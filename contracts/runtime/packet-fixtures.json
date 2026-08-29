@@ -1,0 +1,26 @@
+{
+  "contract": "raw-ipv4-tcp-over-udp",
+  "inner_mtu": 1400,
+  "fixtures": [
+    {
+      "name": "minimal_tcp_syn",
+      "accepted": true,
+      "hex": "4500002800004000400600006460000a5db8d8229c4001bb00000029000000005002000000000000"
+    },
+    {
+      "name": "udp_is_not_forwardable",
+      "accepted": false,
+      "hex": "4500002800004000401100006460000a5db8d8229c4001bb00000029000000005002000000000000"
+    },
+    {
+      "name": "fragment_is_not_forwardable",
+      "accepted": false,
+      "hex": "4500002800002000400600006460000a5db8d8229c4001bb00000029000000005002000000000000"
+    },
+    {
+      "name": "trailing_bytes_are_not_forwardable",
+      "accepted": false,
+      "hex": "4500002800004000400600006460000a5db8d8229c4001bb0000002900000000500200000000000000"
+    }
+  ]
+}

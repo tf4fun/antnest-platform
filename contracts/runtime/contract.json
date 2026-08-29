@@ -1,0 +1,108 @@
+{
+  "mcp_protocol_version": "2026-07-28",
+  "runtime_spec": "runtime-spec.schema.json",
+  "transport": {
+    "status_path": "/status",
+    "mcp_path": "/mcp",
+    "kind": "streamable-http",
+    "trusted_internal_hosts": true
+  },
+  "status": {
+    "agent_id": "agent-1",
+    "generation": 2,
+    "status": "ready",
+    "network_mode": "restricted"
+  },
+  "readiness": {
+    "scope": "runtime-local",
+    "egress_dependency_checked": false,
+    "executor_identity_checked": true,
+    "workspace_access_checked": true,
+    "system_skills_access_checked": true
+  },
+  "lifecycle": {
+    "runtime_exit": "restart_or_replace_instance",
+    "requires_fresh_network_namespace": false,
+    "network_bootstrap": "reconcile_owned_artifacts",
+    "preserve_generation_when_spec_unchanged": true
+  },
+  "lifecycle_errors": {
+    "bootstrap": [
+      "bootstrap_evidence_failed",
+      "entry_failed",
+      "environment_verification_failed",
+      "executor_initialization_failed",
+      "invalid_config",
+      "named_roots_failed",
+      "network_bootstrap_failed",
+      "network_verification_failed",
+      "pre_executor_verification_failed",
+      "root_verification_failed",
+      "unsupported_platform",
+      "workspace_initialization_failed",
+      "workspace_ownership_failed"
+    ],
+    "runtime": [
+      "child_process_containment_unproven",
+      "executor_probe_failed",
+      "http_bind_failed",
+      "http_service_failed",
+      "local_network_failed",
+      "network_protocol_failed",
+      "network_transport_failed",
+      "shutdown_timeout",
+      "signal_listener_failed",
+      "telemetry_initialization_failed",
+      "unexpected_exit"
+    ]
+  },
+  "bootstrap_stages": [
+    "entry",
+    "runtime_spec",
+    "environment_sanitized",
+    "network_ready",
+    "filesystem",
+    "roots_ready",
+    "pre_tokio",
+    "executor",
+    "platform"
+  ],
+  "tool_errors": [
+    "canceled",
+    "child_process_containment_unproven",
+    "content_not_utf8",
+    "edit_failed",
+    "edit_read_failed",
+    "encode_result_failed",
+    "invalid_params",
+    "invalid_path",
+    "old_string_not_found",
+    "old_string_not_unique",
+    "outcome_unknown",
+    "output_capture_failed",
+    "read_failed",
+    "result_too_large",
+    "runtime_busy",
+    "runtime_failed",
+    "runtime_unavailable",
+    "spawn_failed",
+    "timeout",
+    "wait_failed",
+    "write_failed"
+  ],
+  "execution": {
+    "single_flight_enforced_by": "runtime",
+    "max_active_calls_per_agent": 1,
+    "busy_error": "runtime_busy",
+    "subcommands": ["bash", "edit", "read", "write"]
+  },
+  "tools": ["bash", "edit", "read", "write"],
+  "egress_tunnel": {
+    "kind": "udp",
+    "payload": "one-complete-ipv4-packet",
+    "inner_mtu": 1400,
+    "traced": false
+  },
+  "packet_format": "packet-format.md",
+  "packet_fixtures": "packet-fixtures.json"
+}

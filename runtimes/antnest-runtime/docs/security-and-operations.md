@@ -1,0 +1,233 @@
+# Antnest Runtime Security And Operations
+
+## Trust Boundary
+
+Docker or Kubernetes, the host, Runtime Provider, Agent Controller, Runtime
+Egress, and their internal network are trusted infrastructure. Runtime does not
+duplicate platform identity with admission tokens, Egress tokens, mTLS, OAuth,
+or internal request signatures.
+
+Agent-selected shell commands, scripts, Skills, and downloaded dependencies are
+untrusted. The container, UID/capability boundary, named roots, read-only image,
+workspace volume, and network policy limit their fault radius. This service does
+not claim resistance to a container or kernel escape.
+
+## RuntimeSpec Environment
+
+Runtime Provider injects one immutable generation spec:
+
+| Variable | Required | Default | Purpose |
+| --- | --- | --- | --- |
+| `ANTNEST_AGENT_ID` | yes | - | Non-empty stable Agent and workspace identity |
+| `ANTNEST_RUNTIME_GENERATION` | yes | - | Positive immutable configuration generation |
+| `ANTNEST_RUNTIME_LISTEN` | no | `0.0.0.0:8093` | Internal status/MCP socket address |
+| `ANTNEST_RUNTIME_NETWORK_MODE` | yes | - | `restricted` or `unrestricted` |
+| `ANTNEST_RUNTIME_EGRESS_ENDPOINT` | unrestricted only | - | UDP authority resolving to exactly one usable IPv4 address |
+| `ANTNEST_RUNTIME_TUNNEL_IPV4` | yes | - | Usable unicast Runtime virtual egress address |
+| `ANTNEST_RUNTIME_DNS_IPV4` | yes | - | Usable unicast virtual resolver address |
+| `ANTNEST_RUNTIME_WORKSPACE` | no | `/workspace` | Writable workspace and Agent home |
+| `ANTNEST_RUNTIME_SYSTEM_SKILLS` | no | `/skills` | Platform-mounted system-Skill root |
+
+A changed value creates a new generation. Replacing an instance with the same
+values keeps the same generation. The workspace and system-Skill roots must be
+normalized absolute paths without `..` and must not overlap. No bootstrap
+secret is injected.
+
+OpenTelemetry variables are deployment-owned diagnostics and are never copied
+into Executor environments.
+
+Each tool Executor starts with an empty environment. Runtime supplies
+`HOME=/workspace` (or the configured workspace) and
+`PATH=/usr/local/bin:/usr/bin:/bin`; request parameters cannot override these
+reserved names.
+
+## Required Container Shape
+
+- `antnest-runtime serve` is container PID 1 and remains root.
+- The Supervisor has the platform privileges needed for TUN, policy routing,
+  nftables, UID/GID transition, and process-tree cleanup, plus `/dev/net/tun`.
+- Root filesystem is read-only.
+- `/workspace` is a writable persistent Agent volume.
+- `/skills` is mounted read-only by Provider/container policy. Runtime's tool
+  API does not grant writes but does not enforce the mount flag.
+- `/tmp` is bounded ephemeral storage.
+- No Docker socket, database credential, host filesystem, or external API
+  credential is mounted.
+- Runtime HTTP is exposed only on the private platform network.
+
+A minimal Docker container has this shape. Provider supplies the workspace and
+system-Skill host paths and the immutable RuntimeSpec values:
+
+```bash
+docker run --rm \
+  --name antnest-runtime-agent-123 \
+  --read-only \
+  --cap-drop ALL \
+  --cap-add CHOWN \
+  --cap-add DAC_OVERRIDE \
+  --cap-add KILL \
+  --cap-add NET_ADMIN \
+  --cap-add SETGID \
+  --cap-add SETPCAP \
+  --cap-add SETUID \
+  --device /dev/net/tun \
+  --tmpfs /tmp:rw,nosuid,nodev,size=64m \
+  --mount type=bind,src=/srv/antnest/agents/agent-123,\
+dst=/workspace \
+  --mount type=bind,src=/srv/antnest/skills,\
+dst=/skills,readonly \
+  --dns 100.64.0.1 \
+  --dns-option use-vc \
+  --env ANTNEST_AGENT_ID=agent-123 \
+  --env ANTNEST_RUNTIME_GENERATION=1 \
+  --env ANTNEST_RUNTIME_NETWORK_MODE=restricted \
+  --env ANTNEST_RUNTIME_TUNNEL_IPV4=100.96.0.2 \
+  --env ANTNEST_RUNTIME_DNS_IPV4=100.64.0.1 \
+  antnest/antnest-runtime:<immutable-tag>
+```
+
+The corresponding Kubernetes container security context is:
+
+```yaml
+securityContext:
+  runAsUser: 0
+  runAsGroup: 0
+  readOnlyRootFilesystem: true
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
+    add: ["CHOWN", "DAC_OVERRIDE", "KILL", "NET_ADMIN", "SETGID", "SETPCAP", "SETUID"]
+volumeMounts:
+  - {name: tun, mountPath: /dev/net/tun}
+  - {name: workspace, mountPath: /workspace}
+  - {name: system-skills, mountPath: /skills, readOnly: true}
+  - {name: tmp, mountPath: /tmp}
+```
+
+`tun` is a deployment-managed character-device mount, `workspace` is an
+Agent-owned persistent volume, `system-skills` is read-only, and `tmp` is a
+memory-backed `emptyDir` with a size limit. Pod DNS must produce the exact
+resolver file described below; the default cluster resolver is not sufficient.
+
+Named-root containment uses Linux `openat2`; the host kernel must provide that
+system call (Linux 5.6 or newer) and the container seccomp profile must allow
+it. Linux admission calls `bash`, `read`, `write`, and `edit` through an
+official MCP client so an incompatible kernel or seccomp policy fails before
+deployment.
+
+The long-lived Supervisor remains root and must not execute Agent-selected file
+or shell operations. Each MCP request starts exactly one of the explicit
+`bash`, `read`, `write`, or `edit` subcommands. Before reading stdin, that
+subcommand clears supplementary groups, drops irreversibly to UID/GID 1000,
+clears all capability sets, enables `no_new_privileges`, and verifies the final
+process state.
+
+Bootstrap verifies that every required Supervisor capability is present,
+including `CAP_KILL`. The Runtime provider owns the exact capability set. This
+capability is required to terminate a UID/GID 1000 Executor on request
+cancellation, timeout, or container shutdown; it is never retained by the
+Executor.
+
+Supervisor starts subcommands through `/proc/self/exe` with an empty environment
+and only three protocol pipes. All other descriptors are close-on-exec. stdin
+contains one bounded tool-specific JSON request, stdout one bounded structured
+response, and stderr bounded diagnostics. Inputs never appear in argv.
+
+## Connectivity
+
+Runtime listens on:
+
+- `GET /status` for Controller readiness checks;
+- `POST /mcp` for official MCP Streamable HTTP tool calls.
+
+There is no reverse Controller connection and no Runtime self-registration.
+Provider gives Controller the endpoint. Runtime opens one connected UDP socket
+to Egress only in unrestricted mode. Each datagram contains one complete,
+unfragmented IPv4/TCP packet; there is no WebSocket or tunnel authentication
+protocol.
+
+The root Supervisor retains the platform main routing table for MCP replies,
+Egress UDP, and OTLP. A UID-based policy rule sends UID 1000 traffic to an Agent
+table whose only default path is TUN and whose terminal unreachable route
+prevents fallback to the main table. nftables is the fail-closed backstop: it
+rejects UID 1000 bypass traffic, access to Runtime's own listen port, and IPv6.
+Internal destinations needed by an Agent are therefore reached through Egress
+policy instead of direct platform routes. The deployment must not publish the
+MCP port outside the trusted Docker or Kubernetes network.
+
+Runtime requires immutable DNS-over-TCP resolver configuration before it
+installs the Agent policy route. `/etc/resolv.conf` must contain `options use-vc`
+and exactly one `nameserver <ANTNEST_RUNTIME_DNS_IPV4>` entry. Docker's embedded
+`127.0.0.11` resolver is rejected because loopback DNS would bypass TUN and
+Egress policy.
+
+Provider owns this file or platform DNS configuration. Additional name servers
+are rejected because they create an ungoverned DNS path.
+
+Restricted example:
+
+```dotenv
+ANTNEST_AGENT_ID=agent-123
+ANTNEST_RUNTIME_GENERATION=1
+ANTNEST_RUNTIME_NETWORK_MODE=restricted
+ANTNEST_RUNTIME_TUNNEL_IPV4=100.96.0.2
+ANTNEST_RUNTIME_DNS_IPV4=100.64.0.1
+```
+
+Unrestricted adds a concrete private IPv4 endpoint:
+
+```dotenv
+ANTNEST_RUNTIME_NETWORK_MODE=unrestricted
+ANTNEST_RUNTIME_EGRESS_ENDPOINT=192.0.2.10:8092
+```
+
+Provider resolves the Runtime Egress service through Docker/Kubernetes service
+discovery before creating the Runtime and injects exactly one literal
+`IPv4:port` endpoint. Runtime deliberately performs no hostname lookup. This
+keeps platform DNS on the root control plane and Agent DNS on the governed TUN
+path without a split-resolver special case.
+
+## Failure Diagnosis
+
+1. **Exit 78 with `phase=bootstrap`:** inspect stderr for invalid RuntimeSpec, mount,
+   TUN, resolver, route, capability, or bind failure.
+2. **Exit 78 with `phase=runtime`:** inspect the preceding structured fatal
+   record for HTTP service, UDP/TUN session, shutdown timeout, or child-process
+   containment failure.
+3. **`/status` is unreachable:** process is starting or the Runtime instance is
+   invalid. The container platform may restart it; bootstrap must reconcile the
+   Runtime-owned network state or fail closed.
+4. **`/status` identity differs:** Provider or Controller selected the wrong
+   endpoint; never route work to it.
+5. **`tools/list` fails after status succeeds:** MCP is defective; reject the
+   candidate generation.
+6. **Unrestricted `/status` succeeds but public traffic fails:** `/status` is
+   Runtime-local readiness; inspect the selected Provider and Egress deployment.
+7. **Restricted traffic hangs:** this is a Runtime defect. TCP/UDP should fail
+   locally and quickly.
+8. **Unrestricted DNS fails:** inspect the UDP Egress endpoint, virtual resolver, and
+   DNS-over-TCP upstream.
+9. **A tool request times out or is canceled:** Runtime terminates and reaps the
+   Executor tree. `bash`, `write`, and `edit` may report an unknown side-effect
+   outcome; the Agent should inspect state before retrying.
+10. **A second tool call returns `runtime_busy`:** the existing Executor still
+    owns the workspace. Retry only after the Agent operation has settled.
+
+## Recovery
+
+Runtime is crash-only and disposable. If PID 1 exits, Controller marks that
+endpoint unavailable and the container platform restarts or replaces it:
+
+- Docker may restart the container or Provider may replace it;
+- Kubernetes may restart the container in the retained Pod sandbox or Provider
+  may replace the Pod;
+- bootstrap removes or replaces only Runtime-owned named TUN, route, and
+  nftables artifacts and fails if it cannot prove convergence;
+- Provider reattaches the persistent Agent workspace;
+- unchanged RuntimeSpec keeps the same generation; a changed RuntimeSpec gets a
+  new generation;
+- Controller resumes routing only after the replacement passes `/status` and
+  MCP `tools/list`.
+
+Runtime does not implement restart, drain, retire, purge, or rollback methods.
+Those are Provider and Controller lifecycle effects.

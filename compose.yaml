@@ -1,0 +1,107 @@
+name: antnest-platform
+
+services:
+  postgres:
+    image: postgres:17-bookworm
+    environment:
+      POSTGRES_DB: antnest_runtime
+      POSTGRES_USER: antnest_runtime
+      POSTGRES_PASSWORD: ${ANTNEST_RUNTIME_POSTGRES_PASSWORD:-antnest-runtime-dev}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U antnest_runtime -d antnest_runtime"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    volumes:
+      - runtime-postgres:/var/lib/postgresql/data
+    ports:
+      - 127.0.0.1:55432:5432
+    networks: [control, development]
+
+  runtime-controller:
+    image: antnest/runtime-controller:local
+    build:
+      context: .
+      dockerfile: services/runtime-controller/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+      runtime-egress:
+        condition: service_healthy
+      runtime-provider-docker:
+        condition: service_healthy
+    environment:
+      ANTNEST_RUNTIME_DATABASE_URL: postgres://antnest_runtime:${ANTNEST_RUNTIME_POSTGRES_PASSWORD:-antnest-runtime-dev}@postgres:5432/antnest_runtime?sslmode=disable
+      ANTNEST_RUNTIME_ADVERTISED_ENDPOINT: ${ANTNEST_RUNTIME_CONTROL_IPV4:-172.30.255.2}:8091
+      ANTNEST_RUNTIME_EGRESS_URL: http://runtime-egress:8081
+      ANTNEST_RUNTIME_EGRESS_ENDPOINT: ${ANTNEST_RUNTIME_EGRESS_IPV4:-172.30.255.3}:8092
+      ANTNEST_RUNTIME_PROVIDER_URL: http://runtime-provider-docker:8082
+      ANTNEST_RUNTIME_MANAGEMENT_NETWORK: antnest-runtime-management
+      ANTNEST_RUNTIME_TOKEN_SECRET: ${ANTNEST_RUNTIME_TOKEN_SECRET:?set ANTNEST_RUNTIME_TOKEN_SECRET in .env}
+      ANTNEST_RUNTIME_TUNNEL_CIDR: 100.64.0.0/10
+      ANTNEST_RUNTIME_DNS_IPV4: 100.64.0.1
+    ports:
+      - 127.0.0.1:8080:8080
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/runtime-controller", "--healthcheck"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+    networks:
+      control: {}
+      development: {}
+      runtime-management:
+        ipv4_address: ${ANTNEST_RUNTIME_CONTROL_IPV4:-172.30.255.2}
+
+  runtime-egress:
+    image: antnest/runtime-egress:local
+    build:
+      context: .
+      dockerfile: services/runtime-egress/Dockerfile
+    environment:
+      ANTNEST_RUNTIME_TOKEN_SECRET: ${ANTNEST_RUNTIME_TOKEN_SECRET:?set ANTNEST_RUNTIME_TOKEN_SECRET in .env}
+      ANTNEST_RUNTIME_TUNNEL_CIDR: 100.64.0.0/10
+      ANTNEST_RUNTIME_DNS_IPV4: 100.64.0.1
+      ANTNEST_RUNTIME_DNS_UPSTREAM: 127.0.0.11:53
+    cap_add: [NET_ADMIN]
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/runtime-egress", "--healthcheck"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+    networks:
+      control: {}
+      egress: {}
+      runtime-management:
+        ipv4_address: ${ANTNEST_RUNTIME_EGRESS_IPV4:-172.30.255.3}
+
+  runtime-provider-docker:
+    image: antnest/runtime-provider-docker:local
+    build:
+      context: .
+      dockerfile: services/runtime-provider-docker/Dockerfile
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/runtime-provider-docker", "--healthcheck"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+    networks: [control]
+
+networks:
+  control:
+    internal: true
+  development: {}
+  egress: {}
+  runtime-management:
+    name: antnest-runtime-management
+    internal: true
+    ipam:
+      config:
+        - subnet: ${ANTNEST_RUNTIME_MANAGEMENT_SUBNET:-172.30.255.0/24}
+
+volumes:
+  runtime-postgres:

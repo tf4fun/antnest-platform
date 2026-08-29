@@ -1,0 +1,103 @@
+use std::env;
+use std::io::{self, Read, Write};
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use thiserror::Error;
+use tokio_util::sync::CancellationToken;
+
+use crate::command::ToolCommand;
+use crate::executor_protocol::{
+    MAX_EXECUTOR_MESSAGE_BYTES, decode_bash_request, decode_edit_request, decode_read_request,
+    decode_write_request, encode_bash_reply, encode_edit_reply, encode_read_reply,
+    encode_write_reply,
+};
+use crate::roots::NamedRoots;
+use crate::tools::ToolEngine;
+
+#[derive(Debug, Error)]
+pub(crate) enum ExecutorEntryError {
+    #[error("executor privilege transition failed: {0}")]
+    Privilege(#[from] crate::privilege::PrivilegeError),
+    #[error("executor filesystem roots are invalid: {0}")]
+    Roots(#[from] crate::roots::RootError),
+    #[error("executor runtime initialization failed: {0}")]
+    Runtime(#[from] io::Error),
+    #[error("executor protocol failed: {0}")]
+    Protocol(String),
+}
+
+pub(crate) fn run(command: ToolCommand) -> Result<(), ExecutorEntryError> {
+    crate::privilege::enter_executor_state()?;
+    crate::privilege::close_untrusted_fds()?;
+
+    let workspace = env_path("ANTNEST_RUNTIME_WORKSPACE", "/workspace");
+    let system_skills = env_path("ANTNEST_RUNTIME_SYSTEM_SKILLS", "/skills");
+    let roots = Arc::new(NamedRoots::open(&workspace, &system_skills)?);
+    let engine = ToolEngine::new(roots);
+    let input = read_message()?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    let cancel = CancellationToken::new();
+
+    match command {
+        ToolCommand::Bash => {
+            let result = decode_bash_request(&input)
+                .and_then(|request| runtime.block_on(engine.bash(request, cancel)));
+            write_reply(encode_bash_reply(result).map_err(protocol_error)?)
+        }
+        ToolCommand::Read => {
+            let result = decode_read_request(&input)
+                .and_then(|request| runtime.block_on(engine.read(request, cancel)));
+            write_reply(encode_read_reply(result).map_err(protocol_error)?)
+        }
+        ToolCommand::Write => {
+            let result = decode_write_request(&input)
+                .and_then(|request| runtime.block_on(engine.write(request, cancel)));
+            write_reply(encode_write_reply(result).map_err(protocol_error)?)
+        }
+        ToolCommand::Edit => {
+            let result = decode_edit_request(&input)
+                .and_then(|request| runtime.block_on(engine.edit(request, cancel)));
+            write_reply(encode_edit_reply(result).map_err(protocol_error)?)
+        }
+    }
+}
+
+fn protocol_error(error: impl std::fmt::Display) -> ExecutorEntryError {
+    ExecutorEntryError::Protocol(error.to_string())
+}
+
+fn env_path(name: &str, default: &str) -> PathBuf {
+    env::var_os(name)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(default))
+}
+
+fn read_message() -> Result<Vec<u8>, ExecutorEntryError> {
+    let mut input = Vec::new();
+    io::stdin()
+        .take((MAX_EXECUTOR_MESSAGE_BYTES + 1) as u64)
+        .read_to_end(&mut input)
+        .map_err(|error| ExecutorEntryError::Protocol(error.to_string()))?;
+    if input.len() > MAX_EXECUTOR_MESSAGE_BYTES {
+        return Err(ExecutorEntryError::Protocol(
+            "executor request exceeds the encoded limit".into(),
+        ));
+    }
+    Ok(input)
+}
+
+fn write_reply(encoded: Vec<u8>) -> Result<(), ExecutorEntryError> {
+    if encoded.len() > MAX_EXECUTOR_MESSAGE_BYTES {
+        return Err(ExecutorEntryError::Protocol(
+            "executor response exceeds the encoded limit".into(),
+        ));
+    }
+    let mut stdout = io::stdout().lock();
+    stdout
+        .write_all(&encoded)
+        .and_then(|()| stdout.flush())
+        .map_err(|error| ExecutorEntryError::Protocol(error.to_string()))
+}

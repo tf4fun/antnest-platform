@@ -1,0 +1,7 @@
+go 1.25.0
+
+use (
+	./services/runtime-controller
+	./services/runtime-egress
+	./services/runtime-provider-docker
+)

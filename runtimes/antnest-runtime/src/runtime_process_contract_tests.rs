@@ -1,0 +1,175 @@
+use serde_json::json;
+
+use crate::command::{Command, CommandError, ToolCommand};
+use crate::execution_actor::SingleFlight;
+use crate::executor_protocol::{ExecutorFailure, ExecutorReply, Outcome};
+use crate::tool_error::ToolErrorCode;
+
+#[test]
+fn process_execution_core_does_not_import_mcp_transport_types() {
+    for (name, source) in [
+        ("execution_actor", include_str!("execution_actor.rs")),
+        ("executor", include_str!("executor.rs")),
+    ] {
+        assert!(
+            !source.contains("crate::protocol"),
+            "{name} must depend on execution requests, not MCP DTOs"
+        );
+    }
+}
+
+#[test]
+fn runtime_commands_are_explicit_and_closed() {
+    assert_eq!(Command::parse(["serve"]), Ok(Command::Serve));
+    assert_eq!(
+        Command::parse(["bash"]),
+        Ok(Command::Tool(ToolCommand::Bash))
+    );
+    assert_eq!(
+        Command::parse(["read"]),
+        Ok(Command::Tool(ToolCommand::Read))
+    );
+    assert_eq!(
+        Command::parse(["write"]),
+        Ok(Command::Tool(ToolCommand::Write))
+    );
+    assert_eq!(
+        Command::parse(["edit"]),
+        Ok(Command::Tool(ToolCommand::Edit))
+    );
+    assert_eq!(
+        Command::parse(std::iter::empty::<&str>()),
+        Err(CommandError::Missing)
+    );
+    assert_eq!(
+        Command::parse(["execute", "write"]),
+        Err(CommandError::UnexpectedArguments)
+    );
+    assert_eq!(
+        Command::parse(["unknown"]),
+        Err(CommandError::Unknown("unknown".into()))
+    );
+}
+
+#[test]
+fn tool_commands_map_to_fixed_process_arguments() {
+    assert_eq!(ToolCommand::Bash.as_str(), "bash");
+    assert_eq!(ToolCommand::Read.as_str(), "read");
+    assert_eq!(ToolCommand::Write.as_str(), "write");
+    assert_eq!(ToolCommand::Edit.as_str(), "edit");
+}
+
+#[test]
+fn executor_reply_has_one_unambiguous_json_envelope() {
+    let success = ExecutorReply::Success {
+        result: json!({"bytes_written": 5}),
+    };
+    assert_eq!(
+        serde_json::to_value(success).unwrap(),
+        json!({"status": "success", "result": {"bytes_written": 5}})
+    );
+
+    let failure: ExecutorReply<serde_json::Value> = ExecutorReply::Failure {
+        error: ExecutorFailure {
+            code: ToolErrorCode::WriteFailed,
+            message: "disk full".into(),
+            outcome: Outcome::Known,
+        },
+    };
+    let encoded = serde_json::to_value(&failure).unwrap();
+    assert_eq!(
+        encoded,
+        json!({
+            "status": "failure",
+            "error": {
+                "code": "write_failed",
+                "message": "disk full",
+                "outcome": "known"
+            }
+        })
+    );
+    assert_eq!(
+        serde_json::from_value::<ExecutorReply<serde_json::Value>>(encoded).unwrap(),
+        failure
+    );
+}
+
+#[test]
+fn runtime_single_flight_rejects_instead_of_queueing() {
+    let gate = SingleFlight::new();
+    let lease = gate.try_acquire().expect("first execution lease");
+    assert_eq!(
+        gate.try_acquire()
+            .expect_err("concurrent call must fail")
+            .code(),
+        ToolErrorCode::RuntimeBusy
+    );
+    drop(lease);
+    assert!(gate.try_acquire().is_ok());
+}
+
+#[test]
+fn runtime_admission_terminal_states_cannot_be_reopened_by_a_lease() {
+    let closing = SingleFlight::new();
+    let lease = closing.try_acquire().expect("active execution lease");
+    closing.close();
+    drop(lease);
+    assert_eq!(
+        closing
+            .try_acquire()
+            .expect_err("closed Runtime must reject new work")
+            .code(),
+        ToolErrorCode::RuntimeUnavailable
+    );
+
+    let poisoned = SingleFlight::new();
+    let lease = poisoned.try_acquire().expect("active execution lease");
+    poisoned.poison();
+    drop(lease);
+    assert_eq!(
+        poisoned
+            .try_acquire()
+            .expect_err("poisoned Runtime must reject new work")
+            .code(),
+        ToolErrorCode::RuntimeUnavailable
+    );
+}
+
+#[tokio::test]
+async fn runtime_shutdown_waits_for_the_active_execution_lease() {
+    let gate = SingleFlight::new();
+    let lease = gate.try_acquire().expect("active execution lease");
+    let draining_gate = gate.clone();
+    let draining = tokio::spawn(async move { draining_gate.close_and_drain().await });
+    tokio::task::yield_now().await;
+    assert!(!draining.is_finished());
+
+    drop(lease);
+    tokio::time::timeout(std::time::Duration::from_secs(1), draining)
+        .await
+        .expect("Runtime drain deadline")
+        .expect("join Runtime drain")
+        .expect("clean Runtime drain");
+    assert_eq!(
+        gate.try_acquire()
+            .expect_err("drained Runtime must remain closed")
+            .code(),
+        ToolErrorCode::RuntimeUnavailable
+    );
+}
+
+#[tokio::test]
+async fn poisoned_runtime_reports_failure_after_the_active_lease_releases() {
+    let gate = SingleFlight::new();
+    let lease = gate.try_acquire().expect("active execution lease");
+    let draining_gate = gate.clone();
+    let draining = tokio::spawn(async move { draining_gate.close_and_drain().await });
+    gate.poison();
+    drop(lease);
+
+    tokio::time::timeout(std::time::Duration::from_secs(1), draining)
+        .await
+        .expect("Runtime drain deadline")
+        .expect("join Runtime drain")
+        .expect_err("poisoned Runtime drain must fail");
+}

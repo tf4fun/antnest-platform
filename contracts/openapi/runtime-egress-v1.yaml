@@ -1,0 +1,84 @@
+openapi: 3.1.0
+info:
+  title: Antnest Runtime Egress Internal API
+  version: 1.0.0
+paths:
+  /healthz:
+    get:
+      operationId: egressHealth
+      responses:
+        "200": {description: Process is alive}
+  /readyz:
+    get:
+      operationId: egressReadiness
+      responses:
+        "200": {description: TUN and DNS data planes are ready}
+        "503": {$ref: "#/components/responses/Problem"}
+  /internal/v1/reservations/{runtime_instance_id}/{generation}:
+    parameters:
+      - $ref: "#/components/parameters/RuntimeInstanceID"
+      - $ref: "#/components/parameters/Generation"
+    put:
+      operationId: ensureEgressReservation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/Reservation"}
+      responses:
+        "204": {description: Reservation is applied}
+        "400": {$ref: "#/components/responses/Problem"}
+        "409": {$ref: "#/components/responses/Problem"}
+    delete:
+      operationId: releaseEgressReservation
+      responses:
+        "204": {description: Reservation is absent}
+        "400": {$ref: "#/components/responses/Problem"}
+        "409": {$ref: "#/components/responses/Problem"}
+components:
+  parameters:
+    RuntimeInstanceID:
+      name: runtime_instance_id
+      in: path
+      required: true
+      schema: {type: string, minLength: 1}
+    Generation:
+      name: generation
+      in: path
+      required: true
+      schema: {type: integer, format: uint64, minimum: 1}
+  schemas:
+    Reservation:
+      type: object
+      additionalProperties: false
+      required:
+        - runtime_instance_id
+        - generation
+        - agent_id
+        - virtual_ip
+        - allocator_epoch
+        - network_mode
+        - policy_epoch
+        - policy_revision
+      properties:
+        runtime_instance_id: {type: string, minLength: 1}
+        generation: {type: integer, format: uint64, minimum: 1}
+        agent_id: {type: string, minLength: 1}
+        virtual_ip: {type: string, format: ipv4}
+        allocator_epoch: {type: integer, format: uint64, minimum: 1}
+        network_mode: {type: string, const: unrestricted}
+        policy_epoch: {type: integer, format: uint64, minimum: 1}
+        policy_revision: {type: integer, format: uint64, minimum: 1}
+    Problem:
+      type: object
+      required: [status, code, detail]
+      properties:
+        status: {type: integer}
+        code: {type: string}
+        detail: {type: string}
+  responses:
+    Problem:
+      description: Stable internal problem response
+      content:
+        application/problem+json:
+          schema: {$ref: "#/components/schemas/Problem"}

@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://antnest.local/contracts/runtime/runtime-spec.schema.json",
+  "title": "Antnest RuntimeSpec",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["agent_id", "generation", "listen", "network", "filesystem"],
+  "properties": {
+    "agent_id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^\\S+$",
+      "description": "Stable non-empty Agent identifier without whitespace."
+    },
+    "generation": {"type": "integer", "minimum": 1},
+    "listen": {
+      "type": "string",
+      "minLength": 3,
+      "description": "Socket address with a non-zero port. Rust SocketAddr parsing is authoritative."
+    },
+    "network": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "tunnel_ipv4", "resolver_ipv4"],
+          "properties": {
+            "mode": {"const": "restricted"},
+            "tunnel_ipv4": {
+              "type": "string",
+              "format": "ipv4",
+              "description": "Usable unicast IPv4 address, distinct from resolver_ipv4."
+            },
+            "resolver_ipv4": {
+              "type": "string",
+              "format": "ipv4",
+              "description": "Usable unicast IPv4 address, distinct from tunnel_ipv4."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "egress_endpoint", "tunnel_ipv4", "resolver_ipv4"],
+          "properties": {
+            "mode": {"const": "unrestricted"},
+            "egress_endpoint": {
+              "type": "string",
+              "minLength": 3,
+              "pattern": "^[0-9]{1,3}(\\.[0-9]{1,3}){3}:[0-9]{1,5}$",
+              "description": "Provider-resolved literal IPv4 address and non-zero UDP port. Runtime performs no service-name lookup."
+            },
+            "tunnel_ipv4": {
+              "type": "string",
+              "format": "ipv4",
+              "description": "Usable unicast IPv4 address, distinct from resolver_ipv4."
+            },
+            "resolver_ipv4": {
+              "type": "string",
+              "format": "ipv4",
+              "description": "Usable unicast IPv4 address, distinct from tunnel_ipv4."
+            }
+          }
+        }
+      ]
+    },
+    "filesystem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workspace", "system_skills"],
+      "properties": {
+        "workspace": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^/",
+          "description": "Normalized absolute writable workspace root; must not overlap system_skills."
+        },
+        "system_skills": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^/",
+          "description": "Normalized absolute system Skill root; must not overlap workspace."
+        }
+      }
+    }
+  }
+}

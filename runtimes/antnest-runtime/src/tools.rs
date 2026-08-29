@@ -1,0 +1,352 @@
+use std::path::PathBuf;
+use std::process::Stdio;
+use std::sync::Arc;
+use std::time::Duration;
+
+use nix::sys::signal::{Signal, kill};
+use nix::unistd::Pid;
+use tokio::io::{AsyncRead, AsyncReadExt};
+use tokio::process::Command;
+use tokio_util::sync::CancellationToken;
+
+use crate::execution::{
+    BashRequest, BashResult, EditRequest, EditResult, MAX_FILE_CONTENT_BYTES, ReadRequest,
+    ReadResult, RootName, WriteRequest, WriteResult,
+};
+use crate::roots::{NamedRoot, NamedRoots};
+use crate::tool_error::{ToolError, ToolErrorCode};
+
+const MAX_OUTPUT_BYTES: usize = 1024 * 1024;
+const OUTPUT_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
+const PROCESS_STOP_TIMEOUT: Duration = Duration::from_secs(2);
+
+type CapturedOutput = (Vec<u8>, bool, Option<String>);
+type OutputTask = Option<tokio::task::JoinHandle<CapturedOutput>>;
+
+#[derive(Clone)]
+pub(crate) struct ToolEngine {
+    roots: Arc<NamedRoots>,
+    home: PathBuf,
+}
+
+impl ToolEngine {
+    pub(crate) fn new(roots: Arc<NamedRoots>) -> Self {
+        let home = roots.workspace_root().to_owned();
+        Self { roots, home }
+    }
+
+    pub(crate) async fn bash(
+        &self,
+        input: BashRequest,
+        cancel: CancellationToken,
+    ) -> Result<BashResult, ToolError> {
+        reject_canceled(&cancel)?;
+        self.run_bash(input, cancel).await
+    }
+
+    async fn run_bash(
+        &self,
+        input: BashRequest,
+        cancel: CancellationToken,
+    ) -> Result<BashResult, ToolError> {
+        let working_dir = self
+            .roots
+            .workspace_path(input.working_dir().path())
+            .map_err(|error| ToolError::new(ToolErrorCode::InvalidPath, error))?;
+        let mut command = Command::new("/bin/bash");
+        command
+            .args(["-lc", input.command()])
+            .current_dir(working_dir)
+            .env_clear()
+            .env("HOME", &self.home)
+            .env("PATH", "/usr/local/bin:/usr/bin:/bin")
+            .envs(
+                input
+                    .environment()
+                    .iter()
+                    .map(|value| (value.name(), value.value())),
+            )
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        let mut child = command
+            .spawn()
+            .map_err(|error| ToolError::new(ToolErrorCode::SpawnFailed, error))?;
+        let stdout = child
+            .stdout
+            .take()
+            .map(|pipe| tokio::spawn(read_output(pipe)));
+        let stderr = child
+            .stderr
+            .take()
+            .map(|pipe| tokio::spawn(read_output(pipe)));
+
+        enum Exit {
+            Wait(std::io::Result<std::process::ExitStatus>),
+            Canceled,
+            TimedOut,
+        }
+        let exit = tokio::select! {
+            _ = cancel.cancelled() => Exit::Canceled,
+            result = child.wait() => Exit::Wait(result),
+            _ = tokio::time::sleep(input.timeout()) => Exit::TimedOut,
+        };
+        let status = match exit {
+            Exit::Wait(Ok(status)) => status,
+            Exit::Wait(Err(error)) => {
+                terminate_and_reap(&mut child).await;
+                drain_outputs(stdout, stderr).await;
+                return Err(ToolError::new(ToolErrorCode::WaitFailed, error));
+            }
+            Exit::Canceled => {
+                terminate_and_reap(&mut child).await;
+                drain_outputs(stdout, stderr).await;
+                return Err(canceled());
+            }
+            Exit::TimedOut => {
+                terminate_and_reap(&mut child).await;
+                drain_outputs(stdout, stderr).await;
+                return Err(ToolError::new(
+                    ToolErrorCode::Timeout,
+                    "bash command timed out",
+                ));
+            }
+        };
+        let (stdout, stdout_truncated, stdout_error) = join_output(stdout).await;
+        let (stderr, stderr_truncated, stderr_error) = join_output(stderr).await;
+        if let Some(error) = output_error(stdout_error, stderr_error) {
+            return Err(ToolError::new(ToolErrorCode::OutputCaptureFailed, error));
+        }
+        Ok(BashResult {
+            exit_code: status.code().unwrap_or(128),
+            stdout: String::from_utf8_lossy(&stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&stderr).into_owned(),
+            truncated: stdout_truncated || stderr_truncated,
+        })
+    }
+
+    pub(crate) async fn read(
+        &self,
+        input: ReadRequest,
+        cancel: CancellationToken,
+    ) -> Result<ReadResult, ToolError> {
+        reject_canceled(&cancel)?;
+        let roots = self.roots.clone();
+        let root = storage_root(input.path().root());
+        let path = input.path().path().to_owned();
+        let result = tokio::task::spawn_blocking(move || roots.read(root, &path))
+            .await
+            .map_err(|error| ToolError::new(ToolErrorCode::RuntimeFailed, error))?
+            .map_err(|error| ToolError::new(ToolErrorCode::ReadFailed, error))?;
+        reject_canceled(&cancel)?;
+        let offset = input.offset().min(result.data.len());
+        let limit = input.limit();
+        let end = offset.saturating_add(limit).min(result.data.len());
+        let content = std::str::from_utf8(&result.data[offset..end])
+            .map_err(|error| ToolError::new(ToolErrorCode::ContentNotUtf8, error))?
+            .to_owned();
+        Ok(ReadResult {
+            content,
+            truncated: end < result.data.len(),
+        })
+    }
+
+    pub(crate) async fn write(
+        &self,
+        input: WriteRequest,
+        cancel: CancellationToken,
+    ) -> Result<WriteResult, ToolError> {
+        reject_canceled(&cancel)?;
+        let roots = self.roots.clone();
+        let (path, content) = input.into_parts();
+        let path = path.path().to_owned();
+        let content = content.into_bytes();
+        let bytes_written = tokio::task::spawn_blocking(move || {
+            roots.write(NamedRoot::Workspace, &path, &content, false)
+        })
+        .await
+        .map_err(|error| ToolError::new(ToolErrorCode::RuntimeFailed, error))?
+        .map_err(|error| ToolError::new(ToolErrorCode::WriteFailed, error))?;
+        Ok(WriteResult { bytes_written })
+    }
+
+    pub(crate) async fn edit(
+        &self,
+        input: EditRequest,
+        cancel: CancellationToken,
+    ) -> Result<EditResult, ToolError> {
+        reject_canceled(&cancel)?;
+        let (path, old_string, new_string) = input.into_parts();
+        let roots = self.roots.clone();
+        let read_path = path.path().to_owned();
+        let existing =
+            tokio::task::spawn_blocking(move || roots.read(NamedRoot::Workspace, &read_path))
+                .await
+                .map_err(|error| ToolError::new(ToolErrorCode::RuntimeFailed, error))?
+                .map_err(|error| ToolError::new(ToolErrorCode::EditReadFailed, error))?
+                .data;
+        reject_canceled(&cancel)?;
+
+        let old = old_string.as_bytes();
+        let matches = existing
+            .windows(old.len())
+            .enumerate()
+            .filter_map(|(index, value)| (value == old).then_some(index))
+            .take(2)
+            .collect::<Vec<_>>();
+        let [index] = matches.as_slice() else {
+            let code = if matches.is_empty() {
+                ToolErrorCode::OldStringNotFound
+            } else {
+                ToolErrorCode::OldStringNotUnique
+            };
+            return Err(ToolError::new(code, "the file was not changed"));
+        };
+        let final_size = existing
+            .len()
+            .checked_sub(old.len())
+            .and_then(|size| size.checked_add(new_string.len()));
+        let Some(final_size) = final_size.filter(|size| *size <= MAX_FILE_CONTENT_BYTES) else {
+            return Err(ToolError::new(
+                ToolErrorCode::ResultTooLarge,
+                "the edited file would exceed 8 MiB",
+            ));
+        };
+        let mut updated = Vec::with_capacity(final_size);
+        updated.extend_from_slice(&existing[..*index]);
+        updated.extend_from_slice(new_string.as_bytes());
+        updated.extend_from_slice(&existing[*index + old.len()..]);
+        reject_canceled(&cancel)?;
+
+        let roots = self.roots.clone();
+        let path = path.path().to_owned();
+        let bytes_written = tokio::task::spawn_blocking(move || {
+            roots.write(NamedRoot::Workspace, &path, &updated, false)
+        })
+        .await
+        .map_err(|error| ToolError::new(ToolErrorCode::RuntimeFailed, error))?
+        .map_err(|error| ToolError::new(ToolErrorCode::EditFailed, error))?;
+        Ok(EditResult { bytes_written })
+    }
+}
+
+fn reject_canceled(cancel: &CancellationToken) -> Result<(), ToolError> {
+    if cancel.is_cancelled() {
+        Err(canceled())
+    } else {
+        Ok(())
+    }
+}
+
+fn canceled() -> ToolError {
+    ToolError::new(ToolErrorCode::Canceled, "request canceled")
+}
+
+fn storage_root(root: RootName) -> NamedRoot {
+    match root {
+        RootName::Workspace => NamedRoot::Workspace,
+        RootName::SystemSkills => NamedRoot::SystemSkills,
+    }
+}
+
+fn output_error(stdout: Option<String>, stderr: Option<String>) -> Option<String> {
+    let errors = [
+        stdout.map(|error| format!("stdout: {error}")),
+        stderr.map(|error| format!("stderr: {error}")),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>();
+    (!errors.is_empty()).then(|| errors.join("; "))
+}
+
+async fn drain_outputs(stdout: OutputTask, stderr: OutputTask) {
+    let _ = tokio::join!(join_output(stdout), join_output(stderr));
+}
+
+async fn terminate_and_reap(child: &mut tokio::process::Child) {
+    if let Some(pid) = child.id().and_then(|value| i32::try_from(value).ok()) {
+        let _ = kill(Pid::from_raw(pid), Signal::SIGTERM);
+    }
+    let reaped = tokio::time::timeout(PROCESS_STOP_TIMEOUT, child.wait())
+        .await
+        .is_ok_and(|result| result.is_ok());
+    if !reaped {
+        let _ = child.start_kill();
+        let _ = tokio::time::timeout(PROCESS_STOP_TIMEOUT, child.wait()).await;
+    }
+}
+
+async fn read_output<R: AsyncRead + Unpin>(mut reader: R) -> CapturedOutput {
+    let mut output = Vec::new();
+    let mut chunk = [0_u8; 8192];
+    let mut truncated = false;
+    loop {
+        match reader.read(&mut chunk).await {
+            Ok(0) => return (output, truncated, None),
+            Err(error) => return (output, true, Some(error.to_string())),
+            Ok(size) => {
+                let remaining = MAX_OUTPUT_BYTES.saturating_sub(output.len());
+                let kept = size.min(remaining);
+                output.extend_from_slice(&chunk[..kept]);
+                truncated |= kept < size;
+            }
+        }
+    }
+}
+
+async fn join_output(task: OutputTask) -> CapturedOutput {
+    let Some(mut task) = task else {
+        return (Vec::new(), false, None);
+    };
+    match tokio::time::timeout(OUTPUT_DRAIN_TIMEOUT, &mut task).await {
+        Ok(Ok(output)) => output,
+        Ok(Err(error)) => (Vec::new(), true, Some(error.to_string())),
+        Err(_) => {
+            task.abort();
+            (Vec::new(), true, Some("output drain timed out".into()))
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn bash_home_matches_the_configured_workspace() {
+        use std::sync::Arc;
+
+        use tempfile::tempdir;
+        use tokio_util::sync::CancellationToken;
+
+        use super::ToolEngine;
+        use crate::roots::NamedRoots;
+
+        let workspace = tempdir().expect("workspace");
+        let skills = tempdir().expect("skills");
+        let roots = NamedRoots::open(workspace.path(), skills.path()).expect("roots");
+        let engine = ToolEngine::new(Arc::new(roots));
+        let result = engine
+            .bash(
+                bash_request("printf %s \"$HOME\"", 1_000),
+                CancellationToken::new(),
+            )
+            .await
+            .expect("bash");
+
+        assert_eq!(result.stdout, workspace.path().to_string_lossy());
+    }
+
+    #[cfg(target_os = "linux")]
+    fn bash_request(command: &str, timeout_ms: u64) -> crate::execution::BashRequest {
+        crate::execution::BashRequest::new(
+            command.into(),
+            crate::execution::RootPath::new(crate::execution::RootName::Workspace, ".".into())
+                .unwrap(),
+            Vec::new(),
+            timeout_ms,
+        )
+        .unwrap()
+    }
+}
