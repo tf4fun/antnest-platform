@@ -26,6 +26,7 @@ use crate::executor_protocol::{
     encode_bash_request, encode_edit_request, encode_read_request, encode_write_request,
 };
 use crate::spec::RuntimeIdentity;
+use crate::telemetry::RuntimeMetrics;
 use crate::tool_error::{ToolError, ToolErrorCode};
 
 const FILE_TOOL_TIMEOUT: Duration = Duration::from_secs(30);
@@ -43,6 +44,7 @@ pub(crate) struct ExecutionActor {
     identity: RuntimeIdentity,
     workspace: PathBuf,
     system_skills: PathBuf,
+    metrics: RuntimeMetrics,
     shutdown: CancellationToken,
     fatal: mpsc::UnboundedSender<ExecutionFatal>,
 }
@@ -52,6 +54,7 @@ impl ExecutionActor {
         identity: RuntimeIdentity,
         workspace: PathBuf,
         system_skills: PathBuf,
+        metrics: RuntimeMetrics,
         shutdown: CancellationToken,
     ) -> (Self, mpsc::UnboundedReceiver<ExecutionFatal>) {
         let (fatal, failures) = mpsc::unbounded_channel();
@@ -61,6 +64,7 @@ impl ExecutionActor {
                 identity,
                 workspace,
                 system_skills,
+                metrics,
                 shutdown,
                 fatal,
             },
@@ -218,10 +222,11 @@ impl ExecutionActor {
         );
         crate::telemetry::record_span_identity(&span);
         let identity = self.identity.clone();
+        let metrics = self.metrics.clone();
         tokio::spawn(async move {
             let started = tokio::time::Instant::now();
             let result = call.run(decode_reply).instrument(span.clone()).await;
-            record_executor_result(&span, &identity, &result, started.elapsed());
+            record_executor_result(&span, &identity, tool, &metrics, &result, started.elapsed());
             result
         })
         .await
@@ -553,6 +558,8 @@ impl ExecutorCall {
 fn record_executor_result(
     span: &tracing::Span,
     identity: &RuntimeIdentity,
+    tool: ToolCommand,
+    metrics: &RuntimeMetrics,
     result: &Result<impl Sized, ToolError>,
     duration: Duration,
 ) {
@@ -561,6 +568,7 @@ fn record_executor_result(
     span.record("executor.duration_ms", duration_ms);
     match result {
         Ok(_) => {
+            metrics.executor(tool.as_str(), "success", "", duration);
             span.record("executor.outcome", "success");
             span.record("otel.status_code", "OK");
             span.in_scope(|| {
@@ -577,6 +585,7 @@ fn record_executor_result(
             });
         }
         Err(error) => {
+            metrics.executor(tool.as_str(), "error", error.code.as_str(), duration);
             span.record("executor.outcome", "error");
             span.record("otel.status_code", "ERROR");
             span.record("error.type", error.code.as_str());
@@ -686,8 +695,10 @@ mod tests {
     use tracing_subscriber::layer::{Context, Layer, SubscriberExt as _};
 
     use super::{record_executor_result, validate_probe_result};
+    use crate::command::ToolCommand;
     use crate::execution::BashResult;
     use crate::spec::RuntimeIdentity;
+    use crate::telemetry::RuntimeMetrics;
     use crate::tool_error::{ToolError, ToolErrorCode};
 
     #[derive(Clone)]
@@ -706,6 +717,7 @@ mod tests {
     fn executor_results_emit_one_completion_event_each() {
         let events = Arc::new(AtomicUsize::new(0));
         let subscriber = tracing_subscriber::Registry::default().with(EventCounter(events.clone()));
+        let metrics = RuntimeMetrics::default();
 
         tracing::subscriber::with_default(subscriber, || {
             let identity = RuntimeIdentity::new("agent-test", 1).unwrap();
@@ -713,6 +725,8 @@ mod tests {
             record_executor_result(
                 &success,
                 &identity,
+                ToolCommand::Read,
+                &metrics,
                 &Ok::<(), ToolError>(()),
                 std::time::Duration::from_millis(3),
             );
@@ -721,6 +735,8 @@ mod tests {
             record_executor_result(
                 &failure,
                 &identity,
+                ToolCommand::Write,
+                &metrics,
                 &Err::<(), ToolError>(ToolError::new(ToolErrorCode::RuntimeFailed, "failed")),
                 std::time::Duration::from_millis(5),
             );

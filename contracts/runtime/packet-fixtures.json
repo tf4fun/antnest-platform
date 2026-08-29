@@ -1,11 +1,15 @@
 {
   "contract": "raw-ipv4-tcp-over-udp",
-  "inner_mtu": 1400,
   "fixtures": [
     {
       "name": "minimal_tcp_syn",
       "accepted": true,
       "hex": "4500002800004000400600006460000a5db8d8229c4001bb00000029000000005002000000000000"
+    },
+    {
+      "name": "tcp_syn_with_ipv4_options",
+      "accepted": true,
+      "hex": "4600002c00004000400600006460000a5db8d822010100009c4001bb00000029000000005002000000000000"
     },
     {
       "name": "udp_is_not_forwardable",

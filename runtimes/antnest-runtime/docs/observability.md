@@ -35,17 +35,19 @@ standard resource attributes for local operations.
 | Span | Meaning |
 | --- | --- |
 | `runtime.process` | One Runtime process lifetime, from telemetry initialization through service shutdown |
-| `runtime.network` | One restricted or UDP-tunnel network session from start through shutdown or fatal error |
+| `runtime.network` | One UDP-tunnel network session from start through shutdown or fatal error |
 | `runtime.http` | One `/status` or `/mcp` HTTP request |
 | `runtime.mcp.tool` | One `bash`, `read`, `write`, or `edit` call |
 | `runtime.executor` | One non-privileged tool subprocess from spawn through complete reaping |
 
 HTTP path labels are normalized to `/status`, `/mcp`, or `unmatched`; arbitrary
-request paths are never exported. A tool span begins only after the official SDK
-has decoded valid parameters. HTTP-visible protocol rejection is recorded on
-the enclosing `runtime.http` span. MCP/JSON-RPC errors encoded in a successful
-HTTP response remain SDK-level events and are not misreported as tool
-executions.
+request paths are never exported. HTTP spans describe transport completion only.
+Official SDK handler hooks emit a separate normalized `runtime.mcp.operation`
+span for initialize, discovery, tool listing, and tool dispatch, including MCP
+outcome and stable JSON-RPC error code. A tool execution span begins only after
+the SDK has decoded its typed parameters. MCP/JSON-RPC errors encoded in a
+successful HTTP response therefore remain errors at the MCP layer without being
+misreported as HTTP failures or tool executions.
 
 Every HTTP request also emits one structured completion event after its body
 reaches end-of-stream, fails, or is dropped by a disconnected client. The event
@@ -59,10 +61,16 @@ filesystem paths may appear in error logs, but
 spans and logs must not record command text, environment values, file contents,
 stdout/stderr, raw packets, DNS questions, prompts, or model messages.
 
-Runtime Egress is an IP packet data plane and does not participate in distributed
-tracing. Runtime records one bounded network-session span and start/completion
-events, including mode, transport, duration, outcome, and stable fatal error
-code. It does not create packet or Egress spans and never records packet data.
+The Runtime-to-Egress packet path does not participate in distributed tracing.
+Runtime records one bounded network-session span and start/completion events,
+including transport, duration, outcome, and stable fatal error code. It does not
+create packet spans and never records packet data. Egress control RPCs have their
+own request spans; those spans never follow packet traffic.
+Runtime exports OTLP metrics for normalized HTTP routes, MCP operations, tool
+calls, Executor calls, and aggregate network counters. Every 30 seconds it also
+emits the network aggregate as one local structured log. Metrics use bounded
+operation, outcome, and stable error-code labels; Agent IDs, generations,
+paths, packet addresses, flow keys, and Agent-selected content are excluded.
 
 Runtime emits no reverse-session, heartbeat, or queue spans. Single-flight is a
 local invariant: a rejected concurrent call is recorded as `runtime_busy`, not
@@ -85,14 +93,18 @@ Collector reachable through the platform main routing table:
 
 ```dotenv
 OTEL_TRACES_EXPORTER=otlp
+OTEL_METRICS_EXPORTER=otlp
 OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
 OTEL_EXPORTER_OTLP_ENDPOINT=http://192.0.2.10:4318
 OTEL_RESOURCE_ATTRIBUTES=deployment.environment.name=development
-RUST_LOG=info,hyper=warn,reqwest=warn
+RUST_LOG=info
 ```
 
 `OTEL_SDK_DISABLED=true` or `OTEL_TRACES_EXPORTER=none` disables export while
 retaining local trace IDs for structured-log correlation.
+`OTEL_METRICS_EXPORTER=none` disables only metric export. Metrics-specific
+endpoint and protocol variables take precedence over the common OTLP values in
+the same way as their trace equivalents.
 The Collector endpoint must use a literal private IPv4 address. Runtime rejects
 hostnames, IPv6, and public destinations, then configures the exporter with that
 exact validated endpoint. This removes DNS time-of-check/time-of-use ambiguity.
@@ -106,6 +118,9 @@ precedence over `OTEL_EXPORTER_OTLP_PROTOCOL`. The only supported protocol is
 `http://127.0.0.1:4318`. `RUST_LOG` controls stderr log filtering only. Runtime's
 bounded `runtime.*` spans remain enabled for local trace-context generation and
 optional OTLP export; deployment-level trace sampling belongs to the Collector.
+The stderr layer accepts records only from the `antnest_runtime` crate target;
+`RUST_LOG` cannot enable dependency logs that may contain unbounded transport
+details.
 
 Loopback and same-platform collectors are valid. Public collectors must be
 reached through a platform-local Collector rather than directly from Runtime.
@@ -141,6 +156,12 @@ been parsed they also carry Agent ID and generation. Runtime service failures
 preserve the primary component error even if another component subsequently
 fails or times out while stopping.
 
+Before the tracing subscriber exists, each successful bootstrap boundary emits
+one JSON stderr event named `bootstrap_stage_completed`. These events contain
+only the stable stage and, after RuntimeSpec parsing, Agent ID and generation;
+the spec document, filesystem paths, addresses, and environment values are not
+logged.
+
 ### Process lifecycle error catalogue
 
 These are the exhaustive stable `error.type` values that may terminate the
@@ -150,7 +171,7 @@ flush diagnostics are separate contracts and are not part of this catalogue.
 | Phase | Stable error types |
 | --- | --- |
 | Bootstrap | `bootstrap_evidence_failed`, `entry_failed`, `environment_verification_failed`, `executor_initialization_failed`, `invalid_config`, `named_roots_failed`, `network_bootstrap_failed`, `network_verification_failed`, `pre_executor_verification_failed`, `root_verification_failed`, `unsupported_platform`, `workspace_initialization_failed`, `workspace_ownership_failed` |
-| Runtime | `child_process_containment_unproven`, `executor_probe_failed`, `http_bind_failed`, `http_service_failed`, `local_network_failed`, `network_protocol_failed`, `network_transport_failed`, `shutdown_timeout`, `signal_listener_failed`, `telemetry_initialization_failed`, `unexpected_exit` |
+| Runtime | `child_process_containment_unproven`, `executor_probe_failed`, `http_bind_failed`, `http_service_failed`, `local_network_failed`, `network_transport_failed`, `shutdown_timeout`, `signal_listener_failed`, `telemetry_initialization_failed`, `unexpected_exit` |
 
 The same lists are machine-readable in
 `contracts/runtime/contract.json`; contract tests reject drift.

@@ -10,8 +10,7 @@
   "status": {
     "agent_id": "agent-1",
     "generation": 2,
-    "status": "ready",
-    "network_mode": "restricted"
+    "status": "ready"
   },
   "readiness": {
     "scope": "runtime-local",
@@ -48,7 +47,6 @@
       "http_bind_failed",
       "http_service_failed",
       "local_network_failed",
-      "network_protocol_failed",
       "network_transport_failed",
       "shutdown_timeout",
       "signal_listener_failed",
@@ -100,8 +98,9 @@
   "egress_tunnel": {
     "kind": "udp",
     "payload": "one-complete-ipv4-packet",
-    "inner_mtu": 1400,
-    "traced": false
+    "packet_contract": "packet-contract.json",
+    "traced": false,
+    "policy_owner": "runtime-egress"
   },
   "packet_format": "packet-format.md",
   "packet_fixtures": "packet-fixtures.json"

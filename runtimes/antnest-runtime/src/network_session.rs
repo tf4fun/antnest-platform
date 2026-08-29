@@ -11,8 +11,9 @@ use tokio_util::sync::CancellationToken;
 use tracing::Instrument as _;
 
 use crate::network::RuntimeNetwork;
-use crate::packet::{is_forwardable_ipv4_tcp, tunnel_datagram};
+use crate::packet::{is_forwardable_ipv4_tcp, tunnel_datagram, unsupported_ipv4_rejection};
 use crate::spec::RuntimeIdentity;
+use crate::telemetry::RuntimeMetrics;
 
 const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -20,8 +21,6 @@ const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 pub(crate) enum NetworkSessionError {
     #[error("Runtime network transport: {0}")]
     Transport(String),
-    #[error("Runtime network protocol: {0}")]
-    Protocol(String),
     #[error("Runtime local network boundary: {0}")]
     Local(String),
 }
@@ -30,52 +29,35 @@ impl NetworkSessionError {
     pub(crate) fn code(&self) -> crate::lifecycle_error::RuntimeErrorCode {
         match self {
             Self::Transport(_) => crate::lifecycle_error::RuntimeErrorCode::NetworkTransportFailed,
-            Self::Protocol(_) => crate::lifecycle_error::RuntimeErrorCode::NetworkProtocolFailed,
             Self::Local(_) => crate::lifecycle_error::RuntimeErrorCode::LocalNetworkFailed,
         }
     }
 }
 
-pub(crate) enum NetworkSession {
-    Restricted(RestrictedNetwork),
-    Udp(UdpNetwork),
-}
+pub(crate) struct NetworkSession(UdpNetwork);
 
 impl NetworkSession {
     pub(crate) async fn prepare(network: RuntimeNetwork) -> Result<Self, NetworkSessionError> {
-        match network {
-            RuntimeNetwork::Restricted { tun, mtu, .. } => Ok(Self::Restricted(
-                RestrictedNetwork::new(usize::from(mtu), tun)?,
-            )),
-            RuntimeNetwork::Unrestricted {
-                tun,
-                mtu,
-                egress_endpoint,
-                ..
-            } => Ok(Self::Udp(UdpNetwork::connect(
-                SocketAddr::V4(egress_endpoint.address()),
-                usize::from(mtu),
-                tun,
-            )?)),
-        }
+        let (tun, mtu, egress_endpoint) = network.into_transport();
+        Ok(Self(UdpNetwork::connect(
+            SocketAddr::V4(egress_endpoint.address()),
+            usize::from(mtu),
+            tun,
+        )?))
     }
 
     pub(crate) async fn run(
         self,
         shutdown: CancellationToken,
         identity: RuntimeIdentity,
+        metrics: RuntimeMetrics,
     ) -> Result<(), NetworkSessionError> {
-        let (mode, transport) = match &self {
-            Self::Restricted(_) => ("restricted", "local_reject"),
-            Self::Udp(_) => ("unrestricted", "udp_tunnel"),
-        };
         let span = tracing::info_span!(
             "runtime.network",
             "service.name" = crate::telemetry::SERVICE_NAME,
             "antnest.agent.id" = identity.agent_id(),
             "antnest.runtime.generation" = %identity.generation(),
-            "antnest.runtime.network_mode" = mode,
-            "network.transport" = transport,
+            "network.transport" = "udp_tunnel",
             "network.session.outcome" = tracing::field::Empty,
             "network.session.duration_ms" = tracing::field::Empty,
             otel.status_code = tracing::field::Empty,
@@ -91,14 +73,7 @@ impl NetworkSession {
             );
         });
         let started = tokio::time::Instant::now();
-        let result = async move {
-            match self {
-                Self::Restricted(network) => network.run(shutdown).await,
-                Self::Udp(network) => network.run(shutdown).await,
-            }
-        }
-        .instrument(span.clone())
-        .await;
+        let result = self.0.run(shutdown, metrics).instrument(span.clone()).await;
         record_network_result(&span, &result, started.elapsed());
         result
     }
@@ -133,38 +108,77 @@ fn record_network_result(
     });
 }
 
-pub(crate) struct RestrictedNetwork {
-    tun: Arc<AsyncFd<File>>,
-    packet: Vec<u8>,
-}
-
-impl RestrictedNetwork {
-    fn new(mtu: usize, tun: File) -> Result<Self, NetworkSessionError> {
-        Ok(Self {
-            tun: Arc::new(AsyncFd::new(tun).map_err(local_error)?),
-            packet: vec![0_u8; mtu],
-        })
-    }
-
-    async fn run(mut self, shutdown: CancellationToken) -> Result<(), NetworkSessionError> {
-        loop {
-            tokio::select! {
-                _ = shutdown.cancelled() => return Ok(()),
-                read = read_tun(&self.tun, &mut self.packet) => {
-                    let size = read?;
-                    if let Some(rejection) = crate::packet::restricted_ipv4_rejection(&self.packet[..size]) {
-                        write_tun_bounded(&self.tun, &rejection).await?;
-                    }
-                }
-            }
-        }
-    }
-}
-
 pub(crate) struct UdpNetwork {
     socket: tokio::net::UdpSocket,
     mtu: usize,
     tun: File,
+}
+
+struct NetworkMetrics {
+    exporter: RuntimeMetrics,
+    outbound_packets: u64,
+    outbound_bytes: u64,
+    inbound_packets: u64,
+    inbound_bytes: u64,
+    unsupported_outbound_packets: u64,
+    local_rejections: u64,
+    malformed_inbound_packets: u64,
+}
+
+impl NetworkMetrics {
+    fn new(exporter: RuntimeMetrics) -> Self {
+        Self {
+            exporter,
+            outbound_packets: 0,
+            outbound_bytes: 0,
+            inbound_packets: 0,
+            inbound_bytes: 0,
+            unsupported_outbound_packets: 0,
+            local_rejections: 0,
+            malformed_inbound_packets: 0,
+        }
+    }
+
+    fn outbound(&mut self, bytes: usize) {
+        self.exporter.network_outbound(bytes);
+        self.outbound_packets = self.outbound_packets.saturating_add(1);
+        self.outbound_bytes = self
+            .outbound_bytes
+            .saturating_add(u64::try_from(bytes).unwrap_or(u64::MAX));
+    }
+
+    fn inbound(&mut self, bytes: usize) {
+        self.exporter.network_inbound(bytes);
+        self.inbound_packets = self.inbound_packets.saturating_add(1);
+        self.inbound_bytes = self
+            .inbound_bytes
+            .saturating_add(u64::try_from(bytes).unwrap_or(u64::MAX));
+    }
+
+    fn unsupported_outbound(&mut self, rejected: bool) {
+        self.exporter.network_unsupported(rejected);
+        self.unsupported_outbound_packets = self.unsupported_outbound_packets.saturating_add(1);
+        self.local_rejections = self.local_rejections.saturating_add(u64::from(rejected));
+    }
+
+    fn malformed_inbound(&mut self) {
+        self.exporter.network_malformed();
+        self.malformed_inbound_packets = self.malformed_inbound_packets.saturating_add(1);
+    }
+
+    fn log(&self) {
+        tracing::info!(
+            metric.event = "runtime_network_snapshot",
+            outbound.packets = self.outbound_packets,
+            outbound.bytes = self.outbound_bytes,
+            inbound.packets = self.inbound_packets,
+            inbound.bytes = self.inbound_bytes,
+            outbound.unsupported = self.unsupported_outbound_packets,
+            outbound.local_rejections = self.local_rejections,
+            inbound.malformed = self.malformed_inbound_packets,
+            "Runtime network aggregate"
+        );
+    }
 }
 
 impl UdpNetwork {
@@ -173,33 +187,53 @@ impl UdpNetwork {
         Ok(Self { socket, mtu, tun })
     }
 
-    async fn run(self, shutdown: CancellationToken) -> Result<(), NetworkSessionError> {
+    async fn run(
+        self,
+        shutdown: CancellationToken,
+        exporter: RuntimeMetrics,
+    ) -> Result<(), NetworkSessionError> {
         let tun = Arc::new(AsyncFd::new(self.tun).map_err(local_error)?);
         let mut outbound = vec![0_u8; self.mtu];
         let mut inbound = vec![0_u8; self.mtu];
+        let mut metrics = NetworkMetrics::new(exporter);
+        let mut report = tokio::time::interval_at(
+            tokio::time::Instant::now() + Duration::from_secs(30),
+            Duration::from_secs(30),
+        );
         loop {
             tokio::select! {
                 _ = shutdown.cancelled() => return Ok(()),
+                _ = report.tick() => metrics.log(),
                 read = read_tun(&tun, &mut outbound) => {
                     let size = read?;
                     let packet = &outbound[..size];
                     if !is_forwardable_ipv4_tcp(packet, self.mtu) {
-                        if let Some(rejection) = crate::packet::restricted_ipv4_rejection(packet) {
+                        let rejection = unsupported_ipv4_rejection(packet);
+                        metrics.unsupported_outbound(rejection.is_some());
+                        if let Some(rejection) = rejection {
                             write_tun_bounded(&tun, &rejection).await?;
                         }
                         continue;
                     }
-                    let datagram = tunnel_datagram(packet, self.mtu).map_err(protocol_error)?;
-                    send_udp_bounded(&self.socket, datagram).await?;
+                    send_udp_bounded(&self.socket, packet).await?;
+                    metrics.outbound(size);
                 }
                 received = self.socket.recv(&mut inbound) => {
                     let size = received.map_err(transport_error)?;
-                    let packet = tunnel_datagram(&inbound[..size], self.mtu).map_err(protocol_error)?;
+                    let Some(packet) = validated_inbound_datagram(&inbound[..size], self.mtu) else {
+                        metrics.malformed_inbound();
+                        continue;
+                    };
                     write_tun_bounded(&tun, packet).await?;
+                    metrics.inbound(size);
                 }
             }
         }
     }
+}
+
+fn validated_inbound_datagram(packet: &[u8], mtu: usize) -> Option<&[u8]> {
+    tunnel_datagram(packet, mtu).ok()
 }
 
 fn connect_management_udp(
@@ -279,27 +313,22 @@ fn transport_error(error: impl std::fmt::Display) -> NetworkSessionError {
     NetworkSessionError::Transport(error.to_string())
 }
 
-fn protocol_error(error: impl std::fmt::Display) -> NetworkSessionError {
-    NetworkSessionError::Protocol(error.to_string())
-}
-
 fn local_error(error: impl std::fmt::Display) -> NetworkSessionError {
     NetworkSessionError::Local(error.to_string())
 }
 
 #[cfg(test)]
 mod tests {
-    use std::fs::File;
+    use std::net::{Ipv4Addr, SocketAddrV4};
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use nix::unistd::pipe;
-    use tokio::io::unix::AsyncFd;
     use tokio_util::sync::CancellationToken;
     use tracing_subscriber::layer::{Context, Layer, SubscriberExt as _};
 
-    use super::{NetworkSession, RestrictedNetwork};
+    use super::{NetworkMetrics, NetworkSession, UdpNetwork, validated_inbound_datagram};
     use crate::spec::RuntimeIdentity;
+    use crate::telemetry::RuntimeMetrics;
 
     #[derive(Clone)]
     struct EventCounter(Arc<AtomicUsize>);
@@ -317,20 +346,51 @@ mod tests {
     async fn network_session_emits_start_and_completion_events() {
         let events = Arc::new(AtomicUsize::new(0));
         let subscriber = tracing_subscriber::Registry::default().with(EventCounter(events.clone()));
+        let metrics = RuntimeMetrics::default();
         let _guard = tracing::subscriber::set_default(subscriber);
-        let (reader, _writer) = pipe().expect("test pipe");
-        let network = NetworkSession::Restricted(RestrictedNetwork {
-            tun: Arc::new(AsyncFd::new(File::from(reader)).expect("async test pipe")),
-            packet: vec![0_u8; 64],
+        let socket = std::net::UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0))
+            .expect("test UDP socket");
+        socket.set_nonblocking(true).expect("nonblocking UDP");
+        let (reader, _writer) = nix::unistd::pipe().expect("test pipe");
+        let network = NetworkSession(UdpNetwork {
+            socket: tokio::net::UdpSocket::from_std(socket).expect("async UDP socket"),
+            mtu: 64,
+            tun: std::fs::File::from(reader),
         });
         let shutdown = CancellationToken::new();
         shutdown.cancel();
 
         network
-            .run(shutdown, RuntimeIdentity::new("agent-observed", 1).unwrap())
+            .run(
+                shutdown,
+                RuntimeIdentity::new("agent-observed", 1).unwrap(),
+                metrics,
+            )
             .await
             .expect("canceled network session stops cleanly");
 
         assert_eq!(events.load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn malformed_egress_datagrams_are_local_packet_loss_not_session_failure() {
+        assert!(validated_inbound_datagram(&[0_u8; 7], 1400).is_none());
+    }
+
+    #[test]
+    fn network_metrics_are_bounded_process_local_aggregates() {
+        let mut metrics = NetworkMetrics::new(RuntimeMetrics::default());
+        metrics.outbound(40);
+        metrics.inbound(60);
+        metrics.unsupported_outbound(true);
+        metrics.malformed_inbound();
+
+        assert_eq!(metrics.outbound_packets, 1);
+        assert_eq!(metrics.outbound_bytes, 40);
+        assert_eq!(metrics.inbound_packets, 1);
+        assert_eq!(metrics.inbound_bytes, 60);
+        assert_eq!(metrics.unsupported_outbound_packets, 1);
+        assert_eq!(metrics.local_rejections, 1);
+        assert_eq!(metrics.malformed_inbound_packets, 1);
     }
 }

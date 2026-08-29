@@ -27,8 +27,7 @@ MCP specification into a local schema.
 {
   "agent_id": "agent-123",
   "generation": 8,
-  "status": "ready",
-  "network_mode": "restricted"
+  "status": "ready"
 }
 ```
 

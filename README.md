@@ -6,26 +6,27 @@ than around one shared application package.
 
 ## Service Map
 
-| Component | Role | Maintainer entry point |
+| Component | Target role | Status |
 | --- | --- | --- |
-| Runtime Controller | Owns Runtime desired state, admission, reconciliation, and Work dispatch | [`services/runtime-controller/README.md`](services/runtime-controller/README.md) |
-| Runtime Egress | Owns privileged TUN, DNS, packet forwarding, and network reservations | [`services/runtime-egress/README.md`](services/runtime-egress/README.md) |
-| Docker Runtime Provider | Applies stateless container and volume effects through Docker Engine | [`services/runtime-provider-docker/README.md`](services/runtime-provider-docker/README.md) |
-| Antnest Runtime | Executes one Agent's process and file operations inside an isolated container | [`runtimes/antnest-runtime/README.md`](runtimes/antnest-runtime/README.md) |
-| Contracts | Defines the HTTP and Controller-to-Runtime protocol boundary | [`contracts/README.md`](contracts/README.md) |
+| Antnest Runtime | Executes one Agent's process and filesystem operations and transports Agent packets | Implemented and aligned with Egress |
+| Runtime Egress | Rust service owning Agent addresses, network policy, UDP/TUN forwarding, rejection, and address reuse | Implemented and accepted with Runtime |
+| Runtime Controller | Thin Docker/Kubernetes execution and resource-association adapter | Future rewrite |
+| Agent Controller | Owns Agent lifecycle, Runtime generations, rollout, deletion, and execution admission | Future service |
+| ACP Service | Owns Runs, sessions, Agent loop, and MCP calls under an execution grant | Future service |
+| Contracts | Language-neutral Runtime, Egress, and internal RPC contracts | Evolving with each rewritten component |
 
-The repository layout and documentation rules for current and future services
-are defined in [`docs/service-layout.md`](docs/service-layout.md). The earlier
-Stage 1 cross-service behavior is retained only as a historical architecture
-snapshot in [`docs/stage-1-runtime.md`](docs/stage-1-runtime.md).
+The repository layout and ownership rules are defined in
+[`docs/service-layout.md`](docs/service-layout.md). The corrected greenfield
+Stage 1 design is canonical in
+[`docs/stage-1-runtime.md`](docs/stage-1-runtime.md).
 
 ## Current Integration Status
 
-The Rust Runtime now implements the repository's sole Runtime contract. The Go
-Controller and Egress prototypes have not yet been rebuilt around that contract,
-so the repository intentionally has no current end-to-end quick start. Validate
-each rewritten component through its local README until cross-service acceptance
-is restored.
+The Rust Runtime and Runtime Egress are implemented and accepted together.
+Existing Go service code is a non-authoritative prototype and creates no
+compatibility obligation. The thin Runtime Controller and Agent Controller are
+the next delivery targets. Stage 1 has an isolated end-to-end acceptance path;
+it is not yet an end-user quick start.
 
 ## Repository Commands
 
@@ -35,7 +36,7 @@ make lint        # Go vet and Rust clippy
 make test        # Unit and integration tests that need no running Compose stack
 make docker-build
 make compose-up
-make e2e-stage1  # Destructive Stage 1 acceptance against the local stack
+make e2e-stage1  # Isolated disposable Stage 1 Runtime/Egress acceptance
 ```
 
 Use the service-local README before changing a component. It states what that

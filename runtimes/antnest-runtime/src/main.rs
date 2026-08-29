@@ -193,6 +193,7 @@ fn bootstrap() -> Result<PreparedRuntime, BootstrapFailure> {
             )
         })?,
     );
+    report_bootstrap_stage(BootstrapStage::Entry, None);
 
     let spec = config::load().map_err(|error| {
         bootstrap_failure(
@@ -203,6 +204,7 @@ fn bootstrap() -> Result<PreparedRuntime, BootstrapFailure> {
         )
     })?;
     let identity = spec.identity().clone();
+    report_bootstrap_stage(BootstrapStage::RuntimeSpec, Some(&identity));
     let telemetry = config::load_telemetry();
     unsafe {
         env::set_var("HOME", spec.filesystem().workspace());
@@ -231,6 +233,7 @@ fn bootstrap() -> Result<PreparedRuntime, BootstrapFailure> {
             )
         })?,
     );
+    report_bootstrap_stage(BootstrapStage::EnvironmentSanitized, Some(&identity));
 
     let network = network::RuntimeNetwork::bootstrap(spec.network(), spec.listen().port())
         .map_err(|error| {
@@ -252,6 +255,7 @@ fn bootstrap() -> Result<PreparedRuntime, BootstrapFailure> {
             )
         })?,
     );
+    report_bootstrap_stage(BootstrapStage::NetworkReady, Some(&identity));
     for path in [
         spec.filesystem().workspace().join(".antnest"),
         spec.filesystem().workspace().join(".antnest/skills"),
@@ -277,6 +281,7 @@ fn bootstrap() -> Result<PreparedRuntime, BootstrapFailure> {
             )
         })?;
     }
+    report_bootstrap_stage(BootstrapStage::Filesystem, Some(&identity));
     roots::NamedRoots::open(
         spec.filesystem().workspace(),
         spec.filesystem().system_skills(),
@@ -300,6 +305,7 @@ fn bootstrap() -> Result<PreparedRuntime, BootstrapFailure> {
             )
         })?,
     );
+    report_bootstrap_stage(BootstrapStage::RootsReady, Some(&identity));
     evidence.push(
         BootstrapStage::PreTokio,
         privilege::snapshot().map_err(|error| {
@@ -319,6 +325,7 @@ fn bootstrap() -> Result<PreparedRuntime, BootstrapFailure> {
             std::io::Error::other(error),
         )
     })?;
+    report_bootstrap_stage(BootstrapStage::PreTokio, Some(&identity));
 
     let executor = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -328,15 +335,36 @@ fn bootstrap() -> Result<PreparedRuntime, BootstrapFailure> {
             bootstrap_failure(
                 BootstrapStage::Executor,
                 BootstrapErrorCode::ExecutorInitializationFailed,
-                Some(identity),
+                Some(identity.clone()),
                 error,
             )
         })?;
+    report_bootstrap_stage(BootstrapStage::Executor, Some(&identity));
     Ok(PreparedRuntime {
         spec,
         network,
         telemetry,
         executor,
+    })
+}
+
+fn report_bootstrap_stage(stage: BootstrapStage, identity: Option<&spec::RuntimeIdentity>) {
+    eprintln!("{}", bootstrap_stage_event(stage, identity));
+}
+
+fn bootstrap_stage_event(
+    stage: BootstrapStage,
+    identity: Option<&spec::RuntimeIdentity>,
+) -> serde_json::Value {
+    serde_json::json!({
+        "level": "INFO",
+        "service.name": telemetry::SERVICE_NAME,
+        "lifecycle.event": "bootstrap_stage_completed",
+        "bootstrap.stage": stage.as_str(),
+        "antnest.agent.id": identity.map(spec::RuntimeIdentity::agent_id),
+        "antnest.runtime.generation": identity.map(|value| value.generation().to_string()),
+        "trace_id": "",
+        "span_id": "",
     })
 }
 
@@ -380,7 +408,6 @@ async fn run_runtime(
         "service.name" = telemetry::SERVICE_NAME,
         "antnest.agent.id" = spec.identity().agent_id(),
         "antnest.runtime.generation" = %spec.identity().generation(),
-        "antnest.runtime.network_mode" = spec.network().mode().as_str(),
         otel.status_code = tracing::field::Empty,
         error.type = tracing::field::Empty,
         trace_id = tracing::field::Empty,
@@ -388,7 +415,7 @@ async fn run_runtime(
     );
     telemetry::record_span_identity(&process_span);
     let identity = spec.identity().clone();
-    let result = supervise_runtime(spec, network)
+    let result = supervise_runtime(spec, network, telemetry.metrics())
         .instrument(process_span.clone())
         .await;
     if let Err(error) = &result {
@@ -413,6 +440,7 @@ async fn run_runtime(
 async fn supervise_runtime(
     spec: spec::RuntimeSpec,
     network: network::RuntimeNetwork,
+    metrics: telemetry::RuntimeMetrics,
 ) -> Result<(), RuntimeFailure> {
     use tokio::signal::unix::{SignalKind, signal};
     use tokio_util::sync::CancellationToken;
@@ -437,7 +465,7 @@ async fn supervise_runtime(
             error,
         )
     })?;
-    let mut running = Box::pin(serve_runtime(spec, network, shutdown.clone()));
+    let mut running = Box::pin(serve_runtime(spec, network, metrics, shutdown.clone()));
     let result = tokio::select! {
         result = &mut running => result,
         _ = terminate.recv() => {
@@ -468,12 +496,12 @@ async fn supervise_runtime(
 async fn serve_runtime(
     spec: spec::RuntimeSpec,
     network: network::RuntimeNetwork,
+    metrics: telemetry::RuntimeMetrics,
     shutdown: tokio_util::sync::CancellationToken,
 ) -> Result<(), RuntimeFailure> {
     use std::time::Duration;
 
     let identity = spec.identity().clone();
-    let network_mode = spec.network().mode();
     let network_session = network_session::NetworkSession::prepare(network)
         .await
         .map_err(|error| runtime_failure(identity.clone(), "network", error.code(), error))?;
@@ -482,6 +510,7 @@ async fn serve_runtime(
         identity.clone(),
         spec.filesystem().workspace().to_owned(),
         spec.filesystem().system_skills().to_owned(),
+        metrics.clone(),
         service_shutdown.clone(),
     );
     actor.probe().await.map_err(|error| {
@@ -502,8 +531,8 @@ async fn serve_runtime(
                 error,
             )
         })?;
-    let status = mcp::RuntimeStatus::new(spec.identity().clone(), network_mode);
-    let http = mcp::RuntimeHttp::new(status, actor.clone());
+    let status = mcp::RuntimeStatus::new(spec.identity().clone());
+    let http = mcp::RuntimeHttp::new(status, actor.clone(), metrics.clone());
     tracing::info!(
         listen = %spec.listen(),
         "antnest.agent.id" = spec.identity().agent_id(),
@@ -513,7 +542,7 @@ async fn serve_runtime(
 
     let mut http_task = Box::pin(http.serve(listener, service_shutdown.clone()));
     let mut network_task =
-        Box::pin(network_session.run(service_shutdown.clone(), identity.clone()));
+        Box::pin(network_session.run(service_shutdown.clone(), identity.clone(), metrics));
     let exit = tokio::select! {
         result = &mut http_task => RuntimeExit::Http(result),
         result = &mut network_task => RuntimeExit::Network(result),
@@ -751,6 +780,26 @@ fn log_secondary_failure(identity: &spec::RuntimeIdentity, failure: &ServiceFail
     );
 }
 
+#[cfg(target_os = "linux")]
+fn log_shutdown(signal: &'static str, agent_id: &str, generation: u64) {
+    tracing::info!(
+        signal,
+        "antnest.agent.id" = agent_id,
+        "antnest.runtime.generation" = %generation,
+        "Runtime shutdown requested"
+    );
+}
+
+#[cfg(not(target_os = "linux"))]
+fn run() -> Result<(), ExitError> {
+    Err(ExitError::Bootstrap(bootstrap_failure(
+        BootstrapStage::Platform,
+        BootstrapErrorCode::UnsupportedPlatform,
+        None,
+        std::io::Error::other("antnest-runtime requires Linux"),
+    )))
+}
+
 #[cfg(all(test, target_os = "linux"))]
 mod lifecycle_tests {
     use std::time::Duration;
@@ -772,9 +821,10 @@ mod lifecycle_tests {
         assert_eq!(http.component, "http");
         assert_eq!(http.error_type, RuntimeErrorCode::HttpServiceFailed);
 
-        let network = network_exit_failure(Err(NetworkSessionError::Protocol("bad packet".into())));
+        let network =
+            network_exit_failure(Err(NetworkSessionError::Transport("UDP failed".into())));
         assert_eq!(network.component, "network");
-        assert_eq!(network.error_type, RuntimeErrorCode::NetworkProtocolFailed);
+        assert_eq!(network.error_type, RuntimeErrorCode::NetworkTransportFailed);
     }
 
     #[test]
@@ -811,6 +861,7 @@ mod lifecycle_tests {
             RuntimeIdentity::new("agent-test", 1).unwrap(),
             "/workspace".into(),
             "/skills".into(),
+            crate::telemetry::RuntimeMetrics::default(),
             CancellationToken::new(),
         );
         let mut http = Box::pin(async { Err(std::io::Error::other("listener failed")) });
@@ -917,22 +968,22 @@ mod lifecycle_tests {
     }
 }
 
-#[cfg(target_os = "linux")]
-fn log_shutdown(signal: &'static str, agent_id: &str, generation: u64) {
-    tracing::info!(
-        signal,
-        "antnest.agent.id" = agent_id,
-        "antnest.runtime.generation" = %generation,
-        "Runtime shutdown requested"
-    );
-}
+#[cfg(test)]
+mod bootstrap_event_tests {
+    use super::bootstrap_stage_event;
+    use crate::lifecycle_error::BootstrapStage;
+    use crate::spec::RuntimeIdentity;
 
-#[cfg(not(target_os = "linux"))]
-fn run() -> Result<(), ExitError> {
-    Err(ExitError::Bootstrap(bootstrap_failure(
-        BootstrapStage::Platform,
-        BootstrapErrorCode::UnsupportedPlatform,
-        None,
-        std::io::Error::other("antnest-runtime requires Linux"),
-    )))
+    #[test]
+    fn bootstrap_event_is_structured_and_content_free() {
+        let identity = RuntimeIdentity::new("agent-observed", 7).unwrap();
+        let event = bootstrap_stage_event(BootstrapStage::NetworkReady, Some(&identity));
+
+        assert_eq!(event["lifecycle.event"], "bootstrap_stage_completed");
+        assert_eq!(event["bootstrap.stage"], "network_ready");
+        assert_eq!(event["antnest.agent.id"], "agent-observed");
+        assert_eq!(event["antnest.runtime.generation"], "7");
+        assert!(event.get("runtime_spec").is_none());
+        assert!(event.get("environment").is_none());
+    }
 }

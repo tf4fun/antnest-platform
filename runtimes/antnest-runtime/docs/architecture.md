@@ -15,29 +15,30 @@ Runtime is composed from a small domain model before any subsystem starts:
 
 - `RuntimeIdentity`: stable Agent ID plus immutable generation;
 - `RuntimeSpec`: identity, listen address, network spec, and filesystem spec;
-- `NetworkSpec`: a mode-specific restricted or unrestricted value. Only
-  unrestricted mode contains a required UDP Egress endpoint; both modes contain
-  the TUN and resolver addresses;
+- `NetworkSpec`: the required UDP Egress endpoint plus the TUN and resolver
+  addresses assigned to this Agent;
 - `FilesystemSpec`: workspace and system-Skill root locations. Runtime's
   `write` and `edit` tools target only the workspace; mount permissions belong
-  to Provider/container policy.
+  to Runtime Controller's platform adapter/container policy.
 
-Environment variables are one input adapter that constructs `RuntimeSpec`.
-MCP, tools, filesystem, network, and telemetry depend on the domain model and
-must not import environment parsing types.
+The `ANTNEST_RUNTIME_SPEC` environment value is the one deployment adapter that
+decodes the machine-readable RuntimeSpec contract. MCP, tools, filesystem,
+network, and telemetry depend on the domain model and must not import
+environment parsing types or reconstruct the spec from parallel fields.
 
 ## Runtime Identity
 
 Runtime identity is the pair `(agent_id, generation)`:
 
-- `agent_id` is stable for the Agent and its workspace;
+- `agent_id` is a stable 1-255 byte visible-ASCII identifier for the Agent and
+  its workspace;
 - `generation` is the immutable RuntimeSpec revision;
 - replacing a failed instance with the same RuntimeSpec keeps the same generation;
 - a configuration change creates a new generation.
 
 There is no Runtime instance ID, boot ID, connection epoch, admission token, or
 Egress token. Docker or Kubernetes and their internal network are trusted
-infrastructure. Platform resource IDs remain Provider implementation details.
+infrastructure. Platform resource IDs remain Runtime Controller adapter details.
 
 ## Bootstrap Sequence
 
@@ -61,8 +62,8 @@ boundary is ready:
 4. Validate that the workspace and system-Skill roots can be opened by
    UID/GID 1000.
 5. Initialize telemetry and the single-flight Execution Actor.
-6. Start restricted local rejection, or connect the unrestricted UDP Egress
-   socket selected by RuntimeSpec.
+6. Connect the UDP Egress socket selected by RuntimeSpec and start the TUN
+   packet loop.
 7. Bind the internal HTTP server and expose `/status` and `/mcp`.
 
 The PID 1 Supervisor remains root. It owns MCP, TUN, Egress, telemetry, signals,
@@ -72,7 +73,7 @@ operations in-process.
 Any failure before step 7 exits the process. Runtime-owned network artifacts use
 stable names and priorities and are reconciled on every start, so Docker or
 Kubernetes may restart the container in an existing network namespace. Failure
-to prove convergence is fatal. Provider may instead replace the complete
+to prove convergence is fatal. Runtime Controller may instead replace the complete
 container or Pod sandbox. Either recovery path reattaches the Agent workspace
 and keeps the generation only when RuntimeSpec is unchanged.
 
@@ -93,14 +94,13 @@ and does not prove public connectivity. Its body is:
 {
   "agent_id": "agent-123",
   "generation": 8,
-  "status": "ready",
-  "network_mode": "restricted"
+  "status": "ready"
 }
 ```
 
-Controller already receives the endpoint from Runtime Provider. It polls
+Agent Controller receives the endpoint from Runtime Controller. It polls
 `/status`, verifies `(agent_id, generation)`, calls MCP `tools/list` once,
-and combines those local signals with Provider/Egress deployment health before
+and combines those local signals with Runtime Controller/Egress deployment health before
 marking a candidate generation ready. Runtime performs no self-registration
 and maintains no reverse control connection.
 
@@ -181,6 +181,11 @@ environment, timeout, and size invariants. The Actor, private Executor codec,
 Executor entrypoint, and `tools` depend only on those execution types; neither
 the MCP wire adapter nor its generated schema defines the execution model.
 
+`contracts/runtime/runtime-spec.schema.json` is the language-neutral wire
+authority for RuntimeSpec input. Rust constructors are the semantic domain
+authority after decoding; neither the environment adapter nor a Rust-only DTO
+shape may redefine the cross-service contract.
+
 Structured tool errors are valid Executor responses and exit with status zero.
 A non-zero Executor exit means the internal exchange did not complete and its
 stdout is not authoritative. For `bash`, `write`, and `edit`, cancellation,
@@ -203,32 +208,34 @@ for its lease and descendant cleanup before the process flushes telemetry.
 Agent Controller owns `desired_generation`, `candidate_generation`, and
 `active_generation`:
 
-1. create a candidate generation through Runtime Provider;
+1. create a candidate generation through Runtime Controller;
 2. wait for `/status` and `tools/list` to succeed;
-3. wait for the old generation's current Agent operation to finish;
-4. atomically route future MCP calls to the candidate endpoint;
-5. remove the old container through Runtime Provider.
+3. close Agent operation admission and wait for the old generation's current
+   operation to finish;
+4. delete the old generation through Runtime Controller and require an
+   `Absent` observation;
+5. call Runtime Egress `ResetAgentFlows` and wait for acknowledgement;
+6. atomically activate the candidate endpoint and reopen admission.
 
 Runtime does not implement drain or shutdown RPCs. Stopping new calls at the
-caller removes the special case; Provider deletes the old container after its
-in-flight request count reaches zero.
+caller removes the special case. Runtime Controller only realizes and removes
+the selected platform generation. Candidate failure before admission closes
+leaves the old generation active; ambiguous deletion keeps admission closed.
 
 ## Network Boundary
-
-Network mode is immutable RuntimeSpec input rather than a value returned by a
-control session.
 
 - root Supervisor traffic uses the unchanged platform main routing table;
 - locally generated UID 1000 traffic is selected by an Agent policy route and
   sent to TUN instead of inheriting direct platform routes;
 - nftables rejects UID 1000 traffic that bypasses TUN, reaches Runtime's own
   MCP port, or uses unsupported IPv6;
-- `restricted` reads packets from TUN and produces local TCP/ICMP rejection;
-- `unrestricted` carries one validated raw IPv4 packet per UDP datagram to
-  Runtime Egress;
+- every structurally valid supported packet is carried to Runtime Egress, which
+  is the only network-policy authority;
+- malformed or unsupported local packets are rejected or dropped without
+  terminating Runtime;
 - the MCP listen port is reachable only on the internal platform network;
 - Agent-originated public traffic still enters TUN;
-- changing network mode creates a new generation.
+- changing an Agent policy does not create a new Runtime generation.
 
 The UDP tunnel has no custom framing, batching, identity, heartbeat, retry, or
 Trace envelope. Inner TCP owns retransmission and congestion control. MCP never
@@ -240,11 +247,11 @@ carries packet data and Runtime Egress never carries tool calls.
 | --- | --- |
 | `main` | Explicit subcommand dispatch plus ordered `serve` bootstrap, signal handling, and composition |
 | `spec` | Runtime identity and immutable domain specification |
-| `config` | Adapt environment variables into `RuntimeSpec` |
+| `config` | Strictly decode `ANTNEST_RUNTIME_SPEC` into the domain model |
 | `execution` | Transport-neutral tool requests, results, and invariants |
 | `privilege` / `evidence` | Root Supervisor and Executor privilege verification |
 | `network` / `packet` | TUN, routes, kill switch, packet validation, and local rejection |
-| `network_session` | Restricted TUN loop or raw-IP-over-UDP tunnel loop |
+| `network_session` | Single raw-IP-over-UDP TUN tunnel loop |
 | `protocol` | MCP input/output DTOs and generated JSON Schemas |
 | `roots` | Named-root reads and atomic workspace writes |
 | `executor` | Shared subcommand entry, privilege drop, and bounded JSON exchange |
@@ -256,8 +263,9 @@ carries packet data and Runtime Egress never carries tool calls.
 Runtime must not import Docker, Kubernetes, PostgreSQL, Agent scheduling,
 templates, Skills Registry, ACP, Channel, or end-user authentication logic.
 
-Runtime consumes the `/skills` mount Provider supplies. Provider and the
-container platform are solely responsible for mounting it read-only; Runtime
+Runtime consumes the `/skills` mount Runtime Controller supplies. Its platform
+adapter and the container platform are solely responsible for mounting it
+read-only; Runtime
 cannot enforce mount flags. Runtime's own MCP `write` and `edit` tools reject the
 `system_skills` root, but Bash receives ordinary kernel permissions. Preparing,
 updating, or versioning the mount is outside Runtime and does not add Skill

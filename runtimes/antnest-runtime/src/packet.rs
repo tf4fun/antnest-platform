@@ -11,6 +11,8 @@ const TCP_FLAG_FIN: u8 = 0x01;
 const TCP_FLAG_SYN: u8 = 0x02;
 const TCP_FLAG_RST: u8 = 0x04;
 const TCP_FLAG_ACK: u8 = 0x10;
+pub(crate) const INNER_MTU: u16 = 1400;
+pub(crate) const PACKET_CONTRACT_REVISION: u32 = 1;
 
 #[derive(Debug, Error)]
 pub(crate) enum PacketError {
@@ -29,10 +31,10 @@ struct Ipv4TcpPacket {
     payload_len: usize,
 }
 
-pub(crate) fn restricted_ipv4_rejection(packet: &[u8]) -> Option<Vec<u8>> {
+pub(crate) fn unsupported_ipv4_rejection(packet: &[u8]) -> Option<Vec<u8>> {
     let ipv4 = parse_ipv4(packet)?;
     if ipv4.protocol == IP_PROTOCOL_TCP {
-        return restricted_tcp_reset(packet);
+        return unsupported_tcp_reset(packet);
     }
     if ipv4.protocol == IP_PROTOCOL_ICMP
         && packet
@@ -60,7 +62,7 @@ pub(crate) fn is_forwardable_ipv4_tcp(packet: &[u8], mtu: usize) -> bool {
     tunnel_datagram(packet, mtu).is_ok()
 }
 
-fn restricted_tcp_reset(packet: &[u8]) -> Option<Vec<u8>> {
+fn unsupported_tcp_reset(packet: &[u8]) -> Option<Vec<u8>> {
     let incoming = parse_ipv4_tcp(packet)?;
     if incoming.flags & TCP_FLAG_RST != 0 {
         return None;
@@ -231,8 +233,19 @@ mod tests {
     #[derive(Deserialize)]
     struct PacketFixtures {
         contract: String,
-        inner_mtu: usize,
         fixtures: Vec<PacketFixture>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct PacketContract {
+        revision: u32,
+        transport: String,
+        inner_ip_version: u8,
+        inner_transport_protocol: String,
+        inner_mtu: usize,
+        fragmentation: bool,
+        one_packet_per_datagram: bool,
     }
 
     #[derive(Deserialize)]
@@ -250,11 +263,22 @@ mod tests {
         )))
         .expect("decode packet fixtures");
         assert_eq!(fixtures.contract, "raw-ipv4-tcp-over-udp");
-        assert_eq!(fixtures.inner_mtu, 1400);
+        let contract: PacketContract = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../contracts/runtime/packet-contract.json"
+        )))
+        .expect("decode packet contract");
+        assert_eq!(contract.revision, PACKET_CONTRACT_REVISION);
+        assert_eq!(contract.transport, "raw-ip-over-udp");
+        assert_eq!(contract.inner_ip_version, 4);
+        assert_eq!(contract.inner_transport_protocol, "tcp");
+        assert_eq!(contract.inner_mtu, usize::from(INNER_MTU));
+        assert!(!contract.fragmentation);
+        assert!(contract.one_packet_per_datagram);
         for fixture in fixtures.fixtures {
             let packet = decode_hex(&fixture.hex).expect("fixture hex");
             assert_eq!(
-                is_forwardable_ipv4_tcp(&packet, fixtures.inner_mtu),
+                is_forwardable_ipv4_tcp(&packet, contract.inner_mtu),
                 fixture.accepted,
                 "{}",
                 fixture.name
@@ -287,7 +311,7 @@ mod tests {
     #[test]
     fn resets_new_connection_with_acknowledgement() {
         let packet = tcp_packet(TCP_FLAG_SYN, 41, 0, &[]);
-        let reset = restricted_ipv4_rejection(&packet).expect("TCP SYN reset");
+        let reset = unsupported_ipv4_rejection(&packet).expect("TCP SYN reset");
 
         assert_eq!(reset.len(), IPV4_HEADER_LEN + TCP_HEADER_LEN);
         assert_eq!(&reset[12..16], &[93, 184, 216, 34]);
@@ -311,7 +335,7 @@ mod tests {
     #[test]
     fn resets_acknowledged_segment_with_incoming_ack_sequence() {
         let packet = tcp_packet(TCP_FLAG_ACK, 41, 900, b"request");
-        let reset = restricted_ipv4_rejection(&packet).expect("acknowledged TCP reset");
+        let reset = unsupported_ipv4_rejection(&packet).expect("acknowledged TCP reset");
 
         assert_eq!(u32::from_be_bytes(reset[24..28].try_into().unwrap()), 900);
         assert_eq!(u32::from_be_bytes(reset[28..32].try_into().unwrap()), 0);
@@ -321,7 +345,7 @@ mod tests {
     #[test]
     fn never_responds_to_reset_with_another_reset() {
         let packet = tcp_packet(TCP_FLAG_RST, 41, 0, &[]);
-        assert!(restricted_ipv4_rejection(&packet).is_none());
+        assert!(unsupported_ipv4_rejection(&packet).is_none());
     }
 
     #[test]
@@ -338,7 +362,7 @@ mod tests {
         packet[22..24].copy_from_slice(&53_u16.to_be_bytes());
         packet[24..26].copy_from_slice(&8_u16.to_be_bytes());
 
-        let rejection = restricted_ipv4_rejection(&packet).expect("UDP ICMP rejection");
+        let rejection = unsupported_ipv4_rejection(&packet).expect("UDP ICMP rejection");
         assert_eq!(rejection[9], IP_PROTOCOL_ICMP);
         assert_eq!(&rejection[12..16], &[1, 1, 1, 1]);
         assert_eq!(&rejection[16..20], &[100, 96, 0, 10]);
@@ -361,7 +385,7 @@ mod tests {
         packet[16..20].copy_from_slice(&[1, 1, 1, 1]);
         packet[20] = ICMP_DESTINATION_UNREACHABLE;
 
-        assert!(restricted_ipv4_rejection(&packet).is_none());
+        assert!(unsupported_ipv4_rejection(&packet).is_none());
     }
 
     fn tcp_packet(flags: u8, sequence: u32, acknowledgement: u32, payload: &[u8]) -> Vec<u8> {

@@ -1,0 +1,646 @@
+use std::{
+    collections::HashMap,
+    net::{Ipv4Addr, SocketAddrV4},
+    sync::{
+        Arc, Mutex, Weak,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    },
+    time::{Duration, SystemTime},
+};
+
+use async_trait::async_trait;
+use serde::Serialize;
+use thiserror::Error;
+use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
+
+use crate::{
+    dataplane::{AgentRoute, DataPlaneEngine, NetworkSnapshot},
+    domain::{AgentId, AgentNetwork, NetworkState, PolicyAssignment, PolicyId, PolicyRevision},
+    policy::PolicySpec,
+    repository::{BUILTIN_DENY_ALL, BUILTIN_REVISION, Repository, RepositoryError},
+};
+
+#[derive(Clone, Debug)]
+pub struct ControlConfig {
+    pub advertised_udp_endpoint: SocketAddrV4,
+    pub resolver_ipv4: Ipv4Addr,
+    pub max_flows: usize,
+    pub max_agent_flows: usize,
+    pub flow_idle: Duration,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RuntimeNetworkAttachment {
+    pub agent_id: AgentId,
+    pub tunnel_ipv4: Ipv4Addr,
+    pub resolver_ipv4: Ipv4Addr,
+    pub egress_endpoint: SocketAddrV4,
+    pub state: NetworkState,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ServiceStatus {
+    pub status: &'static str,
+    pub data_plane_ready: bool,
+    pub control_plane_ready: bool,
+    pub snapshot_revision: u64,
+}
+
+#[derive(Default)]
+struct ServiceHealth {
+    data_plane_ready: AtomicBool,
+    repository_ready: AtomicBool,
+    operations_ready: AtomicBool,
+    snapshot_revision: AtomicU64,
+}
+
+impl ServiceHealth {
+    fn snapshot(&self) -> ServiceStatus {
+        let data_plane_ready = self.data_plane_ready.load(Ordering::Acquire);
+        let control_plane_ready = self.repository_ready.load(Ordering::Acquire)
+            && self.operations_ready.load(Ordering::Acquire);
+        ServiceStatus {
+            status: if data_plane_ready && control_plane_ready {
+                "ready"
+            } else {
+                "degraded"
+            },
+            data_plane_ready,
+            control_plane_ready,
+            snapshot_revision: self.snapshot_revision.load(Ordering::Acquire),
+        }
+    }
+
+    fn recovered(&self) {
+        self.snapshot_revision.fetch_add(1, Ordering::AcqRel);
+        self.repository_ready.store(true, Ordering::Release);
+        self.operations_ready.store(true, Ordering::Release);
+        self.data_plane_ready.store(true, Ordering::Release);
+    }
+
+    fn snapshot_published(&self) {
+        self.snapshot_revision.fetch_add(1, Ordering::AcqRel);
+    }
+
+    fn control_available(&self, available: bool) {
+        self.operations_ready.store(available, Ordering::Release);
+    }
+
+    fn repository_available(&self, available: bool) {
+        self.repository_ready.store(available, Ordering::Release);
+    }
+}
+
+#[derive(Clone, Debug, Error, Eq, PartialEq)]
+pub enum ControlError {
+    #[error("Agent network was not found")]
+    AgentNetworkNotFound,
+    #[error("Agent network is unavailable")]
+    AgentNetworkUnavailable,
+    #[error("address pool is exhausted")]
+    AddressPoolExhausted,
+    #[error("policy revision was not found")]
+    PolicyRevisionNotFound,
+    #[error("policy revision key has different content")]
+    PolicyRevisionConflict,
+    #[error("policy assignment resource version changed")]
+    ResourceVersionConflict,
+    #[error("data-plane cleanup failed")]
+    CleanupFailed(FailureContext),
+    #[error("control plane is unavailable")]
+    ControlPlaneUnavailable(FailureContext),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FailureContext {
+    pub stage: &'static str,
+    pub cause: &'static str,
+}
+
+impl FailureContext {
+    pub const fn new(stage: &'static str, cause: &'static str) -> Self {
+        Self { stage, cause }
+    }
+}
+
+impl ControlError {
+    pub fn diagnostic(&self) -> Option<FailureContext> {
+        match self {
+            Self::CleanupFailed(context) | Self::ControlPlaneUnavailable(context) => Some(*context),
+            _ => None,
+        }
+    }
+
+    fn repository(stage: &'static str, error: RepositoryError) -> Self {
+        match error {
+            RepositoryError::AddressPoolExhausted => Self::AddressPoolExhausted,
+            RepositoryError::AgentNetworkNotFound => Self::AgentNetworkNotFound,
+            RepositoryError::AgentNetworkUnavailable => Self::AgentNetworkUnavailable,
+            RepositoryError::PolicyRevisionNotFound => Self::PolicyRevisionNotFound,
+            RepositoryError::PolicyRevisionConflict => Self::PolicyRevisionConflict,
+            RepositoryError::ResourceVersionConflict => Self::ResourceVersionConflict,
+            RepositoryError::InvalidPool(_) => {
+                Self::ControlPlaneUnavailable(FailureContext::new(stage, "repository_invalid_pool"))
+            }
+            RepositoryError::ConnectionUnavailable(_) => Self::ControlPlaneUnavailable(
+                FailureContext::new(stage, "repository_connection_unavailable"),
+            ),
+            RepositoryError::Unavailable(_) => {
+                Self::ControlPlaneUnavailable(FailureContext::new(stage, "repository_unavailable"))
+            }
+        }
+    }
+
+    fn cleanup(stage: &'static str) -> Self {
+        Self::CleanupFailed(FailureContext::new(stage, "kernel_command_failed"))
+    }
+}
+
+#[async_trait]
+pub trait KernelCleanup: Send + Sync + 'static {
+    async fn clear_agent(&self, address: Ipv4Addr) -> Result<(), String>;
+}
+
+#[derive(Default)]
+struct AgentOperations {
+    locks: AsyncMutex<HashMap<AgentId, Weak<AsyncMutex<()>>>>,
+}
+
+impl AgentOperations {
+    async fn lock(&self, agent_id: &AgentId) -> OwnedMutexGuard<()> {
+        let mut locks = self.locks.lock().await;
+        locks.retain(|_, lock| lock.strong_count() > 0);
+        let lock = locks
+            .get(agent_id)
+            .and_then(Weak::upgrade)
+            .unwrap_or_else(|| {
+                let lock = Arc::new(AsyncMutex::new(()));
+                locks.insert(agent_id.clone(), Arc::downgrade(&lock));
+                lock
+            });
+        drop(locks);
+        lock.lock_owned().await
+    }
+}
+
+pub struct ControlService<R, K> {
+    repository: Arc<R>,
+    kernel: Arc<K>,
+    config: ControlConfig,
+    dataplane: Arc<Mutex<DataPlaneEngine>>,
+    output_barrier: Arc<AsyncMutex<()>>,
+    operations: AgentOperations,
+    applied_assignments: AsyncMutex<HashMap<AgentId, u64>>,
+    health: ServiceHealth,
+}
+
+impl<R, K> ControlService<R, K>
+where
+    R: Repository,
+    K: KernelCleanup,
+{
+    pub fn new(repository: Arc<R>, kernel: Arc<K>, config: ControlConfig) -> Self {
+        Self {
+            repository,
+            kernel,
+            dataplane: Arc::new(Mutex::new(DataPlaneEngine::new(
+                NetworkSnapshot::default(),
+                crate::packet::INNER_MTU,
+                config.max_flows,
+                config.max_agent_flows,
+                config.flow_idle,
+            ))),
+            config,
+            output_barrier: Arc::new(AsyncMutex::new(())),
+            operations: AgentOperations::default(),
+            applied_assignments: AsyncMutex::new(HashMap::new()),
+            health: ServiceHealth::default(),
+        }
+    }
+
+    pub fn status(&self) -> ServiceStatus {
+        self.health.snapshot()
+    }
+
+    pub fn observe_control_result<T>(&self, result: &Result<T, ControlError>) {
+        match result {
+            Ok(_) => {
+                let has_fenced_agents = self
+                    .dataplane
+                    .lock()
+                    .expect("data-plane mutex poisoned")
+                    .has_fenced_agents();
+                self.health.control_available(!has_fenced_agents);
+            }
+            Err(ControlError::CleanupFailed(_) | ControlError::ControlPlaneUnavailable(_)) => {
+                self.health.control_available(false);
+            }
+            Err(_) => {}
+        }
+    }
+
+    pub fn observe_repository_health(&self, available: bool) {
+        self.health.repository_available(available);
+    }
+
+    pub fn dataplane(&self) -> Arc<Mutex<DataPlaneEngine>> {
+        self.dataplane.clone()
+    }
+
+    pub fn output_barrier(&self) -> Arc<AsyncMutex<()>> {
+        self.output_barrier.clone()
+    }
+
+    pub async fn ensure_agent_network(
+        &self,
+        agent_id: AgentId,
+    ) -> Result<RuntimeNetworkAttachment, ControlError> {
+        let _guard = self.operations.lock(&agent_id).await;
+        let network = self
+            .repository
+            .ensure_agent_network(agent_id.clone())
+            .await
+            .map_err(|error| ControlError::repository("ensure_agent_network.repository", error))?;
+        let assignment = self
+            .repository
+            .policy_assignment(&agent_id)
+            .await
+            .map_err(|error| ControlError::repository("ensure_agent_network.repository", error))?;
+        let was_fenced = self
+            .dataplane
+            .lock()
+            .expect("data-plane mutex poisoned")
+            .is_agent_fenced(&agent_id);
+        let already_applied = self
+            .applied_assignments
+            .lock()
+            .await
+            .get(&agent_id)
+            .is_some_and(|version| *version == assignment.resource_version);
+        if was_fenced || !already_applied {
+            self.fence_dataplane(agent_id.clone()).await;
+            if was_fenced {
+                self.reset_flows_and_kernel(
+                    &agent_id,
+                    network.tunnel_ipv4,
+                    "ensure_agent_network.kernel_cleanup",
+                )
+                .await?;
+            }
+            if !already_applied {
+                self.publish_route(&network, &assignment).await?;
+                self.applied_assignments
+                    .lock()
+                    .await
+                    .insert(agent_id.clone(), assignment.resource_version);
+            }
+        }
+        self.reopen_dataplane(&agent_id);
+        Ok(self.attachment(network))
+    }
+
+    pub async fn agent_network(
+        &self,
+        agent_id: &AgentId,
+    ) -> Result<RuntimeNetworkAttachment, ControlError> {
+        let network = self
+            .repository
+            .agent_network(agent_id)
+            .await
+            .map_err(|error| ControlError::repository("agent_network.repository", error))?;
+        Ok(self.attachment(network))
+    }
+
+    pub async fn put_policy_revision(
+        &self,
+        policy_id: PolicyId,
+        revision: u64,
+        spec: PolicySpec,
+    ) -> Result<PolicyRevision, ControlError> {
+        if revision == 0 {
+            return Err(ControlError::PolicyRevisionConflict);
+        }
+        self.repository
+            .put_policy_revision(policy_id, revision, spec)
+            .await
+            .map_err(|error| ControlError::repository("put_policy_revision.repository", error))
+    }
+
+    pub async fn policy_assignment(
+        &self,
+        agent_id: &AgentId,
+    ) -> Result<PolicyAssignment, ControlError> {
+        self.repository
+            .policy_assignment(agent_id)
+            .await
+            .map_err(|error| ControlError::repository("policy_assignment.repository", error))
+    }
+
+    pub async fn assign_policy(
+        &self,
+        agent_id: AgentId,
+        policy_id: PolicyId,
+        revision: u64,
+        expected_resource_version: u64,
+    ) -> Result<PolicyAssignment, ControlError> {
+        let _guard = self.operations.lock(&agent_id).await;
+        let policy = self
+            .repository
+            .policy_revision(&policy_id, revision)
+            .await
+            .map_err(|error| ControlError::repository("assign_policy.repository", error))?;
+        let before = self
+            .repository
+            .policy_assignment(&agent_id)
+            .await
+            .map_err(|error| ControlError::repository("assign_policy.repository", error))?;
+        let already_applied = self
+            .applied_assignments
+            .lock()
+            .await
+            .get(&agent_id)
+            .is_some_and(|version| *version == before.resource_version);
+        if before.policy_id == policy_id && before.revision == revision && already_applied {
+            self.reopen_dataplane(&agent_id);
+            return Ok(before);
+        }
+        if (before.policy_id != policy_id || before.revision != revision)
+            && before.resource_version != expected_resource_version
+        {
+            return Err(ControlError::ResourceVersionConflict);
+        }
+
+        self.fence_dataplane(agent_id.clone()).await;
+        let assignment = self
+            .repository
+            .compare_and_swap_assignment(&agent_id, policy_id, revision, expected_resource_version)
+            .await
+            .map_err(|error| ControlError::repository("assign_policy.repository", error))?;
+        let network = self
+            .repository
+            .agent_network(&agent_id)
+            .await
+            .map_err(|error| ControlError::repository("assign_policy.repository", error))?;
+        self.reset_flows_and_kernel(
+            &agent_id,
+            network.tunnel_ipv4,
+            "assign_policy.kernel_cleanup",
+        )
+        .await?;
+        self.replace_route(&network, &assignment, policy.spec);
+        self.applied_assignments
+            .lock()
+            .await
+            .insert(agent_id.clone(), assignment.resource_version);
+        self.reopen_dataplane(&agent_id);
+        Ok(assignment)
+    }
+
+    pub async fn reset_agent_flows(&self, agent_id: &AgentId) -> Result<(), ControlError> {
+        let _guard = self.operations.lock(agent_id).await;
+        let network = self
+            .repository
+            .agent_network(agent_id)
+            .await
+            .map_err(|error| ControlError::repository("reset_agent_flows.repository", error))?;
+        self.fence_dataplane(agent_id.clone()).await;
+        self.reset_flows_and_kernel(
+            agent_id,
+            network.tunnel_ipv4,
+            "reset_agent_flows.kernel_cleanup",
+        )
+        .await?;
+        self.reopen_dataplane(agent_id);
+        Ok(())
+    }
+
+    pub async fn fence_agent(&self, agent_id: AgentId) -> Result<(), ControlError> {
+        let _guard = self.operations.lock(&agent_id).await;
+        self.fence_dataplane(agent_id.clone()).await;
+        self.fence_locked(&agent_id, "fence_agent.kernel_cleanup")
+            .await?;
+        self.reopen_dataplane(&agent_id);
+        Ok(())
+    }
+
+    pub async fn release_agent_network(
+        &self,
+        agent_id: AgentId,
+    ) -> Result<RuntimeNetworkAttachment, ControlError> {
+        let _guard = self.operations.lock(&agent_id).await;
+        self.fence_dataplane(agent_id.clone()).await;
+        self.fence_locked(&agent_id, "release_agent_network.kernel_cleanup")
+            .await?;
+        let network = self
+            .repository
+            .quarantine_agent_network(&agent_id, SystemTime::now())
+            .await
+            .map_err(|error| ControlError::repository("release_agent_network.repository", error))?;
+        self.dataplane
+            .lock()
+            .expect("data-plane mutex poisoned")
+            .remove_agent(&agent_id);
+        self.health.snapshot_published();
+        self.applied_assignments.lock().await.remove(&agent_id);
+        Ok(self.attachment(network))
+    }
+
+    pub async fn recover(&self) -> Result<usize, ControlError> {
+        let bindings = self
+            .repository
+            .active_bindings()
+            .await
+            .map_err(|error| ControlError::repository("recover.repository", error))?;
+        let routes = bindings.iter().map(|binding| AgentRoute {
+            agent_id: binding.network.agent_id.clone(),
+            tunnel_ipv4: binding.network.tunnel_ipv4,
+            assignment_version: binding.assignment.resource_version,
+            policy: binding.revision.spec.compile(),
+        });
+        self.dataplane
+            .lock()
+            .expect("data-plane mutex poisoned")
+            .replace_snapshot(NetworkSnapshot::from_routes(routes));
+        let mut applied = self.applied_assignments.lock().await;
+        applied.clear();
+        applied.extend(bindings.iter().map(|binding| {
+            (
+                binding.network.agent_id.clone(),
+                binding.assignment.resource_version,
+            )
+        }));
+        self.health.recovered();
+        Ok(bindings.len())
+    }
+
+    pub async fn sweep_quarantine(&self, now: SystemTime) -> Result<usize, ControlError> {
+        let candidates = self
+            .repository
+            .expired_quarantines(now)
+            .await
+            .map_err(|error| ControlError::repository("sweep_quarantine.repository", error))?;
+        let mut removed = 0;
+        for network in candidates {
+            let _guard = self.operations.lock(&network.agent_id).await;
+            self.fence_dataplane(network.agent_id.clone()).await;
+            self.kernel
+                .clear_agent(network.tunnel_ipv4)
+                .await
+                .map_err(|_| ControlError::cleanup("sweep_quarantine.kernel_cleanup"))?;
+            if self
+                .repository
+                .delete_quarantined(&network.agent_id, network.resource_version)
+                .await
+                .map_err(|error| ControlError::repository("sweep_quarantine.repository", error))?
+            {
+                self.dataplane
+                    .lock()
+                    .expect("data-plane mutex poisoned")
+                    .remove_agent(&network.agent_id);
+                self.health.snapshot_published();
+                self.applied_assignments
+                    .lock()
+                    .await
+                    .remove(&network.agent_id);
+                removed += 1;
+            }
+        }
+        Ok(removed)
+    }
+
+    async fn fence_locked(
+        &self,
+        agent_id: &AgentId,
+        cleanup_stage: &'static str,
+    ) -> Result<(), ControlError> {
+        let network = self
+            .repository
+            .agent_network(agent_id)
+            .await
+            .map_err(|error| ControlError::repository("fence.repository", error))?;
+        if network.state != NetworkState::Active {
+            return Ok(());
+        }
+        let current = self
+            .repository
+            .policy_assignment(agent_id)
+            .await
+            .map_err(|error| ControlError::repository("fence.repository", error))?;
+        let deny_id = PolicyId::parse(BUILTIN_DENY_ALL).map_err(|_| {
+            ControlError::ControlPlaneUnavailable(FailureContext::new(
+                "fence.builtin_policy",
+                "built_in_policy_invalid",
+            ))
+        })?;
+        let assignment = self
+            .repository
+            .compare_and_swap_assignment(
+                agent_id,
+                deny_id,
+                BUILTIN_REVISION,
+                current.resource_version,
+            )
+            .await
+            .map_err(|error| ControlError::repository("fence.repository", error))?;
+        self.reset_flows_and_kernel(agent_id, network.tunnel_ipv4, cleanup_stage)
+            .await?;
+        self.replace_route(&network, &assignment, PolicySpec::deny_all());
+        self.applied_assignments
+            .lock()
+            .await
+            .insert(agent_id.clone(), assignment.resource_version);
+        Ok(())
+    }
+
+    async fn publish_route(
+        &self,
+        network: &AgentNetwork,
+        assignment: &PolicyAssignment,
+    ) -> Result<(), ControlError> {
+        let revision = self
+            .repository
+            .policy_revision(&assignment.policy_id, assignment.revision)
+            .await
+            .map_err(|error| ControlError::repository("publish_route.repository", error))?;
+        self.replace_route(network, assignment, revision.spec);
+        Ok(())
+    }
+
+    fn replace_route(
+        &self,
+        network: &AgentNetwork,
+        assignment: &PolicyAssignment,
+        policy: PolicySpec,
+    ) {
+        self.dataplane
+            .lock()
+            .expect("data-plane mutex poisoned")
+            .upsert_route(AgentRoute {
+                agent_id: network.agent_id.clone(),
+                tunnel_ipv4: network.tunnel_ipv4,
+                assignment_version: assignment.resource_version,
+                policy: policy.compile(),
+            });
+        self.health.snapshot_published();
+    }
+
+    async fn reset_flows_and_kernel(
+        &self,
+        agent_id: &AgentId,
+        address: Ipv4Addr,
+        stage: &'static str,
+    ) -> Result<(), ControlError> {
+        self.dataplane
+            .lock()
+            .expect("data-plane mutex poisoned")
+            .reset_agent_flows(agent_id);
+        self.kernel
+            .clear_agent(address)
+            .await
+            .map_err(|_| ControlError::cleanup(stage))
+    }
+
+    async fn fence_dataplane(&self, agent_id: AgentId) {
+        self.dataplane
+            .lock()
+            .expect("data-plane mutex poisoned")
+            .fence_agent(agent_id);
+        let _drained = self.output_barrier.lock().await;
+    }
+
+    fn reopen_dataplane(&self, agent_id: &AgentId) {
+        self.dataplane
+            .lock()
+            .expect("data-plane mutex poisoned")
+            .reopen_agent(agent_id);
+    }
+
+    fn attachment(&self, network: AgentNetwork) -> RuntimeNetworkAttachment {
+        RuntimeNetworkAttachment {
+            agent_id: network.agent_id,
+            tunnel_ipv4: network.tunnel_ipv4,
+            resolver_ipv4: self.config.resolver_ipv4,
+            egress_endpoint: self.config.advertised_udp_endpoint,
+            state: network.state,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AgentId, AgentOperations};
+
+    #[tokio::test]
+    async fn operation_lock_registry_prunes_inactive_agents() {
+        let operations = AgentOperations::default();
+        let first = AgentId::parse("agent-first").unwrap();
+        let second = AgentId::parse("agent-second").unwrap();
+
+        drop(operations.lock(&first).await);
+        drop(operations.lock(&second).await);
+
+        let locks = operations.locks.lock().await;
+        assert_eq!(locks.len(), 1);
+        assert!(locks.contains_key(&second));
+    }
+}

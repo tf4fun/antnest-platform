@@ -16,8 +16,8 @@ and network boundaries.
   UID/GID 1000 subcommands with no capabilities.
 - Execute child processes with bounded time and output.
 - Read files through named roots; write and edit only the workspace.
-- Reject restricted traffic locally and carry validated unrestricted IP packets
-  as one raw packet per UDP datagram.
+- Carry structurally valid IPv4/TCP packets to Runtime Egress as one raw packet
+  per UDP datagram, and reject unsupported local traffic without bypassing Egress.
 - Accept MCP request cancellation, including terminating and reaping canceled
   `bash` process groups and descendants that change process group or session.
 - Expose `GET /status` only after bootstrap is complete.
@@ -31,7 +31,7 @@ and network boundaries.
 - It does not access Docker, PostgreSQL, or Controller persistence.
 - It does not implement Agent loops, model calls, prompts, memory, or Skill
   Registry behavior.
-- It does not choose its own network mode or authorize end users.
+- It does not choose or apply Agent network policy or authorize end users.
 - It does not own Agent scheduling, Work/session identity, replay policy, or
   side-effect reconciliation.
 - It does not implement service registration, discovery, or a reverse control
@@ -47,7 +47,8 @@ and capability sets plus `no_new_privileges` before reading its request. Its
 environment uses:
 
 - `$HOME=/workspace`: persistent, writable Agent workspace.
-- `/skills`: system Skills; Provider/container policy must mount this read-only.
+- `/skills`: system Skills; Runtime Controller/container policy must mount this
+  read-only.
 - `$HOME/.antnest/skills`: persistent, writable personal Skills.
 - `/tmp`: bounded ephemeral execution space.
 - Read-only container root filesystem.
@@ -58,7 +59,7 @@ behalf of the control plane; an Agent may use these tools inside its own
 workspace.
 
 The Runtime listens on an internal platform address for `GET /status` and
-`POST /mcp`. Runtime Provider gives this endpoint to Agent Controller. The
+`POST /mcp`. Runtime Controller gives this endpoint to Agent Controller. Agent
 Controller polls status and calls MCP `tools/list` before routing work to a new
 generation. The endpoint accepts internal Docker/Kubernetes Host names and is
 not published outside that trusted network.
@@ -68,7 +69,7 @@ roots, TUN, the local network loop, and MCP are ready. Before binding HTTP,
 Runtime also executes a UID/GID 1000 probe that verifies the workspace is
 writable/traversable and the system Skill root is readable/traversable. It does
 not probe Runtime Egress or claim end-to-end public connectivity. Controller
-combines this signal with the health of the selected Provider and Egress
+combines this signal with Runtime Controller and Egress deployment health
 deployment before rollout.
 
 Runtime permits one active tool execution and returns `runtime_busy` for a
@@ -83,23 +84,25 @@ Execution Actor drain concurrently under one shutdown deadline before telemetry
 is flushed.
 
 Runtime is crash-only. If PID 1 exits, Docker or Kubernetes restarts it, or
-Provider replaces the complete container or Pod. Bootstrap reconciles
+Runtime Controller replaces the complete container or Pod. Bootstrap reconciles
 Runtime-owned network artifacts even when the network namespace survives.
-Provider reattaches the workspace; unchanged RuntimeSpec keeps the generation,
+Runtime Controller reattaches the workspace; unchanged RuntimeSpec keeps the generation,
 while a configuration change creates a new generation.
 
-Unrestricted network mode uses a connected UDP socket to Runtime Egress. Each
-datagram contains one complete, unfragmented IPv4/TCP packet. MCP never carries packet traffic,
-and the packet tunnel has no business-level tracing. Root Supervisor traffic
-uses the platform route table. UID 1000 Executor traffic enters TUN and cannot
-use direct platform routes.
+Runtime always uses a connected UDP socket to Runtime Egress. Each datagram
+contains one complete, unfragmented IPv4/TCP packet. MCP never carries packet
+traffic, and the packet tunnel has no business-level tracing. Root Supervisor
+traffic uses the platform route table. UID 1000 Executor traffic enters TUN
+and cannot use direct platform routes. Allow and deny decisions belong only to
+Runtime Egress and can change without rebuilding Runtime.
 
 ## Integration Contract
 
 The official `rmcp` SDK owns the MCP wire contract. `contract.json` records the
 Antnest status path, MCP path, lifecycle rule, Runtime-owned single-flight rule,
 protocol revision, and expected tool names. `packet-format.md` and
-`packet-fixtures.json` define the separate tunnel bytes. Consumers must conform
+`packet-contract.json` and `packet-fixtures.json` define the separate tunnel
+revision, constants, and bytes. Consumers must conform
 to these shared artifacts; Runtime contains no legacy compatibility path.
 
 ## Local Validation
@@ -136,7 +139,7 @@ This service does not yet publish a production image. Local images use
 `antnest/antnest-runtime:<development-tag>`. Before the first registry release,
 the owning platform maintainers must define the immutable image repository,
 version/tag policy, promotion pipeline, rollback procedure, and coordinated
-Runtime/Provider/Egress contract rollout. A shared contract change must pass all
+Runtime/Controller/Egress contract rollout. A shared contract change must pass all
 three consumers before any image is promoted.
 
 ## Maintainer Guide
@@ -152,8 +155,10 @@ three consumers before any image is promoted.
 - [`../../contracts/runtime/contract.json`](../../contracts/runtime/contract.json):
   language-neutral status, MCP transport, tool-name, and packet-format contract.
 - [`../../contracts/runtime/runtime-spec.schema.json`](../../contracts/runtime/runtime-spec.schema.json):
-  language-neutral immutable RuntimeSpec contract supplied by Provider.
+  language-neutral immutable RuntimeSpec contract supplied by Runtime Controller.
 - [`../../contracts/runtime/packet-format.md`](../../contracts/runtime/packet-format.md):
   raw-IP-over-UDP tunnel contract.
+- [`../../contracts/runtime/packet-contract.json`](../../contracts/runtime/packet-contract.json):
+  authoritative packet revision and fixed protocol constants.
 - [`../../contracts/runtime/packet-fixtures.json`](../../contracts/runtime/packet-fixtures.json):
   accepted and rejected language-neutral tunnel examples.

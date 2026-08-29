@@ -3,15 +3,19 @@ use std::time::Duration;
 
 use opentelemetry::propagation::{Extractor, Injector};
 use opentelemetry::trace::{TraceContextExt as _, TracerProvider as _};
-use opentelemetry::{KeyValue, global};
+use opentelemetry::{
+    KeyValue, global,
+    metrics::{Counter, Histogram, Meter, MeterProvider as _},
+};
 use opentelemetry_otlp::WithExportConfig as _;
 use opentelemetry_sdk::Resource;
+use opentelemetry_sdk::metrics::SdkMeterProvider;
 use opentelemetry_sdk::propagation::TraceContextPropagator;
 use opentelemetry_sdk::trace::SdkTracerProvider;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
-use tracing_subscriber::filter::EnvFilter;
+use tracing_subscriber::filter::{EnvFilter, FilterExt as _, filter_fn};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{Layer as _, Registry};
@@ -30,7 +34,10 @@ pub(crate) enum TelemetryError {
 
 pub(crate) struct Telemetry {
     tracer_provider: Option<SdkTracerProvider>,
-    otlp_enabled: bool,
+    meter_provider: Option<SdkMeterProvider>,
+    trace_otlp_enabled: bool,
+    metrics_otlp_enabled: bool,
+    metrics: RuntimeMetrics,
     identity: RuntimeIdentity,
 }
 
@@ -39,8 +46,11 @@ pub(crate) struct TelemetryConfig {
     log_filter: String,
     export: ExportDecision,
     endpoint: String,
+    metrics_export: ExportDecision,
+    metrics_endpoint: String,
 }
 
+#[derive(Default)]
 pub(crate) struct TelemetryEnvironment {
     pub(crate) log_filter: Option<String>,
     pub(crate) sdk_disabled: Option<String>,
@@ -49,6 +59,28 @@ pub(crate) struct TelemetryEnvironment {
     pub(crate) endpoint: Option<String>,
     pub(crate) traces_protocol: Option<String>,
     pub(crate) protocol: Option<String>,
+    pub(crate) metrics_exporter: Option<String>,
+    pub(crate) metrics_endpoint: Option<String>,
+    pub(crate) metrics_protocol: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct RuntimeMetrics {
+    http_requests: Counter<u64>,
+    http_duration_ms: Histogram<f64>,
+    mcp_operations: Counter<u64>,
+    mcp_duration_ms: Histogram<f64>,
+    tool_calls: Counter<u64>,
+    tool_duration_ms: Histogram<f64>,
+    executor_calls: Counter<u64>,
+    executor_duration_ms: Histogram<f64>,
+    network_outbound_packets: Counter<u64>,
+    network_outbound_bytes: Counter<u64>,
+    network_inbound_packets: Counter<u64>,
+    network_inbound_bytes: Counter<u64>,
+    network_unsupported_packets: Counter<u64>,
+    network_local_rejections: Counter<u64>,
+    network_malformed_packets: Counter<u64>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -71,6 +103,174 @@ impl TelemetryWarning {
             reason: reason.into(),
         }
     }
+}
+
+impl RuntimeMetrics {
+    fn new(meter: Meter) -> Self {
+        Self {
+            http_requests: meter
+                .u64_counter("antnest.runtime.http.requests")
+                .with_description("Completed Runtime HTTP requests")
+                .build(),
+            http_duration_ms: meter
+                .f64_histogram("antnest.runtime.http.duration")
+                .with_description("Runtime HTTP response-body completion latency")
+                .with_unit("ms")
+                .build(),
+            mcp_operations: meter
+                .u64_counter("antnest.runtime.mcp.operations")
+                .with_description("Completed MCP protocol operations")
+                .build(),
+            mcp_duration_ms: meter
+                .f64_histogram("antnest.runtime.mcp.duration")
+                .with_description("MCP protocol operation latency")
+                .with_unit("ms")
+                .build(),
+            tool_calls: meter
+                .u64_counter("antnest.runtime.tool.calls")
+                .with_description("Completed Runtime tool calls")
+                .build(),
+            tool_duration_ms: meter
+                .f64_histogram("antnest.runtime.tool.duration")
+                .with_description("Runtime tool call latency")
+                .with_unit("ms")
+                .build(),
+            executor_calls: meter
+                .u64_counter("antnest.runtime.executor.calls")
+                .with_description("Completed non-privileged Executor calls")
+                .build(),
+            executor_duration_ms: meter
+                .f64_histogram("antnest.runtime.executor.duration")
+                .with_description("Non-privileged Executor latency")
+                .with_unit("ms")
+                .build(),
+            network_outbound_packets: meter
+                .u64_counter("antnest.runtime.network.outbound.packets")
+                .build(),
+            network_outbound_bytes: meter
+                .u64_counter("antnest.runtime.network.outbound.bytes")
+                .with_unit("By")
+                .build(),
+            network_inbound_packets: meter
+                .u64_counter("antnest.runtime.network.inbound.packets")
+                .build(),
+            network_inbound_bytes: meter
+                .u64_counter("antnest.runtime.network.inbound.bytes")
+                .with_unit("By")
+                .build(),
+            network_unsupported_packets: meter
+                .u64_counter("antnest.runtime.network.unsupported.packets")
+                .build(),
+            network_local_rejections: meter
+                .u64_counter("antnest.runtime.network.local_rejections")
+                .build(),
+            network_malformed_packets: meter
+                .u64_counter("antnest.runtime.network.malformed.packets")
+                .build(),
+        }
+    }
+
+    pub(crate) fn http(
+        &self,
+        method: &str,
+        route: &'static str,
+        outcome: &'static str,
+        duration: Duration,
+    ) {
+        let attributes = [
+            KeyValue::new("http.request.method", method.to_owned()),
+            KeyValue::new("http.route", route),
+            KeyValue::new("outcome", outcome),
+        ];
+        self.http_requests.add(1, &attributes);
+        self.http_duration_ms
+            .record(duration.as_secs_f64() * 1000.0, &attributes);
+    }
+
+    pub(crate) fn mcp(
+        &self,
+        operation: &'static str,
+        outcome: &'static str,
+        error_type: &'static str,
+        duration: Duration,
+    ) {
+        let attributes = operation_attributes("mcp.operation", operation, outcome, error_type);
+        self.mcp_operations.add(1, &attributes);
+        self.mcp_duration_ms
+            .record(duration.as_secs_f64() * 1000.0, &attributes);
+    }
+
+    pub(crate) fn tool(
+        &self,
+        tool: &'static str,
+        outcome: &'static str,
+        error_type: &'static str,
+        duration: Duration,
+    ) {
+        let attributes = operation_attributes("tool", tool, outcome, error_type);
+        self.tool_calls.add(1, &attributes);
+        self.tool_duration_ms
+            .record(duration.as_secs_f64() * 1000.0, &attributes);
+    }
+
+    pub(crate) fn executor(
+        &self,
+        tool: &'static str,
+        outcome: &'static str,
+        error_type: &'static str,
+        duration: Duration,
+    ) {
+        let attributes = operation_attributes("tool", tool, outcome, error_type);
+        self.executor_calls.add(1, &attributes);
+        self.executor_duration_ms
+            .record(duration.as_secs_f64() * 1000.0, &attributes);
+    }
+
+    pub(crate) fn network_outbound(&self, bytes: usize) {
+        self.network_outbound_packets.add(1, &[]);
+        self.network_outbound_bytes
+            .add(u64::try_from(bytes).unwrap_or(u64::MAX), &[]);
+    }
+
+    pub(crate) fn network_inbound(&self, bytes: usize) {
+        self.network_inbound_packets.add(1, &[]);
+        self.network_inbound_bytes
+            .add(u64::try_from(bytes).unwrap_or(u64::MAX), &[]);
+    }
+
+    pub(crate) fn network_unsupported(&self, rejected_locally: bool) {
+        self.network_unsupported_packets.add(1, &[]);
+        if rejected_locally {
+            self.network_local_rejections.add(1, &[]);
+        }
+    }
+
+    pub(crate) fn network_malformed(&self) {
+        self.network_malformed_packets.add(1, &[]);
+    }
+}
+
+impl Default for RuntimeMetrics {
+    fn default() -> Self {
+        let provider = opentelemetry::metrics::NoopMeterProvider::new();
+        Self::new(provider.meter(SERVICE_NAME))
+    }
+}
+
+fn operation_attributes(
+    name: &'static str,
+    operation: &'static str,
+    outcome: &'static str,
+    error_type: &'static str,
+) -> Vec<KeyValue> {
+    let mut attributes = vec![
+        KeyValue::new(name, operation),
+        KeyValue::new("outcome", outcome),
+    ];
+    if !error_type.is_empty() {
+        attributes.push(KeyValue::new("error.type", error_type));
+    }
+    attributes
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -103,35 +303,15 @@ impl Telemetry {
             .with_current_span(true)
             .with_span_list(false)
             .flatten_event(true)
-            .with_filter(filter.clone())
+            .with_filter(filter_fn(is_runtime_log).and(filter.clone()))
             .boxed();
         let mut layers: Vec<Box<dyn tracing_subscriber::Layer<Registry> + Send + Sync>> =
             vec![console];
-        let exported_provider = match &config.export {
-            ExportDecision::Disabled => None,
-            ExportDecision::Unsupported(warning) => {
-                warnings.push(warning.clone());
-                None
-            }
-            ExportDecision::Otlp => match validate_otlp_destination(&config.endpoint, platform) {
-                Err(reason) => {
-                    warnings.push(TelemetryWarning::new("invalid_otlp_destination", reason));
-                    None
-                }
-                Ok(endpoint) => match build_otlp_provider(identity, &endpoint) {
-                    Err(error) => {
-                        warnings.push(TelemetryWarning::new(
-                            "otlp_exporter_initialization_failed",
-                            error.to_string(),
-                        ));
-                        None
-                    }
-                    Ok(provider) => Some(provider),
-                },
-            },
-        };
-        let otlp_enabled = exported_provider.is_some();
-        let tracer_provider = exported_provider.unwrap_or_else(|| build_local_provider(identity));
+        let (tracer_provider, trace_otlp_enabled) =
+            configured_tracer(identity, platform, config, &mut warnings);
+        let (meter_provider, metrics_otlp_enabled) =
+            configured_meter(platform, config, &mut warnings);
+        let metrics = RuntimeMetrics::new(meter_provider.meter(SERVICE_NAME));
         let tracer = tracer_provider.tracer(SERVICE_NAME);
         layers.push(
             tracing_opentelemetry::layer()
@@ -140,6 +320,7 @@ impl Telemetry {
                 .boxed(),
         );
         global::set_tracer_provider(tracer_provider.clone());
+        global::set_meter_provider(meter_provider.clone());
         Registry::default()
             .with(layers)
             .try_init()
@@ -157,7 +338,8 @@ impl Telemetry {
             );
         }
         tracing::info!(
-            otlp_enabled,
+            trace_otlp_enabled,
+            metrics_otlp_enabled,
             "service.name" = SERVICE_NAME,
             "service.version" = env!("CARGO_PKG_VERSION"),
             "antnest.agent.id" = identity.agent_id(),
@@ -168,21 +350,48 @@ impl Telemetry {
         );
         Ok(Self {
             tracer_provider: Some(tracer_provider),
-            otlp_enabled,
+            meter_provider: Some(meter_provider),
+            trace_otlp_enabled,
+            metrics_otlp_enabled,
+            metrics,
             identity: identity.clone(),
         })
     }
 
+    pub(crate) fn metrics(&self) -> RuntimeMetrics {
+        self.metrics.clone()
+    }
+
     pub(crate) fn shutdown(mut self) {
-        let provider = self
+        let meter_provider = self
+            .meter_provider
+            .take()
+            .expect("Telemetry always owns one local meter provider");
+        if let Err(error) = meter_provider.shutdown_with_timeout(SHUTDOWN_TIMEOUT) {
+            tracing::error!(
+                "service.name" = SERVICE_NAME,
+                "antnest.agent.id" = self.identity.agent_id(),
+                "antnest.runtime.generation" = %self.identity.generation(),
+                error.type = if self.metrics_otlp_enabled {
+                    "otlp_metrics_shutdown_failed"
+                } else {
+                    "metrics_shutdown_failed"
+                },
+                reason = %error,
+                trace_id = "",
+                span_id = "",
+                "Runtime Metrics stopped with an error"
+            );
+        }
+        let tracer_provider = self
             .tracer_provider
             .take()
             .expect("Telemetry always owns one local tracer provider");
-        if let Err(error) = provider.shutdown_with_timeout(SHUTDOWN_TIMEOUT) {
-            let error_type = if self.otlp_enabled {
-                "otlp_shutdown_failed"
+        if let Err(error) = tracer_provider.shutdown_with_timeout(SHUTDOWN_TIMEOUT) {
+            let error_type = if self.trace_otlp_enabled {
+                "otlp_trace_shutdown_failed"
             } else {
-                "telemetry_shutdown_failed"
+                "trace_shutdown_failed"
             };
             tracing::error!(
                 "service.name" = SERVICE_NAME,
@@ -199,7 +408,8 @@ impl Telemetry {
                 "service.name" = SERVICE_NAME,
                 "antnest.agent.id" = self.identity.agent_id(),
                 "antnest.runtime.generation" = %self.identity.generation(),
-                otlp_enabled = self.otlp_enabled,
+                trace_otlp_enabled = self.trace_otlp_enabled,
+                metrics_otlp_enabled = self.metrics_otlp_enabled,
                 trace_id = "",
                 span_id = "",
                 "Runtime telemetry stopped"
@@ -210,30 +420,55 @@ impl Telemetry {
 
 impl TelemetryConfig {
     pub(crate) fn resolve(environment: TelemetryEnvironment) -> Self {
+        let TelemetryEnvironment {
+            log_filter,
+            sdk_disabled,
+            exporter,
+            traces_endpoint,
+            endpoint,
+            traces_protocol,
+            protocol,
+            metrics_exporter,
+            metrics_endpoint,
+            metrics_protocol,
+        } = environment;
         let export = resolve_export(
-            environment.sdk_disabled.as_deref(),
-            environment.exporter.as_deref(),
-            environment.traces_endpoint.as_deref(),
-            environment.endpoint.as_deref(),
+            sdk_disabled.as_deref(),
+            exporter.as_deref(),
+            traces_endpoint.as_deref(),
+            endpoint.as_deref(),
         );
         let export = if export == ExportDecision::Otlp {
-            resolve_protocol(
-                environment.traces_protocol.as_deref(),
-                environment.protocol.as_deref(),
-            )
-            .map_or_else(ExportDecision::Unsupported, |()| ExportDecision::Otlp)
+            resolve_protocol(traces_protocol.as_deref(), protocol.as_deref())
+                .map_or_else(ExportDecision::Unsupported, |()| ExportDecision::Otlp)
         } else {
             export
         };
+        let metrics_export = resolve_signal_export(
+            "metrics",
+            sdk_disabled.as_deref(),
+            metrics_exporter.as_deref(),
+            metrics_endpoint.as_deref(),
+            endpoint.as_deref(),
+        );
+        let metrics_export = if metrics_export == ExportDecision::Otlp {
+            resolve_signal_protocol("metrics", metrics_protocol.as_deref(), protocol.as_deref())
+                .map_or_else(ExportDecision::Unsupported, |()| ExportDecision::Otlp)
+        } else {
+            metrics_export
+        };
         Self {
-            log_filter: environment
-                .log_filter
+            log_filter: log_filter
                 .filter(|value| !value.trim().is_empty())
                 .unwrap_or_else(|| "info,hyper=warn,reqwest=warn".into()),
             export,
-            endpoint: environment
-                .traces_endpoint
-                .or(environment.endpoint)
+            endpoint: traces_endpoint
+                .or_else(|| endpoint.clone())
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or_else(|| "http://127.0.0.1:4318".into()),
+            metrics_export,
+            metrics_endpoint: metrics_endpoint
+                .or(endpoint)
                 .filter(|value| !value.trim().is_empty())
                 .unwrap_or_else(|| "http://127.0.0.1:4318".into()),
         }
@@ -267,6 +502,88 @@ fn validate_otlp_destination(endpoint: &str, platform: &PlatformNetwork) -> Resu
     Ok(endpoint.to_string())
 }
 
+fn configured_tracer(
+    identity: &RuntimeIdentity,
+    platform: &PlatformNetwork,
+    config: &TelemetryConfig,
+    warnings: &mut Vec<TelemetryWarning>,
+) -> (SdkTracerProvider, bool) {
+    let provider = configured_export(
+        &config.export,
+        &config.endpoint,
+        platform,
+        "traces",
+        warnings,
+        |endpoint| build_otlp_provider(identity, endpoint),
+    );
+    let enabled = provider.is_some();
+    (
+        provider.unwrap_or_else(|| build_local_provider(identity)),
+        enabled,
+    )
+}
+
+fn configured_meter(
+    platform: &PlatformNetwork,
+    config: &TelemetryConfig,
+    warnings: &mut Vec<TelemetryWarning>,
+) -> (SdkMeterProvider, bool) {
+    let provider = configured_export(
+        &config.metrics_export,
+        &config.metrics_endpoint,
+        platform,
+        "metrics",
+        warnings,
+        build_otlp_meter_provider,
+    );
+    let enabled = provider.is_some();
+    (provider.unwrap_or_else(build_local_meter_provider), enabled)
+}
+
+fn configured_export<T>(
+    decision: &ExportDecision,
+    endpoint: &str,
+    platform: &PlatformNetwork,
+    signal: &'static str,
+    warnings: &mut Vec<TelemetryWarning>,
+    build: impl FnOnce(&str) -> Result<T, Box<dyn std::error::Error + Send + Sync>>,
+) -> Option<T> {
+    match decision {
+        ExportDecision::Disabled => None,
+        ExportDecision::Unsupported(warning) => {
+            warnings.push(warning.clone());
+            None
+        }
+        ExportDecision::Otlp => match validate_otlp_destination(endpoint, platform) {
+            Err(reason) => {
+                warnings.push(TelemetryWarning::new(
+                    if signal == "metrics" {
+                        "invalid_otlp_metrics_destination"
+                    } else {
+                        "invalid_otlp_trace_destination"
+                    },
+                    reason,
+                ));
+                None
+            }
+            Ok(endpoint) => match build(&endpoint) {
+                Ok(provider) => Some(provider),
+                Err(error) => {
+                    warnings.push(TelemetryWarning::new(
+                        if signal == "metrics" {
+                            "otlp_metrics_exporter_initialization_failed"
+                        } else {
+                            "otlp_trace_exporter_initialization_failed"
+                        },
+                        error.to_string(),
+                    ));
+                    None
+                }
+            },
+        },
+    }
+}
+
 fn build_otlp_provider(
     identity: &RuntimeIdentity,
     endpoint: &str,
@@ -287,6 +604,25 @@ fn build_local_provider(identity: &RuntimeIdentity) -> SdkTracerProvider {
         .build()
 }
 
+fn build_otlp_meter_provider(
+    endpoint: &str,
+) -> Result<SdkMeterProvider, Box<dyn std::error::Error + Send + Sync>> {
+    let exporter = opentelemetry_otlp::MetricExporter::builder()
+        .with_http()
+        .with_endpoint(endpoint)
+        .build()?;
+    Ok(SdkMeterProvider::builder()
+        .with_periodic_exporter(exporter)
+        .with_resource(metrics_resource())
+        .build())
+}
+
+fn build_local_meter_provider() -> SdkMeterProvider {
+    SdkMeterProvider::builder()
+        .with_resource(metrics_resource())
+        .build()
+}
+
 fn runtime_resource(identity: &RuntimeIdentity) -> Resource {
     Resource::builder()
         .with_service_name(SERVICE_NAME)
@@ -302,10 +638,30 @@ fn runtime_resource(identity: &RuntimeIdentity) -> Resource {
         .build()
 }
 
+fn metrics_resource() -> Resource {
+    Resource::builder()
+        .with_service_name(SERVICE_NAME)
+        .with_attributes([
+            KeyValue::new("service.namespace", "antnest"),
+            KeyValue::new("service.version", env!("CARGO_PKG_VERSION")),
+        ])
+        .build()
+}
+
 fn resolve_export(
     sdk_disabled: Option<&str>,
     exporter: Option<&str>,
     traces_endpoint: Option<&str>,
+    endpoint: Option<&str>,
+) -> ExportDecision {
+    resolve_signal_export("traces", sdk_disabled, exporter, traces_endpoint, endpoint)
+}
+
+fn resolve_signal_export(
+    signal: &'static str,
+    sdk_disabled: Option<&str>,
+    exporter: Option<&str>,
+    signal_endpoint: Option<&str>,
     endpoint: Option<&str>,
 ) -> ExportDecision {
     if sdk_disabled.is_some_and(|value| value.trim().eq_ignore_ascii_case("true")) {
@@ -316,12 +672,16 @@ fn resolve_export(
             "none" => ExportDecision::Disabled,
             "otlp" => ExportDecision::Otlp,
             _ => ExportDecision::Unsupported(TelemetryWarning::new(
-                "unsupported_trace_exporter",
-                format!("OTEL_TRACES_EXPORTER={exporter}"),
+                if signal == "metrics" {
+                    "unsupported_metrics_exporter"
+                } else {
+                    "unsupported_trace_exporter"
+                },
+                format!("OTEL_{}_EXPORTER={exporter}", signal.to_ascii_uppercase()),
             )),
         };
     }
-    if [traces_endpoint, endpoint]
+    if [signal_endpoint, endpoint]
         .into_iter()
         .flatten()
         .any(|value| !value.trim().is_empty())
@@ -336,11 +696,26 @@ fn resolve_protocol(
     traces_protocol: Option<&str>,
     protocol: Option<&str>,
 ) -> Result<(), TelemetryWarning> {
-    let (name, value) = if let Some(value) = traces_protocol
+    resolve_signal_protocol("traces", traces_protocol, protocol)
+}
+
+fn resolve_signal_protocol(
+    signal: &'static str,
+    signal_protocol: Option<&str>,
+    protocol: Option<&str>,
+) -> Result<(), TelemetryWarning> {
+    let (name, value) = if let Some(value) = signal_protocol
         .map(str::trim)
         .filter(|value| !value.is_empty())
     {
-        ("OTEL_EXPORTER_OTLP_TRACES_PROTOCOL", value)
+        (
+            if signal == "metrics" {
+                "OTEL_EXPORTER_OTLP_METRICS_PROTOCOL"
+            } else {
+                "OTEL_EXPORTER_OTLP_TRACES_PROTOCOL"
+            },
+            value,
+        )
     } else if let Some(value) = protocol.map(str::trim).filter(|value| !value.is_empty()) {
         ("OTEL_EXPORTER_OTLP_PROTOCOL", value)
     } else {
@@ -429,15 +804,24 @@ pub(crate) fn span_identity(span: &tracing::Span) -> (String, String) {
 }
 
 fn is_runtime_trace(metadata: &tracing::Metadata<'_>) -> bool {
-    metadata.target().starts_with("antnest_runtime")
+    is_runtime_target(metadata.target())
+}
+
+fn is_runtime_log(metadata: &tracing::Metadata<'_>) -> bool {
+    is_runtime_target(metadata.target())
+}
+
+fn is_runtime_target(target: &str) -> bool {
+    target == "antnest_runtime" || target.starts_with("antnest_runtime::")
 }
 
 #[cfg(test)]
 mod tests {
     use std::net::Ipv4Addr;
 
-    use opentelemetry::global;
     use opentelemetry::trace::{TraceContextExt as _, TracerProvider as _};
+    use opentelemetry::{global, metrics::MeterProvider as _};
+    use opentelemetry_sdk::metrics::{InMemoryMetricExporter, PeriodicReader, SdkMeterProvider};
     use opentelemetry_sdk::propagation::TraceContextPropagator;
     use opentelemetry_sdk::trace::{InMemorySpanExporter, SdkTracerProvider};
     use tracing_opentelemetry::OpenTelemetrySpanExt as _;
@@ -447,10 +831,18 @@ mod tests {
     use crate::spec::RuntimeIdentity;
 
     use super::{
-        ExportDecision, SERVICE_NAME, TelemetryConfig, TelemetryEnvironment, TelemetryWarning,
-        TraceContext, build_local_provider, resolve_export, resolve_protocol, set_remote_parent,
-        validate_otlp_destination,
+        ExportDecision, RuntimeMetrics, SERVICE_NAME, TelemetryConfig, TelemetryEnvironment,
+        TelemetryWarning, TraceContext, build_local_provider, is_runtime_target, resolve_export,
+        resolve_protocol, set_remote_parent, validate_otlp_destination,
     };
+
+    #[test]
+    fn log_target_boundary_excludes_dependencies_and_similar_names() {
+        assert!(is_runtime_target("antnest_runtime"));
+        assert!(is_runtime_target("antnest_runtime::mcp"));
+        assert!(!is_runtime_target("hyper"));
+        assert!(!is_runtime_target("antnest_runtime_external"));
+    }
 
     #[test]
     fn stderr_log_filter_cannot_disable_runtime_trace_spans() {
@@ -599,10 +991,15 @@ mod tests {
             endpoint: Some("http://127.0.0.1:4318".into()),
             traces_protocol: Some("http/protobuf".into()),
             protocol: Some("grpc".into()),
+            metrics_exporter: Some("otlp".into()),
+            metrics_endpoint: Some("http://127.0.0.1:9001".into()),
+            metrics_protocol: Some("http/protobuf".into()),
         });
         assert_eq!(config.log_filter, "debug");
         assert_eq!(config.export, ExportDecision::Otlp);
         assert_eq!(config.endpoint, "http://127.0.0.1:9000");
+        assert_eq!(config.metrics_export, ExportDecision::Otlp);
+        assert_eq!(config.metrics_endpoint, "http://127.0.0.1:9001");
     }
 
     #[test]
@@ -620,5 +1017,49 @@ mod tests {
             }))
             .is_err()
         );
+    }
+
+    #[test]
+    fn runtime_metrics_export_each_operational_layer() {
+        let exporter = InMemoryMetricExporter::default();
+        let provider = SdkMeterProvider::builder()
+            .with_reader(PeriodicReader::builder(exporter.clone()).build())
+            .build();
+        let metrics = RuntimeMetrics::new(provider.meter(SERVICE_NAME));
+
+        metrics.http(
+            "POST",
+            "/mcp",
+            "success",
+            std::time::Duration::from_millis(2),
+        );
+        metrics.mcp(
+            "tools/call",
+            "success",
+            "",
+            std::time::Duration::from_millis(3),
+        );
+        metrics.tool("read", "success", "", std::time::Duration::from_millis(4));
+        metrics.executor("read", "success", "", std::time::Duration::from_millis(5));
+        metrics.network_outbound(64);
+        provider.force_flush().unwrap();
+
+        let exported = exporter.get_finished_metrics().unwrap();
+        let names = exported
+            .iter()
+            .flat_map(|resource| resource.scope_metrics())
+            .flat_map(|scope| scope.metrics())
+            .map(|metric| metric.name().to_owned())
+            .collect::<Vec<_>>();
+        for name in [
+            "antnest.runtime.http.requests",
+            "antnest.runtime.mcp.operations",
+            "antnest.runtime.tool.calls",
+            "antnest.runtime.executor.calls",
+            "antnest.runtime.network.outbound.packets",
+        ] {
+            assert!(names.contains(&name.to_owned()), "missing metric {name}");
+        }
+        provider.shutdown().unwrap();
     }
 }

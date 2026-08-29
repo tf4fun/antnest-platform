@@ -1,0 +1,34 @@
+{
+  "revision": 1,
+  "transport": "json-over-http",
+  "trust_boundary": "internal-network",
+  "status_values": ["ready", "degraded"],
+  "routes": [
+    {"method": "GET", "path": "/status"},
+    {"method": "GET", "path": "/internal/agent-networks/{agent_id}"},
+    {"method": "PUT", "path": "/internal/agent-networks/{agent_id}"},
+    {"method": "POST", "path": "/internal/agent-networks/{agent_id}/fence"},
+    {"method": "POST", "path": "/internal/agent-networks/{agent_id}/reset-flows"},
+    {"method": "POST", "path": "/internal/agent-networks/{agent_id}/release"},
+    {"method": "PUT", "path": "/internal/policies/{policy_id}/revisions/{revision}"},
+    {"method": "GET", "path": "/internal/agent-policy-assignments/{agent_id}"},
+    {"method": "PUT", "path": "/internal/agent-policy-assignments/{agent_id}"}
+  ],
+  "schemas": {
+    "policy": "policy.schema.json",
+    "packet": "../runtime/packet-contract.json"
+  },
+  "error_codes": [
+    "invalid_request",
+    "route_not_found",
+    "agent_network_not_found",
+    "policy_revision_not_found",
+    "method_not_allowed",
+    "agent_network_unavailable",
+    "policy_revision_conflict",
+    "resource_version_conflict",
+    "address_pool_exhausted",
+    "cleanup_failed",
+    "control_plane_unavailable"
+  ]
+}

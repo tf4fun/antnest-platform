@@ -1,15 +1,20 @@
-FROM golang:1.25-bookworm AS build
+FROM rust:1.96-bookworm AS build
 WORKDIR /src
-COPY services/runtime-egress/go.mod services/runtime-egress/go.sum ./
-RUN --mount=type=cache,target=/go/pkg/mod go mod download
-COPY services/runtime-egress ./
-RUN --mount=type=cache,target=/go/pkg/mod \
-    --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 go build -trimpath -o /out/runtime-egress ./cmd/runtime-egress
+COPY services/runtime-egress ./services/runtime-egress
+COPY contracts/runtime ./contracts/runtime
+COPY contracts/egress ./contracts/egress
+WORKDIR /src/services/runtime-egress
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/src/services/runtime-egress/target \
+    cargo fmt --all --check \
+    && cargo clippy --locked --all-targets -- -D warnings \
+    && cargo test --locked \
+    && cargo build --locked --release \
+    && cp target/release/antnest-runtime-egress /tmp/runtime-egress
 
 FROM debian:bookworm-slim
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates conntrack iproute2 nftables \
+    && apt-get install -y --no-install-recommends ca-certificates conntrack curl iproute2 nftables procps \
     && rm -rf /var/lib/apt/lists/*
-COPY --from=build /out/runtime-egress /usr/local/bin/runtime-egress
+COPY --from=build /tmp/runtime-egress /usr/local/bin/runtime-egress
 ENTRYPOINT ["/usr/local/bin/runtime-egress"]

@@ -9,60 +9,38 @@
     "agent_id": {
       "type": "string",
       "minLength": 1,
-      "pattern": "^\\S+$",
-      "description": "Stable non-empty Agent identifier without whitespace."
+      "maxLength": 255,
+      "pattern": "^[!-~]+$",
+      "description": "Stable Agent identifier using 1-255 visible ASCII bytes."
     },
     "generation": {"type": "integer", "minimum": 1},
     "listen": {
-      "type": "string",
-      "minLength": 3,
-      "description": "Socket address with a non-zero port. Rust SocketAddr parsing is authoritative."
+      "$ref": "#/$defs/socketAddress"
     },
     "network": {
-      "oneOf": [
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["mode", "tunnel_ipv4", "resolver_ipv4"],
-          "properties": {
-            "mode": {"const": "restricted"},
-            "tunnel_ipv4": {
-              "type": "string",
-              "format": "ipv4",
-              "description": "Usable unicast IPv4 address, distinct from resolver_ipv4."
-            },
-            "resolver_ipv4": {
-              "type": "string",
-              "format": "ipv4",
-              "description": "Usable unicast IPv4 address, distinct from tunnel_ipv4."
-            }
-          }
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["packet_contract_revision", "egress_endpoint", "tunnel_ipv4", "resolver_ipv4"],
+      "properties": {
+        "packet_contract_revision": {
+          "type": "integer",
+          "const": 1,
+          "description": "Exact raw-IP-over-UDP contract revision accepted by this Runtime image."
         },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["mode", "egress_endpoint", "tunnel_ipv4", "resolver_ipv4"],
-          "properties": {
-            "mode": {"const": "unrestricted"},
-            "egress_endpoint": {
-              "type": "string",
-              "minLength": 3,
-              "pattern": "^[0-9]{1,3}(\\.[0-9]{1,3}){3}:[0-9]{1,5}$",
-              "description": "Provider-resolved literal IPv4 address and non-zero UDP port. Runtime performs no service-name lookup."
-            },
-            "tunnel_ipv4": {
-              "type": "string",
-              "format": "ipv4",
-              "description": "Usable unicast IPv4 address, distinct from resolver_ipv4."
-            },
-            "resolver_ipv4": {
-              "type": "string",
-              "format": "ipv4",
-              "description": "Usable unicast IPv4 address, distinct from tunnel_ipv4."
-            }
-          }
+        "egress_endpoint": {
+          "$ref": "#/$defs/ipv4Endpoint"
+        },
+        "tunnel_ipv4": {
+          "type": "string",
+          "format": "ipv4",
+          "description": "Stable Agent Tunnel IPv4, distinct from resolver_ipv4."
+        },
+        "resolver_ipv4": {
+          "type": "string",
+          "format": "ipv4",
+          "description": "Egress virtual resolver/gateway IPv4, distinct from tunnel_ipv4."
         }
-      ]
+      }
     },
     "filesystem": {
       "type": "object",
@@ -82,6 +60,34 @@
           "description": "Normalized absolute system Skill root; must not overlap workspace."
         }
       }
+    }
+  },
+  "$defs": {
+    "socketAddress": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["host", "port"],
+      "properties": {
+        "host": {
+          "type": "string",
+          "anyOf": [
+            {"format": "ipv4"},
+            {"format": "ipv6"}
+          ]
+        },
+        "port": {"type": "integer", "minimum": 1, "maximum": 65535}
+      },
+      "description": "Internal Runtime HTTP listener expressed without language-specific socket parsing."
+    },
+    "ipv4Endpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ipv4", "port"],
+      "properties": {
+        "ipv4": {"type": "string", "format": "ipv4"},
+        "port": {"type": "integer", "minimum": 1, "maximum": 65535}
+      },
+      "description": "Controller-resolved usable unicast IPv4 address and UDP port."
     }
   }
 }

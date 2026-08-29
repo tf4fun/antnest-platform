@@ -79,13 +79,11 @@ mod platform {
 
     use thiserror::Error;
 
-    use crate::spec::{NetworkMode, NetworkSpec, UdpEndpoint};
+    use crate::spec::{NetworkSpec, UdpEndpoint};
 
     use super::{PlatformNetwork, PlatformRoute};
 
     pub const TUN_NAME: &str = "antnest0";
-    pub const DEFAULT_MTU: u16 = 1400;
-
     const IFREQ_DATA_SIZE: usize = 24;
     const IFF_TUN: libc::c_short = 0x0001;
     const IFF_NO_PI: libc::c_short = 0x1000;
@@ -113,54 +111,36 @@ mod platform {
         Nftables(String),
     }
 
-    pub enum RuntimeNetwork {
-        Restricted {
-            tun: File,
-            mtu: u16,
-            platform: PlatformNetwork,
-        },
-        Unrestricted {
-            tun: File,
-            mtu: u16,
-            platform: PlatformNetwork,
-            egress_endpoint: UdpEndpoint,
-        },
+    pub struct RuntimeNetwork {
+        tun: File,
+        mtu: u16,
+        platform: PlatformNetwork,
+        egress_endpoint: UdpEndpoint,
     }
 
     impl RuntimeNetwork {
         pub fn bootstrap(spec: &NetworkSpec, mcp_port: u16) -> Result<Self, NetworkError> {
-            let route_target = spec
-                .egress_endpoint()
-                .map(|endpoint| *endpoint.address().ip())
-                .unwrap_or_else(|| spec.resolver_ipv4());
+            let route_target = *spec.egress_endpoint().address().ip();
             let platform_routes = read_platform_routes(route_target)?;
             validate_resolver(spec.resolver_ipv4())?;
-            let tun = create_tun(TUN_NAME, DEFAULT_MTU, spec.tunnel_ipv4())?;
+            let tun = create_tun(TUN_NAME, crate::packet::INNER_MTU, spec.tunnel_ipv4())?;
             install_routes(TUN_NAME)?;
             install_kill_switch(TUN_NAME, mcp_port)?;
             let platform = PlatformNetwork::new(platform_routes);
-            Ok(match spec.mode() {
-                NetworkMode::Restricted => Self::Restricted {
-                    tun,
-                    mtu: DEFAULT_MTU,
-                    platform,
-                },
-                NetworkMode::Unrestricted => Self::Unrestricted {
-                    tun,
-                    mtu: DEFAULT_MTU,
-                    platform,
-                    egress_endpoint: spec
-                        .egress_endpoint()
-                        .expect("unrestricted network has an egress endpoint")
-                        .clone(),
-                },
+            Ok(Self {
+                tun,
+                mtu: crate::packet::INNER_MTU,
+                platform,
+                egress_endpoint: spec.egress_endpoint().clone(),
             })
         }
 
         pub fn platform_network(&self) -> &PlatformNetwork {
-            match self {
-                Self::Restricted { platform, .. } | Self::Unrestricted { platform, .. } => platform,
-            }
+            &self.platform
+        }
+
+        pub(crate) fn into_transport(self) -> (File, u16, UdpEndpoint) {
+            (self.tun, self.mtu, self.egress_endpoint)
         }
     }
 
@@ -639,8 +619,6 @@ mod platform {
     use crate::spec::NetworkSpec;
 
     use super::PlatformNetwork;
-
-    pub const DEFAULT_MTU: u16 = 1400;
 
     #[derive(Debug, Error)]
     #[error("antnest-runtime network bootstrap requires Linux")]

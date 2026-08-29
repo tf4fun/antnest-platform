@@ -1,0 +1,9 @@
+{
+  "revision": 1,
+  "transport": "raw-ip-over-udp",
+  "inner_ip_version": 4,
+  "inner_transport_protocol": "tcp",
+  "inner_mtu": 1400,
+  "fragmentation": false,
+  "one_packet_per_datagram": true
+}

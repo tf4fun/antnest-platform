@@ -62,7 +62,6 @@ define_error_codes!(RuntimeErrorCode {
     HttpBindFailed => "http_bind_failed",
     HttpServiceFailed => "http_service_failed",
     LocalNetworkFailed => "local_network_failed",
-    NetworkProtocolFailed => "network_protocol_failed",
     NetworkTransportFailed => "network_transport_failed",
     ShutdownTimeout => "shutdown_timeout",
     SignalListenerFailed => "signal_listener_failed",

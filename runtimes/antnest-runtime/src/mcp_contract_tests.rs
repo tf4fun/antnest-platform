@@ -1,9 +1,11 @@
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::config::{FilesystemSpecInput, NetworkSpecInput, RuntimeSpecInput};
+use crate::config::{
+    FilesystemSpecInput, Ipv4EndpointInput, NetworkSpecInput, RuntimeSpecInput, SocketAddressInput,
+};
 use crate::mcp::{MCP_PATH, RuntimeHttp, RuntimeStatus, STATUS_PATH, route_label};
-use crate::spec::{NetworkMode, RuntimeIdentity};
+use crate::spec::RuntimeIdentity;
 
 #[derive(Deserialize)]
 struct Contract {
@@ -66,8 +68,21 @@ struct Transport {
 struct EgressTunnel {
     kind: String,
     payload: String,
-    inner_mtu: u16,
+    packet_contract: String,
     traced: bool,
+    policy_owner: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PacketContract {
+    revision: u32,
+    transport: String,
+    inner_ip_version: u8,
+    inner_transport_protocol: String,
+    inner_mtu: u16,
+    fragmentation: bool,
+    one_packet_per_datagram: bool,
 }
 
 #[test]
@@ -89,10 +104,23 @@ fn shared_contract_matches_runtime_http_surface() {
     assert_eq!(contract.egress_tunnel.kind, "udp");
     assert_eq!(contract.egress_tunnel.payload, "one-complete-ipv4-packet");
     assert_eq!(
-        contract.egress_tunnel.inner_mtu,
-        crate::network::DEFAULT_MTU
+        contract.egress_tunnel.packet_contract,
+        "packet-contract.json"
     );
+    let packet: PacketContract = serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../contracts/runtime/packet-contract.json"
+    )))
+    .expect("decode packet contract");
+    assert_eq!(packet.revision, crate::packet::PACKET_CONTRACT_REVISION);
+    assert_eq!(packet.transport, "raw-ip-over-udp");
+    assert_eq!(packet.inner_ip_version, 4);
+    assert_eq!(packet.inner_transport_protocol, "tcp");
+    assert_eq!(packet.inner_mtu, crate::packet::INNER_MTU);
+    assert!(!packet.fragmentation);
+    assert!(packet.one_packet_per_datagram);
     assert!(!contract.egress_tunnel.traced);
+    assert_eq!(contract.egress_tunnel.policy_owner, "runtime-egress");
     assert_eq!(contract.packet_format, "packet-format.md");
     assert_eq!(contract.packet_fixtures, "packet-fixtures.json");
     assert_eq!(contract.readiness.scope, "runtime-local");
@@ -143,20 +171,25 @@ fn shared_contract_matches_runtime_http_surface() {
     assert_eq!(contract.execution.busy_error, "runtime_busy");
     assert_eq!(contract.execution.subcommands, contract.tools);
 
-    let status = RuntimeStatus::new(
-        RuntimeIdentity::new("agent-1", 2).unwrap(),
-        NetworkMode::Restricted,
-    );
+    let status = RuntimeStatus::new(RuntimeIdentity::new("agent-1", 2).unwrap());
     assert_eq!(serde_json::to_value(status).unwrap(), contract.status);
     assert_eq!(RuntimeHttp::tool_names(), contract.tools);
 }
 
 fn assert_runtime_spec_shape(schema: &serde_json::Value) {
-    let restricted = RuntimeSpecInput {
+    let input = RuntimeSpecInput {
         agent_id: "agent-1".into(),
         generation: 2,
-        listen: "0.0.0.0:8093".into(),
-        network: NetworkSpecInput::Restricted {
+        listen: SocketAddressInput {
+            host: "0.0.0.0".into(),
+            port: 8093,
+        },
+        network: NetworkSpecInput {
+            packet_contract_revision: crate::packet::PACKET_CONTRACT_REVISION,
+            egress_endpoint: Ipv4EndpointInput {
+                ipv4: "192.0.2.10".into(),
+                port: 8092,
+            },
             tunnel_ipv4: "100.96.0.2".into(),
             resolver_ipv4: "100.64.0.1".into(),
         },
@@ -165,77 +198,74 @@ fn assert_runtime_spec_shape(schema: &serde_json::Value) {
             system_skills: "/skills".into(),
         },
     };
-    let unrestricted = RuntimeSpecInput {
-        network: NetworkSpecInput::Unrestricted {
-            egress_endpoint: "192.0.2.10:8092".into(),
-            tunnel_ipv4: "100.96.0.2".into(),
-            resolver_ipv4: "100.64.0.1".into(),
-        },
-        ..restricted.clone()
-    };
     let required = schema["required"].as_array().expect("RuntimeSpec required");
-    for value in [restricted, unrestricted] {
-        let encoded = serde_json::to_value(value).expect("encode RuntimeSpec input");
-        let object = encoded.as_object().expect("RuntimeSpec object");
-        assert_object_shape(object, &schema["properties"], required);
-        let network = object["network"].as_object().expect("network input");
-        let mode = network["mode"].as_str().expect("network mode");
-        let network_schema = schema["properties"]["network"]["oneOf"]
+    let encoded = serde_json::to_value(input).expect("encode RuntimeSpec input");
+    let object = encoded.as_object().expect("RuntimeSpec object");
+    assert_object_shape(object, &schema["properties"], required);
+    assert_object_shape(
+        object["listen"].as_object().expect("listen input"),
+        &schema["$defs"]["socketAddress"]["properties"],
+        schema["$defs"]["socketAddress"]["required"]
             .as_array()
-            .expect("network variants")
-            .iter()
-            .find(|candidate| candidate["properties"]["mode"]["const"] == mode)
-            .expect("network variant schema");
-        assert_object_shape(
-            network,
-            &network_schema["properties"],
-            network_schema["required"]
-                .as_array()
-                .expect("network required"),
-        );
-        assert_object_shape(
-            object["filesystem"].as_object().expect("filesystem input"),
-            &schema["properties"]["filesystem"]["properties"],
-            schema["properties"]["filesystem"]["required"]
-                .as_array()
-                .expect("filesystem required"),
-        );
-        let decoded: RuntimeSpecInput =
-            serde_json::from_value(encoded).expect("decode RuntimeSpec input");
-        decoded
-            .try_into_runtime_spec()
-            .expect("adapt RuntimeSpec input");
-    }
-    assert_eq!(
-        schema["properties"]["network"]["oneOf"]
-            .as_array()
-            .expect("network variants")
-            .len(),
-        2
+            .expect("listen required"),
     );
+    assert_object_shape(
+        object["network"].as_object().expect("network input"),
+        &schema["properties"]["network"]["properties"],
+        schema["properties"]["network"]["required"]
+            .as_array()
+            .expect("network required"),
+    );
+    assert_object_shape(
+        object["filesystem"].as_object().expect("filesystem input"),
+        &schema["properties"]["filesystem"]["properties"],
+        schema["properties"]["filesystem"]["required"]
+            .as_array()
+            .expect("filesystem required"),
+    );
+    let decoded: RuntimeSpecInput =
+        serde_json::from_value(encoded).expect("decode RuntimeSpec input");
+    decoded
+        .try_into_runtime_spec()
+        .expect("adapt RuntimeSpec input");
 
     let invalid = [
         RuntimeSpecInput {
             agent_id: " ".into(),
-            ..valid_restricted_input()
+            ..valid_input()
         },
         RuntimeSpecInput {
-            listen: "0.0.0.0:0".into(),
-            ..valid_restricted_input()
+            listen: SocketAddressInput {
+                host: "0.0.0.0".into(),
+                port: 0,
+            },
+            ..valid_input()
         },
         RuntimeSpecInput {
             filesystem: FilesystemSpecInput {
                 workspace: "workspace".into(),
                 system_skills: "/skills".into(),
             },
-            ..valid_restricted_input()
+            ..valid_input()
         },
         RuntimeSpecInput {
-            network: NetworkSpecInput::Restricted {
+            network: NetworkSpecInput {
+                packet_contract_revision: crate::packet::PACKET_CONTRACT_REVISION,
+                egress_endpoint: Ipv4EndpointInput {
+                    ipv4: "192.0.2.10".into(),
+                    port: 8092,
+                },
                 tunnel_ipv4: "100.96.0.2".into(),
                 resolver_ipv4: "100.96.0.2".into(),
             },
-            ..valid_restricted_input()
+            ..valid_input()
+        },
+        RuntimeSpecInput {
+            network: NetworkSpecInput {
+                packet_contract_revision: crate::packet::PACKET_CONTRACT_REVISION + 1,
+                ..valid_input().network
+            },
+            ..valid_input()
         },
     ];
     assert!(
@@ -245,12 +275,20 @@ fn assert_runtime_spec_shape(schema: &serde_json::Value) {
     );
 }
 
-fn valid_restricted_input() -> RuntimeSpecInput {
+fn valid_input() -> RuntimeSpecInput {
     RuntimeSpecInput {
         agent_id: "agent-1".into(),
         generation: 2,
-        listen: "0.0.0.0:8093".into(),
-        network: NetworkSpecInput::Restricted {
+        listen: SocketAddressInput {
+            host: "0.0.0.0".into(),
+            port: 8093,
+        },
+        network: NetworkSpecInput {
+            packet_contract_revision: crate::packet::PACKET_CONTRACT_REVISION,
+            egress_endpoint: Ipv4EndpointInput {
+                ipv4: "192.0.2.10".into(),
+                port: 8092,
+            },
             tunnel_ipv4: "100.96.0.2".into(),
             resolver_ipv4: "100.64.0.1".into(),
         },
@@ -308,10 +346,7 @@ async fn official_mcp_client_observes_status_and_calls_all_runtime_tools() {
         .expect("bind Runtime HTTP");
     let address = listener.local_addr().expect("Runtime HTTP address");
     let server = RuntimeHttp::new_in_process(
-        RuntimeStatus::new(
-            RuntimeIdentity::new("agent-1", 2).unwrap(),
-            NetworkMode::Restricted,
-        ),
+        RuntimeStatus::new(RuntimeIdentity::new("agent-1", 2).unwrap()),
         roots,
     );
     let running_shutdown = shutdown.clone();
@@ -330,8 +365,7 @@ async fn official_mcp_client_observes_status_and_calls_all_runtime_tools() {
         json!({
             "agent_id": "agent-1",
             "generation": 2,
-            "status": "ready",
-            "network_mode": "restricted"
+            "status": "ready"
         })
     );
 

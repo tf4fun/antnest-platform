@@ -1,7 +1,6 @@
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::path::{Path, PathBuf};
 
-use serde::Serialize;
 use thiserror::Error;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -13,9 +12,12 @@ pub(crate) struct RuntimeIdentity {
 impl RuntimeIdentity {
     pub(crate) fn new(agent_id: impl Into<String>, generation: u64) -> Result<Self, SpecError> {
         let agent_id = agent_id.into();
-        if agent_id.is_empty() || agent_id.chars().any(char::is_whitespace) {
+        if agent_id.is_empty()
+            || agent_id.len() > 255
+            || !agent_id.bytes().all(|byte| byte.is_ascii_graphic())
+        {
             return Err(SpecError::Identity(
-                "Agent ID must be non-empty and contain no whitespace",
+                "Agent ID must contain 1-255 visible ASCII bytes",
             ));
         }
         if generation == 0 {
@@ -81,36 +83,14 @@ impl RuntimeSpec {
 
 #[derive(Debug)]
 pub(crate) struct NetworkSpec {
-    mode: NetworkMode,
-    egress_endpoint: Option<UdpEndpoint>,
+    egress_endpoint: UdpEndpoint,
     tunnel_ipv4: Ipv4Addr,
     resolver_ipv4: Ipv4Addr,
 }
 
 impl NetworkSpec {
-    pub(crate) fn restricted(
-        tunnel_ipv4: Ipv4Addr,
-        resolver_ipv4: Ipv4Addr,
-    ) -> Result<Self, SpecError> {
-        Self::new(NetworkMode::Restricted, None, tunnel_ipv4, resolver_ipv4)
-    }
-
-    pub(crate) fn unrestricted(
+    pub(crate) fn new(
         egress_endpoint: UdpEndpoint,
-        tunnel_ipv4: Ipv4Addr,
-        resolver_ipv4: Ipv4Addr,
-    ) -> Result<Self, SpecError> {
-        Self::new(
-            NetworkMode::Unrestricted,
-            Some(egress_endpoint),
-            tunnel_ipv4,
-            resolver_ipv4,
-        )
-    }
-
-    fn new(
-        mode: NetworkMode,
-        egress_endpoint: Option<UdpEndpoint>,
         tunnel_ipv4: Ipv4Addr,
         resolver_ipv4: Ipv4Addr,
     ) -> Result<Self, SpecError> {
@@ -122,15 +102,10 @@ impl NetworkSpec {
             ));
         }
         Ok(Self {
-            mode,
             egress_endpoint,
             tunnel_ipv4,
             resolver_ipv4,
         })
-    }
-
-    pub(crate) fn mode(&self) -> NetworkMode {
-        self.mode
     }
 
     pub(crate) fn tunnel_ipv4(&self) -> Ipv4Addr {
@@ -141,8 +116,8 @@ impl NetworkSpec {
         self.resolver_ipv4
     }
 
-    pub(crate) fn egress_endpoint(&self) -> Option<&UdpEndpoint> {
-        self.egress_endpoint.as_ref()
+    pub(crate) fn egress_endpoint(&self) -> &UdpEndpoint {
+        &self.egress_endpoint
     }
 }
 
@@ -178,22 +153,6 @@ impl FilesystemSpec {
 
     pub(crate) fn system_skills(&self) -> &Path {
         &self.system_skills
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum NetworkMode {
-    Restricted,
-    Unrestricted,
-}
-
-impl NetworkMode {
-    pub(crate) fn as_str(self) -> &'static str {
-        match self {
-            Self::Restricted => "restricted",
-            Self::Unrestricted => "unrestricted",
-        }
     }
 }
 
@@ -273,9 +232,10 @@ mod tests {
     fn network_addresses_are_usable_and_distinct() {
         let tunnel = Ipv4Addr::new(198, 18, 0, 2);
         let resolver = Ipv4Addr::new(198, 18, 0, 1);
-        assert!(NetworkSpec::restricted(tunnel, resolver).is_ok());
-        assert!(NetworkSpec::restricted(tunnel, tunnel).is_err());
-        assert!(NetworkSpec::restricted(Ipv4Addr::UNSPECIFIED, resolver).is_err());
+        let endpoint = UdpEndpoint::new("192.0.2.10:8092".parse().unwrap()).unwrap();
+        assert!(NetworkSpec::new(endpoint.clone(), tunnel, resolver).is_ok());
+        assert!(NetworkSpec::new(endpoint.clone(), tunnel, tunnel).is_err());
+        assert!(NetworkSpec::new(endpoint, Ipv4Addr::UNSPECIFIED, resolver).is_err());
     }
 
     #[test]

@@ -1,12 +1,12 @@
 use std::env;
-use std::net::{Ipv4Addr, SocketAddrV4};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::spec::{
-    FilesystemSpec, NetworkMode, NetworkSpec, RuntimeIdentity, RuntimeSpec, UdpEndpoint,
-};
+use crate::spec::{FilesystemSpec, NetworkSpec, RuntimeIdentity, RuntimeSpec, UdpEndpoint};
+
+const RUNTIME_SPEC_ENV: &str = "ANTNEST_RUNTIME_SPEC";
 
 #[derive(Debug, Error)]
 pub(crate) enum ConfigError {
@@ -23,23 +23,32 @@ pub(crate) enum ConfigError {
 pub(crate) struct RuntimeSpecInput {
     pub(crate) agent_id: String,
     pub(crate) generation: u64,
-    pub(crate) listen: String,
+    pub(crate) listen: SocketAddressInput,
     pub(crate) network: NetworkSpecInput,
     pub(crate) filesystem: FilesystemSpecInput,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
-pub(crate) enum NetworkSpecInput {
-    Restricted {
-        tunnel_ipv4: String,
-        resolver_ipv4: String,
-    },
-    Unrestricted {
-        egress_endpoint: String,
-        tunnel_ipv4: String,
-        resolver_ipv4: String,
-    },
+#[serde(deny_unknown_fields)]
+pub(crate) struct NetworkSpecInput {
+    pub(crate) packet_contract_revision: u32,
+    pub(crate) egress_endpoint: Ipv4EndpointInput,
+    pub(crate) tunnel_ipv4: String,
+    pub(crate) resolver_ipv4: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SocketAddressInput {
+    pub(crate) host: String,
+    pub(crate) port: u16,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Ipv4EndpointInput {
+    pub(crate) ipv4: String,
+    pub(crate) port: u16,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -50,7 +59,21 @@ pub(crate) struct FilesystemSpecInput {
 }
 
 pub(crate) fn load() -> Result<RuntimeSpec, ConfigError> {
-    RuntimeSpecInput::from_environment()?.try_into_runtime_spec()
+    let encoded = env::var(RUNTIME_SPEC_ENV)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(ConfigError::Missing(RUNTIME_SPEC_ENV))?;
+    decode_runtime_spec(&encoded)
+}
+
+fn decode_runtime_spec(encoded: &str) -> Result<RuntimeSpec, ConfigError> {
+    let input = serde_json::from_str::<RuntimeSpecInput>(encoded).map_err(|error| {
+        ConfigError::Invalid {
+            name: RUNTIME_SPEC_ENV,
+            message: error.to_string(),
+        }
+    })?;
+    input.try_into_runtime_spec()
 }
 
 pub(crate) fn load_telemetry() -> crate::telemetry::TelemetryConfig {
@@ -62,70 +85,64 @@ pub(crate) fn load_telemetry() -> crate::telemetry::TelemetryConfig {
         endpoint: env::var("OTEL_EXPORTER_OTLP_ENDPOINT").ok(),
         traces_protocol: env::var("OTEL_EXPORTER_OTLP_TRACES_PROTOCOL").ok(),
         protocol: env::var("OTEL_EXPORTER_OTLP_PROTOCOL").ok(),
+        metrics_exporter: env::var("OTEL_METRICS_EXPORTER").ok(),
+        metrics_endpoint: env::var("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT").ok(),
+        metrics_protocol: env::var("OTEL_EXPORTER_OTLP_METRICS_PROTOCOL").ok(),
     })
 }
 
 impl RuntimeSpecInput {
-    fn from_environment() -> Result<Self, ConfigError> {
-        let network = match network_mode()? {
-            NetworkMode::Restricted => NetworkSpecInput::Restricted {
-                tunnel_ipv4: required("ANTNEST_RUNTIME_TUNNEL_IPV4")?,
-                resolver_ipv4: required("ANTNEST_RUNTIME_DNS_IPV4")?,
-            },
-            NetworkMode::Unrestricted => NetworkSpecInput::Unrestricted {
-                egress_endpoint: required("ANTNEST_RUNTIME_EGRESS_ENDPOINT")?,
-                tunnel_ipv4: required("ANTNEST_RUNTIME_TUNNEL_IPV4")?,
-                resolver_ipv4: required("ANTNEST_RUNTIME_DNS_IPV4")?,
-            },
-        };
-        Ok(Self {
-            agent_id: required("ANTNEST_AGENT_ID")?,
-            generation: positive_u64("ANTNEST_RUNTIME_GENERATION")?,
-            listen: env_or("ANTNEST_RUNTIME_LISTEN", "0.0.0.0:8093"),
-            network,
-            filesystem: FilesystemSpecInput {
-                workspace: env_or("ANTNEST_RUNTIME_WORKSPACE", "/workspace"),
-                system_skills: env_or("ANTNEST_RUNTIME_SYSTEM_SKILLS", "/skills"),
-            },
-        })
-    }
-
     pub(crate) fn try_into_runtime_spec(self) -> Result<RuntimeSpec, ConfigError> {
-        let network = match self.network {
-            NetworkSpecInput::Restricted {
-                tunnel_ipv4,
-                resolver_ipv4,
-            } => NetworkSpec::restricted(
-                parse_ipv4("network.tunnel_ipv4", &tunnel_ipv4)?,
-                parse_ipv4("network.resolver_ipv4", &resolver_ipv4)?,
-            )
-            .map_err(|error| invalid_spec("network", error))?,
-            NetworkSpecInput::Unrestricted {
-                egress_endpoint,
-                tunnel_ipv4,
-                resolver_ipv4,
-            } => NetworkSpec::unrestricted(
-                parse_endpoint(&egress_endpoint)?,
-                parse_ipv4("network.tunnel_ipv4", &tunnel_ipv4)?,
-                parse_ipv4("network.resolver_ipv4", &resolver_ipv4)?,
-            )
-            .map_err(|error| invalid_spec("network", error))?,
-        };
+        if self.network.packet_contract_revision != crate::packet::PACKET_CONTRACT_REVISION {
+            return Err(ConfigError::Invalid {
+                name: "network.packet_contract_revision",
+                message: format!(
+                    "expected revision {}",
+                    crate::packet::PACKET_CONTRACT_REVISION
+                ),
+            });
+        }
+        let network = NetworkSpec::new(
+            endpoint_from_input(&self.network.egress_endpoint)?,
+            parse_ipv4("network.tunnel_ipv4", &self.network.tunnel_ipv4)?,
+            parse_ipv4("network.resolver_ipv4", &self.network.resolver_ipv4)?,
+        )
+        .map_err(|error| invalid_spec("network", error))?;
         let identity = RuntimeIdentity::new(self.agent_id, self.generation)
             .map_err(|error| invalid_spec("identity", error))?;
-        let listen = self
-            .listen
-            .parse()
-            .map_err(|error: std::net::AddrParseError| ConfigError::Invalid {
-                name: "ANTNEST_RUNTIME_LISTEN",
-                message: error.to_string(),
-            })?;
+        let listen = socket_from_input("listen", &self.listen)?;
         let filesystem =
             FilesystemSpec::new(self.filesystem.workspace, self.filesystem.system_skills)
                 .map_err(|error| invalid_spec("filesystem", error))?;
         RuntimeSpec::new(identity, listen, network, filesystem)
             .map_err(|error| invalid_spec("listen", error))
     }
+}
+
+fn socket_from_input(
+    name: &'static str,
+    input: &SocketAddressInput,
+) -> Result<SocketAddr, ConfigError> {
+    let address = input
+        .host
+        .parse::<IpAddr>()
+        .map_err(|error| ConfigError::Invalid {
+            name,
+            message: error.to_string(),
+        })?;
+    if input.port == 0 {
+        return Err(ConfigError::Invalid {
+            name,
+            message: "port must be non-zero".into(),
+        });
+    }
+    Ok(SocketAddr::new(address, input.port))
+}
+
+fn endpoint_from_input(input: &Ipv4EndpointInput) -> Result<UdpEndpoint, ConfigError> {
+    let address = parse_ipv4("network.egress_endpoint.ipv4", &input.ipv4)?;
+    UdpEndpoint::new(SocketAddrV4::new(address, input.port))
+        .map_err(|error| ConfigError::Endpoint(error.to_string()))
 }
 
 fn invalid_spec(name: &'static str, error: crate::spec::SpecError) -> ConfigError {
@@ -145,7 +162,8 @@ fn parse_ipv4(name: &'static str, value: &str) -> Result<Ipv4Addr, ConfigError> 
     Ok(address)
 }
 
-// Provider owns service discovery; the Runtime domain receives one concrete endpoint.
+// Runtime Controller owns service discovery; Runtime receives one concrete endpoint.
+#[cfg(test)]
 pub(crate) fn parse_endpoint(value: &str) -> Result<UdpEndpoint, ConfigError> {
     let address = value
         .trim()
@@ -154,51 +172,31 @@ pub(crate) fn parse_endpoint(value: &str) -> Result<UdpEndpoint, ConfigError> {
     UdpEndpoint::new(address).map_err(|error| ConfigError::Endpoint(error.to_string()))
 }
 
-fn network_mode() -> Result<NetworkMode, ConfigError> {
-    match required("ANTNEST_RUNTIME_NETWORK_MODE")?.as_str() {
-        "restricted" => Ok(NetworkMode::Restricted),
-        "unrestricted" => Ok(NetworkMode::Unrestricted),
-        _ => Err(ConfigError::Invalid {
-            name: "ANTNEST_RUNTIME_NETWORK_MODE",
-            message: "must be restricted or unrestricted".into(),
-        }),
-    }
-}
-
-fn required(name: &'static str) -> Result<String, ConfigError> {
-    env::var(name)
-        .ok()
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty())
-        .ok_or(ConfigError::Missing(name))
-}
-
-fn positive_u64(name: &'static str) -> Result<u64, ConfigError> {
-    let value = required(name)?;
-    let parsed = value.parse::<u64>().map_err(|error| ConfigError::Invalid {
-        name,
-        message: error.to_string(),
-    })?;
-    if parsed == 0 {
-        return Err(ConfigError::Invalid {
-            name,
-            message: "must be positive".into(),
-        });
-    }
-    Ok(parsed)
-}
-
-fn env_or(name: &str, fallback: &str) -> String {
-    env::var(name)
-        .ok()
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| fallback.to_owned())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn runtime_spec_is_one_strict_json_document() {
+        let encoded = serde_json::to_string(&valid_input()).unwrap();
+        let spec = decode_runtime_spec(&encoded).unwrap();
+
+        assert_eq!(spec.identity().agent_id(), "agent-config-test");
+        assert_eq!(spec.identity().generation(), 7);
+        assert_eq!(spec.listen().to_string(), "0.0.0.0:8093");
+    }
+
+    #[test]
+    fn runtime_spec_rejects_unknown_fields_and_invalid_json() {
+        let mut value = serde_json::to_value(valid_input()).unwrap();
+        value
+            .as_object_mut()
+            .unwrap()
+            .insert("legacy_network_mode".into(), serde_json::json!("allow"));
+
+        assert!(decode_runtime_spec(&value.to_string()).is_err());
+        assert!(decode_runtime_spec("not-json").is_err());
+    }
 
     #[test]
     fn resolves_literal_ipv4_authority() {
@@ -214,5 +212,29 @@ mod tests {
     #[test]
     fn rejects_hostname_authority_at_the_runtime_boundary() {
         assert!(parse_endpoint("localhost:9443").is_err());
+    }
+
+    fn valid_input() -> RuntimeSpecInput {
+        RuntimeSpecInput {
+            agent_id: "agent-config-test".into(),
+            generation: 7,
+            listen: SocketAddressInput {
+                host: "0.0.0.0".into(),
+                port: 8093,
+            },
+            network: NetworkSpecInput {
+                packet_contract_revision: crate::packet::PACKET_CONTRACT_REVISION,
+                egress_endpoint: Ipv4EndpointInput {
+                    ipv4: "192.0.2.10".into(),
+                    port: 8092,
+                },
+                tunnel_ipv4: "100.96.0.2".into(),
+                resolver_ipv4: "100.64.0.1".into(),
+            },
+            filesystem: FilesystemSpecInput {
+                workspace: "/workspace".into(),
+                system_skills: "/skills".into(),
+            },
+        }
     }
 }

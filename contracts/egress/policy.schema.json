@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://antnest.local/contracts/egress/policy.schema.json",
+  "title": "Antnest Runtime Egress Policy",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "action"],
+      "properties": {
+        "schema_version": {"const": 1},
+        "action": {"const": "allow_all"}
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "action"],
+      "properties": {
+        "schema_version": {"const": 1},
+        "action": {"const": "deny_all"}
+      }
+    }
+  ]
+}
+

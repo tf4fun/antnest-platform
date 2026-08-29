@@ -3,6 +3,7 @@ use std::pin::Pin;
 #[cfg(test)]
 use std::sync::Arc;
 use std::task::{Context, Poll};
+use std::time::Instant;
 
 use axum::{
     Json, Router,
@@ -16,8 +17,12 @@ use axum::{
 use http_body::{Body as HttpBody, Frame, SizeHint};
 use rmcp::{
     RoleServer, ServerHandler,
-    handler::server::wrapper::Parameters,
-    model::{CallToolResult, ProtocolVersion},
+    handler::server::{tool::ToolCallContext, wrapper::Parameters},
+    model::{
+        CacheScope, CallToolRequestParams, CallToolResponse, CallToolResult, DiscoverResult,
+        InitializeRequestParams, InitializeResult, ListToolsResult, PaginatedRequestParams,
+        ProtocolVersion, ResultType,
+    },
     service::RequestContext,
     tool, tool_router,
     transport::streamable_http_server::{
@@ -38,7 +43,8 @@ use crate::protocol::types::{
 };
 #[cfg(test)]
 use crate::roots::NamedRoots;
-use crate::spec::{NetworkMode, RuntimeIdentity};
+use crate::spec::RuntimeIdentity;
+use crate::telemetry::RuntimeMetrics;
 use crate::tool_error::{ToolError, ToolErrorCode};
 #[cfg(test)]
 use crate::tools::ToolEngine;
@@ -53,16 +59,14 @@ pub(crate) struct RuntimeStatus {
     agent_id: String,
     generation: u64,
     status: &'static str,
-    network_mode: NetworkMode,
 }
 
 impl RuntimeStatus {
-    pub(crate) fn new(identity: RuntimeIdentity, network_mode: NetworkMode) -> Self {
+    pub(crate) fn new(identity: RuntimeIdentity) -> Self {
         Self {
             agent_id: identity.agent_id().to_owned(),
             generation: identity.generation(),
             status: "ready",
-            network_mode,
         }
     }
 
@@ -75,13 +79,19 @@ impl RuntimeStatus {
 pub(crate) struct RuntimeHttp {
     status: RuntimeStatus,
     tools: ToolBackend,
+    metrics: RuntimeMetrics,
 }
 
 impl RuntimeHttp {
-    pub(crate) fn new(status: RuntimeStatus, actor: ExecutionActor) -> Self {
+    pub(crate) fn new(
+        status: RuntimeStatus,
+        actor: ExecutionActor,
+        metrics: RuntimeMetrics,
+    ) -> Self {
         Self {
             status,
             tools: ToolBackend::Process(actor),
+            metrics,
         }
     }
 
@@ -90,6 +100,7 @@ impl RuntimeHttp {
         Self {
             status,
             tools: ToolBackend::InProcess(ToolEngine::new(roots)),
+            metrics: RuntimeMetrics::default(),
         }
     }
 
@@ -103,7 +114,8 @@ impl RuntimeHttp {
         listener: tokio::net::TcpListener,
         shutdown: CancellationToken,
     ) -> Result<(), std::io::Error> {
-        let tools = RuntimeToolServer::new(self.tools, self.status.identity());
+        let tools =
+            RuntimeToolServer::new(self.tools, self.status.identity(), self.metrics.clone());
         let service: StreamableHttpService<RuntimeToolServer, LocalSessionManager> =
             StreamableHttpService::new(
                 move || Ok(tools.clone()),
@@ -116,18 +128,25 @@ impl RuntimeHttp {
                     .with_cancellation_token(shutdown.child_token()),
             );
         let status = self.status.clone();
+        let state = HttpState {
+            status: self.status,
+            metrics: self.metrics,
+        };
         let router = Router::new()
             .route(STATUS_PATH, get(move || status_response(status.clone())))
             .nest_service(MCP_PATH, service)
             .layer(DefaultBodyLimit::max(MAX_EXECUTOR_MESSAGE_BYTES))
-            .layer(middleware::from_fn_with_state(
-                self.status,
-                trace_http_request,
-            ));
+            .layer(middleware::from_fn_with_state(state, trace_http_request));
         axum::serve(listener, router)
             .with_graceful_shutdown(shutdown.cancelled_owned())
             .await
     }
+}
+
+#[derive(Clone)]
+struct HttpState {
+    status: RuntimeStatus,
+    metrics: RuntimeMetrics,
 }
 
 async fn status_response(status: RuntimeStatus) -> Json<RuntimeStatus> {
@@ -135,10 +154,11 @@ async fn status_response(status: RuntimeStatus) -> Json<RuntimeStatus> {
 }
 
 async fn trace_http_request(
-    State(status): State<RuntimeStatus>,
+    State(state): State<HttpState>,
     request: Request,
     next: Next,
 ) -> Response {
+    let status = &state.status;
     let identity = status.identity();
     let method = request.method().clone();
     let path = route_label(request.uri().path());
@@ -151,7 +171,7 @@ async fn trace_http_request(
         "http.request.method" = %method,
         "url.path" = path,
         "http.response.status_code" = tracing::field::Empty,
-        "http.outcome" = tracing::field::Empty,
+        "http.transport.outcome" = tracing::field::Empty,
         otel.kind = "server",
         otel.status_code = tracing::field::Empty,
         error.type = tracing::field::Empty,
@@ -160,8 +180,17 @@ async fn trace_http_request(
     );
     crate::telemetry::set_remote_parent(&span, remote.as_ref());
     crate::telemetry::record_span_identity(&span);
+    let started = Instant::now();
     let response = next.run(request).instrument(span.clone()).await;
-    let completion = HttpCompletion::new(span, identity, method, path, response.status());
+    let completion = HttpCompletion::new(
+        span,
+        identity,
+        method,
+        path,
+        response.status(),
+        state.metrics,
+        started,
+    );
     let (parts, body) = response.into_parts();
     Response::from_parts(parts, Body::new(ObservedBody::new(body, completion)))
 }
@@ -179,6 +208,8 @@ struct HttpCompletion {
     method: Method,
     path: &'static str,
     status: StatusCode,
+    metrics: RuntimeMetrics,
+    started: Instant,
 }
 
 impl HttpCompletion {
@@ -188,6 +219,8 @@ impl HttpCompletion {
         method: Method,
         path: &'static str,
         status: StatusCode,
+        metrics: RuntimeMetrics,
+        started: Instant,
     ) -> Self {
         Self {
             span,
@@ -195,6 +228,8 @@ impl HttpCompletion {
             method,
             path,
             status,
+            metrics,
+            started,
         }
     }
 
@@ -205,8 +240,14 @@ impl HttpCompletion {
             BodyTermination::ClientDisconnected => ("error", "client_disconnected"),
             BodyTermination::EndOfStream => status_outcome(self.status),
         };
+        self.metrics.http(
+            self.method.as_str(),
+            self.path,
+            outcome,
+            self.started.elapsed(),
+        );
         self.span.record("http.response.status_code", code);
-        self.span.record("http.outcome", outcome);
+        self.span.record("http.transport.outcome", outcome);
         self.span.record(
             "otel.status_code",
             if outcome == "success" { "OK" } else { "ERROR" },
@@ -226,7 +267,7 @@ impl HttpCompletion {
                     "http.request.method" = %self.method,
                     "url.path" = self.path,
                     "http.response.status_code" = code,
-                    "http.outcome" = outcome,
+                    "http.transport.outcome" = outcome,
                     error.type = error_type,
                     "Runtime HTTP request completed"
                 );
@@ -240,7 +281,7 @@ impl HttpCompletion {
                     "http.request.method" = %self.method,
                     "url.path" = self.path,
                     "http.response.status_code" = code,
-                    "http.outcome" = outcome,
+                    "http.transport.outcome" = outcome,
                     error.type = error_type,
                     "Runtime HTTP request completed"
                 );
@@ -292,6 +333,8 @@ impl ObservedBody {
                 Method::GET,
                 STATUS_PATH,
                 StatusCode::OK,
+                RuntimeMetrics::default(),
+                Instant::now(),
             )),
             probe: Some(probe),
         }
@@ -360,11 +403,16 @@ pub(crate) fn route_label(path: &str) -> &'static str {
 struct RuntimeToolServer {
     tools: ToolBackend,
     identity: RuntimeIdentity,
+    metrics: RuntimeMetrics,
 }
 
 impl RuntimeToolServer {
-    fn new(tools: ToolBackend, identity: RuntimeIdentity) -> Self {
-        Self { tools, identity }
+    fn new(tools: ToolBackend, identity: RuntimeIdentity, metrics: RuntimeMetrics) -> Self {
+        Self {
+            tools,
+            identity,
+            metrics,
+        }
     }
 }
 
@@ -454,8 +502,9 @@ impl RuntimeToolServer {
     ) -> CallToolResult {
         let span = tool_span("bash", &self.identity);
         async {
+            let started = Instant::now();
             let result = self.tools.bash(input, context.ct).await;
-            tool_result("bash", &self.identity, result)
+            tool_result("bash", &self.identity, &self.metrics, started, result)
         }
         .instrument(span)
         .await
@@ -479,8 +528,9 @@ impl RuntimeToolServer {
     ) -> CallToolResult {
         let span = tool_span("read", &self.identity);
         async {
+            let started = Instant::now();
             let result = self.tools.read(input, context.ct).await;
-            tool_result("read", &self.identity, result)
+            tool_result("read", &self.identity, &self.metrics, started, result)
         }
         .instrument(span)
         .await
@@ -504,8 +554,9 @@ impl RuntimeToolServer {
     ) -> CallToolResult {
         let span = tool_span("write", &self.identity);
         async {
+            let started = Instant::now();
             let result = self.tools.write(input, context.ct).await;
-            tool_result("write", &self.identity, result)
+            tool_result("write", &self.identity, &self.metrics, started, result)
         }
         .instrument(span)
         .await
@@ -529,8 +580,9 @@ impl RuntimeToolServer {
     ) -> CallToolResult {
         let span = tool_span("edit", &self.identity);
         async {
+            let started = Instant::now();
             let result = self.tools.edit(input, context.ct).await;
-            tool_result("edit", &self.identity, result)
+            tool_result("edit", &self.identity, &self.metrics, started, result)
         }
         .instrument(span)
         .await
@@ -539,6 +591,69 @@ impl RuntimeToolServer {
 
 #[rmcp::tool_handler]
 impl ServerHandler for RuntimeToolServer {
+    async fn initialize(
+        &self,
+        request: InitializeRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<InitializeResult, rmcp::ErrorData> {
+        observe_mcp_operation("initialize", &self.identity, &self.metrics, async {
+            context.peer.set_peer_info(request.clone());
+            let mut info = self.get_info();
+            let supported = self.supported_protocol_versions();
+            if supported.contains(&request.protocol_version) {
+                info.protocol_version = request.protocol_version;
+            }
+            Ok(info)
+        })
+        .await
+    }
+
+    async fn discover(
+        &self,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<DiscoverResult, rmcp::ErrorData> {
+        observe_mcp_operation("discover", &self.identity, &self.metrics, async {
+            Ok(DiscoverResult::from_server_info(
+                self.supported_protocol_versions().into_owned(),
+                self.get_info(),
+            ))
+        })
+        .await
+    }
+
+    async fn list_tools(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ListToolsResult, rmcp::ErrorData> {
+        observe_mcp_operation("tools/list", &self.identity, &self.metrics, async {
+            let supports_cache_hints = context
+                .protocol_version()
+                .is_some_and(|version| version >= ProtocolVersion::V_2026_07_28);
+            Ok(ListToolsResult {
+                result_type: Some(ResultType::COMPLETE),
+                tools: Self::tool_router().list_all(),
+                meta: None,
+                next_cursor: None,
+                ttl_ms: supports_cache_hints.then_some(0),
+                cache_scope: supports_cache_hints.then_some(CacheScope::Public),
+            })
+        })
+        .await
+    }
+
+    async fn call_tool(
+        &self,
+        request: CallToolRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResponse, rmcp::ErrorData> {
+        observe_mcp_operation("tools/call", &self.identity, &self.metrics, async {
+            let call = ToolCallContext::new(self, request, context);
+            Self::tool_router().call(call).await
+        })
+        .await
+    }
+
     fn get_info(&self) -> rmcp::model::ServerInfo {
         rmcp::model::ServerInfo::new(
             rmcp::model::ServerCapabilities::builder()
@@ -551,6 +666,79 @@ impl ServerHandler for RuntimeToolServer {
 
     fn supported_protocol_versions(&self) -> Cow<'static, [ProtocolVersion]> {
         Cow::Borrowed(&[ProtocolVersion::V_2026_07_28])
+    }
+}
+
+async fn observe_mcp_operation<T>(
+    operation: &'static str,
+    identity: &RuntimeIdentity,
+    metrics: &RuntimeMetrics,
+    future: impl std::future::Future<Output = Result<T, rmcp::ErrorData>>,
+) -> Result<T, rmcp::ErrorData> {
+    let span = tracing::info_span!(
+        "runtime.mcp.operation",
+        "service.name" = crate::telemetry::SERVICE_NAME,
+        "antnest.agent.id" = identity.agent_id(),
+        "antnest.runtime.generation" = %identity.generation(),
+        "mcp.operation.name" = operation,
+        "mcp.operation.outcome" = tracing::field::Empty,
+        "jsonrpc.error_code" = tracing::field::Empty,
+        otel.status_code = tracing::field::Empty,
+        "error.type" = tracing::field::Empty,
+        trace_id = tracing::field::Empty,
+        span_id = tracing::field::Empty,
+    );
+    crate::telemetry::record_span_identity(&span);
+    let started = Instant::now();
+    let result = future.instrument(span.clone()).await;
+    let (outcome, error_type, error_code) = match &result {
+        Ok(_) => ("success", "", None),
+        Err(error) => (
+            "error",
+            jsonrpc_error_type(error.code.0),
+            Some(error.code.0),
+        ),
+    };
+    span.record("mcp.operation.outcome", outcome);
+    span.record(
+        "otel.status_code",
+        if result.is_ok() { "OK" } else { "ERROR" },
+    );
+    span.record("error.type", error_type);
+    if let Some(code) = error_code {
+        span.record("jsonrpc.error_code", i64::from(code));
+    }
+    metrics.mcp(operation, outcome, error_type, started.elapsed());
+    let (trace_id, span_id) = crate::telemetry::span_identity(&span);
+    span.in_scope(|| {
+        tracing::info!(
+            "service.name" = crate::telemetry::SERVICE_NAME,
+            "antnest.agent.id" = identity.agent_id(),
+            "antnest.runtime.generation" = %identity.generation(),
+            trace_id = %trace_id,
+            span_id = %span_id,
+            "mcp.operation.name" = operation,
+            "mcp.operation.outcome" = outcome,
+            "jsonrpc.error_code" = error_code,
+            error.type = error_type,
+            "Runtime MCP operation completed"
+        );
+    });
+    result
+}
+
+fn jsonrpc_error_type(code: i32) -> &'static str {
+    match code {
+        -32_022 => "unsupported_protocol_version",
+        -32_021 => "missing_required_client_capability",
+        -32_020 => "header_mismatch",
+        -32_002 => "resource_not_found",
+        -32_600 => "invalid_request",
+        -32_601 => "method_not_found",
+        -32_602 => "invalid_params",
+        -32_603 => "internal_error",
+        -32_700 => "parse_error",
+        _ => "jsonrpc_error",
     }
 }
 
@@ -574,12 +762,15 @@ fn tool_span(name: &'static str, identity: &RuntimeIdentity) -> tracing::Span {
 fn tool_result<T: Serialize>(
     name: &'static str,
     identity: &RuntimeIdentity,
+    metrics: &RuntimeMetrics,
+    started: Instant,
     result: Result<T, ToolError>,
 ) -> CallToolResult {
     let (trace_id, span_id) = crate::telemetry::span_identity(&tracing::Span::current());
     match result {
         Ok(value) => match serde_json::to_value(value) {
             Ok(value) => {
+                metrics.tool(name, "success", "", started.elapsed());
                 tracing::Span::current().record("mcp.tool.outcome", "success");
                 tracing::Span::current().record("otel.status_code", "OK");
                 tracing::info!(
@@ -595,6 +786,12 @@ fn tool_result<T: Serialize>(
                 CallToolResult::structured(value)
             }
             Err(error) => {
+                metrics.tool(
+                    name,
+                    "error",
+                    ToolErrorCode::EncodeResultFailed.as_str(),
+                    started.elapsed(),
+                );
                 tracing::Span::current().record("mcp.tool.outcome", "error");
                 tracing::Span::current().record("otel.status_code", "ERROR");
                 tracing::Span::current()
@@ -620,6 +817,7 @@ fn tool_result<T: Serialize>(
         Err(error) => {
             let code = error.code;
             let message = error.message;
+            metrics.tool(name, "error", code.as_str(), started.elapsed());
             tracing::Span::current().record("mcp.tool.outcome", "error");
             tracing::Span::current().record("otel.status_code", "ERROR");
             tracing::Span::current().record("error.type", code.as_str());

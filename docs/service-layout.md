@@ -33,42 +33,42 @@ has one canonical home: service internals live beside the service; deployment
 and cross-service invariants live under the repository `docs/`; wire schemas
 live under `contracts/`.
 
-## Current Ownership
+## Target Ownership
+
+Antnest Runtime and Runtime Egress are currently implemented. Other service
+directories are design drafts and are not compatibility constraints. The
+target ownership is:
 
 | Capability | Owner | Explicitly outside the owner |
 | --- | --- | --- |
-| Runtime desired/observed state and generations | Runtime Controller | Agent prompts, models, sessions, and user identity |
-| Docker container and workspace volume effects | Docker Runtime Provider | Desired state, retries, and reconciliation |
-| Runtime admission and Work dispatch | Runtime Controller | End-user authentication and authorization |
-| Network intent and reservation ordering | Runtime Controller | Packet forwarding and kernel policy |
-| Unrestricted egress data plane and DNS | Runtime Egress | Runtime lifecycle and policy authoring |
-| Process and filesystem side effects | Antnest Runtime | Docker, PostgreSQL, lifecycle reconciliation |
-| TUN bootstrap and local restricted-mode rejection | Antnest Runtime | Selecting the Agent's network policy |
-| Lifecycle and Work HTTP API | `runtime-controller-v1.yaml` | Runtime transport implementation details |
-| Controller-to-Runtime messages | `contracts/runtime/contract.json` | Business records owned by future services |
+| Agent desired state, generations, rollout, and execution admission | Agent Controller | Platform APIs, packets, policy persistence, MCP implementation |
+| Runtime generation realization on Docker or Kubernetes | Runtime Controller | Generation selection, rollout, work dispatch, network policy |
+| Agent workspace and platform resource effects | Runtime Controller | Agent retention policy and business records |
+| Agent Tunnel IPv4, policy, forwarding, rejection, and address reuse | Rust Runtime Egress | Runtime lifecycle, Runs, Tools, Agent generations |
+| Process, filesystem, TUN bootstrap, and MCP side effects | Antnest Runtime | Policy decisions, deployment resources, durable control state |
+| Runs, sessions, Agent loop, and MCP invocation | ACP Service | Runtime rollout, address allocation, platform resources |
+| Runtime status, MCP, specification, and packet bytes | `contracts/runtime/` | Agent, policy, and deployment-provider persistence |
 
 ## Dependency Direction
 
-The current dependency graph is intentionally small:
+The target dependency graph is intentionally acyclic:
 
 ```text
-future internal callers
-        |
-        v
-Runtime Controller HTTP API ----> PostgreSQL
-        |----> Docker Runtime Provider ----> Docker Engine
-        |----> Runtime Egress -------------> Linux TUN/network
-        v
-Controller-to-Runtime contract
-        |
-        v
-Antnest Runtime ----> /workspace, /skills, child processes
+Management -> Agent Controller -> Runtime Controller -> Docker/Kubernetes
+                     |                    |
+                     |                    `-> Runtime status
+                     `-> Runtime Egress control -> Egress PostgreSQL
+
+ACP Service -> Agent Controller execution grant
+ACP Service -> active Antnest Runtime MCP
+Antnest Runtime -> Runtime Egress UDP/TUN -> destination network
 ```
 
-The Runtime never calls PostgreSQL or Docker. It opens control to Controller and
-packet transport to Egress. Controller owns no host privilege: it has neither
-Docker socket nor TUN access. Future services call Controller through its
-internal API instead of reading its database or calling providers directly.
+The Runtime never calls PostgreSQL or Docker. Runtime Controller holds platform
+credentials but no Egress or Agent database. Runtime Egress owns its private
+schema and network privilege. Agent Controller coordinates internal RPCs but
+does not read another service's tables. ACP calls only the active Runtime named
+by an Agent Controller execution grant.
 
 ## Adding A Service
 
