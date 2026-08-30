@@ -29,8 +29,7 @@ services:
     environment:
       ANTNEST_EGRESS_DATABASE_URL: postgres://antnest_egress:${ANTNEST_EGRESS_POSTGRES_PASSWORD:-antnest-egress-dev}@postgres:5432/antnest_egress
       ANTNEST_EGRESS_DATABASE_TLS_MODE: disable
-      ANTNEST_EGRESS_CONTROL_LISTEN: 0.0.0.0:8081
-      ANTNEST_EGRESS_UDP_LISTEN: 0.0.0.0:8092
+      ANTNEST_EGRESS_CONTROL_LISTEN: ${ANTNEST_EGRESS_CONTROL_IPV4:-172.31.255.3}:8081
       ANTNEST_EGRESS_UDP_ADVERTISE: ${ANTNEST_EGRESS_IPV4:-172.30.255.3}:8092
       ANTNEST_EGRESS_TUNNEL_CIDR: 100.64.0.0/10
       ANTNEST_EGRESS_RESOLVER_IPV4: 100.64.0.1
@@ -43,14 +42,13 @@ services:
     devices:
       - /dev/net/tun:/dev/net/tun
     healthcheck:
-      test: ["CMD-SHELL", "curl --fail --silent http://127.0.0.1:8081/status | grep -q '\"status\":\"ready\"'"]
+      test: ["CMD-SHELL", "curl --fail --silent http://${ANTNEST_EGRESS_CONTROL_IPV4:-172.31.255.3}:8081/status | grep -q '\"status\":\"ready\"'"]
       interval: 5s
       timeout: 2s
       retries: 12
-    ports:
-      - 127.0.0.1:${ANTNEST_EGRESS_CONTROL_HOST_PORT:-18081}:8081
     networks:
-      control: {}
+      control:
+        ipv4_address: ${ANTNEST_EGRESS_CONTROL_IPV4:-172.31.255.3}
       egress: {}
       runtime-management:
         ipv4_address: ${ANTNEST_EGRESS_IPV4:-172.30.255.3}
@@ -59,9 +57,9 @@ services:
 networks:
   control:
     internal: true
-  # Host port publishing is used only by local integration tests. Some Docker
-  # runtimes do not publish ports for containers attached exclusively to
-  # internal networks.
+    ipam:
+      config:
+        - subnet: ${ANTNEST_EGRESS_CONTROL_SUBNET:-172.31.255.0/24}
   development: {}
   egress: {}
   runtime-management:

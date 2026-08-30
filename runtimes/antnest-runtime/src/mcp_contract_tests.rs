@@ -123,8 +123,8 @@ fn shared_contract_matches_runtime_http_surface() {
     assert_eq!(contract.egress_tunnel.policy_owner, "runtime-egress");
     assert_eq!(contract.packet_format, "packet-format.md");
     assert_eq!(contract.packet_fixtures, "packet-fixtures.json");
-    assert_eq!(contract.readiness.scope, "runtime-local");
-    assert!(!contract.readiness.egress_dependency_checked);
+    assert_eq!(contract.readiness.scope, "runtime-with-egress-path");
+    assert!(contract.readiness.egress_dependency_checked);
     assert!(contract.readiness.executor_identity_checked);
     assert!(contract.readiness.workspace_access_checked);
     assert!(contract.readiness.system_skills_access_checked);

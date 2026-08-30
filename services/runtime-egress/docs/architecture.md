@@ -25,9 +25,12 @@ and resets flows between generations.
 
 ## 2. Trust Model
 
-Docker or Kubernetes networking is trusted for Stage 1. The control listener is
-reachable only by internal control-plane services. The UDP listener is reachable
-by Runtime containers. Runtime cannot reach Egress PostgreSQL or the control
+Docker or Kubernetes networking is trusted for Stage 1. The control listener
+binds one explicit control-network address and is reachable only by internal
+control-plane services; a wildcard control bind is rejected. The UDP listener
+binds the single advertised Runtime-network address rather than a wildcard, so
+joining control and external networks does not expose the packet socket on
+those interfaces. Runtime cannot reach Egress PostgreSQL or the control
 listener.
 
 The UDP source address is a return locator, not a durable or cryptographic
@@ -43,10 +46,10 @@ The target crate uses the following modules:
 | `config` | Parse and validate process configuration | Database, packet engine |
 | `domain` | Agent network, policy revision, assignment, and state invariants | Tokio, HTTP, SQL, Linux |
 | `allocator` | PID-style slot selection and quarantine transitions | HTTP, packet bytes |
-| `policy` | Validate, compile, and evaluate immutable policy snapshots | PostgreSQL, sockets |
+| `policy` | Validate, compile, and evaluate immutable policy snapshots, including the non-bypassable special/private-address baseline and resolver exception | PostgreSQL, sockets |
 | `packet` | Parse IPv4/TCP, derive flow keys, and build TCP rejection | Database, policy storage |
 | `flow` | Bounded first-owner flow table and reverse lookup | SQL, kernel commands |
-| `dataplane` | Coordinate UDP, TUN, policy snapshot, and flow ownership | HTTP DTOs, PostgreSQL |
+| `dataplane` | Coordinate UDP, TUN, compiled-policy decisions, and flow ownership; it never reimplements destination policy | HTTP DTOs, PostgreSQL |
 | `repository` | Egress PostgreSQL migrations and transactional control writes | UDP, TUN |
 | `control` | Map internal RPCs to application operations and stable errors | Linux implementation details |
 | `kernel` | TUN, routes, nftables/NAT, and conntrack cleanup | Agent or policy semantics |
@@ -112,20 +115,59 @@ agent_policy_assignments
 `schema_migrations` records every ordered migration, including bootstrap, by
 version, stable name, and SHA-256 checksum. Bootstrap creates the schema,
 history table, and its own history row in one transaction. Startup rejects an
-unexpected schema owner and unknown, reordered, renamed, or modified applied
-migrations; each missing migration and its history row commit in one
-transaction. Reconciliation then inserts one configured address pool and the
-immutable `allow_all` and `deny_all` policy revisions. Missing, invalid, or
-unloadable assignment always compiles to deny-all.
+unexpected existing schema owner before issuing any DDL or DML, then rejects
+unknown, reordered, renamed, or modified applied migrations; each missing
+migration and its history row commit in one transaction. Reconciliation then
+inserts one configured address pool and the immutable `allow_all` and
+`deny_all` policy revisions. An Agent absent from the active in-memory snapshot
+is denied by default. Invalid or unloadable persisted rows make the initial
+snapshot fail before listeners open; Egress never guesses policy from corrupt
+authority data.
 
-The PostgreSQL connection driver publishes availability changes. Transport loss
-immediately marks the control plane degraded but does not replace the last
-packet snapshot. The next control operation reconnects, revalidates migrations,
-ownership, and seed data, and restores control readiness after it succeeds.
+PostgreSQL access uses a small bounded connection pool. The pool mutex protects
+only the idle-client queue and is never held across a SQL await, so a lock wait
+for one Agent cannot serialize unrelated Agent control operations. Connection
+acquisition, transport establishment, statements, and lock waits all have
+finite deadlines. Each complete repository operation also has a client-side
+deadline; expiry discards that connection instead of returning a client with an
+unknown in-flight request to the pool. Every newly established client
+revalidates migrations, ownership, and seed data before entering the pool.
+
+The connection drivers publish aggregate availability changes. Losing one
+pooled connection does not degrade the control plane while another validated
+connection remains live. Losing the last live connection immediately marks the
+control plane degraded but does not replace the last packet snapshot. A later
+validated connection restores control readiness. A statement, lock, or
+persisted-row decoding failure belongs to its current control RPC and does not
+change global readiness while validated connections remain live.
+
+Global readiness represents shared infrastructure only. A failed conntrack
+cleanup leaves that Agent fenced and observable but cannot make unrelated Agent
+control or packet paths unready. Health transitions pass through one structured
+event path, while the periodic metrics snapshot reports global readiness and the
+aggregate fenced-Agent count without Agent labels.
+
+Repository pool health is the sole authority for global control readiness.
+Individual RPC outcomes, including pool acquisition timeout, SQL timeout, and
+connection failure, return their scoped error but never flip readiness directly;
+the pool's validated-live-connection transition does that once for the process.
+
+Quarantine reclamation has the same failure boundary. Each expired Agent is
+cleaned independently; a kernel cleanup failure leaves only that Agent fenced
+and retained while the sweep continues with the remaining candidates. Database
+unavailability remains a shared control-plane failure.
 
 The packet path uses an in-memory snapshot built from one consistent database
 read and replaced under the data-plane consistency lock. PostgreSQL is never
 queried per packet.
+
+Packet-loop failures are classified by ownership. Loss of the shared UDP
+listener or TUN device is fatal and lets the container platform restart Egress.
+An explicit peer refusal, host-unreachable response, or peer-path MTU failure
+removes only that Agent's flows for that peer, increments an aggregate counter,
+and leaves the shared packet loop running. Shared UDP interface/route errors and
+output deadline expiry are fatal; swallowing them as peer-local loss would leave
+Egress reporting ready while every Agent loses downlink traffic.
 
 ## 5. Address Allocation
 
@@ -162,8 +204,17 @@ or:
 {"schema_version":1,"action":"deny_all"}
 ```
 
+The policy universe excludes platform and special-use address space. In schema
+version 1, `allow_all` means all externally routable IPv4 destinations plus TCP
+DNS to the configured virtual resolver; it never permits loopback, link-local,
+private, shared Tunnel, multicast, documentation, benchmarking, or reserved
+destinations. This invariant prevents an Agent from routing through Egress back
+into Docker/Kubernetes control networks or another Runtime's unauthenticated
+MCP listener.
+
 Later schemas may add protocol, destination CIDR, port, and domain-derived
-rules. Runtime and the UDP packet format do not change when policy grows.
+rules, including explicit enterprise-internal destinations. Runtime and the UDP
+packet format do not change when policy grows.
 
 Assignment uses compare-and-swap on `resource_version`. One ephemeral Agent
 operation lock serializes policy assignment, flow reset, fence, release, and
@@ -264,7 +315,17 @@ Antnest-owned table and chain names.
 The virtual resolver is a bounded DNS-over-TCP proxy to one deployment-provided
 upstream. Egress does not hard-code a public DNS service or persist DNS cache;
 resolver selection remains a deployment concern while Agent DNS still follows
-the governed TCP data path.
+the governed TCP data path. Admission has both a process-wide connection limit
+and a per-source tunnel-address limit. A single Runtime therefore cannot consume
+all DNS proxy slots, while metrics remain aggregate and never use an Agent or
+tunnel address as a label.
+
+Runtime readiness uses no Egress control RPC. Once Agent Controller has created
+the network allocation, Runtime sends an ordinary TCP SYN through the raw-packet
+UDP endpoint to `192.0.2.1`, which the immutable special-use-address baseline
+rejects with the normal policy RST. The matching reply proves the assigned
+Runtime-to-Egress packet path without creating a flow, reaching an upstream, or
+adding a session protocol to the data plane.
 
 ## 12. Concurrency
 
@@ -288,8 +349,11 @@ the governed TCP data path.
 - OTLP traces are restricted to trusted control RPCs. Packet, flow, DNS, and
   maintenance paths never emit per-packet logs or OTLP spans; they emit only
   bounded local aggregates and task-level fatal events.
-- A fatal UDP, TUN, or kernel-state failure cancels the process. Container
-  restart is the recovery mechanism.
+- A shared UDP socket can receive delayed ICMP errors without the originating
+  peer. Known destination-level ICMP errors are counted and dropped without
+  mutating any Agent flow; they can neither kill Egress nor be charged to an
+  arbitrary current peer. Local socket, TUN, or kernel-state failures remain
+  fatal and container restart is the recovery mechanism.
 
 ## 13. Failure Semantics
 

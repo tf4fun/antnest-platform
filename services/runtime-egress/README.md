@@ -58,6 +58,10 @@ The Runtime packet bytes remain defined by
 [`../../contracts/runtime/packet-format.md`](../../contracts/runtime/packet-format.md),
 with revision and fixed constants owned by
 [`../../contracts/runtime/packet-contract.json`](../../contracts/runtime/packet-contract.json).
+These root contracts are an intentional versioned monorepo dependency, not a
+copy of another service's implementation or storage model. Build and test this
+independently deployable service from the repository root so the authoritative
+language-neutral contracts are present; do not duplicate them inside the crate.
 
 ## Implementation Shape
 

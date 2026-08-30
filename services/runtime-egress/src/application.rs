@@ -16,7 +16,7 @@ use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
 use crate::{
     dataplane::{AgentRoute, DataPlaneEngine, NetworkSnapshot},
     domain::{AgentId, AgentNetwork, NetworkState, PolicyAssignment, PolicyId, PolicyRevision},
-    policy::PolicySpec,
+    policy::{CompiledPolicy, PolicySpec},
     repository::{BUILTIN_DENY_ALL, BUILTIN_REVISION, Repository, RepositoryError},
 };
 
@@ -46,19 +46,34 @@ pub struct ServiceStatus {
     pub snapshot_revision: u64,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct HealthMetricsSnapshot {
+    pub service_ready: bool,
+    pub data_plane_ready: bool,
+    pub control_plane_ready: bool,
+    pub fenced_agents: usize,
+    pub transitions: u64,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct SweepReport {
+    pub examined: usize,
+    pub removed: usize,
+    pub cleanup_failures: usize,
+}
+
 #[derive(Default)]
 struct ServiceHealth {
     data_plane_ready: AtomicBool,
     repository_ready: AtomicBool,
-    operations_ready: AtomicBool,
     snapshot_revision: AtomicU64,
+    transitions: AtomicU64,
 }
 
 impl ServiceHealth {
     fn snapshot(&self) -> ServiceStatus {
         let data_plane_ready = self.data_plane_ready.load(Ordering::Acquire);
-        let control_plane_ready = self.repository_ready.load(Ordering::Acquire)
-            && self.operations_ready.load(Ordering::Acquire);
+        let control_plane_ready = self.repository_ready.load(Ordering::Acquire);
         ServiceStatus {
             status: if data_plane_ready && control_plane_ready {
                 "ready"
@@ -73,21 +88,78 @@ impl ServiceHealth {
 
     fn recovered(&self) {
         self.snapshot_revision.fetch_add(1, Ordering::AcqRel);
-        self.repository_ready.store(true, Ordering::Release);
-        self.operations_ready.store(true, Ordering::Release);
-        self.data_plane_ready.store(true, Ordering::Release);
+        self.transition(
+            "repository",
+            &self.repository_ready,
+            true,
+            "recovery_completed",
+        );
+        self.transition(
+            "data_plane",
+            &self.data_plane_ready,
+            true,
+            "recovery_completed",
+        );
     }
 
     fn snapshot_published(&self) {
         self.snapshot_revision.fetch_add(1, Ordering::AcqRel);
     }
 
-    fn control_available(&self, available: bool) {
-        self.operations_ready.store(available, Ordering::Release);
+    fn repository_available(&self, available: bool) {
+        self.transition(
+            "repository",
+            &self.repository_ready,
+            available,
+            if available {
+                "repository_available"
+            } else {
+                "repository_unavailable"
+            },
+        );
     }
 
-    fn repository_available(&self, available: bool) {
-        self.repository_ready.store(available, Ordering::Release);
+    fn metrics(&self, fenced_agents: usize) -> HealthMetricsSnapshot {
+        let status = self.snapshot();
+        HealthMetricsSnapshot {
+            service_ready: status.status == "ready",
+            data_plane_ready: status.data_plane_ready,
+            control_plane_ready: status.control_plane_ready,
+            fenced_agents,
+            transitions: self.transitions.load(Ordering::Acquire),
+        }
+    }
+
+    fn transition(
+        &self,
+        component: &'static str,
+        flag: &AtomicBool,
+        available: bool,
+        reason: &'static str,
+    ) {
+        let previous = flag.swap(available, Ordering::AcqRel);
+        if previous == available {
+            return;
+        }
+        let transition = self.transitions.fetch_add(1, Ordering::AcqRel) + 1;
+        tracing::info!(
+            lifecycle.event = "health_transition",
+            health.component = component,
+            health.from = availability(previous),
+            health.to = availability(available),
+            health.reason = reason,
+            health.transition = transition,
+            snapshot_revision = self.snapshot_revision.load(Ordering::Acquire),
+            "Runtime Egress health changed"
+        );
+    }
+}
+
+const fn availability(available: bool) -> &'static str {
+    if available {
+        "available"
+    } else {
+        "unavailable"
     }
 }
 
@@ -107,6 +179,8 @@ pub enum ControlError {
     ResourceVersionConflict,
     #[error("data-plane cleanup failed")]
     CleanupFailed(FailureContext),
+    #[error("control operation failed")]
+    OperationFailed(FailureContext),
     #[error("control plane is unavailable")]
     ControlPlaneUnavailable(FailureContext),
 }
@@ -126,7 +200,9 @@ impl FailureContext {
 impl ControlError {
     pub fn diagnostic(&self) -> Option<FailureContext> {
         match self {
-            Self::CleanupFailed(context) | Self::ControlPlaneUnavailable(context) => Some(*context),
+            Self::CleanupFailed(context)
+            | Self::OperationFailed(context)
+            | Self::ControlPlaneUnavailable(context) => Some(*context),
             _ => None,
         }
     }
@@ -145,6 +221,9 @@ impl ControlError {
             RepositoryError::ConnectionUnavailable(_) => Self::ControlPlaneUnavailable(
                 FailureContext::new(stage, "repository_connection_unavailable"),
             ),
+            RepositoryError::OperationFailed(_) => {
+                Self::OperationFailed(FailureContext::new(stage, "repository_operation_failed"))
+            }
             RepositoryError::Unavailable(_) => {
                 Self::ControlPlaneUnavailable(FailureContext::new(stage, "repository_unavailable"))
             }
@@ -222,18 +301,41 @@ where
         self.health.snapshot()
     }
 
+    pub fn health_metrics(&self) -> HealthMetricsSnapshot {
+        let fenced_agents = self
+            .dataplane
+            .lock()
+            .expect("data-plane mutex poisoned")
+            .fenced_agent_count();
+        self.health.metrics(fenced_agents)
+    }
+
     pub fn observe_control_result<T>(&self, result: &Result<T, ControlError>) {
         match result {
-            Ok(_) => {
-                let has_fenced_agents = self
-                    .dataplane
-                    .lock()
-                    .expect("data-plane mutex poisoned")
-                    .has_fenced_agents();
-                self.health.control_available(!has_fenced_agents);
+            Ok(_) => {}
+            Err(ControlError::CleanupFailed(context)) => {
+                tracing::warn!(
+                    lifecycle.event = "agent_operation_degraded",
+                    failure.stage = context.stage,
+                    failure.cause = context.cause,
+                    "Agent remains fenced after cleanup failure"
+                );
             }
-            Err(ControlError::CleanupFailed(_) | ControlError::ControlPlaneUnavailable(_)) => {
-                self.health.control_available(false);
+            Err(ControlError::OperationFailed(context)) => {
+                tracing::warn!(
+                    lifecycle.event = "control_operation_failed",
+                    failure.stage = context.stage,
+                    failure.cause = context.cause,
+                    "Runtime Egress control operation failed without degrading shared health"
+                );
+            }
+            Err(ControlError::ControlPlaneUnavailable(context)) => {
+                tracing::warn!(
+                    lifecycle.event = "control_operation_unavailable",
+                    failure.stage = context.stage,
+                    failure.cause = context.cause,
+                    "Runtime Egress control operation was unavailable; repository health remains authoritative"
+                );
             }
             Err(_) => {}
         }
@@ -349,6 +451,7 @@ where
             .policy_revision(&policy_id, revision)
             .await
             .map_err(|error| ControlError::repository("assign_policy.repository", error))?;
+        let compiled_policy = policy.spec.compile(self.config.resolver_ipv4);
         let before = self
             .repository
             .policy_assignment(&agent_id)
@@ -387,7 +490,7 @@ where
             "assign_policy.kernel_cleanup",
         )
         .await?;
-        self.replace_route(&network, &assignment, policy.spec);
+        self.replace_route(&network, &assignment, compiled_policy);
         self.applied_assignments
             .lock()
             .await
@@ -455,7 +558,7 @@ where
             agent_id: binding.network.agent_id.clone(),
             tunnel_ipv4: binding.network.tunnel_ipv4,
             assignment_version: binding.assignment.resource_version,
-            policy: binding.revision.spec.compile(),
+            policy: binding.revision.spec.compile(self.config.resolver_ipv4),
         });
         self.dataplane
             .lock()
@@ -473,20 +576,24 @@ where
         Ok(bindings.len())
     }
 
-    pub async fn sweep_quarantine(&self, now: SystemTime) -> Result<usize, ControlError> {
+    pub async fn sweep_quarantine(&self, now: SystemTime) -> Result<SweepReport, ControlError> {
         let candidates = self
             .repository
             .expired_quarantines(now)
             .await
             .map_err(|error| ControlError::repository("sweep_quarantine.repository", error))?;
-        let mut removed = 0;
+        let mut report = SweepReport {
+            examined: candidates.len(),
+            ..SweepReport::default()
+        };
         for network in candidates {
             let _guard = self.operations.lock(&network.agent_id).await;
             self.fence_dataplane(network.agent_id.clone()).await;
-            self.kernel
-                .clear_agent(network.tunnel_ipv4)
-                .await
-                .map_err(|_| ControlError::cleanup("sweep_quarantine.kernel_cleanup"))?;
+            if let Err(error) = self.kernel.clear_agent(network.tunnel_ipv4).await {
+                report.cleanup_failures += 1;
+                log_cleanup_failure(&network.agent_id, "sweep_quarantine.kernel_cleanup", &error);
+                continue;
+            }
             if self
                 .repository
                 .delete_quarantined(&network.agent_id, network.resource_version)
@@ -502,10 +609,10 @@ where
                     .lock()
                     .await
                     .remove(&network.agent_id);
-                removed += 1;
+                report.removed += 1;
             }
         }
-        Ok(removed)
+        Ok(report)
     }
 
     async fn fence_locked(
@@ -544,7 +651,11 @@ where
             .map_err(|error| ControlError::repository("fence.repository", error))?;
         self.reset_flows_and_kernel(agent_id, network.tunnel_ipv4, cleanup_stage)
             .await?;
-        self.replace_route(&network, &assignment, PolicySpec::deny_all());
+        self.replace_route(
+            &network,
+            &assignment,
+            PolicySpec::deny_all().compile(self.config.resolver_ipv4),
+        );
         self.applied_assignments
             .lock()
             .await
@@ -562,7 +673,8 @@ where
             .policy_revision(&assignment.policy_id, assignment.revision)
             .await
             .map_err(|error| ControlError::repository("publish_route.repository", error))?;
-        self.replace_route(network, assignment, revision.spec);
+        let policy = revision.spec.compile(self.config.resolver_ipv4);
+        self.replace_route(network, assignment, policy);
         Ok(())
     }
 
@@ -570,7 +682,7 @@ where
         &self,
         network: &AgentNetwork,
         assignment: &PolicyAssignment,
-        policy: PolicySpec,
+        policy: CompiledPolicy,
     ) {
         self.dataplane
             .lock()
@@ -579,7 +691,7 @@ where
                 agent_id: network.agent_id.clone(),
                 tunnel_ipv4: network.tunnel_ipv4,
                 assignment_version: assignment.resource_version,
-                policy: policy.compile(),
+                policy,
             });
         self.health.snapshot_published();
     }
@@ -594,10 +706,10 @@ where
             .lock()
             .expect("data-plane mutex poisoned")
             .reset_agent_flows(agent_id);
-        self.kernel
-            .clear_agent(address)
-            .await
-            .map_err(|_| ControlError::cleanup(stage))
+        self.kernel.clear_agent(address).await.map_err(|error| {
+            log_cleanup_failure(agent_id, stage, &error);
+            ControlError::cleanup(stage)
+        })
     }
 
     async fn fence_dataplane(&self, agent_id: AgentId) {
@@ -624,6 +736,18 @@ where
             state: network.state,
         }
     }
+}
+
+fn log_cleanup_failure(agent_id: &AgentId, stage: &'static str, detail: &str) {
+    let detail: String = detail.chars().take(512).collect();
+    tracing::warn!(
+        lifecycle.event = "agent_cleanup_failed",
+        "antnest.agent.id" = agent_id.as_str(),
+        failure.stage = stage,
+        failure.cause = "kernel_command_failed",
+        failure.detail = detail,
+        "Agent kernel cleanup failed"
+    );
 }
 
 #[cfg(test)]

@@ -12,6 +12,7 @@ use thiserror::Error;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::process::{Child, Command};
 use tokio::sync::{Notify, mpsc};
+use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::Instrument as _;
 
@@ -223,14 +224,28 @@ impl ExecutionActor {
         crate::telemetry::record_span_identity(&span);
         let identity = self.identity.clone();
         let metrics = self.metrics.clone();
-        tokio::spawn(async move {
-            let started = tokio::time::Instant::now();
-            let result = call.run(decode_reply).instrument(span.clone()).await;
-            record_executor_result(&span, &identity, tool, &metrics, &result, started.elapsed());
-            result
-        })
-        .await
-        .map_err(|error| ToolError::new(ToolErrorCode::RuntimeFailed, error))?
+        let started = tokio::time::Instant::now();
+        let task = tokio::spawn(call.run(decode_reply).instrument(span.clone()));
+        let result = self.join_executor(task).await;
+        record_executor_result(&span, &identity, tool, &metrics, &result, started.elapsed());
+        result
+    }
+
+    async fn join_executor<O>(
+        &self,
+        task: JoinHandle<Result<O, ToolError>>,
+    ) -> Result<O, ToolError> {
+        match task.await {
+            Ok(result) => result,
+            Err(error) => {
+                self.gate.poison();
+                let _ = self.fatal.send(ExecutionFatal);
+                Err(ToolError::new(
+                    ToolErrorCode::ChildProcessContainmentUnproven,
+                    format!("Executor coordination task failed: {error}"),
+                ))
+            }
+        }
     }
 }
 
@@ -689,12 +704,14 @@ fn diagnostic_summary(bytes: &[u8], truncated: bool) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    use tokio_util::sync::CancellationToken;
     use tracing_subscriber::layer::{Context, Layer, SubscriberExt as _};
 
-    use super::{record_executor_result, validate_probe_result};
+    use super::{AdmissionError, ExecutionActor, record_executor_result, validate_probe_result};
     use crate::command::ToolCommand;
     use crate::execution::BashResult;
     use crate::spec::RuntimeIdentity;
@@ -759,5 +776,37 @@ mod tests {
                 .code,
             ToolErrorCode::RuntimeFailed
         );
+    }
+
+    #[tokio::test]
+    async fn executor_coordination_panic_poison_admission_and_notifies_supervisor() {
+        let identity = RuntimeIdentity::new("agent-test", 1).unwrap();
+        let (actor, mut failures) = ExecutionActor::new(
+            identity,
+            PathBuf::from("/workspace"),
+            PathBuf::from("/skills"),
+            RuntimeMetrics::default(),
+            CancellationToken::new(),
+        );
+        let task = tokio::spawn(async {
+            panic!("injected executor coordination panic");
+            #[allow(unreachable_code)]
+            Ok::<(), ToolError>(())
+        });
+
+        let error = actor
+            .join_executor(task)
+            .await
+            .expect_err("coordination panic must fail closed");
+
+        assert_eq!(error.code, ToolErrorCode::ChildProcessContainmentUnproven);
+        assert!(matches!(
+            actor.gate.try_acquire(),
+            Err(AdmissionError::Unavailable)
+        ));
+        failures
+            .recv()
+            .await
+            .expect("Supervisor must receive an execution fatal event");
     }
 }

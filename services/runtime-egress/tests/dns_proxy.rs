@@ -25,6 +25,7 @@ async fn dns_proxy_forwards_the_tcp_byte_stream_to_configured_upstream() {
         listener,
         upstream_address,
         4,
+        2,
         Duration::from_secs(1),
         metrics.clone(),
         cancellation.clone(),
@@ -48,7 +49,7 @@ async fn dns_proxy_forwards_the_tcp_byte_stream_to_configured_upstream() {
     let snapshot = metrics.snapshot();
     assert_eq!(snapshot.accepted_connections, 1);
     assert_eq!(snapshot.completed_connections, 1);
-    assert_eq!(snapshot.upstream_failures, 0);
+    assert_eq!(snapshot.proxy_failures, 0);
     assert_eq!(snapshot.client_to_upstream_bytes, 5);
     assert_eq!(snapshot.upstream_to_client_bytes, 5);
     cancellation.cancel();

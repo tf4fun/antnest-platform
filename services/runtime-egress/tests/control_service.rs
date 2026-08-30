@@ -185,17 +185,63 @@ async fn quarantine_sweeper_rechecks_cleanup_before_deleting_the_allocation() {
     service.ensure_agent_network(agent.clone()).await.unwrap();
     service.release_agent_network(agent.clone()).await.unwrap();
 
-    let removed = service
+    let report = service
         .sweep_quarantine(SystemTime::now() + Duration::from_secs(301))
         .await
         .unwrap();
 
-    assert_eq!(removed, 1);
+    assert_eq!(report.examined, 1);
+    assert_eq!(report.removed, 1);
+    assert_eq!(report.cleanup_failures, 0);
     assert_eq!(kernel.cleared.lock().unwrap().len(), 2);
     assert_eq!(
         service.agent_network(&agent).await,
         Err(ControlError::AgentNetworkNotFound)
     );
+}
+
+#[tokio::test]
+async fn quarantine_sweeper_isolates_one_agents_cleanup_failure() {
+    let repository = Arc::new(
+        InMemoryRepository::new(RepositoryConfig {
+            pool_id: "default".to_owned(),
+            tunnel_cidr: "100.64.0.0/29".parse().unwrap(),
+            resolver_ipv4: "100.64.0.1".parse().unwrap(),
+            quarantine: Duration::from_secs(300),
+        })
+        .unwrap(),
+    );
+    let kernel = Arc::new(ToggleKernel::default());
+    let service = ControlService::new(
+        repository,
+        kernel.clone(),
+        ControlConfig {
+            advertised_udp_endpoint: "10.20.0.8:8092".parse().unwrap(),
+            resolver_ipv4: "100.64.0.1".parse().unwrap(),
+            max_flows: 32,
+            max_agent_flows: 16,
+            flow_idle: Duration::from_secs(60),
+        },
+    );
+    let first = AgentId::parse("agent-first").unwrap();
+    let second = AgentId::parse("agent-second").unwrap();
+    service.ensure_agent_network(first.clone()).await.unwrap();
+    service.ensure_agent_network(second.clone()).await.unwrap();
+    service.release_agent_network(first.clone()).await.unwrap();
+    service.release_agent_network(second.clone()).await.unwrap();
+    kernel.fail_next.store(true, Ordering::Release);
+
+    let report = service
+        .sweep_quarantine(SystemTime::now() + Duration::from_secs(301))
+        .await
+        .unwrap();
+
+    assert_eq!(report.examined, 2);
+    assert_eq!(report.removed, 1);
+    assert_eq!(report.cleanup_failures, 1);
+    let retained = usize::from(service.agent_network(&first).await.is_ok())
+        + usize::from(service.agent_network(&second).await.is_ok());
+    assert_eq!(retained, 1);
 }
 
 #[tokio::test]
@@ -240,7 +286,10 @@ async fn recovery_rebuilds_the_in_memory_policy_snapshot() {
         .route("100.64.0.2".parse().unwrap())
         .cloned();
     assert_eq!(
-        route.unwrap().policy.decide(),
+        route
+            .unwrap()
+            .policy
+            .decide("93.184.216.34".parse().unwrap(), 443),
         antnest_runtime_egress::policy::Decision::Allow
     );
 }
@@ -266,18 +315,13 @@ async fn status_tracks_published_snapshots_instead_of_a_static_constant() {
 }
 
 #[tokio::test]
-async fn control_health_recovers_after_a_later_successful_operation() {
+async fn request_failures_never_override_repository_health() {
     let (service, _) = service();
     service.recover().await.unwrap();
 
     service.observe_control_result::<()>(&Err(ControlError::ControlPlaneUnavailable(
         FailureContext::new("test.repository", "repository_unavailable"),
     )));
-    assert_eq!(service.status().status, "degraded");
-    assert!(!service.status().control_plane_ready);
-    assert!(service.status().data_plane_ready);
-
-    service.observe_control_result(&Ok::<(), ControlError>(()));
     assert_eq!(service.status().status, "ready");
     assert!(service.status().control_plane_ready);
 
@@ -286,8 +330,29 @@ async fn control_health_recovers_after_a_later_successful_operation() {
     assert_eq!(service.status().status, "degraded");
     assert!(!service.status().control_plane_ready);
 
+    service.observe_control_result::<()>(&Err(ControlError::ControlPlaneUnavailable(
+        FailureContext::new("test.repository", "repository_unavailable"),
+    )));
+    assert_eq!(service.status().status, "degraded");
+
     service.observe_repository_health(true);
     assert_eq!(service.status().status, "ready");
+}
+
+#[tokio::test]
+async fn one_repository_operation_failure_does_not_degrade_shared_health() {
+    let (service, _) = service();
+    service.recover().await.unwrap();
+    let transitions = service.health_metrics().transitions;
+
+    service.observe_control_result::<()>(&Err(ControlError::OperationFailed(FailureContext::new(
+        "test.repository",
+        "repository_operation_failed",
+    ))));
+
+    assert_eq!(service.status().status, "ready");
+    assert!(service.status().control_plane_ready);
+    assert_eq!(service.health_metrics().transitions, transitions);
 }
 
 #[tokio::test]
@@ -348,15 +413,38 @@ async fn cleanup_failure_keeps_only_that_agent_fenced_until_retry_completes() {
             .unwrap()
             .is_agent_fenced(&unaffected)
     );
-    assert_eq!(service.status().status, "degraded");
+    assert_eq!(service.status().status, "ready");
+    assert_eq!(service.health_metrics().fenced_agents, 1);
 
     let unrelated = service.agent_network(&unaffected).await;
     service.observe_control_result(&unrelated);
-    assert_eq!(service.status().status, "degraded");
+    assert_eq!(service.status().status, "ready");
 
     let retried = service.assign_policy(failed.clone(), policy, 1, 1).await;
     service.observe_control_result(&retried);
     assert_eq!(retried.unwrap().resource_version, 2);
     assert!(!service.dataplane().lock().unwrap().is_agent_fenced(&failed));
     assert_eq!(service.status().status, "ready");
+    assert_eq!(service.health_metrics().fenced_agents, 0);
+}
+
+#[tokio::test]
+async fn health_transitions_track_shared_infrastructure_only() {
+    let (service, _) = service();
+    assert_eq!(service.health_metrics().transitions, 0);
+
+    service.recover().await.unwrap();
+    let recovered = service.health_metrics();
+    assert!(recovered.service_ready);
+    assert_eq!(recovered.transitions, 2);
+
+    service.observe_repository_health(false);
+    let unavailable = service.health_metrics();
+    assert!(!unavailable.service_ready);
+    assert_eq!(unavailable.transitions, 3);
+
+    service.observe_repository_health(true);
+    let available = service.health_metrics();
+    assert!(available.service_ready);
+    assert_eq!(available.transitions, 4);
 }

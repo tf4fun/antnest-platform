@@ -1,5 +1,6 @@
 use std::{
     io,
+    net::Ipv4Addr,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -20,6 +21,7 @@ use tokio_util::sync::CancellationToken;
 
 const SYN: &str =
     "4500002800004000400600006460000a5db8d8229c4001bb00000029000000005002000000000000";
+const RESOLVER: Ipv4Addr = Ipv4Addr::new(100, 64, 0, 1);
 
 struct TestTun(tokio::io::DuplexStream);
 
@@ -67,7 +69,7 @@ async fn packet_loop_moves_uplink_and_downlink_without_an_application_envelope()
         agent_id: AgentId::parse("agent-1").unwrap(),
         tunnel_ipv4: "100.96.0.10".parse().unwrap(),
         assignment_version: 1,
-        policy: PolicySpec::allow_all().compile(),
+        policy: PolicySpec::allow_all().compile(RESOLVER),
     };
     let engine = Arc::new(Mutex::new(DataPlaneEngine::new(
         NetworkSnapshot::from_routes([route]),
@@ -113,7 +115,7 @@ async fn deny_policy_fails_the_runtime_connection_fast() {
         agent_id: AgentId::parse("agent-1").unwrap(),
         tunnel_ipv4: "100.96.0.10".parse().unwrap(),
         assignment_version: 1,
-        policy: PolicySpec::deny_all().compile(),
+        policy: PolicySpec::deny_all().compile(RESOLVER),
     };
     let engine = Arc::new(Mutex::new(DataPlaneEngine::new(
         NetworkSnapshot::from_routes([route]),
@@ -154,7 +156,7 @@ async fn output_barrier_is_held_until_the_packet_write_completes() {
         agent_id: AgentId::parse("agent-1").unwrap(),
         tunnel_ipv4: "100.96.0.10".parse().unwrap(),
         assignment_version: 1,
-        policy: PolicySpec::allow_all().compile(),
+        policy: PolicySpec::allow_all().compile(RESOLVER),
     };
     let engine = Arc::new(Mutex::new(DataPlaneEngine::new(
         NetworkSnapshot::from_routes([route]),

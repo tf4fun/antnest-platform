@@ -7,7 +7,7 @@ use std::{
 use crate::{
     domain::AgentId,
     flow::{ClaimResult, FlowTable},
-    packet::{parse_ipv4_tcp, tcp_reset},
+    packet::{PacketError, parse_ipv4_tcp, tcp_reset},
     policy::{CompiledPolicy, Decision},
 };
 
@@ -54,13 +54,18 @@ impl NetworkSnapshot {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DataPlaneAction {
     WriteTun(Vec<u8>),
-    SendUdp { peer: SocketAddr, packet: Vec<u8> },
+    SendUdp {
+        agent_id: AgentId,
+        peer: SocketAddr,
+        packet: Vec<u8>,
+    },
     Drop(DropReason),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DropReason {
     MalformedPacket,
+    UnsupportedPacket,
     UnknownAgent,
     AgentFenced,
     PolicyDenied,
@@ -78,11 +83,14 @@ pub struct DataPlaneMetrics {
     pub policy_allows: u64,
     pub policy_denials: u64,
     pub malformed_packets: u64,
+    pub unsupported_packets: u64,
     pub unknown_agents: u64,
     pub fenced_packets: u64,
     pub flow_collisions: u64,
     pub flow_capacity_rejections: u64,
     pub reverse_flow_misses: u64,
+    pub peer_output_failures: u64,
+    pub unattributed_udp_receive_errors: u64,
     pub flow_expirations: u64,
     pub active_flows: usize,
 }
@@ -123,7 +131,7 @@ impl DataPlaneEngine {
         increment(&mut self.metrics.uplink_bytes, bytes.len() as u64);
         let packet = match parse_ipv4_tcp(bytes, self.inner_mtu) {
             Ok(packet) => packet,
-            Err(_) => return self.drop(DropReason::MalformedPacket),
+            Err(error) => return self.drop(packet_drop_reason(error)),
         };
         let Some(route) = self.snapshot.route(packet.source) else {
             return self.drop(DropReason::UnknownAgent);
@@ -131,10 +139,18 @@ impl DataPlaneEngine {
         if self.fenced_agents.contains(&route.agent_id) {
             return self.drop(DropReason::AgentFenced);
         }
-        if route.policy.decide() == Decision::Deny {
+        if route
+            .policy
+            .decide(packet.destination, packet.destination_port)
+            == Decision::Deny
+        {
             increment(&mut self.metrics.policy_denials, 1);
             return match tcp_reset(&packet) {
-                Some(packet) => DataPlaneAction::SendUdp { peer, packet },
+                Some(packet) => DataPlaneAction::SendUdp {
+                    agent_id: route.agent_id.clone(),
+                    peer,
+                    packet,
+                },
                 None => self.drop(DropReason::PolicyDenied),
             };
         }
@@ -167,7 +183,7 @@ impl DataPlaneEngine {
         increment(&mut self.metrics.downlink_bytes, bytes.len() as u64);
         let packet = match parse_ipv4_tcp(bytes, self.inner_mtu) {
             Ok(packet) => packet,
-            Err(_) => return self.drop(DropReason::MalformedPacket),
+            Err(error) => return self.drop(packet_drop_reason(error)),
         };
         let Some(route) = self.snapshot.route(packet.destination) else {
             return self.drop(DropReason::UnknownAgent);
@@ -180,6 +196,7 @@ impl DataPlaneEngine {
             .peer_for_reply(&packet.flow_key(), route.assignment_version, now)
         {
             Some(peer) => DataPlaneAction::SendUdp {
+                agent_id: route.agent_id.clone(),
                 peer,
                 packet: bytes.to_vec(),
             },
@@ -221,12 +238,21 @@ impl DataPlaneEngine {
         self.fenced_agents.contains(agent_id)
     }
 
-    pub fn has_fenced_agents(&self) -> bool {
-        !self.fenced_agents.is_empty()
+    pub fn fenced_agent_count(&self) -> usize {
+        self.fenced_agents.len()
     }
 
     pub fn reset_agent_flows(&mut self, agent_id: &AgentId) -> usize {
         self.flows.remove_agent(agent_id)
+    }
+
+    pub fn peer_output_failed(&mut self, agent_id: &AgentId, peer: SocketAddr) -> usize {
+        increment(&mut self.metrics.peer_output_failures, 1);
+        self.flows.remove_peer(agent_id, peer)
+    }
+
+    pub fn unattributed_udp_receive_error(&mut self) {
+        increment(&mut self.metrics.unattributed_udp_receive_errors, 1);
     }
 
     pub fn flow_count(&self) -> usize {
@@ -248,6 +274,7 @@ impl DataPlaneEngine {
     fn drop(&mut self, reason: DropReason) -> DataPlaneAction {
         match reason {
             DropReason::MalformedPacket => increment(&mut self.metrics.malformed_packets, 1),
+            DropReason::UnsupportedPacket => increment(&mut self.metrics.unsupported_packets, 1),
             DropReason::UnknownAgent => increment(&mut self.metrics.unknown_agents, 1),
             DropReason::AgentFenced => increment(&mut self.metrics.fenced_packets, 1),
             DropReason::PolicyDenied => {}
@@ -260,6 +287,18 @@ impl DataPlaneEngine {
             }
         }
         DataPlaneAction::Drop(reason)
+    }
+}
+
+fn packet_drop_reason(error: PacketError) -> DropReason {
+    match error {
+        PacketError::UnsupportedVersion
+        | PacketError::Fragmented
+        | PacketError::UnsupportedProtocol => DropReason::UnsupportedPacket,
+        PacketError::InvalidSize
+        | PacketError::InvalidIpv4Header
+        | PacketError::LengthMismatch
+        | PacketError::InvalidTcpHeader => DropReason::MalformedPacket,
     }
 }
 

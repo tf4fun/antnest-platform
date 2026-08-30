@@ -40,6 +40,13 @@ pub struct Telemetry {
 pub struct EgressMetrics {
     control_requests: Counter<u64>,
     control_duration_ms: Histogram<f64>,
+    service_ready: Gauge<u64>,
+    data_plane_ready: Gauge<u64>,
+    control_plane_ready: Gauge<u64>,
+    fenced_agents: Gauge<u64>,
+    health_transitions: Counter<u64>,
+    quarantine_removed: Counter<u64>,
+    quarantine_cleanup_failures: Counter<u64>,
     data_plane: DataPlaneInstruments,
 }
 
@@ -52,6 +59,7 @@ struct DataPlaneInstruments {
     policy_allows: Gauge<u64>,
     policy_denials: Gauge<u64>,
     malformed_packets: Gauge<u64>,
+    unsupported_packets: Gauge<u64>,
     unknown_agents: Gauge<u64>,
     fenced_packets: Gauge<u64>,
     active_flows: Gauge<u64>,
@@ -59,10 +67,12 @@ struct DataPlaneInstruments {
     flow_collisions: Gauge<u64>,
     flow_capacity_rejections: Gauge<u64>,
     reverse_flow_misses: Gauge<u64>,
+    peer_output_failures: Gauge<u64>,
+    unattributed_udp_receive_errors: Gauge<u64>,
     dns_accepted: Gauge<u64>,
     dns_rejected: Gauge<u64>,
     dns_completed: Gauge<u64>,
-    dns_upstream_failures: Gauge<u64>,
+    dns_proxy_failures: Gauge<u64>,
     dns_client_bytes: Gauge<u64>,
     dns_upstream_bytes: Gauge<u64>,
 }
@@ -185,6 +195,34 @@ impl EgressMetrics {
                 .with_description("Runtime Egress control request latency")
                 .with_unit("ms")
                 .build(),
+            service_ready: meter
+                .u64_gauge("antnest.egress.health.ready")
+                .with_description("Whether Runtime Egress is globally ready")
+                .build(),
+            data_plane_ready: meter
+                .u64_gauge("antnest.egress.health.data_plane.ready")
+                .with_description("Whether the Runtime Egress data plane is ready")
+                .build(),
+            control_plane_ready: meter
+                .u64_gauge("antnest.egress.health.control_plane.ready")
+                .with_description("Whether shared control infrastructure is ready")
+                .build(),
+            fenced_agents: meter
+                .u64_gauge("antnest.egress.health.fenced_agents")
+                .with_description("Number of Agent packet paths currently fenced")
+                .build(),
+            health_transitions: meter
+                .u64_counter("antnest.egress.health.transitions")
+                .with_description("Runtime Egress shared health state transitions")
+                .build(),
+            quarantine_removed: meter
+                .u64_counter("antnest.egress.quarantine.removed")
+                .with_description("Expired Agent network allocations removed")
+                .build(),
+            quarantine_cleanup_failures: meter
+                .u64_counter("antnest.egress.quarantine.cleanup_failures")
+                .with_description("Agent-local kernel cleanup failures during quarantine sweeps")
+                .build(),
             data_plane: DataPlaneInstruments::new(&meter),
         }
     }
@@ -229,6 +267,9 @@ impl EgressMetrics {
         instruments
             .malformed_packets
             .record(data.malformed_packets, &[]);
+        instruments
+            .unsupported_packets
+            .record(data.unsupported_packets, &[]);
         instruments.unknown_agents.record(data.unknown_agents, &[]);
         instruments.fenced_packets.record(data.fenced_packets, &[]);
         instruments
@@ -247,6 +288,12 @@ impl EgressMetrics {
             .reverse_flow_misses
             .record(data.reverse_flow_misses, &[]);
         instruments
+            .peer_output_failures
+            .record(data.peer_output_failures, &[]);
+        instruments
+            .unattributed_udp_receive_errors
+            .record(data.unattributed_udp_receive_errors, &[]);
+        instruments
             .dns_accepted
             .record(dns.accepted_connections, &[]);
         instruments
@@ -256,14 +303,41 @@ impl EgressMetrics {
             .dns_completed
             .record(dns.completed_connections, &[]);
         instruments
-            .dns_upstream_failures
-            .record(dns.upstream_failures, &[]);
+            .dns_proxy_failures
+            .record(dns.proxy_failures, &[]);
         instruments
             .dns_client_bytes
             .record(dns.client_to_upstream_bytes, &[]);
         instruments
             .dns_upstream_bytes
             .record(dns.upstream_to_client_bytes, &[]);
+    }
+
+    pub fn health(
+        &self,
+        snapshot: crate::application::HealthMetricsSnapshot,
+        transition_delta: u64,
+    ) {
+        self.service_ready
+            .record(u64::from(snapshot.service_ready), &[]);
+        self.data_plane_ready
+            .record(u64::from(snapshot.data_plane_ready), &[]);
+        self.control_plane_ready
+            .record(u64::from(snapshot.control_plane_ready), &[]);
+        self.fenced_agents.record(
+            u64::try_from(snapshot.fenced_agents).unwrap_or(u64::MAX),
+            &[],
+        );
+        self.health_transitions.add(transition_delta, &[]);
+    }
+
+    pub fn quarantine_sweep(&self, report: crate::application::SweepReport) {
+        self.quarantine_removed
+            .add(u64::try_from(report.removed).unwrap_or(u64::MAX), &[]);
+        self.quarantine_cleanup_failures.add(
+            u64::try_from(report.cleanup_failures).unwrap_or(u64::MAX),
+            &[],
+        );
     }
 }
 
@@ -287,6 +361,7 @@ impl DataPlaneInstruments {
             policy_allows: gauge(meter, "antnest.egress.policy.allows"),
             policy_denials: gauge(meter, "antnest.egress.policy.denials"),
             malformed_packets: gauge(meter, "antnest.egress.packet.malformed"),
+            unsupported_packets: gauge(meter, "antnest.egress.packet.unsupported"),
             unknown_agents: gauge(meter, "antnest.egress.agent.unknown"),
             fenced_packets: gauge(meter, "antnest.egress.agent.fenced_packets"),
             active_flows: gauge(meter, "antnest.egress.flow.active"),
@@ -294,10 +369,15 @@ impl DataPlaneInstruments {
             flow_collisions: gauge(meter, "antnest.egress.flow.collisions"),
             flow_capacity_rejections: gauge(meter, "antnest.egress.flow.capacity_rejections"),
             reverse_flow_misses: gauge(meter, "antnest.egress.flow.reverse_misses"),
+            peer_output_failures: gauge(meter, "antnest.egress.peer_output.failures"),
+            unattributed_udp_receive_errors: gauge(
+                meter,
+                "antnest.egress.udp.receive_errors.unattributed",
+            ),
             dns_accepted: gauge(meter, "antnest.egress.dns.connections.accepted"),
             dns_rejected: gauge(meter, "antnest.egress.dns.connections.rejected"),
             dns_completed: gauge(meter, "antnest.egress.dns.connections.completed"),
-            dns_upstream_failures: gauge(meter, "antnest.egress.dns.upstream.failures"),
+            dns_proxy_failures: gauge(meter, "antnest.egress.dns.proxy.failures"),
             dns_client_bytes: gauge(meter, "antnest.egress.dns.client_to_upstream.bytes"),
             dns_upstream_bytes: gauge(meter, "antnest.egress.dns.upstream_to_client.bytes"),
         }
@@ -351,7 +431,9 @@ mod tests {
     use opentelemetry_sdk::metrics::{InMemoryMetricExporter, PeriodicReader, SdkMeterProvider};
 
     use super::{EgressMetrics, SERVICE_NAME, is_control_otlp_target, is_service_target};
-    use crate::{dataplane::DataPlaneMetrics, dns::DnsMetricsSnapshot};
+    use crate::{
+        application::HealthMetricsSnapshot, dataplane::DataPlaneMetrics, dns::DnsMetricsSnapshot,
+    };
 
     #[test]
     fn log_target_boundary_excludes_dependencies_and_similar_names() {
@@ -389,6 +471,8 @@ mod tests {
         metrics.data_plane(
             DataPlaneMetrics {
                 uplink_packets: 2,
+                unsupported_packets: 1,
+                unattributed_udp_receive_errors: 1,
                 active_flows: 1,
                 ..DataPlaneMetrics::default()
             },
@@ -396,11 +480,26 @@ mod tests {
                 accepted_connections: 1,
                 rejected_connections: 0,
                 completed_connections: 1,
-                upstream_failures: 0,
+                proxy_failures: 1,
                 client_to_upstream_bytes: 20,
                 upstream_to_client_bytes: 40,
             },
         );
+        metrics.health(
+            HealthMetricsSnapshot {
+                service_ready: true,
+                data_plane_ready: true,
+                control_plane_ready: true,
+                fenced_agents: 1,
+                transitions: 3,
+            },
+            3,
+        );
+        metrics.quarantine_sweep(crate::application::SweepReport {
+            examined: 2,
+            removed: 1,
+            cleanup_failures: 1,
+        });
         provider.force_flush().unwrap();
 
         let exported = exporter.get_finished_metrics().unwrap();
@@ -413,7 +512,15 @@ mod tests {
         assert!(names.contains(&"antnest.egress.control.requests".to_owned()));
         assert!(names.contains(&"antnest.egress.control.duration".to_owned()));
         assert!(names.contains(&"antnest.egress.uplink.packets".to_owned()));
+        assert!(names.contains(&"antnest.egress.packet.unsupported".to_owned()));
+        assert!(names.contains(&"antnest.egress.udp.receive_errors.unattributed".to_owned()));
         assert!(names.contains(&"antnest.egress.dns.connections.accepted".to_owned()));
+        assert!(names.contains(&"antnest.egress.dns.proxy.failures".to_owned()));
+        assert!(names.contains(&"antnest.egress.health.ready".to_owned()));
+        assert!(names.contains(&"antnest.egress.health.fenced_agents".to_owned()));
+        assert!(names.contains(&"antnest.egress.health.transitions".to_owned()));
+        assert!(names.contains(&"antnest.egress.quarantine.removed".to_owned()));
+        assert!(names.contains(&"antnest.egress.quarantine.cleanup_failures".to_owned()));
         provider.shutdown().unwrap();
     }
 }

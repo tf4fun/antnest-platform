@@ -1,5 +1,5 @@
 use std::{
-    net::SocketAddr,
+    net::{Ipv4Addr, SocketAddr},
     time::{Duration, Instant},
 };
 
@@ -12,12 +12,14 @@ use antnest_runtime_egress::{
 const SYN: &str =
     "4500002800004000400600006460000a5db8d8229c4001bb00000029000000005002000000000000";
 
+const RESOLVER: Ipv4Addr = Ipv4Addr::new(100, 64, 0, 1);
+
 fn route(policy: PolicySpec, version: u64) -> AgentRoute {
     AgentRoute {
         agent_id: AgentId::parse("agent-1").unwrap(),
         tunnel_ipv4: "100.96.0.10".parse().unwrap(),
         assignment_version: version,
-        policy: policy.compile(),
+        policy: policy.compile(RESOLVER),
     }
 }
 
@@ -39,6 +41,42 @@ fn allow_policy_claims_flow_and_writes_the_original_packet() {
 
     assert_eq!(
         engine.handle_uplink(&packet, peer, Instant::now()),
+        DataPlaneAction::WriteTun(packet)
+    );
+}
+
+#[test]
+fn allow_policy_never_routes_back_into_protected_address_space() {
+    let peer: SocketAddr = "10.0.0.2:41000".parse().unwrap();
+    for destination in [
+        "10.20.0.8",
+        "100.96.0.11",
+        "127.0.0.1",
+        "169.254.1.1",
+        "172.20.0.8",
+        "192.168.1.8",
+        "224.0.0.1",
+    ] {
+        let mut engine = engine(PolicySpec::allow_all());
+        let packet = packet_to(destination.parse().unwrap(), 8093);
+        assert!(
+            matches!(
+                engine.handle_uplink(&packet, peer, Instant::now()),
+                DataPlaneAction::SendUdp { .. }
+            ),
+            "{destination}"
+        );
+        assert_eq!(engine.flow_count(), 0, "{destination}");
+    }
+}
+
+#[test]
+fn virtual_resolver_dns_is_the_only_special_use_exception() {
+    let mut engine = engine(PolicySpec::allow_all());
+    let packet = packet_to("100.64.0.1".parse().unwrap(), 53);
+
+    assert_eq!(
+        engine.handle_uplink(&packet, "10.0.0.2:41000".parse().unwrap(), Instant::now()),
         DataPlaneAction::WriteTun(packet)
     );
 }
@@ -81,6 +119,7 @@ fn downlink_uses_only_a_previously_claimed_reverse_flow() {
     assert_eq!(
         engine.handle_downlink(&reply, now),
         DataPlaneAction::SendUdp {
+            agent_id: AgentId::parse("agent-1").unwrap(),
             peer,
             packet: reply,
         }
@@ -120,6 +159,20 @@ fn data_plane_observation_is_aggregate_and_content_free() {
 }
 
 #[test]
+fn unsupported_packets_are_not_reported_as_malformed() {
+    let mut engine = engine(PolicySpec::allow_all());
+    let mut packet = decode_hex(SYN);
+    packet[0] = 0x65;
+
+    assert_eq!(
+        engine.handle_uplink(&packet, "10.0.0.2:41000".parse().unwrap(), Instant::now()),
+        DataPlaneAction::Drop(DropReason::UnsupportedPacket)
+    );
+    assert_eq!(engine.metrics().unsupported_packets, 1);
+    assert_eq!(engine.metrics().malformed_packets, 0);
+}
+
+#[test]
 fn fencing_one_agent_does_not_block_or_drop_another_agent() {
     let agent_one = AgentId::parse("agent-1").unwrap();
     let agent_two = AgentId::parse("agent-2").unwrap();
@@ -134,6 +187,7 @@ fn fencing_one_agent_does_not_block_or_drop_another_agent() {
         Duration::from_secs(60),
     );
     engine.fence_agent(agent_one.clone());
+    assert_eq!(engine.fenced_agent_count(), 1);
     let first = decode_hex(SYN);
     let mut second = first.clone();
     second[15] = 11;
@@ -150,6 +204,7 @@ fn fencing_one_agent_does_not_block_or_drop_another_agent() {
     assert_eq!(engine.metrics().fenced_packets, 1);
 
     engine.reopen_agent(&agent_one);
+    assert_eq!(engine.fenced_agent_count(), 0);
     assert_eq!(
         engine.handle_uplink(&first, peer, Instant::now()),
         DataPlaneAction::WriteTun(first)
@@ -163,6 +218,13 @@ fn reverse_packet(packet: &[u8]) -> Vec<u8> {
     reply[20..22].copy_from_slice(&packet[22..24]);
     reply[22..24].copy_from_slice(&packet[20..22]);
     reply
+}
+
+fn packet_to(destination: std::net::Ipv4Addr, port: u16) -> Vec<u8> {
+    let mut packet = decode_hex(SYN);
+    packet[16..20].copy_from_slice(&destination.octets());
+    packet[22..24].copy_from_slice(&port.to_be_bytes());
+    packet
 }
 
 fn decode_hex(value: &str) -> Vec<u8> {

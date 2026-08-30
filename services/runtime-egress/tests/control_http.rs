@@ -94,6 +94,27 @@ fn machine_contract_matches_the_complete_control_surface() {
         contract.schemas["packet"],
         "../runtime/packet-contract.json"
     );
+
+    let prose = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../contracts/egress/control-api.md"
+    ));
+    let documented_errors = prose
+        .split_once("## Errors")
+        .expect("control error section")
+        .1
+        .lines()
+        .filter_map(|line| line.strip_prefix("| `"))
+        .filter_map(|line| line.split_once('`').map(|(code, _)| code))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        documented_errors,
+        contract
+            .error_codes
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+    );
 }
 
 #[tokio::test]

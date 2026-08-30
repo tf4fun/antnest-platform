@@ -1,8 +1,9 @@
 use std::{
+    collections::HashMap,
     io,
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicU64, Ordering},
     },
     time::Duration,
@@ -22,8 +23,65 @@ use tokio_util::sync::CancellationToken;
 pub enum DnsError {
     #[error("DNS listener failed: {0}")]
     Listener(io::Error),
-    #[error("DNS proxy connection limit must be positive")]
+    #[error(
+        "DNS proxy limits must be positive and the per-source limit must not exceed the global limit"
+    )]
     InvalidLimit,
+}
+
+struct SourceLimits {
+    maximum: usize,
+    active: Mutex<HashMap<IpAddr, usize>>,
+}
+
+impl SourceLimits {
+    fn new(maximum: usize) -> Arc<Self> {
+        Arc::new(Self {
+            maximum,
+            active: Mutex::new(HashMap::new()),
+        })
+    }
+
+    fn try_acquire(self: &Arc<Self>, source: IpAddr) -> Option<SourcePermit> {
+        let mut active = self
+            .active
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let count = active.entry(source).or_default();
+        if *count >= self.maximum {
+            return None;
+        }
+        *count += 1;
+        Some(SourcePermit {
+            limits: self.clone(),
+            source,
+        })
+    }
+
+    fn release(&self, source: IpAddr) {
+        let mut active = self
+            .active
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let Some(count) = active.get_mut(&source) else {
+            return;
+        };
+        *count -= 1;
+        if *count == 0 {
+            active.remove(&source);
+        }
+    }
+}
+
+struct SourcePermit {
+    limits: Arc<SourceLimits>,
+    source: IpAddr,
+}
+
+impl Drop for SourcePermit {
+    fn drop(&mut self) {
+        self.limits.release(self.source);
+    }
 }
 
 #[derive(Default)]
@@ -31,7 +89,7 @@ pub struct DnsMetrics {
     accepted_connections: AtomicU64,
     rejected_connections: AtomicU64,
     completed_connections: AtomicU64,
-    upstream_failures: AtomicU64,
+    proxy_failures: AtomicU64,
     client_to_upstream_bytes: AtomicU64,
     upstream_to_client_bytes: AtomicU64,
 }
@@ -41,7 +99,7 @@ pub struct DnsMetricsSnapshot {
     pub accepted_connections: u64,
     pub rejected_connections: u64,
     pub completed_connections: u64,
-    pub upstream_failures: u64,
+    pub proxy_failures: u64,
     pub client_to_upstream_bytes: u64,
     pub upstream_to_client_bytes: u64,
 }
@@ -52,7 +110,7 @@ impl DnsMetrics {
             accepted_connections: self.accepted_connections.load(Ordering::Relaxed),
             rejected_connections: self.rejected_connections.load(Ordering::Relaxed),
             completed_connections: self.completed_connections.load(Ordering::Relaxed),
-            upstream_failures: self.upstream_failures.load(Ordering::Relaxed),
+            proxy_failures: self.proxy_failures.load(Ordering::Relaxed),
             client_to_upstream_bytes: self.client_to_upstream_bytes.load(Ordering::Relaxed),
             upstream_to_client_bytes: self.upstream_to_client_bytes.load(Ordering::Relaxed),
         }
@@ -67,7 +125,7 @@ impl DnsMetrics {
     }
 
     fn failed(&self) {
-        self.upstream_failures.fetch_add(1, Ordering::Relaxed);
+        self.proxy_failures.fetch_add(1, Ordering::Relaxed);
     }
 
     fn completed(&self, client_to_upstream: u64, upstream_to_client: u64) {
@@ -83,29 +141,39 @@ pub async fn run_dns_proxy(
     listener: TcpListener,
     upstream: SocketAddr,
     max_connections: usize,
+    max_connections_per_source: usize,
     connection_timeout: Duration,
     metrics: Arc<DnsMetrics>,
     cancellation: CancellationToken,
 ) -> Result<(), DnsError> {
-    if max_connections == 0 {
+    if max_connections == 0
+        || max_connections_per_source == 0
+        || max_connections_per_source > max_connections
+    {
         return Err(DnsError::InvalidLimit);
     }
     let permits = Arc::new(Semaphore::new(max_connections));
+    let source_limits = SourceLimits::new(max_connections_per_source);
     let mut connections = JoinSet::new();
 
     loop {
         tokio::select! {
             () = cancellation.cancelled() => break,
             accepted = listener.accept() => {
-                let (client, _) = accepted.map_err(DnsError::Listener)?;
+                let (client, peer) = accepted.map_err(DnsError::Listener)?;
                 metrics.accepted();
                 let Ok(permit) = permits.clone().try_acquire_owned() else {
+                    metrics.rejected();
+                    continue;
+                };
+                let Some(source_permit) = source_limits.try_acquire(peer.ip()) else {
                     metrics.rejected();
                     continue;
                 };
                 let connection_metrics = metrics.clone();
                 connections.spawn(async move {
                     let _permit = permit;
+                    let _source_permit = source_permit;
                     match proxy_connection(client, upstream, connection_timeout).await {
                         Ok((client_to_upstream, upstream_to_client)) => {
                             connection_metrics.completed(client_to_upstream, upstream_to_client);
@@ -138,4 +206,33 @@ async fn proxy_connection(
     timeout(deadline, copy_bidirectional(&mut client, &mut server))
         .await
         .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "DNS proxy idle timeout"))?
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::{IpAddr, Ipv4Addr};
+
+    use super::SourceLimits;
+
+    #[test]
+    fn source_limit_is_fair_and_releases_capacity_on_drop() {
+        let limits = SourceLimits::new(1);
+        let first = limits.try_acquire(IpAddr::V4(Ipv4Addr::new(100, 64, 0, 2)));
+        assert!(first.is_some());
+        assert!(
+            limits
+                .try_acquire(IpAddr::V4(Ipv4Addr::new(100, 64, 0, 2)))
+                .is_none()
+        );
+
+        let other = limits.try_acquire(IpAddr::V4(Ipv4Addr::new(100, 64, 0, 3)));
+        assert!(other.is_some());
+
+        drop(first);
+        assert!(
+            limits
+                .try_acquire(IpAddr::V4(Ipv4Addr::new(100, 64, 0, 2)))
+                .is_some()
+        );
+    }
 }

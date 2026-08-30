@@ -19,6 +19,40 @@ fn process_execution_core_does_not_import_mcp_transport_types() {
 }
 
 #[test]
+fn network_transport_is_registered_before_the_service_can_be_ready() {
+    let source = include_str!("network_session.rs");
+    let connect = source
+        .split_once("fn connect(")
+        .expect("UDP transport constructor")
+        .1
+        .split_once("async fn run(")
+        .expect("network run loop")
+        .0;
+
+    assert!(
+        connect.contains("AsyncFd::new"),
+        "TUN reactor registration must be part of transport construction"
+    );
+}
+
+#[test]
+fn release_build_preserves_executor_panic_containment() {
+    let manifest = include_str!("../Cargo.toml");
+    let release_profile = manifest
+        .split_once("[profile.release]")
+        .expect("release profile")
+        .1;
+
+    assert!(
+        !release_profile.lines().any(|line| {
+            let setting = line.split('#').next().unwrap_or_default().trim();
+            setting == "panic = \"abort\"" || setting == "panic='abort'"
+        }),
+        "release panic=abort bypasses Execution Actor poisoning and fatal telemetry"
+    );
+}
+
+#[test]
 fn runtime_commands_are_explicit_and_closed() {
     assert_eq!(Command::parse(["serve"]), Ok(Command::Serve));
     assert_eq!(

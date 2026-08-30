@@ -20,10 +20,24 @@ IPv4 options are carried opaquely when the IHL is structurally valid; neither
 Runtime nor Egress interprets them. Supporting them is part of the current
 contract, not a generation-specific capability.
 
+Runtime accepts an outbound packet only when its inner source is the exact
+Tunnel IPv4 assigned in RuntimeSpec. It accepts a response datagram only when
+the inner destination is that same address. These checks prevent an untrusted
+Agent process from selecting another Agent's Egress identity through forged TUN
+packets.
+
 Runtime Egress learns the return peer from each outbound UDP source address and
 maps the inner flow to that peer. A response datagram contains the complete
 return IPv4 packet and is written back to Runtime TUN. The current Agent always
 initiates the inner TCP flow, so no registration protocol is required.
+
+Before exposing Runtime readiness, Runtime sends one ordinary TCP SYN from its
+assigned Tunnel IPv4 to the reserved documentation address `192.0.2.1`. The
+Egress safety baseline always rejects that special-use destination with its
+normal TCP RST, so the probe creates no flow or external traffic. This is a
+bounded packet-path probe, not an additional tunnel envelope, heartbeat,
+registration protocol, or claim of public connectivity. Agent Controller must
+create the durable network allocation before starting the Runtime.
 
 Packet loss, duplication, and reordering retain ordinary IP semantics. Runtime
 and Egress do not retransmit tunnel datagrams; inner TCP owns reliability and

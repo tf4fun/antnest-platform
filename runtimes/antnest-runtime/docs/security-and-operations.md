@@ -48,10 +48,16 @@ reserved names.
   credential is mounted.
 - Runtime HTTP is exposed only on the private platform network.
 
-A minimal Docker container has this shape. Runtime Controller supplies the workspace and
-system-Skill host paths and the immutable RuntimeSpec values:
+A minimal Docker container has this shape. Runtime Controller supplies the workspace,
+system-Skill host paths, exact resolver file, and immutable RuntimeSpec values. It creates
+the resolver file before the container so Docker's embedded resolver cannot replace it:
 
 ```bash
+install -d -m 0755 /srv/antnest/runtime/agent-123
+printf 'options use-vc\nnameserver 100.64.0.1\n' \
+  >/srv/antnest/runtime/agent-123/resolv.conf
+chmod 0444 /srv/antnest/runtime/agent-123/resolv.conf
+
 docker run --rm \
   --name antnest-runtime-agent-123 \
   --read-only \
@@ -74,8 +80,8 @@ docker run --rm \
 dst=/workspace \
   --mount type=bind,src=/srv/antnest/skills,\
 dst=/skills,readonly \
-  --dns 100.64.0.1 \
-  --dns-option use-vc \
+  --mount type=bind,src=/srv/antnest/runtime/agent-123/resolv.conf,\
+dst=/etc/resolv.conf,readonly \
   --env 'ANTNEST_RUNTIME_SPEC={"agent_id":"agent-123","generation":1,"listen":{"host":"0.0.0.0","port":8093},"network":{"packet_contract_revision":1,"egress_endpoint":{"ipv4":"172.30.255.3","port":8092},"tunnel_ipv4":"100.96.0.2","resolver_ipv4":"100.64.0.1"},"filesystem":{"workspace":"/workspace","system_skills":"/skills"}}' \
   antnest/antnest-runtime:<immutable-tag>
 ```
@@ -181,11 +187,13 @@ Runtime deployment input:
 ANTNEST_RUNTIME_SPEC={"agent_id":"agent-123","generation":1,"listen":{"host":"0.0.0.0","port":8093},"network":{"packet_contract_revision":1,"egress_endpoint":{"ipv4":"172.30.255.3","port":8092},"tunnel_ipv4":"100.96.0.2","resolver_ipv4":"100.64.0.1"},"filesystem":{"workspace":"/workspace","system_skills":"/skills"}}
 ```
 
-Runtime Controller resolves the Runtime Egress service through Docker/Kubernetes service
-discovery before creating the Runtime and injects exactly one literal
-`IPv4:port` endpoint. Runtime deliberately performs no hostname lookup. This
-keeps platform DNS on the root control plane and Agent DNS on the governed TUN
-path without a split-resolver special case.
+Egress is the sole authority for this endpoint. Its Agent network attachment
+contains exactly one literal `IPv4:port`; Agent Controller copies that value
+into RuntimeSpec, and Runtime Controller deploys the immutable RuntimeSpec
+without discovering, resolving, or rewriting the endpoint. Runtime itself also
+performs no hostname lookup. The deployment platform must make the supplied
+literal endpoint routable from Runtime's root control plane. Agent DNS remains
+on the governed TUN path without a split-resolver special case.
 
 ## Failure Diagnosis
 
@@ -201,8 +209,9 @@ path without a split-resolver special case.
    endpoint; never route work to it.
 5. **`tools/list` fails after status succeeds:** MCP is defective; reject the
    candidate generation.
-6. **`/status` succeeds but public traffic fails:** `/status` is
-   Runtime-local readiness; inspect the selected Runtime Controller and Egress deployment.
+6. **`/status` succeeds but public traffic fails:** the Runtime-to-Egress packet
+   path was ready at startup, but `/status` does not prove external reachability;
+   inspect current Egress health, policy, DNS upstream, and destination state.
 7. **A denied TCP connection hangs:** inspect Egress policy and its fast-reject
    path; Runtime does not evaluate policy locally.
 8. **DNS fails:** inspect the UDP Egress endpoint, virtual resolver, and
@@ -221,8 +230,11 @@ endpoint unavailable and the container platform restarts or replaces it:
 - Docker may restart the container or Runtime Controller may replace it;
 - Kubernetes may restart the container in the retained Pod sandbox or Runtime Controller
   may replace the Pod;
-- bootstrap removes or replaces only Runtime-owned named TUN, route, and
-  nftables artifacts and fails if it cannot prove convergence;
+- bootstrap removes only the exact Runtime-owned UID rule and two expected
+  routes. It never flushes a routing table or deletes by priority alone. The
+  fixed high-numbered table/priority are Runtime reservations; any remaining
+  rule or route at those identifiers is treated as a platform conflict and
+  bootstrap fails before installing Agent routing;
 - Runtime Controller reattaches the persistent Agent workspace;
 - unchanged RuntimeSpec keeps the same generation; a changed RuntimeSpec gets a
   new generation;

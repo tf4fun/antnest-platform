@@ -23,9 +23,8 @@ NAT and DNS upstream traffic.
 | `ANTNEST_EGRESS_DATABASE_TLS_MODE` | no | `require` | `require` uses native trust roots; `disable` is restricted to isolated local development |
 | `ANTNEST_EGRESS_DATABASE_STARTUP_TIMEOUT` | no | `30s` | Maximum cold-start wait for PostgreSQL reachability |
 | `ANTNEST_EGRESS_DATABASE_RETRY_DELAY` | no | `250ms` | Delay between cold-start connection attempts |
-| `ANTNEST_EGRESS_CONTROL_LISTEN` | no | `0.0.0.0:8081` | Trusted internal control HTTP listener |
-| `ANTNEST_EGRESS_UDP_LISTEN` | no | `0.0.0.0:8092` | Runtime packet UDP listener |
-| `ANTNEST_EGRESS_UDP_ADVERTISE` | yes | none | Literal reachable UDP address returned to Runtime Controller |
+| `ANTNEST_EGRESS_CONTROL_LISTEN` | no | `127.0.0.1:8081` | Trusted internal control HTTP listener; deployments must bind one explicit control-network address |
+| `ANTNEST_EGRESS_UDP_ADVERTISE` | yes | none | Literal Runtime-network UDP address used both for bind and for Runtime Controller attachments |
 | `ANTNEST_EGRESS_TUNNEL_CIDR` | no | `100.64.0.0/10` | Agent Tunnel IPv4 pool |
 | `ANTNEST_EGRESS_RESOLVER_IPV4` | no | `100.64.0.1` | Reserved virtual resolver/gateway address |
 | `ANTNEST_EGRESS_QUARANTINE` | no | `5m` | Released-address quarantine duration |
@@ -48,13 +47,21 @@ Packet revision and inner MTU come only from
 `contracts/runtime/packet-contract.json`. The current revision is returned in
 network attachments; MTU has no deployment variable or negotiation field.
 `ANTNEST_EGRESS_UDP_ADVERTISE` must be a stable, usable unicast IPv4 address with
-a non-zero port and must remain reachable across an Egress process restart.
+a non-zero port and must remain reachable across an Egress process restart. It
+is also the bind address; Stage 1 deliberately has no separate wildcard-listen
+setting or NAT-style advertised endpoint.
 
 Egress never selects a public resolver implicitly. Docker Compose points this
 setting at Docker's embedded resolver (`127.0.0.11:53`); a Kubernetes or
 production deployment supplies its cluster or enterprise resolver. That
 resolver must accept DNS over TCP because Runtime executors use `options
 use-vc`, keeping DNS on the governed TCP-only packet path.
+
+Stage 1 `allow_all` is external-only: special-use and private IPv4 destinations
+remain denied, except TCP port 53 on the virtual resolver. An enterprise service
+on an internal address requires a later explicit policy schema; operators must
+not work around this boundary by attaching Runtime containers to control
+networks.
 
 `ANTNEST_EGRESS_DATABASE_TLS_MODE=require` is the production default and
 validates PostgreSQL against the container's native certificate roots. The
@@ -68,6 +75,14 @@ control network for PostgreSQL and control RPCs, a Runtime-facing UDP network,
 and an external route for NAT and the configured DNS upstream. Only the control
 and UDP listeners are exposed to those private networks; neither is a public
 host API.
+
+The control listener must bind the Egress address on the control network, never
+`0.0.0.0` or `[::]`. A multi-homed container does not gain port isolation merely
+by joining separate Docker networks: a wildcard listener would also accept
+connections arriving from the Runtime-facing interface. Compose therefore
+assigns the control interface a stable private address and binds only that
+address. Kubernetes must provide the equivalent fixed Pod address or bind and
+filter the control port with NetworkPolicy before the service becomes ready.
 
 Stage 1 runs exactly one active Egress replica. Do not place multiple replicas
 behind a generic TCP/UDP load balancer: packet flows, UDP return peers, TUN,
@@ -112,9 +127,13 @@ Runtime UDP, the DNS upstream, OTLP when enabled, and intended external egress.
 The listener opens only after PostgreSQL snapshot loading, UDP bind, TUN, DNS,
 and kernel reconciliation succeed, so `data_plane_ready=true` summarizes those
 cold-start prerequisites rather than exposing a second set of component
-states. During a warm database outage, a failed control mutation or
-reconciliation marks `control_plane_ready=false` while the last published data
-plane remains ready. A later successful control operation restores it.
+states. `control_plane_ready` describes shared control infrastructure, not the
+health of every Agent. A warm database outage or shared control-path failure
+marks it false while the last published data plane remains ready. A cleanup
+failure fences only the affected Agent and leaves global readiness unchanged;
+its request error, health event, and aggregate fenced-Agent metric expose the
+local degradation. A later successful shared control operation restores global
+control readiness.
 `snapshot_revision` is a process-local monotonic publication counter, not a
 durable policy version.
 
@@ -143,6 +162,18 @@ connection failures, within the configured startup timeout. A migration,
 persisted-pool mismatch, or initial snapshot failure terminates immediately;
 these are not hidden behind retries. Packet tasks never hold a PostgreSQL
 transaction.
+
+Control operations use a bounded pool of validated PostgreSQL connections. No
+repository-wide lock is held while SQL is running, so one Agent's row-lock wait
+does not block unrelated Agent reads or mutations. Pool acquisition, connection
+establishment, SQL statements, and PostgreSQL lock waits are bounded; expiry is
+reported as a scoped, retryable failure through the owning control request, and
+the timed-out connection is retired. Global control readiness becomes false
+only when no validated pooled connection remains live; one Agent's statement,
+lock, or persisted-row failure does not alter it. Stage 1 fixes the pool at
+eight connections and client-side operation deadlines at five seconds, with
+shorter PostgreSQL statement and lock deadlines; they are implementation
+limits, not deployment configuration knobs.
 
 ## 6. Kernel Ownership
 
@@ -180,11 +211,34 @@ snapshot record:
 
 - active flows, collisions, expirations, and reverse misses;
 - policy allows and rejections;
-- malformed and unsupported packets;
+- malformed and unsupported packets as separate counters;
 - UDP/TUN packet and byte counts;
-- DNS proxy accepted, rejected, completed, failed, and byte counts.
+- Agent-attributed Runtime-peer UDP output failures;
+- unattributed destination-level UDP receive errors from asynchronous ICMP;
+- DNS proxy accepted, rejected, completed, failed, and byte counts;
+- service, data-plane, and control-plane readiness;
+- the number of currently fenced Agents and health transitions.
+- quarantine allocations removed and Agent-local cleanup failures.
+
+Readiness changes emit one low-frequency `health_transition` event containing
+only component, previous state, next state, reason, transition number, and
+snapshot revision. Agent-local cleanup failures may carry the opaque Agent ID in
+logs and control spans, but Agent IDs are never metric labels.
+
+An attributed Runtime-peer output failure emits at most one
+`runtime_peer_output_unavailable` diagnostic event per Agent in each 30-second
+window. The bounded recent-Agent cache is sampling state, not an availability
+authority, so no recovery event is inferred from packet traffic. Events contain
+only the opaque Agent ID and stable error classification; aggregate metrics
+remain free of Agent labels and packet traffic never creates spans.
 
 Individual packet drops never emit logs, even when debug logging is enabled.
+
+DNS-over-TCP admission is bounded twice: once for the whole process and once
+for each source tunnel address. The per-source guard prevents one Runtime from
+starving every other Agent. These limits are implementation-owned safety
+constants in Stage 1; neither source addresses nor Agent IDs appear as metric
+labels.
 The stderr layer accepts only `antnest_runtime_egress` crate targets, so
 `RUST_LOG` cannot enable PostgreSQL, HTTP, or other dependency payload logs.
 Control RPC failures remain control-plane spans and structured logs. Background

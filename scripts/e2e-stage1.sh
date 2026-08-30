@@ -5,15 +5,17 @@ repository_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$repository_root"
 
 export COMPOSE_PROJECT_NAME="antnest-stage1-e2e-$$"
-export ANTNEST_EGRESS_CONTROL_HOST_PORT=$((20000 + ($$ % 10000)))
 export ANTNEST_EGRESS_POSTGRES_HOST_PORT=$((30000 + ($$ % 10000)))
 export ANTNEST_RUNTIME_MANAGEMENT_NETWORK="${COMPOSE_PROJECT_NAME}-runtime-management"
 network_octet=$((1 + ($$ % 200)))
 export ANTNEST_RUNTIME_MANAGEMENT_SUBNET="10.253.${network_octet}.0/24"
 export ANTNEST_EGRESS_IPV4="10.253.${network_octet}.3"
+export ANTNEST_EGRESS_CONTROL_SUBNET="10.252.${network_octet}.0/24"
+export ANTNEST_EGRESS_CONTROL_IPV4="10.252.${network_octet}.3"
 
-control_url="http://127.0.0.1:${ANTNEST_EGRESS_CONTROL_HOST_PORT}"
+control_url="http://${ANTNEST_EGRESS_CONTROL_IPV4}:8081"
 runtime_name="${COMPOSE_PROJECT_NAME}-runtime"
+mcp_url="http://${runtime_name}:8093/mcp"
 temporary_root=$(mktemp -d "${TMPDIR:-/tmp}/antnest-stage1-e2e.XXXXXX")
 workspace="$temporary_root/workspace"
 resolver="$temporary_root/resolv.conf"
@@ -24,7 +26,9 @@ cleanup() {
   if [ "$status" -ne 0 ]; then
     docker compose ps >&2 || true
     docker compose logs --no-color --tail=200 runtime-egress >&2 || true
-    docker logs --tail=200 "$runtime_name" >&2 || true
+    if docker inspect "$runtime_name" >/dev/null 2>&1; then
+      docker logs --tail=200 "$runtime_name" >&2 || true
+    fi
   fi
   docker rm -f "$runtime_name" >/dev/null 2>&1 || true
   docker compose down --volumes --remove-orphans >/dev/null 2>&1 || true
@@ -33,22 +37,53 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+control_request() {
+  docker compose exec -T runtime-egress curl -fsS "$@"
+}
+
+mcp_request() {
+  request=$1
+  method=$2
+  name=${3:-}
+  response_file=/tmp/antnest-stage1-mcp-response
+  status=$(docker compose exec -T runtime-egress curl -sS \
+    -o "$response_file" \
+    -w '%{http_code}' \
+    -X POST \
+    -H 'accept: application/json, text/event-stream' \
+    -H 'content-type: application/json' \
+    -H 'mcp-protocol-version: 2026-07-28' \
+    -H "mcp-method: $method" \
+    -H "mcp-name: $name" \
+    --data-binary "$request" \
+    "$mcp_url")
+  response=$(docker compose exec -T runtime-egress cat "$response_file")
+  docker compose exec -T runtime-egress rm -f "$response_file"
+  case "$status" in
+    2??) printf '%s' "$response" ;;
+    *)
+      printf 'MCP request failed with HTTP %s: %s\n' "$status" "$response" >&2
+      return 1
+      ;;
+  esac
+}
+
 mkdir "$workspace"
 chmod 0777 "$workspace"
 printf 'options use-vc\nnameserver 100.64.0.1\n' >"$resolver"
 
 docker compose up -d --wait postgres runtime-egress
 
-curl -fsS "$control_url/status" | grep -q '"status":"ready"'
-curl -fsS -X PUT \
+control_request "$control_url/status" | grep -q '"status":"ready"'
+control_request -X PUT \
   "$control_url/internal/agent-networks/agent-stage1-e2e" \
   | grep -q '"tunnel_ipv4":"100.64.0.2"'
-curl -fsS -X PUT \
+control_request -X PUT \
   -H 'content-type: application/json' \
   -d '{"spec":{"schema_version":1,"action":"allow_all"}}' \
   "$control_url/internal/policies/stage1-allow/revisions/1" \
   >/dev/null
-curl -fsS -X PUT \
+control_request -X PUT \
   -H 'content-type: application/json' \
   -d '{"policy_id":"stage1-allow","revision":1,"expected_resource_version":1}' \
   "$control_url/internal/agent-policy-assignments/agent-stage1-e2e" \
@@ -77,16 +112,57 @@ docker run -d \
   antnest/antnest-runtime:local \
   >/dev/null
 
-attempt=0
-until docker exec "$runtime_name" curl -fsS http://127.0.0.1:8093/status \
-  2>/dev/null | grep -q '"generation":1,"status":"ready"'; do
-  attempt=$((attempt + 1))
-  if [ "$attempt" -ge 30 ]; then
-    docker logs "$runtime_name"
-    echo "Runtime did not become ready" >&2
+wait_runtime_ready() {
+  attempt=0
+  until docker exec "$runtime_name" curl -fsS http://127.0.0.1:8093/status \
+    2>/dev/null | grep -q '"generation":1,"status":"ready"'; do
+    attempt=$((attempt + 1))
+    if [ "$attempt" -ge 30 ]; then
+      docker logs "$runtime_name"
+      echo "Runtime did not become ready" >&2
+      exit 1
+    fi
+    sleep 1
+  done
+}
+wait_runtime_ready
+
+echo "Checking the production MCP and Executor boundary"
+mcp_tools=$(mcp_request '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}' 'tools/list')
+for tool_name in bash edit read write; do
+  printf '%s' "$mcp_tools" | grep -q "\"name\":\"$tool_name\""
+done
+mcp_request '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}},"name":"write","arguments":{"path":{"root":"workspace","path":"stage1-mcp.txt"},"content":"before"}}}' 'tools/call' 'write' \
+  >/dev/null
+mcp_request '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}},"name":"edit","arguments":{"path":{"root":"workspace","path":"stage1-mcp.txt"},"old_string":"before","new_string":"after"}}}' 'tools/call' 'edit' \
+  >/dev/null
+mcp_read=$(mcp_request '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}},"name":"read","arguments":{"path":{"root":"workspace","path":"stage1-mcp.txt"},"offset":0,"limit":1024}}}' 'tools/call' 'read')
+printf '%s' "$mcp_read" | grep -q '"content":"after"'
+mcp_bash=$(mcp_request '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}},"name":"bash","arguments":{"command":"printf '\''%s:%s:'\'' \"$(id -u)\" \"$(id -g)\"; cat stage1-mcp.txt","working_dir":{"root":"workspace","path":"."},"env":[],"timeout_ms":1000}}}' 'tools/call' 'bash')
+printf '%s' "$mcp_bash" | grep -q '"stdout":"1000:1000:after"'
+
+echo "Checking crash-only Runtime restart in the retained container network"
+docker restart "$runtime_name" >/dev/null
+wait_runtime_ready
+mcp_request '{"jsonrpc":"2.0","id":6,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}' 'tools/list' \
+  | grep -q '"name":"bash"'
+
+echo "Checking control-plane network isolation"
+for control_address in "$ANTNEST_EGRESS_IPV4" "$ANTNEST_EGRESS_CONTROL_IPV4"; do
+  if docker exec --user 1000 "$runtime_name" \
+    curl -fsS --connect-timeout 1 --max-time 2 \
+    "http://${control_address}:8081/status" \
+    >/dev/null 2>&1; then
+    echo "Runtime reached Egress control address ${control_address}" >&2
     exit 1
   fi
-  sleep 1
+  if docker exec "$runtime_name" \
+    curl -fsS --connect-timeout 1 --max-time 2 \
+    "http://${control_address}:8081/status" \
+    >/dev/null 2>&1; then
+    echo "Runtime root route reached Egress control address ${control_address}" >&2
+    exit 1
+  fi
 done
 
 echo "Checking allow_all data path"
@@ -97,7 +173,7 @@ docker exec --user 1000 "$runtime_name" \
   curl -fsS --connect-timeout 5 --max-time 10 https://example.com \
   | grep -q 'Example Domain'
 
-curl -fsS -X PUT \
+control_request -X PUT \
   -H 'content-type: application/json' \
   -d '{"policy_id":"builtin/deny-all","revision":1,"expected_resource_version":2}' \
   "$control_url/internal/agent-policy-assignments/agent-stage1-e2e" \
@@ -110,7 +186,7 @@ if docker exec --user 1000 "$runtime_name" \
   exit 1
 fi
 
-curl -fsS -X PUT \
+control_request -X PUT \
   -H 'content-type: application/json' \
   -d '{"policy_id":"stage1-allow","revision":1,"expected_resource_version":3}' \
   "$control_url/internal/agent-policy-assignments/agent-stage1-e2e" \
@@ -126,7 +202,7 @@ docker exec --user 1000 "$runtime_name" \
 docker compose restart runtime-egress
 docker compose up -d --wait runtime-egress
 echo "Checking persisted state after Egress restart"
-curl -fsS "$control_url/internal/agent-policy-assignments/agent-stage1-e2e" \
+control_request "$control_url/internal/agent-policy-assignments/agent-stage1-e2e" \
   | grep -q '"resource_version":4'
 docker exec --user 1000 "$runtime_name" \
   curl -kfsS --connect-timeout 5 --max-time 10 https://1.1.1.1 \
@@ -135,7 +211,7 @@ docker exec --user 1000 "$runtime_name" \
   curl -fsS --connect-timeout 5 --max-time 10 https://example.com \
   | grep -q 'Example Domain'
 
-curl -fsS -X POST \
+control_request -X POST \
   "$control_url/internal/agent-networks/agent-stage1-e2e/release" \
   | grep -q '"state":"quarantined"'
 

@@ -162,7 +162,7 @@ fn parse_ipv4(name: &'static str, value: &str) -> Result<Ipv4Addr, ConfigError> 
     Ok(address)
 }
 
-// Runtime Controller owns service discovery; Runtime receives one concrete endpoint.
+// Egress owns this address; Runtime receives the concrete endpoint through RuntimeSpec.
 #[cfg(test)]
 pub(crate) fn parse_endpoint(value: &str) -> Result<UdpEndpoint, ConfigError> {
     let address = value

@@ -58,13 +58,21 @@ boundary is ready:
 1. Require container PID 1 and root, then load the immutable RuntimeSpec.
 2. Set the Agent home and XDG locations beneath `/workspace`.
 3. Reconcile the Runtime-owned TUN, UID policy route, resolver policy, and
-   fail-closed nftables rules. The platform main routing table remains intact.
+   fail-closed nftables rules. Reconciliation deletes only exact owned entries,
+   rejects any conflicting reserved table/priority content, and leaves the
+   platform main routing table intact.
 4. Validate that the workspace and system-Skill roots can be opened by
    UID/GID 1000.
 5. Initialize telemetry and the single-flight Execution Actor.
-6. Connect the UDP Egress socket selected by RuntimeSpec and start the TUN
-   packet loop.
-7. Bind the internal HTTP server and expose `/status` and `/mcp`.
+6. Connect the UDP Egress socket selected by RuntimeSpec, register the TUN file
+   with the asynchronous reactor, and verify the assigned packet path with a
+   bounded IPv4/TCP probe to a permanently rejected documentation address.
+   Failure to register the local TUN reactor reports `local_network_failed`;
+   Egress connection or probe failure reports `network_transport_failed`. Both
+   are startup preparation failures rather than background task failures. Agent
+   Controller must allocate the Agent network before creating the Runtime.
+7. Bind the internal HTTP server, start the prepared packet loop, and expose
+   `/status` and `/mcp`.
 
 The PID 1 Supervisor remains root. It owns MCP, TUN, Egress, telemetry, signals,
 and child-process reaping, but never executes Agent-selected filesystem or shell
@@ -86,9 +94,12 @@ Runtime exposes exactly two internal endpoints:
 | `GET /status` | Current Runtime identity and application readiness |
 | `POST /mcp` | MCP 2026-07-28 Streamable HTTP endpoint |
 
-`/status` returns HTTP 200 only after local bootstrap is complete, the network
-loop is running, and MCP can accept tool calls. It is not an Egress handshake
-and does not prove public connectivity. Its body is:
+`/status` returns HTTP 200 only after local bootstrap is complete, every
+fallible local network transport resource is registered, the assigned Egress
+packet path has returned a matching readiness probe, the network loop is
+running, and MCP can accept tool calls. The probe proves current Runtime-to-
+Egress routing and Agent allocation, but deliberately does not claim public or
+upstream DNS connectivity. Its body is:
 
 ```json
 {
@@ -231,6 +242,9 @@ leaves the old generation active; ambiguous deletion keeps admission closed.
   MCP port, or uses unsupported IPv6;
 - every structurally valid supported packet is carried to Runtime Egress, which
   is the only network-policy authority;
+- Runtime requires every outbound inner source and inbound inner destination to
+  equal its assigned Tunnel IPv4; an Agent cannot select another Agent's Egress
+  identity by forging packet headers;
 - malformed or unsupported local packets are rejected or dropped without
   terminating Runtime;
 - the MCP listen port is reachable only on the internal platform network;

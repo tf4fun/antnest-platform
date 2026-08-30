@@ -177,8 +177,8 @@ Errors have one stable shape:
 | `resource_version_conflict` | 409 | Compare-and-swap precondition failed |
 | `address_pool_exhausted` | 409 | No usable non-quarantined address is available |
 | `cleanup_failed` | 503 | Flow or conntrack barrier did not complete |
+| `operation_failed` | 503 | This bounded database/control operation failed; shared readiness may remain healthy and retry is allowed |
 | `control_plane_unavailable` | 503 | Database or control mutation path is unavailable |
-| `internal_error` | 500 | Unclassified service failure |
 
 Internal failures never expose SQL, credentials, packet payloads, or command
 stderr in the response.

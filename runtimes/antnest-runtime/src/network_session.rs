@@ -10,12 +10,18 @@ use tokio::io::unix::AsyncFd;
 use tokio_util::sync::CancellationToken;
 use tracing::Instrument as _;
 
-use crate::network::RuntimeNetwork;
-use crate::packet::{is_forwardable_ipv4_tcp, tunnel_datagram, unsupported_ipv4_rejection};
+use crate::network::{NetworkTransport, RuntimeNetwork};
+use crate::packet::{
+    egress_readiness_probe, inbound_tunnel_datagram, is_egress_readiness_reply,
+    outbound_tunnel_datagram, readiness_probe_sequence, readiness_probe_source_port,
+    unsupported_ipv4_rejection,
+};
 use crate::spec::RuntimeIdentity;
 use crate::telemetry::RuntimeMetrics;
 
 const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
+const READINESS_PROBE_ATTEMPTS: usize = 3;
+const READINESS_PROBE_TIMEOUT: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Error)]
 pub(crate) enum NetworkSessionError {
@@ -37,13 +43,32 @@ impl NetworkSessionError {
 pub(crate) struct NetworkSession(UdpNetwork);
 
 impl NetworkSession {
-    pub(crate) async fn prepare(network: RuntimeNetwork) -> Result<Self, NetworkSessionError> {
-        let (tun, mtu, egress_endpoint) = network.into_transport();
-        Ok(Self(UdpNetwork::connect(
+    pub(crate) async fn prepare(
+        network: RuntimeNetwork,
+        generation: u64,
+    ) -> Result<Self, NetworkSessionError> {
+        let NetworkTransport {
+            tun,
+            mtu,
+            egress_endpoint,
+            tunnel_ipv4,
+        } = network.into_transport();
+        let transport = UdpNetwork::connect(
             SocketAddr::V4(egress_endpoint.address()),
             usize::from(mtu),
             tun,
-        )?))
+            tunnel_ipv4,
+        )?;
+        verify_egress_path(
+            &transport.socket,
+            tunnel_ipv4,
+            usize::from(mtu),
+            generation,
+            READINESS_PROBE_ATTEMPTS,
+            READINESS_PROBE_TIMEOUT,
+        )
+        .await?;
+        Ok(Self(transport))
     }
 
     pub(crate) async fn run(
@@ -111,7 +136,8 @@ fn record_network_result(
 pub(crate) struct UdpNetwork {
     socket: tokio::net::UdpSocket,
     mtu: usize,
-    tun: File,
+    tun: Arc<AsyncFd<File>>,
+    tunnel_ipv4: Ipv4Addr,
 }
 
 struct NetworkMetrics {
@@ -182,9 +208,20 @@ impl NetworkMetrics {
 }
 
 impl UdpNetwork {
-    fn connect(address: SocketAddr, mtu: usize, tun: File) -> Result<Self, NetworkSessionError> {
+    fn connect(
+        address: SocketAddr,
+        mtu: usize,
+        tun: File,
+        tunnel_ipv4: Ipv4Addr,
+    ) -> Result<Self, NetworkSessionError> {
         let socket = connect_management_udp(address)?;
-        Ok(Self { socket, mtu, tun })
+        let tun = Arc::new(AsyncFd::new(tun).map_err(local_error)?);
+        Ok(Self {
+            socket,
+            mtu,
+            tun,
+            tunnel_ipv4,
+        })
     }
 
     async fn run(
@@ -192,7 +229,7 @@ impl UdpNetwork {
         shutdown: CancellationToken,
         exporter: RuntimeMetrics,
     ) -> Result<(), NetworkSessionError> {
-        let tun = Arc::new(AsyncFd::new(self.tun).map_err(local_error)?);
+        let tun = self.tun;
         let mut outbound = vec![0_u8; self.mtu];
         let mut inbound = vec![0_u8; self.mtu];
         let mut metrics = NetworkMetrics::new(exporter);
@@ -207,7 +244,7 @@ impl UdpNetwork {
                 read = read_tun(&tun, &mut outbound) => {
                     let size = read?;
                     let packet = &outbound[..size];
-                    if !is_forwardable_ipv4_tcp(packet, self.mtu) {
+                    if outbound_tunnel_datagram(packet, self.mtu, self.tunnel_ipv4).is_err() {
                         let rejection = unsupported_ipv4_rejection(packet);
                         metrics.unsupported_outbound(rejection.is_some());
                         if let Some(rejection) = rejection {
@@ -220,7 +257,11 @@ impl UdpNetwork {
                 }
                 received = self.socket.recv(&mut inbound) => {
                     let size = received.map_err(transport_error)?;
-                    let Some(packet) = validated_inbound_datagram(&inbound[..size], self.mtu) else {
+                    let Some(packet) = validated_inbound_datagram(
+                        &inbound[..size],
+                        self.mtu,
+                        self.tunnel_ipv4,
+                    ) else {
                         metrics.malformed_inbound();
                         continue;
                     };
@@ -232,8 +273,48 @@ impl UdpNetwork {
     }
 }
 
-fn validated_inbound_datagram(packet: &[u8], mtu: usize) -> Option<&[u8]> {
-    tunnel_datagram(packet, mtu).ok()
+fn validated_inbound_datagram(packet: &[u8], mtu: usize, tunnel_ipv4: Ipv4Addr) -> Option<&[u8]> {
+    inbound_tunnel_datagram(packet, mtu, tunnel_ipv4).ok()
+}
+
+async fn verify_egress_path(
+    socket: &tokio::net::UdpSocket,
+    tunnel_ipv4: Ipv4Addr,
+    mtu: usize,
+    generation: u64,
+    attempts: usize,
+    deadline: Duration,
+) -> Result<(), NetworkSessionError> {
+    let source_port = readiness_probe_source_port(generation);
+    let sequence = readiness_probe_sequence(generation);
+    let probe = egress_readiness_probe(tunnel_ipv4, source_port, sequence);
+    let mut reply = vec![0_u8; mtu];
+
+    for _ in 0..attempts {
+        let sent = tokio::time::timeout(deadline, socket.send(&probe))
+            .await
+            .map_err(|_| transport_error("Egress readiness probe write timed out"))?
+            .map_err(transport_error)?;
+        if sent != probe.len() {
+            return Err(transport_error(
+                "Egress readiness probe write was incomplete",
+            ));
+        }
+        let response = tokio::time::timeout(deadline, async {
+            loop {
+                let size = socket.recv(&mut reply).await.map_err(transport_error)?;
+                if is_egress_readiness_reply(&reply[..size], tunnel_ipv4, source_port, sequence) {
+                    return Ok(());
+                }
+            }
+        })
+        .await;
+        match response {
+            Ok(result) => return result,
+            Err(_) => continue,
+        }
+    }
+    Err(transport_error("Egress readiness probe timed out"))
 }
 
 fn connect_management_udp(
@@ -326,7 +407,11 @@ mod tests {
     use tokio_util::sync::CancellationToken;
     use tracing_subscriber::layer::{Context, Layer, SubscriberExt as _};
 
-    use super::{NetworkMetrics, NetworkSession, UdpNetwork, validated_inbound_datagram};
+    use super::{
+        NetworkMetrics, NetworkSession, UdpNetwork, connect_management_udp,
+        validated_inbound_datagram, verify_egress_path,
+    };
+    use crate::packet::unsupported_ipv4_rejection;
     use crate::spec::RuntimeIdentity;
     use crate::telemetry::RuntimeMetrics;
 
@@ -355,7 +440,11 @@ mod tests {
         let network = NetworkSession(UdpNetwork {
             socket: tokio::net::UdpSocket::from_std(socket).expect("async UDP socket"),
             mtu: 64,
-            tun: std::fs::File::from(reader),
+            tun: Arc::new(
+                tokio::io::unix::AsyncFd::new(std::fs::File::from(reader))
+                    .expect("registered TUN stand-in"),
+            ),
+            tunnel_ipv4: Ipv4Addr::new(100, 64, 0, 2),
         });
         let shutdown = CancellationToken::new();
         shutdown.cancel();
@@ -374,7 +463,9 @@ mod tests {
 
     #[test]
     fn malformed_egress_datagrams_are_local_packet_loss_not_session_failure() {
-        assert!(validated_inbound_datagram(&[0_u8; 7], 1400).is_none());
+        assert!(
+            validated_inbound_datagram(&[0_u8; 7], 1400, Ipv4Addr::new(100, 64, 0, 2)).is_none()
+        );
     }
 
     #[test]
@@ -392,5 +483,53 @@ mod tests {
         assert_eq!(metrics.unsupported_outbound_packets, 1);
         assert_eq!(metrics.local_rejections, 1);
         assert_eq!(metrics.malformed_inbound_packets, 1);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn packet_path_probe_requires_a_correlated_egress_reply() {
+        let egress = tokio::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("test Egress UDP");
+        let endpoint = egress.local_addr().expect("Egress address");
+        let responder = tokio::spawn(async move {
+            let mut packet = [0_u8; 1400];
+            let (size, peer) = egress.recv_from(&mut packet).await.expect("probe");
+            let reply = unsupported_ipv4_rejection(&packet[..size]).expect("probe reset");
+            egress.send_to(&reply, peer).await.expect("probe response");
+        });
+        let socket = connect_management_udp(endpoint).expect("connected UDP");
+
+        verify_egress_path(
+            &socket,
+            Ipv4Addr::new(100, 64, 0, 2),
+            1400,
+            1,
+            1,
+            std::time::Duration::from_millis(200),
+        )
+        .await
+        .expect("matching response proves path");
+        responder.await.expect("responder task");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn packet_path_probe_fails_closed_when_egress_does_not_reply() {
+        let silent = tokio::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("silent Egress UDP");
+        let socket = connect_management_udp(silent.local_addr().unwrap()).unwrap();
+
+        let error = verify_egress_path(
+            &socket,
+            Ipv4Addr::new(100, 64, 0, 2),
+            1400,
+            1,
+            1,
+            std::time::Duration::from_millis(20),
+        )
+        .await
+        .expect_err("silence must fail readiness");
+
+        assert!(error.to_string().contains("readiness probe timed out"));
     }
 }

@@ -107,6 +107,21 @@ impl FlowTable {
         before - self.flows.len()
     }
 
+    pub fn remove_peer(&mut self, agent_id: &AgentId, peer: SocketAddr) -> usize {
+        let removed: Vec<_> = self
+            .flows
+            .iter()
+            .filter_map(|(key, entry)| {
+                (&entry.agent_id == agent_id && entry.peer == peer).then_some(*key)
+            })
+            .collect();
+        for key in &removed {
+            self.flows.remove(key);
+            decrement_count(&mut self.agent_counts, agent_id);
+        }
+        removed.len()
+    }
+
     pub fn len(&self) -> usize {
         self.flows.len()
     }

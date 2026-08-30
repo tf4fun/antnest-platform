@@ -18,8 +18,7 @@ pub struct Config {
     pub database_tls_mode: DatabaseTlsMode,
     pub database_startup_timeout: Duration,
     pub database_retry_delay: Duration,
-    pub control_listen: SocketAddr,
-    pub udp_listen: SocketAddr,
+    pub control_listen: SocketAddrV4,
     pub udp_advertise: SocketAddrV4,
     pub tunnel_cidr: Ipv4Net,
     pub resolver_ipv4: Ipv4Addr,
@@ -72,8 +71,15 @@ impl Config {
             parse_duration(&values, "ANTNEST_EGRESS_DATABASE_STARTUP_TIMEOUT", "30s")?;
         let database_retry_delay =
             parse_duration(&values, "ANTNEST_EGRESS_DATABASE_RETRY_DELAY", "250ms")?;
-        let control_listen = parse(&values, "ANTNEST_EGRESS_CONTROL_LISTEN", "0.0.0.0:8081")?;
-        let udp_listen = parse(&values, "ANTNEST_EGRESS_UDP_LISTEN", "0.0.0.0:8092")?;
+        let control_listen: SocketAddrV4 =
+            parse(&values, "ANTNEST_EGRESS_CONTROL_LISTEN", "127.0.0.1:8081")?;
+        if control_listen.ip().is_unspecified()
+            || control_listen.ip().is_multicast()
+            || control_listen.ip().is_broadcast()
+            || control_listen.port() == 0
+        {
+            return Err(ConfigError::Invalid("ANTNEST_EGRESS_CONTROL_LISTEN"));
+        }
         let udp_advertise: SocketAddrV4 = required(&values, "ANTNEST_EGRESS_UDP_ADVERTISE")?
             .parse()
             .map_err(|_| ConfigError::Invalid("ANTNEST_EGRESS_UDP_ADVERTISE"))?;
@@ -120,7 +126,6 @@ impl Config {
             database_startup_timeout,
             database_retry_delay,
             control_listen,
-            udp_listen,
             udp_advertise,
             tunnel_cidr,
             resolver_ipv4,

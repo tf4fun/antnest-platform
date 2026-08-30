@@ -88,8 +88,8 @@ mod platform {
     const IFF_TUN: libc::c_short = 0x0001;
     const IFF_NO_PI: libc::c_short = 0x1000;
     const RTF_UP: libc::c_ushort = 0x0001;
-    const AGENT_ROUTE_TABLE: &str = "100";
-    const AGENT_RULE_PRIORITY: &str = "1000";
+    const AGENT_ROUTE_TABLE: &str = "18953";
+    const AGENT_RULE_PRIORITY: &str = "18953";
 
     #[repr(C)]
     struct IfReq {
@@ -116,6 +116,14 @@ mod platform {
         mtu: u16,
         platform: PlatformNetwork,
         egress_endpoint: UdpEndpoint,
+        tunnel_ipv4: Ipv4Addr,
+    }
+
+    pub(crate) struct NetworkTransport {
+        pub(crate) tun: File,
+        pub(crate) mtu: u16,
+        pub(crate) egress_endpoint: UdpEndpoint,
+        pub(crate) tunnel_ipv4: Ipv4Addr,
     }
 
     impl RuntimeNetwork {
@@ -132,6 +140,7 @@ mod platform {
                 mtu: crate::packet::INNER_MTU,
                 platform,
                 egress_endpoint: spec.egress_endpoint().clone(),
+                tunnel_ipv4: spec.tunnel_ipv4(),
             })
         }
 
@@ -139,8 +148,13 @@ mod platform {
             &self.platform
         }
 
-        pub(crate) fn into_transport(self) -> (File, u16, UdpEndpoint) {
-            (self.tun, self.mtu, self.egress_endpoint)
+        pub(crate) fn into_transport(self) -> NetworkTransport {
+            NetworkTransport {
+                tun: self.tun,
+                mtu: self.mtu,
+                egress_endpoint: self.egress_endpoint,
+                tunnel_ipv4: self.tunnel_ipv4,
+            }
         }
     }
 
@@ -292,28 +306,109 @@ mod platform {
     }
 
     fn install_routes(tun_name: &str) -> Result<(), NetworkError> {
-        for (index, arguments) in agent_route_commands(tun_name).into_iter().enumerate() {
-            let output = std::process::Command::new("/sbin/ip")
-                .args(&arguments)
-                .output()
-                .map_err(|source| system("execute iproute2", source))?;
-            if !output.status.success() && index >= 2 {
-                return Err(NetworkError::Invalid(format!(
-                    "ip {} failed: {}",
-                    arguments.join(" "),
-                    String::from_utf8_lossy(&output.stderr).trim()
-                )));
-            }
+        for arguments in route_cleanup_commands(tun_name) {
+            let _ = run_ip(&arguments, true)?;
+        }
+        let rule_output = run_ip(&reserved_rule_query(), false)?;
+        if !rule_output.stdout.is_empty() {
+            return Err(NetworkError::Invalid(
+                "Runtime-owned policy-rule priority is already used".into(),
+            ));
+        }
+        let route_output = run_ip(&all_route_tables_query(), false)?;
+        if reserved_route_table_is_used(&route_output.stdout) {
+            return Err(NetworkError::Invalid(
+                "Runtime-owned routing table identifier is already used".into(),
+            ));
+        }
+        for arguments in agent_route_commands(tun_name) {
+            let _ = run_ip(&arguments, false)?;
         }
         Ok(())
+    }
+
+    fn run_ip(
+        arguments: &[String],
+        tolerate_failure: bool,
+    ) -> Result<std::process::Output, NetworkError> {
+        let output = std::process::Command::new("/sbin/ip")
+            .args(arguments)
+            .output()
+            .map_err(|source| system("execute iproute2", source))?;
+        if output.status.success() || tolerate_failure {
+            return Ok(output);
+        }
+        Err(NetworkError::Invalid(format!(
+            "ip {} failed: {}",
+            arguments.join(" "),
+            String::from_utf8_lossy(&output.stderr).trim()
+        )))
+    }
+
+    fn route_cleanup_commands(tun_name: &str) -> Vec<Vec<String>> {
+        let command =
+            |arguments: &[&str]| arguments.iter().map(|value| (*value).to_owned()).collect();
+        vec![
+            command(&[
+                "rule",
+                "del",
+                "pref",
+                AGENT_RULE_PRIORITY,
+                "uidrange",
+                "1000-1000",
+                "lookup",
+                AGENT_ROUTE_TABLE,
+            ]),
+            command(&[
+                "route",
+                "del",
+                "table",
+                AGENT_ROUTE_TABLE,
+                "default",
+                "dev",
+                tun_name,
+                "metric",
+                "10",
+            ]),
+            command(&[
+                "route",
+                "del",
+                "table",
+                AGENT_ROUTE_TABLE,
+                "unreachable",
+                "default",
+                "metric",
+                "32767",
+            ]),
+        ]
+    }
+
+    fn reserved_rule_query() -> Vec<String> {
+        let command =
+            |arguments: &[&str]| arguments.iter().map(|value| (*value).to_owned()).collect();
+        command(&["-o", "rule", "show", "priority", AGENT_RULE_PRIORITY])
+    }
+
+    fn all_route_tables_query() -> Vec<String> {
+        ["-o", "route", "show", "table", "all"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect()
+    }
+
+    fn reserved_route_table_is_used(output: &[u8]) -> bool {
+        String::from_utf8_lossy(output).lines().any(|line| {
+            let fields = line.split_whitespace().collect::<Vec<_>>();
+            fields
+                .windows(2)
+                .any(|field| field == ["table", AGENT_ROUTE_TABLE])
+        })
     }
 
     fn agent_route_commands(tun_name: &str) -> Vec<Vec<String>> {
         let command =
             |arguments: &[&str]| arguments.iter().map(|value| (*value).to_owned()).collect();
         vec![
-            command(&["rule", "del", "pref", AGENT_RULE_PRIORITY]),
-            command(&["route", "flush", "table", AGENT_ROUTE_TABLE]),
             command(&[
                 "route",
                 "add",
@@ -520,8 +615,8 @@ mod platform {
         use std::net::Ipv4Addr;
 
         use super::{
-            agent_route_commands, kill_switch_rules, parse_platform_routes,
-            validate_resolver_contents,
+            agent_route_commands, all_route_tables_query, kill_switch_rules, parse_platform_routes,
+            reserved_route_table_is_used, route_cleanup_commands, validate_resolver_contents,
         };
 
         #[test]
@@ -575,26 +670,44 @@ mod platform {
                 "rule",
                 "add",
                 "pref",
-                "1000",
+                "18953",
                 "uidrange",
                 "1000-1000",
                 "lookup",
-                "100",
+                "18953",
             ])));
             assert!(commands.contains(&expected(&[
-                "route", "add", "table", "100", "default", "dev", "antnest0", "metric", "10",
+                "route", "add", "table", "18953", "default", "dev", "antnest0", "metric", "10",
             ])));
             assert!(commands.contains(&expected(&[
                 "route",
                 "add",
                 "table",
-                "100",
+                "18953",
                 "unreachable",
                 "default",
                 "metric",
                 "32767",
             ])));
             assert!(!commands.iter().flatten().any(|value| value == "main"));
+            let cleanup = route_cleanup_commands("antnest0");
+            assert!(
+                !cleanup
+                    .iter()
+                    .any(|command| command.contains(&"flush".to_owned()))
+            );
+            assert!(cleanup[0].contains(&"uidrange".to_owned()));
+            assert!(cleanup[0].contains(&"lookup".to_owned()));
+            assert_eq!(
+                all_route_tables_query(),
+                ["-o", "route", "show", "table", "all"]
+            );
+            assert!(reserved_route_table_is_used(
+                b"default dev antnest0 table 18953 metric 10\n"
+            ));
+            assert!(!reserved_route_table_is_used(
+                b"default via 172.30.0.1 dev eth0\nlocal 127.0.0.0/8 dev lo table local\n"
+            ));
         }
 
         #[test]

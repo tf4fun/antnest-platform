@@ -59,6 +59,7 @@ pub const CONTROL_ERROR_CODES: &[&str] = &[
     "resource_version_conflict",
     "address_pool_exhausted",
     "cleanup_failed",
+    "operation_failed",
     "control_plane_unavailable",
 ];
 
@@ -611,6 +612,12 @@ impl From<ControlError> for ApiError {
                 "data-plane cleanup did not complete",
                 true,
             ),
+            ControlError::OperationFailed(_) => Self::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "operation_failed",
+                "control operation did not complete",
+                true,
+            ),
             ControlError::ControlPlaneUnavailable(_) => Self::new(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "control_plane_unavailable",
@@ -689,7 +696,7 @@ fn record_policy(policy_id: &PolicyId, revision: u64) {
 
 #[cfg(test)]
 mod tests {
-    use axum::response::IntoResponse;
+    use axum::{http::StatusCode, response::IntoResponse};
 
     use super::{ApiError, ControlErrorCode, is_business_control_route};
     use crate::application::{ControlError, FailureContext};
@@ -728,6 +735,23 @@ mod tests {
         assert_eq!(
             response.extensions().get::<ControlErrorCode>(),
             Some(&ControlErrorCode("cleanup_failed"))
+        );
+    }
+
+    #[test]
+    fn scoped_repository_failure_has_a_retryable_stable_error() {
+        let diagnostic =
+            FailureContext::new("agent_network.repository", "repository_operation_failed");
+        let response = ApiError::from(ControlError::OperationFailed(diagnostic)).into_response();
+
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(
+            response.extensions().get::<FailureContext>(),
+            Some(&diagnostic)
+        );
+        assert_eq!(
+            response.extensions().get::<ControlErrorCode>(),
+            Some(&ControlErrorCode("operation_failed"))
         );
     }
 }

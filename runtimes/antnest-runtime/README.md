@@ -65,12 +65,13 @@ generation. The endpoint accepts internal Docker/Kubernetes Host names and is
 not published outside that trusted network.
 
 `/status` is local application readiness: RuntimeSpec, Supervisor capabilities,
-roots, TUN, the local network loop, and MCP are ready. Before binding HTTP,
-Runtime also executes a UID/GID 1000 probe that verifies the workspace is
-writable/traversable and the system Skill root is readable/traversable. It does
-not probe Runtime Egress or claim end-to-end public connectivity. Controller
-combines this signal with Runtime Controller and Egress deployment health
-deployment before rollout.
+roots, TUN, the assigned Egress packet path, the local network loop, and MCP are
+ready. Before binding HTTP, Runtime executes a UID/GID 1000 probe that verifies
+the workspace is writable/traversable and the system Skill root is
+readable/traversable, then requires a matching packet response from Egress. The
+packet probe does not claim end-to-end public connectivity. Controller combines
+this startup signal with current Runtime Controller and Egress deployment
+health before rollout.
 
 Runtime permits one active tool execution and returns `runtime_busy` for a
 concurrent call. Agent Controller still serializes the broader Agent operation,
@@ -78,10 +79,13 @@ including generation handoff, while Runtime owns only local process and
 workspace correctness.
 
 Actor admission is fail-closed. Shutdown closes it permanently, and an
-unprovable Executor process-tree cleanup poisons it before Runtime exits; a
-finished lease cannot reopen either terminal state. HTTP, network, and the
-Execution Actor drain concurrently under one shutdown deadline before telemetry
-is flushed.
+unprovable Executor process-tree cleanup or abnormal Executor coordination task
+exit poisons it before Runtime exits; a finished lease cannot reopen either
+terminal state. Release builds retain Rust panic unwinding so Tokio can report a
+coordination-task panic to this boundary; `panic=abort` is forbidden because it
+would bypass poisoning, structured fatal logs, and telemetry flush. HTTP,
+network, and the Execution Actor drain concurrently under one shutdown deadline
+before telemetry is flushed.
 
 Runtime is crash-only. If PID 1 exits, Docker or Kubernetes restarts it, or
 Runtime Controller replaces the complete container or Pod. Bootstrap reconciles
@@ -114,6 +118,7 @@ make fmt-check
 make lint
 make test-rust
 docker build -f runtimes/antnest-runtime/Dockerfile -t antnest/antnest-runtime:local .
+make e2e-stage1
 ```
 
 Crate-local checks from this directory are:
@@ -124,14 +129,17 @@ cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked
 ```
 
-The Docker build uses the crate's pinned Rust toolchain and supplies Linux-only
-network, privilege, MCP, filesystem, and process-containment checks. Host checks
-cover portable contract and configuration logic; the Docker build is the
-required Linux admission gate. Building the image requires the platform
-repository root because `contracts/runtime` is a shared, language-neutral
-artifact. The binary requires Linux for TUN and privilege setup. Normal
-execution is Controller-managed; launching it manually without generation
-bootstrap values is expected to fail closed.
+The Docker build uses the crate's pinned Rust toolchain and supplies the Linux
+compile and unit-test gate. `make e2e-stage1` is the production-shape admission
+gate: it starts the real PID 1 binary with TUN and container capabilities,
+checks the non-privileged execution and control-network boundaries, exercises
+MCP, restarts Runtime to verify owned network-state reconciliation, and proves
+Runtime/Egress policy changes. Host checks cover portable contract and
+configuration logic. Building the image requires the platform repository root
+because `contracts/runtime` is a shared, language-neutral artifact. The binary
+requires Linux for TUN and privilege setup. Normal execution is
+Controller-managed; launching it manually without generation bootstrap values
+is expected to fail closed.
 
 ## Release Status
 

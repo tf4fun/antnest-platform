@@ -29,6 +29,7 @@
     "resource_version_conflict",
     "address_pool_exhausted",
     "cleanup_failed",
+    "operation_failed",
     "control_plane_unavailable"
   ]
 }

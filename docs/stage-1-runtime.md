@@ -272,9 +272,12 @@ generation.
 ### 11.1 Initial creation
 
 1. Agent Controller persists the Agent and initial Runtime generation.
-2. It calls Egress `EnsureAgentNetwork` and obtains the stable attachment.
+2. It calls Egress `EnsureAgentNetwork`, obtains the stable attachment, and
+   copies that attachment into RuntimeSpec without reinterpretation.
 3. It ensures Agent storage through Runtime Controller.
-4. It calls Runtime Controller `EnsureRuntime` with the immutable request.
+4. It calls Runtime Controller `EnsureRuntime` with the immutable request;
+   Runtime Controller deploys the supplied RuntimeSpec verbatim and never
+   discovers, resolves, or rewrites the Egress endpoint.
 5. Runtime Controller observes platform presence and Runtime `/status`.
 6. Agent Controller marks the generation active and opens execution admission.
 

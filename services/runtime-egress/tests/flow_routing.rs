@@ -72,3 +72,27 @@ fn reset_agent_removes_only_that_agents_flows() {
         Some(peer)
     );
 }
+
+#[test]
+fn failed_peer_removes_only_that_agents_flows_for_that_peer() {
+    let mut table = FlowTable::new(16, 8, Duration::from_secs(60));
+    let now = Instant::now();
+    let failed_peer: SocketAddr = "10.0.0.2:41000".parse().unwrap();
+    let replacement_peer: SocketAddr = "10.0.0.3:42000".parse().unwrap();
+    let first = AgentId::parse("agent-1").unwrap();
+    let second = AgentId::parse("agent-2").unwrap();
+    table.claim(first.clone(), flow(40_000), failed_peer, 1, now);
+    table.claim(first.clone(), flow(40_001), replacement_peer, 1, now);
+    table.claim(second, flow(40_002), failed_peer, 1, now);
+
+    assert_eq!(table.remove_peer(&first, failed_peer), 1);
+    assert_eq!(table.peer_for_reply(&flow(40_000).reverse(), 1, now), None);
+    assert_eq!(
+        table.peer_for_reply(&flow(40_001).reverse(), 1, now),
+        Some(replacement_peer)
+    );
+    assert_eq!(
+        table.peer_for_reply(&flow(40_002).reverse(), 1, now),
+        Some(failed_peer)
+    );
+}

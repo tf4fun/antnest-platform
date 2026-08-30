@@ -36,8 +36,31 @@ fn policy_schema_has_only_explicit_allow_and_deny() {
     let deny: PolicySpec =
         serde_json::from_str(r#"{"schema_version":1,"action":"deny_all"}"#).expect("deny policy");
 
-    assert_eq!(allow.compile().decide(), Decision::Allow);
-    assert_eq!(deny.compile().decide(), Decision::Deny);
+    let resolver = "100.64.0.1".parse().unwrap();
+    assert_eq!(
+        allow
+            .compile(resolver)
+            .decide("93.184.216.34".parse().unwrap(), 443),
+        Decision::Allow
+    );
+    assert_eq!(
+        deny.compile(resolver)
+            .decide("93.184.216.34".parse().unwrap(), 443),
+        Decision::Deny
+    );
+}
+
+#[test]
+fn compiled_policy_owns_the_non_bypassable_destination_baseline() {
+    let resolver = "100.64.0.1".parse().unwrap();
+    let policy = PolicySpec::allow_all().compile(resolver);
+
+    assert_eq!(
+        policy.decide("10.20.0.8".parse().unwrap(), 443),
+        Decision::Deny
+    );
+    assert_eq!(policy.decide(resolver, 53), Decision::Allow);
+    assert_eq!(policy.decide(resolver, 443), Decision::Deny);
 }
 
 #[test]
@@ -56,5 +79,9 @@ fn policy_rejects_unknown_versions_actions_and_fields() {
 
 #[test]
 fn absent_assignment_is_fail_closed() {
-    assert_eq!(PolicySpec::for_assignment(None).decide(), Decision::Deny);
+    assert_eq!(
+        PolicySpec::for_assignment(None, "100.64.0.1".parse().unwrap())
+            .decide("93.184.216.34".parse().unwrap(), 443),
+        Decision::Deny
+    );
 }

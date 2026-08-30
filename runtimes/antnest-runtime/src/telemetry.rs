@@ -1,5 +1,5 @@
 use std::net::IpAddr;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use opentelemetry::propagation::{Extractor, Injector};
 use opentelemetry::trace::{TraceContextExt as _, TracerProvider as _};
@@ -175,13 +175,17 @@ impl RuntimeMetrics {
         method: &str,
         route: &'static str,
         outcome: &'static str,
+        error_type: &'static str,
         duration: Duration,
     ) {
-        let attributes = [
+        let mut attributes = vec![
             KeyValue::new("http.request.method", method.to_owned()),
             KeyValue::new("http.route", route),
             KeyValue::new("outcome", outcome),
         ];
+        if !error_type.is_empty() {
+            attributes.push(KeyValue::new("error.type", error_type));
+        }
         self.http_requests.add(1, &attributes);
         self.http_duration_ms
             .record(duration.as_secs_f64() * 1000.0, &attributes);
@@ -363,11 +367,14 @@ impl Telemetry {
     }
 
     pub(crate) fn shutdown(mut self) {
+        let deadline = Instant::now() + SHUTDOWN_TIMEOUT;
         let meter_provider = self
             .meter_provider
             .take()
             .expect("Telemetry always owns one local meter provider");
-        if let Err(error) = meter_provider.shutdown_with_timeout(SHUTDOWN_TIMEOUT) {
+        if let Err(error) =
+            meter_provider.shutdown_with_timeout(deadline.saturating_duration_since(Instant::now()))
+        {
             tracing::error!(
                 "service.name" = SERVICE_NAME,
                 "antnest.agent.id" = self.identity.agent_id(),
@@ -387,7 +394,9 @@ impl Telemetry {
             .tracer_provider
             .take()
             .expect("Telemetry always owns one local tracer provider");
-        if let Err(error) = tracer_provider.shutdown_with_timeout(SHUTDOWN_TIMEOUT) {
+        if let Err(error) = tracer_provider
+            .shutdown_with_timeout(deadline.saturating_duration_since(Instant::now()))
+        {
             let error_type = if self.trace_otlp_enabled {
                 "otlp_trace_shutdown_failed"
             } else {
@@ -1030,7 +1039,8 @@ mod tests {
         metrics.http(
             "POST",
             "/mcp",
-            "success",
+            "error",
+            "http_body_error",
             std::time::Duration::from_millis(2),
         );
         metrics.mcp(

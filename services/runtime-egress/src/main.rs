@@ -23,6 +23,9 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
+const DNS_MAX_CONNECTIONS: usize = 128;
+const DNS_MAX_CONNECTIONS_PER_SOURCE: usize = 8;
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let telemetry = Telemetry::init()?;
@@ -73,7 +76,7 @@ async fn run(metrics: EgressMetrics) -> Result<(), Box<dyn Error>> {
     ));
     let recovered = service.recover().await?;
 
-    let udp = UdpSocket::bind(config.udp_listen).await?;
+    let udp = UdpSocket::bind(config.udp_advertise).await?;
     let control_listener = TcpListener::bind(config.control_listen).await?;
     let dns_listener =
         TcpListener::bind(SocketAddr::new(IpAddr::V4(config.resolver_ipv4), 53)).await?;
@@ -82,7 +85,7 @@ async fn run(metrics: EgressMetrics) -> Result<(), Box<dyn Error>> {
     let app = router(service.clone(), metrics.clone());
     tracing::info!(
         control = %config.control_listen,
-        udp = %config.udp_listen,
+        udp = %config.udp_advertise,
         advertised_udp = %config.udp_advertise,
         recovered_agent_networks = recovered,
         "Runtime Egress ready"
@@ -115,7 +118,8 @@ async fn run(metrics: EgressMetrics) -> Result<(), Box<dyn Error>> {
             run_dns_proxy(
                 dns_listener,
                 config.dns_upstream,
-                128,
+                DNS_MAX_CONNECTIONS,
+                DNS_MAX_CONNECTIONS_PER_SOURCE,
                 Duration::from_secs(10),
                 dns_task_metrics,
                 dns_cancellation,
@@ -134,18 +138,25 @@ async fn run(metrics: EgressMetrics) -> Result<(), Box<dyn Error>> {
     });
     let sweep_cancellation = cancellation.clone();
     let sweep_service = service.clone();
+    let sweep_metrics = metrics.clone();
     tasks.spawn(async move {
         task_result(
             "quarantine sweeper",
-            sweep_loop(sweep_service, config.quarantine, sweep_cancellation).await,
+            sweep_loop(
+                sweep_service,
+                config.quarantine,
+                sweep_metrics,
+                sweep_cancellation,
+            )
+            .await,
         )
     });
     let metrics_cancellation = cancellation.clone();
-    let metrics_engine = service.dataplane();
+    let metrics_service = service.clone();
     tasks.spawn(async move {
         task_result(
             "data-plane metrics",
-            metrics_loop(metrics_engine, dns_metrics, metrics, metrics_cancellation).await,
+            metrics_loop(metrics_service, dns_metrics, metrics, metrics_cancellation).await,
         )
     });
     let health_cancellation = cancellation.clone();
@@ -198,24 +209,36 @@ where
     }
 }
 
-async fn metrics_loop(
-    engine: Arc<std::sync::Mutex<antnest_runtime_egress::dataplane::DataPlaneEngine>>,
+async fn metrics_loop<R, K>(
+    service: Arc<ControlService<R, K>>,
     dns: Arc<DnsMetrics>,
     exporter: EgressMetrics,
     cancellation: CancellationToken,
-) -> Result<(), String> {
+) -> Result<(), String>
+where
+    R: antnest_runtime_egress::repository::Repository,
+    K: antnest_runtime_egress::application::KernelCleanup,
+{
     let mut ticker = interval(Duration::from_secs(30));
     ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    let mut observed_health_transitions = 0;
     loop {
         tokio::select! {
             () = cancellation.cancelled() => return Ok(()),
             _ = ticker.tick() => {
-                let metrics = engine
+                let metrics = service
+                    .dataplane()
                     .lock()
                     .map_err(|_| "data-plane state is poisoned".to_owned())?
                     .metrics();
                 let dns = dns.snapshot();
+                let health = service.health_metrics();
+                let transition_delta = health
+                    .transitions
+                    .saturating_sub(observed_health_transitions);
+                observed_health_transitions = health.transitions;
                 exporter.data_plane(metrics, dns);
+                exporter.health(health, transition_delta);
                 tracing::info!(
                     metric.event = "data_plane_snapshot",
                     uplink.packets = metrics.uplink_packets,
@@ -225,6 +248,7 @@ async fn metrics_loop(
                     policy.allows = metrics.policy_allows,
                     policy.denials = metrics.policy_denials,
                     packet.malformed = metrics.malformed_packets,
+                    packet.unsupported = metrics.unsupported_packets,
                     agent.unknown = metrics.unknown_agents,
                     agent.fenced_packets = metrics.fenced_packets,
                     flow.active = metrics.active_flows,
@@ -232,12 +256,19 @@ async fn metrics_loop(
                     flow.collisions = metrics.flow_collisions,
                     flow.capacity_rejections = metrics.flow_capacity_rejections,
                     flow.reverse_misses = metrics.reverse_flow_misses,
+                    peer_output.failures = metrics.peer_output_failures,
+                    udp.receive_errors.unattributed = metrics.unattributed_udp_receive_errors,
                     dns.connections.accepted = dns.accepted_connections,
                     dns.connections.rejected = dns.rejected_connections,
                     dns.connections.completed = dns.completed_connections,
-                    dns.upstream.failures = dns.upstream_failures,
+                    dns.proxy.failures = dns.proxy_failures,
                     dns.client_to_upstream.bytes = dns.client_to_upstream_bytes,
                     dns.upstream_to_client.bytes = dns.upstream_to_client_bytes,
+                    health.ready = health.service_ready,
+                    health.data_plane_ready = health.data_plane_ready,
+                    health.control_plane_ready = health.control_plane_ready,
+                    health.fenced_agents = health.fenced_agents,
+                    health.transitions = health.transitions,
                     "Runtime Egress data-plane aggregate"
                 );
             }
@@ -248,6 +279,7 @@ async fn metrics_loop(
 async fn sweep_loop<R, K>(
     service: Arc<ControlService<R, K>>,
     quarantine: Duration,
+    metrics: EgressMetrics,
     cancellation: CancellationToken,
 ) -> Result<(), String>
 where
@@ -266,7 +298,15 @@ where
                 let result = service.sweep_quarantine(std::time::SystemTime::now()).await;
                 service.observe_control_result(&result);
                 match result {
-                    Ok(removed) if removed > 0 => tracing::info!(removed, "expired Agent networks removed"),
+                    Ok(report) if report.examined > 0 => {
+                        metrics.quarantine_sweep(report);
+                        tracing::info!(
+                            examined = report.examined,
+                            removed = report.removed,
+                            cleanup_failures = report.cleanup_failures,
+                            "expired Agent network sweep completed"
+                        );
+                    }
                     Ok(_) => {}
                     Err(error) => tracing::warn!(%error, "Agent network quarantine sweep failed"),
                 }

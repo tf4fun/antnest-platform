@@ -62,6 +62,8 @@ pub enum RepositoryError {
     ResourceVersionConflict,
     #[error("repository is unavailable: {0}")]
     Unavailable(String),
+    #[error("repository operation failed: {0}")]
+    OperationFailed(String),
 }
 
 #[async_trait]

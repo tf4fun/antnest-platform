@@ -244,6 +244,7 @@ impl HttpCompletion {
             self.method.as_str(),
             self.path,
             outcome,
+            error_type,
             self.started.elapsed(),
         );
         self.span.record("http.response.status_code", code);

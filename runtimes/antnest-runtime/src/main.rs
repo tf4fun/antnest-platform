@@ -502,9 +502,16 @@ async fn serve_runtime(
     use std::time::Duration;
 
     let identity = spec.identity().clone();
-    let network_session = network_session::NetworkSession::prepare(network)
-        .await
-        .map_err(|error| runtime_failure(identity.clone(), "network", error.code(), error))?;
+    let network_session =
+        network_session::NetworkSession::prepare(network, spec.identity().generation())
+            .await
+            .map_err(|error| runtime_failure(identity.clone(), "network", error.code(), error))?;
+    tracing::info!(
+        lifecycle.event = "egress_path_verified",
+        "antnest.agent.id" = spec.identity().agent_id(),
+        "antnest.runtime.generation" = %spec.identity().generation(),
+        "Runtime Egress packet path verified"
+    );
     let service_shutdown = shutdown.child_token();
     let (actor, mut execution_failures) = execution_actor::ExecutionActor::new(
         identity.clone(),

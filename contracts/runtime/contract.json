@@ -13,8 +13,8 @@
     "status": "ready"
   },
   "readiness": {
-    "scope": "runtime-local",
-    "egress_dependency_checked": false,
+    "scope": "runtime-with-egress-path",
+    "egress_dependency_checked": true,
     "executor_identity_checked": true,
     "workspace_access_checked": true,
     "system_skills_access_checked": true

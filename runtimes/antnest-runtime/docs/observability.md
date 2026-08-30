@@ -131,9 +131,12 @@ Telemetry configuration warnings use stable `error.type` values:
 | --- | --- |
 | `invalid_log_filter` | `RUST_LOG` was rejected and the default filter is active |
 | `unsupported_trace_exporter` | `OTEL_TRACES_EXPORTER` is neither `otlp` nor `none` |
+| `unsupported_metrics_exporter` | `OTEL_METRICS_EXPORTER` is neither `otlp` nor `none` |
 | `unsupported_otlp_protocol` | selected OTLP protocol is not `http/protobuf` |
-| `invalid_otlp_destination` | endpoint is malformed or outside the direct platform network |
-| `otlp_exporter_initialization_failed` | exporter construction failed after validation |
+| `invalid_otlp_trace_destination` | trace endpoint is malformed or outside the direct platform network |
+| `invalid_otlp_metrics_destination` | metrics endpoint is malformed or outside the direct platform network |
+| `otlp_trace_exporter_initialization_failed` | trace exporter construction failed after validation |
+| `otlp_metrics_exporter_initialization_failed` | metrics exporter construction failed after validation |
 
 ## Shutdown
 

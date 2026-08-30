@@ -1,3 +1,5 @@
+use std::net::Ipv4Addr;
+
 use thiserror::Error;
 
 const IPV4_HEADER_LEN: usize = 20;
@@ -11,6 +13,9 @@ const TCP_FLAG_FIN: u8 = 0x01;
 const TCP_FLAG_SYN: u8 = 0x02;
 const TCP_FLAG_RST: u8 = 0x04;
 const TCP_FLAG_ACK: u8 = 0x10;
+const READINESS_PROBE_SEQUENCE_BASE: u32 = 0x414e_544e;
+const READINESS_PROBE_DESTINATION: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 1);
+const READINESS_PROBE_DESTINATION_PORT: u16 = 9;
 pub(crate) const INNER_MTU: u16 = 1400;
 pub(crate) const PACKET_CONTRACT_REVISION: u32 = 1;
 
@@ -58,8 +63,90 @@ pub(crate) fn tunnel_datagram(packet: &[u8], mtu: usize) -> Result<&[u8], Packet
     Ok(packet)
 }
 
-pub(crate) fn is_forwardable_ipv4_tcp(packet: &[u8], mtu: usize) -> bool {
-    tunnel_datagram(packet, mtu).is_ok()
+pub(crate) fn outbound_tunnel_datagram(
+    packet: &[u8],
+    mtu: usize,
+    tunnel: Ipv4Addr,
+) -> Result<&[u8], PacketError> {
+    let packet = tunnel_datagram(packet, mtu)?;
+    if parse_ipv4_tcp(packet).is_some_and(|parsed| parsed.source == tunnel.octets()) {
+        Ok(packet)
+    } else {
+        Err(PacketError::Invalid(
+            "inner source does not match the Runtime Tunnel IPv4",
+        ))
+    }
+}
+
+pub(crate) fn inbound_tunnel_datagram(
+    packet: &[u8],
+    mtu: usize,
+    tunnel: Ipv4Addr,
+) -> Result<&[u8], PacketError> {
+    let packet = tunnel_datagram(packet, mtu)?;
+    if parse_ipv4_tcp(packet).is_some_and(|parsed| parsed.destination == tunnel.octets()) {
+        Ok(packet)
+    } else {
+        Err(PacketError::Invalid(
+            "inner destination does not match the Runtime Tunnel IPv4",
+        ))
+    }
+}
+
+pub(crate) fn egress_readiness_probe(tunnel: Ipv4Addr, source_port: u16, sequence: u32) -> Vec<u8> {
+    let packet_len = IPV4_HEADER_LEN + TCP_HEADER_LEN;
+    let mut packet = vec![0_u8; packet_len];
+    packet[0] = 0x45;
+    packet[2..4].copy_from_slice(&(packet_len as u16).to_be_bytes());
+    packet[6..8].copy_from_slice(&0x4000_u16.to_be_bytes());
+    packet[8] = 64;
+    packet[9] = IP_PROTOCOL_TCP;
+    packet[12..16].copy_from_slice(&tunnel.octets());
+    packet[16..20].copy_from_slice(&READINESS_PROBE_DESTINATION.octets());
+    packet[IPV4_HEADER_LEN..IPV4_HEADER_LEN + 2].copy_from_slice(&source_port.to_be_bytes());
+    packet[IPV4_HEADER_LEN + 2..IPV4_HEADER_LEN + 4]
+        .copy_from_slice(&READINESS_PROBE_DESTINATION_PORT.to_be_bytes());
+    packet[IPV4_HEADER_LEN + 4..IPV4_HEADER_LEN + 8].copy_from_slice(&sequence.to_be_bytes());
+    packet[IPV4_HEADER_LEN + 12] = 5 << 4;
+    packet[IPV4_HEADER_LEN + 13] = TCP_FLAG_SYN;
+    packet[IPV4_HEADER_LEN + 14..IPV4_HEADER_LEN + 16].copy_from_slice(&1024_u16.to_be_bytes());
+    let ip_checksum = internet_checksum(&packet[..IPV4_HEADER_LEN]);
+    packet[10..12].copy_from_slice(&ip_checksum.to_be_bytes());
+    let tcp_checksum = tcp_checksum(
+        tunnel.octets(),
+        READINESS_PROBE_DESTINATION.octets(),
+        &packet[IPV4_HEADER_LEN..],
+    );
+    packet[IPV4_HEADER_LEN + 16..IPV4_HEADER_LEN + 18].copy_from_slice(&tcp_checksum.to_be_bytes());
+    packet
+}
+
+pub(crate) fn readiness_probe_sequence(generation: u64) -> u32 {
+    READINESS_PROBE_SEQUENCE_BASE ^ generation as u32
+}
+
+pub(crate) fn readiness_probe_source_port(generation: u64) -> u16 {
+    const FIRST_DYNAMIC_PORT: u64 = 49_152;
+    const DYNAMIC_PORT_COUNT: u64 = u16::MAX as u64 - FIRST_DYNAMIC_PORT + 1;
+    (FIRST_DYNAMIC_PORT + generation % DYNAMIC_PORT_COUNT) as u16
+}
+
+pub(crate) fn is_egress_readiness_reply(
+    packet: &[u8],
+    tunnel: Ipv4Addr,
+    source_port: u16,
+    sequence: u32,
+) -> bool {
+    let Some(reply) = parse_ipv4_tcp(packet) else {
+        return false;
+    };
+    reply.source == READINESS_PROBE_DESTINATION.octets()
+        && reply.destination == tunnel.octets()
+        && reply.source_port == READINESS_PROBE_DESTINATION_PORT.to_be_bytes()
+        && reply.destination_port == source_port.to_be_bytes()
+        && reply.acknowledgement == sequence.wrapping_add(1)
+        && reply.flags & TCP_FLAG_ACK != 0
+        && reply.flags & (TCP_FLAG_SYN | TCP_FLAG_RST) != 0
 }
 
 fn unsupported_tcp_reset(packet: &[u8]) -> Option<Vec<u8>> {
@@ -278,7 +365,7 @@ mod tests {
         for fixture in fixtures.fixtures {
             let packet = decode_hex(&fixture.hex).expect("fixture hex");
             assert_eq!(
-                is_forwardable_ipv4_tcp(&packet, contract.inner_mtu),
+                tunnel_datagram(&packet, contract.inner_mtu).is_ok(),
                 fixture.accepted,
                 "{}",
                 fixture.name
@@ -306,6 +393,53 @@ mod tests {
         let packet = tcp_packet(TCP_FLAG_SYN, 41, 0, &[]);
         let datagram = tunnel_datagram(&packet, 1400).expect("validate UDP payload");
         assert_eq!(datagram, packet.as_slice());
+    }
+
+    #[test]
+    fn runtime_packet_boundary_binds_both_directions_to_its_tunnel_address() {
+        let tunnel = Ipv4Addr::new(100, 96, 0, 10);
+        let outbound = tcp_packet(TCP_FLAG_SYN, 41, 0, &[]);
+        assert!(outbound_tunnel_datagram(&outbound, 1400, tunnel).is_ok());
+        assert!(outbound_tunnel_datagram(&outbound, 1400, Ipv4Addr::new(100, 64, 0, 11)).is_err());
+
+        let inbound = unsupported_ipv4_rejection(&outbound).expect("reverse packet");
+        assert!(inbound_tunnel_datagram(&inbound, 1400, tunnel).is_ok());
+        assert!(inbound_tunnel_datagram(&inbound, 1400, Ipv4Addr::new(100, 64, 0, 11)).is_err());
+    }
+
+    #[test]
+    fn readiness_probe_is_an_ordinary_tcp_packet_with_a_correlated_reply() {
+        let tunnel = Ipv4Addr::new(100, 64, 0, 2);
+        let source_port = readiness_probe_source_port(7);
+        let sequence = readiness_probe_sequence(7);
+        let probe = egress_readiness_probe(tunnel, source_port, sequence);
+        let parsed = parse_ipv4_tcp(&probe).expect("valid readiness SYN");
+
+        assert_eq!(parsed.source, tunnel.octets());
+        assert_eq!(parsed.destination, [192, 0, 2, 1]);
+        assert_eq!(parsed.source_port, source_port.to_be_bytes());
+        assert_eq!(parsed.destination_port, 9_u16.to_be_bytes());
+        assert_eq!(parsed.sequence, sequence);
+        assert_eq!(parsed.flags, TCP_FLAG_SYN);
+        assert_eq!(internet_checksum(&probe[..IPV4_HEADER_LEN]), 0);
+        assert_eq!(
+            tcp_checksum(tunnel.octets(), [192, 0, 2, 1], &probe[IPV4_HEADER_LEN..]),
+            0
+        );
+
+        let reply = unsupported_ipv4_rejection(&probe).expect("matching RST reply");
+        assert!(is_egress_readiness_reply(
+            &reply,
+            tunnel,
+            source_port,
+            sequence
+        ));
+        assert!(!is_egress_readiness_reply(
+            &reply,
+            Ipv4Addr::new(100, 64, 0, 3),
+            source_port,
+            sequence
+        ));
     }
 
     #[test]

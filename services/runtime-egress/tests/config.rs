@@ -20,8 +20,8 @@ fn config_has_bounded_operational_defaults() {
     ]))
     .unwrap();
 
-    assert_eq!(config.control_listen.to_string(), "0.0.0.0:8081");
-    assert_eq!(config.udp_listen.to_string(), "0.0.0.0:8092");
+    assert_eq!(config.control_listen.to_string(), "127.0.0.1:8081");
+    assert_eq!(config.udp_advertise.to_string(), "10.20.0.8:8092");
     assert_eq!(config.max_flows, 65_536);
     assert_eq!(config.max_agent_flows, 1_024);
     assert_eq!(config.tun_name, "antnest-egress0");
@@ -29,6 +29,41 @@ fn config_has_bounded_operational_defaults() {
     assert_eq!(config.database_retry_delay.as_millis(), 250);
     assert_eq!(config.database_tls_mode, DatabaseTlsMode::Require);
     assert_eq!(config.dns_upstream.to_string(), "10.20.0.53:53");
+}
+
+#[test]
+fn control_listener_accepts_only_an_explicit_ipv4_address() {
+    for endpoint in [
+        "0.0.0.0:8081",
+        "[::]:8081",
+        "[::ffff:0.0.0.0]:8081",
+        "[2001:db8::1]:8081",
+    ] {
+        let values = HashMap::from([
+            (
+                "ANTNEST_EGRESS_DATABASE_URL".to_owned(),
+                "postgres://localhost/egress".to_owned(),
+            ),
+            (
+                "ANTNEST_EGRESS_CONTROL_LISTEN".to_owned(),
+                endpoint.to_owned(),
+            ),
+            (
+                "ANTNEST_EGRESS_UDP_ADVERTISE".to_owned(),
+                "10.20.0.8:8092".to_owned(),
+            ),
+            (
+                "ANTNEST_EGRESS_DNS_UPSTREAM".to_owned(),
+                "10.20.0.53:53".to_owned(),
+            ),
+        ]);
+
+        assert_eq!(
+            Config::from_values(values),
+            Err(ConfigError::Invalid("ANTNEST_EGRESS_CONTROL_LISTEN")),
+            "{endpoint}"
+        );
+    }
 }
 
 #[test]
