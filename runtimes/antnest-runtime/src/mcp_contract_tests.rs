@@ -4,7 +4,10 @@ use serde_json::json;
 use crate::config::{
     FilesystemSpecInput, Ipv4EndpointInput, NetworkSpecInput, RuntimeSpecInput, SocketAddressInput,
 };
-use crate::mcp::{MCP_PATH, RuntimeHttp, RuntimeStatus, STATUS_PATH, route_label};
+use crate::mcp::{
+    EXPECTED_EXECUTION_HEADER, MCP_PATH, RuntimeHttp, RuntimeStatus, STATUS_PATH,
+    execution_fence_error, route_label,
+};
 use crate::spec::RuntimeIdentity;
 
 #[derive(Deserialize)]
@@ -62,6 +65,7 @@ struct Transport {
     mcp_path: String,
     kind: String,
     trusted_internal_hosts: bool,
+    expected_execution_header: String,
 }
 
 #[derive(Deserialize)]
@@ -101,6 +105,10 @@ fn shared_contract_matches_runtime_http_surface() {
     assert_eq!(contract.transport.mcp_path, MCP_PATH);
     assert_eq!(contract.transport.kind, "streamable-http");
     assert!(contract.transport.trusted_internal_hosts);
+    assert_eq!(
+        contract.transport.expected_execution_header,
+        EXPECTED_EXECUTION_HEADER
+    );
     assert_eq!(contract.egress_tunnel.kind, "udp");
     assert_eq!(contract.egress_tunnel.payload, "one-complete-ipv4-packet");
     assert_eq!(
@@ -171,7 +179,10 @@ fn shared_contract_matches_runtime_http_surface() {
     assert_eq!(contract.execution.busy_error, "runtime_busy");
     assert_eq!(contract.execution.subcommands, contract.tools);
 
-    let status = RuntimeStatus::new(RuntimeIdentity::new("agent-1", 2).unwrap());
+    let status = RuntimeStatus::with_execution_id(
+        RuntimeIdentity::new("agent-1", 2).unwrap(),
+        "execution-1",
+    );
     assert_eq!(serde_json::to_value(status).unwrap(), contract.status);
     assert_eq!(RuntimeHttp::tool_names(), contract.tools);
 }
@@ -323,6 +334,26 @@ fn telemetry_uses_only_bounded_route_labels() {
     assert_eq!(route_label("/secret-in-path"), "unmatched");
 }
 
+#[test]
+fn mcp_execution_fence_fails_closed() {
+    let status = RuntimeStatus::with_execution_id(
+        RuntimeIdentity::new("agent-1", 2).unwrap(),
+        "execution-1",
+    );
+    let mut headers = axum::http::HeaderMap::new();
+    assert_eq!(execution_fence_error(&headers, &status), Some("missing"));
+    headers.insert(
+        axum::http::HeaderName::from_static("x-antnest-expected-execution-id"),
+        axum::http::HeaderValue::from_static("execution-old"),
+    );
+    assert_eq!(execution_fence_error(&headers, &status), Some("mismatch"));
+    headers.insert(
+        axum::http::HeaderName::from_static("x-antnest-expected-execution-id"),
+        axum::http::HeaderValue::from_static("execution-1"),
+    );
+    assert_eq!(execution_fence_error(&headers, &status), None);
+}
+
 #[cfg(target_os = "linux")]
 #[tokio::test]
 async fn official_mcp_client_observes_status_and_calls_all_runtime_tools() {
@@ -345,10 +376,11 @@ async fn official_mcp_client_observes_status_and_calls_all_runtime_tools() {
         .await
         .expect("bind Runtime HTTP");
     let address = listener.local_addr().expect("Runtime HTTP address");
-    let server = RuntimeHttp::new_in_process(
-        RuntimeStatus::new(RuntimeIdentity::new("agent-1", 2).unwrap()),
-        roots,
+    let runtime_status = RuntimeStatus::with_execution_id(
+        RuntimeIdentity::new("agent-1", 2).unwrap(),
+        "execution-1",
     );
+    let server = RuntimeHttp::new_in_process(runtime_status, roots);
     let running_shutdown = shutdown.clone();
     let running = tokio::spawn(async move { server.serve(listener, running_shutdown).await });
 
@@ -365,6 +397,7 @@ async fn official_mcp_client_observes_status_and_calls_all_runtime_tools() {
         json!({
             "agent_id": "agent-1",
             "generation": 2,
+            "execution_id": "execution-1",
             "status": "ready"
         })
     );
@@ -373,6 +406,10 @@ async fn official_mcp_client_observes_status_and_calls_all_runtime_tools() {
     headers.insert(
         axum::http::header::HOST,
         axum::http::HeaderValue::from_static("antnest-runtime:8093"),
+    );
+    headers.insert(
+        axum::http::HeaderName::from_static("x-antnest-expected-execution-id"),
+        axum::http::HeaderValue::from_static("execution-1"),
     );
     let transport = StreamableHttpClientTransport::from_config(
         rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig::with_uri(

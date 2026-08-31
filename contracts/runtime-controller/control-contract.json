@@ -1,0 +1,179 @@
+{
+  "revision": 3,
+  "transport": "json-over-http",
+  "trust_boundary": "internal-network",
+  "schemas": {
+    "control": "control-api.schema.json",
+    "configuration": "runtime-deployment.schema.json",
+    "runtime_spec": "../runtime/runtime-spec.schema.json"
+  },
+  "headers": {
+    "Idempotency-Key": {
+      "required": true,
+      "schema": "control-api.schema.json#/$defs/request_id",
+      "description": "Stable logical request identity reused for an exact retry"
+    }
+  },
+  "routes": [
+    {
+      "operation_id": "getStatus",
+      "method": "GET",
+      "path": "/status",
+      "responses": {
+        "200": {"content_type": "application/json", "body": "control-api.schema.json#/$defs/readiness"},
+        "503": {"content_type": "application/json", "body": "control-api.schema.json#/$defs/readiness"}
+      },
+      "errors": []
+    },
+    {
+      "operation_id": "listRuntimes",
+      "method": "GET",
+      "path": "/internal/runtimes",
+      "responses": {"200": {"content_type": "application/json", "body": "control-api.schema.json#/$defs/runtime_list"}},
+      "errors": ["runtime_drift", "platform_unavailable", "deadline_exceeded", "internal_error"]
+    },
+    {
+      "operation_id": "inspectRuntime",
+      "method": "GET",
+      "path": "/internal/runtimes/{agent_id}",
+      "path_parameters": {"agent_id": "control-api.schema.json#/$defs/agent_id"},
+      "responses": {"200": {"content_type": "application/json", "body": "control-api.schema.json#/$defs/runtime_inspection"}},
+      "errors": ["invalid_request", "runtime_not_found", "runtime_drift", "platform_unavailable", "deadline_exceeded", "internal_error"]
+    },
+    {
+      "operation_id": "initializeRuntime",
+      "method": "POST",
+      "path": "/internal/runtimes/{agent_id}/initialize",
+      "path_parameters": {"agent_id": "control-api.schema.json#/$defs/agent_id"},
+      "required_headers": ["Idempotency-Key"],
+      "request_body": "control-api.schema.json#/$defs/initialize_request",
+      "responses": {
+        "200": {"content_type": "application/json", "body": "control-api.schema.json#/$defs/operation"},
+        "202": {"content_type": "application/json", "body": "control-api.schema.json#/$defs/operation"}
+      },
+      "errors": ["invalid_request", "idempotency_key_required", "request_id_conflict", "agent_mutation_in_progress", "mutation_lock_lost", "runtime_lifecycle_conflict", "runtime_drift", "storage_ownership_conflict", "platform_unavailable", "deadline_exceeded", "operation_failed", "internal_error"]
+    },
+    {
+      "operation_id": "updateRuntime",
+      "method": "POST",
+      "path": "/internal/runtimes/{agent_id}/update",
+      "path_parameters": {"agent_id": "control-api.schema.json#/$defs/agent_id"},
+      "required_headers": ["Idempotency-Key"],
+      "request_body": "control-api.schema.json#/$defs/revision_configuration_request",
+      "responses": {
+        "200": {"content_type": "application/json", "body": "control-api.schema.json#/$defs/operation"},
+        "202": {"content_type": "application/json", "body": "control-api.schema.json#/$defs/operation"}
+      },
+      "errors": ["invalid_request", "idempotency_key_required", "request_id_conflict", "agent_mutation_in_progress", "mutation_lock_lost", "runtime_lifecycle_conflict", "runtime_revision_conflict", "runtime_drift", "platform_unavailable", "deadline_exceeded", "operation_failed", "internal_error"]
+    },
+    {
+      "operation_id": "disableRuntime",
+      "method": "POST",
+      "path": "/internal/runtimes/{agent_id}/disable",
+      "path_parameters": {"agent_id": "control-api.schema.json#/$defs/agent_id"},
+      "required_headers": ["Idempotency-Key"],
+      "request_body": "control-api.schema.json#/$defs/revision_request",
+      "responses": {
+        "200": {"content_type": "application/json", "body": "control-api.schema.json#/$defs/operation"},
+        "202": {"content_type": "application/json", "body": "control-api.schema.json#/$defs/operation"}
+      },
+      "errors": ["invalid_request", "idempotency_key_required", "request_id_conflict", "agent_mutation_in_progress", "mutation_lock_lost", "runtime_lifecycle_conflict", "runtime_revision_conflict", "runtime_drift", "platform_unavailable", "deadline_exceeded", "operation_failed", "internal_error"]
+    },
+    {
+      "operation_id": "enableRuntime",
+      "method": "POST",
+      "path": "/internal/runtimes/{agent_id}/enable",
+      "path_parameters": {"agent_id": "control-api.schema.json#/$defs/agent_id"},
+      "required_headers": ["Idempotency-Key"],
+      "request_body": "control-api.schema.json#/$defs/revision_configuration_request",
+      "responses": {
+        "200": {"content_type": "application/json", "body": "control-api.schema.json#/$defs/operation"},
+        "202": {"content_type": "application/json", "body": "control-api.schema.json#/$defs/operation"}
+      },
+      "errors": ["invalid_request", "idempotency_key_required", "request_id_conflict", "agent_mutation_in_progress", "mutation_lock_lost", "runtime_lifecycle_conflict", "runtime_revision_conflict", "runtime_drift", "storage_not_found", "storage_ownership_conflict", "platform_unavailable", "deadline_exceeded", "operation_failed", "internal_error"]
+    },
+    {
+      "operation_id": "deleteRuntime",
+      "method": "POST",
+      "path": "/internal/runtimes/{agent_id}/delete",
+      "path_parameters": {"agent_id": "control-api.schema.json#/$defs/agent_id"},
+      "required_headers": ["Idempotency-Key"],
+      "request_body": "control-api.schema.json#/$defs/revision_request",
+      "responses": {
+        "200": {"content_type": "application/json", "body": "control-api.schema.json#/$defs/operation"},
+        "202": {"content_type": "application/json", "body": "control-api.schema.json#/$defs/operation"}
+      },
+      "errors": ["invalid_request", "idempotency_key_required", "request_id_conflict", "agent_mutation_in_progress", "mutation_lock_lost", "runtime_lifecycle_conflict", "runtime_revision_conflict", "runtime_drift", "storage_in_use", "storage_ownership_conflict", "platform_unavailable", "deadline_exceeded", "operation_failed", "internal_error"]
+    },
+    {
+      "operation_id": "getRuntimeOperation",
+      "method": "GET",
+      "path": "/internal/runtime-operations/{request_id}",
+      "path_parameters": {"request_id": "control-api.schema.json#/$defs/request_id"},
+      "responses": {"200": {"content_type": "application/json", "body": "control-api.schema.json#/$defs/operation"}},
+      "errors": ["invalid_request", "operation_not_found", "internal_error"]
+    },
+    {
+      "operation_id": "listRuntimeObservations",
+      "method": "GET",
+      "path": "/internal/runtime-observations",
+      "query_parameters": {
+        "after_sequence": "control-api.schema.json#/$defs/sequence",
+        "limit": "control-api.schema.json#/$defs/page_limit"
+      },
+      "responses": {"200": {"content_type": "application/json", "body": "control-api.schema.json#/$defs/observation_list"}},
+      "errors": ["invalid_request", "internal_error"]
+    },
+    {
+      "operation_id": "watchRuntimeObservations",
+      "method": "GET",
+      "path": "/internal/runtime-observations/watch",
+      "query_parameters": {"after_sequence": "control-api.schema.json#/$defs/sequence"},
+      "responses": {
+        "200": {
+          "content_type": "text/event-stream",
+          "body": "control-api.schema.json#/$defs/observation",
+          "sse": {
+            "event_name": "runtime_observation",
+            "id": "control-api.schema.json#/$defs/sequence",
+            "data": "control-api.schema.json#/$defs/observation",
+            "resume_with": "after_sequence",
+            "delivery": "at-least-once",
+            "initial_read_before_status": true,
+            "post_commit_failure": "disconnect_and_resume"
+          }
+        }
+      },
+      "errors": ["invalid_request", "internal_error"]
+    }
+  ],
+  "errors": {
+    "invalid_request": {"status": 400, "retryable": false, "body": "control-api.schema.json#/$defs/error"},
+    "idempotency_key_required": {"status": 400, "retryable": false, "body": "control-api.schema.json#/$defs/error"},
+    "request_id_conflict": {"status": 409, "retryable": false, "body": "control-api.schema.json#/$defs/error"},
+    "agent_mutation_in_progress": {"status": 409, "retryable": true, "body": "control-api.schema.json#/$defs/error"},
+    "mutation_lock_lost": {"status": 503, "retryable": true, "body": "control-api.schema.json#/$defs/error"},
+    "runtime_not_found": {"status": 404, "retryable": false, "body": "control-api.schema.json#/$defs/error"},
+    "runtime_lifecycle_conflict": {"status": 409, "retryable": false, "body": "control-api.schema.json#/$defs/error"},
+    "runtime_revision_conflict": {"status": 409, "retryable": false, "body": "control-api.schema.json#/$defs/error"},
+    "runtime_drift": {"status": 409, "retryable": false, "body": "control-api.schema.json#/$defs/error"},
+    "storage_in_use": {"status": 409, "retryable": false, "body": "control-api.schema.json#/$defs/error"},
+    "storage_not_found": {"status": 404, "retryable": false, "body": "control-api.schema.json#/$defs/error"},
+    "storage_ownership_conflict": {"status": 409, "retryable": false, "body": "control-api.schema.json#/$defs/error"},
+    "platform_unavailable": {"status": 503, "retryable": true, "body": "control-api.schema.json#/$defs/error"},
+    "operation_not_found": {"status": 404, "retryable": false, "body": "control-api.schema.json#/$defs/error"},
+    "deadline_exceeded": {"status": 504, "retryable": true, "body": "control-api.schema.json#/$defs/error"},
+    "route_not_found": {"status": 404, "retryable": false, "body": "control-api.schema.json#/$defs/error"},
+    "method_not_allowed": {"status": 405, "retryable": false, "body": "control-api.schema.json#/$defs/error"},
+    "operation_failed": {"status": 500, "retryable": false, "body": "control-api.schema.json#/$defs/error"},
+    "internal_error": {"status": 500, "retryable": true, "body": "control-api.schema.json#/$defs/error"}
+  },
+  "operation_error_codes": {
+    "runtime_not_ready": {
+      "operation_state": "unknown",
+      "effect": "completed",
+      "http_status": 202,
+      "retryable_by_same_request_id": true
+    }
+  }
+}

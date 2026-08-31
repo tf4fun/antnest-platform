@@ -70,11 +70,12 @@ fn prefix_mask(prefix_len: u8) -> u32 {
 mod platform {
     use std::ffi::{CStr, CString};
     use std::fs::{self, File, OpenOptions};
-    use std::io;
+    use std::io::{self, Write};
     use std::mem;
     use std::net::Ipv4Addr;
     use std::os::fd::{AsRawFd, RawFd};
     use std::os::unix::fs::OpenOptionsExt;
+    use std::path::Path;
     use std::ptr;
 
     use thiserror::Error;
@@ -130,7 +131,7 @@ mod platform {
         pub fn bootstrap(spec: &NetworkSpec, mcp_port: u16) -> Result<Self, NetworkError> {
             let route_target = *spec.egress_endpoint().address().ip();
             let platform_routes = read_platform_routes(route_target)?;
-            validate_resolver(spec.resolver_ipv4())?;
+            configure_resolver(spec.resolver_ipv4())?;
             let tun = create_tun(TUN_NAME, crate::packet::INNER_MTU, spec.tunnel_ipv4())?;
             install_routes(TUN_NAME)?;
             install_kill_switch(TUN_NAME, mcp_port)?;
@@ -443,9 +444,25 @@ mod platform {
         ]
     }
 
-    fn validate_resolver(resolver: Ipv4Addr) -> Result<(), NetworkError> {
-        let contents = fs::read_to_string("/etc/resolv.conf")
-            .map_err(|source| system("read immutable Agent resolver", source))?;
+    fn configure_resolver(resolver: Ipv4Addr) -> Result<(), NetworkError> {
+        configure_resolver_file(Path::new("/etc/resolv.conf"), resolver)
+    }
+
+    fn configure_resolver_file(path: &Path, resolver: Ipv4Addr) -> Result<(), NetworkError> {
+        let document = format!("options use-vc\nnameserver {resolver}\n");
+        let mut file = OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(path)
+            .map_err(|source| system("open Agent resolver for reconciliation", source))?;
+        file.write_all(document.as_bytes())
+            .map_err(|source| system("write Agent resolver", source))?;
+        file.sync_all()
+            .map_err(|source| system("flush Agent resolver", source))?;
+        drop(file);
+
+        let contents = fs::read_to_string(path)
+            .map_err(|source| system("read reconciled Agent resolver", source))?;
         validate_resolver_contents(&contents, resolver)
     }
 
@@ -615,8 +632,9 @@ mod platform {
         use std::net::Ipv4Addr;
 
         use super::{
-            agent_route_commands, all_route_tables_query, kill_switch_rules, parse_platform_routes,
-            reserved_route_table_is_used, route_cleanup_commands, validate_resolver_contents,
+            agent_route_commands, all_route_tables_query, configure_resolver_file,
+            kill_switch_rules, parse_platform_routes, reserved_route_table_is_used,
+            route_cleanup_commands, validate_resolver_contents,
         };
 
         #[test]
@@ -655,6 +673,25 @@ mod platform {
                 .is_err()
             );
             assert!(validate_resolver_contents("nameserver 100.64.0.1\n", resolver).is_err());
+        }
+
+        #[test]
+        fn resolver_reconciliation_replaces_the_docker_stub() {
+            let directory = tempfile::tempdir().expect("temporary resolver directory");
+            let path = directory.path().join("resolv.conf");
+            std::fs::write(
+                &path,
+                "nameserver 127.0.0.11\noptions use-vc ndots:0\n# ExtServers: [100.64.0.1]\n",
+            )
+            .expect("write Docker resolver stub");
+
+            configure_resolver_file(&path, Ipv4Addr::new(100, 64, 0, 1))
+                .expect("reconcile resolver");
+
+            assert_eq!(
+                std::fs::read_to_string(path).expect("read reconciled resolver"),
+                "options use-vc\nnameserver 100.64.0.1\n"
+            );
         }
 
         #[test]

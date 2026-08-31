@@ -25,7 +25,7 @@ without adding a garbage-collected pause or a second low-level helper process.
 - Bind each inner flow to the outer Runtime UDP peer that first created it.
 - Route return packets from TUN to the owning UDP peer.
 - Produce fast TCP rejection for valid policy-denied traffic.
-- Clear userspace flow and kernel conntrack state at policy, rollout, and
+- Clear userspace flow and kernel conntrack state at policy, Runtime replacement, and
   deletion barriers.
 - Export structured local logs, OTLP metrics for control RPCs and periodic
   aggregate data-plane snapshots, and OTLP traces for control RPCs only.

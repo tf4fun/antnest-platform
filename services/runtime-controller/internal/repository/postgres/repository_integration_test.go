@@ -1,0 +1,308 @@
+package postgres
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"os"
+	"strings"
+	"testing"
+	"time"
+
+	_ "github.com/jackc/pgx/v5/stdlib"
+
+	"soft/antnest-platform/services/runtime-controller/internal/control"
+	"soft/antnest-platform/services/runtime-controller/internal/deployment"
+)
+
+const integrationSpecDigest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+func TestRepositoryLifecycleRoundTrip(t *testing.T) {
+	repository, database, ctx := integrationRepository(t)
+	now := time.Date(2026, 8, 30, 0, 0, 0, 0, time.UTC)
+	initialize := integrationOperation("request-init", deployment.OperationInitializeRuntime, now)
+
+	started, replay, err := repository.BeginTransition(ctx, initialize)
+	if err != nil || replay || started.Attempt != 1 {
+		t.Fatalf("begin initialization: operation=%+v replay=%t err=%v", started, replay, err)
+	}
+	transitioning, err := repository.GetEnvironment(ctx, initialize.AgentID)
+	if err != nil || transitioning.LifecycleState != deployment.LifecycleInitializing ||
+		transitioning.OperationID != initialize.RequestID {
+		t.Fatalf("initializing environment: %+v err=%v", transitioning, err)
+	}
+	replayed, replay, err := repository.BeginTransition(ctx, initialize)
+	if err != nil || !replay || replayed.Attempt != 2 {
+		t.Fatalf("replay initialization: operation=%+v replay=%t err=%v", replayed, replay, err)
+	}
+
+	replayed.State = deployment.OperationCompleted
+	replayed.Effect = deployment.EffectCompleted
+	replayed.Inspection = integrationEnvironment(replayed, deployment.LifecycleReady, now.Add(time.Second))
+	replayed.UpdatedAt = now.Add(time.Second)
+	observation := deployment.Observation{
+		AgentID: replayed.AgentID, RuntimeRevision: replayed.RuntimeRevision,
+		Generation: replayed.Generation, SpecDigest: replayed.SpecDigest,
+		Kind: deployment.ObservationInitialized, Source: "integration_test", ObservedAt: replayed.UpdatedAt,
+	}
+	storedObservation, err := repository.CompleteOperation(ctx, replayed, &observation)
+	if err != nil || storedObservation == nil || storedObservation.Sequence != 1 {
+		t.Fatalf("complete initialization: observation=%+v err=%v", storedObservation, err)
+	}
+	ready, err := repository.GetEnvironment(ctx, initialize.AgentID)
+	if err != nil || ready.LifecycleState != deployment.LifecycleReady || ready.OperationID != "" {
+		t.Fatalf("ready environment: %+v err=%v", ready, err)
+	}
+	claim, err := repository.GenerationClaim(ctx, mustRuntimeKey(t, ready))
+	if err != nil || claim.RuntimeRevision != ready.RuntimeRevision || claim.SpecDigest != ready.SpecDigest {
+		t.Fatalf("generation claim: %+v err=%v", claim, err)
+	}
+
+	update := integrationOperation("request-update", deployment.OperationUpdateRuntime, now.Add(2*time.Second))
+	update.ExpectedRevision = ready.RuntimeRevision
+	update.SourceState = ready.LifecycleState
+	update.SourceRevision = ready.RuntimeRevision
+	update.SourceGeneration = ready.Generation
+	update.SourceSpecDigest = ready.SpecDigest
+	update.Generation = ready.Generation + 1
+	update.RuntimeRevision = deployment.RevisionFor(update.RequestID, update.RequestDigest)
+	update.SpecDigest = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	if _, _, err := repository.BeginTransition(ctx, update); err != nil {
+		t.Fatal(err)
+	}
+	stale := update
+	stale.RequestID = "request-stale"
+	stale.RequestDigest = "sha256:stale"
+	stale.RuntimeRevision = deployment.RevisionFor(stale.RequestID, stale.RequestDigest)
+	if _, _, err := repository.BeginTransition(ctx, stale); !errors.Is(err, control.ErrLifecycleConflict) &&
+		!errors.Is(err, control.ErrAgentMutationInProgress) {
+		t.Fatalf("second transition error=%v", err)
+	}
+	update.State = deployment.OperationFailed
+	update.Effect = deployment.EffectNotStarted
+	update.ErrorCode = "platform_unavailable"
+	update.UpdatedAt = now.Add(3 * time.Second)
+	if _, err := repository.CompleteOperation(ctx, update, nil); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := repository.GetEnvironment(ctx, ready.AgentID)
+	if err != nil || restored.RuntimeRevision != ready.RuntimeRevision || restored.Generation != ready.Generation {
+		t.Fatalf("failed update did not restore source: %+v err=%v", restored, err)
+	}
+
+	values, err := repository.ListObservations(ctx, 0, 10)
+	if err != nil || len(values) != 1 || values[0].RuntimeRevision != ready.RuntimeRevision {
+		t.Fatalf("observations: %+v err=%v", values, err)
+	}
+	var environmentCount int
+	if err := database.QueryRowContext(ctx,
+		`SELECT count(*) FROM runtime_controller.runtime_environments`,
+	).Scan(&environmentCount); err != nil || environmentCount != 1 {
+		t.Fatalf("environment row count=%d err=%v", environmentCount, err)
+	}
+}
+
+func TestRepositoryMigrationJournalAndReadinessProbe(t *testing.T) {
+	repository, database, ctx := integrationRepository(t)
+	if err := Migrate(ctx, database); err != nil {
+		t.Fatalf("repeat migration: %v", err)
+	}
+	var migrationCount int
+	if err := database.QueryRowContext(ctx,
+		`SELECT count(*) FROM runtime_controller.schema_migrations`,
+	).Scan(&migrationCount); err != nil || migrationCount != len(schemaMigrations) {
+		t.Fatalf("migration count=%d err=%v", migrationCount, err)
+	}
+	if err := repository.ProbeObservationJournal(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var probeRows int
+	if err := database.QueryRowContext(ctx,
+		`SELECT count(*) FROM runtime_controller.observations WHERE source = 'readiness_probe'`,
+	).Scan(&probeRows); err != nil || probeRows != 0 {
+		t.Fatalf("probe rows=%d err=%v", probeRows, err)
+	}
+}
+
+func TestRepositoryAgentMutationLockSerializesCalls(t *testing.T) {
+	repository, _, ctx := integrationRepository(t)
+	firstEntered := make(chan struct{})
+	release := make(chan struct{})
+	secondEntered := make(chan struct{})
+	results := make(chan error, 2)
+	go func() {
+		results <- repository.WithAgentLock(ctx, "agent-lock-test", func(context.Context) error {
+			close(firstEntered)
+			<-release
+			return nil
+		})
+	}()
+	select {
+	case <-firstEntered:
+	case <-time.After(time.Second):
+		t.Fatal("first lock was not acquired")
+	}
+	go func() {
+		results <- repository.WithAgentLock(ctx, "agent-lock-test", func(context.Context) error {
+			close(secondEntered)
+			return nil
+		})
+	}()
+	select {
+	case <-secondEntered:
+		t.Fatal("second mutation entered concurrently")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	for range 2 {
+		select {
+		case err := <-results:
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("locked mutation did not finish")
+		}
+	}
+}
+
+func TestRepositoryObservationNotificationAndLeadership(t *testing.T) {
+	repository, _, ctx := integrationRepository(t)
+	leadership, acquired, err := repository.TryAcquireObservationLeadership(ctx)
+	if err != nil || !acquired {
+		t.Fatalf("acquire observation leadership: acquired=%t err=%v", acquired, err)
+	}
+	if second, secondAcquired, secondErr := repository.TryAcquireObservationLeadership(ctx); secondErr != nil || secondAcquired || second != nil {
+		t.Fatalf("second leader was admitted: lease=%v acquired=%t err=%v",
+			second, secondAcquired, secondErr)
+	}
+	if err := leadership.Release(ctx); err != nil {
+		t.Fatalf("release observation leadership: %v", err)
+	}
+
+	listenerCtx, listenerCancel := context.WithCancel(ctx)
+	listenerReady := make(chan struct{})
+	notified := make(chan string, 2)
+	listenerResult := make(chan error, 1)
+	go func() {
+		listenerResult <- repository.ListenObservationNotifications(
+			listenerCtx,
+			func() { close(listenerReady) },
+			func(payload string) { notified <- payload },
+		)
+	}()
+	select {
+	case <-listenerReady:
+	case <-time.After(time.Second):
+		t.Fatal("observation listener did not become ready")
+	}
+	const probePayload = "readiness_probe:integration-test"
+	if err := repository.ProbeObservationNotification(ctx, probePayload); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case payload := <-notified:
+		if payload != probePayload {
+			t.Fatalf("notification payload=%q want=%q", payload, probePayload)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("notification probe did not reach the listener")
+	}
+	if _, err := repository.AppendObservation(ctx, deployment.Observation{
+		Kind: deployment.ObservationReconciled, Source: "integration_test", ObservedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case payload := <-notified:
+		if payload != "" {
+			t.Fatalf("journal notification payload=%q want empty", payload)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("journal commit did not notify the listener")
+	}
+	listenerCancel()
+	select {
+	case err := <-listenerResult:
+		if err != nil {
+			t.Fatalf("stop observation listener: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("observation listener did not stop")
+	}
+}
+
+func integrationRepository(t *testing.T) (*Repository, *sql.DB, context.Context) {
+	t.Helper()
+	databaseURL := os.Getenv("ANTNEST_RUNTIME_CONTROLLER_TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("ANTNEST_RUNTIME_CONTROLLER_TEST_DATABASE_URL is not set")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	t.Cleanup(cancel)
+	database, err := sql.Open("pgx", databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	lockDatabase, err := sql.Open("pgx", databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = lockDatabase.Close() })
+	if _, err := database.ExecContext(ctx, `DROP SCHEMA IF EXISTS runtime_controller CASCADE`); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cleanupCancel()
+		_, _ = database.ExecContext(cleanupCtx, `DROP SCHEMA IF EXISTS runtime_controller CASCADE`)
+	})
+	if err := Migrate(ctx, database); err != nil {
+		t.Fatal(err)
+	}
+	repository, err := New(database, lockDatabase, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return repository, database, ctx
+}
+
+func integrationOperation(requestID string, kind deployment.OperationKind, now time.Time) deployment.Operation {
+	digest := "sha256:" + strings.Repeat("c", 64)
+	requestDigest := "sha256:" + strings.Repeat("d", 64)
+	return deployment.Operation{
+		RequestID: requestID, RequestDigest: requestDigest, Kind: kind, AgentID: "agent-1",
+		RuntimeRevision: deployment.RevisionFor(requestID, requestDigest),
+		SourceState:     deployment.LifecycleUninitialized,
+		Generation:      1, SpecDigest: digest, Attempt: 1,
+		State: deployment.OperationRunning, Effect: deployment.EffectUnknown,
+		CreatedAt: now, UpdatedAt: now,
+	}
+}
+
+func integrationEnvironment(
+	operation deployment.Operation, state deployment.LifecycleState, now time.Time,
+) *deployment.Environment {
+	return &deployment.Environment{
+		AgentID: operation.AgentID, RuntimeRevision: operation.RuntimeRevision,
+		LifecycleState: state, Health: deployment.HealthHealthy,
+		MCPEndpoint: "http://runtime:8093/mcp", RuntimeExecutionID: "execution-1",
+		Generation: operation.Generation, SpecDigest: operation.SpecDigest, ObservedAt: now,
+	}
+}
+
+func mustRuntimeKey(t *testing.T, environment deployment.Environment) deployment.Key {
+	t.Helper()
+	key, ok := environment.RuntimeKey()
+	if !ok {
+		t.Fatalf("invalid Runtime key in environment: %+v", environment)
+	}
+	return key
+}
+
+func TestAdvisoryLockNamespacesAreIndependent(t *testing.T) {
+	if agentMutationLockNamespace == observationLeadershipNamespace {
+		t.Fatal("Agent mutation and observation leadership locks share a namespace")
+	}
+}

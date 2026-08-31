@@ -283,15 +283,15 @@ unsolicited packets are dropped.
 The flow table is bounded globally and per Agent. The first structurally valid
 allowed outbound packet claims a flow, so retransmitted or mid-connection
 packets do not require a special SYN branch. Idle flows expire during packet
-processing; policy changes, Runtime rollout, fence, and release remove all
+processing; policy changes, Runtime replacement, fence, and release remove all
 flows for that Agent explicitly.
 
 The table maintains forward lookup, reverse lookup, Agent ownership, and peer
 ownership under one consistency boundary. Capacity rejection and flow collision
 fail fast without evicting an unrelated active flow.
 
-At Runtime rollout, Agent Controller first confirms the old Runtime absent and
-then calls `ResetAgentFlows`. Candidate receives no Agent work until reset is
+At Runtime replacement, Agent Controller first confirms the old Runtime absent
+and then calls `ResetAgentFlows`. It creates no replacement until reset is
 acknowledged. Egress therefore does not model active/candidate generations.
 
 ## 11. Kernel Adapter

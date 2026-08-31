@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://antnest.local/contracts/runtime-controller/control-api.schema.json",
+  "title": "Antnest Runtime Controller HTTP Messages",
+  "$defs": {
+    "agent_id": {"type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"},
+    "request_id": {"type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"},
+    "runtime_revision": {"type": "string", "pattern": "^rtv_[0-9a-f]{32}$"},
+    "sequence": {"type": "integer", "minimum": 0, "maximum": 9223372036854775807},
+    "page_limit": {"type": "integer", "minimum": 1, "maximum": 500},
+    "configuration": {"$ref": "runtime-deployment.schema.json"},
+    "initialize_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["configuration"],
+      "properties": {"configuration": {"$ref": "#/$defs/configuration"}}
+    },
+    "revision_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["expected_revision"],
+      "properties": {"expected_revision": {"$ref": "#/$defs/runtime_revision"}}
+    },
+    "revision_configuration_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["expected_revision", "configuration"],
+      "properties": {
+        "expected_revision": {"$ref": "#/$defs/runtime_revision"},
+        "configuration": {"$ref": "#/$defs/configuration"}
+      }
+    },
+    "readiness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "live", "ready", "database_ready", "platform_ready", "observation_ready"],
+      "properties": {
+        "status": {"enum": ["ready", "not_ready"]},
+        "live": {"type": "boolean", "const": true},
+        "ready": {"type": "boolean"},
+        "database_ready": {"type": "boolean"},
+        "platform_ready": {"type": "boolean"},
+        "observation_ready": {"type": "boolean"}
+      }
+    },
+    "runtime_inspection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["agent_id", "runtime_revision", "lifecycle_state", "health", "restart_count", "observed_at"],
+      "properties": {
+        "agent_id": {"$ref": "#/$defs/agent_id"},
+        "runtime_revision": {"$ref": "#/$defs/runtime_revision"},
+        "lifecycle_state": {"enum": ["initializing", "ready", "updating", "disabling", "disabled", "enabling", "deleting", "deleted", "unknown"]},
+        "health": {"enum": ["absent", "starting", "healthy", "unhealthy", "unknown"]},
+        "mcp_endpoint": {"type": "string", "format": "uri"},
+        "runtime_execution_id": {"type": "string", "minLength": 1},
+        "restart_count": {"type": "integer", "minimum": 0},
+        "observed_at": {"type": "string", "format": "date-time"}
+      }
+    },
+    "runtime_list": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["runtimes"],
+      "properties": {"runtimes": {"type": "array", "items": {"$ref": "#/$defs/runtime_inspection"}}}
+    },
+    "operation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["request_id", "kind", "agent_id", "runtime_revision", "state", "effect", "created_at", "updated_at"],
+      "properties": {
+        "request_id": {"$ref": "#/$defs/request_id"},
+        "kind": {"enum": ["initialize_runtime", "update_runtime", "disable_runtime", "enable_runtime", "delete_runtime"]},
+        "agent_id": {"$ref": "#/$defs/agent_id"},
+        "runtime_revision": {"$ref": "#/$defs/runtime_revision"},
+        "state": {"enum": ["running", "completed", "failed", "unknown"]},
+        "effect": {"enum": ["completed", "not_started", "unknown"]},
+        "inspection": {"$ref": "#/$defs/runtime_inspection"},
+        "error_code": {"type": "string"},
+        "error_detail": {"type": "string"},
+        "created_at": {"type": "string", "format": "date-time"},
+        "updated_at": {"type": "string", "format": "date-time"}
+      }
+    },
+    "observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sequence", "kind", "observed_at"],
+      "properties": {
+        "sequence": {"$ref": "#/$defs/sequence"},
+        "agent_id": {"$ref": "#/$defs/agent_id"},
+        "runtime_revision": {"$ref": "#/$defs/runtime_revision"},
+        "runtime_execution_id": {"type": "string"},
+        "kind": {"enum": ["initialized", "updated", "disabled", "enabled", "deleted", "healthy", "unhealthy", "restarted", "exited", "status_unverified", "observation_gap", "reconciled"]},
+        "diagnostic_summary": {"type": "string"},
+        "observed_at": {"type": "string", "format": "date-time"}
+      }
+    },
+    "observation_list": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["observations", "next_sequence"],
+      "properties": {
+        "observations": {"type": "array", "items": {"$ref": "#/$defs/observation"}},
+        "next_sequence": {"$ref": "#/$defs/sequence"}
+      }
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message", "retryable"],
+      "properties": {
+        "code": {"type": "string", "minLength": 1},
+        "message": {"type": "string", "minLength": 1},
+        "retryable": {"type": "boolean"}
+      }
+    }
+  }
+}

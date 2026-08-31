@@ -27,9 +27,20 @@ MCP specification into a local schema.
 {
   "agent_id": "agent-123",
   "generation": 8,
+  "execution_id": "d83f89db-74f3-49df-a3b8-83d6718a45fd",
   "status": "ready"
 }
 ```
+
+`execution_id` is generated once by Runtime PID 1 and changes after every
+process restart, even when Agent ID, generation, endpoint, and container remain
+the same. It is a consistency identity, not a credential.
+
+Every `POST /mcp` request must carry
+`X-Antnest-Expected-Execution-ID: <execution_id>`. Runtime rejects a missing or
+stale value with HTTP 409 before the MCP SDK or any Tool sees the request. A
+caller obtains the value from the immutable Run execution snapshot populated
+after Runtime Controller verifies `/status`.
 
 `status` is always `ready` in a successful response. Before Runtime is
 ready, the HTTP listener is not exposed. Unreachable status means unavailable.

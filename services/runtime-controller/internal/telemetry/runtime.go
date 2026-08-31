@@ -22,6 +22,8 @@ import (
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
+
+	"soft/antnest-platform/services/runtime-controller/internal/diagnostics"
 )
 
 const (
@@ -55,6 +57,11 @@ func Setup(ctx context.Context, base slog.Handler, cfg Config) (*Runtime, error)
 	}
 	local := correlatedHandler{next: base}
 	runtime := &Runtime{logger: slog.New(local)}
+	otel.SetTextMapPropagator(defaultPropagator())
+	otel.SetErrorHandler(otel.ErrorHandlerFunc(func(err error) {
+		slog.New(local).Error("OpenTelemetry export failed",
+			"error_class", "export_error", "error", diagnostics.Message(err))
+	}))
 	if sdkDisabled() {
 		return runtime, nil
 	}
@@ -113,10 +120,6 @@ func Setup(ctx context.Context, base slog.Handler, cfg Config) (*Runtime, error)
 		runtime.logger = slog.New(fanoutHandler{handlers: []slog.Handler{local, otelHandler}})
 	}
 
-	otel.SetTextMapPropagator(defaultPropagator())
-	otel.SetErrorHandler(otel.ErrorHandlerFunc(func(err error) {
-		slog.New(local).Error("OpenTelemetry export failed", "error", err)
-	}))
 	return runtime, nil
 }
 

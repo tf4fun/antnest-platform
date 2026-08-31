@@ -1,0 +1,577 @@
+package deployment
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"math"
+	"net/netip"
+	"path"
+	"strings"
+	"time"
+)
+
+var (
+	ErrInvalid          = errors.New("invalid Runtime deployment")
+	ErrIdentityConflict = errors.New("Runtime identity conflict")
+)
+
+type Key struct {
+	AgentID    string `json:"agent_id"`
+	Generation uint64 `json:"generation"`
+}
+
+func (k Key) Validate() error {
+	if err := validateIdentifier("agent_id", k.AgentID); err != nil {
+		return err
+	}
+	if k.Generation == 0 {
+		return invalid("generation must be positive")
+	}
+	if k.Generation > math.MaxInt64 {
+		return invalid("generation exceeds the supported persistence range")
+	}
+	return nil
+}
+
+type Deployment struct {
+	ImageRef    string         `json:"image_ref"`
+	RuntimeSpec RuntimeSpec    `json:"runtime_spec"`
+	Resources   ResourceLimits `json:"resources"`
+}
+
+// Configuration is the caller-owned policy input. Deployment identity and
+// Runtime image invariants are injected by Runtime Controller.
+type Configuration struct {
+	ImageRef  string         `json:"image_ref"`
+	Network   NetworkSpec    `json:"network"`
+	Resources ResourceLimits `json:"resources"`
+}
+
+func (c Configuration) Resolve(agentID string, generation uint64) (Deployment, error) {
+	value := Deployment{
+		ImageRef: c.ImageRef,
+		RuntimeSpec: RuntimeSpec{
+			AgentID: agentID, Generation: generation,
+			Listen:     SocketAddress{Host: "0.0.0.0", Port: 8093},
+			Network:    c.Network,
+			Filesystem: FilesystemSpec{Workspace: "/workspace", SystemSkills: "/skills"},
+		},
+		Resources: c.Resources,
+	}
+	if err := value.ValidateFor(Key{AgentID: agentID, Generation: generation}); err != nil {
+		return Deployment{}, err
+	}
+	return value, nil
+}
+
+func (c Configuration) Validate() error {
+	_, err := c.Resolve("validation-probe", 1)
+	return err
+}
+
+type RuntimeSpec struct {
+	AgentID    string         `json:"agent_id"`
+	Generation uint64         `json:"generation"`
+	Listen     SocketAddress  `json:"listen"`
+	Network    NetworkSpec    `json:"network"`
+	Filesystem FilesystemSpec `json:"filesystem"`
+}
+
+type SocketAddress struct {
+	Host string `json:"host"`
+	Port uint16 `json:"port"`
+}
+
+type IPv4Endpoint struct {
+	IPv4 string `json:"ipv4"`
+	Port uint16 `json:"port"`
+}
+
+type NetworkSpec struct {
+	PacketContractRevision uint32       `json:"packet_contract_revision"`
+	EgressEndpoint         IPv4Endpoint `json:"egress_endpoint"`
+	TunnelIPv4             string       `json:"tunnel_ipv4"`
+	ResolverIPv4           string       `json:"resolver_ipv4"`
+}
+
+type FilesystemSpec struct {
+	Workspace    string `json:"workspace"`
+	SystemSkills string `json:"system_skills"`
+}
+
+type ResourceLimits struct {
+	MemoryBytes uint64 `json:"memory_bytes"`
+	PidsLimit   uint32 `json:"pids_limit"`
+	TmpfsBytes  uint64 `json:"tmpfs_bytes"`
+}
+
+func (d Deployment) ValidateFor(key Key) error {
+	if err := key.Validate(); err != nil {
+		return err
+	}
+	if !immutableImageRef(d.ImageRef) {
+		return invalid("image_ref must be a sha256 image ID or digest-pinned reference")
+	}
+	if d.RuntimeSpec.AgentID != key.AgentID || d.RuntimeSpec.Generation != key.Generation {
+		return invalid("path identity and runtime_spec identity differ")
+	}
+	if err := validateSocketAddress("listen", d.RuntimeSpec.Listen); err != nil {
+		return err
+	}
+	if err := d.RuntimeSpec.Network.validate(); err != nil {
+		return err
+	}
+	if err := d.RuntimeSpec.Filesystem.validate(); err != nil {
+		return err
+	}
+	if d.Resources.MemoryBytes < 128<<20 {
+		return invalid("resources.memory_bytes must be at least 134217728")
+	}
+	if d.Resources.MemoryBytes > math.MaxInt64 {
+		return invalid("resources.memory_bytes exceeds the deployment platform range")
+	}
+	if d.Resources.PidsLimit < 16 || d.Resources.PidsLimit > 32768 {
+		return invalid("resources.pids_limit must be between 16 and 32768")
+	}
+	if d.Resources.TmpfsBytes < 16<<20 {
+		return invalid("resources.tmpfs_bytes must be at least 16777216")
+	}
+	if d.Resources.TmpfsBytes > math.MaxInt64 {
+		return invalid("resources.tmpfs_bytes exceeds the deployment platform range")
+	}
+	return nil
+}
+
+func (d Deployment) Digest() (string, error) {
+	encoded, err := json.Marshal(d)
+	if err != nil {
+		return "", fmt.Errorf("encode Runtime deployment: %w", err)
+	}
+	digest := sha256.Sum256(encoded)
+	return "sha256:" + hex.EncodeToString(digest[:]), nil
+}
+
+func DigestValue(value any) (string, error) {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return "", fmt.Errorf("encode digest input: %w", err)
+	}
+	digest := sha256.Sum256(encoded)
+	return "sha256:" + hex.EncodeToString(digest[:]), nil
+}
+
+func (n NetworkSpec) validate() error {
+	if n.PacketContractRevision != 1 {
+		return invalid("network.packet_contract_revision must be 1")
+	}
+	if err := validateIPv4Endpoint("network.egress_endpoint", n.EgressEndpoint); err != nil {
+		return err
+	}
+	tunnel, err := parseUsableIPv4("network.tunnel_ipv4", n.TunnelIPv4)
+	if err != nil {
+		return err
+	}
+	resolver, err := parseUsableIPv4("network.resolver_ipv4", n.ResolverIPv4)
+	if err != nil {
+		return err
+	}
+	if tunnel == resolver {
+		return invalid("network tunnel and resolver addresses must differ")
+	}
+	return nil
+}
+
+func (f FilesystemSpec) validate() error {
+	workspace, err := normalizedAbsolutePath("filesystem.workspace", f.Workspace)
+	if err != nil {
+		return err
+	}
+	skills, err := normalizedAbsolutePath("filesystem.system_skills", f.SystemSkills)
+	if err != nil {
+		return err
+	}
+	if rootsOverlap(workspace, skills) {
+		return invalid("filesystem roots must not overlap")
+	}
+	return nil
+}
+
+func normalizedAbsolutePath(name, value string) (string, error) {
+	if value == "" || !strings.HasPrefix(value, "/") || path.Clean(value) != value {
+		return "", invalid(name + " must be a normalized absolute path")
+	}
+	return value, nil
+}
+
+func rootsOverlap(left, right string) bool {
+	if left == right || left == "/" || right == "/" {
+		return true
+	}
+	return strings.HasPrefix(left, right+"/") || strings.HasPrefix(right, left+"/")
+}
+
+func validateSocketAddress(name string, value SocketAddress) error {
+	if strings.TrimSpace(value.Host) != "0.0.0.0" {
+		return invalid(name + ".host must be 0.0.0.0")
+	}
+	if value.Port == 0 {
+		return invalid(name + ".port must be positive")
+	}
+	return nil
+}
+
+func immutableImageRef(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" || strings.ContainsAny(value, " \t\r\n") {
+		return false
+	}
+	if ValidateDigest(value) == nil {
+		return true
+	}
+	if strings.Count(value, "@") != 1 {
+		return false
+	}
+	name, digest, found := strings.Cut(value, "@")
+	return found && name != "" && ValidateDigest(digest) == nil
+}
+
+func ValidateDigest(value string) error {
+	if !strings.HasPrefix(value, "sha256:") {
+		return invalid("digest must use sha256")
+	}
+	hexDigest := strings.TrimPrefix(value, "sha256:")
+	if len(hexDigest) != 64 {
+		return invalid("digest must contain 64 hexadecimal characters")
+	}
+	for _, character := range []byte(hexDigest) {
+		if character >= '0' && character <= '9' ||
+			character >= 'a' && character <= 'f' || character >= 'A' && character <= 'F' {
+			continue
+		}
+		return invalid("digest must contain only hexadecimal characters")
+	}
+	return nil
+}
+
+func validateIPv4Endpoint(name string, value IPv4Endpoint) error {
+	if _, err := parseUsableIPv4(name+".ipv4", value.IPv4); err != nil {
+		return err
+	}
+	if value.Port == 0 {
+		return invalid(name + ".port must be positive")
+	}
+	return nil
+}
+
+func parseUsableIPv4(name, value string) (netip.Addr, error) {
+	address, err := netip.ParseAddr(strings.TrimSpace(value))
+	if err != nil || !address.Is4() || !address.IsGlobalUnicast() {
+		return netip.Addr{}, invalid(name + " must be a usable IPv4 address")
+	}
+	return address, nil
+}
+
+func validateIdentifier(name, value string) error {
+	if value == "" || len(value) > 200 {
+		return invalid(name + " must contain 1-200 deployment-safe ASCII bytes")
+	}
+	for index, character := range []byte(value) {
+		letter := character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z'
+		digit := character >= '0' && character <= '9'
+		if letter || digit || index > 0 && (character == '_' || character == '.' || character == '-') {
+			continue
+		}
+		return invalid(name + " must start with an alphanumeric byte and contain only alphanumeric, '_', '.', or '-'")
+	}
+	return nil
+}
+
+func invalid(message string) error {
+	return fmt.Errorf("%w: %s", ErrInvalid, message)
+}
+
+type EffectState string
+
+const (
+	EffectCompleted  EffectState = "completed"
+	EffectNotStarted EffectState = "not_started"
+	EffectUnknown    EffectState = "unknown"
+)
+
+type EffectOutcome struct {
+	State  EffectState `json:"state"`
+	Code   string      `json:"code,omitempty"`
+	Detail string      `json:"detail,omitempty"`
+	Cause  error       `json:"-"`
+}
+
+func (o EffectOutcome) Validate() error {
+	switch o.State {
+	case EffectCompleted:
+		if o.Code != "" || o.Detail != "" {
+			return invalid("completed effect cannot carry an error")
+		}
+	case EffectNotStarted, EffectUnknown:
+		if strings.TrimSpace(o.Code) == "" {
+			return invalid("non-completed effect requires an error code")
+		}
+	default:
+		return invalid("unknown effect state")
+	}
+	return nil
+}
+
+type PlatformPhase string
+
+const (
+	PhaseAbsent  PlatformPhase = "absent"
+	PhaseCreated PlatformPhase = "created"
+	PhaseRunning PlatformPhase = "running"
+	PhaseExited  PlatformPhase = "exited"
+	PhaseUnknown PlatformPhase = "unknown"
+)
+
+type HealthState string
+
+const (
+	HealthAbsent    HealthState = "absent"
+	HealthStarting  HealthState = "starting"
+	HealthHealthy   HealthState = "healthy"
+	HealthUnhealthy HealthState = "unhealthy"
+	HealthUnknown   HealthState = "unknown"
+)
+
+type RuntimeRevision string
+
+func RevisionFor(requestID, requestDigest string) RuntimeRevision {
+	digest := sha256.Sum256([]byte("antnest-runtime-revision-v1\x00" + requestID + "\x00" + requestDigest))
+	return RuntimeRevision("rtv_" + hex.EncodeToString(digest[:16]))
+}
+
+func ValidateRevision(value RuntimeRevision) error {
+	raw := string(value)
+	if len(raw) != 36 || !strings.HasPrefix(raw, "rtv_") {
+		return invalid("runtime_revision is malformed")
+	}
+	if _, err := hex.DecodeString(raw[4:]); err != nil {
+		return invalid("runtime_revision is malformed")
+	}
+	return nil
+}
+
+type LifecycleState string
+
+const (
+	LifecycleUninitialized LifecycleState = "uninitialized"
+	LifecycleInitializing  LifecycleState = "initializing"
+	LifecycleReady         LifecycleState = "ready"
+	LifecycleUpdating      LifecycleState = "updating"
+	LifecycleDisabling     LifecycleState = "disabling"
+	LifecycleDisabled      LifecycleState = "disabled"
+	LifecycleEnabling      LifecycleState = "enabling"
+	LifecycleDeleting      LifecycleState = "deleting"
+	LifecycleDeleted       LifecycleState = "deleted"
+	LifecycleUnknown       LifecycleState = "unknown"
+)
+
+func LifecycleTransition(kind OperationKind, from LifecycleState) (LifecycleState, LifecycleState, error) {
+	switch kind {
+	case OperationInitializeRuntime:
+		if from == LifecycleUninitialized {
+			return LifecycleInitializing, LifecycleReady, nil
+		}
+	case OperationUpdateRuntime:
+		if from == LifecycleReady {
+			return LifecycleUpdating, LifecycleReady, nil
+		}
+	case OperationDisableRuntime:
+		if from == LifecycleReady {
+			return LifecycleDisabling, LifecycleDisabled, nil
+		}
+	case OperationEnableRuntime:
+		if from == LifecycleDisabled {
+			return LifecycleEnabling, LifecycleReady, nil
+		}
+	case OperationDeleteRuntime:
+		if from == LifecycleReady || from == LifecycleDisabled {
+			return LifecycleDeleting, LifecycleDeleted, nil
+		}
+	}
+	return "", "", invalid(fmt.Sprintf("%s is not valid from lifecycle state %s", kind, from))
+}
+
+type Inspection struct {
+	AgentID            string        `json:"-"`
+	Generation         uint64        `json:"-"`
+	SpecDigest         string        `json:"-"`
+	PlatformResourceID string        `json:"-"`
+	PlatformPhase      PlatformPhase `json:"-"`
+	Health             HealthState   `json:"-"`
+	MCPEndpoint        string        `json:"-"`
+	RuntimeExecutionID string        `json:"-"`
+	RestartCount       uint64        `json:"-"`
+	ObservedAt         time.Time     `json:"-"`
+	StatusEndpoint     string        `json:"-"`
+}
+
+func (i Inspection) RuntimeKey() Key {
+	return Key{AgentID: i.AgentID, Generation: i.Generation}
+}
+
+type Environment struct {
+	AgentID            string          `json:"agent_id"`
+	RuntimeRevision    RuntimeRevision `json:"runtime_revision"`
+	LifecycleState     LifecycleState  `json:"lifecycle_state"`
+	Health             HealthState     `json:"health"`
+	MCPEndpoint        string          `json:"mcp_endpoint,omitempty"`
+	RuntimeExecutionID string          `json:"runtime_execution_id,omitempty"`
+	RestartCount       uint64          `json:"restart_count"`
+	ObservedAt         time.Time       `json:"observed_at"`
+
+	Generation  uint64 `json:"-"`
+	SpecDigest  string `json:"-"`
+	OperationID string `json:"-"`
+}
+
+func (e Environment) RuntimeKey() (Key, bool) {
+	key := Key{AgentID: e.AgentID, Generation: e.Generation}
+	return key, key.Validate() == nil
+}
+
+func (e Environment) WithInspection(value Inspection) Environment {
+	e.Health = value.Health
+	e.MCPEndpoint = value.MCPEndpoint
+	e.RuntimeExecutionID = value.RuntimeExecutionID
+	e.RestartCount = value.RestartCount
+	e.ObservedAt = value.ObservedAt
+	return e
+}
+
+type OperationKind string
+
+const (
+	OperationInitializeRuntime OperationKind = "initialize_runtime"
+	OperationUpdateRuntime     OperationKind = "update_runtime"
+	OperationDisableRuntime    OperationKind = "disable_runtime"
+	OperationEnableRuntime     OperationKind = "enable_runtime"
+	OperationDeleteRuntime     OperationKind = "delete_runtime"
+)
+
+type OperationState string
+
+const (
+	OperationRunning   OperationState = "running"
+	OperationCompleted OperationState = "completed"
+	OperationFailed    OperationState = "failed"
+	OperationUnknown   OperationState = "unknown"
+)
+
+type Operation struct {
+	RequestID       string          `json:"request_id"`
+	RequestDigest   string          `json:"-"`
+	Kind            OperationKind   `json:"kind"`
+	AgentID         string          `json:"agent_id"`
+	RuntimeRevision RuntimeRevision `json:"runtime_revision"`
+	State           OperationState  `json:"state"`
+	Effect          EffectState     `json:"effect"`
+	Inspection      *Environment    `json:"inspection,omitempty"`
+	ErrorCode       string          `json:"error_code,omitempty"`
+	ErrorDetail     string          `json:"error_detail,omitempty"`
+	CreatedAt       time.Time       `json:"created_at"`
+	UpdatedAt       time.Time       `json:"updated_at"`
+
+	Attempt          uint64          `json:"-"`
+	ExpectedRevision RuntimeRevision `json:"-"`
+	SourceState      LifecycleState  `json:"-"`
+	SourceRevision   RuntimeRevision `json:"-"`
+	SourceGeneration uint64          `json:"-"`
+	SourceSpecDigest string          `json:"-"`
+	Generation       uint64          `json:"-"`
+	SpecDigest       string          `json:"-"`
+}
+
+func (o Operation) RuntimeKey() Key {
+	return Key{AgentID: o.AgentID, Generation: o.Generation}
+}
+
+func (o Operation) SourceKey() (Key, bool) {
+	key := Key{AgentID: o.AgentID, Generation: o.SourceGeneration}
+	return key, key.Validate() == nil
+}
+
+func (o Operation) TransitionState() (LifecycleState, error) {
+	transition, _, err := LifecycleTransition(o.Kind, o.SourceState)
+	return transition, err
+}
+
+func (o Operation) SuccessState() (LifecycleState, error) {
+	_, success, err := LifecycleTransition(o.Kind, o.SourceState)
+	return success, err
+}
+
+func (o Operation) CreatesCompute() bool {
+	return o.Kind == OperationInitializeRuntime || o.Kind == OperationUpdateRuntime || o.Kind == OperationEnableRuntime
+}
+
+type ObservationKind string
+
+const (
+	ObservationInitialized      ObservationKind = "initialized"
+	ObservationUpdated          ObservationKind = "updated"
+	ObservationDisabled         ObservationKind = "disabled"
+	ObservationEnabled          ObservationKind = "enabled"
+	ObservationHealthy          ObservationKind = "healthy"
+	ObservationUnhealthy        ObservationKind = "unhealthy"
+	ObservationRestarted        ObservationKind = "restarted"
+	ObservationExited           ObservationKind = "exited"
+	ObservationDeleted          ObservationKind = "deleted"
+	ObservationGap              ObservationKind = "observation_gap"
+	ObservationReconciled       ObservationKind = "reconciled"
+	ObservationStatusUnverified ObservationKind = "status_unverified"
+)
+
+type Observation struct {
+	Sequence           uint64          `json:"sequence"`
+	AgentID            string          `json:"agent_id,omitempty"`
+	RuntimeRevision    RuntimeRevision `json:"runtime_revision,omitempty"`
+	RuntimeExecutionID string          `json:"runtime_execution_id,omitempty"`
+	Kind               ObservationKind `json:"kind"`
+	DiagnosticSummary  string          `json:"diagnostic_summary,omitempty"`
+	ObservedAt         time.Time       `json:"observed_at"`
+
+	Generation         uint64 `json:"-"`
+	SpecDigest         string `json:"-"`
+	PlatformResourceID string `json:"-"`
+	Source             string `json:"-"`
+}
+
+func (o Observation) RuntimeKey() (Key, bool) {
+	key := Key{AgentID: o.AgentID, Generation: o.Generation}
+	return key, key.Validate() == nil
+}
+
+func (o Observation) Validate() error {
+	if strings.TrimSpace(o.Source) == "" || o.ObservedAt.IsZero() {
+		return invalid("observation source and observed_at are required")
+	}
+	global := o.Kind == ObservationGap || o.Kind == ObservationReconciled
+	if global {
+		if o.AgentID != "" || o.RuntimeRevision != "" || o.Generation != 0 || o.SpecDigest != "" {
+			return invalid("service-wide observation must not carry Runtime identity")
+		}
+		return nil
+	}
+	if _, ok := o.RuntimeKey(); !ok {
+		return invalid("Runtime observation requires a valid Runtime identity")
+	}
+	if err := ValidateDigest(o.SpecDigest); err != nil {
+		return invalid("Runtime observation requires a valid spec digest")
+	}
+	if err := ValidateRevision(o.RuntimeRevision); err != nil {
+		return invalid("Runtime observation requires a valid Runtime revision")
+	}
+	return nil
+}

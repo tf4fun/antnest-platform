@@ -5,11 +5,13 @@
     "status_path": "/status",
     "mcp_path": "/mcp",
     "kind": "streamable-http",
-    "trusted_internal_hosts": true
+    "trusted_internal_hosts": true,
+    "expected_execution_header": "X-Antnest-Expected-Execution-ID"
   },
   "status": {
     "agent_id": "agent-1",
     "generation": 2,
+    "execution_id": "execution-1",
     "status": "ready"
   },
   "readiness": {

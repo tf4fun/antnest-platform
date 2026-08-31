@@ -51,7 +51,9 @@ environment uses:
   read-only.
 - `$HOME/.antnest/skills`: persistent, writable personal Skills.
 - `/tmp`: bounded ephemeral execution space.
-- Read-only container root filesystem.
+- Root-owned image filesystem; Agent-selected work always runs as UID/GID 1000
+  with no capabilities and can write only locations granted by Unix ownership
+  or explicit mounts.
 
 The baseline image includes Python 3.12, Node.js/npm, Git, and curl. Runtime
 does not model language-specific Skill runtimes or install dependencies on
@@ -59,24 +61,24 @@ behalf of the control plane; an Agent may use these tools inside its own
 workspace.
 
 The Runtime listens on an internal platform address for `GET /status` and
-`POST /mcp`. Runtime Controller gives this endpoint to Agent Controller. Agent
-Controller polls status and calls MCP `tools/list` before routing work to a new
-generation. The endpoint accepts internal Docker/Kubernetes Host names and is
-not published outside that trusted network.
+`POST /mcp`. Runtime Controller performs one bounded status verification and
+returns the endpoint to Agent Controller. Agent ACP Service discovers tools
+through MCP only after acquiring a Run snapshot. The endpoint accepts internal
+Docker/Kubernetes Host names and is not published outside that trusted network.
 
 `/status` is local application readiness: RuntimeSpec, Supervisor capabilities,
 roots, TUN, the assigned Egress packet path, the local network loop, and MCP are
 ready. Before binding HTTP, Runtime executes a UID/GID 1000 probe that verifies
 the workspace is writable/traversable and the system Skill root is
 readable/traversable, then requires a matching packet response from Egress. The
-packet probe does not claim end-to-end public connectivity. Controller combines
-this startup signal with current Runtime Controller and Egress deployment
-health before rollout.
+packet probe does not claim end-to-end public connectivity. Runtime Controller
+combines this startup signal with platform health before reporting the physical
+Runtime ready.
 
 Runtime permits one active tool execution and returns `runtime_busy` for a
-concurrent call. Agent Controller still serializes the broader Agent operation,
-including generation handoff, while Runtime owns only local process and
-workspace correctness.
+concurrent call. Agent Controller separately serializes Agent Runs and explicit
+Runtime replacement, while Runtime owns only local process and workspace
+correctness.
 
 Actor admission is fail-closed. Shutdown closes it permanently, and an
 unprovable Executor process-tree cleanup or abnormal Executor coordination task

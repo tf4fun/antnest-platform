@@ -3,7 +3,7 @@
 ## Mission
 
 Antnest Runtime gives one Agent an isolated Linux workspace and exposes that
-workspace as four MCP tools. Agent reasoning, scheduling, generation rollout,
+workspace as four MCP tools. Agent reasoning, scheduling, generation selection,
 container lifecycle, persistence, and audit stay outside this process.
 
 Runtime is an internal remote MCP server. It is not an Agent, a Controller, a
@@ -57,10 +57,12 @@ boundary is ready:
 
 1. Require container PID 1 and root, then load the immutable RuntimeSpec.
 2. Set the Agent home and XDG locations beneath `/workspace`.
-3. Reconcile the Runtime-owned TUN, UID policy route, resolver policy, and
-   fail-closed nftables rules. Reconciliation deletes only exact owned entries,
-   rejects any conflicting reserved table/priority content, and leaves the
-   platform main routing table intact.
+3. Reconcile the Runtime-owned resolver file, TUN, UID policy route, and
+   fail-closed nftables rules. The root Supervisor replaces deployment-platform
+   DNS stubs with the single virtual resolver from RuntimeSpec before any
+   Executor exists, then verifies the exact file. Reconciliation deletes only
+   exact owned entries, rejects any conflicting reserved table/priority
+   content, and leaves the platform main routing table intact.
 4. Validate that the workspace and system-Skill roots can be opened by
    UID/GID 1000.
 5. Initialize telemetry and the single-flight Execution Actor.
@@ -105,15 +107,17 @@ upstream DNS connectivity. Its body is:
 {
   "agent_id": "agent-123",
   "generation": 8,
+  "execution_id": "d83f89db-74f3-49df-a3b8-83d6718a45fd",
   "status": "ready"
 }
 ```
 
-Agent Controller receives the endpoint from Runtime Controller. It polls
-`/status`, verifies `(agent_id, generation)`, calls MCP `tools/list` once,
-and combines those local signals with Runtime Controller/Egress deployment health before
-marking a candidate generation ready. Runtime performs no self-registration
-and maintains no reverse control connection.
+Runtime Controller performs one bounded `/status` request, verifies
+`(agent_id, generation)`, and returns the ready endpoint to Agent Controller.
+Agent ACP Service later calls MCP under a Run snapshot and supplies that
+snapshot's expected execution ID on every request. Runtime rejects missing or
+stale execution identity before MCP dispatch. Runtime performs no
+self-registration and maintains no reverse control connection.
 
 ## MCP Tool Model
 
@@ -143,7 +147,7 @@ Runtime accepts at most one active tool execution. A second call receives the
 stable `runtime_busy` tool error instead of entering an internal queue. This
 single-flight boundary covers all four tools, permits complete UID 1000 process
 cleanup after each call, and prevents concurrent workspace mutation. Agent
-Controller still serializes Agent operations across generations, but Runtime
+Controller still serializes Agent Runs and replacement across generations, but Runtime
 does not rely on that caller behavior for local correctness.
 
 ## Tool Execution Boundary
@@ -214,24 +218,22 @@ irreversible UID transition. Admission closure and execution activity are
 separate state: shutdown rejects new calls, cancels the active call, and waits
 for its lease and descendant cleanup before the process flushes telemetry.
 
-## Generation Rollout
+## Explicit Runtime Replacement
 
-Agent Controller owns `desired_generation`, `candidate_generation`, and
-`active_generation`:
+Agent Controller allocates generations and owns the rebuild workflow:
 
-1. create a candidate generation through Runtime Controller;
-2. wait for `/status` and `tools/list` to succeed;
-3. close Agent operation admission and wait for the old generation's current
-   operation to finish;
-4. delete the old generation through Runtime Controller and require an
-   `Absent` observation;
-5. call Runtime Egress `ResetAgentFlows` and wait for acknowledgement;
-6. atomically activate the candidate endpoint and reopen admission.
+1. close Agent Run admission and wait for the current Run to finish;
+2. delete the old generation through Runtime Controller and require an
+   `Absent` result;
+3. call Runtime Egress `ResetAgentFlows` and wait for acknowledgement;
+4. create the replacement generation through Runtime Controller;
+5. wait for platform health and matching `/status`;
+6. atomically publish the new Agent ExecutionRevision and reopen admission.
 
-Runtime does not implement drain or shutdown RPCs. Stopping new calls at the
-caller removes the special case. Runtime Controller only realizes and removes
-the selected platform generation. Candidate failure before admission closes
-leaves the old generation active; ambiguous deletion keeps admission closed.
+Runtime does not implement drain, shutdown, candidate, or activation RPCs.
+Runtime Controller only realizes and removes the caller-selected generation.
+Ambiguous deletion or Egress reset keeps admission closed and prevents creation
+of a second Runtime.
 
 ## Network Boundary
 
@@ -293,3 +295,18 @@ must update the applicable file under `contracts/runtime`, Runtime DTOs or
 domain types, contract tests, and these documents in one lockstep change.
 Adding a fifth tool requires a deliberate architecture decision; it is not a
 local handler-only edit.
+
+### Approved Stage 1C Change, Not Yet Implemented
+
+Runtime Controller integration requires one future lockstep contract change:
+
+1. PID 1 generates a fresh random `execution_id` on every process start.
+2. `/status` returns that value with `agent_id`, `generation`, and readiness.
+3. Every MCP request carries the execution ID expected by the Agent Run
+   snapshot, for example in `X-Antnest-Expected-Execution-ID`.
+4. Runtime rejects a mismatch before Tool dispatch.
+
+This identity is a stale-execution consistency check, not an authentication
+credential or rollout generation. Until the Runtime code, language-neutral contract, and tests land
+together, the implemented identity and status body remain exactly as described
+earlier in this document.

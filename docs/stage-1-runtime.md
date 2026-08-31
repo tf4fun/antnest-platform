@@ -1,23 +1,27 @@
 # Stage 1 Runtime And Egress Architecture
 
-> Status: implemented Stage 1 baseline; future changes remain doc-first<br>
-> Updated: 2026-08-30<br>
+> Status: Stage 1A/1B/1C implemented for Docker; Kubernetes adapter pending<br>
+> Updated: 2026-08-31<br>
 > Compatibility: greenfield; no legacy service or wire compatibility is kept
 
 Stage 1 establishes the isolated Agent execution and network data planes.
-`antnest-runtime` and Runtime Egress are implemented and accepted together.
-Runtime Controller, Agent Controller, and ACP Service appear here only where
-their future boundaries constrain Runtime or Egress; their existing prototype
-code is not authoritative.
+`antnest-runtime`, Runtime Egress, and the thin Docker Runtime Controller are
+implemented and accepted together. Agent Controller and ACP Service appear
+here only where their future boundaries constrain the Stage 1 contracts; their
+existing prototype code is not authoritative.
+
+[`stage-2-agent-and-acp.md`](stage-2-agent-and-acp.md) is authoritative for
+Agent rebuild, Run admission, ACP Sessions, and execution snapshots. Stage 1
+does not define candidate/active Runtime rollout or Agent environment epochs.
 
 Both Stage 1 data-plane services are implemented in Rust. Runtime Egress has a
 small but privileged Linux packet hot path, long-lived concurrent I/O, and
 strict ownership lifetimes; Rust provides the clearest fit without introducing
 a cross-language framework or shared implementation library.
 
-This document is the canonical cross-component design for Stage 1. A future
-change must update this document before changing the affected contracts or
-implementations.
+This document is the canonical cross-component design for the Runtime, Egress,
+and thin physical Runtime Controller foundation. A future change must update
+this document before changing those contracts or implementations.
 
 ## 1. Goals
 
@@ -26,10 +30,11 @@ Stage 1 must provide a small, durable foundation for later Agent management:
 1. Run one Agent in an isolated Linux Runtime with a persistent workspace.
 2. Route all Agent-executor network traffic through a separately managed
    Egress data plane.
-3. Give one Agent one stable Tunnel IPv4 address across Runtime generations.
+3. Give one Agent one stable Tunnel IPv4 address across explicit Runtime
+   replacements.
 4. Keep network policy independent from Runtime generation and deployment.
-5. Permit a prepared candidate Runtime without allowing two generations to
-   execute Agent work concurrently.
+5. Clear stale Egress flow ownership before a replacement Runtime starts using
+   the same Tunnel address.
 6. Keep deployment-platform details outside Agent and Egress domain models.
 7. Preserve enough durable state to recover configuration after process
    restart without persisting packets, peers, flows, or conntrack.
@@ -41,20 +46,22 @@ across Egress restart.
 
 ## 2. Design Invariants
 
-1. Agent Controller is the sole authority for Agent lifecycle, Runtime
-   generation allocation, rollout, and Agent-level execution admission.
-2. Runtime Controller realizes one explicitly named Runtime generation on one
-   deployment platform. It never chooses a generation or an Agent policy.
+1. Agent Controller is the sole authority for Agent lifecycle intent, Runtime
+   configuration, explicit rebuild, and Agent-level Run admission.
+2. Runtime Controller owns the logical Runtime Environment lifecycle and maps
+   `Initialize`, `Update`, `Disable`, `Enable`, and `Delete` to one deployment
+   platform. Physical generations are private implementation details.
 3. Runtime Egress is the sole authority for Agent Tunnel addresses, address
    reuse, policy definitions, policy assignments, and packet decisions.
 4. Antnest Runtime owns only local bootstrap, MCP tools, process containment,
    filesystem side effects, TUN, and packet transport.
 5. One Agent has one stable Tunnel IPv4. All of its Runtime generations receive
    the same network attachment.
-6. One Agent may have active and candidate Runtime resources, but only the
-   active generation may receive Agent operations.
-7. Before a candidate becomes active, the old Runtime is confirmed absent and
-   Egress has cleared all flows and conntrack owned by that Agent.
+6. Runtime Controller maintains at most one non-absent compute resource per
+   Agent; it contains no candidate/active rollout state.
+7. Before requesting Update, Agent Controller fences the Agent network and
+   requires Egress to clear old flows and conntrack. Runtime Controller then
+   removes old compute before creating its replacement.
 8. Network policy changes never create a Runtime generation.
 9. No component reads or writes another component's database tables.
 10. RPC retries reuse the original logical identifier and payload digest.
@@ -63,11 +70,11 @@ across Egress restart.
 
 | Component | Responsibility | Explicit non-responsibilities |
 | --- | --- | --- |
-| Agent Controller | Agent desired state, generations, rollout, deletion, execution gate, and workflow recovery | Containers, Pods, packet forwarding, network policy storage, MCP implementation |
-| Runtime Controller | Idempotent `Ensure`, `Inspect`, and `Delete` for a caller-selected Runtime generation; deployment-platform credentials and resource association | Generation selection, rollout, work dispatch, policy, Egress allocation |
+| Agent Controller | Agent desired state, Runtime configuration, explicit rebuild, deletion, Run admission, and workflow recovery | Physical generations, containers, Pods, packet forwarding, network policy storage, MCP implementation |
+| Runtime Controller | Logical Runtime Environment lifecycle; private compute/workspace realization; deployment-platform credentials, resource association, platform observation normalization, and a bounded observation journal | Agent policy, Run admission, work dispatch, Egress allocation |
 | Runtime Egress | Agent network allocation, policy revisions and assignments, UDP/TUN forwarding, rejection, flow ownership, conntrack cleanup, and address quarantine | Runtime creation, Agent lifecycle, Runs, Tools, prompts, Runtime generations |
 | Antnest Runtime | Immutable bootstrap, status, MCP tools, UID/GID isolation, workspace access, TUN setup, and raw-IP-over-UDP transport | Durable state, policy decisions, containers, databases, Agent lifecycle |
-| ACP Service | Runs, sessions, Agent loop, and MCP calls made under an Agent Controller execution grant | Runtime rollout, Tunnel allocation, deployment-platform resources |
+| ACP Service | Runs, ACP Sessions, Agent loop, and MCP calls made under an immutable Run snapshot | Runtime rebuild, Tunnel allocation, deployment-platform resources |
 
 Runtime Controller contains its Docker or Kubernetes adapter in process. Stage
 1 does not add another Provider service hop. Different platform implementations
@@ -78,8 +85,8 @@ Management -----> Agent Controller -----> Runtime Controller -----> Docker/Kuber
                          |
                          `---------------> Runtime Egress control plane
 
-ACP Service ---- acquire operation -----> Agent Controller
-ACP Service ----------- MCP ------------> active Antnest Runtime
+ACP Service -- Acquire/Finish Run ------> Agent Controller
+ACP Service ----------- MCP ------------> snapshot-selected Antnest Runtime
 Antnest Runtime ---- raw IP over UDP ---> Runtime Egress ----> destination network
 ```
 
@@ -90,19 +97,34 @@ Antnest Runtime ---- raw IP over UDP ---> Runtime Egress ----> destination netwo
 `agent_id` is globally unique and is never reused. It owns the persistent
 workspace, network address, policy assignment, and ordered Runtime generations.
 
-### 4.2 Runtime generation
+### 4.2 Runtime Environment and private generation
 
-Runtime identity is the composite key `(agent_id, generation)`. `generation`
-is a positive, monotonically increasing integer scoped to one Agent and
-identifies one immutable Runtime deployment specification. The same composite
-key and specification digest are idempotent. Reusing the composite key with
-different content is a conflict.
+The cross-service identity is `agent_id`. Each successful lifecycle mutation
+returns an opaque `runtime_revision`; callers use it as compare-and-swap input
+for the next mutation and must not infer ordering from it.
 
-Generation identity is not part of the Egress durable model. It is needed only
-by Agent Controller, Runtime Controller, deployment labels, Runtime status, and
-the execution grant returned to ACP Service.
+Runtime Controller privately allocates a positive, monotonically increasing
+compute generation for Initialize, Update, and Enable. `(agent_id, generation)`
+and the effective deployment digest fence Docker/Kubernetes resources and
+platform observations, but neither value crosses the business RPC boundary.
+The digest includes behavior-affecting Controller configuration rather than
+only caller JSON.
 
-### 4.3 Agent network
+### 4.3 Runtime execution
+
+`execution_id` is a fresh random identity generated by Runtime PID 1 on every
+process start. It distinguishes two process lifetimes that use the same Agent,
+generation, platform resource, and endpoint.
+
+It is not a credential. It is a consistency check used by `/status`, Runtime
+observations, Agent execution binding, Run snapshots, and MCP requests.
+An MCP request whose expected execution ID differs from the serving Runtime is
+rejected before Tool execution.
+
+The Runtime implementation, status contract, MCP execution fence, Controller
+observations, and tests are maintained as one lockstep contract.
+
+### 4.4 Agent network
 
 One active Agent owns one Tunnel IPv4. The address remains unchanged while
 Runtime generations are prepared, replaced, or deleted. It is released only
@@ -113,16 +135,19 @@ durable identity nor an authentication credential.
 
 ## 5. Runtime Deployment Contract
 
-Agent Controller constructs an immutable Runtime deployment request containing:
+Agent Controller constructs a Runtime configuration request containing:
 
-- `agent_id` and positive Agent-scoped `generation`;
 - Runtime image reference and resource limits;
-- Runtime listen address;
-- Agent workspace and system-Skill mount descriptions;
 - `tunnel_ipv4`, virtual resolver IPv4 address, and literal IPv4 Egress UDP
   endpoint;
-- exact packet contract revision selected by Egress;
-- a canonical specification digest.
+- exact packet contract revision selected by Egress.
+
+Runtime Controller injects `agent_id`, its private generation, the fixed
+Runtime listener, workspace and system-Skill paths, mounts, and healthcheck.
+
+Runtime Controller computes the canonical deployment digest after applying its
+behavior-affecting platform configuration. The caller neither supplies nor
+reimplements that digest.
 
 Runtime Controller serializes the language-neutral object defined by
 `contracts/runtime/runtime-spec.schema.json` once and supplies it as
@@ -134,20 +159,35 @@ allocator cursor, Egress token, reservation, or generation network lease.
 
 Runtime Controller maps this description to deterministic Docker or Kubernetes
 resources. Platform labels contain `agent_id`, `generation`, and the
-specification digest. These labels are the reconstructible association; Runtime
-Controller should not need its own database. Runtime and Egress use the fixed
-inner MTU defined by `contracts/runtime/packet-contract.json`; it is a protocol
-constant rather than deployment input.
+specification digest. These labels are the reconstructible current-state
+association. Runtime Controller may persist only idempotent deployment-
+operation state and a bounded Runtime observation journal in its own private
+database; it must not duplicate Agent desired state. Runtime and Egress use the
+fixed inner MTU defined by `contracts/runtime/packet-contract.json`; it is a
+protocol constant rather than deployment input.
 
-Runtime Controller also exposes Agent-scoped workspace operations. Deleting a
-Runtime generation must never delete the Agent workspace. Workspace deletion is
-allowed only during Agent deletion through a separate operation.
+Workspace lifecycle is not a separate RPC. Initialize creates or adopts it;
+Update and Disable retain it; Enable reuses it; Delete removes it after compute
+is conclusively absent.
 
 ## 6. Runtime Contract Alignment
 
 The implemented Rust Runtime remains the baseline for privilege separation,
 MCP, filesystem roots, cancellation, process cleanup, status, telemetry, and
 raw packet transport.
+
+Stage 1C extends, but does not reinterpret, that baseline:
+
+- PID 1 creates one `execution_id` per process lifetime.
+- `/status` returns `agent_id`, `generation`, `execution_id`, and readiness.
+- Runtime Controller performs one bounded `/status` verification after the
+  deployment platform reports Healthy; it does not maintain a polling loop.
+- Every MCP request carries the execution ID expected by the Run snapshot, for
+  example in `X-Antnest-Expected-Execution-ID`.
+- Runtime rejects a stale expected execution ID before dispatching a Tool.
+
+The header is an internal consistency token, not service authentication. The
+trusted platform network remains the access boundary.
 
 The implemented Egress design applies the following Runtime contract decision:
 
@@ -167,8 +207,9 @@ later explicit contract revision.
 
 RuntimeSpec and the Egress attachment carry that revision. A future incompatible
 packet revision is introduced on a distinct Egress UDP endpoint, supported in
-parallel during Runtime generation rollout, and removed only after no Runtime
-uses the old revision. The revision is control metadata, never a packet envelope.
+parallel while old Runtime images are retired, and removed only after no
+Runtime uses the old revision. The revision is control metadata, never a packet
+envelope.
 
 ## 7. Runtime Egress Durable Model
 
@@ -219,9 +260,8 @@ assignment version, protocol state, and last activity time. The first peer to
 claim an inner flow owns it until the flow is closed or expires. A second peer
 using the same five-tuple is rejected and cannot replace the owner.
 
-There is no durable active/candidate peer state. Candidate Runtime does not
-receive Agent work, and the rollout barrier clears all Agent flows before the
-candidate is made active.
+There is no durable active/candidate peer state. Agent Controller clears all
+Agent flows after the old Runtime is absent and before creating its replacement.
 
 ## 9. Packet Processing
 
@@ -271,43 +311,71 @@ generation.
 
 ### 11.1 Initial creation
 
-1. Agent Controller persists the Agent and initial Runtime generation.
+1. Agent Controller persists the Agent and complete Runtime configuration.
 2. It calls Egress `EnsureAgentNetwork`, obtains the stable attachment, and
-   copies that attachment into RuntimeSpec without reinterpretation.
-3. It ensures Agent storage through Runtime Controller.
-4. It calls Runtime Controller `EnsureRuntime` with the immutable request;
-   Runtime Controller deploys the supplied RuntimeSpec verbatim and never
-   discovers, resolves, or rewrites the Egress endpoint.
-5. Runtime Controller observes platform presence and Runtime `/status`.
-6. Agent Controller marks the generation active and opens execution admission.
+   copies that attachment into the Runtime configuration without reinterpretation.
+3. It calls Runtime Controller `InitializeRuntime`. Runtime Controller creates
+   the Agent workspace, privately allocates generation 1, injects platform
+   invariants, and creates compute.
+4. Runtime Controller observes platform health, performs one bounded Runtime
+   `/status` verification, and publishes the execution identity.
+5. Agent Controller stores the returned opaque `runtime_revision`, atomically
+   publishes its ExecutionRevision, and opens
+   Run admission as defined by Stage 2.
 
-A failed Runtime build is visible immediately. The failed candidate is deleted,
+A failed Runtime build is visible immediately. The failed resource is deleted,
 but the Agent network and workspace remain available for an explicit retry.
 
-### 11.2 Runtime rollout
+### 11.2 Explicit Runtime replacement
 
-1. Persist and create a candidate using the same workspace and network address.
-2. Wait for candidate local readiness; candidate receives no Agent work.
-3. Close new-operation admission and wait for the current operation to finish.
-4. Delete the old Runtime and require Runtime Controller to report `Absent`.
-5. Call Egress `ResetAgentFlows` and wait for flow/conntrack cleanup.
-6. Atomically set the candidate as active and reopen operation admission.
+1. Agent Controller closes Run admission and waits for the active Run to finish.
+2. It fences the Agent network, calls Egress `ResetAgentFlows`, and requires
+   flow/conntrack cleanup.
+3. It calls Runtime Controller `UpdateRuntime` with the current
+   `runtime_revision` and complete replacement configuration.
+4. Runtime Controller removes the current compute resource, privately allocates
+   the next generation, reuses the workspace, and creates verified replacement
+   compute.
+5. Agent Controller stores the returned revision, calls Egress
+   `EnsureAgentNetwork` to reopen admission, atomically publishes the new Agent
+   ExecutionRevision, and reopens Run admission.
 
-Candidate failure before step 3 leaves the active Runtime untouched. An
-ambiguous old-Runtime deletion keeps admission closed until inspection proves
-presence or absence. This deliberately favors a short queued interval over two
-generations executing concurrently.
+There is intentionally no compute resource during Runtime Controller's
+replacement. Failure to reset Egress, delete old compute, or verify replacement
+compute leaves Agent Run admission closed.
 
-### 11.3 Agent deletion
+### 11.3 Disable and enable
+
+Disable closes Run admission and calls `DisableRuntime` with the current
+revision. Runtime Controller removes compute and retains workspace. Enable
+first obtains the latest complete configuration and network attachment, then
+calls `EnableRuntime`; Runtime Controller verifies workspace ownership,
+allocates a new private generation, and creates verified compute. Neither
+command is equivalent to Agent deletion.
+
+### 11.4 Unexpected Runtime restart
+
+1. Docker or Kubernetes health policy restarts the failed process or resource.
+2. Runtime Controller consumes platform List/Watch facts and records a Runtime
+   observation; Watch is a latency path, not the recovery authority.
+3. The restarted Runtime generates a new execution ID and becomes Healthy.
+4. Runtime Controller verifies `/status` once and records the new execution.
+5. A Run pinned to the old execution ID is rejected before its next Tool
+   dispatch; it is not transparently reconnected or replayed.
+6. Stage 2 records the platform observation and requires explicit Agent rebuild
+   before publishing another executable binding.
+
+### 11.5 Agent deletion
 
 1. Persist deletion intent and close operation admission.
 2. Finish or cancel the current operation. Ambiguous side effects become
    `unknown` and are never automatically replayed.
 3. Fence the Agent network and clear flows and conntrack.
-4. Delete every Runtime generation and confirm absence.
-5. Delete the Agent workspace according to retention policy.
-6. Mark the Agent deleted.
-7. Release its network address into Egress quarantine.
+4. Call Runtime Controller `DeleteRuntime` with the current revision. Runtime
+   Controller deletes compute and then its owned workspace as one lifecycle
+   operation.
+5. Mark the Agent deleted.
+6. Release its network address into Egress quarantine.
 
 An address is never released while platform deletion is ambiguous.
 
@@ -315,11 +383,15 @@ An address is never released while platform deletion is ambiguous.
 
 ```text
 Runtime Controller
-  EnsureRuntime(agent_id, generation, spec, digest)
-  InspectRuntime(agent_id, generation)
-  DeleteRuntime(agent_id, generation)
-  EnsureAgentStorage(agent_id, storage_spec)
-  DeleteAgentStorage(agent_id)
+  InitializeRuntime(request_id, agent_id, configuration)
+  UpdateRuntime(request_id, agent_id, expected_revision, configuration)
+  DisableRuntime(request_id, agent_id, expected_revision)
+  EnableRuntime(request_id, agent_id, expected_revision, configuration)
+  DeleteRuntime(request_id, agent_id, expected_revision)
+  InspectRuntime(agent_id)
+  ListRuntimes()
+  ListRuntimeObservations(after_sequence)
+  WatchRuntimeObservations(after_sequence)
 
 Runtime Egress
   EnsureAgentNetwork(agent_id)
@@ -329,29 +401,74 @@ Runtime Egress
   ReleaseAgentNetwork(agent_id)
   CreatePolicyRevision(policy_id, revision, spec)
   AssignAgentPolicy(agent_id, policy_ref, expected_resource_version)
-
-Agent Controller
-  BeginAgentOperation(agent_id, operation_id)
-  FinishAgentOperation(agent_id, operation_id, outcome)
-  CancelAgentOperation(agent_id, operation_id)
 ```
 
-`BeginAgentOperation` returns the exact active Runtime generation and endpoint.
-ACP Service must not cache an endpoint beyond that operation. Runtime MCP and
-Runtime `/status` remain their existing standard HTTP interfaces.
+The Agent Controller and ACP surfaces are defined only by
+[`stage-2-agent-and-acp.md`](stage-2-agent-and-acp.md). Runtime MCP and Runtime
+`/status` remain their standard internal HTTP interfaces.
+
+Runtime observations and Agent events use monotonic sequence numbers. Watch may
+disconnect, duplicate, or lag; List plus sequence and `InspectRuntime` provide
+recovery correctness.
+
+### 12.1 Observation And Agent Event Ownership
+
+Runtime Controller records only normalized deployment facts:
+
+```text
+RuntimeObservation
+  sequence
+  optional agent_id and runtime_revision (absent for service-wide recovery facts)
+  execution_id, when known
+  kind
+  observed_at
+  diagnostic_summary
+```
+
+Before a Runtime-scoped fact enters the journal, Runtime Controller privately
+matches its platform generation and digest to one opaque revision. Physical
+identity is retained for adapter diagnosis but omitted from the RPC message.
+
+Platform List and `InspectRuntime` are current-state authority. Watch lowers
+latency. A Watch gap produces service-wide `observation_gap`, current-state
+reconciliation, then service-wide `reconciled`; this remains observable when
+List is empty. Runtime Controller must not invent a restart cause, count, or
+missing intermediate transition. A failed Runtime status check is
+`status_unverified`, not a fabricated platform-unhealthy fact.
+
+Agent Controller decides whether a platform fact requires an explicit rebuild.
+Stage 1 never updates an Agent binding or creates an Agent semantic event on
+Runtime Controller's behalf. Runtime observations remain infrastructure facts;
+Stage 2 owns all Agent and Session consequences.
 
 ## 13. Failure And Recovery Semantics
 
 - A timed-out mutation is inspected and retried with the same identifier. A
   timeout never causes an inverse mutation or a new generation automatically.
-- Runtime Controller operations are serialized per generation. `DeleteRuntime`
-  returns only after platform absence; deletion wins over concurrent ensure.
-- Runtime failure after possible side effects produces an `unknown` operation
-  outcome. The operation is not automatically replayed.
+- Runtime Controller mutations are serialized per Agent across service
+  replicas. Runtime compute and workspace deletion therefore cannot race.
+  The advisory-lock session is monitored while the mutation runs, and a
+  database constraint admits only one `running` or `unknown` request per Agent.
+  If the session is lost, only that request ID may reconcile the ambiguous
+  operation; a different request cannot overtake it. Each recovery claims a
+  private attempt number, and only the newest attempt can commit terminal state.
+  each private `(agent_id, generation)` is durably claimed by one revision and deployment digest even
+  after compute deletion.
+- One Runtime Controller replica owns platform List/Watch leadership. Durable
+  observation commits wake every replica through PostgreSQL notification;
+  consumers still recover solely from journal sequence and platform state.
+- Runtime failure after a Tool may have started produces an `outcome_unknown`;
+  the Tool is not automatically replayed. Runtime loss outside an in-flight
+  Tool fails the pinned Run as `runtime_lost`.
+- Every MCP request is fenced by the expected execution ID. This closes the
+  interval in which a platform restart is already serving at the old endpoint
+  but its Watch event has not yet reached Agent Controller.
 - Agent Controller persists workflow phase before issuing a side effect and
   resumes non-terminal workflows by inspecting child components.
 - Runtime Controller restart reconstructs state from deterministic platform
-  names and labels.
+  names and labels, then resumes observation from its journal and platform
+  List/Watch. A gap is a service-wide recovery fact, never fabricated as a
+  known restart cause or count.
 - Egress cold start is fail-closed. It loads allocations and policy, initializes
   TUN and kernel state, and becomes ready only after publishing one consistent
   snapshot.
@@ -383,7 +500,7 @@ removes cross-service authentication; it does not make packet bytes valid.
 ## 15. Observability
 
 Control-plane RPCs propagate OpenTelemetry context. Logs and spans may carry
-`agent_id`, `generation`, rollout ID, operation ID, policy revision,
+`agent_id`, `generation`, execution ID, Runtime operation ID, policy revision,
 and trace ID. High-cardinality identifiers are not metric labels.
 
 Runtime Egress emits periodic content-free aggregate counters for packet and
@@ -397,8 +514,9 @@ balancer. Horizontal scale requires an explicit Tunnel-address shard owner and
 is a later contract change, not an operator tuning flag.
 
 Runtime Controller reports platform operation latency, observed Runtime phases,
-drift, readiness failures, and delete convergence. Antnest Runtime retains its
-existing HTTP/tool tracing and structured local lifecycle logs.
+restart observations, Watch gaps, drift, readiness failures, and delete
+convergence. Antnest Runtime retains its existing HTTP/tool tracing and
+structured local lifecycle logs.
 
 ## 16. Delivery Sequence
 
@@ -428,14 +546,28 @@ implemented.
    PostgreSQL restoration, Egress restart recovery, and address release in an
    isolated disposable Compose environment.
 
+### Stage 1C / Stage 2A: Runtime Controller and stale-call rejection -- implemented
+
+1. Replaced the old Runtime Controller and separate Docker Provider prototypes
+   with one thin Go service and an in-process Docker adapter.
+2. Added Runtime `execution_id`, status output, and expected-execution MCP
+   fencing as one lockstep contract change.
+3. Implemented deterministic `Initialize`, `Update`, `Disable`, `Enable`,
+   `Inspect`, and `Delete` without Agent rollout or Tool dispatch semantics.
+4. Implemented platform health and List/Watch consumption, one bounded
+   `/status` verification after Healthy, and a bounded observation journal.
+5. Proved Watch-gap recovery through List/Inspect and that a same-generation
+   process restart changes execution identity.
+
 ### Later integration
 
-Runtime Controller, Agent Controller, ACP Service, and Kubernetes support are
-implemented only after Runtime Egress passes its standalone acceptance. Their
-interfaces in this document prevent Stage 1 components from absorbing those
-future responsibilities.
+Agent Controller and Agent ACP Service follow this work under the Stage 2
+design. Kubernetes support remains later. Their interfaces prevent Stage 1
+components from absorbing those future responsibilities.
 
-## 17. Stage 1B Acceptance
+## 17. Acceptance
+
+### 17.1 Implemented Stage 1A/1B
 
 - Repeating `EnsureAgentNetwork` returns one stable address for an Agent.
 - Two Runtime UDP peers using one Agent address receive replies for their own
@@ -451,3 +583,21 @@ future responsibilities.
 - TUN, PostgreSQL, or policy initialization failure keeps Egress unready.
 - Runtime and Egress emit correlated control-plane telemetry without tracing or
   logging packet payloads.
+
+### 17.2 Implemented Stage 1C
+
+- Repeating any lifecycle command with the same request is idempotent; reusing
+  its request ID with different content conflicts.
+- Stale `runtime_revision` values are rejected before a platform mutation.
+- Disable removes compute but retains workspace; Enable creates a new private
+  generation over that workspace; Delete removes both.
+- Platform Healthy is followed by one bounded status verification, not a
+  Controller polling loop.
+- Restarting Runtime PID 1 without changing generation produces a new
+  execution ID and an ordered observation.
+- Runtime rejects MCP calls carrying a stale expected execution ID before Tool
+  dispatch.
+- A disconnected Watch resumes through sequence plus List/Inspect without
+  losing current-state convergence or inventing a restart cause.
+- Docker adapter code is private to Runtime Controller and no separate Runtime
+  Provider service remains in the target topology.

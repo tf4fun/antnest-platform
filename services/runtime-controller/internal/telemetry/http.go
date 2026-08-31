@@ -25,7 +25,10 @@ func HTTPHandler(next http.Handler) http.Handler {
 		ctx := otel.GetTextMapPropagator().Extract(
 			request.Context(), propagation.HeaderCarrier(request.Header),
 		)
-		ctx, span := httpTracer.Start(ctx, "HTTP "+request.Method, trace.WithSpanKind(trace.SpanKindServer))
+		var span trace.Span
+		if !isObservationWatch(request) {
+			ctx, span = httpTracer.Start(ctx, "HTTP "+request.Method, trace.WithSpanKind(trace.SpanKindServer))
+		}
 		started := time.Now()
 		observed := &statusWriter{ResponseWriter: response, status: http.StatusOK}
 		instrumented := request.WithContext(ctx)
@@ -39,20 +42,30 @@ func HTTPHandler(next http.Handler) http.Handler {
 			attribute.String("http.route", route),
 			attribute.Int("http.response.status_code", observed.status),
 		}
-		span.SetName("HTTP " + request.Method + " " + route)
-		span.SetAttributes(attributes...)
-		if observed.status >= http.StatusInternalServerError {
-			span.SetStatus(codes.Error, strconv.Itoa(observed.status))
+		if span != nil {
+			span.SetName("HTTP " + request.Method + " " + route)
+			span.SetAttributes(attributes...)
+			if observed.status >= http.StatusInternalServerError {
+				span.SetStatus(codes.Error, strconv.Itoa(observed.status))
+			}
+			span.End()
 		}
-		span.End()
 		httpRequests.Add(ctx, 1, metric.WithAttributes(attributes...))
 		httpDuration.Record(ctx, time.Since(started).Seconds(), metric.WithAttributes(attributes...))
 	})
 }
 
+func isObservationWatch(request *http.Request) bool {
+	return request.Method == http.MethodGet && request.URL.Path == "/internal/runtime-observations/watch"
+}
+
 type statusWriter struct {
 	http.ResponseWriter
 	status int
+}
+
+func (w *statusWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
 }
 
 func (w *statusWriter) WriteHeader(status int) {

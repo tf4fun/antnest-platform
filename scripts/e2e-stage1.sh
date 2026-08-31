@@ -18,7 +18,7 @@ runtime_name="${COMPOSE_PROJECT_NAME}-runtime"
 mcp_url="http://${runtime_name}:8093/mcp"
 temporary_root=$(mktemp -d "${TMPDIR:-/tmp}/antnest-stage1-e2e.XXXXXX")
 workspace="$temporary_root/workspace"
-resolver="$temporary_root/resolv.conf"
+runtime_execution_id=""
 
 cleanup() {
   status=$?
@@ -53,6 +53,7 @@ mcp_request() {
     -H 'accept: application/json, text/event-stream' \
     -H 'content-type: application/json' \
     -H 'mcp-protocol-version: 2026-07-28' \
+    -H "X-Antnest-Expected-Execution-ID: $runtime_execution_id" \
     -H "mcp-method: $method" \
     -H "mcp-name: $name" \
     --data-binary "$request" \
@@ -70,7 +71,6 @@ mcp_request() {
 
 mkdir "$workspace"
 chmod 0777 "$workspace"
-printf 'options use-vc\nnameserver 100.64.0.1\n' >"$resolver"
 
 docker compose up -d --wait postgres runtime-egress
 
@@ -93,7 +93,6 @@ runtime_spec="{\"agent_id\":\"agent-stage1-e2e\",\"generation\":1,\"listen\":{\"
 
 docker run -d \
   --name "$runtime_name" \
-  --read-only \
   --cap-drop ALL \
   --cap-add CHOWN \
   --cap-add DAC_OVERRIDE \
@@ -104,8 +103,9 @@ docker run -d \
   --cap-add SETUID \
   --device /dev/net/tun \
   --tmpfs /tmp:rw,nosuid,nodev,size=64m \
+  --dns 100.64.0.1 \
+  --dns-option use-vc \
   --mount "type=bind,src=$workspace,dst=/workspace" \
-  --mount "type=bind,src=$resolver,dst=/etc/resolv.conf,readonly" \
   --network "$ANTNEST_RUNTIME_MANAGEMENT_NETWORK" \
   --env "ANTNEST_RUNTIME_SPEC=$runtime_spec" \
   --env OTEL_SDK_DISABLED=true \
@@ -114,16 +114,20 @@ docker run -d \
 
 wait_runtime_ready() {
   attempt=0
-  until docker exec "$runtime_name" curl -fsS http://127.0.0.1:8093/status \
-    2>/dev/null | grep -q '"generation":1,"status":"ready"'; do
-    attempt=$((attempt + 1))
-    if [ "$attempt" -ge 30 ]; then
-      docker logs "$runtime_name"
-      echo "Runtime did not become ready" >&2
-      exit 1
+  while [ "$attempt" -lt 30 ]; do
+    runtime_status=$(docker exec "$runtime_name" curl -fsS http://127.0.0.1:8093/status 2>/dev/null || true)
+    runtime_execution_id=$(printf '%s' "$runtime_status" | sed -n 's/.*"execution_id":"\([^"]*\)".*/\1/p')
+    if printf '%s' "$runtime_status" | grep -q '"generation":1' &&
+      printf '%s' "$runtime_status" | grep -q '"status":"ready"' &&
+      [ -n "$runtime_execution_id" ]; then
+      return 0
     fi
+    attempt=$((attempt + 1))
     sleep 1
   done
+  docker logs "$runtime_name"
+  echo "Runtime did not become ready" >&2
+  exit 1
 }
 wait_runtime_ready
 
@@ -142,8 +146,13 @@ mcp_bash=$(mcp_request '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{
 printf '%s' "$mcp_bash" | grep -q '"stdout":"1000:1000:after"'
 
 echo "Checking crash-only Runtime restart in the retained container network"
+first_execution_id=$runtime_execution_id
 docker restart "$runtime_name" >/dev/null
 wait_runtime_ready
+if [ "$runtime_execution_id" = "$first_execution_id" ]; then
+  echo "Runtime restart reused its execution identity" >&2
+  exit 1
+fi
 mcp_request '{"jsonrpc":"2.0","id":6,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}' 'tools/list' \
   | grep -q '"name":"bash"'
 

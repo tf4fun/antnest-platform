@@ -1,0 +1,794 @@
+package control
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"time"
+
+	"soft/antnest-platform/services/runtime-controller/internal/deployment"
+)
+
+var (
+	ErrInvalidRequest          = errors.New("invalid request")
+	ErrRequestConflict         = errors.New("request ID conflict")
+	ErrOperationFinalized      = errors.New("operation is already finalized")
+	ErrMutationLockLost        = errors.New("Agent mutation lock lost")
+	ErrAgentMutationInProgress = errors.New("Agent mutation is already in progress")
+	ErrLifecycleConflict       = errors.New("Runtime lifecycle conflict")
+	ErrRevisionConflict        = errors.New("Runtime revision conflict")
+	ErrDrift                   = errors.New("Runtime platform drift")
+	ErrNotFound                = errors.New("not found")
+)
+
+const operationFinalizeBudget = 5 * time.Second
+
+type mutationDeadlineKey struct{}
+
+type GenerationClaim struct {
+	RuntimeRevision deployment.RuntimeRevision
+	SpecDigest      string
+}
+
+type Repository interface {
+	BeginTransition(context.Context, deployment.Operation) (deployment.Operation, bool, error)
+	CompleteOperation(
+		context.Context, deployment.Operation, *deployment.Observation,
+	) (*deployment.Observation, error)
+	GetOperation(context.Context, string) (deployment.Operation, error)
+	GetEnvironment(context.Context, string) (deployment.Environment, error)
+	ListEnvironments(context.Context) ([]deployment.Environment, error)
+	GenerationClaim(context.Context, deployment.Key) (GenerationClaim, error)
+	AppendObservation(context.Context, deployment.Observation) (deployment.Observation, error)
+	ListObservations(context.Context, uint64, int) ([]deployment.Observation, error)
+	Ready(context.Context) error
+}
+
+type MutationLocker interface {
+	WithAgentLock(context.Context, string, func(context.Context) error) error
+}
+
+type ObservationReadiness interface {
+	ObservationReady() error
+}
+
+type Platform interface {
+	Ready(context.Context) error
+	DeploymentDigest(deployment.Deployment) (string, error)
+	Create(context.Context, deployment.Deployment, string) deployment.EffectOutcome
+	Inspect(context.Context, deployment.Key) (deployment.Inspection, error)
+	Delete(context.Context, deployment.Key, string) deployment.EffectOutcome
+	EnsureStorage(context.Context, string) deployment.EffectOutcome
+	VerifyStorage(context.Context, string) deployment.EffectOutcome
+	DeleteStorage(context.Context, string) deployment.EffectOutcome
+	List(context.Context) ([]deployment.Inspection, error)
+}
+
+type RuntimeVerifier interface {
+	Verify(context.Context, deployment.Inspection) (deployment.Inspection, error)
+}
+
+type Service struct {
+	repository      Repository
+	locker          MutationLocker
+	observations    ObservationReadiness
+	platform        Platform
+	verifier        RuntimeVerifier
+	now             func() time.Time
+	mutationTimeout time.Duration
+	readyTimeout    time.Duration
+	pollInterval    time.Duration
+}
+
+type Readiness struct {
+	DatabaseReady    bool `json:"database_ready"`
+	PlatformReady    bool `json:"platform_ready"`
+	ObservationReady bool `json:"observation_ready"`
+}
+
+func (r Readiness) Ready() bool {
+	return r.DatabaseReady && r.PlatformReady && r.ObservationReady
+}
+
+func NewService(
+	repository Repository,
+	locker MutationLocker,
+	observations ObservationReadiness,
+	platform Platform,
+	verifier RuntimeVerifier,
+	now func() time.Time,
+	mutationTimeout time.Duration,
+	readyTimeout time.Duration,
+	pollInterval time.Duration,
+) (*Service, error) {
+	if repository == nil || locker == nil || observations == nil || platform == nil || verifier == nil || now == nil {
+		return nil, fmt.Errorf("repository, mutation locker, observation health, platform, Runtime verifier, and clock are required")
+	}
+	if mutationTimeout <= 0 || readyTimeout <= 0 || pollInterval <= 0 || pollInterval > readyTimeout {
+		return nil, fmt.Errorf("valid mutation timeout, readiness timeout, and poll interval are required")
+	}
+	return &Service{
+		repository: repository, locker: locker, observations: observations,
+		platform: platform, verifier: verifier, now: now, mutationTimeout: mutationTimeout,
+		readyTimeout: readyTimeout, pollInterval: pollInterval,
+	}, nil
+}
+
+func (s *Service) Ready(ctx context.Context) error {
+	status, err := s.Status(ctx)
+	if err != nil {
+		return err
+	}
+	if !status.Ready() {
+		return fmt.Errorf("Runtime Controller is not ready")
+	}
+	return nil
+}
+
+func (s *Service) Status(ctx context.Context) (Readiness, error) {
+	var status Readiness
+	var result error
+	if err := s.repository.Ready(ctx); err != nil {
+		result = errors.Join(result, fmt.Errorf("operation store: %w", err))
+	} else {
+		status.DatabaseReady = true
+	}
+	if err := s.observations.ObservationReady(); err != nil {
+		result = errors.Join(result, fmt.Errorf("observation pipeline: %w", err))
+	} else {
+		status.ObservationReady = true
+	}
+	if err := s.platform.Ready(ctx); err != nil {
+		result = errors.Join(result, fmt.Errorf("deployment platform: %w", err))
+	} else {
+		status.PlatformReady = true
+	}
+	return status, result
+}
+
+func (s *Service) InitializeRuntime(
+	ctx context.Context, requestID, agentID string, configuration deployment.Configuration,
+) (deployment.Operation, error) {
+	return s.lifecycle(ctx, lifecycleRequest{
+		RequestID: requestID, AgentID: agentID,
+		Kind: deployment.OperationInitializeRuntime, Configuration: &configuration,
+	})
+}
+
+func (s *Service) UpdateRuntime(
+	ctx context.Context,
+	requestID, agentID string,
+	expectedRevision deployment.RuntimeRevision,
+	configuration deployment.Configuration,
+) (deployment.Operation, error) {
+	return s.lifecycle(ctx, lifecycleRequest{
+		RequestID: requestID, AgentID: agentID, ExpectedRevision: expectedRevision,
+		Kind: deployment.OperationUpdateRuntime, Configuration: &configuration,
+	})
+}
+
+func (s *Service) DisableRuntime(
+	ctx context.Context, requestID, agentID string, expectedRevision deployment.RuntimeRevision,
+) (deployment.Operation, error) {
+	return s.lifecycle(ctx, lifecycleRequest{
+		RequestID: requestID, AgentID: agentID, ExpectedRevision: expectedRevision,
+		Kind: deployment.OperationDisableRuntime,
+	})
+}
+
+func (s *Service) EnableRuntime(
+	ctx context.Context,
+	requestID, agentID string,
+	expectedRevision deployment.RuntimeRevision,
+	configuration deployment.Configuration,
+) (deployment.Operation, error) {
+	return s.lifecycle(ctx, lifecycleRequest{
+		RequestID: requestID, AgentID: agentID, ExpectedRevision: expectedRevision,
+		Kind: deployment.OperationEnableRuntime, Configuration: &configuration,
+	})
+}
+
+func (s *Service) DeleteRuntime(
+	ctx context.Context, requestID, agentID string, expectedRevision deployment.RuntimeRevision,
+) (deployment.Operation, error) {
+	return s.lifecycle(ctx, lifecycleRequest{
+		RequestID: requestID, AgentID: agentID, ExpectedRevision: expectedRevision,
+		Kind: deployment.OperationDeleteRuntime,
+	})
+}
+
+type lifecycleRequest struct {
+	RequestID        string
+	AgentID          string
+	ExpectedRevision deployment.RuntimeRevision
+	Kind             deployment.OperationKind
+	Configuration    *deployment.Configuration
+}
+
+func (s *Service) lifecycle(ctx context.Context, input lifecycleRequest) (deployment.Operation, error) {
+	requestDigest, err := validateLifecycleRequest(input)
+	if err != nil {
+		return deployment.Operation{}, err
+	}
+	return s.withAgentLock(ctx, input.AgentID, func(lockCtx context.Context) (deployment.Operation, error) {
+		operation, terminal, prepareErr := s.prepareOperation(lockCtx, input, requestDigest)
+		if prepareErr != nil || terminal {
+			return operation, prepareErr
+		}
+		var physical deployment.Deployment
+		if operation.CreatesCompute() {
+			if input.Configuration == nil {
+				return deployment.Operation{}, fmt.Errorf("%w: Runtime configuration is required", ErrInvalidRequest)
+			}
+			physical, err = input.Configuration.Resolve(operation.AgentID, operation.Generation)
+			if err != nil {
+				return deployment.Operation{}, fmt.Errorf("%w: %v", ErrInvalidRequest, err)
+			}
+			digest, digestErr := s.platform.DeploymentDigest(physical)
+			if digestErr != nil {
+				return deployment.Operation{}, digestErr
+			}
+			if digest != operation.SpecDigest {
+				return deployment.Operation{}, ErrRequestConflict
+			}
+		}
+		return s.executeOperation(lockCtx, operation, physical)
+	})
+}
+
+func validateLifecycleRequest(input lifecycleRequest) (string, error) {
+	if err := validateRequestID(input.RequestID); err != nil {
+		return "", err
+	}
+	if err := (deployment.Key{AgentID: input.AgentID, Generation: 1}).Validate(); err != nil {
+		return "", fmt.Errorf("%w: %v", ErrInvalidRequest, err)
+	}
+	needsConfiguration := input.Kind == deployment.OperationInitializeRuntime ||
+		input.Kind == deployment.OperationUpdateRuntime || input.Kind == deployment.OperationEnableRuntime
+	if needsConfiguration {
+		if input.Configuration == nil {
+			return "", fmt.Errorf("%w: Runtime configuration is required", ErrInvalidRequest)
+		}
+		if err := input.Configuration.Validate(); err != nil {
+			return "", fmt.Errorf("%w: %v", ErrInvalidRequest, err)
+		}
+	} else if input.Configuration != nil {
+		return "", fmt.Errorf("%w: Runtime configuration is not valid for %s", ErrInvalidRequest, input.Kind)
+	}
+	if input.Kind == deployment.OperationInitializeRuntime {
+		if input.ExpectedRevision != "" {
+			return "", fmt.Errorf("%w: Initialize must not carry expected_revision", ErrInvalidRequest)
+		}
+	} else if err := deployment.ValidateRevision(input.ExpectedRevision); err != nil {
+		return "", fmt.Errorf("%w: %v", ErrInvalidRequest, err)
+	}
+	requestDigest, err := deployment.DigestValue(struct {
+		Kind             deployment.OperationKind   `json:"kind"`
+		AgentID          string                     `json:"agent_id"`
+		ExpectedRevision deployment.RuntimeRevision `json:"expected_revision,omitempty"`
+		Configuration    *deployment.Configuration  `json:"configuration,omitempty"`
+	}{input.Kind, input.AgentID, input.ExpectedRevision, input.Configuration})
+	if err != nil {
+		return "", err
+	}
+	return requestDigest, nil
+}
+
+func (s *Service) prepareOperation(
+	ctx context.Context, input lifecycleRequest, requestDigest string,
+) (deployment.Operation, bool, error) {
+	stored, err := s.repository.GetOperation(ctx, input.RequestID)
+	if err == nil {
+		if stored.RequestDigest != requestDigest || stored.Kind != input.Kind || stored.AgentID != input.AgentID {
+			return deployment.Operation{}, false, ErrRequestConflict
+		}
+		if operationIsTerminal(stored) {
+			return stored, true, nil
+		}
+		stored.UpdatedAt = s.now().UTC()
+		resumed, _, beginErr := s.repository.BeginTransition(ctx, stored)
+		return resumed, false, beginErr
+	}
+	if !errors.Is(err, ErrNotFound) {
+		return deployment.Operation{}, false, err
+	}
+
+	source, sourceErr := s.repository.GetEnvironment(ctx, input.AgentID)
+	if errors.Is(sourceErr, ErrNotFound) {
+		source = deployment.Environment{
+			AgentID: input.AgentID, LifecycleState: deployment.LifecycleUninitialized,
+			Health: deployment.HealthAbsent, ObservedAt: s.now().UTC(),
+		}
+	} else if sourceErr != nil {
+		return deployment.Operation{}, false, sourceErr
+	}
+	if source.OperationID != "" {
+		return deployment.Operation{}, false, ErrAgentMutationInProgress
+	}
+	if _, _, transitionErr := deployment.LifecycleTransition(input.Kind, source.LifecycleState); transitionErr != nil {
+		return deployment.Operation{}, false, ErrLifecycleConflict
+	}
+	if input.Kind != deployment.OperationInitializeRuntime && source.RuntimeRevision != input.ExpectedRevision {
+		return deployment.Operation{}, false, ErrRevisionConflict
+	}
+
+	generation := source.Generation
+	if input.Kind == deployment.OperationInitializeRuntime || input.Kind == deployment.OperationUpdateRuntime ||
+		input.Kind == deployment.OperationEnableRuntime {
+		generation++
+		if err := (deployment.Key{AgentID: input.AgentID, Generation: generation}).Validate(); err != nil {
+			return deployment.Operation{}, false, fmt.Errorf("%w: %v", ErrInvalidRequest, err)
+		}
+	}
+	revision := deployment.RevisionFor(input.RequestID, requestDigest)
+	specDigest := source.SpecDigest
+	if input.Configuration != nil {
+		physical, resolveErr := input.Configuration.Resolve(input.AgentID, generation)
+		if resolveErr != nil {
+			return deployment.Operation{}, false, fmt.Errorf("%w: %v", ErrInvalidRequest, resolveErr)
+		}
+		specDigest, resolveErr = s.platform.DeploymentDigest(physical)
+		if resolveErr != nil {
+			return deployment.Operation{}, false, resolveErr
+		}
+	}
+	now := s.now().UTC()
+	candidate := deployment.Operation{
+		RequestID: input.RequestID, RequestDigest: requestDigest, Kind: input.Kind,
+		AgentID: input.AgentID, RuntimeRevision: revision,
+		Attempt: 1, State: deployment.OperationRunning, Effect: deployment.EffectUnknown,
+		ExpectedRevision: input.ExpectedRevision,
+		SourceState:      source.LifecycleState, SourceRevision: source.RuntimeRevision,
+		SourceGeneration: source.Generation, SourceSpecDigest: source.SpecDigest,
+		Generation: generation, SpecDigest: specDigest,
+		CreatedAt: now, UpdatedAt: now,
+	}
+	operation, replay, beginErr := s.repository.BeginTransition(ctx, candidate)
+	if beginErr != nil {
+		return deployment.Operation{}, false, beginErr
+	}
+	if replay {
+		if operation.RequestDigest != candidate.RequestDigest || operation.Kind != candidate.Kind ||
+			operation.AgentID != candidate.AgentID {
+			return deployment.Operation{}, false, ErrRequestConflict
+		}
+		if operationIsTerminal(operation) {
+			return operation, true, nil
+		}
+	}
+	return operation, false, nil
+}
+
+func (s *Service) executeOperation(
+	ctx context.Context, operation deployment.Operation, physical deployment.Deployment,
+) (deployment.Operation, error) {
+	switch operation.Kind {
+	case deployment.OperationInitializeRuntime:
+		if outcome := s.platform.EnsureStorage(ctx, operation.AgentID); outcome.State != deployment.EffectCompleted {
+			return s.finishFromEffect(ctx, operation, outcome, false)
+		}
+		return s.createAndVerify(ctx, operation, physical, false)
+	case deployment.OperationUpdateRuntime:
+		if outcome := s.deleteSource(ctx, operation); outcome.State != deployment.EffectCompleted {
+			return s.finishFromEffect(ctx, operation, outcome, false)
+		}
+		return s.createAndVerify(ctx, operation, physical, true)
+	case deployment.OperationDisableRuntime:
+		if outcome := s.deleteSource(ctx, operation); outcome.State != deployment.EffectCompleted {
+			return s.finishFromEffect(ctx, operation, outcome, false)
+		}
+		return s.finishWithoutCompute(ctx, operation)
+	case deployment.OperationEnableRuntime:
+		if outcome := s.platform.VerifyStorage(ctx, operation.AgentID); outcome.State != deployment.EffectCompleted {
+			return s.finishFromEffect(ctx, operation, outcome, false)
+		}
+		return s.createAndVerify(ctx, operation, physical, false)
+	case deployment.OperationDeleteRuntime:
+		destructive := false
+		if operation.SourceState == deployment.LifecycleReady {
+			if outcome := s.deleteSource(ctx, operation); outcome.State != deployment.EffectCompleted {
+				return s.finishFromEffect(ctx, operation, outcome, false)
+			}
+			destructive = true
+		}
+		if outcome := s.platform.DeleteStorage(ctx, operation.AgentID); outcome.State != deployment.EffectCompleted {
+			return s.finishFromEffect(ctx, operation, outcome, destructive)
+		}
+		return s.finishWithoutCompute(ctx, operation)
+	default:
+		return deployment.Operation{}, fmt.Errorf("unsupported Runtime operation %q", operation.Kind)
+	}
+}
+
+func (s *Service) deleteSource(ctx context.Context, operation deployment.Operation) deployment.EffectOutcome {
+	key, ok := operation.SourceKey()
+	if !ok || deployment.ValidateDigest(operation.SourceSpecDigest) != nil {
+		return deployment.EffectOutcome{
+			State: deployment.EffectNotStarted, Code: "runtime_drift",
+			Detail: "current Runtime has no valid private deployment identity",
+		}
+	}
+	return s.platform.Delete(ctx, key, operation.SourceSpecDigest)
+}
+
+func (s *Service) createAndVerify(
+	ctx context.Context, operation deployment.Operation, physical deployment.Deployment, destructive bool,
+) (deployment.Operation, error) {
+	outcome := s.platform.Create(ctx, physical, operation.SpecDigest)
+	if outcome.State != deployment.EffectCompleted {
+		return s.finishFromEffect(ctx, operation, outcome, destructive)
+	}
+	inspection, readyErr := s.waitUntilReady(ctx, operation.RuntimeKey(), operation.SpecDigest)
+	if readyErr != nil {
+		environment := operationEnvironment(operation, deployment.LifecycleUnknown, s.now().UTC())
+		if inspection.RuntimeKey() == operation.RuntimeKey() && inspection.SpecDigest == operation.SpecDigest {
+			environment = environment.WithInspection(inspection)
+		}
+		operation.State = deployment.OperationUnknown
+		operation.Effect = deployment.EffectCompleted
+		operation.Inspection = &environment
+		operation.ErrorCode = "runtime_not_ready"
+		operation.ErrorDetail = "Runtime readiness could not be confirmed before the operation deadline"
+		operation.UpdatedAt = s.now().UTC()
+		return s.persistOperation(ctx, operation, nil)
+	}
+	environment := operationEnvironment(operation, deployment.LifecycleReady, inspection.ObservedAt).WithInspection(inspection)
+	operation.State = deployment.OperationCompleted
+	operation.Effect = deployment.EffectCompleted
+	operation.Inspection = &environment
+	operation.ErrorCode = ""
+	operation.ErrorDetail = ""
+	operation.UpdatedAt = s.now().UTC()
+	observation := lifecycleObservation(operation, environment)
+	return s.persistOperation(ctx, operation, &observation)
+}
+
+func (s *Service) finishWithoutCompute(
+	ctx context.Context, operation deployment.Operation,
+) (deployment.Operation, error) {
+	state, err := operation.SuccessState()
+	if err != nil {
+		return deployment.Operation{}, err
+	}
+	environment := operationEnvironment(operation, state, s.now().UTC())
+	environment.Health = deployment.HealthAbsent
+	operation.State = deployment.OperationCompleted
+	operation.Effect = deployment.EffectCompleted
+	operation.Inspection = &environment
+	operation.ErrorCode = ""
+	operation.ErrorDetail = ""
+	operation.UpdatedAt = s.now().UTC()
+	observation := lifecycleObservation(operation, environment)
+	return s.persistOperation(ctx, operation, &observation)
+}
+
+func (s *Service) finishFromEffect(
+	ctx context.Context,
+	operation deployment.Operation,
+	outcome deployment.EffectOutcome,
+	destructive bool,
+) (deployment.Operation, error) {
+	if err := outcome.Validate(); err != nil {
+		return deployment.Operation{}, fmt.Errorf("platform returned invalid outcome: %w", err)
+	}
+	operation.ErrorCode = outcome.Code
+	operation.ErrorDetail = sanitizedDetail(outcome)
+	operation.UpdatedAt = s.now().UTC()
+	if destructive || outcome.State == deployment.EffectUnknown {
+		operation.State = deployment.OperationUnknown
+		operation.Effect = deployment.EffectUnknown
+		environment := operationEnvironment(operation, deployment.LifecycleUnknown, operation.UpdatedAt)
+		operation.Inspection = &environment
+	} else {
+		operation.State = deployment.OperationFailed
+		operation.Effect = deployment.EffectNotStarted
+	}
+	return s.persistOperation(ctx, operation, nil)
+}
+
+func operationEnvironment(
+	operation deployment.Operation, state deployment.LifecycleState, observedAt time.Time,
+) deployment.Environment {
+	return deployment.Environment{
+		AgentID: operation.AgentID, RuntimeRevision: operation.RuntimeRevision,
+		LifecycleState: state, Health: deployment.HealthUnknown,
+		Generation: operation.Generation, SpecDigest: operation.SpecDigest,
+		OperationID: operation.RequestID, ObservedAt: observedAt,
+	}
+}
+
+func lifecycleObservation(
+	operation deployment.Operation, environment deployment.Environment,
+) deployment.Observation {
+	kind := deployment.ObservationInitialized
+	switch operation.Kind {
+	case deployment.OperationUpdateRuntime:
+		kind = deployment.ObservationUpdated
+	case deployment.OperationDisableRuntime:
+		kind = deployment.ObservationDisabled
+	case deployment.OperationEnableRuntime:
+		kind = deployment.ObservationEnabled
+	case deployment.OperationDeleteRuntime:
+		kind = deployment.ObservationDeleted
+	}
+	return deployment.Observation{
+		AgentID: operation.AgentID, RuntimeRevision: operation.RuntimeRevision,
+		Generation: operation.Generation, SpecDigest: operation.SpecDigest,
+		RuntimeExecutionID: environment.RuntimeExecutionID,
+		Kind:               kind, Source: "lifecycle_operation", ObservedAt: environment.ObservedAt,
+	}
+}
+
+func (s *Service) InspectRuntime(ctx context.Context, agentID string) (deployment.Environment, error) {
+	if err := (deployment.Key{AgentID: agentID, Generation: 1}).Validate(); err != nil {
+		return deployment.Environment{}, fmt.Errorf("%w: %v", ErrInvalidRequest, err)
+	}
+	environment, err := s.repository.GetEnvironment(ctx, agentID)
+	if err != nil {
+		return deployment.Environment{}, err
+	}
+	return s.inspectEnvironment(ctx, environment)
+}
+
+func (s *Service) inspectEnvironment(
+	ctx context.Context, environment deployment.Environment,
+) (deployment.Environment, error) {
+	environment.ObservedAt = s.now().UTC()
+	switch environment.LifecycleState {
+	case deployment.LifecycleDisabled:
+		outcome := s.platform.VerifyStorage(ctx, environment.AgentID)
+		if outcome.State != deployment.EffectCompleted {
+			return deployment.Environment{}, ErrDrift
+		}
+		environment.Health = deployment.HealthAbsent
+		return environment, nil
+	case deployment.LifecycleDeleted:
+		environment.Health = deployment.HealthAbsent
+		return environment, nil
+	case deployment.LifecycleReady:
+		key, ok := environment.RuntimeKey()
+		if !ok {
+			return deployment.Environment{}, ErrDrift
+		}
+		inspection, inspectErr := s.platform.Inspect(ctx, key)
+		if inspectErr != nil {
+			return deployment.Environment{}, inspectErr
+		}
+		if inspection.RuntimeKey() != key || inspection.SpecDigest != environment.SpecDigest {
+			return deployment.Environment{}, ErrDrift
+		}
+		if validateErr := s.ValidateRuntimeInspection(ctx, inspection); validateErr != nil {
+			return deployment.Environment{}, validateErr
+		}
+		if inspection.Health == deployment.HealthHealthy {
+			inspection, inspectErr = s.verifier.Verify(ctx, inspection)
+			if inspectErr != nil {
+				return deployment.Environment{}, inspectErr
+			}
+		}
+		return environment.WithInspection(inspection), nil
+	default:
+		environment.Health = deployment.HealthUnknown
+		return environment, nil
+	}
+}
+
+func (s *Service) ListRuntimes(ctx context.Context) ([]deployment.Environment, error) {
+	environments, err := s.repository.ListEnvironments(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]deployment.Environment, 0, len(environments))
+	for _, environment := range environments {
+		value, inspectErr := s.inspectEnvironment(ctx, environment)
+		if inspectErr != nil {
+			return nil, inspectErr
+		}
+		result = append(result, value)
+	}
+	return result, nil
+}
+
+func (s *Service) GetOperation(ctx context.Context, requestID string) (deployment.Operation, error) {
+	if err := validateRequestID(requestID); err != nil {
+		return deployment.Operation{}, err
+	}
+	return s.repository.GetOperation(ctx, requestID)
+}
+
+func (s *Service) ListObservations(
+	ctx context.Context, after uint64, limit int,
+) ([]deployment.Observation, error) {
+	if limit < 1 || limit > 500 {
+		return nil, fmt.Errorf("%w: observation limit must be between 1 and 500", ErrInvalidRequest)
+	}
+	return s.repository.ListObservations(ctx, after, limit)
+}
+
+func (s *Service) ValidateRuntimeInspection(
+	ctx context.Context, inspection deployment.Inspection,
+) error {
+	key := inspection.RuntimeKey()
+	if err := key.Validate(); err != nil || inspection.PlatformPhase == deployment.PhaseAbsent {
+		return ErrDrift
+	}
+	claim, err := s.repository.GenerationClaim(ctx, key)
+	if errors.Is(err, ErrNotFound) {
+		return ErrDrift
+	}
+	if err != nil {
+		return err
+	}
+	if inspection.SpecDigest != claim.SpecDigest {
+		return ErrDrift
+	}
+	return nil
+}
+
+// InspectPlatformRuntime verifies a physical Runtime for the observation
+// pipeline. It is deliberately not part of the logical control RPC surface.
+func (s *Service) InspectPlatformRuntime(
+	ctx context.Context, key deployment.Key,
+) (deployment.Inspection, error) {
+	inspection, err := s.platform.Inspect(ctx, key)
+	if err != nil {
+		return deployment.Inspection{}, err
+	}
+	if err := s.ValidateRuntimeInspection(ctx, inspection); err != nil {
+		return deployment.Inspection{}, err
+	}
+	if inspection.Health != deployment.HealthHealthy {
+		return inspection, nil
+	}
+	return s.verifier.Verify(ctx, inspection)
+}
+
+func (s *Service) RecordPlatformObservation(
+	ctx context.Context, observation deployment.Observation,
+) (deployment.Observation, error) {
+	if observation.ObservedAt.IsZero() {
+		observation.ObservedAt = s.now().UTC()
+	}
+	if key, ok := observation.RuntimeKey(); ok {
+		claim, err := s.repository.GenerationClaim(ctx, key)
+		if err != nil {
+			if errors.Is(err, ErrNotFound) {
+				return deployment.Observation{}, ErrDrift
+			}
+			return deployment.Observation{}, err
+		}
+		if observation.SpecDigest != claim.SpecDigest {
+			return deployment.Observation{}, ErrDrift
+		}
+		observation.RuntimeRevision = claim.RuntimeRevision
+	}
+	return s.repository.AppendObservation(ctx, observation)
+}
+
+func (s *Service) persistOperation(
+	ctx context.Context,
+	operation deployment.Operation,
+	observation *deployment.Observation,
+) (deployment.Operation, error) {
+	deadline, ok := ctx.Value(mutationDeadlineKey{}).(time.Time)
+	if !ok {
+		deadline, ok = ctx.Deadline()
+	}
+	finalizeDeadline := time.Now().Add(operationFinalizeBudget)
+	if ok && deadline.Before(finalizeDeadline) {
+		finalizeDeadline = deadline
+	}
+	persistCtx, cancel := context.WithDeadline(context.WithoutCancel(ctx), finalizeDeadline)
+	defer cancel()
+	if _, err := s.repository.CompleteOperation(persistCtx, operation, observation); err != nil {
+		return deployment.Operation{}, err
+	}
+	return operation, nil
+}
+
+func (s *Service) waitUntilReady(
+	ctx context.Context, key deployment.Key, digest string,
+) (deployment.Inspection, error) {
+	deadlineCtx, cancel := context.WithTimeout(ctx, s.readyTimeout)
+	defer cancel()
+	ticker := time.NewTicker(s.pollInterval)
+	defer ticker.Stop()
+	var lastErr error
+	var lastInspection deployment.Inspection
+	for {
+		inspection, err := s.platform.Inspect(deadlineCtx, key)
+		if err == nil {
+			if inspection.RuntimeKey() != key || inspection.SpecDigest != digest {
+				return deployment.Inspection{}, ErrDrift
+			}
+			inspection.ObservedAt = s.now().UTC()
+			lastInspection = inspection
+			if inspection.Health == deployment.HealthHealthy {
+				verified, verifyErr := s.verifier.Verify(deadlineCtx, inspection)
+				if verifyErr == nil {
+					return verified, nil
+				}
+				if errors.Is(verifyErr, deployment.ErrIdentityConflict) {
+					return deployment.Inspection{}, ErrDrift
+				}
+				lastErr = verifyErr
+			} else {
+				lastErr = fmt.Errorf("Runtime platform health is %s", inspection.Health)
+			}
+		} else {
+			lastErr = err
+		}
+		select {
+		case <-deadlineCtx.Done():
+			return lastInspection, errors.Join(deadlineCtx.Err(), lastErr)
+		case <-ticker.C:
+		}
+	}
+}
+
+func (s *Service) withAgentLock(
+	ctx context.Context,
+	agentID string,
+	execute func(context.Context) (deployment.Operation, error),
+) (deployment.Operation, error) {
+	operationCtx, cancel := context.WithTimeout(ctx, s.mutationTimeout)
+	defer cancel()
+	deadline, _ := operationCtx.Deadline()
+	operationCtx = context.WithValue(operationCtx, mutationDeadlineKey{}, deadline)
+	var operation deployment.Operation
+	err := s.locker.WithAgentLock(operationCtx, agentID, func(lockCtx context.Context) error {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return context.DeadlineExceeded
+		}
+		reserve := operationFinalizeBudget
+		if quarter := remaining / 4; quarter < reserve {
+			reserve = quarter
+		}
+		executionCtx, executionCancel := context.WithDeadline(lockCtx, deadline.Add(-reserve))
+		defer executionCancel()
+		var executeErr error
+		operation, executeErr = execute(executionCtx)
+		return executeErr
+	})
+	return operation, err
+}
+
+func operationIsTerminal(operation deployment.Operation) bool {
+	return operation.State == deployment.OperationCompleted || operation.State == deployment.OperationFailed
+}
+
+func validateRequestID(value string) error {
+	if value == "" || len(value) > 200 {
+		return fmt.Errorf("%w: request ID must contain 1-200 deployment-safe ASCII bytes", ErrInvalidRequest)
+	}
+	for index, character := range []byte(value) {
+		letter := character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z'
+		digit := character >= '0' && character <= '9'
+		if letter || digit || index > 0 && (character == '_' || character == '.' || character == '-') {
+			continue
+		}
+		return fmt.Errorf("%w: request ID must start with an alphanumeric byte and contain only alphanumeric, '_', '.', or '-'", ErrInvalidRequest)
+	}
+	return nil
+}
+
+func sanitizedDetail(outcome deployment.EffectOutcome) string {
+	switch outcome.Code {
+	case "runtime_drift":
+		return "managed Runtime has a different private identity"
+	case "storage_in_use":
+		return "Agent storage is still used by a managed Runtime"
+	case "storage_ownership_conflict":
+		return "workspace volume is not owned by this Agent"
+	case "storage_not_found":
+		return "Agent workspace is not available"
+	case "platform_unavailable":
+		return "deployment platform did not return a conclusive result"
+	default:
+		if outcome.State == deployment.EffectCompleted {
+			return ""
+		}
+		return "deployment operation did not complete"
+	}
+}

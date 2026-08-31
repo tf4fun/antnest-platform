@@ -1,0 +1,247 @@
+{
+  "contract": "antnest.agent-controller.run-admission",
+  "revision": 2,
+  "transport": "json-over-http",
+  "trust": "internal-network",
+  "base_path": "/rpc/agent-controller",
+  "status": {
+    "method": "GET",
+    "path": "/status",
+    "success_status": 200,
+    "response_content_type": "application/json",
+    "response": {
+      "required": ["status"],
+      "properties": {
+        "status": { "const": "ready" }
+      }
+    }
+  },
+  "error": {
+    "response_content_type": "application/json",
+    "required": ["code", "message", "retryable"],
+    "properties": {
+      "code": {
+        "enum": [
+          "access_denied",
+          "agent_not_found",
+          "agent_busy",
+          "agent_rebuilding",
+          "agent_build_failed",
+          "admission_not_found",
+          "credential_not_allowed",
+          "invalid_request",
+          "dependency_unavailable",
+          "internal_error"
+        ]
+      },
+      "message": { "type": "string" },
+      "retryable": { "type": "boolean" }
+    }
+  },
+  "methods": {
+    "resolve_agent_access": {
+      "method": "POST",
+      "path": "/resolve-agent-access",
+      "success_status": 200,
+      "request_content_type": "application/json",
+      "response_content_type": "application/json",
+      "request": {
+        "required": ["request_id", "authenticated_subject"],
+        "properties": {
+          "request_id": { "type": "string", "minLength": 1 },
+          "authenticated_subject": { "type": "string", "minLength": 1 }
+        }
+      },
+      "response": {
+        "required": ["principal_id", "agent_id", "access_revision"],
+        "properties": {
+          "principal_id": { "type": "string", "minLength": 1 },
+          "agent_id": { "type": "string", "minLength": 1 },
+          "access_revision": { "type": "string", "minLength": 1 },
+          "prompt_capabilities": {
+            "type": "object",
+            "properties": {
+              "image": { "type": "boolean" },
+              "embedded_context": { "type": "boolean" }
+            },
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    "acquire_run": {
+      "method": "POST",
+      "path": "/acquire-run",
+      "success_status": 200,
+      "request_content_type": "application/json",
+      "response_content_type": "application/json",
+      "request": {
+        "required": ["request_id", "agent_id", "session_id"],
+        "properties": {
+          "request_id": { "type": "string", "minLength": 1 },
+          "agent_id": { "type": "string", "minLength": 1 },
+          "session_id": { "type": "string", "minLength": 1 }
+        }
+      },
+      "response": {
+        "required": [
+          "admission_id",
+          "admission_deadline",
+          "agent_config_revision",
+          "execution_revision",
+          "runtime_mcp_source_digest",
+          "agent_execution_spec_digest",
+          "credential_version",
+          "runtime",
+          "execution_spec"
+        ],
+        "properties": {
+          "admission_id": { "type": "string", "minLength": 1 },
+          "admission_deadline": { "type": "string", "format": "date-time" },
+          "agent_config_revision": { "type": "string", "minLength": 1 },
+          "execution_revision": { "type": "string", "minLength": 1 },
+          "runtime_mcp_source_digest": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "agent_execution_spec_digest": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "credential_version": { "type": "string", "minLength": 1 },
+          "runtime": {
+            "type": "object",
+            "required": [
+              "runtime_generation",
+              "runtime_instance_id",
+              "runtime_execution_id",
+              "mcp_endpoint"
+            ],
+            "properties": {
+              "runtime_generation": { "type": "integer", "minimum": 1 },
+              "runtime_instance_id": { "type": "string", "minLength": 1 },
+              "runtime_execution_id": { "type": "string", "minLength": 1 },
+              "mcp_endpoint": { "type": "string", "format": "uri" }
+            },
+            "additionalProperties": false
+          },
+          "execution_spec": {
+            "type": "object",
+            "required": [
+              "system_prompt",
+              "model",
+              "max_model_requests",
+              "credential_ref"
+            ],
+            "properties": {
+              "system_prompt": { "type": "string" },
+              "skill_instructions": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["skill_key", "version", "instructions"],
+                  "properties": {
+                    "skill_key": { "type": "string", "minLength": 1 },
+                    "version": { "type": "string", "minLength": 1 },
+                    "instructions": { "type": "string" }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "model": {
+                "type": "object",
+                "required": [
+                  "adapter",
+                  "base_url",
+                  "model",
+                  "context_window",
+                  "max_output_tokens"
+                ],
+                "properties": {
+                  "adapter": { "enum": ["openai_compatible"] },
+                  "base_url": { "type": "string", "format": "uri" },
+                  "model": { "type": "string", "minLength": 1 },
+                  "context_window": { "type": "integer", "minimum": 1024 },
+                  "max_output_tokens": { "type": "integer", "minimum": 1 },
+                  "temperature": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 2
+                  },
+                  "supports_images": { "type": "boolean" }
+                },
+                "additionalProperties": false
+              },
+              "max_model_requests": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 128
+              },
+              "credential_ref": { "type": "string", "minLength": 1 }
+            },
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    "resolve_credential": {
+      "method": "POST",
+      "path": "/resolve-credential",
+      "success_status": 200,
+      "request_content_type": "application/json",
+      "response_content_type": "application/json",
+      "request": {
+        "required": ["request_id", "admission_id", "credential_ref"],
+        "properties": {
+          "request_id": { "type": "string", "minLength": 1 },
+          "admission_id": { "type": "string", "minLength": 1 },
+          "credential_ref": { "type": "string", "minLength": 1 }
+        }
+      },
+      "response": {
+        "required": ["credential_version", "secret_type", "secret"],
+        "properties": {
+          "credential_version": { "type": "string", "minLength": 1 },
+          "secret_type": { "enum": ["bearer"] },
+          "secret": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "finish_run": {
+      "method": "POST",
+      "path": "/finish-run",
+      "success_status": 200,
+      "request_content_type": "application/json",
+      "response_content_type": "application/json",
+      "request": {
+        "required": [
+          "request_id",
+          "admission_id",
+          "terminal_class",
+          "executor_state",
+          "runtime_effect_state"
+        ],
+        "properties": {
+          "request_id": { "type": "string", "minLength": 1 },
+          "admission_id": { "type": "string", "minLength": 1 },
+          "terminal_class": {
+            "enum": ["completed", "cancelled", "failed", "unresolved"]
+          },
+          "executor_state": {
+            "enum": ["quiescent", "cancellation_requested", "unknown"]
+          },
+          "runtime_effect_state": {
+            "enum": ["none", "settled", "unknown"]
+          },
+          "error_class": { "type": ["string", "null"] }
+        }
+      },
+      "response": {
+        "required": ["status"],
+        "properties": {
+          "status": { "enum": ["finished", "already_finished"] }
+        }
+      }
+    }
+  }
+}

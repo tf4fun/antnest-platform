@@ -9,17 +9,21 @@ generated application models, persistence records, or reusable business code.
 | Contract | Owner | Required reviewers | Consumers | Purpose |
 | --- | --- | --- | --- | --- |
 | [`runtime/contract.json`](runtime/contract.json) | Antnest Runtime | ACP Service, Agent Controller | Runtime Controller, ACP Service, and Antnest Runtime | Runtime status and MCP surface |
-| [`runtime/runtime-spec.schema.json`](runtime/runtime-spec.schema.json) | Agent Controller | Runtime Controller, Antnest Runtime | Agent Controller, Runtime Controller, and Antnest Runtime | Immutable Runtime creation input |
+| [`runtime/runtime-spec.schema.json`](runtime/runtime-spec.schema.json) | Runtime Controller | Antnest Runtime | Runtime Controller and Antnest Runtime | Controller-resolved immutable Runtime bootstrap input |
 | [`runtime/packet-contract.json`](runtime/packet-contract.json) | Runtime Egress | Antnest Runtime | Antnest Runtime and Runtime Egress | Machine-readable raw-IP-over-UDP contract |
 | [`runtime/packet-format.md`](runtime/packet-format.md) | Runtime Egress | Antnest Runtime | Antnest Runtime and Runtime Egress | Raw-IP-over-UDP semantics and evolution |
 | [`runtime/packet-fixtures.json`](runtime/packet-fixtures.json) | Runtime Egress | Antnest Runtime | Antnest Runtime and Runtime Egress tests | Shared accepted and rejected packet examples |
 | [`egress/control-contract.json`](egress/control-contract.json) | Runtime Egress | Agent Controller | Agent Controller and Runtime Egress | Machine-readable trusted internal control RPC surface |
 | [`egress/control-api.md`](egress/control-api.md) | Runtime Egress | Agent Controller | Agent Controller and Runtime Egress | Trusted internal network-control RPC semantics |
 | [`egress/policy.schema.json`](egress/policy.schema.json) | Runtime Egress | Agent Controller | Runtime Egress control callers and tests | Immutable Egress policy revision schema |
+| [`runtime-controller/control-contract.json`](runtime-controller/control-contract.json) | Runtime Controller | Agent Controller | Agent Controller and Runtime Controller | Machine-readable deployment RPC surface |
+| [`runtime-controller/control-api.md`](runtime-controller/control-api.md) | Runtime Controller | Agent Controller | Agent Controller and Runtime Controller | Logical Runtime lifecycle, operation, and observation semantics |
+| [`runtime-controller/runtime-deployment.schema.json`](runtime-controller/runtime-deployment.schema.json) | Agent Controller | Runtime Controller | Agent Controller and Runtime Controller | Language-neutral Runtime configuration input |
+| [`agent-controller/run-contract.json`](agent-controller/run-contract.json) | Agent Controller | Agent ACP Service | Agent Controller and Agent ACP Service | Agent access resolution, serialized Run admission, immutable execution snapshot, credential resolution, and terminal completion |
+| [`identity/identity-contract.json`](identity/identity-contract.json) | Identity Service | Edge Gateway and administrative clients | Internal identity clients | Organizations, principals, local authentication, OIDC configuration, and SCIM credential administration |
 
-Files under `openapi/` describe obsolete service prototypes. They are not
-active contracts and impose no compatibility requirement. Each service rewrite
-removes its corresponding draft instead of adapting the new domain to it.
+Obsolete prototype contracts are deleted when their service is rewritten; they
+do not remain as an implied compatibility layer.
 
 ## Ownership Rules
 

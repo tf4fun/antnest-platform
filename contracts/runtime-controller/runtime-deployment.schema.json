@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://antnest.local/contracts/runtime-controller/runtime-deployment.schema.json",
+  "title": "Antnest Runtime Configuration",
+  "description": "Caller-owned Runtime policy. Runtime Controller injects identity, internal generation, listener, filesystem, and platform mapping.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["image_ref", "network", "resources"],
+  "properties": {
+    "image_ref": {
+      "type": "string",
+      "pattern": "^(sha256:[0-9a-fA-F]{64}|[^@\\s]+@sha256:[0-9a-fA-F]{64})$",
+      "description": "Immutable Runtime image selected by Agent Controller."
+    },
+    "network": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["packet_contract_revision", "egress_endpoint", "tunnel_ipv4", "resolver_ipv4"],
+      "properties": {
+        "packet_contract_revision": {"type": "integer", "const": 1},
+        "egress_endpoint": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["ipv4", "port"],
+          "properties": {
+            "ipv4": {"type": "string", "format": "ipv4"},
+            "port": {"type": "integer", "minimum": 1, "maximum": 65535}
+          }
+        },
+        "tunnel_ipv4": {"type": "string", "format": "ipv4"},
+        "resolver_ipv4": {"type": "string", "format": "ipv4"}
+      }
+    },
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["memory_bytes", "pids_limit", "tmpfs_bytes"],
+      "properties": {
+        "memory_bytes": {"type": "integer", "minimum": 134217728, "maximum": 9223372036854775807},
+        "pids_limit": {"type": "integer", "minimum": 16, "maximum": 32768},
+        "tmpfs_bytes": {"type": "integer", "minimum": 16777216, "maximum": 9223372036854775807}
+      }
+    }
+  }
+}

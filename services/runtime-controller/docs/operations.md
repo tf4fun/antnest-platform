@@ -1,95 +1,197 @@
 # Runtime Controller Operations
 
+> Status: implemented Docker operations model<br>
+> Updated: 2026-08-31
+
 ## Runtime Requirements
 
 The service requires:
 
-- PostgreSQL 17-compatible storage.
-- A reachable Docker Runtime Provider internal endpoint.
-- A reachable Runtime Egress internal endpoint and advertised packet endpoint.
-- A dedicated internal Docker network for Runtime reverse connections.
-- A prebuilt `antnest/antnest-runtime:local` image in the development setup.
+- its private PostgreSQL schema for Runtime Environment heads, operation
+  idempotency, immutable internal generation claims, cross-replica Agent locks,
+  and the bounded observation journal;
+- one selected deployment-platform adapter;
+- Docker Engine access for the first implementation;
+- network reachability to managed Runtime `/status` endpoints;
+- a prebuilt Antnest Runtime image.
 
-This service requires no host privilege. Docker socket access belongs only to
-Docker Runtime Provider; TUN and `NET_ADMIN` belong only to Runtime Egress.
+It does not depend on Runtime Egress, Agent ACP Service, or another Runtime
+Provider service. Agent Controller supplies lifecycle commands and complete
+Runtime configuration for Initialize, Update, and Enable, including the Egress
+attachment already allocated for the Agent. It never supplies platform resource
+identity or physical generation.
 
 ## Configuration
 
-| Variable | Required | Default | Meaning |
-| --- | --- | --- | --- |
-| `ANTNEST_RUNTIME_DATABASE_URL` | yes | none | Controller-owned PostgreSQL DSN |
-| `ANTNEST_RUNTIME_ADVERTISED_ENDPOINT` | yes | none | Stable IPv4 authority Runtime containers use for reverse connections |
-| `ANTNEST_RUNTIME_EGRESS_URL` | yes | none | Runtime Egress internal reservation API |
-| `ANTNEST_RUNTIME_EGRESS_ENDPOINT` | yes | none | Stable IPv4 authority Runtime containers use for packet tunnels |
-| `ANTNEST_RUNTIME_PROVIDER_URL` | yes | none | Docker Runtime Provider internal API |
-| `ANTNEST_RUNTIME_MANAGEMENT_NETWORK` | yes | none | Dedicated Docker network attached to Runtime containers |
-| `ANTNEST_RUNTIME_TOKEN_SECRET` | yes | none | At least 32 bytes used to derive generation admission tokens |
-| `ANTNEST_RUNTIME_LISTEN` | no | `:8080` | Internal lifecycle and Work API listen address |
-| `ANTNEST_RUNTIME_CONTROL_LISTEN` | no | `:8091` | Runtime reverse control listen address |
-| `ANTNEST_RUNTIME_TUNNEL_CIDR` | no | `100.64.0.0/10` | Virtual Runtime egress address pool |
-| `ANTNEST_RUNTIME_DNS_IPV4` | no | `100.64.0.1` | Virtual DNS endpoint in the tunnel |
+| Variable | Required | Meaning |
+| --- | --- | --- |
+| `ANTNEST_RUNTIME_CONTROLLER_DATABASE_URL` | yes | Controller-private PostgreSQL DSN |
+| `ANTNEST_RUNTIME_CONTROLLER_LISTEN` | no | Go listen address; default `:8080` |
+| `ANTNEST_RUNTIME_PLATFORM` | no | `docker`; default and only current adapter |
+| `ANTNEST_DOCKER_HOST` | no | Unix Docker Engine URL; default `unix:///var/run/docker.sock`; TCP is rejected |
+| `ANTNEST_RUNTIME_MANAGEMENT_NETWORK` | yes | Existing private Docker network shared with Runtime and internal callers |
+| `ANTNEST_RUNTIME_SYSTEM_SKILLS_VOLUME` | no | Existing read-only system-Skill volume name; defaults to `antnest-system-skills` |
+| `ANTNEST_RUNTIME_STATUS_TIMEOUT` | no | Go duration; one `/status` bound; default `5s` |
+| `ANTNEST_RUNTIME_MUTATION_TIMEOUT` | no | Go duration; complete mutation bound including lock wait; default `2m` |
+| `ANTNEST_RUNTIME_READY_TIMEOUT` | no | Go duration; compute readiness bound; default `1m` |
+| `ANTNEST_RUNTIME_POLL_INTERVAL` | no | Go duration; compute readiness inspection interval; default `500ms` |
+| `ANTNEST_OBSERVATION_RETENTION` | no | Go duration; journal retention; default `168h` |
+| `ANTNEST_RUNTIME_SSE_HEARTBEAT` | no | Go duration; internal SSE heartbeat; default `15s` |
 
-Standard OpenTelemetry environment variables configure telemetry export. Do
-not place token secrets in command-line flags or logs.
+Standard OpenTelemetry environment variables configure telemetry export using
+OTLP `http/protobuf`. Trace context propagation remains active when export is
+disabled. Runtime-supported trace/metric exporter variables are copied into
+new Runtime containers; unsupported variables are not forwarded.
+Runtime Controller has no Runtime token secret, reverse-control listener,
+Egress URL, or external authentication configuration.
+
+The Docker adapter uses Engine API `v1.47`; operators must provide an Engine
+that supports this API version.
 
 ## Ports And Networks
 
-| Endpoint | Audience | Compose exposure |
-| --- | --- | --- |
-| `:8080` | Trusted internal callers and health checks | `127.0.0.1:8080` in development |
-| `:8091` | Managed Runtime control | Runtime management network only |
-| PostgreSQL `:5432` | Controller | Control network only; loopback `:55432` for development |
+Runtime Controller exposes one trusted internal listener for health and RPC.
+It does not bind a public host port outside an explicit development profile.
 
-The management network is internal. Runtime containers attach only to it and
-use TUN for unrestricted egress; they do not join the Controller's control or
-egress network.
+It must reach:
 
-## Readiness And Startup
+1. its private PostgreSQL database;
+2. the Docker socket or Kubernetes API selected by its platform adapter;
+3. managed Runtime `/status` endpoints.
 
-`/healthz` proves the process can serve HTTP. `/readyz` additionally requires:
+It does not need to reach Runtime MCP, Runtime Egress control, or Egress packet
+listeners.
 
-1. PostgreSQL is reachable.
-2. Runtime Egress reports ready.
-3. Docker Runtime Provider reports ready.
+## Readiness
 
-On startup the service migrates its own schema, restores Ready Runtime
-reservations through Egress, scans durable non-terminal operations, and opens
-Runtime admission only after dependencies initialize.
+Process liveness and application readiness are distinct operator signals even
+if one HTTP status document exposes both fields.
 
-## Coordinated Runtime Resources
+Controller readiness requires:
 
-For `agent_id=<id>` the Controller requests deterministic Provider resources:
+1. private database connectivity and completed ordered migrations; migrations
+   are serialized by a PostgreSQL advisory lock, committed transactionally,
+   and refuse an unknown future schema version;
+2. the selected platform adapter can perform a lightweight managed-resource
+   list permission probe;
+3. the configured Docker management network exists;
+4. the configured system-Skill volume exists;
+5. a rollback-safe observation journal insert/read probe succeeds without
+   leaving a synthetic business fact;
+6. a separately committed, payload-only notification probe traverses the
+   active PostgreSQL LISTEN callback without entering the journal;
+7. the shared observation monitor is active or another replica holds its
+   leadership.
 
-- Container: `antnest-runtime-<id>`.
-- Workspace volume: `antnest-workspace-<id>`.
-- Shared system Skill volume managed for Runtime mounts.
+One unhealthy Runtime does not make the Controller unready. Its state appears
+in `InspectRuntime` and Runtime observations. Readiness never inspects every
+Runtime; full inventory belongs only to reconciliation.
 
-Stop retains compute and workspace state. Retire removes compute but retains
-the workspace. Purge removes both. Operators should use the lifecycle API, not
-manual Docker deletion, so PostgreSQL and observed state remain convergent.
+## Platform Health And Restart
+
+Docker or Kubernetes owns Runtime liveness checks and restart policy. Runtime
+Controller consumes platform events instead of polling every Runtime.
+
+When the platform reports a new Healthy process, the Controller performs one
+bounded `/status` verification and records the returned `execution_id`. A Watch
+disconnect triggers List/Inspect reconciliation followed by Watch resume.
+
+The Controller records a service-wide `observation_gap`, reconciles List and
+Inspect, then records service-wide `reconciled`. This remains visible when no
+Runtime exists. A `/status` failure is `status_unverified`, not a fabricated
+platform `unhealthy` fact.
+
+Across Controller replicas, PostgreSQL elects exactly one platform-Watch
+consumer. Followers continue serving control and observation RPCs and take over
+after leadership loss. Transactional PostgreSQL notifications wake each
+replica's local SSE clients; reconnecting clients always resume from the
+durable sequence and never rely on notification delivery.
+Observation SSE connections use lifecycle metrics rather than one
+connection-duration trace span; each finite journal read remains traced.
+
+## Coordinated Resources
+
+Resource names and labels are deterministic from Agent identity, private generation,
+and the effective physical specification digest. This digest includes
+Controller-injected Docker configuration, so changing a management network,
+mount source, Runtime telemetry environment, privilege set, healthcheck, or
+restart policy requires a new private generation. Each lifecycle mutation
+acquires one PostgreSQL Agent lock, so compute and workspace substeps cannot interleave
+across Controller replicas. Lock sessions use a small dedicated database pool
+and do not consume repository query capacity. The same database session is
+probed while its callback runs. Session loss cancels the callback and returns
+`mutation_lock_lost`; callers retry the same `Idempotency-Key`. The private
+database also admits only one `running` or `unknown` operation per Agent, so a
+different request returns `agent_mutation_in_progress` instead of overtaking an
+ambiguous effect. An exact recovery increments a private attempt number;
+terminal persistence is attempt-checked, and Docker create conflicts are
+re-inspected before exact resources are adopted. The Docker adapter owns:
+
+- one current Runtime container per Agent, labeled with its generation/digest;
+- Agent-scoped persistent workspace volume association;
+- system Skill mounts injected by Runtime Controller;
+- internal network attachment and Runtime endpoint discovery;
+- platform health configuration.
+
+Initialize creates workspace plus compute. Update replaces compute while
+retaining workspace. Disable removes compute while retaining workspace. Enable
+recreates compute. Delete removes compute and then workspace. No workspace
+operation is exposed to another service.
+
+Workspace volumes carry Antnest managed and Agent ownership labels. A same-name
+volume without exact labels is never adopted, mounted, or deleted. System Skill
+storage is deployment-owned and only checked for existence.
+
+Runtime containers are handled by the same rule: normal Inspect/List/Delete
+requires exact managed, Agent, generation, and persisted-digest identity. A
+managed container with malformed labels blocks reconciliation until an operator
+repairs or explicitly removes the drift.
+
+Operators should prefer Runtime Controller RPCs over manual platform mutation.
+Manual changes are still detected through platform List/Watch and surfaced as
+drift observations.
 
 ## Failure Diagnosis
 
-1. Check `/readyz`; a failure isolates service dependencies from one Runtime's
-   lifecycle failure.
-2. Read the Runtime and lifecycle operation through the internal API. Branch on
-   stable Problem Details `code`, not human-readable detail.
-3. Inspect the deterministic container name and Provider/Controller logs using
-   `agent_id`, generation, operation ID, and trace ID.
-4. Treat `unknown` as an ambiguous external effect. Observe convergence; do not
-   issue a replacement command until it resolves.
-5. A Runtime that cannot connect usually indicates advertised endpoint,
-   management network, token generation, image startup, or privilege failure.
+1. Check Controller readiness to separate platform/database failure from one
+   Runtime failure.
+2. Inspect the Agent Runtime and read observations after the last known sequence.
+3. Correlate Runtime revision, operation ID, trace ID, and execution ID in
+   cross-service logs. Adapter logs additionally carry private generation and
+   platform resource ID.
+4. Treat `unknown` mutation results as ambiguous. Inspect current platform state
+   with the original operation identity; do not issue a compensating mutation
+   blindly.
+5. A platform-Healthy Runtime with a failing `/status` is not Ready.
+6. A changed execution ID under the same Runtime revision indicates process
+   restart, not a lifecycle update.
+7. A Watch gap is not evidence of a known restart count or cause.
+8. `status_unverified` means platform state was observed but Runtime identity or
+   readiness could not be confirmed; it is not equivalent to unhealthy.
+9. `mutation_lock_lost` means coordination failed during an operation. Inspect
+   and retry only the same request ID. `agent_mutation_in_progress` means a
+   distinct non-terminal request still owns the Agent mutation slot.
+10. Observation sequence is a sparse cursor. Do not infer loss from a numeric
+    jump; consume explicit `observation_gap` records and recover with List.
 
-## Development Commands
+## Stage 1C Acceptance
 
-```bash
-make test-go
-make docker-build
-make compose-up
-make e2e-stage1
-make compose-down
-```
+The service is operationally acceptable only when it proves:
 
-`make e2e-stage1` creates and destroys uniquely named Runtime resources. Run it
-serially against the repository Compose stack.
+1. deterministic idempotent Initialize/Update/Disable/Enable/Delete and Inspect
+   in an empty Docker setup;
+2. reconstruction from platform labels after Controller restart;
+3. ordered observation recovery after Watch disconnect, including empty
+   inventory;
+4. one-shot status verification after Healthy without a permanent polling loop;
+5. same-revision Runtime restart produces a new execution observation and
+   rejects the stale execution fence;
+6. no separate Docker Provider, reverse Runtime channel, Work lease, MCP proxy,
+   or Egress dependency remains.
+
+`make test-runtime-controller-postgres` proves the private repository against a
+real disposable PostgreSQL database. `make e2e-runtime-controller` builds the
+actual images and proves items 1, 4, 5, and complete lifecycle deletion in an
+isolated disposable Compose project. Unit tests cover Docker List/Watch
+normalization, Agent-level mutation serialization, owned-volume handling, and
+Watch-gap reconciliation.

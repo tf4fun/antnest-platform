@@ -11,7 +11,7 @@ use axum::{
     extract::{DefaultBodyLimit, Request, State},
     http::{Method, StatusCode},
     middleware::{self, Next},
-    response::Response,
+    response::{IntoResponse, Response},
     routing::get,
 };
 use http_body::{Body as HttpBody, Frame, SizeHint};
@@ -51,6 +51,7 @@ use crate::tools::ToolEngine;
 
 pub(crate) const STATUS_PATH: &str = "/status";
 pub(crate) const MCP_PATH: &str = "/mcp";
+pub(crate) const EXPECTED_EXECUTION_HEADER: &str = "X-Antnest-Expected-Execution-ID";
 #[cfg(test)]
 const TOOL_NAMES: [&str; 4] = ["bash", "edit", "read", "write"];
 
@@ -58,6 +59,7 @@ const TOOL_NAMES: [&str; 4] = ["bash", "edit", "read", "write"];
 pub(crate) struct RuntimeStatus {
     agent_id: String,
     generation: u64,
+    execution_id: String,
     status: &'static str,
 }
 
@@ -66,6 +68,20 @@ impl RuntimeStatus {
         Self {
             agent_id: identity.agent_id().to_owned(),
             generation: identity.generation(),
+            execution_id: uuid::Uuid::new_v4().to_string(),
+            status: "ready",
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_execution_id(
+        identity: RuntimeIdentity,
+        execution_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            agent_id: identity.agent_id().to_owned(),
+            generation: identity.generation(),
+            execution_id: execution_id.into(),
             status: "ready",
         }
     }
@@ -181,7 +197,15 @@ async fn trace_http_request(
     crate::telemetry::set_remote_parent(&span, remote.as_ref());
     crate::telemetry::record_span_identity(&span);
     let started = Instant::now();
-    let response = next.run(request).instrument(span.clone()).await;
+    let fence_error = if path == MCP_PATH {
+        execution_fence_error(request.headers(), status)
+    } else {
+        None
+    };
+    let response = match fence_error {
+        Some(reason) => execution_fence_response(reason),
+        None => next.run(request).instrument(span.clone()).await,
+    };
     let completion = HttpCompletion::new(
         span,
         identity,
@@ -193,6 +217,34 @@ async fn trace_http_request(
     );
     let (parts, body) = response.into_parts();
     Response::from_parts(parts, Body::new(ObservedBody::new(body, completion)))
+}
+
+pub(crate) fn execution_fence_error(
+    headers: &axum::http::HeaderMap,
+    status: &RuntimeStatus,
+) -> Option<&'static str> {
+    let Some(expected) = headers
+        .get(EXPECTED_EXECUTION_HEADER)
+        .and_then(|value| value.to_str().ok())
+    else {
+        return Some("missing");
+    };
+    if expected != status.execution_id {
+        return Some("mismatch");
+    }
+    None
+}
+
+fn execution_fence_response(reason: &'static str) -> Response {
+    (
+        StatusCode::CONFLICT,
+        Json(json!({
+            "code": "runtime_execution_mismatch",
+            "message": "Runtime execution changed; refresh the Runtime inspection before retrying",
+            "reason": reason,
+        })),
+    )
+        .into_response()
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

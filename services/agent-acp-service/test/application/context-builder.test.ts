@@ -1,0 +1,207 @@
+import { describe, expect, it, vi } from "vitest";
+
+import { ContextBuilder } from "../../src/application/context-builder.js";
+import type { ContextRepository, ContextSource } from "../../src/ports/context-repository.js";
+import type { RunExecutionSnapshot } from "../../src/domain/types.js";
+
+describe("ContextBuilder", () => {
+  it("builds system, Skill, environment, and conversation context in order", async () => {
+    const saveCheckpoint = vi.fn<ContextRepository["saveCheckpoint"]>();
+    const repository: ContextRepository = {
+      load: vi.fn((): Promise<ContextSource> =>
+        Promise.resolve({
+          checkpoint: null,
+          messages: [
+            { sequence: 1, kind: "user_message", content: [{ type: "text", text: "hello" }] },
+            {
+              sequence: 2,
+              kind: "environment_change",
+              content: [{ type: "text", text: "Runtime changed" }],
+            },
+            { sequence: 3, kind: "agent_message", content: [{ type: "text", text: "ready" }] },
+          ],
+        }),
+      ),
+      saveCheckpoint,
+    };
+    const builder = new ContextBuilder({
+      repository,
+      id: () => "checkpoint-1",
+      now: () => new Date("2026-08-30T00:00:00Z"),
+    });
+
+    const messages = await builder.build("session-1", snapshot(), new AbortController().signal);
+
+    expect(messages.map((message) => message.role)).toEqual([
+      "system",
+      "user",
+      "system",
+      "assistant",
+    ]);
+    const systemText = messages[0]?.content[0];
+    expect(systemText?.type).toBe("text");
+    expect(systemText?.type === "text" ? systemText.text : "").toContain("skill instructions");
+    expect(saveCheckpoint).not.toHaveBeenCalled();
+  });
+
+  it("checkpoints old history while preserving the newest user request", async () => {
+    const saveCheckpoint = vi.fn<ContextRepository["saveCheckpoint"]>();
+    const repository: ContextRepository = {
+      load: vi.fn((): Promise<ContextSource> =>
+        Promise.resolve({
+          checkpoint: { throughSequence: 1, summary: "older summary" },
+          messages: [
+            {
+              sequence: 2,
+              kind: "user_message",
+              content: [{ type: "text", text: "x".repeat(4_000) }],
+            },
+            {
+              sequence: 3,
+              kind: "agent_message",
+              content: [{ type: "text", text: "intermediate" }],
+            },
+            {
+              sequence: 4,
+              kind: "user_message",
+              content: [{ type: "text", text: "latest request" }],
+            },
+          ],
+        }),
+      ),
+      saveCheckpoint,
+    };
+    const builder = new ContextBuilder({
+      repository,
+      id: () => "checkpoint-2",
+      now: () => new Date("2026-08-30T00:00:00Z"),
+    });
+    const constrained = snapshot();
+    constrained.executionSpec.model.contextWindow = 1_024;
+    constrained.executionSpec.model.maxOutputTokens = 128;
+
+    const messages = await builder.build("session-1", constrained, new AbortController().signal);
+
+    expect(JSON.stringify(messages.at(-1))).toContain("latest request");
+    expect(saveCheckpoint).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "checkpoint-2",
+        sessionId: "session-1",
+        throughSequence: 2,
+      }),
+    );
+  });
+
+  it("does not save a checkpoint after worker ownership is lost during context load", async () => {
+    const ownership = new AbortController();
+    const saveCheckpoint = vi.fn<ContextRepository["saveCheckpoint"]>();
+    const repository: ContextRepository = {
+      load: vi.fn((): Promise<ContextSource> => {
+        ownership.abort(new Error("worker lock lost"));
+        return Promise.resolve({
+          checkpoint: null,
+          messages: [
+            {
+              sequence: 1,
+              kind: "user_message",
+              content: [{ type: "text", text: "x".repeat(4_000) }],
+            },
+            {
+              sequence: 2,
+              kind: "user_message",
+              content: [{ type: "text", text: "latest request" }],
+            },
+          ],
+        });
+      }),
+      saveCheckpoint,
+    };
+    const builder = new ContextBuilder({
+      repository,
+      id: () => "checkpoint-lost",
+      now: () => new Date("2026-08-30T00:00:00Z"),
+    });
+    const constrained = snapshot();
+    constrained.executionSpec.model.contextWindow = 1_024;
+    constrained.executionSpec.model.maxOutputTokens = 128;
+
+    await expect(builder.build("session-1", constrained, ownership.signal)).rejects.toThrow(
+      "worker lock lost",
+    );
+    expect(saveCheckpoint).not.toHaveBeenCalled();
+  });
+
+  it("surfaces ownership loss instead of a concurrent checkpoint error", async () => {
+    const ownership = new AbortController();
+    const repository: ContextRepository = {
+      load: vi.fn((): Promise<ContextSource> =>
+        Promise.resolve({
+          checkpoint: null,
+          messages: [
+            {
+              sequence: 1,
+              kind: "user_message",
+              content: [{ type: "text", text: "x".repeat(4_000) }],
+            },
+            {
+              sequence: 2,
+              kind: "user_message",
+              content: [{ type: "text", text: "latest request" }],
+            },
+          ],
+        }),
+      ),
+      saveCheckpoint: vi.fn(() => {
+        ownership.abort(new Error("worker lock lost"));
+        return Promise.reject(new Error("database write failed"));
+      }),
+    };
+    const builder = new ContextBuilder({
+      repository,
+      id: () => "checkpoint-lost",
+      now: () => new Date("2026-08-30T00:00:00Z"),
+    });
+    const constrained = snapshot();
+    constrained.executionSpec.model.contextWindow = 1_024;
+    constrained.executionSpec.model.maxOutputTokens = 128;
+
+    await expect(builder.build("session-1", constrained, ownership.signal)).rejects.toThrow(
+      "worker lock lost",
+    );
+  });
+});
+
+function snapshot(): RunExecutionSnapshot {
+  return {
+    admissionId: "admission-1",
+    admissionDeadline: new Date("2026-08-30T00:10:00Z"),
+    agentConfigRevision: "config-1",
+    executionRevision: "execution-1",
+    runtimeMcpSourceDigest: "a".repeat(64),
+    agentExecutionSpecDigest: "b".repeat(64),
+    credentialVersion: "credential-version-1",
+    runtime: {
+      generation: 1,
+      instanceId: "runtime-1",
+      executionId: "runtime-execution-1",
+      mcpEndpoint: "http://runtime-1:8080/mcp",
+    },
+    executionSpec: {
+      systemPrompt: "system",
+      skillInstructions: [
+        { skillKey: "example", version: "1", instructions: "skill instructions" },
+      ],
+      model: {
+        adapter: "openai_compatible",
+        baseUrl: "https://api.example.test/v1",
+        model: "example-model",
+        contextWindow: 64_000,
+        maxOutputTokens: 4_096,
+        supportsImages: false,
+      },
+      maxModelRequests: 4,
+      credentialRef: "credential-1",
+    },
+    clientMcpRevisionId: "client-mcp-1",
+  };
+}

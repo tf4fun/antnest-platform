@@ -6,6 +6,10 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
 )
 
 func TestSetupDefaultsToLocalStructuredLogging(t *testing.T) {
@@ -33,6 +37,22 @@ func TestSetupRejectsUnsupportedOTLPProtocol(t *testing.T) {
 	_, err := Setup(context.Background(), slog.NewTextHandler(&bytes.Buffer{}, nil), Config{})
 	if err == nil {
 		t.Fatal("unsupported OTLP protocol was accepted")
+	}
+}
+
+func TestDisabledSDKStillPropagatesW3CTraceContext(t *testing.T) {
+	clearEnvironment(t)
+	t.Setenv("OTEL_SDK_DISABLED", "true")
+	_, err := Setup(context.Background(), slog.NewTextHandler(&bytes.Buffer{}, nil), Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	carrier := propagation.MapCarrier{
+		"traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+	}
+	ctx := otel.GetTextMapPropagator().Extract(context.Background(), carrier)
+	if !trace.SpanContextFromContext(ctx).IsValid() {
+		t.Fatal("trace context propagation was disabled with OTLP export")
 	}
 }
 

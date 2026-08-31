@@ -1,0 +1,439 @@
+{
+  "contract": "antnest.identity",
+  "revision": 2,
+  "transport": "json-over-http",
+  "trust": "internal-network",
+  "base_path": "/rpc/identity",
+  "definitions": {
+    "id": { "type": "string", "minLength": 1 },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "organization_role": { "type": "string", "enum": ["member", "admin"] },
+    "system_role": { "type": "string", "enum": ["user", "admin"] },
+    "source": { "type": "string", "enum": ["local", "oidc", "scim"] },
+    "scim_scope": { "type": "string", "enum": ["scim:read", "scim:write"] },
+    "organization": {
+      "type": "object",
+      "required": ["id", "slug", "name", "active", "created_at", "updated_at"],
+      "properties": {
+        "id": { "$ref": "#/definitions/id" },
+        "slug": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "active": { "type": "boolean" },
+        "created_at": { "$ref": "#/definitions/timestamp" },
+        "updated_at": { "$ref": "#/definitions/timestamp" }
+      }
+    },
+    "user": {
+      "type": "object",
+      "required": ["id", "email", "display_name", "system_role", "source", "active", "created_at", "updated_at"],
+      "properties": {
+        "id": { "$ref": "#/definitions/id" },
+        "email": { "type": "string", "format": "email" },
+        "display_name": { "type": "string", "minLength": 1 },
+        "system_role": { "$ref": "#/definitions/system_role" },
+        "source": { "$ref": "#/definitions/source" },
+        "active": { "type": "boolean" },
+        "created_at": { "$ref": "#/definitions/timestamp" },
+        "updated_at": { "$ref": "#/definitions/timestamp" }
+      }
+    },
+    "membership": {
+      "type": "object",
+      "required": ["id", "organization_id", "user_id", "role", "source", "active", "created_at", "updated_at"],
+      "properties": {
+        "id": { "$ref": "#/definitions/id" },
+        "organization_id": { "$ref": "#/definitions/id" },
+        "user_id": { "$ref": "#/definitions/id" },
+        "role": { "$ref": "#/definitions/organization_role" },
+        "source": { "$ref": "#/definitions/source" },
+        "active": { "type": "boolean" },
+        "scim_external_id": { "type": "string" },
+        "scim_user_name": { "type": "string" },
+        "created_at": { "$ref": "#/definitions/timestamp" },
+        "updated_at": { "$ref": "#/definitions/timestamp" }
+      }
+    },
+    "group": {
+      "type": "object",
+      "required": ["id", "organization_id", "display_name", "source", "active", "created_at", "updated_at"],
+      "properties": {
+        "id": { "$ref": "#/definitions/id" },
+        "organization_id": { "$ref": "#/definitions/id" },
+        "display_name": { "type": "string", "minLength": 1 },
+        "source": { "$ref": "#/definitions/source" },
+        "active": { "type": "boolean" },
+        "scim_external_id": { "type": "string" },
+        "created_at": { "$ref": "#/definitions/timestamp" },
+        "updated_at": { "$ref": "#/definitions/timestamp" }
+      }
+    },
+    "directory_member": {
+      "type": "object",
+      "required": ["user", "membership"],
+      "properties": {
+        "user": { "$ref": "#/definitions/user" },
+        "membership": { "$ref": "#/definitions/membership" }
+      }
+    },
+    "principal": {
+      "type": "object",
+      "required": ["user_id", "organization_id", "membership_id", "system_role", "organization_role", "active"],
+      "properties": {
+        "user_id": { "$ref": "#/definitions/id" },
+        "organization_id": { "$ref": "#/definitions/id" },
+        "membership_id": { "$ref": "#/definitions/id" },
+        "system_role": { "$ref": "#/definitions/system_role" },
+        "organization_role": { "$ref": "#/definitions/organization_role" },
+        "active": { "type": "boolean" }
+      }
+    },
+    "scim_token": {
+      "type": "object",
+      "required": ["id", "organization_id", "name", "scopes", "created_at"],
+      "properties": {
+        "id": { "$ref": "#/definitions/id" },
+        "organization_id": { "$ref": "#/definitions/id" },
+        "name": { "type": "string", "minLength": 1 },
+        "scopes": { "type": "array", "items": { "$ref": "#/definitions/scim_scope" } },
+        "created_at": { "$ref": "#/definitions/timestamp" },
+        "revoked_at": { "$ref": "#/definitions/timestamp" }
+      }
+    },
+    "oidc_provider": {
+      "type": "object",
+      "required": ["id", "organization_id", "name", "display_name", "issuer", "client_id", "redirect_uri", "scopes", "enabled", "authorization_endpoint", "token_endpoint", "jwks_uri", "created_at", "updated_at"],
+      "properties": {
+        "id": { "$ref": "#/definitions/id" },
+        "organization_id": { "$ref": "#/definitions/id" },
+        "name": { "type": "string", "minLength": 1 },
+        "display_name": { "type": "string", "minLength": 1 },
+        "issuer": { "type": "string", "format": "uri" },
+        "client_id": { "type": "string", "minLength": 1 },
+        "redirect_uri": { "type": "string", "format": "uri" },
+        "scopes": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "enabled": { "type": "boolean" },
+        "authorization_endpoint": { "type": "string", "format": "uri" },
+        "token_endpoint": { "type": "string", "format": "uri" },
+        "userinfo_endpoint": { "type": "string" },
+        "jwks_uri": { "type": "string", "format": "uri" },
+        "created_at": { "$ref": "#/definitions/timestamp" },
+        "updated_at": { "$ref": "#/definitions/timestamp" }
+      }
+    },
+    "login_method": {
+      "type": "object",
+      "required": ["name", "display_name"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "display_name": { "type": "string", "minLength": 1 }
+      }
+    }
+  },
+  "error": {
+    "required": ["code", "message", "retryable"],
+    "properties": {
+      "code": {
+        "type": "string",
+        "enum": [
+          "invalid_argument",
+          "bad_request",
+          "unauthenticated",
+          "forbidden",
+          "inactive_principal",
+          "not_found",
+          "conflict",
+          "oidc_provider_issuer_immutable",
+          "oidc_exchange_in_progress",
+          "oidc_exchange_claim_invalid",
+          "oidc_session_expired",
+          "oidc_session_failed",
+          "oidc_completed_token_unavailable",
+          "oidc_authorization_failed",
+          "oidc_provider_failed",
+          "oidc_provider_secret_failed",
+          "oidc_exchange_failed",
+          "oidc_identity_failed",
+          "oidc_token_failed",
+          "oidc_persistence_failed",
+          "internal_error"
+        ]
+      },
+      "message": { "type": "string", "minLength": 1 },
+      "retryable": { "type": "boolean" }
+    },
+    "http_status_by_code": {
+      "invalid_argument": 400,
+      "bad_request": 400,
+      "unauthenticated": 401,
+      "forbidden": 403,
+      "inactive_principal": 403,
+      "not_found": 404,
+      "conflict": 409,
+      "oidc_provider_issuer_immutable": 409,
+      "oidc_exchange_in_progress": 409,
+      "oidc_exchange_claim_invalid": 400,
+      "oidc_session_failed": 400,
+      "oidc_session_expired": 410,
+      "oidc_completed_token_unavailable": 410,
+      "internal_error": 500
+    }
+  },
+  "methods": {
+    "create_organization": {
+      "method": "POST",
+      "path": "/create-organization",
+      "request": {
+        "required": ["request_id", "actor_principal_id", "slug", "name"],
+        "properties": {
+          "request_id": { "$ref": "#/definitions/id" },
+          "actor_principal_id": { "$ref": "#/definitions/id" },
+          "slug": { "type": "string", "minLength": 1 },
+          "name": { "type": "string", "minLength": 1 }
+        }
+      },
+      "response": {
+        "required": ["organization"],
+        "properties": { "organization": { "$ref": "#/definitions/organization" } }
+      }
+    },
+    "create_local_user": {
+      "method": "POST",
+      "path": "/create-local-user",
+      "request": {
+        "required": ["request_id", "actor_principal_id", "organization_id", "email", "display_name", "password", "role"],
+        "properties": {
+          "request_id": { "$ref": "#/definitions/id" },
+          "actor_principal_id": { "$ref": "#/definitions/id" },
+          "organization_id": { "$ref": "#/definitions/id" },
+          "email": { "type": "string", "format": "email" },
+          "display_name": { "type": "string", "minLength": 1 },
+          "password": { "type": "string", "minLength": 1, "secret": true },
+          "role": { "$ref": "#/definitions/organization_role" }
+        }
+      },
+      "response": {
+        "required": ["user", "membership"],
+        "properties": {
+          "user": { "$ref": "#/definitions/user" },
+          "membership": { "$ref": "#/definitions/membership" }
+        }
+      }
+    },
+    "add_organization_membership": {
+      "method": "POST",
+      "path": "/add-organization-membership",
+      "request": {
+        "required": ["request_id", "actor_principal_id", "organization_id", "user_id", "role"],
+        "properties": {
+          "request_id": { "$ref": "#/definitions/id" },
+          "actor_principal_id": { "$ref": "#/definitions/id" },
+          "organization_id": { "$ref": "#/definitions/id" },
+          "user_id": { "$ref": "#/definitions/id" },
+          "role": { "$ref": "#/definitions/organization_role" }
+        }
+      },
+      "response": {
+        "required": ["membership"],
+        "properties": { "membership": { "$ref": "#/definitions/membership" } }
+      }
+    },
+    "list_directory": {
+      "method": "POST",
+      "path": "/list-directory",
+      "request": {
+        "required": ["actor_principal_id", "organization_id"],
+        "properties": {
+          "actor_principal_id": { "$ref": "#/definitions/id" },
+          "organization_id": { "$ref": "#/definitions/id" }
+        }
+      },
+      "response": {
+        "required": ["users", "groups"],
+        "properties": {
+          "users": { "type": "array", "items": { "$ref": "#/definitions/directory_member" } },
+          "groups": { "type": "array", "items": { "$ref": "#/definitions/group" } }
+        }
+      }
+    },
+    "local_login": {
+      "method": "POST",
+      "path": "/local-login",
+      "request": {
+        "required": ["request_id", "organization_slug", "email", "password"],
+        "properties": {
+          "request_id": { "$ref": "#/definitions/id" },
+          "organization_slug": { "type": "string", "minLength": 1 },
+          "email": { "type": "string", "format": "email" },
+          "password": { "type": "string", "minLength": 1, "secret": true }
+        }
+      },
+      "response": {
+        "required": ["token_id", "access_token", "expires_at", "principal"],
+        "properties": {
+          "token_id": { "$ref": "#/definitions/id" },
+          "access_token": { "type": "string", "minLength": 1, "secret": true },
+          "expires_at": { "$ref": "#/definitions/timestamp" },
+          "principal": { "$ref": "#/definitions/principal" }
+        }
+      }
+    },
+    "resolve_access_token": {
+      "method": "POST",
+      "path": "/resolve-access-token",
+      "request": {
+        "required": ["access_token"],
+        "properties": { "access_token": { "type": "string", "minLength": 1, "secret": true } }
+      },
+      "response": {
+        "required": ["principal"],
+        "properties": { "principal": { "$ref": "#/definitions/principal" } }
+      }
+    },
+    "revoke_access_token": {
+      "method": "POST",
+      "path": "/revoke-access-token",
+      "request": {
+        "required": ["actor_principal_id", "token_id"],
+        "properties": {
+          "actor_principal_id": { "$ref": "#/definitions/id" },
+          "token_id": { "$ref": "#/definitions/id" }
+        }
+      },
+      "response": {
+        "required": ["status"],
+        "properties": { "status": { "type": "string", "const": "revoked" } }
+      }
+    },
+    "issue_scim_token": {
+      "method": "POST",
+      "path": "/issue-scim-token",
+      "request": {
+        "required": ["request_id", "actor_principal_id", "organization_id", "name", "scopes"],
+        "properties": {
+          "request_id": { "$ref": "#/definitions/id" },
+          "actor_principal_id": { "$ref": "#/definitions/id" },
+          "organization_id": { "$ref": "#/definitions/id" },
+          "name": { "type": "string", "minLength": 1 },
+          "scopes": { "type": "array", "minItems": 1, "items": { "$ref": "#/definitions/scim_scope" } }
+        }
+      },
+      "response": {
+        "required": ["token", "credential"],
+        "properties": {
+          "token": { "$ref": "#/definitions/scim_token" },
+          "credential": { "type": "string", "minLength": 1, "secret": true }
+        }
+      }
+    },
+    "revoke_scim_token": {
+      "method": "POST",
+      "path": "/revoke-scim-token",
+      "request": {
+        "required": ["actor_principal_id", "token_id"],
+        "properties": {
+          "actor_principal_id": { "$ref": "#/definitions/id" },
+          "token_id": { "$ref": "#/definitions/id" }
+        }
+      },
+      "response": {
+        "required": ["status"],
+        "properties": { "status": { "type": "string", "const": "revoked" } }
+      }
+    },
+    "upsert_oidc_provider": {
+      "method": "POST",
+      "path": "/upsert-oidc-provider",
+      "lifecycle": "Provider identity is (organization_id, name). The issuer is immutable. Use set_oidc_provider_enabled to disable the old Provider, then create a new name when moving to another issuer; deletion is not supported.",
+      "request": {
+        "required": ["request_id", "actor_principal_id", "organization_id", "name", "issuer", "client_id", "redirect_uri", "scopes", "enabled"],
+        "properties": {
+          "request_id": { "$ref": "#/definitions/id" },
+          "actor_principal_id": { "$ref": "#/definitions/id" },
+          "organization_id": { "$ref": "#/definitions/id" },
+          "name": { "type": "string", "minLength": 1 },
+          "issuer": { "type": "string", "format": "uri" },
+          "client_id": { "type": "string", "minLength": 1 },
+          "client_secret": { "type": "string", "secret": true },
+          "redirect_uri": { "type": "string", "format": "uri" },
+          "scopes": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+          "enabled": { "type": "boolean" }
+        }
+      },
+      "response": {
+        "required": ["provider"],
+        "properties": { "provider": { "$ref": "#/definitions/oidc_provider" } }
+      }
+    },
+    "set_oidc_provider_enabled": {
+      "method": "POST",
+      "path": "/set-oidc-provider-enabled",
+      "lifecycle": "Changes only the local enabled state and never contacts the external Provider. Repeating the desired state is idempotent.",
+      "request": {
+        "required": ["request_id", "actor_principal_id", "organization_id", "name", "enabled"],
+        "properties": {
+          "request_id": { "$ref": "#/definitions/id" },
+          "actor_principal_id": { "$ref": "#/definitions/id" },
+          "organization_id": { "$ref": "#/definitions/id" },
+          "name": { "type": "string", "minLength": 1 },
+          "enabled": { "type": "boolean" }
+        }
+      },
+      "response": {
+        "required": ["provider"],
+        "properties": { "provider": { "$ref": "#/definitions/oidc_provider" } }
+      }
+    },
+    "list_login_methods": {
+      "method": "POST",
+      "path": "/list-login-methods",
+      "request": {
+        "required": ["organization_slug"],
+        "properties": { "organization_slug": { "type": "string", "minLength": 1 } }
+      },
+      "response": {
+        "required": ["methods"],
+        "properties": { "methods": { "type": "array", "items": { "$ref": "#/definitions/login_method" } } }
+      }
+    },
+    "start_oidc_login": {
+      "method": "POST",
+      "path": "/start-oidc-login",
+      "request": {
+        "required": ["request_id", "organization_slug", "provider_name"],
+        "properties": {
+          "request_id": { "$ref": "#/definitions/id" },
+          "organization_slug": { "type": "string", "minLength": 1 },
+          "provider_name": { "type": "string", "minLength": 1 }
+        }
+      },
+      "response": {
+        "required": ["authorization_url", "expires_at"],
+        "properties": {
+          "authorization_url": { "type": "string", "format": "uri", "contains_secret_query": ["state"] },
+          "expires_at": { "$ref": "#/definitions/timestamp" }
+        }
+      }
+    }
+  },
+  "protocols": {
+    "oidc_callback": {
+      "method": "GET",
+      "path": "/protocol/oidc/callback",
+      "query": {
+        "required": ["state", "code"],
+        "properties": {
+          "state": { "type": "string", "minLength": 1, "secret": true },
+          "code": { "type": "string", "minLength": 1, "secret": true }
+        }
+      },
+      "initial_response": {
+        "required": ["principal", "token_id", "access_token", "expires_at"]
+      },
+      "replay_response": {
+        "required": ["principal", "token_id", "expires_at", "already_completed"],
+        "forbidden": ["access_token"]
+      }
+    },
+    "scim_base_path": "/scim/v2"
+  }
+}

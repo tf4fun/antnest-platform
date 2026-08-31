@@ -9,11 +9,11 @@
     "agent_id": {
       "type": "string",
       "minLength": 1,
-      "maxLength": 255,
-      "pattern": "^[!-~]+$",
-      "description": "Stable Agent identifier using 1-255 visible ASCII bytes."
+      "maxLength": 200,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,199}$",
+      "description": "Stable deployment-safe Agent identifier used in platform resource names."
     },
-    "generation": {"type": "integer", "minimum": 1},
+    "generation": {"type": "integer", "minimum": 1, "maximum": 9223372036854775807},
     "listen": {
       "$ref": "#/$defs/socketAddress"
     },
@@ -70,10 +70,7 @@
       "properties": {
         "host": {
           "type": "string",
-          "anyOf": [
-            {"format": "ipv4"},
-            {"format": "ipv6"}
-          ]
+          "const": "0.0.0.0"
         },
         "port": {"type": "integer", "minimum": 1, "maximum": 65535}
       },

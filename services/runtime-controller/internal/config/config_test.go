@@ -1,78 +1,88 @@
 package config
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
-func TestLoadUsesDockerFirstDefaults(t *testing.T) {
+func TestLoadUsesThinDockerAdapterDefaults(t *testing.T) {
 	values := map[string]string{
-		"ANTNEST_RUNTIME_DATABASE_URL":        "postgres://runtime:runtime@postgres/runtime",
-		"ANTNEST_RUNTIME_ADVERTISED_ENDPOINT": "172.30.255.2:8091",
-		"ANTNEST_RUNTIME_EGRESS_URL":          "http://runtime-egress:8081",
-		"ANTNEST_RUNTIME_EGRESS_ENDPOINT":     "172.30.255.3:8092",
-		"ANTNEST_RUNTIME_PROVIDER_URL":        "http://runtime-provider-docker:8082",
-		"ANTNEST_RUNTIME_MANAGEMENT_NETWORK":  "antnest-runtime-management",
-		"ANTNEST_RUNTIME_TOKEN_SECRET":        "01234567890123456789012345678901",
+		"ANTNEST_RUNTIME_CONTROLLER_DATABASE_URL": "postgres://runtime:runtime@postgres/runtime",
+		"ANTNEST_RUNTIME_MANAGEMENT_NETWORK":      "antnest-runtime-management",
 	}
 	config, err := Load(func(key string) string { return values[key] })
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	if config.ListenAddress != ":8080" || config.RuntimeListenAddress != ":8091" {
-		t.Fatalf("unexpected listeners: %+v", config)
+	if config.ListenAddress != ":8080" || config.Platform != "docker" ||
+		config.DockerSocketPath != "/var/run/docker.sock" {
+		t.Fatalf("unexpected platform defaults: %+v", config)
 	}
-	if config.TunnelCIDR != "100.64.0.0/10" || config.DNSIPv4 != "100.64.0.1" {
-		t.Fatalf("unexpected Runtime network defaults: %+v", config)
+	if config.RuntimeStatusTimeout != 5*time.Second || config.MutationTimeout != 2*time.Minute ||
+		config.RuntimeReadyTimeout != time.Minute ||
+		config.ObservationRetention != 7*24*time.Hour {
+		t.Fatalf("unexpected bounded-operation defaults: %+v", config)
 	}
-	if config.AdvertisedEndpoint != "172.30.255.2:8091" ||
-		config.ManagementNetwork != "antnest-runtime-management" {
-		t.Fatalf("unexpected advertised endpoint: %q", config.AdvertisedEndpoint)
+	if config.SystemSkillsVolume != "antnest-system-skills" {
+		t.Fatalf("unexpected system Skills volume: %s", config.SystemSkillsVolume)
 	}
 }
 
-func TestLoadRejectsMissingRuntimeBoundaryConfiguration(t *testing.T) {
+func TestLoadRejectsInvalidDeploymentBoundary(t *testing.T) {
 	tests := []struct {
 		name   string
 		values map[string]string
 	}{
 		{name: "database", values: map[string]string{
-			"ANTNEST_RUNTIME_ADVERTISED_ENDPOINT": "172.30.255.2:8091",
-			"ANTNEST_RUNTIME_EGRESS_URL":          "http://runtime-egress:8081",
-			"ANTNEST_RUNTIME_EGRESS_ENDPOINT":     "172.30.255.3:8092",
-			"ANTNEST_RUNTIME_PROVIDER_URL":        "http://runtime-provider-docker:8082",
-			"ANTNEST_RUNTIME_MANAGEMENT_NETWORK":  "antnest-runtime-management",
-			"ANTNEST_RUNTIME_TOKEN_SECRET":        "01234567890123456789012345678901",
-		}},
-		{name: "advertised endpoint", values: map[string]string{
-			"ANTNEST_RUNTIME_DATABASE_URL":       "postgres://runtime:runtime@postgres/runtime",
-			"ANTNEST_RUNTIME_EGRESS_URL":         "http://runtime-egress:8081",
-			"ANTNEST_RUNTIME_EGRESS_ENDPOINT":    "172.30.255.3:8092",
-			"ANTNEST_RUNTIME_PROVIDER_URL":       "http://runtime-provider-docker:8082",
 			"ANTNEST_RUNTIME_MANAGEMENT_NETWORK": "antnest-runtime-management",
-			"ANTNEST_RUNTIME_TOKEN_SECRET":       "01234567890123456789012345678901",
 		}},
 		{name: "management network", values: map[string]string{
-			"ANTNEST_RUNTIME_DATABASE_URL":        "postgres://runtime:runtime@postgres/runtime",
-			"ANTNEST_RUNTIME_ADVERTISED_ENDPOINT": "172.30.255.2:8091",
-			"ANTNEST_RUNTIME_EGRESS_URL":          "http://runtime-egress:8081",
-			"ANTNEST_RUNTIME_EGRESS_ENDPOINT":     "172.30.255.3:8092",
-			"ANTNEST_RUNTIME_PROVIDER_URL":        "http://runtime-provider-docker:8082",
-			"ANTNEST_RUNTIME_TOKEN_SECRET":        "01234567890123456789012345678901",
+			"ANTNEST_RUNTIME_CONTROLLER_DATABASE_URL": "postgres://runtime:runtime@postgres/runtime",
 		}},
-		{name: "short token secret", values: map[string]string{
-			"ANTNEST_RUNTIME_DATABASE_URL":        "postgres://runtime:runtime@postgres/runtime",
-			"ANTNEST_RUNTIME_ADVERTISED_ENDPOINT": "172.30.255.2:8091",
-			"ANTNEST_RUNTIME_MANAGEMENT_NETWORK":  "antnest-runtime-management",
-			"ANTNEST_RUNTIME_EGRESS_URL":          "http://runtime-egress:8081",
-			"ANTNEST_RUNTIME_EGRESS_ENDPOINT":     "172.30.255.3:8092",
-			"ANTNEST_RUNTIME_PROVIDER_URL":        "http://runtime-provider-docker:8082",
-			"ANTNEST_RUNTIME_TOKEN_SECRET":        "short",
+		{name: "unsupported platform", values: map[string]string{
+			"ANTNEST_RUNTIME_CONTROLLER_DATABASE_URL": "postgres://runtime:runtime@postgres/runtime",
+			"ANTNEST_RUNTIME_MANAGEMENT_NETWORK":      "antnest-runtime-management",
+			"ANTNEST_RUNTIME_PLATFORM":                "nomad",
+		}},
+		{name: "remote Docker host", values: map[string]string{
+			"ANTNEST_RUNTIME_CONTROLLER_DATABASE_URL": "postgres://runtime:runtime@postgres/runtime",
+			"ANTNEST_RUNTIME_MANAGEMENT_NETWORK":      "antnest-runtime-management",
+			"ANTNEST_DOCKER_HOST":                     "tcp://docker:2375",
+		}},
+		{name: "invalid timeout", values: map[string]string{
+			"ANTNEST_RUNTIME_CONTROLLER_DATABASE_URL": "postgres://runtime:runtime@postgres/runtime",
+			"ANTNEST_RUNTIME_MANAGEMENT_NETWORK":      "antnest-runtime-management",
+			"ANTNEST_RUNTIME_STATUS_TIMEOUT":          "zero",
+		}},
+		{name: "mutation shorter than readiness", values: map[string]string{
+			"ANTNEST_RUNTIME_CONTROLLER_DATABASE_URL": "postgres://runtime:runtime@postgres/runtime",
+			"ANTNEST_RUNTIME_MANAGEMENT_NETWORK":      "antnest-runtime-management",
+			"ANTNEST_RUNTIME_MUTATION_TIMEOUT":        "30s",
 		}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			_, err := Load(func(key string) string { return test.values[key] })
-			if err == nil {
+			if _, err := Load(func(key string) string { return test.values[key] }); err == nil {
 				t.Fatal("invalid configuration accepted")
 			}
 		})
+	}
+}
+
+func TestLoadPassesOnlyRuntimeSupportedOTELConfiguration(t *testing.T) {
+	values := map[string]string{
+		"ANTNEST_RUNTIME_CONTROLLER_DATABASE_URL": "postgres://runtime:runtime@postgres/runtime",
+		"ANTNEST_RUNTIME_MANAGEMENT_NETWORK":      "antnest-runtime-management",
+		"OTEL_SDK_DISABLED":                       "false",
+		"OTEL_EXPORTER_OTLP_ENDPOINT":             "http://collector:4318",
+		"OTEL_EXPORTER_OTLP_HEADERS":              "must-not-be-forwarded",
+	}
+	config, err := Load(func(key string) string { return values[key] })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.RuntimeOTEL["OTEL_EXPORTER_OTLP_ENDPOINT"] != "http://collector:4318" ||
+		config.RuntimeOTEL["OTEL_EXPORTER_OTLP_HEADERS"] != "" {
+		t.Fatalf("unexpected Runtime telemetry environment: %+v", config.RuntimeOTEL)
 	}
 }

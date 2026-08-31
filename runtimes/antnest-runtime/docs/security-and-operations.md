@@ -8,9 +8,9 @@ duplicate platform identity with admission tokens, Egress tokens, mTLS, OAuth,
 or internal request signatures.
 
 Agent-selected shell commands, scripts, Skills, and downloaded dependencies are
-untrusted. The container, UID/capability boundary, named roots, read-only image,
-workspace volume, and network policy limit their fault radius. This service does
-not claim resistance to a container or kernel escape.
+untrusted. The container, UID/capability boundary, root-owned image files,
+named roots, workspace volume, and network policy limit their fault radius.
+This service does not claim resistance to a container or kernel escape.
 
 ## RuntimeSpec Environment
 
@@ -39,7 +39,9 @@ reserved names.
 - `antnest-runtime serve` is container PID 1 and remains root.
 - The Supervisor has the platform privileges needed for TUN, policy routing,
   nftables, UID/GID transition, and process-tree cleanup, plus `/dev/net/tun`.
-- Root filesystem is read-only.
+- The root filesystem is writable by the trusted Supervisor so it can replace
+  the platform resolver; image files remain root-owned and are not writable by
+  UID/GID 1000 Executors.
 - `/workspace` is a writable persistent Agent volume.
 - `/skills` is mounted read-only by Runtime Controller/container policy. Runtime's tool
   API does not grant writes but does not enforce the mount flag.
@@ -48,19 +50,15 @@ reserved names.
   credential is mounted.
 - Runtime HTTP is exposed only on the private platform network.
 
-A minimal Docker container has this shape. Runtime Controller supplies the workspace,
-system-Skill host paths, exact resolver file, and immutable RuntimeSpec values. It creates
-the resolver file before the container so Docker's embedded resolver cannot replace it:
+A minimal Docker container has this shape. Runtime Controller supplies the
+workspace, system-Skill mounts, DNS upstream, and immutable RuntimeSpec values.
+Docker may initially expose its `127.0.0.11` embedded resolver; the root
+Supervisor replaces that container-local file with the exact virtual resolver
+before any UID/GID 1000 Executor exists:
 
 ```bash
-install -d -m 0755 /srv/antnest/runtime/agent-123
-printf 'options use-vc\nnameserver 100.64.0.1\n' \
-  >/srv/antnest/runtime/agent-123/resolv.conf
-chmod 0444 /srv/antnest/runtime/agent-123/resolv.conf
-
 docker run --rm \
   --name antnest-runtime-agent-123 \
-  --read-only \
   --network antnest-internal \
   --cpus 1 \
   --memory 1g \
@@ -76,12 +74,12 @@ docker run --rm \
   --cap-add SETUID \
   --device /dev/net/tun \
   --tmpfs /tmp:rw,nosuid,nodev,size=64m \
+  --dns 100.64.0.1 \
+  --dns-option use-vc \
   --mount type=bind,src=/srv/antnest/agents/agent-123,\
 dst=/workspace \
   --mount type=bind,src=/srv/antnest/skills,\
 dst=/skills,readonly \
-  --mount type=bind,src=/srv/antnest/runtime/agent-123/resolv.conf,\
-dst=/etc/resolv.conf,readonly \
   --env 'ANTNEST_RUNTIME_SPEC={"agent_id":"agent-123","generation":1,"listen":{"host":"0.0.0.0","port":8093},"network":{"packet_contract_revision":1,"egress_endpoint":{"ipv4":"172.30.255.3","port":8092},"tunnel_ipv4":"100.96.0.2","resolver_ipv4":"100.64.0.1"},"filesystem":{"workspace":"/workspace","system_skills":"/skills"}}' \
   antnest/antnest-runtime:<immutable-tag>
 ```
@@ -99,7 +97,7 @@ spec:
       securityContext:
         runAsUser: 0
         runAsGroup: 0
-        readOnlyRootFilesystem: true
+        readOnlyRootFilesystem: false
         allowPrivilegeEscalation: false
         capabilities:
           drop: ["ALL"]
@@ -113,8 +111,9 @@ spec:
 
 `tun` is a deployment-managed character-device mount, `workspace` is an
 Agent-owned persistent volume, `system-skills` is read-only, and `tmp` is a
-memory-backed `emptyDir` with a size limit. Pod DNS must produce the exact
-resolver file described below; the default cluster resolver is not sufficient.
+memory-backed `emptyDir` with a size limit. `/etc/resolv.conf` must remain
+writable by the root Supervisor during bootstrap; the default cluster resolver
+is only an initial platform value and is not an Agent DNS path.
 The Pod has no public Service or ingress. NetworkPolicy permits inbound status
 and MCP only from Agent Controller/ACP callers, and permits root-owned outbound
 traffic only to Runtime Egress UDP and the optional OTLP collector. Executor
@@ -172,14 +171,18 @@ Internal destinations needed by an Agent are therefore reached through Egress
 policy instead of direct platform routes. The deployment must not publish the
 MCP port outside the trusted Docker or Kubernetes network.
 
-Runtime requires immutable DNS-over-TCP resolver configuration before it
-installs the Agent policy route. `/etc/resolv.conf` must contain `options use-vc`
-and exactly one `nameserver <network.resolver_ipv4>` entry from RuntimeSpec. Docker's embedded
-`127.0.0.11` resolver is rejected because loopback DNS would bypass TUN and
-Egress policy.
+Runtime installs immutable DNS-over-TCP resolver configuration before it
+installs the Agent policy route. The root Supervisor truncates the
+container-local `/etc/resolv.conf`, writes `options use-vc` plus exactly one
+`nameserver <network.resolver_ipv4>` entry from RuntimeSpec, flushes it, and
+validates the result. Startup fails closed when the file cannot be written or
+does not match. UID/GID 1000 cannot modify the root-owned file later.
 
-Runtime Controller owns this file or platform DNS configuration. Additional name servers
-are rejected because they create an ungoverned DNS path.
+This removes Docker's embedded `127.0.0.11` and Kubernetes cluster DNS from the
+Agent path because either would bypass TUN and Egress policy. Runtime Controller
+still supplies platform DNS settings as a bootstrap hint, but Runtime owns the
+final resolver state inside its network namespace. Additional name servers are
+never retained.
 
 Runtime deployment input:
 
@@ -207,8 +210,8 @@ on the governed TUN path without a split-resolver special case.
    Runtime-owned network state or fail closed.
 4. **`/status` identity differs:** Runtime Controller or Agent Controller selected the wrong
    endpoint; never route work to it.
-5. **`tools/list` fails after status succeeds:** MCP is defective; reject the
-   candidate generation.
+5. **`tools/list` fails after status succeeds:** MCP is defective; fail Runtime
+   creation and do not publish the Agent execution revision.
 6. **`/status` succeeds but public traffic fails:** the Runtime-to-Egress packet
    path was ready at startup, but `/status` does not prove external reachability;
    inspect current Egress health, policy, DNS upstream, and destination state.
