@@ -30,7 +30,9 @@
       "list": {
         "method": "GET",
         "path": "/internal/model-profiles",
-        "success_status": 200
+        "query": ["organization_id", "after_id", "limit"],
+        "success_status": 200,
+        "response": "control-api.schema.json#/$defs/model_profile_list"
       }
     },
     "agent_templates": {
@@ -57,7 +59,9 @@
       "list": {
         "method": "GET",
         "path": "/internal/agent-templates",
-        "success_status": 200
+        "query": ["organization_id", "after_id", "limit"],
+        "success_status": 200,
+        "response": "control-api.schema.json#/$defs/agent_template_list"
       }
     },
     "agents": {

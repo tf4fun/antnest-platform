@@ -35,6 +35,10 @@ Agent configuration has an empty Skill set.
 
 Updating a Template creates a revision. It does not silently mutate existing
 Agents. Applying that revision to an Agent is an explicit rebuild operation.
+ModelProfile and Template heads use optimistic revision comparison inside the
+repository transaction. The application never asks PostgreSQL to infer or
+reshape business intent; it submits one complete immutable next revision and
+the expected current revision.
 
 ### Agent
 

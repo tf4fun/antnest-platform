@@ -135,6 +135,15 @@
         "updated_at": { "$ref": "#/$defs/timestamp" }
       }
     },
+    "model_profile_list": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["items", "next_after_id"],
+      "properties": {
+        "items": {"type": "array", "items": {"$ref": "#/$defs/model_profile"}},
+        "next_after_id": {"type": ["string", "null"]}
+      }
+    },
     "create_template_request": {
       "type": "object",
       "additionalProperties": false,
@@ -224,6 +233,15 @@
         "enabled": { "type": "boolean" },
         "created_at": { "$ref": "#/$defs/timestamp" },
         "updated_at": { "$ref": "#/$defs/timestamp" }
+      }
+    },
+    "agent_template_list": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["items", "next_after_id"],
+      "properties": {
+        "items": {"type": "array", "items": {"$ref": "#/$defs/agent_template"}},
+        "next_after_id": {"type": ["string", "null"]}
       }
     },
     "create_agent_request": {

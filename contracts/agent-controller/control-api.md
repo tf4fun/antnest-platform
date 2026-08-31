@@ -13,6 +13,12 @@ All mutating requests carry a stable `request_id`. Reusing a request ID with a
 different canonical request returns `request_id_conflict`. Cross-service IDs
 are opaque strings and have no database foreign keys.
 
+Catalog request IDs are unique across every ModelProfile and Template command,
+not merely within one route. Concurrent retries serialize on that identity. A
+revision command compares the head revision it read with the head locked by the
+repository; a concurrent successful revision returns `lifecycle_conflict` and
+the caller submits a new intent instead of silently rebasing it.
+
 ## Model Profiles
 
 `POST /internal/model-profiles` creates a profile and first immutable revision.
@@ -22,8 +28,13 @@ management boundary, encrypted at rest, and returned only through the
 admission-scoped Run contract.
 
 Profile revision contains endpoint/model metadata and a credential reference.
-Disabling a profile prevents new Template revisions but does not rewrite
-historical Agent revisions.
+Stage 2 creates profiles as enabled. Profile disable/delete management is
+deferred; historical Agent revisions are never rewritten.
+
+`GET /internal/model-profiles/{model_profile_id}` returns the current head.
+`GET /internal/model-profiles` requires `organization_id` and uses stable
+`after_id` plus bounded `limit` pagination. It never returns encrypted
+credential bytes or plaintext secrets.
 
 ## Templates
 
@@ -32,6 +43,11 @@ historical Agent revisions.
 revision. The request references one enabled ModelProfile revision and contains
 Runtime image/resource inputs. Skill references are absent until Skill Registry
 exists; the effective list is empty.
+
+Template get/list return current heads only. List requires `organization_id`
+and uses the same `after_id`/`limit` pagination. Agent creation resolves the
+explicit `(template_id, template_revision)` pair rather than silently using a
+newer head.
 
 ## Agents
 
