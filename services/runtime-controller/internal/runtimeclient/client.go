@@ -23,7 +23,7 @@ import (
 
 const maxStatusBytes = 16 << 10
 
-var ErrNotReady = errors.New("Runtime is not ready")
+var ErrNotReady = errors.New("runtime is not ready")
 
 var (
 	statusTracer   = otel.Tracer("soft/antnest-platform/runtime-controller/runtimeclient")
@@ -72,7 +72,7 @@ func (c *Client) Verify(
 		statusDuration.Record(ctx, time.Since(started).Seconds(), metric.WithAttributes(attributes...))
 	}()
 	if strings.TrimSpace(inspection.StatusEndpoint) == "" {
-		return deployment.Inspection{}, fmt.Errorf("Runtime status endpoint is missing")
+		return deployment.Inspection{}, fmt.Errorf("runtime status endpoint is missing")
 	}
 	requestCtx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
@@ -85,10 +85,10 @@ func (c *Client) Verify(
 	if err != nil {
 		return deployment.Inspection{}, fmt.Errorf("request Runtime status: %w", err)
 	}
-	defer response.Body.Close()
+	defer joinCloseError(&resultErr, response.Body.Close)
 	if response.StatusCode != http.StatusOK {
 		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, maxStatusBytes))
-		return deployment.Inspection{}, fmt.Errorf("Runtime status returned %s", response.Status)
+		return deployment.Inspection{}, fmt.Errorf("runtime status returned %s", response.Status)
 	}
 	var status struct {
 		AgentID     string `json:"agent_id"`
@@ -102,7 +102,7 @@ func (c *Client) Verify(
 		return deployment.Inspection{}, fmt.Errorf("decode Runtime status: %w", err)
 	}
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		return deployment.Inspection{}, fmt.Errorf("Runtime status must contain one JSON object")
+		return deployment.Inspection{}, fmt.Errorf("runtime status must contain one JSON object")
 	}
 	if status.AgentID != inspection.AgentID || status.Generation != inspection.Generation {
 		return deployment.Inspection{}, deployment.ErrIdentityConflict
@@ -111,11 +111,17 @@ func (c *Client) Verify(
 		return deployment.Inspection{}, fmt.Errorf("%w: status is %q", ErrNotReady, status.Status)
 	}
 	if strings.TrimSpace(status.ExecutionID) == "" {
-		return deployment.Inspection{}, fmt.Errorf("Runtime ready status is missing execution identity")
+		return deployment.Inspection{}, fmt.Errorf("runtime ready status is missing execution identity")
 	}
 	inspection.RuntimeExecutionID = status.ExecutionID
 	inspection.ObservedAt = time.Now().UTC()
 	return inspection, nil
+}
+
+func joinCloseError(resultErr *error, closeFunc func() error) {
+	if err := closeFunc(); err != nil {
+		*resultErr = errors.Join(*resultErr, fmt.Errorf("close runtime status response: %w", err))
+	}
 }
 
 func mustCounter(instrument metric.Int64Counter, err error) metric.Int64Counter {

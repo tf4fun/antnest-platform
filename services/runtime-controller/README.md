@@ -44,12 +44,12 @@ separate Runtime Provider service in the target architecture.
 
 ## Target Interfaces And Dependencies
 
-| Direction | Interface |
-| --- | --- |
-| Inbound | Internal RPC for Runtime Initialize, Update, Disable, Enable, Delete, Inspect, and observation List/Watch |
-| Platform outbound | Docker Engine API initially; Kubernetes API in a later adapter |
-| Runtime outbound | Bounded `GET /status` verification for lifecycle, observation, and ready-state reads |
-| Persistence | Private Runtime Environment head, operation, internal generation-claim, and bounded observation-journal schema |
+| Direction         | Interface                                                                                                      |
+| ----------------- | -------------------------------------------------------------------------------------------------------------- |
+| Inbound           | Internal RPC for Runtime Initialize, Update, Disable, Enable, Delete, Inspect, and observation List/Watch      |
+| Platform outbound | Docker Engine API initially; Kubernetes API in a later adapter                                                 |
+| Runtime outbound  | Bounded `GET /status` verification for lifecycle, observation, and ready-state reads                           |
+| Persistence       | Private Runtime Environment head, operation, internal generation-claim, and bounded observation-journal schema |
 
 Runtime Controller never calls Runtime Egress. Agent Controller obtains an
 Agent network attachment from Egress and includes it in the immutable Runtime
@@ -122,6 +122,10 @@ make fmt-check
 make lint
 make test
 ```
+
+The lint command uses the platform repository's checked-in `.golangci.yml`
+with the `standard` linter set; it never inherits configuration from a parent
+checkout.
 
 Run integration evidence serially from the platform repository root:
 

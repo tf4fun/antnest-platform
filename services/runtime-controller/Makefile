@@ -1,5 +1,9 @@
 .PHONY: fmt fmt-check lint test test-postgres e2e
 
+GOCACHE := $(abspath ../../.cache/go-build)
+GOMODCACHE := $(abspath ../../.cache/go-mod)
+GOLANGCI_LINT_CACHE := $(abspath ../../.cache/golangci-lint)
+
 fmt:
 	gofmt -w ./cmd ./internal
 
@@ -8,7 +12,7 @@ fmt-check:
 		{ gofmt -l ./cmd ./internal; exit 1; }
 
 lint:
-	go vet ./...
+	GOLANGCI_LINT_CACHE=$(GOLANGCI_LINT_CACHE) GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) golangci-lint run ./...
 
 test:
 	go test -p=1 ./...

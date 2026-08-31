@@ -15,8 +15,8 @@ import (
 
 var (
 	ErrInvalid          = errors.New("invalid Runtime deployment")
-	ErrIdentityConflict = errors.New("Runtime identity conflict")
-	ErrStatusUnverified = errors.New("Runtime status could not be verified")
+	ErrIdentityConflict = errors.New("runtime identity conflict")
+	ErrStatusUnverified = errors.New("runtime status could not be verified")
 )
 
 type Key struct {

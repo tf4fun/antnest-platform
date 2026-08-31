@@ -46,7 +46,7 @@ func main() {
 	}
 }
 
-func checkHealth(lookup func(string) string) error {
+func checkHealth(lookup func(string) string) (resultErr error) {
 	listen := strings.TrimSpace(lookup("ANTNEST_RUNTIME_CONTROLLER_LISTEN"))
 	if listen == "" {
 		listen = ":8080"
@@ -60,11 +60,17 @@ func checkHealth(lookup func(string) string) error {
 	if err != nil {
 		return classified("readiness", "healthcheck_transport_failed", err)
 	}
-	defer response.Body.Close()
+	defer joinCloseError(&resultErr, "Runtime Controller status response", response.Body.Close)
 	if response.StatusCode != http.StatusOK {
-		return fmt.Errorf("Runtime Controller status returned %s", response.Status)
+		return fmt.Errorf("runtime controller status returned %s", response.Status)
 	}
 	return nil
+}
+
+func joinCloseError(resultErr *error, resource string, closeFunc func() error) {
+	if err := closeFunc(); err != nil {
+		*resultErr = errors.Join(*resultErr, fmt.Errorf("close %s: %w", resource, err))
+	}
 }
 
 func run(ctx context.Context) (resultErr error) {
@@ -88,12 +94,12 @@ func run(ctx context.Context) (resultErr error) {
 	if err != nil {
 		return classified("repository", "database_connection_failed", err)
 	}
-	defer database.Close()
+	defer joinCloseError(&resultErr, "Runtime Controller database", database.Close)
 	lockDatabase, err := openDatabase(ctx, configuration.DatabaseURL, 8, 8)
 	if err != nil {
 		return classified("repository", "lock_database_connection_failed", err)
 	}
-	defer lockDatabase.Close()
+	defer joinCloseError(&resultErr, "Runtime Controller lock database", lockDatabase.Close)
 	if err := postgresrepository.Migrate(ctx, database); err != nil {
 		return classified("repository", "database_migration_failed", err)
 	}

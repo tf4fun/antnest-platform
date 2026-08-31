@@ -198,7 +198,9 @@ type appliedMigration struct {
 	checksum string
 }
 
-func appliedMigrations(ctx context.Context, tx *sql.Tx) (map[int64]appliedMigration, error) {
+func appliedMigrations(
+	ctx context.Context, tx *sql.Tx,
+) (applied map[int64]appliedMigration, resultErr error) {
 	rows, err := tx.QueryContext(ctx, `
 SELECT version, name, checksum
 FROM runtime_controller.schema_migrations
@@ -206,8 +208,8 @@ ORDER BY version`)
 	if err != nil {
 		return nil, fmt.Errorf("read Runtime Controller schema migration journal: %w", err)
 	}
-	defer rows.Close()
-	applied := make(map[int64]appliedMigration)
+	defer joinCloseError(&resultErr, "schema migration rows", rows.Close)
+	applied = make(map[int64]appliedMigration)
 	for rows.Next() {
 		var version int64
 		var value appliedMigration

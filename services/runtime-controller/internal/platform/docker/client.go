@@ -27,7 +27,7 @@ type Client struct {
 func NewUnixClient(socketPath string) (*Client, error) {
 	socketPath = strings.TrimSpace(socketPath)
 	if socketPath == "" {
-		return nil, fmt.Errorf("Docker socket path is required")
+		return nil, fmt.Errorf("docker socket path is required")
 	}
 	transport := &http.Transport{
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
@@ -41,7 +41,7 @@ func NewUnixClient(socketPath string) (*Client, error) {
 
 func NewHTTPClient(httpClient *http.Client, baseURL string) (*Client, error) {
 	if httpClient == nil || strings.TrimSpace(baseURL) == "" {
-		return nil, fmt.Errorf("Docker HTTP client and base URL are required")
+		return nil, fmt.Errorf("docker HTTP client and base URL are required")
 	}
 	return &Client{httpClient: httpClient, baseURL: strings.TrimRight(baseURL, "/")}, nil
 }
@@ -101,7 +101,7 @@ func (c *Client) ListManagedContainerIDs(ctx context.Context) ([]string, error) 
 	for _, summary := range summaries {
 		identifier := strings.TrimSpace(summary.ID)
 		if identifier == "" {
-			return nil, fmt.Errorf("Docker managed container summary is missing an ID")
+			return nil, fmt.Errorf("docker managed container summary is missing an ID")
 		}
 		result = append(result, identifier)
 	}
@@ -113,9 +113,9 @@ func (c *Client) WatchManagedEvents(
 	since time.Time,
 	ready func() error,
 	emit func(ContainerEvent) error,
-) error {
+) (resultErr error) {
 	if ready == nil || emit == nil {
-		return fmt.Errorf("Docker event readiness and sink callbacks are required")
+		return fmt.Errorf("docker event readiness and sink callbacks are required")
 	}
 	encodedFilters, err := json.Marshal(map[string][]string{
 		"type":  {"container"},
@@ -145,7 +145,7 @@ func (c *Client) WatchManagedEvents(
 		}
 		return fmt.Errorf("watch Docker events: %w", err)
 	}
-	defer response.Body.Close()
+	defer joinResponseCloseError(&resultErr, response.Body.Close)
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		detail, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
 		return fmt.Errorf("watch Docker events returned %s: %s",
@@ -223,7 +223,7 @@ func (c *Client) CreateContainer(ctx context.Context, spec ContainerSpec) (strin
 		return "", err
 	}
 	if strings.TrimSpace(response.ID) == "" {
-		return "", Uncertain(fmt.Errorf("Docker create returned an empty container ID"))
+		return "", Uncertain(fmt.Errorf("docker create returned an empty container ID"))
 	}
 	return response.ID, nil
 }
@@ -272,7 +272,7 @@ func (c *Client) RemoveContainer(ctx context.Context, identifier string) error {
 	return c.do(ctx, http.MethodDelete, "/containers/"+url.PathEscape(identifier)+"?force=1", nil, nil)
 }
 
-func (c *Client) do(ctx context.Context, method, requestPath string, input, output any) error {
+func (c *Client) do(ctx context.Context, method, requestPath string, input, output any) (resultErr error) {
 	var body io.Reader
 	if input != nil {
 		encoded, err := json.Marshal(input)
@@ -292,16 +292,16 @@ func (c *Client) do(ctx context.Context, method, requestPath string, input, outp
 	}
 	response, err := c.httpClient.Do(request)
 	if err != nil {
-		return Uncertain(fmt.Errorf("Docker %s %s: %w", method, requestPath, err))
+		return Uncertain(fmt.Errorf("docker %s %s: %w", method, requestPath, err))
 	}
-	defer response.Body.Close()
+	defer joinResponseCloseError(&resultErr, response.Body.Close)
 	if response.StatusCode == http.StatusNotFound {
 		_, _ = io.Copy(io.Discard, response.Body)
 		return ErrNotFound
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		detail, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
-		err := fmt.Errorf("Docker %s %s returned %s: %s",
+		err := fmt.Errorf("docker %s %s returned %s: %s",
 			method, requestPath, response.Status, strings.TrimSpace(string(detail)))
 		if response.StatusCode == http.StatusConflict {
 			return errors.Join(ErrConflict, err)
@@ -319,6 +319,12 @@ func (c *Client) do(ctx context.Context, method, requestPath string, input, outp
 		return responseDecodeError{cause: err}
 	}
 	return nil
+}
+
+func joinResponseCloseError(resultErr *error, closeFunc func() error) {
+	if err := closeFunc(); err != nil {
+		*resultErr = errors.Join(*resultErr, fmt.Errorf("close Docker response: %w", err))
+	}
 }
 
 func mutatingMethod(method string) bool {

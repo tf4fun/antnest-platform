@@ -1,0 +1,22 @@
+version: "2"
+
+run:
+  timeout: 10m
+  tests: true
+  modules-download-mode: readonly
+  relative-path-mode: gomod
+
+linters:
+  default: standard
+  exclusions:
+    generated: strict
+
+issues:
+  uniq-by-line: false
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+output:
+  sort-order:
+    - linter
+    - file

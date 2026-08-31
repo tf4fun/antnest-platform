@@ -6,15 +6,15 @@ than around one shared application package.
 
 ## Service Map
 
-| Component | Target role | Status |
-| --- | --- | --- |
-| Antnest Runtime | Executes one Agent's process and filesystem operations and transports Agent packets | Implemented and aligned with Egress |
-| Runtime Egress | Rust service owning Agent addresses, network policy, UDP/TUN forwarding, rejection, and address reuse | Implemented and accepted with Runtime |
-| Runtime Controller | Logical Runtime Environment lifecycle, private deployment realization, and platform observation with an in-process Docker adapter | Implemented and accepted for Docker |
-| Agent Controller | Owns Agent lifecycle, immutable configuration/execution revisions, explicit Runtime rebuild, Run admission, and Agent events | Future service |
-| Agent ACP Service | Owns ACP v2 Sessions, Runs, context, model/Tool loop, and per-Run Runtime MCP calls | Implemented for Stage 2 |
-| Identity Service | Owns Organizations, Users, local login, OIDC, SCIM, credentials, and the directory journal | Implemented for Stage 2 |
-| Contracts | Language-neutral Runtime, Egress, Agent Controller, ACP, and Identity contracts | Evolving with each rewritten component |
+| Component          | Target role                                                                                                                       | Status                                 |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- |
+| Antnest Runtime    | Executes one Agent's process and filesystem operations and transports Agent packets                                               | Implemented and aligned with Egress    |
+| Runtime Egress     | Rust service owning Agent addresses, network policy, UDP/TUN forwarding, rejection, and address reuse                             | Implemented and accepted with Runtime  |
+| Runtime Controller | Logical Runtime Environment lifecycle, private deployment realization, and platform observation with an in-process Docker adapter | Implemented and accepted for Docker    |
+| Agent Controller   | Owns Agent lifecycle, immutable configuration/execution revisions, explicit Runtime rebuild, Run admission, and Agent events      | Future service                         |
+| Agent ACP Service  | Owns ACP v2 Sessions, Runs, context, model/Tool loop, and per-Run Runtime MCP calls                                               | Implemented for Stage 2                |
+| Identity Service   | Owns Organizations, Users, local login, OIDC, SCIM, credentials, and the directory journal                                        | Implemented for Stage 2                |
+| Contracts          | Language-neutral Runtime, Egress, Agent Controller, ACP, and Identity contracts                                                   | Evolving with each rewritten component |
 
 The repository layout and ownership rules are defined in
 [`docs/service-layout.md`](docs/service-layout.md). The greenfield Stage 1
@@ -39,7 +39,7 @@ acceptance paths; this is not yet an end-user quick start.
 
 ```bash
 make fmt-check   # Go and Rust formatting
-make lint        # Go vet and Rust clippy
+make lint        # Go golangci-lint standard rules, Rust clippy, and Node lint/typecheck
 make test        # Unit and integration tests that need no running Compose stack
 make docker-build
 make compose-up

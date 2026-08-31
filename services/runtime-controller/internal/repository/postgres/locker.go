@@ -20,7 +20,7 @@ func (r *Repository) WithAgentLock(
 	ctx context.Context, agentID string, execute func(context.Context) error,
 ) (resultErr error) {
 	if strings.TrimSpace(agentID) == "" || execute == nil {
-		return fmt.Errorf("Agent ID and locked operation are required")
+		return fmt.Errorf("agent ID and locked operation are required")
 	}
 	connection, err := r.lockDatabase.Conn(ctx)
 	if err != nil {
@@ -135,9 +135,9 @@ func monitorAgentLockSession(
 				return
 			}
 			if err == nil {
-				err = fmt.Errorf("Agent mutation lock probe returned unexpected value")
+				err = fmt.Errorf("agent mutation lock probe returned unexpected value")
 			}
-			err = fmt.Errorf("Agent mutation lock session lost: %w", err)
+			err = fmt.Errorf("agent mutation lock session lost: %w", err)
 			leaseLost <- err
 			cancelExecution(errors.Join(repository.ErrLockLost, err))
 			return
@@ -151,7 +151,7 @@ func releaseAgentLock(ctx context.Context, connection *sql.Conn, agentID string)
 		"SELECT pg_advisory_unlock($1, hashtext($2))", agentMutationLockNamespace, agentID,
 	).Scan(&unlocked)
 	if err != nil || !unlocked {
-		return errors.Join(err, fmt.Errorf("Agent mutation lock was not released"))
+		return errors.Join(err, fmt.Errorf("agent mutation lock was not released"))
 	}
 	return nil
 }

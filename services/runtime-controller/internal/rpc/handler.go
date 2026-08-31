@@ -27,7 +27,7 @@ import (
 
 const maxRequestBytes = 1 << 20
 
-var ErrServerShutdown = errors.New("Runtime Controller server is shutting down")
+var ErrServerShutdown = errors.New("runtime controller server is shutting down")
 
 var (
 	rpcMeter          = otel.Meter("soft/antnest-platform/runtime-controller/rpc")

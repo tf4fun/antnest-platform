@@ -1,7 +1,8 @@
-.PHONY: fmt fmt-check lint go-vet rust-clippy node-lint test test-go test-rust test-node test-egress-postgres test-runtime-controller-postgres test-agent-acp-postgres test-identity-postgres docker-build docker-build-runtime-controller compose-up compose-down e2e-stage1 e2e-runtime-controller
+.PHONY: fmt fmt-check lint go-lint rust-clippy node-lint test test-go test-rust test-node test-egress-postgres test-runtime-controller-postgres test-agent-acp-postgres test-identity-postgres docker-build docker-build-runtime-controller compose-up compose-down e2e-stage1 e2e-runtime-controller
 
 GOCACHE := $(CURDIR)/.cache/go-build
 GOMODCACHE := $(CURDIR)/.cache/go-mod
+GOLANGCI_LINT_CACHE := $(CURDIR)/.cache/golangci-lint
 
 fmt:
 	gofmt -w $$(find services -name '*.go' -type f)
@@ -15,11 +16,10 @@ fmt-check:
 	cargo fmt --manifest-path services/runtime-egress/Cargo.toml --all --check
 	npm --prefix services/agent-acp-service run format:check
 
-lint: go-vet rust-clippy node-lint
+lint: go-lint rust-clippy node-lint
 
-go-vet:
-	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go vet -p=1 ./services/runtime-controller/...
-	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go vet -p=1 ./services/identity-service/...
+go-lint:
+	GOLANGCI_LINT_CACHE=$(GOLANGCI_LINT_CACHE) GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) golangci-lint run ./services/runtime-controller/... ./services/identity-service/...
 
 rust-clippy:
 	cargo clippy --manifest-path runtimes/antnest-runtime/Cargo.toml --locked --all-targets -- -D warnings

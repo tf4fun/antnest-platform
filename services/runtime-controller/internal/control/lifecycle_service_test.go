@@ -623,7 +623,7 @@ func newLifecyclePlatform() *lifecyclePlatform {
 }
 
 func (*lifecyclePlatform) Ready(context.Context) error { return nil }
-func (_ *lifecyclePlatform) DeploymentDigest(value deployment.Deployment) (string, error) {
+func (*lifecyclePlatform) DeploymentDigest(value deployment.Deployment) (string, error) {
 	return deployment.DigestValue(struct {
 		MappingRevision uint32
 		Deployment      deployment.Deployment

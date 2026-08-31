@@ -63,7 +63,7 @@ func (r *Repository) ProbeObservationJournal(ctx context.Context) error {
 		return fmt.Errorf("read Runtime observation journal probe: %w", err)
 	}
 	if source != probeSource {
-		return fmt.Errorf("Runtime observation journal probe returned unexpected source")
+		return fmt.Errorf("runtime observation journal probe returned unexpected source")
 	}
 	if err := notifyObservation(ctx, tx); err != nil {
 		return fmt.Errorf("exercise Runtime observation notification probe: %w", err)
@@ -407,13 +407,15 @@ func (r *Repository) GetEnvironment(
 	return scanEnvironment(r.database.QueryRowContext(ctx, selectEnvironmentSQL, agentID))
 }
 
-func (r *Repository) ListEnvironments(ctx context.Context) ([]deployment.Environment, error) {
+func (r *Repository) ListEnvironments(
+	ctx context.Context,
+) (result []deployment.Environment, resultErr error) {
 	rows, err := r.database.QueryContext(ctx, listEnvironmentsSQL)
 	if err != nil {
 		return nil, fmt.Errorf("list Runtime environments: %w", err)
 	}
-	defer rows.Close()
-	result := make([]deployment.Environment, 0)
+	defer joinCloseError(&resultErr, "Runtime environment rows", rows.Close)
+	result = make([]deployment.Environment, 0)
 	for rows.Next() {
 		value, scanErr := scanEnvironment(rows)
 		if scanErr != nil {

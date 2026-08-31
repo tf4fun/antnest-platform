@@ -123,12 +123,12 @@ func (l *observationLeadership) MarkObservationUnready(ctx context.Context) erro
 	return nil
 }
 
-func (r *Repository) ObservationMonitorReady(ctx context.Context) (bool, error) {
+func (r *Repository) ObservationMonitorReady(ctx context.Context) (ready bool, resultErr error) {
 	connection, err := r.lockDatabase.Conn(ctx)
 	if err != nil {
 		return false, fmt.Errorf("reserve observation readiness probe connection: %w", err)
 	}
-	defer connection.Close()
+	defer joinCloseError(&resultErr, "observation readiness probe connection", connection.Close)
 	var acquired bool
 	if err := connection.QueryRowContext(ctx,
 		"SELECT pg_try_advisory_lock($1, $2)",
@@ -229,7 +229,7 @@ func (l *observationLeadership) Release(ctx context.Context) error {
 
 func (r *Repository) ListenObservationNotifications(
 	ctx context.Context, ready func(), notify func(string),
-) error {
+) (resultErr error) {
 	if ready == nil || notify == nil {
 		return fmt.Errorf("observation notification callbacks are required")
 	}
@@ -237,7 +237,7 @@ func (r *Repository) ListenObservationNotifications(
 	if err != nil {
 		return fmt.Errorf("reserve observation notification connection: %w", err)
 	}
-	defer connection.Close()
+	defer joinCloseError(&resultErr, "observation notification connection", connection.Close)
 	return connection.Raw(func(raw any) error {
 		stdlibConnection, ok := raw.(*stdlib.Conn)
 		if !ok {

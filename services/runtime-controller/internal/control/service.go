@@ -95,7 +95,7 @@ func (s *Service) Ready(ctx context.Context) error {
 		return err
 	}
 	if !status.Ready() {
-		return fmt.Errorf("Runtime Controller is not ready")
+		return fmt.Errorf("runtime controller is not ready")
 	}
 	return nil
 }
@@ -816,7 +816,7 @@ func (s *Service) waitUntilReady(
 				}
 				lastErr = verifyErr
 			} else {
-				lastErr = fmt.Errorf("Runtime platform health is %s", inspection.Health)
+				lastErr = fmt.Errorf("runtime platform health is %s", inspection.Health)
 			}
 		} else {
 			lastErr = err

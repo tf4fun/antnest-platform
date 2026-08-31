@@ -23,8 +23,8 @@ const (
 )
 
 var (
-	ErrNotFound = errors.New("Docker resource was not found")
-	ErrConflict = errors.New("Docker resource already exists")
+	ErrNotFound = errors.New("docker resource was not found")
+	ErrConflict = errors.New("docker resource already exists")
 )
 
 type Config struct {
@@ -110,7 +110,7 @@ type Driver struct {
 
 func NewDriver(engine Engine, config Config) (*Driver, error) {
 	if engine == nil {
-		return nil, fmt.Errorf("Docker Engine is required")
+		return nil, fmt.Errorf("docker engine is required")
 	}
 	config.ManagementNetwork = strings.TrimSpace(config.ManagementNetwork)
 	config.SystemSkillsVolume = strings.TrimSpace(config.SystemSkillsVolume)
@@ -371,7 +371,7 @@ func (d *Driver) Watch(
 	emit func(context.Context, deployment.Observation) error,
 ) error {
 	if ready == nil || emit == nil {
-		return fmt.Errorf("Docker observation readiness and sink callbacks are required")
+		return fmt.Errorf("docker observation readiness and sink callbacks are required")
 	}
 	return d.engine.WatchManagedEvents(ctx, since, func() error { return ready(ctx) }, func(event ContainerEvent) error {
 		if event.Attributes[labelManaged] != "runtime" {
