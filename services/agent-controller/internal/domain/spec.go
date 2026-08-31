@@ -230,8 +230,9 @@ func (spec AgentSpec) Digest() (string, error) {
 
 func validateModel(model ModelSpec) error {
 	endpoint, err := url.Parse(model.BaseURL)
-	if err != nil || endpoint.Host == "" || (endpoint.Scheme != "http" && endpoint.Scheme != "https") {
-		return fmt.Errorf("model base URL must be an HTTP URL")
+	if err != nil || endpoint.Host == "" || (endpoint.Scheme != "http" && endpoint.Scheme != "https") ||
+		endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" {
+		return fmt.Errorf("model base URL must be an HTTP URL without credentials, query, or fragment")
 	}
 	if strings.TrimSpace(model.Model) == "" || model.ContextWindow < minimumContextWindow || model.MaxOutputTokens < 1 {
 		return fmt.Errorf("model limits or identity are invalid")

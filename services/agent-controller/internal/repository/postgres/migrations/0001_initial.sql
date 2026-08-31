@@ -27,7 +27,9 @@ CREATE TABLE IF NOT EXISTS agent_controller.provider_credentials (
     secret_type TEXT NOT NULL CHECK (secret_type = 'bearer'),
     ciphertext BYTEA NOT NULL,
     nonce BYTEA NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL
+    key_version TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    UNIQUE (credential_ref, organization_id, credential_version)
 );
 
 CREATE TABLE IF NOT EXISTS agent_controller.model_profiles (
@@ -49,11 +51,26 @@ CREATE TABLE IF NOT EXISTS agent_controller.model_profile_revisions (
     organization_id TEXT NOT NULL,
     revision BIGINT NOT NULL CHECK (revision > 0),
     model JSONB NOT NULL,
-    credential_ref TEXT NOT NULL REFERENCES agent_controller.provider_credentials(credential_ref),
+    credential_ref TEXT NOT NULL,
     credential_version TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL,
-    UNIQUE (model_profile_id, revision)
+    UNIQUE (model_profile_id, revision),
+    UNIQUE (id, organization_id),
+    UNIQUE (id, model_profile_id, organization_id, revision),
+    CONSTRAINT model_profile_credential_fk
+        FOREIGN KEY (credential_ref, organization_id, credential_version)
+        REFERENCES agent_controller.provider_credentials (
+            credential_ref, organization_id, credential_version
+        )
 );
+
+ALTER TABLE agent_controller.model_profiles
+    ADD CONSTRAINT model_profile_head_fk
+    FOREIGN KEY (current_revision_id, id, organization_id, current_revision)
+    REFERENCES agent_controller.model_profile_revisions (
+        id, model_profile_id, organization_id, revision
+    )
+    DEFERRABLE INITIALLY DEFERRED;
 
 CREATE TABLE IF NOT EXISTS agent_controller.agent_templates (
     id TEXT PRIMARY KEY,
@@ -71,14 +88,26 @@ CREATE TABLE IF NOT EXISTS agent_controller.agent_template_revisions (
     template_id TEXT NOT NULL REFERENCES agent_controller.agent_templates(id),
     organization_id TEXT NOT NULL,
     revision BIGINT NOT NULL CHECK (revision > 0),
-    model_profile_revision_id TEXT NOT NULL REFERENCES agent_controller.model_profile_revisions(id),
+    model_profile_revision_id TEXT NOT NULL,
     system_prompt TEXT NOT NULL,
     max_model_requests INTEGER NOT NULL CHECK (max_model_requests BETWEEN 1 AND 128),
     context_policy_version TEXT NOT NULL,
     runtime_input JSONB NOT NULL,
     created_at TIMESTAMPTZ NOT NULL,
-    PRIMARY KEY (template_id, revision)
+    PRIMARY KEY (template_id, revision),
+    UNIQUE (template_id, organization_id, revision),
+    CONSTRAINT template_model_revision_fk
+        FOREIGN KEY (model_profile_revision_id, organization_id)
+        REFERENCES agent_controller.model_profile_revisions (id, organization_id)
 );
+
+ALTER TABLE agent_controller.agent_templates
+    ADD CONSTRAINT template_head_fk
+    FOREIGN KEY (id, organization_id, current_revision)
+    REFERENCES agent_controller.agent_template_revisions (
+        template_id, organization_id, revision
+    )
+    DEFERRABLE INITIALLY DEFERRED;
 
 CREATE TABLE IF NOT EXISTS agent_controller.agents (
     id TEXT PRIMARY KEY,

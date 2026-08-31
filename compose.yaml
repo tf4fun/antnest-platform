@@ -212,6 +212,62 @@ services:
     networks: [identity-database, development]
     stop_grace_period: 20s
 
+  agent-controller-postgres:
+    profiles: [stage2]
+    image: postgres:17-bookworm
+    environment:
+      POSTGRES_DB: antnest_agent_controller
+      POSTGRES_USER: antnest_agent_controller
+      POSTGRES_PASSWORD: ${ANTNEST_AGENT_CONTROLLER_POSTGRES_PASSWORD:-antnest-agent-controller-dev}
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U antnest_agent_controller -d antnest_agent_controller",
+        ]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    volumes:
+      - agent-controller-postgres:/var/lib/postgresql/data
+    ports:
+      - 127.0.0.1:${ANTNEST_AGENT_CONTROLLER_POSTGRES_HOST_PORT:-55436}:5432
+    networks: [agent-controller-database]
+
+  agent-controller:
+    profiles: [stage2]
+    image: antnest/agent-controller:local
+    build:
+      context: .
+      dockerfile: services/agent-controller/Dockerfile
+    depends_on:
+      agent-controller-postgres:
+        condition: service_healthy
+    environment:
+      ANTNEST_AGENT_CONTROLLER_DATABASE_URL: postgres://antnest_agent_controller:${ANTNEST_AGENT_CONTROLLER_POSTGRES_PASSWORD:-antnest-agent-controller-dev}@agent-controller-postgres:5432/antnest_agent_controller
+      ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY: ${ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY:-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=}
+      ANTNEST_AGENT_CONTROLLER_LISTEN: :8080
+      OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-true}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_EXPORTER_OTLP_PROTOCOL: ${OTEL_EXPORTER_OTLP_PROTOCOL:-http/protobuf}
+      OTEL_SERVICE_NAME: agent-controller
+    ports:
+      - 127.0.0.1:${ANTNEST_AGENT_CONTROLLER_HOST_PORT:-58083}:8080
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/agent-controller", "--healthcheck"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [agent-controller-database, development]
+    stop_grace_period: 20s
+
+  jaeger:
+    profiles: [observability]
+    image: cr.jaegertracing.io/jaegertracing/jaeger:2.20.0
+    ports:
+      - 127.0.0.1:${ANTNEST_JAEGER_UI_HOST_PORT:-16686}:16686
+    networks: [development]
+
 networks:
   control:
     internal: true
@@ -230,6 +286,7 @@ networks:
   runtime-controller-database: {}
   agent-acp-database: {}
   identity-database: {}
+  agent-controller-database: {}
 
 volumes:
   egress-postgres:
@@ -238,3 +295,4 @@ volumes:
     name: ${ANTNEST_RUNTIME_SYSTEM_SKILLS_VOLUME:-antnest-system-skills}
   agent-acp-postgres:
   identity-postgres:
+  agent-controller-postgres:

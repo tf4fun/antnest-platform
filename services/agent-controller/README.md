@@ -6,9 +6,11 @@ executable Agent by coordinating Runtime Controller and Runtime Egress.
 
 ## Status
 
-Stage 2B implementation is in progress. The service contract, domain model,
-PostgreSQL ownership, lifecycle Saga, Run admission, event journal, and
-OpenTelemetry acceptance are developed together.
+Stage 2B implementation is in progress. The first runnable vertical slice now
+provides ModelProfile and Template create/revise/get/list RPC, encrypted
+Provider credentials, immutable revisions, PostgreSQL idempotency/CAS, and
+OTLP HTTP/repository spans. Agent lifecycle, Run admission, and event-journal
+routes remain target contracts until their corresponding slices are completed.
 
 ## Owns
 

@@ -47,10 +47,28 @@ func TestInitialMigrationHasFinalSerializationConstraints(t *testing.T) {
 		"UNIQUE (organization_id, profile_key)",
 		"UNIQUE (organization_id, template_key)",
 		"source_runtime_absent",
+		"model_profile_head_fk",
+		"model_profile_credential_fk",
+		"template_head_fk",
+		"template_model_revision_fk",
 	}
 	for _, constraint := range required {
 		if !strings.Contains(initialSchemaSQL, constraint) {
 			t.Errorf("initial migration lacks %s", constraint)
 		}
+	}
+}
+
+func TestMigrationRecordRejectsNameOrChecksumDrift(t *testing.T) {
+	t.Parallel()
+
+	if err := validateMigrationRecord("initial_agent_controller_schema", "checksum", "initial_agent_controller_schema", "checksum"); err != nil {
+		t.Fatalf("matching migration record: %v", err)
+	}
+	if err := validateMigrationRecord("initial_agent_controller_schema", "checksum", "renamed", "checksum"); err == nil {
+		t.Fatal("migration name drift was accepted")
+	}
+	if err := validateMigrationRecord("initial_agent_controller_schema", "checksum", "initial_agent_controller_schema", "changed"); err == nil {
+		t.Fatal("migration checksum drift was accepted")
 	}
 }

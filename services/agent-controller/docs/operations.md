@@ -2,9 +2,10 @@
 
 ## Process Model
 
-One binary serves internal HTTP RPC and runs a durable lifecycle-operation
-worker. PostgreSQL is authoritative. A process restart resumes non-terminal
-operations from their persisted phase and reuses the same child request IDs.
+One binary serves internal HTTP RPC. PostgreSQL is authoritative. The current
+runnable slice serves ModelProfile and Template Catalog operations. The durable
+lifecycle-operation worker described below is the next Stage 2 slice and is not
+yet started by the process.
 
 Multiple replicas may serve reads and Run admission. Lifecycle workers claim
 operations with PostgreSQL row locking; Agent-row constraints remain the final
@@ -12,10 +13,13 @@ serialization guard.
 
 ## Configuration
 
-Required:
+Required by the current Catalog slice:
 
 - `ANTNEST_AGENT_CONTROLLER_DATABASE_URL`;
 - `ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY`: base64-encoded 32-byte AES key;
+
+Required when lifecycle orchestration is enabled in a later slice:
+
 - `ANTNEST_RUNTIME_CONTROLLER_URL`;
 - `ANTNEST_EGRESS_CONTROL_URL`;
 - `ANTNEST_RUNTIME_EGRESS_ADVERTISE_IPV4`: Runtime-reachable Egress address is
@@ -35,18 +39,19 @@ Secrets must come from environment/secret mounts and must never be printed.
 
 ## Readiness
 
-`GET /status` returns ready only when:
+`GET /status` currently returns ready when PostgreSQL is reachable and its
+migrations were accepted at startup. Once lifecycle orchestration is enabled,
+readiness will additionally require:
 
-1. PostgreSQL is reachable and migrations are current;
-2. Runtime Controller reports ready;
-3. Runtime Egress control plane reports ready;
-4. the lifecycle worker has completed its initial recovery scan.
+1. Runtime Controller reports ready;
+2. Runtime Egress control plane reports ready;
+3. the lifecycle worker has completed its initial recovery scan.
 
 Dependency failures after startup are reported per business request and in
 metrics; liveness remains process-level so the deployment platform does not
 turn a downstream outage into a restart loop.
 
-## Failure Recovery
+## Lifecycle Failure Recovery (Planned Slice)
 
 - Retry an uncertain lifecycle command with the original request ID.
 - Inspect `/internal/agent-operations/{request_id}` before creating a new
@@ -71,7 +76,9 @@ OTEL_SERVICE_NAME=agent-controller
 ```
 
 The Compose `observability` profile starts Jaeger and exposes its UI on the
-configured loopback port. A Stage 2 trace must show:
+configured loopback port. The current Catalog trace shows the bounded HTTP
+route and logical repository operation. Once Stage 2 is complete, a Run trace
+must show:
 
 ```text
 ACP session/prompt
@@ -99,13 +106,13 @@ the closed aggregate after the configured policy window.
 Run heavy checks serially:
 
 ```sh
-go test ./services/agent-controller/...
+GOCACHE=.cache/go-build GOMODCACHE=.cache/go-mod go test ./services/agent-controller/...
 make test-agent-controller-postgres
-docker compose --profile stage2 --profile observability up -d --wait
-make e2e-stage2
+OTEL_SDK_DISABLED=false OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318 \
+  docker compose --profile stage2 --profile observability up -d --wait \
+  agent-controller-postgres agent-controller jaeger
 ```
 
-The E2E profile starts from empty service databases, creates a ModelProfile and
-Template, creates an Agent, proves Runtime readiness and one ACP Tool Run,
-rebuilds it, and verifies a single trace crosses ACP, Agent Controller,
-Runtime Controller, and Runtime MCP.
+Full Stage 2 E2E will additionally create an Agent, prove Runtime readiness and
+one ACP Tool Run, rebuild it, and verify one trace crosses ACP, Agent
+Controller, Runtime Controller, and Runtime MCP.

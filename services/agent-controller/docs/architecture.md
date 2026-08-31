@@ -10,6 +10,11 @@ are proven.
 It depends on language-neutral HTTP contracts. It does not import another
 service implementation or inspect another service database.
 
+The document describes the completed target boundary. Implementation proceeds
+as vertical business slices. At present the ModelProfile/Template Catalog slice
+is runnable; Agent lifecycle, Run admission, and event replay remain in
+progress and must not be inferred from table or contract presence alone.
+
 ## Aggregate Model
 
 ### ModelProfile
@@ -152,7 +157,9 @@ candidate Runtime.
 1. Persist an encrypted Provider credential and immutable ModelProfile revision.
 2. Validate a Template against an enabled ModelProfile revision.
 3. Persist the Template head and immutable revision atomically.
-4. Append management audit facts without exposing secrets.
+4. The immutable revisions and idempotency ledger provide the current Catalog
+   history. A queryable management-audit stream is added with the event slice;
+   no secret may enter it.
 
 ### Create Agent
 

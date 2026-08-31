@@ -88,6 +88,27 @@ func TestTemplateRejectsUnknownContextPolicyVersion(t *testing.T) {
 	}
 }
 
+func TestModelProfileRejectsEndpointCredentialsQueryAndFragment(t *testing.T) {
+	t.Parallel()
+
+	for _, baseURL := range []string{
+		"https://user:secret@api.example.com/v1",
+		"https://api.example.com/v1?token=secret",
+		"https://api.example.com/v1#fragment",
+	} {
+		model := validModel()
+		model.BaseURL = baseURL
+		_, err := NewModelProfileRevision(ModelProfileRevisionInput{
+			ID: "model-revision-1", ModelProfileID: "model-1", OrganizationID: "org-1",
+			Revision: 1, Model: model, CredentialRef: "credential-1",
+			CredentialVersion: "credential-version-1",
+		})
+		if err == nil {
+			t.Errorf("unsafe Model endpoint %q was accepted", baseURL)
+		}
+	}
+}
+
 func validModel() ModelSpec {
 	temperature := 0.4
 	return ModelSpec{

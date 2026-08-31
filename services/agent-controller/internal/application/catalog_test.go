@@ -36,7 +36,7 @@ func TestCreateModelProfileSealsCredentialAndPersistsImmutableRevision(t *testin
 	if sealer.plaintext != "secret-value" {
 		t.Fatal("credential was not passed to sealer")
 	}
-	if sealer.credentialRef != created.CredentialRef {
+	if sealer.identity.CredentialRef != created.CredentialRef || sealer.identity.OrganizationID != "org-1" {
 		t.Fatal("credential identity was not bound as authenticated encryption context")
 	}
 	if store.modelRecord.RequestFingerprint == "" || store.modelRecord.RequestFingerprint == "secret-value" {
@@ -67,6 +67,31 @@ func TestCreateModelProfileRetryUsesDeterministicResourceIdentities(t *testing.T
 	}
 	if firstRecord.RequestFingerprint != store.modelRecord.RequestFingerprint {
 		t.Fatal("retry fingerprint changed")
+	}
+}
+
+func TestCreateModelProfileReplaysCompletedRequestBeforeSealing(t *testing.T) {
+	t.Parallel()
+
+	replayed := ports.ModelProfileRecord{
+		ModelProfileID: "model-existing", OrganizationID: "org-1", ProfileKey: "deepseek",
+		DisplayName: "DeepSeek", Revision: mustModelRevision(t, "model-revision-existing", "org-1"),
+		CredentialRef: "credential-existing", CredentialVersion: "credential-version-existing",
+		Enabled: true, CreatedAt: time.Unix(1, 0).UTC(), UpdatedAt: time.Unix(1, 0).UTC(),
+	}
+	store := &catalogStoreStub{modelReplay: replayed, replayFound: true}
+	sealer := &sealerStub{err: errors.New("sealer unavailable")}
+	service := NewCatalogService(store, sealer, fixedClock{now: time.Unix(2, 0).UTC()})
+
+	view, err := service.CreateModelProfile(context.Background(), CreateModelProfileInput{
+		RequestID: "request-1", OrganizationID: "org-1", ProfileKey: "deepseek",
+		DisplayName: "DeepSeek", Model: validModelInput(), CredentialSecret: "secret-value",
+	})
+	if err != nil {
+		t.Fatalf("replay completed ModelProfile request: %v", err)
+	}
+	if view.ModelProfileID != replayed.ModelProfileID || sealer.calls != 0 {
+		t.Fatalf("completed request was not replayed before sealing: view=%+v calls=%d", view, sealer.calls)
 	}
 }
 
@@ -221,6 +246,21 @@ type catalogStoreStub struct {
 	expectedTemplateRevision int64
 	listAfterID              string
 	listLimit                int
+	modelReplay              ports.ModelProfileRecord
+	templateReplay           ports.TemplateRecord
+	replayFound              bool
+}
+
+func (store *catalogStoreStub) ReplayModelProfileRequest(
+	_ context.Context, _ ports.CatalogRequestKind, _ string, _ string,
+) (ports.ModelProfileRecord, bool, error) {
+	return store.modelReplay, store.replayFound, nil
+}
+
+func (store *catalogStoreStub) ReplayTemplateRequest(
+	_ context.Context, _ ports.CatalogRequestKind, _ string, _ string,
+) (ports.TemplateRecord, bool, error) {
+	return store.templateReplay, store.replayFound, nil
 }
 
 func (store *catalogStoreStub) PutModelProfile(_ context.Context, record ports.ModelProfileRecord) (ports.ModelProfileRecord, error) {
@@ -287,17 +327,20 @@ func (store *catalogStoreStub) ListTemplates(
 }
 
 type sealerStub struct {
-	credentialRef string
-	plaintext     string
-	sealed        ports.SealedSecret
+	identity  ports.CredentialIdentity
+	plaintext string
+	sealed    ports.SealedSecret
+	err       error
+	calls     int
 }
 
 func (sealer *sealerStub) Seal(
-	_ context.Context, credentialRef string, plaintext string,
+	_ context.Context, identity ports.CredentialIdentity, plaintext string,
 ) (ports.SealedSecret, error) {
-	sealer.credentialRef = credentialRef
+	sealer.calls++
+	sealer.identity = identity
 	sealer.plaintext = plaintext
-	return sealer.sealed, nil
+	return sealer.sealed, sealer.err
 }
 
 type fixedClock struct{ now time.Time }

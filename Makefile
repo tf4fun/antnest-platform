@@ -1,4 +1,4 @@
-.PHONY: fmt fmt-check lint go-lint rust-clippy node-lint test test-go test-rust test-node test-egress-postgres test-runtime-controller-postgres test-agent-acp-postgres test-identity-postgres docker-build docker-build-runtime-controller compose-up compose-down e2e-stage1 e2e-runtime-controller
+.PHONY: fmt fmt-check lint go-lint rust-clippy node-lint test test-go test-rust test-node test-egress-postgres test-runtime-controller-postgres test-agent-acp-postgres test-identity-postgres test-agent-controller-postgres docker-build docker-build-runtime-controller compose-up compose-down e2e-stage1 e2e-runtime-controller
 
 GOCACHE := $(CURDIR)/.cache/go-build
 GOMODCACHE := $(CURDIR)/.cache/go-mod
@@ -70,6 +70,12 @@ test-identity-postgres:
 	docker compose exec -T identity-postgres createdb -U antnest_identity antnest_identity_test
 	ANTNEST_IDENTITY_TEST_DATABASE_URL=postgres://antnest_identity:$${ANTNEST_IDENTITY_POSTGRES_PASSWORD:-antnest-identity-dev}@127.0.0.1:55435/antnest_identity_test GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go test -p=1 ./services/identity-service/internal/repository ./services/identity-service/internal/e2e -count=1
 
+test-agent-controller-postgres:
+	docker compose --profile stage2 up -d --wait agent-controller-postgres
+	docker compose exec -T agent-controller-postgres dropdb --if-exists --force -U antnest_agent_controller antnest_agent_controller_test
+	docker compose exec -T agent-controller-postgres createdb -U antnest_agent_controller antnest_agent_controller_test
+	ANTNEST_AGENT_CONTROLLER_TEST_DATABASE_URL=postgres://antnest_agent_controller:$${ANTNEST_AGENT_CONTROLLER_POSTGRES_PASSWORD:-antnest-agent-controller-dev}@127.0.0.1:55436/antnest_agent_controller_test GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go test -p=1 ./services/agent-controller/internal/repository/postgres ./services/agent-controller/internal/e2e -count=1
+
 docker-build-runtime-controller:
 	docker build -f runtimes/antnest-runtime/Dockerfile -t antnest/antnest-runtime:local .
 	docker compose build runtime-egress
@@ -78,6 +84,7 @@ docker-build-runtime-controller:
 docker-build: docker-build-runtime-controller
 	docker compose build agent-acp-service
 	docker compose --profile stage2 build identity-service
+	docker compose --profile stage2 build agent-controller
 
 compose-up: docker-build-runtime-controller
 	docker compose up -d --wait postgres runtime-egress runtime-controller-postgres runtime-controller

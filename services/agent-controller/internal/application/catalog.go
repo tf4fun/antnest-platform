@@ -69,6 +69,15 @@ func (service *CatalogService) CreateModelProfile(ctx context.Context, input Cre
 	if err != nil {
 		return ModelProfileView{}, err
 	}
+	replayed, found, err := service.store.ReplayModelProfileRequest(
+		ctx, ports.CreateModelProfileRequest, input.RequestID, fingerprint,
+	)
+	if err != nil {
+		return ModelProfileView{}, fmt.Errorf("replay ModelProfile request: %w", err)
+	}
+	if found {
+		return modelProfileView(replayed), nil
+	}
 	profileID := derivedID("model", input.RequestID)
 	revisionID := derivedID("modelrev", input.RequestID)
 	credentialRef := derivedID("credential", input.RequestID)
@@ -81,7 +90,10 @@ func (service *CatalogService) CreateModelProfile(ctx context.Context, input Cre
 	if err != nil {
 		return ModelProfileView{}, fmt.Errorf("%w: %v", ErrInvalidInput, err)
 	}
-	sealed, err := service.sealer.Seal(ctx, credentialRef, input.CredentialSecret)
+	sealed, err := service.sealer.Seal(ctx, ports.CredentialIdentity{
+		OrganizationID: input.OrganizationID, CredentialRef: credentialRef,
+		CredentialVersion: credentialVersion,
+	}, input.CredentialSecret)
 	if err != nil {
 		return ModelProfileView{}, fmt.Errorf("seal Provider credential: %w", err)
 	}
@@ -115,13 +127,22 @@ func (service *CatalogService) ReviseModelProfile(
 		strings.TrimSpace(input.DisplayName) == "" || strings.TrimSpace(input.CredentialSecret) == "" {
 		return ModelProfileView{}, fmt.Errorf("%w: ModelProfile revision input", ErrInvalidInput)
 	}
-	current, err := service.store.GetModelProfile(ctx, input.ModelProfileID)
-	if err != nil {
-		return ModelProfileView{}, fmt.Errorf("load ModelProfile: %w", err)
-	}
 	fingerprint, err := requestFingerprint(input)
 	if err != nil {
 		return ModelProfileView{}, err
+	}
+	replayed, found, err := service.store.ReplayModelProfileRequest(
+		ctx, ports.ReviseModelProfileRequest, input.RequestID, fingerprint,
+	)
+	if err != nil {
+		return ModelProfileView{}, fmt.Errorf("replay ModelProfile revision request: %w", err)
+	}
+	if found {
+		return modelProfileView(replayed), nil
+	}
+	current, err := service.store.GetModelProfile(ctx, input.ModelProfileID)
+	if err != nil {
+		return ModelProfileView{}, fmt.Errorf("load ModelProfile: %w", err)
 	}
 	revisionID := derivedID("modelrev", input.RequestID)
 	credentialRef := derivedID("credential", input.RequestID)
@@ -134,7 +155,10 @@ func (service *CatalogService) ReviseModelProfile(
 	if err != nil {
 		return ModelProfileView{}, fmt.Errorf("%w: %v", ErrInvalidInput, err)
 	}
-	sealed, err := service.sealer.Seal(ctx, credentialRef, input.CredentialSecret)
+	sealed, err := service.sealer.Seal(ctx, ports.CredentialIdentity{
+		OrganizationID: current.OrganizationID, CredentialRef: credentialRef,
+		CredentialVersion: credentialVersion,
+	}, input.CredentialSecret)
 	if err != nil {
 		return ModelProfileView{}, fmt.Errorf("seal Provider credential: %w", err)
 	}
@@ -184,6 +208,19 @@ func (service *CatalogService) CreateTemplate(ctx context.Context, input CreateT
 	if err := validateTemplateInput(input); err != nil {
 		return TemplateView{}, err
 	}
+	fingerprint, err := requestFingerprint(input)
+	if err != nil {
+		return TemplateView{}, err
+	}
+	replayed, found, err := service.store.ReplayTemplateRequest(
+		ctx, ports.CreateTemplateRequest, input.RequestID, fingerprint,
+	)
+	if err != nil {
+		return TemplateView{}, fmt.Errorf("replay Template request: %w", err)
+	}
+	if found {
+		return templateView(replayed), nil
+	}
 	modelRevision, err := service.store.GetModelProfileRevision(ctx, input.ModelProfileRevisionID)
 	if err != nil {
 		if errors.Is(err, ports.ErrNotFound) {
@@ -193,10 +230,6 @@ func (service *CatalogService) CreateTemplate(ctx context.Context, input CreateT
 	}
 	if modelRevision.OrganizationID() != input.OrganizationID {
 		return TemplateView{}, fmt.Errorf("%w: cross-organization ModelProfile", ErrInvalidReference)
-	}
-	fingerprint, err := requestFingerprint(input)
-	if err != nil {
-		return TemplateView{}, err
 	}
 	templateID := derivedID("template", input.RequestID)
 	revision, err := domain.NewTemplateRevision(domain.TemplateRevisionInput{
@@ -239,6 +272,19 @@ func (service *CatalogService) ReviseTemplate(
 		!validIdentifier(input.ModelProfileRevisionID) || strings.TrimSpace(input.Name) == "" {
 		return TemplateView{}, fmt.Errorf("%w: Template revision input", ErrInvalidInput)
 	}
+	fingerprint, err := requestFingerprint(input)
+	if err != nil {
+		return TemplateView{}, err
+	}
+	replayed, found, err := service.store.ReplayTemplateRequest(
+		ctx, ports.ReviseTemplateRequest, input.RequestID, fingerprint,
+	)
+	if err != nil {
+		return TemplateView{}, fmt.Errorf("replay Template revision request: %w", err)
+	}
+	if found {
+		return templateView(replayed), nil
+	}
 	current, err := service.store.GetTemplate(ctx, input.TemplateID)
 	if err != nil {
 		return TemplateView{}, fmt.Errorf("load Template: %w", err)
@@ -249,10 +295,6 @@ func (service *CatalogService) ReviseTemplate(
 	}
 	if modelRevision.OrganizationID() != current.OrganizationID {
 		return TemplateView{}, fmt.Errorf("%w: cross-organization ModelProfile", ErrInvalidReference)
-	}
-	fingerprint, err := requestFingerprint(input)
-	if err != nil {
-		return TemplateView{}, err
 	}
 	revision, err := domain.NewTemplateRevision(domain.TemplateRevisionInput{
 		TemplateID: current.TemplateID, OrganizationID: current.OrganizationID,

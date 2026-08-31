@@ -18,10 +18,26 @@ var (
 type SealedSecret struct {
 	Ciphertext []byte
 	Nonce      []byte
+	KeyVersion string
 }
 
+type CredentialIdentity struct {
+	OrganizationID    string
+	CredentialRef     string
+	CredentialVersion string
+}
+
+type CatalogRequestKind string
+
+const (
+	CreateModelProfileRequest CatalogRequestKind = "create_model_profile"
+	ReviseModelProfileRequest CatalogRequestKind = "revise_model_profile"
+	CreateTemplateRequest     CatalogRequestKind = "create_template"
+	ReviseTemplateRequest     CatalogRequestKind = "revise_template"
+)
+
 type CredentialSealer interface {
-	Seal(ctx context.Context, credentialRef string, plaintext string) (SealedSecret, error)
+	Seal(ctx context.Context, identity CredentialIdentity, plaintext string) (SealedSecret, error)
 }
 
 type ModelProfileRecord struct {
@@ -54,11 +70,13 @@ type TemplateRecord struct {
 }
 
 type CatalogStore interface {
+	ReplayModelProfileRequest(ctx context.Context, kind CatalogRequestKind, requestID string, fingerprint string) (ModelProfileRecord, bool, error)
 	PutModelProfile(ctx context.Context, record ModelProfileRecord) (ModelProfileRecord, error)
 	ReviseModelProfile(ctx context.Context, expectedRevision int64, record ModelProfileRecord) (ModelProfileRecord, error)
 	GetModelProfile(ctx context.Context, id string) (ModelProfileRecord, error)
 	GetModelProfileRevision(ctx context.Context, id string) (domain.ModelProfileRevision, error)
 	ListModelProfiles(ctx context.Context, organizationID string, afterID string, limit int) ([]ModelProfileRecord, string, error)
+	ReplayTemplateRequest(ctx context.Context, kind CatalogRequestKind, requestID string, fingerprint string) (TemplateRecord, bool, error)
 	PutTemplate(ctx context.Context, record TemplateRecord) (TemplateRecord, error)
 	ReviseTemplate(ctx context.Context, expectedRevision int64, record TemplateRecord) (TemplateRecord, error)
 	GetTemplate(ctx context.Context, id string) (TemplateRecord, error)
