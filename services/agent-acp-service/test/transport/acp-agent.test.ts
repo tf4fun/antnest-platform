@@ -1,13 +1,18 @@
 import { describe, expect, it, vi } from "vitest";
 import * as acp from "@agentclientprotocol/sdk/experimental/v2";
 
-import { createAcpAgent } from "../../src/transport/acp/agent.js";
-import type { AcpApplicationPort, AcceptedAcpRun } from "../../src/ports/acp-application.js";
+import { createAcpV2Agent } from "../../src/transport/acp/v2/agent.js";
+import {
+  RunRecoveryRequiredError,
+  type AcpApplicationPort,
+  type AcceptedAcpRun,
+} from "../../src/ports/acp-application.js";
 import type { ConnectionBinding } from "../../src/domain/types.js";
+import { DomainError } from "../../src/domain/errors.js";
 
 const binding: ConnectionBinding = {
   connectionId: "connection-1",
-  authenticatedSubject: "subject-1",
+  agentAccessSubject: "subject-1",
   principalId: "principal-1",
   agentId: "agent-1",
   accessRevision: "access-1",
@@ -26,13 +31,14 @@ describe("ACP v2 agent mapping", () => {
       return {
         terminalClass: "completed",
         executorState: "quiescent",
-        runtimeEffectState: "none",
+        toolEffectState: "none",
+        stopReason: "max_tokens",
       };
     });
     const application = createApplication({
       executeRun,
     });
-    const agent = createAcpAgent({
+    const agent = createAcpV2Agent({
       binding,
       promptCapabilities: { image: false, embeddedContext: false },
       application,
@@ -85,7 +91,7 @@ describe("ACP v2 agent mapping", () => {
         messageId: "assistant-1",
         content: [{ type: "text", text: "hello" }],
       },
-      { sessionUpdate: "state_update", state: "idle", stopReason: "end_turn" },
+      { sessionUpdate: "state_update", state: "idle", stopReason: "max_tokens" },
     ]);
   });
 
@@ -106,7 +112,7 @@ describe("ACP v2 agent mapping", () => {
     const application = createApplication({
       resumeSession,
     });
-    const agent = createAcpAgent({
+    const agent = createAcpV2Agent({
       binding,
       promptCapabilities: { image: true, embeddedContext: true },
       application,
@@ -149,7 +155,7 @@ describe("ACP v2 agent mapping", () => {
       return {
         terminalClass: "cancelled",
         executorState: "quiescent",
-        runtimeEffectState: "none",
+        toolEffectState: "none",
       };
     });
     const cancelRun = vi.fn<AcpApplicationPort["cancelRun"]>(() => {
@@ -160,7 +166,7 @@ describe("ACP v2 agent mapping", () => {
       executeRun,
       cancelRun,
     });
-    const agent = createAcpAgent({
+    const agent = createAcpV2Agent({
       binding,
       promptCapabilities: { image: true, embeddedContext: true },
       application,
@@ -190,9 +196,51 @@ describe("ACP v2 agent mapping", () => {
     expect(cancelRun).toHaveBeenCalledOnce();
   });
 
+  it("does not invent an idle failure while durable recovery owns the Run outcome", async () => {
+    const updates: acp.SessionUpdate[] = [];
+    const executeRun = vi.fn<AcpApplicationPort["executeRun"]>(() =>
+      Promise.reject(
+        new RunRecoveryRequiredError(
+          "Run event persistence requires recovery",
+          new Error("database unavailable"),
+        ),
+      ),
+    );
+    const agent = createAcpV2Agent({
+      binding,
+      promptCapabilities: { image: false, embeddedContext: false },
+      application: createApplication({ executeRun }),
+    });
+    const client = acp.client().onNotification(acp.methods.client.session.update, ({ params }) => {
+      updates.push(params.update);
+    });
+
+    await client.connectWith(agent, async (context) => {
+      await context.request(acp.methods.agent.initialize, {
+        protocolVersion: acp.PROTOCOL_VERSION,
+        info: { name: "test-client", version: "1.0.0" },
+      });
+      await context.request(acp.methods.agent.session.prompt, {
+        sessionId: "session-1",
+        prompt: [{ type: "text", text: "recover" }],
+      });
+      await vi.waitFor(() => expect(executeRun).toHaveBeenCalledOnce());
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(updates).toEqual([
+      {
+        sessionUpdate: "user_message",
+        messageId: "user-message-1",
+        content: [{ type: "text", text: "recover" }],
+      },
+      { sessionUpdate: "state_update", state: "running" },
+    ]);
+  });
+
   it("delegates cancellation even when this connection did not start the Run", async () => {
     const cancelRun = vi.fn<AcpApplicationPort["cancelRun"]>(() => Promise.resolve());
-    const agent = createAcpAgent({
+    const agent = createAcpV2Agent({
       binding,
       promptCapabilities: { image: true, embeddedContext: true },
       application: createApplication({ cancelRun }),
@@ -216,7 +264,7 @@ describe("ACP v2 agent mapping", () => {
       Promise.reject(new Error("unsupported prompt reached application")),
     );
     const application = createApplication({ acceptPrompt });
-    const agent = createAcpAgent({
+    const agent = createAcpV2Agent({
       binding,
       promptCapabilities: { image: false, embeddedContext: false },
       application,
@@ -238,10 +286,42 @@ describe("ACP v2 agent mapping", () => {
 
     expect(acceptPrompt).not.toHaveBeenCalled();
   });
+
+  it("reports a stale access binding before checking cached prompt capabilities", async () => {
+    const assertAccess = vi.fn<AcpApplicationPort["assertAccess"]>(() =>
+      Promise.reject(
+        new DomainError("connection_binding_stale", "Agent access changed; reconnect"),
+      ),
+    );
+    const acceptPrompt = vi.fn<AcpApplicationPort["acceptPrompt"]>();
+    const agent = createAcpV2Agent({
+      binding,
+      promptCapabilities: { image: false, embeddedContext: false },
+      application: createApplication({ assertAccess, acceptPrompt }),
+    });
+    const client = acp.client();
+
+    await client.connectWith(agent, async (context) => {
+      await context.request(acp.methods.agent.initialize, {
+        protocolVersion: acp.PROTOCOL_VERSION,
+        info: { name: "test-client", version: "1.0.0" },
+      });
+      await expect(
+        context.request(acp.methods.agent.session.prompt, {
+          sessionId: "session-1",
+          prompt: [{ type: "image", data: "aGVsbG8=", mimeType: "image/png" }],
+        }),
+      ).rejects.toThrow("Agent access changed; reconnect");
+    });
+
+    expect(assertAccess).toHaveBeenCalledWith({ binding });
+    expect(acceptPrompt).not.toHaveBeenCalled();
+  });
 });
 
 function createApplication(overrides: Partial<AcpApplicationPort> = {}): AcpApplicationPort {
   return {
+    assertAccess: vi.fn(() => Promise.resolve()),
     createSession: vi.fn(() => Promise.resolve({ sessionId: "session-1" })),
     listSessions: vi.fn(() => Promise.resolve({ sessions: [] })),
     deleteSession: vi.fn(() => Promise.resolve()),
@@ -272,7 +352,6 @@ function createApplication(overrides: Partial<AcpApplicationPort> = {}): AcpAppl
             systemPrompt: "system",
             skillInstructions: [],
             model: {
-              adapter: "openai_compatible",
               baseUrl: "https://api.example.test/v1",
               model: "model",
               contextWindow: 32_000,
@@ -290,7 +369,8 @@ function createApplication(overrides: Partial<AcpApplicationPort> = {}): AcpAppl
       Promise.resolve({
         terminalClass: "completed",
         executorState: "quiescent",
-        runtimeEffectState: "none",
+        toolEffectState: "none",
+        stopReason: "end_turn",
       }),
     ),
     ...overrides,

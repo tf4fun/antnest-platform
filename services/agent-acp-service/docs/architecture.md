@@ -1,7 +1,7 @@
 # Agent ACP Service Architecture
 
 > Status: Stage 2 implementation contract<br>
-> Updated: 2026-08-30
+> Updated: 2026-08-31
 
 ## Mission
 
@@ -28,14 +28,18 @@ the v2 `WireStream` used over WebSocket handles individual and batch messages.
 ```text
 ConnectionBinding
   connection_id
-  authenticated_subject
+  agent_access_subject
   principal_id
   agent_id
   access_revision
 ```
 
-It is immutable for one connection. It is resolved before the WebSocket is
-accepted and is never supplied by ACP Session parameters.
+It is immutable for one connection. The opaque Agent-scoped access subject is
+resolved before the WebSocket is accepted and re-resolved before every ACP
+business operation. Any change to its principal, Agent, access revision, or
+prompt capabilities requires Agent Controller to advance `access_revision`;
+the old connection then fails closed and must reconnect. The subject is never
+supplied by ACP Session parameters and is not a reusable user identity token.
 
 ### Session
 
@@ -90,7 +94,7 @@ contains Runtime endpoint identity, but never a Provider secret.
 ACP-visible user, agent, and thought messages use stable opaque `messageId`
 values and a monotonic Session sequence. Internal environment-change facts are
 stored with `visible=false`. ToolAttempt stores status, source identity,
-request digest, bounded result summary, and runtime effect state; it does not
+request digest, bounded result summary, and Tool effect state; it does not
 store model credentials or raw secret headers.
 
 ## Prompt Acceptance Transaction
@@ -98,8 +102,10 @@ store model credentials or raw secret headers.
 ```text
 session/prompt
   -> authorize Session against ConnectionBinding
-  -> insert durable Run intent(state=admitting, request_id, client_mcp_revision_id)
-  -> Agent Controller acquire_run(same request_id)
+  -> insert durable Run intent(state=admitting, request_id,
+       expected_access_revision, client_mcp_revision_id)
+  -> Agent Controller acquire_run(same request_id, principal_id,
+       expected_access_revision)
   -> transaction:
        store RunExecutionSnapshot
        append environment-change fact when needed
@@ -129,15 +135,27 @@ starting model or Tool work.
    process memory.
 3. List the mandatory platform Runtime Tools and optional client MCP Tools.
 4. Qualify every client Tool name; platform names remain canonical.
-5. Call the model and persist/emit text or thought output.
-6. For each Tool call, persist pending/in-progress/terminal updates, invoke the
-   source client once, append its result, and continue.
-7. Stop on model completion, cancellation, context budget, or
+5. Call the model and persist/emit text or thought output. Mixed text and Tool
+   calls are retained as one assistant response.
+6. Validate the complete Tool-call batch, including unique call IDs, known
+   names, and JSON Schema arguments, before the first Tool effect. If any call
+   is invalid, execute none of them and return explicit Tool errors to the
+   model for one normal repair turn.
+7. Persist the assistant response before dispatch. For each validated Tool call,
+   persist its in-progress state, invoke the source client once, bound
+   retained/model-visible output to 64 KiB with a digest marker, append its
+   terminal result, and continue. If cancellation or an unknown Tool outcome
+   ends the Run early, close every remaining call as not executed. Recovery
+   applies the same rule to calls retained in the assistant response but not
+   yet dispatched when the process stopped.
+8. Stop on model completion, refusal, output limit, cancellation, context budget, or
    `max_model_requests`.
-8. Persist terminal Run facts before calling `finish_run`; retry
+9. Persist the exact stop reason and terminal Run facts before calling `finish_run`; retry
    `finish_run` idempotently after uncertain transport failure.
 
 Tool calls are not replayed automatically after timeout or process crash.
+Effect certainty is source-neutral: both Runtime and client MCP calls may leave
+`tool_effect_state=unknown` after an unconfirmed transport outcome.
 
 ## Two MCP Sources
 
@@ -189,7 +207,7 @@ src/adapters/postgres/    private migrations and repository
 src/adapters/controller/  narrow Run admission RPC client
 src/adapters/model/       OpenAI-compatible model adapter
 src/adapters/mcp/         trusted Runtime and untrusted client MCP clients
-src/transport/acp/        official ACP v2 handlers and WebSocket stream adapter
+src/transport/acp/v2/     official ACP v2 handlers and WebSocket stream adapter
 src/telemetry/            logs, traces, low-cardinality metrics
 src/main.ts               composition only
 ```
@@ -211,18 +229,26 @@ coordinated contract revision.
 - `admitting` Run: retry `acquire_run` with the same request ID. A trusted
   Controller rejection terminates the local intent; an unavailable or invalid
   response leaves it recoverable and fails startup.
-- `running` Run after service restart: do not replay model or Tool work; mark
-  local state unresolved and idempotently call `finish_run` with unknown
-  runtime effect.
+- `running` Run after service restart: do not replay model or Tool work. An
+  in-progress Tool is closed with unknown effect and makes the Run unresolved;
+  calls retained in the assistant response but not yet dispatched are closed
+  as not executed. A Run with no unknown Tool effect terminates failed and
+  quiescent. The exact result is reported idempotently through `finish_run`.
 - `completed/cancelled/failed/unresolved`: terminal and immutable except for
   recording successful admission closure.
 - An uncertain `acquire_run`, a failed local acceptance transaction after
-  admission, a failed local terminal transaction, or an uncertain `finish_run`
-  is not left stranded behind a healthy process. The application records every
-  fact it can prove, marks the service unavailable, and requests process
-  replacement. Startup recovery is then the single owner that retries the same
-  durable request IDs. This is deliberately simpler than a second in-process
-  workflow scheduler.
+  admission, a failed durable Run-event write, a failed local terminal
+  transaction, or an uncertain `finish_run` is not left stranded behind a
+  healthy process. A Run-event write failure is not flattened into an ordinary
+  Run failure: the Run remains recoverable so startup can close undispatched or
+  ambiguous Tool calls without leaving a partial context batch. The application
+  records every fact it can prove, marks the service unavailable, and requests
+  process replacement. Startup recovery is then the single owner that retries
+  the same durable request IDs. This is deliberately simpler than a second
+  in-process workflow scheduler.
+- A failure handed to startup recovery does not emit a speculative ACP
+  `idle/_failed` projection. The current connection remains at its last durable
+  state and reconnect/replay exposes the recovered terminal result.
 - Connection loss: does not delete Session state. In-flight work may continue;
   updates are durable and can be replayed after resume. Every resume also
   projects the latest durable Run as `running` or `idle`, even when historical
@@ -285,3 +311,11 @@ exits non-zero for platform replacement.
     before a replacement worker may take ownership.
 12. Transactions that need both records lock the Session before the Run; this
     canonical order also applies to cancellation and durable event writes.
+13. A Tool-call batch produces no external effect until every call in that
+    model response passes preflight validation.
+14. Completed Runs retain the model or loop stop reason; unresolved Tool
+    effects cannot be mislabeled completed, cancelled, or failed.
+15. A retained assistant Tool-call response is followed by one terminal result
+    per call before normal termination, or repaired during restart recovery;
+    context reconstruction never exposes a partial Tool batch to the next model
+    request.

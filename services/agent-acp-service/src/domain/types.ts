@@ -1,5 +1,6 @@
 export type JsonPrimitive = string | number | boolean | null;
-export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
+export type JsonObject = { [key: string]: JsonValue };
+export type JsonValue = JsonPrimitive | JsonValue[] | JsonObject;
 
 export type ContentBlock = {
   type: string;
@@ -8,7 +9,7 @@ export type ContentBlock = {
 
 export type ConnectionBinding = {
   connectionId: string;
-  authenticatedSubject: string;
+  agentAccessSubject: string;
   principalId: string;
   agentId: string;
   accessRevision: string;
@@ -30,7 +31,6 @@ export type SessionRecord = {
 };
 
 export type ModelSpec = {
-  adapter: "openai_compatible";
   baseUrl: string;
   model: string;
   contextWindow: number;
@@ -85,8 +85,40 @@ export type RunState =
   "admitting" | "running" | "completed" | "cancelled" | "failed" | "unresolved";
 
 export type TerminalClass = "completed" | "cancelled" | "failed" | "unresolved";
+export type ModelStopReason = "end_turn" | "max_tokens" | "refusal";
+export type RunStopReason = ModelStopReason | "max_turn_requests";
 export type ExecutorState = "quiescent" | "cancellation_requested" | "unknown";
-export type RuntimeEffectState = "none" | "settled" | "unknown";
+export type ToolEffectState = "none" | "settled" | "unknown";
+
+export type RunOutcome =
+  | {
+      terminalClass: "completed";
+      executorState: "quiescent";
+      toolEffectState: "none" | "settled";
+      stopReason: RunStopReason;
+      errorClass?: never;
+    }
+  | {
+      terminalClass: "cancelled";
+      executorState: "quiescent";
+      toolEffectState: "none" | "settled";
+      stopReason?: never;
+      errorClass?: string;
+    }
+  | {
+      terminalClass: "failed";
+      executorState: "quiescent";
+      toolEffectState: "none" | "settled";
+      stopReason?: never;
+      errorClass: string;
+    }
+  | {
+      terminalClass: "unresolved";
+      executorState: "unknown";
+      toolEffectState: "unknown";
+      stopReason?: never;
+      errorClass: string;
+    };
 
 export type ModelMessage =
   | {
@@ -114,7 +146,7 @@ export type ToolDefinition = {
   name: string;
   modelName?: string;
   description: string;
-  inputSchema?: JsonValue;
+  inputSchema?: JsonObject;
 };
 
 export type ModelToolDefinition = ToolDefinition & {

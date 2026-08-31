@@ -2,7 +2,6 @@ CREATE TABLE acp_sessions (
     id text PRIMARY KEY,
     principal_id text NOT NULL,
     agent_id text NOT NULL,
-    created_access_revision text NOT NULL,
     cwd text NOT NULL CHECK (cwd = '/workspace'),
     state text NOT NULL CHECK (state IN ('active', 'closed', 'deleted')),
     client_mcp_revision_id text,
@@ -35,6 +34,7 @@ CREATE TABLE runs (
     request_id text NOT NULL UNIQUE,
     session_id text NOT NULL REFERENCES acp_sessions(id) ON DELETE RESTRICT,
     client_mcp_revision_id text NOT NULL REFERENCES client_mcp_revisions(id) ON DELETE RESTRICT,
+    expected_access_revision text NOT NULL,
     state text NOT NULL CHECK (state IN ('admitting', 'running', 'completed', 'cancelled', 'failed', 'unresolved')),
     pending_user_message_id text,
     pending_prompt jsonb,
@@ -42,7 +42,8 @@ CREATE TABLE runs (
     execution_snapshot jsonb,
     terminal_class text CHECK (terminal_class IS NULL OR terminal_class IN ('completed', 'cancelled', 'failed', 'unresolved')),
     executor_state text CHECK (executor_state IS NULL OR executor_state IN ('quiescent', 'cancellation_requested', 'unknown')),
-    runtime_effect_state text CHECK (runtime_effect_state IS NULL OR runtime_effect_state IN ('none', 'settled', 'unknown')),
+    tool_effect_state text CHECK (tool_effect_state IS NULL OR tool_effect_state IN ('none', 'settled', 'unknown')),
+    stop_reason text CHECK (stop_reason IS NULL OR stop_reason IN ('end_turn', 'max_tokens', 'max_turn_requests', 'refusal')),
     error_class text,
     cancel_requested_at timestamptz,
     admission_finished_at timestamptz,
@@ -57,10 +58,25 @@ CREATE TABLE runs (
     CHECK (state <> 'admitting' OR admission_id IS NULL),
     CHECK (state <> 'running' OR admission_id IS NOT NULL),
     CHECK (
-        (terminal_class IS NULL AND executor_state IS NULL AND runtime_effect_state IS NULL)
+        (terminal_class IS NULL AND executor_state IS NULL AND tool_effect_state IS NULL)
         OR
         (terminal_class IS NOT NULL AND executor_state IS NOT NULL
-            AND runtime_effect_state IS NOT NULL AND terminal_class = state)
+            AND tool_effect_state IS NOT NULL AND terminal_class = state)
+    ),
+    CHECK (
+        (terminal_class = 'completed' AND stop_reason IS NOT NULL)
+        OR (terminal_class IS DISTINCT FROM 'completed' AND stop_reason IS NULL)
+    ),
+    CHECK (
+        terminal_class IS NULL
+        OR (terminal_class = 'completed' AND executor_state = 'quiescent'
+            AND tool_effect_state IN ('none', 'settled') AND error_class IS NULL)
+        OR (terminal_class = 'cancelled' AND executor_state = 'quiescent'
+            AND tool_effect_state IN ('none', 'settled'))
+        OR (terminal_class = 'failed' AND executor_state = 'quiescent'
+            AND tool_effect_state IN ('none', 'settled') AND error_class IS NOT NULL)
+        OR (terminal_class = 'unresolved' AND executor_state = 'unknown'
+            AND tool_effect_state = 'unknown' AND error_class IS NOT NULL)
     ),
     CHECK (
         state IN ('admitting', 'running')
@@ -117,7 +133,7 @@ CREATE TABLE tool_attempts (
     request_digest text NOT NULL,
     state text NOT NULL CHECK (state IN ('pending', 'in_progress', 'completed', 'failed', 'cancelled')),
     result_summary jsonb,
-    runtime_effect_state text NOT NULL CHECK (runtime_effect_state IN ('none', 'settled', 'unknown')),
+    tool_effect_state text NOT NULL CHECK (tool_effect_state IN ('none', 'settled', 'unknown')),
     started_at timestamptz,
     finished_at timestamptz,
     created_at timestamptz NOT NULL,

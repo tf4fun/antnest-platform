@@ -1,14 +1,8 @@
-import type {
-  AgentExecutionSpec,
-  ExecutorState,
-  RuntimeBinding,
-  RuntimeEffectState,
-  TerminalClass,
-} from "../domain/types.js";
+import type { AgentExecutionSpec, RunOutcome, RuntimeBinding } from "../domain/types.js";
 
 export type ResolveAgentAccessInput = {
   requestId: string;
-  authenticatedSubject: string;
+  agentAccessSubject: string;
 };
 
 export const AGENT_CONTROLLER_ERROR_CODES = [
@@ -57,6 +51,8 @@ export type ResolveAgentAccessResult = {
 export type AcquireRunInput = {
   requestId: string;
   agentId: string;
+  principalId: string;
+  expectedAccessRevision: string;
   sessionId: string;
 };
 
@@ -84,14 +80,24 @@ export type ResolveCredentialResult = {
   secret: string;
 };
 
-export type FinishRunInput = {
+export type FinishRunInput = RunOutcome & {
   requestId: string;
   admissionId: string;
-  terminalClass: TerminalClass;
-  executorState: ExecutorState;
-  runtimeEffectState: RuntimeEffectState;
-  errorClass?: string;
 };
+
+export function finishRunInput(
+  requestId: string,
+  admissionId: string,
+  outcome: RunOutcome,
+): FinishRunInput {
+  switch (outcome.terminalClass) {
+    case "completed":
+    case "cancelled":
+    case "failed":
+    case "unresolved":
+      return { requestId, admissionId, ...outcome };
+  }
+}
 
 export interface AgentControllerPort {
   resolveAgentAccess(

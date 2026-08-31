@@ -3,7 +3,7 @@ import type { ConnectionBinding, RunExecutionSnapshot } from "../../src/domain/t
 export function binding(): ConnectionBinding {
   return {
     connectionId: "connection-1",
-    authenticatedSubject: "subject-1",
+    agentAccessSubject: "subject-1",
     principalId: "principal-1",
     agentId: "agent-1",
     accessRevision: "access-1",
@@ -29,7 +29,6 @@ export function snapshot(): RunExecutionSnapshot {
       systemPrompt: "system",
       skillInstructions: [],
       model: {
-        adapter: "openai_compatible",
         baseUrl: "https://api.example.test/v1",
         model: "example-model",
         contextWindow: 64_000,

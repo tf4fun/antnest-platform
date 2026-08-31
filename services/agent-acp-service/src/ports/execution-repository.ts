@@ -1,11 +1,4 @@
-import type {
-  ContentBlock,
-  ExecutorState,
-  RunExecutionSnapshot,
-  RunState,
-  RuntimeEffectState,
-  TerminalClass,
-} from "../domain/types.js";
+import type { ContentBlock, RunOutcome, RunExecutionSnapshot, RunState } from "../domain/types.js";
 
 export type RecoveryWork =
   | {
@@ -14,6 +7,7 @@ export type RecoveryWork =
       requestId: string;
       sessionId: string;
       clientMcpRevisionId: string;
+      expectedAccessRevision: string;
       userMessageId: string;
       prompt: ContentBlock[];
     }
@@ -24,15 +18,11 @@ export type RecoveryWork =
       sessionId: string;
       snapshot: RunExecutionSnapshot;
     }
-  | {
+  | ({
       kind: "finish_admission";
       id: string;
       admissionId: string;
-      terminalClass: TerminalClass;
-      executorState: ExecutorState;
-      runtimeEffectState: RuntimeEffectState;
-      errorClass?: string;
-    }
+    } & RunOutcome)
   | {
       kind: "invalid";
       id: string;
@@ -41,12 +31,8 @@ export type RecoveryWork =
       errorClass: "invalid_recovery_record";
     };
 
-export type FinishLocalRunInput = {
+export type FinishLocalRunInput = RunOutcome & {
   runId: string;
-  terminalClass: TerminalClass;
-  executorState: ExecutorState;
-  runtimeEffectState: RuntimeEffectState;
-  errorClass?: string;
   finishedAt: Date;
 };
 

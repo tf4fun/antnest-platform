@@ -16,7 +16,7 @@ export type ModelToolCall = {
   arguments: { [key: string]: unknown };
 };
 
-export type ModelResult =
+export type ModelResult = (
   | {
       kind: "message";
       content: ContentBlock[];
@@ -25,9 +25,11 @@ export type ModelResult =
     }
   | {
       kind: "tool_calls";
+      content: ContentBlock[];
       calls: ModelToolCall[];
       usage: ModelUsage;
-    };
+    }
+) & { thought?: ContentBlock[] };
 
 export type ModelRequest = {
   snapshot: RunExecutionSnapshot;

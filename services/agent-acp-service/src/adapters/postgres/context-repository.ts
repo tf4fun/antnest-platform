@@ -33,13 +33,13 @@ export class PostgresContextRepository implements ContextRepository {
          FROM session_messages
         WHERE session_id = $1
           AND sequence > $2
-          AND kind IN ('user_message', 'agent_message', 'environment_change')
+          AND kind IN ('user_message', 'agent_message', 'environment_change', 'tool_call')
         ORDER BY sequence`,
       [sessionId, checkpoint?.throughSequence ?? 0],
     );
     return {
       checkpoint,
-      messages: messagesResult.rows.map(mapContextMessage),
+      messages: mapContextMessages(messagesResult.rows),
     };
   }
 
@@ -73,6 +73,92 @@ function mapCheckpoint(
   };
 }
 
+function mapContextMessages(
+  rows: Array<{ sequence: string; kind: string; payload: unknown }>,
+): StoredContextMessage[] {
+  const messages: StoredContextMessage[] = [];
+  let pending: PendingToolExchange | null = null;
+  for (const row of rows) {
+    if (row.kind === "agent_message") {
+      if (pending !== null) {
+        throw new Error("Assistant Tool exchange is incomplete");
+      }
+      const message = mapAgentMessage(row);
+      if (message.toolCalls.length === 0) {
+        messages.push({
+          sequence: message.sequence,
+          kind: "agent_message",
+          content: message.content,
+        });
+      } else {
+        pending = { ...message, results: new Map() };
+      }
+      continue;
+    }
+    if (row.kind !== "tool_call") {
+      if (pending !== null) {
+        throw new Error("Assistant Tool exchange is incomplete");
+      }
+      messages.push(mapContextMessage(row));
+      continue;
+    }
+    const event = mapToolEvent(row.payload);
+    if (event.status === "in_progress") {
+      continue;
+    }
+    if (pending === null) {
+      throw new Error("Terminal Tool event has no matching assistant response");
+    }
+    if (!pending.toolCalls.some((call) => call.id === event.toolCallId)) {
+      throw new Error("Terminal Tool event has no matching model call");
+    }
+    if (pending.results.has(event.toolCallId)) {
+      throw new Error("Tool call has more than one terminal result");
+    }
+    pending.results.set(event.toolCallId, event.content);
+    if (pending.results.size === pending.toolCalls.length) {
+      const completed = pending;
+      messages.push({
+        sequence: completed.sequence,
+        endSequence: Number(row.sequence),
+        kind: "tool_exchange",
+        assistant: {
+          content: completed.content,
+          toolCalls: completed.toolCalls,
+        },
+        results: completed.toolCalls.map((call) => ({
+          toolCallId: call.id,
+          content: requireResult(completed, call.id),
+        })),
+      });
+      pending = null;
+    }
+  }
+  if (pending !== null) {
+    throw new Error("Assistant Tool exchange is incomplete");
+  }
+  return messages.sort((left, right) => left.sequence - right.sequence);
+}
+
+type PendingToolExchange = {
+  sequence: number;
+  content: ContentBlock[];
+  toolCalls: Extract<StoredContextMessage, { kind: "tool_exchange" }>["assistant"]["toolCalls"];
+  results: Map<string, ContentBlock[]>;
+};
+
+function mapAgentMessage(row: {
+  sequence: string;
+  payload: unknown;
+}): Omit<PendingToolExchange, "results"> {
+  const payload = asRecord(row.payload, "Agent message payload is invalid");
+  return {
+    sequence: Number(row.sequence),
+    content: asContent(payload.content),
+    toolCalls: mapToolCalls(payload.toolCalls),
+  };
+}
+
 function mapContextMessage(row: {
   sequence: string;
   kind: string;
@@ -91,6 +177,53 @@ function mapContextMessage(row: {
       ? [{ type: "text", text: requireString(payload.content, "Environment fact is invalid") }]
       : asContent(payload.content);
   return { sequence: Number(row.sequence), kind: row.kind, content };
+}
+
+function mapToolEvent(value: unknown): {
+  toolCallId: string;
+  status: string;
+  content: ContentBlock[];
+} {
+  const payload = asRecord(value, "Tool event payload is invalid");
+  const toolCallId = requireString(payload.toolCallId, "Tool call ID is invalid");
+  const status = requireString(payload.status, "Tool status is invalid");
+  return {
+    toolCallId,
+    status,
+    content:
+      status === "in_progress"
+        ? []
+        : asContent(
+            payload.content ?? [
+              { type: "text", text: "Tool call completed without a retained result." },
+            ],
+          ),
+  };
+}
+
+function mapToolCalls(value: unknown): PendingToolExchange["toolCalls"] {
+  if (value === undefined) {
+    return [];
+  }
+  if (!Array.isArray(value)) {
+    throw new Error("Agent Tool calls are invalid");
+  }
+  return value.map((item) => {
+    const call = asRecord(item, "Agent Tool call is invalid");
+    return {
+      id: requireString(call.id, "Agent Tool call ID is invalid"),
+      name: requireString(call.name, "Agent Tool name is invalid"),
+      arguments: asRecord(call.arguments, "Agent Tool arguments are invalid"),
+    };
+  });
+}
+
+function requireResult(pending: PendingToolExchange, toolCallId: string): ContentBlock[] {
+  const result = pending.results.get(toolCallId);
+  if (result === undefined) {
+    throw new Error("Assistant Tool exchange has no terminal result");
+  }
+  return result;
 }
 
 function asContent(value: unknown): ContentBlock[] {

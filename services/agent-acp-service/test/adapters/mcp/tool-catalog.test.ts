@@ -62,13 +62,44 @@ describe("McpToolCatalog", () => {
     ).resolves.toEqual({
       content: [{ type: "text", text: "found" }],
       isError: false,
-      runtimeEffectState: "none",
+      toolEffectState: "settled",
     });
     expect(client.callTool).toHaveBeenCalledWith(
       { name: "search", arguments: { query: "antnest" } },
       expect.any(AbortSignal),
     );
     expect(client.close).toHaveBeenCalled();
+  });
+
+  it("keeps a confirmed Tool result settled when connection cleanup fails", async () => {
+    const runtime = fakeDialer([{ name: "read", description: "Read" }], {
+      content: [{ type: "text", text: "confirmed" }],
+      isError: false,
+    });
+    const closeFailure = new Error("close failed");
+    const reportConnectionCloseFailure = vi.fn();
+    const catalog = new McpToolCatalog({
+      runtimeDialer: runtime.dialer,
+      clientDialer: fakeDialer([]).dialer,
+      revisions: revisions(),
+      reportConnectionCloseFailure,
+    });
+    const [tool] = await catalog.list(snapshot(), new AbortController().signal);
+    if (tool === undefined) {
+      throw new Error("expected Runtime Tool");
+    }
+    runtime.close.mockRejectedValueOnce(closeFailure);
+
+    await expect(
+      catalog.call({
+        runId: "run-1",
+        snapshot: snapshot(),
+        tool,
+        arguments: { path: "README.md" },
+        signal: new AbortController().signal,
+      }),
+    ).resolves.toMatchObject({ toolEffectState: "settled" });
+    expect(reportConnectionCloseFailure).toHaveBeenCalledWith("runtime", "runtime", closeFailure);
   });
 
   it("does not replay a Runtime Tool when the outcome is unknown", async () => {
@@ -99,7 +130,7 @@ describe("McpToolCatalog", () => {
     expect(runtime.callTool).toHaveBeenCalledTimes(1);
   });
 
-  it("fails a client Tool source without claiming a Runtime effect is unknown", async () => {
+  it("treats an unconfirmed client Tool outcome as unknown side effects", async () => {
     const client = fakeDialer([{ name: "search", description: "Search" }]);
     client.callTool.mockRejectedValueOnce(new TypeError("connection reset"));
     const catalog = new McpToolCatalog({
@@ -125,7 +156,7 @@ describe("McpToolCatalog", () => {
       .catch((caught: unknown) => caught);
 
     expect(error).toBeInstanceOf(McpToolCallError);
-    expect(error).toMatchObject({ effectState: "none" });
+    expect(error).toMatchObject({ effectState: "unknown" });
     expect(client.callTool).toHaveBeenCalledTimes(1);
   });
 
@@ -199,7 +230,6 @@ function snapshot(): RunExecutionSnapshot {
       systemPrompt: "system",
       skillInstructions: [],
       model: {
-        adapter: "openai_compatible",
         baseUrl: "https://api.example.test/v1",
         model: "example-model",
         contextWindow: 64_000,

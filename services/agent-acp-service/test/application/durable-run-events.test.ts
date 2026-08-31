@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { DurableRunEvents } from "../../src/application/durable-run-events.js";
+import {
+  DurableRunEvents,
+  RunEventPersistenceError,
+} from "../../src/application/durable-run-events.js";
 import type { RunEventRepository } from "../../src/ports/run-event-repository.js";
 
 describe("DurableRunEvents", () => {
@@ -19,6 +22,8 @@ describe("DurableRunEvents", () => {
     );
     const repository: RunEventRepository = {
       appendAgentMessage: vi.fn(),
+      appendAgentThought: vi.fn(),
+      appendRejectedToolCall: vi.fn(),
       appendUsage: vi.fn(),
       startToolAttempt,
       finishToolAttempt: vi.fn(),
@@ -66,6 +71,8 @@ describe("DurableRunEvents", () => {
           content: [{ type: "text", text: "done" }],
         }),
       ),
+      appendAgentThought: vi.fn(),
+      appendRejectedToolCall: vi.fn(),
       appendUsage: vi.fn(),
       startToolAttempt: vi.fn(),
       finishToolAttempt: vi.fn(),
@@ -87,5 +94,30 @@ describe("DurableRunEvents", () => {
 
     expect(result).toBe("completed");
     expect(publish).toHaveBeenCalledOnce();
+  });
+
+  it("classifies repository failure separately from best-effort publication", async () => {
+    const repository: RunEventRepository = {
+      appendAgentMessage: vi.fn(() => Promise.reject(new Error("database unavailable"))),
+      appendAgentThought: vi.fn(),
+      appendRejectedToolCall: vi.fn(),
+      appendUsage: vi.fn(),
+      startToolAttempt: vi.fn(),
+      finishToolAttempt: vi.fn(),
+      interruptToolAttempts: vi.fn(),
+    };
+    const publish = vi.fn();
+    const events = new DurableRunEvents({
+      repository,
+      publish,
+      id: () => "message-1",
+      now: () => new Date("2026-08-30T00:00:00Z"),
+      contextSize: 64_000,
+    });
+
+    await expect(
+      events.agentMessage("run-1", [{ type: "text", text: "done" }]),
+    ).rejects.toBeInstanceOf(RunEventPersistenceError);
+    expect(publish).not.toHaveBeenCalled();
   });
 });

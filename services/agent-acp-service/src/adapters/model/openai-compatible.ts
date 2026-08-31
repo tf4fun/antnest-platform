@@ -23,10 +23,11 @@ const responseSchema = z.object({
   choices: z
     .array(
       z.object({
-        finish_reason: z.string().nullable().optional(),
+        finish_reason: z.enum(["stop", "length", "tool_calls", "content_filter"]),
         message: z.object({
           role: z.literal("assistant"),
           content: z.string().nullable().optional(),
+          reasoning_content: z.string().nullable().optional(),
           refusal: z.string().nullable().optional(),
           tool_calls: z.array(functionCallSchema).optional(),
         }),
@@ -172,9 +173,6 @@ function userOrSystemContent(content: ContentBlock[], supportsImages: boolean): 
     );
   }
   return content.map((block) => {
-    if (block.type === "text" && typeof block.text === "string") {
-      return { type: "text", text: block.text };
-    }
     if (
       block.type === "image" &&
       typeof block.data === "string" &&
@@ -185,11 +183,7 @@ function userOrSystemContent(content: ContentBlock[], supportsImages: boolean): 
         image_url: { url: `data:${block.mimeType};base64,${block.data}` },
       };
     }
-    throw new OpenAICompatibleModelError(
-      "model_unsupported_content",
-      `Unsupported content block ${block.type}`,
-      false,
-    );
+    return { type: "text", text: textContent([block]) };
   });
 }
 
@@ -199,15 +193,8 @@ function textContent(content: ContentBlock[]): string {
       if (block.type === "text" && typeof block.text === "string") {
         return block.text;
       }
-      const resource = block.resource;
-      if (
-        block.type === "resource" &&
-        typeof resource === "object" &&
-        resource !== null &&
-        "text" in resource &&
-        typeof resource.text === "string"
-      ) {
-        return resource.text;
+      if (block.type === "resource") {
+        return embeddedResourceText(block.resource);
       }
       if (block.type === "resource_link" && typeof block.uri === "string") {
         const name = typeof block.name === "string" ? block.name : block.uri;
@@ -235,19 +222,48 @@ function toModelResult(response: z.infer<typeof responseSchema>): ModelResult {
     inputTokens: response.usage?.prompt_tokens ?? 0,
     outputTokens: response.usage?.completion_tokens ?? 0,
   };
+  const thought = textBlock(choice.message.reasoning_content);
   const toolCalls = choice.message.tool_calls ?? [];
-  if (toolCalls.length > 0) {
+  if (choice.finish_reason === "length") {
+    return {
+      kind: "message",
+      content: textBlock(choice.message.content) ?? [],
+      stopReason: "max_tokens",
+      usage,
+      ...(thought === undefined ? {} : { thought }),
+    };
+  }
+  if (choice.finish_reason === "content_filter") {
+    return {
+      kind: "message",
+      content: textBlock(choice.message.refusal) ??
+        textBlock(choice.message.content) ?? [
+          { type: "text", text: "The model response was blocked by its content filter." },
+        ],
+      stopReason: "refusal",
+      usage,
+      ...(thought === undefined ? {} : { thought }),
+    };
+  }
+  if (choice.finish_reason === "tool_calls") {
+    if (toolCalls.length === 0) {
+      throw invalidResponse("Model API ended for Tool calls without returning any Tool call");
+    }
     return {
       kind: "tool_calls",
+      content: textBlock(choice.message.content) ?? [],
       calls: toolCalls.map((call) => ({
         id: call.id,
         name: call.function.name,
         arguments: parseToolArguments(call.function.arguments),
       })),
       usage,
+      ...(thought === undefined ? {} : { thought }),
     };
   }
-
+  if (toolCalls.length > 0) {
+    throw invalidResponse("Model API returned Tool calls with a non-Tool finish reason");
+  }
   const refusal = choice.message.refusal;
   if (typeof refusal === "string" && refusal.length > 0) {
     return {
@@ -255,6 +271,7 @@ function toModelResult(response: z.infer<typeof responseSchema>): ModelResult {
       content: [{ type: "text", text: refusal }],
       stopReason: "refusal",
       usage,
+      ...(thought === undefined ? {} : { thought }),
     };
   }
   if (typeof choice.message.content !== "string") {
@@ -263,9 +280,40 @@ function toModelResult(response: z.infer<typeof responseSchema>): ModelResult {
   return {
     kind: "message",
     content: [{ type: "text", text: choice.message.content }],
-    stopReason: choice.finish_reason === "length" ? "max_tokens" : "end_turn",
+    stopReason: "end_turn",
     usage,
+    ...(thought === undefined ? {} : { thought }),
   };
+}
+
+function embeddedResourceText(value: unknown): string {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw unsupportedContent("resource");
+  }
+  const uri = "uri" in value && typeof value.uri === "string" ? value.uri : "embedded-resource";
+  if ("text" in value && typeof value.text === "string") {
+    return `Embedded resource: ${uri}\n${value.text}`;
+  }
+  if ("blob" in value && typeof value.blob === "string") {
+    const mimeType =
+      "mimeType" in value && typeof value.mimeType === "string" ? value.mimeType : "unknown";
+    return `Embedded binary resource: ${uri}\nMIME: ${mimeType}\nBase64: ${value.blob}`;
+  }
+  throw unsupportedContent("resource");
+}
+
+function unsupportedContent(type: string): OpenAICompatibleModelError {
+  return new OpenAICompatibleModelError(
+    "model_unsupported_content",
+    `Unsupported textual content block ${type}`,
+    false,
+  );
+}
+
+function textBlock(value: string | null | undefined): ContentBlock[] | undefined {
+  return typeof value === "string" && value.length > 0
+    ? [{ type: "text", text: value }]
+    : undefined;
 }
 
 function parseToolArguments(value: string): { [key: string]: unknown } {

@@ -68,22 +68,26 @@ export class PostgresRunRepository implements RunRepository {
           request_id: string;
           session_id: string;
           client_mcp_revision_id: string;
+          expected_access_revision: string;
           state: RunIntent["state"];
           pending_user_message_id: string;
           pending_prompt: unknown;
         }>(
           `INSERT INTO runs(
-             id, request_id, session_id, client_mcp_revision_id, state,
+             id, request_id, session_id, client_mcp_revision_id,
+             expected_access_revision, state,
              pending_user_message_id, pending_prompt,
              created_at, updated_at
-           ) VALUES ($1, $2, $3, $4, 'admitting', $5, $6::jsonb, $7, $7)
-           RETURNING id, request_id, session_id, client_mcp_revision_id, state,
+           ) VALUES ($1, $2, $3, $4, $5, 'admitting', $6, $7::jsonb, $8, $8)
+           RETURNING id, request_id, session_id, client_mcp_revision_id,
+                     expected_access_revision, state,
                      pending_user_message_id, pending_prompt`,
           [
             input.runId,
             input.requestId,
             input.sessionId,
             sessionRow.client_mcp_revision_id,
+            input.expectedAccessRevision,
             input.userMessageId,
             JSON.stringify(input.prompt),
             input.createdAt,
@@ -95,6 +99,7 @@ export class PostgresRunRepository implements RunRepository {
           requestId: row.request_id,
           sessionId: row.session_id,
           clientMcpRevisionId: row.client_mcp_revision_id,
+          expectedAccessRevision: row.expected_access_revision,
           state: row.state,
           userMessageId: row.pending_user_message_id,
           prompt: row.pending_prompt as RunIntent["prompt"],
@@ -161,7 +166,7 @@ export class PostgresRunRepository implements RunRepository {
               SET state = 'cancelled', admission_id = $2, execution_snapshot = $3::jsonb,
                   pending_user_message_id = NULL, pending_prompt = NULL,
                   terminal_class = 'cancelled', executor_state = 'quiescent',
-                  runtime_effect_state = 'none', error_class = 'run_cancelled',
+                  tool_effect_state = 'none', error_class = 'run_cancelled',
                   cancel_requested_at = COALESCE(cancel_requested_at, $4), updated_at = $4
             WHERE id = $1`,
           [
@@ -225,7 +230,7 @@ export class PostgresRunRepository implements RunRepository {
               pending_user_message_id = NULL, pending_prompt = NULL,
               terminal_class = CASE WHEN cancel_requested_at IS NULL THEN NULL ELSE 'cancelled' END,
               executor_state = CASE WHEN cancel_requested_at IS NULL THEN NULL ELSE 'quiescent' END,
-              runtime_effect_state = CASE WHEN cancel_requested_at IS NULL THEN NULL ELSE 'none' END,
+              tool_effect_state = CASE WHEN cancel_requested_at IS NULL THEN NULL ELSE 'none' END,
               error_class = CASE WHEN cancel_requested_at IS NULL THEN $2 ELSE 'run_cancelled' END,
               updated_at = $3
         WHERE id = $1 AND state = 'admitting'

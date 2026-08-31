@@ -1,6 +1,6 @@
 import { Client, StreamableHTTPClientTransport, type Tool } from "@modelcontextprotocol/client";
 
-import type { ContentBlock, JsonValue } from "../../domain/types.js";
+import type { ContentBlock, JsonObject } from "../../domain/types.js";
 import {
   ClientMcpNetworkPolicy,
   createClientMcpFetch,
@@ -101,7 +101,7 @@ function toRemoteTool(tool: Tool): McpRemoteTool {
   return {
     name: tool.name,
     ...(tool.description === undefined ? {} : { description: tool.description }),
-    inputSchema: structuredClone(tool.inputSchema) as JsonValue,
+    inputSchema: structuredClone(tool.inputSchema) as JsonObject,
   };
 }
 

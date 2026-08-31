@@ -1,16 +1,17 @@
 import * as acp from "@agentclientprotocol/sdk/experimental/v2";
 import { context, propagation, type TextMapGetter } from "@opentelemetry/api";
 
-import { DomainError } from "../../domain/errors.js";
-import type { ClientMcpInput } from "../../domain/mcp.js";
-import type { ConnectionBinding, ContentBlock, TerminalClass } from "../../domain/types.js";
+import { DomainError } from "../../../domain/errors.js";
+import type { ClientMcpInput } from "../../../domain/mcp.js";
+import type { ConnectionBinding, ContentBlock } from "../../../domain/types.js";
+import { RunRecoveryRequiredError } from "../../../ports/acp-application.js";
 import type {
   AcpApplicationPort,
   AcceptedAcpRun,
   ExecuteRunResult,
   SessionEvent,
-} from "../../ports/acp-application.js";
-import { AgentControllerError } from "../../ports/agent-controller.js";
+} from "../../../ports/acp-application.js";
+import { AgentControllerError } from "../../../ports/agent-controller.js";
 
 export type CreateAcpAgentInput = {
   binding: ConnectionBinding;
@@ -18,7 +19,7 @@ export type CreateAcpAgentInput = {
   application: AcpApplicationPort;
 };
 
-export function createAcpAgent({
+export function createAcpV2Agent({
   binding,
   promptCapabilities,
   application,
@@ -27,10 +28,7 @@ export function createAcpAgent({
     .agent({ name: "antnest-agent-acp-service" })
     .onRequest(acp.methods.agent.initialize, ({ params }) =>
       withAcpTrace(params._meta, () => ({
-        protocolVersion:
-          params.protocolVersion === acp.PROTOCOL_VERSION
-            ? params.protocolVersion
-            : acp.PROTOCOL_VERSION,
+        protocolVersion: acp.PROTOCOL_VERSION,
         info: {
           name: "antnest-agent-acp-service",
           title: "Antnest Agent",
@@ -127,7 +125,10 @@ export function createAcpAgent({
     )
     .onRequest(acp.methods.agent.session.prompt, ({ params, client }) =>
       withAcpTrace(params._meta, async () => {
-        assertPromptSupported(params.prompt, promptCapabilities);
+        if (!isPromptSupported(params.prompt, promptCapabilities)) {
+          await mapError(() => application.assertAccess({ binding }));
+          assertPromptSupported(params.prompt, promptCapabilities);
+        }
         const accepted = await mapError(() =>
           application.acceptPrompt({
             binding,
@@ -176,7 +177,11 @@ function startRun(
   });
   void execution
     .then((result) => notifyIdle(client, sessionId, result))
-    .catch(() => notifyState(client, sessionId, "idle", "_failed"));
+    .catch((error: unknown) => {
+      if (!(error instanceof RunRecoveryRequiredError)) {
+        notifyState(client, sessionId, "idle", "_failed");
+      }
+    });
 }
 
 function bestEffortNotify(
@@ -209,13 +214,13 @@ function notifyState(
 }
 
 function notifyIdle(client: acp.AgentContext, sessionId: string, result: ExecuteRunResult): void {
-  notifyState(client, sessionId, "idle", stopReason(result.terminalClass));
+  notifyState(client, sessionId, "idle", stopReason(result));
 }
 
-function stopReason(terminalClass: TerminalClass): string {
-  switch (terminalClass) {
+function stopReason(result: ExecuteRunResult): string {
+  switch (result.terminalClass) {
     case "completed":
-      return "end_turn";
+      return result.stopReason;
     case "cancelled":
       return "cancelled";
     case "failed":
@@ -239,7 +244,9 @@ function toAcpUpdate(event: SessionEvent): acp.SessionUpdate {
       return {
         sessionUpdate: "tool_call_update",
         toolCallId: event.toolCallId,
+        ...(event.modelName === undefined ? {} : { name: event.modelName }),
         ...(event.title === undefined ? {} : { title: event.title }),
+        ...(event.arguments === undefined ? {} : { rawInput: event.arguments }),
         status: event.status,
         ...(event.content === undefined
           ? {}
@@ -282,6 +289,19 @@ function assertPromptSupported(
       );
     }
   }
+}
+
+function isPromptSupported(
+  content: readonly acp.ContentBlock[],
+  capabilities: CreateAcpAgentInput["promptCapabilities"],
+): boolean {
+  return content.every(
+    (block) =>
+      block.type === "text" ||
+      block.type === "resource_link" ||
+      (block.type === "image" && capabilities.image) ||
+      (block.type === "resource" && capabilities.embeddedContext),
+  );
 }
 
 function toClientMcpInputs(servers: readonly acp.McpServer[]): ClientMcpInput[] {

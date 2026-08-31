@@ -28,7 +28,6 @@ describe("AgentControllerClient", () => {
             system_prompt: "system",
             skill_instructions: [],
             model: {
-              adapter: "openai_compatible",
               base_url: "https://api.example.test/v1",
               model: "model",
               context_window: 32000,
@@ -48,7 +47,13 @@ describe("AgentControllerClient", () => {
     });
 
     await expect(
-      client.acquireRun({ requestId: "request-1", agentId: "agent-1", sessionId: "session-1" }),
+      client.acquireRun({
+        requestId: "request-1",
+        agentId: "agent-1",
+        principalId: "principal-1",
+        expectedAccessRevision: "access-1",
+        sessionId: "session-1",
+      }),
     ).resolves.toMatchObject({
       admissionId: "admission-1",
       admissionDeadline: new Date("2026-08-30T00:10:00.000Z"),
@@ -56,7 +61,7 @@ describe("AgentControllerClient", () => {
       agentExecutionSpecDigest: "b".repeat(64),
       credentialVersion: "credential-version-1",
       runtime: { generation: 1, executionId: "runtime-execution-1" },
-      executionSpec: { model: { adapter: "openai_compatible", contextWindow: 32000 } },
+      executionSpec: { model: { contextWindow: 32000 } },
     });
     expect(fetchFn).toHaveBeenCalledWith(
       new URL("http://agent-controller:8080/rpc/agent-controller/acquire-run"),
@@ -65,6 +70,8 @@ describe("AgentControllerClient", () => {
         body: JSON.stringify({
           request_id: "request-1",
           agent_id: "agent-1",
+          principal_id: "principal-1",
+          expected_access_revision: "access-1",
           session_id: "session-1",
         }),
       }),
@@ -86,7 +93,13 @@ describe("AgentControllerClient", () => {
     });
 
     const error = await client
-      .acquireRun({ requestId: "request-1", agentId: "agent-1", sessionId: "session-1" })
+      .acquireRun({
+        requestId: "request-1",
+        agentId: "agent-1",
+        principalId: "principal-1",
+        expectedAccessRevision: "access-1",
+        sessionId: "session-1",
+      })
       .catch((caught: unknown) => caught);
 
     expect(error).toBeInstanceOf(AgentControllerError);
@@ -108,7 +121,13 @@ describe("AgentControllerClient", () => {
     });
 
     await expect(
-      client.acquireRun({ requestId: "request-1", agentId: "agent-1", sessionId: "session-1" }),
+      client.acquireRun({
+        requestId: "request-1",
+        agentId: "agent-1",
+        principalId: "principal-1",
+        expectedAccessRevision: "access-1",
+        sessionId: "session-1",
+      }),
     ).rejects.toMatchObject({ code: "dependency_unavailable" });
   });
 
@@ -137,7 +156,13 @@ describe("AgentControllerClient", () => {
     });
 
     await expect(
-      client.acquireRun({ requestId: "request-1", agentId: "agent-1", sessionId: "session-1" }),
+      client.acquireRun({
+        requestId: "request-1",
+        agentId: "agent-1",
+        principalId: "principal-1",
+        expectedAccessRevision: "access-1",
+        sessionId: "session-1",
+      }),
     ).rejects.toMatchObject({ code: "dependency_unavailable", retryable: true });
     expect(fetchFn).toHaveBeenCalledTimes(1);
   });

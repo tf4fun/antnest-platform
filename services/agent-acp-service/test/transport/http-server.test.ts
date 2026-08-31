@@ -47,9 +47,9 @@ describe("AgentAcpHttpServer", () => {
     }
     const client = acp.client();
     const connection = client.connect(
-      createWebSocketStream<acp.AnyWireMessage>(`ws://127.0.0.1:${address.port}/acp`, {
+      createWebSocketStream<acp.AnyWireMessage>(`ws://127.0.0.1:${address.port}/v2/acp`, {
         WebSocket,
-        headers: { "x-antnest-authenticated-subject": "subject-1" },
+        headers: { "x-antnest-agent-access-subject": "subject-1" },
       }),
     );
 
@@ -95,7 +95,7 @@ describe("AgentAcpHttpServer", () => {
     expect(created).toEqual({ sessionId: "session-1" });
     expect(controller.resolveAgentAccess).toHaveBeenCalledWith({
       requestId: "id-1",
-      authenticatedSubject: "subject-1",
+      agentAccessSubject: "subject-1",
     });
     connection.close();
     await connection.closed.catch((error: unknown) => {
@@ -118,8 +118,8 @@ describe("AgentAcpHttpServer", () => {
     }
 
     const status = await new Promise<number>((resolve, reject) => {
-      const socket = new WebSocket(`ws://127.0.0.1:${address.port}/acp`, {
-        headers: { "x-antnest-authenticated-subject": "subject-1" },
+      const socket = new WebSocket(`ws://127.0.0.1:${address.port}/v2/acp`, {
+        headers: { "x-antnest-agent-access-subject": "subject-1" },
       });
       socket.once("unexpected-response", (_request, response) => {
         resolve(response.statusCode ?? 0);
@@ -133,6 +133,41 @@ describe("AgentAcpHttpServer", () => {
     expect(controller.resolveAgentAccess).not.toHaveBeenCalled();
   });
 
+  it.each(["/acp", "/v1/acp"])(
+    "does not expose an unversioned or fake ACP compatibility route at %s",
+    async (path) => {
+      const controller = controllerPort();
+      server = new AgentAcpHttpServer({
+        agentController: controller.port,
+        application: applicationPort(),
+        ready: vi.fn(() => Promise.resolve(true)),
+        maxWebSocketPayloadBytes: 64 * 1024,
+      });
+      await server.listen("127.0.0.1", 0);
+      const address = server.address();
+      if (address === null || typeof address === "string") {
+        throw new Error("server has no TCP address");
+      }
+
+      const status = await new Promise<number>((resolve, reject) => {
+        const socket = new WebSocket(`ws://127.0.0.1:${address.port}${path}`, {
+          headers: { "x-antnest-agent-access-subject": "subject-1" },
+        });
+        socket.once("unexpected-response", (_request, response) => {
+          resolve(response.statusCode ?? 0);
+          response.destroy();
+        });
+        socket.once("open", () => reject(new Error(`${path} unexpectedly accepted a WebSocket`)));
+        socket.once("error", () => undefined);
+      });
+
+      expect(status).toBe(404);
+      expect(controller.resolveAgentAccess).not.toHaveBeenCalled();
+      await server.close();
+      server = undefined;
+    },
+  );
+
   it("terminates an open ACP connection during deterministic shutdown", async () => {
     server = new AgentAcpHttpServer({
       agentController: controllerPort().port,
@@ -145,8 +180,8 @@ describe("AgentAcpHttpServer", () => {
     if (address === null || typeof address === "string") {
       throw new Error("server has no TCP address");
     }
-    const socket = new WebSocket(`ws://127.0.0.1:${address.port}/acp`, {
-      headers: { "x-antnest-authenticated-subject": "subject-1" },
+    const socket = new WebSocket(`ws://127.0.0.1:${address.port}/v2/acp`, {
+      headers: { "x-antnest-agent-access-subject": "subject-1" },
     });
     await new Promise<void>((resolve, reject) => {
       socket.once("open", resolve);
@@ -180,6 +215,7 @@ function controllerPort() {
 
 function applicationPort(): AcpApplicationPort {
   return {
+    assertAccess: vi.fn(() => Promise.resolve()),
     createSession: vi.fn(() => Promise.resolve({ sessionId: "session-1" })),
     listSessions: vi.fn(() => Promise.resolve({ sessions: [] })),
     deleteSession: vi.fn(),

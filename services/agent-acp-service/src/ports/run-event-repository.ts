@@ -1,11 +1,12 @@
-import type { ContentBlock, ModelToolDefinition, RuntimeEffectState } from "../domain/types.js";
+import type { ContentBlock, ModelToolDefinition, ToolEffectState } from "../domain/types.js";
 import type { SessionEvent } from "./acp-application.js";
-import type { ModelUsage } from "./model.js";
+import type { ModelToolCall, ModelUsage } from "./model.js";
 
 export type AppendAgentMessageInput = {
   id: string;
   runId: string;
   content: ContentBlock[];
+  toolCalls?: ModelToolCall[];
   createdAt: Date;
 };
 
@@ -14,7 +15,16 @@ export type StartToolAttemptInput = {
   runId: string;
   toolCallId: string;
   tool: ModelToolDefinition;
+  arguments: { [key: string]: unknown };
   requestDigest: string;
+  createdAt: Date;
+};
+
+export type AppendRejectedToolCallInput = {
+  id: string;
+  runId: string;
+  call: ModelToolCall;
+  message: string;
   createdAt: Date;
 };
 
@@ -25,12 +35,13 @@ export type FinishToolAttemptInput = {
   status: "completed" | "failed" | "cancelled";
   content: ContentBlock[];
   resultSummary: ContentBlock[];
-  runtimeEffectState: RuntimeEffectState;
+  toolEffectState: ToolEffectState;
   createdAt: Date;
 };
 
 export interface RunEventRepository {
   appendAgentMessage(input: AppendAgentMessageInput): Promise<SessionEvent>;
+  appendAgentThought(input: AppendAgentMessageInput): Promise<SessionEvent>;
   appendUsage(input: {
     id: string;
     runId: string;
@@ -39,6 +50,7 @@ export interface RunEventRepository {
     createdAt: Date;
   }): Promise<SessionEvent>;
   startToolAttempt(input: StartToolAttemptInput): Promise<SessionEvent>;
+  appendRejectedToolCall(input: AppendRejectedToolCallInput): Promise<SessionEvent>;
   finishToolAttempt(input: FinishToolAttemptInput): Promise<SessionEvent>;
-  interruptToolAttempts(runId: string, interruptedAt: Date): Promise<void>;
+  interruptToolAttempts(runId: string, interruptedAt: Date): Promise<ToolEffectState>;
 }

@@ -1,10 +1,9 @@
 import type {
   ConnectionBinding,
   ContentBlock,
-  ExecutorState,
   RunExecutionSnapshot,
-  RuntimeEffectState,
-  TerminalClass,
+  RunOutcome,
+  RunStopReason,
 } from "../domain/types.js";
 import type { ClientMcpInput } from "../domain/mcp.js";
 
@@ -17,14 +16,26 @@ export type AcpSessionInfo = {
 
 export type SessionEvent =
   | {
-      kind: "user_message" | "agent_message" | "agent_thought";
+      kind: "user_message" | "agent_thought";
       messageId: string;
       content: ContentBlock[];
+    }
+  | {
+      kind: "agent_message";
+      messageId: string;
+      content: ContentBlock[];
+      toolCalls?: Array<{
+        id: string;
+        name: string;
+        arguments: { [key: string]: unknown };
+      }>;
     }
   | {
       kind: "tool_call";
       toolCallId: string;
       title?: string;
+      modelName?: string;
+      arguments?: { [key: string]: unknown };
       status: "pending" | "in_progress" | "completed" | "failed" | "cancelled";
       content?: ContentBlock[];
     }
@@ -36,7 +47,7 @@ export type SessionEvent =
   | {
       kind: "state";
       state: "running" | "idle";
-      stopReason?: "end_turn" | "cancelled" | "_failed" | "_unresolved";
+      stopReason?: RunStopReason | "cancelled" | "_failed" | "_unresolved";
     };
 
 export interface SessionEventPublisher {
@@ -51,14 +62,17 @@ export type AcceptedAcpRun = {
   snapshot: RunExecutionSnapshot;
 };
 
-export type ExecuteRunResult = {
-  terminalClass: TerminalClass;
-  executorState: ExecutorState;
-  runtimeEffectState: RuntimeEffectState;
-  errorClass?: string;
-};
+export type ExecuteRunResult = RunOutcome;
+
+export class RunRecoveryRequiredError extends Error {
+  public constructor(message: string, cause: unknown) {
+    super(message, { cause });
+    this.name = "RunRecoveryRequiredError";
+  }
+}
 
 export interface AcpApplicationPort {
+  assertAccess(input: { binding: ConnectionBinding }): Promise<void>;
   createSession(input: {
     binding: ConnectionBinding;
     cwd: string;

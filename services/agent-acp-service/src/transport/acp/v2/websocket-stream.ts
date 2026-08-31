@@ -2,7 +2,7 @@ import type * as acp from "@agentclientprotocol/sdk/experimental/v2";
 import type WebSocket from "ws";
 import type { RawData } from "ws";
 
-export function createWebSocketWireStream(socket: WebSocket): acp.WireStream {
+export function createAcpV2WebSocketWireStream(socket: WebSocket): acp.WireStream {
   let readableController: ReadableStreamDefaultController<acp.AnyWireMessage> | undefined;
   let closed = false;
 

@@ -92,6 +92,62 @@ describe("ContextBuilder", () => {
     );
   });
 
+  it("restores one Tool exchange as an atomic assistant-call/result pair", async () => {
+    const repository: ContextRepository = {
+      load: vi.fn(() =>
+        Promise.resolve({
+          checkpoint: null,
+          messages: [
+            {
+              sequence: 1,
+              kind: "user_message" as const,
+              content: [{ type: "text", text: "read" }],
+            },
+            {
+              sequence: 2,
+              endSequence: 3,
+              kind: "tool_exchange" as const,
+              assistant: {
+                content: [{ type: "text", text: "I will read the file." }],
+                toolCalls: [{ id: "call-1", name: "read", arguments: { path: "README.md" } }],
+              },
+              results: [
+                {
+                  toolCallId: "call-1",
+                  content: [{ type: "text", text: "contents" }],
+                },
+              ],
+            },
+            {
+              sequence: 4,
+              kind: "agent_message" as const,
+              content: [{ type: "text", text: "done" }],
+            },
+          ],
+        }),
+      ),
+      saveCheckpoint: vi.fn(),
+    };
+    const builder = new ContextBuilder({
+      repository,
+      id: () => "checkpoint-1",
+      now: () => new Date("2026-08-30T00:00:00Z"),
+    });
+
+    const messages = await builder.build("session-1", snapshot(), new AbortController().signal);
+
+    expect(messages.slice(1)).toEqual([
+      { role: "user", content: [{ type: "text", text: "read" }] },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "I will read the file." }],
+        toolCalls: [{ id: "call-1", name: "read", arguments: { path: "README.md" } }],
+      },
+      { role: "tool", toolCallId: "call-1", content: [{ type: "text", text: "contents" }] },
+      { role: "assistant", content: [{ type: "text", text: "done" }] },
+    ]);
+  });
+
   it("does not save a checkpoint after worker ownership is lost during context load", async () => {
     const ownership = new AbortController();
     const saveCheckpoint = vi.fn<ContextRepository["saveCheckpoint"]>();
@@ -192,7 +248,6 @@ function snapshot(): RunExecutionSnapshot {
         { skillKey: "example", version: "1", instructions: "skill instructions" },
       ],
       model: {
-        adapter: "openai_compatible",
         baseUrl: "https://api.example.test/v1",
         model: "example-model",
         contextWindow: 64_000,

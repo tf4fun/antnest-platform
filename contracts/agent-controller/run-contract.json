@@ -1,6 +1,6 @@
 {
   "contract": "antnest.agent-controller.run-admission",
-  "revision": 2,
+  "revision": 3,
   "transport": "json-over-http",
   "trust": "internal-network",
   "base_path": "/rpc/agent-controller",
@@ -10,6 +10,7 @@
     "success_status": 200,
     "response_content_type": "application/json",
     "response": {
+      "type": "object",
       "required": ["status"],
       "properties": {
         "status": { "const": "ready" }
@@ -17,6 +18,7 @@
     }
   },
   "error": {
+    "type": "object",
     "response_content_type": "application/json",
     "required": ["code", "message", "retryable"],
     "properties": {
@@ -46,13 +48,16 @@
       "request_content_type": "application/json",
       "response_content_type": "application/json",
       "request": {
-        "required": ["request_id", "authenticated_subject"],
+        "type": "object",
+        "required": ["request_id", "agent_access_subject"],
         "properties": {
           "request_id": { "type": "string", "minLength": 1 },
-          "authenticated_subject": { "type": "string", "minLength": 1 }
-        }
+          "agent_access_subject": { "type": "string", "minLength": 1 }
+        },
+        "additionalProperties": false
       },
       "response": {
+        "type": "object",
         "required": ["principal_id", "agent_id", "access_revision"],
         "properties": {
           "principal_id": { "type": "string", "minLength": 1 },
@@ -76,14 +81,25 @@
       "request_content_type": "application/json",
       "response_content_type": "application/json",
       "request": {
-        "required": ["request_id", "agent_id", "session_id"],
+        "type": "object",
+        "required": [
+          "request_id",
+          "agent_id",
+          "principal_id",
+          "expected_access_revision",
+          "session_id"
+        ],
         "properties": {
           "request_id": { "type": "string", "minLength": 1 },
           "agent_id": { "type": "string", "minLength": 1 },
+          "principal_id": { "type": "string", "minLength": 1 },
+          "expected_access_revision": { "type": "string", "minLength": 1 },
           "session_id": { "type": "string", "minLength": 1 }
-        }
+        },
+        "additionalProperties": false
       },
       "response": {
+        "type": "object",
         "required": [
           "admission_id",
           "admission_deadline",
@@ -151,14 +167,12 @@
               "model": {
                 "type": "object",
                 "required": [
-                  "adapter",
                   "base_url",
                   "model",
                   "context_window",
                   "max_output_tokens"
                 ],
                 "properties": {
-                  "adapter": { "enum": ["openai_compatible"] },
                   "base_url": { "type": "string", "format": "uri" },
                   "model": { "type": "string", "minLength": 1 },
                   "context_window": { "type": "integer", "minimum": 1024 },
@@ -191,14 +205,17 @@
       "request_content_type": "application/json",
       "response_content_type": "application/json",
       "request": {
+        "type": "object",
         "required": ["request_id", "admission_id", "credential_ref"],
         "properties": {
           "request_id": { "type": "string", "minLength": 1 },
           "admission_id": { "type": "string", "minLength": 1 },
           "credential_ref": { "type": "string", "minLength": 1 }
-        }
+        },
+        "additionalProperties": false
       },
       "response": {
+        "type": "object",
         "required": ["credential_version", "secret_type", "secret"],
         "properties": {
           "credential_version": { "type": "string", "minLength": 1 },
@@ -214,12 +231,15 @@
       "request_content_type": "application/json",
       "response_content_type": "application/json",
       "request": {
+        "type": "object",
         "required": [
           "request_id",
           "admission_id",
           "terminal_class",
           "executor_state",
-          "runtime_effect_state"
+          "tool_effect_state",
+          "stop_reason",
+          "error_class"
         ],
         "properties": {
           "request_id": { "type": "string", "minLength": 1 },
@@ -230,13 +250,69 @@
           "executor_state": {
             "enum": ["quiescent", "cancellation_requested", "unknown"]
           },
-          "runtime_effect_state": {
+          "tool_effect_state": {
             "enum": ["none", "settled", "unknown"]
           },
+          "stop_reason": {
+            "type": ["string", "null"],
+            "enum": [
+              "end_turn",
+              "max_tokens",
+              "max_turn_requests",
+              "refusal",
+              null
+            ]
+          },
           "error_class": { "type": ["string", "null"] }
-        }
+        },
+        "additionalProperties": false,
+        "oneOf": [
+          {
+            "properties": {
+              "terminal_class": { "const": "completed" },
+              "executor_state": { "const": "quiescent" },
+              "tool_effect_state": { "enum": ["none", "settled"] },
+              "stop_reason": {
+                "enum": [
+                  "end_turn",
+                  "max_tokens",
+                  "max_turn_requests",
+                  "refusal"
+                ]
+              },
+              "error_class": { "const": null }
+            }
+          },
+          {
+            "properties": {
+              "terminal_class": { "const": "cancelled" },
+              "executor_state": { "const": "quiescent" },
+              "tool_effect_state": { "enum": ["none", "settled"] },
+              "stop_reason": { "const": null }
+            }
+          },
+          {
+            "properties": {
+              "terminal_class": { "const": "failed" },
+              "executor_state": { "const": "quiescent" },
+              "tool_effect_state": { "enum": ["none", "settled"] },
+              "stop_reason": { "const": null },
+              "error_class": { "type": "string", "minLength": 1 }
+            }
+          },
+          {
+            "properties": {
+              "terminal_class": { "const": "unresolved" },
+              "executor_state": { "const": "unknown" },
+              "tool_effect_state": { "const": "unknown" },
+              "stop_reason": { "const": null },
+              "error_class": { "type": "string", "minLength": 1 }
+            }
+          }
+        ]
       },
       "response": {
+        "type": "object",
         "required": ["status"],
         "properties": {
           "status": { "enum": ["finished", "already_finished"] }

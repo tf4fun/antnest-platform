@@ -36,17 +36,10 @@ export class PostgresSessionRepository implements SessionRepository {
     await this.kernel.transaction(async (client) => {
       await client.query(
         `INSERT INTO acp_sessions(
-           id, principal_id, agent_id, created_access_revision, cwd, state,
+           id, principal_id, agent_id, cwd, state,
            client_mcp_revision_id, created_at, updated_at
-         ) VALUES ($1, $2, $3, $4, $5, 'active', NULL, $6, $6)`,
-        [
-          input.sessionId,
-          input.binding.principalId,
-          input.binding.agentId,
-          input.binding.accessRevision,
-          input.cwd,
-          now,
-        ],
+         ) VALUES ($1, $2, $3, $4, 'active', NULL, $5, $5)`,
+        [input.sessionId, input.binding.principalId, input.binding.agentId, input.cwd, now],
       );
       await this.insertMcpRevision(
         client,
@@ -157,8 +150,9 @@ export class PostgresSessionRepository implements SessionRepository {
   ): Promise<Extract<SessionEvent, { kind: "state" }>> {
     const result = await this.kernel.query<{
       state: "admitting" | "running" | "completed" | "cancelled" | "failed" | "unresolved";
+      stop_reason: "end_turn" | "max_tokens" | "max_turn_requests" | "refusal" | null;
     }>(
-      `SELECT state
+      `SELECT state, stop_reason
          FROM runs
         WHERE session_id = $1
         ORDER BY created_at DESC, id DESC
@@ -169,8 +163,17 @@ export class PostgresSessionRepository implements SessionRepository {
       case "admitting":
       case "running":
         return { kind: "state", state: "running" };
-      case "completed":
-        return { kind: "state", state: "idle", stopReason: "end_turn" };
+      case "completed": {
+        const stopReason = result.rows[0].stop_reason;
+        if (stopReason === null) {
+          throw new Error("Completed Run has no stop reason");
+        }
+        return {
+          kind: "state",
+          state: "idle",
+          stopReason,
+        };
+      }
       case "cancelled":
         return { kind: "state", state: "idle", stopReason: "cancelled" };
       case "failed":

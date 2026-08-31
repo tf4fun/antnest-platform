@@ -1,6 +1,11 @@
 import { z } from "zod";
 
-import type { RunExecutionSnapshot, RunState } from "../../domain/types.js";
+import type {
+  RunExecutionSnapshot,
+  RunOutcome,
+  RunState,
+  RunStopReason,
+} from "../../domain/types.js";
 import type {
   ExecutionRepository,
   FinishLocalRunInput,
@@ -29,7 +34,6 @@ const snapshotSchema = z.object({
       z.object({ skillKey: z.string(), version: z.string(), instructions: z.string() }),
     ),
     model: z.object({
-      adapter: z.literal("openai_compatible"),
       baseUrl: z.url(),
       model: z.string().min(1),
       contextWindow: z.number().int().positive(),
@@ -58,13 +62,14 @@ export class PostgresExecutionRepository implements ExecutionRepository {
     const result = await this.kernel.query(
       `UPDATE runs
           SET state = $2, terminal_class = $2, executor_state = $3,
-              runtime_effect_state = $4, error_class = $5, updated_at = $6
+              tool_effect_state = $4, stop_reason = $5, error_class = $6, updated_at = $7
         WHERE id = $1 AND state = 'running'`,
       [
         input.runId,
         input.terminalClass,
         input.executorState,
-        input.runtimeEffectState,
+        input.toolEffectState,
+        input.stopReason ?? null,
         input.errorClass ?? null,
         input.finishedAt,
       ],
@@ -72,10 +77,24 @@ export class PostgresExecutionRepository implements ExecutionRepository {
     if (result.rowCount === 1) {
       return;
     }
-    const state = await this.getState(input.runId);
-    if (state !== input.terminalClass) {
+    const stored = await this.loadTerminalOutcome(input.runId);
+    if (stored === null || !sameOutcome(stored, input)) {
       throw new Error("Run cannot enter the requested terminal state");
     }
+  }
+
+  private async loadTerminalOutcome(runId: string): Promise<RunOutcome | null> {
+    const result = await this.kernel.query<TerminalOutcomeRow>(
+      `SELECT terminal_class, executor_state, tool_effect_state, stop_reason, error_class
+         FROM runs
+        WHERE id = $1`,
+      [runId],
+    );
+    const row = result.rows[0];
+    if (row === undefined || row.terminal_class === null) {
+      return null;
+    }
+    return storedOutcome(row);
   }
 
   public async quarantine(runId: string, errorClass: string, finishedAt: Date): Promise<void> {
@@ -83,7 +102,7 @@ export class PostgresExecutionRepository implements ExecutionRepository {
       `UPDATE runs
           SET state = 'unresolved', pending_user_message_id = NULL, pending_prompt = NULL,
               terminal_class = 'unresolved', executor_state = 'unknown',
-              runtime_effect_state = 'unknown', error_class = $2, updated_at = $3
+              tool_effect_state = 'unknown', error_class = $2, updated_at = $3
         WHERE id = $1 AND admission_finished_at IS NULL`,
       [runId, errorClass, finishedAt],
     );
@@ -109,6 +128,7 @@ export class PostgresExecutionRepository implements ExecutionRepository {
       request_id: string;
       session_id: string;
       client_mcp_revision_id: string;
+      expected_access_revision: string;
       state: RunState;
       pending_user_message_id: string | null;
       pending_prompt: unknown;
@@ -116,13 +136,15 @@ export class PostgresExecutionRepository implements ExecutionRepository {
       admission_id: string | null;
       terminal_class: "completed" | "cancelled" | "failed" | "unresolved" | null;
       executor_state: "quiescent" | "cancellation_requested" | "unknown" | null;
-      runtime_effect_state: "none" | "settled" | "unknown" | null;
+      tool_effect_state: "none" | "settled" | "unknown" | null;
+      stop_reason: RunStopReason | null;
       error_class: string | null;
     }>(
-      `SELECT id, request_id, session_id, client_mcp_revision_id, state,
+      `SELECT id, request_id, session_id, client_mcp_revision_id,
+              expected_access_revision, state,
               pending_user_message_id,
               pending_prompt, execution_snapshot, admission_id, terminal_class,
-              executor_state, runtime_effect_state, error_class
+              executor_state, tool_effect_state, stop_reason, error_class
          FROM runs
         WHERE state IN ('admitting', 'running')
            OR (state IN ('completed', 'cancelled', 'failed', 'unresolved')
@@ -152,6 +174,7 @@ function mapRecoveryWork(row: {
   request_id: string;
   session_id: string;
   client_mcp_revision_id: string;
+  expected_access_revision: string;
   state: RunState;
   pending_user_message_id: string | null;
   pending_prompt: unknown;
@@ -159,7 +182,8 @@ function mapRecoveryWork(row: {
   admission_id: string | null;
   terminal_class: "completed" | "cancelled" | "failed" | "unresolved" | null;
   executor_state: "quiescent" | "cancellation_requested" | "unknown" | null;
-  runtime_effect_state: "none" | "settled" | "unknown" | null;
+  tool_effect_state: "none" | "settled" | "unknown" | null;
+  stop_reason: RunStopReason | null;
   error_class: string | null;
 }): RecoveryWork {
   if (row.state === "admitting") {
@@ -172,6 +196,7 @@ function mapRecoveryWork(row: {
       requestId: row.request_id,
       sessionId: row.session_id,
       clientMcpRevisionId: row.client_mcp_revision_id,
+      expectedAccessRevision: row.expected_access_revision,
       userMessageId: row.pending_user_message_id,
       prompt: contentSchema.parse(row.pending_prompt),
     };
@@ -192,17 +217,101 @@ function mapRecoveryWork(row: {
     row.admission_id === null ||
     row.terminal_class === null ||
     row.executor_state === null ||
-    row.runtime_effect_state === null
+    row.tool_effect_state === null
   ) {
     throw new Error("Terminal Run has incomplete admission facts");
   }
+  const outcome = storedOutcome(row);
   return {
     kind: "finish_admission",
     id: row.id,
     admissionId: row.admission_id,
-    terminalClass: row.terminal_class,
-    executorState: row.executor_state,
-    runtimeEffectState: row.runtime_effect_state,
-    ...(row.error_class === null ? {} : { errorClass: row.error_class }),
+    ...outcome,
   };
+}
+
+type TerminalOutcomeRow = {
+  terminal_class: "completed" | "cancelled" | "failed" | "unresolved" | null;
+  executor_state: "quiescent" | "cancellation_requested" | "unknown" | null;
+  tool_effect_state: "none" | "settled" | "unknown" | null;
+  stop_reason: RunStopReason | null;
+  error_class: string | null;
+};
+
+function storedOutcome(row: TerminalOutcomeRow): RunOutcome {
+  switch (row.terminal_class) {
+    case "completed":
+      if (
+        row.executor_state !== "quiescent" ||
+        row.tool_effect_state === null ||
+        row.tool_effect_state === "unknown" ||
+        row.stop_reason === null
+      ) {
+        throw new Error("Completed Run has invalid terminal facts");
+      }
+      return {
+        terminalClass: "completed",
+        executorState: "quiescent",
+        toolEffectState: row.tool_effect_state,
+        stopReason: row.stop_reason,
+      };
+    case "cancelled":
+      if (
+        row.executor_state !== "quiescent" ||
+        row.tool_effect_state === null ||
+        row.tool_effect_state === "unknown" ||
+        row.stop_reason !== null
+      ) {
+        throw new Error("Cancelled Run has invalid terminal facts");
+      }
+      return {
+        terminalClass: "cancelled",
+        executorState: "quiescent",
+        toolEffectState: row.tool_effect_state,
+        ...(row.error_class === null ? {} : { errorClass: row.error_class }),
+      };
+    case "failed":
+      if (
+        row.executor_state !== "quiescent" ||
+        row.tool_effect_state === null ||
+        row.tool_effect_state === "unknown" ||
+        row.error_class === null ||
+        row.stop_reason !== null
+      ) {
+        throw new Error("Failed Run has invalid terminal facts");
+      }
+      return {
+        terminalClass: "failed",
+        executorState: "quiescent",
+        toolEffectState: row.tool_effect_state,
+        errorClass: row.error_class,
+      };
+    case "unresolved":
+      if (
+        row.executor_state !== "unknown" ||
+        row.tool_effect_state !== "unknown" ||
+        row.error_class === null ||
+        row.stop_reason !== null
+      ) {
+        throw new Error("Unresolved Run has invalid terminal facts");
+      }
+      return {
+        terminalClass: "unresolved",
+        executorState: "unknown",
+        toolEffectState: "unknown",
+        errorClass: row.error_class,
+      };
+    case null:
+      throw new Error("Terminal Run has no terminal class");
+  }
+}
+
+function sameOutcome(left: RunOutcome, right: RunOutcome): boolean {
+  return (
+    left.terminalClass === right.terminalClass &&
+    left.executorState === right.executorState &&
+    left.toolEffectState === right.toolEffectState &&
+    (left.stopReason ?? null) === (right.stopReason ?? null) &&
+    (left.errorClass ?? null) === (right.errorClass ?? null)
+  );
 }

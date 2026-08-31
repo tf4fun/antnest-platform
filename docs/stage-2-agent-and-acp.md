@@ -1,7 +1,7 @@
 # Stage 2 Agent And ACP Architecture
 
 > Status: reviewed target design, pending implementation<br>
-> Updated: 2026-08-30<br>
+> Updated: 2026-08-31<br>
 > Compatibility: greenfield service rewrite; no prototype wire or database
 > compatibility is retained<br>
 > Protocol baseline: ACP v2 Draft and MCP `2026-07-28`
@@ -85,7 +85,7 @@ packet and policy contracts.
 `agent_id` is the stable business identity. Rebuild does not change:
 
 - owner and authorization binding;
-- ACP authentication mapping;
+- transport-level Agent access-subject mapping;
 - ACP Sessions and conversation history;
 - persistent workspace and Personal Skills;
 - historical Runs, Tool attempts, and Agent events;
@@ -287,7 +287,7 @@ classes. For MCP `2026-07-28` HTTP, closing a request's SSE response is the
 transport cancellation signal, but cancellation still does not prove that a
 side effect was never started.
 
-If the local executor is terminal while a Runtime MCP effect remains unknown,
+If the local executor is terminal while any Tool effect remains unknown,
 the admission stays unresolved. An explicit rebuild may then delete the old
 Runtime conclusively and close that admission before creating its replacement.
 No new Run is admitted in the interval.
@@ -331,15 +331,15 @@ Skills.
 ### 5.1 AcquireRun
 
 Before calling Agent Controller, Agent ACP Service persists an `admitting` Run
-intent with the pending prompt, a deterministic request ID, an input
-fingerprint, and the Session's current client MCP revision. The pending prompt
-is not yet part of accepted conversation history. Recovery always uses this
-captured revision rather than a later Session replacement.
+intent with the pending prompt, a generated durable request ID, the expected
+access revision, and the Session's current client MCP revision. The pending
+prompt is not yet part of accepted conversation history. Recovery always uses
+these captured facts rather than later Session or access state.
 
 Agent ACP Service then calls:
 
 ```text
-AcquireRun(agent_id, session_id, request_id)
+AcquireRun(agent_id, principal_id, expected_access_revision, session_id, request_id)
 ```
 
 In one Agent Controller transaction it:
@@ -369,24 +369,23 @@ build a hidden queue. The caller can present waiting state and retry later.
 ### 5.2 FinishRun
 
 ```text
-FinishRun(admission_id, terminal_class, executor_state, runtime_effect_state)
+FinishRun(admission_id, terminal_class, executor_state, tool_effect_state, stop_reason, error_class)
 ```
 
-is idempotent. `terminal_class` is a small coordination result such as
-completed, cancelled, failed, or outcome-unknown. Once recorded,
+is idempotent. `terminal_class` is a small coordination result: completed,
+cancelled, failed, or unresolved. Once recorded,
 `terminal_class` and executor quiescence are immutable. `executor_state` must
 prove the local Agent loop cannot issue another model or MCP request.
-`runtime_effect_state` is `settled` or `unknown` and may move only from unknown
-to settled.
+`tool_effect_state` is `none`, `settled`, or `unknown` and covers both Runtime
+and client MCP Tools.
 
-The admission is released only when the local executor is quiescent and no
-Runtime MCP effect remains unknown. An unknown Runtime effect leaves admission
-`unresolved` until Agent ACP Service observes the request settle or Agent
-Controller proves the bound Runtime conclusively absent. Repeating `FinishRun`
-may report that monotonic settlement; Runtime deletion may perform the same
-transition in Agent Controller's local transaction. The original outcome stays
-unknown for audit. Agent Controller does not copy messages, Turns, Tool results,
-or detailed Run history from Agent ACP Service.
+`FinishRun` seals one immutable terminal report. A successful RPC response means
+that report is stored, not necessarily that the Agent is available for another
+Run. An unknown Tool effect leaves the admission `unresolved` and Agent
+Controller fail-closed until an explicit lifecycle operation proves the bound
+Runtime absent. Agent ACP Service never replays or later rewrites the ambiguous
+Tool outcome. Agent Controller does not copy messages, Turns, Tool results, or
+detailed Run history from Agent ACP Service.
 
 ### 5.3 Crash recovery
 
@@ -394,11 +393,15 @@ Every Run has a configured maximum deadline, and all model and MCP calls use
 deadlines no later than that boundary. A lost Agent ACP Service instance leaves
 the admission fail-closed.
 
-Expiration alone does not prove a Tool stopped. An expired admission becomes
-`unresolved`, not immediately reusable. The single Stage 2 Agent ACP Run worker
-recovers its own `admitting` and executing Runs, retries AcquireRun with the
-same request ID, and reports terminal state. Agent Controller never calls back
-into Agent ACP Service, so the dependency direction remains acyclic.
+Expiration alone does not prove a dispatched Tool stopped. Recovery therefore
+classifies persisted Tool attempts rather than treating every interrupted Run
+the same: an in-progress call has unknown effect and makes the admission
+`unresolved`; a call retained in the assistant response but not yet dispatched
+is closed as not executed; a Run with no unknown Tool effect terminates failed
+and quiescent. The single Stage 2 Agent ACP Run worker recovers its own
+`admitting` and executing Runs, retries AcquireRun with the same request ID,
+and reports terminal state. Agent Controller never calls back into Agent ACP
+Service, so the dependency direction remains acyclic.
 
 If a crash happened during an ambiguous Tool attempt, recovery does not resume
 the Tool loop or start another worker. The Run remains unresolved until the
@@ -409,8 +412,10 @@ rebuild. This is fail-closed recovery, not automatic replay.
 
 ### 6.1 Standard wire only
 
-Agent ACP Service implements the ACP v2 Draft request and success shapes without
-adding Antnest fields. In particular, clients never send:
+Agent ACP Service implements the ACP v2 Draft request and success shapes at the
+explicit WebSocket endpoint `/v2/acp`, without adding Antnest fields. The
+unversioned `/acp` and reserved `/v1/acp` do not alias this endpoint. In
+particular, clients never send:
 
 - `agent_id` as a private Session field;
 - Runtime endpoint or Runtime instance identity;
@@ -422,22 +427,26 @@ Implementation-defined JSON-RPC errors may communicate `agent_busy`,
 `agent_rebuilding`, and `agent_build_failed`, but no custom success payload is
 required.
 
-### 6.2 Agent selection through authentication
+### 6.2 Agent selection through transport identity
 
-ACP authentication establishes an authenticated connection context. Antnest's
-credential mapping resolves that context to exactly one authorized Logical
-Agent before `session/new`, `session/resume`, or `session/prompt` is accepted.
+The trusted transport supplies an opaque Agent-scoped access subject. Antnest's
+credential mapping resolves that subject to exactly one authorized Logical
+Agent before the connection is accepted and revalidates it before every ACP
+business operation.
 
-The mapping is an internal authentication result, not an ACP schema extension.
+The mapping is a trusted transport authentication result, not an ACP auth
+method or schema extension.
 A Session cannot switch Agent after creation. Supporting one user selecting
 among several Agents belongs in Edge Gateway or client connection selection,
 not in Session parameters.
 
-Every request that targets an existing Session, including resume, prompt,
-cancel, close, and delete, verifies the current authenticated principal against
-the Session's stored principal and `agent_id`. `session/list` returns only
-Sessions visible to that principal. Credential remapping never rebinds an
-existing Session.
+Every request, including new, list, resume, prompt, cancel, close, and delete,
+must resolve to the connection's bound principal, Agent, and access revision.
+Agent Controller advances that revision when authorization, mapping, or prompt
+capability changes; stale connections fail closed and reconnect. Existing
+Session operations also verify the current principal against the Session's
+stored principal and `agent_id`. `session/list` returns only Sessions visible to
+that principal. Credential remapping never rebinds an existing Session.
 
 ### 6.3 Session behavior during rebuild
 
@@ -474,8 +483,9 @@ Client MCP comes only from ACP `session/new.mcpServers` and
 - a resume request supplies the complete intended list;
 - changing it does not create AgentConfigRevision or rebuild Runtime;
 - Agent ACP Service stores a normalized revision and protects secret headers;
-- replacing the list closes the previous source clients before the replacement
-  revision becomes active;
+- replacing the list atomically changes the Session's encrypted configuration
+  revision; MCP connections are request-scoped and are not retained between
+  Tool operations;
 - only transports advertised during ACP initialization are accepted.
 
 Remote Antnest ACP initially advertises ACP HTTP MCP support only. It does not
@@ -626,7 +636,7 @@ Egress, or interpret an observation as an Agent business event.
 
 Owns:
 
-- ACP v2 transport and authentication flow;
+- explicit ACP v2 transport at `/v2/acp` and access-binding flow;
 - ACP Sessions and replayable messages;
 - Runs, Turns, context, compression checkpoints, and Tool attempts;
 - client MCP lifecycle;
@@ -663,8 +673,8 @@ RequestAgentRebuild(request_id, agent_id, target_config)
 GetLifecycleOperation(request_id)
 GetAgent(agent_id)
 AcquireRun(request_id, agent_id, session_id)
-FinishRun(admission_id, terminal_class, executor_state, runtime_effect_state)
-ResolveAgentAccess(authenticated_subject)
+FinishRun(admission_id, terminal_class, executor_state, tool_effect_state, stop_reason)
+ResolveAgentAccess(agent_access_subject)
 ResolveCredential(admission_id, credential_ref)
 DeleteAgent(request_id, agent_id)
 ListAgentEvents(agent_id, after_sequence)
@@ -710,7 +720,8 @@ ReleaseAgentNetwork(agent_id)
 
 ### 10.4 Agent ACP Service
 
-Its external protocol is ACP v2 Draft. Agent Controller never calls Agent ACP
+Its external protocol is ACP v2 Draft at `/v2/acp`; ACP v1 is not implemented.
+Agent Controller never calls Agent ACP
 Service during admission recovery. Any future trusted read surface exposes Run
 facts only and cannot mutate Agent configuration.
 
@@ -887,8 +898,9 @@ span attributes or default logs.
 
 ### Stage 2C: Agent ACP Service
 
-1. Implement ACP v2 authentication, Session persistence, resume, prompt,
-   cancellation, content, Tool updates, and replay behavior.
+1. Implement transport-level Agent-scoped subject mapping and request
+   revalidation plus ACP v2 Session persistence, resume, prompt, cancellation,
+   content, Tool updates, and replay behavior.
 2. Implement safe HTTP-only client MCP plus a separate mandatory platform
    Runtime MCP client.
 3. Persist RunExecutionSnapshot before model execution.
@@ -923,8 +935,9 @@ Before Stage 2 is called complete, verification must include:
 - contract tests generated from language-neutral RPC schemas;
 - component tests with private PostgreSQL schemas and no cross-service SQL;
 - Docker E2E for create, chat, Runtime Tool, rebuild, retry, cancel, and delete;
-- ACP conformance tests for authentication, Session lifecycle, replay,
-  cancellation, content, and client MCP capabilities;
+- ACP conformance tests for Session lifecycle, replay, cancellation, content,
+  and client MCP capabilities, plus transport identity mapping and request
+  revalidation tests;
 - MCP `2026-07-28` tests for headers, POST behavior, SSE response, cancellation,
   and absence of protocol-level Session coupling;
 - SSRF tests covering DNS rebinding, redirects, private ranges, metadata
@@ -980,7 +993,9 @@ execution snapshot.
 
 ## 19. Protocol References
 
-- ACP v2 authentication:
+- ACP v2 authentication model, retained as a future negotiation reference;
+  Stage 2 terminates authentication at the trusted transport boundary and does
+  not advertise ACP `authMethods`:
   <https://agentclientprotocol.com/protocol/v2/authentication>
 - ACP v2 Session setup and `mcpServers`:
   <https://agentclientprotocol.com/protocol/v2/session-setup>

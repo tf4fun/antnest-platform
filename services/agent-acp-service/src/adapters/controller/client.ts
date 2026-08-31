@@ -78,7 +78,6 @@ const acquireSchema = z.object({
       )
       .default([]),
     model: z.object({
-      adapter: z.literal("openai_compatible"),
       base_url: z.url(),
       model: z.string().min(1),
       context_window: z.number().int().min(1024),
@@ -140,7 +139,7 @@ export class AgentControllerClient implements AgentControllerPort {
       "resolve-agent-access",
       {
         request_id: input.requestId,
-        authenticated_subject: input.authenticatedSubject,
+        agent_access_subject: input.agentAccessSubject,
       },
       accessSchema,
       signal,
@@ -162,6 +161,8 @@ export class AgentControllerClient implements AgentControllerPort {
       {
         request_id: input.requestId,
         agent_id: input.agentId,
+        principal_id: input.principalId,
+        expected_access_revision: input.expectedAccessRevision,
         session_id: input.sessionId,
       },
       acquireSchema,
@@ -189,7 +190,6 @@ export class AgentControllerClient implements AgentControllerPort {
           instructions: skill.instructions,
         })),
         model: {
-          adapter: result.execution_spec.model.adapter,
           baseUrl: result.execution_spec.model.base_url,
           model: result.execution_spec.model.model,
           contextWindow: result.execution_spec.model.context_window,
@@ -234,7 +234,8 @@ export class AgentControllerClient implements AgentControllerPort {
         admission_id: input.admissionId,
         terminal_class: input.terminalClass,
         executor_state: input.executorState,
-        runtime_effect_state: input.runtimeEffectState,
+        tool_effect_state: input.toolEffectState,
+        stop_reason: input.stopReason ?? null,
         error_class: input.errorClass ?? null,
       },
       finishSchema,

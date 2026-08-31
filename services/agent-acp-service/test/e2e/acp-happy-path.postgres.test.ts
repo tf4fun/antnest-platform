@@ -15,6 +15,7 @@ import { PostgresRunRepository } from "../../src/adapters/postgres/run-repositor
 import { SecretBox } from "../../src/adapters/postgres/secret-box.js";
 import { PostgresSessionRepository } from "../../src/adapters/postgres/session-repository.js";
 import { AcpApplication } from "../../src/application/application.js";
+import { AccessService } from "../../src/application/access-service.js";
 import { ContextBuilder } from "../../src/application/context-builder.js";
 import { PromptCoordinator } from "../../src/application/prompt-coordinator.js";
 import { RunExecutor } from "../../src/application/run-executor.js";
@@ -70,6 +71,7 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP happy path", () => {
     });
     supervisor = new RunSupervisor(executor);
     const application = new AcpApplication({
+      access: new AccessService({ agentController: controller.port, id: randomUUID }),
       sessions: new SessionService({ repository: sessions, id: randomUUID, now: () => new Date() }),
       prompts: new PromptCoordinator({
         repository: runs,
@@ -102,9 +104,9 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP happy path", () => {
       }
     });
     const connection = client.connect(
-      createWebSocketStream<acp.AnyWireMessage>(`ws://127.0.0.1:${address.port}/acp`, {
+      createWebSocketStream<acp.AnyWireMessage>(`ws://127.0.0.1:${address.port}/v2/acp`, {
         WebSocket,
-        headers: { "x-antnest-authenticated-subject": "subject-1" },
+        headers: { "x-antnest-agent-access-subject": "subject-1" },
       }),
     );
     await connection.agent.request(acp.methods.agent.initialize, {
@@ -141,7 +143,7 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP happy path", () => {
       expect.objectContaining({
         terminalClass: "completed",
         executorState: "quiescent",
-        runtimeEffectState: "settled",
+        toolEffectState: "settled",
       }),
       expect.any(AbortSignal),
     );
@@ -161,10 +163,10 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP happy path", () => {
       executionRevision: "execution-1",
     });
     expect(persisted.rows[0]?.admission_finished_at).toBeInstanceOf(Date);
-    const attempts = await pool.query<{ state: string; runtime_effect_state: string }>(
-      "SELECT state, runtime_effect_state FROM tool_attempts",
+    const attempts = await pool.query<{ state: string; tool_effect_state: string }>(
+      "SELECT state, tool_effect_state FROM tool_attempts",
     );
-    expect(attempts.rows).toEqual([{ state: "completed", runtime_effect_state: "settled" }]);
+    expect(attempts.rows).toEqual([{ state: "completed", tool_effect_state: "settled" }]);
   });
 });
 
@@ -198,7 +200,6 @@ function controllerPort() {
           systemPrompt: "You are useful.",
           skillInstructions: [],
           model: {
-            adapter: "openai_compatible",
             baseUrl: "https://api.example.test/v1",
             model: "example-model",
             contextWindow: 64_000,
@@ -227,6 +228,7 @@ function modelPort() {
   complete
     .mockResolvedValueOnce({
       kind: "tool_calls",
+      content: [],
       calls: [{ id: "call-1", name: "read", arguments: { path: "README.md" } }],
       usage: { inputTokens: 10, outputTokens: 3 },
     })
@@ -245,7 +247,7 @@ function toolCatalog() {
     Promise.resolve({
       content: [{ type: "text", text: "# Antnest" }],
       isError: false,
-      runtimeEffectState: "settled",
+      toolEffectState: "settled",
     }),
   );
   const port: ToolCatalogPort = {

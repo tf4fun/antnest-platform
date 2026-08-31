@@ -20,7 +20,7 @@ describe("RunSupervisor", () => {
       return {
         terminalClass: "cancelled",
         executorState: "quiescent",
-        runtimeEffectState: "none",
+        toolEffectState: "none",
       };
     });
     const delegate: RunExecutionPort = {
@@ -53,11 +53,20 @@ describe("RunSupervisor", () => {
 
   it("rejects new work after quiescing without invoking the executor", async () => {
     const execute = vi.fn<RunExecutionPort["execute"]>(({ signal }) =>
-      Promise.resolve({
-        terminalClass: signal.aborted ? "cancelled" : "completed",
-        executorState: "quiescent",
-        runtimeEffectState: "none",
-      }),
+      Promise.resolve(
+        signal.aborted
+          ? {
+              terminalClass: "cancelled" as const,
+              executorState: "quiescent" as const,
+              toolEffectState: "none" as const,
+            }
+          : {
+              terminalClass: "completed" as const,
+              executorState: "quiescent" as const,
+              toolEffectState: "none" as const,
+              stopReason: "end_turn" as const,
+            },
+      ),
     );
     const delegate: RunExecutionPort = {
       execute,
@@ -91,7 +100,7 @@ describe("RunSupervisor", () => {
       return {
         terminalClass: "cancelled",
         executorState: "quiescent",
-        runtimeEffectState: "none",
+        toolEffectState: "none",
       };
     });
     const supervisor = new RunSupervisor({ execute });
@@ -119,11 +128,20 @@ describe("RunSupervisor", () => {
     const settle = Promise.withResolvers<void>();
     let admissionSignal: AbortSignal | undefined;
     const execute = vi.fn<RunExecutionPort["execute"]>(({ signal }) =>
-      Promise.resolve({
-        terminalClass: signal.aborted ? "cancelled" : "completed",
-        executorState: "quiescent",
-        runtimeEffectState: "none",
-      }),
+      Promise.resolve(
+        signal.aborted
+          ? {
+              terminalClass: "cancelled" as const,
+              executorState: "quiescent" as const,
+              toolEffectState: "none" as const,
+            }
+          : {
+              terminalClass: "completed" as const,
+              executorState: "quiescent" as const,
+              toolEffectState: "none" as const,
+              stopReason: "end_turn" as const,
+            },
+      ),
     );
     const supervisor = new RunSupervisor({ execute });
     const admission = supervisor.admit("session-4", async (signal) => {
@@ -152,7 +170,8 @@ describe("RunSupervisor", () => {
       Promise.resolve({
         terminalClass: "completed",
         executorState: "quiescent",
-        runtimeEffectState: "none",
+        toolEffectState: "none",
+        stopReason: "end_turn",
       }),
     );
     const supervisor = new RunSupervisor({ execute });

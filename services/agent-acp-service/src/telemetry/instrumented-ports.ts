@@ -21,6 +21,12 @@ export class InstrumentedAcpApplication implements AcpApplicationPort {
     private readonly telemetry: TelemetryPort,
   ) {}
 
+  public assertAccess(
+    input: Parameters<AcpApplicationPort["assertAccess"]>[0],
+  ): ReturnType<AcpApplicationPort["assertAccess"]> {
+    return this.delegate.assertAccess(input);
+  }
+
   public createSession(
     input: Parameters<AcpApplicationPort["createSession"]>[0],
   ): ReturnType<AcpApplicationPort["createSession"]> {
@@ -231,7 +237,7 @@ export class InstrumentedModel implements ModelPort {
       },
       "antnest.acp.model.duration",
       "antnest.acp.model.requests",
-      { adapter: request.snapshot.executionSpec.model.adapter },
+      { protocol: "openai_chat_completions" },
       () => this.delegate.complete(request),
     );
   }

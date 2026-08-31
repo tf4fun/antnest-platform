@@ -50,20 +50,26 @@ lifetime of the service-owned database.
 
 `ANTNEST_AGENT_CONTROLLER_URL` names the service root. Readiness calls
 `GET /status`; business calls use `/rpc/agent-controller/*` beneath that root.
-The complete revision-2 dependency contract is
+The complete revision-3 dependency contract is
 [`../../../contracts/agent-controller/run-api.md`](../../../contracts/agent-controller/run-api.md),
 with machine-readable shapes in
 [`../../../contracts/agent-controller/run-contract.json`](../../../contracts/agent-controller/run-contract.json).
 
 ## ACP Endpoint
 
-`GET /acp` must be a WebSocket upgrade. The caller supplies the authenticated
-subject in `X-Antnest-Authenticated-Subject`. This header is trusted only
-because the service is not externally routable; Edge Gateway must replace any
-external value before forwarding.
+`GET /v2/acp` must be a WebSocket upgrade. The caller supplies an opaque,
+Agent-scoped access subject in `X-Antnest-Agent-Access-Subject`. This header is
+trusted only because the service is not externally routable; Edge Gateway must
+remove any external value and inject the value issued for the selected Agent.
 
 The service validates the subject through Agent Controller before accepting
-the upgrade. It never logs the raw header.
+the upgrade and revalidates it before every ACP business operation. Agent
+Controller must advance `access_revision` when authorization, Agent mapping, or
+prompt capabilities change. A stale connection receives a stable ACP error and
+must reconnect. The service never logs the raw header.
+
+The unversioned `/acp` and `/v1/acp` return not found. ACP v1 is not silently
+served by a v2 implementation.
 
 ## Telemetry
 
@@ -93,7 +99,7 @@ credentials are never telemetry attributes.
 
 The implemented metric namespace is `antnest.acp.*`. Request counters and
 duration histograms use only bounded labels such as method, result, terminal
-class, MCP source class, and model adapter. Agent, Session, Run, admission, and
+class, MCP source class, and model protocol. Agent, Session, Run, admission, and
 revision identifiers are trace attributes only.
 
 Prompts, model output, Tool arguments/results, full paths, MCP headers,
@@ -107,16 +113,24 @@ metrics, and traces.
   `admitting` intent, fail readiness, and request process replacement so startup
   recovery repeats `acquire_run` with that exact request ID. Only an explicit
   Controller business rejection terminates it.
-- Local acceptance failure after a successful admission, local terminal-state
-  persistence failure, or an uncertain `finish_run`: fail readiness and request
-  process replacement. The service does not remain healthy with a stranded
-  admission; startup recovery resumes the same durable work.
+- Local acceptance failure after a successful admission, durable Run-event or
+  terminal-state persistence failure, or an uncertain `finish_run`: fail
+  readiness and request process replacement. A Run-event write failure is not
+  converted into a normal terminal Run because that could strand a partial Tool
+  exchange. The service does not remain healthy with a stranded admission;
+  startup recovery resumes the same durable work. No speculative ACP idle state
+  is emitted before that recovery establishes the terminal facts.
 - Model timeout: cancel the request and terminate the Run as failed unless the
   client cancellation path applies.
-- Runtime MCP timeout: report runtime effect unknown and never replay the Tool
-  automatically.
-- Client MCP failure: fail that Tool source explicitly; Runtime MCP remains
-  available.
+- Runtime or client MCP timeout after dispatch: report Tool effect unknown and
+  never replay the Tool automatically.
+- Agent ACP Service restart during a Run: never replay model or Tool work.
+  Recovery marks dispatched-but-unconfirmed Tool calls unknown, marks retained
+  but undispatched calls not executed, and reports the Run unresolved only when
+  an unknown Tool effect actually exists; otherwise it reports a failed,
+  quiescent Run.
+- A confirmed client MCP failure is returned to the model as a Tool error;
+  Runtime MCP and other client sources remain available.
 - PostgreSQL unavailable: readiness fails and no prompt is accepted.
 - Run worker lock unavailable: startup fails because another replica owns Run
   execution. A same-session heartbeat detects loss of the dedicated lock

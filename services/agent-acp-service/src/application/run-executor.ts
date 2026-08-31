@@ -1,9 +1,13 @@
-import { DurableRunEvents } from "./durable-run-events.js";
+import { DurableRunEvents, RunEventPersistenceError } from "./durable-run-events.js";
 import { TurnRunner } from "./turn-runner.js";
 import type { ContextBuilder } from "./context-builder.js";
 import { DomainError } from "../domain/errors.js";
-import type { AcpApplicationPort, ExecuteRunResult } from "../ports/acp-application.js";
-import type { AgentControllerPort } from "../ports/agent-controller.js";
+import {
+  RunRecoveryRequiredError,
+  type AcpApplicationPort,
+  type ExecuteRunResult,
+} from "../ports/acp-application.js";
+import { finishRunInput, type AgentControllerPort } from "../ports/agent-controller.js";
 import type { ExecutionRepository } from "../ports/execution-repository.js";
 import type { ModelPort } from "../ports/model.js";
 import type { RunEventRepository } from "../ports/run-event-repository.js";
@@ -53,7 +57,7 @@ export class RunExecutor implements RunExecutionPort {
       this.dependencies.recoveryRequired(
         new Error("Run terminal state could not be persisted", { cause: error }),
       );
-      throw error;
+      throw new RunRecoveryRequiredError("Run terminal state requires recovery", error);
     }
     assertWorkerOwnership(this.dependencies.ownershipSignal);
     await this.closeAdmission(input.accepted.runId, input.accepted.snapshot.admissionId, result);
@@ -73,14 +77,20 @@ export class RunExecutor implements RunExecutionPort {
     try {
       const result = await this.run({ ...input, signal });
       return deadline.aborted && !input.signal.aborted
-        ? deadlineResult(result.runtimeEffectState)
+        ? deadlineResult(result.toolEffectState)
         : result;
     } catch (error) {
+      if (error instanceof RunEventPersistenceError) {
+        this.dependencies.recoveryRequired(
+          new Error("Run event persistence requires startup recovery", { cause: error }),
+        );
+        throw new RunRecoveryRequiredError("Run event persistence requires recovery", error);
+      }
       if (input.signal.aborted) {
         return {
           terminalClass: "cancelled",
           executorState: "quiescent",
-          runtimeEffectState: "none",
+          toolEffectState: "none",
         };
       }
       if (deadline.aborted) {
@@ -89,7 +99,7 @@ export class RunExecutor implements RunExecutionPort {
       return {
         terminalClass: "failed",
         executorState: "quiescent",
-        runtimeEffectState: "none",
+        toolEffectState: "none",
         errorClass: errorClass(error),
       };
     }
@@ -154,14 +164,7 @@ export class RunExecutor implements RunExecutionPort {
     try {
       await withWorkerOwnership(this.dependencies.ownershipSignal, () =>
         this.dependencies.agentController.finishRun(
-          {
-            requestId: this.dependencies.id(),
-            admissionId,
-            terminalClass: result.terminalClass,
-            executorState: result.executorState,
-            runtimeEffectState: result.runtimeEffectState,
-            ...(result.errorClass === undefined ? {} : { errorClass: result.errorClass }),
-          },
+          finishRunInput(this.dependencies.id(), admissionId, result),
           this.dependencies.ownershipSignal,
         ),
       );
@@ -198,18 +201,18 @@ function errorClass(error: unknown): string {
   return "run_setup_failed";
 }
 
-function deadlineResult(runtimeEffectState: "none" | "settled" | "unknown"): ExecuteRunResult {
-  return runtimeEffectState === "unknown"
+function deadlineResult(toolEffectState: "none" | "settled" | "unknown"): ExecuteRunResult {
+  return toolEffectState === "unknown"
     ? {
         terminalClass: "unresolved",
         executorState: "unknown",
-        runtimeEffectState,
+        toolEffectState,
         errorClass: "run_deadline_exceeded",
       }
     : {
         terminalClass: "failed",
         executorState: "quiescent",
-        runtimeEffectState,
+        toolEffectState,
         errorClass: "run_deadline_exceeded",
       };
 }

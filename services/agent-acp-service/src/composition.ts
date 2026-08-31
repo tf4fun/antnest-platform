@@ -19,6 +19,7 @@ import { SecretBox } from "./adapters/postgres/secret-box.js";
 import { PostgresSessionRepository } from "./adapters/postgres/session-repository.js";
 import { PostgresWorkerLock, WorkerOwnershipLostError } from "./adapters/postgres/worker-lock.js";
 import { AcpApplication } from "./application/application.js";
+import { AccessService } from "./application/access-service.js";
 import { ContextBuilder } from "./application/context-builder.js";
 import { PromptCoordinator } from "./application/prompt-coordinator.js";
 import { RunExecutor } from "./application/run-executor.js";
@@ -183,6 +184,15 @@ function buildComponents(
           error,
         );
       },
+      reportConnectionCloseFailure: (source, sourceId, error) => {
+        telemetry.count("antnest.acp.mcp.close_failures", { source });
+        telemetry.log(
+          "warn",
+          "mcp_connection_close_failed",
+          { "mcp.source": source, "mcp.source_id": sourceId },
+          error,
+        );
+      },
     }),
     telemetry,
   );
@@ -201,6 +211,7 @@ function buildComponents(
   const supervisor = new RunSupervisor(executor);
   const application = new InstrumentedAcpApplication(
     new AcpApplication({
+      access: new AccessService({ agentController, id: randomUUID }),
       sessions: new SessionService({ repository: sessions, id: randomUUID, now }),
       prompts: new PromptCoordinator({
         repository: runs,

@@ -51,10 +51,54 @@ describe("RunRecovery", () => {
       expect.objectContaining({
         runId: "run-1",
         terminalClass: "unresolved",
-        runtimeEffectState: "unknown",
+        toolEffectState: "unknown",
       }),
     );
     expect(controller.finishRun).toHaveBeenCalledOnce();
+  });
+
+  it("fails a restarted Run cleanly when no Tool effect was left unknown", async () => {
+    const work: RecoveryWork = {
+      kind: "running",
+      id: "run-model-wait",
+      requestId: "request-model-wait",
+      sessionId: "session-1",
+      snapshot: snapshot(),
+    };
+    const executions = executionRepository([work]);
+    const controller = controllerPort();
+    const events = runEventRepository();
+    events.interruptToolAttempts.mockResolvedValueOnce("none");
+    const recovery = new RunRecovery({
+      executions: executions.port,
+      runs: runRepository().port,
+      agentController: controller.port,
+      runExecutor: runExecutionPort().port,
+      events: events.port,
+      telemetry: NOOP_TELEMETRY,
+      id: sequentialIds(),
+      now: () => new Date("2026-08-30T00:00:00Z"),
+    });
+
+    await recovery.recover();
+
+    expect(executions.finish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: "run-model-wait",
+        terminalClass: "failed",
+        executorState: "quiescent",
+        toolEffectState: "none",
+        errorClass: "service_restarted_during_run",
+      }),
+    );
+    expect(controller.finishRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        terminalClass: "failed",
+        executorState: "quiescent",
+        toolEffectState: "none",
+      }),
+      expect.anything(),
+    );
   });
 
   it("reacquires a durable admitting prompt with the original request id", async () => {
@@ -64,6 +108,7 @@ describe("RunRecovery", () => {
       requestId: "request-2",
       sessionId: "session-1",
       clientMcpRevisionId: "client-mcp-captured",
+      expectedAccessRevision: "access-1",
       userMessageId: "message-2",
       prompt: [{ type: "text", text: "hello" }],
     };
@@ -87,6 +132,8 @@ describe("RunRecovery", () => {
       {
         requestId: "request-2",
         agentId: "agent-1",
+        principalId: "principal-1",
+        expectedAccessRevision: "access-1",
         sessionId: "session-1",
       },
       expect.anything(),
@@ -104,6 +151,7 @@ describe("RunRecovery", () => {
       requestId: "request-rejected",
       sessionId: "session-1",
       clientMcpRevisionId: "client-mcp-captured",
+      expectedAccessRevision: "access-1",
       userMessageId: "message-rejected",
       prompt: [{ type: "text", text: "hello" }],
     };
@@ -142,6 +190,7 @@ describe("RunRecovery", () => {
       requestId: "request-unknown",
       sessionId: "session-1",
       clientMcpRevisionId: "client-mcp-captured",
+      expectedAccessRevision: "access-1",
       userMessageId: "message-unknown",
       prompt: [{ type: "text", text: "hello" }],
     };
@@ -176,6 +225,7 @@ describe("RunRecovery", () => {
       requestId: "request-closed",
       sessionId: "session-1",
       clientMcpRevisionId: "client-mcp-captured",
+      expectedAccessRevision: "access-1",
       userMessageId: "message-closed",
       prompt: [{ type: "text", text: "do not execute" }],
     };
@@ -229,6 +279,7 @@ describe("RunRecovery", () => {
       requestId: "request-lock-lost",
       sessionId: "session-1",
       clientMcpRevisionId: "client-mcp-captured",
+      expectedAccessRevision: "access-1",
       userMessageId: "message-lock-lost",
       prompt: [{ type: "text", text: "never execute" }],
     };
@@ -274,7 +325,7 @@ describe("RunRecovery", () => {
     const events = runEventRepository();
     events.interruptToolAttempts.mockImplementationOnce(() => {
       ownership.abort(new WorkerOwnershipLostError());
-      return Promise.resolve();
+      return Promise.resolve("unknown");
     });
     const executions = executionRepository([work]);
     const controller = controllerPort();
@@ -344,6 +395,7 @@ describe("RunRecovery", () => {
       requestId: "request-next",
       sessionId: "session-1",
       clientMcpRevisionId: "client-mcp-captured",
+      expectedAccessRevision: "access-1",
       userMessageId: "message-next",
       prompt: [{ type: "text", text: "continue" }],
     };
@@ -448,7 +500,8 @@ function runExecutionPort() {
     Promise.resolve({
       terminalClass: "completed" as const,
       executorState: "quiescent" as const,
-      runtimeEffectState: "none" as const,
+      toolEffectState: "none" as const,
+      stopReason: "end_turn" as const,
     }),
   );
   const port: RunExecutionPort = { execute };
@@ -457,10 +510,12 @@ function runExecutionPort() {
 
 function runEventRepository() {
   const interruptToolAttempts = vi.fn<RunEventRepository["interruptToolAttempts"]>(() =>
-    Promise.resolve(),
+    Promise.resolve("unknown"),
   );
   const port: RunEventRepository = {
     appendAgentMessage: vi.fn(),
+    appendAgentThought: vi.fn(),
+    appendRejectedToolCall: vi.fn(),
     appendUsage: vi.fn(),
     startToolAttempt: vi.fn(),
     finishToolAttempt: vi.fn(),
@@ -488,7 +543,6 @@ function snapshot(): RunExecutionSnapshot {
       systemPrompt: "system",
       skillInstructions: [],
       model: {
-        adapter: "openai_compatible",
         baseUrl: "https://api.example.test/v1",
         model: "example-model",
         contextWindow: 64_000,

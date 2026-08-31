@@ -42,7 +42,7 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP private PostgreSQL reposit
       sessionId,
       binding: {
         connectionId: "connection-1",
-        authenticatedSubject: "subject-1",
+        agentAccessSubject: "subject-1",
         principalId: "principal-1",
         agentId: "agent-1",
         accessRevision: "access-1",
@@ -82,7 +82,7 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP private PostgreSQL reposit
       sessionId,
       binding: {
         connectionId: "connection-1",
-        authenticatedSubject: "subject-1",
+        agentAccessSubject: "subject-1",
         principalId: "principal-1",
         agentId: "agent-1",
         accessRevision: "access-1",
@@ -99,6 +99,7 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP private PostgreSQL reposit
       runId,
       requestId: randomUUID(),
       sessionId,
+      expectedAccessRevision: "access-1",
       userMessageId: randomUUID(),
       prompt: [{ type: "text", text: "hello" }],
       createdAt: new Date("2026-08-30T00:00:00Z"),
@@ -153,7 +154,7 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP private PostgreSQL reposit
       sessionId,
       binding: {
         connectionId: "connection-2",
-        authenticatedSubject: "subject-2",
+        agentAccessSubject: "subject-2",
         principalId: "principal-2",
         agentId: "agent-2",
         accessRevision: "access-2",
@@ -166,6 +167,7 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP private PostgreSQL reposit
       runId,
       requestId: randomUUID(),
       sessionId,
+      expectedAccessRevision: "access-2",
       userMessageId: randomUUID(),
       prompt: [{ type: "text", text: "inspect" }],
       createdAt: new Date("2026-08-30T01:00:00Z"),
@@ -175,6 +177,21 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP private PostgreSQL reposit
       snapshot: snapshot(revisionId),
       environmentFact: null,
       acceptedAt: new Date("2026-08-30T01:00:01Z"),
+    });
+    await events.appendAgentMessage({
+      id: randomUUID(),
+      runId,
+      content: [{ type: "text", text: "I will inspect and update the files." }],
+      toolCalls: [
+        { id: "call-1", name: "read", arguments: { path: "README.md" } },
+        {
+          id: "call-2",
+          name: "write",
+          arguments: { path: "result.txt", text: "data" },
+        },
+        { id: "call-3", name: "bash", arguments: { command: "pwd" } },
+      ],
+      createdAt: new Date("2026-08-30T01:00:01Z"),
     });
     await events.startToolAttempt({
       id: randomUUID(),
@@ -187,6 +204,7 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP private PostgreSQL reposit
         modelName: "read",
         description: "Read",
       },
+      arguments: { path: "README.md" },
       requestDigest: "a".repeat(64),
       createdAt: new Date("2026-08-30T01:00:02Z"),
     });
@@ -197,7 +215,7 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP private PostgreSQL reposit
       status: "completed",
       content: [{ type: "text", text: "data" }],
       resultSummary: [{ type: "text", text: "data" }],
-      runtimeEffectState: "settled",
+      toolEffectState: "settled",
       createdAt: new Date("2026-08-30T01:00:03Z"),
     });
     await events.startToolAttempt({
@@ -211,6 +229,7 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP private PostgreSQL reposit
         modelName: "write",
         description: "Write",
       },
+      arguments: { path: "result.txt", text: "data" },
       requestDigest: "b".repeat(64),
       createdAt: new Date("2026-08-30T01:00:03Z"),
     });
@@ -225,8 +244,45 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP private PostgreSQL reposit
     const context = await contexts.load(sessionId);
     expect(context.messages.map((message) => message.kind)).toEqual([
       "user_message",
+      "tool_exchange",
       "agent_message",
     ]);
+    expect(context.messages[1]).toMatchObject({
+      kind: "tool_exchange",
+      assistant: {
+        content: [{ type: "text", text: "I will inspect and update the files." }],
+        toolCalls: [
+          { id: "call-1", name: "read", arguments: { path: "README.md" } },
+          {
+            id: "call-2",
+            name: "write",
+            arguments: { path: "result.txt", text: "data" },
+          },
+          { id: "call-3", name: "bash", arguments: { command: "pwd" } },
+        ],
+      },
+      results: [
+        { toolCallId: "call-1", content: [{ type: "text", text: "data" }] },
+        {
+          toolCallId: "call-2",
+          content: [
+            {
+              type: "text",
+              text: "Tool outcome is unknown because Agent ACP Service restarted.",
+            },
+          ],
+        },
+        {
+          toolCallId: "call-3",
+          content: [
+            {
+              type: "text",
+              text: "Tool was not executed because Agent ACP Service restarted before dispatch.",
+            },
+          ],
+        },
+      ],
+    });
     await contexts.saveCheckpoint({
       id: randomUUID(),
       sessionId,
@@ -239,30 +295,51 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP private PostgreSQL reposit
       runId,
       terminalClass: "completed",
       executorState: "quiescent",
-      runtimeEffectState: "settled",
+      toolEffectState: "settled",
+      stopReason: "refusal",
       finishedAt: new Date("2026-08-30T01:00:06Z"),
     });
+    await expect(
+      executions.finish({
+        runId,
+        terminalClass: "completed",
+        executorState: "quiescent",
+        toolEffectState: "settled",
+        stopReason: "refusal",
+        finishedAt: new Date("2026-08-30T01:00:06Z"),
+      }),
+    ).resolves.toBeUndefined();
+    await expect(
+      executions.finish({
+        runId,
+        terminalClass: "completed",
+        executorState: "quiescent",
+        toolEffectState: "settled",
+        stopReason: "end_turn",
+        finishedAt: new Date("2026-08-30T01:00:06Z"),
+      }),
+    ).rejects.toThrow("Run cannot enter the requested terminal state");
     await executions.markAdmissionFinished(runId, new Date("2026-08-30T01:00:07Z"));
 
     await expect(executions.getState(runId)).resolves.toBe("completed");
     await expect(sessions.getCurrentRunState(sessionId)).resolves.toEqual({
       kind: "state",
       state: "idle",
-      stopReason: "end_turn",
+      stopReason: "refusal",
     });
     await expect(executions.listRecoveryWork()).resolves.not.toContainEqual(
       expect.objectContaining({ id: runId }),
     );
-    const attempt = await pool.query<{ state: string; runtime_effect_state: string }>(
-      `SELECT state, runtime_effect_state
+    const attempt = await pool.query<{ state: string; tool_effect_state: string }>(
+      `SELECT state, tool_effect_state
          FROM tool_attempts
         WHERE run_id = $1
         ORDER BY tool_call_id`,
       [runId],
     );
     expect(attempt.rows).toEqual([
-      { state: "completed", runtime_effect_state: "settled" },
-      { state: "failed", runtime_effect_state: "unknown" },
+      { state: "completed", tool_effect_state: "settled" },
+      { state: "failed", tool_effect_state: "unknown" },
     ]);
   });
 
@@ -274,7 +351,7 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP private PostgreSQL reposit
       sessionId,
       binding: {
         connectionId: "connection-cancel",
-        authenticatedSubject: "subject-cancel",
+        agentAccessSubject: "subject-cancel",
         principalId: "principal-cancel",
         agentId: "agent-cancel",
         accessRevision: "access-cancel",
@@ -287,6 +364,7 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP private PostgreSQL reposit
       runId,
       requestId: randomUUID(),
       sessionId,
+      expectedAccessRevision: "access-cancel",
       userMessageId: randomUUID(),
       prompt: [{ type: "text", text: "do not run" }],
       createdAt: new Date("2026-08-30T02:00:00Z"),
@@ -322,7 +400,7 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP private PostgreSQL reposit
       sessionId,
       binding: {
         connectionId: "connection-lock-order",
-        authenticatedSubject: "subject-lock-order",
+        agentAccessSubject: "subject-lock-order",
         principalId: "principal-lock-order",
         agentId: "agent-lock-order",
         accessRevision: "access-lock-order",
@@ -335,6 +413,7 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP private PostgreSQL reposit
       runId,
       requestId: randomUUID(),
       sessionId,
+      expectedAccessRevision: "access-lock-order",
       userMessageId: randomUUID(),
       prompt: [{ type: "text", text: "cancel while accepting" }],
       createdAt: new Date("2026-08-30T02:30:00Z"),
@@ -375,7 +454,7 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP private PostgreSQL reposit
       sessionId,
       binding: {
         connectionId: "connection-unique",
-        authenticatedSubject: "subject-unique",
+        agentAccessSubject: "subject-unique",
         principalId: "principal-unique",
         agentId: "agent-unique",
         accessRevision: "access-unique",
@@ -389,6 +468,7 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP private PostgreSQL reposit
         runId,
         requestId: randomUUID(),
         sessionId,
+        expectedAccessRevision: "access-unique",
         userMessageId: randomUUID(),
         prompt: [{ type: "text", text: runId }],
         createdAt: new Date("2026-08-30T03:00:00Z"),
@@ -418,7 +498,6 @@ function snapshot(clientMcpRevisionId: string): RunExecutionSnapshot {
       systemPrompt: "system",
       skillInstructions: [],
       model: {
-        adapter: "openai_compatible",
         baseUrl: "https://api.example.test/v1",
         model: "model",
         contextWindow: 32_000,

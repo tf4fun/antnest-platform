@@ -34,6 +34,7 @@ describe("OpenAICompatibleModel", () => {
 
     await expect(model.complete(request())).resolves.toEqual({
       kind: "tool_calls",
+      content: [],
       calls: [
         {
           id: "call-2",
@@ -82,6 +83,118 @@ describe("OpenAICompatibleModel", () => {
           },
         },
       ],
+    });
+  });
+
+  it("preserves mixed assistant text and reasoning alongside complete Tool calls", async () => {
+    const model = new OpenAICompatibleModel({
+      fetchFn: vi.fn(() =>
+        Promise.resolve(
+          Response.json({
+            choices: [
+              {
+                finish_reason: "tool_calls",
+                message: {
+                  role: "assistant",
+                  content: "I will inspect the file.",
+                  reasoning_content: "The request requires local evidence.",
+                  tool_calls: [
+                    {
+                      id: "call-1",
+                      type: "function",
+                      function: { name: "read", arguments: '{"path":"README.md"}' },
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+        ),
+      ),
+    });
+
+    await expect(model.complete(request())).resolves.toMatchObject({
+      kind: "tool_calls",
+      content: [{ type: "text", text: "I will inspect the file." }],
+      thought: [{ type: "text", text: "The request requires local evidence." }],
+    });
+  });
+
+  it("never executes Tool calls from a length-truncated model response", async () => {
+    const model = new OpenAICompatibleModel({
+      fetchFn: vi.fn(() =>
+        Promise.resolve(
+          Response.json({
+            choices: [
+              {
+                finish_reason: "length",
+                message: {
+                  role: "assistant",
+                  content: "Partial response",
+                  tool_calls: [
+                    {
+                      id: "call-1",
+                      type: "function",
+                      function: { name: "write", arguments: '{"path":"unfinished' },
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+        ),
+      ),
+    });
+
+    await expect(model.complete(request())).resolves.toEqual({
+      kind: "message",
+      content: [{ type: "text", text: "Partial response" }],
+      stopReason: "max_tokens",
+      usage: { inputTokens: 0, outputTokens: 0 },
+    });
+  });
+
+  it("records content filtering as refusal instead of successful completion", async () => {
+    const model = new OpenAICompatibleModel({
+      fetchFn: vi.fn(() =>
+        Promise.resolve(
+          Response.json({
+            choices: [
+              {
+                finish_reason: "content_filter",
+                message: { role: "assistant", content: null, refusal: "Request blocked" },
+              },
+            ],
+          }),
+        ),
+      ),
+    });
+
+    await expect(model.complete(request())).resolves.toMatchObject({
+      kind: "message",
+      stopReason: "refusal",
+      content: [{ type: "text", text: "Request blocked" }],
+    });
+  });
+
+  it("rejects unknown Provider finish reasons", async () => {
+    const model = new OpenAICompatibleModel({
+      fetchFn: vi.fn(() =>
+        Promise.resolve(
+          Response.json({
+            choices: [
+              {
+                finish_reason: "provider_magic",
+                message: { role: "assistant", content: "done" },
+              },
+            ],
+          }),
+        ),
+      ),
+    });
+
+    await expect(model.complete(request())).rejects.toMatchObject({
+      code: "model_invalid_response",
     });
   });
 
@@ -143,6 +256,86 @@ describe("OpenAICompatibleModel", () => {
             "Resource: Design\nURI: https://docs.example.test/design\nDescription: Architecture notes",
         },
       ],
+    });
+  });
+
+  it("preserves resource context when an image makes the prompt multimodal", async () => {
+    const fetchFn = vi.fn<(input: string, init: RequestInit) => Promise<Response>>(() =>
+      Promise.resolve(
+        Response.json({
+          choices: [{ finish_reason: "stop", message: { role: "assistant", content: "done" } }],
+        }),
+      ),
+    );
+    const model = new OpenAICompatibleModel({ fetchFn });
+    const input = request();
+    input.snapshot.executionSpec.model.supportsImages = true;
+    input.messages = [
+      {
+        role: "user",
+        content: [
+          { type: "image", data: "aGVsbG8=", mimeType: "image/png" },
+          {
+            type: "resource_link",
+            name: "Design",
+            uri: "https://docs.example.test/design",
+          },
+          {
+            type: "resource",
+            resource: {
+              uri: "file:///workspace/notes.txt",
+              mimeType: "text/plain",
+              text: "embedded notes",
+            },
+          },
+        ],
+      },
+    ];
+
+    await model.complete(input);
+
+    const body = fetchFn.mock.calls[0]?.[1].body;
+    if (typeof body !== "string") {
+      throw new Error("request body is not JSON text");
+    }
+    expect(JSON.parse(body) as unknown).toMatchObject({
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "image_url", image_url: { url: "data:image/png;base64,aGVsbG8=" } },
+            {
+              type: "text",
+              text: "Resource: Design\nURI: https://docs.example.test/design",
+            },
+            {
+              type: "text",
+              text: "Embedded resource: file:///workspace/notes.txt\nembedded notes",
+            },
+          ],
+        },
+      ],
+    });
+  });
+
+  it("rejects a Tool finish reason without a Tool call", async () => {
+    const model = new OpenAICompatibleModel({
+      fetchFn: vi.fn(() =>
+        Promise.resolve(
+          Response.json({
+            choices: [
+              {
+                finish_reason: "tool_calls",
+                message: { role: "assistant", content: null, tool_calls: [] },
+              },
+            ],
+          }),
+        ),
+      ),
+    });
+
+    await expect(model.complete(request())).rejects.toMatchObject({
+      code: "model_invalid_response",
     });
   });
 
@@ -212,7 +405,6 @@ function request(): ModelRequest {
         systemPrompt: "system",
         skillInstructions: [],
         model: {
-          adapter: "openai_compatible",
           baseUrl: "https://api.example.test/v1",
           model: "example-model",
           contextWindow: 64_000,

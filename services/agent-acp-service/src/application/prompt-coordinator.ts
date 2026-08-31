@@ -56,6 +56,7 @@ export class PromptCoordinator {
       runId,
       requestId,
       sessionId: session.id,
+      expectedAccessRevision: input.binding.accessRevision,
       userMessageId,
       prompt: input.prompt,
       createdAt: now,
@@ -71,6 +72,8 @@ export class PromptCoordinator {
         {
           requestId,
           agentId: input.binding.agentId,
+          principalId: input.binding.principalId,
+          expectedAccessRevision: intent.expectedAccessRevision,
           sessionId: session.id,
         },
         signal,
@@ -139,7 +142,7 @@ export class PromptCoordinator {
         admissionId,
         terminalClass: "cancelled",
         executorState: "quiescent",
-        runtimeEffectState: "none",
+        toolEffectState: "none",
       });
     } catch (error) {
       this.dependencies.recoveryRequired(

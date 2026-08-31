@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { RunExecutor } from "../../src/application/run-executor.js";
+import { RunRecoveryRequiredError } from "../../src/ports/acp-application.js";
 import { WorkerOwnershipLostError } from "../../src/adapters/postgres/worker-lock.js";
 import type { ContextBuilder } from "../../src/application/context-builder.js";
 import type { AgentControllerPort } from "../../src/ports/agent-controller.js";
@@ -103,7 +104,39 @@ describe("RunExecutor", () => {
         publish: vi.fn(() => Promise.resolve()),
         signal: new AbortController().signal,
       }),
-    ).rejects.toThrow("database unavailable");
+    ).rejects.toBeInstanceOf(RunRecoveryRequiredError);
+    expect(controller.finishRun).not.toHaveBeenCalled();
+    expect(recoveryRequired).toHaveBeenCalledOnce();
+  });
+
+  it("does not terminalize a Run when durable event persistence requires recovery", async () => {
+    const order: string[] = [];
+    const executions = executionRepository(order);
+    const controller = agentController(order);
+    const recoveryRequired = vi.fn();
+    const events = eventRepository();
+    events.appendUsage = vi.fn(() => Promise.reject(new Error("database unavailable")));
+    const executor = new RunExecutor({
+      executions: executions.port,
+      contextBuilder: contextBuilder(),
+      agentController: controller.port,
+      model: terminalModel(),
+      tools: emptyTools(),
+      events,
+      ownershipSignal: new AbortController().signal,
+      recoveryRequired,
+      id: sequentialIds(),
+      now: () => new Date("2026-08-30T00:00:00Z"),
+    });
+
+    await expect(
+      executor.execute({
+        accepted: accepted(),
+        publish: vi.fn(() => Promise.resolve()),
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toBeInstanceOf(RunRecoveryRequiredError);
+    expect(executions.finish).not.toHaveBeenCalled();
     expect(controller.finishRun).not.toHaveBeenCalled();
     expect(recoveryRequired).toHaveBeenCalledOnce();
   });
@@ -138,7 +171,7 @@ describe("RunExecutor", () => {
     ).resolves.toMatchObject({
       terminalClass: "failed",
       executorState: "quiescent",
-      runtimeEffectState: "none",
+      toolEffectState: "none",
       errorClass: "run_deadline_exceeded",
     });
     expect(complete).not.toHaveBeenCalled();
@@ -316,6 +349,8 @@ function eventRepository(): RunEventRepository {
         content: input.content,
       }),
     ),
+    appendAgentThought: vi.fn(),
+    appendRejectedToolCall: vi.fn(),
     appendUsage: vi.fn<RunEventRepository["appendUsage"]>((input) =>
       Promise.resolve({
         kind: "usage" as const,
@@ -353,7 +388,6 @@ function accepted(): AcceptedAcpRun {
         systemPrompt: "system",
         skillInstructions: [],
         model: {
-          adapter: "openai_compatible",
           baseUrl: "https://api.example.test/v1",
           model: "example-model",
           contextWindow: 64_000,

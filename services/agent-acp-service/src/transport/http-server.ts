@@ -8,8 +8,8 @@ import { WebSocketServer, type WebSocket } from "ws";
 import type { AcpApplicationPort } from "../ports/acp-application.js";
 import type { AgentControllerPort } from "../ports/agent-controller.js";
 import { NOOP_TELEMETRY, type TelemetryPort } from "../ports/telemetry.js";
-import { createAcpAgent } from "./acp/agent.js";
-import { createWebSocketWireStream } from "./acp/websocket-stream.js";
+import { createAcpV2Agent } from "./acp/v2/agent.js";
+import { createAcpV2WebSocketWireStream } from "./acp/v2/websocket-stream.js";
 
 export type AgentAcpHttpServerOptions = {
   agentController: AgentControllerPort;
@@ -98,7 +98,7 @@ export class AgentAcpHttpServer {
     socket: Duplex,
     head: Buffer,
   ): Promise<void> {
-    if (request.url !== "/acp") {
+    if (request.url !== "/v2/acp") {
       this.telemetry.count("antnest.acp.connections", { result: "rejected", reason: "not_found" });
       rejectUpgrade(socket, 404, "Not Found");
       return;
@@ -116,7 +116,7 @@ export class AgentAcpHttpServer {
       rejectUpgrade(socket, 503, "Service Unavailable");
       return;
     }
-    const subject = oneHeader(request, "x-antnest-authenticated-subject");
+    const subject = oneHeader(request, "x-antnest-agent-access-subject");
     if (subject === null) {
       this.telemetry.count("antnest.acp.connections", {
         result: "rejected",
@@ -129,11 +129,11 @@ export class AgentAcpHttpServer {
     try {
       const access = await this.options.agentController.resolveAgentAccess({
         requestId: this.id(),
-        authenticatedSubject: subject,
+        agentAccessSubject: subject,
       });
       const binding = {
         connectionId: this.id(),
-        authenticatedSubject: subject,
+        agentAccessSubject: subject,
         principalId: access.principalId,
         agentId: access.agentId,
         accessRevision: access.accessRevision,
@@ -147,11 +147,11 @@ export class AgentAcpHttpServer {
         });
         webSocket.once("error", (error) => this.report(error, "websocket"));
         try {
-          const connection = createAcpAgent({
+          const connection = createAcpV2Agent({
             binding,
             promptCapabilities: access.promptCapabilities,
             application: this.options.application,
-          }).connect(createWebSocketWireStream(webSocket));
+          }).connect(createAcpV2WebSocketWireStream(webSocket));
           void connection.initialized.catch((error) => this.report(error, "acp_initialize"));
           void connection.closed.then(() => {
             const reason = connection.signal.reason as unknown;

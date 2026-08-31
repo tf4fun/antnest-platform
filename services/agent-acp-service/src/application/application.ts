@@ -3,11 +3,13 @@ import type {
   AcceptedAcpRun,
   ExecuteRunResult,
 } from "../ports/acp-application.js";
+import type { AccessService } from "./access-service.js";
 import type { PromptCoordinator } from "./prompt-coordinator.js";
 import type { RunLifecyclePort } from "./run-supervisor.js";
 import type { SessionService } from "./session-service.js";
 
 export type AcpApplicationDependencies = {
+  access: AccessService;
   sessions: SessionService;
   prompts: PromptCoordinator;
   runs: RunLifecyclePort;
@@ -16,39 +18,49 @@ export type AcpApplicationDependencies = {
 export class AcpApplication implements AcpApplicationPort {
   public constructor(private readonly dependencies: AcpApplicationDependencies) {}
 
-  public createSession(
+  public assertAccess(input: Parameters<AcpApplicationPort["assertAccess"]>[0]): Promise<void> {
+    return this.dependencies.access.assert(input.binding);
+  }
+
+  public async createSession(
     input: Parameters<AcpApplicationPort["createSession"]>[0],
-  ): ReturnType<AcpApplicationPort["createSession"]> {
+  ): Promise<Awaited<ReturnType<AcpApplicationPort["createSession"]>>> {
+    await this.assertAccess(input);
     return this.dependencies.sessions.createSession(input);
   }
 
-  public listSessions(
+  public async listSessions(
     input: Parameters<AcpApplicationPort["listSessions"]>[0],
-  ): ReturnType<AcpApplicationPort["listSessions"]> {
+  ): Promise<Awaited<ReturnType<AcpApplicationPort["listSessions"]>>> {
+    await this.assertAccess(input);
     return this.dependencies.sessions.listSessions(input);
   }
 
   public async deleteSession(
     input: Parameters<AcpApplicationPort["deleteSession"]>[0],
   ): Promise<void> {
+    await this.assertAccess(input);
     await this.dependencies.sessions.deleteSession(input);
     await this.dependencies.runs.cancel(input.sessionId);
   }
 
-  public resumeSession(
+  public async resumeSession(
     input: Parameters<AcpApplicationPort["resumeSession"]>[0],
-  ): ReturnType<AcpApplicationPort["resumeSession"]> {
+  ): Promise<Awaited<ReturnType<AcpApplicationPort["resumeSession"]>>> {
+    await this.assertAccess(input);
     return this.dependencies.sessions.resumeSession(input);
   }
 
   public async closeSession(
     input: Parameters<AcpApplicationPort["closeSession"]>[0],
   ): Promise<void> {
+    await this.assertAccess(input);
     await this.dependencies.sessions.closeSession(input);
     await this.dependencies.runs.cancel(input.sessionId);
   }
 
   public async cancelRun(input: Parameters<AcpApplicationPort["cancelRun"]>[0]): Promise<void> {
+    await this.assertAccess(input);
     await this.dependencies.sessions.requestCancellation(input.sessionId, input.binding);
     await this.dependencies.runs.cancel(input.sessionId);
   }
@@ -56,6 +68,7 @@ export class AcpApplication implements AcpApplicationPort {
   public async acceptPrompt(
     input: Parameters<AcpApplicationPort["acceptPrompt"]>[0],
   ): Promise<AcceptedAcpRun> {
+    await this.assertAccess(input);
     return this.dependencies.runs.admit(input.sessionId, (signal) =>
       this.dependencies.prompts.accept(input, signal),
     );

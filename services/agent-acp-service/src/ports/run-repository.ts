@@ -11,6 +11,7 @@ export type RunIntent = {
   requestId: string;
   sessionId: string;
   clientMcpRevisionId: string;
+  expectedAccessRevision: string;
   state: RunState;
   userMessageId: string;
   prompt: ContentBlock[];
@@ -20,6 +21,7 @@ export type CreateRunIntentInput = {
   runId: string;
   requestId: string;
   sessionId: string;
+  expectedAccessRevision: string;
   userMessageId: string;
   prompt: ContentBlock[];
   createdAt: Date;

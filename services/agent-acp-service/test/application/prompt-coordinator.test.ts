@@ -11,7 +11,7 @@ import type { ConnectionBinding, SessionRecord } from "../../src/domain/types.js
 
 const binding: ConnectionBinding = {
   connectionId: "connection-1",
-  authenticatedSubject: "subject-1",
+  agentAccessSubject: "subject-1",
   principalId: "principal-1",
   agentId: "agent-1",
   accessRevision: "access-1",
@@ -48,7 +48,6 @@ const acquired: AcquireRunResult = {
     systemPrompt: "You are useful.",
     skillInstructions: [],
     model: {
-      adapter: "openai_compatible",
       baseUrl: "https://api.example.test/v1",
       model: "example-model",
       contextWindow: 64_000,
@@ -68,6 +67,7 @@ function createRepository() {
       requestId: input.requestId,
       sessionId: input.sessionId,
       clientMcpRevisionId: session.clientMcpRevisionId,
+      expectedAccessRevision: input.expectedAccessRevision,
       state: "admitting",
       userMessageId: input.userMessageId,
       prompt: input.prompt,
@@ -250,6 +250,8 @@ describe("PromptCoordinator", () => {
       {
         requestId: result.requestId,
         agentId: "agent-1",
+        principalId: "principal-1",
+        expectedAccessRevision: "access-1",
         sessionId: "session-1",
       },
       cancellation.signal,
@@ -293,7 +295,7 @@ describe("PromptCoordinator", () => {
         admissionId: "admission-1",
         terminalClass: "cancelled",
         executorState: "quiescent",
-        runtimeEffectState: "none",
+        toolEffectState: "none",
       }),
     );
     expect(markAdmissionFinished).toHaveBeenCalledOnce();

@@ -7,8 +7,9 @@ Runtimes.
 
 ## Status
 
-The Agent ACP Service implementation is complete and independently testable.
-The Stage 2 cross-service path remains pending Agent Controller. The
+The Stage 2 ACP core surface is implemented and independently testable. The
+broader optional ACP v2 method catalog is not claimed as implemented. The Stage
+2 cross-service path remains pending Agent Controller. The
 authoritative cross-service design is
 [`../../docs/stage-2-agent-and-acp.md`](../../docs/stage-2-agent-and-acp.md);
 this directory is the only implementation authority for Agent ACP Service.
@@ -32,17 +33,17 @@ this directory is the only implementation authority for Agent ACP Service.
 
 ## Interfaces
 
-| Interface                    | Direction | Purpose                                                |
-| ---------------------------- | --------- | ------------------------------------------------------ |
-| ACP v2 over WebSocket `/acp` | inbound   | Standard Session and prompt protocol                   |
-| `GET /status`                | inbound   | Liveness/readiness without business mutation           |
-| Agent Controller Run RPC     | outbound  | Resolve access, acquire/finish Run, resolve credential |
-| MCP `2026-07-28` HTTP        | outbound  | Platform Runtime and client Tool execution             |
-| OpenAI-compatible model API  | outbound  | Stage 2 model adapter                                  |
-| Private PostgreSQL           | owned     | Sessions, messages, checkpoints, Runs, Tool attempts   |
+| Interface                       | Direction | Purpose                                                |
+| ------------------------------- | --------- | ------------------------------------------------------ |
+| ACP v2 over WebSocket `/v2/acp` | inbound   | Standard Session and prompt protocol                   |
+| `GET /status`                   | inbound   | Liveness/readiness without business mutation           |
+| Agent Controller Run RPC        | outbound  | Resolve access, acquire/finish Run, resolve credential |
+| MCP `2026-07-28` HTTP           | outbound  | Platform Runtime and client Tool execution             |
+| OpenAI-compatible model API     | outbound  | Stage 2 model adapter                                  |
+| Private PostgreSQL              | owned     | Sessions, messages, checkpoints, Runs, Tool attempts   |
 
 The Agent Controller dependency surface is owned by Agent Controller and
-consumed here at contract revision 2. Its normative status, method, request,
+consumed here at contract revision 3. Its normative status, method, request,
 response, error, and
 compatibility rules are [`../../contracts/agent-controller/run-api.md`](../../contracts/agent-controller/run-api.md),
 with machine-readable shapes in
@@ -55,13 +56,32 @@ uses WebSocket as a documented custom transport and feeds the official SDK's
 v2 `WireStream`, including JSON-RPC batch messages. The ACP success shapes are
 not extended with Antnest fields.
 
+`/v1/acp` and the unversioned `/acp` are deliberately not implemented. A future
+ACP v1 adapter must be a separate transport over the same application port; it
+must not add v1 branches to the v2 wire handler.
+
+### ACP v2 Surface
+
+| Status                       | Methods                                                                                                                                         |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Implemented                  | `initialize`, `session/new`, `session/list`, `session/resume`, `session/close`, `session/delete`, `session/prompt`, `session/cancel`            |
+| Emitted to clients           | durable `session/update` message, thought, Tool, usage, and state projections                                                                   |
+| Intentionally not advertised | ACP auth/provider management, Session fork/config options, stdio or message-tunneled MCP, permission prompts, NES, and document synchronization |
+
+This is a capability-valid ACP v2 Agent, not an assertion that every optional
+v2 method exists. Platform authentication and Provider selection remain Agent
+Controller responsibilities; unsupported editor-oriented features are not
+stubbed with false success responses.
+
 ## Connection Identity
 
 The deployment's Edge Gateway eventually authenticates external users and
-forwards an opaque authenticated subject during WebSocket upgrade. During
-internal development, a trusted client supplies the same subject directly.
+forwards an opaque Agent-scoped access subject during WebSocket upgrade. During
+internal development, a trusted client supplies the same value directly.
 Agent ACP Service resolves it through Agent Controller before accepting the
-connection. It advertises no ACP `authMethods` because authentication has
+connection and before every ACP business operation. A changed access revision,
+principal, Agent, or prompt capability invalidates the binding and requires a
+new connection. It advertises no ACP `authMethods` because authentication has
 already completed at the transport boundary.
 
 ## Local Commands

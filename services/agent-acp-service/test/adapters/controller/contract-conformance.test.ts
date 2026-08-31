@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 
 import { describe, expect, it, vi } from "vitest";
+import { Ajv } from "ajv";
 import { z } from "zod";
 
 import {
@@ -16,10 +17,17 @@ const methodSchema = z.object({
   request_content_type: z.literal("application/json"),
   response_content_type: z.literal("application/json"),
   request: z.object({
+    type: z.literal("object"),
+    required: z.array(z.string()),
+    properties: z.record(z.string(), z.unknown()),
+    additionalProperties: z.literal(false),
+    oneOf: z.array(z.unknown()).optional(),
+  }),
+  response: z.object({
+    type: z.literal("object"),
     required: z.array(z.string()),
     properties: z.record(z.string(), z.unknown()),
   }),
-  response: z.object({ required: z.array(z.string()) }),
 });
 
 const contractSchema = z.object({
@@ -30,9 +38,14 @@ const contractSchema = z.object({
     path: z.literal("/status"),
     success_status: z.literal(200),
     response_content_type: z.literal("application/json"),
-    response: z.object({ required: z.array(z.string()) }),
+    response: z.object({
+      type: z.literal("object"),
+      required: z.array(z.string()),
+      properties: z.record(z.string(), z.unknown()),
+    }),
   }),
   error: z.object({
+    type: z.literal("object"),
     response_content_type: z.literal("application/json"),
     properties: z.object({ code: z.object({ enum: z.array(z.string()) }) }),
   }),
@@ -54,6 +67,7 @@ describe("Agent Controller consumer contract", () => {
     const contract = contractSchema.parse(JSON.parse(readFileSync(CONTRACT_URL, "utf8")));
     expect(contract.error.properties.code.enum).toEqual([...AGENT_CONTROLLER_ERROR_CODES]);
     const responses = responseFixtures();
+    const ajv = new Ajv({ strict: false });
     const requests: Array<{ url: URL; init: RequestInit; body?: Record<string, unknown> }> = [];
     const fetchFn = vi.fn((url: URL, init: RequestInit) => {
       if (url.pathname === contract.status.path) {
@@ -69,6 +83,7 @@ describe("Agent Controller consumer contract", () => {
       expect(Object.keys(response)).toEqual(
         expect.arrayContaining(contract.methods[method].response.required),
       );
+      expect(ajv.validate(contract.methods[method].response, response)).toBe(true);
       return Promise.resolve(
         Response.json(response, { status: contract.methods[method].success_status }),
       );
@@ -86,11 +101,13 @@ describe("Agent Controller consumer contract", () => {
 
     await client.resolveAgentAccess({
       requestId: "request-access",
-      authenticatedSubject: "subject-1",
+      agentAccessSubject: "subject-1",
     });
     await client.acquireRun({
       requestId: "request-acquire",
       agentId: "agent-1",
+      principalId: "principal-1",
+      expectedAccessRevision: "access-1",
       sessionId: "session-1",
     });
     await client.resolveCredential({
@@ -103,7 +120,8 @@ describe("Agent Controller consumer contract", () => {
       admissionId: "admission-1",
       terminalClass: "completed",
       executorState: "quiescent",
-      runtimeEffectState: "settled",
+      toolEffectState: "settled",
+      stopReason: "end_turn",
     });
 
     const methods = [
@@ -145,7 +163,23 @@ describe("Agent Controller consumer contract", () => {
       expect(Object.keys(request.body).every((key) => key in definition.request.properties)).toBe(
         true,
       );
+      expect(ajv.validate(definition.request, request.body)).toBe(true);
+      expect(ajv.validate(definition.request, "not-an-object")).toBe(false);
     }
+
+    const finishRequest = contract.methods.finish_run.request;
+    const validateFinish = ajv.compile(finishRequest);
+    const validFinish = requests.at(-1)?.body;
+    expect(validateFinish(validFinish)).toBe(true);
+    expect(
+      validateFinish({
+        ...validFinish,
+        terminal_class: "completed",
+        executor_state: "unknown",
+        tool_effect_state: "unknown",
+        error_class: "ambiguous",
+      }),
+    ).toBe(false);
   });
 });
 
@@ -198,7 +232,6 @@ function responseFixtures(): Record<MethodName, Record<string, unknown>> {
         system_prompt: "system",
         skill_instructions: [],
         model: {
-          adapter: "openai_compatible",
           base_url: "https://api.example.test/v1",
           model: "model",
           context_window: 32_000,

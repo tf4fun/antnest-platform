@@ -1,6 +1,6 @@
 import { environmentChangeFact } from "../domain/session.js";
-import type { RunExecutionSnapshot } from "../domain/types.js";
-import type { AgentControllerPort } from "../ports/agent-controller.js";
+import type { RunExecutionSnapshot, RunOutcome } from "../domain/types.js";
+import { finishRunInput, type AgentControllerPort } from "../ports/agent-controller.js";
 import type { ExecutionRepository, RecoveryWork } from "../ports/execution-repository.js";
 import type { RunRepository } from "../ports/run-repository.js";
 import type { RunEventRepository } from "../ports/run-event-repository.js";
@@ -65,7 +65,7 @@ export class RunRecovery {
     const terminal = {
       terminalClass: "unresolved" as const,
       executorState: "unknown" as const,
-      runtimeEffectState: "unknown" as const,
+      toolEffectState: "unknown" as const,
       errorClass: work.errorClass,
     };
     await withWorkerOwnership(signal, () =>
@@ -96,6 +96,8 @@ export class RunRecovery {
           {
             requestId: work.requestId,
             agentId: session.agentId,
+            principalId: session.principalId,
+            expectedAccessRevision: work.expectedAccessRevision,
             sessionId: session.id,
           },
           signal,
@@ -135,7 +137,7 @@ export class RunRecovery {
         {
           terminalClass: "cancelled",
           executorState: "quiescent",
-          runtimeEffectState: "none",
+          toolEffectState: "none",
           errorClass: "run_cancelled",
         },
         signal,
@@ -162,18 +164,28 @@ export class RunRecovery {
     signal: AbortSignal,
   ): Promise<void> {
     assertWorkerOwnership(signal);
-    const terminal = {
-      terminalClass: "unresolved" as const,
-      executorState: "unknown" as const,
-      runtimeEffectState: "unknown" as const,
-      errorClass: "service_restarted_during_run",
-    };
-    this.dependencies.telemetry.count("antnest.acp.unresolved_admissions", {
-      reason: "service_restart",
-    });
-    await withWorkerOwnership(signal, () =>
+    const effectState = await withWorkerOwnership(signal, () =>
       this.dependencies.events.interruptToolAttempts(work.id, this.dependencies.now()),
     );
+    const terminal: RunOutcome =
+      effectState === "unknown"
+        ? {
+            terminalClass: "unresolved",
+            executorState: "unknown",
+            toolEffectState: "unknown",
+            errorClass: "service_restarted_during_tool",
+          }
+        : {
+            terminalClass: "failed",
+            executorState: "quiescent",
+            toolEffectState: effectState,
+            errorClass: "service_restarted_during_run",
+          };
+    if (terminal.terminalClass === "unresolved") {
+      this.dependencies.telemetry.count("antnest.acp.unresolved_admissions", {
+        reason: "service_restart_during_tool",
+      });
+    }
     await withWorkerOwnership(signal, () =>
       this.dependencies.executions.finish({
         runId: work.id,
@@ -187,25 +199,13 @@ export class RunRecovery {
   private async finishAdmission(
     runId: string,
     admissionId: string,
-    terminal: {
-      terminalClass: "completed" | "cancelled" | "failed" | "unresolved";
-      executorState: "quiescent" | "cancellation_requested" | "unknown";
-      runtimeEffectState: "none" | "settled" | "unknown";
-      errorClass?: string;
-    },
+    terminal: RunOutcome,
     signal: AbortSignal,
   ): Promise<void> {
     assertWorkerOwnership(signal);
     await withWorkerOwnership(signal, () =>
       this.dependencies.agentController.finishRun(
-        {
-          requestId: this.dependencies.id(),
-          admissionId,
-          terminalClass: terminal.terminalClass,
-          executorState: terminal.executorState,
-          runtimeEffectState: terminal.runtimeEffectState,
-          ...(terminal.errorClass === undefined ? {} : { errorClass: terminal.errorClass }),
-        },
+        finishRunInput(this.dependencies.id(), admissionId, terminal),
         signal,
       ),
     );

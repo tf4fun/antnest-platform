@@ -126,6 +126,7 @@ describe("instrumented ports", () => {
 
 function acpApplication(): AcpApplicationPort {
   return {
+    assertAccess: vi.fn(),
     createSession: vi.fn(),
     listSessions: vi.fn(),
     deleteSession: vi.fn(),
@@ -145,7 +146,8 @@ function acpApplication(): AcpApplicationPort {
       Promise.resolve({
         terminalClass: "completed",
         executorState: "quiescent",
-        runtimeEffectState: "settled",
+        toolEffectState: "settled",
+        stopReason: "end_turn",
       }),
     ),
   };

@@ -2,7 +2,7 @@ import type {
   ContentBlock,
   ModelToolDefinition,
   RunExecutionSnapshot,
-  RuntimeEffectState,
+  ToolEffectState,
 } from "../domain/types.js";
 import type { NormalizedClientMcpSource } from "../domain/mcp.js";
 
@@ -17,7 +17,7 @@ export type ToolCallInput = {
 export type ToolCallResult = {
   content: ContentBlock[];
   isError: boolean;
-  runtimeEffectState: RuntimeEffectState;
+  toolEffectState: ToolEffectState;
 };
 
 export interface ToolCatalogPort {

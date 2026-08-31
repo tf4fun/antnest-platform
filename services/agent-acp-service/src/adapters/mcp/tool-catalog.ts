@@ -2,9 +2,9 @@ import { mergeToolCatalogs } from "../../domain/mcp.js";
 import { context, propagation } from "@opentelemetry/api";
 import type {
   ContentBlock,
-  JsonValue,
+  JsonObject,
   ModelToolDefinition,
-  RuntimeEffectState,
+  ToolEffectState,
   ToolDefinition,
 } from "../../domain/types.js";
 import type {
@@ -23,7 +23,7 @@ export type McpConnectInput = {
 export type McpRemoteTool = {
   name: string;
   description?: string;
-  inputSchema?: JsonValue;
+  inputSchema?: JsonObject;
 };
 
 export interface McpConnection {
@@ -44,12 +44,17 @@ export type McpToolCatalogDependencies = {
   clientDialer: McpDialer;
   revisions: ClientMcpRevisionPort;
   reportClientSourceFailure?: (sourceId: string, error: unknown) => void;
+  reportConnectionCloseFailure?: (
+    source: "runtime" | "client",
+    sourceId: string,
+    error: unknown,
+  ) => void;
 };
 
 export class McpToolCallError extends Error {
   public constructor(
     message: string,
-    public readonly effectState: RuntimeEffectState,
+    public readonly effectState: ToolEffectState,
     options?: ErrorOptions,
   ) {
     super(message, options);
@@ -98,6 +103,7 @@ export class McpToolCatalog implements ToolCatalogPort {
         headers: runtimeHeaders(snapshot.runtime.executionId),
         signal,
       },
+      (error) => this.dependencies.reportConnectionCloseFailure?.("runtime", "runtime", error),
       async (connection) =>
         (await connection.listTools(signal)).map((tool) => ({
           source: "runtime",
@@ -122,6 +128,7 @@ export class McpToolCatalog implements ToolCatalogPort {
         ),
         signal,
       },
+      (error) => this.dependencies.reportConnectionCloseFailure?.("client", source.sourceId, error),
       async (connection) =>
         (await connection.listTools(signal)).map((tool) => ({
           source: "client",
@@ -142,10 +149,11 @@ export class McpToolCatalog implements ToolCatalogPort {
           headers: runtimeHeaders(input.snapshot.runtime.executionId),
           signal: input.signal,
         },
+        (error) => this.dependencies.reportConnectionCloseFailure?.("runtime", "runtime", error),
         async (connection) =>
           connection.callTool({ name: input.tool.name, arguments: input.arguments }, input.signal),
       );
-      return { ...result, runtimeEffectState: "settled" };
+      return { ...result, toolEffectState: "settled" };
     } catch (error) {
       throw new McpToolCallError("Runtime Tool outcome is unknown", "unknown", { cause: error });
     }
@@ -169,12 +177,14 @@ export class McpToolCatalog implements ToolCatalogPort {
           ),
           signal: input.signal,
         },
+        (error) =>
+          this.dependencies.reportConnectionCloseFailure?.("client", source.sourceId, error),
         async (connection) =>
           connection.callTool({ name: input.tool.name, arguments: input.arguments }, input.signal),
       );
-      return { ...result, runtimeEffectState: "none" };
+      return { ...result, toolEffectState: "settled" };
     } catch (error) {
-      throw new McpToolCallError("Client MCP source did not produce a result", "none", {
+      throw new McpToolCallError("Client MCP Tool outcome is unknown", "unknown", {
         cause: error,
       });
     }
@@ -183,13 +193,18 @@ export class McpToolCatalog implements ToolCatalogPort {
   private async withConnection<Result>(
     dialer: McpDialer,
     input: McpConnectInput,
+    reportCloseFailure: (error: unknown) => void,
     operation: (connection: McpConnection) => Promise<Result>,
   ): Promise<Result> {
     const connection = await dialer.connect(input);
     try {
       return await operation(connection);
     } finally {
-      await connection.close();
+      try {
+        await connection.close();
+      } catch (error) {
+        reportCloseFailure(error);
+      }
     }
   }
 }
