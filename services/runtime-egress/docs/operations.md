@@ -44,9 +44,10 @@ Configuration is immutable after startup. Agent policy changes use the control
 API and PostgreSQL rather than environment variables.
 
 The OTLP collector must be reachable from the Runtime Egress service network.
-The development Compose topology attaches Runtime Egress and Jaeger to the
-shared `development` network for this purpose; packet forwarding remains on its
-dedicated data-plane networks.
+The development Compose topology attaches Runtime Egress and Jaeger to a
+dedicated internal `observability` network for this purpose. That network is
+not an Agent packet egress route; packet forwarding keeps the dedicated
+`egress` network as its default gateway.
 
 Packet revision and inner MTU come only from
 `contracts/runtime/packet-contract.json`. The current revision is returned in

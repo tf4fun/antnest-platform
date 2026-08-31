@@ -25,7 +25,7 @@ func TestCreateAgentMaterializesSpecAndPublishesOnlyAfterRuntimeReady(t *testing
 			EgressIPv4: "10.20.0.8", EgressPort: 8092, State: "active",
 		},
 		runtime: ports.RuntimeOperation{
-			State: "completed", RuntimeRevision: "runtime-revision-1",
+			State: "completed", Effect: "completed", RuntimeRevision: "runtime-revision-1",
 			RuntimeExecutionID: "execution-identity-1",
 			MCPEndpoint:        "http://runtime-agent:8091/mcp", LifecycleState: "ready",
 			Health: "healthy",
@@ -48,7 +48,7 @@ func TestCreateAgentMaterializesSpecAndPublishesOnlyAfterRuntimeReady(t *testing
 		t.Fatalf("create Agent: %v", err)
 	}
 
-	if !reflect.DeepEqual(dependencies.calls, []string{"egress.ensure", "runtime.initialize"}) {
+	if !reflect.DeepEqual(dependencies.calls, []string{"egress.ensure", "runtime.initialize", "egress.ensure"}) {
 		t.Fatalf("dependency order = %v", dependencies.calls)
 	}
 	if result.Agent.LifecycleState != domain.AgentAvailable || result.Operation.State != domain.OperationCompleted {
@@ -170,6 +170,110 @@ func TestCreateAgentDoesNotStartRuntimeWithInactiveNetwork(t *testing.T) {
 	}
 }
 
+func TestCreateAgentRejectsRuntimeWithoutConfirmedEffect(t *testing.T) {
+	t.Parallel()
+
+	store := &lifecycleStoreStub{}
+	dependencies := &lifecycleDependenciesStub{
+		network: validLifecycleNetwork(),
+		runtime: ports.RuntimeOperation{
+			State: "completed", Effect: "unknown", RuntimeRevision: "runtime-revision-1",
+			RuntimeExecutionID: "execution-identity-1", MCPEndpoint: "http://runtime-agent:8091/mcp",
+			LifecycleState: "ready", Health: "healthy",
+		},
+	}
+	service := newLifecycleTestService(t, store, dependencies)
+
+	result, err := service.CreateAgent(context.Background(), lifecycleCreateInput("request-unconfirmed-effect"))
+	if err != nil {
+		t.Fatalf("create Agent: %v", err)
+	}
+	if result.Operation.State != domain.OperationFailed || result.Operation.ErrorCode != "invalid_runtime_result" {
+		t.Fatalf("unconfirmed Runtime result = %+v", result)
+	}
+	if store.published.Execution.ID != "" {
+		t.Fatalf("unconfirmed Runtime was published: %+v", store.published)
+	}
+}
+
+func TestCreateAgentRejectsChangedNetworkAtPublicationBarrier(t *testing.T) {
+	t.Parallel()
+
+	first := validLifecycleNetwork()
+	second := first
+	second.TunnelIPv4 = "100.64.0.3"
+	store := &lifecycleStoreStub{}
+	dependencies := &lifecycleDependenciesStub{
+		networkResults: []ports.NetworkAttachment{first, second},
+		runtime: ports.RuntimeOperation{
+			State: "completed", Effect: "completed", RuntimeRevision: "runtime-revision-1",
+			RuntimeExecutionID: "execution-identity-1", MCPEndpoint: "http://runtime-agent:8091/mcp",
+			LifecycleState: "ready", Health: "healthy",
+		},
+	}
+	service := newLifecycleTestService(t, store, dependencies)
+
+	result, err := service.CreateAgent(context.Background(), lifecycleCreateInput("request-network-changed"))
+	if err != nil {
+		t.Fatalf("create Agent: %v", err)
+	}
+	if result.Operation.State != domain.OperationFailed || result.Operation.ErrorCode != "network_attachment_changed" {
+		t.Fatalf("changed network result = %+v", result)
+	}
+	if store.published.Execution.ID != "" {
+		t.Fatalf("stale Runtime binding was published: %+v", store.published)
+	}
+}
+
+func TestCreateAgentConvergesAfterConcurrentExactReplay(t *testing.T) {
+	t.Parallel()
+
+	for _, phase := range []string{"network", "runtime", "publish"} {
+		phase := phase
+		t.Run(phase, func(t *testing.T) {
+			t.Parallel()
+			store := &lifecycleStoreStub{concurrentPhase: phase}
+			dependencies := &lifecycleDependenciesStub{
+				network: validLifecycleNetwork(),
+				runtime: ports.RuntimeOperation{
+					State: "completed", Effect: "completed", RuntimeRevision: "runtime-revision-1",
+					RuntimeExecutionID: "execution-identity-1", MCPEndpoint: "http://runtime-agent:8091/mcp",
+					LifecycleState: "ready", Health: "healthy",
+				},
+			}
+			service := newLifecycleTestService(t, store, dependencies)
+
+			result, err := service.CreateAgent(context.Background(), lifecycleCreateInput("request-concurrent-"+phase))
+			if err != nil {
+				t.Fatalf("converge exact replay: %v", err)
+			}
+			if result.Operation.State != domain.OperationCompleted || result.Agent.LifecycleState != domain.AgentAvailable {
+				t.Fatalf("converged result = %+v", result)
+			}
+		})
+	}
+}
+
+func TestGetLifecycleOperationReturnsDurableState(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(40, 0).UTC()
+	store := &lifecycleStoreStub{operation: ports.LifecycleOperationRecord{
+		RequestID: "request-operation", AgentID: "agent-1", Kind: domain.OperationCreate,
+		Phase: domain.PhaseRuntimeInitialize, State: domain.OperationRunning,
+		CreatedAt: now, UpdatedAt: now,
+	}}
+	service := newLifecycleTestService(t, store, &lifecycleDependenciesStub{})
+
+	operation, err := service.GetLifecycleOperation(context.Background(), "request-operation")
+	if err != nil {
+		t.Fatalf("get lifecycle operation: %v", err)
+	}
+	if operation.RequestID != "request-operation" || operation.Phase != domain.PhaseRuntimeInitialize {
+		t.Fatalf("operation = %+v", operation)
+	}
+}
+
 type lifecycleSpecSourceStub struct {
 	template domain.TemplateRevision
 	model    domain.ModelProfileRevision
@@ -196,6 +300,8 @@ func (source lifecycleSpecSourceStub) GetModelProfileRevision(
 type lifecycleDependenciesStub struct {
 	calls                []string
 	network              ports.NetworkAttachment
+	networkResults       []ports.NetworkAttachment
+	networkIndex         int
 	runtime              ports.RuntimeOperation
 	runtimeConfiguration ports.RuntimeConfiguration
 }
@@ -205,6 +311,10 @@ func (dependency *lifecycleDependenciesStub) EnsureAgentNetwork(
 ) (ports.NetworkAttachment, error) {
 	dependency.calls = append(dependency.calls, "egress.ensure")
 	result := dependency.network
+	if dependency.networkIndex < len(dependency.networkResults) {
+		result = dependency.networkResults[dependency.networkIndex]
+	}
+	dependency.networkIndex++
 	result.AgentID = agentID
 	return result, nil
 }
@@ -218,11 +328,20 @@ func (dependency *lifecycleDependenciesStub) InitializeRuntime(
 }
 
 type lifecycleStoreStub struct {
-	initial    ports.BeginAgentCreate
-	beginState ports.AgentCreateState
-	replayed   bool
-	published  ports.PublishAgentCreate
-	failed     ports.FailAgentCreate
+	initial            ports.BeginAgentCreate
+	beginState         ports.AgentCreateState
+	replayed           bool
+	published          ports.PublishAgentCreate
+	failed             ports.FailAgentCreate
+	operation          ports.LifecycleOperationRecord
+	concurrentPhase    string
+	concurrentReturned bool
+}
+
+func (store *lifecycleStoreStub) GetLifecycleOperation(
+	_ context.Context, _ string,
+) (ports.LifecycleOperationRecord, error) {
+	return store.operation, nil
 }
 
 func (store *lifecycleStoreStub) ReplayAgentCreate(
@@ -257,6 +376,9 @@ func (store *lifecycleStoreStub) RecordCreateNetwork(
 	state.Operation.NetworkAttachment = &attachment
 	state.Operation.UpdatedAt = now
 	store.beginState = state
+	if store.takeConcurrent("network") {
+		return ports.AgentCreateState{}, ports.ErrConcurrentChange
+	}
 	return state, nil
 }
 
@@ -270,6 +392,9 @@ func (store *lifecycleStoreStub) RecordCreateRuntime(
 	state.Operation.RuntimeResult = &runtime
 	state.Operation.UpdatedAt = now
 	store.beginState = state
+	if store.takeConcurrent("runtime") {
+		return ports.AgentCreateState{}, ports.ErrConcurrentChange
+	}
 	return state, nil
 }
 
@@ -291,7 +416,20 @@ func (store *lifecycleStoreStub) PublishAgentCreate(
 	state.Operation.State = domain.OperationCompleted
 	state.Operation.ChildRequestID = ""
 	state.Operation.UpdatedAt = input.Now
+	store.beginState = state
+	if store.takeConcurrent("publish") {
+		return ports.AgentCreateState{}, ports.ErrConcurrentChange
+	}
 	return state, nil
+}
+
+func (store *lifecycleStoreStub) takeConcurrent(phase string) bool {
+	if store.concurrentReturned || store.concurrentPhase != phase {
+		return false
+	}
+	store.concurrentReturned = true
+	store.replayed = true
+	return true
 }
 
 func (store *lifecycleStoreStub) FailAgentCreate(
@@ -332,6 +470,31 @@ func mustLifecycleTemplate(t *testing.T) domain.TemplateRevision {
 		t.Fatalf("Template revision: %v", err)
 	}
 	return revision
+}
+
+func newLifecycleTestService(
+	t *testing.T, store *lifecycleStoreStub, dependencies *lifecycleDependenciesStub,
+) *LifecycleService {
+	t.Helper()
+	return NewLifecycleService(
+		lifecycleSpecSourceStub{template: mustLifecycleTemplate(t), model: mustLifecycleModel(t)},
+		store, dependencies, dependencies, fixedClock{now: time.Unix(50, 0).UTC()},
+	)
+}
+
+func lifecycleCreateInput(requestID string) CreateAgentInput {
+	return CreateAgentInput{
+		RequestID: requestID, OrganizationID: "org-1", OwnerUserID: "user-1",
+		Name: "Research Agent", TemplateID: "template-1", TemplateRevision: 1,
+	}
+}
+
+func validLifecycleNetwork() ports.NetworkAttachment {
+	return ports.NetworkAttachment{
+		TunnelIPv4: "100.64.0.2", ResolverIPv4: "100.64.0.1",
+		PacketContractRevision: 1, EgressIPv4: "10.20.0.8", EgressPort: 8092,
+		State: "active",
+	}
 }
 
 func mustLifecycleModel(t *testing.T) domain.ModelProfileRevision {

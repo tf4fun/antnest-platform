@@ -53,9 +53,10 @@ services:
     networks:
       control:
         ipv4_address: ${ANTNEST_EGRESS_CONTROL_IPV4:-172.31.255.3}
-      development: {}
       egress-database: {}
-      egress: {}
+      egress:
+        gw_priority: 1
+      observability: {}
       runtime-management:
         ipv4_address: ${ANTNEST_EGRESS_IPV4:-172.30.255.3}
     stop_grace_period: 10s
@@ -274,7 +275,7 @@ services:
     image: cr.jaegertracing.io/jaegertracing/jaeger:2.20.0
     ports:
       - 127.0.0.1:${ANTNEST_JAEGER_UI_HOST_PORT:-16686}:16686
-    networks: [development]
+    networks: [development, observability]
 
 networks:
   control:
@@ -283,6 +284,8 @@ networks:
       config:
         - subnet: ${ANTNEST_EGRESS_CONTROL_SUBNET:-172.31.255.0/24}
   development: {}
+  observability:
+    internal: true
   egress: {}
   runtime-management:
     name: ${ANTNEST_RUNTIME_MANAGEMENT_NETWORK:-antnest-runtime-management}

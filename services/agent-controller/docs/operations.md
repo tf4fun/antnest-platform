@@ -3,9 +3,10 @@
 ## Process Model
 
 One binary serves internal HTTP RPC. PostgreSQL is authoritative. The current
-runnable slices serve ModelProfile/Template Catalog operations and the Agent
-create Saga. The request thread advances create through Egress ensure, Runtime
-initialize, and atomic publication. The background lifecycle recovery worker
+runnable slices serve ModelProfile/Template Catalog operations, the Agent
+create Saga, and durable lifecycle-operation inspection. The request thread
+advances create through Egress ensure, Runtime initialize, an exact Egress
+attachment recheck, and atomic publication. The background lifecycle recovery worker
 described below is not yet started by the process.
 
 Multiple replicas may serve reads and Run admission. Lifecycle workers claim
@@ -85,7 +86,9 @@ ACP session/prompt
   -> Agent Controller finish_run
 ```
 
-Lifecycle traces must show each Saga phase and both downstream control calls.
+Lifecycle traces must show each Saga phase and all downstream control calls.
+Create has two Egress calls by design: initial allocation and the exact active
+attachment barrier immediately before publication.
 Each worker attempt starts a new span linked to the persisted initial request
 trace and previous attempt; a process restart never fabricates one continuous
 parent/child timeline. Trace identities are correlation data, not metric

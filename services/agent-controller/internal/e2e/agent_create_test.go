@@ -65,9 +65,9 @@ func TestCreateAgentAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 		response.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(response).Encode(map[string]any{
 			"request_id": requestID, "kind": "initialize_runtime", "agent_id": agentID,
-			"target_revision": "runtime-revision-e2e", "state": "completed", "effect": "completed",
+			"target_revision": "rtv_22222222222222222222222222222222", "state": "completed", "effect": "completed",
 			"inspection": map[string]any{
-				"agent_id": agentID, "runtime_revision": "runtime-revision-e2e",
+				"agent_id": agentID, "runtime_revision": "rtv_22222222222222222222222222222222",
 				"lifecycle_state": "ready", "health": "healthy",
 				"mcp_endpoint":         "http://runtime-e2e:8091/mcp",
 				"runtime_execution_id": "runtime-execution-e2e",
@@ -127,7 +127,7 @@ func TestCreateAgentAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 	}
 	replayed := serveJSON(t, handler, http.MethodPost, "/internal/agents", createBody, http.StatusAccepted)
 	if replayed["agent_access_subject"] != created["agent_access_subject"] ||
-		egressCalls.Load() != 1 || runtimeCalls.Load() != 1 {
+		egressCalls.Load() != 2 || runtimeCalls.Load() != 1 {
 		t.Fatalf("idempotent replay repeated effects: egress=%d runtime=%d replay=%+v",
 			egressCalls.Load(), runtimeCalls.Load(), replayed)
 	}

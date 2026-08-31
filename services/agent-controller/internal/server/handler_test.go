@@ -228,6 +228,38 @@ func TestLifecycleHandlerCreatesAgentWithStableContract(t *testing.T) {
 	}
 }
 
+func TestLifecycleHandlerGetsDurableOperation(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(20, 0).UTC()
+	lifecycle := &lifecycleServiceStub{operation: application.OperationView{
+		RequestID: "request-agent-1", AgentID: "agent-1", Kind: domain.OperationCreate,
+		Phase: domain.PhaseRuntimeInitialize, State: domain.OperationRunning,
+		CreatedAt: now, UpdatedAt: now,
+	}}
+	handler, err := NewHandler(&catalogServiceStub{}, lifecycle, func(context.Context) error { return nil })
+	if err != nil {
+		t.Fatalf("new handler: %v", err)
+	}
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/internal/agent-operations/request-agent-1", nil)
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", response.Code, response.Body.String())
+	}
+	if lifecycle.operationRequestID != "request-agent-1" {
+		t.Fatalf("operation request ID = %q", lifecycle.operationRequestID)
+	}
+	var payload operationResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.RequestID != "request-agent-1" || payload.Phase != domain.PhaseRuntimeInitialize {
+		t.Fatalf("operation response = %+v", payload)
+	}
+}
+
 type catalogServiceStub struct {
 	createModelInput application.CreateModelProfileInput
 	createModelCalls int
@@ -238,9 +270,11 @@ type catalogServiceStub struct {
 }
 
 type lifecycleServiceStub struct {
-	input  application.CreateAgentInput
-	result application.CreateAgentResult
-	err    error
+	input              application.CreateAgentInput
+	result             application.CreateAgentResult
+	operation          application.OperationView
+	operationRequestID string
+	err                error
 }
 
 func (service *lifecycleServiceStub) CreateAgent(
@@ -248,6 +282,13 @@ func (service *lifecycleServiceStub) CreateAgent(
 ) (application.CreateAgentResult, error) {
 	service.input = input
 	return service.result, service.err
+}
+
+func (service *lifecycleServiceStub) GetLifecycleOperation(
+	_ context.Context, requestID string,
+) (application.OperationView, error) {
+	service.operationRequestID = requestID
+	return service.operation, service.err
 }
 
 func (service *catalogServiceStub) CreateModelProfile(

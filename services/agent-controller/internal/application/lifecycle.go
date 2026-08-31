@@ -17,6 +17,8 @@ import (
 
 var ErrDependencyUnavailable = errors.New("dependency unavailable")
 
+const maximumCreateConvergenceAttempts = 4
+
 type LifecycleService struct {
 	specs   ports.AgentSpecSource
 	store   ports.LifecycleStore
@@ -99,7 +101,7 @@ func (service *LifecycleService) CreateAgent(
 		return CreateAgentResult{}, fmt.Errorf("replay Agent create: %w", err)
 	}
 	if found {
-		return service.continueAgentCreate(ctx, state)
+		return service.convergeAgentCreate(ctx, state, fingerprint)
 	}
 
 	template, model, spec, err := service.resolveAgentSpec(ctx, input)
@@ -163,7 +165,40 @@ func (service *LifecycleService) CreateAgent(
 		return CreateAgentResult{}, fmt.Errorf("begin Agent create: %w", err)
 	}
 	_ = model
-	return service.continueAgentCreate(ctx, state)
+	return service.convergeAgentCreate(ctx, state, fingerprint)
+}
+
+func (service *LifecycleService) GetLifecycleOperation(
+	ctx context.Context, requestID string,
+) (OperationView, error) {
+	if !validIdentifier(requestID) {
+		return OperationView{}, fmt.Errorf("%w: lifecycle operation request ID", ErrInvalidInput)
+	}
+	record, err := service.store.GetLifecycleOperation(ctx, requestID)
+	if err != nil {
+		return OperationView{}, fmt.Errorf("get lifecycle operation: %w", err)
+	}
+	return lifecycleOperationView(record), nil
+}
+
+func (service *LifecycleService) convergeAgentCreate(
+	ctx context.Context, state ports.AgentCreateState, fingerprint string,
+) (CreateAgentResult, error) {
+	for range maximumCreateConvergenceAttempts {
+		result, err := service.continueAgentCreate(ctx, state)
+		if !errors.Is(err, ports.ErrConcurrentChange) {
+			return result, err
+		}
+		var found bool
+		state, found, err = service.store.ReplayAgentCreate(ctx, state.Operation.RequestID, fingerprint)
+		if err != nil {
+			return CreateAgentResult{}, fmt.Errorf("replay concurrent Agent create: %w", err)
+		}
+		if !found {
+			return CreateAgentResult{}, fmt.Errorf("concurrent Agent create disappeared")
+		}
+	}
+	return CreateAgentResult{}, ports.ErrConcurrentChange
 }
 
 func (service *LifecycleService) resolveAgentSpec(
@@ -229,9 +264,7 @@ func (service *LifecycleService) ensureCreateNetwork(
 	if err != nil {
 		return service.handleCreateDependencyFailure(ctx, state, "runtime-egress", err)
 	}
-	if attachment.AgentID != state.Agent.AgentID || attachment.TunnelIPv4 == "" ||
-		attachment.ResolverIPv4 == "" || attachment.EgressIPv4 == "" || attachment.EgressPort == 0 ||
-		attachment.PacketContractRevision == 0 || attachment.State != "active" {
+	if !networkAttachmentReady(attachment, state.Agent.AgentID) {
 		return service.failCreate(ctx, state, "invalid_network_attachment", "Runtime Egress returned an incomplete attachment", false)
 	}
 	now := service.clock.Now()
@@ -266,15 +299,18 @@ func (service *LifecycleService) initializeCreateRuntime(
 	case "running", "unknown":
 		return state, nil
 	case "failed":
+		if result.Effect == "unknown" {
+			return state, fmt.Errorf("%w: runtime-controller", ErrDependencyUnavailable)
+		}
 		code := strings.TrimSpace(result.ErrorCode)
 		if code == "" {
 			code = "runtime_initialization_failed"
 		}
-		return service.failCreate(ctx, state, code, result.ErrorDetail, result.Effect == "unknown")
+		return service.failCreate(ctx, state, code, result.ErrorDetail, false)
 	case "completed":
-		if result.LifecycleState != "ready" || result.Health != "healthy" ||
+		if result.Effect != "completed" || result.LifecycleState != "ready" || result.Health != "healthy" ||
 			result.RuntimeRevision == "" || result.RuntimeExecutionID == "" || result.MCPEndpoint == "" {
-			return service.failCreate(ctx, state, "runtime_not_ready", "Runtime initialization did not prove readiness", false)
+			return service.failCreate(ctx, state, "invalid_runtime_result", "Runtime initialization did not prove a completed ready effect", false)
 		}
 	default:
 		return service.failCreate(ctx, state, "invalid_runtime_result", "Runtime Controller returned an unknown state", false)
@@ -295,6 +331,19 @@ func (service *LifecycleService) publishAgentCreate(
 ) (ports.AgentCreateState, error) {
 	if state.Operation.RuntimeResult == nil {
 		return ports.AgentCreateState{}, fmt.Errorf("create operation has no Runtime result")
+	}
+	if state.Operation.NetworkAttachment == nil {
+		return ports.AgentCreateState{}, fmt.Errorf("create operation has no network attachment")
+	}
+	attachment, err := service.egress.EnsureAgentNetwork(ctx, state.Agent.AgentID)
+	if err != nil {
+		return service.handleCreateDependencyFailure(ctx, state, "runtime-egress", err)
+	}
+	if !networkAttachmentReady(attachment, state.Agent.AgentID) {
+		return service.failCreate(ctx, state, "invalid_network_attachment", "Runtime Egress did not confirm an active attachment", false)
+	}
+	if attachment != *state.Operation.NetworkAttachment {
+		return service.failCreate(ctx, state, "network_attachment_changed", "Runtime Egress attachment changed after Runtime initialization", false)
 	}
 	runtime := *state.Operation.RuntimeResult
 	now := service.clock.Now()
@@ -325,6 +374,12 @@ func (service *LifecycleService) publishAgentCreate(
 		return ports.AgentCreateState{}, fmt.Errorf("publish Agent create: %w", err)
 	}
 	return published, nil
+}
+
+func networkAttachmentReady(attachment ports.NetworkAttachment, agentID string) bool {
+	return attachment.AgentID == agentID && attachment.TunnelIPv4 != "" &&
+		attachment.ResolverIPv4 != "" && attachment.EgressIPv4 != "" && attachment.EgressPort != 0 &&
+		attachment.PacketContractRevision != 0 && attachment.State == "active"
 }
 
 func (service *LifecycleService) handleCreateDependencyFailure(
@@ -407,12 +462,16 @@ func createAgentResult(state ports.AgentCreateState) CreateAgentResult {
 			CreatedAt: agent.CreatedAt, UpdatedAt: agent.UpdatedAt,
 		},
 		AgentAccessSubject: state.Access.AccessSubject,
-		Operation: OperationView{
-			RequestID: operation.RequestID, AgentID: operation.AgentID,
-			Kind: operation.Kind, Phase: operation.Phase, State: operation.State,
-			ErrorCode: operation.ErrorCode, ErrorDetail: operation.ErrorDetail,
-			CreatedAt: operation.CreatedAt, UpdatedAt: operation.UpdatedAt,
-		},
+		Operation:          lifecycleOperationView(operation),
+	}
+}
+
+func lifecycleOperationView(operation ports.LifecycleOperationRecord) OperationView {
+	return OperationView{
+		RequestID: operation.RequestID, AgentID: operation.AgentID,
+		Kind: operation.Kind, Phase: operation.Phase, State: operation.State,
+		ErrorCode: operation.ErrorCode, ErrorDetail: operation.ErrorDetail,
+		CreatedAt: operation.CreatedAt, UpdatedAt: operation.UpdatedAt,
 	}
 }
 

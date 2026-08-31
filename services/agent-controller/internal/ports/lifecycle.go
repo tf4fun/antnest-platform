@@ -187,6 +187,7 @@ type FailAgentCreate struct {
 }
 
 type LifecycleStore interface {
+	GetLifecycleOperation(context.Context, string) (LifecycleOperationRecord, error)
 	ReplayAgentCreate(context.Context, string, string) (AgentCreateState, bool, error)
 	BeginAgentCreate(context.Context, BeginAgentCreate) (AgentCreateState, bool, error)
 	RecordCreateNetwork(context.Context, string, string, NetworkAttachment, string, time.Time) (AgentCreateState, error)

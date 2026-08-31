@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -46,12 +47,12 @@ func TestInitializeRuntimeUsesRuntimeControllerContract(t *testing.T) {
 			"request_id":"child-request-1",
 			"kind":"initialize_runtime",
 			"agent_id":"agent-1",
-			"target_revision":"runtime-revision-1",
+			"target_revision":"rtv_11111111111111111111111111111111",
 			"state":"completed",
 			"effect":"completed",
 			"inspection":{
 				"agent_id":"agent-1",
-				"runtime_revision":"runtime-revision-1",
+				"runtime_revision":"rtv_11111111111111111111111111111111",
 				"lifecycle_state":"ready",
 				"health":"healthy",
 				"mcp_endpoint":"http://runtime-agent:8091/mcp",
@@ -75,7 +76,7 @@ func TestInitializeRuntimeUsesRuntimeControllerContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("initialize Runtime: %v", err)
 	}
-	if result.State != "completed" || result.RuntimeRevision != "runtime-revision-1" ||
+	if result.State != "completed" || result.RuntimeRevision != "rtv_11111111111111111111111111111111" ||
 		result.MCPEndpoint != "http://runtime-agent:8091/mcp" || result.Health != "healthy" {
 		t.Fatalf("Runtime operation = %+v", result)
 	}
@@ -118,12 +119,12 @@ func TestInitializeRuntimePropagatesTraceContext(t *testing.T) {
 			"request_id":"child-request-1",
 			"kind":"initialize_runtime",
 			"agent_id":"agent-1",
-			"target_revision":"runtime-revision-1",
+			"target_revision":"rtv_11111111111111111111111111111111",
 			"state":"completed",
 			"effect":"completed",
 			"inspection":{
 				"agent_id":"agent-1",
-				"runtime_revision":"runtime-revision-1",
+				"runtime_revision":"rtv_11111111111111111111111111111111",
 				"lifecycle_state":"ready",
 				"health":"healthy",
 				"mcp_endpoint":"http://runtime-agent:8091/mcp",
@@ -148,6 +149,59 @@ func TestInitializeRuntimePropagatesTraceContext(t *testing.T) {
 	}))
 	if _, err := client.InitializeRuntime(ctx, "child-request-1", "agent-1", runtimeConfiguration()); err != nil {
 		t.Fatalf("initialize Runtime: %v", err)
+	}
+}
+
+func TestInitializeRuntimeRejectsContradictoryCompletedResponse(t *testing.T) {
+	t.Parallel()
+
+	valid := `{
+		"request_id":"child-request-1",
+		"kind":"initialize_runtime",
+		"agent_id":"agent-1",
+		"target_revision":"rtv_11111111111111111111111111111111",
+		"state":"completed",
+		"effect":"completed",
+		"inspection":{
+			"agent_id":"agent-1",
+			"runtime_revision":"rtv_11111111111111111111111111111111",
+			"lifecycle_state":"ready",
+			"health":"healthy",
+			"mcp_endpoint":"http://runtime-agent:8091/mcp",
+			"runtime_execution_id":"execution-1"
+		}
+	}`
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "effect not confirmed", body: strings.Replace(valid, `"effect":"completed"`, `"effect":"unknown"`, 1)},
+		{name: "invalid endpoint", body: strings.Replace(valid, "http://runtime-agent:8091/mcp", "not-a-uri", 1)},
+		{name: "non canonical endpoint", body: strings.Replace(valid, "http://runtime-agent:8091/mcp", " http://runtime-agent:8091/mcp ", 1)},
+		{name: "invalid revision", body: strings.ReplaceAll(valid, "rtv_11111111111111111111111111111111", "runtime-revision")},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+				response.Header().Set("Content-Type", "application/json")
+				_, _ = response.Write([]byte(test.body))
+			}))
+			t.Cleanup(server.Close)
+			client, err := New(server.URL, time.Second, server.Client())
+			if err != nil {
+				t.Fatalf("new client: %v", err)
+			}
+
+			_, err = client.InitializeRuntime(
+				context.Background(), "child-request-1", "agent-1", runtimeConfiguration(),
+			)
+			var dependencyError *ports.DependencyError
+			if !errors.As(err, &dependencyError) || dependencyError.Code != "invalid_response" {
+				t.Fatalf("dependency error = %#v (%v)", dependencyError, err)
+			}
+		})
 	}
 }
 

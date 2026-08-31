@@ -28,6 +28,14 @@ func ObserveLifecycleStore(
 	return &ObservedLifecycleStore{next: next, logger: logger}, nil
 }
 
+func (store *ObservedLifecycleStore) GetLifecycleOperation(
+	ctx context.Context, requestID string,
+) (ports.LifecycleOperationRecord, error) {
+	return observeLifecycleValue(ctx, store, "get_lifecycle_operation", func(callCtx context.Context) (ports.LifecycleOperationRecord, error) {
+		return store.next.GetLifecycleOperation(callCtx, requestID)
+	})
+}
+
 func (store *ObservedLifecycleStore) ReplayAgentCreate(
 	ctx context.Context, requestID string, fingerprint string,
 ) (ports.AgentCreateState, bool, error) {

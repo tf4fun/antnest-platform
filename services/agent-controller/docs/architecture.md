@@ -171,12 +171,16 @@ candidate Runtime.
 4. Construct Runtime Controller configuration from the frozen Runtime inputs
    plus returned network attachment.
 5. Initialize Runtime with the durable child request ID and wait for a completed,
-   healthy result.
-6. Atomically publish ExecutionRevision, set `available`, and append `agent_ready`.
-7. Any terminal failure sets `unavailable`, records exact phase/class, and
+   healthy result whose effect is confirmed complete.
+6. Re-read the Egress attachment and require the same active tunnel, resolver,
+   packet contract, and endpoint used to initialize Runtime. This closes the
+   readiness race without publishing a Runtime configured for stale network
+   facts.
+7. Atomically publish ExecutionRevision, set `available`, and append `agent_ready`.
+8. Any terminal failure sets `unavailable`, records exact phase/class, and
    appends `agent_build_failed`.
 
-The request thread currently drives these three create phases. A transport
+The request thread currently drives these three durable create phases. A transport
 timeout leaves the durable operation at its last committed phase; replaying the
 same request continues with the same child request identity. Background claim
 and recovery are added with the lifecycle-recovery slice.

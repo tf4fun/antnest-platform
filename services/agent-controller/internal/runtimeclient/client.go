@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -23,6 +24,8 @@ import (
 const maximumResponseBytes = 1 << 20
 
 var tracer = otel.Tracer("soft/antnest-platform/agent-controller/runtimeclient")
+
+var runtimeRevisionPattern = regexp.MustCompile(`^rtv_[0-9a-f]{32}$`)
 
 type Client struct {
 	baseURL    *url.URL
@@ -103,7 +106,7 @@ func (client *Client) InitializeRuntime(
 	var operation runtimeOperationDTO
 	if err := json.Unmarshal(responseBody, &operation); err != nil ||
 		operation.RequestID != requestID || operation.AgentID != agentID ||
-		operation.Kind != "initialize_runtime" || operation.State == "" {
+		operation.Kind != "initialize_runtime" || !validRuntimeOperation(operation) {
 		return ports.RuntimeOperation{}, dependencyFailure("invalid_response", true)
 	}
 	result = ports.RuntimeOperation{
@@ -123,6 +126,43 @@ func (client *Client) InitializeRuntime(
 		result.Health = operation.Inspection.Health
 	}
 	return result, nil
+}
+
+func validRuntimeOperation(operation runtimeOperationDTO) bool {
+	if !runtimeRevisionPattern.MatchString(operation.TargetRevision) ||
+		!oneOf(operation.State, "running", "completed", "failed", "unknown") ||
+		!oneOf(operation.Effect, "completed", "not_started", "unknown") {
+		return false
+	}
+	if operation.Inspection != nil && (operation.Inspection.AgentID != operation.AgentID ||
+		operation.Inspection.RuntimeRevision != operation.TargetRevision) {
+		return false
+	}
+	if operation.State != "completed" {
+		return true
+	}
+	return operation.Effect == "completed" && operation.Inspection != nil &&
+		operation.Inspection.LifecycleState == "ready" && operation.Inspection.Health == "healthy" &&
+		strings.TrimSpace(operation.Inspection.RuntimeExecutionID) != "" &&
+		validMCPEndpoint(operation.Inspection.MCPEndpoint)
+}
+
+func validMCPEndpoint(value string) bool {
+	if value != strings.TrimSpace(value) {
+		return false
+	}
+	endpoint, err := url.ParseRequestURI(value)
+	return err == nil && endpoint.Host != "" && endpoint.User == nil && endpoint.Fragment == "" &&
+		(endpoint.Scheme == "http" || endpoint.Scheme == "https")
+}
+
+func oneOf(value string, allowed ...string) bool {
+	for _, candidate := range allowed {
+		if value == candidate {
+			return true
+		}
+	}
+	return false
 }
 
 type runtimeConfigurationDTO struct {

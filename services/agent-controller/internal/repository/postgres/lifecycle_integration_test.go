@@ -95,6 +95,13 @@ func TestLifecycleRepositoryPersistsCreateSagaAndPublishesAtomically(t *testing.
 	if _, found, err := repository.ReplayAgentCreate(ctx, begin.Operation.RequestID, strings.Repeat("f", 64)); !errors.Is(err, ports.ErrRequestConflict) || found {
 		t.Fatalf("conflicting Agent request error=%v found=%t", err, found)
 	}
+	operation, err := repository.GetLifecycleOperation(ctx, begin.Operation.RequestID)
+	if err != nil {
+		t.Fatalf("get lifecycle operation: %v", err)
+	}
+	if operation.RequestID != begin.Operation.RequestID || operation.Phase != domain.PhaseNetworkEnsure {
+		t.Fatalf("lifecycle operation = %+v", operation)
+	}
 
 	attachment := ports.NetworkAttachment{
 		AgentID: "agent-integration", TunnelIPv4: "100.64.0.2", ResolverIPv4: "100.64.0.1",

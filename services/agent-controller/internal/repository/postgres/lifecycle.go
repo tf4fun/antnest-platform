@@ -19,6 +19,12 @@ type lifecycleRowScanner interface {
 	Scan(...any) error
 }
 
+func (repository *Repository) GetLifecycleOperation(
+	ctx context.Context, requestID string,
+) (ports.LifecycleOperationRecord, error) {
+	return loadLifecycleOperation(ctx, repository.pool, requestID, "")
+}
+
 func (repository *Repository) ReplayAgentCreate(
 	ctx context.Context, requestID string, fingerprint string,
 ) (ports.AgentCreateState, bool, error) {

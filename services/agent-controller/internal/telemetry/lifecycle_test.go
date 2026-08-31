@@ -48,6 +48,12 @@ func TestObservedLifecycleStoreEmitsBoundedOperationSpan(t *testing.T) {
 
 type lifecycleStoreStub struct{ err error }
 
+func (store *lifecycleStoreStub) GetLifecycleOperation(
+	context.Context, string,
+) (ports.LifecycleOperationRecord, error) {
+	return ports.LifecycleOperationRecord{}, store.err
+}
+
 func (store *lifecycleStoreStub) ReplayAgentCreate(
 	context.Context, string, string,
 ) (ports.AgentCreateState, bool, error) {

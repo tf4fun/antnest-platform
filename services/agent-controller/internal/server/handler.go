@@ -32,6 +32,7 @@ type CatalogService interface {
 
 type LifecycleService interface {
 	CreateAgent(context.Context, application.CreateAgentInput) (application.CreateAgentResult, error)
+	GetLifecycleOperation(context.Context, string) (application.OperationView, error)
 }
 
 type HealthCheck func(context.Context) error
@@ -66,6 +67,7 @@ func NewHandler(
 	mux.HandleFunc("GET /internal/agent-templates/{template_id}", h.getTemplate)
 	mux.HandleFunc("POST /internal/agent-templates/{template_id}/revisions", h.reviseTemplate)
 	mux.HandleFunc("POST /internal/agents", h.createAgent)
+	mux.HandleFunc("GET /internal/agent-operations/{request_id}", h.getLifecycleOperation)
 	return mux, nil
 }
 
@@ -373,6 +375,15 @@ func (h *handler) createAgent(response http.ResponseWriter, request *http.Reques
 	writeJSON(response, http.StatusAccepted, createAgentPayload(result))
 }
 
+func (h *handler) getLifecycleOperation(response http.ResponseWriter, request *http.Request) {
+	operation, err := h.lifecycle.GetLifecycleOperation(request.Context(), request.PathValue("request_id"))
+	if err != nil {
+		writeServiceError(request.Context(), response, err)
+		return
+	}
+	writeJSON(response, http.StatusOK, operationPayload(operation))
+}
+
 func catalogListInput(response http.ResponseWriter, request *http.Request) (application.ListCatalogInput, bool) {
 	query := request.URL.Query()
 	for key := range query {
@@ -454,12 +465,16 @@ func createAgentPayload(result application.CreateAgentResult) createAgentRespons
 	operation := result.Operation
 	return createAgentResponse{
 		Agent: response, AgentAccessSubject: result.AgentAccessSubject,
-		Operation: operationResponse{
-			RequestID: operation.RequestID, AgentID: operation.AgentID,
-			Kind: operation.Kind, Phase: operation.Phase, State: operation.State,
-			ErrorCode: operation.ErrorCode, ErrorDetail: operation.ErrorDetail,
-			CreatedAt: operation.CreatedAt, UpdatedAt: operation.UpdatedAt,
-		},
+		Operation: operationPayload(operation),
+	}
+}
+
+func operationPayload(operation application.OperationView) operationResponse {
+	return operationResponse{
+		RequestID: operation.RequestID, AgentID: operation.AgentID,
+		Kind: operation.Kind, Phase: operation.Phase, State: operation.State,
+		ErrorCode: operation.ErrorCode, ErrorDetail: operation.ErrorDetail,
+		CreatedAt: operation.CreatedAt, UpdatedAt: operation.UpdatedAt,
 	}
 }
 

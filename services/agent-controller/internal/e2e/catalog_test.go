@@ -133,6 +133,12 @@ func (clock fixedClock) Now() time.Time { return clock.now }
 
 type catalogOnlyLifecycle struct{}
 
+func (catalogOnlyLifecycle) GetLifecycleOperation(
+	context.Context, string,
+) (application.OperationView, error) {
+	return application.OperationView{}, application.ErrDependencyUnavailable
+}
+
 func (catalogOnlyLifecycle) CreateAgent(
 	context.Context, application.CreateAgentInput,
 ) (application.CreateAgentResult, error) {
