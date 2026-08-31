@@ -108,6 +108,12 @@ func (store *catalogStoreStub) GetTemplate(
 	return ports.TemplateRecord{}, store.err
 }
 
+func (store *catalogStoreStub) GetTemplateRevision(
+	context.Context, string, int64,
+) (domain.TemplateRevision, error) {
+	return domain.TemplateRevision{}, store.err
+}
+
 func (store *catalogStoreStub) ListTemplates(
 	context.Context, string, string, int,
 ) ([]ports.TemplateRecord, string, error) {

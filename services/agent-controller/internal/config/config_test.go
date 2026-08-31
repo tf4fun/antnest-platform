@@ -12,13 +12,20 @@ func TestLoadRequiresDatabaseAndCanonicalEncryptionKey(t *testing.T) {
 	values := map[string]string{
 		"ANTNEST_AGENT_CONTROLLER_DATABASE_URL":   "postgres://controller:secret@postgres/controller",
 		"ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY": base64.StdEncoding.EncodeToString(make([]byte, 32)),
+		"ANTNEST_RUNTIME_EGRESS_URL":              "http://runtime-egress:8081",
+		"ANTNEST_RUNTIME_CONTROLLER_URL":          "http://runtime-controller:8080",
 	}
 	loaded, err := Load(func(key string) string { return values[key] })
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	if loaded.ListenAddress != ":8080" || loaded.ShutdownTimeout != 15*time.Second {
+	if loaded.ListenAddress != ":8080" || loaded.ShutdownTimeout != 15*time.Second ||
+		loaded.DependencyTimeout != 150*time.Second {
 		t.Fatalf("defaults = %+v", loaded)
+	}
+	if loaded.RuntimeEgressURL != values["ANTNEST_RUNTIME_EGRESS_URL"] ||
+		loaded.RuntimeControllerURL != values["ANTNEST_RUNTIME_CONTROLLER_URL"] {
+		t.Fatalf("dependency URLs = %+v", loaded)
 	}
 	if len(loaded.EncryptionKey) != 32 {
 		t.Fatalf("encryption key length = %d", len(loaded.EncryptionKey))
@@ -36,6 +43,8 @@ func TestLoadRejectsInvalidEncryptionKeyAndDuration(t *testing.T) {
 	values := map[string]string{
 		"ANTNEST_AGENT_CONTROLLER_DATABASE_URL":   "postgres://controller:secret@postgres/controller",
 		"ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY": "not-base64",
+		"ANTNEST_RUNTIME_EGRESS_URL":              "http://runtime-egress:8081",
+		"ANTNEST_RUNTIME_CONTROLLER_URL":          "http://runtime-controller:8080",
 	}
 	if _, err := Load(func(key string) string { return values[key] }); err == nil {
 		t.Fatal("invalid encryption key was accepted")
@@ -44,5 +53,10 @@ func TestLoadRejectsInvalidEncryptionKeyAndDuration(t *testing.T) {
 	values["ANTNEST_AGENT_CONTROLLER_SHUTDOWN_TIMEOUT"] = "0s"
 	if _, err := Load(func(key string) string { return values[key] }); err == nil {
 		t.Fatal("non-positive shutdown timeout was accepted")
+	}
+	delete(values, "ANTNEST_AGENT_CONTROLLER_SHUTDOWN_TIMEOUT")
+	delete(values, "ANTNEST_RUNTIME_EGRESS_URL")
+	if _, err := Load(func(key string) string { return values[key] }); err == nil {
+		t.Fatal("missing Runtime Egress URL was accepted")
 	}
 }

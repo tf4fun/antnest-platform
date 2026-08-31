@@ -3,9 +3,10 @@
 ## Process Model
 
 One binary serves internal HTTP RPC. PostgreSQL is authoritative. The current
-runnable slice serves ModelProfile and Template Catalog operations. The durable
-lifecycle-operation worker described below is the next Stage 2 slice and is not
-yet started by the process.
+runnable slices serve ModelProfile/Template Catalog operations and the Agent
+create Saga. The request thread advances create through Egress ensure, Runtime
+initialize, and atomic publication. The background lifecycle recovery worker
+described below is not yet started by the process.
 
 Multiple replicas may serve reads and Run admission. Lifecycle workers claim
 operations with PostgreSQL row locking; Agent-row constraints remain the final
@@ -13,23 +14,20 @@ serialization guard.
 
 ## Configuration
 
-Required by the current Catalog slice:
+Required:
 
 - `ANTNEST_AGENT_CONTROLLER_DATABASE_URL`;
 - `ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY`: base64-encoded 32-byte AES key;
-
-Required when lifecycle orchestration is enabled in a later slice:
-
 - `ANTNEST_RUNTIME_CONTROLLER_URL`;
-- `ANTNEST_EGRESS_CONTROL_URL`;
-- `ANTNEST_RUNTIME_EGRESS_ADVERTISE_IPV4`: Runtime-reachable Egress address is
-  normally returned by Egress and is not duplicated here.
+- `ANTNEST_RUNTIME_EGRESS_URL`.
+
+The Runtime-reachable Egress endpoint is returned by Runtime Egress and is not
+duplicated in Agent Controller configuration.
 
 Optional:
 
 - `ANTNEST_AGENT_CONTROLLER_LISTEN` (default `:8080`);
-- `ANTNEST_AGENT_CONTROLLER_OPERATION_POLL_INTERVAL` (default `500ms`);
-- `ANTNEST_AGENT_CONTROLLER_DEPENDENCY_TIMEOUT` (default `10s`);
+- `ANTNEST_AGENT_CONTROLLER_DEPENDENCY_TIMEOUT` (default `150s`);
 - `ANTNEST_AGENT_CONTROLLER_RUN_DEADLINE` (default `30m`);
 - `ANTNEST_AGENT_CONTROLLER_DRAIN_TIMEOUT` (default `5m`);
 - `ANTNEST_AGENT_CONTROLLER_SHUTDOWN_TIMEOUT` (default `15s`);
@@ -39,25 +37,25 @@ Secrets must come from environment/secret mounts and must never be printed.
 
 ## Readiness
 
-`GET /status` currently returns ready when PostgreSQL is reachable and its
-migrations were accepted at startup. Once lifecycle orchestration is enabled,
-readiness will additionally require:
-
-1. Runtime Controller reports ready;
-2. Runtime Egress control plane reports ready;
-3. the lifecycle worker has completed its initial recovery scan.
+`GET /status` returns ready when PostgreSQL is reachable and its migrations
+were accepted at startup. Runtime Controller and Runtime Egress outages are
+reported by the affected create request and do not make the process unready;
+otherwise a downstream outage would cause an unrelated restart loop.
 
 Dependency failures after startup are reported per business request and in
 metrics; liveness remains process-level so the deployment platform does not
 turn a downstream outage into a restart loop.
 
-## Lifecycle Failure Recovery (Planned Slice)
+## Lifecycle Failure Recovery
 
 - Retry an uncertain lifecycle command with the original request ID.
 - Inspect `/internal/agent-operations/{request_id}` before creating a new
   operation. Stage 2 uses the idempotency request ID as the lifecycle operation
   identity; there is no second alias to lose or reconcile.
-- An `unavailable` Agent requires explicit rebuild retry or deletion.
+- A create transport timeout leaves the operation at the last committed phase;
+  replay the exact request ID and body to continue with the same child request.
+- An `unavailable` Agent requires explicit rebuild retry or deletion once those
+  lifecycle commands are implemented.
 - A draining Agent with a settled Run is resumed by the worker.
 - An unresolved Run remains fail-closed until rebuild/delete proves its Runtime
   absent.
@@ -76,9 +74,9 @@ OTEL_SERVICE_NAME=agent-controller
 ```
 
 The Compose `observability` profile starts Jaeger and exposes its UI on the
-configured loopback port. The current Catalog trace shows the bounded HTTP
-route and logical repository operation. Once Stage 2 is complete, a Run trace
-must show:
+configured loopback port. A create trace shows the bounded HTTP route,
+repository phases, Runtime Egress ensure call, Runtime Controller initialize
+call, and atomic publication. Once Stage 2 is complete, a Run trace must show:
 
 ```text
 ACP session/prompt

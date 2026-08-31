@@ -6,11 +6,13 @@ executable Agent by coordinating Runtime Controller and Runtime Egress.
 
 ## Status
 
-Stage 2B implementation is in progress. The first runnable vertical slice now
-provides ModelProfile and Template create/revise/get/list RPC, encrypted
-Provider credentials, immutable revisions, PostgreSQL idempotency/CAS, and
-OTLP HTTP/repository spans. Agent lifecycle, Run admission, and event-journal
-routes remain target contracts until their corresponding slices are completed.
+Stage 2B implementation is in progress. The runnable slices provide
+ModelProfile and Template Catalog RPC plus Agent creation. Create freezes an
+exact Template/Model graph, persists owner access and the initial event,
+ensures Egress, initializes Runtime through deterministic child idempotency,
+and publishes an executable revision only after Runtime readiness. Rebuild,
+disable, enable, delete, Run admission, and event replay routes remain target
+contracts until their corresponding slices are completed.
 
 ## Owns
 

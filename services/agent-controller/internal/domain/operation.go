@@ -251,3 +251,7 @@ func childRequestID(requestID string, phase OperationPhase) string {
 	digest := sha256.Sum256([]byte(requestID + "\x00" + string(phase)))
 	return "acr_" + hex.EncodeToString(digest[:16])
 }
+
+func ChildRequestID(requestID string, phase OperationPhase) string {
+	return childRequestID(requestID, phase)
+}

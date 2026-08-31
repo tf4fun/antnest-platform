@@ -30,21 +30,31 @@ type CatalogService interface {
 	ListTemplates(context.Context, application.ListCatalogInput) (application.TemplatePage, error)
 }
 
+type LifecycleService interface {
+	CreateAgent(context.Context, application.CreateAgentInput) (application.CreateAgentResult, error)
+}
+
 type HealthCheck func(context.Context) error
 
 type handler struct {
-	catalog CatalogService
-	health  HealthCheck
+	catalog   CatalogService
+	lifecycle LifecycleService
+	health    HealthCheck
 }
 
-func NewHandler(catalog CatalogService, health HealthCheck) (http.Handler, error) {
+func NewHandler(
+	catalog CatalogService, lifecycle LifecycleService, health HealthCheck,
+) (http.Handler, error) {
 	if catalog == nil {
 		return nil, fmt.Errorf("catalog service is required")
+	}
+	if lifecycle == nil {
+		return nil, fmt.Errorf("lifecycle service is required")
 	}
 	if health == nil {
 		return nil, fmt.Errorf("health check is required")
 	}
-	h := &handler{catalog: catalog, health: health}
+	h := &handler{catalog: catalog, lifecycle: lifecycle, health: health}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /status", h.status)
 	mux.HandleFunc("POST /internal/model-profiles", h.createModelProfile)
@@ -55,6 +65,7 @@ func NewHandler(catalog CatalogService, health HealthCheck) (http.Handler, error
 	mux.HandleFunc("GET /internal/agent-templates", h.listTemplates)
 	mux.HandleFunc("GET /internal/agent-templates/{template_id}", h.getTemplate)
 	mux.HandleFunc("POST /internal/agent-templates/{template_id}/revisions", h.reviseTemplate)
+	mux.HandleFunc("POST /internal/agents", h.createAgent)
 	return mux, nil
 }
 
@@ -101,6 +112,15 @@ type reviseTemplateRequest struct {
 	Runtime                domain.RuntimeSpecInput `json:"runtime"`
 }
 
+type createAgentRequest struct {
+	RequestID        string `json:"request_id"`
+	OrganizationID   string `json:"organization_id"`
+	OwnerUserID      string `json:"owner_user_id"`
+	Name             string `json:"name"`
+	TemplateID       string `json:"template_id"`
+	TemplateRevision int64  `json:"template_revision"`
+}
+
 type modelProfileResponse struct {
 	ModelProfileID    string           `json:"model_profile_id"`
 	OrganizationID    string           `json:"organization_id"`
@@ -141,6 +161,49 @@ type modelProfileListResponse struct {
 type templateListResponse struct {
 	Items       []templateResponse `json:"items"`
 	NextAfterID *string            `json:"next_after_id"`
+}
+
+type runtimeBindingResponse struct {
+	RuntimeRevision    string `json:"runtime_revision"`
+	RuntimeExecutionID string `json:"runtime_execution_id"`
+	MCPEndpoint        string `json:"mcp_endpoint"`
+}
+
+type agentResponse struct {
+	AgentID                         string                  `json:"agent_id"`
+	OrganizationID                  string                  `json:"organization_id"`
+	OwnerUserID                     string                  `json:"owner_user_id"`
+	Name                            string                  `json:"name"`
+	DesiredState                    domain.DesiredState     `json:"desired_state"`
+	LifecycleState                  domain.AgentState       `json:"lifecycle_state"`
+	AccessRevision                  string                  `json:"access_revision"`
+	AgentSpecRevision               string                  `json:"agent_spec_revision,omitempty"`
+	ExecutableExecutionRevision     string                  `json:"executable_execution_revision,omitempty"`
+	LastSuccessfulExecutionRevision string                  `json:"last_successful_execution_revision,omitempty"`
+	Runtime                         *runtimeBindingResponse `json:"runtime,omitempty"`
+	ActiveOperationRequestID        string                  `json:"active_operation_request_id,omitempty"`
+	FailureStage                    string                  `json:"failure_stage,omitempty"`
+	FailureCode                     string                  `json:"failure_code,omitempty"`
+	CreatedAt                       time.Time               `json:"created_at"`
+	UpdatedAt                       time.Time               `json:"updated_at"`
+}
+
+type operationResponse struct {
+	RequestID   string                `json:"request_id"`
+	AgentID     string                `json:"agent_id"`
+	Kind        domain.OperationKind  `json:"kind"`
+	Phase       domain.OperationPhase `json:"phase"`
+	State       domain.OperationState `json:"state"`
+	ErrorCode   string                `json:"error_code,omitempty"`
+	ErrorDetail string                `json:"error_detail,omitempty"`
+	CreatedAt   time.Time             `json:"created_at"`
+	UpdatedAt   time.Time             `json:"updated_at"`
+}
+
+type createAgentResponse struct {
+	Agent              agentResponse     `json:"agent"`
+	AgentAccessSubject string            `json:"agent_access_subject"`
+	Operation          operationResponse `json:"operation"`
 }
 
 type errorResponse struct {
@@ -292,6 +355,24 @@ func (h *handler) listTemplates(response http.ResponseWriter, request *http.Requ
 	})
 }
 
+func (h *handler) createAgent(response http.ResponseWriter, request *http.Request) {
+	var payload createAgentRequest
+	if !decodeJSON(response, request, &payload) {
+		return
+	}
+	result, err := h.lifecycle.CreateAgent(request.Context(), application.CreateAgentInput{
+		RequestID: payload.RequestID, OrganizationID: payload.OrganizationID,
+		OwnerUserID: payload.OwnerUserID, Name: payload.Name,
+		TemplateID: payload.TemplateID, TemplateRevision: payload.TemplateRevision,
+		InitialTraceParent: request.Header.Get("traceparent"),
+	})
+	if err != nil {
+		writeServiceError(request.Context(), response, err)
+		return
+	}
+	writeJSON(response, http.StatusAccepted, createAgentPayload(result))
+}
+
 func catalogListInput(response http.ResponseWriter, request *http.Request) (application.ListCatalogInput, bool) {
 	query := request.URL.Query()
 	for key := range query {
@@ -351,6 +432,37 @@ func templatePayload(view application.TemplateView) templateResponse {
 	}
 }
 
+func createAgentPayload(result application.CreateAgentResult) createAgentResponse {
+	agent := result.Agent
+	response := agentResponse{
+		AgentID: agent.AgentID, OrganizationID: agent.OrganizationID,
+		OwnerUserID: agent.OwnerUserID, Name: agent.Name,
+		DesiredState: agent.DesiredState, LifecycleState: agent.LifecycleState,
+		AccessRevision: agent.AccessRevision, AgentSpecRevision: agent.AgentSpecRevisionID,
+		ExecutableExecutionRevision:     agent.ExecutionRevisionID,
+		LastSuccessfulExecutionRevision: agent.LastSuccessfulExecutionRevisionID,
+		ActiveOperationRequestID:        agent.ActiveOperationRequestID,
+		FailureStage:                    agent.FailureStage, FailureCode: agent.FailureCode,
+		CreatedAt: agent.CreatedAt, UpdatedAt: agent.UpdatedAt,
+	}
+	if agent.RuntimeRevision != "" || agent.RuntimeExecutionID != "" || agent.RuntimeMCPEndpoint != "" {
+		response.Runtime = &runtimeBindingResponse{
+			RuntimeRevision: agent.RuntimeRevision, RuntimeExecutionID: agent.RuntimeExecutionID,
+			MCPEndpoint: agent.RuntimeMCPEndpoint,
+		}
+	}
+	operation := result.Operation
+	return createAgentResponse{
+		Agent: response, AgentAccessSubject: result.AgentAccessSubject,
+		Operation: operationResponse{
+			RequestID: operation.RequestID, AgentID: operation.AgentID,
+			Kind: operation.Kind, Phase: operation.Phase, State: operation.State,
+			ErrorCode: operation.ErrorCode, ErrorDetail: operation.ErrorDetail,
+			CreatedAt: operation.CreatedAt, UpdatedAt: operation.UpdatedAt,
+		},
+	}
+}
+
 func optionalString(value string) *string {
 	if value == "" {
 		return nil
@@ -379,6 +491,10 @@ func publicError(err error) (int, errorResponse) {
 	case errors.Is(err, ports.ErrConcurrentChange):
 		return http.StatusConflict, errorResponse{Code: "lifecycle_conflict", Message: "resource changed concurrently"}
 	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
+		return http.StatusServiceUnavailable, errorResponse{
+			Code: "dependency_unavailable", Message: "dependency is unavailable", Retryable: true,
+		}
+	case errors.Is(err, application.ErrDependencyUnavailable):
 		return http.StatusServiceUnavailable, errorResponse{
 			Code: "dependency_unavailable", Message: "dependency is unavailable", Retryable: true,
 		}

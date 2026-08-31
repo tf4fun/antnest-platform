@@ -18,9 +18,8 @@ import (
 )
 
 var (
-	repositoryTracer = otel.Tracer(instrumentationName + "/repository")
-	repositoryMeter  = otel.Meter(instrumentationName + "/repository")
-	repositoryCalls  = mustCounter(repositoryMeter.Int64Counter(
+	repositoryMeter = otel.Meter(instrumentationName + "/repository")
+	repositoryCalls = mustCounter(repositoryMeter.Int64Counter(
 		"antnest.agent_controller.repository.operations",
 	))
 	repositoryDuration = mustHistogram(repositoryMeter.Float64Histogram(
@@ -120,6 +119,14 @@ func (store *ObservedCatalogStore) GetTemplate(
 	})
 }
 
+func (store *ObservedCatalogStore) GetTemplateRevision(
+	ctx context.Context, id string, revision int64,
+) (domain.TemplateRevision, error) {
+	return observeValue(ctx, store, "get_template_revision", func(callCtx context.Context) (domain.TemplateRevision, error) {
+		return store.next.GetTemplateRevision(callCtx, id, revision)
+	})
+}
+
 func (store *ObservedCatalogStore) ListTemplates(
 	ctx context.Context, organizationID string, afterID string, limit int,
 ) ([]ports.TemplateRecord, string, error) {
@@ -162,7 +169,7 @@ func observeList[T any](
 }
 
 func startRepositorySpan(ctx context.Context, operation string) (context.Context, trace.Span, time.Time) {
-	ctx, span := repositoryTracer.Start(
+	ctx, span := otel.Tracer(instrumentationName+"/repository").Start(
 		ctx, "agent_controller.repository."+operation, trace.WithSpanKind(trace.SpanKindClient),
 	)
 	return ctx, span, time.Now()

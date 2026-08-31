@@ -36,6 +36,7 @@ func TestCatalogHappyPathThroughHTTPAndPostgres(t *testing.T) {
 	}
 	handler, err := server.NewHandler(
 		application.NewCatalogService(repository, secretBox, fixedClock{now: time.Unix(1, 0).UTC()}),
+		catalogOnlyLifecycle{},
 		repository.Ping,
 	)
 	if err != nil {
@@ -129,3 +130,11 @@ func mustJSON(t *testing.T, value any) string {
 type fixedClock struct{ now time.Time }
 
 func (clock fixedClock) Now() time.Time { return clock.now }
+
+type catalogOnlyLifecycle struct{}
+
+func (catalogOnlyLifecycle) CreateAgent(
+	context.Context, application.CreateAgentInput,
+) (application.CreateAgentResult, error) {
+	return application.CreateAgentResult{}, application.ErrDependencyUnavailable
+}

@@ -243,10 +243,17 @@ services:
     depends_on:
       agent-controller-postgres:
         condition: service_healthy
+      runtime-egress:
+        condition: service_healthy
+      runtime-controller:
+        condition: service_healthy
     environment:
       ANTNEST_AGENT_CONTROLLER_DATABASE_URL: postgres://antnest_agent_controller:${ANTNEST_AGENT_CONTROLLER_POSTGRES_PASSWORD:-antnest-agent-controller-dev}@agent-controller-postgres:5432/antnest_agent_controller
       ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY: ${ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY:-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=}
       ANTNEST_AGENT_CONTROLLER_LISTEN: :8080
+      ANTNEST_AGENT_CONTROLLER_DEPENDENCY_TIMEOUT: ${ANTNEST_AGENT_CONTROLLER_DEPENDENCY_TIMEOUT:-150s}
+      ANTNEST_RUNTIME_EGRESS_URL: http://${ANTNEST_EGRESS_CONTROL_IPV4:-172.31.255.3}:8081
+      ANTNEST_RUNTIME_CONTROLLER_URL: http://runtime-controller:8080
       OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-true}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       OTEL_EXPORTER_OTLP_PROTOCOL: ${OTEL_EXPORTER_OTLP_PROTOCOL:-http/protobuf}
@@ -258,7 +265,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
-    networks: [agent-controller-database, development]
+    networks: [agent-controller-database, control, development]
     stop_grace_period: 20s
 
   jaeger:

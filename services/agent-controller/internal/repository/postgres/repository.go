@@ -293,6 +293,19 @@ WHERE t.id = $1`, id)
 	return scanTemplateRecord(row)
 }
 
+func (repository *Repository) GetTemplateRevision(
+	ctx context.Context, id string, revision int64,
+) (domain.TemplateRevision, error) {
+	record, err := loadTemplateRecord(ctx, repository.pool, id, revision)
+	if err != nil {
+		return domain.TemplateRevision{}, err
+	}
+	if !record.Enabled {
+		return domain.TemplateRevision{}, ports.ErrDisabledReference
+	}
+	return record.Revision, nil
+}
+
 func (repository *Repository) ListTemplates(
 	ctx context.Context,
 	organizationID string,

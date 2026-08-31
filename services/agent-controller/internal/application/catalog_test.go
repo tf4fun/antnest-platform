@@ -310,6 +310,15 @@ func (store *catalogStoreStub) GetTemplate(_ context.Context, id string) (ports.
 	return store.templateRecord, nil
 }
 
+func (store *catalogStoreStub) GetTemplateRevision(
+	_ context.Context, id string, revision int64,
+) (domain.TemplateRevision, error) {
+	if store.templateRecord.TemplateID != id || store.templateRecord.Revision.Revision() != revision {
+		return domain.TemplateRevision{}, ports.ErrNotFound
+	}
+	return store.templateRecord.Revision, nil
+}
+
 func (store *catalogStoreStub) ReviseTemplate(
 	_ context.Context, expectedRevision int64, record ports.TemplateRecord,
 ) (ports.TemplateRecord, error) {

@@ -16,7 +16,9 @@ import (
 	"soft/antnest-platform/services/agent-controller/internal/application"
 	"soft/antnest-platform/services/agent-controller/internal/config"
 	"soft/antnest-platform/services/agent-controller/internal/credentials"
+	"soft/antnest-platform/services/agent-controller/internal/egressclient"
 	"soft/antnest-platform/services/agent-controller/internal/repository/postgres"
+	"soft/antnest-platform/services/agent-controller/internal/runtimeclient"
 	"soft/antnest-platform/services/agent-controller/internal/server"
 	"soft/antnest-platform/services/agent-controller/internal/telemetry"
 )
@@ -141,15 +143,30 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 	if err != nil {
 		return classifyFailure("service_composition", err)
 	}
+	observedLifecycleStore, err := telemetry.ObserveLifecycleStore(repository, logger)
+	if err != nil {
+		return classifyFailure("service_composition", err)
+	}
+	egress, err := egressclient.New(cfg.RuntimeEgressURL, cfg.DependencyTimeout, nil)
+	if err != nil {
+		return classifyFailure("service_composition", err)
+	}
+	runtime, err := runtimeclient.New(cfg.RuntimeControllerURL, cfg.DependencyTimeout, nil)
+	if err != nil {
+		return classifyFailure("service_composition", err)
+	}
 	catalog := application.NewCatalogService(observedStore, secretBox, systemClock{})
-	handler, err := server.NewHandler(catalog, repository.Ping)
+	lifecycle := application.NewLifecycleService(
+		observedStore, observedLifecycleStore, egress, runtime, systemClock{},
+	)
+	handler, err := server.NewHandler(catalog, lifecycle, repository.Ping)
 	if err != nil {
 		return classifyFailure("service_composition", err)
 	}
 	httpServer := &http.Server{
 		Addr: cfg.ListenAddress, Handler: telemetry.HTTPHandler(handler, logger),
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second,
-		WriteTimeout: 2 * time.Minute, IdleTimeout: 90 * time.Second,
+		WriteTimeout: 2*cfg.DependencyTimeout + 30*time.Second, IdleTimeout: 90 * time.Second,
 		MaxHeaderBytes: 1 << 20,
 	}
 	listener, err := net.Listen("tcp", cfg.ListenAddress)

@@ -80,6 +80,7 @@ type CatalogStore interface {
 	PutTemplate(ctx context.Context, record TemplateRecord) (TemplateRecord, error)
 	ReviseTemplate(ctx context.Context, expectedRevision int64, record TemplateRecord) (TemplateRecord, error)
 	GetTemplate(ctx context.Context, id string) (TemplateRecord, error)
+	GetTemplateRevision(ctx context.Context, id string, revision int64) (domain.TemplateRevision, error)
 	ListTemplates(ctx context.Context, organizationID string, afterID string, limit int) ([]TemplateRecord, string, error)
 }
 

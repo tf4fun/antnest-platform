@@ -11,9 +11,10 @@ It depends on language-neutral HTTP contracts. It does not import another
 service implementation or inspect another service database.
 
 The document describes the completed target boundary. Implementation proceeds
-as vertical business slices. At present the ModelProfile/Template Catalog slice
-is runnable; Agent lifecycle, Run admission, and event replay remain in
-progress and must not be inferred from table or contract presence alone.
+as vertical business slices. At present ModelProfile/Template Catalog and the
+Agent create Saga are runnable. The other Agent lifecycle commands, Run
+admission, recovery worker, and event replay remain in progress and must not be
+inferred from table or contract presence alone.
 
 ## Aggregate Model
 
@@ -174,6 +175,11 @@ candidate Runtime.
 6. Atomically publish ExecutionRevision, set `available`, and append `agent_ready`.
 7. Any terminal failure sets `unavailable`, records exact phase/class, and
    appends `agent_build_failed`.
+
+The request thread currently drives these three create phases. A transport
+timeout leaves the durable operation at its last committed phase; replaying the
+same request continues with the same child request identity. Background claim
+and recovery are added with the lifecycle-recovery slice.
 
 ### Explicit Rebuild
 

@@ -20,7 +20,7 @@ func TestCatalogHandlerCreatesModelProfileWithoutEchoingSecret(t *testing.T) {
 	t.Parallel()
 
 	service := &catalogServiceStub{modelView: sampleModelProfileView()}
-	handler, err := NewHandler(service, func(context.Context) error { return nil })
+	handler, err := NewHandler(service, &lifecycleServiceStub{}, func(context.Context) error { return nil })
 	if err != nil {
 		t.Fatalf("new handler: %v", err)
 	}
@@ -64,7 +64,7 @@ func TestCatalogHandlerRejectsUnknownFieldsAndTrailingJSON(t *testing.T) {
 	t.Parallel()
 
 	service := &catalogServiceStub{}
-	handler, err := NewHandler(service, func(context.Context) error { return nil })
+	handler, err := NewHandler(service, &lifecycleServiceStub{}, func(context.Context) error { return nil })
 	if err != nil {
 		t.Fatalf("new handler: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestCatalogHandlerListsCurrentTemplatesWithNullableCursor(t *testing.T) {
 	service := &catalogServiceStub{templatePage: application.TemplatePage{
 		Items: []application.TemplateView{sampleTemplateView()}, NextAfterID: "template-1",
 	}}
-	handler, err := NewHandler(service, func(context.Context) error { return nil })
+	handler, err := NewHandler(service, &lifecycleServiceStub{}, func(context.Context) error { return nil })
 	if err != nil {
 		t.Fatalf("new handler: %v", err)
 	}
@@ -140,7 +140,7 @@ func TestCatalogHandlerMapsStableErrors(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			service := &catalogServiceStub{getModelErr: test.err}
-			handler, err := NewHandler(service, func(context.Context) error { return nil })
+			handler, err := NewHandler(service, &lifecycleServiceStub{}, func(context.Context) error { return nil })
 			if err != nil {
 				t.Fatalf("new handler: %v", err)
 			}
@@ -161,6 +161,73 @@ func TestCatalogHandlerMapsStableErrors(t *testing.T) {
 	}
 }
 
+func TestLifecycleHandlerCreatesAgentWithStableContract(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(10, 0).UTC()
+	lifecycle := &lifecycleServiceStub{result: application.CreateAgentResult{
+		Agent: application.AgentView{
+			AgentID: "agent-1", OrganizationID: "org-1", OwnerUserID: "user-1",
+			Name: "Research Agent", DesiredState: domain.DesiredEnabled,
+			LifecycleState: domain.AgentAvailable, AccessRevision: "access-revision-1",
+			AgentSpecRevisionID: "agentspec-1", ExecutionRevisionID: "execution-1",
+			LastSuccessfulExecutionRevisionID: "execution-1",
+			RuntimeRevision:                   "runtime-1", RuntimeExecutionID: "runtime-execution-1",
+			RuntimeMCPEndpoint: "http://runtime:8091/mcp", CreatedAt: now, UpdatedAt: now,
+		},
+		AgentAccessSubject: "access-1",
+		Operation: application.OperationView{
+			RequestID: "request-agent-1", AgentID: "agent-1", Kind: domain.OperationCreate,
+			Phase: domain.PhaseCompleted, State: domain.OperationCompleted,
+			CreatedAt: now, UpdatedAt: now,
+		},
+	}}
+	handler, err := NewHandler(&catalogServiceStub{}, lifecycle, func(context.Context) error { return nil })
+	if err != nil {
+		t.Fatalf("new handler: %v", err)
+	}
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/internal/agents", strings.NewReader(`{
+		"request_id":"request-agent-1",
+		"organization_id":"org-1",
+		"owner_user_id":"user-1",
+		"name":"Research Agent",
+		"template_id":"template-1",
+		"template_revision":1
+	}`))
+	request.Header.Set("traceparent", "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01")
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("status = %d body=%s", response.Code, response.Body.String())
+	}
+	if lifecycle.input.InitialTraceParent != request.Header.Get("traceparent") ||
+		lifecycle.input.OwnerUserID != "user-1" || lifecycle.input.TemplateRevision != 1 {
+		t.Fatalf("CreateAgent input = %+v", lifecycle.input)
+	}
+	var payload struct {
+		Agent struct {
+			AgentID           string `json:"agent_id"`
+			AgentSpecRevision string `json:"agent_spec_revision"`
+			Runtime           struct {
+				MCPEndpoint string `json:"mcp_endpoint"`
+			} `json:"runtime"`
+		} `json:"agent"`
+		AgentAccessSubject string `json:"agent_access_subject"`
+		Operation          struct {
+			State string `json:"state"`
+		} `json:"operation"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.Agent.AgentID != "agent-1" || payload.Agent.AgentSpecRevision != "agentspec-1" ||
+		payload.Agent.Runtime.MCPEndpoint != "http://runtime:8091/mcp" ||
+		payload.AgentAccessSubject != "access-1" || payload.Operation.State != "completed" {
+		t.Fatalf("response = %+v", payload)
+	}
+}
+
 type catalogServiceStub struct {
 	createModelInput application.CreateModelProfileInput
 	createModelCalls int
@@ -168,6 +235,19 @@ type catalogServiceStub struct {
 	getModelErr      error
 	templatePage     application.TemplatePage
 	listInput        application.ListCatalogInput
+}
+
+type lifecycleServiceStub struct {
+	input  application.CreateAgentInput
+	result application.CreateAgentResult
+	err    error
+}
+
+func (service *lifecycleServiceStub) CreateAgent(
+	_ context.Context, input application.CreateAgentInput,
+) (application.CreateAgentResult, error) {
+	service.input = input
+	return service.result, service.err
 }
 
 func (service *catalogServiceStub) CreateModelProfile(
