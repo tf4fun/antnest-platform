@@ -1,6 +1,6 @@
 {
   "contract": "antnest.agent-controller.run-admission",
-  "revision": 3,
+  "revision": 4,
   "transport": "json-over-http",
   "trust": "internal-network",
   "base_path": "/rpc/agent-controller",
@@ -103,7 +103,7 @@
         "required": [
           "admission_id",
           "admission_deadline",
-          "agent_config_revision",
+          "agent_spec_revision",
           "execution_revision",
           "runtime_mcp_source_digest",
           "agent_execution_spec_digest",
@@ -114,7 +114,7 @@
         "properties": {
           "admission_id": { "type": "string", "minLength": 1 },
           "admission_deadline": { "type": "string", "format": "date-time" },
-          "agent_config_revision": { "type": "string", "minLength": 1 },
+          "agent_spec_revision": { "type": "string", "minLength": 1 },
           "execution_revision": { "type": "string", "minLength": 1 },
           "runtime_mcp_source_digest": {
             "type": "string",
@@ -128,14 +128,12 @@
           "runtime": {
             "type": "object",
             "required": [
-              "runtime_generation",
-              "runtime_instance_id",
+              "runtime_revision",
               "runtime_execution_id",
               "mcp_endpoint"
             ],
             "properties": {
-              "runtime_generation": { "type": "integer", "minimum": 1 },
-              "runtime_instance_id": { "type": "string", "minLength": 1 },
+              "runtime_revision": { "type": "string", "minLength": 1 },
               "runtime_execution_id": { "type": "string", "minLength": 1 },
               "mcp_endpoint": { "type": "string", "format": "uri" }
             },
@@ -145,12 +143,14 @@
             "type": "object",
             "required": [
               "system_prompt",
+              "context_policy_version",
               "model",
               "max_model_requests",
               "credential_ref"
             ],
             "properties": {
               "system_prompt": { "type": "string" },
+              "context_policy_version": { "const": "context-v1" },
               "skill_instructions": {
                 "type": "array",
                 "items": {
@@ -236,7 +236,6 @@
           "request_id",
           "admission_id",
           "terminal_class",
-          "executor_state",
           "tool_effect_state",
           "stop_reason",
           "error_class"
@@ -246,9 +245,6 @@
           "admission_id": { "type": "string", "minLength": 1 },
           "terminal_class": {
             "enum": ["completed", "cancelled", "failed", "unresolved"]
-          },
-          "executor_state": {
-            "enum": ["quiescent", "cancellation_requested", "unknown"]
           },
           "tool_effect_state": {
             "enum": ["none", "settled", "unknown"]
@@ -270,7 +266,6 @@
           {
             "properties": {
               "terminal_class": { "const": "completed" },
-              "executor_state": { "const": "quiescent" },
               "tool_effect_state": { "enum": ["none", "settled"] },
               "stop_reason": {
                 "enum": [
@@ -286,7 +281,6 @@
           {
             "properties": {
               "terminal_class": { "const": "cancelled" },
-              "executor_state": { "const": "quiescent" },
               "tool_effect_state": { "enum": ["none", "settled"] },
               "stop_reason": { "const": null }
             }
@@ -294,7 +288,6 @@
           {
             "properties": {
               "terminal_class": { "const": "failed" },
-              "executor_state": { "const": "quiescent" },
               "tool_effect_state": { "enum": ["none", "settled"] },
               "stop_reason": { "const": null },
               "error_class": { "type": "string", "minLength": 1 }
@@ -303,7 +296,6 @@
           {
             "properties": {
               "terminal_class": { "const": "unresolved" },
-              "executor_state": { "const": "unknown" },
               "tool_effect_state": { "const": "unknown" },
               "stop_reason": { "const": null },
               "error_class": { "type": "string", "minLength": 1 }
@@ -313,9 +305,12 @@
       },
       "response": {
         "type": "object",
-        "required": ["status"],
+        "required": ["status", "admission_state"],
         "properties": {
-          "status": { "enum": ["finished", "already_finished"] }
+          "status": { "enum": ["finished", "already_finished"] },
+          "admission_state": {
+            "enum": ["released", "blocked_unknown_effect"]
+          }
         }
       }
     }

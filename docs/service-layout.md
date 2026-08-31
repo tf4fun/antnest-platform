@@ -67,7 +67,7 @@ Six identities must remain distinct:
 
 ```text
 agent_id               stable Agent identity, never reused
-agent_config_revision  immutable intended Agent behavior
+agent_spec_revision    immutable intended Agent behavior
 execution_revision     atomically published executable Agent configuration
 runtime_revision       opaque cross-service Runtime Environment revision
 runtime_generation     private Runtime Controller compute revision

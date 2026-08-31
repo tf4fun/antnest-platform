@@ -55,19 +55,19 @@ const accessSchema = z.object({
 const acquireSchema = z.object({
   admission_id: z.string().min(1),
   admission_deadline: z.iso.datetime(),
-  agent_config_revision: z.string().min(1),
+  agent_spec_revision: z.string().min(1),
   execution_revision: z.string().min(1),
   runtime_mcp_source_digest: z.string().regex(/^[a-f0-9]{64}$/u),
   agent_execution_spec_digest: z.string().regex(/^[a-f0-9]{64}$/u),
   credential_version: z.string().min(1),
   runtime: z.object({
-    runtime_generation: z.number().int().positive(),
-    runtime_instance_id: z.string().min(1),
+    runtime_revision: z.string().min(1),
     runtime_execution_id: z.string().min(1),
     mcp_endpoint: z.url(),
   }),
   execution_spec: z.object({
     system_prompt: z.string(),
+    context_policy_version: z.literal("context-v1"),
     skill_instructions: z
       .array(
         z.object({
@@ -96,7 +96,10 @@ const credentialSchema = z.object({
   secret: z.string().min(1),
 });
 
-const finishSchema = z.object({ status: z.enum(["finished", "already_finished"]) });
+const finishSchema = z.object({
+  status: z.enum(["finished", "already_finished"]),
+  admission_state: z.enum(["released", "blocked_unknown_effect"]),
+});
 
 export async function requireAgentControllerReady(
   options: AgentControllerStatusOptions,
@@ -171,19 +174,19 @@ export class AgentControllerClient implements AgentControllerPort {
     return {
       admissionId: result.admission_id,
       admissionDeadline: new Date(result.admission_deadline),
-      agentConfigRevision: result.agent_config_revision,
+      agentSpecRevision: result.agent_spec_revision,
       executionRevision: result.execution_revision,
       runtimeMcpSourceDigest: result.runtime_mcp_source_digest,
       agentExecutionSpecDigest: result.agent_execution_spec_digest,
       credentialVersion: result.credential_version,
       runtime: {
-        generation: result.runtime.runtime_generation,
-        instanceId: result.runtime.runtime_instance_id,
+        revision: result.runtime.runtime_revision,
         executionId: result.runtime.runtime_execution_id,
         mcpEndpoint: result.runtime.mcp_endpoint,
       },
       executionSpec: {
         systemPrompt: result.execution_spec.system_prompt,
+        contextPolicyVersion: result.execution_spec.context_policy_version,
         skillInstructions: result.execution_spec.skill_instructions.map((skill) => ({
           skillKey: skill.skill_key,
           version: skill.version,
@@ -233,7 +236,6 @@ export class AgentControllerClient implements AgentControllerPort {
         request_id: input.requestId,
         admission_id: input.admissionId,
         terminal_class: input.terminalClass,
-        executor_state: input.executorState,
         tool_effect_state: input.toolEffectState,
         stop_reason: input.stopReason ?? null,
         error_class: input.errorClass ?? null,

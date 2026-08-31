@@ -64,7 +64,7 @@ export class RunRecovery {
     }
     const terminal = {
       terminalClass: "unresolved" as const,
-      executorState: "unknown" as const,
+      executorState: "quiescent" as const,
       toolEffectState: "unknown" as const,
       errorClass: work.errorClass,
     };
@@ -173,7 +173,7 @@ export class RunRecovery {
       effectState === "unknown"
         ? {
             terminalClass: "unresolved",
-            executorState: "unknown",
+            executorState: "quiescent",
             toolEffectState: "unknown",
             errorClass: "service_restarted_during_tool",
           }

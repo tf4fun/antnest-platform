@@ -1,0 +1,422 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://antnest.local/agent-controller/control-api.schema.json",
+  "title": "Antnest Agent Controller lifecycle messages",
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+    },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "digest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "desired_state": { "enum": ["enabled", "disabled", "deleted"] },
+    "lifecycle_state": {
+      "enum": [
+        "provisioning",
+        "available",
+        "unavailable",
+        "disabled",
+        "deleting",
+        "deleted"
+      ]
+    },
+    "runtime_resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["memory_bytes", "pids_limit", "tmpfs_bytes"],
+      "properties": {
+        "memory_bytes": { "type": "integer", "minimum": 134217728 },
+        "pids_limit": { "type": "integer", "minimum": 16, "maximum": 32768 },
+        "tmpfs_bytes": { "type": "integer", "minimum": 16777216 }
+      }
+    },
+    "runtime_input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["image_ref", "resources"],
+      "properties": {
+        "image_ref": {
+          "type": "string",
+          "pattern": "^(sha256:[0-9a-fA-F]{64}|[^@\\s]+@sha256:[0-9a-fA-F]{64})$"
+        },
+        "resources": { "$ref": "#/$defs/runtime_resources" }
+      }
+    },
+    "model_input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "base_url",
+        "model",
+        "context_window",
+        "max_output_tokens",
+        "supports_images"
+      ],
+      "properties": {
+        "base_url": { "type": "string", "format": "uri" },
+        "model": { "type": "string", "minLength": 1 },
+        "context_window": { "type": "integer", "minimum": 1024 },
+        "max_output_tokens": { "type": "integer", "minimum": 1 },
+        "temperature": { "type": "number", "minimum": 0, "maximum": 2 },
+        "supports_images": { "type": "boolean" }
+      }
+    },
+    "credential_input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["secret_type", "secret"],
+      "properties": {
+        "secret_type": { "const": "bearer" },
+        "secret": { "type": "string", "minLength": 1, "secret": true }
+      }
+    },
+    "create_model_profile_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "request_id",
+        "organization_id",
+        "profile_key",
+        "display_name",
+        "model",
+        "credential"
+      ],
+      "properties": {
+        "request_id": { "$ref": "#/$defs/id" },
+        "organization_id": { "$ref": "#/$defs/id" },
+        "profile_key": { "$ref": "#/$defs/id" },
+        "display_name": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "model": { "$ref": "#/$defs/model_input" },
+        "credential": { "$ref": "#/$defs/credential_input" }
+      }
+    },
+    "revise_model_profile_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["request_id", "display_name", "model", "credential"],
+      "properties": {
+        "request_id": { "$ref": "#/$defs/id" },
+        "display_name": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "model": { "$ref": "#/$defs/model_input" },
+        "credential": { "$ref": "#/$defs/credential_input" }
+      }
+    },
+    "model_profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "model_profile_id",
+        "organization_id",
+        "profile_key",
+        "display_name",
+        "revision_id",
+        "revision",
+        "enabled",
+        "model",
+        "credential_ref",
+        "credential_version",
+        "created_at",
+        "updated_at"
+      ],
+      "properties": {
+        "model_profile_id": { "$ref": "#/$defs/id" },
+        "organization_id": { "$ref": "#/$defs/id" },
+        "profile_key": { "$ref": "#/$defs/id" },
+        "display_name": { "type": "string" },
+        "revision_id": { "$ref": "#/$defs/id" },
+        "revision": { "type": "integer", "minimum": 1 },
+        "enabled": { "type": "boolean" },
+        "model": { "$ref": "#/$defs/model_input" },
+        "credential_ref": { "$ref": "#/$defs/id" },
+        "credential_version": { "$ref": "#/$defs/id" },
+        "created_at": { "$ref": "#/$defs/timestamp" },
+        "updated_at": { "$ref": "#/$defs/timestamp" }
+      }
+    },
+    "create_template_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "request_id",
+        "organization_id",
+        "template_key",
+        "name",
+        "model_profile_revision_id",
+        "system_prompt",
+        "max_model_requests",
+        "context_policy_version",
+        "runtime"
+      ],
+      "properties": {
+        "request_id": { "$ref": "#/$defs/id" },
+        "organization_id": { "$ref": "#/$defs/id" },
+        "template_key": { "$ref": "#/$defs/id" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "model_profile_revision_id": { "$ref": "#/$defs/id" },
+        "system_prompt": { "type": "string", "maxLength": 1048576 },
+        "max_model_requests": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 128
+        },
+        "context_policy_version": { "const": "context-v1" },
+        "runtime": { "$ref": "#/$defs/runtime_input" }
+      }
+    },
+    "revise_template_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "request_id",
+        "name",
+        "model_profile_revision_id",
+        "system_prompt",
+        "max_model_requests",
+        "context_policy_version",
+        "runtime"
+      ],
+      "properties": {
+        "request_id": { "$ref": "#/$defs/id" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "model_profile_revision_id": { "$ref": "#/$defs/id" },
+        "system_prompt": { "type": "string", "maxLength": 1048576 },
+        "max_model_requests": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 128
+        },
+        "context_policy_version": { "const": "context-v1" },
+        "runtime": { "$ref": "#/$defs/runtime_input" }
+      }
+    },
+    "agent_template": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "template_id",
+        "organization_id",
+        "template_key",
+        "name",
+        "revision",
+        "model_profile_revision_id",
+        "system_prompt",
+        "max_model_requests",
+        "context_policy_version",
+        "runtime",
+        "enabled",
+        "created_at",
+        "updated_at"
+      ],
+      "properties": {
+        "template_id": { "$ref": "#/$defs/id" },
+        "organization_id": { "$ref": "#/$defs/id" },
+        "template_key": { "$ref": "#/$defs/id" },
+        "name": { "type": "string" },
+        "revision": { "type": "integer", "minimum": 1 },
+        "model_profile_revision_id": { "$ref": "#/$defs/id" },
+        "system_prompt": { "type": "string" },
+        "max_model_requests": { "type": "integer" },
+        "context_policy_version": { "const": "context-v1" },
+        "runtime": { "$ref": "#/$defs/runtime_input" },
+        "skill_refs": { "type": "array", "maxItems": 0 },
+        "enabled": { "type": "boolean" },
+        "created_at": { "$ref": "#/$defs/timestamp" },
+        "updated_at": { "$ref": "#/$defs/timestamp" }
+      }
+    },
+    "create_agent_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "request_id",
+        "organization_id",
+        "owner_user_id",
+        "name",
+        "template_id",
+        "template_revision"
+      ],
+      "properties": {
+        "request_id": { "$ref": "#/$defs/id" },
+        "organization_id": { "$ref": "#/$defs/id" },
+        "owner_user_id": { "$ref": "#/$defs/id" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "template_id": { "$ref": "#/$defs/id" },
+        "template_revision": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "rebuild_agent_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["request_id", "template_id", "template_revision"],
+      "properties": {
+        "request_id": { "$ref": "#/$defs/id" },
+        "template_id": { "$ref": "#/$defs/id" },
+        "template_revision": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "lifecycle_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["request_id"],
+      "properties": { "request_id": { "$ref": "#/$defs/id" } }
+    },
+    "runtime_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["runtime_revision", "runtime_execution_id", "mcp_endpoint"],
+      "properties": {
+        "runtime_revision": { "$ref": "#/$defs/id" },
+        "runtime_execution_id": { "$ref": "#/$defs/id" },
+        "mcp_endpoint": { "type": "string", "format": "uri" }
+      }
+    },
+    "agent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "agent_id",
+        "organization_id",
+        "owner_user_id",
+        "name",
+        "desired_state",
+        "lifecycle_state",
+        "access_revision",
+        "created_at",
+        "updated_at"
+      ],
+      "properties": {
+        "agent_id": { "$ref": "#/$defs/id" },
+        "organization_id": { "$ref": "#/$defs/id" },
+        "owner_user_id": { "$ref": "#/$defs/id" },
+        "name": { "type": "string" },
+        "desired_state": { "$ref": "#/$defs/desired_state" },
+        "lifecycle_state": { "$ref": "#/$defs/lifecycle_state" },
+        "access_revision": { "$ref": "#/$defs/id" },
+        "agent_spec_revision": { "$ref": "#/$defs/id" },
+        "executable_execution_revision": { "$ref": "#/$defs/id" },
+        "last_successful_execution_revision": { "$ref": "#/$defs/id" },
+        "runtime": { "$ref": "#/$defs/runtime_binding" },
+        "active_operation_request_id": { "$ref": "#/$defs/id" },
+        "failure_stage": { "type": "string" },
+        "failure_code": { "type": "string" },
+        "created_at": { "$ref": "#/$defs/timestamp" },
+        "updated_at": { "$ref": "#/$defs/timestamp" }
+      }
+    },
+    "operation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "request_id",
+        "agent_id",
+        "kind",
+        "phase",
+        "state",
+        "created_at",
+        "updated_at"
+      ],
+      "properties": {
+        "request_id": { "$ref": "#/$defs/id" },
+        "agent_id": { "$ref": "#/$defs/id" },
+        "kind": {
+          "enum": ["create", "rebuild", "disable", "enable", "delete"]
+        },
+        "phase": {
+          "enum": [
+            "drain",
+            "network_ensure",
+            "network_fence",
+            "flow_reset",
+            "runtime_initialize",
+            "runtime_update",
+            "runtime_disable",
+            "runtime_enable",
+            "runtime_delete",
+            "network_release",
+            "publish",
+            "completed"
+          ]
+        },
+        "state": { "enum": ["running", "completed", "failed"] },
+        "error_code": { "type": "string" },
+        "error_detail": { "type": "string" },
+        "created_at": { "$ref": "#/$defs/timestamp" },
+        "updated_at": { "$ref": "#/$defs/timestamp" }
+      }
+    },
+    "create_agent_response": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["agent", "agent_access_subject", "operation"],
+      "properties": {
+        "agent": { "$ref": "#/$defs/agent" },
+        "agent_access_subject": { "$ref": "#/$defs/id" },
+        "operation": { "$ref": "#/$defs/operation" }
+      }
+    },
+    "agent_event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "event_id",
+        "global_sequence",
+        "aggregate_sequence",
+        "schema_version",
+        "agent_id",
+        "event_type",
+        "occurred_at",
+        "data"
+      ],
+      "properties": {
+        "event_id": { "$ref": "#/$defs/id" },
+        "global_sequence": { "type": "integer", "minimum": 1 },
+        "aggregate_sequence": { "type": "integer", "minimum": 1 },
+        "schema_version": { "type": "integer", "const": 1 },
+        "agent_id": { "$ref": "#/$defs/id" },
+        "event_type": { "type": "string", "minLength": 1 },
+        "operation_request_id": { "$ref": "#/$defs/id" },
+        "admission_id": { "$ref": "#/$defs/id" },
+        "trace_id": { "type": "string", "pattern": "^[a-f0-9]{32}$" },
+        "occurred_at": { "$ref": "#/$defs/timestamp" },
+        "data": { "type": "object" }
+      }
+    },
+    "event_list": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["events", "next_sequence"],
+      "properties": {
+        "events": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/agent_event" }
+        },
+        "next_sequence": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message", "retryable"],
+      "properties": {
+        "code": {
+          "enum": [
+            "invalid_request",
+            "request_id_conflict",
+            "reference_not_found",
+            "reference_disabled",
+            "agent_not_found",
+            "agent_not_ready",
+            "lifecycle_conflict",
+            "operation_not_found",
+            "dependency_unavailable",
+            "internal_error"
+          ]
+        },
+        "message": { "type": "string", "minLength": 1 },
+        "retryable": { "type": "boolean" }
+      }
+    }
+  }
+}

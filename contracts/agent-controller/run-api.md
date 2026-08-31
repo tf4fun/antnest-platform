@@ -57,12 +57,16 @@ response idempotent. A successful response is a complete, immutable, non-secret
 input for one Run. The response is copied into Agent ACP Service's private
 `RunExecutionSnapshot` before the prompt is acknowledged.
 
-The snapshot includes one Runtime MCP endpoint and execution identity. Agent
-ACP Service must never discover or refresh that endpoint through Docker,
-Kubernetes, Runtime Controller, or DNS metadata.
+The snapshot includes one opaque Runtime revision, MCP endpoint, and execution
+identity. Physical Runtime generation and instance identifiers are private to
+Runtime Controller and never appear here. Agent ACP Service must never discover
+or refresh that endpoint through Docker, Kubernetes, Runtime Controller, or DNS
+metadata.
 
 The response also freezes `runtime_mcp_source_digest`,
-`agent_execution_spec_digest`, and the non-secret `credential_version`. The
+`agent_execution_spec_digest`, `context_policy_version`, and the non-secret
+`credential_version`. Stage 2 supports `context-v1`; an unknown version is
+rejected before execution rather than interpreted as the current policy. The
 credential resolver must return that same version; a mismatch fails the Run
 before the first model request rather than silently executing under configuration
 that differs from the admitted snapshot.
@@ -82,16 +86,26 @@ an effect happened.
 
 The terminal facts form one closed union:
 
-- `completed`: quiescent executor, `none|settled` Tool effect, required
+- `completed`: `none|settled` Tool effect, required
   `stop_reason`, no error class;
-- `cancelled`: quiescent executor, `none|settled` Tool effect, no stop reason;
-- `failed`: quiescent executor, `none|settled` Tool effect, required error
+- `cancelled`: `none|settled` Tool effect, no stop reason;
+- `failed`: `none|settled` Tool effect, required error
   class, no stop reason;
-- `unresolved`: unknown executor and Tool effect, required error class, no stop
-  reason.
+- `unresolved`: unknown Tool effect, required error class, no stop reason.
+
+`finish_run` is accepted only after the local executor is quiescent and can no
+longer issue model or MCP requests. That is a method precondition, not a second
+state field in the terminal union.
 
 Repeating the same request is idempotent. Reusing an admission with different
 terminal facts is a contract violation, not a second successful finish.
+
+The immutable executor report and the admission's coordination occupancy are
+separate facts. Completed, cancelled, and failed reports release admission. An
+unresolved report is sealed once, while admission becomes
+`blocked_unknown_effect` and continues excluding new Runs. A rebuild/delete
+barrier may later prove the bound Runtime absent and release that occupancy; it
+must not rewrite the original executor report.
 
 ## Error Classes
 
@@ -110,7 +124,7 @@ Every non-success response uses the error envelope from the JSON contract.
 
 ## Compatibility Rules
 
-1. This document and machine catalog describe contract revision 3.
+1. This document and machine catalog describe contract revision 4.
 2. Contract fields are `snake_case`; ACP wire fields remain the ACP-defined
    `camelCase` shapes.
 3. New optional response fields may be added. Existing required fields cannot

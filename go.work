@@ -1,6 +1,7 @@
 go 1.25.0
 
 use (
+	./services/agent-controller
 	./services/identity-service
 	./services/runtime-controller
 )

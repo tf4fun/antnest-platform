@@ -239,7 +239,7 @@ export class InstrumentedModel implements ModelPort {
       "model.complete",
       {
         "admission.id": request.snapshot.admissionId,
-        "agent.config_revision": request.snapshot.agentConfigRevision,
+        "agent.spec_revision": request.snapshot.agentSpecRevision,
         "execution.revision": request.snapshot.executionRevision,
         "model.name": request.snapshot.executionSpec.model.model,
       },

@@ -35,19 +35,19 @@ const session: SessionRecord = {
 const acquired: AcquireRunResult = {
   admissionId: "admission-1",
   admissionDeadline: new Date("2026-08-30T00:10:00Z"),
-  agentConfigRevision: "config-2",
+  agentSpecRevision: "config-2",
   executionRevision: "execution-2",
   runtimeMcpSourceDigest: "a".repeat(64),
   agentExecutionSpecDigest: "b".repeat(64),
   credentialVersion: "credential-version-1",
   runtime: {
-    generation: 2,
-    instanceId: "runtime-2",
+    revision: "runtime-2",
     executionId: "runtime-execution-2",
     mcpEndpoint: "http://runtime-2:8080/mcp",
   },
   executionSpec: {
     systemPrompt: "You are useful.",
+    contextPolicyVersion: "context-v1",
     skillInstructions: [],
     model: {
       baseUrl: "https://api.example.test/v1",
@@ -276,8 +276,7 @@ describe("PromptCoordinator", () => {
         admissionId: "admission-2",
         executionRevision: "execution-3",
         runtime: {
-          generation: 3,
-          instanceId: "runtime-3",
+          revision: "runtime-3",
           executionId: "runtime-execution-3",
           mcpEndpoint: "http://runtime-3:8080/mcp",
         },
@@ -304,11 +303,11 @@ describe("PromptCoordinator", () => {
 
     expect(first.snapshot).toMatchObject({
       executionRevision: "execution-2",
-      runtime: { instanceId: "runtime-2" },
+      runtime: { revision: "runtime-2" },
     });
     expect(second.snapshot).toMatchObject({
       executionRevision: "execution-3",
-      runtime: { instanceId: "runtime-3" },
+      runtime: { revision: "runtime-3" },
     });
     expect(acquireRun).toHaveBeenCalledTimes(2);
   });

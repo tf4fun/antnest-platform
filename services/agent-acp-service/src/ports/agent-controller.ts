@@ -59,7 +59,7 @@ export type AcquireRunInput = {
 export type AcquireRunResult = {
   admissionId: string;
   admissionDeadline: Date;
-  agentConfigRevision: string;
+  agentSpecRevision: string;
   executionRevision: string;
   runtimeMcpSourceDigest: string;
   agentExecutionSpecDigest: string;

@@ -49,6 +49,7 @@ export type SkillInstruction = {
 
 export type AgentExecutionSpec = {
   systemPrompt: string;
+  contextPolicyVersion: "context-v1";
   skillInstructions: SkillInstruction[];
   model: ModelSpec;
   maxModelRequests: number;
@@ -56,8 +57,7 @@ export type AgentExecutionSpec = {
 };
 
 export type RuntimeBinding = {
-  generation: number;
-  instanceId: string;
+  revision: string;
   executionId: string;
   mcpEndpoint: string;
 };
@@ -65,7 +65,7 @@ export type RuntimeBinding = {
 export type RunExecutionSnapshot = {
   admissionId: string;
   admissionDeadline: Date;
-  agentConfigRevision: string;
+  agentSpecRevision: string;
   executionRevision: string;
   runtimeMcpSourceDigest: string;
   agentExecutionSpecDigest: string;
@@ -116,7 +116,7 @@ export type RunOutcome =
     }
   | {
       terminalClass: "unresolved";
-      executorState: "unknown";
+      executorState: "quiescent";
       toolEffectState: "unknown";
       stopReason?: never;
       errorClass: string;

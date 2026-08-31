@@ -17,19 +17,19 @@ const contentSchema = z.array(z.object({ type: z.string() }).catchall(z.unknown(
 const snapshotSchema = z.object({
   admissionId: z.string().min(1),
   admissionDeadline: z.coerce.date(),
-  agentConfigRevision: z.string().min(1),
+  agentSpecRevision: z.string().min(1),
   executionRevision: z.string().min(1),
   runtimeMcpSourceDigest: z.string().regex(/^[a-f0-9]{64}$/u),
   agentExecutionSpecDigest: z.string().regex(/^[a-f0-9]{64}$/u),
   credentialVersion: z.string().min(1),
   runtime: z.object({
-    generation: z.number().int().positive(),
-    instanceId: z.string().min(1),
+    revision: z.string().min(1),
     executionId: z.string().min(1),
     mcpEndpoint: z.url(),
   }),
   executionSpec: z.object({
     systemPrompt: z.string(),
+    contextPolicyVersion: z.literal("context-v1"),
     skillInstructions: z.array(
       z.object({ skillKey: z.string(), version: z.string(), instructions: z.string() }),
     ),
@@ -101,7 +101,7 @@ export class PostgresExecutionRepository implements ExecutionRepository {
     const result = await this.kernel.query(
       `UPDATE runs
           SET state = 'unresolved', pending_user_message_id = NULL, pending_prompt = NULL,
-              terminal_class = 'unresolved', executor_state = 'unknown',
+              terminal_class = 'unresolved', executor_state = 'quiescent',
               tool_effect_state = 'unknown', error_class = $2, updated_at = $3
         WHERE id = $1 AND admission_finished_at IS NULL`,
       [runId, errorClass, finishedAt],
@@ -288,7 +288,7 @@ function storedOutcome(row: TerminalOutcomeRow): RunOutcome {
       };
     case "unresolved":
       if (
-        row.executor_state !== "unknown" ||
+        row.executor_state !== "quiescent" ||
         row.tool_effect_state !== "unknown" ||
         row.error_class === null ||
         row.stop_reason !== null
@@ -297,7 +297,7 @@ function storedOutcome(row: TerminalOutcomeRow): RunOutcome {
       }
       return {
         terminalClass: "unresolved",
-        executorState: "unknown",
+        executorState: "quiescent",
         toolEffectState: "unknown",
         errorClass: row.error_class,
       };
@@ -309,7 +309,6 @@ function storedOutcome(row: TerminalOutcomeRow): RunOutcome {
 function sameOutcome(left: RunOutcome, right: RunOutcome): boolean {
   return (
     left.terminalClass === right.terminalClass &&
-    left.executorState === right.executorState &&
     left.toolEffectState === right.toolEffectState &&
     (left.stopReason ?? null) === (right.stopReason ?? null) &&
     (left.errorClass ?? null) === (right.errorClass ?? null)

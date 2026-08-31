@@ -85,6 +85,7 @@ packet and policy contracts.
 
 `agent_id` is the stable business identity. Rebuild does not change:
 
+- organization and owner-user binding;
 - owner and authorization binding;
 - transport-level Agent access-subject mapping;
 - ACP Sessions and conversation history;
@@ -92,29 +93,37 @@ packet and policy contracts.
 - historical Runs, Tool attempts, and Agent events;
 - Egress Tunnel address and policy assignment.
 
-### 3.2 AgentConfigRevision
+Agent Controller also owns reusable Template heads and immutable Template
+revisions. Creating or rebuilding an Agent materializes one complete
+AgentSpecRevision from an exact Template revision and ModelProfile revision;
+later Template changes never mutate an existing Agent implicitly. The Agent
+projection separates desired state (`enabled`, `disabled`, `deleted`) from
+stable availability (`provisioning`, `available`, `unavailable`, `disabled`,
+`deleting`, `deleted`). Process phases live only in LifecycleOperation.
+
+### 3.2 AgentSpecRevision
 
 An immutable description of intended Agent behavior:
 
 ```text
-AgentConfigRevision
+AgentSpecRevision
   agent_id
   revision
   model_profile_ref
   system_prompt_policy
-  context_policy
-  system_skill_refs
+  context_policy_version
   runtime_spec_input
   credential_refs
   canonical_digest
   created_at
 ```
 
-It stores credential references, never secret values. Model profiles, Skill
-packages, prompt policies, and every other referenced behavior are immutable,
-versioned, or content-addressed. `canonical_digest` covers the complete
-transitive non-secret configuration. A revision is not active until rebuild
-publishes a matching ExecutionRevision.
+It stores credential references, never secret values. Model profiles, prompt
+policies, and every other referenced behavior are immutable, versioned, or
+content-addressed. `canonical_digest` covers the complete transitive non-secret
+configuration. Skill Registry is absent in Stage 2, so Skill input is rejected
+and the effective Skill list is always empty. A revision is not executable
+until lifecycle publication creates a matching ExecutionRevision.
 
 Network policy is absent. Egress policy has an independent lifecycle and does
 not rebuild Runtime.
@@ -143,7 +152,7 @@ An immutable record of one successfully published executable Agent:
 ExecutionRevision
   agent_id
   revision
-  agent_config_revision
+  agent_spec_revision
   runtime_revision
   runtime_execution_id
   runtime_mcp_endpoint
@@ -181,7 +190,7 @@ RunExecutionSnapshot
   admission_id
   agent_id
   session_id
-  agent_config_revision
+  agent_spec_revision
   execution_revision
   runtime_revision
   runtime_execution_id
@@ -201,61 +210,60 @@ with the Run for audit and incident analysis.
 ### 4.1 State machine
 
 ```text
-CREATING      -> READY | BUILD_FAILED
-READY         -> DRAINING | DELETING
-DRAINING      -> REBUILDING | READY | DELETING
-REBUILDING    -> READY | BUILD_FAILED
-BUILD_FAILED  -> REBUILDING | DELETING
-DELETING      -> DELETED
+PROVISIONING -> AVAILABLE | UNAVAILABLE | DELETING
+AVAILABLE    -> DISABLED | UNAVAILABLE | DELETING
+DISABLED     -> AVAILABLE | UNAVAILABLE | DELETING
+UNAVAILABLE  -> AVAILABLE | DELETING
+DELETING     -> DELETED
 ```
 
-Only `READY` accepts a new Run. AcquireRun and every transition out of `READY`
-lock the same Agent row in one transaction. A partial unique constraint permits
-at most one non-terminal Run admission and one non-terminal lifecycle operation
-per Agent.
+Only `AVAILABLE` with no active lifecycle operation accepts a new Run.
+AcquireRun and lifecycle-operation creation lock the same Agent row in one
+transaction. A partial unique constraint permits at most one admission that
+still occupies the Agent and one non-terminal lifecycle operation per Agent.
 
-`DRAINING` closes new admission and waits for an existing Run. `REBUILDING`
-means no Run is active and Runtime replacement is in progress. `BUILD_FAILED`
-is visible and unavailable; it does not silently fall back to an old partial
-configuration.
-
-`DRAINING -> READY` means a rebuild was abandoned before any external mutation,
-usually after drain timeout. `BUILD_FAILED -> REBUILDING` is an explicit retry.
-Neither transition is implicit.
+Drain, rebuild, disable, and enable are operation phases, not duplicate Agent
+states. An active operation closes admission. The projection keeps nullable
+`executable_execution_revision` separate from
+`last_successful_execution_revision`; after the old Runtime deletion barrier,
+the former is cleared while the latter remains audit history.
 
 ### 4.2 Initial creation
 
 1. Agent Controller validates the complete Agent configuration.
-2. It persists Logical Agent, immutable AgentConfigRevision, and a durable
-   create operation in `CREATING`.
+2. It persists Logical Agent, immutable AgentSpecRevision, and a durable
+   create operation in `PROVISIONING`.
 3. It obtains or reuses the Agent network attachment from Runtime Egress.
 4. It asks Runtime Controller to initialize the Agent's Runtime Environment
    with the complete Runtime configuration.
 5. Runtime Controller returns only after platform health and Runtime `/status`
    agree that the instance is ready. The result includes its MCP endpoint and
    `runtime_execution_id`.
-6. Agent Controller atomically publishes ExecutionRevision and state `READY`.
+6. Agent Controller atomically publishes ExecutionRevision and state
+   `AVAILABLE`.
 7. Any failed stage records the exact failing stage and leaves the Agent in
-   `BUILD_FAILED`. `READY` proves readiness passed at publication time; a later
+   `UNAVAILABLE`. `AVAILABLE` proves readiness passed at publication time; a later
    Runtime failure is still possible and appears as a normal infrastructure
    failure.
 
 ### 4.3 Explicit rebuild
 
-1. Validate and persist the target AgentConfigRevision and one durable rebuild
+1. Validate and persist the target AgentSpecRevision and one durable rebuild
    operation. The operation stores its expected source Agent and Runtime
    revisions, target digest, child request IDs, and current phase
    before any RPC.
-2. Lock the Agent row and atomically change `READY` to `DRAINING`; from this
-   point `AcquireRun` rejects new Runs with a retryable rebuilding result.
+2. Lock the Agent row and atomically attach the rebuild operation; from this
+   point `AcquireRun` rejects new Runs with a retryable rebuilding result while
+   the stable Agent availability remains unchanged until an external barrier.
 3. Wait until any active Run executor is quiescent. A normally settled admission
    closes before rebuild continues. An `unresolved` admission may continue to
    the deletion barrier only after its executor can issue no more model or MCP
    requests; Runtime absence then settles that admission without claiming that
    the Tool succeeded or failed. Runtime is never changed while a Run executor
    is still active.
-4. Change `DRAINING` to `REBUILDING`.
-5. Fence the Agent network and call Runtime Egress
+4. Advance the operation from drain to its network barrier.
+5. Fence the Agent network without changing its durable policy assignment and
+   call Runtime Egress
    `ResetAgentFlows(agent_id)`; require acknowledgement so the stable Tunnel
    address cannot retain the old Runtime UDP peer.
 6. Call Runtime Controller `UpdateRuntime` with the current opaque revision and
@@ -264,8 +272,8 @@ Neither transition is implicit.
    compute under one idempotent lifecycle operation.
 7. Wait for Runtime Controller to return a ready endpoint and execution ID.
 8. Call Egress `EnsureAgentNetwork` to reopen the fenced Agent path.
-9. Atomically publish the target AgentConfigRevision, new ExecutionRevision,
-   Runtime binding, change summary, and state `READY`.
+9. Atomically publish the target AgentSpecRevision, new ExecutionRevision,
+   Runtime binding, change summary, and state `AVAILABLE`.
 10. Append the corresponding Agent domain event in the same local transaction.
 
 There is intentionally a period with no Runtime. This removes the candidate,
@@ -278,9 +286,10 @@ lifecycle mutation.
 
 ### 4.4 Drain timeout and cancellation
 
-Drain timeout records `run_drain_timeout` and returns `DRAINING -> READY` only
-when no rebuild side effect has started. The target configuration remains an
-inactive revision. The operator can cancel the Run through ACP and retry.
+Drain timeout records `run_drain_timeout` and fails the operation only when no
+rebuild side effect has started. The Agent stays `AVAILABLE`, the target
+configuration remains non-executable, and the operator can cancel the Run
+through ACP and retry.
 
 Stage 2 has no force-rebuild shortcut. Standard ACP `session/cancel` stops the
 local Run executor and propagates cancellation to the model and both MCP source
@@ -295,23 +304,25 @@ No new Run is admitted in the interval.
 
 ### 4.5 Build failure and retry
 
-- Failure before old Runtime deletion may return the Agent to `READY` only when
+- Failure before old Runtime deletion leaves the Agent `AVAILABLE` only when
   no externally visible mutation occurred and the old binding is intact.
-- Failure after deletion leaves `BUILD_FAILED` with the old successful revision
-  retained only for audit. It is not executable.
+- Failure after deletion leaves the Agent `UNAVAILABLE`, clears
+  `executable_execution_revision`, and retains the old successful revision only
+  for audit. It is not executable.
 - Crash recovery resumes the same operation and child identities. A later
   operator retry creates a new operation only after the previous operation is
   terminal and every attempted Runtime is conclusively absent or adopted.
 - At most one non-absent Runtime resource may exist for an Agent in Stage 2.
-- Retry may reuse the validated target AgentConfigRevision.
+- Retry may reuse the validated target AgentSpecRevision.
 - Automatic rollback is deferred. A rollback is an explicit rebuild to a
-  previous immutable AgentConfigRevision.
+  previous immutable AgentSpecRevision.
 
 ### 4.6 Agent deletion
 
 Deletion is a durable, restartable workflow:
 
-1. lock the Agent row, change to `DELETING`, and reject new Run admission;
+1. lock the Agent row, set desired state `deleted`, change availability to
+   `DELETING`, and reject new Run admission;
 2. wait for the active admission to finish or follow the same explicit
    cancellation and unresolved-effect rules as rebuild;
 3. fence the Agent network and clear Egress flows;
@@ -349,7 +360,8 @@ In one Agent Controller transaction it:
    original response when the fingerprint matches;
 2. rejects reuse of the same request ID with different input;
 3. locks the same Agent row used by lifecycle transitions;
-4. verifies state is `READY` and no admission is active;
+4. verifies state is `AVAILABLE`, no lifecycle operation is active, and no
+   admission still occupies the Agent;
 5. creates a durable admission;
 6. copies the current ExecutionRevision and complete immutable non-secret Agent
    execution spec into the stored response.
@@ -370,23 +382,25 @@ build a hidden queue. The caller can present waiting state and retry later.
 ### 5.2 FinishRun
 
 ```text
-FinishRun(admission_id, terminal_class, executor_state, tool_effect_state, stop_reason, error_class)
+FinishRun(admission_id, terminal_class, tool_effect_state, stop_reason, error_class)
 ```
 
-is idempotent. `terminal_class` is a small coordination result: completed,
-cancelled, failed, or unresolved. Once recorded,
-`terminal_class` and executor quiescence are immutable. `executor_state` must
-prove the local Agent loop cannot issue another model or MCP request.
+is idempotent. Calling it asserts the local Agent loop is quiescent and cannot
+issue another model or MCP request. `terminal_class` is a small coordination
+result: completed, cancelled, failed, or unresolved. Once recorded, the report
+is immutable.
 `tool_effect_state` is `none`, `settled`, or `unknown` and covers both Runtime
 and client MCP Tools.
 
 `FinishRun` seals one immutable terminal report. A successful RPC response means
 that report is stored, not necessarily that the Agent is available for another
-Run. An unknown Tool effect leaves the admission `unresolved` and Agent
-Controller fail-closed until an explicit lifecycle operation proves the bound
-Runtime absent. Agent ACP Service never replays or later rewrites the ambiguous
-Tool outcome. Agent Controller does not copy messages, Turns, Tool results, or
-detailed Run history from Agent ACP Service.
+Run. Completed, cancelled, and failed reports release admission. An unknown
+Tool effect seals an unresolved report but moves admission occupancy to
+`blocked_unknown_effect`; Agent Controller stays fail-closed until an explicit
+lifecycle operation proves the bound Runtime absent. That barrier releases the
+occupancy without rewriting the report. Agent ACP Service never replays or
+later rewrites the ambiguous Tool outcome. Agent Controller does not copy
+messages, Turns, Tool results, or detailed Run history from Agent ACP Service.
 
 ### 5.3 Crash recovery
 
@@ -487,7 +501,7 @@ Client MCP comes only from ACP `session/new.mcpServers` and
 
 - it is scoped to one ACP Session;
 - a resume request supplies the complete intended list;
-- changing it does not create AgentConfigRevision or rebuild Runtime;
+- changing it does not create AgentSpecRevision or rebuild Runtime;
 - Agent ACP Service stores a normalized revision and protects secret headers;
 - replacing the list atomically changes the Session's encrypted configuration
   revision; MCP connections are request-scoped and are not retained between
@@ -613,7 +627,10 @@ this Runtime-reset fact.
 
 Owns:
 
-- Logical Agent and immutable AgentConfigRevision;
+- Logical Agent, organization/owner binding, desired state, and current
+  availability projection;
+- mutable Template/ModelProfile heads and their immutable revisions;
+- immutable AgentSpecRevision;
 - Runtime rebuild workflow and ExecutionRevision publication;
 - current Runtime binding;
 - Agent-wide Run admission;
@@ -675,17 +692,24 @@ must not leak Go or Rust types.
 ### 10.1 Agent Controller
 
 ```text
-CreateAgent(request_id, initial_config)
-RequestAgentRebuild(request_id, agent_id, target_config)
+CreateModelProfile(request_id, organization_id, model, credential)
+CreateTemplate(request_id, organization_id, template_spec)
+CreateAgent(request_id, organization_id, owner_user_id, template_revision)
+RequestAgentRebuild(request_id, agent_id, template_revision)
+DisableAgent(request_id, agent_id)
+EnableAgent(request_id, agent_id)
 GetLifecycleOperation(request_id)
 GetAgent(agent_id)
-AcquireRun(request_id, agent_id, session_id)
-FinishRun(admission_id, terminal_class, executor_state, tool_effect_state, stop_reason)
+ListAgents(filters)
+AcquireRun(request_id, agent_id, principal_id, expected_access_revision, session_id)
+FinishRun(admission_id, terminal_class, tool_effect_state, stop_reason, error_class)
 ResolveAgentAccess(agent_access_subject)
 ResolveCredential(admission_id, credential_ref)
 DeleteAgent(request_id, agent_id)
 ListAgentEvents(agent_id, after_sequence)
 WatchAgentEvents(agent_id, after_sequence)
+ListAgentEventsGlobal(after_sequence)
+WatchAgentEventsGlobal(after_sequence)
 ```
 
 The create and rebuild methods return durable operation identity and current
@@ -743,8 +767,14 @@ Minimal durable concepts:
 
 ```text
 agents
-agent_config_revisions
+model_profiles
+model_profile_revisions
+provider_credentials
+agent_templates
+agent_template_revisions
+agent_spec_revisions
 execution_revisions
+agent_access_bindings
 agent_lifecycle_operations
 run_admissions
 agent_events
@@ -799,7 +829,7 @@ Runtime Controller records normalized Docker/Kubernetes facts. An unexpected
 PID or container restart is recorded and can be projected to administrators.
 It does not automatically:
 
-- change AgentConfigRevision or ExecutionRevision;
+- change AgentSpecRevision or ExecutionRevision;
 - inject an environment-change message;
 - retry an in-flight Tool;
 - rebuild the Agent.
@@ -835,11 +865,11 @@ span attributes or default logs.
 | Failure                       | Required behavior                                                                        |
 | ----------------------------- | ---------------------------------------------------------------------------------------- |
 | Invalid target config         | Reject before closing admission                                                          |
-| Run active during rebuild     | Enter `DRAINING`; reject new Runs                                                        |
+| Run active during rebuild     | Keep the operation in `drain`; reject new Runs                                           |
 | Drain timeout before mutation | Record failure and return to `READY`; do not infer cancellation                          |
 | Old Runtime delete unknown    | Stay unavailable and inspect; do not create a second Runtime                             |
 | Egress flow reset unknown     | Stay unavailable; do not create or publish the replacement Runtime                       |
-| New Runtime not ready         | Enter `BUILD_FAILED` with failing stage                                                  |
+| New Runtime not ready         | Fail the operation; project `UNAVAILABLE` once the old Runtime is absent                 |
 | Atomic publication fails      | Remain unavailable; never expose an uncommitted endpoint                                 |
 | ACP process crashes           | Session/Run recover from its DB; admission remains fail-closed                           |
 | Runtime MCP call times out    | Keep admission unresolved until settled or Runtime is absent; never replay automatically |
@@ -852,7 +882,7 @@ span attributes or default logs.
 1. `READY` implies exactly one published ExecutionRevision and a Runtime MCP
    endpoint/execution ID pair that passed readiness verification at publication.
 2. A non-`READY` Agent cannot acquire a new Run.
-3. AcquireRun and every transition out of `READY` serialize on one Agent row;
+3. AcquireRun and lifecycle-operation creation serialize on one Agent row;
    at most one non-terminal Run admission exists per Agent.
 4. One Run uses one RunExecutionSnapshot for its complete lifetime.
 5. Agent ACP Service never discovers a Runtime endpoint from Docker/Kubernetes.
@@ -896,7 +926,7 @@ span attributes or default logs.
 
 ### Stage 2B: Agent Controller
 
-1. Define AgentConfigRevision, ExecutionRevision, lifecycle state, rebuild
+1. Define AgentSpecRevision, ExecutionRevision, lifecycle state, rebuild
    operation, and Run admission contracts.
 2. Implement create and explicit rebuild over Runtime Controller and Runtime
    Egress.
@@ -932,7 +962,7 @@ span attributes or default logs.
 6. Add and replace client HTTP MCP through ACP without rebuilding the Agent;
    prove the safe dialer cannot reach Runtime or control-plane addresses.
 7. Restart Runtime PID 1 and prove stale Run MCP calls fail before Tool dispatch.
-8. Break Runtime creation and prove the Agent remains visibly `BUILD_FAILED`.
+8. Break Runtime creation and prove the Agent remains visibly `UNAVAILABLE`.
 9. Update Egress policy and prove no Runtime or Agent revision changes.
 
 ## 16. Acceptance Evidence
@@ -961,7 +991,7 @@ Before Stage 2 is called complete, verification must include:
 
 ## 17. Deferred Decisions
 
-- Automatic rollback to a prior AgentConfigRevision.
+- Automatic rollback to a prior AgentSpecRevision.
 - Third-party ACP Agent hot replacement.
 - More than one simultaneously executable Runtime per Agent.
 - Persistent background process restoration.

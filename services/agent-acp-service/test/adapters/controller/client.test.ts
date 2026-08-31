@@ -13,19 +13,19 @@ describe("AgentControllerClient", () => {
         Response.json({
           admission_id: "admission-1",
           admission_deadline: "2026-08-30T00:10:00.000Z",
-          agent_config_revision: "config-1",
+          agent_spec_revision: "config-1",
           execution_revision: "execution-1",
           runtime_mcp_source_digest: "a".repeat(64),
           agent_execution_spec_digest: "b".repeat(64),
           credential_version: "credential-version-1",
           runtime: {
-            runtime_generation: 1,
-            runtime_instance_id: "runtime-1",
+            runtime_revision: "runtime-1",
             runtime_execution_id: "runtime-execution-1",
             mcp_endpoint: "http://runtime-1:8080/mcp",
           },
           execution_spec: {
             system_prompt: "system",
+            context_policy_version: "context-v1",
             skill_instructions: [],
             model: {
               base_url: "https://api.example.test/v1",
@@ -60,8 +60,11 @@ describe("AgentControllerClient", () => {
       runtimeMcpSourceDigest: "a".repeat(64),
       agentExecutionSpecDigest: "b".repeat(64),
       credentialVersion: "credential-version-1",
-      runtime: { generation: 1, executionId: "runtime-execution-1" },
-      executionSpec: { model: { contextWindow: 32000 } },
+      runtime: { revision: "runtime-1", executionId: "runtime-execution-1" },
+      executionSpec: {
+        contextPolicyVersion: "context-v1",
+        model: { contextWindow: 32000 },
+      },
     });
     expect(fetchFn).toHaveBeenCalledWith(
       new URL("http://agent-controller:8080/rpc/agent-controller/acquire-run"),

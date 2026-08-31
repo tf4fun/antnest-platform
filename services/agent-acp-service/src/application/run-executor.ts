@@ -205,7 +205,7 @@ function deadlineResult(toolEffectState: "none" | "settled" | "unknown"): Execut
   return toolEffectState === "unknown"
     ? {
         terminalClass: "unresolved",
-        executorState: "unknown",
+        executorState: "quiescent",
         toolEffectState,
         errorClass: "run_deadline_exceeded",
       }

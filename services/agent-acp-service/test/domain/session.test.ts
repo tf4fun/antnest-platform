@@ -38,19 +38,19 @@ const session: SessionRecord = {
 const snapshot: RunExecutionSnapshot = {
   admissionId: "admission-1",
   admissionDeadline: new Date("2026-08-30T00:10:00Z"),
-  agentConfigRevision: "config-2",
+  agentSpecRevision: "config-2",
   executionRevision: "execution-2",
   runtimeMcpSourceDigest: "a".repeat(64),
   agentExecutionSpecDigest: "b".repeat(64),
   credentialVersion: "credential-version-1",
   runtime: {
-    generation: 2,
-    instanceId: "runtime-2",
+    revision: "runtime-2",
     executionId: "runtime-execution-2",
     mcpEndpoint: "http://runtime-2:8080/mcp",
   },
   executionSpec: {
     systemPrompt: "You are useful.",
+    contextPolicyVersion: "context-v1",
     skillInstructions: [],
     model: {
       baseUrl: "https://api.example.test/v1",

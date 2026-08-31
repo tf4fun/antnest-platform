@@ -568,7 +568,7 @@ describe("ACP v1 agent mapping", () => {
               }
             : {
                 terminalClass,
-                executorState: "unknown",
+                executorState: "quiescent",
                 toolEffectState: "unknown",
                 errorClass,
               },
@@ -635,19 +635,19 @@ function snapshot(): AcceptedAcpRun["snapshot"] {
   return {
     admissionId: "admission-1",
     admissionDeadline: new Date("2026-08-30T00:10:00Z"),
-    agentConfigRevision: "config-1",
+    agentSpecRevision: "config-1",
     executionRevision: "execution-1",
     runtimeMcpSourceDigest: "a".repeat(64),
     agentExecutionSpecDigest: "b".repeat(64),
     credentialVersion: "credential-version-1",
     runtime: {
-      generation: 1,
-      instanceId: "runtime-1",
+      revision: "runtime-1",
       executionId: "runtime-execution-1",
       mcpEndpoint: "http://runtime-1:8080/mcp",
     },
     executionSpec: {
       systemPrompt: "system",
+      contextPolicyVersion: "context-v1",
       skillInstructions: [],
       model: {
         baseUrl: "https://api.example.test/v1",

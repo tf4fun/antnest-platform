@@ -191,7 +191,7 @@ export class TurnRunner {
           message: { role: "tool", toolCallId: call.id, content },
           terminal: {
             terminalClass: "unresolved",
-            executorState: "unknown",
+            executorState: "quiescent",
             toolEffectState: "unknown",
             errorClass: "tool_outcome_unknown",
           },
@@ -266,7 +266,7 @@ function failure(effect: ToolEffectState, errorClass: string): RunTurnResult {
   if (effect === "unknown") {
     return {
       terminalClass: "unresolved",
-      executorState: "unknown",
+      executorState: "quiescent",
       toolEffectState: "unknown",
       errorClass,
     };
@@ -283,7 +283,7 @@ function cancelled(effect: ToolEffectState): RunTurnResult {
   if (effect === "unknown") {
     return {
       terminalClass: "unresolved",
-      executorState: "unknown",
+      executorState: "quiescent",
       toolEffectState: "unknown",
       errorClass: "cancelled_tool_outcome_unknown",
     };
@@ -302,7 +302,7 @@ function completed(
   if (effect === "unknown") {
     return {
       terminalClass: "unresolved",
-      executorState: "unknown",
+      executorState: "quiescent",
       toolEffectState: "unknown",
       errorClass: "tool_outcome_unknown",
     };

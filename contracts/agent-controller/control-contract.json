@@ -1,0 +1,227 @@
+{
+  "contract": "antnest.agent-controller.lifecycle",
+  "revision": 1,
+  "transport": "json-over-http",
+  "trust": "internal-network",
+  "schemas": { "messages": "control-api.schema.json" },
+  "status": { "method": "GET", "path": "/status", "success_status": 200 },
+  "resources": {
+    "model_profiles": {
+      "create": {
+        "method": "POST",
+        "path": "/internal/model-profiles",
+        "request": "control-api.schema.json#/$defs/create_model_profile_request",
+        "success_status": 201,
+        "response": "control-api.schema.json#/$defs/model_profile"
+      },
+      "revise": {
+        "method": "POST",
+        "path": "/internal/model-profiles/{model_profile_id}/revisions",
+        "request": "control-api.schema.json#/$defs/revise_model_profile_request",
+        "success_status": 201,
+        "response": "control-api.schema.json#/$defs/model_profile"
+      },
+      "get": {
+        "method": "GET",
+        "path": "/internal/model-profiles/{model_profile_id}",
+        "success_status": 200,
+        "response": "control-api.schema.json#/$defs/model_profile"
+      },
+      "list": {
+        "method": "GET",
+        "path": "/internal/model-profiles",
+        "success_status": 200
+      }
+    },
+    "agent_templates": {
+      "create": {
+        "method": "POST",
+        "path": "/internal/agent-templates",
+        "request": "control-api.schema.json#/$defs/create_template_request",
+        "success_status": 201,
+        "response": "control-api.schema.json#/$defs/agent_template"
+      },
+      "revise": {
+        "method": "POST",
+        "path": "/internal/agent-templates/{template_id}/revisions",
+        "request": "control-api.schema.json#/$defs/revise_template_request",
+        "success_status": 201,
+        "response": "control-api.schema.json#/$defs/agent_template"
+      },
+      "get": {
+        "method": "GET",
+        "path": "/internal/agent-templates/{template_id}",
+        "success_status": 200,
+        "response": "control-api.schema.json#/$defs/agent_template"
+      },
+      "list": {
+        "method": "GET",
+        "path": "/internal/agent-templates",
+        "success_status": 200
+      }
+    },
+    "agents": {
+      "create": {
+        "method": "POST",
+        "path": "/internal/agents",
+        "request": "control-api.schema.json#/$defs/create_agent_request",
+        "success_status": 202,
+        "response": "control-api.schema.json#/$defs/create_agent_response"
+      },
+      "get": {
+        "method": "GET",
+        "path": "/internal/agents/{agent_id}",
+        "success_status": 200,
+        "response": "control-api.schema.json#/$defs/agent"
+      },
+      "list": {
+        "method": "GET",
+        "path": "/internal/agents",
+        "query": [
+          "organization_id",
+          "owner_user_id",
+          "lifecycle_state",
+          "include_deleted",
+          "limit",
+          "cursor"
+        ],
+        "success_status": 200
+      },
+      "rebuild": {
+        "method": "POST",
+        "path": "/internal/agents/{agent_id}/rebuild",
+        "request": "control-api.schema.json#/$defs/rebuild_agent_request",
+        "success_status": 202,
+        "response": "control-api.schema.json#/$defs/operation"
+      },
+      "disable": {
+        "method": "POST",
+        "path": "/internal/agents/{agent_id}/disable",
+        "request": "control-api.schema.json#/$defs/lifecycle_request",
+        "success_status": 202,
+        "response": "control-api.schema.json#/$defs/operation"
+      },
+      "enable": {
+        "method": "POST",
+        "path": "/internal/agents/{agent_id}/enable",
+        "request": "control-api.schema.json#/$defs/lifecycle_request",
+        "success_status": 202,
+        "response": "control-api.schema.json#/$defs/operation"
+      },
+      "delete": {
+        "method": "POST",
+        "path": "/internal/agents/{agent_id}/delete",
+        "request": "control-api.schema.json#/$defs/lifecycle_request",
+        "success_status": 202,
+        "response": "control-api.schema.json#/$defs/operation"
+      }
+    },
+    "operations": {
+      "get": {
+        "method": "GET",
+        "path": "/internal/agent-operations/{request_id}",
+        "success_status": 200,
+        "response": "control-api.schema.json#/$defs/operation"
+      }
+    },
+    "events": {
+      "list_global": {
+        "method": "GET",
+        "path": "/internal/agent-events",
+        "query": ["after_sequence", "limit"],
+        "success_status": 200,
+        "response": "control-api.schema.json#/$defs/event_list"
+      },
+      "watch_global": {
+        "method": "GET",
+        "path": "/internal/agent-events/watch",
+        "query": ["after_sequence"],
+        "success_status": 200,
+        "content_type": "text/event-stream",
+        "event": "agent_event",
+        "event_id": "global_sequence",
+        "data": "control-api.schema.json#/$defs/agent_event"
+      },
+      "list": {
+        "method": "GET",
+        "path": "/internal/agents/{agent_id}/events",
+        "query": ["after_sequence", "limit"],
+        "success_status": 200,
+        "response": "control-api.schema.json#/$defs/event_list"
+      },
+      "watch": {
+        "method": "GET",
+        "path": "/internal/agents/{agent_id}/events/watch",
+        "query": ["after_sequence"],
+        "success_status": 200,
+        "content_type": "text/event-stream",
+        "event": "agent_event",
+        "event_id": "global_sequence",
+        "data": "control-api.schema.json#/$defs/agent_event"
+      }
+    }
+  },
+  "enums": {
+    "desired_state": ["enabled", "disabled", "deleted"],
+    "lifecycle_state": [
+      "provisioning",
+      "available",
+      "unavailable",
+      "disabled",
+      "deleting",
+      "deleted"
+    ],
+    "operation_kind": ["create", "rebuild", "disable", "enable", "delete"],
+    "operation_state": ["running", "completed", "failed"],
+    "event_type": [
+      "agent_create_requested",
+      "agent_ready",
+      "agent_rebuild_requested",
+      "agent_draining",
+      "agent_rebuilt",
+      "agent_disable_requested",
+      "agent_disabled",
+      "agent_enable_requested",
+      "agent_enabled",
+      "agent_delete_requested",
+      "agent_deleted",
+      "agent_build_failed",
+      "run_admission_unresolved",
+      "run_admission_released"
+    ]
+  },
+  "errors": {
+    "shape": ["code", "message", "retryable"],
+    "response": "control-api.schema.json#/$defs/error",
+    "status_by_code": {
+      "invalid_request": 400,
+      "request_id_conflict": 409,
+      "reference_not_found": 404,
+      "reference_disabled": 409,
+      "agent_not_found": 404,
+      "agent_not_ready": 409,
+      "lifecycle_conflict": 409,
+      "operation_not_found": 404,
+      "dependency_unavailable": 503,
+      "internal_error": 500
+    },
+    "retryable_by_code": {
+      "invalid_request": false,
+      "request_id_conflict": false,
+      "reference_not_found": false,
+      "reference_disabled": false,
+      "agent_not_found": false,
+      "agent_not_ready": true,
+      "lifecycle_conflict": false,
+      "operation_not_found": false,
+      "dependency_unavailable": true,
+      "internal_error": true
+    }
+  },
+  "compatibility": {
+    "unknown_request_fields": "rejected",
+    "unknown_response_fields": "clients_may_ignore",
+    "secrets_in_logs_traces_events": false,
+    "cross_service_database_access": false
+  }
+}
