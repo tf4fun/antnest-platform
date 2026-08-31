@@ -9,11 +9,11 @@ import (
 	"strings"
 	"time"
 
-	"soft/antnest-platform/services/runtime-controller/internal/control"
 	"soft/antnest-platform/services/runtime-controller/internal/deployment"
+	"soft/antnest-platform/services/runtime-controller/internal/repository"
 )
 
-var _ control.Repository = (*Repository)(nil)
+var _ repository.Port = (*Repository)(nil)
 
 type Repository struct {
 	database                *sql.DB
@@ -97,7 +97,7 @@ func (r *Repository) BeginTransition(
 	if err == nil {
 		if stored.RequestDigest != candidate.RequestDigest || stored.Kind != candidate.Kind ||
 			stored.AgentID != candidate.AgentID {
-			return deployment.Operation{}, false, control.ErrRequestConflict
+			return deployment.Operation{}, false, repository.ErrIdempotencyConflict
 		}
 		if stored.State == deployment.OperationRunning || stored.State == deployment.OperationUnknown {
 			stored, err = scanOperation(tx.QueryRowContext(ctx, claimOperationAttemptSQL,
@@ -115,12 +115,12 @@ func (r *Repository) BeginTransition(
 		}
 		return stored, true, nil
 	}
-	if !errors.Is(err, control.ErrNotFound) {
+	if !errors.Is(err, repository.ErrNotFound) {
 		return deployment.Operation{}, false, err
 	}
 
 	current, err := scanEnvironment(tx.QueryRowContext(ctx, selectEnvironmentForUpdateSQL, candidate.AgentID))
-	if errors.Is(err, control.ErrNotFound) {
+	if errors.Is(err, repository.ErrNotFound) {
 		current = deployment.Environment{
 			AgentID: candidate.AgentID, LifecycleState: deployment.LifecycleUninitialized,
 		}
@@ -130,14 +130,14 @@ func (r *Repository) BeginTransition(
 	if err := matchOperationSource(candidate, current); err != nil {
 		return deployment.Operation{}, false, err
 	}
-	transition, err := candidate.TransitionState()
-	if err != nil {
-		return deployment.Operation{}, false, control.ErrLifecycleConflict
+	transition := candidate.Transition
+	if transition == "" {
+		return deployment.Operation{}, false, repository.ErrTransitionConflict
 	}
 	candidate.Attempt = 1
 	if _, err := tx.ExecContext(ctx, insertOperationSQL, operationArguments(candidate)...); err != nil {
 		if strings.Contains(err.Error(), "operations_agent_nonterminal_unique") {
-			return deployment.Operation{}, false, control.ErrAgentMutationInProgress
+			return deployment.Operation{}, false, repository.ErrConcurrentMutation
 		}
 		return deployment.Operation{}, false, fmt.Errorf("insert Runtime operation: %w", err)
 	}
@@ -158,13 +158,13 @@ func (r *Repository) BeginTransition(
 func matchOperationSource(operation deployment.Operation, current deployment.Environment) error {
 	if current.LifecycleState != operation.SourceState || current.Generation != operation.SourceGeneration ||
 		current.SpecDigest != operation.SourceSpecDigest {
-		return control.ErrLifecycleConflict
+		return repository.ErrTransitionConflict
 	}
 	if current.RuntimeRevision != operation.SourceRevision {
-		return control.ErrRevisionConflict
+		return repository.ErrRevisionConflict
 	}
 	if current.OperationID != "" {
-		return control.ErrAgentMutationInProgress
+		return repository.ErrConcurrentMutation
 	}
 	return nil
 }
@@ -175,7 +175,7 @@ func verifyTransitionOwner(ctx context.Context, tx *sql.Tx, operation deployment
 		return err
 	}
 	if current.OperationID != operation.RequestID || current.RuntimeRevision != operation.RuntimeRevision {
-		return control.ErrDrift
+		return repository.ErrInvariantConflict
 	}
 	return nil
 }
@@ -211,7 +211,7 @@ func writeTransitionEnvironment(
 		return fmt.Errorf("read Runtime environment transition result: %w", err)
 	}
 	if rows != 1 {
-		return control.ErrRevisionConflict
+		return repository.ErrRevisionConflict
 	}
 	return nil
 }
@@ -244,19 +244,19 @@ func claimGeneration(ctx context.Context, tx *sql.Tx, operation deployment.Opera
 
 func (r *Repository) GenerationClaim(
 	ctx context.Context, key deployment.Key,
-) (control.GenerationClaim, error) {
+) (repository.GenerationClaim, error) {
 	return scanGenerationClaim(r.database.QueryRowContext(ctx, selectGenerationClaimSQL,
 		key.AgentID, key.Generation,
 	))
 }
 
-func scanGenerationClaim(row scanner) (control.GenerationClaim, error) {
-	var claim control.GenerationClaim
+func scanGenerationClaim(row scanner) (repository.GenerationClaim, error) {
+	var claim repository.GenerationClaim
 	if err := row.Scan(&claim.RuntimeRevision, &claim.SpecDigest); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return control.GenerationClaim{}, control.ErrNotFound
+			return repository.GenerationClaim{}, repository.ErrNotFound
 		}
-		return control.GenerationClaim{}, fmt.Errorf("scan Runtime generation claim: %w", err)
+		return repository.GenerationClaim{}, fmt.Errorf("scan Runtime generation claim: %w", err)
 	}
 	return claim, nil
 }
@@ -281,7 +281,7 @@ func (r *Repository) CompleteOperation(
 	}
 	if stored.Attempt != operation.Attempt ||
 		(stored.State != deployment.OperationRunning && stored.State != deployment.OperationUnknown) {
-		return nil, control.ErrOperationFinalized
+		return nil, repository.ErrOperationFinalized
 	}
 	if err := verifyTransitionOwner(ctx, tx, operation); err != nil {
 		return nil, err
@@ -298,7 +298,7 @@ func (r *Repository) CompleteOperation(
 		return nil, fmt.Errorf("read Runtime operation update result: %w", err)
 	}
 	if rows != 1 {
-		return nil, control.ErrOperationFinalized
+		return nil, repository.ErrOperationFinalized
 	}
 	if err := completeEnvironment(ctx, tx, operation); err != nil {
 		return nil, err
@@ -317,7 +317,7 @@ func encodeEnvironment(environment *deployment.Environment) (any, error) {
 	if environment == nil {
 		return nil, nil
 	}
-	encoded, err := json.Marshal(environment)
+	encoded, err := json.Marshal(environmentSnapshotFromDomain(*environment))
 	if err != nil {
 		return nil, fmt.Errorf("encode Runtime operation inspection: %w", err)
 	}
@@ -368,7 +368,7 @@ func requireSingleEnvironmentUpdate(result sql.Result, err error, action string)
 		return fmt.Errorf("read %s Runtime environment result: %w", action, err)
 	}
 	if rows != 1 {
-		return control.ErrOperationFinalized
+		return repository.ErrOperationFinalized
 	}
 	return nil
 }
@@ -478,24 +478,73 @@ func notifyObservation(ctx context.Context, executer executer) error {
 
 func (r *Repository) ListObservations(
 	ctx context.Context, after uint64, limit int,
-) ([]deployment.Observation, error) {
-	rows, err := r.database.QueryContext(ctx, selectObservationsSQL, after, limit)
+) (deployment.ObservationWindow, error) {
+	tx, err := r.database.BeginTx(ctx, &sql.TxOptions{
+		Isolation: sql.LevelRepeatableRead,
+		ReadOnly:  true,
+	})
 	if err != nil {
-		return nil, fmt.Errorf("list Runtime observations: %w", err)
+		return deployment.ObservationWindow{}, fmt.Errorf("begin Runtime observation window read: %w", err)
 	}
-	defer rows.Close()
-	result := make([]deployment.Observation, 0, limit)
+	defer func() { _ = tx.Rollback() }()
+	var window deployment.ObservationWindow
+	if err := tx.QueryRowContext(ctx, selectObservationBoundsSQL).Scan(
+		&window.OldestSequence, &window.LatestSequence,
+	); err != nil {
+		return deployment.ObservationWindow{}, fmt.Errorf("read Runtime observation bounds: %w", err)
+	}
+	rows, err := tx.QueryContext(ctx, selectObservationsSQL, after, limit)
+	if err != nil {
+		return deployment.ObservationWindow{}, fmt.Errorf("list Runtime observations: %w", err)
+	}
+	window.Observations = make([]deployment.Observation, 0, limit)
 	for rows.Next() {
 		observation, scanErr := scanObservation(rows)
 		if scanErr != nil {
-			return nil, scanErr
+			return deployment.ObservationWindow{}, scanErr
 		}
-		result = append(result, observation)
+		window.Observations = append(window.Observations, observation)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate Runtime observations: %w", err)
+		_ = rows.Close()
+		return deployment.ObservationWindow{}, fmt.Errorf("iterate Runtime observations: %w", err)
 	}
-	return result, nil
+	if err := rows.Close(); err != nil {
+		return deployment.ObservationWindow{}, fmt.Errorf("close Runtime observation rows: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return deployment.ObservationWindow{}, fmt.Errorf("commit Runtime observation window read: %w", err)
+	}
+	return window, nil
+}
+
+type environmentSnapshot struct {
+	AgentID            string                     `json:"agent_id"`
+	RuntimeRevision    deployment.RuntimeRevision `json:"runtime_revision"`
+	LifecycleState     deployment.LifecycleState  `json:"lifecycle_state"`
+	Health             deployment.HealthState     `json:"health"`
+	MCPEndpoint        string                     `json:"mcp_endpoint,omitempty"`
+	RuntimeExecutionID string                     `json:"runtime_execution_id,omitempty"`
+	RestartCount       uint64                     `json:"restart_count"`
+	ObservedAt         time.Time                  `json:"observed_at"`
+}
+
+func environmentSnapshotFromDomain(value deployment.Environment) environmentSnapshot {
+	return environmentSnapshot{
+		AgentID: value.AgentID, RuntimeRevision: value.RuntimeRevision,
+		LifecycleState: value.LifecycleState, Health: value.Health,
+		MCPEndpoint: value.MCPEndpoint, RuntimeExecutionID: value.RuntimeExecutionID,
+		RestartCount: value.RestartCount, ObservedAt: value.ObservedAt,
+	}
+}
+
+func (s environmentSnapshot) domain() deployment.Environment {
+	return deployment.Environment{
+		AgentID: s.AgentID, RuntimeRevision: s.RuntimeRevision,
+		LifecycleState: s.LifecycleState, Health: s.Health,
+		MCPEndpoint: s.MCPEndpoint, RuntimeExecutionID: s.RuntimeExecutionID,
+		RestartCount: s.RestartCount, ObservedAt: s.ObservedAt,
+	}
 }
 
 type scanner interface {
@@ -515,15 +564,17 @@ func scanOperation(row scanner) (deployment.Operation, error) {
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return deployment.Operation{}, control.ErrNotFound
+			return deployment.Operation{}, repository.ErrNotFound
 		}
 		return deployment.Operation{}, fmt.Errorf("scan Runtime operation: %w", err)
 	}
 	if len(inspection) > 0 {
-		operation.Inspection = &deployment.Environment{}
-		if err := json.Unmarshal(inspection, operation.Inspection); err != nil {
+		var snapshot environmentSnapshot
+		if err := json.Unmarshal(inspection, &snapshot); err != nil {
 			return deployment.Operation{}, fmt.Errorf("decode Runtime operation inspection: %w", err)
 		}
+		environment := snapshot.domain()
+		operation.Inspection = &environment
 	}
 	return operation, nil
 }
@@ -536,7 +587,7 @@ func scanEnvironment(row scanner) (deployment.Environment, error) {
 		&environment.Generation, &environment.SpecDigest, &operationID, &environment.ObservedAt,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return deployment.Environment{}, control.ErrNotFound
+			return deployment.Environment{}, repository.ErrNotFound
 		}
 		return deployment.Environment{}, fmt.Errorf("scan Runtime environment: %w", err)
 	}
@@ -613,7 +664,9 @@ FROM runtime_controller.runtime_environments WHERE agent_id = $1`
 const selectEnvironmentForUpdateSQL = selectEnvironmentSQL + ` FOR UPDATE`
 
 const listEnvironmentsSQL = `SELECT ` + environmentColumns + `
-FROM runtime_controller.runtime_environments ORDER BY agent_id`
+FROM runtime_controller.runtime_environments
+WHERE lifecycle_state <> 'deleted'
+ORDER BY agent_id`
 
 const insertEnvironmentSQL = `
 INSERT INTO runtime_controller.runtime_environments (
@@ -685,3 +738,7 @@ platform_resource_id, runtime_execution_id, kind, source, diagnostic_summary, ob
 const selectObservationsSQL = `SELECT ` + observationColumns + `
 FROM runtime_controller.observations
 WHERE sequence > $1 ORDER BY sequence ASC LIMIT $2`
+
+const selectObservationBoundsSQL = `
+SELECT COALESCE(MIN(sequence), 0), COALESCE(MAX(sequence), 0)
+FROM runtime_controller.observations`

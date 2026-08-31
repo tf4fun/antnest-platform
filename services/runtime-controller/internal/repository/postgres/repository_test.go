@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"soft/antnest-platform/services/runtime-controller/internal/control"
 	"soft/antnest-platform/services/runtime-controller/internal/deployment"
+	"soft/antnest-platform/services/runtime-controller/internal/repository"
 )
 
 const testRevision = deployment.RuntimeRevision("rtv_0123456789abcdef0123456789abcdef")
@@ -50,7 +50,7 @@ func TestScanOperationRestoresLogicalAndPrivateIdentity(t *testing.T) {
 		SpecDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		ObservedAt: now,
 	}
-	encoded, _ := json.Marshal(environment)
+	encoded, _ := json.Marshal(environmentSnapshotFromDomain(environment))
 	row := valueScanner{values: []any{
 		"request-1", "sha256:request", string(deployment.OperationUpdateRuntime), "agent-1",
 		string(testRevision), "rtv_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -74,7 +74,7 @@ func TestScanOperationRestoresLogicalAndPrivateIdentity(t *testing.T) {
 
 func TestScanOperationMapsMissingRecord(t *testing.T) {
 	_, err := scanOperation(errorScanner{err: sql.ErrNoRows})
-	if !errors.Is(err, control.ErrNotFound) {
+	if !errors.Is(err, repository.ErrNotFound) {
 		t.Fatalf("missing operation error = %v", err)
 	}
 }
@@ -130,7 +130,7 @@ func TestOperationSourceMustMatchEnvironmentHead(t *testing.T) {
 		t.Fatalf("matching source was rejected: %v", err)
 	}
 	environment.RuntimeRevision = "rtv_ffffffffffffffffffffffffffffffff"
-	if err := matchOperationSource(operation, environment); !errors.Is(err, control.ErrRevisionConflict) {
+	if err := matchOperationSource(operation, environment); !errors.Is(err, repository.ErrRevisionConflict) {
 		t.Fatalf("stale revision error = %v", err)
 	}
 }

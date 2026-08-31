@@ -7,61 +7,36 @@ import (
 	"time"
 
 	"soft/antnest-platform/services/runtime-controller/internal/deployment"
+	"soft/antnest-platform/services/runtime-controller/internal/platform"
+	repositoryport "soft/antnest-platform/services/runtime-controller/internal/repository"
 )
 
 var (
 	ErrInvalidRequest          = errors.New("invalid request")
-	ErrRequestConflict         = errors.New("request ID conflict")
-	ErrOperationFinalized      = errors.New("operation is already finalized")
-	ErrMutationLockLost        = errors.New("Agent mutation lock lost")
-	ErrAgentMutationInProgress = errors.New("Agent mutation is already in progress")
-	ErrLifecycleConflict       = errors.New("Runtime lifecycle conflict")
-	ErrRevisionConflict        = errors.New("Runtime revision conflict")
-	ErrDrift                   = errors.New("Runtime platform drift")
-	ErrNotFound                = errors.New("not found")
+	ErrRequestConflict         = repositoryport.ErrIdempotencyConflict
+	ErrOperationFinalized      = repositoryport.ErrOperationFinalized
+	ErrMutationLockLost        = repositoryport.ErrLockLost
+	ErrAgentMutationInProgress = repositoryport.ErrConcurrentMutation
+	ErrLifecycleConflict       = repositoryport.ErrTransitionConflict
+	ErrRevisionConflict        = repositoryport.ErrRevisionConflict
+	ErrDrift                   = repositoryport.ErrInvariantConflict
+	ErrNotFound                = repositoryport.ErrNotFound
 )
 
 const operationFinalizeBudget = 5 * time.Second
 
 type mutationDeadlineKey struct{}
 
-type GenerationClaim struct {
-	RuntimeRevision deployment.RuntimeRevision
-	SpecDigest      string
+type ObservationCursorExpiredError struct {
+	ResetSequence uint64
 }
 
-type Repository interface {
-	BeginTransition(context.Context, deployment.Operation) (deployment.Operation, bool, error)
-	CompleteOperation(
-		context.Context, deployment.Operation, *deployment.Observation,
-	) (*deployment.Observation, error)
-	GetOperation(context.Context, string) (deployment.Operation, error)
-	GetEnvironment(context.Context, string) (deployment.Environment, error)
-	ListEnvironments(context.Context) ([]deployment.Environment, error)
-	GenerationClaim(context.Context, deployment.Key) (GenerationClaim, error)
-	AppendObservation(context.Context, deployment.Observation) (deployment.Observation, error)
-	ListObservations(context.Context, uint64, int) ([]deployment.Observation, error)
-	Ready(context.Context) error
-}
-
-type MutationLocker interface {
-	WithAgentLock(context.Context, string, func(context.Context) error) error
+func (e *ObservationCursorExpiredError) Error() string {
+	return "Runtime observation cursor is outside the retained journal"
 }
 
 type ObservationReadiness interface {
 	ObservationReady() error
-}
-
-type Platform interface {
-	Ready(context.Context) error
-	DeploymentDigest(deployment.Deployment) (string, error)
-	Create(context.Context, deployment.Deployment, string) deployment.EffectOutcome
-	Inspect(context.Context, deployment.Key) (deployment.Inspection, error)
-	Delete(context.Context, deployment.Key, string) deployment.EffectOutcome
-	EnsureStorage(context.Context, string) deployment.EffectOutcome
-	VerifyStorage(context.Context, string) deployment.EffectOutcome
-	DeleteStorage(context.Context, string) deployment.EffectOutcome
-	List(context.Context) ([]deployment.Inspection, error)
 }
 
 type RuntimeVerifier interface {
@@ -69,10 +44,10 @@ type RuntimeVerifier interface {
 }
 
 type Service struct {
-	repository      Repository
-	locker          MutationLocker
+	repository      repositoryport.Store
+	locker          repositoryport.MutationLocker
 	observations    ObservationReadiness
-	platform        Platform
+	platform        platform.Lifecycle
 	verifier        RuntimeVerifier
 	now             func() time.Time
 	mutationTimeout time.Duration
@@ -81,9 +56,9 @@ type Service struct {
 }
 
 type Readiness struct {
-	DatabaseReady    bool `json:"database_ready"`
-	PlatformReady    bool `json:"platform_ready"`
-	ObservationReady bool `json:"observation_ready"`
+	DatabaseReady    bool
+	PlatformReady    bool
+	ObservationReady bool
 }
 
 func (r Readiness) Ready() bool {
@@ -91,10 +66,10 @@ func (r Readiness) Ready() bool {
 }
 
 func NewService(
-	repository Repository,
-	locker MutationLocker,
+	repository repositoryport.Store,
+	locker repositoryport.MutationLocker,
 	observations ObservationReadiness,
-	platform Platform,
+	platform platform.Lifecycle,
 	verifier RuntimeVerifier,
 	now func() time.Time,
 	mutationTimeout time.Duration,
@@ -305,7 +280,8 @@ func (s *Service) prepareOperation(
 	if source.OperationID != "" {
 		return deployment.Operation{}, false, ErrAgentMutationInProgress
 	}
-	if _, _, transitionErr := deployment.LifecycleTransition(input.Kind, source.LifecycleState); transitionErr != nil {
+	transition, _, transitionErr := deployment.LifecycleTransition(input.Kind, source.LifecycleState)
+	if transitionErr != nil {
 		return deployment.Operation{}, false, ErrLifecycleConflict
 	}
 	if input.Kind != deployment.OperationInitializeRuntime && source.RuntimeRevision != input.ExpectedRevision {
@@ -340,7 +316,7 @@ func (s *Service) prepareOperation(
 		ExpectedRevision: input.ExpectedRevision,
 		SourceState:      source.LifecycleState, SourceRevision: source.RuntimeRevision,
 		SourceGeneration: source.Generation, SourceSpecDigest: source.SpecDigest,
-		Generation: generation, SpecDigest: specDigest,
+		Generation: generation, SpecDigest: specDigest, Transition: transition,
 		CreatedAt: now, UpdatedAt: now,
 	}
 	operation, replay, beginErr := s.repository.BeginTransition(ctx, candidate)
@@ -513,9 +489,7 @@ func lifecycleObservation(
 	}
 	return deployment.Observation{
 		AgentID: operation.AgentID, RuntimeRevision: operation.RuntimeRevision,
-		Generation: operation.Generation, SpecDigest: operation.SpecDigest,
-		RuntimeExecutionID: environment.RuntimeExecutionID,
-		Kind:               kind, Source: "lifecycle_operation", ObservedAt: environment.ObservedAt,
+		Kind: kind, Source: "lifecycle_operation", ObservedAt: environment.ObservedAt,
 	}
 }
 
@@ -537,11 +511,19 @@ func (s *Service) inspectEnvironment(
 	switch environment.LifecycleState {
 	case deployment.LifecycleDisabled:
 		outcome := s.platform.VerifyStorage(ctx, environment.AgentID)
-		if outcome.State != deployment.EffectCompleted {
-			return deployment.Environment{}, ErrDrift
+		if err := outcome.Validate(); err != nil {
+			return deployment.Environment{}, fmt.Errorf("verify retained workspace: %w", err)
 		}
-		environment.Health = deployment.HealthAbsent
-		return environment, nil
+		switch outcome.Code {
+		case "":
+			environment.Health = deployment.HealthAbsent
+			return environment, nil
+		case "storage_not_found", "storage_ownership_conflict":
+			environment.Health = deployment.HealthUnhealthy
+			return environment, nil
+		default:
+			return deployment.Environment{}, fmt.Errorf("verify retained workspace: %s", sanitizedDetail(outcome))
+		}
 	case deployment.LifecycleDeleted:
 		environment.Health = deployment.HealthAbsent
 		return environment, nil
@@ -573,6 +555,51 @@ func (s *Service) inspectEnvironment(
 	}
 }
 
+// ReconcileExpectedRuntimes compares the private logical heads with one
+// complete platform inventory. It records missing compute instead of silently
+// declaring a one-sided platform List converged.
+func (s *Service) ReconcileExpectedRuntimes(
+	ctx context.Context, inspections []deployment.Inspection,
+) error {
+	present := make(map[deployment.Key]struct{}, len(inspections))
+	for _, inspection := range inspections {
+		if inspection.PlatformPhase == deployment.PhaseAbsent {
+			continue
+		}
+		key := inspection.RuntimeKey()
+		if err := key.Validate(); err == nil {
+			present[key] = struct{}{}
+		}
+	}
+	environments, err := s.repository.ListEnvironments(ctx)
+	if err != nil {
+		return fmt.Errorf("list expected Runtime environments: %w", err)
+	}
+	for _, environment := range environments {
+		if environment.LifecycleState != deployment.LifecycleReady {
+			continue
+		}
+		key, ok := environment.RuntimeKey()
+		if !ok || deployment.ValidateDigest(environment.SpecDigest) != nil {
+			return ErrDrift
+		}
+		if _, ok := present[key]; ok {
+			continue
+		}
+		_, err := s.RecordPlatformObservation(ctx, deployment.Observation{
+			AgentID: environment.AgentID, RuntimeRevision: environment.RuntimeRevision,
+			Generation: environment.Generation, SpecDigest: environment.SpecDigest,
+			Kind: deployment.ObservationRuntimeMissing, Source: "platform_reconciliation",
+			DiagnosticSummary: "Expected Runtime compute is missing from the platform inventory",
+			ObservedAt:        s.now().UTC(),
+		})
+		if err != nil {
+			return fmt.Errorf("record missing Runtime compute for Agent %q: %w", environment.AgentID, err)
+		}
+	}
+	return nil
+}
+
 func (s *Service) ListRuntimes(ctx context.Context) ([]deployment.Environment, error) {
 	environments, err := s.repository.ListEnvironments(ctx)
 	if err != nil {
@@ -589,6 +616,55 @@ func (s *Service) ListRuntimes(ctx context.Context) ([]deployment.Environment, e
 	return result, nil
 }
 
+// ReconcileRetainedStorage verifies the workspace owned by every disabled
+// Runtime. Ready Runtime storage is verified with its compute inspection, while
+// deleted Runtime storage is intentionally absent.
+func (s *Service) ReconcileRetainedStorage(ctx context.Context) error {
+	environments, err := s.repository.ListEnvironments(ctx)
+	if err != nil {
+		return fmt.Errorf("list Runtime environments for storage reconciliation: %w", err)
+	}
+	for _, environment := range environments {
+		if environment.LifecycleState != deployment.LifecycleDisabled {
+			continue
+		}
+		outcome := s.platform.VerifyStorage(ctx, environment.AgentID)
+		if err := outcome.Validate(); err != nil {
+			return fmt.Errorf("verify retained workspace for Agent %q: invalid platform outcome: %w",
+				environment.AgentID, err)
+		}
+		if outcome.State == deployment.EffectCompleted {
+			continue
+		}
+		kind, summary, ok := storageObservation(outcome.Code)
+		if !ok {
+			return fmt.Errorf("verify retained workspace for Agent %q: %s",
+				environment.AgentID, sanitizedDetail(outcome))
+		}
+		_, err = s.RecordPlatformObservation(ctx, deployment.Observation{
+			AgentID: environment.AgentID, RuntimeRevision: environment.RuntimeRevision,
+			Kind: kind, Source: "platform_reconciliation",
+			DiagnosticSummary: summary, ObservedAt: s.now().UTC(),
+		})
+		if err != nil {
+			return fmt.Errorf("record retained workspace observation for Agent %q: %w",
+				environment.AgentID, err)
+		}
+	}
+	return nil
+}
+
+func storageObservation(code string) (deployment.ObservationKind, string, bool) {
+	switch code {
+	case "storage_not_found":
+		return deployment.ObservationStorageMissing, "Retained Agent workspace is missing", true
+	case "storage_ownership_conflict":
+		return deployment.ObservationStorageDrift, "Retained Agent workspace has conflicting ownership", true
+	default:
+		return "", "", false
+	}
+}
+
 func (s *Service) GetOperation(ctx context.Context, requestID string) (deployment.Operation, error) {
 	if err := validateRequestID(requestID); err != nil {
 		return deployment.Operation{}, err
@@ -598,11 +674,34 @@ func (s *Service) GetOperation(ctx context.Context, requestID string) (deploymen
 
 func (s *Service) ListObservations(
 	ctx context.Context, after uint64, limit int,
-) ([]deployment.Observation, error) {
+) (deployment.ObservationWindow, error) {
 	if limit < 1 || limit > 500 {
-		return nil, fmt.Errorf("%w: observation limit must be between 1 and 500", ErrInvalidRequest)
+		return deployment.ObservationWindow{}, fmt.Errorf(
+			"%w: observation limit must be between 1 and 500", ErrInvalidRequest,
+		)
 	}
-	return s.repository.ListObservations(ctx, after, limit)
+	window, err := s.repository.ListObservations(ctx, after, limit)
+	if err != nil {
+		return deployment.ObservationWindow{}, err
+	}
+	if after == 0 {
+		return window, nil
+	}
+	if window.LatestSequence == 0 || cursorPrecedesWindow(after, window.OldestSequence) {
+		return deployment.ObservationWindow{}, &ObservationCursorExpiredError{
+			ResetSequence: window.LatestSequence,
+		}
+	}
+	if after > window.LatestSequence {
+		return deployment.ObservationWindow{}, fmt.Errorf(
+			"%w: after_sequence is newer than the retained journal", ErrInvalidRequest,
+		)
+	}
+	return window, nil
+}
+
+func cursorPrecedesWindow(after, oldest uint64) bool {
+	return oldest > 1 && after < oldest-1
 }
 
 func (s *Service) ValidateRuntimeInspection(
@@ -640,7 +739,11 @@ func (s *Service) InspectPlatformRuntime(
 	if inspection.Health != deployment.HealthHealthy {
 		return inspection, nil
 	}
-	return s.verifier.Verify(ctx, inspection)
+	verified, err := s.verifier.Verify(ctx, inspection)
+	if err != nil {
+		return deployment.Inspection{}, errors.Join(deployment.ErrStatusUnverified, err)
+	}
+	return verified, nil
 }
 
 func (s *Service) RecordPlatformObservation(

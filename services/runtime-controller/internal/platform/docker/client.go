@@ -13,6 +13,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"soft/antnest-platform/services/runtime-controller/internal/platform"
 )
 
 const dockerAPIVersion = "v1.47"
@@ -31,7 +33,8 @@ func NewUnixClient(socketPath string) (*Client, error) {
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			return (&net.Dialer{Timeout: 10 * time.Second}).DialContext(ctx, "unix", socketPath)
 		},
-		DisableCompression: true,
+		DisableCompression:    true,
+		ResponseHeaderTimeout: 10 * time.Second,
 	}
 	return NewHTTPClient(&http.Client{Transport: transport, Timeout: 30 * time.Second}, "http://docker")
 }
@@ -108,10 +111,11 @@ func (c *Client) ListManagedContainerIDs(ctx context.Context) ([]string, error) 
 func (c *Client) WatchManagedEvents(
 	ctx context.Context,
 	since time.Time,
+	ready func() error,
 	emit func(ContainerEvent) error,
 ) error {
-	if emit == nil {
-		return fmt.Errorf("Docker event sink is required")
+	if ready == nil || emit == nil {
+		return fmt.Errorf("Docker event readiness and sink callbacks are required")
 	}
 	encodedFilters, err := json.Marshal(map[string][]string{
 		"type":  {"container"},
@@ -137,7 +141,7 @@ func (c *Client) WatchManagedEvents(
 	response, err := streamClient.Do(request)
 	if err != nil {
 		if ctx.Err() != nil {
-			return nil
+			return ctx.Err()
 		}
 		return fmt.Errorf("watch Docker events: %w", err)
 	}
@@ -147,12 +151,18 @@ func (c *Client) WatchManagedEvents(
 		return fmt.Errorf("watch Docker events returned %s: %s",
 			response.Status, strings.TrimSpace(string(detail)))
 	}
+	if err := ready(); err != nil {
+		return fmt.Errorf("announce Docker event stream readiness: %w", err)
+	}
 	decoder := json.NewDecoder(response.Body)
 	for {
 		var raw dockerEvent
 		if err := decoder.Decode(&raw); err != nil {
-			if errors.Is(err, io.EOF) || ctx.Err() != nil {
-				return nil
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			if errors.Is(err, io.EOF) {
+				return platform.ErrObservationStreamDisconnected
 			}
 			return fmt.Errorf("decode Docker event: %w", err)
 		}

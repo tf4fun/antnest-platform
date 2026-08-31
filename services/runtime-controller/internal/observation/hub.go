@@ -9,8 +9,8 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 
-	"soft/antnest-platform/services/runtime-controller/internal/control"
 	"soft/antnest-platform/services/runtime-controller/internal/deployment"
+	"soft/antnest-platform/services/runtime-controller/internal/repository"
 )
 
 var (
@@ -57,12 +57,12 @@ func (h *Hub) Publish() {
 }
 
 type Repository struct {
-	next   control.Repository
+	next   repository.Store
 	hub    *Hub
 	health *Health
 }
 
-func NewRepository(next control.Repository, hub *Hub, health *Health) (*Repository, error) {
+func NewRepository(next repository.Store, hub *Hub, health *Health) (*Repository, error) {
 	if next == nil || hub == nil || health == nil {
 		return nil, fmt.Errorf("repository, observation hub, and health tracker are required")
 	}
@@ -77,7 +77,7 @@ func (r *Repository) BeginTransition(
 
 func (r *Repository) GenerationClaim(
 	ctx context.Context, key deployment.Key,
-) (control.GenerationClaim, error) {
+) (repository.GenerationClaim, error) {
 	return r.next.GenerationClaim(ctx, key)
 }
 
@@ -129,7 +129,7 @@ func (r *Repository) AppendObservation(
 
 func (r *Repository) ListObservations(
 	ctx context.Context, after uint64, limit int,
-) ([]deployment.Observation, error) {
+) (deployment.ObservationWindow, error) {
 	return r.next.ListObservations(ctx, after, limit)
 }
 
@@ -137,7 +137,7 @@ func (r *Repository) Ready(ctx context.Context) error {
 	return r.next.Ready(ctx)
 }
 
-var _ control.Repository = (*Repository)(nil)
+var _ repository.Store = (*Repository)(nil)
 
 func recordStoredObservation(ctx context.Context, value deployment.Observation) {
 	storedObservations.Add(ctx, 1, metric.WithAttributes(

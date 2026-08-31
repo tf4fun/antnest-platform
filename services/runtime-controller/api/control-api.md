@@ -23,6 +23,10 @@ compare this value but never construct, increment, parse, or attach business
 meaning to it. Update, Disable, Enable, and Delete carry the current revision as
 `expected_revision`; a stale request returns `runtime_revision_conflict`.
 
+An operation reports `target_revision`, which is fixed before execution and is
+stable across retries. It becomes the Environment's current
+`runtime_revision` only after that operation commits its lifecycle result.
+
 Runtime Controller privately allocates a compute generation for Initialize,
 Update, and Enable. That number is supplied to Antnest Runtime and platform
 labels, but never appears in this API.
@@ -42,7 +46,9 @@ disabled      --Delete-----> deleted
 
 Transitions may report `initializing`, `updating`, `disabling`, `enabling`, or
 `deleting`. An inconclusive platform effect reports `unknown` and retains the
-Agent mutation slot. Only the original request ID may reconcile it.
+Agent mutation slot. Until a mutation is terminal, the caller retains its
+method, path, exact body, and `Idempotency-Key`; only that exact request may
+reconcile it.
 
 All mutations for one Agent are serialized across Controller replicas. The
 PostgreSQL lock session is monitored while a mutation runs. A database
@@ -145,16 +151,18 @@ endpoint, execution ID, health, restart count, and observation time. It never
 contains physical generation, digest, container/Pod ID, volume ID, or platform
 phase.
 
-`GET /internal/runtimes` returns all non-deleted Runtime Environments. It is the
-authoritative recovery companion to a service-wide observation gap. Every
+`GET /internal/runtimes` returns all non-deleted Runtime Environments. Deleted
+identities remain private tombstones and can still be inspected directly by
+Agent ID. The list is the authoritative recovery companion to a service-wide
+observation gap. Every
 `ready` Environment is checked against the private platform identity; drift
 fails the request instead of being silently omitted.
 
 ## Operations
 
 `GET /internal/runtime-operations/{request_id}` returns the immutable request
-identity, operation kind, current state, effect state, resulting Runtime
-revision, logical Runtime inspection, and sanitized failure. A process crash
+identity, operation kind, current state, effect state, target Runtime revision,
+logical Runtime inspection, and sanitized failure. A process crash
 may leave `running`; retrying the original mutation with the same request ID
 reconciles platform resources. `unknown` never means absent or safe to replay
 under a new request ID.
@@ -162,17 +170,30 @@ under a new request ID.
 ## Observations
 
 `GET /internal/runtime-observations?after_sequence={n}&limit={n}` returns an
-ordered page from the bounded Controller journal.
+ordered page from the bounded Controller journal. The response carries
+`oldest_sequence`, `latest_sequence`, and `next_sequence`. Sequence zero is the
+bootstrap cursor and always starts at the oldest retained observation.
+
+If a non-zero cursor is older than the retained window, List and Watch return
+HTTP 410 `observation_cursor_expired` with `reset_sequence` set to the latest
+committed sequence visible to that read. The consumer must rebuild its logical
+projection with `GET /internal/runtimes`, then resume Watch from
+`reset_sequence`. Consumer-history expiry is deliberately distinct from a
+platform `observation_gap`.
 
 `GET /internal/runtime-observations/watch?after_sequence={n}` returns
 `text/event-stream`. Watch is only a low-latency wake-up path: clients first
 read List, consume Watch, and return to List after disconnect. Delivery is at
 least once, so callers de-duplicate by sequence.
 
-Runtime-scoped observations expose Agent ID, opaque revision, event kind,
-execution ID when known, diagnostic summary, and time. Physical platform
-identity remains private. `observation_gap` and `reconciled` are service-wide
-facts without Agent identity. Agent Controller decides their business meaning.
+Observations use three disjoint shapes. `observation_gap` and `reconciled` are
+service facts without Agent identity. Lifecycle and workspace facts are
+Environment facts carrying Agent ID plus opaque revision. Platform process
+facts are Runtime-generation facts projected as Agent ID, revision, event kind,
+execution ID when known, diagnostic summary, and time; generation, digest, and
+platform resource ID remain private. `runtime_missing` means a logical ready
+Environment had no matching resource in a complete platform inventory. Agent
+Controller decides each fact's business meaning.
 
 ## Status
 

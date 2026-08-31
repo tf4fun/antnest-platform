@@ -194,6 +194,30 @@ func TestVerifyStorageRejectsMissingOrForeignWorkspace(t *testing.T) {
 	}
 }
 
+func TestVerifyStorageDoesNotConflateWorkspaceWithSystemSkills(t *testing.T) {
+	engine := newFakeEngine()
+	delete(engine.volumes, "antnest-system-skills")
+	driver := newTestDriver(t, engine)
+
+	outcome := driver.VerifyStorage(context.Background(), "agent-1")
+
+	if outcome.State != deployment.EffectCompleted {
+		t.Fatalf("global system-Skills readiness leaked into Agent workspace: %+v", outcome)
+	}
+}
+
+func TestCreateStillRequiresSystemSkillsVolume(t *testing.T) {
+	engine := newFakeEngine()
+	delete(engine.volumes, "antnest-system-skills")
+	driver := newTestDriver(t, engine)
+
+	outcome := driver.Create(context.Background(), testDeployment(), testDigest)
+
+	if outcome.State != deployment.EffectNotStarted || outcome.Code != "storage_not_found" {
+		t.Fatalf("Runtime creation accepted a missing system-Skills volume: %+v", outcome)
+	}
+}
+
 func TestDeleteDoesNotRemoveWorkspace(t *testing.T) {
 	engine := newFakeEngine()
 	engine.container = exactContainer()
@@ -327,7 +351,9 @@ func TestWatchNormalizesOnlyManagedRuntimeFacts(t *testing.T) {
 	}
 	driver := newTestDriver(t, engine)
 	var observations []deployment.Observation
-	if err := driver.Watch(context.Background(), time.Unix(100, 0), func(_ context.Context, value deployment.Observation) error {
+	if err := driver.Watch(context.Background(), time.Unix(100, 0), func(context.Context) error {
+		return nil
+	}, func(_ context.Context, value deployment.Observation) error {
 		observations = append(observations, value)
 		return nil
 	}); err != nil {
@@ -347,7 +373,9 @@ func TestWatchRejectsMalformedManagedRuntimeEvent(t *testing.T) {
 		Attributes: map[string]string{labelManaged: "runtime", labelAgentID: "agent-1"},
 	}}
 	driver := newTestDriver(t, engine)
-	if err := driver.Watch(context.Background(), time.Time{}, func(context.Context, deployment.Observation) error {
+	if err := driver.Watch(context.Background(), time.Time{}, func(context.Context) error {
+		return nil
+	}, func(context.Context, deployment.Observation) error {
 		return nil
 	}); err == nil {
 		t.Fatal("malformed managed Runtime event was silently ignored")
@@ -469,8 +497,11 @@ func (e *fakeEngine) ListManagedContainers(context.Context) ([]Container, error)
 }
 
 func (e *fakeEngine) WatchManagedEvents(
-	_ context.Context, _ time.Time, emit func(ContainerEvent) error,
+	_ context.Context, _ time.Time, ready func() error, emit func(ContainerEvent) error,
 ) error {
+	if err := ready(); err != nil {
+		return err
+	}
 	for _, event := range e.events {
 		if err := emit(event); err != nil {
 			return err

@@ -13,10 +13,9 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 
-	"soft/antnest-platform/services/runtime-controller/internal/control"
 	"soft/antnest-platform/services/runtime-controller/internal/deployment"
 	"soft/antnest-platform/services/runtime-controller/internal/diagnostics"
-	platformmonitor "soft/antnest-platform/services/runtime-controller/internal/platform/monitor"
+	"soft/antnest-platform/services/runtime-controller/internal/repository"
 )
 
 var (
@@ -29,36 +28,23 @@ var (
 )
 
 type ObservedRepository struct {
-	next          control.Repository
-	locker        control.MutationLocker
-	coordinator   platformmonitor.Coordinator
-	notifications observationNotificationListener
-	logger        *slog.Logger
+	next           repository.Store
+	locker         repository.MutationLocker
+	coordinator    repository.ObservationCoordinator
+	notifications  repository.ObservationNotificationSource
+	logger         *slog.Logger
+	databaseSystem string
 }
 
-type observationNotificationListener interface {
-	ListenObservationNotifications(context.Context, func(), func(string)) error
-}
-
-func ObserveRepository(next control.Repository, logger *slog.Logger) (*ObservedRepository, error) {
-	if next == nil || logger == nil {
-		return nil, fmt.Errorf("repository port and logger are required")
-	}
-	locker, ok := next.(control.MutationLocker)
-	if !ok {
-		return nil, fmt.Errorf("repository does not implement the Agent mutation lock")
-	}
-	coordinator, ok := next.(platformmonitor.Coordinator)
-	if !ok {
-		return nil, fmt.Errorf("repository does not implement observation leadership")
-	}
-	notifications, ok := next.(observationNotificationListener)
-	if !ok {
-		return nil, fmt.Errorf("repository does not implement observation notifications")
+func ObserveRepository(
+	next repository.Port, logger *slog.Logger, databaseSystem string,
+) (*ObservedRepository, error) {
+	if next == nil || logger == nil || databaseSystem == "" {
+		return nil, fmt.Errorf("repository port, logger, and database system are required")
 	}
 	return &ObservedRepository{
-		next: next, locker: locker, coordinator: coordinator,
-		notifications: notifications, logger: logger,
+		next: next, locker: next, coordinator: next,
+		notifications: next, logger: logger, databaseSystem: databaseSystem,
 	}, nil
 }
 
@@ -73,10 +59,16 @@ func (r *ObservedRepository) WithAgentLock(
 
 func (r *ObservedRepository) TryAcquireObservationLeadership(
 	ctx context.Context,
-) (leadership platformmonitor.Leadership, acquired bool, resultErr error) {
+) (leadership repository.Leadership, acquired bool, resultErr error) {
 	ctx, span, started := startRepositorySpan(ctx, "observation_leadership")
 	defer func() { r.finish(ctx, span, started, "observation_leadership", resultErr) }()
 	return r.coordinator.TryAcquireObservationLeadership(ctx)
+}
+
+func (r *ObservedRepository) ObservationMonitorReady(ctx context.Context) (ready bool, resultErr error) {
+	ctx, span, started := startRepositorySpan(ctx, "observation_monitor_ready")
+	defer func() { r.finish(ctx, span, started, "observation_monitor_ready", resultErr) }()
+	return r.coordinator.ObservationMonitorReady(ctx)
 }
 
 func (r *ObservedRepository) ListenObservationNotifications(
@@ -99,7 +91,7 @@ func (r *ObservedRepository) BeginTransition(
 
 func (r *ObservedRepository) GenerationClaim(
 	ctx context.Context, key deployment.Key,
-) (claim control.GenerationClaim, resultErr error) {
+) (claim repository.GenerationClaim, resultErr error) {
 	ctx, span, started := startRepositorySpan(ctx, "generation_claim")
 	setRuntimeAttributes(span, key)
 	defer func() { r.finish(ctx, span, started, "generation_claim", resultErr) }()
@@ -154,7 +146,7 @@ func (r *ObservedRepository) AppendObservation(
 
 func (r *ObservedRepository) ListObservations(
 	ctx context.Context, after uint64, limit int,
-) (values []deployment.Observation, resultErr error) {
+) (window deployment.ObservationWindow, resultErr error) {
 	ctx, span, started := startRepositorySpan(ctx, "list_observations")
 	span.SetAttributes(attribute.Int("antnest.page.limit", limit))
 	defer func() { r.finish(ctx, span, started, "list_observations", resultErr) }()
@@ -181,7 +173,7 @@ func (r *ObservedRepository) finish(
 ) {
 	result := effectResult(err)
 	attributes := []attribute.KeyValue{
-		attribute.String("db.system.name", "postgresql"),
+		attribute.String("db.system.name", r.databaseSystem),
 		attribute.String("antnest.repository.operation", operation),
 		attribute.String("antnest.result", result),
 	}
@@ -201,16 +193,14 @@ func (r *ObservedRepository) finish(
 func (r *ObservedRepository) finishSession(
 	ctx context.Context, started time.Time, operation string, err error,
 ) {
-	result := effectResult(err)
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		result = "canceled"
-	} else if err != nil {
+	result := sessionResult(err)
+	if result == "error" {
 		r.logger.ErrorContext(ctx, "Runtime Controller repository session failed",
 			"operation", operation, "error_class", repositoryErrorClass(err),
 			"error", diagnostics.Message(err))
 	}
 	attributes := []attribute.KeyValue{
-		attribute.String("db.system.name", "postgresql"),
+		attribute.String("db.system.name", r.databaseSystem),
 		attribute.String("antnest.repository.operation", operation),
 		attribute.String("antnest.result", result),
 	}
@@ -225,19 +215,19 @@ func repositoryErrorClass(err error) string {
 	switch {
 	case errors.Is(err, deployment.ErrIdentityConflict):
 		return "identity_conflict"
-	case errors.Is(err, control.ErrOperationFinalized):
+	case errors.Is(err, repository.ErrOperationFinalized):
 		return "operation_finalized"
-	case errors.Is(err, control.ErrMutationLockLost):
+	case errors.Is(err, repository.ErrLockLost):
 		return "mutation_lock_lost"
-	case errors.Is(err, control.ErrAgentMutationInProgress):
+	case errors.Is(err, repository.ErrConcurrentMutation):
 		return "agent_mutation_in_progress"
-	case errors.Is(err, control.ErrLifecycleConflict):
+	case errors.Is(err, repository.ErrTransitionConflict):
 		return "runtime_lifecycle_conflict"
-	case errors.Is(err, control.ErrRevisionConflict):
+	case errors.Is(err, repository.ErrRevisionConflict):
 		return "runtime_revision_conflict"
-	case errors.Is(err, control.ErrDrift):
+	case errors.Is(err, repository.ErrInvariantConflict):
 		return "runtime_drift"
-	case errors.Is(err, control.ErrNotFound):
+	case errors.Is(err, repository.ErrNotFound):
 		return "not_found"
 	default:
 		return "persistence_error"
@@ -261,6 +251,4 @@ func setObservationAttributes(span trace.Span, value deployment.Observation) {
 	)
 }
 
-var _ control.Repository = (*ObservedRepository)(nil)
-var _ control.MutationLocker = (*ObservedRepository)(nil)
-var _ platformmonitor.Coordinator = (*ObservedRepository)(nil)
+var _ repository.Port = (*ObservedRepository)(nil)

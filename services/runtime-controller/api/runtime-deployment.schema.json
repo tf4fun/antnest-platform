@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://antnest.local/contracts/runtime-controller/runtime-deployment.schema.json",
+  "$id": "https://antnest.local/runtime-controller/api/runtime-deployment.schema.json",
   "title": "Antnest Runtime Configuration",
   "description": "Caller-owned Runtime policy. Runtime Controller injects identity, internal generation, listener, filesystem, and platform mapping.",
   "type": "object",

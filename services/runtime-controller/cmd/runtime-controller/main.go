@@ -101,7 +101,7 @@ func run(ctx context.Context) (resultErr error) {
 	if err != nil {
 		return classified("repository", "repository_initialization_failed", err)
 	}
-	observedRepository, err := telemetry.ObserveRepository(baseRepository, slog.Default())
+	observedRepository, err := telemetry.ObserveRepository(baseRepository, slog.Default(), "postgresql")
 	if err != nil {
 		return classified("telemetry", "repository_observer_initialization_failed", err)
 	}
@@ -140,6 +140,7 @@ func run(ctx context.Context) (resultErr error) {
 	}
 	monitor, err := platformmonitor.New(
 		observedPlatform, service, observationHealth, slog.Default(), time.Second,
+		configuration.ReconciliationTimeout,
 	)
 	if err != nil {
 		return classified("observation", "platform_monitor_initialization_failed", err)
@@ -218,13 +219,18 @@ func run(ctx context.Context) (resultErr error) {
 	case <-ctx.Done():
 		return nil
 	}
-	handler, err := rpc.NewHandler(service, hub, configuration.SSEHeartbeat)
+	handler, err := rpc.NewHandler(
+		service, hub, configuration.SSEHeartbeat, configuration.RPCRequestTimeout,
+	)
 	if err != nil {
 		return classified("rpc", "rpc_handler_initialization_failed", err)
 	}
+	serverContext, cancelServer := context.WithCancelCause(context.WithoutCancel(ctx))
+	defer cancelServer(rpc.ErrServerShutdown)
 	server := &http.Server{
 		Addr: configuration.ListenAddress, Handler: telemetry.HTTPHandler(handler),
-		ReadHeaderTimeout: 5 * time.Second, IdleTimeout: time.Minute,
+		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, IdleTimeout: time.Minute,
+		BaseContext: func(net.Listener) context.Context { return serverContext },
 	}
 	if err := service.Ready(ctx); err != nil {
 		return classified("readiness", "startup_readiness_failed", err)
@@ -239,6 +245,7 @@ func run(ctx context.Context) (resultErr error) {
 	case <-ctx.Done():
 	case runErr = <-componentErrors:
 	}
+	cancelServer(rpc.ErrServerShutdown)
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	return errors.Join(runErr, classified("rpc", "http_shutdown_failed", server.Shutdown(shutdownCtx)))

@@ -28,6 +28,12 @@ type machineContract struct {
 		Retryable bool   `json:"retryable"`
 		Body      string `json:"body"`
 	} `json:"errors"`
+	OperationErrorCodes map[string]struct {
+		OperationStates      []string `json:"operation_states"`
+		Effects              []string `json:"effects"`
+		HTTPStatuses         []int    `json:"http_statuses"`
+		RetrySameRequestOnly bool     `json:"retry_same_request_only"`
+	} `json:"operation_error_codes"`
 }
 
 type contractRoute struct {
@@ -58,16 +64,18 @@ type contractReply struct {
 
 type controlSchema struct {
 	Defs map[string]struct {
-		Required []string `json:"required"`
+		Required []string          `json:"required"`
+		OneOf    []json.RawMessage `json:"oneOf"`
+		AllOf    []json.RawMessage `json:"allOf"`
 	} `json:"$defs"`
 }
 
 func TestMachineContractCoversRegisteredHTTPBoundary(t *testing.T) {
-	root := repositoryRoot(t)
+	root := serviceRoot(t)
 	var contract machineContract
-	readJSONFile(t, filepath.Join(root, "contracts/runtime-controller/control-contract.json"), &contract)
+	readJSONFile(t, filepath.Join(root, "api/control-contract.json"), &contract)
 	var schema controlSchema
-	readJSONFile(t, filepath.Join(root, "contracts/runtime-controller/control-api.schema.json"), &schema)
+	readJSONFile(t, filepath.Join(root, "api/control-api.schema.json"), &schema)
 
 	expectedRoutes := map[string][]string{
 		"GET /status":                                   {"200", "503"},
@@ -156,12 +164,22 @@ func TestMachineContractCoversRegisteredHTTPBoundary(t *testing.T) {
 		}
 		assertKnownSchemaReference(t, schema, definition.Body)
 	}
+	for _, code := range []string{
+		"runtime_not_ready", "runtime_drift", "storage_in_use", "storage_not_found",
+		"storage_ownership_conflict", "platform_unavailable",
+	} {
+		definition, ok := contract.OperationErrorCodes[code]
+		if !ok || len(definition.OperationStates) == 0 || len(definition.Effects) == 0 ||
+			len(definition.HTTPStatuses) == 0 {
+			t.Fatalf("operation error %s has no complete state/effect/HTTP contract: %+v", code, definition)
+		}
+	}
 }
 
 func TestMachineSSEContractMatchesWireFraming(t *testing.T) {
-	root := repositoryRoot(t)
+	root := serviceRoot(t)
 	var contract machineContract
-	readJSONFile(t, filepath.Join(root, "contracts/runtime-controller/control-contract.json"), &contract)
+	readJSONFile(t, filepath.Join(root, "api/control-contract.json"), &contract)
 	var watch contractReply
 	for _, route := range contract.Routes {
 		if route.Method == "GET" && route.Path == "/internal/runtime-observations/watch" {
@@ -192,43 +210,51 @@ func TestMachineSSEContractMatchesWireFraming(t *testing.T) {
 }
 
 func TestMachineSchemaMatchesGoWireTypes(t *testing.T) {
-	root := repositoryRoot(t)
+	root := serviceRoot(t)
 	var schema controlSchema
-	readJSONFile(t, filepath.Join(root, "contracts/runtime-controller/control-api.schema.json"), &schema)
+	readJSONFile(t, filepath.Join(root, "api/control-api.schema.json"), &schema)
 	now := time.Date(2026, 8, 30, 0, 0, 0, 0, time.UTC)
 	inspection := deployment.Environment{
 		AgentID: "agent-1", RuntimeRevision: testRuntimeRevision,
 		LifecycleState: deployment.LifecycleReady,
 		Health:         deployment.HealthHealthy, RestartCount: 0, ObservedAt: now,
 	}
-	assertRequiredFields(t, schema, "initialize_request", initializeRequest{Configuration: deployment.Configuration{}})
+	assertRequiredFields(t, schema, "initialize_request", initializeRequest{Configuration: configurationDTO{}})
 	assertRequiredFields(t, schema, "revision_request", revisionRequest{ExpectedRevision: testRuntimeRevision})
 	assertRequiredFields(t, schema, "revision_configuration_request", revisionConfigurationRequest{
-		ExpectedRevision: testRuntimeRevision, Configuration: deployment.Configuration{},
+		ExpectedRevision: testRuntimeRevision, Configuration: configurationDTO{},
 	})
-	assertRequiredFields(t, schema, "readiness", readinessResponse{
-		Status: "ready", Live: true, Ready: true,
-		Readiness: control.Readiness{DatabaseReady: true, PlatformReady: true, ObservationReady: true},
+	assertRequiredFields(t, schema, "readiness", readinessFromDomain("ready", control.Readiness{
+		DatabaseReady: true, PlatformReady: true, ObservationReady: true,
+	}))
+	assertRequiredFields(t, schema, "runtime_inspection", runtimeInspectionFromDomain(inspection))
+	assertRequiredFields(t, schema, "runtime_list", runtimesResponse{
+		Runtimes: []runtimeInspectionDTO{runtimeInspectionFromDomain(inspection)},
 	})
-	assertRequiredFields(t, schema, "runtime_inspection", inspection)
-	assertRequiredFields(t, schema, "runtime_list", runtimesResponse{Runtimes: []deployment.Environment{inspection}})
-	assertRequiredFields(t, schema, "operation", deployment.Operation{
+	assertRequiredFields(t, schema, "operation", operationFromDomain(deployment.Operation{
 		RequestID: "request-1", RequestDigest: "sha256:" + strings.Repeat("a", 64),
 		Kind: deployment.OperationInitializeRuntime, AgentID: "agent-1",
 		RuntimeRevision: testRuntimeRevision,
 		State:           deployment.OperationCompleted, Effect: deployment.EffectCompleted,
 		CreatedAt: now, UpdatedAt: now,
-	})
+	}))
 	observationValue := deployment.Observation{
 		Sequence: 1, Kind: deployment.ObservationReconciled, Source: "test", ObservedAt: now,
 	}
-	assertRequiredFields(t, schema, "observation", observationValue)
+	assertRequiredFields(t, schema, "service_observation", observationFromDomain(observationValue))
 	assertRequiredFields(t, schema, "observation_list", observationsResponse{
-		Observations: []deployment.Observation{observationValue}, NextSequence: 1,
+		Observations:   []observationDTO{observationFromDomain(observationValue)},
+		OldestSequence: 1, LatestSequence: 1, NextSequence: 1,
 	})
 	assertRequiredFields(t, schema, "error", errorResponse{
 		Code: "invalid_request", Message: "request is invalid", Retryable: false,
 	})
+	if len(schema.Defs["observation"].OneOf) != 3 {
+		t.Fatalf("observation schema does not discriminate service, Environment, and Runtime facts")
+	}
+	if len(schema.Defs["error"].AllOf) == 0 {
+		t.Fatal("error schema does not require reset_sequence only for cursor expiry")
+	}
 }
 
 func TestLogicalWireTypesHidePhysicalRuntimeIdentity(t *testing.T) {
@@ -248,7 +274,10 @@ func TestLogicalWireTypesHidePhysicalRuntimeIdentity(t *testing.T) {
 		SpecDigest: "sha256:" + strings.Repeat("a", 64),
 		CreatedAt:  now, UpdatedAt: now,
 	}
-	for name, value := range map[string]any{"environment": environment, "operation": operation} {
+	for name, value := range map[string]any{
+		"environment": runtimeInspectionFromDomain(environment),
+		"operation":   operationFromDomain(operation),
+	} {
 		encoded, err := json.Marshal(value)
 		if err != nil {
 			t.Fatal(err)
@@ -261,13 +290,13 @@ func TestLogicalWireTypesHidePhysicalRuntimeIdentity(t *testing.T) {
 	}
 }
 
-func repositoryRoot(t *testing.T) string {
+func serviceRoot(t *testing.T) string {
 	t.Helper()
 	_, file, _, ok := goruntime.Caller(0)
 	if !ok {
 		t.Fatal("resolve contract test path")
 	}
-	return filepath.Clean(filepath.Join(filepath.Dir(file), "../../../.."))
+	return filepath.Clean(filepath.Join(filepath.Dir(file), "../.."))
 }
 
 func readJSONFile(t *testing.T, path string, target any) {

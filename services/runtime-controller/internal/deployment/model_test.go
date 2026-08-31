@@ -4,20 +4,21 @@ import (
 	"math"
 	"strings"
 	"testing"
+	"time"
 )
 
-func TestDeploymentDigestIsStableAndCoversExecutionInput(t *testing.T) {
+func TestDigestValueIsStableAndCoversExecutionInput(t *testing.T) {
 	value := testDeployment()
 	key := Key{AgentID: "agent-1", Generation: 7}
 	if err := value.ValidateFor(key); err != nil {
 		t.Fatalf("validate deployment: %v", err)
 	}
 
-	first, err := value.Digest()
+	first, err := DigestValue(value)
 	if err != nil {
 		t.Fatalf("digest deployment: %v", err)
 	}
-	second, err := value.Digest()
+	second, err := DigestValue(value)
 	if err != nil {
 		t.Fatalf("digest deployment again: %v", err)
 	}
@@ -27,12 +28,75 @@ func TestDeploymentDigestIsStableAndCoversExecutionInput(t *testing.T) {
 
 	changed := value
 	changed.Resources.MemoryBytes++
-	changedDigest, err := changed.Digest()
+	changedDigest, err := DigestValue(changed)
 	if err != nil {
 		t.Fatalf("digest changed deployment: %v", err)
 	}
 	if changedDigest == first {
 		t.Fatal("resource change did not change deployment digest")
+	}
+}
+
+func TestObservationIdentityMatchesItsScope(t *testing.T) {
+	now := time.Date(2026, 8, 31, 0, 0, 0, 0, time.UTC)
+	revision := RevisionFor("request-1", "sha256:"+strings.Repeat("a", 64))
+	digest := "sha256:" + strings.Repeat("b", 64)
+
+	tests := []struct {
+		name    string
+		value   Observation
+		wantErr bool
+	}{
+		{
+			name:  "service fact",
+			value: Observation{Kind: ObservationReconciled, Source: "test", ObservedAt: now},
+		},
+		{
+			name: "service fact with Agent identity",
+			value: Observation{
+				AgentID: "agent-1", Kind: ObservationReconciled, Source: "test", ObservedAt: now,
+			},
+			wantErr: true,
+		},
+		{
+			name: "Environment fact",
+			value: Observation{
+				AgentID: "agent-1", RuntimeRevision: revision,
+				Kind: ObservationStorageMissing, Source: "test", ObservedAt: now,
+			},
+		},
+		{
+			name: "Environment fact with generation identity",
+			value: Observation{
+				AgentID: "agent-1", RuntimeRevision: revision, Generation: 7, SpecDigest: digest,
+				Kind: ObservationStorageMissing, Source: "test", ObservedAt: now,
+			},
+			wantErr: true,
+		},
+		{
+			name: "Runtime generation fact",
+			value: Observation{
+				AgentID: "agent-1", RuntimeRevision: revision, Generation: 7, SpecDigest: digest,
+				Kind: ObservationHealthy, Source: "test", ObservedAt: now,
+			},
+		},
+		{
+			name: "Runtime generation fact without generation",
+			value: Observation{
+				AgentID: "agent-1", RuntimeRevision: revision,
+				Kind: ObservationRuntimeMissing, Source: "test", ObservedAt: now,
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := test.value.Validate()
+			if (err != nil) != test.wantErr {
+				t.Fatalf("Validate() error = %v, wantErr %t", err, test.wantErr)
+			}
+		})
 	}
 }
 

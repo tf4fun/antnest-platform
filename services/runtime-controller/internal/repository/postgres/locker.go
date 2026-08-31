@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"soft/antnest-platform/services/runtime-controller/internal/control"
+	"soft/antnest-platform/services/runtime-controller/internal/repository"
 )
 
 const lockRetryInterval = 50 * time.Millisecond
@@ -42,7 +42,7 @@ func (r *Repository) WithAgentLock(
 				unlockErr := releaseAgentLock(unlockCtx, connection, agentID)
 				if unlockErr != nil {
 					discard = true
-					resultErr = errors.Join(resultErr, control.ErrMutationLockLost, unlockErr)
+					resultErr = errors.Join(resultErr, repository.ErrLockLost, unlockErr)
 				}
 			}
 		}
@@ -73,7 +73,7 @@ func (r *Repository) WithAgentLock(
 		}
 	}
 	resultErr = executeWithAgentLockMonitor(ctx, connection, r.mutationProbeInterval, execute)
-	if errors.Is(resultErr, control.ErrMutationLockLost) {
+	if errors.Is(resultErr, repository.ErrLockLost) {
 		discard = true
 	}
 	return resultErr
@@ -98,7 +98,7 @@ func executeWithAgentLockMonitor(
 		cancelExecution(nil)
 		select {
 		case err := <-leaseLost:
-			resultErr = errors.Join(resultErr, control.ErrMutationLockLost, err)
+			resultErr = errors.Join(resultErr, repository.ErrLockLost, err)
 		default:
 		}
 	}()
@@ -139,7 +139,7 @@ func monitorAgentLockSession(
 			}
 			err = fmt.Errorf("Agent mutation lock session lost: %w", err)
 			leaseLost <- err
-			cancelExecution(errors.Join(control.ErrMutationLockLost, err))
+			cancelExecution(errors.Join(repository.ErrLockLost, err))
 			return
 		}
 	}

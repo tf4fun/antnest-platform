@@ -15,6 +15,8 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
 	"soft/antnest-platform/services/runtime-controller/internal/deployment"
+	"soft/antnest-platform/services/runtime-controller/internal/platform"
+	"soft/antnest-platform/services/runtime-controller/internal/repository"
 )
 
 const testSpecDigest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -32,6 +34,55 @@ func TestReconcilePublishesVerifiedHealthyExecution(t *testing.T) {
 	if len(sink.values) != 2 || sink.values[0].Kind != deployment.ObservationHealthy ||
 		sink.values[0].RuntimeExecutionID != "execution-1" {
 		t.Fatalf("healthy Runtime was not verified: %+v", sink.values)
+	}
+	if sink.storageReconciliations != 1 {
+		t.Fatalf("retained storage reconciliations = %d, want 1", sink.storageReconciliations)
+	}
+	if sink.expectedReconciliations != 1 {
+		t.Fatalf("expected Runtime reconciliations = %d, want 1", sink.expectedReconciliations)
+	}
+}
+
+func TestReconcileStopsBeforeCompletionWhenRetainedStorageCannotBeVerified(t *testing.T) {
+	sink := &fakeSink{storageErr: errors.New("workspace inventory unavailable")}
+	health := &fakeHealth{}
+	runner, err := New(&fakeSource{}, sink, health,
+		slog.New(slog.NewTextHandler(io.Discard, nil)), time.Millisecond, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runner.Reconcile(context.Background(), false); err == nil {
+		t.Fatal("failed retained storage reconciliation was accepted")
+	}
+	if health.healthy || len(sink.values) != 0 {
+		t.Fatalf("failed storage reconciliation advanced state: health=%t values=%+v",
+			health.healthy, sink.values)
+	}
+}
+
+func TestReconcileDoesNotDeclareWatchReadyBeforeHandshake(t *testing.T) {
+	health := &fakeHealth{}
+	runner, err := New(&fakeSource{}, &fakeSink{}, health,
+		slog.New(slog.NewTextHandler(io.Discard, nil)), time.Millisecond, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runner.Reconcile(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	if health.healthy {
+		t.Fatal("inventory reconciliation was mistaken for an active platform Watch")
+	}
+}
+
+func TestReconcileStopsWhenExpectedRuntimeInventoryCannotConverge(t *testing.T) {
+	sink := &fakeSink{expectedErr: errors.New("logical inventory unavailable")}
+	runner := newTestRunner(t, &fakeSource{}, sink)
+	if err := runner.Reconcile(context.Background(), false); err == nil {
+		t.Fatal("failed logical inventory reconciliation was accepted")
+	}
+	if len(sink.values) != 0 {
+		t.Fatalf("failed logical reconciliation emitted completion: %+v", sink.values)
 	}
 }
 
@@ -53,7 +104,7 @@ func TestGapReconciliationRecordsGapBeforeCurrentFact(t *testing.T) {
 }
 
 func TestHealthyEventBecomesUnverifiedWhenStatusCannotBeVerified(t *testing.T) {
-	sink := &fakeSink{inspectErr: errors.New("status mismatch")}
+	sink := &fakeSink{inspectErr: errors.Join(deployment.ErrStatusUnverified, errors.New("status mismatch"))}
 	runner := newTestRunner(t, &fakeSource{}, sink)
 	err := runner.record(context.Background(), deployment.Observation{
 		AgentID: "agent-1", Generation: 7, Kind: deployment.ObservationHealthy,
@@ -65,6 +116,18 @@ func TestHealthyEventBecomesUnverifiedWhenStatusCannotBeVerified(t *testing.T) {
 	if len(sink.values) != 1 || sink.values[0].Kind != deployment.ObservationStatusUnverified ||
 		sink.values[0].DiagnosticSummary != "Runtime status could not be verified" {
 		t.Fatalf("status failure was hidden: %+v", sink.values)
+	}
+}
+
+func TestHealthyEventDoesNotHidePlatformOrClaimFailureAsStatusUnverified(t *testing.T) {
+	sink := &fakeSink{inspectErr: errors.New("platform inspection failed")}
+	runner := newTestRunner(t, &fakeSource{}, sink)
+	err := runner.record(context.Background(), deployment.Observation{
+		AgentID: "agent-1", Generation: 7, Kind: deployment.ObservationHealthy,
+		SpecDigest: testSpecDigest, Source: "docker_event", ObservedAt: time.Now(),
+	})
+	if err == nil || len(sink.values) != 0 {
+		t.Fatalf("platform inspection failure was collapsed: err=%v values=%+v", err, sink.values)
 	}
 }
 
@@ -124,7 +187,7 @@ func TestReconcileDoesNotDeclareMalformedOrUnclaimedInventoryConverged(t *testin
 	}}}
 	sink := &fakeSink{validateErr: errors.New("generation claim mismatch")}
 	health := &fakeHealth{}
-	runner, err := New(source, sink, health, slog.New(slog.NewTextHandler(io.Discard, nil)), time.Millisecond)
+	runner, err := New(source, sink, health, slog.New(slog.NewTextHandler(io.Discard, nil)), time.Millisecond, time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,16 +199,16 @@ func TestReconcileDoesNotDeclareMalformedOrUnclaimedInventoryConverged(t *testin
 	}
 }
 
-func TestCoordinatedFollowerIsReadyWithoutRunningSecondMonitor(t *testing.T) {
+func TestCoordinatedFollowerIsReadyOnlyWhenLeaderWatchIsReady(t *testing.T) {
 	health := &fakeHealth{}
 	runner, err := New(&fakeSource{}, &fakeSink{}, health,
-		slog.New(slog.NewTextHandler(io.Discard, nil)), time.Millisecond)
+		slog.New(slog.NewTextHandler(io.Discard, nil)), time.Millisecond, time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	ready := false
-	err = runner.RunCoordinated(ctx, &fakeCoordinator{}, func() {
+	err = runner.RunCoordinated(ctx, &fakeCoordinator{monitorReady: true}, func() {
 		ready = true
 		cancel()
 	})
@@ -154,12 +217,28 @@ func TestCoordinatedFollowerIsReadyWithoutRunningSecondMonitor(t *testing.T) {
 	}
 }
 
+func TestCoordinatedFollowerDoesNotPublishReadinessForUnreadyLeader(t *testing.T) {
+	health := &fakeHealth{}
+	runner, err := New(&fakeSource{}, &fakeSink{}, health,
+		slog.New(slog.NewTextHandler(io.Discard, nil)), time.Millisecond, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
+	defer cancel()
+	ready := false
+	err = runner.RunCoordinated(ctx, &fakeCoordinator{}, func() { ready = true })
+	if err != nil || ready || health.healthy {
+		t.Fatalf("unready leader leaked readiness: ready=%t healthy=%t err=%v", ready, health.healthy, err)
+	}
+}
+
 func TestCoordinatedLeaderCancelsWatchAndReelectsAfterLeaseLoss(t *testing.T) {
 	lease := newFakeLeadership()
 	source := &blockingSource{started: make(chan struct{})}
 	health := &recordingHealth{}
 	runner, err := New(source, &fakeSink{}, health,
-		slog.New(slog.NewTextHandler(io.Discard, nil)), time.Millisecond)
+		slog.New(slog.NewTextHandler(io.Discard, nil)), time.Millisecond, time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,9 +278,9 @@ func TestCoordinatedLeaderCancelsWatchAndReelectsAfterLeaseLoss(t *testing.T) {
 	}
 }
 
-func newTestRunner(t *testing.T, source Source, sink Sink) *Runner {
+func newTestRunner(t *testing.T, source platform.ObservationSource, sink Sink) *Runner {
 	t.Helper()
-	runner, err := New(source, sink, &fakeHealth{}, slog.New(slog.NewTextHandler(io.Discard, nil)), time.Millisecond)
+	runner, err := New(source, sink, &fakeHealth{}, slog.New(slog.NewTextHandler(io.Discard, nil)), time.Millisecond, time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,8 +325,12 @@ type blockingSource struct {
 func (*blockingSource) List(context.Context) ([]deployment.Inspection, error) { return nil, nil }
 
 func (s *blockingSource) Watch(
-	ctx context.Context, _ time.Time, _ func(context.Context, deployment.Observation) error,
+	ctx context.Context, _ time.Time, ready func(context.Context) error,
+	_ func(context.Context, deployment.Observation) error,
 ) error {
+	if err := ready(ctx); err != nil {
+		return err
+	}
 	s.once.Do(func() { close(s.started) })
 	<-ctx.Done()
 	return ctx.Err()
@@ -256,14 +339,36 @@ func (s *blockingSource) Watch(
 func (s *fakeSource) List(context.Context) ([]deployment.Inspection, error) {
 	return s.inspections, nil
 }
-func (*fakeSource) Watch(context.Context, time.Time, func(context.Context, deployment.Observation) error) error {
+func (*fakeSource) Watch(
+	ctx context.Context, _ time.Time, ready func(context.Context) error,
+	_ func(context.Context, deployment.Observation) error,
+) error {
+	if err := ready(ctx); err != nil {
+		return err
+	}
 	return context.Canceled
 }
 
 type fakeSink struct {
-	values      []deployment.Observation
-	inspectErr  error
-	validateErr error
+	values                  []deployment.Observation
+	inspectErr              error
+	validateErr             error
+	storageErr              error
+	expectedErr             error
+	storageReconciliations  int
+	expectedReconciliations int
+}
+
+func (s *fakeSink) ReconcileRetainedStorage(context.Context) error {
+	s.storageReconciliations++
+	return s.storageErr
+}
+
+func (s *fakeSink) ReconcileExpectedRuntimes(
+	_ context.Context, _ []deployment.Inspection,
+) error {
+	s.expectedReconciliations++
+	return s.expectedErr
 }
 
 func (s *fakeSink) ValidateRuntimeInspection(context.Context, deployment.Inspection) error {
@@ -283,12 +388,16 @@ func (s *fakeSink) InspectPlatformRuntime(_ context.Context, key deployment.Key)
 	}, nil
 }
 
-type fakeCoordinator struct{}
+type fakeCoordinator struct{ monitorReady bool }
 
 func (*fakeCoordinator) TryAcquireObservationLeadership(
 	context.Context,
-) (Leadership, bool, error) {
+) (repository.Leadership, bool, error) {
 	return nil, false, nil
+}
+
+func (c *fakeCoordinator) ObservationMonitorReady(context.Context) (bool, error) {
+	return c.monitorReady, nil
 }
 
 type fakeLeadership struct {
@@ -306,6 +415,8 @@ func (l *fakeLeadership) Release(context.Context) error {
 	l.releases.Add(1)
 	return nil
 }
+func (l *fakeLeadership) MarkObservationReady(context.Context) error   { return nil }
+func (l *fakeLeadership) MarkObservationUnready(context.Context) error { return nil }
 func (l *fakeLeadership) lose(err error) {
 	l.err = err
 	l.once.Do(func() { close(l.done) })
@@ -318,11 +429,14 @@ type sequenceCoordinator struct {
 
 func (c *sequenceCoordinator) TryAcquireObservationLeadership(
 	context.Context,
-) (Leadership, bool, error) {
+) (repository.Leadership, bool, error) {
 	if c.calls.Add(1) == 1 {
 		return c.lease, true, nil
 	}
 	return nil, false, nil
+}
+func (c *sequenceCoordinator) ObservationMonitorReady(context.Context) (bool, error) {
+	return c.calls.Load() > 1, nil
 }
 func (s *fakeSink) RecordPlatformObservation(
 	_ context.Context, value deployment.Observation,

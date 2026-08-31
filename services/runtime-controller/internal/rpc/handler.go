@@ -15,17 +15,29 @@ import (
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 
 	"soft/antnest-platform/services/runtime-controller/internal/control"
 	"soft/antnest-platform/services/runtime-controller/internal/deployment"
+	"soft/antnest-platform/services/runtime-controller/internal/diagnostics"
 	"soft/antnest-platform/services/runtime-controller/internal/observation"
 )
 
 const maxRequestBytes = 1 << 20
 
+var ErrServerShutdown = errors.New("Runtime Controller server is shutting down")
+
 var (
 	rpcMeter          = otel.Meter("soft/antnest-platform/runtime-controller/rpc")
+	rpcTracer         = otel.Tracer("soft/antnest-platform/runtime-controller/rpc")
+	lifecycleCalls    = mustCounter(rpcMeter.Int64Counter("runtime.lifecycle.operations"))
+	lifecycleDuration = mustHistogram(rpcMeter.Float64Histogram(
+		"runtime.lifecycle.operation.duration", metric.WithUnit("s"),
+	))
+	watchConnections  = mustCounter(rpcMeter.Int64Counter("runtime.observation.watch.connections"))
+	watchActive       = mustUpDownCounter(rpcMeter.Int64UpDownCounter("runtime.observation.watch.active"))
 	watchTerminations = mustCounter(rpcMeter.Int64Counter("runtime.observation.watch.terminations"))
 )
 
@@ -39,24 +51,32 @@ type Service interface {
 	InspectRuntime(context.Context, string) (deployment.Environment, error)
 	GetOperation(context.Context, string) (deployment.Operation, error)
 	ListRuntimes(context.Context) ([]deployment.Environment, error)
-	ListObservations(context.Context, uint64, int) ([]deployment.Observation, error)
+	ListObservations(context.Context, uint64, int) (deployment.ObservationWindow, error)
 }
 
 type Handler struct {
-	service   Service
-	hub       *observation.Hub
-	heartbeat time.Duration
-	mux       *http.ServeMux
+	service        Service
+	hub            *observation.Hub
+	heartbeat      time.Duration
+	requestTimeout time.Duration
+	mux            *http.ServeMux
 }
 
-func NewHandler(service Service, hub *observation.Hub, heartbeat time.Duration) (*Handler, error) {
+func NewHandler(
+	service Service, hub *observation.Hub, heartbeat, requestTimeout time.Duration,
+) (*Handler, error) {
 	if service == nil || hub == nil {
 		return nil, fmt.Errorf("service and observation hub are required")
 	}
 	if heartbeat <= 0 {
 		return nil, fmt.Errorf("SSE heartbeat must be positive")
 	}
-	handler := &Handler{service: service, hub: hub, heartbeat: heartbeat}
+	if requestTimeout <= 0 {
+		return nil, fmt.Errorf("RPC request timeout must be positive")
+	}
+	handler := &Handler{
+		service: service, hub: hub, heartbeat: heartbeat, requestTimeout: requestTimeout,
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /status", handler.status)
 	mux.HandleFunc("GET /internal/runtimes", handler.listRuntimes)
@@ -84,42 +104,13 @@ func NewHandler(service Service, hub *observation.Hub, heartbeat time.Duration) 
 }
 
 func (h *Handler) ServeHTTP(response http.ResponseWriter, request *http.Request) {
-	h.mux.ServeHTTP(response, request)
-}
-
-type initializeRequest struct {
-	Configuration deployment.Configuration `json:"configuration"`
-}
-
-type revisionRequest struct {
-	ExpectedRevision deployment.RuntimeRevision `json:"expected_revision"`
-}
-
-type revisionConfigurationRequest struct {
-	ExpectedRevision deployment.RuntimeRevision `json:"expected_revision"`
-	Configuration    deployment.Configuration   `json:"configuration"`
-}
-
-type readinessResponse struct {
-	Status string `json:"status"`
-	Live   bool   `json:"live"`
-	Ready  bool   `json:"ready"`
-	control.Readiness
-}
-
-type runtimesResponse struct {
-	Runtimes []deployment.Environment `json:"runtimes"`
-}
-
-type observationsResponse struct {
-	Observations []deployment.Observation `json:"observations"`
-	NextSequence uint64                   `json:"next_sequence"`
-}
-
-type errorResponse struct {
-	Code      string `json:"code"`
-	Message   string `json:"message"`
-	Retryable bool   `json:"retryable"`
+	if request.URL.Path == "/internal/runtime-observations/watch" {
+		h.mux.ServeHTTP(response, request)
+		return
+	}
+	ctx, cancel := context.WithTimeout(request.Context(), h.requestTimeout)
+	defer cancel()
+	h.mux.ServeHTTP(response, request.WithContext(ctx))
 }
 
 func (h *Handler) status(response http.ResponseWriter, request *http.Request) {
@@ -130,9 +121,7 @@ func (h *Handler) status(response http.ResponseWriter, request *http.Request) {
 		label = "not_ready"
 		code = http.StatusServiceUnavailable
 	}
-	writeJSON(response, code, readinessResponse{
-		Status: label, Live: true, Ready: status.Ready(), Readiness: status,
-	})
+	writeJSON(response, code, readinessFromDomain(label, status))
 }
 
 func (h *Handler) listRuntimes(response http.ResponseWriter, request *http.Request) {
@@ -144,7 +133,7 @@ func (h *Handler) listRuntimes(response http.ResponseWriter, request *http.Reque
 	if values == nil {
 		values = []deployment.Environment{}
 	}
-	writeJSON(response, http.StatusOK, runtimesResponse{Runtimes: values})
+	writeJSON(response, http.StatusOK, runtimesResponse{Runtimes: runtimesFromDomain(values)})
 }
 
 func (h *Handler) initializeRuntime(response http.ResponseWriter, request *http.Request) {
@@ -157,10 +146,11 @@ func (h *Handler) initializeRuntime(response http.ResponseWriter, request *http.
 		writeError(response, err)
 		return
 	}
+	call := beginLifecycle(request, deployment.OperationInitializeRuntime, requestID)
 	operation, err := h.service.InitializeRuntime(
-		request.Context(), requestID, request.PathValue("agent_id"), input.Configuration,
+		call.context, requestID, request.PathValue("agent_id"), input.Configuration.domain(),
 	)
-	writeOperation(response, request.Context(), operation, err)
+	writeOperation(response, call, operation, err)
 }
 
 func (h *Handler) inspectRuntime(response http.ResponseWriter, request *http.Request) {
@@ -175,7 +165,7 @@ func (h *Handler) inspectRuntime(response http.ResponseWriter, request *http.Req
 		writeError(response, err)
 		return
 	}
-	writeJSON(response, http.StatusOK, inspection)
+	writeJSON(response, http.StatusOK, runtimeInspectionFromDomain(inspection))
 }
 
 func (h *Handler) updateRuntime(response http.ResponseWriter, request *http.Request) {
@@ -188,15 +178,16 @@ func (h *Handler) updateRuntime(response http.ResponseWriter, request *http.Requ
 		writeError(response, err)
 		return
 	}
+	call := beginLifecycle(request, deployment.OperationUpdateRuntime, requestID)
 	operation, err := h.service.UpdateRuntime(
-		request.Context(), requestID, request.PathValue("agent_id"),
-		input.ExpectedRevision, input.Configuration,
+		call.context, requestID, request.PathValue("agent_id"),
+		input.ExpectedRevision, input.Configuration.domain(),
 	)
-	writeOperation(response, request.Context(), operation, err)
+	writeOperation(response, call, operation, err)
 }
 
 func (h *Handler) disableRuntime(response http.ResponseWriter, request *http.Request) {
-	h.revisionOnly(response, request, h.service.DisableRuntime)
+	h.revisionOnly(response, request, deployment.OperationDisableRuntime, h.service.DisableRuntime)
 }
 
 func (h *Handler) enableRuntime(response http.ResponseWriter, request *http.Request) {
@@ -209,11 +200,12 @@ func (h *Handler) enableRuntime(response http.ResponseWriter, request *http.Requ
 		writeError(response, err)
 		return
 	}
+	call := beginLifecycle(request, deployment.OperationEnableRuntime, requestID)
 	operation, err := h.service.EnableRuntime(
-		request.Context(), requestID, request.PathValue("agent_id"),
-		input.ExpectedRevision, input.Configuration,
+		call.context, requestID, request.PathValue("agent_id"),
+		input.ExpectedRevision, input.Configuration.domain(),
 	)
-	writeOperation(response, request.Context(), operation, err)
+	writeOperation(response, call, operation, err)
 }
 
 func (h *Handler) deleteRuntime(response http.ResponseWriter, request *http.Request) {
@@ -226,15 +218,17 @@ func (h *Handler) deleteRuntime(response http.ResponseWriter, request *http.Requ
 		writeError(response, err)
 		return
 	}
+	call := beginLifecycle(request, deployment.OperationDeleteRuntime, requestID)
 	operation, err := h.service.DeleteRuntime(
-		request.Context(), requestID, request.PathValue("agent_id"), input.ExpectedRevision,
+		call.context, requestID, request.PathValue("agent_id"), input.ExpectedRevision,
 	)
-	writeOperation(response, request.Context(), operation, err)
+	writeOperation(response, call, operation, err)
 }
 
 func (h *Handler) revisionOnly(
 	response http.ResponseWriter,
 	request *http.Request,
+	kind deployment.OperationKind,
 	execute func(context.Context, string, string, deployment.RuntimeRevision) (deployment.Operation, error),
 ) {
 	requestID, ok := requireIdempotencyKey(response, request)
@@ -246,10 +240,11 @@ func (h *Handler) revisionOnly(
 		writeError(response, err)
 		return
 	}
+	call := beginLifecycle(request, kind, requestID)
 	operation, err := execute(
-		request.Context(), requestID, request.PathValue("agent_id"), input.ExpectedRevision,
+		call.context, requestID, request.PathValue("agent_id"), input.ExpectedRevision,
 	)
-	writeOperation(response, request.Context(), operation, err)
+	writeOperation(response, call, operation, err)
 }
 
 func (h *Handler) getOperation(response http.ResponseWriter, request *http.Request) {
@@ -264,7 +259,7 @@ func (h *Handler) getOperation(response http.ResponseWriter, request *http.Reque
 		writeError(response, err)
 		return
 	}
-	writeJSON(response, http.StatusOK, operation)
+	writeJSON(response, http.StatusOK, operationFromDomain(operation))
 }
 
 func (h *Handler) listObservations(response http.ResponseWriter, request *http.Request) {
@@ -273,22 +268,33 @@ func (h *Handler) listObservations(response http.ResponseWriter, request *http.R
 		writeError(response, err)
 		return
 	}
-	values, err := h.service.ListObservations(request.Context(), after, limit)
+	window, err := h.service.ListObservations(request.Context(), after, limit)
 	if err != nil {
 		writeError(response, err)
 		return
 	}
 	writeJSON(response, http.StatusOK, observationsResponse{
-		Observations: values, NextSequence: nextSequence(after, values),
+		Observations:   observationsFromDomain(window.Observations),
+		OldestSequence: window.OldestSequence, LatestSequence: window.LatestSequence,
+		NextSequence: nextSequence(after, window.Observations),
 	})
 }
 
 func (h *Handler) watchObservations(response http.ResponseWriter, request *http.Request) {
 	termination := "client_closed"
 	ctx := request.Context()
+	streamStarted := false
+	started := time.Now()
 	defer func() {
+		metricCtx := context.WithoutCancel(ctx)
 		attributes := []attribute.KeyValue{attribute.String("antnest.watch.termination", termination)}
-		watchTerminations.Add(ctx, 1, metric.WithAttributes(attributes...))
+		watchTerminations.Add(metricCtx, 1, metric.WithAttributes(attributes...))
+		if streamStarted {
+			watchActive.Add(metricCtx, -1)
+			slog.InfoContext(metricCtx, "Runtime observation Watch closed",
+				"component", "observation_watch", "result", termination,
+				"duration", time.Since(started))
+		}
 	}()
 	after, _, err := observationCursor(request)
 	if err != nil {
@@ -304,6 +310,11 @@ func (h *Handler) watchObservations(response http.ResponseWriter, request *http.
 		writeError(response, err)
 		return
 	}
+	streamStarted = true
+	watchConnections.Add(ctx, 1)
+	watchActive.Add(ctx, 1)
+	slog.InfoContext(ctx, "Runtime observation Watch started",
+		"component", "observation_watch", "result", "connected")
 	response.Header().Set("Content-Type", "text/event-stream")
 	response.Header().Set("Cache-Control", "no-cache")
 	response.Header().Set("X-Accel-Buffering", "no")
@@ -315,7 +326,7 @@ func (h *Handler) watchObservations(response http.ResponseWriter, request *http.
 	}
 	ticker := time.NewTicker(h.heartbeat)
 	defer ticker.Stop()
-	cursor, err := writeObservationValues(response, controller, after, initial)
+	cursor, err := writeObservationValues(response, controller, after, initial.Observations)
 	if err != nil {
 		termination = "delivery_error"
 		return
@@ -328,8 +339,8 @@ func (h *Handler) watchObservations(response http.ResponseWriter, request *http.
 			return
 		}
 		select {
-		case <-request.Context().Done():
-			termination = "client_closed"
+		case <-ctx.Done():
+			termination = watchTermination(ctx)
 			return
 		case <-notifications:
 		case <-ticker.C:
@@ -364,17 +375,17 @@ func (h *Handler) writeAvailable(
 	cursor uint64,
 ) (uint64, error) {
 	for {
-		values, err := h.service.ListObservations(request.Context(), cursor, 500)
+		window, err := h.service.ListObservations(request.Context(), cursor, 500)
 		if err != nil {
 			return cursor, err
 		}
 		previous := cursor
-		cursor, err = writeObservationValues(response, controller, cursor, values)
+		cursor, err = writeObservationValues(response, controller, cursor, window.Observations)
 		if err != nil {
 			return cursor, err
 		}
 		advanced := cursor != previous
-		if len(values) < 500 || !advanced {
+		if len(window.Observations) < 500 || !advanced {
 			return cursor, nil
 		}
 	}
@@ -391,7 +402,7 @@ func writeObservationValues(
 		if value.Sequence <= cursor {
 			continue
 		}
-		encoded, err := json.Marshal(value)
+		encoded, err := json.Marshal(observationFromDomain(value))
 		if err != nil {
 			return cursor, err
 		}
@@ -468,15 +479,20 @@ func decodeJSON(response http.ResponseWriter, request *http.Request, target any)
 }
 
 func writeOperation(
-	response http.ResponseWriter, ctx context.Context, operation deployment.Operation, err error,
+	response http.ResponseWriter,
+	call lifecycleCall,
+	operation deployment.Operation,
+	err error,
 ) {
+	defer finishLifecycle(call, operation, err)
 	result := string(operation.State)
 	if err != nil {
 		result = "error"
 	}
 	attributes := []any{
-		"operation_id", operation.RequestID, "operation_kind", operation.Kind,
-		"agent_id", operation.AgentID, "runtime_revision", operation.RuntimeRevision,
+		"operation_id", valueOr(operation.RequestID, call.requestID), "operation_kind", call.kind,
+		"agent_id", valueOr(operation.AgentID, call.agentID),
+		"target_revision", operation.RuntimeRevision,
 		"result", result, "error_code", operation.ErrorCode,
 	}
 	if operation.Inspection != nil {
@@ -484,16 +500,16 @@ func writeOperation(
 			"runtime_execution_id", operation.Inspection.RuntimeExecutionID,
 		)
 	}
-	slog.InfoContext(ctx, "Runtime deployment operation finished", attributes...)
+	slog.InfoContext(call.context, "Runtime deployment operation finished", attributes...)
 	if err != nil {
 		writeError(response, err)
 		return
 	}
 	switch operation.State {
 	case deployment.OperationCompleted:
-		writeJSON(response, http.StatusOK, operation)
+		writeJSON(response, http.StatusOK, operationFromDomain(operation))
 	case deployment.OperationRunning, deployment.OperationUnknown:
-		writeJSON(response, http.StatusAccepted, operation)
+		writeJSON(response, http.StatusAccepted, operationFromDomain(operation))
 	case deployment.OperationFailed:
 		writeOperationError(response, operation)
 	default:
@@ -501,7 +517,112 @@ func writeOperation(
 	}
 }
 
+type lifecycleCall struct {
+	context   context.Context
+	span      trace.Span
+	started   time.Time
+	kind      deployment.OperationKind
+	requestID string
+	agentID   string
+}
+
+func beginLifecycle(
+	request *http.Request, kind deployment.OperationKind, requestID string,
+) lifecycleCall {
+	ctx, span := rpcTracer.Start(request.Context(), "runtime.lifecycle."+string(kind))
+	agentID := request.PathValue("agent_id")
+	span.SetAttributes(
+		attribute.String("antnest.agent.id", agentID),
+		attribute.String("antnest.operation.id", requestID),
+		attribute.String("antnest.operation.kind", string(kind)),
+	)
+	return lifecycleCall{
+		context: ctx, span: span, started: time.Now(), kind: kind,
+		requestID: requestID, agentID: agentID,
+	}
+}
+
+func finishLifecycle(
+	call lifecycleCall,
+	operation deployment.Operation,
+	err error,
+) {
+	result := string(operation.State)
+	errorClass := operation.ErrorCode
+	if err != nil {
+		result = "error"
+		errorClass = lifecycleErrorClass(err)
+		call.span.RecordError(diagnostics.Error(err))
+		call.span.SetStatus(codes.Error, errorClass)
+	} else if operation.State == deployment.OperationFailed || operation.State == deployment.OperationUnknown {
+		call.span.SetStatus(codes.Error, errorClass)
+	}
+	if result == "" {
+		result = "error"
+	}
+	if errorClass == "" {
+		errorClass = "none"
+	}
+	spanAttributes := []attribute.KeyValue{
+		attribute.String("antnest.operation.kind", string(call.kind)),
+		attribute.String("antnest.result", result),
+		attribute.String("antnest.error.class", errorClass),
+	}
+	if operation.RequestID != "" {
+		spanAttributes = append(spanAttributes, attribute.String("antnest.operation.id", operation.RequestID))
+	}
+	if operation.AgentID != "" {
+		spanAttributes = append(spanAttributes, attribute.String("antnest.agent.id", operation.AgentID))
+	}
+	if operation.RuntimeRevision != "" {
+		spanAttributes = append(spanAttributes,
+			attribute.String("antnest.runtime.target_revision", string(operation.RuntimeRevision)))
+	}
+	call.span.SetAttributes(spanAttributes...)
+	call.span.End()
+	metricAttributes := []attribute.KeyValue{
+		attribute.String("antnest.operation.kind", string(call.kind)),
+		attribute.String("antnest.result", result),
+		attribute.String("antnest.error.class", errorClass),
+	}
+	metricCtx := context.WithoutCancel(call.context)
+	lifecycleCalls.Add(metricCtx, 1, metric.WithAttributes(metricAttributes...))
+	lifecycleDuration.Record(metricCtx, time.Since(call.started).Seconds(), metric.WithAttributes(metricAttributes...))
+}
+
+func valueOr(value, fallback string) string {
+	if value != "" {
+		return value
+	}
+	return fallback
+}
+
+func lifecycleErrorClass(err error) string {
+	return classifyError(err).response.Code
+}
+
+func watchTermination(ctx context.Context) string {
+	if errors.Is(context.Cause(ctx), ErrServerShutdown) {
+		return "server_shutdown"
+	}
+	return "client_closed"
+}
+
 func mustCounter(instrument metric.Int64Counter, err error) metric.Int64Counter {
+	if err != nil {
+		panic(err)
+	}
+	return instrument
+}
+
+func mustHistogram(instrument metric.Float64Histogram, err error) metric.Float64Histogram {
+	if err != nil {
+		panic(err)
+	}
+	return instrument
+}
+
+func mustUpDownCounter(instrument metric.Int64UpDownCounter, err error) metric.Int64UpDownCounter {
 	if err != nil {
 		panic(err)
 	}
@@ -537,42 +658,68 @@ func writeOperationError(response http.ResponseWriter, operation deployment.Oper
 	writeJSON(response, status, errorResponse{Code: code, Message: message, Retryable: retryable})
 }
 
-func writeError(response http.ResponseWriter, err error) {
-	result := errorResponse{Code: "internal_error", Message: "internal service error", Retryable: true}
-	status := http.StatusInternalServerError
+type errorDescriptor struct {
+	status   int
+	response errorResponse
+}
+
+func classifyError(err error) errorDescriptor {
+	result := errorDescriptor{
+		status: http.StatusInternalServerError,
+		response: errorResponse{
+			Code: "internal_error", Message: "internal service error", Retryable: true,
+		},
+	}
+	var cursorExpired *control.ObservationCursorExpiredError
+	if errors.As(err, &cursorExpired) {
+		reset := cursorExpired.ResetSequence
+		return errorDescriptor{
+			status: http.StatusGone,
+			response: errorResponse{
+				Code:      "observation_cursor_expired",
+				Message:   "observation cursor is outside the retained journal",
+				Retryable: false, ResetSequence: &reset,
+			},
+		}
+	}
 	switch {
 	case errors.Is(err, control.ErrInvalidRequest), errors.Is(err, deployment.ErrInvalid):
-		status = http.StatusBadRequest
-		result = errorResponse{Code: "invalid_request", Message: "request is invalid", Retryable: false}
+		result.status = http.StatusBadRequest
+		result.response = errorResponse{Code: "invalid_request", Message: "request is invalid", Retryable: false}
 	case errors.Is(err, control.ErrRequestConflict):
-		status = http.StatusConflict
-		result = errorResponse{Code: "request_id_conflict", Message: "request ID was already used for different input", Retryable: false}
+		result.status = http.StatusConflict
+		result.response = errorResponse{Code: "request_id_conflict", Message: "request ID was already used for different input", Retryable: false}
 	case errors.Is(err, control.ErrAgentMutationInProgress):
-		status = http.StatusConflict
-		result = errorResponse{Code: "agent_mutation_in_progress", Message: "another Agent mutation is still in progress", Retryable: true}
+		result.status = http.StatusConflict
+		result.response = errorResponse{Code: "agent_mutation_in_progress", Message: "another Agent mutation is still in progress", Retryable: true}
 	case errors.Is(err, control.ErrMutationLockLost):
-		status = http.StatusServiceUnavailable
-		result = errorResponse{Code: "mutation_lock_lost", Message: "Agent mutation coordination was interrupted", Retryable: true}
+		result.status = http.StatusServiceUnavailable
+		result.response = errorResponse{Code: "mutation_lock_lost", Message: "Agent mutation coordination was interrupted", Retryable: true}
 	case errors.Is(err, control.ErrLifecycleConflict):
-		status = http.StatusConflict
-		result = errorResponse{Code: "runtime_lifecycle_conflict", Message: "operation is not valid for the current Runtime lifecycle state", Retryable: false}
+		result.status = http.StatusConflict
+		result.response = errorResponse{Code: "runtime_lifecycle_conflict", Message: "operation is not valid for the current Runtime lifecycle state", Retryable: false}
 	case errors.Is(err, control.ErrRevisionConflict):
-		status = http.StatusConflict
-		result = errorResponse{Code: "runtime_revision_conflict", Message: "Runtime revision is stale", Retryable: false}
+		result.status = http.StatusConflict
+		result.response = errorResponse{Code: "runtime_revision_conflict", Message: "Runtime revision is stale", Retryable: false}
 	case errors.Is(err, control.ErrDrift):
-		status = http.StatusConflict
-		result = errorResponse{Code: "runtime_drift", Message: "Runtime platform state differs from the controller record", Retryable: false}
+		result.status = http.StatusConflict
+		result.response = errorResponse{Code: "runtime_drift", Message: "Runtime platform state differs from the controller record", Retryable: false}
 	case errors.Is(err, deployment.ErrIdentityConflict):
-		status = http.StatusConflict
-		result = errorResponse{Code: "runtime_drift", Message: "managed Runtime has different immutable identity", Retryable: false}
+		result.status = http.StatusConflict
+		result.response = errorResponse{Code: "runtime_drift", Message: "managed Runtime has different immutable identity", Retryable: false}
 	case errors.Is(err, control.ErrNotFound):
-		status = http.StatusNotFound
-		result = errorResponse{Code: "runtime_not_found", Message: "Runtime environment was not found", Retryable: false}
+		result.status = http.StatusNotFound
+		result.response = errorResponse{Code: "runtime_not_found", Message: "Runtime environment was not found", Retryable: false}
 	case errors.Is(err, context.DeadlineExceeded):
-		status = http.StatusGatewayTimeout
-		result = errorResponse{Code: "deadline_exceeded", Message: "operation deadline exceeded", Retryable: true}
+		result.status = http.StatusGatewayTimeout
+		result.response = errorResponse{Code: "deadline_exceeded", Message: "operation deadline exceeded", Retryable: true}
 	}
-	writeJSON(response, status, result)
+	return result
+}
+
+func writeError(response http.ResponseWriter, err error) {
+	descriptor := classifyError(err)
+	writeJSON(response, descriptor.status, descriptor.response)
 }
 
 func writeJSON(response http.ResponseWriter, status int, value any) {

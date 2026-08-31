@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"soft/antnest-platform/services/runtime-controller/internal/deployment"
+	repositoryport "soft/antnest-platform/services/runtime-controller/internal/repository"
 )
 
 func TestRuntimeLifecycleCommandsHidePhysicalResourceSteps(t *testing.T) {
@@ -226,6 +227,162 @@ func TestTerminalLifecycleRequestReplayDoesNotRepeatPlatformMutation(t *testing.
 	}
 }
 
+func TestObservationCursorExpiryRequiresProjectionReset(t *testing.T) {
+	t.Parallel()
+	repository := newLifecycleRepository()
+	repository.observations = []deployment.Observation{
+		{Sequence: 10, Kind: deployment.ObservationReconciled},
+		{Sequence: 11, Kind: deployment.ObservationReconciled},
+	}
+	service := newLifecycleService(t, repository, newLifecyclePlatform())
+
+	_, err := service.ListObservations(context.Background(), 4, 10)
+	var expired *ObservationCursorExpiredError
+	if !errors.As(err, &expired) || expired.ResetSequence != 11 {
+		t.Fatalf("expired cursor: error=%v reset=%d", err, expiredReset(expired))
+	}
+	window, err := service.ListObservations(context.Background(), 0, 10)
+	if err != nil || window.OldestSequence != 10 || window.LatestSequence != 11 ||
+		len(window.Observations) != 2 {
+		t.Fatalf("bootstrap observation window: window=%+v err=%v", window, err)
+	}
+}
+
+func TestReconcileRetainedStorageRecordsDisabledWorkspaceDrift(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name   string
+		code   string
+		kind   deployment.ObservationKind
+		detail string
+	}{
+		{
+			name: "missing", code: "storage_not_found",
+			kind:   deployment.ObservationStorageMissing,
+			detail: "Retained Agent workspace is missing",
+		},
+		{
+			name: "foreign ownership", code: "storage_ownership_conflict",
+			kind:   deployment.ObservationStorageDrift,
+			detail: "Retained Agent workspace has conflicting ownership",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			repository := newLifecycleRepository()
+			repository.environments["agent-1"] = disabledLifecycleEnvironment("agent-1")
+			repository.claims[deployment.Key{AgentID: "agent-1", Generation: 7}] = repositoryport.GenerationClaim{
+				RuntimeRevision: lifecycleRevision, SpecDigest: lifecycleDigest,
+			}
+			platform := newLifecyclePlatform()
+			platform.verifyStorageOutcome = deployment.EffectOutcome{
+				State: deployment.EffectNotStarted, Code: test.code,
+			}
+			service := newLifecycleService(t, repository, platform)
+
+			if err := service.ReconcileRetainedStorage(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if len(repository.observations) != 1 || repository.observations[0].Kind != test.kind ||
+				repository.observations[0].DiagnosticSummary != test.detail ||
+				repository.observations[0].RuntimeRevision != lifecycleRevision ||
+				repository.observations[0].Generation != 0 ||
+				repository.observations[0].SpecDigest != "" {
+				t.Fatalf("workspace observation = %+v", repository.observations)
+			}
+		})
+	}
+}
+
+func TestDisabledRuntimeInspectionSurfacesWorkspaceDriftWithoutBreakingLogicalList(t *testing.T) {
+	t.Parallel()
+	repository := newLifecycleRepository()
+	repository.environments["agent-1"] = disabledLifecycleEnvironment("agent-1")
+	platform := newLifecyclePlatform()
+	platform.verifyStorageOutcome = deployment.EffectOutcome{
+		State: deployment.EffectNotStarted, Code: "storage_not_found",
+	}
+	service := newLifecycleService(t, repository, platform)
+
+	values, err := service.ListRuntimes(context.Background())
+	if err != nil || len(values) != 1 || values[0].LifecycleState != deployment.LifecycleDisabled ||
+		values[0].Health != deployment.HealthUnhealthy {
+		t.Fatalf("disabled Runtime list = %+v, err=%v", values, err)
+	}
+}
+
+func TestReconcileExpectedRuntimeInventoryRecordsMissingReadyCompute(t *testing.T) {
+	t.Parallel()
+	repository := newLifecycleRepository()
+	repository.environments["missing-agent"] = deployment.Environment{
+		AgentID: "missing-agent", RuntimeRevision: lifecycleRevision,
+		LifecycleState: deployment.LifecycleReady, Generation: 7, SpecDigest: lifecycleDigest,
+		ObservedAt: lifecycleNow,
+	}
+	repository.claims[deployment.Key{AgentID: "missing-agent", Generation: 7}] = repositoryport.GenerationClaim{
+		RuntimeRevision: lifecycleRevision, SpecDigest: lifecycleDigest,
+	}
+	repository.environments["present-agent"] = deployment.Environment{
+		AgentID: "present-agent", RuntimeRevision: lifecycleRevision,
+		LifecycleState: deployment.LifecycleReady, Generation: 8, SpecDigest: lifecycleDigest,
+		ObservedAt: lifecycleNow,
+	}
+	service := newLifecycleService(t, repository, newLifecyclePlatform())
+
+	err := service.ReconcileExpectedRuntimes(context.Background(), []deployment.Inspection{{
+		AgentID: "present-agent", Generation: 8, SpecDigest: lifecycleDigest,
+		PlatformPhase: deployment.PhaseRunning, Health: deployment.HealthHealthy,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(repository.observations) != 1 {
+		t.Fatalf("missing compute observations = %+v", repository.observations)
+	}
+	observation := repository.observations[0]
+	if observation.Kind != deployment.ObservationRuntimeMissing || observation.AgentID != "missing-agent" ||
+		observation.Generation != 7 || observation.RuntimeRevision != lifecycleRevision {
+		t.Fatalf("missing compute observation = %+v", observation)
+	}
+}
+
+func TestReconcileRetainedStorageSkipsReadyAndFailsOnUnknownPlatformOutcome(t *testing.T) {
+	t.Parallel()
+	repository := newLifecycleRepository()
+	repository.environments["ready-agent"] = deployment.Environment{
+		AgentID: "ready-agent", RuntimeRevision: lifecycleRevision,
+		LifecycleState: deployment.LifecycleReady, Generation: 7, SpecDigest: lifecycleDigest,
+	}
+	repository.environments["disabled-agent"] = disabledLifecycleEnvironment("disabled-agent")
+	platform := newLifecyclePlatform()
+	platform.verifyStorageOutcome = deployment.EffectOutcome{
+		State: deployment.EffectUnknown, Code: "platform_unavailable",
+	}
+	service := newLifecycleService(t, repository, platform)
+
+	if err := service.ReconcileRetainedStorage(context.Background()); err == nil {
+		t.Fatal("inconclusive workspace verification was accepted")
+	}
+	if platform.verifyStorageCalls != 1 || len(repository.observations) != 0 {
+		t.Fatalf("unexpected reconciliation side effects: verify=%d observations=%+v",
+			platform.verifyStorageCalls, repository.observations)
+	}
+}
+
+func disabledLifecycleEnvironment(agentID string) deployment.Environment {
+	return deployment.Environment{
+		AgentID: agentID, RuntimeRevision: lifecycleRevision,
+		LifecycleState: deployment.LifecycleDisabled, Health: deployment.HealthAbsent,
+		Generation: 7, SpecDigest: lifecycleDigest, ObservedAt: lifecycleNow,
+	}
+}
+
+func expiredReset(value *ObservationCursorExpiredError) uint64 {
+	if value == nil {
+		return 0
+	}
+	return value.ResetSequence
+}
+
 func newLifecycleService(t *testing.T, repository *lifecycleRepository, platform *lifecyclePlatform) *Service {
 	t.Helper()
 	service, err := NewService(
@@ -251,6 +408,8 @@ func requireLifecycleEnvironment(
 
 const lifecycleDigest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
+const lifecycleRevision = deployment.RuntimeRevision("rtv_0123456789abcdef0123456789abcdef")
+
 var lifecycleNow = time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
 
 func lifecycleConfiguration() deployment.Configuration {
@@ -270,7 +429,7 @@ type lifecycleRepository struct {
 	mu           sync.Mutex
 	operations   map[string]deployment.Operation
 	environments map[string]deployment.Environment
-	claims       map[deployment.Key]GenerationClaim
+	claims       map[deployment.Key]repositoryport.GenerationClaim
 	observations []deployment.Observation
 }
 
@@ -278,7 +437,7 @@ func newLifecycleRepository() *lifecycleRepository {
 	return &lifecycleRepository{
 		operations:   make(map[string]deployment.Operation),
 		environments: make(map[string]deployment.Environment),
-		claims:       make(map[deployment.Key]GenerationClaim),
+		claims:       make(map[deployment.Key]repositoryport.GenerationClaim),
 	}
 }
 
@@ -314,10 +473,7 @@ func (r *lifecycleRepository) BeginTransition(
 			return deployment.Operation{}, false, ErrAgentMutationInProgress
 		}
 	}
-	transition, err := candidate.TransitionState()
-	if err != nil {
-		return deployment.Operation{}, false, err
-	}
+	transition := candidate.Transition
 	r.operations[candidate.RequestID] = candidate
 	r.environments[candidate.AgentID] = deployment.Environment{
 		AgentID: candidate.AgentID, RuntimeRevision: candidate.RuntimeRevision,
@@ -326,7 +482,7 @@ func (r *lifecycleRepository) BeginTransition(
 		OperationID: candidate.RequestID, ObservedAt: lifecycleNow,
 	}
 	if candidate.CreatesCompute() {
-		r.claims[candidate.RuntimeKey()] = GenerationClaim{
+		r.claims[candidate.RuntimeKey()] = repositoryport.GenerationClaim{
 			RuntimeRevision: candidate.RuntimeRevision, SpecDigest: candidate.SpecDigest,
 		}
 	}
@@ -405,12 +561,14 @@ func (r *lifecycleRepository) ListEnvironments(context.Context) ([]deployment.En
 	return result, nil
 }
 
-func (r *lifecycleRepository) GenerationClaim(_ context.Context, key deployment.Key) (GenerationClaim, error) {
+func (r *lifecycleRepository) GenerationClaim(
+	_ context.Context, key deployment.Key,
+) (repositoryport.GenerationClaim, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	value, ok := r.claims[key]
 	if !ok {
-		return GenerationClaim{}, ErrNotFound
+		return repositoryport.GenerationClaim{}, ErrNotFound
 	}
 	return value, nil
 }
@@ -427,40 +585,49 @@ func (r *lifecycleRepository) AppendObservation(
 
 func (r *lifecycleRepository) ListObservations(
 	_ context.Context, after uint64, limit int,
-) ([]deployment.Observation, error) {
+) (deployment.ObservationWindow, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	result := make([]deployment.Observation, 0, limit)
+	window := deployment.ObservationWindow{Observations: make([]deployment.Observation, 0, limit)}
+	if len(r.observations) > 0 {
+		window.OldestSequence = r.observations[0].Sequence
+		window.LatestSequence = r.observations[len(r.observations)-1].Sequence
+	}
 	for _, value := range r.observations {
-		if value.Sequence > after && len(result) < limit {
-			result = append(result, value)
+		if value.Sequence > after && len(window.Observations) < limit {
+			window.Observations = append(window.Observations, value)
 		}
 	}
-	return result, nil
+	return window, nil
 }
 
 type lifecyclePlatform struct {
-	ensureStorageCalls int
-	verifyStorageCalls int
-	createCalls        int
-	deleteCalls        int
-	deleteStorageCalls int
-	createOutcome      deployment.EffectOutcome
-	deleteOutcome      deployment.EffectOutcome
-	containers         map[string]deployment.Inspection
+	ensureStorageCalls   int
+	verifyStorageCalls   int
+	createCalls          int
+	deleteCalls          int
+	deleteStorageCalls   int
+	createOutcome        deployment.EffectOutcome
+	deleteOutcome        deployment.EffectOutcome
+	verifyStorageOutcome deployment.EffectOutcome
+	containers           map[string]deployment.Inspection
 }
 
 func newLifecyclePlatform() *lifecyclePlatform {
 	return &lifecyclePlatform{
-		createOutcome: deployment.EffectOutcome{State: deployment.EffectCompleted},
-		deleteOutcome: deployment.EffectOutcome{State: deployment.EffectCompleted},
-		containers:    make(map[string]deployment.Inspection),
+		createOutcome:        deployment.EffectOutcome{State: deployment.EffectCompleted},
+		deleteOutcome:        deployment.EffectOutcome{State: deployment.EffectCompleted},
+		verifyStorageOutcome: deployment.EffectOutcome{State: deployment.EffectCompleted},
+		containers:           make(map[string]deployment.Inspection),
 	}
 }
 
 func (*lifecyclePlatform) Ready(context.Context) error { return nil }
 func (_ *lifecyclePlatform) DeploymentDigest(value deployment.Deployment) (string, error) {
-	return value.Digest()
+	return deployment.DigestValue(struct {
+		MappingRevision uint32
+		Deployment      deployment.Deployment
+	}{MappingRevision: 1, Deployment: value})
 }
 func (p *lifecyclePlatform) EnsureStorage(context.Context, string) deployment.EffectOutcome {
 	p.ensureStorageCalls++
@@ -468,7 +635,7 @@ func (p *lifecyclePlatform) EnsureStorage(context.Context, string) deployment.Ef
 }
 func (p *lifecyclePlatform) VerifyStorage(context.Context, string) deployment.EffectOutcome {
 	p.verifyStorageCalls++
-	return deployment.EffectOutcome{State: deployment.EffectCompleted}
+	return p.verifyStorageOutcome
 }
 func (p *lifecyclePlatform) DeleteStorage(context.Context, string) deployment.EffectOutcome {
 	p.deleteStorageCalls++

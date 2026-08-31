@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://antnest.local/contracts/runtime-controller/control-api.schema.json",
+  "$id": "https://antnest.local/runtime-controller/api/control-api.schema.json",
   "title": "Antnest Runtime Controller HTTP Messages",
   "$defs": {
     "agent_id": {"type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"},
@@ -67,12 +67,12 @@
     "operation": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["request_id", "kind", "agent_id", "runtime_revision", "state", "effect", "created_at", "updated_at"],
+      "required": ["request_id", "kind", "agent_id", "target_revision", "state", "effect", "created_at", "updated_at"],
       "properties": {
         "request_id": {"$ref": "#/$defs/request_id"},
         "kind": {"enum": ["initialize_runtime", "update_runtime", "disable_runtime", "enable_runtime", "delete_runtime"]},
         "agent_id": {"$ref": "#/$defs/agent_id"},
-        "runtime_revision": {"$ref": "#/$defs/runtime_revision"},
+        "target_revision": {"$ref": "#/$defs/runtime_revision"},
         "state": {"enum": ["running", "completed", "failed", "unknown"]},
         "effect": {"enum": ["completed", "not_started", "unknown"]},
         "inspection": {"$ref": "#/$defs/runtime_inspection"},
@@ -82,26 +82,59 @@
         "updated_at": {"type": "string", "format": "date-time"}
       }
     },
-    "observation": {
+    "service_observation": {
       "type": "object",
       "additionalProperties": false,
       "required": ["sequence", "kind", "observed_at"],
       "properties": {
         "sequence": {"$ref": "#/$defs/sequence"},
-        "agent_id": {"$ref": "#/$defs/agent_id"},
-        "runtime_revision": {"$ref": "#/$defs/runtime_revision"},
-        "runtime_execution_id": {"type": "string"},
-        "kind": {"enum": ["initialized", "updated", "disabled", "enabled", "deleted", "healthy", "unhealthy", "restarted", "exited", "status_unverified", "observation_gap", "reconciled"]},
+        "kind": {"enum": ["observation_gap", "reconciled"]},
         "diagnostic_summary": {"type": "string"},
         "observed_at": {"type": "string", "format": "date-time"}
       }
     },
+    "environment_observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sequence", "agent_id", "runtime_revision", "kind", "observed_at"],
+      "properties": {
+        "sequence": {"$ref": "#/$defs/sequence"},
+        "agent_id": {"$ref": "#/$defs/agent_id"},
+        "runtime_revision": {"$ref": "#/$defs/runtime_revision"},
+        "kind": {"enum": ["initialized", "updated", "disabled", "enabled", "deleted", "storage_missing", "storage_drift"]},
+        "diagnostic_summary": {"type": "string"},
+        "observed_at": {"type": "string", "format": "date-time"}
+      }
+    },
+    "runtime_observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sequence", "agent_id", "runtime_revision", "kind", "observed_at"],
+      "properties": {
+        "sequence": {"$ref": "#/$defs/sequence"},
+        "agent_id": {"$ref": "#/$defs/agent_id"},
+        "runtime_revision": {"$ref": "#/$defs/runtime_revision"},
+        "runtime_execution_id": {"type": "string", "minLength": 1},
+        "kind": {"enum": ["healthy", "unhealthy", "restarted", "exited", "runtime_deleted", "status_unverified", "runtime_missing"]},
+        "diagnostic_summary": {"type": "string"},
+        "observed_at": {"type": "string", "format": "date-time"}
+      }
+    },
+    "observation": {
+      "oneOf": [
+        {"$ref": "#/$defs/service_observation"},
+        {"$ref": "#/$defs/environment_observation"},
+        {"$ref": "#/$defs/runtime_observation"}
+      ]
+    },
     "observation_list": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["observations", "next_sequence"],
+      "required": ["observations", "oldest_sequence", "latest_sequence", "next_sequence"],
       "properties": {
         "observations": {"type": "array", "items": {"$ref": "#/$defs/observation"}},
+        "oldest_sequence": {"$ref": "#/$defs/sequence"},
+        "latest_sequence": {"$ref": "#/$defs/sequence"},
         "next_sequence": {"$ref": "#/$defs/sequence"}
       }
     },
@@ -112,8 +145,14 @@
       "properties": {
         "code": {"type": "string", "minLength": 1},
         "message": {"type": "string", "minLength": 1},
-        "retryable": {"type": "boolean"}
-      }
+        "retryable": {"type": "boolean"},
+        "reset_sequence": {"$ref": "#/$defs/sequence"}
+      },
+      "allOf": [{
+        "if": {"properties": {"code": {"const": "observation_cursor_expired"}}, "required": ["code"]},
+        "then": {"required": ["reset_sequence"]},
+        "else": {"not": {"required": ["reset_sequence"]}}
+      }]
     }
   }
 }

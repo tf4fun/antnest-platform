@@ -18,7 +18,8 @@ resources and reports a platform-neutral result.
   Kubernetes compute and workspace resources.
 - Keep deployment-platform credentials and adapters inside this service.
 - Consume platform health plus List/Watch events.
-- Verify Runtime `/status` once after the platform reports Healthy.
+- Verify Runtime `/status` after lifecycle creation, Healthy events, and
+  explicit reads of a ready Environment.
 - Normalize platform facts into a bounded, ordered Runtime observation journal.
 - Create and retain the Agent workspace as part of Runtime lifecycle commands;
   workspace operations are never exposed as a cross-service API.
@@ -47,7 +48,7 @@ separate Runtime Provider service in the target architecture.
 | --- | --- |
 | Inbound | Internal RPC for Runtime Initialize, Update, Disable, Enable, Delete, Inspect, and observation List/Watch |
 | Platform outbound | Docker Engine API initially; Kubernetes API in a later adapter |
-| Runtime outbound | One bounded `GET /status` verification after platform Healthy |
+| Runtime outbound | Bounded `GET /status` verification for lifecycle, observation, and ready-state reads |
 | Persistence | Private Runtime Environment head, operation, internal generation-claim, and bounded observation-journal schema |
 
 Runtime Controller never calls Runtime Egress. Agent Controller obtains an
@@ -89,7 +90,14 @@ Runtime telemetry settings.
 
 ## Local Start
 
-From the repository root:
+From the service directory, unit and contract tests are self-contained:
+
+```bash
+make test
+make fmt-check
+```
+
+From the platform repository root:
 
 ```bash
 docker build -f runtimes/antnest-runtime/Dockerfile -t antnest/antnest-runtime:local .
@@ -100,14 +108,22 @@ curl --fail http://127.0.0.1:58080/status
 
 Startup serializes ordered, immutable, transactional migrations through a
 journal inside the Controller's private PostgreSQL schema. A binary refuses a
-database carrying unknown future migrations. Docker mode requires the configured management network and
-system-Skill volume to exist; Compose creates both. The internal RPC contract
-is documented in
-[`../../contracts/runtime-controller/control-api.md`](../../contracts/runtime-controller/control-api.md)
-and its machine-readable route/error catalog is
-[`../../contracts/runtime-controller/control-contract.json`](../../contracts/runtime-controller/control-contract.json).
+database carrying unknown future migrations. Docker mode requires the
+configured management network and system-Skill volume to exist; Compose
+creates both. The service owns its
+internal RPC contract in [`api/control-api.md`](api/control-api.md) and its
+machine-readable route/error catalog in
+[`api/control-contract.json`](api/control-contract.json).
 
-Run the focused evidence serially:
+Run service-local checks from this directory:
+
+```bash
+make fmt-check
+make lint
+make test
+```
+
+Run integration evidence serially from the platform repository root:
 
 ```bash
 make test-go
@@ -117,10 +133,10 @@ make e2e-runtime-controller
 
 The PostgreSQL and Docker targets require a local Docker Engine and use
 disposable test databases/projects. The E2E proves initialization from an
-empty environment, status identity, same-generation process restart
-observation, update replacement, Disable workspace retention, Enable
-recreation, and Delete cleanup. It also proves immutable image input and
-execution fencing.
+empty environment, Controller-process restart recovery, status identity,
+same-generation Runtime process restart observation, update replacement,
+Disable workspace retention, Enable recreation, and Delete cleanup. It also
+proves immutable image input and execution fencing.
 
 ## Maintainer Guide
 
@@ -128,6 +144,7 @@ execution fencing.
   persistence, observation semantics, and invariants.
 - [`docs/operations.md`](docs/operations.md): deployment, readiness,
   configuration, and failure diagnosis.
+- [`api/control-api.md`](api/control-api.md): owned RPC and recovery contract.
 - [`../../docs/stage-1-runtime.md`](../../docs/stage-1-runtime.md): canonical
   cross-service Stage 1 contract and acceptance.
 - [`../../docs/service-layout.md`](../../docs/service-layout.md): repository

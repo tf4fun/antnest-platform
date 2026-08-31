@@ -88,4 +88,4 @@ e2e-stage1: docker-build-runtime-controller
 	sh scripts/e2e-stage1.sh
 
 e2e-runtime-controller: docker-build-runtime-controller
-	sh scripts/e2e-runtime-controller.sh
+	sh services/runtime-controller/scripts/e2e.sh

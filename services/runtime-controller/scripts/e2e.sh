@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-repository_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+repository_root=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
 cd "$repository_root"
 
 export COMPOSE_PROJECT_NAME="antnest-runtime-controller-e2e-$$"
@@ -46,6 +46,19 @@ controller_request() {
   curl --fail-with-body -sS "$@"
 }
 
+wait_for_controller() {
+  attempt=0
+  while [ "$attempt" -lt 60 ]; do
+    if controller_request "$controller_url/status" 2>/dev/null | grep -q '"status":"ready"'; then
+      return 0
+    fi
+    attempt=$((attempt + 1))
+    sleep 1
+  done
+  echo "Runtime Controller did not become ready" >&2
+  return 1
+}
+
 docker compose up -d --wait postgres runtime-egress runtime-controller-postgres runtime-controller
 
 runtime_image=$(docker image inspect --format '{{.Id}}' antnest/antnest-runtime:local)
@@ -67,7 +80,7 @@ egress_request -X PUT -H 'content-type: application/json' \
   -d '{"policy_id":"runtime-controller-e2e","revision":1,"expected_resource_version":1}' \
   "$egress_url/internal/agent-policy-assignments/${agent_id}" >/dev/null
 
-controller_request "$controller_url/status" | grep -q '"status":"ready"'
+wait_for_controller
 runtime_configuration=$(printf '%s' "{\"image_ref\":\"${runtime_image}\",\"network\":{\"packet_contract_revision\":1,\"egress_endpoint\":{\"ipv4\":\"${ANTNEST_EGRESS_IPV4}\",\"port\":8092},\"tunnel_ipv4\":\"100.64.0.2\",\"resolver_ipv4\":\"100.64.0.1\"},\"resources\":{\"memory_bytes\":536870912,\"pids_limit\":256,\"tmpfs_bytes\":67108864}}")
 initialize_payload=$(printf '%s' "{\"configuration\":${runtime_configuration}}")
 created=$(controller_request -X POST -H 'content-type: application/json' \
@@ -75,20 +88,39 @@ created=$(controller_request -X POST -H 'content-type: application/json' \
   "$controller_url/internal/runtimes/${agent_id}/initialize")
 printf '%s' "$created" | grep -q '"state":"completed"'
 first_execution=$(printf '%s' "$created" | sed -n 's/.*"runtime_execution_id":"\([^"]*\)".*/\1/p')
-runtime_revision=$(printf '%s' "$created" | sed -n 's/.*"runtime_revision":"\([^"]*\)".*/\1/p')
+runtime_revision=$(printf '%s' "$created" | sed -n 's/.*"target_revision":"\([^"]*\)".*/\1/p')
 test -n "$first_execution"
 test -n "$runtime_revision"
 
 controller_request "$controller_url/internal/runtimes/${agent_id}" \
   | grep -q "\"runtime_execution_id\":\"${first_execution}\""
 controller_request "$controller_url/internal/runtime-operations/initialize-${agent_id}" \
+  | grep -q "\"target_revision\":\"${runtime_revision}\""
+
+before_restart=$(controller_request "$controller_url/internal/runtime-observations?after_sequence=0&limit=500")
+before_restart_sequence=$(printf '%s' "$before_restart" | sed -n 's/.*"latest_sequence":\([0-9][0-9]*\).*/\1/p')
+test -n "$before_restart_sequence"
+docker compose restart runtime-controller >/dev/null
+wait_for_controller
+controller_request "$controller_url/internal/runtimes/${agent_id}" \
+  | grep -q "\"runtime_revision\":\"${runtime_revision}\""
+controller_request "$controller_url/internal/runtime-operations/initialize-${agent_id}" \
   | grep -q '"state":"completed"'
+after_restart=$(controller_request "$controller_url/internal/runtime-observations?after_sequence=0&limit=500")
+after_restart_sequence=$(printf '%s' "$after_restart" | sed -n 's/.*"latest_sequence":\([0-9][0-9]*\).*/\1/p')
+if [ -z "$after_restart_sequence" ] || [ "$after_restart_sequence" -lt "$before_restart_sequence" ]; then
+  echo "Runtime observation journal regressed across Controller restart" >&2
+  exit 1
+fi
 
 docker restart "$runtime_name" >/dev/null
 attempt=0
 second_execution=""
 while [ "$attempt" -lt 30 ]; do
   observations=$(controller_request "$controller_url/internal/runtime-observations?after_sequence=0&limit=500")
+  printf '%s' "$observations" | grep -q '"oldest_sequence":'
+  printf '%s' "$observations" | grep -q '"latest_sequence":'
+  printf '%s' "$observations" | grep -q '"next_sequence":'
   second_execution=$(printf '%s' "$observations" | sed -n 's/.*"runtime_execution_id":"\([^"]*\)".*"kind":"healthy".*/\1/p')
   if [ -n "$second_execution" ] && [ "$second_execution" != "$first_execution" ]; then
     break
@@ -114,7 +146,7 @@ updated=$(controller_request -X POST -H 'content-type: application/json' \
   -H "Idempotency-Key: update-${agent_id}" -d "$update_payload" \
   "$controller_url/internal/runtimes/${agent_id}/update")
 printf '%s' "$updated" | grep -q '"state":"completed"'
-runtime_revision=$(printf '%s' "$updated" | sed -n 's/.*"runtime_revision":"\([^"]*\)".*/\1/p')
+runtime_revision=$(printf '%s' "$updated" | sed -n 's/.*"target_revision":"\([^"]*\)".*/\1/p')
 test -n "$runtime_revision"
 
 revision_payload=$(printf '%s' "{\"expected_revision\":\"${runtime_revision}\"}")
@@ -127,19 +159,24 @@ if docker inspect "$runtime_name" >/dev/null 2>&1; then
   exit 1
 fi
 docker volume inspect "$workspace_volume" >/dev/null
-runtime_revision=$(printf '%s' "$disabled" | sed -n 's/.*"runtime_revision":"\([^"]*\)".*/\1/p')
+runtime_revision=$(printf '%s' "$disabled" | sed -n 's/.*"target_revision":"\([^"]*\)".*/\1/p')
 enable_payload=$(printf '%s' "{\"expected_revision\":\"${runtime_revision}\",\"configuration\":${runtime_configuration}}")
 enabled=$(controller_request -X POST -H 'content-type: application/json' \
   -H "Idempotency-Key: enable-${agent_id}" -d "$enable_payload" \
   "$controller_url/internal/runtimes/${agent_id}/enable")
 printf '%s' "$enabled" | grep -q '"lifecycle_state":"ready"'
-runtime_revision=$(printf '%s' "$enabled" | sed -n 's/.*"runtime_revision":"\([^"]*\)".*/\1/p')
+runtime_revision=$(printf '%s' "$enabled" | sed -n 's/.*"target_revision":"\([^"]*\)".*/\1/p')
 test -n "$runtime_revision"
 
 revision_payload=$(printf '%s' "{\"expected_revision\":\"${runtime_revision}\"}")
 controller_request -X POST -H 'content-type: application/json' \
   -H "Idempotency-Key: delete-${agent_id}" -d "$revision_payload" \
   "$controller_url/internal/runtimes/${agent_id}/delete" | grep -q '"lifecycle_state":"deleted"'
+controller_request "$controller_url/internal/runtimes/${agent_id}" | grep -q '"lifecycle_state":"deleted"'
+if controller_request "$controller_url/internal/runtimes" | grep -q "\"agent_id\":\"${agent_id}\""; then
+  echo "Deleted Runtime remained in active inventory" >&2
+  exit 1
+fi
 if docker volume inspect "$workspace_volume" >/dev/null 2>&1; then
   echo "Agent workspace survived Runtime deletion" >&2
   exit 1

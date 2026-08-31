@@ -15,6 +15,7 @@ import (
 
 	"soft/antnest-platform/services/runtime-controller/internal/deployment"
 	"soft/antnest-platform/services/runtime-controller/internal/diagnostics"
+	"soft/antnest-platform/services/runtime-controller/internal/platform"
 )
 
 var (
@@ -26,26 +27,13 @@ var (
 	))
 )
 
-type PlatformPort interface {
-	Ready(context.Context) error
-	DeploymentDigest(deployment.Deployment) (string, error)
-	Create(context.Context, deployment.Deployment, string) deployment.EffectOutcome
-	Inspect(context.Context, deployment.Key) (deployment.Inspection, error)
-	Delete(context.Context, deployment.Key, string) deployment.EffectOutcome
-	EnsureStorage(context.Context, string) deployment.EffectOutcome
-	VerifyStorage(context.Context, string) deployment.EffectOutcome
-	DeleteStorage(context.Context, string) deployment.EffectOutcome
-	List(context.Context) ([]deployment.Inspection, error)
-	Watch(context.Context, time.Time, func(context.Context, deployment.Observation) error) error
-}
-
 type ObservedPlatform struct {
-	next     PlatformPort
+	next     platform.Port
 	logger   *slog.Logger
 	platform string
 }
 
-func ObservePlatform(next PlatformPort, logger *slog.Logger, platform string) (*ObservedPlatform, error) {
+func ObservePlatform(next platform.Port, logger *slog.Logger, platform string) (*ObservedPlatform, error) {
 	if next == nil || logger == nil || platform == "" {
 		return nil, fmt.Errorf("platform port, logger, and platform name are required")
 	}
@@ -127,10 +115,11 @@ func (p *ObservedPlatform) List(ctx context.Context) ([]deployment.Inspection, e
 func (p *ObservedPlatform) Watch(
 	ctx context.Context,
 	since time.Time,
+	ready func(context.Context) error,
 	emit func(context.Context, deployment.Observation) error,
 ) error {
 	started := time.Now()
-	err := p.next.Watch(ctx, since, emit)
+	err := p.next.Watch(ctx, since, ready, emit)
 	p.finishSession(ctx, started, "watch", err)
 	return err
 }
@@ -138,10 +127,8 @@ func (p *ObservedPlatform) Watch(
 func (p *ObservedPlatform) finishSession(
 	ctx context.Context, started time.Time, operation string, err error,
 ) {
-	result := effectResult(err)
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		result = "canceled"
-	} else if err != nil {
+	result := sessionResult(err)
+	if result == "error" {
 		p.logger.ErrorContext(ctx, "Runtime deployment platform session failed",
 			"operation", operation, "platform", p.platform,
 			"error_class", "platform_session_failed", "error", diagnostics.Message(err),
@@ -157,6 +144,19 @@ func (p *ObservedPlatform) finishSession(
 	platformDuration.Record(
 		metricCtx, time.Since(started).Seconds(), metric.WithAttributes(attributes...),
 	)
+}
+
+func sessionResult(err error) string {
+	switch {
+	case err == nil:
+		return "completed"
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		return "canceled"
+	case errors.Is(err, platform.ErrObservationStreamDisconnected):
+		return "disconnected"
+	default:
+		return "error"
+	}
 }
 
 func (p *ObservedPlatform) mutate(
@@ -230,3 +230,5 @@ func setRuntimeAttributes(span trace.Span, key deployment.Key) {
 		attribute.Int64("antnest.runtime.generation", int64(key.Generation)),
 	)
 }
+
+var _ platform.Port = (*ObservedPlatform)(nil)

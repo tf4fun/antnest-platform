@@ -35,13 +35,23 @@ identity or physical generation.
 | `ANTNEST_RUNTIME_MUTATION_TIMEOUT` | no | Go duration; complete mutation bound including lock wait; default `2m` |
 | `ANTNEST_RUNTIME_READY_TIMEOUT` | no | Go duration; compute readiness bound; default `1m` |
 | `ANTNEST_RUNTIME_POLL_INTERVAL` | no | Go duration; compute readiness inspection interval; default `500ms` |
+| `ANTNEST_RUNTIME_RPC_TIMEOUT` | no | Go duration; finite internal RPC execution bound; default `3m` and must exceed mutation timeout |
+| `ANTNEST_RUNTIME_RECONCILIATION_TIMEOUT` | no | Go duration; complete physical/logical inventory reconciliation bound; default `2m` |
 | `ANTNEST_OBSERVATION_RETENTION` | no | Go duration; journal retention; default `168h` |
 | `ANTNEST_RUNTIME_SSE_HEARTBEAT` | no | Go duration; internal SSE heartbeat; default `15s` |
 
-Standard OpenTelemetry environment variables configure telemetry export using
-OTLP `http/protobuf`. Trace context propagation remains active when export is
-disabled. Runtime-supported trace/metric exporter variables are copied into
-new Runtime containers; unsupported variables are not forwarded.
+Runtime Controller supports OTLP `http/protobuf` for traces, metrics, and logs.
+Export is selected with `OTEL_{TRACES,METRICS,LOGS}_EXPORTER=otlp|none` or by
+setting a matching signal endpoint. The supported endpoint and protocol inputs
+are `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_PROTOCOL`, and their
+`_TRACES_`, `_METRICS_`, or `_LOGS_` variants. `OTEL_SERVICE_NAME`,
+`OTEL_RESOURCE_ATTRIBUTES`, and `OTEL_SDK_DISABLED` are also honored. A
+configured protocol other than `http/protobuf` is rejected at startup. Trace
+context propagation remains active when export is disabled.
+
+Only the explicitly allowlisted trace/metric variables documented in
+`internal/config` are copied into new Runtime containers. Controller log-export
+configuration and exporter credentials are not forwarded.
 Runtime Controller has no Runtime token secret, reverse-control listener,
 Egress URL, or external authentication configuration.
 
@@ -80,8 +90,8 @@ Controller readiness requires:
    leaving a synthetic business fact;
 6. a separately committed, payload-only notification probe traverses the
    active PostgreSQL LISTEN callback without entering the journal;
-7. the shared observation monitor is active or another replica holds its
-   leadership.
+7. a deployment-platform Watch has completed its response handshake and holds
+   the shared readiness lease; leadership without an active Watch is unready.
 
 One unhealthy Runtime does not make the Controller unready. Its state appears
 in `InspectRuntime` and Runtime observations. Readiness never inspects every
@@ -96,10 +106,12 @@ When the platform reports a new Healthy process, the Controller performs one
 bounded `/status` verification and records the returned `execution_id`. A Watch
 disconnect triggers List/Inspect reconciliation followed by Watch resume.
 
-The Controller records a service-wide `observation_gap`, reconciles List and
-Inspect, then records service-wide `reconciled`. This remains visible when no
-Runtime exists. A `/status` failure is `status_unverified`, not a fabricated
-platform `unhealthy` fact.
+The Controller records a service-wide `observation_gap`, reconciles physical
+List/Inspect in both directions against logical ready Runtime heads, then
+records service-wide `reconciled`. Missing expected compute is an explicit
+`runtime_missing` fact. This remains visible when no Runtime exists. A
+`/status` failure is `status_unverified`, not a fabricated platform `unhealthy`
+fact.
 
 Across Controller replicas, PostgreSQL elects exactly one platform-Watch
 consumer. Followers continue serving control and observation RPCs and take over
@@ -108,6 +120,9 @@ replica's local SSE clients; reconnecting clients always resume from the
 durable sequence and never rely on notification delivery.
 Observation SSE connections use lifecycle metrics rather than one
 connection-duration trace span; each finite journal read remains traced.
+If a consumer cursor falls outside the configured retention window, List or
+Watch returns `observation_cursor_expired`. The consumer performs a full Runtime
+List, then resumes from the returned reset sequence.
 
 ## Coordinated Resources
 
@@ -173,6 +188,8 @@ drift observations.
    distinct non-terminal request still owns the Agent mutation slot.
 10. Observation sequence is a sparse cursor. Do not infer loss from a numeric
     jump; consume explicit `observation_gap` records and recover with List.
+11. `observation_cursor_expired` is unrelated to a platform Watch gap. Rebuild
+    the consumer projection from Runtime List before using `reset_sequence`.
 
 ## Stage 1C Acceptance
 
@@ -180,7 +197,8 @@ The service is operationally acceptable only when it proves:
 
 1. deterministic idempotent Initialize/Update/Disable/Enable/Delete and Inspect
    in an empty Docker setup;
-2. reconstruction from platform labels after Controller restart;
+2. reconstruction from the private store plus platform labels after Controller
+   restart;
 3. ordered observation recovery after Watch disconnect, including empty
    inventory;
 4. one-shot status verification after Healthy without a permanent polling loop;
@@ -191,7 +209,7 @@ The service is operationally acceptable only when it proves:
 
 `make test-runtime-controller-postgres` proves the private repository against a
 real disposable PostgreSQL database. `make e2e-runtime-controller` builds the
-actual images and proves items 1, 4, 5, and complete lifecycle deletion in an
-isolated disposable Compose project. Unit tests cover Docker List/Watch
+actual images and proves items 1, 2, 4, 5, and complete lifecycle deletion in
+an isolated disposable Compose project. Unit tests cover Docker List/Watch
 normalization, Agent-level mutation serialization, owned-volume handling, and
 Watch-gap reconciliation.

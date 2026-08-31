@@ -8,19 +8,21 @@ import (
 )
 
 type Config struct {
-	ListenAddress        string
-	DatabaseURL          string
-	Platform             string
-	DockerSocketPath     string
-	ManagementNetwork    string
-	SystemSkillsVolume   string
-	RuntimeStatusTimeout time.Duration
-	MutationTimeout      time.Duration
-	RuntimeReadyTimeout  time.Duration
-	RuntimePollInterval  time.Duration
-	ObservationRetention time.Duration
-	SSEHeartbeat         time.Duration
-	RuntimeOTEL          map[string]string
+	ListenAddress         string
+	DatabaseURL           string
+	Platform              string
+	DockerSocketPath      string
+	ManagementNetwork     string
+	SystemSkillsVolume    string
+	RuntimeStatusTimeout  time.Duration
+	MutationTimeout       time.Duration
+	RuntimeReadyTimeout   time.Duration
+	RuntimePollInterval   time.Duration
+	RPCRequestTimeout     time.Duration
+	ReconciliationTimeout time.Duration
+	ObservationRetention  time.Duration
+	SSEHeartbeat          time.Duration
+	RuntimeOTEL           map[string]string
 }
 
 func Load(lookup func(string) string) (Config, error) {
@@ -43,6 +45,16 @@ func Load(lookup func(string) string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	rpcTimeout, err := duration(lookup, "ANTNEST_RUNTIME_RPC_TIMEOUT", 3*time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
+	reconciliationTimeout, err := duration(
+		lookup, "ANTNEST_RUNTIME_RECONCILIATION_TIMEOUT", 2*time.Minute,
+	)
+	if err != nil {
+		return Config{}, err
+	}
 	retention, err := duration(lookup, "ANTNEST_OBSERVATION_RETENTION", 7*24*time.Hour)
 	if err != nil {
 		return Config{}, err
@@ -52,18 +64,20 @@ func Load(lookup func(string) string) (Config, error) {
 		return Config{}, err
 	}
 	config := Config{
-		ListenAddress:        valueOr(lookup, "ANTNEST_RUNTIME_CONTROLLER_LISTEN", ":8080"),
-		DatabaseURL:          strings.TrimSpace(lookup("ANTNEST_RUNTIME_CONTROLLER_DATABASE_URL")),
-		Platform:             strings.ToLower(valueOr(lookup, "ANTNEST_RUNTIME_PLATFORM", "docker")),
-		ManagementNetwork:    strings.TrimSpace(lookup("ANTNEST_RUNTIME_MANAGEMENT_NETWORK")),
-		SystemSkillsVolume:   valueOr(lookup, "ANTNEST_RUNTIME_SYSTEM_SKILLS_VOLUME", "antnest-system-skills"),
-		RuntimeStatusTimeout: statusTimeout,
-		MutationTimeout:      mutationTimeout,
-		RuntimeReadyTimeout:  readyTimeout,
-		RuntimePollInterval:  pollInterval,
-		ObservationRetention: retention,
-		SSEHeartbeat:         heartbeat,
-		RuntimeOTEL:          runtimeTelemetryEnvironment(lookup),
+		ListenAddress:         valueOr(lookup, "ANTNEST_RUNTIME_CONTROLLER_LISTEN", ":8080"),
+		DatabaseURL:           strings.TrimSpace(lookup("ANTNEST_RUNTIME_CONTROLLER_DATABASE_URL")),
+		Platform:              strings.ToLower(valueOr(lookup, "ANTNEST_RUNTIME_PLATFORM", "docker")),
+		ManagementNetwork:     strings.TrimSpace(lookup("ANTNEST_RUNTIME_MANAGEMENT_NETWORK")),
+		SystemSkillsVolume:    valueOr(lookup, "ANTNEST_RUNTIME_SYSTEM_SKILLS_VOLUME", "antnest-system-skills"),
+		RuntimeStatusTimeout:  statusTimeout,
+		MutationTimeout:       mutationTimeout,
+		RuntimeReadyTimeout:   readyTimeout,
+		RuntimePollInterval:   pollInterval,
+		RPCRequestTimeout:     rpcTimeout,
+		ReconciliationTimeout: reconciliationTimeout,
+		ObservationRetention:  retention,
+		SSEHeartbeat:          heartbeat,
+		RuntimeOTEL:           runtimeTelemetryEnvironment(lookup),
 	}
 	if config.DatabaseURL == "" {
 		return Config{}, fmt.Errorf("ANTNEST_RUNTIME_CONTROLLER_DATABASE_URL is required")
@@ -85,6 +99,9 @@ func Load(lookup func(string) string) (Config, error) {
 	}
 	if config.RuntimeReadyTimeout >= config.MutationTimeout {
 		return Config{}, fmt.Errorf("ANTNEST_RUNTIME_READY_TIMEOUT must be less than ANTNEST_RUNTIME_MUTATION_TIMEOUT")
+	}
+	if config.RPCRequestTimeout <= config.MutationTimeout {
+		return Config{}, fmt.Errorf("ANTNEST_RUNTIME_RPC_TIMEOUT must exceed ANTNEST_RUNTIME_MUTATION_TIMEOUT")
 	}
 	return config, nil
 }

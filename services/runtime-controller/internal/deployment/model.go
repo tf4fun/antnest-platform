@@ -16,6 +16,7 @@ import (
 var (
 	ErrInvalid          = errors.New("invalid Runtime deployment")
 	ErrIdentityConflict = errors.New("Runtime identity conflict")
+	ErrStatusUnverified = errors.New("Runtime status could not be verified")
 )
 
 type Key struct {
@@ -143,15 +144,6 @@ func (d Deployment) ValidateFor(key Key) error {
 		return invalid("resources.tmpfs_bytes exceeds the deployment platform range")
 	}
 	return nil
-}
-
-func (d Deployment) Digest() (string, error) {
-	encoded, err := json.Marshal(d)
-	if err != nil {
-		return "", fmt.Errorf("encode Runtime deployment: %w", err)
-	}
-	digest := sha256.Sum256(encoded)
-	return "sha256:" + hex.EncodeToString(digest[:]), nil
 }
 
 func DigestValue(value any) (string, error) {
@@ -422,18 +414,18 @@ func (i Inspection) RuntimeKey() Key {
 }
 
 type Environment struct {
-	AgentID            string          `json:"agent_id"`
-	RuntimeRevision    RuntimeRevision `json:"runtime_revision"`
-	LifecycleState     LifecycleState  `json:"lifecycle_state"`
-	Health             HealthState     `json:"health"`
-	MCPEndpoint        string          `json:"mcp_endpoint,omitempty"`
-	RuntimeExecutionID string          `json:"runtime_execution_id,omitempty"`
-	RestartCount       uint64          `json:"restart_count"`
-	ObservedAt         time.Time       `json:"observed_at"`
+	AgentID            string
+	RuntimeRevision    RuntimeRevision
+	LifecycleState     LifecycleState
+	Health             HealthState
+	MCPEndpoint        string
+	RuntimeExecutionID string
+	RestartCount       uint64
+	ObservedAt         time.Time
 
-	Generation  uint64 `json:"-"`
-	SpecDigest  string `json:"-"`
-	OperationID string `json:"-"`
+	Generation  uint64
+	SpecDigest  string
+	OperationID string
 }
 
 func (e Environment) RuntimeKey() (Key, bool) {
@@ -470,27 +462,28 @@ const (
 )
 
 type Operation struct {
-	RequestID       string          `json:"request_id"`
-	RequestDigest   string          `json:"-"`
-	Kind            OperationKind   `json:"kind"`
-	AgentID         string          `json:"agent_id"`
-	RuntimeRevision RuntimeRevision `json:"runtime_revision"`
-	State           OperationState  `json:"state"`
-	Effect          EffectState     `json:"effect"`
-	Inspection      *Environment    `json:"inspection,omitempty"`
-	ErrorCode       string          `json:"error_code,omitempty"`
-	ErrorDetail     string          `json:"error_detail,omitempty"`
-	CreatedAt       time.Time       `json:"created_at"`
-	UpdatedAt       time.Time       `json:"updated_at"`
+	RequestID       string
+	RequestDigest   string
+	Kind            OperationKind
+	AgentID         string
+	RuntimeRevision RuntimeRevision
+	State           OperationState
+	Effect          EffectState
+	Inspection      *Environment
+	ErrorCode       string
+	ErrorDetail     string
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 
-	Attempt          uint64          `json:"-"`
-	ExpectedRevision RuntimeRevision `json:"-"`
-	SourceState      LifecycleState  `json:"-"`
-	SourceRevision   RuntimeRevision `json:"-"`
-	SourceGeneration uint64          `json:"-"`
-	SourceSpecDigest string          `json:"-"`
-	Generation       uint64          `json:"-"`
-	SpecDigest       string          `json:"-"`
+	Attempt          uint64
+	ExpectedRevision RuntimeRevision
+	SourceState      LifecycleState
+	SourceRevision   RuntimeRevision
+	SourceGeneration uint64
+	SourceSpecDigest string
+	Generation       uint64
+	SpecDigest       string
+	Transition       LifecycleState
 }
 
 func (o Operation) RuntimeKey() Key {
@@ -500,11 +493,6 @@ func (o Operation) RuntimeKey() Key {
 func (o Operation) SourceKey() (Key, bool) {
 	key := Key{AgentID: o.AgentID, Generation: o.SourceGeneration}
 	return key, key.Validate() == nil
-}
-
-func (o Operation) TransitionState() (LifecycleState, error) {
-	transition, _, err := LifecycleTransition(o.Kind, o.SourceState)
-	return transition, err
 }
 
 func (o Operation) SuccessState() (LifecycleState, error) {
@@ -528,27 +516,42 @@ const (
 	ObservationRestarted        ObservationKind = "restarted"
 	ObservationExited           ObservationKind = "exited"
 	ObservationDeleted          ObservationKind = "deleted"
+	ObservationRuntimeDeleted   ObservationKind = "runtime_deleted"
+	ObservationStorageMissing   ObservationKind = "storage_missing"
+	ObservationStorageDrift     ObservationKind = "storage_drift"
 	ObservationGap              ObservationKind = "observation_gap"
 	ObservationReconciled       ObservationKind = "reconciled"
 	ObservationStatusUnverified ObservationKind = "status_unverified"
+	ObservationRuntimeMissing   ObservationKind = "runtime_missing"
 )
 
 type Observation struct {
-	Sequence           uint64          `json:"sequence"`
-	AgentID            string          `json:"agent_id,omitempty"`
-	RuntimeRevision    RuntimeRevision `json:"runtime_revision,omitempty"`
-	RuntimeExecutionID string          `json:"runtime_execution_id,omitempty"`
-	Kind               ObservationKind `json:"kind"`
-	DiagnosticSummary  string          `json:"diagnostic_summary,omitempty"`
-	ObservedAt         time.Time       `json:"observed_at"`
+	Sequence           uint64
+	AgentID            string
+	RuntimeRevision    RuntimeRevision
+	RuntimeExecutionID string
+	Kind               ObservationKind
+	DiagnosticSummary  string
+	ObservedAt         time.Time
 
-	Generation         uint64 `json:"-"`
-	SpecDigest         string `json:"-"`
-	PlatformResourceID string `json:"-"`
-	Source             string `json:"-"`
+	Generation         uint64
+	SpecDigest         string
+	PlatformResourceID string
+	Source             string
+}
+
+// ObservationWindow is one consistent view of the retained journal and its
+// sequence bounds. Sequence zero means the journal is currently empty.
+type ObservationWindow struct {
+	Observations   []Observation
+	OldestSequence uint64
+	LatestSequence uint64
 }
 
 func (o Observation) RuntimeKey() (Key, bool) {
+	if observationScope(o.Kind) != observationRuntime {
+		return Key{}, false
+	}
 	key := Key{AgentID: o.AgentID, Generation: o.Generation}
 	return key, key.Validate() == nil
 }
@@ -557,21 +560,61 @@ func (o Observation) Validate() error {
 	if strings.TrimSpace(o.Source) == "" || o.ObservedAt.IsZero() {
 		return invalid("observation source and observed_at are required")
 	}
-	global := o.Kind == ObservationGap || o.Kind == ObservationReconciled
-	if global {
-		if o.AgentID != "" || o.RuntimeRevision != "" || o.Generation != 0 || o.SpecDigest != "" {
+	switch observationScope(o.Kind) {
+	case observationService:
+		if o.AgentID != "" || o.RuntimeRevision != "" || o.Generation != 0 || o.SpecDigest != "" ||
+			o.PlatformResourceID != "" || o.RuntimeExecutionID != "" {
 			return invalid("service-wide observation must not carry Runtime identity")
 		}
 		return nil
+	case observationEnvironment:
+		if err := validateIdentifier("agent_id", o.AgentID); err != nil {
+			return invalid("Environment observation requires a valid Agent identity")
+		}
+		if err := ValidateRevision(o.RuntimeRevision); err != nil {
+			return invalid("Environment observation requires a valid Runtime revision")
+		}
+		if o.Generation != 0 || o.SpecDigest != "" || o.PlatformResourceID != "" ||
+			o.RuntimeExecutionID != "" {
+			return invalid("Environment observation must not carry generation identity")
+		}
+		return nil
+	case observationRuntime:
+		if _, ok := o.RuntimeKey(); !ok {
+			return invalid("Runtime observation requires a valid generation identity")
+		}
+		if err := ValidateDigest(o.SpecDigest); err != nil {
+			return invalid("Runtime observation requires a valid spec digest")
+		}
+		if err := ValidateRevision(o.RuntimeRevision); err != nil {
+			return invalid("Runtime observation requires a valid Runtime revision")
+		}
+		return nil
+	default:
+		return invalid("unknown observation kind")
 	}
-	if _, ok := o.RuntimeKey(); !ok {
-		return invalid("Runtime observation requires a valid Runtime identity")
+}
+
+type observationIdentityScope uint8
+
+const (
+	observationInvalid observationIdentityScope = iota
+	observationService
+	observationEnvironment
+	observationRuntime
+)
+
+func observationScope(kind ObservationKind) observationIdentityScope {
+	switch kind {
+	case ObservationGap, ObservationReconciled:
+		return observationService
+	case ObservationInitialized, ObservationUpdated, ObservationDisabled, ObservationEnabled,
+		ObservationDeleted, ObservationStorageMissing, ObservationStorageDrift:
+		return observationEnvironment
+	case ObservationHealthy, ObservationUnhealthy, ObservationRestarted, ObservationExited,
+		ObservationRuntimeDeleted, ObservationStatusUnverified, ObservationRuntimeMissing:
+		return observationRuntime
+	default:
+		return observationInvalid
 	}
-	if err := ValidateDigest(o.SpecDigest); err != nil {
-		return invalid("Runtime observation requires a valid spec digest")
-	}
-	if err := ValidateRevision(o.RuntimeRevision); err != nil {
-		return invalid("Runtime observation requires a valid Runtime revision")
-	}
-	return nil
 }

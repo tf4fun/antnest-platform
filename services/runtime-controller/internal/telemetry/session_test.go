@@ -12,9 +12,9 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
-	"soft/antnest-platform/services/runtime-controller/internal/control"
 	"soft/antnest-platform/services/runtime-controller/internal/deployment"
-	platformmonitor "soft/antnest-platform/services/runtime-controller/internal/platform/monitor"
+	"soft/antnest-platform/services/runtime-controller/internal/platform"
+	"soft/antnest-platform/services/runtime-controller/internal/repository"
 )
 
 func TestPlatformWatchDoesNotCreateLongLivedSpan(t *testing.T) {
@@ -30,7 +30,9 @@ func TestPlatformWatchDoesNotCreateLongLivedSpan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := observed.Watch(context.Background(), time.Time{}, func(context.Context, deployment.Observation) error {
+	if err := observed.Watch(context.Background(), time.Time{}, func(context.Context) error {
+		return nil
+	}, func(context.Context, deployment.Observation) error {
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -49,7 +51,9 @@ func TestObservationListenerDoesNotCreateLongLivedSpan(t *testing.T) {
 		repositoryTracer = original
 		_ = provider.Shutdown(context.Background())
 	})
-	observed, err := ObserveRepository(&sessionRepository{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	observed, err := ObserveRepository(
+		&sessionRepository{}, slog.New(slog.NewTextHandler(io.Discard, nil)), "postgresql",
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,6 +62,25 @@ func TestObservationListenerDoesNotCreateLongLivedSpan(t *testing.T) {
 	}
 	if spans := recorder.Ended(); len(spans) != 0 {
 		t.Fatalf("observation listener created session-long spans: %d", len(spans))
+	}
+}
+
+func TestSessionResultPreservesTerminationCause(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		err  error
+		want string
+	}{
+		{name: "completed", want: "completed"},
+		{name: "canceled", err: context.Canceled, want: "canceled"},
+		{name: "disconnected", err: platform.ErrObservationStreamDisconnected, want: "disconnected"},
+		{name: "failed", err: io.ErrUnexpectedEOF, want: "error"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := sessionResult(test.err); got != test.want {
+				t.Fatalf("sessionResult(%v) = %q, want %q", test.err, got, test.want)
+			}
+		})
 	}
 }
 
@@ -122,7 +145,13 @@ func (*sessionPlatform) DeleteStorage(context.Context, string) deployment.Effect
 	return deployment.EffectOutcome{State: deployment.EffectCompleted}
 }
 func (*sessionPlatform) List(context.Context) ([]deployment.Inspection, error) { return nil, nil }
-func (*sessionPlatform) Watch(context.Context, time.Time, func(context.Context, deployment.Observation) error) error {
+func (*sessionPlatform) Watch(
+	ctx context.Context, _ time.Time, ready func(context.Context) error,
+	_ func(context.Context, deployment.Observation) error,
+) error {
+	if err := ready(ctx); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -131,8 +160,8 @@ type sessionRepository struct{}
 func (*sessionRepository) BeginTransition(context.Context, deployment.Operation) (deployment.Operation, bool, error) {
 	return deployment.Operation{}, false, nil
 }
-func (*sessionRepository) GenerationClaim(context.Context, deployment.Key) (control.GenerationClaim, error) {
-	return control.GenerationClaim{}, nil
+func (*sessionRepository) GenerationClaim(context.Context, deployment.Key) (repository.GenerationClaim, error) {
+	return repository.GenerationClaim{}, nil
 }
 func (*sessionRepository) CompleteOperation(context.Context, deployment.Operation, *deployment.Observation) (*deployment.Observation, error) {
 	return nil, nil
@@ -149,16 +178,17 @@ func (*sessionRepository) ListEnvironments(context.Context) ([]deployment.Enviro
 func (*sessionRepository) AppendObservation(_ context.Context, value deployment.Observation) (deployment.Observation, error) {
 	return value, nil
 }
-func (*sessionRepository) ListObservations(context.Context, uint64, int) ([]deployment.Observation, error) {
-	return nil, nil
+func (*sessionRepository) ListObservations(context.Context, uint64, int) (deployment.ObservationWindow, error) {
+	return deployment.ObservationWindow{}, nil
 }
 func (*sessionRepository) Ready(context.Context) error { return nil }
 func (*sessionRepository) WithAgentLock(_ context.Context, _ string, execute func(context.Context) error) error {
 	return execute(context.Background())
 }
-func (*sessionRepository) TryAcquireObservationLeadership(context.Context) (platformmonitor.Leadership, bool, error) {
+func (*sessionRepository) TryAcquireObservationLeadership(context.Context) (repository.Leadership, bool, error) {
 	return nil, false, nil
 }
+func (*sessionRepository) ObservationMonitorReady(context.Context) (bool, error) { return true, nil }
 func (*sessionRepository) ListenObservationNotifications(_ context.Context, ready func(), notify func(string)) error {
 	ready()
 	notify("")

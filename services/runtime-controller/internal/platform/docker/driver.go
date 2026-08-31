@@ -10,7 +10,10 @@ import (
 	"time"
 
 	"soft/antnest-platform/services/runtime-controller/internal/deployment"
+	"soft/antnest-platform/services/runtime-controller/internal/platform"
 )
+
+var _ platform.Port = (*Driver)(nil)
 
 const (
 	labelManaged    = "io.antnest.managed"
@@ -35,7 +38,7 @@ type Engine interface {
 	InspectContainer(context.Context, string) (Container, error)
 	ListManagedContainerIDs(context.Context) ([]string, error)
 	ListManagedContainers(context.Context) ([]Container, error)
-	WatchManagedEvents(context.Context, time.Time, func(ContainerEvent) error) error
+	WatchManagedEvents(context.Context, time.Time, func() error, func(ContainerEvent) error) error
 	InspectVolume(context.Context, string) (Volume, error)
 	CreateVolume(context.Context, string, map[string]string) error
 	InspectNetwork(context.Context, string) error
@@ -164,7 +167,7 @@ func (d *Driver) Create(
 	if err != nil || computed != digest {
 		return failed(deployment.EffectNotStarted, "invalid_request", errors.New("deployment digest mismatch"))
 	}
-	if err := d.requireStorage(ctx, key.AgentID); err != nil {
+	if err := d.requireCreateStorage(ctx, key.AgentID); err != nil {
 		switch {
 		case errors.Is(err, deployment.ErrIdentityConflict):
 			return failed(deployment.EffectNotStarted, "storage_ownership_conflict", err)
@@ -304,7 +307,7 @@ func (d *Driver) EnsureStorage(ctx context.Context, agentID string) deployment.E
 }
 
 func (d *Driver) VerifyStorage(ctx context.Context, agentID string) deployment.EffectOutcome {
-	if err := d.requireStorage(ctx, agentID); err != nil {
+	if err := d.requireWorkspace(ctx, agentID); err != nil {
 		switch {
 		case errors.Is(err, deployment.ErrIdentityConflict):
 			return failed(deployment.EffectNotStarted, "storage_ownership_conflict", err)
@@ -364,12 +367,13 @@ func (d *Driver) List(ctx context.Context) ([]deployment.Inspection, error) {
 func (d *Driver) Watch(
 	ctx context.Context,
 	since time.Time,
+	ready func(context.Context) error,
 	emit func(context.Context, deployment.Observation) error,
 ) error {
-	if emit == nil {
-		return fmt.Errorf("Docker observation sink is required")
+	if ready == nil || emit == nil {
+		return fmt.Errorf("Docker observation readiness and sink callbacks are required")
 	}
-	return d.engine.WatchManagedEvents(ctx, since, func(event ContainerEvent) error {
+	return d.engine.WatchManagedEvents(ctx, since, func() error { return ready(ctx) }, func(event ContainerEvent) error {
 		if event.Attributes[labelManaged] != "runtime" {
 			return nil
 		}
@@ -445,13 +449,20 @@ func managedIdentity(labels map[string]string) (deployment.Key, string, error) {
 	return key, digest, nil
 }
 
-func (d *Driver) requireStorage(ctx context.Context, agentID string) error {
+func (d *Driver) requireWorkspace(ctx context.Context, agentID string) error {
 	workspace, err := d.engine.InspectVolume(ctx, workspaceVolume(agentID))
 	if err != nil {
 		return fmt.Errorf("workspace volume: %w", err)
 	}
 	if !workspaceOwnedBy(workspace, agentID) {
 		return fmt.Errorf("workspace volume: %w", deployment.ErrIdentityConflict)
+	}
+	return nil
+}
+
+func (d *Driver) requireCreateStorage(ctx context.Context, agentID string) error {
+	if err := d.requireWorkspace(ctx, agentID); err != nil {
+		return err
 	}
 	if _, err := d.engine.InspectVolume(ctx, d.config.SystemSkillsVolume); err != nil {
 		return fmt.Errorf("system Skills volume: %w", err)
@@ -525,7 +536,7 @@ func observationKind(action string) (deployment.ObservationKind, bool) {
 	case "die", "stop", "kill":
 		return deployment.ObservationExited, true
 	case "destroy":
-		return deployment.ObservationDeleted, true
+		return deployment.ObservationRuntimeDeleted, true
 	default:
 		return "", false
 	}

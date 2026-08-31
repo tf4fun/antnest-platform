@@ -10,12 +10,13 @@ import (
 
 	"github.com/jackc/pgx/v5/stdlib"
 
-	platformmonitor "soft/antnest-platform/services/runtime-controller/internal/platform/monitor"
+	"soft/antnest-platform/services/runtime-controller/internal/repository"
 )
 
 const (
 	observationLeadershipNamespace int32 = 0x414e5402
 	observationLeadershipKey       int32 = 1
+	observationReadyKey            int32 = 2
 )
 
 type observationLeadership struct {
@@ -27,12 +28,13 @@ type observationLeadership struct {
 	releaseOnce sync.Once
 	mu          sync.RWMutex
 	lost        bool
+	ready       bool
 	err         error
 }
 
 func (r *Repository) TryAcquireObservationLeadership(
 	ctx context.Context,
-) (platformmonitor.Leadership, bool, error) {
+) (repository.Leadership, bool, error) {
 	connection, err := r.lockDatabase.Conn(ctx)
 	if err != nil {
 		return nil, false, fmt.Errorf("reserve observation leadership connection: %w", err)
@@ -70,6 +72,84 @@ func (l *observationLeadership) Err() error {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
 	return l.err
+}
+
+func (l *observationLeadership) MarkObservationReady(ctx context.Context) error {
+	l.mu.RLock()
+	ready, lost := l.ready, l.lost
+	l.mu.RUnlock()
+	if lost {
+		return fmt.Errorf("mark observation monitor ready: leadership session is lost")
+	}
+	if ready {
+		return nil
+	}
+	var acquired bool
+	if err := l.connection.QueryRowContext(ctx,
+		"SELECT pg_try_advisory_lock($1, $2)",
+		observationLeadershipNamespace, observationReadyKey,
+	).Scan(&acquired); err != nil {
+		return fmt.Errorf("mark observation monitor ready: %w", err)
+	}
+	if !acquired {
+		return fmt.Errorf("mark observation monitor ready: readiness lock is already held")
+	}
+	l.mu.Lock()
+	l.ready = true
+	l.mu.Unlock()
+	return nil
+}
+
+func (l *observationLeadership) MarkObservationUnready(ctx context.Context) error {
+	l.mu.RLock()
+	ready, lost := l.ready, l.lost
+	l.mu.RUnlock()
+	if !ready || lost {
+		return nil
+	}
+	var unlocked bool
+	if err := l.connection.QueryRowContext(ctx,
+		"SELECT pg_advisory_unlock($1, $2)",
+		observationLeadershipNamespace, observationReadyKey,
+	).Scan(&unlocked); err != nil {
+		return fmt.Errorf("mark observation monitor unready: %w", err)
+	}
+	if !unlocked {
+		return fmt.Errorf("mark observation monitor unready: readiness lock was not held")
+	}
+	l.mu.Lock()
+	l.ready = false
+	l.mu.Unlock()
+	return nil
+}
+
+func (r *Repository) ObservationMonitorReady(ctx context.Context) (bool, error) {
+	connection, err := r.lockDatabase.Conn(ctx)
+	if err != nil {
+		return false, fmt.Errorf("reserve observation readiness probe connection: %w", err)
+	}
+	defer connection.Close()
+	var acquired bool
+	if err := connection.QueryRowContext(ctx,
+		"SELECT pg_try_advisory_lock($1, $2)",
+		observationLeadershipNamespace, observationReadyKey,
+	).Scan(&acquired); err != nil {
+		return false, fmt.Errorf("probe observation monitor readiness: %w", err)
+	}
+	if !acquired {
+		return true, nil
+	}
+	var unlocked bool
+	if err := connection.QueryRowContext(ctx,
+		"SELECT pg_advisory_unlock($1, $2)",
+		observationLeadershipNamespace, observationReadyKey,
+	).Scan(&unlocked); err != nil {
+		return false, fmt.Errorf("release observation readiness probe: %w", err)
+	}
+	if !unlocked {
+		return false, fmt.Errorf("release observation readiness probe: lock was not held")
+	}
+	return false, nil
 }
 
 func (l *observationLeadership) monitor(ctx context.Context, probeInterval time.Duration) {
@@ -124,12 +204,13 @@ func (l *observationLeadership) Release(ctx context.Context) error {
 			l.doneOnce.Do(func() { close(l.done) })
 			return
 		}
+		unreadyErr := l.MarkObservationUnready(ctx)
 		var unlocked bool
 		unlockErr := l.connection.QueryRowContext(ctx,
 			"SELECT pg_advisory_unlock($1, $2)",
 			observationLeadershipNamespace, observationLeadershipKey,
 		).Scan(&unlocked)
-		var resultErr error
+		resultErr := unreadyErr
 		if unlockErr != nil || !unlocked {
 			resultErr = errors.Join(unlockErr, fmt.Errorf("observation monitor leadership was not released"))
 			resultErr = errors.Join(resultErr, discardConnection(l.connection))
@@ -171,7 +252,7 @@ func (r *Repository) ListenObservationNotifications(
 			notification, err := postgresConnection.WaitForNotification(ctx)
 			if err != nil {
 				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-					return nil
+					return ctx.Err()
 				}
 				return fmt.Errorf("wait for Runtime observation notification: %w", err)
 			}
@@ -180,4 +261,5 @@ func (r *Repository) ListenObservationNotifications(
 	})
 }
 
-var _ platformmonitor.Coordinator = (*Repository)(nil)
+var _ repository.ObservationCoordinator = (*Repository)(nil)
+var _ repository.ObservationNotificationSource = (*Repository)(nil)

@@ -15,6 +15,8 @@ import (
 
 	"soft/antnest-platform/services/runtime-controller/internal/deployment"
 	"soft/antnest-platform/services/runtime-controller/internal/diagnostics"
+	"soft/antnest-platform/services/runtime-controller/internal/platform"
+	"soft/antnest-platform/services/runtime-controller/internal/repository"
 )
 
 var (
@@ -25,42 +27,35 @@ var (
 	reconciliationGaps = mustCounter(monitorMeter.Int64Counter("runtime.platform.reconciliation.gaps"))
 )
 
-type Source interface {
-	List(context.Context) ([]deployment.Inspection, error)
-	Watch(context.Context, time.Time, func(context.Context, deployment.Observation) error) error
-}
-
 type Sink interface {
 	InspectPlatformRuntime(context.Context, deployment.Key) (deployment.Inspection, error)
 	ValidateRuntimeInspection(context.Context, deployment.Inspection) error
 	RecordPlatformObservation(context.Context, deployment.Observation) (deployment.Observation, error)
+	ReconcileExpectedRuntimes(context.Context, []deployment.Inspection) error
+	ReconcileRetainedStorage(context.Context) error
 }
 
 type Health interface {
 	MarkMonitor(bool)
 }
 
-type Leadership interface {
-	Done() <-chan struct{}
-	Err() error
-	Release(context.Context) error
-}
-
-type Coordinator interface {
-	TryAcquireObservationLeadership(context.Context) (Leadership, bool, error)
-}
-
 type Runner struct {
-	source     Source
-	sink       Sink
-	health     Health
-	logger     *slog.Logger
-	retryDelay time.Duration
-	now        func() time.Time
+	source           platform.ObservationSource
+	sink             Sink
+	health           Health
+	logger           *slog.Logger
+	retryDelay       time.Duration
+	reconcileTimeout time.Duration
+	now              func() time.Time
 }
 
 func New(
-	source Source, sink Sink, health Health, logger *slog.Logger, retryDelay time.Duration,
+	source platform.ObservationSource,
+	sink Sink,
+	health Health,
+	logger *slog.Logger,
+	retryDelay time.Duration,
+	reconcileTimeout time.Duration,
 ) (*Runner, error) {
 	if source == nil || sink == nil || health == nil || logger == nil {
 		return nil, fmt.Errorf("platform source, observation sink, health tracker, and logger are required")
@@ -68,13 +63,18 @@ func New(
 	if retryDelay <= 0 {
 		return nil, fmt.Errorf("platform Watch retry delay must be positive")
 	}
+	if reconcileTimeout <= 0 {
+		return nil, fmt.Errorf("platform reconciliation timeout must be positive")
+	}
 	return &Runner{
 		source: source, sink: sink, health: health, logger: logger,
-		retryDelay: retryDelay, now: time.Now,
+		retryDelay: retryDelay, reconcileTimeout: reconcileTimeout, now: time.Now,
 	}, nil
 }
 
 func (r *Runner) Reconcile(ctx context.Context, afterGap bool) (resultErr error) {
+	ctx, cancel := context.WithTimeout(ctx, r.reconcileTimeout)
+	defer cancel()
 	ctx, span := monitorTracer.Start(ctx, "runtime.platform.reconcile")
 	span.SetAttributes(attribute.Bool("antnest.observation.after_gap", afterGap))
 	defer func() {
@@ -115,6 +115,12 @@ func (r *Runner) Reconcile(ctx context.Context, afterGap bool) (resultErr error)
 			return err
 		}
 	}
+	if err := r.sink.ReconcileExpectedRuntimes(ctx, inspections); err != nil {
+		return fmt.Errorf("reconcile expected Runtime inventory: %w", err)
+	}
+	if err := r.sink.ReconcileRetainedStorage(ctx); err != nil {
+		return fmt.Errorf("reconcile retained Runtime storage: %w", err)
+	}
 	if err := r.record(ctx, deployment.Observation{
 		Kind: deployment.ObservationReconciled, Source: "platform_reconciliation",
 		DiagnosticSummary: "Current managed Runtime inventory was reconciled",
@@ -122,19 +128,44 @@ func (r *Runner) Reconcile(ctx context.Context, afterGap bool) (resultErr error)
 	}); err != nil {
 		return fmt.Errorf("record platform reconciliation: %w", err)
 	}
-	r.health.MarkMonitor(true)
 	return nil
 }
 
-func (r *Runner) Run(ctx context.Context, since time.Time) error {
+func (r *Runner) Run(
+	ctx context.Context,
+	since time.Time,
+	onReady func(context.Context) error,
+	onUnready func(context.Context) error,
+) error {
+	if onReady == nil || onUnready == nil {
+		return fmt.Errorf("platform Watch readiness callbacks are required")
+	}
 	for {
-		watchErr := r.source.Watch(ctx, since, func(eventCtx context.Context, value deployment.Observation) error {
-			return r.record(eventCtx, value)
-		})
+		watchReady := false
+		watchErr := r.source.Watch(
+			ctx,
+			since,
+			func(readyCtx context.Context) error {
+				if err := onReady(readyCtx); err != nil {
+					return err
+				}
+				watchReady = true
+				r.health.MarkMonitor(true)
+				return nil
+			},
+			func(eventCtx context.Context, value deployment.Observation) error {
+				return r.record(eventCtx, value)
+			},
+		)
+		if watchReady {
+			r.health.MarkMonitor(false)
+			if err := callWithTimeout(onUnready); err != nil && ctx.Err() == nil {
+				return fmt.Errorf("withdraw platform Watch readiness: %w", err)
+			}
+		}
 		if ctx.Err() != nil {
 			return nil
 		}
-		r.health.MarkMonitor(false)
 		watchReconnects.Add(ctx, 1)
 		r.logger.WarnContext(ctx, "platform event stream disconnected",
 			"component", "platform_watch", "result", "disconnected",
@@ -160,7 +191,7 @@ func (r *Runner) Run(ctx context.Context, since time.Time) error {
 }
 
 func (r *Runner) RunCoordinated(
-	ctx context.Context, coordinator Coordinator, ready func(),
+	ctx context.Context, coordinator repository.ObservationCoordinator, ready func(),
 ) error {
 	if coordinator == nil || ready == nil {
 		return fmt.Errorf("observation coordinator and readiness callback are required")
@@ -172,8 +203,15 @@ func (r *Runner) RunCoordinated(
 			return fmt.Errorf("acquire observation monitor leadership: %w", err)
 		}
 		if !acquired {
-			r.health.MarkMonitor(true)
-			ready()
+			monitorReady, readyErr := coordinator.ObservationMonitorReady(ctx)
+			if readyErr != nil {
+				r.health.MarkMonitor(false)
+				return fmt.Errorf("probe observation monitor readiness: %w", readyErr)
+			}
+			r.health.MarkMonitor(monitorReady)
+			if monitorReady {
+				ready()
+			}
 			if !wait(ctx, r.retryDelay) {
 				return nil
 			}
@@ -195,8 +233,19 @@ func (r *Runner) RunCoordinated(
 		reconcileErr := r.Reconcile(leaderCtx, true)
 		var runErr error
 		if reconcileErr == nil {
-			ready()
-			runErr = r.Run(leaderCtx, watchSince)
+			runErr = r.Run(
+				leaderCtx,
+				watchSince,
+				func(readyCtx context.Context) error {
+					if err := leadership.MarkObservationReady(readyCtx); err != nil {
+						return err
+					}
+					r.health.MarkMonitor(true)
+					ready()
+					return nil
+				},
+				leadership.MarkObservationUnready,
+			)
 		}
 		leaseLost := leadershipEnded(leadership)
 		cancelLeader()
@@ -225,7 +274,7 @@ func (r *Runner) RunCoordinated(
 	}
 }
 
-func leadershipEnded(leadership Leadership) bool {
+func leadershipEnded(leadership repository.Leadership) bool {
 	select {
 	case <-leadership.Done():
 		return true
@@ -234,10 +283,16 @@ func leadershipEnded(leadership Leadership) bool {
 	}
 }
 
-func releaseLeadership(leadership Leadership) error {
+func releaseLeadership(leadership repository.Leadership) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	return leadership.Release(ctx)
+	return errors.Join(leadership.MarkObservationUnready(ctx), leadership.Release(ctx))
+}
+
+func callWithTimeout(callback func(context.Context) error) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return callback(ctx)
 }
 
 func mustCounter(instrument metric.Int64Counter, err error) metric.Int64Counter {
@@ -272,6 +327,9 @@ func (r *Runner) record(
 		}
 		inspection, err := r.sink.InspectPlatformRuntime(ctx, key)
 		if err != nil {
+			if !errors.Is(err, deployment.ErrStatusUnverified) {
+				return fmt.Errorf("inspect observed Runtime: %w", err)
+			}
 			value.Kind = deployment.ObservationStatusUnverified
 			value.DiagnosticSummary = "Runtime status could not be verified"
 		} else if current, currentOK := observationFromInspection(inspection); currentOK {
@@ -305,7 +363,7 @@ func observationFromInspection(
 	var kind deployment.ObservationKind
 	switch {
 	case inspection.PlatformPhase == deployment.PhaseAbsent:
-		kind = deployment.ObservationDeleted
+		kind = deployment.ObservationRuntimeDeleted
 	case inspection.PlatformPhase == deployment.PhaseExited:
 		kind = deployment.ObservationExited
 	case inspection.Health == deployment.HealthHealthy:

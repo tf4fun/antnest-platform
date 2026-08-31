@@ -11,8 +11,8 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 
-	"soft/antnest-platform/services/runtime-controller/internal/control"
 	"soft/antnest-platform/services/runtime-controller/internal/deployment"
+	repositoryport "soft/antnest-platform/services/runtime-controller/internal/repository"
 )
 
 const integrationSpecDigest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -21,6 +21,7 @@ func TestRepositoryLifecycleRoundTrip(t *testing.T) {
 	repository, database, ctx := integrationRepository(t)
 	now := time.Date(2026, 8, 30, 0, 0, 0, 0, time.UTC)
 	initialize := integrationOperation("request-init", deployment.OperationInitializeRuntime, now)
+	initialize.Transition = deployment.LifecycleInitializing
 
 	started, replay, err := repository.BeginTransition(ctx, initialize)
 	if err != nil || replay || started.Attempt != 1 {
@@ -42,7 +43,6 @@ func TestRepositoryLifecycleRoundTrip(t *testing.T) {
 	replayed.UpdatedAt = now.Add(time.Second)
 	observation := deployment.Observation{
 		AgentID: replayed.AgentID, RuntimeRevision: replayed.RuntimeRevision,
-		Generation: replayed.Generation, SpecDigest: replayed.SpecDigest,
 		Kind: deployment.ObservationInitialized, Source: "integration_test", ObservedAt: replayed.UpdatedAt,
 	}
 	storedObservation, err := repository.CompleteOperation(ctx, replayed, &observation)
@@ -64,6 +64,7 @@ func TestRepositoryLifecycleRoundTrip(t *testing.T) {
 	update.SourceRevision = ready.RuntimeRevision
 	update.SourceGeneration = ready.Generation
 	update.SourceSpecDigest = ready.SpecDigest
+	update.Transition = deployment.LifecycleUpdating
 	update.Generation = ready.Generation + 1
 	update.RuntimeRevision = deployment.RevisionFor(update.RequestID, update.RequestDigest)
 	update.SpecDigest = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -74,8 +75,8 @@ func TestRepositoryLifecycleRoundTrip(t *testing.T) {
 	stale.RequestID = "request-stale"
 	stale.RequestDigest = "sha256:stale"
 	stale.RuntimeRevision = deployment.RevisionFor(stale.RequestID, stale.RequestDigest)
-	if _, _, err := repository.BeginTransition(ctx, stale); !errors.Is(err, control.ErrLifecycleConflict) &&
-		!errors.Is(err, control.ErrAgentMutationInProgress) {
+	if _, _, err := repository.BeginTransition(ctx, stale); !errors.Is(err, repositoryport.ErrTransitionConflict) &&
+		!errors.Is(err, repositoryport.ErrConcurrentMutation) {
 		t.Fatalf("second transition error=%v", err)
 	}
 	update.State = deployment.OperationFailed
@@ -90,9 +91,11 @@ func TestRepositoryLifecycleRoundTrip(t *testing.T) {
 		t.Fatalf("failed update did not restore source: %+v err=%v", restored, err)
 	}
 
-	values, err := repository.ListObservations(ctx, 0, 10)
-	if err != nil || len(values) != 1 || values[0].RuntimeRevision != ready.RuntimeRevision {
-		t.Fatalf("observations: %+v err=%v", values, err)
+	window, err := repository.ListObservations(ctx, 0, 10)
+	if err != nil || len(window.Observations) != 1 ||
+		window.Observations[0].RuntimeRevision != ready.RuntimeRevision ||
+		window.OldestSequence != 1 || window.LatestSequence != 1 {
+		t.Fatalf("observations: %+v err=%v", window, err)
 	}
 	var environmentCount int
 	if err := database.QueryRowContext(ctx,
@@ -121,6 +124,56 @@ func TestRepositoryMigrationJournalAndReadinessProbe(t *testing.T) {
 		`SELECT count(*) FROM runtime_controller.observations WHERE source = 'readiness_probe'`,
 	).Scan(&probeRows); err != nil || probeRows != 0 {
 		t.Fatalf("probe rows=%d err=%v", probeRows, err)
+	}
+}
+
+func TestRepositoryListExcludesDeletedEnvironmentButDirectReadRetainsTombstone(t *testing.T) {
+	repository, database, ctx := integrationRepository(t)
+	now := time.Date(2026, 8, 31, 0, 0, 0, 0, time.UTC)
+	for _, fixture := range []struct {
+		agentID string
+		state   deployment.LifecycleState
+	}{
+		{agentID: "active-agent", state: deployment.LifecycleReady},
+		{agentID: "deleted-agent", state: deployment.LifecycleDeleted},
+	} {
+		if _, err := database.ExecContext(ctx, insertEnvironmentSQL,
+			fixture.agentID, testRevision, fixture.state, uint64(1),
+			integrationSpecDigest, nil, now,
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	values, err := repository.ListEnvironments(ctx)
+	if err != nil || len(values) != 1 || values[0].AgentID != "active-agent" {
+		t.Fatalf("active Runtime inventory = %+v err=%v", values, err)
+	}
+	deleted, err := repository.GetEnvironment(ctx, "deleted-agent")
+	if err != nil || deleted.LifecycleState != deployment.LifecycleDeleted {
+		t.Fatalf("deleted Runtime tombstone = %+v err=%v", deleted, err)
+	}
+}
+
+func TestRepositoryObservationWindowReportsBoundsAfterRetentionPruning(t *testing.T) {
+	repository, database, ctx := integrationRepository(t)
+	old := time.Now().UTC().Add(-2 * time.Hour)
+	if _, err := database.ExecContext(ctx, `
+INSERT INTO runtime_controller.observations (
+    agent_id, runtime_revision, generation, spec_digest, kind, source, observed_at, recorded_at
+) VALUES ('', '', 0, '', 'reconciled', 'expired_fixture', $1, $1)`, old); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := repository.AppendObservation(ctx, deployment.Observation{
+		Kind: deployment.ObservationReconciled, Source: "current_fixture", ObservedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	window, err := repository.ListObservations(ctx, 0, 10)
+	if err != nil || len(window.Observations) != 1 ||
+		window.OldestSequence != stored.Sequence || window.LatestSequence != stored.Sequence {
+		t.Fatalf("retained observation window = %+v stored=%+v err=%v", window, stored, err)
 	}
 }
 
@@ -176,6 +229,21 @@ func TestRepositoryObservationNotificationAndLeadership(t *testing.T) {
 		t.Fatalf("second leader was admitted: lease=%v acquired=%t err=%v",
 			second, secondAcquired, secondErr)
 	}
+	if ready, readyErr := repository.ObservationMonitorReady(ctx); readyErr != nil || ready {
+		t.Fatalf("unannounced observation leader was ready: ready=%t err=%v", ready, readyErr)
+	}
+	if err := leadership.MarkObservationReady(ctx); err != nil {
+		t.Fatalf("mark observation Watch ready: %v", err)
+	}
+	if ready, readyErr := repository.ObservationMonitorReady(ctx); readyErr != nil || !ready {
+		t.Fatalf("active observation Watch was not visible: ready=%t err=%v", ready, readyErr)
+	}
+	if err := leadership.MarkObservationUnready(ctx); err != nil {
+		t.Fatalf("mark observation Watch unready: %v", err)
+	}
+	if ready, readyErr := repository.ObservationMonitorReady(ctx); readyErr != nil || ready {
+		t.Fatalf("stopped observation Watch remained ready: ready=%t err=%v", ready, readyErr)
+	}
 	if err := leadership.Release(ctx); err != nil {
 		t.Fatalf("release observation leadership: %v", err)
 	}
@@ -224,7 +292,7 @@ func TestRepositoryObservationNotificationAndLeadership(t *testing.T) {
 	listenerCancel()
 	select {
 	case err := <-listenerResult:
-		if err != nil {
+		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("stop observation listener: %v", err)
 		}
 	case <-time.After(time.Second):

@@ -11,6 +11,10 @@ import (
 	"testing"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+
 	"soft/antnest-platform/services/runtime-controller/internal/control"
 	"soft/antnest-platform/services/runtime-controller/internal/deployment"
 	"soft/antnest-platform/services/runtime-controller/internal/observation"
@@ -46,14 +50,96 @@ func TestInitializeRuntimeReturnsCompletedOperation(t *testing.T) {
 		Effect: deployment.EffectCompleted,
 	}}
 	handler := newTestHandler(t, service)
-	payload := initializeRequest{Configuration: deployment.Configuration{}}
+	payload := initializeRequest{Configuration: configurationDTO{}}
 	encoded, _ := json.Marshal(payload)
 	request := httptest.NewRequest(http.MethodPost, "/internal/runtimes/agent-1/initialize", bytes.NewReader(encoded))
 	request.Header.Set("Idempotency-Key", "request-1")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
-	if response.Code != http.StatusOK || service.agentID != "agent-1" {
+	if response.Code != http.StatusOK || service.agentID != "agent-1" ||
+		!strings.Contains(response.Body.String(), `"target_revision":"`+string(testRuntimeRevision)+`"`) {
 		t.Fatalf("initialize response=%d agent_id=%q body=%s", response.Code, service.agentID, response.Body.String())
+	}
+}
+
+func TestLifecycleMutationTraceCarriesLogicalOperationIdentity(t *testing.T) {
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	original := rpcTracer
+	rpcTracer = provider.Tracer("runtime-controller-rpc-test")
+	t.Cleanup(func() {
+		rpcTracer = original
+		_ = provider.Shutdown(context.Background())
+	})
+	service := &fakeService{operation: deployment.Operation{
+		RequestID: "request-1", Kind: deployment.OperationInitializeRuntime,
+		AgentID: "agent-1", RuntimeRevision: testRuntimeRevision,
+		State: deployment.OperationCompleted, Effect: deployment.EffectCompleted,
+	}}
+	handler := newTestHandler(t, service)
+	encoded, _ := json.Marshal(initializeRequest{Configuration: configurationDTO{}})
+	request := httptest.NewRequest(http.MethodPost, "/internal/runtimes/agent-1/initialize", bytes.NewReader(encoded))
+	request.Header.Set("Idempotency-Key", "request-1")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	spans := recorder.Ended()
+	if len(spans) != 1 || spans[0].Name() != "runtime.lifecycle.initialize_runtime" {
+		t.Fatalf("lifecycle spans = %+v", spans)
+	}
+	attributes := make(map[attribute.Key]attribute.Value)
+	for _, value := range spans[0].Attributes() {
+		attributes[value.Key] = value.Value
+	}
+	for key, want := range map[attribute.Key]string{
+		"antnest.agent.id":                "agent-1",
+		"antnest.operation.id":            "request-1",
+		"antnest.operation.kind":          string(deployment.OperationInitializeRuntime),
+		"antnest.runtime.target_revision": string(testRuntimeRevision),
+		"antnest.result":                  string(deployment.OperationCompleted),
+	} {
+		if got := attributes[key].AsString(); got != want {
+			t.Fatalf("span attribute %s = %q, want %q", key, got, want)
+		}
+	}
+}
+
+func TestLifecycleFailureKeepsRequestedIdentityAndWireErrorClassification(t *testing.T) {
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	original := rpcTracer
+	rpcTracer = provider.Tracer("runtime-controller-rpc-failure-test")
+	t.Cleanup(func() {
+		rpcTracer = original
+		_ = provider.Shutdown(context.Background())
+	})
+	service := &fakeService{operationErr: context.DeadlineExceeded}
+	handler := newTestHandler(t, service)
+	encoded, _ := json.Marshal(initializeRequest{Configuration: configurationDTO{}})
+	request := httptest.NewRequest(http.MethodPost, "/internal/runtimes/agent-1/initialize", bytes.NewReader(encoded))
+	request.Header.Set("Idempotency-Key", "request-1")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusGatewayTimeout || !strings.Contains(response.Body.String(), "deadline_exceeded") {
+		t.Fatalf("deadline response=%d body=%s", response.Code, response.Body.String())
+	}
+	spans := recorder.Ended()
+	if len(spans) != 1 {
+		t.Fatalf("lifecycle spans=%d want=1", len(spans))
+	}
+	attributes := make(map[attribute.Key]attribute.Value)
+	for _, value := range spans[0].Attributes() {
+		attributes[value.Key] = value.Value
+	}
+	for key, want := range map[attribute.Key]string{
+		"antnest.agent.id":     "agent-1",
+		"antnest.operation.id": "request-1",
+		"antnest.error.class":  "deadline_exceeded",
+	} {
+		if got := attributes[key].AsString(); got != want {
+			t.Fatalf("span attribute %s=%q want=%q", key, got, want)
+		}
 	}
 }
 
@@ -64,7 +150,7 @@ func TestFailedOperationUsesStableSanitizedError(t *testing.T) {
 		ErrorDetail: "must not leak Docker internals",
 	}}
 	handler := newTestHandler(t, service)
-	encoded, _ := json.Marshal(initializeRequest{Configuration: deployment.Configuration{}})
+	encoded, _ := json.Marshal(initializeRequest{Configuration: configurationDTO{}})
 	request := httptest.NewRequest(http.MethodPost, "/internal/runtimes/agent-1/initialize", bytes.NewReader(encoded))
 	request.Header.Set("Idempotency-Key", "request-1")
 	response := httptest.NewRecorder()
@@ -97,7 +183,7 @@ func TestLifecycleMutationRoutesForwardOpaqueRevision(t *testing.T) {
 			var payload any = body
 			if test.withConfig {
 				payload = revisionConfigurationRequest{
-					ExpectedRevision: testRuntimeRevision, Configuration: deployment.Configuration{},
+					ExpectedRevision: testRuntimeRevision, Configuration: configurationDTO{},
 				}
 			}
 			encoded, _ := json.Marshal(payload)
@@ -140,6 +226,22 @@ func TestObservationCursorRejectsValuesBeyondPersistenceRange(t *testing.T) {
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "invalid_request") {
 		t.Fatalf("overflow cursor response=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestObservationCursorExpiryReturnsProjectionResetSequence(t *testing.T) {
+	service := &fakeService{listErr: &control.ObservationCursorExpiredError{ResetSequence: 42}}
+	handler := newTestHandler(t, service)
+	request := httptest.NewRequest(http.MethodGet, "/internal/runtime-observations?after_sequence=3", nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	var body errorResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusGone || body.Code != "observation_cursor_expired" ||
+		body.ResetSequence == nil || *body.ResetSequence != 42 {
+		t.Fatalf("expired cursor response=%d body=%+v", response.Code, body)
 	}
 }
 
@@ -221,9 +323,30 @@ func TestMutationCoordinationFailuresUseStableErrors(t *testing.T) {
 	}
 }
 
+func TestFiniteRPCUsesServerExecutionBudget(t *testing.T) {
+	service := &fakeService{blockListUntilCanceled: true}
+	handler, err := NewHandler(service, observation.NewHub(), time.Second, 5*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/internal/runtimes", nil))
+	if response.Code != http.StatusGatewayTimeout || !strings.Contains(response.Body.String(), "deadline_exceeded") {
+		t.Fatalf("bounded List response=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestWatchTerminationDistinguishesServerShutdown(t *testing.T) {
+	ctx, cancel := context.WithCancelCause(context.Background())
+	cancel(ErrServerShutdown)
+	if got := watchTermination(ctx); got != "server_shutdown" {
+		t.Fatalf("watch termination=%q want=server_shutdown", got)
+	}
+}
+
 func newTestHandler(t *testing.T, service Service) http.Handler {
 	t.Helper()
-	handler, err := NewHandler(service, observation.NewHub(), time.Second)
+	handler, err := NewHandler(service, observation.NewHub(), time.Second, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,17 +354,19 @@ func newTestHandler(t *testing.T, service Service) http.Handler {
 }
 
 type fakeService struct {
-	operation        deployment.Operation
-	inspection       deployment.Environment
-	observations     []deployment.Observation
-	readyErr         error
-	listErr          error
-	agentID          string
-	after            uint64
-	limit            int
-	initializeCalls  int
-	command          deployment.OperationKind
-	expectedRevision deployment.RuntimeRevision
+	operation              deployment.Operation
+	inspection             deployment.Environment
+	observations           []deployment.Observation
+	readyErr               error
+	operationErr           error
+	listErr                error
+	blockListUntilCanceled bool
+	agentID                string
+	after                  uint64
+	limit                  int
+	initializeCalls        int
+	command                deployment.OperationKind
+	expectedRevision       deployment.RuntimeRevision
 }
 
 func (s *fakeService) Status(context.Context) (control.Readiness, error) {
@@ -255,7 +380,7 @@ func (s *fakeService) InitializeRuntime(
 ) (deployment.Operation, error) {
 	s.initializeCalls++
 	s.agentID = agentID
-	return s.operation, nil
+	return s.operation, s.operationErr
 }
 func (s *fakeService) UpdateRuntime(
 	_ context.Context, _ string, agentID string, revision deployment.RuntimeRevision, _ deployment.Configuration,
@@ -288,12 +413,24 @@ func (s *fakeService) DeleteRuntime(
 func (s *fakeService) GetOperation(context.Context, string) (deployment.Operation, error) {
 	return s.operation, nil
 }
-func (s *fakeService) ListRuntimes(context.Context) ([]deployment.Environment, error) {
+
+func (s *fakeService) ListRuntimes(ctx context.Context) ([]deployment.Environment, error) {
+	if s.blockListUntilCanceled {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
 	return nil, nil
 }
-func (s *fakeService) ListObservations(_ context.Context, after uint64, limit int) ([]deployment.Observation, error) {
+func (s *fakeService) ListObservations(
+	_ context.Context, after uint64, limit int,
+) (deployment.ObservationWindow, error) {
 	s.after, s.limit = after, limit
-	return s.observations, s.listErr
+	window := deployment.ObservationWindow{Observations: s.observations}
+	if len(s.observations) > 0 {
+		window.OldestSequence = s.observations[0].Sequence
+		window.LatestSequence = s.observations[len(s.observations)-1].Sequence
+	}
+	return window, s.listErr
 }
 
 var _ Service = (*fakeService)(nil)

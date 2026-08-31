@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"soft/antnest-platform/services/runtime-controller/internal/platform"
 )
 
 func TestHTTPClientMapsDockerResourcesAndHardening(t *testing.T) {
@@ -192,16 +194,38 @@ func TestHTTPClientStreamsFilteredDockerEvents(t *testing.T) {
 		t.Fatal(err)
 	}
 	var events []ContainerEvent
-	err = client.WatchManagedEvents(context.Background(), time.Unix(99, 0), func(event ContainerEvent) error {
+	ready := false
+	err = client.WatchManagedEvents(context.Background(), time.Unix(99, 0), func() error {
+		ready = true
+		return nil
+	}, func(event ContainerEvent) error {
 		events = append(events, event)
 		return nil
 	})
+	if !errors.Is(err, platform.ErrObservationStreamDisconnected) {
+		t.Fatalf("finite Docker event stream termination = %v", err)
+	}
+	if !ready || len(events) != 2 || events[0].Action != "start" || events[1].Action != "die" ||
+		events[0].ObservedAt.Unix() != 100 {
+		t.Fatalf("unexpected Docker events: ready=%t events=%+v", ready, events)
+	}
+}
+
+func TestHTTPClientDoesNotAnnounceWatchBeforeResponseHeaders(t *testing.T) {
+	transport := roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return nil, errors.New("Docker socket unavailable")
+	})
+	client, err := NewHTTPClient(&http.Client{Transport: transport}, "http://docker")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(events) != 2 || events[0].Action != "start" || events[1].Action != "die" ||
-		events[0].ObservedAt.Unix() != 100 {
-		t.Fatalf("unexpected Docker events: %+v", events)
+	ready := false
+	err = client.WatchManagedEvents(context.Background(), time.Time{}, func() error {
+		ready = true
+		return nil
+	}, func(ContainerEvent) error { return nil })
+	if err == nil || ready {
+		t.Fatalf("failed Watch announced readiness: ready=%t err=%v", ready, err)
 	}
 }
 

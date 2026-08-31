@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"soft/antnest-platform/services/runtime-controller/internal/control"
 	"soft/antnest-platform/services/runtime-controller/internal/deployment"
+	"soft/antnest-platform/services/runtime-controller/internal/repository"
 )
 
 func TestRepositoryPublishesOnlyPersistedObservations(t *testing.T) {
@@ -79,8 +79,8 @@ type fakeRepository struct {
 func (*fakeRepository) BeginTransition(_ context.Context, operation deployment.Operation) (deployment.Operation, bool, error) {
 	return operation, false, nil
 }
-func (*fakeRepository) GenerationClaim(context.Context, deployment.Key) (control.GenerationClaim, error) {
-	return control.GenerationClaim{}, nil
+func (*fakeRepository) GenerationClaim(context.Context, deployment.Key) (repository.GenerationClaim, error) {
+	return repository.GenerationClaim{}, nil
 }
 func (*fakeRepository) CompleteOperation(
 	context.Context, deployment.Operation, *deployment.Observation,
@@ -103,7 +103,7 @@ func (r *fakeRepository) AppendObservation(_ context.Context, value deployment.O
 	value.Sequence = 1
 	return value, nil
 }
-func (*fakeRepository) ListObservations(context.Context, uint64, int) ([]deployment.Observation, error) {
-	return nil, nil
+func (*fakeRepository) ListObservations(context.Context, uint64, int) (deployment.ObservationWindow, error) {
+	return deployment.ObservationWindow{}, nil
 }
 func (*fakeRepository) Ready(context.Context) error { return nil }

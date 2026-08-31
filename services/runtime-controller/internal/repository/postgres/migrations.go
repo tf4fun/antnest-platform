@@ -99,6 +99,42 @@ CREATE INDEX IF NOT EXISTS observations_agent_generation_idx
 CREATE INDEX IF NOT EXISTS observations_recorded_at_idx
     ON runtime_controller.observations (recorded_at);
 `
+	storageObservationKindsSQL = `
+ALTER TABLE runtime_controller.observations
+    DROP CONSTRAINT observations_kind_check;
+
+ALTER TABLE runtime_controller.observations
+    ADD CONSTRAINT observations_kind_check CHECK (kind IN (
+        'initialized', 'updated', 'disabled', 'enabled', 'healthy', 'unhealthy',
+        'restarted', 'exited', 'deleted', 'status_unverified', 'storage_missing',
+        'storage_drift', 'observation_gap', 'reconciled'
+    ));
+`
+	observationIdentityScopesSQL = `
+ALTER TABLE runtime_controller.observations
+    DROP CONSTRAINT observations_kind_check,
+    DROP CONSTRAINT observations_check;
+
+ALTER TABLE runtime_controller.observations
+    ADD CONSTRAINT observations_kind_check CHECK (kind IN (
+        'initialized', 'updated', 'disabled', 'enabled', 'healthy', 'unhealthy',
+		'restarted', 'exited', 'deleted', 'runtime_deleted', 'status_unverified', 'runtime_missing',
+        'storage_missing', 'storage_drift', 'observation_gap', 'reconciled'
+    )),
+    ADD CONSTRAINT observations_identity_scope_check CHECK (
+        (kind IN ('observation_gap', 'reconciled')
+            AND agent_id = '' AND runtime_revision = '' AND generation = 0
+            AND spec_digest = '' AND platform_resource_id = '' AND runtime_execution_id = '')
+        OR
+		(kind IN ('initialized', 'updated', 'disabled', 'enabled', 'deleted', 'storage_missing', 'storage_drift')
+			AND agent_id <> '' AND runtime_revision ~ '^rtv_[0-9a-f]{32}$'
+			AND generation = 0 AND spec_digest = '' AND platform_resource_id = '' AND runtime_execution_id = '')
+		OR
+		(kind IN ('healthy', 'unhealthy', 'restarted', 'exited', 'runtime_deleted', 'status_unverified', 'runtime_missing')
+            AND agent_id <> '' AND runtime_revision ~ '^rtv_[0-9a-f]{32}$'
+            AND generation > 0 AND spec_digest ~ '^sha256:[0-9a-fA-F]{64}$')
+    );
+`
 )
 
 type migration struct {
@@ -113,6 +149,16 @@ var schemaMigrations = []migration{
 		version: 1, name: "initial_runtime_controller_schema",
 		checksum: "0a7a7162403e43319291d6e23edd02b87cbb462283e96a3f7cb56172e868ed97",
 		sql:      initialSchemaSQL,
+	},
+	{
+		version: 2, name: "add_storage_observation_kinds",
+		checksum: "dd275263861b958ff589945764615ccbe1456716a6c9fadc15b0adcfd59dc611",
+		sql:      storageObservationKindsSQL,
+	},
+	{
+		version: 3, name: "separate_observation_identity_scopes",
+		checksum: "57b2fbfa2e54f8c2d982d153d78ba091d75bc4728b29663a35d29a40a98f0e0a",
+		sql:      observationIdentityScopesSQL,
 	},
 }
 
