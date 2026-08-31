@@ -44,6 +44,13 @@ export class AcpApplication implements AcpApplicationPort {
     await this.dependencies.runs.cancel(input.sessionId);
   }
 
+  public async forkSession(
+    input: Parameters<AcpApplicationPort["forkSession"]>[0],
+  ): Promise<Awaited<ReturnType<AcpApplicationPort["forkSession"]>>> {
+    await this.assertAccess(input);
+    return this.dependencies.sessions.forkSession(input);
+  }
+
   public async resumeSession(
     input: Parameters<AcpApplicationPort["resumeSession"]>[0],
   ): Promise<Awaited<ReturnType<AcpApplicationPort["resumeSession"]>>> {

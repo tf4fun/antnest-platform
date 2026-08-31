@@ -1,12 +1,14 @@
 import { DomainError } from "./errors.js";
 import type {
   ConnectionBinding,
+  ContentBlock,
   EnvironmentChangeFact,
   RunExecutionSnapshot,
   SessionRecord,
 } from "./types.js";
 
 const WORKSPACE = "/workspace";
+const MAX_SESSION_TITLE_CHARACTERS = 80;
 const ENVIRONMENT_CHANGE_CONTENT =
   "The Agent configuration or isolated execution environment was rebuilt after the previous " +
   "Run. Persisted workspace and conversation state remain available. Temporary processes, " +
@@ -41,6 +43,24 @@ export function requireActiveSession(session: SessionRecord): void {
   if (session.state !== "active") {
     throw new DomainError("session_not_active", "Session is not active");
   }
+}
+
+export function defaultSessionTitle(prompt: readonly ContentBlock[]): string | undefined {
+  const text = prompt.find(
+    (block): block is ContentBlock & { text: string } =>
+      block.type === "text" && typeof block.text === "string",
+  )?.text;
+  if (text === undefined) {
+    return undefined;
+  }
+  const normalized = text.replace(/\s+/gu, " ").trim();
+  if (normalized.length === 0) {
+    return undefined;
+  }
+  const characters = [...normalized];
+  return characters.length <= MAX_SESSION_TITLE_CHARACTERS
+    ? normalized
+    : `${characters.slice(0, MAX_SESSION_TITLE_CHARACTERS - 3).join("")}...`;
 }
 
 export function environmentChangeFact(

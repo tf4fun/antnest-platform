@@ -100,9 +100,22 @@ describe("SessionService", () => {
 
   it("never exposes Sessions owned by another principal through list", async () => {
     const repository = createRepository();
+    repository.list.mockResolvedValueOnce({
+      sessions: [repository.session],
+      nextCursor: undefined,
+    });
     const service = createService(repository.port);
 
-    await service.listSessions({ binding, cwd: "/workspace" });
+    await expect(service.listSessions({ binding, cwd: "/workspace" })).resolves.toEqual({
+      sessions: [
+        {
+          sessionId: "session-1",
+          cwd: "/workspace",
+          title: "Existing conversation",
+          updatedAt: "2026-08-30T00:00:00.000Z",
+        },
+      ],
+    });
 
     expect(repository.list).toHaveBeenCalledWith({
       principalId: "principal-1",
@@ -110,6 +123,29 @@ describe("SessionService", () => {
       cwd: "/workspace",
       cursor: undefined,
       limit: 50,
+    });
+  });
+
+  it("forks an idle Session into a new durable context with a fresh MCP revision", async () => {
+    const repository = createRepository();
+    const service = createService(repository.port);
+
+    await expect(
+      service.forkSession({
+        binding,
+        sessionId: "session-1",
+        cwd: "/workspace",
+        additionalDirectories: [],
+        mcpServers: [],
+      }),
+    ).resolves.toEqual({ sessionId: "id-1" });
+
+    expect(repository.fork).toHaveBeenCalledWith({
+      sourceSessionId: "session-1",
+      sessionId: "id-1",
+      mcpRevisionId: "id-2",
+      mcpSources: [],
+      createdAt: new Date("2026-08-30T00:00:01Z"),
     });
   });
 
@@ -135,6 +171,8 @@ function createRepository() {
     agentId: "agent-1",
     cwd: "/workspace",
     state: "closed",
+    title: "Existing conversation",
+    forkedFromSessionId: null,
     clientMcpRevisionId: "mcp-1",
     lastExecutionRevision: null,
     lastMessageSequence: 0,
@@ -148,6 +186,7 @@ function createRepository() {
   const replaceMcpAndActivate = vi.fn<SessionRepository["replaceMcpAndActivate"]>(() =>
     Promise.resolve(session),
   );
+  const fork = vi.fn<SessionRepository["fork"]>(() => Promise.resolve());
   const replay = vi.fn<SessionRepository["replay"]>(() => Promise.resolve([]));
   const getCurrentRunState = vi.fn<SessionRepository["getCurrentRunState"]>(() =>
     Promise.resolve({ kind: "state", state: "idle", stopReason: "end_turn" }),
@@ -162,6 +201,7 @@ function createRepository() {
     get: vi.fn(() => Promise.resolve(session)),
     list,
     replaceMcpAndActivate,
+    fork,
     replay,
     getCurrentRunState,
     requestCancellation,
@@ -171,9 +211,11 @@ function createRepository() {
   };
   return {
     port,
+    session,
     create,
     list,
     replaceMcpAndActivate,
+    fork,
     replay,
     getCurrentRunState,
     requestCancellation,

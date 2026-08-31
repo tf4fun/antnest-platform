@@ -8,8 +8,12 @@ import { WebSocketServer, type WebSocket } from "ws";
 import type { AcpApplicationPort } from "../ports/acp-application.js";
 import type { AgentControllerPort } from "../ports/agent-controller.js";
 import { NOOP_TELEMETRY, type TelemetryPort } from "../ports/telemetry.js";
+import {
+  createAcpV1WebSocketStream,
+  createAcpV2WebSocketWireStream,
+} from "./acp/websocket-stream.js";
+import { createAcpV1Agent } from "./acp/v1/agent.js";
 import { createAcpV2Agent } from "./acp/v2/agent.js";
-import { createAcpV2WebSocketWireStream } from "./acp/v2/websocket-stream.js";
 
 export type AgentAcpHttpServerOptions = {
   agentController: AgentControllerPort;
@@ -98,7 +102,8 @@ export class AgentAcpHttpServer {
     socket: Duplex,
     head: Buffer,
   ): Promise<void> {
-    if (request.url !== "/v2/acp") {
+    const protocol = acpProtocol(request.url);
+    if (protocol === null) {
       this.telemetry.count("antnest.acp.connections", { result: "rejected", reason: "not_found" });
       rejectUpgrade(socket, 404, "Not Found");
       return;
@@ -139,7 +144,7 @@ export class AgentAcpHttpServer {
         accessRevision: access.accessRevision,
       };
       this.webSockets.handleUpgrade(request, socket, head, (webSocket) => {
-        this.telemetry.count("antnest.acp.connections", { result: "accepted" });
+        this.telemetry.count("antnest.acp.connections", { result: "accepted", protocol });
         this.connections.add(webSocket);
         webSocket.once("close", () => {
           this.connections.delete(webSocket);
@@ -147,18 +152,21 @@ export class AgentAcpHttpServer {
         });
         webSocket.once("error", (error) => this.report(error, "websocket"));
         try {
-          const connection = createAcpV2Agent({
-            binding,
-            promptCapabilities: access.promptCapabilities,
-            application: this.options.application,
-          }).connect(createAcpV2WebSocketWireStream(webSocket));
-          void connection.initialized.catch((error) => this.report(error, "acp_initialize"));
-          void connection.closed.then(() => {
-            const reason = connection.signal.reason as unknown;
-            if (reason !== undefined) {
-              this.report(reason, "acp_connection");
-            }
-          });
+          if (protocol === "v1") {
+            const connection = createAcpV1Agent({
+              binding,
+              promptCapabilities: access.promptCapabilities,
+              application: this.options.application,
+            }).connect(createAcpV1WebSocketStream(webSocket));
+            this.observeConnection(connection, protocol);
+          } else {
+            const connection = createAcpV2Agent({
+              binding,
+              promptCapabilities: access.promptCapabilities,
+              application: this.options.application,
+            }).connect(createAcpV2WebSocketWireStream(webSocket));
+            this.observeConnection(connection, protocol);
+          }
         } catch (error) {
           this.report(error, "acp_connect");
           webSocket.close(1011, "ACP connection setup failed");
@@ -172,9 +180,39 @@ export class AgentAcpHttpServer {
     }
   }
 
+  private observeConnection(
+    connection: {
+      initialized?: Promise<unknown>;
+      closed: Promise<void>;
+      signal: AbortSignal;
+    },
+    protocol: "v1" | "v2",
+  ): void {
+    void connection.initialized?.catch((error) => this.report(error, `${protocol}_initialize`));
+    void connection.closed.then(() => {
+      const reason = connection.signal.reason as unknown;
+      if (reason !== undefined) {
+        this.report(reason, `${protocol}_connection`);
+      }
+    });
+  }
+
   private report(error: unknown, operation: string): void {
     this.telemetry.log("error", operation, {}, error);
     this.options.reportError?.(error, operation);
+  }
+}
+
+function acpProtocol(url: string | undefined): "v1" | "v2" | null {
+  switch (url) {
+    case "/v1/acp":
+      return "v1";
+    case "/v2/acp":
+      return "v2";
+    case undefined:
+      return null;
+    default:
+      return null;
   }
 }
 

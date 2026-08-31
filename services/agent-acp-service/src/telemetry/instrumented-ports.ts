@@ -51,6 +51,14 @@ export class InstrumentedAcpApplication implements AcpApplicationPort {
     );
   }
 
+  public forkSession(
+    input: Parameters<AcpApplicationPort["forkSession"]>[0],
+  ): ReturnType<AcpApplicationPort["forkSession"]> {
+    return this.sessionOperation("fork", input.binding.agentId, input.sessionId, () =>
+      this.delegate.forkSession(input),
+    );
+  }
+
   public resumeSession(
     input: Parameters<AcpApplicationPort["resumeSession"]>[0],
   ): ReturnType<AcpApplicationPort["resumeSession"]> {

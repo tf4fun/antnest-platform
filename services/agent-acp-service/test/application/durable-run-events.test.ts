@@ -14,6 +14,7 @@ describe("DurableRunEvents", () => {
         order.push("persist");
         return {
           kind: "tool_call",
+          initial: true,
           toolCallId: input.toolCallId,
           title: input.tool.name,
           status: "in_progress",

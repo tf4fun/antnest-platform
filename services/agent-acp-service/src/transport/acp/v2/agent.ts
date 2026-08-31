@@ -37,6 +37,7 @@ export function createAcpV2Agent({
         capabilities: {
           session: {
             delete: {},
+            fork: {},
             mcp: { http: {} },
             prompt: {
               ...(promptCapabilities.image ? { image: {} } : {}),
@@ -85,6 +86,19 @@ export function createAcpV2Agent({
         await mapError(() => application.deleteSession({ binding, sessionId: params.sessionId }));
         return {};
       }),
+    )
+    .onRequest(acp.methods.agent.session.fork, ({ params }) =>
+      withAcpTrace(params._meta, () =>
+        mapError(() =>
+          application.forkSession({
+            binding,
+            sessionId: params.sessionId,
+            cwd: params.cwd,
+            additionalDirectories: [...(params.additionalDirectories ?? [])],
+            mcpServers: toClientMcpInputs(params.mcpServers ?? []),
+          }),
+        ),
+      ),
     )
     .onRequest(acp.methods.agent.session.resume, ({ params, client }) =>
       withAcpTrace(params._meta, async () => {
@@ -136,7 +150,9 @@ export function createAcpV2Agent({
             prompt: toDomainContent(params.prompt),
           }),
         );
-        startRun(application, accepted, params.sessionId, params.prompt, client);
+        setImmediate(() => {
+          void startRun(application, accepted, params.sessionId, params.prompt, client);
+        });
         return {};
       }),
     )
@@ -147,21 +163,20 @@ export function createAcpV2Agent({
     );
 }
 
-function startRun(
+async function startRun(
   application: AcpApplicationPort,
   accepted: AcceptedAcpRun,
   sessionId: string,
   prompt: acp.ContentBlock[],
   client: acp.AgentContext,
-): void {
-  const publish = (event: SessionEvent): Promise<void> => {
-    bestEffortNotify(client, {
+): Promise<void> {
+  const publish = (event: SessionEvent): Promise<void> =>
+    notifyBestEffort(client, {
       sessionId,
       update: toAcpUpdate(event),
     });
-    return Promise.resolve();
-  };
-  bestEffortNotify(client, {
+
+  await notifyBestEffort(client, {
     sessionId,
     update: toAcpUpdate({
       kind: "user_message",
@@ -169,31 +184,38 @@ function startRun(
       content: toDomainContent(prompt),
     }),
   });
-  notifyState(client, sessionId, "running");
-  const execution = application.executeRun({
-    accepted,
-    publish,
-    signal: new AbortController().signal,
-  });
-  void execution
-    .then((result) => notifyIdle(client, sessionId, result))
-    .catch((error: unknown) => {
-      if (!(error instanceof RunRecoveryRequiredError)) {
-        notifyState(client, sessionId, "idle", "_failed");
-      }
+  if (accepted.sessionInfoUpdate !== undefined) {
+    await notifyBestEffort(client, {
+      sessionId,
+      update: {
+        sessionUpdate: "session_info_update",
+        ...accepted.sessionInfoUpdate,
+      },
     });
+  }
+  await notifyState(client, sessionId, "running");
+  try {
+    const result = await application.executeRun({
+      accepted,
+      publish,
+      signal: new AbortController().signal,
+    });
+    await notifyIdle(client, sessionId, result);
+  } catch (error) {
+    if (!(error instanceof RunRecoveryRequiredError)) {
+      await notifyState(client, sessionId, "idle", "_failed");
+    }
+  }
 }
 
-function bestEffortNotify(
+async function notifyBestEffort(
   client: acp.AgentContext,
   params: { sessionId: string; update: acp.SessionUpdate },
-): void {
+): Promise<void> {
   try {
-    void client.notify(acp.methods.client.session.update, params).catch(() => {
-      // Durable replay, not the socket, is the source of truth.
-    });
+    await client.notify(acp.methods.client.session.update, params);
   } catch {
-    // A synchronously closed transport is repaired by replay as well.
+    // Durable replay, not the socket, is the source of truth.
   }
 }
 
@@ -202,8 +224,8 @@ function notifyState(
   sessionId: string,
   state: "running" | "idle",
   stopReason?: string,
-): void {
-  bestEffortNotify(client, {
+): Promise<void> {
+  return notifyBestEffort(client, {
     sessionId,
     update: {
       sessionUpdate: "state_update",
@@ -213,8 +235,12 @@ function notifyState(
   });
 }
 
-function notifyIdle(client: acp.AgentContext, sessionId: string, result: ExecuteRunResult): void {
-  notifyState(client, sessionId, "idle", stopReason(result));
+function notifyIdle(
+  client: acp.AgentContext,
+  sessionId: string,
+  result: ExecuteRunResult,
+): Promise<void> {
+  return notifyState(client, sessionId, "idle", stopReason(result));
 }
 
 function stopReason(result: ExecuteRunResult): string {

@@ -24,6 +24,14 @@ export type ReplaceMcpInput = {
   mcpSources: NormalizedClientMcpSource[];
 };
 
+export type ForkSessionInput = {
+  sourceSessionId: string;
+  sessionId: string;
+  mcpRevisionId: string;
+  mcpSources: NormalizedClientMcpSource[];
+  createdAt: Date;
+};
+
 export interface SessionRepository {
   create(input: CreateSessionInput): Promise<void>;
   get(sessionId: string): Promise<SessionRecord | null>;
@@ -32,6 +40,7 @@ export interface SessionRepository {
     nextCursor: string | undefined;
   }>;
   replaceMcpAndActivate(input: ReplaceMcpInput): Promise<SessionRecord>;
+  fork(input: ForkSessionInput): Promise<void>;
   replay(sessionId: string): Promise<SessionEvent[]>;
   getCurrentRunState(sessionId: string): Promise<Extract<SessionEvent, { kind: "state" }>>;
   requestCancellation(sessionId: string, requestedAt: Date): Promise<void>;

@@ -12,7 +12,12 @@ export type SessionServiceDependencies = {
 
 export class SessionService implements Pick<
   AcpApplicationPort,
-  "createSession" | "listSessions" | "deleteSession" | "resumeSession" | "closeSession"
+  | "createSession"
+  | "listSessions"
+  | "deleteSession"
+  | "forkSession"
+  | "resumeSession"
+  | "closeSession"
 > {
   public constructor(private readonly dependencies: SessionServiceDependencies) {}
 
@@ -48,10 +53,30 @@ export class SessionService implements Pick<
       sessions: result.sessions.map((session) => ({
         sessionId: session.id,
         cwd: session.cwd,
+        ...(session.title === null ? {} : { title: session.title }),
         updatedAt: session.updatedAt.toISOString(),
       })),
       ...(result.nextCursor === undefined ? {} : { nextCursor: result.nextCursor }),
     };
+  }
+
+  public async forkSession(
+    input: Parameters<AcpApplicationPort["forkSession"]>[0],
+  ): Promise<{ sessionId: string }> {
+    requireWorkspace(input.cwd, input.additionalDirectories);
+    const source = await this.requireAuthorized(input.sessionId, input.binding);
+    if (source.cwd !== input.cwd) {
+      throw new DomainError("session_workspace_mismatch", "Session belongs to another workspace");
+    }
+    const sessionId = this.dependencies.id();
+    await this.dependencies.repository.fork({
+      sourceSessionId: source.id,
+      sessionId,
+      mcpRevisionId: this.dependencies.id(),
+      mcpSources: normalizeClientMcpServers(input.mcpServers),
+      createdAt: this.dependencies.now(),
+    });
+    return { sessionId };
   }
 
   public async resumeSession(

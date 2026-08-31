@@ -1,10 +1,12 @@
 import type { PoolClient } from "pg";
 
+import { DomainError } from "../../domain/errors.js";
 import type { NormalizedClientMcpSource } from "../../domain/mcp.js";
 import type { SessionRecord } from "../../domain/types.js";
 import type { SessionEvent } from "../../ports/acp-application.js";
 import type {
   CreateSessionInput,
+  ForkSessionInput,
   ListSessionsInput,
   ReplaceMcpInput,
   SessionRepository,
@@ -18,6 +20,8 @@ type SessionRow = {
   agent_id: string;
   cwd: "/workspace";
   state: SessionRecord["state"];
+  title: string | null;
+  forked_from_session_id: string | null;
   client_mcp_revision_id: string;
   last_execution_revision: string | null;
   last_message_sequence: string;
@@ -58,7 +62,8 @@ export class PostgresSessionRepository implements SessionRepository {
 
   public async get(sessionId: string): Promise<SessionRecord | null> {
     const result = await this.kernel.query<SessionRow>(
-      `SELECT id, principal_id, agent_id, cwd, state, client_mcp_revision_id,
+      `SELECT id, principal_id, agent_id, cwd, state, title, forked_from_session_id,
+              client_mcp_revision_id,
               last_execution_revision, last_message_sequence, created_at, updated_at
          FROM acp_sessions WHERE id = $1`,
       [sessionId],
@@ -72,7 +77,8 @@ export class PostgresSessionRepository implements SessionRepository {
   }> {
     const cursor = decodeCursor(input.cursor);
     const result = await this.kernel.query<SessionRow>(
-      `SELECT id, principal_id, agent_id, cwd, state, client_mcp_revision_id,
+      `SELECT id, principal_id, agent_id, cwd, state, title, forked_from_session_id,
+              client_mcp_revision_id,
               last_execution_revision, last_message_sequence, created_at, updated_at
          FROM acp_sessions
         WHERE principal_id = $1
@@ -103,6 +109,85 @@ export class PostgresSessionRepository implements SessionRepository {
     };
   }
 
+  public async fork(input: ForkSessionInput): Promise<void> {
+    await this.kernel.transaction(async (client) => {
+      const source = await selectSessionForUpdate(client, input.sourceSessionId);
+      if (source.state === "deleted") {
+        throw new DomainError("session_not_found", "Session has been deleted");
+      }
+      const activeRun = await client.query(
+        `SELECT 1 FROM runs
+          WHERE session_id = $1 AND state IN ('admitting', 'running')
+          LIMIT 1`,
+        [input.sourceSessionId],
+      );
+      if (activeRun.rowCount !== 0) {
+        throw new DomainError("session_busy", "Session has an active Run");
+      }
+      await client.query(
+        `INSERT INTO acp_sessions(
+           id, principal_id, agent_id, cwd, state, title, forked_from_session_id,
+           client_mcp_revision_id, last_execution_revision,
+           last_message_sequence, created_at, updated_at
+         ) VALUES ($1, $2, $3, $4, 'active', $5, $6, NULL, $7, $8, $9, $9)`,
+        [
+          input.sessionId,
+          source.principal_id,
+          source.agent_id,
+          source.cwd,
+          source.title,
+          source.id,
+          source.last_execution_revision,
+          source.last_message_sequence,
+          input.createdAt,
+        ],
+      );
+      await this.insertMcpRevision(
+        client,
+        input.sessionId,
+        input.mcpRevisionId,
+        1,
+        input.mcpSources,
+        input.createdAt,
+      );
+      await client.query(
+        `INSERT INTO session_messages(
+           id, session_id, run_id, sequence, kind, visible, payload, created_at
+         )
+         SELECT $2 || ':message:' || sequence::text,
+                $2, NULL, sequence, kind, visible,
+                CASE WHEN payload ? 'messageId'
+                  THEN jsonb_set(
+                    payload,
+                    '{messageId}',
+                    to_jsonb($2 || ':message:' || sequence::text),
+                    false
+                  )
+                  ELSE payload
+                END,
+                created_at
+           FROM session_messages
+          WHERE session_id = $1
+          ORDER BY sequence`,
+        [input.sourceSessionId, input.sessionId],
+      );
+      await client.query(
+        `INSERT INTO context_checkpoints(
+           id, session_id, through_sequence, summary, token_count, created_at
+         )
+         SELECT $2 || ':checkpoint:' || through_sequence::text,
+                $2, through_sequence, summary, token_count, created_at
+           FROM context_checkpoints
+          WHERE session_id = $1`,
+        [input.sourceSessionId, input.sessionId],
+      );
+      await client.query("UPDATE acp_sessions SET client_mcp_revision_id = $2 WHERE id = $1", [
+        input.sessionId,
+        input.mcpRevisionId,
+      ]);
+    });
+  }
+
   public async replaceMcpAndActivate(input: ReplaceMcpInput): Promise<SessionRecord> {
     return this.kernel.transaction(async (client) => {
       const session = await selectSessionForUpdate(client, input.sessionId);
@@ -127,7 +212,8 @@ export class PostgresSessionRepository implements SessionRepository {
         `UPDATE acp_sessions
             SET client_mcp_revision_id = $2, state = 'active', updated_at = $3
           WHERE id = $1
-        RETURNING id, principal_id, agent_id, cwd, state, client_mcp_revision_id,
+        RETURNING id, principal_id, agent_id, cwd, state, title, forked_from_session_id,
+                  client_mcp_revision_id,
                   last_execution_revision, last_message_sequence, created_at, updated_at`,
         [input.sessionId, input.mcpRevisionId, now],
       );
@@ -267,7 +353,8 @@ async function markRunsCancelled(
 
 async function selectSessionForUpdate(client: PoolClient, sessionId: string): Promise<SessionRow> {
   const result = await client.query<SessionRow>(
-    `SELECT id, principal_id, agent_id, cwd, state, client_mcp_revision_id,
+    `SELECT id, principal_id, agent_id, cwd, state, title, forked_from_session_id,
+            client_mcp_revision_id,
             last_execution_revision, last_message_sequence, created_at, updated_at
        FROM acp_sessions WHERE id = $1 FOR UPDATE`,
     [sessionId],
@@ -282,6 +369,8 @@ function mapSession(row: SessionRow): SessionRecord {
     agentId: row.agent_id,
     cwd: row.cwd,
     state: row.state,
+    title: row.title,
+    forkedFromSessionId: row.forked_from_session_id,
     clientMcpRevisionId: row.client_mcp_revision_id,
     lastExecutionRevision: row.last_execution_revision,
     lastMessageSequence: Number(row.last_message_sequence),

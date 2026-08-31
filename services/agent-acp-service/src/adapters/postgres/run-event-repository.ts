@@ -62,6 +62,7 @@ export class PostgresRunEventRepository implements RunEventRepository {
   public async startToolAttempt(input: StartToolAttemptInput): Promise<SessionEvent> {
     const event: SessionEvent = {
       kind: "tool_call",
+      initial: true,
       toolCallId: input.toolCallId,
       title: input.tool.name,
       modelName: input.tool.modelName,
@@ -94,6 +95,7 @@ export class PostgresRunEventRepository implements RunEventRepository {
   public async appendRejectedToolCall(input: AppendRejectedToolCallInput): Promise<SessionEvent> {
     const event: SessionEvent = {
       kind: "tool_call",
+      initial: true,
       toolCallId: input.call.id,
       title: input.call.name,
       modelName: input.call.name,
@@ -108,6 +110,7 @@ export class PostgresRunEventRepository implements RunEventRepository {
   public async finishToolAttempt(input: FinishToolAttemptInput): Promise<SessionEvent> {
     const event: SessionEvent = {
       kind: "tool_call",
+      initial: false,
       toolCallId: input.toolCallId,
       status: input.status,
       content: input.content,
@@ -181,6 +184,7 @@ export class PostgresRunEventRepository implements RunEventRepository {
           "tool_call",
           {
             kind: "tool_call",
+            initial: false,
             toolCallId: attempt.tool_call_id,
             title: attempt.tool_name,
             status: "failed",
@@ -338,6 +342,7 @@ async function appendUnstartedToolResults(
       "tool_call",
       {
         kind: "tool_call",
+        initial: true,
         toolCallId: call.id,
         title: call.name,
         modelName: call.name,

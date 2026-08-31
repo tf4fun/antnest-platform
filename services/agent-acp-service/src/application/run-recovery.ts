@@ -1,4 +1,4 @@
-import { environmentChangeFact } from "../domain/session.js";
+import { defaultSessionTitle, environmentChangeFact } from "../domain/session.js";
 import type { RunExecutionSnapshot, RunOutcome } from "../domain/types.js";
 import { finishRunInput, type AgentControllerPort } from "../ports/agent-controller.js";
 import type { ExecutionRepository, RecoveryWork } from "../ports/execution-repository.js";
@@ -121,12 +121,14 @@ export class RunRecovery {
       ...acquired,
       clientMcpRevisionId: work.clientMcpRevisionId,
     };
+    const sessionTitle = session.title ?? defaultSessionTitle(work.prompt);
     assertWorkerOwnership(signal);
     const disposition = await withWorkerOwnership(signal, () =>
       this.dependencies.runs.acceptRun({
         runId: work.id,
         snapshot,
         environmentFact: environmentChangeFact(session, snapshot),
+        ...(sessionTitle === undefined ? {} : { sessionTitle }),
         acceptedAt: this.dependencies.now(),
       }),
     );

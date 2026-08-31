@@ -32,6 +32,17 @@ export type SessionEvent =
     }
   | {
       kind: "tool_call";
+      initial: true;
+      toolCallId: string;
+      title: string;
+      modelName?: string;
+      arguments?: { [key: string]: unknown };
+      status: "pending" | "in_progress" | "completed" | "failed" | "cancelled";
+      content?: ContentBlock[];
+    }
+  | {
+      kind: "tool_call";
+      initial: false;
       toolCallId: string;
       title?: string;
       modelName?: string;
@@ -59,6 +70,10 @@ export type AcceptedAcpRun = {
   requestId: string;
   sessionId: string;
   userMessageId: string;
+  sessionInfoUpdate?: {
+    title?: string;
+    updatedAt: string;
+  };
   snapshot: RunExecutionSnapshot;
 };
 
@@ -85,6 +100,13 @@ export interface AcpApplicationPort {
     cursor?: string;
   }): Promise<{ sessions: AcpSessionInfo[]; nextCursor?: string }>;
   deleteSession(input: { binding: ConnectionBinding; sessionId: string }): Promise<void>;
+  forkSession(input: {
+    binding: ConnectionBinding;
+    sessionId: string;
+    cwd: string;
+    additionalDirectories: string[];
+    mcpServers: ClientMcpInput[];
+  }): Promise<{ sessionId: string }>;
   resumeSession(input: {
     binding: ConnectionBinding;
     sessionId: string;

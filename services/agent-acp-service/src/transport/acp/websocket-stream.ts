@@ -1,12 +1,24 @@
-import type * as acp from "@agentclientprotocol/sdk/experimental/v2";
+import type * as acpV1 from "@agentclientprotocol/sdk";
+import type * as acpV2 from "@agentclientprotocol/sdk/experimental/v2";
 import type WebSocket from "ws";
 import type { RawData } from "ws";
 
-export function createAcpV2WebSocketWireStream(socket: WebSocket): acp.WireStream {
-  let readableController: ReadableStreamDefaultController<acp.AnyWireMessage> | undefined;
+export function createAcpV1WebSocketStream(socket: WebSocket): acpV1.Stream {
+  return createWebSocketJsonStream<acpV1.AnyMessage>(socket);
+}
+
+export function createAcpV2WebSocketWireStream(socket: WebSocket): acpV2.WireStream {
+  return createWebSocketJsonStream<acpV2.AnyWireMessage>(socket);
+}
+
+function createWebSocketJsonStream<Message>(socket: WebSocket): {
+  readable: ReadableStream<Message>;
+  writable: WritableStream<Message>;
+} {
+  let readableController: ReadableStreamDefaultController<Message> | undefined;
   let closed = false;
 
-  const readable = new ReadableStream<acp.AnyWireMessage>({
+  const readable = new ReadableStream<Message>({
     start(controller) {
       readableController = controller;
       socket.on("message", (data, isBinary) => {
@@ -15,11 +27,9 @@ export function createAcpV2WebSocketWireStream(socket: WebSocket): acp.WireStrea
           return;
         }
         try {
-          controller.enqueue(JSON.parse(textFrame(data)) as acp.AnyWireMessage);
-        } catch (error) {
-          closed = true;
-          controller.error(error);
-          socket.close(1007, "Invalid JSON");
+          controller.enqueue(JSON.parse(textFrame(data)) as Message);
+        } catch {
+          sendParseError(socket);
         }
       });
       socket.once("close", () => {
@@ -41,7 +51,7 @@ export function createAcpV2WebSocketWireStream(socket: WebSocket): acp.WireStrea
     },
   });
 
-  const writable = new WritableStream<acp.AnyWireMessage>({
+  const writable = new WritableStream<Message>({
     write(message) {
       return new Promise<void>((resolve, reject) => {
         socket.send(JSON.stringify(message), (error) => {
@@ -66,6 +76,21 @@ export function createAcpV2WebSocketWireStream(socket: WebSocket): acp.WireStrea
   });
 
   return { readable, writable };
+}
+
+function sendParseError(socket: WebSocket): void {
+  socket.send(
+    JSON.stringify({
+      jsonrpc: "2.0",
+      id: null,
+      error: { code: -32700, message: "Parse error" },
+    }),
+    (error) => {
+      if (error != null) {
+        socket.close(1011, "ACP parse error response failed");
+      }
+    },
+  );
 }
 
 function textFrame(data: RawData): string {

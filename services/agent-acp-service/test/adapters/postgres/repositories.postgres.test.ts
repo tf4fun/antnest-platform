@@ -109,6 +109,7 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP private PostgreSQL reposit
       runs.acceptRun({
         runId,
         snapshot: snapshot(revisionId),
+        sessionTitle: "hello",
         environmentFact: {
           kind: "environment_change",
           visible: false,
@@ -137,6 +138,7 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP private PostgreSQL reposit
       { kind: "user_message", visible: true, sequence: "2" },
     ]);
     await expect(sessions.get(sessionId)).resolves.toMatchObject({
+      title: "hello",
       lastExecutionRevision: "execution-2",
       lastMessageSequence: 2,
     });
@@ -144,6 +146,93 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP private PostgreSQL reposit
       kind: "state",
       state: "running",
     });
+  });
+
+  it("forks a settled Session context without copying Run ownership", async () => {
+    const sourceSessionId = randomUUID();
+    const sourceMcpRevisionId = randomUUID();
+    const runId = randomUUID();
+    await sessions.create({
+      sessionId: sourceSessionId,
+      binding: {
+        connectionId: "connection-fork",
+        agentAccessSubject: "subject-fork",
+        principalId: "principal-fork",
+        agentId: "agent-fork",
+        accessRevision: "access-fork",
+      },
+      cwd: "/workspace",
+      mcpRevisionId: sourceMcpRevisionId,
+      mcpSources: [],
+    });
+    await runs.createRunIntent({
+      runId,
+      requestId: randomUUID(),
+      sessionId: sourceSessionId,
+      expectedAccessRevision: "access-fork",
+      userMessageId: randomUUID(),
+      prompt: [{ type: "text", text: "remember this" }],
+      createdAt: new Date("2026-08-30T00:20:00Z"),
+    });
+    await runs.acceptRun({
+      runId,
+      snapshot: snapshot(sourceMcpRevisionId),
+      environmentFact: null,
+      sessionTitle: "remember this",
+      acceptedAt: new Date("2026-08-30T00:20:01Z"),
+    });
+    await events.appendAgentMessage({
+      id: randomUUID(),
+      runId,
+      content: [{ type: "text", text: "remembered" }],
+      createdAt: new Date("2026-08-30T00:20:02Z"),
+    });
+    await expect(
+      sessions.fork({
+        sourceSessionId,
+        sessionId: randomUUID(),
+        mcpRevisionId: randomUUID(),
+        mcpSources: [],
+        createdAt: new Date("2026-08-30T00:20:02Z"),
+      }),
+    ).rejects.toMatchObject({ code: "session_busy" });
+    await executions.finish({
+      runId,
+      terminalClass: "completed",
+      executorState: "quiescent",
+      toolEffectState: "none",
+      stopReason: "end_turn",
+      finishedAt: new Date("2026-08-30T00:20:03Z"),
+    });
+    await executions.markAdmissionFinished(runId, new Date("2026-08-30T00:20:04Z"));
+
+    const forkSessionId = randomUUID();
+    const forkMcpRevisionId = randomUUID();
+    await sessions.fork({
+      sourceSessionId,
+      sessionId: forkSessionId,
+      mcpRevisionId: forkMcpRevisionId,
+      mcpSources: [],
+      createdAt: new Date("2026-08-30T00:20:05Z"),
+    });
+
+    await expect(sessions.get(forkSessionId)).resolves.toMatchObject({
+      principalId: "principal-fork",
+      agentId: "agent-fork",
+      state: "active",
+      title: "remember this",
+      forkedFromSessionId: sourceSessionId,
+      lastMessageSequence: 2,
+    });
+    await expect(sessions.replay(forkSessionId)).resolves.toMatchObject([
+      { kind: "user_message", content: [{ type: "text", text: "remember this" }] },
+      { kind: "agent_message", content: [{ type: "text", text: "remembered" }] },
+    ]);
+    const copiedRunReferences = await pool.query(
+      "SELECT id FROM session_messages WHERE session_id = $1 AND run_id IS NOT NULL",
+      [forkSessionId],
+    );
+    expect(copiedRunReferences.rowCount).toBe(0);
   });
 
   it("persists replay events, context checkpoints, Tool attempts, and terminal Run facts", async () => {

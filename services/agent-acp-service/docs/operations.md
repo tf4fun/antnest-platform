@@ -57,7 +57,7 @@ with machine-readable shapes in
 
 ## ACP Endpoint
 
-`GET /v2/acp` must be a WebSocket upgrade. The caller supplies an opaque,
+`GET /v1/acp` and `GET /v2/acp` must be WebSocket upgrades. The caller supplies an opaque,
 Agent-scoped access subject in `X-Antnest-Agent-Access-Subject`. This header is
 trusted only because the service is not externally routable; Edge Gateway must
 remove any external value and inject the value issued for the selected Agent.
@@ -68,8 +68,9 @@ Controller must advance `access_revision` when authorization, Agent mapping, or
 prompt capabilities change. A stale connection receives a stable ACP error and
 must reconnect. The service never logs the raw header.
 
-The unversioned `/acp` and `/v1/acp` return not found. ACP v1 is not silently
-served by a v2 implementation.
+The endpoint fixes the protocol version for the complete connection. Stable v1
+and draft v2 are separate adapters over the same application core. The
+unversioned `/acp` returns not found and never negotiates a default version.
 
 ## Telemetry
 

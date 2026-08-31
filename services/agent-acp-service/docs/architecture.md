@@ -10,16 +10,19 @@ Agent lifecycle, Runtime deployment, and identity outside this service.
 
 ## Technology Decision
 
-The service uses TypeScript and the official
-`@agentclientprotocol/sdk/experimental/v2` surface. The available Go SDK still
-targets protocol version 1; generating or hand-maintaining a second v2 wire
-model would make protocol drift an Antnest responsibility. TypeScript is
-confined to this service boundary and does not leak into internal RPC schemas.
+The service uses TypeScript and both official SDK entry points:
+`@agentclientprotocol/sdk` for stable ACP v1 and
+`@agentclientprotocol/sdk/experimental/v2` for draft ACP v2. Protocol adapters
+share one application port and never branch inside Session or Run business
+logic. Generating or hand-maintaining either wire model would make protocol
+drift an Antnest responsibility. TypeScript is confined to this service
+boundary and does not leak into internal RPC schemas.
 
-The remote transport is WebSocket. ACP v2 explicitly permits custom
-bidirectional transports, while its Streamable HTTP transport remains a draft.
-The official SDK's current generic HTTP server also rejects JSON-RPC batches;
-the v2 `WireStream` used over WebSocket handles individual and batch messages.
+The remote transport is WebSocket. `/v1/acp` carries individual stable v1
+JSON-RPC messages; `/v2/acp` carries the v2 `WireStream`, including batches.
+The unversioned `/acp` is absent. Version-specific transport code maps wire
+requests and updates only; authorization, persistence, Run admission, model
+execution, and Tool execution remain shared application behavior.
 
 ## Domain Model
 
@@ -50,6 +53,8 @@ Session
   agent_id
   cwd = /workspace
   state = active | closed | deleted
+  title?
+  forked_from_session_id?
   client_mcp_revision
   last_execution_revision?
   last_message_sequence
@@ -58,7 +63,10 @@ Session
 A Session survives connections and Agent rebuilds. Every operation checks the
 current ConnectionBinding against the stored principal and Agent. Resume may
 replace the complete client MCP list; omission means an empty list, not “keep
-the previous list.”
+the previous list.” The first accepted text prompt supplies a bounded default
+title. Fork creates a new Session with a point-in-time copy of durable context,
+records the immutable immediate source Session, but never copies Runs or
+admissions and rejects a source Session with active work.
 
 ### Run
 
@@ -112,13 +120,16 @@ session/prompt
        append accepted user message
        advance Session execution baseline
        state=running
-  -> return ACP PromptResponse {}
-  -> background Tool loop emits persisted session/update facts
+  -> protocol-specific completion:
+       v1: run Tool loop, stream persisted updates, return stopReason at terminal state
+       v2: return PromptResponse {} before any update, then run Tool loop and emit
+           persisted updates through running -> idle state_update
 ```
 
-If admission fails, the user message is not accepted or persisted. Once the
-prompt response is returned, the accepted user message is durable. Completion
-is reported only by an `idle` `state_update`.
+If admission fails, the user message is not accepted or persisted. Once either
+protocol acknowledges the accepted prompt, the user message is durable. ACP v1
+completion is the blocking Prompt response; ACP v2 completion is the later
+`idle` `state_update`.
 
 Prompt intent creation, Session close/delete, and cancellation serialize on
 the same Session row. Closing or deleting a Session atomically records
@@ -207,7 +218,7 @@ src/adapters/postgres/    private migrations and repository
 src/adapters/controller/  narrow Run admission RPC client
 src/adapters/model/       OpenAI-compatible model adapter
 src/adapters/mcp/         trusted Runtime and untrusted client MCP clients
-src/transport/acp/v2/     official ACP v2 handlers and WebSocket stream adapter
+src/transport/acp/        shared WebSocket stream plus versioned official SDK adapters
 src/telemetry/            logs, traces, low-cardinality metrics
 src/main.ts               composition only
 ```

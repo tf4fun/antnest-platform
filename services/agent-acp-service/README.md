@@ -1,15 +1,17 @@
 # Agent ACP Service
 
 Agent ACP Service is Antnest's replaceable Agent compute service. It exposes
-the draft ACP v2 protocol, owns durable conversation and Run execution state,
-calls the model, and invokes MCP Tools. It does not construct Agents or
-Runtimes.
+stable ACP v1 and the draft ACP v2 protocol over separate endpoints, owns
+durable conversation and Run execution state, calls the model, and invokes MCP
+Tools. It does not construct Agents or Runtimes.
 
 ## Status
 
-The Stage 2 ACP core surface is implemented and independently testable. The
-broader optional ACP v2 method catalog is not claimed as implemented. The Stage
-2 cross-service path remains pending Agent Controller. The
+The Stage 2 ACP core surface is implemented and independently testable. ACP v1
+is the compatibility baseline; ACP v2 is an explicitly draft, side-by-side
+adapter. Optional editor, authentication, and Provider administration methods
+are not claimed as implemented. The Stage 2 cross-service path remains pending
+Agent Controller. The
 authoritative cross-service design is
 [`../../docs/stage-2-agent-and-acp.md`](../../docs/stage-2-agent-and-acp.md);
 this directory is the only implementation authority for Agent ACP Service.
@@ -35,7 +37,8 @@ this directory is the only implementation authority for Agent ACP Service.
 
 | Interface                       | Direction | Purpose                                                |
 | ------------------------------- | --------- | ------------------------------------------------------ |
-| ACP v2 over WebSocket `/v2/acp` | inbound   | Standard Session and prompt protocol                   |
+| ACP v1 over WebSocket `/v1/acp` | inbound   | Stable ACP Session and prompt protocol                 |
+| ACP v2 over WebSocket `/v2/acp` | inbound   | Draft ACP Session and prompt protocol                  |
 | `GET /status`                   | inbound   | Liveness/readiness without business mutation           |
 | Agent Controller Run RPC        | outbound  | Resolve access, acquire/finish Run, resolve credential |
 | MCP `2026-07-28` HTTP           | outbound  | Platform Runtime and client Tool execution             |
@@ -51,27 +54,39 @@ with machine-readable shapes in
 New optional response fields are compatible; required fields and existing
 semantics cannot change without a coordinated contract revision.
 
-ACP v2 Streamable HTTP is still a draft proposal. The initial remote transport
-uses WebSocket as a documented custom transport and feeds the official SDK's
-v2 `WireStream`, including JSON-RPC batch messages. The ACP success shapes are
-not extended with Antnest fields.
+The remote transport is WebSocket for both versions. Each endpoint feeds the
+matching official SDK surface: the stable package root for v1 and the
+batch-capable experimental `WireStream` for v2. ACP success shapes are not
+extended with Antnest fields. The unversioned `/acp` is deliberately absent so
+protocol selection is never implicit.
 
-`/v1/acp` and the unversioned `/acp` are deliberately not implemented. A future
-ACP v1 adapter must be a separate transport over the same application port; it
-must not add v1 branches to the v2 wire handler.
+### ACP Capability Matrix
 
-### ACP v2 Surface
+| Surface   | Implemented                                                                                                                                                                                                                          | Deliberately absent                                                                                                                                       |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v1 stable | `initialize`, `session/new`, `session/load`, `session/list`, `session/resume`, `session/close`, `session/delete`, `session/prompt`, `session/cancel`, replayable message/thought/Tool/usage updates; SDK-experimental `session/fork` | Client filesystem and terminal delegation, Agent modes/configuration, authentication, Provider administration, permissions, NES, document synchronization |
+| v2 draft  | `initialize`, `session/new`, `session/list`, `session/resume`, `session/close`, `session/delete`, `session/fork`, `session/prompt`, `session/cancel`, replayable message/thought/Tool/usage/state/session-info updates               | Authentication, Provider administration, Session configuration, message-tunneled MCP, permissions/elicitation, NES, document synchronization              |
 
-| Status                       | Methods                                                                                                                                         |
-| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| Implemented                  | `initialize`, `session/new`, `session/list`, `session/resume`, `session/close`, `session/delete`, `session/prompt`, `session/cancel`            |
-| Emitted to clients           | durable `session/update` message, thought, Tool, usage, and state projections                                                                   |
-| Intentionally not advertised | ACP auth/provider management, Session fork/config options, stdio or message-tunneled MCP, permission prompts, NES, and document synchronization |
+The executable coverage contract is maintained in
+[`docs/protocol-conformance.md`](docs/protocol-conformance.md). Stable ACP v1
+requires stdio MCP support; the remote service currently supports only HTTP
+client MCP, so v1 must not yet be described as fully conformant.
 
-This is a capability-valid ACP v2 Agent, not an assertion that every optional
-v2 method exists. Platform authentication and Provider selection remain Agent
-Controller responsibilities; unsupported editor-oriented features are not
-stubbed with false success responses.
+This matrix distinguishes protocol completeness from optional product scope.
+Methods are advertised only when their semantics are implemented. Platform
+authentication and Provider selection remain Agent Controller responsibilities;
+editor-owned filesystem/terminal APIs are replaced by the platform Runtime MCP;
+unsupported surfaces are not stubbed with false success responses.
+
+## Runtime Rebuild Integration
+
+Agent ACP Service intentionally has no inbound `update_runtime` RPC. Agent
+Controller calls Runtime Controller's `UpdateRuntime`, waits for readiness, and
+atomically publishes a new ExecutionRevision. Every accepted ACP prompt calls
+Agent Controller `acquire_run`; that response contains the current Runtime MCP
+endpoint and execution identity and is copied into one immutable Run snapshot.
+An in-flight Run therefore cannot drift, while the first Run admitted after a
+rebuild automatically uses the replacement Runtime.
 
 ## Connection Identity
 

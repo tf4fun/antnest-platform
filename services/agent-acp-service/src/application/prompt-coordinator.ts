@@ -1,6 +1,7 @@
 import { DomainError } from "../domain/errors.js";
 import {
   authorizeSession,
+  defaultSessionTitle,
   environmentChangeFact,
   requireActiveSession,
 } from "../domain/session.js";
@@ -30,6 +31,10 @@ export type AcceptedRun = {
   requestId: string;
   sessionId: string;
   userMessageId: string;
+  sessionInfoUpdate: {
+    title?: string;
+    updatedAt: string;
+  };
   snapshot: RunExecutionSnapshot;
 };
 
@@ -101,12 +106,15 @@ export class PromptCoordinator {
     }
     // If local acceptance fails, the durable intent remains admitting so recovery
     // can repeat acquire_run with the same request ID.
+    const acceptedAt = this.dependencies.now();
+    const title = session.title ?? defaultSessionTitle(input.prompt);
     try {
       const disposition = await this.dependencies.repository.acceptRun({
         runId,
         snapshot,
         environmentFact: environmentChangeFact(session, snapshot),
-        acceptedAt: this.dependencies.now(),
+        ...(title === undefined ? {} : { sessionTitle: title }),
+        acceptedAt,
       });
       if (disposition === "cancelled") {
         await this.closeCancelledAdmission(runId, snapshot.admissionId);
@@ -122,7 +130,17 @@ export class PromptCoordinator {
       throw error;
     }
 
-    return { runId, requestId, sessionId: session.id, userMessageId, snapshot };
+    return {
+      runId,
+      requestId,
+      sessionId: session.id,
+      userMessageId,
+      sessionInfoUpdate: {
+        ...(title === undefined ? {} : { title }),
+        updatedAt: acceptedAt.toISOString(),
+      },
+      snapshot,
+    };
   }
 
   private async reject(runId: string, error: unknown, at: Date): Promise<"failed" | "cancelled"> {

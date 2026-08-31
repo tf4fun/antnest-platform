@@ -33,6 +33,7 @@ export type AcceptRunInput = {
   runId: string;
   snapshot: RunExecutionSnapshot;
   environmentFact: EnvironmentChangeFact | null;
+  sessionTitle?: string;
   acceptedAt: Date;
 };
 

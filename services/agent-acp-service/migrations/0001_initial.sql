@@ -4,11 +4,14 @@ CREATE TABLE acp_sessions (
     agent_id text NOT NULL,
     cwd text NOT NULL CHECK (cwd = '/workspace'),
     state text NOT NULL CHECK (state IN ('active', 'closed', 'deleted')),
+    title text CHECK (title IS NULL OR (char_length(title) BETWEEN 1 AND 200)),
+    forked_from_session_id text REFERENCES acp_sessions(id) ON DELETE RESTRICT,
     client_mcp_revision_id text,
     last_execution_revision text,
     last_message_sequence bigint NOT NULL DEFAULT 0 CHECK (last_message_sequence >= 0),
     created_at timestamptz NOT NULL,
-    updated_at timestamptz NOT NULL
+    updated_at timestamptz NOT NULL,
+    CHECK (forked_from_session_id IS NULL OR forked_from_session_id <> id)
 );
 
 CREATE INDEX acp_sessions_owner_updated_idx

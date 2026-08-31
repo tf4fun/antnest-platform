@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   authorizeSession,
+  defaultSessionTitle,
   environmentChangeFact,
   requireWorkspace,
 } from "../../src/domain/session.js";
@@ -25,6 +26,8 @@ const session: SessionRecord = {
   agentId: "agent-1",
   cwd: "/workspace",
   state: "active",
+  title: null,
+  forkedFromSessionId: null,
   clientMcpRevisionId: "mcp-revision-1",
   lastExecutionRevision: "execution-1",
   lastMessageSequence: 4,
@@ -78,6 +81,19 @@ describe("Session domain", () => {
       /principal/u,
     );
     expect(() => authorizeSession(session, { ...binding, agentId: "agent-2" })).toThrow(/Agent/u);
+  });
+
+  it("derives a bounded title from the first meaningful text block", () => {
+    expect(
+      defaultSessionTitle([
+        { type: "image", data: "ignored" },
+        { type: "text", text: "  explain\n\nthis   system  " },
+      ]),
+    ).toBe("explain this system");
+    expect(defaultSessionTitle([{ type: "text", text: "x".repeat(100) }])).toBe(
+      `${"x".repeat(77)}...`,
+    );
+    expect(defaultSessionTitle([{ type: "text", text: "   " }])).toBeUndefined();
   });
 
   it("adds an environment reset fact only after an executed revision changes", () => {

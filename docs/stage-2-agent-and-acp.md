@@ -4,7 +4,8 @@
 > Updated: 2026-08-31<br>
 > Compatibility: greenfield service rewrite; no prototype wire or database
 > compatibility is retained<br>
-> Protocol baseline: ACP v2 Draft and MCP `2026-07-28`
+> Protocol baseline: stable ACP v1, side-by-side ACP v2 Draft, and MCP
+> `2026-07-28`
 
 Stage 2 turns the Stage 1 Runtime and Egress foundation into the smallest useful
 Agent platform: create an Agent, build its isolated Runtime, expose the Agent
@@ -412,10 +413,10 @@ rebuild. This is fail-closed recovery, not automatic replay.
 
 ### 6.1 Standard wire only
 
-Agent ACP Service implements the ACP v2 Draft request and success shapes at the
-explicit WebSocket endpoint `/v2/acp`, without adding Antnest fields. The
-unversioned `/acp` and reserved `/v1/acp` do not alias this endpoint. In
-particular, clients never send:
+Agent ACP Service implements stable ACP v1 at `/v1/acp` and the ACP v2 Draft at
+`/v2/acp`, without adding Antnest fields. Both adapters use the official SDK and
+the same application core. The unversioned `/acp` is absent, so a client cannot
+silently change protocol semantics. In particular, clients never send:
 
 - `agent_id` as a private Session field;
 - Runtime endpoint or Runtime instance identity;
@@ -457,12 +458,17 @@ that principal. Credential remapping never rebinds an existing Session.
   Run; Session creation during rebuild therefore cannot invent a stale baseline.
 - A prompt rejected before AcquireRun is not persisted as an accepted user
   message.
+- Stable v1 blocks `session/prompt` until the Run is terminal and returns its
+  `stopReason`. Draft v2 acknowledges `session/prompt` with `{}` before sending
+  any Session update, then reports completion with an `idle` `state_update`.
 - No ACP Client reconnect is required after a successful rebuild.
-- `session/resume` restores durable context and applies the supplied full MCP
-  list. `replayFrom` controls standard ACP v2 history replay; resume without it
-  does not replay historical updates. Resume always emits one current
-  `running`/`idle` state projection so a replacement client repairs its input
-  controls after a disconnect.
+- Stable v1 `session/load` restores durable context, applies the supplied full
+  MCP list, and replays history before returning. Stable v1 `session/resume`
+  restores without historical replay. Draft v2 `session/resume` uses
+  `replayFrom=start` for full replay and otherwise resumes without history.
+  Resume emits the current durable Run projection when that protocol has a
+  state update, so a replacement v2 client repairs its input controls after a
+  disconnect.
 - A lost prompt response is never replayed merely because the JSON-RPC ID is
   repeated. Run idempotency uses the server's durable Run intent.
 - `session/cancel` is authorized like every Session method and propagates one
@@ -636,7 +642,8 @@ Egress, or interpret an observation as an Agent business event.
 
 Owns:
 
-- explicit ACP v2 transport at `/v2/acp` and access-binding flow;
+- explicit stable ACP v1 at `/v1/acp`, draft ACP v2 at `/v2/acp`, and one
+  access-binding flow;
 - ACP Sessions and replayable messages;
 - Runs, Turns, context, compression checkpoints, and Tool attempts;
 - client MCP lifecycle;
@@ -720,10 +727,13 @@ ReleaseAgentNetwork(agent_id)
 
 ### 10.4 Agent ACP Service
 
-Its external protocol is ACP v2 Draft at `/v2/acp`; ACP v1 is not implemented.
-Agent Controller never calls Agent ACP
-Service during admission recovery. Any future trusted read surface exposes Run
-facts only and cannot mutate Agent configuration.
+Its external protocols are stable ACP v1 at `/v1/acp` and ACP v2 Draft at
+`/v2/acp`. Agent Controller never calls Agent ACP Service to mutate Runtime or
+Agent configuration. A rebuild publishes a new immutable ExecutionRevision;
+the next `acquire_run` returns that complete snapshot, and one accepted Run
+keeps its original snapshot until terminal. Agent Controller also never calls
+Agent ACP Service during admission recovery. Any future trusted read surface
+exposes Run facts only and cannot mutate Agent configuration.
 
 ## 11. Persistence Boundaries
 
@@ -899,8 +909,9 @@ span attributes or default logs.
 ### Stage 2C: Agent ACP Service
 
 1. Implement transport-level Agent-scoped subject mapping and request
-   revalidation plus ACP v2 Session persistence, resume, prompt, cancellation,
-   content, Tool updates, and replay behavior.
+   revalidation plus stable ACP v1 and draft ACP v2 Session persistence,
+   resume/load, prompt, cancellation, content, Tool updates, and replay
+   behavior.
 2. Implement safe HTTP-only client MCP plus a separate mandatory platform
    Runtime MCP client.
 3. Persist RunExecutionSnapshot before model execution.

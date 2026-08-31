@@ -19,8 +19,52 @@ const binding: ConnectionBinding = {
 };
 
 describe("ACP v2 agent mapping", () => {
+  it("enforces the v2 initialize state machine supplied by the official SDK", async () => {
+    const createSession = vi.fn<AcpApplicationPort["createSession"]>(() =>
+      Promise.resolve({ sessionId: "session-1" }),
+    );
+    const uninitializedAgent = createAcpV2Agent({
+      binding,
+      promptCapabilities: { image: false, embeddedContext: false },
+      application: createApplication({ createSession }),
+    });
+
+    await acp.client().connectWith(uninitializedAgent, async (context) => {
+      await expect(
+        context.request(acp.methods.agent.session.new, {
+          cwd: "/workspace",
+          mcpServers: [],
+        }),
+      ).rejects.toMatchObject({ code: -32600 });
+      expect(createSession).not.toHaveBeenCalled();
+    });
+
+    const initializedAgent = createAcpV2Agent({
+      binding,
+      promptCapabilities: { image: false, embeddedContext: false },
+      application: createApplication({ createSession }),
+    });
+    await acp.client().connectWith(initializedAgent, async (context) => {
+      await context.request(acp.methods.agent.initialize, {
+        protocolVersion: acp.PROTOCOL_VERSION,
+        info: { name: "test-client", version: "1.0.0" },
+      });
+      let duplicateError: unknown;
+      try {
+        void context.request(acp.methods.agent.initialize, {
+          protocolVersion: acp.PROTOCOL_VERSION,
+          info: { name: "test-client", version: "1.0.0" },
+        });
+      } catch (error) {
+        duplicateError = error;
+      }
+      expect(duplicateError).toMatchObject({ code: -32600 });
+    });
+  });
+
   it("advertises only implemented surfaces and reports prompt completion through updates", async () => {
     const idle = Promise.withResolvers<void>();
+    const order: string[] = [];
     const updates: acp.SessionUpdate[] = [];
     const executeRun = vi.fn<AcpApplicationPort["executeRun"]>(async ({ publish }) => {
       await publish({
@@ -44,6 +88,7 @@ describe("ACP v2 agent mapping", () => {
       application,
     });
     const client = acp.client().onNotification(acp.methods.client.session.update, ({ params }) => {
+      order.push(params.update.sessionUpdate);
       updates.push(params.update);
       if (params.update.sessionUpdate === "state_update" && params.update.state === "idle") {
         idle.resolve();
@@ -59,7 +104,7 @@ describe("ACP v2 agent mapping", () => {
       expect(initialized).toMatchObject({
         protocolVersion: acp.PROTOCOL_VERSION,
         capabilities: {
-          session: { delete: {}, mcp: { http: {} }, prompt: {} },
+          session: { delete: {}, fork: {}, mcp: { http: {} }, prompt: {} },
         },
       });
       expect(initialized.authMethods).toBeUndefined();
@@ -70,20 +115,26 @@ describe("ACP v2 agent mapping", () => {
       });
       expect(created).toEqual({ sessionId: "session-1" });
 
-      await expect(
-        context.request(acp.methods.agent.session.prompt, {
-          sessionId: "session-1",
-          prompt: [{ type: "text", text: "hi" }],
-        }),
-      ).resolves.toEqual({});
+      const response = await context.request(acp.methods.agent.session.prompt, {
+        sessionId: "session-1",
+        prompt: [{ type: "text", text: "hi" }],
+      });
+      order.push("prompt_response");
+      expect(response).toEqual({});
       await idle.promise;
     });
 
+    expect(order[0]).toBe("prompt_response");
     expect(updates).toEqual([
       {
         sessionUpdate: "user_message",
         messageId: "user-message-1",
         content: [{ type: "text", text: "hi" }],
+      },
+      {
+        sessionUpdate: "session_info_update",
+        title: "hi",
+        updatedAt: "2026-08-30T00:00:01.000Z",
       },
       { sessionUpdate: "state_update", state: "running" },
       {
@@ -93,6 +144,39 @@ describe("ACP v2 agent mapping", () => {
       },
       { sessionUpdate: "state_update", state: "idle", stopReason: "max_tokens" },
     ]);
+  });
+
+  it("maps draft session fork to the shared application contract", async () => {
+    const forkSession = vi.fn<AcpApplicationPort["forkSession"]>(() =>
+      Promise.resolve({ sessionId: "session-fork" }),
+    );
+    const agent = createAcpV2Agent({
+      binding,
+      promptCapabilities: { image: false, embeddedContext: false },
+      application: createApplication({ forkSession }),
+    });
+
+    await acp.client().connectWith(agent, async (context) => {
+      await context.request(acp.methods.agent.initialize, {
+        protocolVersion: acp.PROTOCOL_VERSION,
+        info: { name: "test-client", version: "1.0.0" },
+      });
+      await expect(
+        context.request(acp.methods.agent.session.fork, {
+          sessionId: "session-1",
+          cwd: "/workspace",
+          mcpServers: [],
+        }),
+      ).resolves.toEqual({ sessionId: "session-fork" });
+    });
+
+    expect(forkSession).toHaveBeenCalledWith({
+      binding,
+      sessionId: "session-1",
+      cwd: "/workspace",
+      additionalDirectories: [],
+      mcpServers: [],
+    });
   });
 
   it("replays durable history only when resume starts at the beginning", async () => {
@@ -234,6 +318,11 @@ describe("ACP v2 agent mapping", () => {
         messageId: "user-message-1",
         content: [{ type: "text", text: "recover" }],
       },
+      {
+        sessionUpdate: "session_info_update",
+        title: "hi",
+        updatedAt: "2026-08-30T00:00:01.000Z",
+      },
       { sessionUpdate: "state_update", state: "running" },
     ]);
   });
@@ -317,6 +406,259 @@ describe("ACP v2 agent mapping", () => {
     expect(assertAccess).toHaveBeenCalledWith({ binding });
     expect(acceptPrompt).not.toHaveBeenCalled();
   });
+
+  it("maps the complete v2 baseline and advertised session lifecycle surface", async () => {
+    const createSession = vi.fn<AcpApplicationPort["createSession"]>(() =>
+      Promise.resolve({ sessionId: "session-created" }),
+    );
+    const listSessions = vi.fn<AcpApplicationPort["listSessions"]>(() =>
+      Promise.resolve({
+        sessions: [
+          {
+            sessionId: "session-created",
+            cwd: "/workspace",
+            title: "Session title",
+            updatedAt: "2026-08-30T00:00:02.000Z",
+          },
+        ],
+        nextCursor: "cursor-next",
+      }),
+    );
+    const closeSession = vi.fn<AcpApplicationPort["closeSession"]>(() => Promise.resolve());
+    const deleteSession = vi.fn<AcpApplicationPort["deleteSession"]>(() => Promise.resolve());
+    const application = createApplication({
+      createSession,
+      listSessions,
+      closeSession,
+      deleteSession,
+    });
+    const agent = createAcpV2Agent({
+      binding,
+      promptCapabilities: { image: false, embeddedContext: false },
+      application,
+    });
+
+    await acp.client().connectWith(agent, async (context) => {
+      await context.request(acp.methods.agent.initialize, {
+        protocolVersion: acp.PROTOCOL_VERSION,
+        info: { name: "test-client", version: "1.0.0" },
+      });
+      await expect(
+        context.request(acp.methods.agent.session.new, {
+          cwd: "/workspace",
+          mcpServers: [
+            {
+              type: "http",
+              name: "docs",
+              url: "https://mcp.example.test/mcp",
+              headers: [{ name: "authorization", value: "Bearer token" }],
+            },
+          ],
+        }),
+      ).resolves.toEqual({ sessionId: "session-created" });
+      await expect(
+        context.request(acp.methods.agent.session.list, {
+          cwd: "/workspace",
+          cursor: "cursor-current",
+        }),
+      ).resolves.toEqual({
+        sessions: [
+          {
+            sessionId: "session-created",
+            cwd: "/workspace",
+            title: "Session title",
+            updatedAt: "2026-08-30T00:00:02.000Z",
+          },
+        ],
+        nextCursor: "cursor-next",
+      });
+      await expect(
+        context.request(acp.methods.agent.session.close, { sessionId: "session-created" }),
+      ).resolves.toEqual({});
+      await expect(
+        context.request(acp.methods.agent.session.delete, { sessionId: "session-created" }),
+      ).resolves.toEqual({});
+    });
+
+    expect(createSession).toHaveBeenCalledWith({
+      binding,
+      cwd: "/workspace",
+      additionalDirectories: [],
+      mcpServers: [
+        {
+          type: "http",
+          name: "docs",
+          url: "https://mcp.example.test/mcp",
+          headers: [{ name: "authorization", value: "Bearer token" }],
+        },
+      ],
+    });
+    expect(listSessions).toHaveBeenCalledWith({
+      binding,
+      cwd: "/workspace",
+      cursor: "cursor-current",
+    });
+    expect(closeSession).toHaveBeenCalledWith({ binding, sessionId: "session-created" });
+    expect(deleteSession).toHaveBeenCalledWith({ binding, sessionId: "session-created" });
+  });
+
+  it("accepts baseline and advertised prompt blocks while rejecting undeclared audio", async () => {
+    const acceptPrompt = vi.fn<AcpApplicationPort["acceptPrompt"]>(() =>
+      Promise.resolve({
+        runId: "run-1",
+        requestId: "request-1",
+        sessionId: "session-1",
+        userMessageId: "user-message-1",
+        snapshot: createApplicationSnapshot(),
+      }),
+    );
+    const idle = Promise.withResolvers<void>();
+    const agent = createAcpV2Agent({
+      binding,
+      promptCapabilities: { image: true, embeddedContext: true },
+      application: createApplication({ acceptPrompt }),
+    });
+    const client = acp.client().onNotification(acp.methods.client.session.update, ({ params }) => {
+      if (params.update.sessionUpdate === "state_update" && params.update.state === "idle") {
+        idle.resolve();
+      }
+    });
+
+    await client.connectWith(agent, async (context) => {
+      await context.request(acp.methods.agent.initialize, {
+        protocolVersion: acp.PROTOCOL_VERSION,
+        info: { name: "test-client", version: "1.0.0" },
+      });
+      const supported: acp.ContentBlock[] = [
+        { type: "text", text: "inspect" },
+        { type: "resource_link", name: "notes", uri: "file:///workspace/notes.txt" },
+        { type: "image", data: "aGVsbG8=", mimeType: "image/png" },
+        {
+          type: "resource",
+          resource: {
+            uri: "file:///workspace/context.txt",
+            mimeType: "text/plain",
+            text: "context",
+          },
+        },
+      ];
+      await expect(
+        context.request(acp.methods.agent.session.prompt, {
+          sessionId: "session-1",
+          prompt: supported,
+        }),
+      ).resolves.toEqual({});
+      await idle.promise;
+      await expect(
+        context.request(acp.methods.agent.session.prompt, {
+          sessionId: "session-1",
+          prompt: [{ type: "audio", data: "aGVsbG8=", mimeType: "audio/wav" }],
+        }),
+      ).rejects.toMatchObject({ code: -32602 });
+    });
+
+    expect(acceptPrompt).toHaveBeenCalledTimes(1);
+  });
+
+  it("serializes every v2 update variant emitted by the shared application", async () => {
+    const updates: acp.SessionUpdate[] = [];
+    const idle = Promise.withResolvers<void>();
+    const executeRun = vi.fn<AcpApplicationPort["executeRun"]>(async ({ publish }) => {
+      await publish({
+        kind: "agent_thought",
+        messageId: "thought-1",
+        content: [{ type: "text", text: "reasoning" }],
+      });
+      await publish({ kind: "usage", used: 120, size: 2_000 });
+      await publish({
+        kind: "tool_call",
+        initial: true,
+        toolCallId: "call-1",
+        title: "Run command",
+        modelName: "bash",
+        arguments: { command: "pwd" },
+        status: "in_progress",
+      });
+      await publish({
+        kind: "tool_call",
+        initial: false,
+        toolCallId: "call-1",
+        status: "cancelled",
+        content: [{ type: "text", text: "cancelled" }],
+      });
+      return {
+        terminalClass: "unresolved",
+        executorState: "unknown",
+        toolEffectState: "unknown",
+        errorClass: "tool_effect_unknown",
+      };
+    });
+    const agent = createAcpV2Agent({
+      binding,
+      promptCapabilities: { image: false, embeddedContext: false },
+      application: createApplication({ executeRun }),
+    });
+    const client = acp.client().onNotification(acp.methods.client.session.update, ({ params }) => {
+      updates.push(params.update);
+      if (params.update.sessionUpdate === "state_update" && params.update.state === "idle") {
+        idle.resolve();
+      }
+    });
+
+    await client.connectWith(agent, async (context) => {
+      await context.request(acp.methods.agent.initialize, {
+        protocolVersion: acp.PROTOCOL_VERSION,
+        info: { name: "test-client", version: "1.0.0" },
+      });
+      await context.request(acp.methods.agent.session.prompt, {
+        sessionId: "session-1",
+        prompt: [{ type: "text", text: "run" }],
+      });
+      await idle.promise;
+    });
+
+    expect(updates.map((update) => update.sessionUpdate)).toEqual([
+      "user_message",
+      "session_info_update",
+      "state_update",
+      "agent_thought",
+      "usage_update",
+      "tool_call_update",
+      "tool_call_update",
+      "state_update",
+    ]);
+    expect(updates.at(-1)).toEqual({
+      sessionUpdate: "state_update",
+      state: "idle",
+      stopReason: "_unresolved",
+    });
+  });
+
+  it("rejects unknown v2 replay cursors instead of guessing their meaning", async () => {
+    const resumeSession = vi.fn<AcpApplicationPort["resumeSession"]>();
+    const agent = createAcpV2Agent({
+      binding,
+      promptCapabilities: { image: false, embeddedContext: false },
+      application: createApplication({ resumeSession }),
+    });
+
+    await acp.client().connectWith(agent, async (context) => {
+      await context.request(acp.methods.agent.initialize, {
+        protocolVersion: acp.PROTOCOL_VERSION,
+        info: { name: "test-client", version: "1.0.0" },
+      });
+      await expect(
+        context.request(acp.methods.agent.session.resume, {
+          sessionId: "session-1",
+          cwd: "/workspace",
+          mcpServers: [],
+          replayFrom: { type: "message", messageId: "message-1" },
+        }),
+      ).rejects.toMatchObject({ code: -32602 });
+    });
+
+    expect(resumeSession).not.toHaveBeenCalled();
+  });
 });
 
 function createApplication(overrides: Partial<AcpApplicationPort> = {}): AcpApplicationPort {
@@ -325,6 +667,7 @@ function createApplication(overrides: Partial<AcpApplicationPort> = {}): AcpAppl
     createSession: vi.fn(() => Promise.resolve({ sessionId: "session-1" })),
     listSessions: vi.fn(() => Promise.resolve({ sessions: [] })),
     deleteSession: vi.fn(() => Promise.resolve()),
+    forkSession: vi.fn(() => Promise.resolve({ sessionId: "session-fork" })),
     resumeSession: vi.fn(() => Promise.resolve({ replay: [] })),
     closeSession: vi.fn(() => Promise.resolve()),
     cancelRun: vi.fn(() => Promise.resolve()),
@@ -334,35 +677,11 @@ function createApplication(overrides: Partial<AcpApplicationPort> = {}): AcpAppl
         requestId: "request-1",
         sessionId: "session-1",
         userMessageId: "user-message-1",
-        snapshot: {
-          admissionId: "admission-1",
-          admissionDeadline: new Date("2026-08-30T00:10:00Z"),
-          agentConfigRevision: "config-1",
-          executionRevision: "execution-1",
-          runtimeMcpSourceDigest: "a".repeat(64),
-          agentExecutionSpecDigest: "b".repeat(64),
-          credentialVersion: "credential-version-1",
-          runtime: {
-            generation: 1,
-            instanceId: "runtime-1",
-            executionId: "runtime-execution-1",
-            mcpEndpoint: "http://runtime-1:8080/mcp",
-          },
-          executionSpec: {
-            systemPrompt: "system",
-            skillInstructions: [],
-            model: {
-              baseUrl: "https://api.example.test/v1",
-              model: "model",
-              contextWindow: 32_000,
-              maxOutputTokens: 2_048,
-              supportsImages: false,
-            },
-            maxModelRequests: 8,
-            credentialRef: "credential-1",
-          },
-          clientMcpRevisionId: "mcp-1",
+        sessionInfoUpdate: {
+          title: "hi",
+          updatedAt: "2026-08-30T00:00:01.000Z",
         },
+        snapshot: createApplicationSnapshot(),
       }),
     ),
     executeRun: vi.fn<AcpApplicationPort["executeRun"]>(() =>
@@ -374,5 +693,37 @@ function createApplication(overrides: Partial<AcpApplicationPort> = {}): AcpAppl
       }),
     ),
     ...overrides,
+  };
+}
+
+function createApplicationSnapshot(): AcceptedAcpRun["snapshot"] {
+  return {
+    admissionId: "admission-1",
+    admissionDeadline: new Date("2026-08-30T00:10:00Z"),
+    agentConfigRevision: "config-1",
+    executionRevision: "execution-1",
+    runtimeMcpSourceDigest: "a".repeat(64),
+    agentExecutionSpecDigest: "b".repeat(64),
+    credentialVersion: "credential-version-1",
+    runtime: {
+      generation: 1,
+      instanceId: "runtime-1",
+      executionId: "runtime-execution-1",
+      mcpEndpoint: "http://runtime-1:8080/mcp",
+    },
+    executionSpec: {
+      systemPrompt: "system",
+      skillInstructions: [],
+      model: {
+        baseUrl: "https://api.example.test/v1",
+        model: "model",
+        contextWindow: 32_000,
+        maxOutputTokens: 2_048,
+        supportsImages: false,
+      },
+      maxModelRequests: 8,
+      credentialRef: "credential-1",
+    },
+    clientMcpRevisionId: "mcp-1",
   };
 }

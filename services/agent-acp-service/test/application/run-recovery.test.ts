@@ -139,6 +139,7 @@ describe("RunRecovery", () => {
       expect.anything(),
     );
     expect(runs.acceptRun).toHaveBeenCalledOnce();
+    expect(runs.acceptRun).toHaveBeenCalledWith(expect.objectContaining({ sessionTitle: "hello" }));
     const execution = runner.execute.mock.calls[0]?.[0];
     expect(execution?.accepted).toMatchObject({ runId: "run-2", userMessageId: "message-2" });
     expect(execution?.accepted.snapshot.clientMcpRevisionId).toBe("client-mcp-captured");
@@ -237,6 +238,8 @@ describe("RunRecovery", () => {
         agentId: "agent-1",
         cwd: "/workspace" as const,
         state: "closed" as const,
+        title: null,
+        forkedFromSessionId: null,
         clientMcpRevisionId: "client-mcp-1",
         lastExecutionRevision: "execution-0",
         lastMessageSequence: 0,
@@ -462,6 +465,8 @@ function runRepository() {
         agentId: "agent-1",
         cwd: "/workspace",
         state: "active",
+        title: null,
+        forkedFromSessionId: null,
         clientMcpRevisionId: "client-mcp-1",
         lastExecutionRevision: "execution-0",
         lastMessageSequence: 0,

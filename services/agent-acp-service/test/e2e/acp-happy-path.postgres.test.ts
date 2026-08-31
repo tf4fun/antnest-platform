@@ -129,6 +129,7 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP happy path", () => {
 
     expect(updates.map((update) => update.sessionUpdate)).toEqual([
       "user_message",
+      "session_info_update",
       "state_update",
       "usage_update",
       "tool_call_update",
@@ -163,6 +164,11 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP happy path", () => {
       executionRevision: "execution-1",
     });
     expect(persisted.rows[0]?.admission_finished_at).toBeInstanceOf(Date);
+    const session = await pool.query<{ title: string | null }>(
+      "SELECT title FROM acp_sessions WHERE id = $1",
+      [created.sessionId],
+    );
+    expect(session.rows[0]?.title).toBe("Read README and summarize it");
     const attempts = await pool.query<{ state: string; tool_effect_state: string }>(
       "SELECT state, tool_effect_state FROM tool_attempts",
     );

@@ -23,6 +23,8 @@ export type SessionRecord = {
   agentId: string;
   cwd: "/workspace";
   state: SessionState;
+  title: string | null;
+  forkedFromSessionId: string | null;
   clientMcpRevisionId: string;
   lastExecutionRevision: string | null;
   lastMessageSequence: number;

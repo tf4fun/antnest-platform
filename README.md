@@ -12,7 +12,7 @@ than around one shared application package.
 | Runtime Egress     | Rust service owning Agent addresses, network policy, UDP/TUN forwarding, rejection, and address reuse                             | Implemented and accepted with Runtime  |
 | Runtime Controller | Logical Runtime Environment lifecycle, private deployment realization, and platform observation with an in-process Docker adapter | Implemented and accepted for Docker    |
 | Agent Controller   | Owns Agent lifecycle, immutable configuration/execution revisions, explicit Runtime rebuild, Run admission, and Agent events      | Future service                         |
-| Agent ACP Service  | Owns ACP v2 Sessions, Runs, context, model/Tool loop, and per-Run Runtime MCP calls                                               | Implemented for Stage 2                |
+| Agent ACP Service  | Owns ACP v1/v2 Sessions, Runs, context, model/Tool loop, and per-Run Runtime MCP calls                                            | Implemented for Stage 2                |
 | Identity Service   | Owns Organizations, Users, local login, OIDC, SCIM, credentials, and the directory journal                                        | Implemented for Stage 2                |
 | Contracts          | Language-neutral Runtime, Egress, Agent Controller, ACP, and Identity contracts                                                   | Evolving with each rewritten component |
 

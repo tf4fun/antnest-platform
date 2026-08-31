@@ -20,13 +20,16 @@ export class PostgresRunRepository implements RunRepository {
       agent_id: string;
       cwd: "/workspace";
       state: SessionRecord["state"];
+      title: string | null;
+      forked_from_session_id: string | null;
       client_mcp_revision_id: string;
       last_execution_revision: string | null;
       last_message_sequence: string;
       created_at: Date;
       updated_at: Date;
     }>(
-      `SELECT id, principal_id, agent_id, cwd, state, client_mcp_revision_id,
+      `SELECT id, principal_id, agent_id, cwd, state, title, forked_from_session_id,
+              client_mcp_revision_id,
               last_execution_revision, last_message_sequence, created_at, updated_at
          FROM acp_sessions WHERE id = $1`,
       [sessionId],
@@ -40,6 +43,8 @@ export class PostgresRunRepository implements RunRepository {
           agentId: row.agent_id,
           cwd: row.cwd,
           state: row.state,
+          title: row.title,
+          forkedFromSessionId: row.forked_from_session_id,
           clientMcpRevisionId: row.client_mcp_revision_id,
           lastExecutionRevision: row.last_execution_revision,
           lastMessageSequence: Number(row.last_message_sequence),
@@ -211,9 +216,16 @@ export class PostgresRunRepository implements RunRepository {
       );
       await client.query(
         `UPDATE acp_sessions
-            SET last_execution_revision = $2, last_message_sequence = $3, updated_at = $4
+            SET last_execution_revision = $2, last_message_sequence = $3,
+                title = COALESCE(title, $5), updated_at = $4
           WHERE id = $1`,
-        [runRow.session_id, input.snapshot.executionRevision, sequence, input.acceptedAt],
+        [
+          runRow.session_id,
+          input.snapshot.executionRevision,
+          sequence,
+          input.acceptedAt,
+          input.sessionTitle ?? null,
+        ],
       );
       return "accepted";
     });

@@ -23,6 +23,8 @@ const session: SessionRecord = {
   agentId: "agent-1",
   cwd: "/workspace",
   state: "active",
+  title: null,
+  forkedFromSessionId: null,
   clientMcpRevisionId: "client-mcp-1",
   lastExecutionRevision: "execution-1",
   lastMessageSequence: 1,
@@ -231,6 +233,10 @@ describe("PromptCoordinator", () => {
     );
 
     expect(result.snapshot.executionRevision).toBe("execution-2");
+    expect(result.sessionInfoUpdate).toEqual({
+      title: "hello",
+      updatedAt: "2026-08-30T00:00:00.000Z",
+    });
     expect(accepted).toHaveLength(1);
     expect(accepted[0]).toMatchObject({
       runId: result.runId,
@@ -239,6 +245,7 @@ describe("PromptCoordinator", () => {
         previousExecutionRevision: "execution-1",
         currentExecutionRevision: "execution-2",
       },
+      sessionTitle: "hello",
     });
     expect(createRunIntent).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -257,6 +264,53 @@ describe("PromptCoordinator", () => {
       cancellation.signal,
     );
     expect(recoveryRequired).not.toHaveBeenCalled();
+  });
+
+  it("acquires a fresh immutable execution snapshot for every accepted prompt", async () => {
+    const { repository } = createRepository();
+    const acquireRun = vi
+      .fn<AgentControllerPort["acquireRun"]>()
+      .mockResolvedValueOnce(acquired)
+      .mockResolvedValueOnce({
+        ...acquired,
+        admissionId: "admission-2",
+        executionRevision: "execution-3",
+        runtime: {
+          generation: 3,
+          instanceId: "runtime-3",
+          executionId: "runtime-execution-3",
+          mcpEndpoint: "http://runtime-3:8080/mcp",
+        },
+      });
+    const coordinator = new PromptCoordinator({
+      repository,
+      agentController: createController(acquireRun),
+      executions: { markAdmissionFinished: vi.fn() },
+      recoveryRequired: vi.fn(),
+      id: sequentialIds(),
+      now: () => new Date("2026-08-30T00:00:00Z"),
+    });
+
+    const first = await coordinator.accept({
+      binding,
+      sessionId: session.id,
+      prompt: [{ type: "text", text: "first" }],
+    });
+    const second = await coordinator.accept({
+      binding,
+      sessionId: session.id,
+      prompt: [{ type: "text", text: "second" }],
+    });
+
+    expect(first.snapshot).toMatchObject({
+      executionRevision: "execution-2",
+      runtime: { instanceId: "runtime-2" },
+    });
+    expect(second.snapshot).toMatchObject({
+      executionRevision: "execution-3",
+      runtime: { instanceId: "runtime-3" },
+    });
+    expect(acquireRun).toHaveBeenCalledTimes(2);
   });
 
   it("closes a late admission without accepting the prompt when cancellation races acquire", async () => {
