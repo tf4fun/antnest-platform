@@ -53,6 +53,7 @@ services:
     networks:
       control:
         ipv4_address: ${ANTNEST_EGRESS_CONTROL_IPV4:-172.31.255.3}
+      development: {}
       egress-database: {}
       egress: {}
       runtime-management:

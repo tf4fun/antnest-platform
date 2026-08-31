@@ -90,7 +90,7 @@ func (service *LifecycleService) CreateAgent(
 	if err := validateCreateAgentInput(input); err != nil {
 		return CreateAgentResult{}, err
 	}
-	fingerprint, err := requestFingerprint(input)
+	fingerprint, err := createAgentFingerprint(input)
 	if err != nil {
 		return CreateAgentResult{}, err
 	}
@@ -231,7 +231,7 @@ func (service *LifecycleService) ensureCreateNetwork(
 	}
 	if attachment.AgentID != state.Agent.AgentID || attachment.TunnelIPv4 == "" ||
 		attachment.ResolverIPv4 == "" || attachment.EgressIPv4 == "" || attachment.EgressPort == 0 ||
-		attachment.PacketContractRevision == 0 {
+		attachment.PacketContractRevision == 0 || attachment.State != "active" {
 		return service.failCreate(ctx, state, "invalid_network_attachment", "Runtime Egress returned an incomplete attachment", false)
 	}
 	now := service.clock.Now()
@@ -371,6 +371,21 @@ func validateCreateAgentInput(input CreateAgentInput) error {
 		return fmt.Errorf("%w: Agent create input", ErrInvalidInput)
 	}
 	return nil
+}
+
+func createAgentFingerprint(input CreateAgentInput) (string, error) {
+	return requestFingerprint(struct {
+		RequestID        string
+		OrganizationID   string
+		OwnerUserID      string
+		Name             string
+		TemplateID       string
+		TemplateRevision int64
+	}{
+		RequestID: input.RequestID, OrganizationID: input.OrganizationID,
+		OwnerUserID: input.OwnerUserID, Name: strings.TrimSpace(input.Name),
+		TemplateID: input.TemplateID, TemplateRevision: input.TemplateRevision,
+	})
 }
 
 func createAgentResult(state ports.AgentCreateState) CreateAgentResult {

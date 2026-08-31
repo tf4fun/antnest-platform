@@ -100,9 +100,8 @@ impl Telemetry {
                 .with_resource(service_resource())
                 .build()
         } else {
-            let endpoint = env::var("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT")
-                .or_else(|_| env::var("OTEL_EXPORTER_OTLP_ENDPOINT"))
-                .unwrap_or_else(|_| "http://127.0.0.1:4318/v1/traces".to_owned());
+            let endpoint =
+                configured_otlp_endpoint("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "v1/traces");
             let exporter = opentelemetry_otlp::SpanExporter::builder()
                 .with_http()
                 .with_endpoint(endpoint)
@@ -118,9 +117,8 @@ impl Telemetry {
                 .with_resource(service_resource())
                 .build()
         } else {
-            let endpoint = env::var("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT")
-                .or_else(|_| env::var("OTEL_EXPORTER_OTLP_ENDPOINT"))
-                .unwrap_or_else(|_| "http://127.0.0.1:4318/v1/metrics".to_owned());
+            let endpoint =
+                configured_otlp_endpoint("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", "v1/metrics");
             let exporter = opentelemetry_otlp::MetricExporter::builder()
                 .with_http()
                 .with_endpoint(endpoint)
@@ -401,6 +399,27 @@ fn sdk_disabled() -> bool {
         .unwrap_or(true)
 }
 
+fn configured_otlp_endpoint(signal_key: &str, signal_path: &str) -> String {
+    let specific = env::var(signal_key).ok();
+    let generic = env::var("OTEL_EXPORTER_OTLP_ENDPOINT").ok();
+    resolve_otlp_endpoint(specific.as_deref(), generic.as_deref(), signal_path)
+}
+
+fn resolve_otlp_endpoint(
+    specific: Option<&str>,
+    generic: Option<&str>,
+    signal_path: &str,
+) -> String {
+    if let Some(endpoint) = specific.map(str::trim).filter(|value| !value.is_empty()) {
+        return endpoint.to_owned();
+    }
+    let base = generic
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("http://127.0.0.1:4318");
+    format!("{}/{signal_path}", base.trim_end_matches('/'))
+}
+
 fn service_resource() -> Resource {
     Resource::builder()
         .with_service_name(SERVICE_NAME)
@@ -431,6 +450,30 @@ mod tests {
     use opentelemetry_sdk::metrics::{InMemoryMetricExporter, PeriodicReader, SdkMeterProvider};
 
     use super::{EgressMetrics, SERVICE_NAME, is_control_otlp_target, is_service_target};
+
+    #[test]
+    fn generic_otlp_endpoint_is_a_base_url() {
+        assert_eq!(
+            super::resolve_otlp_endpoint(None, Some("http://jaeger:4318"), "v1/traces"),
+            "http://jaeger:4318/v1/traces"
+        );
+        assert_eq!(
+            super::resolve_otlp_endpoint(None, Some("http://collector:4318/base/"), "v1/metrics"),
+            "http://collector:4318/base/v1/metrics"
+        );
+    }
+
+    #[test]
+    fn signal_specific_otlp_endpoint_is_not_rewritten() {
+        assert_eq!(
+            super::resolve_otlp_endpoint(
+                Some("http://collector:4318/custom-traces"),
+                Some("http://jaeger:4318"),
+                "v1/traces"
+            ),
+            "http://collector:4318/custom-traces"
+        );
+    }
     use crate::{
         application::HealthMetricsSnapshot, dataplane::DataPlaneMetrics, dns::DnsMetricsSnapshot,
     };

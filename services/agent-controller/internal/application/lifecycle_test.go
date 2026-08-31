@@ -22,7 +22,7 @@ func TestCreateAgentMaterializesSpecAndPublishesOnlyAfterRuntimeReady(t *testing
 		network: ports.NetworkAttachment{
 			AgentID: "agent_expected", TunnelIPv4: "100.64.0.2",
 			ResolverIPv4: "100.64.0.1", PacketContractRevision: 1,
-			EgressIPv4: "10.20.0.8", EgressPort: 8092, State: "fenced",
+			EgressIPv4: "10.20.0.8", EgressPort: 8092, State: "active",
 		},
 		runtime: ports.RuntimeOperation{
 			State: "completed", RuntimeRevision: "runtime-revision-1",
@@ -113,6 +113,63 @@ func TestCreateAgentCompletedRetryDoesNotRepeatDependencies(t *testing.T) {
 	}
 }
 
+func TestCreateAgentFingerprintIgnoresTraceContext(t *testing.T) {
+	t.Parallel()
+
+	input := CreateAgentInput{
+		RequestID: "request-create-agent", OrganizationID: "org-1",
+		OwnerUserID: "user-1", Name: "Research Agent",
+		TemplateID: "template-1", TemplateRevision: 1,
+		InitialTraceParent: "00-11111111111111111111111111111111-1111111111111111-01",
+	}
+	first, err := createAgentFingerprint(input)
+	if err != nil {
+		t.Fatalf("first fingerprint: %v", err)
+	}
+	input.InitialTraceParent = "00-22222222222222222222222222222222-2222222222222222-01"
+	second, err := createAgentFingerprint(input)
+	if err != nil {
+		t.Fatalf("second fingerprint: %v", err)
+	}
+	if first != second {
+		t.Fatalf("trace context changed business fingerprint: %q != %q", first, second)
+	}
+}
+
+func TestCreateAgentDoesNotStartRuntimeWithInactiveNetwork(t *testing.T) {
+	t.Parallel()
+
+	template := mustLifecycleTemplate(t)
+	model := mustLifecycleModel(t)
+	store := &lifecycleStoreStub{}
+	dependencies := &lifecycleDependenciesStub{network: ports.NetworkAttachment{
+		TunnelIPv4: "100.64.0.2", ResolverIPv4: "100.64.0.1",
+		PacketContractRevision: 1, EgressIPv4: "10.20.0.8", EgressPort: 8092,
+		State: "quarantined",
+	}}
+	service := NewLifecycleService(
+		lifecycleSpecSourceStub{template: template, model: model},
+		store, dependencies, dependencies, fixedClock{now: time.Unix(30, 0).UTC()},
+	)
+
+	result, err := service.CreateAgent(context.Background(), CreateAgentInput{
+		RequestID: "request-inactive-network", OrganizationID: "org-1",
+		OwnerUserID: "user-1", Name: "Research Agent",
+		TemplateID: "template-1", TemplateRevision: 1,
+	})
+	if err != nil {
+		t.Fatalf("create Agent: %v", err)
+	}
+	if !reflect.DeepEqual(dependencies.calls, []string{"egress.ensure"}) {
+		t.Fatalf("inactive network reached Runtime: %v", dependencies.calls)
+	}
+	if result.Agent.LifecycleState != domain.AgentUnavailable ||
+		result.Operation.State != domain.OperationFailed ||
+		result.Operation.ErrorCode != "invalid_network_attachment" {
+		t.Fatalf("inactive network result = %+v", result)
+	}
+}
+
 type lifecycleSpecSourceStub struct {
 	template domain.TemplateRevision
 	model    domain.ModelProfileRevision
@@ -165,6 +222,7 @@ type lifecycleStoreStub struct {
 	beginState ports.AgentCreateState
 	replayed   bool
 	published  ports.PublishAgentCreate
+	failed     ports.FailAgentCreate
 }
 
 func (store *lifecycleStoreStub) ReplayAgentCreate(
@@ -237,9 +295,29 @@ func (store *lifecycleStoreStub) PublishAgentCreate(
 }
 
 func (store *lifecycleStoreStub) FailAgentCreate(
-	_ context.Context, _ ports.FailAgentCreate,
+	_ context.Context, input ports.FailAgentCreate,
 ) (ports.AgentCreateState, error) {
-	panic("unexpected create failure")
+	store.failed = input
+	state := store.beginState
+	if state.Agent.AgentID == "" {
+		state = ports.AgentCreateState{
+			Agent: store.initial.Agent, Access: store.initial.Access, Spec: store.initial.Spec,
+			Operation: store.initial.Operation,
+		}
+	}
+	state.Agent.LifecycleState = domain.AgentUnavailable
+	state.Agent.ActiveOperationRequestID = ""
+	state.Agent.FailureStage = string(input.Stage)
+	state.Agent.FailureCode = input.Code
+	state.Agent.FailureDetail = input.Detail
+	state.Agent.AggregateSequence = input.FailedEvent.AggregateSequence
+	state.Agent.UpdatedAt = input.Now
+	state.Operation.State = domain.OperationFailed
+	state.Operation.ErrorCode = input.Code
+	state.Operation.ErrorDetail = input.Detail
+	state.Operation.Retryable = input.Retryable
+	state.Operation.UpdatedAt = input.Now
+	return state, nil
 }
 
 func mustLifecycleTemplate(t *testing.T) domain.TemplateRevision {

@@ -101,7 +101,7 @@ func (client *Client) EnsureAgentNetwork(
 	if err := json.Unmarshal(body, &payload); err != nil || payload.AgentID != agentID ||
 		!validIPv4(payload.TunnelIPv4) || !validIPv4(payload.ResolverIPv4) ||
 		!validIPv4(payload.EgressEndpoint.IPv4) || payload.EgressEndpoint.Port == 0 ||
-		payload.PacketContractRevision == 0 || payload.State == "" {
+		payload.PacketContractRevision == 0 || payload.State != "active" {
 		return ports.NetworkAttachment{}, dependencyFailure("invalid_response", true)
 	}
 	return ports.NetworkAttachment{

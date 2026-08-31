@@ -9,6 +9,10 @@ import (
 	"testing"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
+
 	"soft/antnest-platform/services/agent-controller/internal/domain"
 	"soft/antnest-platform/services/agent-controller/internal/ports"
 )
@@ -96,6 +100,54 @@ func TestInitializeRuntimeReturnsStableDependencyFailure(t *testing.T) {
 	if !errors.As(err, &dependencyError) || dependencyError.Service != "runtime-controller" ||
 		dependencyError.Code != "runtime_lifecycle_conflict" || dependencyError.Retryable {
 		t.Fatalf("dependency error = %#v (%v)", dependencyError, err)
+	}
+}
+
+func TestInitializeRuntimePropagatesTraceContext(t *testing.T) {
+	previous := otel.GetTextMapPropagator()
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+	t.Cleanup(func() { otel.SetTextMapPropagator(previous) })
+
+	const expected = "00-11111111111111111111111111111111-2222222222222222-01"
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if actual := request.Header.Get("traceparent"); actual != expected {
+			t.Fatalf("traceparent = %q, want %q", actual, expected)
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = response.Write([]byte(`{
+			"request_id":"child-request-1",
+			"kind":"initialize_runtime",
+			"agent_id":"agent-1",
+			"target_revision":"runtime-revision-1",
+			"state":"completed",
+			"effect":"completed",
+			"inspection":{
+				"agent_id":"agent-1",
+				"runtime_revision":"runtime-revision-1",
+				"lifecycle_state":"ready",
+				"health":"healthy",
+				"mcp_endpoint":"http://runtime-agent:8091/mcp",
+				"runtime_execution_id":"execution-1",
+				"restart_count":0,
+				"observed_at":"2026-09-01T00:00:00Z"
+			},
+			"created_at":"2026-09-01T00:00:00Z",
+			"updated_at":"2026-09-01T00:00:01Z"
+		}`))
+	}))
+	t.Cleanup(server.Close)
+	client, err := New(server.URL, time.Second, server.Client())
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	ctx := trace.ContextWithRemoteSpanContext(context.Background(), trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID: trace.TraceID{0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+			0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11},
+		SpanID:     trace.SpanID{0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22},
+		TraceFlags: trace.FlagsSampled, Remote: true,
+	}))
+	if _, err := client.InitializeRuntime(ctx, "child-request-1", "agent-1", runtimeConfiguration()); err != nil {
+		t.Fatalf("initialize Runtime: %v", err)
 	}
 }
 

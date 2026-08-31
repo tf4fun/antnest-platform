@@ -38,10 +38,15 @@ NAT and DNS upstream traffic.
 | `OTEL_SDK_DISABLED` | no | `true` | Disable OTLP export while retaining local correlation |
 | `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | no | `http://127.0.0.1:4318/v1/traces` | Preferred OTLP HTTP traces endpoint |
 | `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | no | `http://127.0.0.1:4318/v1/metrics` | Preferred OTLP HTTP metrics endpoint |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | no | none | Fallback OTLP HTTP endpoint |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | no | none | Fallback OTLP HTTP base URL; `/v1/traces` and `/v1/metrics` are appended |
 
 Configuration is immutable after startup. Agent policy changes use the control
 API and PostgreSQL rather than environment variables.
+
+The OTLP collector must be reachable from the Runtime Egress service network.
+The development Compose topology attaches Runtime Egress and Jaeger to the
+shared `development` network for this purpose; packet forwarding remains on its
+dedicated data-plane networks.
 
 Packet revision and inner MTU come only from
 `contracts/runtime/packet-contract.json`. The current revision is returned in
