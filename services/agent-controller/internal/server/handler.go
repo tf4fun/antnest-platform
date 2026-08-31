@@ -12,12 +12,25 @@ import (
 	"strings"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
+
 	"soft/antnest-platform/services/agent-controller/internal/application"
 	"soft/antnest-platform/services/agent-controller/internal/domain"
 	"soft/antnest-platform/services/agent-controller/internal/ports"
 )
 
 const maximumRequestBytes = 2 << 20
+
+var lifecycleOperations = mustLifecycleCounter(
+	otel.Meter("soft/antnest-platform/agent-controller/server").Int64Counter(
+		"antnest.agent_controller.lifecycle.operations",
+		metric.WithDescription("Agent lifecycle request outcomes"),
+	),
+)
 
 type CatalogService interface {
 	CreateModelProfile(context.Context, application.CreateModelProfileInput) (application.ModelProfileView, error)
@@ -32,6 +45,7 @@ type CatalogService interface {
 
 type LifecycleService interface {
 	CreateAgent(context.Context, application.CreateAgentInput) (application.CreateAgentResult, error)
+	RebuildAgent(context.Context, application.RebuildAgentInput) (application.RebuildAgentResult, error)
 	GetLifecycleOperation(context.Context, string) (application.OperationView, error)
 }
 
@@ -67,6 +81,7 @@ func NewHandler(
 	mux.HandleFunc("GET /internal/agent-templates/{template_id}", h.getTemplate)
 	mux.HandleFunc("POST /internal/agent-templates/{template_id}/revisions", h.reviseTemplate)
 	mux.HandleFunc("POST /internal/agents", h.createAgent)
+	mux.HandleFunc("POST /internal/agents/{agent_id}/rebuild", h.rebuildAgent)
 	mux.HandleFunc("GET /internal/agent-operations/{request_id}", h.getLifecycleOperation)
 	return mux, nil
 }
@@ -119,6 +134,12 @@ type createAgentRequest struct {
 	OrganizationID   string `json:"organization_id"`
 	OwnerUserID      string `json:"owner_user_id"`
 	Name             string `json:"name"`
+	TemplateID       string `json:"template_id"`
+	TemplateRevision int64  `json:"template_revision"`
+}
+
+type rebuildAgentRequest struct {
+	RequestID        string `json:"request_id"`
 	TemplateID       string `json:"template_id"`
 	TemplateRevision int64  `json:"template_revision"`
 }
@@ -375,6 +396,24 @@ func (h *handler) createAgent(response http.ResponseWriter, request *http.Reques
 	writeJSON(response, http.StatusAccepted, createAgentPayload(result))
 }
 
+func (h *handler) rebuildAgent(response http.ResponseWriter, request *http.Request) {
+	var payload rebuildAgentRequest
+	if !decodeJSON(response, request, &payload) {
+		return
+	}
+	result, err := h.lifecycle.RebuildAgent(request.Context(), application.RebuildAgentInput{
+		RequestID: payload.RequestID, AgentID: request.PathValue("agent_id"),
+		TemplateID: payload.TemplateID, TemplateRevision: payload.TemplateRevision,
+		InitialTraceParent: request.Header.Get("traceparent"),
+	})
+	if err != nil {
+		writeServiceError(request.Context(), response, err)
+		return
+	}
+	observeLifecycleResult(request.Context(), result.Operation)
+	writeJSON(response, http.StatusAccepted, operationPayload(result.Operation))
+}
+
 func (h *handler) getLifecycleOperation(response http.ResponseWriter, request *http.Request) {
 	operation, err := h.lifecycle.GetLifecycleOperation(request.Context(), request.PathValue("request_id"))
 	if err != nil {
@@ -444,7 +483,13 @@ func templatePayload(view application.TemplateView) templateResponse {
 }
 
 func createAgentPayload(result application.CreateAgentResult) createAgentResponse {
-	agent := result.Agent
+	return createAgentResponse{
+		Agent: agentPayload(result.Agent), AgentAccessSubject: result.AgentAccessSubject,
+		Operation: operationPayload(result.Operation),
+	}
+}
+
+func agentPayload(agent application.AgentView) agentResponse {
 	response := agentResponse{
 		AgentID: agent.AgentID, OrganizationID: agent.OrganizationID,
 		OwnerUserID: agent.OwnerUserID, Name: agent.Name,
@@ -462,11 +507,7 @@ func createAgentPayload(result application.CreateAgentResult) createAgentRespons
 			MCPEndpoint: agent.RuntimeMCPEndpoint,
 		}
 	}
-	operation := result.Operation
-	return createAgentResponse{
-		Agent: response, AgentAccessSubject: result.AgentAccessSubject,
-		Operation: operationPayload(operation),
-	}
+	return response
 }
 
 func operationPayload(operation application.OperationView) operationResponse {
@@ -499,6 +540,14 @@ func publicError(err error) (int, errorResponse) {
 		return http.StatusBadRequest, errorResponse{Code: "invalid_request", Message: "request is invalid"}
 	case errors.Is(err, application.ErrInvalidReference), errors.Is(err, ports.ErrNotFound):
 		return http.StatusNotFound, errorResponse{Code: "reference_not_found", Message: "referenced resource was not found"}
+	case errors.Is(err, application.ErrAgentNotFound):
+		return http.StatusNotFound, errorResponse{Code: "agent_not_found", Message: "Agent was not found"}
+	case errors.Is(err, application.ErrAgentNotReady):
+		return http.StatusConflict, errorResponse{
+			Code: "agent_not_ready", Message: "Agent is not ready", Retryable: true,
+		}
+	case errors.Is(err, application.ErrLifecycleConflict):
+		return http.StatusConflict, errorResponse{Code: "lifecycle_conflict", Message: "Agent lifecycle is busy"}
 	case errors.Is(err, ports.ErrDisabledReference):
 		return http.StatusConflict, errorResponse{Code: "reference_disabled", Message: "referenced resource is disabled"}
 	case errors.Is(err, ports.ErrRequestConflict):
@@ -518,6 +567,44 @@ func publicError(err error) (int, errorResponse) {
 			Code: "internal_error", Message: "internal service error", Retryable: true,
 		}
 	}
+}
+
+func observeLifecycleResult(ctx context.Context, operation application.OperationView) {
+	span := trace.SpanFromContext(ctx)
+	metricAttributes := []attribute.KeyValue{
+		attribute.String("antnest.lifecycle.kind", string(operation.Kind)),
+		attribute.String("antnest.lifecycle.phase", string(operation.Phase)),
+		attribute.String("antnest.lifecycle.state", string(operation.State)),
+	}
+	if operation.State == domain.OperationFailed {
+		metricAttributes = append(
+			metricAttributes, attribute.String("antnest.lifecycle.error_class", operation.ErrorCode),
+		)
+	}
+	span.SetAttributes(append(
+		[]attribute.KeyValue{attribute.String("antnest.agent.id", operation.AgentID)},
+		metricAttributes...,
+	)...)
+	lifecycleOperations.Add(ctx, 1, metric.WithAttributes(metricAttributes...))
+	if operation.State != domain.OperationFailed {
+		return
+	}
+	span.SetStatus(codes.Error, operation.ErrorCode)
+	slog.WarnContext(
+		ctx, "Agent lifecycle operation failed",
+		"agent_id", operation.AgentID,
+		"request_id", operation.RequestID,
+		"operation_kind", operation.Kind,
+		"failure_stage", operation.Phase,
+		"failure_code", operation.ErrorCode,
+	)
+}
+
+func mustLifecycleCounter(counter metric.Int64Counter, err error) metric.Int64Counter {
+	if err != nil {
+		panic(err)
+	}
+	return counter
 }
 
 func writeError(response http.ResponseWriter, status int, code string, message string, retryable bool) {

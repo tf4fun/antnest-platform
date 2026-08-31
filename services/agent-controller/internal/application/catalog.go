@@ -16,8 +16,11 @@ import (
 )
 
 var (
-	ErrInvalidInput     = errors.New("invalid input")
-	ErrInvalidReference = errors.New("invalid reference")
+	ErrInvalidInput      = errors.New("invalid input")
+	ErrInvalidReference  = errors.New("invalid reference")
+	ErrAgentNotFound     = errors.New("agent not found")
+	ErrAgentNotReady     = errors.New("agent not ready")
+	ErrLifecycleConflict = errors.New("lifecycle conflict")
 )
 
 const (

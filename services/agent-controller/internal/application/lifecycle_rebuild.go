@@ -1,0 +1,517 @@
+package application
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+
+	"soft/antnest-platform/services/agent-controller/internal/domain"
+	"soft/antnest-platform/services/agent-controller/internal/ports"
+)
+
+type RebuildAgentInput struct {
+	RequestID          string
+	AgentID            string
+	TemplateID         string
+	TemplateRevision   int64
+	InitialTraceParent string
+}
+
+type RebuildAgentResult struct {
+	Agent     AgentView
+	Operation OperationView
+}
+
+func (service *LifecycleService) RebuildAgent(
+	ctx context.Context, input RebuildAgentInput,
+) (RebuildAgentResult, error) {
+	if err := validateRebuildAgentInput(input); err != nil {
+		return RebuildAgentResult{}, err
+	}
+	fingerprint, err := rebuildAgentFingerprint(input)
+	if err != nil {
+		return RebuildAgentResult{}, err
+	}
+	state, found, err := service.store.ReplayAgentRebuild(ctx, input.RequestID, fingerprint)
+	if err != nil {
+		return RebuildAgentResult{}, fmt.Errorf("replay Agent rebuild: %w", err)
+	}
+	if found {
+		return service.convergeAgentRebuild(ctx, state, fingerprint)
+	}
+
+	base, err := service.store.GetAgentLifecycleBase(ctx, input.AgentID)
+	if err != nil {
+		if errors.Is(err, ports.ErrNotFound) {
+			return RebuildAgentResult{}, fmt.Errorf("%w: %s", ErrAgentNotFound, input.AgentID)
+		}
+		return RebuildAgentResult{}, fmt.Errorf("load Agent rebuild source: %w", err)
+	}
+	if err := validateRebuildSource(base); err != nil {
+		return RebuildAgentResult{}, err
+	}
+	template, _, targetSpec, err := service.resolveAgentSpecRevision(
+		ctx, base.Agent.OrganizationID, input.TemplateID, input.TemplateRevision,
+	)
+	if err != nil {
+		return RebuildAgentResult{}, err
+	}
+	digest, err := targetSpec.Digest()
+	if err != nil {
+		return RebuildAgentResult{}, fmt.Errorf("digest rebuilt Agent spec: %w", err)
+	}
+	now := service.clock.Now()
+	targetSpecID := derivedID("agentspec-rebuild", input.RequestID)
+	operation, err := domain.NewLifecycleOperation(domain.NewLifecycleOperationInput{
+		RequestID: input.RequestID, RequestFingerprint: fingerprint,
+		AgentID: input.AgentID, Kind: domain.OperationRebuild,
+		SourceSpecRevision:    base.ExecutableSpec.ID,
+		SourceRuntimeRevision: base.Agent.RuntimeRevision,
+		TargetSpecRevision:    targetSpecID,
+		InitialTraceParent:    input.InitialTraceParent, Now: now,
+	})
+	if err != nil {
+		return RebuildAgentResult{}, fmt.Errorf("%w: %v", ErrInvalidInput, err)
+	}
+	begin := ports.BeginAgentRebuild{
+		AgentID:                     input.AgentID,
+		ExpectedAggregateSequence:   base.Agent.AggregateSequence,
+		ExpectedSpecRevisionID:      base.ExecutableSpec.ID,
+		ExpectedExecutionRevisionID: base.ExecutableExecution.ID,
+		ExpectedRuntimeRevision:     base.Agent.RuntimeRevision,
+		TargetSpec: ports.AgentSpecRecord{
+			ID: targetSpecID, AgentID: input.AgentID, Revision: base.NextSpecRevision,
+			Snapshot: targetSpec.Snapshot(), CanonicalDigest: digest, CreatedAt: now,
+		},
+		Operation: ports.LifecycleOperationRecord{
+			RequestID: input.RequestID, RequestFingerprint: fingerprint,
+			AgentID: input.AgentID, Kind: domain.OperationRebuild,
+			Phase: operation.Phase(), State: operation.State(),
+			SourceSpecRevisionID:  base.ExecutableSpec.ID,
+			SourceRuntimeRevision: base.Agent.RuntimeRevision,
+			TargetSpecRevisionID:  targetSpecID,
+			ChildRequestID:        operation.ChildRequestID(),
+			InitialTraceParent:    input.InitialTraceParent, Attempt: 1,
+			CreatedAt: now, UpdatedAt: now,
+		},
+		RequestedEvent: ports.AgentEventRecord{
+			EventID: derivedID("event-rebuild-requested", input.RequestID),
+			AgentID: input.AgentID, AggregateSequence: base.Agent.AggregateSequence + 1,
+			SchemaVersion: 1, EventType: ports.EventAgentRebuildRequested,
+			OperationRequestID: input.RequestID, TraceID: currentTraceID(ctx),
+			Data: map[string]any{
+				"source_agent_spec_revision_id": base.ExecutableSpec.ID,
+				"source_runtime_revision":       base.Agent.RuntimeRevision,
+				"target_agent_spec_revision_id": targetSpecID,
+				"template_id":                   template.Snapshot().TemplateID,
+				"template_revision":             template.Revision(),
+			},
+			OccurredAt: now,
+		},
+		Now: now,
+	}
+	state, _, err = service.store.BeginAgentRebuild(ctx, begin)
+	if err != nil {
+		return RebuildAgentResult{}, fmt.Errorf("begin Agent rebuild: %w", err)
+	}
+	return service.convergeAgentRebuild(ctx, state, fingerprint)
+}
+
+func (service *LifecycleService) convergeAgentRebuild(
+	ctx context.Context, state ports.AgentRebuildState, fingerprint string,
+) (RebuildAgentResult, error) {
+	for range maximumLifecycleConvergenceAttempts {
+		result, err := service.continueAgentRebuild(ctx, state)
+		if !errors.Is(err, ports.ErrConcurrentChange) {
+			return result, err
+		}
+		var found bool
+		state, found, err = service.store.ReplayAgentRebuild(
+			ctx, state.Operation.RequestID, fingerprint,
+		)
+		if err != nil {
+			return RebuildAgentResult{}, fmt.Errorf("replay concurrent Agent rebuild: %w", err)
+		}
+		if !found {
+			return RebuildAgentResult{}, fmt.Errorf("concurrent Agent rebuild disappeared")
+		}
+	}
+	return RebuildAgentResult{}, ports.ErrConcurrentChange
+}
+
+func (service *LifecycleService) continueAgentRebuild(
+	ctx context.Context, state ports.AgentRebuildState,
+) (RebuildAgentResult, error) {
+	if state.Operation.State != domain.OperationRunning {
+		return rebuildAgentResult(state), nil
+	}
+	var err error
+	if state.Operation.Phase == domain.PhaseDrain {
+		now := service.clock.Now()
+		if !now.Before(state.Operation.CreatedAt.Add(service.drainTimeout)) {
+			state, err = service.failRebuildPreservingSource(
+				ctx, state, "run_drain_timeout", "active Run did not drain before the deadline", false,
+			)
+			return rebuildAgentResult(state), err
+		}
+		state, err = service.store.SettleAgentRebuildDrain(
+			ctx, state.Operation.RequestID, state.Operation.RequestFingerprint,
+			domain.ChildRequestID(state.Operation.RequestID, domain.PhaseNetworkFence),
+			service.clock.Now(),
+		)
+		if err != nil || state.Operation.Phase == domain.PhaseDrain {
+			return rebuildAgentResult(state), err
+		}
+	}
+	if state.Operation.Phase == domain.PhaseNetworkFence {
+		state, err = service.fenceRebuildNetwork(ctx, state)
+		if err != nil || state.Operation.State != domain.OperationRunning {
+			return rebuildAgentResult(state), err
+		}
+	}
+	if state.Operation.Phase == domain.PhaseFlowReset {
+		state, err = service.resetRebuildFlows(ctx, state)
+		if err != nil || state.Operation.State != domain.OperationRunning {
+			return rebuildAgentResult(state), err
+		}
+	}
+	if state.Operation.Phase == domain.PhaseRuntimeUpdate {
+		state, err = service.updateRebuildRuntime(ctx, state)
+		if err != nil || state.Operation.State != domain.OperationRunning ||
+			state.Operation.Phase == domain.PhaseRuntimeUpdate {
+			return rebuildAgentResult(state), err
+		}
+	}
+	if state.Operation.Phase == domain.PhaseNetworkEnsure {
+		state, err = service.reopenRebuildNetwork(ctx, state)
+		if err != nil || state.Operation.State != domain.OperationRunning {
+			return rebuildAgentResult(state), err
+		}
+	}
+	if state.Operation.Phase != domain.PhasePublish {
+		return RebuildAgentResult{}, fmt.Errorf("invalid rebuild operation phase %q", state.Operation.Phase)
+	}
+	state, err = service.publishAgentRebuild(ctx, state)
+	if err != nil {
+		return RebuildAgentResult{}, err
+	}
+	return rebuildAgentResult(state), nil
+}
+
+func (service *LifecycleService) fenceRebuildNetwork(
+	ctx context.Context, state ports.AgentRebuildState,
+) (ports.AgentRebuildState, error) {
+	if state.Operation.NetworkPolicyAssignment == nil {
+		assignment, err := service.egress.GetAgentPolicyAssignment(ctx, state.Agent.AgentID)
+		if err != nil {
+			return service.handleRebuildDependencyFailure(ctx, state, "runtime-egress", err)
+		}
+		if !networkPolicyAssignmentReady(assignment, state.Agent.AgentID) {
+			return service.failRebuildPreservingSource(
+				ctx, state, "invalid_network_policy_assignment",
+				"Runtime Egress did not return the current policy assignment", false,
+			)
+		}
+		state, err = service.store.RecordAgentRebuildPolicy(
+			ctx, state.Operation.RequestID, state.Operation.RequestFingerprint,
+			assignment, service.clock.Now(),
+		)
+		if err != nil {
+			return ports.AgentRebuildState{}, err
+		}
+	}
+	if err := service.egress.FenceAgentNetwork(ctx, state.Agent.AgentID); err != nil {
+		return service.handleRebuildDependencyFailure(ctx, state, "runtime-egress", err)
+	}
+	attachment, err := service.egress.GetAgentNetwork(ctx, state.Agent.AgentID)
+	if err != nil {
+		return service.handleRebuildDependencyFailure(ctx, state, "runtime-egress", err)
+	}
+	if !networkAttachmentReady(attachment, state.Agent.AgentID) {
+		return service.failRebuildPreservingSource(
+			ctx, state, "invalid_network_attachment",
+			"Runtime Egress did not return the active attachment after fencing", false,
+		)
+	}
+	return service.store.AdvanceAgentRebuild(ctx, ports.AdvanceAgentRebuild{
+		RequestID:     state.Operation.RequestID,
+		Fingerprint:   state.Operation.RequestFingerprint,
+		ExpectedPhase: domain.PhaseNetworkFence, NextPhase: domain.PhaseFlowReset,
+		NextChildRequestID: domain.ChildRequestID(state.Operation.RequestID, domain.PhaseFlowReset),
+		NetworkAttachment:  &attachment, Now: service.clock.Now(),
+	})
+}
+
+func (service *LifecycleService) resetRebuildFlows(
+	ctx context.Context, state ports.AgentRebuildState,
+) (ports.AgentRebuildState, error) {
+	if err := service.egress.ResetAgentFlows(ctx, state.Agent.AgentID); err != nil {
+		return service.handleRebuildDependencyFailure(ctx, state, "runtime-egress", err)
+	}
+	return service.store.AdvanceAgentRebuild(ctx, ports.AdvanceAgentRebuild{
+		RequestID:     state.Operation.RequestID,
+		Fingerprint:   state.Operation.RequestFingerprint,
+		ExpectedPhase: domain.PhaseFlowReset, NextPhase: domain.PhaseRuntimeUpdate,
+		NextChildRequestID: domain.ChildRequestID(state.Operation.RequestID, domain.PhaseRuntimeUpdate),
+		Now:                service.clock.Now(),
+	})
+}
+
+func (service *LifecycleService) updateRebuildRuntime(
+	ctx context.Context, state ports.AgentRebuildState,
+) (ports.AgentRebuildState, error) {
+	if state.Operation.NetworkAttachment == nil {
+		return ports.AgentRebuildState{}, fmt.Errorf("rebuild operation has no network attachment")
+	}
+	runtimeInput := state.TargetSpec.Snapshot.Runtime
+	configuration := ports.RuntimeConfiguration{
+		ImageRef: runtimeInput.ImageRef, Network: *state.Operation.NetworkAttachment,
+		Resources: runtimeInput.Resources,
+	}
+	result, err := service.runtime.UpdateRuntime(
+		ctx, state.Operation.ChildRequestID, state.Agent.AgentID,
+		state.Operation.SourceRuntimeRevision, configuration,
+	)
+	if err != nil {
+		return service.handleRebuildDependencyFailure(ctx, state, "runtime-controller", err)
+	}
+	switch result.State {
+	case "running", "unknown":
+		return state, nil
+	case "failed":
+		if result.Effect == "unknown" {
+			return state, fmt.Errorf("%w: runtime-controller", ErrDependencyUnavailable)
+		}
+		code := strings.TrimSpace(result.ErrorCode)
+		if code == "" {
+			code = "runtime_update_failed"
+		}
+		return service.failRebuildPreservingSource(ctx, state, code, result.ErrorDetail, false)
+	case "completed":
+		if !completedReadyRuntime(result) {
+			return state, fmt.Errorf(
+				"%w: runtime-controller returned an unprovable completed effect",
+				ErrDependencyUnavailable,
+			)
+		}
+	default:
+		return state, fmt.Errorf(
+			"%w: runtime-controller returned an unknown state", ErrDependencyUnavailable,
+		)
+	}
+	return service.store.AdvanceAgentRebuild(ctx, ports.AdvanceAgentRebuild{
+		RequestID:     state.Operation.RequestID,
+		Fingerprint:   state.Operation.RequestFingerprint,
+		ExpectedPhase: domain.PhaseRuntimeUpdate, NextPhase: domain.PhaseNetworkEnsure,
+		NextChildRequestID: domain.ChildRequestID(state.Operation.RequestID, domain.PhaseNetworkEnsure),
+		RuntimeResult:      &result, Now: service.clock.Now(),
+	})
+}
+
+func (service *LifecycleService) reopenRebuildNetwork(
+	ctx context.Context, state ports.AgentRebuildState,
+) (ports.AgentRebuildState, error) {
+	if state.Operation.NetworkAttachment == nil {
+		return ports.AgentRebuildState{}, fmt.Errorf("rebuild operation has no network attachment")
+	}
+	attachment, err := service.restoreRebuildNetwork(ctx, state)
+	if err != nil {
+		return service.handleRebuildDependencyFailure(ctx, state, "runtime-egress", err)
+	}
+	if !networkAttachmentReady(attachment, state.Agent.AgentID) {
+		return state, fmt.Errorf(
+			"%w: runtime-egress did not confirm an active attachment", ErrDependencyUnavailable,
+		)
+	}
+	if !sameNetworkCoordinates(*state.Operation.NetworkAttachment, attachment) {
+		return state, fmt.Errorf(
+			"%w: runtime-egress attachment changed during Runtime replacement",
+			ErrDependencyUnavailable,
+		)
+	}
+	return service.store.AdvanceAgentRebuild(ctx, ports.AdvanceAgentRebuild{
+		RequestID:     state.Operation.RequestID,
+		Fingerprint:   state.Operation.RequestFingerprint,
+		ExpectedPhase: domain.PhaseNetworkEnsure, NextPhase: domain.PhasePublish,
+		NextChildRequestID: domain.ChildRequestID(state.Operation.RequestID, domain.PhasePublish),
+		NetworkAttachment:  &attachment, Now: service.clock.Now(),
+	})
+}
+
+func (service *LifecycleService) publishAgentRebuild(
+	ctx context.Context, state ports.AgentRebuildState,
+) (ports.AgentRebuildState, error) {
+	if state.Operation.RuntimeResult == nil {
+		return ports.AgentRebuildState{}, fmt.Errorf("rebuild operation has no Runtime result")
+	}
+	runtime := *state.Operation.RuntimeResult
+	now := service.clock.Now()
+	executionID := derivedID("execution-rebuild", state.Operation.RequestID)
+	return service.store.PublishAgentRebuild(ctx, ports.PublishAgentRebuild{
+		RequestID:   state.Operation.RequestID,
+		Fingerprint: state.Operation.RequestFingerprint,
+		Execution: ports.ExecutionRecord{
+			ID: executionID, AgentID: state.Agent.AgentID,
+			Revision:               state.SourceExecution.Revision + 1,
+			AgentSpecRevisionID:    state.TargetSpec.ID,
+			RuntimeRevision:        runtime.RuntimeRevision,
+			RuntimeExecutionID:     runtime.RuntimeExecutionID,
+			RuntimeMCPEndpoint:     runtime.MCPEndpoint,
+			RuntimeMCPSourceDigest: digestString(runtime.MCPEndpoint),
+			ChangeSummary: map[string]any{
+				"kind":                          "rebuild",
+				"source_agent_spec_revision_id": state.SourceSpec.ID,
+				"target_agent_spec_revision_id": state.TargetSpec.ID,
+			},
+			PublishedAt: now,
+		},
+		RebuiltEvent: ports.AgentEventRecord{
+			EventID:           derivedID("event-rebuilt", state.Operation.RequestID),
+			AgentID:           state.Agent.AgentID,
+			AggregateSequence: state.Agent.AggregateSequence + 1,
+			SchemaVersion:     1, EventType: ports.EventAgentRebuilt,
+			OperationRequestID: state.Operation.RequestID, TraceID: currentTraceID(ctx),
+			Data: map[string]any{
+				"agent_spec_revision_id": state.TargetSpec.ID,
+				"execution_revision_id":  executionID,
+				"runtime_revision":       runtime.RuntimeRevision,
+			},
+			OccurredAt: now,
+		},
+		Now: now,
+	})
+}
+
+func (service *LifecycleService) handleRebuildDependencyFailure(
+	ctx context.Context, state ports.AgentRebuildState, serviceName string, err error,
+) (ports.AgentRebuildState, error) {
+	var dependencyFailure *ports.DependencyError
+	if !errors.As(err, &dependencyFailure) || dependencyFailure.Retryable {
+		return state, fmt.Errorf("%w: %s", ErrDependencyUnavailable, serviceName)
+	}
+	if state.Operation.RuntimeResult != nil {
+		return state, fmt.Errorf("%w: %s", ErrDependencyUnavailable, serviceName)
+	}
+	return service.failRebuildPreservingSource(
+		ctx, state, dependencyFailure.Code, dependencyFailure.Error(), false,
+	)
+}
+
+func (service *LifecycleService) failRebuildPreservingSource(
+	ctx context.Context,
+	state ports.AgentRebuildState,
+	code string,
+	detail string,
+	retryable bool,
+) (ports.AgentRebuildState, error) {
+	if state.Operation.NetworkPolicyAssignment != nil {
+		if _, err := service.restoreRebuildNetwork(ctx, state); err != nil {
+			return state, fmt.Errorf("%w: runtime-egress policy restoration", ErrDependencyUnavailable)
+		}
+	}
+	now := service.clock.Now()
+	return service.store.FailAgentRebuild(ctx, ports.FailAgentRebuild{
+		RequestID:   state.Operation.RequestID,
+		Fingerprint: state.Operation.RequestFingerprint,
+		Stage:       state.Operation.Phase, Code: code, Detail: detail, Retryable: retryable,
+		FailedEvent: ports.AgentEventRecord{
+			EventID:           derivedID("event-rebuild-failed", state.Operation.RequestID),
+			AgentID:           state.Agent.AgentID,
+			AggregateSequence: state.Agent.AggregateSequence + 1,
+			SchemaVersion:     1, EventType: ports.EventAgentBuildFailed,
+			OperationRequestID: state.Operation.RequestID, TraceID: currentTraceID(ctx),
+			Data: map[string]any{
+				"failure_stage": state.Operation.Phase,
+				"failure_code":  code,
+			},
+			OccurredAt: now,
+		},
+		PreserveExecutable: true, Now: now,
+	})
+}
+
+func validateRebuildAgentInput(input RebuildAgentInput) error {
+	if !validIdentifier(input.RequestID) || !validIdentifier(input.AgentID) ||
+		!validIdentifier(input.TemplateID) || input.TemplateRevision < 1 {
+		return fmt.Errorf("%w: Agent rebuild input", ErrInvalidInput)
+	}
+	return nil
+}
+
+func validateRebuildSource(base ports.AgentLifecycleBase) error {
+	agent := base.Agent
+	if agent.ActiveOperationRequestID != "" {
+		return fmt.Errorf("%w: Agent already has an active lifecycle operation", ErrLifecycleConflict)
+	}
+	if agent.DesiredState != domain.DesiredEnabled || agent.LifecycleState != domain.AgentAvailable ||
+		agent.AgentSpecRevisionID == "" ||
+		agent.ExecutionRevisionID == "" || agent.RuntimeRevision == "" ||
+		base.ExecutableSpec.ID != agent.AgentSpecRevisionID ||
+		base.ExecutableExecution.ID != agent.ExecutionRevisionID ||
+		base.ExecutableExecution.RuntimeRevision != agent.RuntimeRevision ||
+		base.NextSpecRevision <= base.ExecutableSpec.Revision ||
+		base.NextExecutionRevision <= base.ExecutableExecution.Revision {
+		return fmt.Errorf("%w: Agent is not a complete available rebuild source", ErrAgentNotReady)
+	}
+	return nil
+}
+
+func (service *LifecycleService) restoreRebuildNetwork(
+	ctx context.Context, state ports.AgentRebuildState,
+) (ports.NetworkAttachment, error) {
+	if state.Operation.NetworkPolicyAssignment == nil {
+		return ports.NetworkAttachment{}, &ports.DependencyError{
+			Service: "runtime-egress", Code: "missing_policy_assignment", Retryable: false,
+		}
+	}
+	original := *state.Operation.NetworkPolicyAssignment
+	current, err := service.egress.GetAgentPolicyAssignment(ctx, state.Agent.AgentID)
+	if err != nil {
+		return ports.NetworkAttachment{}, err
+	}
+	restored, err := service.egress.AssignAgentPolicy(ctx, original, current.ResourceVersion)
+	if err != nil {
+		return ports.NetworkAttachment{}, err
+	}
+	if !sameNetworkPolicy(original, restored) {
+		return ports.NetworkAttachment{}, &ports.DependencyError{
+			Service: "runtime-egress", Code: "policy_restore_mismatch", Retryable: true,
+		}
+	}
+	return service.egress.EnsureAgentNetwork(ctx, state.Agent.AgentID)
+}
+
+func networkPolicyAssignmentReady(assignment ports.NetworkPolicyAssignment, agentID string) bool {
+	return assignment.AgentID == agentID && strings.TrimSpace(assignment.PolicyID) != "" &&
+		assignment.Revision > 0 && assignment.ResourceVersion > 0
+}
+
+func sameNetworkPolicy(left ports.NetworkPolicyAssignment, right ports.NetworkPolicyAssignment) bool {
+	return left.AgentID == right.AgentID && left.PolicyID == right.PolicyID && left.Revision == right.Revision
+}
+
+func rebuildAgentFingerprint(input RebuildAgentInput) (string, error) {
+	return requestFingerprint(struct {
+		RequestID        string
+		AgentID          string
+		TemplateID       string
+		TemplateRevision int64
+	}{
+		RequestID: input.RequestID, AgentID: input.AgentID,
+		TemplateID: input.TemplateID, TemplateRevision: input.TemplateRevision,
+	})
+}
+
+func sameNetworkCoordinates(left ports.NetworkAttachment, right ports.NetworkAttachment) bool {
+	return left.AgentID == right.AgentID && left.TunnelIPv4 == right.TunnelIPv4 &&
+		left.ResolverIPv4 == right.ResolverIPv4 &&
+		left.PacketContractRevision == right.PacketContractRevision &&
+		left.EgressIPv4 == right.EgressIPv4 && left.EgressPort == right.EgressPort
+}
+
+func rebuildAgentResult(state ports.AgentRebuildState) RebuildAgentResult {
+	return RebuildAgentResult{
+		Agent: agentView(state.Agent), Operation: lifecycleOperationView(state.Operation),
+	}
+}

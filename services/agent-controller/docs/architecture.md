@@ -12,9 +12,10 @@ service implementation or inspect another service database.
 
 The document describes the completed target boundary. Implementation proceeds
 as vertical business slices. At present ModelProfile/Template Catalog and the
-Agent create Saga are runnable. The other Agent lifecycle commands, Run
-admission, recovery worker, and event replay remain in progress and must not be
-inferred from table or contract presence alone.
+Agent create and explicit rebuild Sagas are runnable. The other Agent lifecycle
+commands, Run admission, recovery worker, and event
+replay remain in progress and must not be inferred from table or contract
+presence alone.
 
 ## Aggregate Model
 
@@ -187,10 +188,40 @@ and recovery are added with the lifecycle-recovery slice.
 
 ### Explicit Rebuild
 
-A rebuild freezes a target Template revision before closing admission. It
-drains active work, fences/reset network flows, replaces the Runtime using the
-current opaque Runtime revision, reopens the existing network, then atomically
-publishes one new ExecutionRevision. No partially published endpoint is usable.
+A rebuild freezes a target Template revision before closing admission. The
+internal command is `POST /internal/agents/{agent_id}/rebuild` with one durable
+`request_id`, `template_id`, and `template_revision`.
+
+The request transaction locks the Agent, verifies its current executable Spec
+and Runtime revisions, appends `agent_rebuild_requested`, and attaches the
+operation without changing the stable `available` projection. New Run
+admissions are rejected from that point. The drain phase remains pending while
+an active admission exists; an admission whose executor is terminal but whose
+Tool effect is unknown may cross the deletion barrier and is released only
+after Runtime replacement proves the old compute absent.
+
+Once drained, the Saga first persists the authoritative Egress policy assignment,
+then fences Egress to durable deny-all, reads and persists the authoritative
+active network attachment, resets userspace/kernel flows, and calls Runtime
+Controller `UpdateRuntime` with the source opaque Runtime revision and the
+complete target Runtime configuration. Agent Controller never copies Tunnel
+allocation ownership into its Agent projection. After Runtime readiness it
+restores the captured policy assignment using Egress resource-version CAS,
+calls `EnsureAgentNetwork`, and requires the same Tunnel, resolver, packet
+contract, and Egress endpoint to be active before publication.
+
+The Egress fence is not a third allocation state. Allocation remains `active`,
+but fence durably assigns deny-all and clears packet state. The captured policy
+is therefore part of the rebuild operation's recovery evidence.
+
+Publication atomically installs the target AgentSpecRevision, one new
+ExecutionRevision, the ready Runtime binding, `available`, and
+`agent_rebuilt`. No partially published endpoint is usable. A transport or
+ambiguous dependency result leaves the durable operation at its current phase
+for exact-request replay. A conclusive pre-replacement failure restores the old
+policy and executable source. After Runtime replacement is confirmed, failure
+remains non-terminal and fail-closed until exact replay can publish the observed
+Runtime; there is no implicit rollback.
 
 ### Disable, Enable, Delete
 

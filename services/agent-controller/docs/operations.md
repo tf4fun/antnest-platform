@@ -6,8 +6,10 @@ One binary serves internal HTTP RPC. PostgreSQL is authoritative. The current
 runnable slices serve ModelProfile/Template Catalog operations, the Agent
 create Saga, and durable lifecycle-operation inspection. The request thread
 advances create through Egress ensure, Runtime initialize, an exact Egress
-attachment recheck, and atomic publication. The background lifecycle recovery worker
-described below is not yet started by the process.
+attachment recheck, and atomic publication. Explicit rebuild is implemented as
+the next request-driven durable Saga: drain, Egress fence/read/reset, Runtime
+update, exact active-network barrier, and atomic publication. The background
+lifecycle recovery worker described below is not yet started by the process.
 
 Multiple replicas may serve reads and Run admission. Lifecycle workers claim
 operations with PostgreSQL row locking; Agent-row constraints remain the final
@@ -29,7 +31,6 @@ Optional:
 
 - `ANTNEST_AGENT_CONTROLLER_LISTEN` (default `:8080`);
 - `ANTNEST_AGENT_CONTROLLER_DEPENDENCY_TIMEOUT` (default `150s`);
-- `ANTNEST_AGENT_CONTROLLER_RUN_DEADLINE` (default `30m`);
 - `ANTNEST_AGENT_CONTROLLER_DRAIN_TIMEOUT` (default `5m`);
 - `ANTNEST_AGENT_CONTROLLER_SHUTDOWN_TIMEOUT` (default `15s`);
 - standard OTEL environment variables using OTLP HTTP/protobuf.
@@ -55,8 +56,12 @@ turn a downstream outage into a restart loop.
   identity; there is no second alias to lose or reconcile.
 - A create transport timeout leaves the operation at the last committed phase;
   replay the exact request ID and body to continue with the same child request.
-- An `unavailable` Agent requires explicit rebuild retry or deletion once those
-  lifecycle commands are implemented.
+- A rebuild transport timeout follows the same rule. Before Runtime replacement,
+  a conclusive failure restores the captured policy and old executable binding.
+  After replacement, replay the exact command until policy restoration, network
+  readiness, and publication are conclusive.
+- A rebuild in `drain` has made no external mutation. It advances only after no
+  active Run executor occupies the Agent.
 - A draining Agent with a settled Run is resumed by the worker.
 - An unresolved Run remains fail-closed until rebuild/delete proves its Runtime
   absent.
@@ -71,6 +76,9 @@ Set:
 OTEL_SDK_DISABLED=false
 OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318
 OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+OTEL_TRACES_EXPORTER=otlp
+OTEL_METRICS_EXPORTER=none
+OTEL_LOGS_EXPORTER=none
 OTEL_SERVICE_NAME=agent-controller
 ```
 
@@ -89,10 +97,12 @@ ACP session/prompt
 Lifecycle traces must show each Saga phase and all downstream control calls.
 Create has two Egress calls by design: initial allocation and the exact active
 attachment barrier immediately before publication.
-Each worker attempt starts a new span linked to the persisted initial request
-trace and previous attempt; a process restart never fabricates one continuous
-parent/child timeline. Trace identities are correlation data, not metric
-labels. No packet-level or secret-bearing spans are emitted.
+The current request-driven slice propagates W3C context through both dependency
+clients and correlates retries by durable request ID. The future recovery worker
+must create a new trace with Span Links to prior attempts; it must not fabricate
+one continuous parent/child timeline across process restarts. Trace identities
+are correlation data, not metric labels. No packet-level or secret-bearing spans
+are emitted.
 
 ## Retention And Backup
 
@@ -110,6 +120,7 @@ Run heavy checks serially:
 GOCACHE=.cache/go-build GOMODCACHE=.cache/go-mod go test ./services/agent-controller/...
 make test-agent-controller-postgres
 OTEL_SDK_DISABLED=false OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318 \
+  OTEL_TRACES_EXPORTER=otlp OTEL_METRICS_EXPORTER=none OTEL_LOGS_EXPORTER=none \
   docker compose --profile stage2 --profile observability up -d --wait \
   agent-controller-postgres agent-controller jaeger
 ```

@@ -144,3 +144,9 @@ func (catalogOnlyLifecycle) CreateAgent(
 ) (application.CreateAgentResult, error) {
 	return application.CreateAgentResult{}, application.ErrDependencyUnavailable
 }
+
+func (catalogOnlyLifecycle) RebuildAgent(
+	context.Context, application.RebuildAgentInput,
+) (application.RebuildAgentResult, error) {
+	return application.RebuildAgentResult{}, application.ErrDependencyUnavailable
+}

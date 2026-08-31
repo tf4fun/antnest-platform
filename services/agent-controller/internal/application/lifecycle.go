@@ -17,15 +17,18 @@ import (
 
 var ErrDependencyUnavailable = errors.New("dependency unavailable")
 
-const maximumCreateConvergenceAttempts = 4
+const maximumLifecycleConvergenceAttempts = 4
 
 type LifecycleService struct {
-	specs   ports.AgentSpecSource
-	store   ports.LifecycleStore
-	egress  ports.EgressClient
-	runtime ports.RuntimeClient
-	clock   ports.Clock
+	specs        ports.AgentSpecSource
+	store        ports.LifecycleStore
+	egress       ports.EgressClient
+	runtime      ports.RuntimeClient
+	clock        ports.Clock
+	drainTimeout time.Duration
 }
+
+const defaultDrainTimeout = 5 * time.Minute
 
 func NewLifecycleService(
 	specs ports.AgentSpecSource,
@@ -34,7 +37,26 @@ func NewLifecycleService(
 	runtime ports.RuntimeClient,
 	clock ports.Clock,
 ) *LifecycleService {
-	return &LifecycleService{specs: specs, store: store, egress: egress, runtime: runtime, clock: clock}
+	return NewLifecycleServiceWithDrainTimeout(
+		specs, store, egress, runtime, clock, defaultDrainTimeout,
+	)
+}
+
+func NewLifecycleServiceWithDrainTimeout(
+	specs ports.AgentSpecSource,
+	store ports.LifecycleStore,
+	egress ports.EgressClient,
+	runtime ports.RuntimeClient,
+	clock ports.Clock,
+	drainTimeout time.Duration,
+) *LifecycleService {
+	if drainTimeout <= 0 {
+		drainTimeout = defaultDrainTimeout
+	}
+	return &LifecycleService{
+		specs: specs, store: store, egress: egress, runtime: runtime,
+		clock: clock, drainTimeout: drainTimeout,
+	}
 }
 
 type CreateAgentInput struct {
@@ -184,7 +206,7 @@ func (service *LifecycleService) GetLifecycleOperation(
 func (service *LifecycleService) convergeAgentCreate(
 	ctx context.Context, state ports.AgentCreateState, fingerprint string,
 ) (CreateAgentResult, error) {
-	for range maximumCreateConvergenceAttempts {
+	for range maximumLifecycleConvergenceAttempts {
 		result, err := service.continueAgentCreate(ctx, state)
 		if !errors.Is(err, ports.ErrConcurrentChange) {
 			return result, err
@@ -204,13 +226,21 @@ func (service *LifecycleService) convergeAgentCreate(
 func (service *LifecycleService) resolveAgentSpec(
 	ctx context.Context, input CreateAgentInput,
 ) (domain.TemplateRevision, domain.ModelProfileRevision, domain.AgentSpec, error) {
-	template, err := service.specs.GetTemplateRevision(ctx, input.TemplateID, input.TemplateRevision)
+	return service.resolveAgentSpecRevision(
+		ctx, input.OrganizationID, input.TemplateID, input.TemplateRevision,
+	)
+}
+
+func (service *LifecycleService) resolveAgentSpecRevision(
+	ctx context.Context, organizationID string, templateID string, templateRevision int64,
+) (domain.TemplateRevision, domain.ModelProfileRevision, domain.AgentSpec, error) {
+	template, err := service.specs.GetTemplateRevision(ctx, templateID, templateRevision)
 	if err != nil {
 		return domain.TemplateRevision{}, domain.ModelProfileRevision{}, domain.AgentSpec{},
 			fmt.Errorf("resolve Template revision: %w", err)
 	}
 	templateSnapshot := template.Snapshot()
-	if templateSnapshot.OrganizationID != input.OrganizationID {
+	if templateSnapshot.OrganizationID != organizationID {
 		return domain.TemplateRevision{}, domain.ModelProfileRevision{}, domain.AgentSpec{},
 			fmt.Errorf("%w: Template belongs to another organization", ErrInvalidReference)
 	}
@@ -308,8 +338,7 @@ func (service *LifecycleService) initializeCreateRuntime(
 		}
 		return service.failCreate(ctx, state, code, result.ErrorDetail, false)
 	case "completed":
-		if result.Effect != "completed" || result.LifecycleState != "ready" || result.Health != "healthy" ||
-			result.RuntimeRevision == "" || result.RuntimeExecutionID == "" || result.MCPEndpoint == "" {
+		if !completedReadyRuntime(result) {
 			return service.failCreate(ctx, state, "invalid_runtime_result", "Runtime initialization did not prove a completed ready effect", false)
 		}
 	default:
@@ -377,9 +406,19 @@ func (service *LifecycleService) publishAgentCreate(
 }
 
 func networkAttachmentReady(attachment ports.NetworkAttachment, agentID string) bool {
+	return networkAttachmentInState(attachment, agentID, "active")
+}
+
+func networkAttachmentInState(attachment ports.NetworkAttachment, agentID string, state string) bool {
 	return attachment.AgentID == agentID && attachment.TunnelIPv4 != "" &&
 		attachment.ResolverIPv4 != "" && attachment.EgressIPv4 != "" && attachment.EgressPort != 0 &&
-		attachment.PacketContractRevision != 0 && attachment.State == "active"
+		attachment.PacketContractRevision != 0 && attachment.State == state
+}
+
+func completedReadyRuntime(result ports.RuntimeOperation) bool {
+	return result.State == "completed" && result.Effect == "completed" &&
+		result.LifecycleState == "ready" && result.Health == "healthy" &&
+		result.RuntimeRevision != "" && result.RuntimeExecutionID != "" && result.MCPEndpoint != ""
 }
 
 func (service *LifecycleService) handleCreateDependencyFailure(
@@ -444,25 +483,31 @@ func createAgentFingerprint(input CreateAgentInput) (string, error) {
 }
 
 func createAgentResult(state ports.AgentCreateState) CreateAgentResult {
-	agent := state.Agent
 	operation := state.Operation
 	return CreateAgentResult{
-		Agent: AgentView{
-			AgentID: agent.AgentID, OrganizationID: agent.OrganizationID,
-			OwnerUserID: agent.OwnerUserID, Name: agent.Name,
-			DesiredState: agent.DesiredState, LifecycleState: agent.LifecycleState,
-			AccessRevision:                    agent.AccessRevision,
-			AgentSpecRevisionID:               agent.AgentSpecRevisionID,
-			ExecutionRevisionID:               agent.ExecutionRevisionID,
-			LastSuccessfulExecutionRevisionID: agent.LastSuccessfulExecutionRevisionID,
-			RuntimeRevision:                   agent.RuntimeRevision, RuntimeExecutionID: agent.RuntimeExecutionID,
-			RuntimeMCPEndpoint:       agent.RuntimeMCPEndpoint,
-			ActiveOperationRequestID: agent.ActiveOperationRequestID,
-			FailureStage:             agent.FailureStage, FailureCode: agent.FailureCode,
-			CreatedAt: agent.CreatedAt, UpdatedAt: agent.UpdatedAt,
-		},
+		Agent:              agentView(state.Agent),
 		AgentAccessSubject: state.Access.AccessSubject,
 		Operation:          lifecycleOperationView(operation),
+	}
+}
+
+func agentView(agent ports.AgentRecord) AgentView {
+	return AgentView{
+		AgentID: agent.AgentID, OrganizationID: agent.OrganizationID,
+		OwnerUserID: agent.OwnerUserID, Name: agent.Name,
+		DesiredState: agent.DesiredState, LifecycleState: agent.LifecycleState,
+		AccessRevision:                    agent.AccessRevision,
+		AgentSpecRevisionID:               agent.AgentSpecRevisionID,
+		ExecutionRevisionID:               agent.ExecutionRevisionID,
+		LastSuccessfulExecutionRevisionID: agent.LastSuccessfulExecutionRevisionID,
+		RuntimeRevision:                   agent.RuntimeRevision,
+		RuntimeExecutionID:                agent.RuntimeExecutionID,
+		RuntimeMCPEndpoint:                agent.RuntimeMCPEndpoint,
+		ActiveOperationRequestID:          agent.ActiveOperationRequestID,
+		FailureStage:                      agent.FailureStage,
+		FailureCode:                       agent.FailureCode,
+		CreatedAt:                         agent.CreatedAt,
+		UpdatedAt:                         agent.UpdatedAt,
 	}
 }
 

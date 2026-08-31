@@ -82,6 +82,65 @@ func TestInitializeRuntimeUsesRuntimeControllerContract(t *testing.T) {
 	}
 }
 
+func TestUpdateRuntimeUsesExpectedRevisionAndCompleteConfiguration(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost || request.URL.Path != "/internal/runtimes/agent-1/update" {
+			t.Fatalf("request = %s %s", request.Method, request.URL.Path)
+		}
+		if request.Header.Get("Idempotency-Key") != "child-request-update" {
+			t.Fatalf("Idempotency-Key = %q", request.Header.Get("Idempotency-Key"))
+		}
+		var payload struct {
+			ExpectedRevision string                  `json:"expected_revision"`
+			Configuration    runtimeConfigurationDTO `json:"configuration"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if payload.ExpectedRevision != "rtv_11111111111111111111111111111111" ||
+			payload.Configuration.ImageRef == "" ||
+			payload.Configuration.Network.TunnelIPv4 != "100.64.0.2" {
+			t.Fatalf("update payload = %+v", payload)
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = response.Write([]byte(`{
+			"request_id":"child-request-update",
+			"kind":"update_runtime",
+			"agent_id":"agent-1",
+			"target_revision":"rtv_22222222222222222222222222222222",
+			"state":"completed",
+			"effect":"completed",
+			"inspection":{
+				"agent_id":"agent-1",
+				"runtime_revision":"rtv_22222222222222222222222222222222",
+				"lifecycle_state":"ready",
+				"health":"healthy",
+				"mcp_endpoint":"http://runtime-rebuilt:8091/mcp",
+				"runtime_execution_id":"execution-rebuilt"
+			}
+		}`))
+	}))
+	t.Cleanup(server.Close)
+	client, err := New(server.URL, time.Second, server.Client())
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+
+	result, err := client.UpdateRuntime(
+		context.Background(), "child-request-update", "agent-1",
+		"rtv_11111111111111111111111111111111", runtimeConfiguration(),
+	)
+	if err != nil {
+		t.Fatalf("update Runtime: %v", err)
+	}
+	if result.RuntimeRevision != "rtv_22222222222222222222222222222222" ||
+		result.RuntimeExecutionID != "execution-rebuilt" {
+		t.Fatalf("Runtime operation = %+v", result)
+	}
+}
+
 func TestInitializeRuntimeReturnsStableDependencyFailure(t *testing.T) {
 	t.Parallel()
 

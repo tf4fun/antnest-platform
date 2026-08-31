@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -19,7 +20,7 @@ import (
 	"soft/antnest-platform/services/agent-controller/internal/server"
 )
 
-func TestCreateAgentAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
+func TestCreateAndRebuildAgentAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 	databaseURL := os.Getenv("ANTNEST_AGENT_CONTROLLER_TEST_DATABASE_URL")
 	if databaseURL == "" {
 		t.Skip("ANTNEST_AGENT_CONTROLLER_TEST_DATABASE_URL is not set")
@@ -39,10 +40,56 @@ func TestCreateAgentAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 	}
 
 	var egressCalls, runtimeCalls atomic.Int64
+	var policyMu sync.Mutex
+	policyID := "internet-enabled"
+	policyVersion := uint64(1)
 	egressServer := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		egressCalls.Add(1)
-		agentID := strings.TrimPrefix(request.URL.Path, "/internal/agent-networks/")
-		if request.Method != http.MethodPut || agentID == request.URL.Path || agentID == "" {
+		if strings.HasPrefix(request.URL.Path, "/internal/agent-policy-assignments/") {
+			agentID := strings.TrimPrefix(request.URL.Path, "/internal/agent-policy-assignments/")
+			policyMu.Lock()
+			defer policyMu.Unlock()
+			if request.Method == http.MethodPut {
+				var payload struct {
+					PolicyID                string `json:"policy_id"`
+					Revision                uint64 `json:"revision"`
+					ExpectedResourceVersion uint64 `json:"expected_resource_version"`
+				}
+				if err := json.NewDecoder(request.Body).Decode(&payload); err != nil ||
+					payload.ExpectedResourceVersion != policyVersion {
+					t.Fatalf("Egress policy payload = %+v err=%v", payload, err)
+				}
+				policyID = payload.PolicyID
+				policyVersion++
+			} else if request.Method != http.MethodGet {
+				t.Fatalf("Egress policy request = %s %s", request.Method, request.URL.Path)
+			}
+			response.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"agent_id": agentID, "policy_id": policyID,
+				"revision": 1, "resource_version": policyVersion,
+			})
+			return
+		}
+		path := strings.TrimPrefix(request.URL.Path, "/internal/agent-networks/")
+		agentID := strings.TrimSuffix(strings.TrimSuffix(path, "/fence"), "/reset-flows")
+		if agentID == request.URL.Path || agentID == "" {
+			t.Fatalf("Egress request = %s %s", request.Method, request.URL.Path)
+		}
+		if request.Method == http.MethodPost &&
+			(path == agentID+"/fence" || path == agentID+"/reset-flows") {
+			if path == agentID+"/fence" {
+				policyMu.Lock()
+				if policyID != "builtin-deny-all" {
+					policyID = "builtin-deny-all"
+					policyVersion++
+				}
+				policyMu.Unlock()
+			}
+			response.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if (request.Method != http.MethodPut && request.Method != http.MethodGet) || path != agentID {
 			t.Fatalf("Egress request = %s %s", request.Method, request.URL.Path)
 		}
 		response.Header().Set("Content-Type", "application/json")
@@ -57,21 +104,40 @@ func TestCreateAgentAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 	runtimeServer := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		runtimeCalls.Add(1)
 		path := strings.TrimPrefix(request.URL.Path, "/internal/runtimes/")
+		action := "initialize"
 		agentID := strings.TrimSuffix(path, "/initialize")
+		kind := "initialize_runtime"
+		revision := "rtv_22222222222222222222222222222222"
+		executionID := "runtime-execution-e2e"
+		endpoint := "http://runtime-e2e:8091/mcp"
+		if strings.HasSuffix(path, "/update") {
+			action = "update"
+			agentID = strings.TrimSuffix(path, "/update")
+			kind = "update_runtime"
+			revision = "rtv_33333333333333333333333333333333"
+			executionID = "runtime-execution-rebuilt-e2e"
+			endpoint = "http://runtime-rebuilt-e2e:8091/mcp"
+			var payload struct {
+				ExpectedRevision string `json:"expected_revision"`
+			}
+			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil ||
+				payload.ExpectedRevision != "rtv_22222222222222222222222222222222" {
+				t.Fatalf("Runtime update payload = %+v err=%v", payload, err)
+			}
+		}
 		requestID := request.Header.Get("Idempotency-Key")
-		if request.Method != http.MethodPost || agentID == path || agentID == "" || requestID == "" {
+		if request.Method != http.MethodPost || path != agentID+"/"+action || agentID == "" || requestID == "" {
 			t.Fatalf("Runtime request = %s %s idempotency=%q", request.Method, request.URL.Path, requestID)
 		}
 		response.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(response).Encode(map[string]any{
-			"request_id": requestID, "kind": "initialize_runtime", "agent_id": agentID,
-			"target_revision": "rtv_22222222222222222222222222222222", "state": "completed", "effect": "completed",
+			"request_id": requestID, "kind": kind, "agent_id": agentID,
+			"target_revision": revision, "state": "completed", "effect": "completed",
 			"inspection": map[string]any{
-				"agent_id": agentID, "runtime_revision": "rtv_22222222222222222222222222222222",
+				"agent_id": agentID, "runtime_revision": revision,
 				"lifecycle_state": "ready", "health": "healthy",
-				"mcp_endpoint":         "http://runtime-e2e:8091/mcp",
-				"runtime_execution_id": "runtime-execution-e2e",
-				"restart_count":        0, "observed_at": "2026-09-01T00:00:00Z",
+				"mcp_endpoint": endpoint, "runtime_execution_id": executionID,
+				"restart_count": 0, "observed_at": "2026-09-01T00:00:00Z",
 			},
 			"created_at": "2026-09-01T00:00:00Z", "updated_at": "2026-09-01T00:00:01Z",
 		})
@@ -130,5 +196,36 @@ func TestCreateAgentAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 		egressCalls.Load() != 2 || runtimeCalls.Load() != 1 {
 		t.Fatalf("idempotent replay repeated effects: egress=%d runtime=%d replay=%+v",
 			egressCalls.Load(), runtimeCalls.Load(), replayed)
+	}
+
+	agentID := agent["agent_id"].(string)
+	rebuildBody := `{
+		"request_id":"agent-e2e-rebuild",
+		"template_id":"` + templateID + `",
+		"template_revision":1
+	}`
+	rebuilt := serveJSON(
+		t, handler, http.MethodPost, "/internal/agents/"+agentID+"/rebuild",
+		rebuildBody, http.StatusAccepted,
+	)
+	if rebuilt["state"] != "completed" {
+		t.Fatalf("rebuild operation = %+v", rebuilt)
+	}
+	rebuiltBase, err := repository.GetAgentLifecycleBase(ctx, agentID)
+	if err != nil {
+		t.Fatalf("load rebuilt Agent: %v", err)
+	}
+	if rebuiltBase.Agent.LifecycleState != "available" ||
+		rebuiltBase.Agent.AgentSpecRevisionID == agent["agent_spec_revision"] ||
+		rebuiltBase.Agent.RuntimeRevision != "rtv_33333333333333333333333333333333" {
+		t.Fatalf("rebuilt Agent = %+v", rebuiltBase.Agent)
+	}
+	replayedRebuild := serveJSON(
+		t, handler, http.MethodPost, "/internal/agents/"+agentID+"/rebuild",
+		rebuildBody, http.StatusAccepted,
+	)
+	if replayedRebuild["state"] != "completed" || egressCalls.Load() != 9 || runtimeCalls.Load() != 2 {
+		t.Fatalf("idempotent rebuild repeated effects: egress=%d runtime=%d replay=%+v",
+			egressCalls.Load(), runtimeCalls.Load(), replayedRebuild)
 	}
 }

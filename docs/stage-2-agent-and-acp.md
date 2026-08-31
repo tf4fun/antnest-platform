@@ -262,16 +262,17 @@ the former is cleared while the latter remains audit history.
    the Tool succeeded or failed. Runtime is never changed while a Run executor
    is still active.
 4. Advance the operation from drain to its network barrier.
-5. Fence the Agent network without changing its durable policy assignment and
-   call Runtime Egress
-   `ResetAgentFlows(agent_id)`; require acknowledgement so the stable Tunnel
-   address cannot retain the old Runtime UDP peer.
+5. Read and persist the Agent's current immutable policy assignment, then fence
+	the Agent network. Runtime Egress durably assigns deny-all while fencing.
+	Call `ResetAgentFlows(agent_id)` and require acknowledgement so the stable
+	Tunnel address cannot retain the old Runtime UDP peer.
 6. Call Runtime Controller `UpdateRuntime` with the current opaque revision and
    complete target configuration. Runtime Controller deletes current compute,
    allocates a private generation, retains workspace, and creates replacement
    compute under one idempotent lifecycle operation.
 7. Wait for Runtime Controller to return a ready endpoint and execution ID.
-8. Call Egress `EnsureAgentNetwork` to reopen the fenced Agent path.
+8. Restore the captured policy assignment with Egress resource-version CAS,
+	then call `EnsureAgentNetwork` to reconcile and reopen the Agent path.
 9. Atomically publish the target AgentSpecRevision, new ExecutionRevision,
    Runtime binding, change summary, and state `AVAILABLE`.
 10. Append the corresponding Agent domain event in the same local transaction.
@@ -304,11 +305,12 @@ No new Run is admitted in the interval.
 
 ### 4.5 Build failure and retry
 
-- Failure before old Runtime deletion leaves the Agent `AVAILABLE` only when
-  no externally visible mutation occurred and the old binding is intact.
-- Failure after deletion leaves the Agent `UNAVAILABLE`, clears
-  `executable_execution_revision`, and retains the old successful revision only
-  for audit. It is not executable.
+- A conclusive failure before old Runtime deletion restores the captured Egress
+  policy and leaves the old executable binding `AVAILABLE`.
+- After Runtime replacement is confirmed, an inconclusive dependency or
+  readiness result keeps the same operation running and the Agent fail-closed.
+  Exact-request replay must adopt and publish that Runtime; it must not fabricate
+  a terminal failure with no recovery path.
 - Crash recovery resumes the same operation and child identities. A later
   operator retry creates a new operation only after the previous operation is
   terminal and every attempted Runtime is conclusively absent or adopted.
@@ -743,11 +745,22 @@ Stage 2 consumes the Stage 1 control contract without adding Agent lifecycle to
 Egress:
 
 ```text
+GetAgentNetwork(agent_id)
 EnsureAgentNetwork(agent_id)
+GetAgentPolicyAssignment(agent_id)
+AssignAgentPolicy(agent_id, policy_id, revision, expected_resource_version)
 ResetAgentFlows(agent_id)
 FenceAgentNetwork(agent_id)
 ReleaseAgentNetwork(agent_id)
 ```
+
+Before fencing, rebuild persists the authoritative policy assignment. Runtime
+Egress fence keeps the allocation `active` but durably changes its policy to
+deny-all and clears packet state. The operation then reads and persists the
+authoritative attachment, uses it to assemble the complete Runtime update
+configuration, restores the captured policy through assignment CAS, and
+requires `EnsureAgentNetwork` to return the same active attachment before
+publication.
 
 ### 10.4 Agent ACP Service
 

@@ -54,6 +54,12 @@ func (store *lifecycleStoreStub) GetLifecycleOperation(
 	return ports.LifecycleOperationRecord{}, store.err
 }
 
+func (store *lifecycleStoreStub) GetAgentLifecycleBase(
+	context.Context, string,
+) (ports.AgentLifecycleBase, error) {
+	return ports.AgentLifecycleBase{}, store.err
+}
+
 func (store *lifecycleStoreStub) ReplayAgentCreate(
 	context.Context, string, string,
 ) (ports.AgentCreateState, bool, error) {
@@ -88,4 +94,46 @@ func (store *lifecycleStoreStub) FailAgentCreate(
 	context.Context, ports.FailAgentCreate,
 ) (ports.AgentCreateState, error) {
 	return ports.AgentCreateState{}, store.err
+}
+
+func (store *lifecycleStoreStub) ReplayAgentRebuild(
+	context.Context, string, string,
+) (ports.AgentRebuildState, bool, error) {
+	return ports.AgentRebuildState{}, false, store.err
+}
+
+func (store *lifecycleStoreStub) BeginAgentRebuild(
+	context.Context, ports.BeginAgentRebuild,
+) (ports.AgentRebuildState, bool, error) {
+	return ports.AgentRebuildState{}, false, store.err
+}
+
+func (store *lifecycleStoreStub) RecordAgentRebuildPolicy(
+	context.Context, string, string, ports.NetworkPolicyAssignment, time.Time,
+) (ports.AgentRebuildState, error) {
+	return ports.AgentRebuildState{}, store.err
+}
+
+func (store *lifecycleStoreStub) SettleAgentRebuildDrain(
+	context.Context, string, string, string, time.Time,
+) (ports.AgentRebuildState, error) {
+	return ports.AgentRebuildState{}, store.err
+}
+
+func (store *lifecycleStoreStub) AdvanceAgentRebuild(
+	context.Context, ports.AdvanceAgentRebuild,
+) (ports.AgentRebuildState, error) {
+	return ports.AgentRebuildState{}, store.err
+}
+
+func (store *lifecycleStoreStub) PublishAgentRebuild(
+	context.Context, ports.PublishAgentRebuild,
+) (ports.AgentRebuildState, error) {
+	return ports.AgentRebuildState{}, store.err
+}
+
+func (store *lifecycleStoreStub) FailAgentRebuild(
+	context.Context, ports.FailAgentRebuild,
+) (ports.AgentRebuildState, error) {
+	return ports.AgentRebuildState{}, store.err
 }

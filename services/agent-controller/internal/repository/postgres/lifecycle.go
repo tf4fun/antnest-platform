@@ -354,15 +354,27 @@ INSERT INTO agent_controller.agent_access_bindings (
 func insertLifecycleOperation(
 	ctx context.Context, transaction pgx.Tx, record ports.LifecycleOperationRecord,
 ) error {
-	_, err := transaction.Exec(ctx, `
-INSERT INTO agent_controller.agent_lifecycle_operations (
+	var policyPayload []byte
+	var err error
+	if record.NetworkPolicyAssignment != nil {
+		policyPayload, err = json.Marshal(record.NetworkPolicyAssignment)
+		if err != nil {
+			return fmt.Errorf("encode Agent network policy assignment: %w", err)
+		}
+	}
+	_, err = transaction.Exec(ctx, `
+	INSERT INTO agent_controller.agent_lifecycle_operations (
     request_id, request_fingerprint, agent_id, kind, phase, state,
-    target_spec_revision_id, child_request_id, initial_trace_parent,
-    attempt, created_at, updated_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+    source_spec_revision_id, source_runtime_revision, source_runtime_absent,
+	    target_spec_revision_id, child_request_id, network_policy_assignment,
+	    initial_trace_parent, previous_attempt_trace_id, attempt, created_at, updated_at
+	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
 		record.RequestID, record.RequestFingerprint, record.AgentID, record.Kind,
-		record.Phase, record.State, record.TargetSpecRevisionID, record.ChildRequestID,
-		record.InitialTraceParent, record.Attempt, record.CreatedAt, record.UpdatedAt,
+		record.Phase, record.State, record.SourceSpecRevisionID, record.SourceRuntimeRevision,
+		record.SourceRuntimeAbsent, record.TargetSpecRevisionID, record.ChildRequestID,
+		nullJSON(policyPayload),
+		record.InitialTraceParent, record.PreviousAttemptTraceID, record.Attempt,
+		record.CreatedAt, record.UpdatedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("insert Agent lifecycle operation: %w", err)
@@ -464,14 +476,30 @@ func loadAgentCreateState(
 func loadAgentRecord(
 	ctx context.Context, queryer catalogQueryer, agentID string,
 ) (ports.AgentRecord, error) {
-	var record ports.AgentRecord
-	err := queryer.QueryRow(ctx, `
+	return scanAgentRecord(queryer.QueryRow(ctx, `
 SELECT id, organization_id, owner_user_id, name, desired_state, lifecycle_state,
        access_revision, executable_spec_revision_id, executable_execution_revision_id,
        last_successful_execution_revision_id, runtime_revision, runtime_execution_id,
        runtime_mcp_endpoint, active_operation_request_id, failure_stage, failure_code,
        failure_detail, aggregate_sequence, created_at, updated_at
-FROM agent_controller.agents WHERE id = $1`, agentID).Scan(
+FROM agent_controller.agents WHERE id = $1`, agentID))
+}
+
+func loadAgentRecordForUpdate(
+	ctx context.Context, queryer catalogQueryer, agentID string,
+) (ports.AgentRecord, error) {
+	return scanAgentRecord(queryer.QueryRow(ctx, `
+SELECT id, organization_id, owner_user_id, name, desired_state, lifecycle_state,
+       access_revision, executable_spec_revision_id, executable_execution_revision_id,
+       last_successful_execution_revision_id, runtime_revision, runtime_execution_id,
+       runtime_mcp_endpoint, active_operation_request_id, failure_stage, failure_code,
+       failure_detail, aggregate_sequence, created_at, updated_at
+FROM agent_controller.agents WHERE id = $1 FOR UPDATE`, agentID))
+}
+
+func scanAgentRecord(scanner lifecycleRowScanner) (ports.AgentRecord, error) {
+	var record ports.AgentRecord
+	err := scanner.Scan(
 		&record.AgentID, &record.OrganizationID, &record.OwnerUserID, &record.Name,
 		&record.DesiredState, &record.LifecycleState, &record.AccessRevision,
 		&record.AgentSpecRevisionID, &record.ExecutionRevisionID,
@@ -541,9 +569,10 @@ func loadLifecycleOperation(
 ) (ports.LifecycleOperationRecord, error) {
 	query := `
 SELECT request_id, request_fingerprint, agent_id, kind, phase, state,
-       target_spec_revision_id, child_request_id, network_attachment,
-       runtime_result, initial_trace_parent, attempt, error_code, error_detail,
-       retryable, created_at, updated_at
+	       source_spec_revision_id, source_runtime_revision, source_runtime_absent,
+	       target_spec_revision_id, child_request_id, network_attachment,
+	       network_policy_assignment, runtime_result, initial_trace_parent, previous_attempt_trace_id,
+       attempt, error_code, error_detail, retryable, created_at, updated_at
 FROM agent_controller.agent_lifecycle_operations
 WHERE request_id = $1`
 	if lockClause == "FOR UPDATE" {
@@ -554,12 +583,15 @@ WHERE request_id = $1`
 
 func scanLifecycleOperation(scanner lifecycleRowScanner) (ports.LifecycleOperationRecord, error) {
 	var record ports.LifecycleOperationRecord
-	var networkPayload, runtimePayload []byte
+	var networkPayload, policyPayload, runtimePayload []byte
 	err := scanner.Scan(
 		&record.RequestID, &record.RequestFingerprint, &record.AgentID,
-		&record.Kind, &record.Phase, &record.State, &record.TargetSpecRevisionID,
-		&record.ChildRequestID, &networkPayload, &runtimePayload,
-		&record.InitialTraceParent, &record.Attempt, &record.ErrorCode,
+		&record.Kind, &record.Phase, &record.State,
+		&record.SourceSpecRevisionID, &record.SourceRuntimeRevision,
+		&record.SourceRuntimeAbsent, &record.TargetSpecRevisionID,
+		&record.ChildRequestID, &networkPayload, &policyPayload, &runtimePayload,
+		&record.InitialTraceParent, &record.PreviousAttemptTraceID,
+		&record.Attempt, &record.ErrorCode,
 		&record.ErrorDetail, &record.Retryable, &record.CreatedAt, &record.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -574,6 +606,13 @@ func scanLifecycleOperation(scanner lifecycleRowScanner) (ports.LifecycleOperati
 			return ports.LifecycleOperationRecord{}, fmt.Errorf("decode Agent network attachment: %w", err)
 		}
 		record.NetworkAttachment = &attachment
+	}
+	if len(policyPayload) != 0 {
+		var assignment ports.NetworkPolicyAssignment
+		if err := json.Unmarshal(policyPayload, &assignment); err != nil {
+			return ports.LifecycleOperationRecord{}, fmt.Errorf("decode Agent network policy assignment: %w", err)
+		}
+		record.NetworkPolicyAssignment = &assignment
 	}
 	if len(runtimePayload) != 0 {
 		var runtime ports.RuntimeOperation

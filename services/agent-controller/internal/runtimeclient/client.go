@@ -54,11 +54,49 @@ func (client *Client) InitializeRuntime(
 	requestID string,
 	agentID string,
 	configuration ports.RuntimeConfiguration,
+) (ports.RuntimeOperation, error) {
+	payload := struct {
+		Configuration runtimeConfigurationDTO `json:"configuration"`
+	}{Configuration: runtimeConfigurationPayload(configuration)}
+	return client.callRuntimeOperation(
+		ctx, requestID, agentID, "initialize", "initialize_runtime", payload,
+	)
+}
+
+func (client *Client) UpdateRuntime(
+	ctx context.Context,
+	requestID string,
+	agentID string,
+	expectedRevision string,
+	configuration ports.RuntimeConfiguration,
+) (ports.RuntimeOperation, error) {
+	if !runtimeRevisionPattern.MatchString(expectedRevision) {
+		return ports.RuntimeOperation{}, dependencyFailure("invalid_request", false)
+	}
+	payload := struct {
+		ExpectedRevision string                  `json:"expected_revision"`
+		Configuration    runtimeConfigurationDTO `json:"configuration"`
+	}{
+		ExpectedRevision: expectedRevision,
+		Configuration:    runtimeConfigurationPayload(configuration),
+	}
+	return client.callRuntimeOperation(
+		ctx, requestID, agentID, "update", "update_runtime", payload,
+	)
+}
+
+func (client *Client) callRuntimeOperation(
+	ctx context.Context,
+	requestID string,
+	agentID string,
+	action string,
+	kind string,
+	payload any,
 ) (result ports.RuntimeOperation, resultErr error) {
 	ctx, cancel := context.WithTimeout(ctx, client.timeout)
 	defer cancel()
 	ctx, span := tracer.Start(
-		ctx, "agent_controller.runtime.initialize",
+		ctx, "agent_controller.runtime."+action,
 		trace.WithSpanKind(trace.SpanKindClient),
 		trace.WithAttributes(
 			attribute.String("server.address", client.baseURL.Hostname()),
@@ -74,15 +112,12 @@ func (client *Client) InitializeRuntime(
 		span.End()
 	}()
 
-	payload := struct {
-		Configuration runtimeConfigurationDTO `json:"configuration"`
-	}{Configuration: runtimeConfigurationPayload(configuration)}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return ports.RuntimeOperation{}, dependencyFailure("invalid_request", false)
 	}
 	endpoint := *client.baseURL
-	endpoint.Path = "/internal/runtimes/" + url.PathEscape(agentID) + "/initialize"
+	endpoint.Path = "/internal/runtimes/" + url.PathEscape(agentID) + "/" + action
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), bytes.NewReader(body))
 	if err != nil {
 		return ports.RuntimeOperation{}, dependencyFailure("invalid_request", false)
@@ -106,7 +141,7 @@ func (client *Client) InitializeRuntime(
 	var operation runtimeOperationDTO
 	if err := json.Unmarshal(responseBody, &operation); err != nil ||
 		operation.RequestID != requestID || operation.AgentID != agentID ||
-		operation.Kind != "initialize_runtime" || !validRuntimeOperation(operation) {
+		operation.Kind != kind || !validRuntimeOperation(operation) {
 		return ports.RuntimeOperation{}, dependencyFailure("invalid_response", true)
 	}
 	result = ports.RuntimeOperation{

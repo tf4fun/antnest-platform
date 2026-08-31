@@ -36,6 +36,14 @@ func (store *ObservedLifecycleStore) GetLifecycleOperation(
 	})
 }
 
+func (store *ObservedLifecycleStore) GetAgentLifecycleBase(
+	ctx context.Context, agentID string,
+) (ports.AgentLifecycleBase, error) {
+	return observeLifecycleValue(ctx, store, "get_agent_lifecycle_base", func(callCtx context.Context) (ports.AgentLifecycleBase, error) {
+		return store.next.GetAgentLifecycleBase(callCtx, agentID)
+	})
+}
+
 func (store *ObservedLifecycleStore) ReplayAgentCreate(
 	ctx context.Context, requestID string, fingerprint string,
 ) (ports.AgentCreateState, bool, error) {
@@ -95,6 +103,72 @@ func (store *ObservedLifecycleStore) FailAgentCreate(
 ) (ports.AgentCreateState, error) {
 	return observeLifecycleValue(ctx, store, "fail_agent_create", func(callCtx context.Context) (ports.AgentCreateState, error) {
 		return store.next.FailAgentCreate(callCtx, input)
+	})
+}
+
+func (store *ObservedLifecycleStore) ReplayAgentRebuild(
+	ctx context.Context, requestID string, fingerprint string,
+) (ports.AgentRebuildState, bool, error) {
+	return observeLifecycleReplay(ctx, store, "replay_agent_rebuild", func(callCtx context.Context) (ports.AgentRebuildState, bool, error) {
+		return store.next.ReplayAgentRebuild(callCtx, requestID, fingerprint)
+	})
+}
+
+func (store *ObservedLifecycleStore) BeginAgentRebuild(
+	ctx context.Context, input ports.BeginAgentRebuild,
+) (ports.AgentRebuildState, bool, error) {
+	return observeLifecycleReplay(ctx, store, "begin_agent_rebuild", func(callCtx context.Context) (ports.AgentRebuildState, bool, error) {
+		return store.next.BeginAgentRebuild(callCtx, input)
+	})
+}
+
+func (store *ObservedLifecycleStore) RecordAgentRebuildPolicy(
+	ctx context.Context,
+	requestID string,
+	fingerprint string,
+	assignment ports.NetworkPolicyAssignment,
+	now time.Time,
+) (ports.AgentRebuildState, error) {
+	return observeLifecycleValue(ctx, store, "record_agent_rebuild_policy", func(callCtx context.Context) (ports.AgentRebuildState, error) {
+		return store.next.RecordAgentRebuildPolicy(callCtx, requestID, fingerprint, assignment, now)
+	})
+}
+
+func (store *ObservedLifecycleStore) SettleAgentRebuildDrain(
+	ctx context.Context,
+	requestID string,
+	fingerprint string,
+	nextChildRequestID string,
+	now time.Time,
+) (ports.AgentRebuildState, error) {
+	return observeLifecycleValue(ctx, store, "settle_agent_rebuild_drain", func(callCtx context.Context) (ports.AgentRebuildState, error) {
+		return store.next.SettleAgentRebuildDrain(
+			callCtx, requestID, fingerprint, nextChildRequestID, now,
+		)
+	})
+}
+
+func (store *ObservedLifecycleStore) AdvanceAgentRebuild(
+	ctx context.Context, input ports.AdvanceAgentRebuild,
+) (ports.AgentRebuildState, error) {
+	return observeLifecycleValue(ctx, store, "advance_agent_rebuild", func(callCtx context.Context) (ports.AgentRebuildState, error) {
+		return store.next.AdvanceAgentRebuild(callCtx, input)
+	})
+}
+
+func (store *ObservedLifecycleStore) PublishAgentRebuild(
+	ctx context.Context, input ports.PublishAgentRebuild,
+) (ports.AgentRebuildState, error) {
+	return observeLifecycleValue(ctx, store, "publish_agent_rebuild", func(callCtx context.Context) (ports.AgentRebuildState, error) {
+		return store.next.PublishAgentRebuild(callCtx, input)
+	})
+}
+
+func (store *ObservedLifecycleStore) FailAgentRebuild(
+	ctx context.Context, input ports.FailAgentRebuild,
+) (ports.AgentRebuildState, error) {
+	return observeLifecycleValue(ctx, store, "fail_agent_rebuild", func(callCtx context.Context) (ports.AgentRebuildState, error) {
+		return store.next.FailAgentRebuild(callCtx, input)
 	})
 }
 

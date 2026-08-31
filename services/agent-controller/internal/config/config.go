@@ -14,6 +14,7 @@ type Config struct {
 	RuntimeEgressURL     string
 	RuntimeControllerURL string
 	DependencyTimeout    time.Duration
+	DrainTimeout         time.Duration
 	ShutdownTimeout      time.Duration
 }
 
@@ -37,12 +38,21 @@ func Load(lookup func(string) string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	drainTimeout, err := positiveDuration(
+		lookup("ANTNEST_AGENT_CONTROLLER_DRAIN_TIMEOUT"),
+		"ANTNEST_AGENT_CONTROLLER_DRAIN_TIMEOUT",
+		5*time.Minute,
+	)
+	if err != nil {
+		return Config{}, err
+	}
 	config := Config{
 		ListenAddress:        strings.TrimSpace(lookup("ANTNEST_AGENT_CONTROLLER_LISTEN")),
 		DatabaseURL:          strings.TrimSpace(lookup("ANTNEST_AGENT_CONTROLLER_DATABASE_URL")),
 		RuntimeEgressURL:     strings.TrimSpace(lookup("ANTNEST_RUNTIME_EGRESS_URL")),
 		RuntimeControllerURL: strings.TrimSpace(lookup("ANTNEST_RUNTIME_CONTROLLER_URL")),
 		DependencyTimeout:    dependencyTimeout,
+		DrainTimeout:         drainTimeout,
 		ShutdownTimeout:      shutdownTimeout,
 	}
 	if config.ListenAddress == "" {

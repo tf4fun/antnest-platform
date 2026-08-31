@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -319,12 +320,44 @@ func (dependency *lifecycleDependenciesStub) EnsureAgentNetwork(
 	return result, nil
 }
 
+func (dependency *lifecycleDependenciesStub) GetAgentNetwork(
+	context.Context, string,
+) (ports.NetworkAttachment, error) {
+	return ports.NetworkAttachment{}, errors.New("unexpected Egress network read")
+}
+
+func (dependency *lifecycleDependenciesStub) GetAgentPolicyAssignment(
+	context.Context, string,
+) (ports.NetworkPolicyAssignment, error) {
+	return ports.NetworkPolicyAssignment{}, errors.New("unexpected Egress policy read")
+}
+
+func (dependency *lifecycleDependenciesStub) AssignAgentPolicy(
+	context.Context, ports.NetworkPolicyAssignment, uint64,
+) (ports.NetworkPolicyAssignment, error) {
+	return ports.NetworkPolicyAssignment{}, errors.New("unexpected Egress policy assignment")
+}
+
+func (dependency *lifecycleDependenciesStub) FenceAgentNetwork(context.Context, string) error {
+	return errors.New("unexpected Egress network fence")
+}
+
+func (dependency *lifecycleDependenciesStub) ResetAgentFlows(context.Context, string) error {
+	return errors.New("unexpected Egress flow reset")
+}
+
 func (dependency *lifecycleDependenciesStub) InitializeRuntime(
 	_ context.Context, _ string, _ string, configuration ports.RuntimeConfiguration,
 ) (ports.RuntimeOperation, error) {
 	dependency.calls = append(dependency.calls, "runtime.initialize")
 	dependency.runtimeConfiguration = configuration
 	return dependency.runtime, nil
+}
+
+func (dependency *lifecycleDependenciesStub) UpdateRuntime(
+	context.Context, string, string, string, ports.RuntimeConfiguration,
+) (ports.RuntimeOperation, error) {
+	return ports.RuntimeOperation{}, errors.New("unexpected Runtime update")
 }
 
 type lifecycleStoreStub struct {
@@ -342,6 +375,54 @@ func (store *lifecycleStoreStub) GetLifecycleOperation(
 	_ context.Context, _ string,
 ) (ports.LifecycleOperationRecord, error) {
 	return store.operation, nil
+}
+
+func (store *lifecycleStoreStub) GetAgentLifecycleBase(
+	context.Context, string,
+) (ports.AgentLifecycleBase, error) {
+	return ports.AgentLifecycleBase{}, errors.New("unexpected Agent lifecycle base read")
+}
+
+func (store *lifecycleStoreStub) ReplayAgentRebuild(
+	context.Context, string, string,
+) (ports.AgentRebuildState, bool, error) {
+	return ports.AgentRebuildState{}, false, errors.New("unexpected Agent rebuild replay")
+}
+
+func (store *lifecycleStoreStub) BeginAgentRebuild(
+	context.Context, ports.BeginAgentRebuild,
+) (ports.AgentRebuildState, bool, error) {
+	return ports.AgentRebuildState{}, false, errors.New("unexpected Agent rebuild begin")
+}
+
+func (store *lifecycleStoreStub) RecordAgentRebuildPolicy(
+	context.Context, string, string, ports.NetworkPolicyAssignment, time.Time,
+) (ports.AgentRebuildState, error) {
+	return ports.AgentRebuildState{}, errors.New("unexpected Agent rebuild policy record")
+}
+
+func (store *lifecycleStoreStub) SettleAgentRebuildDrain(
+	context.Context, string, string, string, time.Time,
+) (ports.AgentRebuildState, error) {
+	return ports.AgentRebuildState{}, errors.New("unexpected Agent rebuild drain")
+}
+
+func (store *lifecycleStoreStub) AdvanceAgentRebuild(
+	context.Context, ports.AdvanceAgentRebuild,
+) (ports.AgentRebuildState, error) {
+	return ports.AgentRebuildState{}, errors.New("unexpected Agent rebuild advance")
+}
+
+func (store *lifecycleStoreStub) PublishAgentRebuild(
+	context.Context, ports.PublishAgentRebuild,
+) (ports.AgentRebuildState, error) {
+	return ports.AgentRebuildState{}, errors.New("unexpected Agent rebuild publish")
+}
+
+func (store *lifecycleStoreStub) FailAgentRebuild(
+	context.Context, ports.FailAgentRebuild,
+) (ports.AgentRebuildState, error) {
+	return ports.AgentRebuildState{}, errors.New("unexpected Agent rebuild failure")
 }
 
 func (store *lifecycleStoreStub) ReplayAgentCreate(

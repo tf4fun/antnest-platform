@@ -20,7 +20,7 @@ func TestLoadRequiresDatabaseAndCanonicalEncryptionKey(t *testing.T) {
 		t.Fatalf("load config: %v", err)
 	}
 	if loaded.ListenAddress != ":8080" || loaded.ShutdownTimeout != 15*time.Second ||
-		loaded.DependencyTimeout != 150*time.Second {
+		loaded.DependencyTimeout != 150*time.Second || loaded.DrainTimeout != 5*time.Minute {
 		t.Fatalf("defaults = %+v", loaded)
 	}
 	if loaded.RuntimeEgressURL != values["ANTNEST_RUNTIME_EGRESS_URL"] ||
@@ -55,6 +55,11 @@ func TestLoadRejectsInvalidEncryptionKeyAndDuration(t *testing.T) {
 		t.Fatal("non-positive shutdown timeout was accepted")
 	}
 	delete(values, "ANTNEST_AGENT_CONTROLLER_SHUTDOWN_TIMEOUT")
+	values["ANTNEST_AGENT_CONTROLLER_DRAIN_TIMEOUT"] = "not-a-duration"
+	if _, err := Load(func(key string) string { return values[key] }); err == nil {
+		t.Fatal("invalid drain timeout was accepted")
+	}
+	delete(values, "ANTNEST_AGENT_CONTROLLER_DRAIN_TIMEOUT")
 	delete(values, "ANTNEST_RUNTIME_EGRESS_URL")
 	if _, err := Load(func(key string) string { return values[key] }); err == nil {
 		t.Fatal("missing Runtime Egress URL was accepted")

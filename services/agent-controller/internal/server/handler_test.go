@@ -11,6 +11,11 @@ import (
 	"testing"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/codes"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+
 	"soft/antnest-platform/services/agent-controller/internal/application"
 	"soft/antnest-platform/services/agent-controller/internal/domain"
 	"soft/antnest-platform/services/agent-controller/internal/ports"
@@ -135,6 +140,9 @@ func TestCatalogHandlerMapsStableErrors(t *testing.T) {
 		{name: "disabled", err: ports.ErrDisabledReference, status: http.StatusConflict, code: "reference_disabled"},
 		{name: "request conflict", err: ports.ErrRequestConflict, status: http.StatusConflict, code: "request_id_conflict"},
 		{name: "concurrent", err: ports.ErrConcurrentChange, status: http.StatusConflict, code: "lifecycle_conflict"},
+		{name: "Agent missing", err: application.ErrAgentNotFound, status: http.StatusNotFound, code: "agent_not_found"},
+		{name: "Agent not ready", err: application.ErrAgentNotReady, status: http.StatusConflict, code: "agent_not_ready"},
+		{name: "Agent busy", err: application.ErrLifecycleConflict, status: http.StatusConflict, code: "lifecycle_conflict"},
 		{name: "internal", err: errors.New("database detail"), status: http.StatusInternalServerError, code: "internal_error"},
 	}
 	for _, test := range tests {
@@ -260,6 +268,83 @@ func TestLifecycleHandlerGetsDurableOperation(t *testing.T) {
 	}
 }
 
+func TestLifecycleHandlerRequestsAgentRebuildWithStableContract(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(30, 0).UTC()
+	lifecycle := &lifecycleServiceStub{rebuildResult: application.RebuildAgentResult{
+		Agent: application.AgentView{
+			AgentID: "agent-1", OrganizationID: "org-1", OwnerUserID: "user-1",
+			Name: "Research Agent", DesiredState: domain.DesiredEnabled,
+			LifecycleState: domain.AgentAvailable, AgentSpecRevisionID: "agentspec-2",
+			ExecutionRevisionID: "execution-2", RuntimeRevision: "runtime-2",
+			RuntimeExecutionID: "runtime-execution-2",
+			RuntimeMCPEndpoint: "http://runtime-2:8091/mcp", CreatedAt: now, UpdatedAt: now,
+		},
+		Operation: application.OperationView{
+			RequestID: "request-rebuild-1", AgentID: "agent-1",
+			Kind: domain.OperationRebuild, Phase: domain.PhaseCompleted,
+			State: domain.OperationCompleted, CreatedAt: now, UpdatedAt: now,
+		},
+	}}
+	handler, err := NewHandler(&catalogServiceStub{}, lifecycle, func(context.Context) error { return nil })
+	if err != nil {
+		t.Fatalf("new handler: %v", err)
+	}
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(
+		http.MethodPost, "/internal/agents/agent-1/rebuild",
+		strings.NewReader(`{
+			"request_id":"request-rebuild-1",
+			"template_id":"template-1",
+			"template_revision":2
+		}`),
+	)
+	request.Header.Set("traceparent", "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01")
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("status = %d body=%s", response.Code, response.Body.String())
+	}
+	if lifecycle.rebuildInput.AgentID != "agent-1" ||
+		lifecycle.rebuildInput.TemplateRevision != 2 ||
+		lifecycle.rebuildInput.InitialTraceParent != request.Header.Get("traceparent") {
+		t.Fatalf("RebuildAgent input = %+v", lifecycle.rebuildInput)
+	}
+	var payload operationResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.Kind != domain.OperationRebuild || payload.State != domain.OperationCompleted ||
+		payload.RequestID != "request-rebuild-1" {
+		t.Fatalf("response = %+v", payload)
+	}
+}
+
+func TestObserveLifecycleResultMarksTerminalBusinessFailure(t *testing.T) {
+	previousProvider := otel.GetTracerProvider()
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	otel.SetTracerProvider(provider)
+	t.Cleanup(func() {
+		_ = provider.Shutdown(context.Background())
+		otel.SetTracerProvider(previousProvider)
+	})
+
+	ctx, span := otel.Tracer("handler-test").Start(context.Background(), "request")
+	observeLifecycleResult(ctx, application.OperationView{
+		RequestID: "request-rebuild-failed", AgentID: "agent-1",
+		Kind: domain.OperationRebuild, Phase: domain.PhaseDrain,
+		State: domain.OperationFailed, ErrorCode: "run_drain_timeout",
+	})
+	span.End()
+	ended := recorder.Ended()
+	if len(ended) != 1 || ended[0].Status().Code != codes.Error ||
+		ended[0].Status().Description != "run_drain_timeout" {
+		t.Fatalf("failed lifecycle span = %+v", ended)
+	}
+}
+
 type catalogServiceStub struct {
 	createModelInput application.CreateModelProfileInput
 	createModelCalls int
@@ -272,6 +357,8 @@ type catalogServiceStub struct {
 type lifecycleServiceStub struct {
 	input              application.CreateAgentInput
 	result             application.CreateAgentResult
+	rebuildInput       application.RebuildAgentInput
+	rebuildResult      application.RebuildAgentResult
 	operation          application.OperationView
 	operationRequestID string
 	err                error
@@ -289,6 +376,13 @@ func (service *lifecycleServiceStub) GetLifecycleOperation(
 ) (application.OperationView, error) {
 	service.operationRequestID = requestID
 	return service.operation, service.err
+}
+
+func (service *lifecycleServiceStub) RebuildAgent(
+	_ context.Context, input application.RebuildAgentInput,
+) (application.RebuildAgentResult, error) {
+	service.rebuildInput = input
+	return service.rebuildResult, service.err
 }
 
 func (service *catalogServiceStub) CreateModelProfile(

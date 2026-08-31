@@ -9,9 +9,11 @@ import (
 )
 
 const (
-	EventAgentCreateRequested = "agent_create_requested"
-	EventAgentReady           = "agent_ready"
-	EventAgentBuildFailed     = "agent_build_failed"
+	EventAgentCreateRequested  = "agent_create_requested"
+	EventAgentReady            = "agent_ready"
+	EventAgentBuildFailed      = "agent_build_failed"
+	EventAgentRebuildRequested = "agent_rebuild_requested"
+	EventAgentRebuilt          = "agent_rebuilt"
 )
 
 type AgentSpecSource interface {
@@ -27,6 +29,13 @@ type NetworkAttachment struct {
 	EgressIPv4             string `json:"egress_ipv4"`
 	EgressPort             uint16 `json:"egress_port"`
 	State                  string `json:"state"`
+}
+
+type NetworkPolicyAssignment struct {
+	AgentID         string `json:"agent_id"`
+	PolicyID        string `json:"policy_id"`
+	Revision        uint64 `json:"revision"`
+	ResourceVersion uint64 `json:"resource_version"`
 }
 
 type RuntimeConfiguration struct {
@@ -48,11 +57,17 @@ type RuntimeOperation struct {
 }
 
 type EgressClient interface {
+	GetAgentNetwork(context.Context, string) (NetworkAttachment, error)
 	EnsureAgentNetwork(context.Context, string) (NetworkAttachment, error)
+	GetAgentPolicyAssignment(context.Context, string) (NetworkPolicyAssignment, error)
+	AssignAgentPolicy(context.Context, NetworkPolicyAssignment, uint64) (NetworkPolicyAssignment, error)
+	FenceAgentNetwork(context.Context, string) error
+	ResetAgentFlows(context.Context, string) error
 }
 
 type RuntimeClient interface {
 	InitializeRuntime(context.Context, string, string, RuntimeConfiguration) (RuntimeOperation, error)
+	UpdateRuntime(context.Context, string, string, string, RuntimeConfiguration) (RuntimeOperation, error)
 }
 
 type DependencyError struct {
@@ -108,23 +123,28 @@ type AgentSpecRecord struct {
 }
 
 type LifecycleOperationRecord struct {
-	RequestID            string
-	RequestFingerprint   string
-	AgentID              string
-	Kind                 domain.OperationKind
-	Phase                domain.OperationPhase
-	State                domain.OperationState
-	TargetSpecRevisionID string
-	ChildRequestID       string
-	NetworkAttachment    *NetworkAttachment
-	RuntimeResult        *RuntimeOperation
-	InitialTraceParent   string
-	Attempt              int64
-	ErrorCode            string
-	ErrorDetail          string
-	Retryable            bool
-	CreatedAt            time.Time
-	UpdatedAt            time.Time
+	RequestID               string
+	RequestFingerprint      string
+	AgentID                 string
+	Kind                    domain.OperationKind
+	Phase                   domain.OperationPhase
+	State                   domain.OperationState
+	SourceSpecRevisionID    string
+	SourceRuntimeRevision   string
+	SourceRuntimeAbsent     bool
+	TargetSpecRevisionID    string
+	ChildRequestID          string
+	NetworkAttachment       *NetworkAttachment
+	NetworkPolicyAssignment *NetworkPolicyAssignment
+	RuntimeResult           *RuntimeOperation
+	InitialTraceParent      string
+	PreviousAttemptTraceID  string
+	Attempt                 int64
+	ErrorCode               string
+	ErrorDetail             string
+	Retryable               bool
+	CreatedAt               time.Time
+	UpdatedAt               time.Time
 }
 
 type AgentEventRecord struct {
@@ -159,6 +179,22 @@ type AgentCreateState struct {
 	Operation LifecycleOperationRecord
 }
 
+type AgentLifecycleBase struct {
+	Agent                 AgentRecord
+	ExecutableSpec        AgentSpecRecord
+	ExecutableExecution   ExecutionRecord
+	NextSpecRevision      int64
+	NextExecutionRevision int64
+}
+
+type AgentRebuildState struct {
+	Agent           AgentRecord
+	SourceSpec      AgentSpecRecord
+	SourceExecution ExecutionRecord
+	TargetSpec      AgentSpecRecord
+	Operation       LifecycleOperationRecord
+}
+
 type BeginAgentCreate struct {
 	Agent          AgentRecord
 	Access         AgentAccessRecord
@@ -186,12 +222,65 @@ type FailAgentCreate struct {
 	Now         time.Time
 }
 
+type BeginAgentRebuild struct {
+	AgentID                     string
+	ExpectedAggregateSequence   int64
+	ExpectedSpecRevisionID      string
+	ExpectedExecutionRevisionID string
+	ExpectedRuntimeRevision     string
+	TargetSpec                  AgentSpecRecord
+	Operation                   LifecycleOperationRecord
+	RequestedEvent              AgentEventRecord
+	Now                         time.Time
+}
+
+type AdvanceAgentRebuild struct {
+	RequestID          string
+	Fingerprint        string
+	ExpectedPhase      domain.OperationPhase
+	NextPhase          domain.OperationPhase
+	NextChildRequestID string
+	NetworkAttachment  *NetworkAttachment
+	RuntimeResult      *RuntimeOperation
+	Now                time.Time
+}
+
+type PublishAgentRebuild struct {
+	RequestID    string
+	Fingerprint  string
+	Execution    ExecutionRecord
+	RebuiltEvent AgentEventRecord
+	Now          time.Time
+}
+
+type FailAgentRebuild struct {
+	RequestID          string
+	Fingerprint        string
+	Stage              domain.OperationPhase
+	Code               string
+	Detail             string
+	Retryable          bool
+	PreserveExecutable bool
+	FailedEvent        AgentEventRecord
+	Now                time.Time
+}
+
 type LifecycleStore interface {
 	GetLifecycleOperation(context.Context, string) (LifecycleOperationRecord, error)
+	GetAgentLifecycleBase(context.Context, string) (AgentLifecycleBase, error)
 	ReplayAgentCreate(context.Context, string, string) (AgentCreateState, bool, error)
 	BeginAgentCreate(context.Context, BeginAgentCreate) (AgentCreateState, bool, error)
 	RecordCreateNetwork(context.Context, string, string, NetworkAttachment, string, time.Time) (AgentCreateState, error)
 	RecordCreateRuntime(context.Context, string, string, RuntimeOperation, string, time.Time) (AgentCreateState, error)
 	PublishAgentCreate(context.Context, PublishAgentCreate) (AgentCreateState, error)
 	FailAgentCreate(context.Context, FailAgentCreate) (AgentCreateState, error)
+	ReplayAgentRebuild(context.Context, string, string) (AgentRebuildState, bool, error)
+	BeginAgentRebuild(context.Context, BeginAgentRebuild) (AgentRebuildState, bool, error)
+	RecordAgentRebuildPolicy(
+		context.Context, string, string, NetworkPolicyAssignment, time.Time,
+	) (AgentRebuildState, error)
+	SettleAgentRebuildDrain(context.Context, string, string, string, time.Time) (AgentRebuildState, error)
+	AdvanceAgentRebuild(context.Context, AdvanceAgentRebuild) (AgentRebuildState, error)
+	PublishAgentRebuild(context.Context, PublishAgentRebuild) (AgentRebuildState, error)
+	FailAgentRebuild(context.Context, FailAgentRebuild) (AgentRebuildState, error)
 }

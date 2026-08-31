@@ -156,8 +156,8 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 		return classifyFailure("service_composition", err)
 	}
 	catalog := application.NewCatalogService(observedStore, secretBox, systemClock{})
-	lifecycle := application.NewLifecycleService(
-		observedStore, observedLifecycleStore, egress, runtime, systemClock{},
+	lifecycle := application.NewLifecycleServiceWithDrainTimeout(
+		observedStore, observedLifecycleStore, egress, runtime, systemClock{}, cfg.DrainTimeout,
 	)
 	handler, err := server.NewHandler(catalog, lifecycle, repository.Ping)
 	if err != nil {

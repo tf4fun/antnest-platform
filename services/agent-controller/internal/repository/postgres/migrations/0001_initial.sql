@@ -196,6 +196,7 @@ CREATE TABLE IF NOT EXISTS agent_controller.agent_lifecycle_operations (
     target_spec_revision_id TEXT NOT NULL DEFAULT '',
     child_request_id TEXT NOT NULL DEFAULT '',
     network_attachment JSONB,
+    network_policy_assignment JSONB,
     runtime_result JSONB,
     initial_trace_parent TEXT NOT NULL DEFAULT '',
     previous_attempt_trace_id TEXT NOT NULL DEFAULT '',
