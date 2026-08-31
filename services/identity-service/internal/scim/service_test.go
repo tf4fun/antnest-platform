@@ -62,12 +62,14 @@ func TestCreateUserBuildsOrganizationScopedSCIMMembership(t *testing.T) {
 	result, err := service.CreateUser(context.Background(), Authorization{
 		TokenID: "scim-token-1", OrganizationID: "org-1",
 	}, UserInput{
-		ExternalID: "workday-42", UserName: "Alice@Example.COM", DisplayName: " Alice ", Active: true,
+		ExternalID: "workday-42", UserName: " Alice.Employee ", Email: "Alice@Example.COM",
+		DisplayName: " Alice ", Active: true,
 	})
 	if err != nil {
 		t.Fatalf("create SCIM user: %v", err)
 	}
-	if result.User.Email != "alice@example.com" || result.User.Source != domain.SourceSCIM ||
+	if result.User.SystemRole != domain.SystemRoleUser || result.Membership.Email != "alice@example.com" ||
+		result.Membership.DisplayName != "Alice" || result.Membership.SCIMUserName != "alice.employee" ||
 		result.Membership.OrganizationID != "org-1" || result.Membership.Source != domain.SourceSCIM ||
 		result.Membership.SCIMExternalID != "workday-42" || result.Membership.ID == result.User.ID {
 		t.Fatalf("SCIM user = %#v", result)
@@ -80,17 +82,20 @@ func TestCreateUserBuildsOrganizationScopedSCIMMembership(t *testing.T) {
 func TestReplaceUserOnlyChangesOrganizationMembershipActivation(t *testing.T) {
 	repository := &scimRepositoryStub{user: UserResource{
 		User: domain.User{
-			ID: "user-1", Email: "alice@example.com", DisplayName: "Alice",
-			Source: domain.SourceSCIM, Active: true,
+			ID: "user-1", SystemRole: domain.SystemRoleUser, Active: true,
 		},
 		Membership: domain.OrganizationMembership{
 			ID: "membership-1", OrganizationID: "org-1", UserID: "user-1",
-			Source: domain.SourceSCIM, Active: true,
+			Email: "alice@example.com", DisplayName: "Alice",
+			SCIMUserName: "alice.employee", Source: domain.SourceSCIM, Active: true,
 		},
 	}}
 	service := newSCIMTestService(t, repository)
-	_, err := service.ReplaceUser(context.Background(), Authorization{OrganizationID: "org-1"}, "membership-1", UserInput{
-		ExternalID: "workday-42", UserName: "alice@example.com", DisplayName: "Alice", Active: false,
+	_, err := service.ReplaceUser(context.Background(), Authorization{OrganizationID: "org-1"}, "membership-1", ReplaceUserInput{
+		UserInput: UserInput{
+			ExternalID: "workday-42", UserName: "alice.employee", Email: "alice@example.com",
+			DisplayName: "Alice", Active: false,
+		},
 	})
 	if err != nil {
 		t.Fatalf("replace SCIM user: %v", err)
@@ -108,9 +113,11 @@ func TestReplaceGroupExpressesOnlySCIMOwnedDesiredMemberships(t *testing.T) {
 		ID: "group-1", OrganizationID: "org-1", Source: domain.SourceSCIM, Active: true,
 	}}}
 	service := newSCIMTestService(t, repository)
-	result, err := service.ReplaceGroup(context.Background(), Authorization{OrganizationID: "org-1"}, "group-1", GroupInput{
-		ExternalID: "group-ext", DisplayName: "Engineering",
-		MemberIDs: []string{"membership-2", "membership-1", "membership-2"},
+	result, err := service.ReplaceGroup(context.Background(), Authorization{OrganizationID: "org-1"}, "group-1", ReplaceGroupInput{
+		GroupInput: GroupInput{
+			ExternalID: "group-ext", DisplayName: "Engineering",
+			MemberIDs: []string{"membership-2", "membership-1", "membership-2"},
+		},
 	})
 	if err != nil {
 		t.Fatalf("replace group: %v", err)
@@ -135,6 +142,20 @@ func TestDeleteGroupRemovesTheSCIMResourceInsteadOfInventingAnActiveField(t *tes
 	if repository.deletedGroup.GroupID != "group-1" ||
 		repository.deletedGroup.ActorTokenID != "scim-token-1" {
 		t.Fatalf("delete command = %#v", repository.deletedGroup)
+	}
+}
+
+func TestDeleteUserTombstonesOnlyTheSCIMResource(t *testing.T) {
+	repository := &scimRepositoryStub{}
+	service := newSCIMTestService(t, repository)
+	authorization := Authorization{TokenID: "scim-token-1", OrganizationID: "org-1"}
+
+	if err := service.DeleteUser(context.Background(), authorization, "membership-1"); err != nil {
+		t.Fatal(err)
+	}
+	if repository.deletedUser.MembershipID != "membership-1" ||
+		repository.deletedUser.ActorTokenID != "scim-token-1" {
+		t.Fatalf("delete command = %#v", repository.deletedUser)
 	}
 }
 
@@ -163,6 +184,7 @@ type scimRepositoryStub struct {
 	createdUser   CreateUserCommand
 	replacedGroup ReplaceGroupCommand
 	listedUsers   ListQuery
+	deletedUser   DeleteUserCommand
 	deletedGroup  DeleteGroupCommand
 }
 
@@ -201,6 +223,11 @@ func (r *scimRepositoryStub) ListUsers(_ context.Context, query ListQuery) (User
 func (r *scimRepositoryStub) ReplaceUser(_ context.Context, command ReplaceUserCommand) (UserResource, error) {
 	r.replacedUser = command
 	return UserResource{User: command.User, Membership: command.Membership}, nil
+}
+
+func (r *scimRepositoryStub) DeleteUser(_ context.Context, command DeleteUserCommand) error {
+	r.deletedUser = command
+	return nil
 }
 
 func (r *scimRepositoryStub) CreateGroup(_ context.Context, command CreateGroupCommand) (GroupResource, error) {

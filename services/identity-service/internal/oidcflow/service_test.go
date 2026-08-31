@@ -16,19 +16,19 @@ import (
 
 func TestUpsertProviderDiscoversBeforePersistingEnabledConfiguration(t *testing.T) {
 	repository := newOIDCRepositoryStub(t)
-	repository.principal = organizationAdmin()
+	repository.principal = systemAdministrator()
 	federation := &federationStub{discovery: Discovery{
-		Issuer: "https://id.example.com", AuthorizationEndpoint: "https://id.example.com/authorize",
+		Issuer: "https://id.example.com/", AuthorizationEndpoint: "https://id.example.com/authorize",
 		TokenEndpoint: "https://id.example.com/token", UserInfoEndpoint: "https://id.example.com/userinfo",
-		JWKSURI: "https://id.example.com/jwks",
+		JWKSURI:                  "https://id.example.com/jwks",
+		TokenEndpointAuthMethods: []string{"client_secret_basic"}, IDTokenSigningAlgs: []string{"RS256"},
 	}}
 	service := newTestService(t, repository, federation)
 
 	provider, err := service.UpsertProvider(context.Background(), UpsertProviderInput{
 		RequestID: "request-1", ActorPrincipalID: "admin", OrganizationID: "org-1",
 		Name: " Workforce ", Issuer: "https://id.example.com/", ClientID: "client-1",
-		ClientSecret: "top-secret", RedirectURI: "https://antnest.example.com/protocol/oidc/callback",
-		Scopes: []string{"profile"}, Enabled: true,
+		ClientSecret: "top-secret", Scopes: []string{"profile"}, Enabled: true,
 	})
 	if err != nil {
 		t.Fatalf("upsert provider: %v", err)
@@ -36,12 +36,20 @@ func TestUpsertProviderDiscoversBeforePersistingEnabledConfiguration(t *testing.
 	if provider.ID != "id-1" || provider.Name != "workforce" || !provider.Enabled {
 		t.Fatalf("provider = %#v", provider)
 	}
+	if provider.Issuer != "https://id.example.com/" {
+		t.Fatalf("provider issuer = %q, want exact configured issuer", provider.Issuer)
+	}
 	if repository.upsert.Provider.ClientSecret.Ciphertext == nil ||
 		bytes.Contains(repository.upsert.Provider.ClientSecret.Ciphertext, []byte("top-secret")) {
 		t.Fatal("client secret was not sealed")
 	}
 	if repository.upsert.Provider.AuthorizationEndpoint != federation.discovery.AuthorizationEndpoint {
 		t.Fatal("discovery result was not persisted with provider")
+	}
+	if repository.upsert.Provider.TokenEndpointAuthMethod != "client_secret_basic" ||
+		len(repository.upsert.Provider.IDTokenSigningAlgs) != 1 ||
+		repository.upsert.Provider.IDTokenSigningAlgs[0] != "RS256" {
+		t.Fatalf("Provider security metadata = %#v", repository.upsert.Provider.Provider)
 	}
 	if got := strings.Join(repository.upsert.Provider.Scopes, ","); got != "email,openid,profile" {
 		t.Fatalf("provider scopes = %q, want mandatory email and openid scopes", got)
@@ -55,15 +63,46 @@ func TestUpsertProviderDiscoversBeforePersistingEnabledConfiguration(t *testing.
 	}
 }
 
-func TestOIDCUserControlledValidationReturnsInvalidArgument(t *testing.T) {
+func TestUpsertProviderRequiresSystemAdministrator(t *testing.T) {
 	repository := newOIDCRepositoryStub(t)
 	repository.principal = organizationAdmin()
 	service := newTestService(t, repository, &federationStub{})
 
 	_, err := service.UpsertProvider(context.Background(), UpsertProviderInput{
+		ActorPrincipalID: "organization-admin", OrganizationID: "org-1", Name: "workforce",
+		Issuer: "https://id.example.com", ClientID: "client", ClientSecret: "secret",
+	})
+	if !errors.Is(err, domain.ErrForbidden) {
+		t.Fatalf("organization administrator upsert error = %v, want forbidden", err)
+	}
+}
+
+func TestUpsertProviderTreatsTrailingSlashAsPartOfIssuerIdentity(t *testing.T) {
+	repository := newOIDCRepositoryStub(t)
+	repository.principal = systemAdministrator()
+	service := newTestService(t, repository, &federationStub{discovery: Discovery{
+		Issuer: "https://id.example.com", AuthorizationEndpoint: "https://id.example.com/authorize",
+		TokenEndpoint: "https://id.example.com/token", JWKSURI: "https://id.example.com/jwks",
+		TokenEndpointAuthMethods: []string{"client_secret_basic"}, IDTokenSigningAlgs: []string{"RS256"},
+	}})
+
+	_, err := service.UpsertProvider(context.Background(), UpsertProviderInput{
+		ActorPrincipalID: "admin", OrganizationID: "org-1", Name: "workforce",
+		Issuer: "https://id.example.com/", ClientID: "client", ClientSecret: "secret",
+	})
+	if err == nil || repository.upsert.Provider.ID != "" {
+		t.Fatalf("issuer mismatch err=%v write=%#v", err, repository.upsert)
+	}
+}
+
+func TestOIDCUserControlledValidationReturnsInvalidArgument(t *testing.T) {
+	repository := newOIDCRepositoryStub(t)
+	repository.principal = systemAdministrator()
+	service := newTestService(t, repository, &federationStub{})
+
+	_, err := service.UpsertProvider(context.Background(), UpsertProviderInput{
 		ActorPrincipalID: "admin", OrganizationID: "org-1", Name: "workforce",
 		Issuer: "not-a-url", ClientID: "client", ClientSecret: "secret",
-		RedirectURI: "https://antnest.example.com/protocol/oidc/callback",
 	})
 	if !errors.Is(err, domain.ErrInvalidArgument) {
 		t.Fatalf("invalid Provider error = %v, want invalid argument", err)
@@ -74,37 +113,71 @@ func TestOIDCUserControlledValidationReturnsInvalidArgument(t *testing.T) {
 	}
 }
 
+func TestValidateIdentityPreservesOpaqueSubject(t *testing.T) {
+	provider := testProvider(t).Provider
+	identity := VerifiedIdentity{
+		Issuer: provider.Issuer, Subject: " subject-1 ", Email: "alice@example.com",
+		EmailVerified: true,
+	}
+
+	validated, err := validateIdentity(provider, identity)
+	if err != nil {
+		t.Fatalf("validate identity: %v", err)
+	}
+	if validated.Subject != identity.Subject {
+		t.Fatalf("OIDC subject = %q, want exact opaque value %q", validated.Subject, identity.Subject)
+	}
+}
+
 func TestUpsertProviderRejectsDiscoveryIssuerMismatchWithoutWrite(t *testing.T) {
 	repository := newOIDCRepositoryStub(t)
-	repository.principal = organizationAdmin()
+	repository.principal = systemAdministrator()
 	service := newTestService(t, repository, &federationStub{discovery: Discovery{
 		Issuer: "https://attacker.example.com", AuthorizationEndpoint: "https://attacker.example.com/authorize",
 		TokenEndpoint: "https://attacker.example.com/token", JWKSURI: "https://attacker.example.com/jwks",
+		TokenEndpointAuthMethods: []string{"client_secret_basic"}, IDTokenSigningAlgs: []string{"RS256"},
 	}})
 
 	_, err := service.UpsertProvider(context.Background(), UpsertProviderInput{
 		ActorPrincipalID: "admin", OrganizationID: "org-1", Name: "workforce",
-		Issuer: "https://id.example.com", ClientID: "client", ClientSecret: "secret",
-		RedirectURI: "https://antnest.example.com/protocol/oidc/callback", Enabled: true,
+		Issuer: "https://id.example.com", ClientID: "client", ClientSecret: "secret", Enabled: true,
 	})
 	if err == nil || repository.upsert.Provider.ID != "" {
 		t.Fatalf("issuer mismatch err=%v write=%#v", err, repository.upsert)
 	}
 }
 
-func TestUpsertProviderRejectsChangingExistingIssuer(t *testing.T) {
+func TestUpsertProviderRejectsInsecureDiscoveredEndpoint(t *testing.T) {
 	repository := newOIDCRepositoryStub(t)
-	repository.principal = organizationAdmin()
-	repository.provider = testProvider(t)
+	repository.principal = systemAdministrator()
 	service := newTestService(t, repository, &federationStub{discovery: Discovery{
-		Issuer: "https://replacement.example.com", AuthorizationEndpoint: "https://replacement.example.com/authorize",
-		TokenEndpoint: "https://replacement.example.com/token", JWKSURI: "https://replacement.example.com/jwks",
+		Issuer: "https://id.example.com", AuthorizationEndpoint: "https://id.example.com/authorize",
+		TokenEndpoint: "http://127.0.0.1/token", JWKSURI: "https://id.example.com/jwks",
+		TokenEndpointAuthMethods: []string{"client_secret_basic"}, IDTokenSigningAlgs: []string{"RS256"},
 	}})
 
 	_, err := service.UpsertProvider(context.Background(), UpsertProviderInput{
 		ActorPrincipalID: "admin", OrganizationID: "org-1", Name: "workforce",
-		Issuer: "https://replacement.example.com", ClientID: "client", ClientSecret: "secret",
-		RedirectURI: "https://antnest.example.com/protocol/oidc/callback", Enabled: true,
+		Issuer: "https://id.example.com", ClientID: "client", ClientSecret: "secret",
+	})
+	if err == nil || repository.upsert.Provider.ID != "" {
+		t.Fatalf("insecure discovery endpoint err=%v write=%#v", err, repository.upsert)
+	}
+}
+
+func TestUpsertProviderRejectsChangingExistingIssuer(t *testing.T) {
+	repository := newOIDCRepositoryStub(t)
+	repository.principal = systemAdministrator()
+	repository.provider = testProvider(t)
+	service := newTestService(t, repository, &federationStub{discovery: Discovery{
+		Issuer: "https://replacement.example.com", AuthorizationEndpoint: "https://replacement.example.com/authorize",
+		TokenEndpoint: "https://replacement.example.com/token", JWKSURI: "https://replacement.example.com/jwks",
+		TokenEndpointAuthMethods: []string{"client_secret_basic"}, IDTokenSigningAlgs: []string{"RS256"},
+	}})
+
+	_, err := service.UpsertProvider(context.Background(), UpsertProviderInput{
+		ActorPrincipalID: "admin", OrganizationID: "org-1", Name: "workforce",
+		Issuer: "https://replacement.example.com", ClientID: "client", ClientSecret: "secret", Enabled: true,
 	})
 	code, message, _ := domain.ErrorDetails(err)
 	if code != "oidc_provider_issuer_immutable" ||
@@ -115,7 +188,7 @@ func TestUpsertProviderRejectsChangingExistingIssuer(t *testing.T) {
 
 func TestSetProviderEnabledDoesNotDependOnExternalDiscovery(t *testing.T) {
 	repository := newOIDCRepositoryStub(t)
-	repository.principal = organizationAdmin()
+	repository.principal = systemAdministrator()
 	repository.provider = testProvider(t)
 	federation := &federationStub{discoveryErr: errors.New("provider is retired")}
 	service := newTestService(t, repository, federation)
@@ -159,6 +232,26 @@ func TestStartLoginStoresHashedStateAndSealedPKCESecrets(t *testing.T) {
 	if federation.authorization.PKCEChallenge == "" || federation.authorization.State == "" ||
 		federation.authorization.Nonce == "" {
 		t.Fatalf("authorization input = %#v", federation.authorization)
+	}
+	if federation.authorization.RedirectURI != "https://antnest.example.com/protocol/oidc/callback" ||
+		repository.session.Session.ProviderRevision != repository.provider.Revision {
+		t.Fatalf("authorization=%#v session=%#v", federation.authorization, repository.session.Session)
+	}
+}
+
+func TestCompleteLoginRejectsProviderChangedAfterAuthorizationStarted(t *testing.T) {
+	repository := newOIDCRepositoryStub(t)
+	repository.provider = testProvider(t)
+	repository.provider.Revision++
+	repository.claim = SessionClaim{Disposition: ClaimAcquired, Session: testSession(t)}
+	service := newTestService(t, repository, &federationStub{})
+
+	_, err := service.CompleteLogin(context.Background(), CompleteLoginInput{
+		State: "oidc_state_2", Code: "authorization-code",
+	})
+	code, _, _ := domain.ErrorDetails(err)
+	if code != "oidc_provider_changed" || repository.failed.Stage != "provider" {
+		t.Fatalf("provider change error=%v code=%q failure=%#v", err, code, repository.failed)
 	}
 }
 
@@ -272,6 +365,24 @@ func TestCompleteLoginTerminalizesMissingCodeAsInvalidArgument(t *testing.T) {
 	}
 }
 
+func TestCompleteLoginTerminalizesProviderAuthorizationErrorWithoutExchange(t *testing.T) {
+	repository := newOIDCRepositoryStub(t)
+	repository.claim = SessionClaim{Disposition: ClaimAcquired, Session: testSession(t)}
+	federation := &federationStub{}
+	service := newTestService(t, repository, federation)
+
+	_, err := service.CompleteLogin(context.Background(), CompleteLoginInput{
+		State: "oidc_state_2", AuthorizationError: "access_denied",
+	})
+	code, _, _ := domain.ErrorDetails(err)
+	if code != "oidc_authorization_failed" || repository.failed.Stage != "authorization" {
+		t.Fatalf("authorization error=%v code=%q failure=%#v", err, code, repository.failed)
+	}
+	if federation.exchangeCalls != 0 {
+		t.Fatalf("authorization error performed %d token exchanges", federation.exchangeCalls)
+	}
+}
+
 func TestCompleteLoginTerminalizesPersistenceFailure(t *testing.T) {
 	repository := newOIDCRepositoryStub(t)
 	repository.provider = testProvider(t)
@@ -288,6 +399,26 @@ func TestCompleteLoginTerminalizesPersistenceFailure(t *testing.T) {
 	})
 	if err == nil || repository.failed.Stage != "persistence" {
 		t.Fatalf("persistence error=%v failure=%#v", err, repository.failed)
+	}
+}
+
+func TestCompleteLoginClassifiesCommitTimeProviderChange(t *testing.T) {
+	repository := newOIDCRepositoryStub(t)
+	repository.provider = testProvider(t)
+	repository.claim = SessionClaim{Disposition: ClaimAcquired, Session: testSession(t)}
+	repository.completeErr = domain.NewError("oidc_provider_changed", "OIDC Provider changed", false)
+	federation := &federationStub{identity: VerifiedIdentity{
+		Issuer: "https://id.example.com", Subject: "subject-1", Email: "alice@example.com",
+		EmailVerified: true, DisplayName: "Alice",
+	}}
+	service := newTestService(t, repository, federation)
+
+	_, err := service.CompleteLogin(context.Background(), CompleteLoginInput{
+		State: "oidc_state_2", Code: "authorization-code",
+	})
+	code, _, _ := domain.ErrorDetails(err)
+	if code != "oidc_provider_changed" || repository.failed.Stage != "provider" {
+		t.Fatalf("commit-time Provider change error=%v code=%q failure=%#v", err, code, repository.failed)
 	}
 }
 
@@ -455,7 +586,8 @@ func newTestService(t *testing.T, repository *oidcRepositoryStub, federation *fe
 		Repository: repository, Federation: federation, SecretBox: box,
 		NewID:     func() string { next++; return fmt.Sprintf("id-%d", next) },
 		NewOpaque: deterministicOpaque(), Now: fixedOIDCNow,
-		SessionTTL: 10 * time.Minute, TokenTTL: 12 * time.Hour,
+		RedirectURI: "https://antnest.example.com/protocol/oidc/callback",
+		SessionTTL:  10 * time.Minute, TokenTTL: 12 * time.Hour,
 	})
 	if err != nil {
 		t.Fatalf("new OIDC service: %v", err)
@@ -479,6 +611,10 @@ func organizationAdmin() domain.Principal {
 	}
 }
 
+func systemAdministrator() domain.Principal {
+	return domain.Principal{UserID: "admin", SystemRole: domain.SystemRoleAdmin, Active: true}
+}
+
 func testProvider(t *testing.T) ProviderWithSecret {
 	t.Helper()
 	box, err := credentials.NewSecretBox(bytes.Repeat([]byte{7}, 32))
@@ -491,11 +627,11 @@ func testProvider(t *testing.T) ProviderWithSecret {
 	}
 	return ProviderWithSecret{Provider: Provider{
 		ID: "provider-1", OrganizationID: "org-1", Name: "workforce", DisplayName: "Workforce",
-		Issuer: "https://id.example.com", ClientID: "client-1", ClientSecret: secret,
-		RedirectURI: "https://antnest.example.com/protocol/oidc/callback",
-		Scopes:      []string{"openid", "profile", "email"}, Enabled: true,
+		Issuer: "https://id.example.com", ClientID: "client-1", ClientSecret: secret, Revision: 1,
+		Scopes: []string{"openid", "profile", "email"}, Enabled: true,
 		AuthorizationEndpoint: "https://id.example.com/authorize",
-		TokenEndpoint:         "https://id.example.com/token", UserInfoEndpoint: "https://id.example.com/userinfo",
+		TokenEndpoint:         "https://id.example.com/token", TokenEndpointAuthMethod: "client_secret_basic",
+		IDTokenSigningAlgs: []string{"RS256"}, UserInfoEndpoint: "https://id.example.com/userinfo",
 		JWKSURI: "https://id.example.com/jwks",
 	}}
 }
@@ -512,7 +648,8 @@ func testSession(t *testing.T) AuthSession {
 	}
 	return AuthSession{
 		ID: "session-1", ProviderID: "provider-1", OrganizationID: "org-1",
-		Status: SessionStatusExchanging, Secrets: sealed, ExpiresAt: fixedOIDCNow().Add(10 * time.Minute),
+		ProviderRevision: 1, Status: SessionStatusExchanging, Secrets: sealed,
+		ExpiresAt: fixedOIDCNow().Add(10 * time.Minute),
 	}
 }
 

@@ -10,47 +10,68 @@ CREATE TABLE organizations (
 
 CREATE TABLE users (
     id TEXT PRIMARY KEY,
-    email TEXT NOT NULL UNIQUE,
-    display_name TEXT NOT NULL,
-    password_hash TEXT,
     system_role TEXT NOT NULL,
-    source TEXT NOT NULL,
     active BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL,
-    CONSTRAINT users_email_normalized CHECK (email = lower(btrim(email))),
-    CONSTRAINT users_system_role_valid CHECK (system_role IN ('user', 'admin')),
-    CONSTRAINT users_source_valid CHECK (source IN ('local', 'oidc', 'scim')),
-    CONSTRAINT users_password_source CHECK ((source = 'local') = (password_hash IS NOT NULL))
+    CONSTRAINT users_system_role_valid CHECK (system_role IN ('user', 'admin'))
+);
+
+CREATE TABLE local_credentials (
+    user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    password_hash TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL,
+    CONSTRAINT local_credentials_password_hash_nonempty CHECK (length(password_hash) > 0)
 );
 
 CREATE TABLE organization_memberships (
     id TEXT PRIMARY KEY,
     organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    email TEXT NOT NULL,
+    display_name TEXT NOT NULL,
     role TEXT NOT NULL,
     source TEXT NOT NULL,
     active BOOLEAN NOT NULL DEFAULT TRUE,
     scim_external_id TEXT,
     scim_user_name TEXT,
+    scim_deleted_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL,
-    CONSTRAINT organization_memberships_role_valid CHECK (role IN ('member', 'admin')),
-    CONSTRAINT organization_memberships_source_valid CHECK (source IN ('local', 'oidc', 'scim')),
-    CONSTRAINT organization_memberships_scim_shape CHECK (
-        source = 'scim' OR (scim_external_id IS NULL AND scim_user_name IS NULL)
+    CONSTRAINT organization_memberships_email_normalized CHECK (
+        length(email) > 0 AND email = lower(btrim(email))
     ),
-    CONSTRAINT organization_memberships_org_id_unique UNIQUE (organization_id, id),
+    CONSTRAINT organization_memberships_display_name_nonempty CHECK (length(btrim(display_name)) > 0),
+    CONSTRAINT organization_memberships_role_valid CHECK (role IN ('member', 'admin')),
+    CONSTRAINT organization_memberships_source_valid CHECK (source IN ('local', 'scim')),
+    CONSTRAINT organization_memberships_scim_shape CHECK (
+        (source = 'scim' AND scim_user_name IS NOT NULL)
+        OR (source = 'local' AND scim_external_id IS NULL AND scim_user_name IS NULL AND scim_deleted_at IS NULL)
+    ),
+    CONSTRAINT organization_memberships_scim_username_normalized CHECK (
+        scim_user_name IS NULL OR (
+            length(scim_user_name) > 0 AND scim_user_name = lower(btrim(scim_user_name))
+        )
+    ),
     CONSTRAINT organization_memberships_org_id_user_identity_unique UNIQUE (organization_id, id, user_id),
-    CONSTRAINT organization_memberships_org_user_unique UNIQUE (organization_id, user_id)
+    CONSTRAINT organization_memberships_org_id_source_unique UNIQUE (organization_id, id, source),
+    CONSTRAINT organization_memberships_scim_deleted_inactive CHECK (scim_deleted_at IS NULL OR NOT active)
 );
+
+CREATE UNIQUE INDEX organization_memberships_org_email_unique
+    ON organization_memberships (organization_id, email)
+    WHERE scim_deleted_at IS NULL;
+CREATE UNIQUE INDEX organization_memberships_org_user_unique
+    ON organization_memberships (organization_id, user_id)
+    WHERE scim_deleted_at IS NULL;
 
 CREATE UNIQUE INDEX organization_memberships_scim_external_unique
     ON organization_memberships (organization_id, scim_external_id)
-    WHERE source = 'scim' AND scim_external_id IS NOT NULL;
+    WHERE source = 'scim' AND scim_external_id IS NOT NULL AND scim_deleted_at IS NULL;
 CREATE UNIQUE INDEX organization_memberships_scim_username_unique
     ON organization_memberships (organization_id, scim_user_name)
-    WHERE source = 'scim' AND scim_user_name IS NOT NULL;
+    WHERE source = 'scim' AND scim_user_name IS NOT NULL AND scim_deleted_at IS NULL;
 
 CREATE TABLE groups (
     id TEXT PRIMARY KEY,
@@ -61,9 +82,9 @@ CREATE TABLE groups (
     scim_external_id TEXT,
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL,
-    CONSTRAINT groups_source_valid CHECK (source IN ('local', 'oidc', 'scim')),
+    CONSTRAINT groups_source_valid CHECK (source IN ('local', 'scim')),
     CONSTRAINT groups_scim_shape CHECK (source = 'scim' OR scim_external_id IS NULL),
-    CONSTRAINT groups_org_id_unique UNIQUE (organization_id, id)
+    CONSTRAINT groups_org_id_source_unique UNIQUE (organization_id, id, source)
 );
 
 CREATE UNIQUE INDEX groups_scim_external_unique
@@ -79,11 +100,11 @@ CREATE TABLE group_memberships (
     active BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL,
-    CONSTRAINT group_memberships_source_valid CHECK (source IN ('local', 'oidc', 'scim')),
-    CONSTRAINT group_memberships_group_fk FOREIGN KEY (organization_id, group_id)
-        REFERENCES groups (organization_id, id) ON DELETE CASCADE,
-    CONSTRAINT group_memberships_member_fk FOREIGN KEY (organization_id, organization_membership_id)
-        REFERENCES organization_memberships (organization_id, id) ON DELETE CASCADE,
+    CONSTRAINT group_memberships_source_valid CHECK (source IN ('local', 'scim')),
+    CONSTRAINT group_memberships_group_fk FOREIGN KEY (organization_id, group_id, source)
+        REFERENCES groups (organization_id, id, source) ON DELETE CASCADE,
+    CONSTRAINT group_memberships_member_fk FOREIGN KEY (organization_id, organization_membership_id, source)
+        REFERENCES organization_memberships (organization_id, id, source) ON DELETE CASCADE,
     CONSTRAINT group_memberships_owner_unique UNIQUE (group_id, organization_membership_id, source)
 );
 
@@ -96,16 +117,23 @@ CREATE TABLE oidc_providers (
     client_id TEXT NOT NULL,
     client_secret_ciphertext BYTEA NOT NULL,
     client_secret_nonce BYTEA NOT NULL,
-    redirect_uri TEXT NOT NULL,
     scopes TEXT[] NOT NULL,
     enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    revision BIGINT NOT NULL,
     authorization_endpoint TEXT NOT NULL,
     token_endpoint TEXT NOT NULL,
+    token_endpoint_auth_method TEXT NOT NULL,
+    id_token_signing_algs TEXT[] NOT NULL,
     userinfo_endpoint TEXT NOT NULL DEFAULT '',
     jwks_uri TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL,
     CONSTRAINT oidc_providers_name_normalized CHECK (name = lower(btrim(name))),
+    CONSTRAINT oidc_providers_revision_positive CHECK (revision > 0),
+    CONSTRAINT oidc_providers_token_auth_method_valid CHECK (
+        token_endpoint_auth_method IN ('client_secret_basic', 'client_secret_post')
+    ),
+    CONSTRAINT oidc_providers_signing_algs_nonempty CHECK (cardinality(id_token_signing_algs) > 0),
     CONSTRAINT oidc_providers_org_id_unique UNIQUE (organization_id, id),
     CONSTRAINT oidc_providers_org_name_unique UNIQUE (organization_id, name),
     CONSTRAINT oidc_providers_org_issuer_unique UNIQUE (organization_id, issuer)
@@ -149,6 +177,7 @@ CREATE TABLE oidc_auth_sessions (
     id TEXT PRIMARY KEY,
     provider_id TEXT NOT NULL,
     organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    provider_revision BIGINT NOT NULL,
     state_hash TEXT NOT NULL UNIQUE,
     request_id TEXT NOT NULL,
     status TEXT NOT NULL,
@@ -172,10 +201,24 @@ CREATE TABLE oidc_auth_sessions (
     CONSTRAINT oidc_auth_sessions_token_fk FOREIGN KEY (
         organization_id, completed_access_token_id, completed_user_id, completed_membership_id
     ) REFERENCES api_tokens (organization_id, id, user_id, membership_id) ON DELETE RESTRICT,
-    CONSTRAINT oidc_auth_sessions_completion_shape CHECK (
-        (status = 'completed' AND completed_user_id IS NOT NULL AND completed_membership_id IS NOT NULL
-            AND completed_access_token_id IS NOT NULL AND completed_at IS NOT NULL)
-        OR status <> 'completed'
+    CONSTRAINT oidc_auth_sessions_expiry_valid CHECK (expires_at > created_at),
+    CONSTRAINT oidc_auth_sessions_revision_positive CHECK (provider_revision > 0),
+    CONSTRAINT oidc_auth_sessions_state_shape CHECK (
+        (status = 'pending' AND claim_id IS NULL AND claimed_at IS NULL
+            AND completed_user_id IS NULL AND completed_membership_id IS NULL
+            AND completed_access_token_id IS NULL AND completed_at IS NULL
+            AND failure_stage IS NULL AND failure_reason IS NULL AND failed_at IS NULL)
+        OR (status = 'exchanging' AND claim_id IS NOT NULL AND claimed_at IS NOT NULL
+            AND completed_user_id IS NULL AND completed_membership_id IS NULL
+            AND completed_access_token_id IS NULL AND completed_at IS NULL
+            AND failure_stage IS NULL AND failure_reason IS NULL AND failed_at IS NULL)
+        OR (status = 'completed' AND claim_id IS NOT NULL AND claimed_at IS NOT NULL
+            AND completed_user_id IS NOT NULL AND completed_membership_id IS NOT NULL
+            AND completed_access_token_id IS NOT NULL AND completed_at IS NOT NULL
+            AND failure_stage IS NULL AND failure_reason IS NULL AND failed_at IS NULL)
+        OR (status = 'failed' AND completed_user_id IS NULL AND completed_membership_id IS NULL
+            AND completed_access_token_id IS NULL AND completed_at IS NULL
+            AND failure_stage IS NOT NULL AND failure_reason IS NOT NULL AND failed_at IS NOT NULL)
     )
 );
 

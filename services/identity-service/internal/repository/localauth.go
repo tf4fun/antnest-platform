@@ -22,12 +22,13 @@ func (a *LocalAuthAdapter) FindLocalCredential(
 		var result localauth.LocalCredential
 		var userActive, membershipActive, organizationActive bool
 		err := a.store.pool.QueryRow(ctx, `
-			SELECT u.password_hash, u.id, m.organization_id, m.id, u.system_role, m.role,
+			SELECT c.password_hash, u.id, m.organization_id, m.id, u.system_role, m.role,
 			       u.active, m.active, o.active
 			FROM users u
+			JOIN local_credentials c ON c.user_id = u.id
 			JOIN organization_memberships m ON m.user_id = u.id
 			JOIN organizations o ON o.id = m.organization_id
-			WHERE o.slug = $1 AND u.email = $2 AND u.password_hash IS NOT NULL`,
+			WHERE o.slug = $1 AND m.email = $2 AND m.scim_deleted_at IS NULL`,
 			organizationSlug, email,
 		).Scan(
 			&result.PasswordHash, &result.Principal.UserID, &result.Principal.OrganizationID,
@@ -86,6 +87,7 @@ func (a *LocalAuthAdapter) ResolveToken(
 		WHERE t.token_hash = $1 AND t.revoked_at IS NULL AND t.expires_at > $2
 		  AND u.id = t.user_id
 		  AND m.id = t.membership_id AND m.organization_id = t.organization_id AND m.user_id = u.id
+		  AND m.scim_deleted_at IS NULL
 		  AND o.id = t.organization_id
 		RETURNING u.id, m.organization_id, m.id, u.system_role, m.role,
 		          u.active, m.active, o.active`, digest, now,

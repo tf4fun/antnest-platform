@@ -68,6 +68,9 @@ func TestIdentityProtocolHappyPath(t *testing.T) {
 
 	idp := newOIDCProvider(t)
 	defer idp.Close()
+	identity := httptest.NewUnstartedServer(nil)
+	identityURL := "http://" + identity.Listener.Addr().String()
+	t.Cleanup(identity.Close)
 	federation, err := oidcclient.New(idp.Client())
 	if err != nil {
 		t.Fatal(err)
@@ -84,7 +87,8 @@ func TestIdentityProtocolHappyPath(t *testing.T) {
 	oidcService, err := oidcflow.NewService(oidcflow.Config{
 		Repository: store.OIDC(), Federation: federation, SecretBox: box,
 		NewID: newID, NewOpaque: credentials.NewOpaqueToken, Now: time.Now,
-		SessionTTL: 10 * time.Minute, TokenTTL: time.Hour,
+		RedirectURI: identityURL + "/protocol/oidc/callback",
+		SessionTTL:  10 * time.Minute, TokenTTL: time.Hour,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -101,7 +105,7 @@ func TestIdentityProtocolHappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	scimHandler, err := scim.NewHTTPHandler(scimService, "http://identity.test")
+	scimHandler, err := scim.NewHTTPHandler(scimService, identityURL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,8 +114,8 @@ func TestIdentityProtocolHappyPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	readiness.Set(true)
-	identity := httptest.NewServer(handler)
-	defer identity.Close()
+	identity.Config.Handler = handler
+	identity.Start()
 
 	var login localauth.LoginResult
 	postJSON(t, identity.Client(), identity.URL+rpc.ContractRoutes["local_login"], map[string]any{
@@ -148,22 +152,21 @@ func TestIdentityProtocolHappyPath(t *testing.T) {
 		"request_id": "provider-1", "actor_principal_id": bootstrap.User.ID,
 		"organization_id": bootstrap.Organization.ID, "name": "workforce",
 		"issuer": idp.URL, "client_id": "client-1", "client_secret": "client-secret",
-		"redirect_uri": identity.URL + "/protocol/oidc/callback",
-		"scopes":       []string{"openid", "email", "profile"}, "enabled": true,
+		"scopes": []string{"openid", "email", "profile"}, "enabled": true,
 	}, &map[string]any{})
 	var started oidcflow.StartLoginResult
 	postJSON(t, identity.Client(), identity.URL+rpc.ContractRoutes["start_oidc_login"], map[string]any{
 		"request_id": "oidc-login-1", "organization_slug": "engineering", "provider_name": "workforce",
 	}, &started)
 	var completed oidcflow.CompleteLoginResult
-	getJSON(t, identity.Client(), started.AuthorizationURL, &completed)
+	getJSON(t, idp.Client(), started.AuthorizationURL, &completed)
 	if completed.Principal.UserID != createdUser.User.ID || completed.AccessToken == "" {
 		t.Fatalf("OIDC did not bind the SCIM-created user: %#v", completed)
 	}
 	assertResolvedPrincipal(t, identity.Client(), identity.URL, completed.AccessToken, createdUser.User.ID)
 
 	var replay oidcflow.CompleteLoginResult
-	getJSON(t, identity.Client(), started.AuthorizationURL, &replay)
+	getJSON(t, idp.Client(), started.AuthorizationURL, &replay)
 	if replay.AccessToken != "" || replay.TokenID != completed.TokenID || !replay.AlreadyCompleted || idp.ExchangeCount() != 1 {
 		t.Fatalf("OIDC callback was not idempotent: first=%#v replay=%#v exchanges=%d", completed, replay, idp.ExchangeCount())
 	}
@@ -262,7 +265,11 @@ func scimRequest(
 
 func decodeResponse(t *testing.T, response *http.Response, wantStatus int, target any) {
 	t.Helper()
-	defer response.Body.Close()
+	defer func() {
+		if err := response.Body.Close(); err != nil {
+			t.Errorf("close response body: %v", err)
+		}
+	}()
 	if response.StatusCode != wantStatus {
 		var failure any
 		_ = json.NewDecoder(response.Body).Decode(&failure)
@@ -302,7 +309,7 @@ func newOIDCProvider(t *testing.T) *oidcProvider {
 		t.Fatal(err)
 	}
 	provider := &oidcProvider{key: key}
-	provider.Server = httptest.NewServer(http.HandlerFunc(provider.handle))
+	provider.Server = httptest.NewTLSServer(http.HandlerFunc(provider.handle))
 	return provider
 }
 
@@ -319,7 +326,9 @@ func (p *oidcProvider) handle(response http.ResponseWriter, request *http.Reques
 		writeJSON(response, map[string]any{
 			"issuer": p.URL, "authorization_endpoint": p.URL + "/authorize",
 			"token_endpoint": p.URL + "/token", "userinfo_endpoint": p.URL + "/userinfo",
-			"jwks_uri": p.URL + "/jwks",
+			"jwks_uri":                              p.URL + "/jwks",
+			"token_endpoint_auth_methods_supported": []string{"client_secret_basic"},
+			"id_token_signing_alg_values_supported": []string{"RS256"},
 		})
 	case "/authorize":
 		p.mu.Lock()
@@ -358,8 +367,8 @@ func (p *oidcProvider) handle(response http.ResponseWriter, request *http.Reques
 	case "/jwks":
 		writeJSON(response, map[string]any{"keys": []map[string]any{{
 			"kty": "RSA", "use": "sig", "alg": "RS256", "kid": "test-key",
-			"n": base64.RawURLEncoding.EncodeToString(p.key.PublicKey.N.Bytes()),
-			"e": base64.RawURLEncoding.EncodeToString(big.NewInt(int64(p.key.PublicKey.E)).Bytes()),
+			"n": base64.RawURLEncoding.EncodeToString(p.key.N.Bytes()),
+			"e": base64.RawURLEncoding.EncodeToString(big.NewInt(int64(p.key.E)).Bytes()),
 		}}})
 	case "/userinfo":
 		if request.Header.Get("Authorization") != "Bearer provider-access-token" {

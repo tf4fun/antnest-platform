@@ -19,7 +19,7 @@ type groupMember struct {
 func (h *HTTPHandler) listGroups(response http.ResponseWriter, request *http.Request, authorization Authorization) {
 	query, err := listQueryFromRequest(request)
 	if err != nil {
-		writeSCIMError(response, http.StatusBadRequest, "invalidFilter", err.Error())
+		writeListQueryError(response, err)
 		return
 	}
 	if query.FilterAttribute != "" && !equalFoldAny(query.FilterAttribute, "displayName", "externalId") {
@@ -41,6 +41,10 @@ func (h *HTTPHandler) listGroups(response http.ResponseWriter, request *http.Req
 func (h *HTTPHandler) createGroup(response http.ResponseWriter, request *http.Request, authorization Authorization) {
 	var body groupRequest
 	if !decodeSCIMBody(response, request, &body) {
+		return
+	}
+	if err := validateSchemas(body.Schemas, groupSchema); err != nil {
+		writeSCIMError(response, http.StatusBadRequest, "invalidValue", err.Error())
 		return
 	}
 	resource, err := h.service.CreateGroup(request.Context(), authorization, body.input())
@@ -66,7 +70,13 @@ func (h *HTTPHandler) replaceGroup(response http.ResponseWriter, request *http.R
 	if !decodeSCIMBody(response, request, &body) {
 		return
 	}
-	resource, err := h.service.ReplaceGroup(request.Context(), authorization, request.PathValue("id"), body.input())
+	if err := validateSchemas(body.Schemas, groupSchema); err != nil {
+		writeSCIMError(response, http.StatusBadRequest, "invalidValue", err.Error())
+		return
+	}
+	resource, err := h.service.ReplaceGroup(
+		request.Context(), authorization, request.PathValue("id"), ReplaceGroupInput{GroupInput: body.input()},
+	)
 	if err != nil {
 		writeServiceError(response, err)
 		return

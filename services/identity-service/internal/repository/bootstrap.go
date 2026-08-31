@@ -99,52 +99,36 @@ func (s *Store) bootstrapAdministrator(
 	organizationID string,
 	input BootstrapInput,
 ) (domain.User, domain.OrganizationMembership, bool, error) {
-	user, err := findUserByEmail(ctx, tx, input.AdminEmail)
-	created := false
-	if errors.Is(err, domain.ErrNotFound) {
-		user = domain.User{
-			ID: s.newID(), Email: input.AdminEmail, DisplayName: input.AdminDisplayName,
-			SystemRole: domain.SystemRoleAdmin, Source: domain.SourceLocal, Active: true,
-			CreatedAt: input.Now, UpdatedAt: input.Now,
-		}
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO users (
-				id, email, display_name, password_hash, system_role, source, active, created_at, updated_at
-			) VALUES ($1, $2, $3, $4, 'admin', 'local', TRUE, $5, $5)`,
-			user.ID, user.Email, user.DisplayName, input.PasswordHash, input.Now,
-		); err != nil {
-			return domain.User{}, domain.OrganizationMembership{}, false, fmt.Errorf("insert bootstrap administrator: %w", err)
-		}
-		created = true
-	} else if err != nil {
-		return domain.User{}, domain.OrganizationMembership{}, false, err
-	} else if user.Source != domain.SourceLocal || user.SystemRole != domain.SystemRoleAdmin || !user.Active {
-		return domain.User{}, domain.OrganizationMembership{}, false, domain.ErrConflict
-	}
-
-	var membership domain.OrganizationMembership
-	err = tx.QueryRow(ctx, `
-		SELECT id, organization_id, user_id, role, source, active,
-		       COALESCE(scim_external_id, ''), COALESCE(scim_user_name, ''), created_at, updated_at
-		FROM organization_memberships
-		WHERE organization_id = $1 AND user_id = $2
-		FOR UPDATE`, organizationID, user.ID,
-	).Scan(
-		&membership.ID, &membership.OrganizationID, &membership.UserID, &membership.Role,
-		&membership.Source, &membership.Active, &membership.SCIMExternalID,
-		&membership.SCIMUserName, &membership.CreatedAt, &membership.UpdatedAt,
-	)
+	user, membership, err := findBootstrapAdministrator(ctx, tx, organizationID, input.AdminEmail)
 	if err == nil {
-		if membership.Role != domain.OrganizationRoleAdmin || membership.Source != domain.SourceLocal || !membership.Active {
+		if user.SystemRole != domain.SystemRoleAdmin || !user.Active ||
+			membership.Role != domain.OrganizationRoleAdmin || membership.Source != domain.SourceLocal || !membership.Active {
 			return domain.User{}, domain.OrganizationMembership{}, false, domain.ErrConflict
 		}
-		return user, membership, created, nil
+		return user, membership, false, nil
 	}
-	if err != pgx.ErrNoRows {
-		return domain.User{}, domain.OrganizationMembership{}, false, fmt.Errorf("find bootstrap membership: %w", err)
+	if !errors.Is(err, domain.ErrNotFound) {
+		return domain.User{}, domain.OrganizationMembership{}, false, err
+	}
+	user = domain.User{
+		ID: s.newID(), SystemRole: domain.SystemRoleAdmin, Active: true,
+		CreatedAt: input.Now, UpdatedAt: input.Now,
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO users (id, system_role, active, created_at, updated_at)
+		VALUES ($1, 'admin', TRUE, $2, $2)`, user.ID, input.Now,
+	); err != nil {
+		return domain.User{}, domain.OrganizationMembership{}, false, fmt.Errorf("insert bootstrap administrator: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO local_credentials (user_id, password_hash, created_at, updated_at)
+		VALUES ($1, $2, $3, $3)`, user.ID, input.PasswordHash, input.Now,
+	); err != nil {
+		return domain.User{}, domain.OrganizationMembership{}, false, fmt.Errorf("insert bootstrap credential: %w", err)
 	}
 	membership = domain.OrganizationMembership{
 		ID: s.newID(), OrganizationID: organizationID, UserID: user.ID,
+		Email: input.AdminEmail, DisplayName: input.AdminDisplayName,
 		Role: domain.OrganizationRoleAdmin, Source: domain.SourceLocal, Active: true,
 		CreatedAt: input.Now, UpdatedAt: input.Now,
 	}
@@ -154,21 +138,35 @@ func (s *Store) bootstrapAdministrator(
 	return user, membership, true, nil
 }
 
-func findUserByEmail(ctx context.Context, tx pgx.Tx, email string) (domain.User, error) {
+func findBootstrapAdministrator(
+	ctx context.Context,
+	tx pgx.Tx,
+	organizationID string,
+	email string,
+) (domain.User, domain.OrganizationMembership, error) {
 	var user domain.User
+	var membership domain.OrganizationMembership
 	err := tx.QueryRow(ctx, `
-		SELECT id, email, display_name, system_role, source, active, created_at, updated_at
-		FROM users
-		WHERE email = $1
-		FOR UPDATE`, email,
+		SELECT u.id, u.system_role, u.active, u.created_at, u.updated_at,
+		       m.id, m.organization_id, m.user_id, m.email, m.display_name,
+		       m.role, m.source, m.active, COALESCE(m.scim_external_id, ''),
+		       COALESCE(m.scim_user_name, ''), m.created_at, m.updated_at
+		FROM organization_memberships m
+		JOIN users u ON u.id = m.user_id
+		JOIN local_credentials c ON c.user_id = u.id
+		WHERE m.organization_id = $1 AND m.email = $2
+		FOR UPDATE OF u, m, c`, organizationID, email,
 	).Scan(
-		&user.ID, &user.Email, &user.DisplayName, &user.SystemRole,
-		&user.Source, &user.Active, &user.CreatedAt, &user.UpdatedAt,
+		&user.ID, &user.SystemRole, &user.Active, &user.CreatedAt, &user.UpdatedAt,
+		&membership.ID, &membership.OrganizationID, &membership.UserID,
+		&membership.Email, &membership.DisplayName, &membership.Role, &membership.Source,
+		&membership.Active, &membership.SCIMExternalID, &membership.SCIMUserName,
+		&membership.CreatedAt, &membership.UpdatedAt,
 	)
 	if err != nil {
-		return domain.User{}, normalizeError(err)
+		return domain.User{}, domain.OrganizationMembership{}, normalizeError(err)
 	}
-	return user, nil
+	return user, membership, nil
 }
 
 func (s *Store) FailExpiredOIDCSessions(ctx context.Context, now time.Time) (int64, error) {

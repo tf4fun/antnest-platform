@@ -32,10 +32,16 @@ func ErrorDetails(err error) (string, string, bool) {
 }
 
 var (
-	ErrUnauthenticated = NewError("unauthenticated", "Authentication failed", false)
-	ErrForbidden       = NewError("forbidden", "The principal is not allowed to perform this operation", false)
-	ErrNotFound        = NewError("not_found", "The requested identity resource does not exist", false)
-	ErrConflict        = NewError("conflict", "The identity resource conflicts with an existing resource", false)
+	ErrUnauthenticated  = NewError("unauthenticated", "Authentication failed", false)
+	ErrForbidden        = NewError("forbidden", "The principal is not allowed to perform this operation", false)
+	ErrNotFound         = NewError("not_found", "The requested identity resource does not exist", false)
+	ErrConflict         = NewError("conflict", "The identity resource conflicts with an existing resource", false)
+	ErrVersionConflict  = NewError("version_conflict", "The identity resource changed concurrently", true)
+	ErrInvalidReference = NewError(
+		"invalid_reference",
+		"The referenced identity resource is invalid",
+		false,
+	)
 	ErrInactive        = NewError("inactive_principal", "The principal is inactive", false)
 	ErrInvalidArgument = NewError("invalid_argument", "The request contains an invalid argument", false)
 )

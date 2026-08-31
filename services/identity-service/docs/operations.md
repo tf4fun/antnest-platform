@@ -18,23 +18,23 @@ and do not affect process readiness.
 
 ## Configuration
 
-| Variable | Required | Meaning |
-| --- | --- | --- |
-| `ANTNEST_IDENTITY_LISTEN` | no | Listen address, default `:8080` |
-| `ANTNEST_IDENTITY_DATABASE_URL` | yes | Private PostgreSQL URL |
-| `ANTNEST_IDENTITY_ENCRYPTION_KEY` | yes | Canonical base64 32-byte AES key |
-| `ANTNEST_IDENTITY_PUBLIC_BASE_URL` | yes | OIDC callback and SCIM location base |
-| `ANTNEST_IDENTITY_TOKEN_TTL` | no | Local/OIDC access token TTL, default `12h` |
-| `ANTNEST_IDENTITY_OIDC_SESSION_TTL` | no | OIDC state lifetime, default `10m` |
-| `ANTNEST_IDENTITY_HTTP_TIMEOUT` | no | Outbound OIDC deadline, default `10s` |
-| `ANTNEST_IDENTITY_SHUTDOWN_TIMEOUT` | no | Graceful shutdown deadline, default `15s` |
-| `ANTNEST_BOOTSTRAP_ORGANIZATION_SLUG` | conditional | Initial organization slug |
-| `ANTNEST_BOOTSTRAP_ORGANIZATION_NAME` | conditional | Initial organization name |
-| `ANTNEST_BOOTSTRAP_ADMIN_EMAIL` | conditional | Initial local system administrator |
-| `ANTNEST_BOOTSTRAP_ADMIN_PASSWORD` | conditional | Initial administrator password |
-| `OTEL_SDK_DISABLED` | no | Disable OTLP export |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | no | OTLP HTTP base endpoint |
-| `OTEL_SERVICE_NAME` | no | Defaults to `identity-service` |
+| Variable                              | Required    | Meaning                                    |
+| ------------------------------------- | ----------- | ------------------------------------------ |
+| `ANTNEST_IDENTITY_LISTEN`             | no          | Listen address, default `:8080`            |
+| `ANTNEST_IDENTITY_DATABASE_URL`       | yes         | Private PostgreSQL URL                     |
+| `ANTNEST_IDENTITY_ENCRYPTION_KEY`     | yes         | Canonical base64 32-byte AES key           |
+| `ANTNEST_IDENTITY_PUBLIC_BASE_URL`    | yes         | OIDC callback and SCIM location base       |
+| `ANTNEST_IDENTITY_TOKEN_TTL`          | no          | Local/OIDC access token TTL, default `12h` |
+| `ANTNEST_IDENTITY_OIDC_SESSION_TTL`   | no          | OIDC state lifetime, default `10m`         |
+| `ANTNEST_IDENTITY_HTTP_TIMEOUT`       | no          | Outbound OIDC deadline, default `10s`      |
+| `ANTNEST_IDENTITY_SHUTDOWN_TIMEOUT`   | no          | Graceful shutdown deadline, default `15s`  |
+| `ANTNEST_BOOTSTRAP_ORGANIZATION_SLUG` | conditional | Initial organization slug                  |
+| `ANTNEST_BOOTSTRAP_ORGANIZATION_NAME` | conditional | Initial organization name                  |
+| `ANTNEST_BOOTSTRAP_ADMIN_EMAIL`       | conditional | Initial local system administrator         |
+| `ANTNEST_BOOTSTRAP_ADMIN_PASSWORD`    | conditional | Initial administrator password             |
+| `OTEL_SDK_DISABLED`                   | no          | Disable OTLP export                        |
+| `OTEL_EXPORTER_OTLP_ENDPOINT`         | no          | OTLP HTTP base endpoint                    |
+| `OTEL_SERVICE_NAME`                   | no          | Defaults to `identity-service`             |
 
 Bootstrap variables are all-or-none. Repeated startup verifies the same
 organization/admin identity and never resets an existing password.
@@ -90,9 +90,25 @@ protocol bodies are never telemetry.
   deletion is intentionally absent so existing external identities remain
   auditable. Use `set_oidc_provider_enabled` for enable/disable; this local,
   idempotent operation remains available when the external IdP is unavailable.
-- SCIM User DELETE deactivates only the SCIM-owned OrganizationMembership.
+- The OIDC callback is fixed from `ANTNEST_IDENTITY_PUBLIC_BASE_URL`; Provider
+  configuration cannot supply another redirect URI. An in-flight session is
+  rejected after any Provider revision change and must be restarted.
+- OIDC issuer and discovered endpoints must use HTTPS. The client rejects
+  redirects, bounds discovery/token/UserInfo/JWKS responses to 1 MiB, preserves
+  opaque subjects exactly, and exchanges each authorization code once using the
+  discovered client-secret authentication method. Restrict reachable IdP hosts
+  with deployment egress policy when private-network destinations are not
+  intended.
+- SCIM User `active=false` deactivates the SCIM-owned Membership without
+  deleting it. DELETE tombstones and hides that SCIM resource; reprovisioning
+  with the same external ID creates a fresh Membership on the same global User
+  and repoints its OIDC identity while audit history remains. POST never
+  overwrites an active User or Group; use PUT/PATCH for updates.
   SCIM Group DELETE removes the Group and its owned edges; it does not expose a
   nonstandard Group `active` state.
+- Multiple SCIM bearer tokens for an Organization are rotating credentials for
+  the same logical directory authority. Operators must not connect competing
+  provisioning authorities to the same Organization.
 - Protocol request bodies and responses are bounded. Unknown fields are
   rejected on internal RPC and tolerated only where the standards require
   extensibility.

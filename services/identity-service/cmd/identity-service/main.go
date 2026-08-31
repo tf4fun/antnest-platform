@@ -77,7 +77,7 @@ func main() {
 	}
 }
 
-func checkHealth(lookup func(string) string) error {
+func checkHealth(lookup func(string) string) (resultErr error) {
 	listenAddress := strings.TrimSpace(lookup("ANTNEST_IDENTITY_LISTEN"))
 	if listenAddress == "" {
 		listenAddress = ":8080"
@@ -91,11 +91,17 @@ func checkHealth(lookup func(string) string) error {
 	if err != nil {
 		return fmt.Errorf("request Identity status: %w", err)
 	}
-	defer response.Body.Close()
+	defer joinCloseError(&resultErr, "Identity status response", response.Body.Close)
 	if response.StatusCode != http.StatusOK {
-		return fmt.Errorf("Identity status returned %s", response.Status)
+		return fmt.Errorf("identity status returned %s", response.Status)
 	}
 	return nil
+}
+
+func joinCloseError(resultErr *error, resource string, closeFunc func() error) {
+	if err := closeFunc(); err != nil {
+		*resultErr = errors.Join(*resultErr, fmt.Errorf("close %s: %w", resource, err))
+	}
 }
 
 func run(ctx context.Context, lookup func(string) string) (resultErr error) {
@@ -164,7 +170,8 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 	oidcService, err := oidcflow.NewService(oidcflow.Config{
 		Repository: store.OIDC(), Federation: federation, SecretBox: secretBox,
 		NewID: identityid.MustNew, NewOpaque: credentials.NewOpaqueToken, Now: time.Now,
-		SessionTTL: cfg.OIDCSessionTTL, TokenTTL: cfg.TokenTTL,
+		RedirectURI: cfg.PublicBaseURL + "/protocol/oidc/callback",
+		SessionTTL:  cfg.OIDCSessionTTL, TokenTTL: cfg.TokenTTL,
 	})
 	if err != nil {
 		return classifyFailure("service_composition", err)
@@ -215,8 +222,12 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer cancel()
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
-		httpServer.Close()
-		resultErr = errors.Join(resultErr, classifyFailure("http_shutdown", err))
+		closeErr := httpServer.Close()
+		resultErr = errors.Join(
+			resultErr,
+			classifyFailure("http_shutdown", err),
+			classifyFailure("http_close", closeErr),
+		)
 	}
 	return resultErr
 }

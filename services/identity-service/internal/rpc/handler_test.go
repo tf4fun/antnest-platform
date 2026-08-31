@@ -49,6 +49,30 @@ func TestRPCMapsDomainErrorsAndOIDCCallbackDisablesCaching(t *testing.T) {
 	}
 }
 
+func TestOIDCCallbackForwardsStandardAuthorizationError(t *testing.T) {
+	services := &rpcServicesStub{completeLoginErr: domain.NewError(
+		"oidc_authorization_failed",
+		"OIDC authorization was not granted",
+		false,
+	)}
+	handler := newRPCHandler(t, services)
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/protocol/oidc/callback?state=state-1&error=access_denied&error_description=cancelled",
+		nil,
+	)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadRequest || services.completeLoginInput.AuthorizationError != "access_denied" ||
+		services.completeLoginInput.Code != "" {
+		t.Fatalf("status=%d input=%#v body=%s", response.Code, services.completeLoginInput, response.Body.String())
+	}
+	if response.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("callback cache policy = %q", response.Header().Get("Cache-Control"))
+	}
+}
+
 func TestRPCMapsInvalidArgumentsToBadRequest(t *testing.T) {
 	response := httptest.NewRecorder()
 	writeError(response, domain.InvalidArgument("email is invalid"))
@@ -89,7 +113,7 @@ func TestRPCPreservesAuditRequestIDsForDirectoryMutations(t *testing.T) {
 	}{
 		{
 			path: ContractRoutes["create_organization"],
-			body: `{"request_id":"organization-request","actor_principal_id":"admin","slug":"engineering","name":"Engineering"}`,
+			body: `{"request_id":"organization-request","actor_principal_id":"admin","slug":"engineering","name":"Engineering","owner_email":"admin@example.com","owner_display_name":"Administrator"}`,
 		},
 		{
 			path: ContractRoutes["create_local_user"],
@@ -97,7 +121,7 @@ func TestRPCPreservesAuditRequestIDsForDirectoryMutations(t *testing.T) {
 		},
 		{
 			path: ContractRoutes["add_organization_membership"],
-			body: `{"request_id":"membership-request","actor_principal_id":"admin","organization_id":"org-1","user_id":"user-1","role":"member"}`,
+			body: `{"request_id":"membership-request","actor_principal_id":"admin","organization_id":"org-1","user_id":"user-1","email":"alice@example.com","display_name":"Alice","role":"member"}`,
 		},
 	} {
 		request := httptest.NewRequest(http.MethodPost, test.path, strings.NewReader(test.body))
@@ -115,13 +139,78 @@ func TestRPCPreservesAuditRequestIDsForDirectoryMutations(t *testing.T) {
 	}
 }
 
+func TestRPCLocalIdentityLifecycleBindings(t *testing.T) {
+	services := &rpcServicesStub{}
+	handler := newRPCHandler(t, services)
+
+	request := httptest.NewRequest(http.MethodPost, ContractRoutes["change_local_password"], strings.NewReader(`{
+		"request_id":"password-request","actor_principal_id":"user-1","user_id":"user-1",
+		"current_password":"current correct password","new_password":"replacement correct password"
+	}`))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || services.changePasswordInput.RequestID != "password-request" ||
+		services.changePasswordInput.UserID != "user-1" {
+		t.Fatalf("change password status=%d input=%#v body=%s",
+			response.Code, services.changePasswordInput, response.Body.String())
+	}
+
+	request = httptest.NewRequest(http.MethodPost, ContractRoutes["update_membership"], strings.NewReader(`{
+		"request_id":"membership-request","actor_principal_id":"admin","organization_id":"org-1",
+		"membership_id":"membership-1","email":"alice@example.com","display_name":"Alice",
+		"role":"member","active":false
+	}`))
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || services.updateMembershipInput.RequestID != "membership-request" ||
+		services.updateMembershipInput.Active {
+		t.Fatalf("update membership status=%d input=%#v body=%s",
+			response.Code, services.updateMembershipInput, response.Body.String())
+	}
+
+	request = httptest.NewRequest(http.MethodPost, ContractRoutes["set_user_active"], strings.NewReader(`{
+		"request_id":"activation-request","actor_principal_id":"root","user_id":"user-1","active":false
+	}`))
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || services.setUserActiveInput.RequestID != "activation-request" ||
+		services.setUserActiveInput.Active {
+		t.Fatalf("set user active status=%d input=%#v body=%s",
+			response.Code, services.setUserActiveInput, response.Body.String())
+	}
+}
+
+func TestRPCRequiresExplicitIdentityLifecycleState(t *testing.T) {
+	services := &rpcServicesStub{}
+	handler := newRPCHandler(t, services)
+	for _, test := range []struct {
+		path string
+		body string
+	}{
+		{
+			path: ContractRoutes["update_membership"],
+			body: `{"request_id":"membership-request","actor_principal_id":"admin","organization_id":"org-1","membership_id":"membership-1","email":"alice@example.com","display_name":"Alice","role":"member"}`,
+		},
+		{
+			path: ContractRoutes["set_user_active"],
+			body: `{"request_id":"activation-request","actor_principal_id":"root","user_id":"user-1"}`,
+		},
+	} {
+		request := httptest.NewRequest(http.MethodPost, test.path, strings.NewReader(test.body))
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("%s status=%d body=%s", test.path, response.Code, response.Body.String())
+		}
+	}
+}
+
 func TestRPCRequiresExplicitOIDCProviderEnabledState(t *testing.T) {
 	services := &rpcServicesStub{}
 	handler := newRPCHandler(t, services)
 	request := httptest.NewRequest(http.MethodPost, ContractRoutes["upsert_oidc_provider"], strings.NewReader(`{
 		"request_id":"provider-request","actor_principal_id":"admin","organization_id":"org-1",
-		"name":"workforce","issuer":"https://id.example.com","client_id":"client",
-		"redirect_uri":"https://identity.example.com/protocol/oidc/callback","scopes":["openid"]
+		"name":"workforce","issuer":"https://id.example.com","client_id":"client","scopes":["openid"]
 	}`))
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
@@ -133,7 +222,7 @@ func TestRPCRequiresExplicitOIDCProviderEnabledState(t *testing.T) {
 	request = httptest.NewRequest(http.MethodPost, ContractRoutes["upsert_oidc_provider"], strings.NewReader(`{
 		"request_id":"provider-request","actor_principal_id":"admin","organization_id":"org-1",
 		"name":"workforce","issuer":"https://id.example.com","client_id":"client",
-		"redirect_uri":"https://identity.example.com/protocol/oidc/callback","scopes":["openid"],"enabled":false
+		"scopes":["openid"],"enabled":false
 	}`))
 	response = httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
@@ -171,9 +260,22 @@ func TestRPCBindingsConformToCentralIdentityContract(t *testing.T) {
 	}
 	var contract struct {
 		Definitions struct {
+			Source struct {
+				Enum []string `json:"enum"`
+			} `json:"source"`
 			OrganizationRole struct {
 				Enum []string `json:"enum"`
 			} `json:"organization_role"`
+			User struct {
+				Properties map[string]json.RawMessage `json:"properties"`
+			} `json:"user"`
+			Membership struct {
+				Required []string `json:"required"`
+			} `json:"membership"`
+			OIDCProvider struct {
+				Required   []string                   `json:"required"`
+				Properties map[string]json.RawMessage `json:"properties"`
+			} `json:"oidc_provider"`
 		} `json:"definitions"`
 		Error struct {
 			Properties struct {
@@ -232,24 +334,49 @@ func TestRPCBindingsConformToCentralIdentityContract(t *testing.T) {
 	if !contains(contract.Methods["add_organization_membership"].Request.Required, "user_id") {
 		t.Fatal("add_organization_membership contract must identify the stable user")
 	}
+	if _, hasEmail := contract.Definitions.User.Properties["email"]; hasEmail {
+		t.Fatal("User contract must not own an organization-scoped email")
+	}
+	if !contains(contract.Definitions.Membership.Required, "email") ||
+		!contains(contract.Definitions.Membership.Required, "display_name") {
+		t.Fatal("Membership contract must own the organization-scoped profile")
+	}
+	if contains(contract.Definitions.Source.Enum, "oidc") {
+		t.Fatal("OIDC authentication must not masquerade as Membership ownership")
+	}
+	if _, hasRedirect := contract.Definitions.OIDCProvider.Properties["redirect_uri"]; hasRedirect ||
+		contains(contract.Methods["upsert_oidc_provider"].Request.Required, "redirect_uri") {
+		t.Fatal("OIDC callback URI must be service configuration, not Provider input")
+	}
+	if !contains(contract.Definitions.OIDCProvider.Required, "revision") {
+		t.Fatal("OIDC Provider contract must expose its session-pinned revision")
+	}
 	if !contains(contract.Definitions.OrganizationRole.Enum, "member") ||
 		!contains(contract.Definitions.OrganizationRole.Enum, "admin") {
 		t.Fatal("organization role contract must enumerate member and admin")
 	}
 	for _, code := range []string{
-		"invalid_argument", "unauthenticated", "forbidden", "not_found", "conflict",
-		"oidc_exchange_in_progress", "oidc_session_expired", "oidc_completed_token_unavailable",
+		"invalid_argument", "invalid_reference", "unauthenticated", "forbidden", "not_found", "conflict",
+		"version_conflict",
+		"oidc_provider_changed", "oidc_membership_required", "oidc_exchange_in_progress",
+		"oidc_session_expired", "oidc_completed_token_unavailable",
 	} {
 		if !contains(contract.Error.Properties.Code.Enum, code) {
 			t.Errorf("identity error contract omits stable code %q", code)
 		}
 	}
 	for code, status := range map[string]int{
-		"invalid_argument": 400, "unauthenticated": 401, "forbidden": 403,
-		"not_found": 404, "conflict": 409, "oidc_session_expired": 410,
+		"invalid_argument": 400, "invalid_reference": 400, "unauthenticated": 401,
+		"forbidden": 403, "not_found": 404, "conflict": 409, "version_conflict": 409,
+		"oidc_session_expired": 410,
 	} {
 		if contract.Error.HTTPStatusByCode[code] != status {
 			t.Errorf("identity error %q status=%d want=%d", code, contract.Error.HTTPStatusByCode[code], status)
+		}
+	}
+	for _, code := range contract.Error.Properties.Code.Enum {
+		if _, ok := contract.Error.HTTPStatusByCode[code]; !ok {
+			t.Errorf("identity error %q has no HTTP status mapping", code)
 		}
 	}
 	if !contains(contract.Methods["local_login"].Response.Required, "token_id") {
@@ -278,10 +405,15 @@ type rpcServicesStub struct {
 	createOrganizationInput directory.CreateOrganizationInput
 	createLocalUserInput    directory.CreateLocalUserInput
 	addMembershipInput      directory.AddOrganizationMembershipInput
+	changePasswordInput     directory.ChangeLocalPasswordInput
+	updateMembershipInput   directory.UpdateMembershipInput
+	setUserActiveInput      directory.SetUserActiveInput
 	upsertProviderCalls     int
 	upsertProviderInput     oidcflow.UpsertProviderInput
 	setProviderEnabledCalls int
 	setProviderEnabledInput oidcflow.SetProviderEnabledInput
+	completeLoginInput      oidcflow.CompleteLoginInput
+	completeLoginErr        error
 }
 
 func (s *rpcServicesStub) CreateOrganization(_ context.Context, input directory.CreateOrganizationInput) (domain.Organization, error) {
@@ -300,6 +432,24 @@ func (s *rpcServicesStub) AddOrganizationMembership(
 ) (domain.OrganizationMembership, error) {
 	s.addMembershipInput = input
 	return domain.OrganizationMembership{}, nil
+}
+
+func (s *rpcServicesStub) ChangeLocalPassword(_ context.Context, input directory.ChangeLocalPasswordInput) error {
+	s.changePasswordInput = input
+	return nil
+}
+
+func (s *rpcServicesStub) UpdateMembership(
+	_ context.Context,
+	input directory.UpdateMembershipInput,
+) (domain.OrganizationMembership, error) {
+	s.updateMembershipInput = input
+	return domain.OrganizationMembership{ID: input.MembershipID, Active: input.Active}, nil
+}
+
+func (s *rpcServicesStub) SetUserActive(_ context.Context, input directory.SetUserActiveInput) error {
+	s.setUserActiveInput = input
+	return nil
 }
 
 func (*rpcServicesStub) List(context.Context, string, string) (directory.Directory, error) {
@@ -343,8 +493,9 @@ func (*rpcServicesStub) StartLogin(context.Context, oidcflow.StartLoginInput) (o
 	return oidcflow.StartLoginResult{}, nil
 }
 
-func (*rpcServicesStub) CompleteLogin(context.Context, oidcflow.CompleteLoginInput) (oidcflow.CompleteLoginResult, error) {
-	return oidcflow.CompleteLoginResult{AccessToken: "credential"}, nil
+func (s *rpcServicesStub) CompleteLogin(_ context.Context, input oidcflow.CompleteLoginInput) (oidcflow.CompleteLoginResult, error) {
+	s.completeLoginInput = input
+	return oidcflow.CompleteLoginResult{AccessToken: "credential"}, s.completeLoginErr
 }
 
 func (*rpcServicesStub) IssueToken(context.Context, scim.IssueTokenInput) (scim.IssueTokenResult, error) {

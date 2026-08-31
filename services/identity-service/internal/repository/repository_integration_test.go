@@ -128,6 +128,17 @@ func TestPostgresIdentityHappyPathAndOwnershipBoundaries(t *testing.T) {
 	if bootstrapEvents != 1 {
 		t.Fatalf("bootstrap event count = %d, want 1", bootstrapEvents)
 	}
+	var bootstrapCredentialRows int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM local_credentials c
+		JOIN users u ON u.id = c.user_id
+		JOIN organization_memberships m ON m.user_id = u.id
+		WHERE u.id = $1 AND m.organization_id = $2 AND m.email = $3`,
+		bootstrap.User.ID, bootstrap.Organization.ID, bootstrapInput.AdminEmail,
+	).Scan(&bootstrapCredentialRows); err != nil || bootstrapCredentialRows != 1 {
+		t.Fatalf("bootstrap credential/profile boundary rows=%d err=%v", bootstrapCredentialRows, err)
+	}
 	repeated, err := store.Bootstrap(ctx, BootstrapInput{
 		OrganizationSlug: "engineering", OrganizationName: "Engineering",
 		AdminEmail: "admin@example.com", AdminDisplayName: "Antnest Administrator",
@@ -142,6 +153,7 @@ func TestPostgresIdentityHappyPathAndOwnershipBoundaries(t *testing.T) {
 	secondaryOrganization, err := directoryService.CreateOrganization(ctx, directory.CreateOrganizationInput{
 		RequestID: "organization-2", ActorPrincipalID: bootstrap.User.ID,
 		Slug: "research", Name: "Research",
+		OwnerEmail: "admin@example.com", OwnerDisplayName: "Antnest Administrator",
 	})
 	if err != nil {
 		t.Fatalf("system administrator create second organization: %v", err)
@@ -158,6 +170,7 @@ func TestPostgresIdentityHappyPathAndOwnershipBoundaries(t *testing.T) {
 	sharedMembership, err := directoryService.AddOrganizationMembership(ctx, directory.AddOrganizationMembershipInput{
 		RequestID: "share-secondary-user", ActorPrincipalID: bootstrap.User.ID,
 		OrganizationID: bootstrap.Organization.ID, UserID: secondaryUser.User.ID,
+		Email: "research-admin@example.com", DisplayName: "Research Administrator",
 		Role: domain.OrganizationRoleMember,
 	})
 	if err != nil || sharedMembership.UserID != secondaryUser.User.ID ||
@@ -167,6 +180,7 @@ func TestPostgresIdentityHappyPathAndOwnershipBoundaries(t *testing.T) {
 	repeatedMembership, err := directoryService.AddOrganizationMembership(ctx, directory.AddOrganizationMembershipInput{
 		RequestID: "share-secondary-user-again", ActorPrincipalID: bootstrap.User.ID,
 		OrganizationID: bootstrap.Organization.ID, UserID: secondaryUser.User.ID,
+		Email: "research-admin@example.com", DisplayName: "Research Administrator",
 		Role: domain.OrganizationRoleMember,
 	})
 	if err != nil || repeatedMembership.ID != sharedMembership.ID {
@@ -206,6 +220,74 @@ func TestPostgresIdentityHappyPathAndOwnershipBoundaries(t *testing.T) {
 		secondaryOrganizationLogin.Principal.MembershipID != secondaryUser.Membership.ID {
 		t.Fatalf("login shared User through secondary organization = %#v, %v", secondaryOrganizationLogin, err)
 	}
+	if err := directoryService.ChangeLocalPassword(ctx, directory.ChangeLocalPasswordInput{
+		RequestID: "rotate-secondary-password", ActorPrincipalID: secondaryUser.User.ID,
+		UserID: secondaryUser.User.ID, CurrentPassword: "secondary correct password",
+		NewPassword: "rotated secondary password",
+	}); err != nil {
+		t.Fatalf("change local password: %v", err)
+	}
+	if _, err := authService.Login(ctx, localauth.LoginInput{
+		RequestID: "old-password-login", OrganizationSlug: "research",
+		Email: "research-admin@example.com", Password: "secondary correct password",
+	}); !errors.Is(err, domain.ErrUnauthenticated) {
+		t.Fatalf("old password login error = %v, want unauthenticated", err)
+	}
+	rotatedLogin, err := authService.Login(ctx, localauth.LoginInput{
+		RequestID: "rotated-password-login", OrganizationSlug: "research",
+		Email: "research-admin@example.com", Password: "rotated secondary password",
+	})
+	if err != nil {
+		t.Fatalf("rotated password login: %v", err)
+	}
+	updatedMembership, err := directoryService.UpdateMembership(ctx, directory.UpdateMembershipInput{
+		RequestID: "update-shared-membership", ActorPrincipalID: bootstrap.User.ID,
+		OrganizationID: bootstrap.Organization.ID, MembershipID: sharedMembership.ID,
+		Email: sharedMembership.Email, DisplayName: "Research Operator",
+		Role: sharedMembership.Role, Active: true,
+	})
+	if err != nil || !updatedMembership.UpdatedAt.After(sharedMembership.UpdatedAt) {
+		t.Fatalf("update local membership = %#v, %v", updatedMembership, err)
+	}
+	staleMembership := updatedMembership
+	staleMembership.DisplayName = "Stale Update"
+	staleMembership.UpdatedAt = domain.NextUpdatedAt(now, updatedMembership.UpdatedAt)
+	if _, err := store.Directory().UpdateMembership(ctx, directory.UpdateMembershipCommand{
+		RequestID: "stale-membership-update", ActorPrincipalID: bootstrap.User.ID,
+		Membership: staleMembership, ExpectedUpdatedAt: sharedMembership.UpdatedAt,
+	}); !errors.Is(err, domain.ErrVersionConflict) {
+		t.Fatalf("stale membership update error = %v, want version conflict", err)
+	}
+	sharedMembership, err = directoryService.UpdateMembership(ctx, directory.UpdateMembershipInput{
+		RequestID: "restore-shared-membership", ActorPrincipalID: bootstrap.User.ID,
+		OrganizationID: bootstrap.Organization.ID, MembershipID: sharedMembership.ID,
+		Email: sharedMembership.Email, DisplayName: "Research Administrator",
+		Role: sharedMembership.Role, Active: true,
+	})
+	if err != nil {
+		t.Fatalf("restore local membership: %v", err)
+	}
+	if err := directoryService.SetUserActive(ctx, directory.SetUserActiveInput{
+		RequestID: "disable-secondary-user", ActorPrincipalID: bootstrap.User.ID,
+		UserID: secondaryUser.User.ID, Active: false,
+	}); err != nil {
+		t.Fatalf("disable global User: %v", err)
+	}
+	if _, err := authService.Resolve(ctx, rotatedLogin.AccessToken); !errors.Is(err, domain.ErrUnauthenticated) {
+		t.Fatalf("disabled User token resolution error = %v, want unauthenticated", err)
+	}
+	if err := directoryService.SetUserActive(ctx, directory.SetUserActiveInput{
+		RequestID: "enable-secondary-user", ActorPrincipalID: bootstrap.User.ID,
+		UserID: secondaryUser.User.ID, Active: true,
+	}); err != nil {
+		t.Fatalf("enable global User: %v", err)
+	}
+	if _, err := authService.Login(ctx, localauth.LoginInput{
+		RequestID: "reenabled-user-login", OrganizationSlug: "research",
+		Email: "research-admin@example.com", Password: "rotated secondary password",
+	}); err != nil {
+		t.Fatalf("reenabled User login: %v", err)
+	}
 
 	scimService, err := scim.NewService(scim.Config{
 		Repository: store.SCIM(),
@@ -228,16 +310,26 @@ func TestPostgresIdentityHappyPathAndOwnershipBoundaries(t *testing.T) {
 		t.Fatalf("authorize SCIM token: %v", err)
 	}
 	user, err := scimService.CreateUser(ctx, authorization, scim.UserInput{
-		ExternalID: "workday-user-1", UserName: "alice@example.com", DisplayName: "Alice", Active: true,
+		ExternalID: "workday-user-1", UserName: "alice.employee", Email: "alice@example.com",
+		DisplayName: "Alice", Active: true,
 	})
 	if err != nil {
 		t.Fatalf("create SCIM user: %v", err)
 	}
-	repeatedUser, err := scimService.CreateUser(ctx, authorization, scim.UserInput{
-		ExternalID: "workday-user-1", UserName: "alice@example.com", DisplayName: "Alice Updated", Active: true,
+	if _, err := directoryService.UpdateMembership(ctx, directory.UpdateMembershipInput{
+		RequestID: "local-update-scim-membership", ActorPrincipalID: bootstrap.User.ID,
+		OrganizationID: bootstrap.Organization.ID, MembershipID: user.Membership.ID,
+		Email: user.Membership.Email, DisplayName: "Local Override",
+		Role: domain.OrganizationRoleMember, Active: true,
+	}); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("local update of SCIM-owned membership error = %v, want conflict", err)
+	}
+	_, err = scimService.CreateUser(ctx, authorization, scim.UserInput{
+		ExternalID: "workday-user-1", UserName: "alice.employee", Email: "alice@example.com",
+		DisplayName: "Alice Updated", Active: true,
 	})
-	if err != nil || repeatedUser.Membership.ID != user.Membership.ID || repeatedUser.User.ID != user.User.ID {
-		t.Fatalf("repeat SCIM user = %#v, %v", repeatedUser, err)
+	if !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("duplicate SCIM user create error = %v, want conflict", err)
 	}
 	deactivatedUser, err := scimService.DeactivateUser(ctx, authorization, user.Membership.ID)
 	if err != nil {
@@ -265,12 +357,21 @@ func TestPostgresIdentityHappyPathAndOwnershipBoundaries(t *testing.T) {
 	if err != nil || len(group.MemberIDs) != 1 {
 		t.Fatalf("create SCIM group = %#v, %v", group, err)
 	}
-	repeatedGroup, err := scimService.CreateGroup(ctx, authorization, scim.GroupInput{
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO group_memberships (
+			id, organization_id, group_id, organization_membership_id,
+			source, active, created_at, updated_at
+		) VALUES ('cross-owner-edge', $1, $2, $3, 'scim', TRUE, $4, $4)`,
+		bootstrap.Organization.ID, group.Group.ID, sharedMembership.ID, now,
+	); err == nil {
+		t.Fatal("database accepted a SCIM Group edge to a local-owned Membership")
+	}
+	_, err = scimService.CreateGroup(ctx, authorization, scim.GroupInput{
 		ExternalID: "workday-group-1", DisplayName: "Engineering Updated",
 		MemberIDs: []string{user.Membership.ID},
 	})
-	if err != nil || repeatedGroup.Group.ID != group.Group.ID {
-		t.Fatalf("repeat SCIM group = %#v, %v", repeatedGroup, err)
+	if !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("duplicate SCIM group create error = %v, want conflict", err)
 	}
 	var reconciliationEvents int
 	if err := pool.QueryRow(ctx, `
@@ -280,8 +381,8 @@ func TestPostgresIdentityHappyPathAndOwnershipBoundaries(t *testing.T) {
 	).Scan(&reconciliationEvents); err != nil {
 		t.Fatalf("count SCIM reconciliation events: %v", err)
 	}
-	if reconciliationEvents != 2 {
-		t.Fatalf("SCIM reconciliation event count = %d, want 2", reconciliationEvents)
+	if reconciliationEvents != 0 {
+		t.Fatalf("SCIM reconciliation event count = %d, want 0", reconciliationEvents)
 	}
 	if err := scimService.DeleteGroup(ctx, authorization, group.Group.ID); err != nil {
 		t.Fatalf("delete SCIM group: %v", err)
@@ -314,8 +415,10 @@ func TestPostgresIdentityHappyPathAndOwnershipBoundaries(t *testing.T) {
 	}
 	replaceResult := make(chan error, 1)
 	go func() {
-		_, replaceErr := scimService.ReplaceGroup(ctx, authorization, recreatedGroup.Group.ID, scim.GroupInput{
-			ExternalID: "workday-group-1", DisplayName: "Must Not Survive Concurrent Delete",
+		_, replaceErr := scimService.ReplaceGroup(ctx, authorization, recreatedGroup.Group.ID, scim.ReplaceGroupInput{
+			GroupInput: scim.GroupInput{
+				ExternalID: "workday-group-1", DisplayName: "Must Not Survive Concurrent Delete",
+			},
 		})
 		replaceResult <- replaceErr
 	}()
@@ -388,8 +491,9 @@ func TestPostgresIdentityHappyPathAndOwnershipBoundaries(t *testing.T) {
 	provider := oidcflow.ProviderWithSecret{Provider: oidcflow.Provider{
 		ID: "provider-1", OrganizationID: bootstrap.Organization.ID, Name: "workforce", DisplayName: "Workforce",
 		Issuer: "https://id.example.com", ClientID: "client", ClientSecret: providerSecret,
-		RedirectURI: "https://identity.example.com/protocol/oidc/callback", Scopes: []string{"openid"}, Enabled: true,
+		Scopes: []string{"openid"}, Enabled: true, Revision: 1,
 		AuthorizationEndpoint: "https://id.example.com/auth", TokenEndpoint: "https://id.example.com/token",
+		TokenEndpointAuthMethod: "client_secret_basic", IDTokenSigningAlgs: []string{"RS256"},
 		JWKSURI: "https://id.example.com/jwks", CreatedAt: now, UpdatedAt: now,
 	}}
 	storedProvider, err := store.OIDC().UpsertProvider(ctx, oidcflow.UpsertProviderCommand{
@@ -400,15 +504,23 @@ func TestPostgresIdentityHappyPathAndOwnershipBoundaries(t *testing.T) {
 	}
 	provider.Provider = storedProvider
 	competingProvider := provider
-	competingProvider.Provider.ID = "provider-proposed-by-concurrent-request"
+	competingProvider.ID = "provider-proposed-by-concurrent-request"
+	competingProvider.Revision++
 	canonicalProvider, err := store.OIDC().UpsertProvider(ctx, oidcflow.UpsertProviderCommand{
 		ActorPrincipalID: bootstrap.User.ID, RequestID: "provider-1-repeat", Provider: competingProvider,
 	})
 	if err != nil || canonicalProvider.ID != provider.ID {
 		t.Fatalf("repeat Provider canonical ID = %#v, %v; want %q", canonicalProvider, err, provider.ID)
 	}
+	staleProvider := competingProvider
+	staleProvider.DisplayName = "Stale Workforce"
+	if _, err := store.OIDC().UpsertProvider(ctx, oidcflow.UpsertProviderCommand{
+		ActorPrincipalID: bootstrap.User.ID, RequestID: "provider-stale-write", Provider: staleProvider,
+	}); !errors.Is(err, domain.ErrVersionConflict) {
+		t.Fatalf("stale Provider write error = %v, want version conflict", err)
+	}
 	changedIssuer := competingProvider
-	changedIssuer.Provider.Issuer = "https://replacement-id.example.com"
+	changedIssuer.Issuer = "https://replacement-id.example.com"
 	if _, err := store.OIDC().UpsertProvider(ctx, oidcflow.UpsertProviderCommand{
 		ActorPrincipalID: bootstrap.User.ID, RequestID: "provider-issuer-change", Provider: changedIssuer,
 	}); domainErrorCode(err) != "oidc_provider_issuer_immutable" {
@@ -450,6 +562,52 @@ func TestPostgresIdentityHappyPathAndOwnershipBoundaries(t *testing.T) {
 	if disabledEvents != 1 || enabledEvents != 1 {
 		t.Fatalf("OIDC Provider lifecycle events disabled=%d enabled=%d, want 1/1", disabledEvents, enabledEvents)
 	}
+	raceSessionSecrets, err := box.Seal([]byte(`{"nonce":"nonce","pkce_verifier":"verifier"}`), "session-provider-race")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raceState := "provider-race-state"
+	if err := store.OIDC().CreateSession(ctx, oidcflow.CreateSessionCommand{
+		RequestID: "session-provider-race", StateHash: credentials.HashToken(raceState),
+		Session: oidcflow.AuthSession{
+			ID: "session-provider-race", ProviderID: provider.ID, OrganizationID: bootstrap.Organization.ID,
+			ProviderRevision: provider.Revision, Status: oidcflow.SessionStatusPending,
+			Secrets: raceSessionSecrets, ExpiresAt: now.Add(time.Hour), CreatedAt: now,
+		},
+	}); err != nil {
+		t.Fatalf("create Provider-race OIDC session: %v", err)
+	}
+	if _, err := store.OIDC().ClaimSession(ctx, credentials.HashToken(raceState), "provider-race-claim", now); err != nil {
+		t.Fatalf("claim Provider-race OIDC session: %v", err)
+	}
+	provider.Provider, err = store.OIDC().SetProviderEnabled(ctx, oidcflow.SetProviderEnabledCommand{
+		RequestID: "provider-race-disable", ActorPrincipalID: bootstrap.User.ID,
+		OrganizationID: bootstrap.Organization.ID, Name: provider.Name,
+		Enabled: false, UpdatedAt: now.Add(4 * time.Second),
+	})
+	if err != nil {
+		t.Fatalf("change Provider during OIDC session: %v", err)
+	}
+	if _, err := store.OIDC().CompleteLogin(ctx, oidcflow.CompleteLoginCommand{
+		SessionID: "session-provider-race", ProviderID: provider.ID,
+		OrganizationID: bootstrap.Organization.ID, ClaimID: "provider-race-claim",
+		Identity: oidcflow.VerifiedIdentity{
+			Issuer: provider.Issuer, Subject: "provider-race-subject",
+			Email: "research-admin@example.com", EmailVerified: true,
+		},
+		AccessTokenID: "provider-race-token", AccessTokenHash: credentials.HashToken("provider-race-token"),
+		IssuedAt: now, ExpiresAt: now.Add(time.Hour),
+	}); domainErrorCode(err) != "oidc_provider_changed" {
+		t.Fatalf("commit-time Provider revision error = %v, want oidc_provider_changed", err)
+	}
+	provider.Provider, err = store.OIDC().SetProviderEnabled(ctx, oidcflow.SetProviderEnabledCommand{
+		RequestID: "provider-race-enable", ActorPrincipalID: bootstrap.User.ID,
+		OrganizationID: bootstrap.Organization.ID, Name: provider.Name,
+		Enabled: true, UpdatedAt: now.Add(5 * time.Second),
+	})
+	if err != nil {
+		t.Fatalf("restore Provider after revision test: %v", err)
+	}
 	sessionSecrets, err := box.Seal([]byte(`{"nonce":"nonce","pkce_verifier":"verifier"}`), "session-1")
 	if err != nil {
 		t.Fatal(err)
@@ -459,7 +617,8 @@ func TestPostgresIdentityHappyPathAndOwnershipBoundaries(t *testing.T) {
 		RequestID: "session-1", StateHash: credentials.HashToken(state),
 		Session: oidcflow.AuthSession{
 			ID: "session-1", ProviderID: provider.ID, OrganizationID: bootstrap.Organization.ID,
-			Status: oidcflow.SessionStatusPending, Secrets: sessionSecrets,
+			ProviderRevision: provider.Revision,
+			Status:           oidcflow.SessionStatusPending, Secrets: sessionSecrets,
 			ExpiresAt: now.Add(10 * time.Minute), CreatedAt: now,
 		},
 	}); err != nil {
@@ -476,14 +635,32 @@ func TestPostgresIdentityHappyPathAndOwnershipBoundaries(t *testing.T) {
 	completed, err := store.OIDC().CompleteLogin(ctx, oidcflow.CompleteLoginCommand{
 		SessionID: "session-1", ProviderID: provider.ID, OrganizationID: bootstrap.Organization.ID,
 		ClaimID: "claim-1", Identity: oidcflow.VerifiedIdentity{
-			Issuer: provider.Issuer, Subject: "subject-1", Email: "oidc@example.com",
-			EmailVerified: true, DisplayName: "OIDC User",
+			Issuer: provider.Issuer, Subject: "subject-1", Email: "research-admin@example.com",
+			EmailVerified: true, DisplayName: "Provider Display Name",
 		},
 		AccessTokenID: "oidc-token-1", AccessTokenHash: accessHash,
 		IssuedAt: now, ExpiresAt: now.Add(12 * time.Hour),
 	})
 	if err != nil || completed.Principal.UserID == "" || completed.TokenID != "oidc-token-1" {
 		t.Fatalf("complete OIDC login = %#v, %v", completed, err)
+	}
+	if completed.Principal.UserID != secondaryUser.User.ID ||
+		completed.Principal.MembershipID != sharedMembership.ID {
+		t.Fatalf("OIDC did not bind the existing organization Membership: %#v", completed.Principal)
+	}
+	var primaryDisplayName, secondaryDisplayName string
+	if err := pool.QueryRow(ctx, `
+		SELECT display_name FROM organization_memberships WHERE id = $1`, sharedMembership.ID,
+	).Scan(&primaryDisplayName); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `
+		SELECT display_name FROM organization_memberships WHERE id = $1`, secondaryUser.Membership.ID,
+	).Scan(&secondaryDisplayName); err != nil {
+		t.Fatal(err)
+	}
+	if primaryDisplayName != "Research Administrator" || secondaryDisplayName != "Research Administrator" {
+		t.Fatalf("OIDC rewrote locally owned profiles: primary=%q secondary=%q", primaryDisplayName, secondaryDisplayName)
 	}
 	var sessionEventCount, sessionRequestIDs int
 	var completedEventTokenID, completedEventExternalIdentityID string
@@ -521,7 +698,8 @@ func TestPostgresIdentityHappyPathAndOwnershipBoundaries(t *testing.T) {
 		RequestID: "provider-organization-mismatch", StateHash: credentials.HashToken("provider-organization-mismatch"),
 		Session: oidcflow.AuthSession{
 			ID: "provider-organization-mismatch", ProviderID: provider.ID,
-			OrganizationID: secondaryOrganization.ID, Status: oidcflow.SessionStatusPending,
+			OrganizationID: secondaryOrganization.ID, ProviderRevision: provider.Revision,
+			Status:  oidcflow.SessionStatusPending,
 			Secrets: sessionSecrets, ExpiresAt: now.Add(time.Hour), CreatedAt: now,
 		},
 	}); err == nil {
@@ -545,15 +723,18 @@ func TestPostgresIdentityHappyPathAndOwnershipBoundaries(t *testing.T) {
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO oidc_auth_sessions (
-			id, provider_id, organization_id, state_hash, request_id, status,
+			id, provider_id, organization_id, provider_revision, state_hash, request_id, status,
 			secret_ciphertext, secret_nonce, expires_at,
+			claim_id, claimed_at,
 			completed_user_id, completed_membership_id, completed_access_token_id, completed_at,
 			created_at, updated_at
 		) VALUES (
-			'completed-token-mismatch', $1, $2, $3, 'completed-token-mismatch', 'completed',
-			$4, $5, $6, $7, $8, $9, $10, $10, $10
+			'completed-token-mismatch', $1, $2, $3, $4, 'completed-token-mismatch', 'completed',
+			$5, $6, $7, 'completed-token-mismatch-claim', $11,
+			$8, $9, $10, $11, $11, $11
 		)`,
-		provider.ID, bootstrap.Organization.ID, credentials.HashToken("completed-token-mismatch"),
+		provider.ID, bootstrap.Organization.ID, provider.Revision,
+		credentials.HashToken("completed-token-mismatch"),
 		sessionSecrets.Ciphertext, sessionSecrets.Nonce, now.Add(time.Hour),
 		secondaryOrganizationLogin.Principal.UserID, secondaryOrganizationLogin.Principal.MembershipID,
 		secondaryOrganizationLogin.TokenID, now,
@@ -578,9 +759,9 @@ func TestPostgresIdentityHappyPathAndOwnershipBoundaries(t *testing.T) {
 		ID: "provider-2", OrganizationID: secondaryOrganization.ID,
 		Name: "workforce", DisplayName: "Workforce", Issuer: "https://id.example.com",
 		ClientID: "client-2", ClientSecret: provider2Secret,
-		RedirectURI: "https://identity.example.com/protocol/oidc/callback",
-		Scopes:      []string{"openid", "email"}, Enabled: true,
+		Scopes: []string{"openid", "email"}, Enabled: true, Revision: 1,
 		AuthorizationEndpoint: "https://id.example.com/auth", TokenEndpoint: "https://id.example.com/token",
+		TokenEndpointAuthMethod: "client_secret_basic", IDTokenSigningAlgs: []string{"RS256"},
 		JWKSURI: "https://id.example.com/jwks", CreatedAt: now, UpdatedAt: now,
 	}}
 	if _, err := store.OIDC().UpsertProvider(ctx, oidcflow.UpsertProviderCommand{
@@ -597,7 +778,8 @@ func TestPostgresIdentityHappyPathAndOwnershipBoundaries(t *testing.T) {
 		RequestID: "session-2", StateHash: credentials.HashToken(secondState),
 		Session: oidcflow.AuthSession{
 			ID: "session-2", ProviderID: provider2.ID, OrganizationID: secondaryOrganization.ID,
-			Status: oidcflow.SessionStatusPending, Secrets: secondSessionSecrets,
+			ProviderRevision: provider2.Revision,
+			Status:           oidcflow.SessionStatusPending, Secrets: secondSessionSecrets,
 			ExpiresAt: now.Add(10 * time.Minute), CreatedAt: now,
 		},
 	}); err != nil {
@@ -615,8 +797,8 @@ func TestPostgresIdentityHappyPathAndOwnershipBoundaries(t *testing.T) {
 		AccessTokenID: "cross-org-token", AccessTokenHash: credentials.HashToken("cross-org-token"),
 		IssuedAt: now, ExpiresAt: now.Add(time.Hour),
 	})
-	if !errors.Is(err, domain.ErrConflict) {
-		t.Fatalf("cross-organization email binding error = %v, want conflict", err)
+	if domainErrorCode(err) != "oidc_membership_required" {
+		t.Fatalf("OIDC without an existing Organization Membership error = %v", err)
 	}
 
 	expiredSecrets, err := box.Seal([]byte(`{"nonce":"nonce","pkce_verifier":"verifier"}`), "session-expired")
@@ -628,7 +810,8 @@ func TestPostgresIdentityHappyPathAndOwnershipBoundaries(t *testing.T) {
 		RequestID: "session-expired", StateHash: credentials.HashToken(expiredState),
 		Session: oidcflow.AuthSession{
 			ID: "session-expired", ProviderID: provider.ID, OrganizationID: bootstrap.Organization.ID,
-			Status: oidcflow.SessionStatusPending, Secrets: expiredSecrets,
+			ProviderRevision: provider.Revision,
+			Status:           oidcflow.SessionStatusPending, Secrets: expiredSecrets,
 			ExpiresAt: now.Add(-time.Minute), CreatedAt: now.Add(-time.Hour),
 		},
 	}); err != nil {
@@ -644,6 +827,292 @@ func TestPostgresIdentityHappyPathAndOwnershipBoundaries(t *testing.T) {
 	}
 	if expiredStatus != string(oidcflow.SessionStatusFailed) {
 		t.Fatalf("expired OIDC status = %q", expiredStatus)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO external_identities (
+			id, organization_id, provider_id, user_id, membership_id, subject, created_at, updated_at
+		) VALUES ('scim-user-oidc', $1, $2, $3, $4, 'scim-subject', $5, $5)`,
+		authorization.OrganizationID, provider.ID, user.User.ID, user.Membership.ID, now,
+	); err != nil {
+		t.Fatalf("bind SCIM user to OIDC subject: %v", err)
+	}
+	raceUser, err := scimService.CreateUser(ctx, authorization, scim.UserInput{
+		ExternalID: "oidc-delete-race", UserName: "oidc.delete.race",
+		Email: "oidc-delete-race@example.com", DisplayName: "OIDC Delete Race", Active: true,
+	})
+	if err != nil {
+		t.Fatalf("create OIDC-delete race user: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO external_identities (
+			id, organization_id, provider_id, user_id, membership_id, subject, created_at, updated_at
+		) VALUES ('oidc-delete-race', $1, $2, $3, $4, 'oidc-delete-race', $5, $5)`,
+		authorization.OrganizationID, provider.ID, raceUser.User.ID, raceUser.Membership.ID, now,
+	); err != nil {
+		t.Fatalf("bind OIDC-delete race identity: %v", err)
+	}
+	raceSecrets, err := box.Seal(
+		[]byte(`{"nonce":"nonce","pkce_verifier":"verifier"}`),
+		"session-oidc-delete-race",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deleteRaceState := "oidc-delete-race-state"
+	if err := store.OIDC().CreateSession(ctx, oidcflow.CreateSessionCommand{
+		RequestID: "session-oidc-delete-race", StateHash: credentials.HashToken(deleteRaceState),
+		Session: oidcflow.AuthSession{
+			ID: "session-oidc-delete-race", ProviderID: provider.ID,
+			OrganizationID: authorization.OrganizationID, ProviderRevision: provider.Revision,
+			Status: oidcflow.SessionStatusPending, Secrets: raceSecrets,
+			ExpiresAt: now.Add(time.Hour), CreatedAt: now,
+		},
+	}); err != nil {
+		t.Fatalf("create OIDC-delete race session: %v", err)
+	}
+	if _, err := store.OIDC().ClaimSession(
+		ctx,
+		credentials.HashToken(deleteRaceState),
+		"oidc-delete-race-claim",
+		now,
+	); err != nil {
+		t.Fatalf("claim OIDC-delete race session: %v", err)
+	}
+	raceDeleteTx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin OIDC-delete race transaction: %v", err)
+	}
+	raceDeleteFinished := false
+	defer func() {
+		if !raceDeleteFinished {
+			_ = raceDeleteTx.Rollback(context.WithoutCancel(ctx))
+		}
+	}()
+	if _, err := raceDeleteTx.Exec(ctx, `
+		SELECT 1
+		FROM organization_memberships
+		WHERE organization_id = $1 AND id = $2
+		FOR UPDATE`, authorization.OrganizationID, raceUser.Membership.ID,
+	); err != nil {
+		t.Fatalf("lock OIDC-delete race Membership: %v", err)
+	}
+	raceLoginResult := make(chan error, 1)
+	go func() {
+		_, completionErr := store.OIDC().CompleteLogin(ctx, oidcflow.CompleteLoginCommand{
+			SessionID: "session-oidc-delete-race", ProviderID: provider.ID,
+			OrganizationID: authorization.OrganizationID, ClaimID: "oidc-delete-race-claim",
+			Identity: oidcflow.VerifiedIdentity{
+				Issuer: provider.Issuer, Subject: "oidc-delete-race",
+				Email: raceUser.Membership.Email, EmailVerified: true,
+			},
+			AccessTokenID:   "oidc-delete-race-token",
+			AccessTokenHash: credentials.HashToken("oidc-delete-race-token"),
+			IssuedAt:        now.Add(time.Minute), ExpiresAt: now.Add(time.Hour),
+		})
+		raceLoginResult <- completionErr
+	}()
+	raceWaitDeadline := time.Now().Add(2 * time.Second)
+	for {
+		var waitingForMembership bool
+		if err := adminPool.QueryRow(ctx, `
+			SELECT EXISTS (
+				SELECT 1
+				FROM pg_stat_activity
+				WHERE application_name = $1 AND wait_event_type = 'Lock'
+				  AND query LIKE '%FOR UPDATE OF u, m, o%'
+			)`, applicationName,
+		).Scan(&waitingForMembership); err != nil {
+			t.Fatalf("inspect OIDC-delete race: %v", err)
+		}
+		if waitingForMembership {
+			break
+		}
+		if time.Now().After(raceWaitDeadline) {
+			t.Fatal("OIDC completion did not lock the target Membership")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	raceDeletedAt := now.Add(2 * time.Minute)
+	if _, err := raceDeleteTx.Exec(ctx, `
+		UPDATE organization_memberships
+		SET active = FALSE, scim_deleted_at = $3, updated_at = $3
+		WHERE organization_id = $1 AND id = $2`,
+		authorization.OrganizationID, raceUser.Membership.ID, raceDeletedAt,
+	); err != nil {
+		t.Fatalf("tombstone OIDC-delete race Membership: %v", err)
+	}
+	if err := raceDeleteTx.Commit(ctx); err != nil {
+		t.Fatalf("commit OIDC-delete race transaction: %v", err)
+	}
+	raceDeleteFinished = true
+	if err := <-raceLoginResult; domainErrorCode(err) != "oidc_membership_required" {
+		t.Fatalf("OIDC completion concurrent with SCIM delete error = %v, want oidc_membership_required", err)
+	}
+	var racedTokenCount int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM api_tokens WHERE id = 'oidc-delete-race-token'`).
+		Scan(&racedTokenCount); err != nil {
+		t.Fatalf("inspect OIDC-delete race token: %v", err)
+	}
+	if racedTokenCount != 0 {
+		t.Fatalf("OIDC completion committed %d token rows for a deleted Membership", racedTokenCount)
+	}
+	affectedGroup, err := scimService.CreateGroup(ctx, authorization, scim.GroupInput{
+		ExternalID: "delete-user-group", DisplayName: "Delete User Group",
+		MemberIDs: []string{user.Membership.ID},
+	})
+	if err != nil {
+		t.Fatalf("create group affected by SCIM user deletion: %v", err)
+	}
+	userBeforeDelete, err := scimService.GetUser(ctx, authorization, user.Membership.ID)
+	if err != nil {
+		t.Fatalf("load SCIM user before deletion: %v", err)
+	}
+	if err := scimService.DeleteUser(ctx, authorization, user.Membership.ID); err != nil {
+		t.Fatalf("delete SCIM user: %v", err)
+	}
+	var tombstoneUpdatedAt, tombstoneDeletedAt time.Time
+	if err := pool.QueryRow(ctx, `
+		SELECT updated_at, scim_deleted_at
+		FROM organization_memberships
+		WHERE organization_id = $1 AND id = $2`, authorization.OrganizationID, user.Membership.ID,
+	).Scan(&tombstoneUpdatedAt, &tombstoneDeletedAt); err != nil {
+		t.Fatalf("inspect SCIM user tombstone version: %v", err)
+	}
+	if !tombstoneUpdatedAt.After(userBeforeDelete.Membership.UpdatedAt) ||
+		!tombstoneDeletedAt.Equal(tombstoneUpdatedAt) {
+		t.Fatalf(
+			"SCIM tombstone version updated=%s deleted=%s previous=%s",
+			tombstoneUpdatedAt,
+			tombstoneDeletedAt,
+			userBeforeDelete.Membership.UpdatedAt,
+		)
+	}
+	updatedAffectedGroup, err := scimService.GetGroup(ctx, authorization, affectedGroup.Group.ID)
+	if err != nil {
+		t.Fatalf("load group after SCIM user deletion: %v", err)
+	}
+	if len(updatedAffectedGroup.MemberIDs) != 0 ||
+		!updatedAffectedGroup.Group.UpdatedAt.After(affectedGroup.Group.UpdatedAt) {
+		t.Fatalf("group version did not reflect deleted member: %#v", updatedAffectedGroup)
+	}
+	if _, err := scimService.GetUser(ctx, authorization, user.Membership.ID); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("deleted SCIM user remained visible: %v", err)
+	}
+	deletedPage, err := scimService.ListUsers(ctx, authorization, scim.ListQuery{StartIndex: 1, Count: 100})
+	if err != nil {
+		t.Fatalf("list users after SCIM delete: %v", err)
+	}
+	for _, item := range deletedPage.Items {
+		if item.Membership.ID == user.Membership.ID {
+			t.Fatalf("deleted SCIM user remained in list: %#v", item)
+		}
+	}
+	recreatedUser, err := scimService.CreateUser(ctx, authorization, scim.UserInput{
+		ExternalID: "workday-user-1", UserName: "alice.employee", Email: "alice@example.com",
+		DisplayName: "Alice Recreated", Active: true,
+	})
+	if err != nil || recreatedUser.Membership.ID == user.Membership.ID || recreatedUser.User.ID != user.User.ID {
+		t.Fatalf("recreate deleted SCIM user = %#v, %v", recreatedUser, err)
+	}
+	var reboundMembershipID string
+	if err := pool.QueryRow(ctx, `
+		SELECT membership_id
+		FROM external_identities
+		WHERE id = 'scim-user-oidc'`,
+	).Scan(&reboundMembershipID); err != nil {
+		t.Fatalf("inspect reprovisioned OIDC binding: %v", err)
+	}
+	if reboundMembershipID != recreatedUser.Membership.ID {
+		t.Fatalf("OIDC binding membership = %q, want %q", reboundMembershipID, recreatedUser.Membership.ID)
+	}
+	reprovisionSecrets, err := box.Seal(
+		[]byte(`{"nonce":"nonce","pkce_verifier":"verifier"}`),
+		"session-reprovisioned-user",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reprovisionState := "reprovisioned-user-state"
+	if err := store.OIDC().CreateSession(ctx, oidcflow.CreateSessionCommand{
+		RequestID: "session-reprovisioned-user", StateHash: credentials.HashToken(reprovisionState),
+		Session: oidcflow.AuthSession{
+			ID: "session-reprovisioned-user", ProviderID: provider.ID,
+			OrganizationID: authorization.OrganizationID, ProviderRevision: provider.Revision,
+			Status: oidcflow.SessionStatusPending, Secrets: reprovisionSecrets,
+			ExpiresAt: now.Add(time.Hour), CreatedAt: now,
+		},
+	}); err != nil {
+		t.Fatalf("create reprovisioned-user OIDC session: %v", err)
+	}
+	if _, err := store.OIDC().ClaimSession(
+		ctx,
+		credentials.HashToken(reprovisionState),
+		"reprovisioned-user-claim",
+		now,
+	); err != nil {
+		t.Fatalf("claim reprovisioned-user OIDC session: %v", err)
+	}
+	reprovisionedLogin, err := store.OIDC().CompleteLogin(ctx, oidcflow.CompleteLoginCommand{
+		SessionID: "session-reprovisioned-user", ProviderID: provider.ID,
+		OrganizationID: authorization.OrganizationID, ClaimID: "reprovisioned-user-claim",
+		Identity: oidcflow.VerifiedIdentity{
+			Issuer: provider.Issuer, Subject: "scim-subject", Email: recreatedUser.Membership.Email,
+			EmailVerified: true,
+		},
+		AccessTokenID:   "reprovisioned-user-token",
+		AccessTokenHash: credentials.HashToken("reprovisioned-user-token"),
+		IssuedAt:        now.Add(time.Minute), ExpiresAt: now.Add(time.Hour),
+	})
+	if err != nil || reprovisionedLogin.Principal.MembershipID != recreatedUser.Membership.ID {
+		t.Fatalf("login after SCIM reprovisioning = %#v, %v", reprovisionedLogin, err)
+	}
+
+	secondAdminID := "system-admin-2"
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO users (id, system_role, active, created_at, updated_at)
+		VALUES ($1, 'admin', TRUE, $2, $2)`, secondAdminID, now,
+	); err != nil {
+		t.Fatalf("create second system administrator: %v", err)
+	}
+	startAdminRace := make(chan struct{})
+	adminRaceResults := make(chan error, 2)
+	go func() {
+		<-startAdminRace
+		adminRaceResults <- store.Directory().SetUserActive(ctx, directory.SetUserActiveCommand{
+			ActorPrincipalID: bootstrap.User.ID, UserID: secondAdminID, Active: false,
+			UpdatedAt: now.Add(2 * time.Minute),
+		})
+	}()
+	go func() {
+		<-startAdminRace
+		adminRaceResults <- store.Directory().SetUserActive(ctx, directory.SetUserActiveCommand{
+			ActorPrincipalID: secondAdminID, UserID: bootstrap.User.ID, Active: false,
+			UpdatedAt: now.Add(2 * time.Minute),
+		})
+	}()
+	close(startAdminRace)
+	adminRaceErrors := []error{<-adminRaceResults, <-adminRaceResults}
+	successes := 0
+	for _, raceErr := range adminRaceErrors {
+		if raceErr == nil {
+			successes++
+			continue
+		}
+		if !errors.Is(raceErr, domain.ErrForbidden) {
+			t.Fatalf("concurrent administrator deactivation error = %v", raceErr)
+		}
+	}
+	if successes != 1 {
+		t.Fatalf("concurrent administrator deactivation successes = %d, want 1", successes)
+	}
+	var activeAdministratorCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM users WHERE system_role = 'admin' AND active`,
+	).Scan(&activeAdministratorCount); err != nil {
+		t.Fatalf("count active system administrators: %v", err)
+	}
+	if activeAdministratorCount != 1 {
+		t.Fatalf("active system administrators = %d, want 1", activeAdministratorCount)
 	}
 }
 

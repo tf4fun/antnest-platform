@@ -148,6 +148,10 @@ func repositoryErrorClass(err error) string {
 		switch domainError.Code {
 		case domain.ErrInvalidArgument.Code:
 			return "invalid_argument"
+		case domain.ErrInvalidReference.Code:
+			return "invalid_reference"
+		case domain.ErrVersionConflict.Code:
+			return "version_conflict"
 		case domain.ErrUnauthenticated.Code:
 			return "unauthenticated"
 		case domain.ErrInactive.Code:
@@ -230,7 +234,8 @@ func (s *Store) getPrincipal(
 		       u.active, COALESCE(m.active, FALSE), o.active
 		FROM users u
 		JOIN organizations o ON o.id = $2
-		LEFT JOIN organization_memberships m ON m.user_id = u.id AND m.organization_id = o.id
+		LEFT JOIN organization_memberships m
+		  ON m.user_id = u.id AND m.organization_id = o.id AND m.scim_deleted_at IS NULL
 		WHERE u.id = $1`, userID, organizationID,
 	).Scan(
 		&principal.UserID, &principal.OrganizationID, &principal.MembershipID,
@@ -246,6 +251,70 @@ func (s *Store) getPrincipal(
 	principal.Active = userActive && organizationActive &&
 		(principal.SystemRole == domain.SystemRoleAdmin || membershipActive)
 	return principal, nil
+}
+
+func (s *Store) requireSystemAdmin(ctx context.Context, tx pgx.Tx, actorUserID string) error {
+	var role domain.SystemRole
+	var active bool
+	if err := tx.QueryRow(ctx, `
+		SELECT system_role, active
+		FROM users
+		WHERE id = $1
+		FOR SHARE`, actorUserID,
+	).Scan(&role, &active); err != nil {
+		return normalizeError(err)
+	}
+	if !active || role != domain.SystemRoleAdmin {
+		return domain.ErrForbidden
+	}
+	return nil
+}
+
+func (s *Store) requireOrganizationAdmin(
+	ctx context.Context,
+	tx pgx.Tx,
+	actorUserID string,
+	organizationID string,
+) error {
+	var role domain.SystemRole
+	var userActive bool
+	if err := tx.QueryRow(ctx, `
+		SELECT system_role, active
+		FROM users
+		WHERE id = $1
+		FOR SHARE`, actorUserID,
+	).Scan(&role, &userActive); err != nil {
+		return normalizeError(err)
+	}
+	var organizationActive bool
+	if err := tx.QueryRow(ctx, `
+		SELECT active
+		FROM organizations
+		WHERE id = $1
+		FOR SHARE`, organizationID,
+	).Scan(&organizationActive); err != nil {
+		return normalizeError(err)
+	}
+	if !userActive || !organizationActive {
+		return domain.ErrForbidden
+	}
+	if role == domain.SystemRoleAdmin {
+		return nil
+	}
+	var membershipRole domain.OrganizationRole
+	var membershipActive bool
+	if err := tx.QueryRow(ctx, `
+		SELECT role, active
+		FROM organization_memberships
+		WHERE organization_id = $1 AND user_id = $2 AND scim_deleted_at IS NULL
+		FOR SHARE`, organizationID, actorUserID,
+	).Scan(&membershipRole, &membershipActive); err != nil {
+		return normalizeError(err)
+	}
+	if !membershipActive || membershipRole != domain.OrganizationRoleAdmin {
+		return domain.ErrForbidden
+	}
+	return nil
 }
 
 func normalizeError(err error) error {

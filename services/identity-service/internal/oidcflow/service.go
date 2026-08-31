@@ -37,32 +37,36 @@ type Federation interface {
 }
 
 type Provider struct {
-	ID                    string                   `json:"id"`
-	OrganizationID        string                   `json:"organization_id"`
-	Name                  string                   `json:"name"`
-	DisplayName           string                   `json:"display_name"`
-	Issuer                string                   `json:"issuer"`
-	ClientID              string                   `json:"client_id"`
-	ClientSecret          credentials.SealedSecret `json:"-"`
-	RedirectURI           string                   `json:"redirect_uri"`
-	Scopes                []string                 `json:"scopes"`
-	Enabled               bool                     `json:"enabled"`
-	AuthorizationEndpoint string                   `json:"authorization_endpoint"`
-	TokenEndpoint         string                   `json:"token_endpoint"`
-	UserInfoEndpoint      string                   `json:"userinfo_endpoint,omitempty"`
-	JWKSURI               string                   `json:"jwks_uri"`
-	CreatedAt             time.Time                `json:"created_at"`
-	UpdatedAt             time.Time                `json:"updated_at"`
+	ID                      string                   `json:"id"`
+	OrganizationID          string                   `json:"organization_id"`
+	Name                    string                   `json:"name"`
+	DisplayName             string                   `json:"display_name"`
+	Issuer                  string                   `json:"issuer"`
+	ClientID                string                   `json:"client_id"`
+	ClientSecret            credentials.SealedSecret `json:"-"`
+	Scopes                  []string                 `json:"scopes"`
+	Enabled                 bool                     `json:"enabled"`
+	Revision                int64                    `json:"revision"`
+	AuthorizationEndpoint   string                   `json:"authorization_endpoint"`
+	TokenEndpoint           string                   `json:"token_endpoint"`
+	TokenEndpointAuthMethod string                   `json:"token_endpoint_auth_method"`
+	IDTokenSigningAlgs      []string                 `json:"id_token_signing_algs"`
+	UserInfoEndpoint        string                   `json:"userinfo_endpoint,omitempty"`
+	JWKSURI                 string                   `json:"jwks_uri"`
+	CreatedAt               time.Time                `json:"created_at"`
+	UpdatedAt               time.Time                `json:"updated_at"`
 }
 
 type ProviderWithSecret struct{ Provider }
 
 type Discovery struct {
-	Issuer                string
-	AuthorizationEndpoint string
-	TokenEndpoint         string
-	UserInfoEndpoint      string
-	JWKSURI               string
+	Issuer                   string
+	AuthorizationEndpoint    string
+	TokenEndpoint            string
+	TokenEndpointAuthMethods []string
+	IDTokenSigningAlgs       []string
+	UserInfoEndpoint         string
+	JWKSURI                  string
 }
 
 type LoginMethod struct {
@@ -78,7 +82,6 @@ type UpsertProviderInput struct {
 	Issuer           string
 	ClientID         string
 	ClientSecret     string
-	RedirectURI      string
 	Scopes           []string
 	Enabled          bool
 }
@@ -119,6 +122,7 @@ type StartLoginResult struct {
 
 type AuthorizationInput struct {
 	Provider      Provider
+	RedirectURI   string
 	State         string
 	Nonce         string
 	PKCEChallenge string
@@ -126,6 +130,7 @@ type AuthorizationInput struct {
 
 type ExchangeInput struct {
 	Provider     Provider
+	RedirectURI  string
 	ClientSecret string
 	Code         string
 	Nonce        string
@@ -143,22 +148,25 @@ type VerifiedIdentity struct {
 type SessionStatus string
 
 const (
-	SessionStatusPending      SessionStatus = "pending"
-	SessionStatusExchanging   SessionStatus = "exchanging"
-	SessionStatusCompleted    SessionStatus = "completed"
-	SessionStatusFailed       SessionStatus = "failed"
-	failurePersistenceTimeout               = 5 * time.Second
+	SessionStatusPending       SessionStatus = "pending"
+	SessionStatusExchanging    SessionStatus = "exchanging"
+	SessionStatusCompleted     SessionStatus = "completed"
+	SessionStatusFailed        SessionStatus = "failed"
+	failurePersistenceTimeout                = 5 * time.Second
+	tokenAuthClientSecretBasic               = "client_secret_basic"
+	tokenAuthClientSecretPost                = "client_secret_post"
 )
 
 type AuthSession struct {
-	ID             string
-	RequestID      string
-	ProviderID     string
-	OrganizationID string
-	Status         SessionStatus
-	Secrets        credentials.SealedSecret
-	ExpiresAt      time.Time
-	CreatedAt      time.Time
+	ID               string
+	RequestID        string
+	ProviderID       string
+	OrganizationID   string
+	ProviderRevision int64
+	Status           SessionStatus
+	Secrets          credentials.SealedSecret
+	ExpiresAt        time.Time
+	CreatedAt        time.Time
 }
 
 type CreateSessionCommand struct {
@@ -182,8 +190,9 @@ type SessionClaim struct {
 }
 
 type CompleteLoginInput struct {
-	State string
-	Code  string
+	State              string
+	Code               string
+	AuthorizationError string
 }
 
 type CompleteLoginCommand struct {
@@ -222,25 +231,27 @@ type FailSessionCommand struct {
 }
 
 type Config struct {
-	Repository Repository
-	Federation Federation
-	SecretBox  *credentials.SecretBox
-	NewID      func() string
-	NewOpaque  func(string) (string, string, error)
-	Now        func() time.Time
-	SessionTTL time.Duration
-	TokenTTL   time.Duration
+	Repository  Repository
+	Federation  Federation
+	SecretBox   *credentials.SecretBox
+	NewID       func() string
+	NewOpaque   func(string) (string, string, error)
+	Now         func() time.Time
+	SessionTTL  time.Duration
+	TokenTTL    time.Duration
+	RedirectURI string
 }
 
 type Service struct {
-	repository Repository
-	federation Federation
-	secretBox  *credentials.SecretBox
-	newID      func() string
-	newOpaque  func(string) (string, string, error)
-	now        func() time.Time
-	sessionTTL time.Duration
-	tokenTTL   time.Duration
+	repository  Repository
+	federation  Federation
+	secretBox   *credentials.SecretBox
+	newID       func() string
+	newOpaque   func(string) (string, string, error)
+	now         func() time.Time
+	sessionTTL  time.Duration
+	tokenTTL    time.Duration
+	redirectURI string
 }
 
 func NewService(config Config) (*Service, error) {
@@ -251,10 +262,14 @@ func NewService(config Config) (*Service, error) {
 	if config.SessionTTL <= 0 || config.TokenTTL <= 0 {
 		return nil, fmt.Errorf("OIDC session and token TTLs must be positive")
 	}
+	redirectURI, err := normalizeHTTPURL(config.RedirectURI, "redirect URI")
+	if err != nil {
+		return nil, err
+	}
 	return &Service{
 		repository: config.Repository, federation: config.Federation, secretBox: config.SecretBox,
 		newID: config.NewID, newOpaque: config.NewOpaque, now: config.Now,
-		sessionTTL: config.SessionTTL, tokenTTL: config.TokenTTL,
+		sessionTTL: config.SessionTTL, tokenTTL: config.TokenTTL, redirectURI: redirectURI,
 	}, nil
 }
 
@@ -263,7 +278,7 @@ func (s *Service) UpsertProvider(ctx context.Context, input UpsertProviderInput)
 	if err != nil {
 		return Provider{}, fmt.Errorf("resolve OIDC provider actor: %w", err)
 	}
-	if !principal.CanAdminister(input.OrganizationID) {
+	if !principal.Active || principal.SystemRole != domain.SystemRoleAdmin {
 		return Provider{}, domain.ErrForbidden
 	}
 
@@ -275,11 +290,7 @@ func (s *Service) UpsertProvider(ctx context.Context, input UpsertProviderInput)
 	if err != nil {
 		return Provider{}, fmt.Errorf("provider display name: %w", err)
 	}
-	issuer, err := normalizeHTTPURL(input.Issuer, "issuer", true)
-	if err != nil {
-		return Provider{}, domain.InvalidArgument(err.Error())
-	}
-	redirectURI, err := normalizeHTTPURL(input.RedirectURI, "redirect URI", false)
+	issuer, err := validateIssuerURL(input.Issuer, "issuer")
 	if err != nil {
 		return Provider{}, domain.InvalidArgument(err.Error())
 	}
@@ -292,11 +303,19 @@ func (s *Service) UpsertProvider(ctx context.Context, input UpsertProviderInput)
 	if err != nil {
 		return Provider{}, fmt.Errorf("discover OIDC provider: %w", err)
 	}
-	discoveredIssuer, issuerErr := normalizeHTTPURL(discovery.Issuer, "discovery issuer", true)
+	discoveredIssuer, issuerErr := validateIssuerURL(discovery.Issuer, "discovery issuer")
 	if issuerErr != nil || discoveredIssuer != issuer {
 		return Provider{}, fmt.Errorf("discovery issuer does not exactly match configured issuer")
 	}
 	if err := validateDiscovery(discovery); err != nil {
+		return Provider{}, err
+	}
+	tokenAuthMethod, err := selectTokenEndpointAuthMethod(discovery.TokenEndpointAuthMethods)
+	if err != nil {
+		return Provider{}, err
+	}
+	signingAlgs, err := selectIDTokenSigningAlgs(discovery.IDTokenSigningAlgs)
+	if err != nil {
 		return Provider{}, err
 	}
 
@@ -312,9 +331,9 @@ func (s *Service) UpsertProvider(ctx context.Context, input UpsertProviderInput)
 		)
 	}
 	now := s.now().UTC()
-	providerID, createdAt := existing.ID, existing.CreatedAt
+	providerID, createdAt, revision := existing.ID, existing.CreatedAt, existing.Revision+1
 	if providerID == "" {
-		providerID, createdAt = s.newID(), now
+		providerID, createdAt, revision = s.newID(), now, 1
 	}
 	sealedSecret := existing.ClientSecret
 	if input.ClientSecret != "" {
@@ -332,11 +351,12 @@ func (s *Service) UpsertProvider(ctx context.Context, input UpsertProviderInput)
 
 	provider := ProviderWithSecret{Provider: Provider{
 		ID: providerID, OrganizationID: input.OrganizationID, Name: name, DisplayName: displayName,
-		Issuer: issuer, ClientID: clientID, ClientSecret: sealedSecret, RedirectURI: redirectURI,
-		Scopes: normalizeScopes(input.Scopes), Enabled: input.Enabled,
+		Issuer: issuer, ClientID: clientID, ClientSecret: sealedSecret,
+		Scopes: normalizeScopes(input.Scopes), Enabled: input.Enabled, Revision: revision,
 		AuthorizationEndpoint: strings.TrimSpace(discovery.AuthorizationEndpoint),
-		TokenEndpoint:         strings.TrimSpace(discovery.TokenEndpoint),
-		UserInfoEndpoint:      strings.TrimSpace(discovery.UserInfoEndpoint), JWKSURI: strings.TrimSpace(discovery.JWKSURI),
+		TokenEndpoint:         strings.TrimSpace(discovery.TokenEndpoint), TokenEndpointAuthMethod: tokenAuthMethod,
+		IDTokenSigningAlgs: signingAlgs,
+		UserInfoEndpoint:   strings.TrimSpace(discovery.UserInfoEndpoint), JWKSURI: strings.TrimSpace(discovery.JWKSURI),
 		CreatedAt: createdAt, UpdatedAt: now,
 	}}
 	return s.repository.UpsertProvider(ctx, UpsertProviderCommand{
@@ -352,7 +372,7 @@ func (s *Service) SetProviderEnabled(
 	if err != nil {
 		return Provider{}, fmt.Errorf("resolve OIDC provider actor: %w", err)
 	}
-	if !principal.CanAdminister(input.OrganizationID) {
+	if !principal.Active || principal.SystemRole != domain.SystemRoleAdmin {
 		return Provider{}, domain.ErrForbidden
 	}
 	name, err := domain.NormalizeSlug(input.Name)
@@ -409,7 +429,8 @@ func (s *Service) StartLogin(ctx context.Context, input StartLoginInput) (StartL
 		return StartLoginResult{}, err
 	}
 	authorizationURL, err := s.federation.AuthorizationURL(AuthorizationInput{
-		Provider: provider.Provider, State: state, Nonce: nonce, PKCEChallenge: pkceChallenge(verifier),
+		Provider: provider.Provider, RedirectURI: s.redirectURI,
+		State: state, Nonce: nonce, PKCEChallenge: pkceChallenge(verifier),
 	})
 	if err != nil {
 		return StartLoginResult{}, fmt.Errorf("build OIDC authorization URL: %w", err)
@@ -420,7 +441,8 @@ func (s *Service) StartLogin(ctx context.Context, input StartLoginInput) (StartL
 		RequestID: input.RequestID, StateHash: stateHash,
 		Session: AuthSession{
 			ID: sessionID, ProviderID: provider.ID, OrganizationID: provider.OrganizationID,
-			Status: SessionStatusPending, Secrets: sealed, ExpiresAt: expiresAt, CreatedAt: now,
+			ProviderRevision: provider.Revision,
+			Status:           SessionStatusPending, Secrets: sealed, ExpiresAt: expiresAt, CreatedAt: now,
 		},
 	}); err != nil {
 		return StartLoginResult{}, fmt.Errorf("create OIDC session: %w", err)
@@ -450,6 +472,15 @@ func (s *Service) CompleteLogin(ctx context.Context, input CompleteLoginInput) (
 	if claim.Disposition != ClaimAcquired {
 		return CompleteLoginResult{}, fmt.Errorf("unknown OIDC session claim disposition %q", claim.Disposition)
 	}
+	if strings.TrimSpace(input.AuthorizationError) != "" {
+		return CompleteLoginResult{}, s.failSession(
+			ctx,
+			claim.Session,
+			claimID,
+			"authorization",
+			domain.NewError("oidc_authorization_failed", "OIDC authorization was not granted", false),
+		)
+	}
 	if strings.TrimSpace(input.Code) == "" {
 		return CompleteLoginResult{}, s.failSession(
 			ctx,
@@ -471,6 +502,15 @@ func (s *Service) CompleteLogin(ctx context.Context, input CompleteLoginInput) (
 		}
 		return CompleteLoginResult{}, s.failSession(ctx, claim.Session, claimID, "provider", err)
 	}
+	if provider.Revision != claim.Session.ProviderRevision {
+		return CompleteLoginResult{}, s.failSession(
+			ctx,
+			claim.Session,
+			claimID,
+			"provider",
+			domain.NewError("oidc_provider_changed", "OIDC Provider changed; restart login", false),
+		)
+	}
 	clientSecret, err := s.secretBox.Open(
 		provider.ClientSecret,
 		providerSecretAAD(provider.OrganizationID, provider.Name),
@@ -479,7 +519,8 @@ func (s *Service) CompleteLogin(ctx context.Context, input CompleteLoginInput) (
 		return CompleteLoginResult{}, s.failSession(ctx, claim.Session, claimID, "provider_secret", err)
 	}
 	identity, err := s.federation.ExchangeAndVerify(ctx, ExchangeInput{
-		Provider: provider.Provider, ClientSecret: string(clientSecret), Code: input.Code,
+		Provider: provider.Provider, RedirectURI: s.redirectURI,
+		ClientSecret: string(clientSecret), Code: input.Code,
 		Nonce: secrets.Nonce, PKCEVerifier: secrets.PKCEVerifier,
 	})
 	if err != nil {
@@ -508,7 +549,11 @@ func (s *Service) CompleteLogin(ctx context.Context, input CompleteLoginInput) (
 				AccessToken: rawToken, ExpiresAt: reconciled.ExpiresAt,
 			}, nil
 		}
-		return CompleteLoginResult{}, s.failSession(ctx, claim.Session, claimID, "persistence", err)
+		stage := "persistence"
+		if code, _, _ := domain.ErrorDetails(err); code == "oidc_provider_changed" {
+			stage = "provider"
+		}
+		return CompleteLoginResult{}, s.failSession(ctx, claim.Session, claimID, stage, err)
 	}
 	return CompleteLoginResult{
 		Principal: completed.Principal, TokenID: completed.TokenID,
@@ -545,7 +590,7 @@ func (s *Service) failSession(
 	if err := s.repository.FailSession(failureCtx, command); err != nil {
 		return errors.Join(fmt.Errorf("OIDC %s failed", stage), fmt.Errorf("record terminal OIDC failure: %w", err))
 	}
-	if errors.Is(cause, domain.ErrInvalidArgument) {
+	if code, _, _ := domain.ErrorDetails(cause); code != "internal_error" {
 		return cause
 	}
 	return domain.NewError("oidc_"+stage+"_failed", "OIDC login failed and must be restarted", false)
@@ -584,12 +629,11 @@ func openSessionSecrets(box *credentials.SecretBox, sessionID string, sealed cre
 }
 
 func validateIdentity(provider Provider, identity VerifiedIdentity) (VerifiedIdentity, error) {
-	issuer, err := normalizeHTTPURL(identity.Issuer, "identity issuer", true)
+	issuer, err := validateIssuerURL(identity.Issuer, "identity issuer")
 	if err != nil || issuer != provider.Issuer {
 		return VerifiedIdentity{}, fmt.Errorf("verified identity issuer does not match provider")
 	}
-	identity.Subject = strings.TrimSpace(identity.Subject)
-	if identity.Subject == "" {
+	if identity.Subject == "" || len(identity.Subject) > 255 {
 		return VerifiedIdentity{}, fmt.Errorf("verified identity subject is required")
 	}
 	if !identity.EmailVerified {
@@ -611,7 +655,17 @@ func validateIdentity(provider Provider, identity VerifiedIdentity) (VerifiedIde
 	return identity, nil
 }
 
-func normalizeHTTPURL(raw, field string, stripTrailingSlash bool) (string, error) {
+func validateIssuerURL(raw, field string) (string, error) {
+	issuer := strings.TrimSpace(raw)
+	parsed, err := url.Parse(issuer)
+	if err != nil || parsed.Host == "" || parsed.Scheme != "https" || parsed.User != nil ||
+		parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", fmt.Errorf("%s must be an absolute HTTPS URL without credentials, query, or fragment", field)
+	}
+	return issuer, nil
+}
+
+func normalizeHTTPURL(raw, field string) (string, error) {
 	parsed, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil || parsed.Host == "" || (parsed.Scheme != "https" && parsed.Scheme != "http") ||
 		parsed.User != nil || parsed.Fragment != "" {
@@ -619,9 +673,6 @@ func normalizeHTTPURL(raw, field string, stripTrailingSlash bool) (string, error
 	}
 	if parsed.Scheme == "http" && parsed.Hostname() != "localhost" && parsed.Hostname() != "127.0.0.1" && parsed.Hostname() != "::1" {
 		return "", fmt.Errorf("%s must use HTTPS outside loopback", field)
-	}
-	if stripTrailingSlash {
-		parsed.Path = strings.TrimRight(parsed.Path, "/")
 	}
 	return parsed.String(), nil
 }
@@ -632,16 +683,67 @@ func validateDiscovery(discovery Discovery) error {
 		"token endpoint":         discovery.TokenEndpoint,
 		"JWKS URI":               discovery.JWKSURI,
 	} {
-		if _, err := normalizeHTTPURL(value, name, false); err != nil {
+		if _, err := normalizeProviderEndpointURL(value, name); err != nil {
 			return err
 		}
 	}
 	if discovery.UserInfoEndpoint != "" {
-		if _, err := normalizeHTTPURL(discovery.UserInfoEndpoint, "userinfo endpoint", false); err != nil {
+		if _, err := normalizeProviderEndpointURL(discovery.UserInfoEndpoint, "userinfo endpoint"); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func normalizeProviderEndpointURL(raw, field string) (string, error) {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Host == "" || parsed.Scheme != "https" || parsed.User != nil || parsed.Fragment != "" {
+		return "", fmt.Errorf("%s must be an absolute HTTPS URL", field)
+	}
+	return parsed.String(), nil
+}
+
+func selectTokenEndpointAuthMethod(methods []string) (string, error) {
+	if len(methods) == 0 {
+		return tokenAuthClientSecretBasic, nil
+	}
+	available := make(map[string]struct{}, len(methods))
+	for _, method := range methods {
+		available[strings.TrimSpace(method)] = struct{}{}
+	}
+	if _, ok := available[tokenAuthClientSecretBasic]; ok {
+		return tokenAuthClientSecretBasic, nil
+	}
+	if _, ok := available[tokenAuthClientSecretPost]; ok {
+		return tokenAuthClientSecretPost, nil
+	}
+	return "", fmt.Errorf("OIDC Provider does not support client_secret_basic or client_secret_post")
+}
+
+func selectIDTokenSigningAlgs(algorithms []string) ([]string, error) {
+	supported := map[string]struct{}{
+		"RS256": {}, "RS384": {}, "RS512": {},
+		"ES256": {}, "ES384": {}, "ES512": {},
+		"PS256": {}, "PS384": {}, "PS512": {},
+		"EdDSA": {},
+	}
+	selected := make([]string, 0, len(algorithms))
+	seen := make(map[string]struct{}, len(algorithms))
+	for _, algorithm := range algorithms {
+		algorithm = strings.TrimSpace(algorithm)
+		if _, ok := supported[algorithm]; !ok {
+			continue
+		}
+		if _, duplicate := seen[algorithm]; duplicate {
+			continue
+		}
+		seen[algorithm] = struct{}{}
+		selected = append(selected, algorithm)
+	}
+	if len(selected) == 0 {
+		return nil, fmt.Errorf("OIDC Provider has no supported ID Token signing algorithm")
+	}
+	return selected, nil
 }
 
 func normalizeScopes(input []string) []string {

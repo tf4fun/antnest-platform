@@ -27,7 +27,6 @@ type Source string
 
 const (
 	SourceLocal Source = "local"
-	SourceOIDC  Source = "oidc"
 	SourceSCIM  Source = "scim"
 )
 
@@ -41,25 +40,32 @@ type Organization struct {
 }
 
 type User struct {
-	ID          string     `json:"id"`
-	Email       string     `json:"email"`
-	DisplayName string     `json:"display_name"`
-	SystemRole  SystemRole `json:"system_role"`
-	Source      Source     `json:"source"`
-	Active      bool       `json:"active"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
+	ID         string     `json:"id"`
+	SystemRole SystemRole `json:"system_role"`
+	Active     bool       `json:"active"`
+	CreatedAt  time.Time  `json:"created_at"`
+	UpdatedAt  time.Time  `json:"updated_at"`
+}
+
+type LocalCredential struct {
+	UserID       string    `json:"user_id"`
+	PasswordHash string    `json:"-"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 type OrganizationMembership struct {
 	ID             string           `json:"id"`
 	OrganizationID string           `json:"organization_id"`
 	UserID         string           `json:"user_id"`
+	Email          string           `json:"email"`
+	DisplayName    string           `json:"display_name"`
 	Role           OrganizationRole `json:"role"`
 	Source         Source           `json:"source"`
 	Active         bool             `json:"active"`
 	SCIMExternalID string           `json:"scim_external_id,omitempty"`
 	SCIMUserName   string           `json:"scim_user_name,omitempty"`
+	SCIMDeletedAt  *time.Time       `json:"scim_deleted_at,omitempty"`
 	CreatedAt      time.Time        `json:"created_at"`
 	UpdatedAt      time.Time        `json:"updated_at"`
 }
@@ -137,6 +143,23 @@ func NormalizeDisplayName(value string) (string, error) {
 	normalized := strings.TrimSpace(value)
 	if len(normalized) == 0 || len(normalized) > 200 {
 		return "", InvalidArgument("display name must contain between 1 and 200 bytes")
+	}
+	return normalized, nil
+}
+
+func NextUpdatedAt(now, current time.Time) time.Time {
+	now = now.UTC().Truncate(time.Microsecond)
+	current = current.UTC().Truncate(time.Microsecond)
+	if now.After(current) {
+		return now
+	}
+	return current.Add(time.Microsecond)
+}
+
+func NormalizeSCIMUserName(value string) (string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	if len(normalized) == 0 || len(normalized) > 254 {
+		return "", InvalidArgument("SCIM userName must contain between 1 and 254 bytes")
 	}
 	return normalized, nil
 }

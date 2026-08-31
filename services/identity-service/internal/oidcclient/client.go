@@ -17,24 +17,40 @@ import (
 
 const responseLimit = 1 << 20
 
+var errResponseTooLarge = errors.New("OIDC response exceeds 1 MiB")
+
 type Client struct{ httpClient *http.Client }
 
 func New(httpClient *http.Client) (*Client, error) {
 	if httpClient == nil {
 		return nil, fmt.Errorf("OIDC client requires an HTTP client")
 	}
-	return &Client{httpClient: httpClient}, nil
+	bounded := *httpClient
+	transport := bounded.Transport
+	if transport == nil {
+		transport = http.DefaultTransport
+	}
+	bounded.Transport = responseLimitTransport{base: transport, limit: responseLimit}
+	bounded.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	return &Client{httpClient: &bounded}, nil
 }
 
 func (c *Client) Discover(ctx context.Context, issuer string) (oidcflow.Discovery, error) {
 	provider, err := oidc.NewProvider(oidc.ClientContext(ctx, c.httpClient), issuer)
 	if err != nil {
+		if strings.Contains(err.Error(), errResponseTooLarge.Error()) {
+			err = errResponseTooLarge
+		}
 		return oidcflow.Discovery{}, fmt.Errorf("discover OIDC metadata: %w", err)
 	}
 	var metadata struct {
-		Issuer           string `json:"issuer"`
-		UserInfoEndpoint string `json:"userinfo_endpoint"`
-		JWKSURI          string `json:"jwks_uri"`
+		Issuer                   string   `json:"issuer"`
+		UserInfoEndpoint         string   `json:"userinfo_endpoint"`
+		JWKSURI                  string   `json:"jwks_uri"`
+		TokenEndpointAuthMethods []string `json:"token_endpoint_auth_methods_supported"`
+		IDTokenSigningAlgs       []string `json:"id_token_signing_alg_values_supported"`
 	}
 	if err := provider.Claims(&metadata); err != nil {
 		return oidcflow.Discovery{}, fmt.Errorf("decode OIDC metadata: %w", err)
@@ -43,7 +59,8 @@ func (c *Client) Discover(ctx context.Context, issuer string) (oidcflow.Discover
 	return oidcflow.Discovery{
 		Issuer: metadata.Issuer, AuthorizationEndpoint: endpoint.AuthURL,
 		TokenEndpoint: endpoint.TokenURL, UserInfoEndpoint: metadata.UserInfoEndpoint,
-		JWKSURI: metadata.JWKSURI,
+		JWKSURI: metadata.JWKSURI, TokenEndpointAuthMethods: metadata.TokenEndpointAuthMethods,
+		IDTokenSigningAlgs: metadata.IDTokenSigningAlgs,
 	}, nil
 }
 
@@ -51,7 +68,7 @@ func (c *Client) AuthorizationURL(input oidcflow.AuthorizationInput) (string, er
 	config := oauth2.Config{
 		ClientID:    input.Provider.ClientID,
 		Endpoint:    oauth2.Endpoint{AuthURL: input.Provider.AuthorizationEndpoint},
-		RedirectURL: input.Provider.RedirectURI,
+		RedirectURL: input.RedirectURI,
 		Scopes:      input.Provider.Scopes,
 	}
 	return config.AuthCodeURL(
@@ -66,13 +83,18 @@ func (c *Client) ExchangeAndVerify(
 	ctx context.Context,
 	input oidcflow.ExchangeInput,
 ) (oidcflow.VerifiedIdentity, error) {
+	authStyle, err := tokenEndpointAuthStyle(input.Provider.TokenEndpointAuthMethod)
+	if err != nil {
+		return oidcflow.VerifiedIdentity{}, err
+	}
 	config := oauth2.Config{
 		ClientID:     input.Provider.ClientID,
 		ClientSecret: input.ClientSecret,
 		Endpoint: oauth2.Endpoint{
 			AuthURL: input.Provider.AuthorizationEndpoint, TokenURL: input.Provider.TokenEndpoint,
+			AuthStyle: authStyle,
 		},
-		RedirectURL: input.Provider.RedirectURI,
+		RedirectURL: input.RedirectURI,
 		Scopes:      input.Provider.Scopes,
 	}
 	requestContext := oidc.ClientContext(ctx, c.httpClient)
@@ -87,7 +109,7 @@ func (c *Client) ExchangeAndVerify(
 	verifier := oidc.NewVerifier(
 		input.Provider.Issuer,
 		oidc.NewRemoteKeySet(requestContext, input.Provider.JWKSURI),
-		&oidc.Config{ClientID: input.Provider.ClientID},
+		&oidc.Config{ClientID: input.Provider.ClientID, SupportedSigningAlgs: input.Provider.IDTokenSigningAlgs},
 	)
 	idToken, err := verifier.Verify(requestContext, rawIDToken)
 	if err != nil {
@@ -111,11 +133,65 @@ func (c *Client) ExchangeAndVerify(
 		EmailVerified: claims.EmailVerified,
 		DisplayName:   firstNonempty(claims.Name, claims.PreferredUsername),
 	}
-	if input.Provider.UserInfoEndpoint == "" || token.AccessToken == "" {
+	if (strings.TrimSpace(identity.Email) != "" && identity.EmailVerified) ||
+		input.Provider.UserInfoEndpoint == "" || token.AccessToken == "" {
 		return identity, nil
 	}
 	return c.mergeUserInfo(requestContext, input.Provider.UserInfoEndpoint, token.AccessToken, identity)
 }
+
+func tokenEndpointAuthStyle(method string) (oauth2.AuthStyle, error) {
+	switch method {
+	case "client_secret_basic":
+		return oauth2.AuthStyleInHeader, nil
+	case "client_secret_post":
+		return oauth2.AuthStyleInParams, nil
+	default:
+		return oauth2.AuthStyleAutoDetect, fmt.Errorf("unsupported OIDC token endpoint auth method %q", method)
+	}
+}
+
+type responseLimitTransport struct {
+	base  http.RoundTripper
+	limit int64
+}
+
+func (t responseLimitTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	response, err := t.base.RoundTrip(request)
+	if err != nil {
+		return nil, err
+	}
+	if response.ContentLength > t.limit {
+		_ = response.Body.Close()
+		return nil, errResponseTooLarge
+	}
+	response.Body = &responseLimitBody{body: response.Body, remaining: t.limit}
+	return response, nil
+}
+
+type responseLimitBody struct {
+	body      io.ReadCloser
+	remaining int64
+}
+
+func (b *responseLimitBody) Read(buffer []byte) (int, error) {
+	if b.remaining == 0 {
+		var probe [1]byte
+		read, err := b.body.Read(probe[:])
+		if read > 0 {
+			return 0, errResponseTooLarge
+		}
+		return 0, err
+	}
+	if int64(len(buffer)) > b.remaining {
+		buffer = buffer[:b.remaining]
+	}
+	read, err := b.body.Read(buffer)
+	b.remaining -= int64(read)
+	return read, err
+}
+
+func (b *responseLimitBody) Close() error { return b.body.Close() }
 
 func (c *Client) mergeUserInfo(
 	ctx context.Context,

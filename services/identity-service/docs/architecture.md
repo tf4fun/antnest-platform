@@ -12,14 +12,19 @@ principals without importing Agent, Channel, Runtime, or UI concepts.
 
 ### User And OrganizationMembership
 
-`User` is the global human/account identity. `OrganizationMembership` is the
-organization-scoped directory resource and carries role, active state, source,
-and SCIM identity. A User can survive deactivation in one Organization.
+`User` is the stable Antnest subject and carries only system-wide role and
+status. It does not own an email, display name, credential, or provisioning
+source. `OrganizationMembership` is the organization-scoped profile and
+carries email, display name, role, active state, source, and SCIM identity. A
+User can survive profile changes or deactivation in one Organization without
+changing its identity in another Organization.
 Administrators attach an existing active User to another Organization by
 stable User ID; the repository treats an identical local Membership as an
 idempotent result and rejects ownership, role, or active-state conflicts.
 
-The system administrator is a local User with `system_role=admin`. Creating an
+`LocalCredential` owns a password hash for one User independently of any
+Membership. The system administrator is a User with `system_role=admin`, a
+LocalCredential, and a local administrator Membership. Creating an
 Organization atomically grants its creator an active local administrator
 Membership, so the Organization is usable immediately. OIDC and SCIM can never
 create or promote a system administrator.
@@ -31,24 +36,40 @@ GroupMembership points to an OrganizationMembership rather than directly to a
 User, making cross-organization edges structurally impossible.
 
 Every edge has a source. A SCIM replacement sees and replaces only
-SCIM-owned edges; local edges remain invisible and unchanged.
+SCIM-owned edges; local edges remain invisible and unchanged. The persistence
+model requires Group and edge source to match, so an adapter cannot attach a
+SCIM-owned edge to a local Group or vice versa.
 
 ### OIDCProvider And ExternalIdentity
 
 OIDCProvider owns discovered endpoints and an encrypted client secret.
-ExternalIdentity is immutable at `(provider_id, subject)` and maps to one User.
-Verified email can bind a SCIM-created membership in the same organization but
-cannot take over a local or differently bound identity.
+ExternalIdentity is immutable at `(provider_id, subject)` and maps to one User
+and Membership. A new verified OIDC identity may bind an existing active,
+non-system Membership by normalized email, but only inside the Provider's
+Organization. It never searches another Organization. This permits local,
+SCIM, and multiple OIDC credentials to identify the same organization member
+without making email a global User key.
+OIDC is authentication only: it never creates a User or Membership and never
+rewrites a local- or SCIM-owned profile.
 
 Provider identity is `(organization_id, name)`. The issuer cannot change in
 place because doing so would reuse the old subject namespace for a different
 authority. An administrator disables the old Provider and creates the new
 issuer under a new Provider name; old external identities remain durable for
-audit. Concurrent first writes return the canonical persisted Provider ID;
-secret encryption binds to the stable Organization/name key rather than a
-contending proposed ID. Enable/disable is a separate idempotent local command:
+audit. Concurrent writes use Provider revision compare-and-swap; one commits
+and a stale writer receives `version_conflict` instead of silently replacing
+newer discovery data. Secret encryption binds to the stable Organization/name
+key rather than a proposed row ID. Enable/disable is a separate idempotent local command:
 it never performs discovery, so a retired or unavailable IdP can still be
 disabled and the state transition can be audited.
+
+Provider configuration is restricted to system administrators. Its callback
+URI comes only from service deployment configuration. Every successful change
+increments `revision`; AuthSession pins that value so a callback cannot mix
+authorization performed under one configuration with token exchange under
+another. Discovery also pins the selected client-secret authentication method
+and supported asymmetric ID-token signing algorithms. Provider writes use the
+revision as a compare-and-swap token rather than accepting a stale replacement.
 
 ### AuthSession And Token
 
@@ -115,12 +136,30 @@ event without resetting an existing password.
 
 - Internal JSON RPC follows `contracts/identity/identity-contract.json` and is
   not public OpenAPI.
-- OIDC keeps standard query, token, and claims semantics. Private fields are
-  not injected into protocol success objects.
-- SCIM keeps standard schemas, pagination, filters, errors, and locations.
-  Unsupported PATCH paths fail explicitly instead of being ignored.
+- OIDC uses Authorization Code, Discovery, PKCE S256, state, nonce, ID Token
+  verification, and optional UserInfo. Standard authorization error responses
+  terminalize the login session without attempting token exchange. Private
+  fields are not injected into protocol success objects. Issuer and discovered
+  endpoints require HTTPS, redirects are rejected, remote responses are bounded
+  to 1 MiB, and an authorization code is exchanged using one discovered client
+  authentication style exactly once. The opaque `sub` value is preserved byte
+  for byte.
+- The Antnest SCIM Profile supports core User and Group resources, collection
+  and item discovery, pagination, exact `eq` filters, PUT, the documented PATCH
+  subset, and canonical SCIM errors and locations. User `userName` is an
+  organization-scoped identifier and need not be an email; a primary email is
+  accepted from `emails` with `userName` as a compatibility fallback when it
+  is itself an email. Unsupported PATCH paths fail explicitly instead of being
+  ignored.
 - SCIM Group DELETE is a real resource deletion. Group membership rows cascade,
   and the same external ID may later create a fresh Group.
+- SCIM User `active=false` is reversible deactivation. User DELETE tombstones
+  the SCIM Membership and hides it from GET, list, and filter results while the
+  global User and audit facts remain. Exact external-ID reprovisioning reuses
+  that User, creates a fresh SCIM Membership ID, and repoints any durable OIDC
+  identity to the new Membership.
+- SCIM tokens are rotating credentials for one logical directory authority per
+  Organization. They do not create separate ownership namespaces.
 
 ## Persistence Boundary
 
@@ -145,7 +184,11 @@ whose Organization, User, and Membership match the session result.
   callback.
 - Startup recovery terminalizes only callbacks whose durable session lifetime
   has expired. It does not fail another replica's still-valid exchange.
-- SCIM writes are transactional and idempotent by resource ID/externalId.
+- SCIM POST is create-only and returns conflict for an existing resource ID or
+  external ID. PUT/PATCH are transactional updates addressed by resource ID.
+- Membership and Group replacement compare the previously read update version
+  under row lock; successful writes advance it monotonically at PostgreSQL
+  timestamp precision.
 - A SCIM mutation accepts one bounded JSON object. Group member references
   must be non-empty, and replacement locks the Group before changing its
   owned membership set.
@@ -163,3 +206,14 @@ whose Organization, User, and Membership match the session result.
 5. Raw OIDC state appears only in the start operation's authorization URL; it
    is hashed durably and never logged, traced, journaled, or echoed by callback.
 6. No operation reads or writes another service's database.
+7. SCIM mutations update only the organization-scoped Membership profile;
+   they never rewrite another Organization's profile or a global User subject.
+8. Passwords and OIDC subjects are credentials of a User, not User attributes.
+
+## Deferred Event Delivery
+
+Identity mutations continue to append `identity_events` in the same database
+transaction. This is an audit/outbox foundation only. Listing, watching,
+consumer cursors, replay, and Agent Controller reactions are deferred until the
+Agent Controller contract is implemented; this service must not claim that the
+cross-service business flow is complete before then.

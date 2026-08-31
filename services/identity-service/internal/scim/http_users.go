@@ -1,6 +1,7 @@
 package scim
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 )
@@ -10,16 +11,26 @@ type userRequest struct {
 	ExternalID  string   `json:"externalId"`
 	UserName    string   `json:"userName"`
 	DisplayName string   `json:"displayName"`
-	Active      *bool    `json:"active"`
+	Name        struct {
+		Formatted string `json:"formatted"`
+	} `json:"name"`
+	Emails []userEmail `json:"emails"`
+	Active *bool       `json:"active"`
+}
+
+type userEmail struct {
+	Value   string `json:"value"`
+	Type    string `json:"type"`
+	Primary bool   `json:"primary"`
 }
 
 func (h *HTTPHandler) listUsers(response http.ResponseWriter, request *http.Request, authorization Authorization) {
 	query, err := listQueryFromRequest(request)
 	if err != nil {
-		writeSCIMError(response, http.StatusBadRequest, "invalidFilter", err.Error())
+		writeListQueryError(response, err)
 		return
 	}
-	if query.FilterAttribute != "" && !equalFoldAny(query.FilterAttribute, "userName", "externalId") {
+	if query.FilterAttribute != "" && !equalFoldAny(query.FilterAttribute, "userName", "externalId", "emails.value") {
 		writeSCIMError(response, http.StatusBadRequest, "invalidFilter", "Unsupported SCIM User filter")
 		return
 	}
@@ -40,7 +51,16 @@ func (h *HTTPHandler) createUser(response http.ResponseWriter, request *http.Req
 	if !decodeSCIMBody(response, request, &body) {
 		return
 	}
-	resource, err := h.service.CreateUser(request.Context(), authorization, body.input())
+	if err := validateSchemas(body.Schemas, userSchema); err != nil {
+		writeSCIMError(response, http.StatusBadRequest, "invalidValue", err.Error())
+		return
+	}
+	input, err := body.input()
+	if err != nil {
+		writeSCIMError(response, http.StatusBadRequest, "invalidValue", err.Error())
+		return
+	}
+	resource, err := h.service.CreateUser(request.Context(), authorization, input)
 	if err != nil {
 		writeServiceError(response, err)
 		return
@@ -63,7 +83,18 @@ func (h *HTTPHandler) replaceUser(response http.ResponseWriter, request *http.Re
 	if !decodeSCIMBody(response, request, &body) {
 		return
 	}
-	resource, err := h.service.ReplaceUser(request.Context(), authorization, request.PathValue("id"), body.input())
+	if err := validateSchemas(body.Schemas, userSchema); err != nil {
+		writeSCIMError(response, http.StatusBadRequest, "invalidValue", err.Error())
+		return
+	}
+	input, err := body.input()
+	if err != nil {
+		writeSCIMError(response, http.StatusBadRequest, "invalidValue", err.Error())
+		return
+	}
+	resource, err := h.service.ReplaceUser(
+		request.Context(), authorization, request.PathValue("id"), ReplaceUserInput{UserInput: input},
+	)
 	if err != nil {
 		writeServiceError(response, err)
 		return
@@ -72,22 +103,55 @@ func (h *HTTPHandler) replaceUser(response http.ResponseWriter, request *http.Re
 }
 
 func (h *HTTPHandler) deleteUser(response http.ResponseWriter, request *http.Request, authorization Authorization) {
-	if _, err := h.service.DeactivateUser(request.Context(), authorization, request.PathValue("id")); err != nil {
+	if err := h.service.DeleteUser(request.Context(), authorization, request.PathValue("id")); err != nil {
 		writeServiceError(response, err)
 		return
 	}
 	response.WriteHeader(http.StatusNoContent)
 }
 
-func (b userRequest) input() UserInput {
+func (b userRequest) input() (UserInput, error) {
 	active := true
 	if b.Active != nil {
 		active = *b.Active
 	}
+	email, err := b.primaryEmail()
+	if err != nil {
+		return UserInput{}, err
+	}
+	displayName := strings.TrimSpace(b.DisplayName)
+	if displayName == "" {
+		displayName = strings.TrimSpace(b.Name.Formatted)
+	}
 	return UserInput{
 		ExternalID: strings.TrimSpace(b.ExternalID), UserName: b.UserName,
-		DisplayName: b.DisplayName, Active: active,
+		Email: email, DisplayName: displayName, Active: active,
+	}, nil
+}
+
+func (b userRequest) primaryEmail() (string, error) {
+	selected := ""
+	primaryCount := 0
+	for _, email := range b.Emails {
+		value := strings.TrimSpace(email.Value)
+		if value == "" {
+			continue
+		}
+		if selected == "" {
+			selected = value
+		}
+		if email.Primary {
+			primaryCount++
+			selected = value
+		}
 	}
+	if primaryCount > 1 {
+		return "", fmt.Errorf("SCIM User must not contain more than one primary email")
+	}
+	if selected == "" {
+		selected = strings.TrimSpace(b.UserName)
+	}
+	return selected, nil
 }
 
 func (h *HTTPHandler) userResponse(resource UserResource) map[string]any {
@@ -96,8 +160,9 @@ func (h *HTTPHandler) userResponse(resource UserResource) map[string]any {
 		"schemas": []string{userSchema}, "id": resource.Membership.ID,
 		"externalId":  resource.Membership.SCIMExternalID,
 		"userName":    resource.Membership.SCIMUserName,
-		"displayName": resource.User.DisplayName, "active": active,
-		"emails": []map[string]any{{"value": resource.User.Email, "primary": true}},
+		"displayName": resource.Membership.DisplayName, "active": active,
+		"name":   map[string]any{"formatted": resource.Membership.DisplayName},
+		"emails": []map[string]any{{"value": resource.Membership.Email, "primary": true}},
 		"meta": map[string]any{
 			"resourceType": "User", "created": resource.Membership.CreatedAt,
 			"lastModified": resource.Membership.UpdatedAt,

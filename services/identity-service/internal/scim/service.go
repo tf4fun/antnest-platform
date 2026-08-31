@@ -21,6 +21,7 @@ type Repository interface {
 	GetUser(context.Context, string, string) (UserResource, error)
 	ListUsers(context.Context, ListQuery) (UserPage, error)
 	ReplaceUser(context.Context, ReplaceUserCommand) (UserResource, error)
+	DeleteUser(context.Context, DeleteUserCommand) error
 	CreateGroup(context.Context, CreateGroupCommand) (GroupResource, error)
 	GetGroup(context.Context, string, string) (GroupResource, error)
 	ListGroups(context.Context, ListQuery) (GroupPage, error)
@@ -70,6 +71,7 @@ type IssueTokenResult struct {
 type UserInput struct {
 	ExternalID  string
 	UserName    string
+	Email       string
 	DisplayName string
 	Active      bool
 }
@@ -87,10 +89,23 @@ type CreateUserCommand struct {
 }
 
 type ReplaceUserCommand struct {
+	OrganizationID    string
+	ActorTokenID      string
+	User              domain.User
+	Membership        domain.OrganizationMembership
+	ExpectedUpdatedAt time.Time
+}
+
+type ReplaceUserInput struct {
+	UserInput
+	ExpectedUpdatedAt time.Time
+}
+
+type DeleteUserCommand struct {
 	OrganizationID string
 	ActorTokenID   string
-	User           domain.User
-	Membership     domain.OrganizationMembership
+	MembershipID   string
+	DeletedAt      time.Time
 }
 
 type GroupInput struct {
@@ -112,10 +127,16 @@ type CreateGroupCommand struct {
 }
 
 type ReplaceGroupCommand struct {
-	OrganizationID string
-	ActorTokenID   string
-	Group          domain.Group
-	MemberIDs      []string
+	OrganizationID    string
+	ActorTokenID      string
+	Group             domain.Group
+	MemberIDs         []string
+	ExpectedUpdatedAt time.Time
+}
+
+type ReplaceGroupInput struct {
+	GroupInput
+	ExpectedUpdatedAt time.Time
 }
 
 type DeleteGroupCommand struct {
@@ -229,19 +250,20 @@ func (s *Service) Authorize(ctx context.Context, rawToken, requiredScope string)
 }
 
 func (s *Service) CreateUser(ctx context.Context, authorization Authorization, input UserInput) (UserResource, error) {
-	email, displayName, err := normalizeUserInput(input)
+	userName, email, displayName, err := normalizeUserInput(input)
 	if err != nil {
 		return UserResource{}, err
 	}
 	now := s.now().UTC()
 	user := domain.User{
-		ID: s.newID(), Email: email, DisplayName: displayName, SystemRole: domain.SystemRoleUser,
-		Source: domain.SourceSCIM, Active: true, CreatedAt: now, UpdatedAt: now,
+		ID: s.newID(), SystemRole: domain.SystemRoleUser,
+		Active: true, CreatedAt: now, UpdatedAt: now,
 	}
 	membership := domain.OrganizationMembership{
 		ID: s.newID(), OrganizationID: authorization.OrganizationID, UserID: user.ID,
+		Email: email, DisplayName: displayName,
 		Role: domain.OrganizationRoleMember, Source: domain.SourceSCIM, Active: input.Active,
-		SCIMExternalID: strings.TrimSpace(input.ExternalID), SCIMUserName: email,
+		SCIMExternalID: strings.TrimSpace(input.ExternalID), SCIMUserName: userName,
 		CreatedAt: now, UpdatedAt: now,
 	}
 	return s.repository.CreateUser(ctx, CreateUserCommand{
@@ -264,7 +286,7 @@ func (s *Service) ReplaceUser(
 	ctx context.Context,
 	authorization Authorization,
 	resourceID string,
-	input UserInput,
+	input ReplaceUserInput,
 ) (UserResource, error) {
 	current, err := s.repository.GetUser(ctx, authorization.OrganizationID, strings.TrimSpace(resourceID))
 	if err != nil {
@@ -273,21 +295,22 @@ func (s *Service) ReplaceUser(
 	if current.Membership.Source != domain.SourceSCIM || current.Membership.OrganizationID != authorization.OrganizationID {
 		return UserResource{}, domain.ErrNotFound
 	}
-	email, displayName, err := normalizeUserInput(input)
+	userName, email, displayName, err := normalizeUserInput(input.UserInput)
 	if err != nil {
 		return UserResource{}, err
 	}
-	now := s.now().UTC()
-	current.User.Email = email
-	current.User.DisplayName = displayName
-	current.User.UpdatedAt = now
+	expectedUpdatedAt := chooseExpectedVersion(input.ExpectedUpdatedAt, current.Membership.UpdatedAt)
+	now := domain.NextUpdatedAt(s.now(), current.Membership.UpdatedAt)
+	current.Membership.Email = email
+	current.Membership.DisplayName = displayName
 	current.Membership.Active = input.Active
 	current.Membership.SCIMExternalID = strings.TrimSpace(input.ExternalID)
-	current.Membership.SCIMUserName = email
+	current.Membership.SCIMUserName = userName
 	current.Membership.UpdatedAt = now
 	return s.repository.ReplaceUser(ctx, ReplaceUserCommand{
 		OrganizationID: authorization.OrganizationID, ActorTokenID: authorization.TokenID,
 		User: current.User, Membership: current.Membership,
+		ExpectedUpdatedAt: expectedUpdatedAt,
 	})
 }
 
@@ -296,9 +319,22 @@ func (s *Service) DeactivateUser(ctx context.Context, authorization Authorizatio
 	if err != nil {
 		return UserResource{}, err
 	}
-	return s.ReplaceUser(ctx, authorization, resourceID, UserInput{
+	return s.ReplaceUser(ctx, authorization, resourceID, ReplaceUserInput{UserInput: UserInput{
 		ExternalID: current.Membership.SCIMExternalID, UserName: current.Membership.SCIMUserName,
-		DisplayName: current.User.DisplayName, Active: false,
+		Email: current.Membership.Email, DisplayName: current.Membership.DisplayName, Active: false,
+	}, ExpectedUpdatedAt: current.Membership.UpdatedAt})
+}
+
+func (s *Service) DeleteUser(ctx context.Context, authorization Authorization, resourceID string) error {
+	membershipID := strings.TrimSpace(resourceID)
+	if membershipID == "" {
+		return domain.ErrNotFound
+	}
+	return s.repository.DeleteUser(ctx, DeleteUserCommand{
+		OrganizationID: authorization.OrganizationID,
+		ActorTokenID:   authorization.TokenID,
+		MembershipID:   membershipID,
+		DeletedAt:      s.now().UTC(),
 	})
 }
 
@@ -337,7 +373,7 @@ func (s *Service) ReplaceGroup(
 	ctx context.Context,
 	authorization Authorization,
 	resourceID string,
-	input GroupInput,
+	input ReplaceGroupInput,
 ) (GroupResource, error) {
 	current, err := s.repository.GetGroup(ctx, authorization.OrganizationID, strings.TrimSpace(resourceID))
 	if err != nil {
@@ -354,15 +390,24 @@ func (s *Service) ReplaceGroup(
 	if err != nil {
 		return GroupResource{}, err
 	}
+	expectedUpdatedAt := chooseExpectedVersion(input.ExpectedUpdatedAt, current.Group.UpdatedAt)
 	current.Group.DisplayName = displayName
 	current.Group.Active = true
 	current.Group.SCIMExternalID = strings.TrimSpace(input.ExternalID)
-	current.Group.UpdatedAt = s.now().UTC()
+	current.Group.UpdatedAt = domain.NextUpdatedAt(s.now(), current.Group.UpdatedAt)
 	return s.repository.ReplaceGroup(ctx, ReplaceGroupCommand{
 		OrganizationID: authorization.OrganizationID,
 		ActorTokenID:   authorization.TokenID,
 		Group:          current.Group, MemberIDs: memberIDs,
+		ExpectedUpdatedAt: expectedUpdatedAt,
 	})
+}
+
+func chooseExpectedVersion(requested, current time.Time) time.Time {
+	if requested.IsZero() {
+		return current
+	}
+	return requested
 }
 
 func (s *Service) DeleteGroup(ctx context.Context, authorization Authorization, resourceID string) error {
@@ -378,20 +423,24 @@ func (s *Service) DeleteGroup(ctx context.Context, authorization Authorization, 
 	})
 }
 
-func normalizeUserInput(input UserInput) (string, string, error) {
-	email, err := domain.NormalizeEmail(input.UserName)
+func normalizeUserInput(input UserInput) (string, string, string, error) {
+	userName, err := domain.NormalizeSCIMUserName(input.UserName)
 	if err != nil {
-		return "", "", fmt.Errorf("SCIM userName: %w", err)
+		return "", "", "", err
+	}
+	email, err := domain.NormalizeEmail(input.Email)
+	if err != nil {
+		return "", "", "", fmt.Errorf("SCIM email: %w", err)
 	}
 	displayName := strings.TrimSpace(input.DisplayName)
 	if displayName == "" {
-		displayName = email
+		displayName = userName
 	}
 	displayName, err = domain.NormalizeDisplayName(displayName)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
-	return email, displayName, nil
+	return userName, email, displayName, nil
 }
 
 func normalizeMemberIDs(input []string) ([]string, error) {

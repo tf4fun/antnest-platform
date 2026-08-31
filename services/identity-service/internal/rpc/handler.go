@@ -22,6 +22,9 @@ var ContractRoutes = map[string]string{
 	"create_organization":         "/rpc/identity/create-organization",
 	"create_local_user":           "/rpc/identity/create-local-user",
 	"add_organization_membership": "/rpc/identity/add-organization-membership",
+	"change_local_password":       "/rpc/identity/change-local-password",
+	"update_membership":           "/rpc/identity/update-membership",
+	"set_user_active":             "/rpc/identity/set-user-active",
 	"list_directory":              "/rpc/identity/list-directory",
 	"local_login":                 "/rpc/identity/local-login",
 	"resolve_access_token":        "/rpc/identity/resolve-access-token",
@@ -38,6 +41,9 @@ type DirectoryService interface {
 	CreateOrganization(context.Context, directory.CreateOrganizationInput) (domain.Organization, error)
 	CreateLocalUser(context.Context, directory.CreateLocalUserInput) (directory.CreateLocalUserResult, error)
 	AddOrganizationMembership(context.Context, directory.AddOrganizationMembershipInput) (domain.OrganizationMembership, error)
+	ChangeLocalPassword(context.Context, directory.ChangeLocalPasswordInput) error
+	UpdateMembership(context.Context, directory.UpdateMembershipInput) (domain.OrganizationMembership, error)
+	SetUserActive(context.Context, directory.SetUserActiveInput) error
 	List(context.Context, string, string) (directory.Directory, error)
 }
 
@@ -81,6 +87,9 @@ func NewHandler(dependencies Dependencies) (*Handler, error) {
 	handler.mux.HandleFunc("POST /rpc/identity/create-organization", handler.createOrganization)
 	handler.mux.HandleFunc("POST /rpc/identity/create-local-user", handler.createLocalUser)
 	handler.mux.HandleFunc("POST /rpc/identity/add-organization-membership", handler.addOrganizationMembership)
+	handler.mux.HandleFunc("POST /rpc/identity/change-local-password", handler.changeLocalPassword)
+	handler.mux.HandleFunc("POST /rpc/identity/update-membership", handler.updateMembership)
+	handler.mux.HandleFunc("POST /rpc/identity/set-user-active", handler.setUserActive)
 	handler.mux.HandleFunc("POST /rpc/identity/list-directory", handler.listDirectory)
 	handler.mux.HandleFunc("POST /rpc/identity/local-login", handler.localLogin)
 	handler.mux.HandleFunc("POST /rpc/identity/resolve-access-token", handler.resolveAccessToken)
@@ -104,15 +113,19 @@ type createOrganizationRequest struct {
 	ActorPrincipalID string `json:"actor_principal_id"`
 	Slug             string `json:"slug"`
 	Name             string `json:"name"`
+	OwnerEmail       string `json:"owner_email"`
+	OwnerDisplayName string `json:"owner_display_name"`
 }
 
 func (h *Handler) createOrganization(response http.ResponseWriter, request *http.Request) {
 	var body createOrganizationRequest
-	if !decodeRequest(response, request, &body) || !require(response, body.RequestID, body.ActorPrincipalID) {
+	if !decodeRequest(response, request, &body) ||
+		!require(response, body.RequestID, body.ActorPrincipalID, body.OwnerEmail, body.OwnerDisplayName) {
 		return
 	}
 	organization, err := h.dependencies.Directory.CreateOrganization(request.Context(), directory.CreateOrganizationInput{
 		RequestID: body.RequestID, ActorPrincipalID: body.ActorPrincipalID, Slug: body.Slug, Name: body.Name,
+		OwnerEmail: body.OwnerEmail, OwnerDisplayName: body.OwnerDisplayName,
 	})
 	writeResult(response, map[string]any{"organization": organization}, err)
 }
@@ -145,6 +158,8 @@ type addOrganizationMembershipRequest struct {
 	ActorPrincipalID string                  `json:"actor_principal_id"`
 	OrganizationID   string                  `json:"organization_id"`
 	UserID           string                  `json:"user_id"`
+	Email            string                  `json:"email"`
+	DisplayName      string                  `json:"display_name"`
 	Role             domain.OrganizationRole `json:"role"`
 }
 
@@ -156,6 +171,8 @@ func (h *Handler) addOrganizationMembership(response http.ResponseWriter, reques
 		body.ActorPrincipalID,
 		body.OrganizationID,
 		body.UserID,
+		body.Email,
+		body.DisplayName,
 	) {
 		return
 	}
@@ -163,10 +180,98 @@ func (h *Handler) addOrganizationMembership(response http.ResponseWriter, reques
 		request.Context(),
 		directory.AddOrganizationMembershipInput{
 			RequestID: body.RequestID, ActorPrincipalID: body.ActorPrincipalID,
-			OrganizationID: body.OrganizationID, UserID: body.UserID, Role: body.Role,
+			OrganizationID: body.OrganizationID, UserID: body.UserID,
+			Email: body.Email, DisplayName: body.DisplayName, Role: body.Role,
 		},
 	)
 	writeResult(response, map[string]any{"membership": membership}, err)
+}
+
+type changeLocalPasswordRequest struct {
+	RequestID        string `json:"request_id"`
+	ActorPrincipalID string `json:"actor_principal_id"`
+	UserID           string `json:"user_id"`
+	CurrentPassword  string `json:"current_password"`
+	NewPassword      string `json:"new_password"`
+}
+
+func (h *Handler) changeLocalPassword(response http.ResponseWriter, request *http.Request) {
+	var body changeLocalPasswordRequest
+	if !decodeRequest(response, request, &body) || !require(
+		response,
+		body.RequestID,
+		body.ActorPrincipalID,
+		body.UserID,
+		body.CurrentPassword,
+		body.NewPassword,
+	) {
+		return
+	}
+	err := h.dependencies.Directory.ChangeLocalPassword(request.Context(), directory.ChangeLocalPasswordInput{
+		RequestID: body.RequestID, ActorPrincipalID: body.ActorPrincipalID, UserID: body.UserID,
+		CurrentPassword: body.CurrentPassword, NewPassword: body.NewPassword,
+	})
+	writeResult(response, map[string]string{"status": "changed"}, err)
+}
+
+type updateMembershipRequest struct {
+	RequestID        string                  `json:"request_id"`
+	ActorPrincipalID string                  `json:"actor_principal_id"`
+	OrganizationID   string                  `json:"organization_id"`
+	MembershipID     string                  `json:"membership_id"`
+	Email            string                  `json:"email"`
+	DisplayName      string                  `json:"display_name"`
+	Role             domain.OrganizationRole `json:"role"`
+	Active           *bool                   `json:"active"`
+}
+
+func (h *Handler) updateMembership(response http.ResponseWriter, request *http.Request) {
+	var body updateMembershipRequest
+	if !decodeRequest(response, request, &body) || !require(
+		response,
+		body.RequestID,
+		body.ActorPrincipalID,
+		body.OrganizationID,
+		body.MembershipID,
+		body.Email,
+		body.DisplayName,
+	) {
+		return
+	}
+	if body.Active == nil {
+		writeError(response, domain.NewError("bad_request", "active is required", false))
+		return
+	}
+	membership, err := h.dependencies.Directory.UpdateMembership(request.Context(), directory.UpdateMembershipInput{
+		RequestID: body.RequestID, ActorPrincipalID: body.ActorPrincipalID,
+		OrganizationID: body.OrganizationID, MembershipID: body.MembershipID,
+		Email: body.Email, DisplayName: body.DisplayName, Role: body.Role, Active: *body.Active,
+	})
+	writeResult(response, map[string]any{"membership": membership}, err)
+}
+
+type setUserActiveRequest struct {
+	RequestID        string `json:"request_id"`
+	ActorPrincipalID string `json:"actor_principal_id"`
+	UserID           string `json:"user_id"`
+	Active           *bool  `json:"active"`
+}
+
+func (h *Handler) setUserActive(response http.ResponseWriter, request *http.Request) {
+	var body setUserActiveRequest
+	if !decodeRequest(response, request, &body) ||
+		!require(response, body.RequestID, body.ActorPrincipalID, body.UserID) {
+		return
+	}
+	if body.Active == nil {
+		writeError(response, domain.NewError("bad_request", "active is required", false))
+		return
+	}
+	err := h.dependencies.Directory.SetUserActive(request.Context(), directory.SetUserActiveInput{
+		RequestID: body.RequestID, ActorPrincipalID: body.ActorPrincipalID,
+		UserID: body.UserID, Active: *body.Active,
+	})
+	writeResult(response, map[string]string{"status": "updated"}, err)
 }
 
 type directoryRequest struct {
@@ -267,7 +372,6 @@ type upsertOIDCProviderRequest struct {
 	Issuer           string   `json:"issuer"`
 	ClientID         string   `json:"client_id"`
 	ClientSecret     string   `json:"client_secret"`
-	RedirectURI      string   `json:"redirect_uri"`
 	Scopes           []string `json:"scopes"`
 	Enabled          *bool    `json:"enabled"`
 }
@@ -275,7 +379,7 @@ type upsertOIDCProviderRequest struct {
 func (h *Handler) upsertOIDCProvider(response http.ResponseWriter, request *http.Request) {
 	var body upsertOIDCProviderRequest
 	if !decodeRequest(response, request, &body) ||
-		!require(response, body.RequestID, body.ActorPrincipalID, body.OrganizationID, body.Name, body.Issuer, body.ClientID, body.RedirectURI) {
+		!require(response, body.RequestID, body.ActorPrincipalID, body.OrganizationID, body.Name, body.Issuer, body.ClientID) {
 		return
 	}
 	if body.Enabled == nil {
@@ -285,7 +389,7 @@ func (h *Handler) upsertOIDCProvider(response http.ResponseWriter, request *http
 	provider, err := h.dependencies.OIDC.UpsertProvider(request.Context(), oidcflow.UpsertProviderInput{
 		RequestID: body.RequestID, ActorPrincipalID: body.ActorPrincipalID,
 		OrganizationID: body.OrganizationID, Name: body.Name, Issuer: body.Issuer,
-		ClientID: body.ClientID, ClientSecret: body.ClientSecret, RedirectURI: body.RedirectURI,
+		ClientID: body.ClientID, ClientSecret: body.ClientSecret,
 		Scopes: body.Scopes, Enabled: *body.Enabled,
 	})
 	writeResult(response, map[string]any{"provider": provider}, err)
@@ -350,14 +454,21 @@ func (h *Handler) startOIDCLogin(response http.ResponseWriter, request *http.Req
 }
 
 func (h *Handler) oidcCallback(response http.ResponseWriter, request *http.Request) {
+	response.Header().Set("Cache-Control", "no-store")
 	state := strings.TrimSpace(request.URL.Query().Get("state"))
 	code := strings.TrimSpace(request.URL.Query().Get("code"))
+	authorizationError := strings.TrimSpace(request.URL.Query().Get("error"))
 	if state == "" {
 		writeError(response, domain.NewError("bad_request", "state is required", false))
 		return
 	}
-	result, err := h.dependencies.OIDC.CompleteLogin(request.Context(), oidcflow.CompleteLoginInput{State: state, Code: code})
-	response.Header().Set("Cache-Control", "no-store")
+	if len(authorizationError) > 256 {
+		writeError(response, domain.NewError("bad_request", "OIDC authorization error is invalid", false))
+		return
+	}
+	result, err := h.dependencies.OIDC.CompleteLogin(request.Context(), oidcflow.CompleteLoginInput{
+		State: state, Code: code, AuthorizationError: authorizationError,
+	})
 	writeResult(response, result, err)
 }
 
@@ -408,13 +519,17 @@ func writeError(response http.ResponseWriter, err error) {
 		status = http.StatusNotFound
 	case errors.Is(err, domain.ErrConflict):
 		status = http.StatusConflict
+	case errors.Is(err, domain.ErrVersionConflict):
+		status = http.StatusConflict
+	case errors.Is(err, domain.ErrInvalidReference):
+		status = http.StatusBadRequest
 	}
 	switch code {
-	case "bad_request", "oidc_exchange_claim_invalid", "oidc_session_failed":
+	case "bad_request", "oidc_authorization_failed", "oidc_exchange_claim_invalid", "oidc_session_failed":
 		status = http.StatusBadRequest
-	case "inactive_principal":
+	case "inactive_principal", "oidc_membership_required":
 		status = http.StatusForbidden
-	case "oidc_provider_issuer_immutable", "oidc_exchange_in_progress":
+	case "oidc_provider_changed", "oidc_provider_issuer_immutable", "oidc_exchange_in_progress":
 		status = http.StatusConflict
 	case "oidc_session_expired", "oidc_completed_token_unavailable":
 		status = http.StatusGone

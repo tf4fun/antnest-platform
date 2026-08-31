@@ -2,7 +2,9 @@ package domain
 
 import (
 	"errors"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestNormalizeEmailAndSlug(t *testing.T) {
@@ -24,6 +26,20 @@ func TestNormalizeEmailAndSlug(t *testing.T) {
 	for _, value := range []string{"", "-team", "team-", "team space", "团队"} {
 		if _, err := NormalizeSlug(value); err == nil {
 			t.Fatalf("invalid slug %q was accepted", value)
+		}
+	}
+}
+
+func TestNormalizeSCIMUserNameDoesNotRequireAnEmail(t *testing.T) {
+	t.Parallel()
+
+	userName, err := NormalizeSCIMUserName("  Alice.Employee ")
+	if err != nil || userName != "alice.employee" {
+		t.Fatalf("NormalizeSCIMUserName = %q, %v", userName, err)
+	}
+	for _, value := range []string{"", "   ", strings.Repeat("x", 255)} {
+		if _, err := NormalizeSCIMUserName(value); !errors.Is(err, ErrInvalidArgument) {
+			t.Fatalf("invalid SCIM userName %q error = %v", value, err)
 		}
 	}
 }
@@ -60,5 +76,21 @@ func TestNormalizeScopesRejectsUnknownAndDeduplicates(t *testing.T) {
 	}
 	if _, err := NormalizeSCIMScopes([]string{"scim:admin"}); err == nil {
 		t.Fatal("unknown scope was accepted")
+	}
+}
+
+func TestNextUpdatedAtIsStrictlyMonotonicAtDatabasePrecision(t *testing.T) {
+	t.Parallel()
+
+	current := time.Date(2026, 8, 31, 12, 0, 0, 123456000, time.UTC)
+	if got := NextUpdatedAt(current, current); !got.Equal(current.Add(time.Microsecond)) {
+		t.Fatalf("same-clock update = %s", got)
+	}
+	if got := NextUpdatedAt(current.Add(time.Nanosecond), current); !got.Equal(current.Add(time.Microsecond)) {
+		t.Fatalf("sub-microsecond update = %s", got)
+	}
+	advanced := current.Add(time.Second)
+	if got := NextUpdatedAt(advanced, current); !got.Equal(advanced) {
+		t.Fatalf("advanced update = %s", got)
 	}
 }

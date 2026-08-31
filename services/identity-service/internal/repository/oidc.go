@@ -58,35 +58,58 @@ func (a *OIDCAdapter) UpsertProvider(
 ) (oidcflow.Provider, error) {
 	provider := command.Provider.Provider
 	err := a.store.inTransaction(ctx, "upsert_oidc_provider", func(tx pgx.Tx) error {
+		if err := a.store.requireSystemAdmin(ctx, tx, command.ActorPrincipalID); err != nil {
+			return err
+		}
 		if err := tx.QueryRow(ctx, `
 			INSERT INTO oidc_providers (
 				id, organization_id, name, display_name, issuer, client_id,
-				client_secret_ciphertext, client_secret_nonce, redirect_uri, scopes, enabled,
-				authorization_endpoint, token_endpoint, userinfo_endpoint, jwks_uri, created_at, updated_at
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+				client_secret_ciphertext, client_secret_nonce, scopes, enabled, revision,
+				authorization_endpoint, token_endpoint, token_endpoint_auth_method,
+				id_token_signing_algs, userinfo_endpoint, jwks_uri, created_at, updated_at
+			) VALUES (
+				$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19
+			)
 			ON CONFLICT (organization_id, name) DO UPDATE SET
 				display_name = EXCLUDED.display_name,
 				issuer = EXCLUDED.issuer,
 				client_id = EXCLUDED.client_id,
 				client_secret_ciphertext = EXCLUDED.client_secret_ciphertext,
 				client_secret_nonce = EXCLUDED.client_secret_nonce,
-				redirect_uri = EXCLUDED.redirect_uri,
 				scopes = EXCLUDED.scopes,
 				enabled = EXCLUDED.enabled,
+				revision = oidc_providers.revision + 1,
 				authorization_endpoint = EXCLUDED.authorization_endpoint,
 				token_endpoint = EXCLUDED.token_endpoint,
+				token_endpoint_auth_method = EXCLUDED.token_endpoint_auth_method,
+				id_token_signing_algs = EXCLUDED.id_token_signing_algs,
 				userinfo_endpoint = EXCLUDED.userinfo_endpoint,
 				jwks_uri = EXCLUDED.jwks_uri,
 				updated_at = EXCLUDED.updated_at
 			WHERE oidc_providers.issuer = EXCLUDED.issuer
-			RETURNING id, created_at`,
+			  AND oidc_providers.revision = EXCLUDED.revision - 1
+			RETURNING id, created_at, revision`,
 			provider.ID, provider.OrganizationID, provider.Name, provider.DisplayName,
 			provider.Issuer, provider.ClientID, provider.ClientSecret.Ciphertext,
-			provider.ClientSecret.Nonce, provider.RedirectURI, provider.Scopes, provider.Enabled,
-			provider.AuthorizationEndpoint, provider.TokenEndpoint, provider.UserInfoEndpoint,
-			provider.JWKSURI, provider.CreatedAt, provider.UpdatedAt,
-		).Scan(&provider.ID, &provider.CreatedAt); err != nil {
+			provider.ClientSecret.Nonce, provider.Scopes, provider.Enabled, provider.Revision,
+			provider.AuthorizationEndpoint, provider.TokenEndpoint, provider.TokenEndpointAuthMethod,
+			provider.IDTokenSigningAlgs, provider.UserInfoEndpoint, provider.JWKSURI,
+			provider.CreatedAt, provider.UpdatedAt,
+		).Scan(&provider.ID, &provider.CreatedAt, &provider.Revision); err != nil {
 			if err == pgx.ErrNoRows {
+				var currentIssuer string
+				var currentRevision int64
+				if lookupErr := tx.QueryRow(ctx, `
+					SELECT issuer, revision
+					FROM oidc_providers
+					WHERE organization_id = $1 AND name = $2
+					FOR UPDATE`, provider.OrganizationID, provider.Name,
+				).Scan(&currentIssuer, &currentRevision); lookupErr != nil {
+					return lookupErr
+				}
+				if currentIssuer == provider.Issuer {
+					return domain.ErrVersionConflict
+				}
 				return domain.NewError(
 					"oidc_provider_issuer_immutable",
 					"Disable this OIDC Provider and create a new Provider name for the new issuer",
@@ -110,6 +133,9 @@ func (a *OIDCAdapter) SetProviderEnabled(
 ) (oidcflow.Provider, error) {
 	var provider oidcflow.Provider
 	err := a.store.inTransaction(ctx, "set_oidc_provider_enabled", func(tx pgx.Tx) error {
+		if err := a.store.requireSystemAdmin(ctx, tx, command.ActorPrincipalID); err != nil {
+			return err
+		}
 		stored, err := scanProviderRow(tx.QueryRow(ctx, providerSelect+`
 			WHERE p.organization_id = $1 AND p.name = $2
 			FOR UPDATE`, command.OrganizationID, command.Name))
@@ -122,13 +148,14 @@ func (a *OIDCAdapter) SetProviderEnabled(
 		}
 		if _, err := tx.Exec(ctx, `
 			UPDATE oidc_providers
-			SET enabled = $3, updated_at = $4
+			SET enabled = $3, revision = revision + 1, updated_at = $4
 			WHERE organization_id = $1 AND name = $2`,
 			command.OrganizationID, command.Name, command.Enabled, command.UpdatedAt,
 		); err != nil {
 			return fmt.Errorf("set OIDC provider enabled state: %w", err)
 		}
 		provider.Enabled = command.Enabled
+		provider.Revision++
 		provider.UpdatedAt = command.UpdatedAt
 		eventType := "oidc_provider.disabled"
 		if command.Enabled {
@@ -175,10 +202,11 @@ func (a *OIDCAdapter) CreateSession(ctx context.Context, command oidcflow.Create
 		session := command.Session
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO oidc_auth_sessions (
-				id, provider_id, organization_id, state_hash, request_id, status,
+				id, provider_id, organization_id, provider_revision, state_hash, request_id, status,
 				secret_ciphertext, secret_nonce, expires_at, created_at, updated_at
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10)`,
-			session.ID, session.ProviderID, session.OrganizationID, command.StateHash, command.RequestID, session.Status,
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11)`,
+			session.ID, session.ProviderID, session.OrganizationID, session.ProviderRevision,
+			command.StateHash, command.RequestID, session.Status,
 			session.Secrets.Ciphertext, session.Secrets.Nonce, session.ExpiresAt, session.CreatedAt,
 		); err != nil {
 			return fmt.Errorf("insert OIDC session: %w", err)
@@ -271,17 +299,27 @@ func (a *OIDCAdapter) CompleteLogin(
 	err := a.store.inTransaction(ctx, "complete_oidc_login", func(tx pgx.Tx) error {
 		var status oidcflow.SessionStatus
 		var providerID, organizationID, claimID, requestID string
+		var sessionProviderRevision, currentProviderRevision int64
 		if err := tx.QueryRow(ctx, `
-			SELECT status, provider_id, organization_id, COALESCE(claim_id, ''), request_id
-			FROM oidc_auth_sessions
-			WHERE id = $1
-			FOR UPDATE`, command.SessionID,
-		).Scan(&status, &providerID, &organizationID, &claimID, &requestID); err != nil {
+			SELECT s.status, s.provider_id, s.organization_id, COALESCE(s.claim_id, ''), s.request_id,
+			       s.provider_revision, p.revision
+			FROM oidc_auth_sessions s
+			JOIN oidc_providers p
+			  ON p.id = s.provider_id AND p.organization_id = s.organization_id
+			WHERE s.id = $1
+			FOR UPDATE OF s, p`, command.SessionID,
+		).Scan(
+			&status, &providerID, &organizationID, &claimID, &requestID,
+			&sessionProviderRevision, &currentProviderRevision,
+		); err != nil {
 			return err
 		}
 		if status != oidcflow.SessionStatusExchanging || claimID != command.ClaimID ||
 			providerID != command.ProviderID || organizationID != command.OrganizationID {
 			return domain.NewError("oidc_exchange_claim_invalid", "OIDC callback claim is invalid", false)
+		}
+		if sessionProviderRevision != currentProviderRevision {
+			return domain.NewError("oidc_provider_changed", "OIDC Provider changed; restart login", false)
 		}
 
 		principal, externalIdentityID, err := a.resolveOIDCIdentity(ctx, tx, command)
@@ -358,26 +396,32 @@ func (a *OIDCAdapter) resolveOIDCIdentity(
 	tx pgx.Tx,
 	command oidcflow.CompleteLoginCommand,
 ) (domain.Principal, string, error) {
-	var externalID, userID string
+	var externalID, userID, membershipID string
 	err := tx.QueryRow(ctx, `
-		SELECT id, user_id
+		SELECT id, user_id, membership_id
 		FROM external_identities
 		WHERE provider_id = $1 AND subject = $2
 		FOR UPDATE`, command.ProviderID, command.Identity.Subject,
-	).Scan(&externalID, &userID)
+	).Scan(&externalID, &userID, &membershipID)
 	if err == nil {
-		principal, principalErr := a.ensureOIDCMembership(ctx, tx, userID, command.OrganizationID, command)
+		principal, principalErr := a.ensureOIDCMembership(
+			ctx,
+			tx,
+			userID,
+			command.OrganizationID,
+			membershipID,
+		)
 		return principal, externalID, principalErr
 	}
 	if err != pgx.ErrNoRows {
 		return domain.Principal{}, "", fmt.Errorf("find external identity: %w", err)
 	}
 
-	userID, err = a.findOrCreateOIDCUser(ctx, tx, command)
+	userID, err = a.findOIDCUser(ctx, tx, command)
 	if err != nil {
 		return domain.Principal{}, "", err
 	}
-	principal, err := a.ensureOIDCMembership(ctx, tx, userID, command.OrganizationID, command)
+	principal, err := a.ensureOIDCMembership(ctx, tx, userID, command.OrganizationID, "")
 	if err != nil {
 		return domain.Principal{}, "", err
 	}
@@ -394,43 +438,35 @@ func (a *OIDCAdapter) resolveOIDCIdentity(
 	return principal, externalID, nil
 }
 
-func (a *OIDCAdapter) findOrCreateOIDCUser(
+func (a *OIDCAdapter) findOIDCUser(
 	ctx context.Context,
 	tx pgx.Tx,
 	command oidcflow.CompleteLoginCommand,
 ) (string, error) {
 	var userID string
-	var source domain.Source
 	var systemRole domain.SystemRole
-	var membershipSource string
+	var userActive, membershipActive bool
 	err := tx.QueryRow(ctx, `
-		SELECT u.id, u.source, u.system_role, COALESCE(m.source, '')
-		FROM users u
-		LEFT JOIN organization_memberships m
-		  ON m.user_id = u.id AND m.organization_id = $2
-		WHERE u.email = $1
-		FOR UPDATE OF u`, command.Identity.Email, command.OrganizationID,
-	).Scan(&userID, &source, &systemRole, &membershipSource)
+		SELECT u.id, u.system_role, u.active, m.active
+		FROM organization_memberships m
+		JOIN users u ON u.id = m.user_id
+		WHERE m.organization_id = $1 AND m.email = $2 AND m.scim_deleted_at IS NULL
+		FOR UPDATE OF u, m`, command.OrganizationID, command.Identity.Email,
+	).Scan(&userID, &systemRole, &userActive, &membershipActive)
 	if err == nil {
-		if source != domain.SourceSCIM || systemRole != domain.SystemRoleUser ||
-			membershipSource != string(domain.SourceSCIM) {
-			return "", domain.ErrConflict
+		if systemRole != domain.SystemRoleUser || !userActive || !membershipActive {
+			return "", domain.ErrForbidden
 		}
 		return userID, nil
 	}
 	if err != pgx.ErrNoRows {
 		return "", fmt.Errorf("find user for external identity: %w", err)
 	}
-	userID = a.store.newID()
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO users (
-			id, email, display_name, system_role, source, active, created_at, updated_at
-		) VALUES ($1, $2, $3, 'user', 'oidc', TRUE, $4, $4)`,
-		userID, command.Identity.Email, command.Identity.DisplayName, command.IssuedAt,
-	); err != nil {
-		return "", fmt.Errorf("insert OIDC user: %w", err)
-	}
-	return userID, nil
+	return "", domain.NewError(
+		"oidc_membership_required",
+		"OIDC identity must match an existing active Organization Membership",
+		false,
+	)
 }
 
 func (a *OIDCAdapter) ensureOIDCMembership(
@@ -438,27 +474,44 @@ func (a *OIDCAdapter) ensureOIDCMembership(
 	tx pgx.Tx,
 	userID string,
 	organizationID string,
-	command oidcflow.CompleteLoginCommand,
+	expectedMembershipID string,
 ) (domain.Principal, error) {
-	principal, err := a.store.getPrincipal(ctx, tx, userID, organizationID)
+	var principal domain.Principal
+	var userActive, membershipActive, organizationActive bool
+	err := tx.QueryRow(ctx, `
+		SELECT u.id, o.id, m.id, u.system_role, m.role,
+		       u.active, m.active, o.active
+		FROM users u
+		JOIN organization_memberships m
+		  ON m.user_id = u.id AND m.organization_id = $2 AND m.scim_deleted_at IS NULL
+		JOIN organizations o ON o.id = m.organization_id
+		WHERE u.id = $1 AND ($3 = '' OR m.id = $3)
+		FOR UPDATE OF u, m, o`, userID, organizationID, expectedMembershipID,
+	).Scan(
+		&principal.UserID,
+		&principal.OrganizationID,
+		&principal.MembershipID,
+		&principal.SystemRole,
+		&principal.OrganizationRole,
+		&userActive,
+		&membershipActive,
+		&organizationActive,
+	)
+	if err != nil && err != pgx.ErrNoRows {
+		return domain.Principal{}, err
+	}
 	if err == nil {
+		principal.Active = userActive && membershipActive && organizationActive
 		if !principal.Active || principal.SystemRole == domain.SystemRoleAdmin {
 			return domain.Principal{}, domain.ErrForbidden
 		}
 		return principal, nil
 	}
-	if err != domain.ErrNotFound {
-		return domain.Principal{}, err
-	}
-	membership := domain.OrganizationMembership{
-		ID: a.store.newID(), OrganizationID: organizationID, UserID: userID,
-		Role: domain.OrganizationRoleMember, Source: domain.SourceOIDC, Active: true,
-		CreatedAt: command.IssuedAt, UpdatedAt: command.IssuedAt,
-	}
-	if err := insertMembership(ctx, tx, membership); err != nil {
-		return domain.Principal{}, err
-	}
-	return a.store.getPrincipal(ctx, tx, userID, organizationID)
+	return domain.Principal{}, domain.NewError(
+		"oidc_membership_required",
+		"OIDC identity must match an existing active Organization Membership",
+		false,
+	)
 }
 
 func (a *OIDCAdapter) sessionByState(
@@ -476,7 +529,7 @@ func (a *OIDCAdapter) sessionByState(
 	var tokenID string
 	var tokenExpiresAt, tokenRevokedAt *time.Time
 	err := tx.QueryRow(ctx, `
-		SELECT s.id, s.request_id, s.provider_id, s.organization_id, s.status,
+		SELECT s.id, s.request_id, s.provider_id, s.organization_id, s.provider_revision, s.status,
 		       s.secret_ciphertext, s.secret_nonce, s.expires_at,
 		       COALESCE(u.id, ''), COALESCE(m.id, ''),
 		       COALESCE(u.system_role, 'user'), COALESCE(m.role, 'member'),
@@ -493,7 +546,8 @@ func (a *OIDCAdapter) sessionByState(
 		WHERE s.state_hash = $1
 		FOR UPDATE OF s`, stateHash,
 	).Scan(
-		&session.ID, &session.RequestID, &session.ProviderID, &session.OrganizationID, &session.Status,
+		&session.ID, &session.RequestID, &session.ProviderID, &session.OrganizationID,
+		&session.ProviderRevision, &session.Status,
 		&session.Secrets.Ciphertext, &session.Secrets.Nonce, &session.ExpiresAt,
 		&userID, &membershipID, &systemRole, &organizationRole,
 		&userActive, &membershipActive, &organizationActive,
@@ -525,8 +579,9 @@ func (a *OIDCAdapter) sessionByState(
 
 const providerSelect = `
 	SELECT p.id, p.organization_id, p.name, p.display_name, p.issuer, p.client_id,
-	       p.client_secret_ciphertext, p.client_secret_nonce, p.redirect_uri, p.scopes,
-	       p.enabled, p.authorization_endpoint, p.token_endpoint, p.userinfo_endpoint,
+	       p.client_secret_ciphertext, p.client_secret_nonce, p.scopes,
+	       p.enabled, p.revision, p.authorization_endpoint, p.token_endpoint,
+	       p.token_endpoint_auth_method, p.id_token_signing_algs, p.userinfo_endpoint,
 	       p.jwks_uri, p.created_at, p.updated_at
 	FROM oidc_providers p`
 
@@ -535,8 +590,9 @@ func scanProviderRow(row rowScanner) (oidcflow.ProviderWithSecret, error) {
 	err := row.Scan(
 		&provider.ID, &provider.OrganizationID, &provider.Name, &provider.DisplayName,
 		&provider.Issuer, &provider.ClientID, &provider.ClientSecret.Ciphertext,
-		&provider.ClientSecret.Nonce, &provider.RedirectURI, &provider.Scopes, &provider.Enabled,
-		&provider.AuthorizationEndpoint, &provider.TokenEndpoint, &provider.UserInfoEndpoint,
+		&provider.ClientSecret.Nonce, &provider.Scopes, &provider.Enabled, &provider.Revision,
+		&provider.AuthorizationEndpoint, &provider.TokenEndpoint, &provider.TokenEndpointAuthMethod,
+		&provider.IDTokenSigningAlgs, &provider.UserInfoEndpoint,
 		&provider.JWKSURI, &provider.CreatedAt, &provider.UpdatedAt,
 	)
 	if err != nil {

@@ -10,6 +10,7 @@ import (
 )
 
 var memberPathPattern = regexp.MustCompile(`(?i)^members\s*\[\s*value\s+eq\s+"([^"]+)"\s*\]$`)
+var emailValuePathPattern = regexp.MustCompile(`(?i)^emails\.value$`)
 
 type patchRequest struct {
 	Schemas    []string         `json:"schemas"`
@@ -27,6 +28,14 @@ func (h *HTTPHandler) patchUser(response http.ResponseWriter, request *http.Requ
 	if !decodeSCIMBody(response, request, &body) {
 		return
 	}
+	if err := validateSchemas(body.Schemas, patchSchema); err != nil {
+		writeSCIMError(response, http.StatusBadRequest, "invalidValue", err.Error())
+		return
+	}
+	if len(body.Operations) == 0 {
+		writeSCIMError(response, http.StatusBadRequest, "invalidValue", "SCIM PATCH requires at least one operation")
+		return
+	}
 	current, err := h.service.GetUser(request.Context(), authorization, request.PathValue("id"))
 	if err != nil {
 		writeServiceError(response, err)
@@ -34,7 +43,8 @@ func (h *HTTPHandler) patchUser(response http.ResponseWriter, request *http.Requ
 	}
 	input := UserInput{
 		ExternalID: current.Membership.SCIMExternalID, UserName: current.Membership.SCIMUserName,
-		DisplayName: current.User.DisplayName, Active: current.User.Active && current.Membership.Active,
+		Email: current.Membership.Email, DisplayName: current.Membership.DisplayName,
+		Active: current.User.Active && current.Membership.Active,
 	}
 	for _, operation := range body.Operations {
 		if err := applyUserPatch(&input, operation); err != nil {
@@ -42,7 +52,9 @@ func (h *HTTPHandler) patchUser(response http.ResponseWriter, request *http.Requ
 			return
 		}
 	}
-	resource, err := h.service.ReplaceUser(request.Context(), authorization, request.PathValue("id"), input)
+	resource, err := h.service.ReplaceUser(request.Context(), authorization, request.PathValue("id"), ReplaceUserInput{
+		UserInput: input, ExpectedUpdatedAt: current.Membership.UpdatedAt,
+	})
 	if err != nil {
 		writeServiceError(response, err)
 		return
@@ -53,6 +65,14 @@ func (h *HTTPHandler) patchUser(response http.ResponseWriter, request *http.Requ
 func (h *HTTPHandler) patchGroup(response http.ResponseWriter, request *http.Request, authorization Authorization) {
 	var body patchRequest
 	if !decodeSCIMBody(response, request, &body) {
+		return
+	}
+	if err := validateSchemas(body.Schemas, patchSchema); err != nil {
+		writeSCIMError(response, http.StatusBadRequest, "invalidValue", err.Error())
+		return
+	}
+	if len(body.Operations) == 0 {
+		writeSCIMError(response, http.StatusBadRequest, "invalidValue", "SCIM PATCH requires at least one operation")
 		return
 	}
 	current, err := h.service.GetGroup(request.Context(), authorization, request.PathValue("id"))
@@ -70,7 +90,9 @@ func (h *HTTPHandler) patchGroup(response http.ResponseWriter, request *http.Req
 			return
 		}
 	}
-	resource, err := h.service.ReplaceGroup(request.Context(), authorization, request.PathValue("id"), input)
+	resource, err := h.service.ReplaceGroup(request.Context(), authorization, request.PathValue("id"), ReplaceGroupInput{
+		GroupInput: input, ExpectedUpdatedAt: current.Group.UpdatedAt,
+	})
 	if err != nil {
 		writeServiceError(response, err)
 		return
@@ -103,6 +125,9 @@ func applyUserPatch(input *UserInput, operation patchOperation) error {
 }
 
 func setUserPatchValue(input *UserInput, path string, value json.RawMessage, operation string) error {
+	if emailValuePathPattern.MatchString(path) {
+		return patchString(&input.Email, value, operation)
+	}
 	switch path {
 	case "active":
 		if operation == "remove" {
@@ -117,11 +142,37 @@ func setUserPatchValue(input *UserInput, path string, value json.RawMessage, ope
 		return patchString(&input.UserName, value, operation)
 	case "displayname":
 		return patchString(&input.DisplayName, value, operation)
+	case "name.formatted":
+		return patchString(&input.DisplayName, value, operation)
+	case "emails":
+		return patchEmails(&input.Email, value, operation)
 	case "externalid":
 		return patchString(&input.ExternalID, value, operation)
 	default:
 		return fmt.Errorf("unsupported SCIM User patch path %q", path)
 	}
+}
+
+func patchEmails(target *string, value json.RawMessage, operation string) error {
+	if operation == "remove" {
+		*target = ""
+		return nil
+	}
+	var emails []userEmail
+	if err := json.Unmarshal(value, &emails); err != nil {
+		var email userEmail
+		if singleErr := json.Unmarshal(value, &email); singleErr != nil {
+			return invalidPatchValue("SCIM emails patch value is invalid")
+		}
+		emails = []userEmail{email}
+	}
+	request := userRequest{Emails: emails}
+	email, err := request.primaryEmail()
+	if err != nil || strings.TrimSpace(email) == "" {
+		return invalidPatchValue("SCIM emails patch value is invalid")
+	}
+	*target = email
+	return nil
 }
 
 func applyGroupPatch(input *GroupInput, operation patchOperation) error {

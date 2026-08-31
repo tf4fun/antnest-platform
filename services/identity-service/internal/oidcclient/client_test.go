@@ -6,6 +6,7 @@ import (
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -28,14 +29,21 @@ func TestClientDiscoversBuildsPKCEAndVerifiesSignedIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("discover: %v", err)
 	}
+	if len(discovery.TokenEndpointAuthMethods) != 1 ||
+		discovery.TokenEndpointAuthMethods[0] != "client_secret_basic" ||
+		len(discovery.IDTokenSigningAlgs) != 1 || discovery.IDTokenSigningAlgs[0] != "RS256" {
+		t.Fatalf("discovery security metadata = %#v", discovery)
+	}
 	config := oidcflow.Provider{
-		Issuer: discovery.Issuer, ClientID: "client-1", RedirectURI: "http://localhost/callback",
+		Issuer: discovery.Issuer, ClientID: "client-1",
 		Scopes: []string{"openid", "email"}, AuthorizationEndpoint: discovery.AuthorizationEndpoint,
 		TokenEndpoint: discovery.TokenEndpoint, UserInfoEndpoint: discovery.UserInfoEndpoint,
-		JWKSURI: discovery.JWKSURI,
+		JWKSURI: discovery.JWKSURI, TokenEndpointAuthMethod: "client_secret_basic",
+		IDTokenSigningAlgs: discovery.IDTokenSigningAlgs,
 	}
 	authorizationURL, err := client.AuthorizationURL(oidcflow.AuthorizationInput{
-		Provider: config, State: "state-1", Nonce: "nonce-1", PKCEChallenge: "challenge-1",
+		Provider: config, RedirectURI: "http://localhost/callback",
+		State: "state-1", Nonce: "nonce-1", PKCEChallenge: "challenge-1",
 	})
 	if err != nil {
 		t.Fatalf("authorization URL: %v", err)
@@ -49,7 +57,8 @@ func TestClientDiscoversBuildsPKCEAndVerifiesSignedIdentity(t *testing.T) {
 		t.Fatalf("authorization query = %v", parsed.Query())
 	}
 	identity, err := client.ExchangeAndVerify(t.Context(), oidcflow.ExchangeInput{
-		Provider: config, ClientSecret: "client-secret", Code: "code-1",
+		Provider: config, RedirectURI: "http://localhost/callback",
+		ClientSecret: "client-secret", Code: "code-1",
 		Nonce: "nonce-1", PKCEVerifier: "verifier-1",
 	})
 	if err != nil {
@@ -60,35 +69,112 @@ func TestClientDiscoversBuildsPKCEAndVerifiesSignedIdentity(t *testing.T) {
 	}
 }
 
-func TestClientRejectsNonceAndUserInfoSubjectMismatch(t *testing.T) {
-	tests := []struct {
-		name            string
-		idTokenNonce    string
-		userInfoSubject string
-	}{
-		{name: "nonce", idTokenNonce: "other-nonce", userInfoSubject: "subject-1"},
-		{name: "userinfo subject", idTokenNonce: "nonce-1", userInfoSubject: "other-subject"},
+func TestExchangeUsesOneConfiguredClientAuthenticationAttempt(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		calls++
+		if _, _, ok := request.BasicAuth(); !ok {
+			t.Error("token request did not use client_secret_basic")
+		}
+		http.Error(response, "rejected", http.StatusUnauthorized)
+	}))
+	defer server.Close()
+	client, err := New(server.Client())
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			provider := newFakeProvider(t, test.idTokenNonce, test.userInfoSubject)
-			defer provider.Close()
-			client, err := New(provider.Client())
-			if err != nil {
-				t.Fatal(err)
-			}
-			_, err = client.ExchangeAndVerify(t.Context(), oidcflow.ExchangeInput{
-				Provider: oidcflow.Provider{
-					Issuer: provider.URL, ClientID: "client-1", RedirectURI: "http://localhost/callback",
-					TokenEndpoint: provider.URL + "/token", UserInfoEndpoint: provider.URL + "/userinfo",
-					JWKSURI: provider.URL + "/jwks",
-				},
-				ClientSecret: "client-secret", Code: "code-1", Nonce: "nonce-1", PKCEVerifier: "verifier-1",
-			})
-			if err == nil {
-				t.Fatal("invalid provider identity was accepted")
-			}
-		})
+
+	_, err = client.ExchangeAndVerify(t.Context(), oidcflow.ExchangeInput{
+		Provider: oidcflow.Provider{
+			Issuer: server.URL, ClientID: "client", TokenEndpoint: server.URL,
+			TokenEndpointAuthMethod: "client_secret_basic", IDTokenSigningAlgs: []string{"RS256"},
+		},
+		RedirectURI: "http://localhost/callback", ClientSecret: "secret", Code: "code",
+		Nonce: "nonce", PKCEVerifier: "verifier",
+	})
+	if err == nil {
+		t.Fatal("rejected token exchange succeeded")
+	}
+	if calls != 1 {
+		t.Fatalf("token endpoint calls = %d, want exactly one", calls)
+	}
+}
+
+func TestClientBoundsDiscoveryResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = response.Write([]byte(`{"issuer":"` + strings.Repeat("x", responseLimit) + `"}`))
+	}))
+	defer server.Close()
+	client, err := New(server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = client.Discover(t.Context(), server.URL)
+	if !errors.Is(err, errResponseTooLarge) {
+		t.Fatalf("oversized discovery error = %v, want response-too-large", err)
+	}
+}
+
+func TestClientDoesNotFollowDiscoveryRedirects(t *testing.T) {
+	redirectedCalls := 0
+	target := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		redirectedCalls++
+		writeJSON(t, response, map[string]any{"issuer": "https://unexpected.example.com"})
+	}))
+	defer target.Close()
+	redirector := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		http.Redirect(response, request, target.URL, http.StatusFound)
+	}))
+	defer redirector.Close()
+	client, err := New(redirector.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := client.Discover(t.Context(), redirector.URL); err == nil {
+		t.Fatal("redirected OIDC discovery succeeded")
+	}
+	if redirectedCalls != 0 {
+		t.Fatalf("redirect target calls = %d, want 0", redirectedCalls)
+	}
+}
+
+func TestClientRejectsNonceMismatch(t *testing.T) {
+	provider := newFakeProvider(t, "other-nonce", "subject-1")
+	defer provider.Close()
+	client, err := New(provider.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.ExchangeAndVerify(t.Context(), oidcflow.ExchangeInput{
+		Provider: oidcflow.Provider{
+			Issuer: provider.URL, ClientID: "client-1",
+			TokenEndpoint: provider.URL + "/token", UserInfoEndpoint: provider.URL + "/userinfo",
+			JWKSURI: provider.URL + "/jwks", TokenEndpointAuthMethod: "client_secret_basic",
+			IDTokenSigningAlgs: []string{"RS256"},
+		},
+		RedirectURI:  "http://localhost/callback",
+		ClientSecret: "client-secret", Code: "code-1", Nonce: "nonce-1", PKCEVerifier: "verifier-1",
+	})
+	if err == nil {
+		t.Fatal("invalid provider identity was accepted")
+	}
+}
+
+func TestUserInfoRejectsSubjectMismatch(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		writeJSON(t, response, map[string]any{"sub": "other-subject", "email": "alice@example.com", "email_verified": true})
+	}))
+	defer server.Close()
+	client, err := New(server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.mergeUserInfo(t.Context(), server.URL, "access-token", oidcflow.VerifiedIdentity{Subject: "subject-1"})
+	if err == nil {
+		t.Fatal("UserInfo subject mismatch was accepted")
 	}
 }
 
@@ -132,9 +218,15 @@ func newFakeProvider(t *testing.T, tokenNonce, userInfoSubject string) *httptest
 			writeJSON(t, response, map[string]any{
 				"issuer": server.URL, "authorization_endpoint": server.URL + "/authorize",
 				"token_endpoint": server.URL + "/token", "userinfo_endpoint": server.URL + "/userinfo",
-				"jwks_uri": server.URL + "/jwks",
+				"jwks_uri":                              server.URL + "/jwks",
+				"token_endpoint_auth_methods_supported": []string{"client_secret_basic"},
+				"id_token_signing_alg_values_supported": []string{"RS256"},
 			})
 		case "/token":
+			clientID, clientSecret, ok := request.BasicAuth()
+			if !ok || clientID != "client-1" || clientSecret != "client-secret" {
+				t.Errorf("token endpoint basic auth = %q, %q, %v", clientID, clientSecret, ok)
+			}
 			if err := request.ParseForm(); err != nil {
 				t.Errorf("parse token form: %v", err)
 			}
@@ -148,8 +240,8 @@ func newFakeProvider(t *testing.T, tokenNonce, userInfoSubject string) *httptest
 		case "/jwks":
 			writeJSON(t, response, map[string]any{"keys": []map[string]any{{
 				"kty": "RSA", "use": "sig", "alg": "RS256", "kid": "test-key",
-				"n": base64.RawURLEncoding.EncodeToString(key.PublicKey.N.Bytes()),
-				"e": base64.RawURLEncoding.EncodeToString(big.NewInt(int64(key.PublicKey.E)).Bytes()),
+				"n": base64.RawURLEncoding.EncodeToString(key.N.Bytes()),
+				"e": base64.RawURLEncoding.EncodeToString(big.NewInt(int64(key.E)).Bytes()),
 			}}})
 		case "/userinfo":
 			if request.Header.Get("Authorization") != "Bearer access-1" {
