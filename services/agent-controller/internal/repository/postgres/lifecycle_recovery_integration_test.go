@@ -163,6 +163,42 @@ WHERE request_id = 'request-stale'`); err != nil {
 	}
 }
 
+func TestLifecycleRecoveryTerminalOperationCannotRetainLease(t *testing.T) {
+	databaseURL := os.Getenv("ANTNEST_AGENT_CONTROLLER_TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("ANTNEST_AGENT_CONTROLLER_TEST_DATABASE_URL is not set")
+	}
+	ctx := context.Background()
+	repository, err := Open(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("open repository: %v", err)
+	}
+	t.Cleanup(repository.Close)
+	resetCatalogSchema(t, ctx, repository)
+	if err := repository.Migrate(ctx); err != nil {
+		t.Fatalf("migrate repository: %v", err)
+	}
+
+	now := time.Now().UTC()
+	insertRecoveryOperation(t, ctx, repository, "agent-terminal-lease", "request-terminal-lease", now)
+	if _, err := repository.pool.Exec(ctx, `
+UPDATE agent_controller.agent_lifecycle_operations
+SET state = 'completed', phase = 'completed',
+    recovery_owner = 'stale-worker', recovery_lease_until = $2
+WHERE request_id = $1`, "request-terminal-lease", now.Add(time.Minute)); err == nil {
+		t.Fatal("terminal lifecycle operation accepted a recovery lease")
+	}
+
+	operation, err := repository.GetLifecycleOperation(ctx, "request-terminal-lease")
+	if err != nil {
+		t.Fatalf("load operation after rejected update: %v", err)
+	}
+	if operation.State != domain.OperationRunning || operation.RecoveryOwner != "" ||
+		operation.RecoveryLeaseUntil != nil {
+		t.Fatalf("rejected terminal update changed operation: %+v", operation)
+	}
+}
+
 func insertRecoveryOperation(
 	t *testing.T,
 	ctx context.Context,

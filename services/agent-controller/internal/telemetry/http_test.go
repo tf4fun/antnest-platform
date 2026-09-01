@@ -101,11 +101,39 @@ func TestHTTPHandlerDoesNotTraceSuccessfulStatusProbe(t *testing.T) {
 	mux.HandleFunc("GET /status", func(response http.ResponseWriter, _ *http.Request) {
 		response.WriteHeader(http.StatusOK)
 	})
-	HTTPHandler(mux, slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))).ServeHTTP(
-		httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "http://controller.test/status", nil),
-	)
+	mux.HandleFunc("GET /rpc/agent-controller/status", func(response http.ResponseWriter, _ *http.Request) {
+		response.WriteHeader(http.StatusOK)
+	})
+	instrumented := HTTPHandler(mux, slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)))
+	for _, path := range []string{"/status", "/rpc/agent-controller/status"} {
+		instrumented.ServeHTTP(
+			httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "http://controller.test"+path, nil),
+		)
+	}
 	if ended := recorder.Ended(); len(ended) != 0 {
 		t.Fatalf("status probe emitted traces: %#v", ended)
+	}
+}
+
+func TestStatusWriterRecordsFirstCommittedStatus(t *testing.T) {
+	t.Parallel()
+
+	recorder := httptest.NewRecorder()
+	writer := &statusWriter{ResponseWriter: recorder, status: http.StatusOK}
+	writer.WriteHeader(http.StatusServiceUnavailable)
+	writer.WriteHeader(http.StatusOK)
+	if writer.status != http.StatusServiceUnavailable || recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status writer = %d recorder=%d", writer.status, recorder.Code)
+	}
+
+	recorder = httptest.NewRecorder()
+	writer = &statusWriter{ResponseWriter: recorder, status: http.StatusOK}
+	if _, err := writer.Write([]byte("ready")); err != nil {
+		t.Fatalf("write response: %v", err)
+	}
+	writer.WriteHeader(http.StatusServiceUnavailable)
+	if writer.status != http.StatusOK || recorder.Code != http.StatusOK {
+		t.Fatalf("implicit status writer = %d recorder=%d", writer.status, recorder.Code)
 	}
 }
 
@@ -124,15 +152,28 @@ func TestHTTPHandlerTracesFailedStatusProbe(t *testing.T) {
 	mux.HandleFunc("GET /status", func(response http.ResponseWriter, _ *http.Request) {
 		response.WriteHeader(http.StatusServiceUnavailable)
 	})
-	HTTPHandler(mux, slog.New(slog.NewJSONHandler(&logs, nil))).ServeHTTP(
-		httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "http://controller.test/status", nil),
-	)
+	mux.HandleFunc("GET /rpc/agent-controller/status", func(response http.ResponseWriter, _ *http.Request) {
+		response.WriteHeader(http.StatusServiceUnavailable)
+	})
+	instrumented := HTTPHandler(mux, slog.New(slog.NewJSONHandler(&logs, nil)))
+	for _, path := range []string{"/status", "/rpc/agent-controller/status"} {
+		instrumented.ServeHTTP(
+			httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "http://controller.test"+path, nil),
+		)
+	}
 	ended := recorder.Ended()
-	if len(ended) != 1 || ended[0].Name() != "HTTP GET /status" ||
-		ended[0].Status().Code != codes.Error {
+	if len(ended) != 2 {
 		t.Fatalf("failed status spans = %#v", ended)
 	}
+	names := map[string]bool{}
+	for _, span := range ended {
+		names[span.Name()] = span.Status().Code == codes.Error
+	}
+	if !names["HTTP GET /status"] || !names["HTTP GET /rpc/agent-controller/status"] {
+		t.Fatalf("failed status span names = %#v", names)
+	}
 	if !strings.Contains(logs.String(), `"route":"/status"`) ||
+		!strings.Contains(logs.String(), `"route":"/rpc/agent-controller/status"`) ||
 		!strings.Contains(logs.String(), `"result":"error"`) {
 		t.Fatalf("failed status log = %s", logs.String())
 	}

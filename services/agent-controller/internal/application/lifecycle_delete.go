@@ -158,49 +158,42 @@ func (service *LifecycleService) continueAgentDelete(
 	if state.Operation.State != domain.OperationRunning {
 		return deleteAgentResult(state), nil
 	}
-	if lifecycleOperationReservedForRecovery(ctx, state.Operation) {
+	if lifecycleOperationReservedForRecovery(state.Operation) {
 		return deleteAgentResult(state), nil
 	}
-	_, recoveryStep := ports.LifecycleRecoveryTokenFromContext(ctx)
-	var err error
-	if state.Operation.Phase == domain.PhaseDrain {
-		state, err = service.settleDeleteDrain(ctx, state)
-		if err != nil || state.Operation.Phase == domain.PhaseDrain || recoveryStep {
-			return deleteAgentResult(state), err
+	for state.Operation.State == domain.OperationRunning {
+		phase := state.Operation.Phase
+		next, err := service.stepAgentDelete(ctx, state)
+		if err != nil {
+			return deleteAgentResult(next), err
 		}
-	}
-	if state.Operation.Phase == domain.PhaseNetworkFence {
-		state, err = service.fenceDeleteNetwork(ctx, state)
-		if err != nil || recoveryStep {
-			return deleteAgentResult(state), err
+		state = next
+		if state.Operation.Phase == phase {
+			break
 		}
-	}
-	if state.Operation.Phase == domain.PhaseFlowReset {
-		state, err = service.resetDeleteFlows(ctx, state)
-		if err != nil || recoveryStep {
-			return deleteAgentResult(state), err
-		}
-	}
-	if state.Operation.Phase == domain.PhaseRuntimeDelete {
-		state, err = service.deleteRuntime(ctx, state)
-		if err != nil || state.Operation.Phase == domain.PhaseRuntimeDelete || recoveryStep {
-			return deleteAgentResult(state), err
-		}
-	}
-	if state.Operation.Phase == domain.PhaseNetworkRelease {
-		state, err = service.releaseDeleteNetwork(ctx, state)
-		if err != nil || recoveryStep {
-			return deleteAgentResult(state), err
-		}
-	}
-	if state.Operation.Phase != domain.PhasePublish {
-		return DeleteAgentResult{}, fmt.Errorf("invalid delete operation phase %q", state.Operation.Phase)
-	}
-	state, err = service.publishAgentDelete(ctx, state)
-	if err != nil {
-		return DeleteAgentResult{}, err
 	}
 	return deleteAgentResult(state), nil
+}
+
+func (service *LifecycleService) stepAgentDelete(
+	ctx context.Context, state ports.AgentDeleteState,
+) (ports.AgentDeleteState, error) {
+	switch state.Operation.Phase {
+	case domain.PhaseDrain:
+		return service.settleDeleteDrain(ctx, state)
+	case domain.PhaseNetworkFence:
+		return service.fenceDeleteNetwork(ctx, state)
+	case domain.PhaseFlowReset:
+		return service.resetDeleteFlows(ctx, state)
+	case domain.PhaseRuntimeDelete:
+		return service.deleteRuntime(ctx, state)
+	case domain.PhaseNetworkRelease:
+		return service.releaseDeleteNetwork(ctx, state)
+	case domain.PhasePublish:
+		return service.publishAgentDelete(ctx, state)
+	default:
+		return state, fmt.Errorf("invalid delete operation phase %q", state.Operation.Phase)
+	}
 }
 
 func (service *LifecycleService) settleDeleteDrain(

@@ -256,9 +256,13 @@ CREATE TABLE IF NOT EXISTS agent_controller.agent_lifecycle_operations (
     retryable BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL,
-    CHECK (
+    CONSTRAINT agent_lifecycle_operations_recovery_pair_check CHECK (
         (recovery_owner = '' AND recovery_lease_until IS NULL) OR
         (recovery_owner <> '' AND recovery_lease_until IS NOT NULL)
+    ),
+    CONSTRAINT agent_lifecycle_operations_terminal_unclaimed_check CHECK (
+        state = 'running' OR
+        (recovery_owner = '' AND recovery_lease_until IS NULL)
     ),
     CHECK (
         (kind = 'create' AND source_spec_revision_id = '' AND source_execution_revision_id = ''

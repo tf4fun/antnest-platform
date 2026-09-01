@@ -148,61 +148,52 @@ func (service *LifecycleService) continueAgentRebuild(
 	if state.Operation.State != domain.OperationRunning {
 		return rebuildAgentResult(state), nil
 	}
-	if lifecycleOperationReservedForRecovery(ctx, state.Operation) {
+	if lifecycleOperationReservedForRecovery(state.Operation) {
 		return rebuildAgentResult(state), nil
 	}
-	_, recoveryStep := ports.LifecycleRecoveryTokenFromContext(ctx)
-	var err error
-	if state.Operation.Phase == domain.PhaseDrain {
+	for state.Operation.State == domain.OperationRunning {
+		phase := state.Operation.Phase
+		next, err := service.stepAgentRebuild(ctx, state)
+		if err != nil {
+			return rebuildAgentResult(next), err
+		}
+		state = next
+		if state.Operation.Phase == phase {
+			break
+		}
+	}
+	return rebuildAgentResult(state), nil
+}
+
+func (service *LifecycleService) stepAgentRebuild(
+	ctx context.Context, state ports.AgentRebuildState,
+) (ports.AgentRebuildState, error) {
+	switch state.Operation.Phase {
+	case domain.PhaseDrain:
 		now := service.clock.Now()
 		if !now.Before(state.Operation.CreatedAt.Add(service.drainTimeout)) {
-			state, err = service.failRebuildPreservingSource(
+			return service.failRebuildPreservingSource(
 				ctx, state, "run_drain_timeout", "active Run did not drain before the deadline", false,
 			)
-			return rebuildAgentResult(state), err
 		}
-		state, err = service.store.SettleAgentRebuildDrain(
+		return service.store.SettleAgentRebuildDrain(
 			ctx, state.Operation.RequestID, state.Operation.RequestFingerprint,
 			domain.ChildRequestID(state.Operation.RequestID, domain.PhaseNetworkFence),
 			service.clock.Now(),
 		)
-		if err != nil || state.Operation.Phase == domain.PhaseDrain || recoveryStep {
-			return rebuildAgentResult(state), err
-		}
+	case domain.PhaseNetworkFence:
+		return service.fenceRebuildNetwork(ctx, state)
+	case domain.PhaseFlowReset:
+		return service.resetRebuildFlows(ctx, state)
+	case domain.PhaseRuntimeUpdate:
+		return service.updateRebuildRuntime(ctx, state)
+	case domain.PhaseNetworkEnsure:
+		return service.reopenRebuildNetwork(ctx, state)
+	case domain.PhasePublish:
+		return service.publishAgentRebuild(ctx, state)
+	default:
+		return state, fmt.Errorf("invalid rebuild operation phase %q", state.Operation.Phase)
 	}
-	if state.Operation.Phase == domain.PhaseNetworkFence {
-		state, err = service.fenceRebuildNetwork(ctx, state)
-		if err != nil || state.Operation.State != domain.OperationRunning || recoveryStep {
-			return rebuildAgentResult(state), err
-		}
-	}
-	if state.Operation.Phase == domain.PhaseFlowReset {
-		state, err = service.resetRebuildFlows(ctx, state)
-		if err != nil || state.Operation.State != domain.OperationRunning || recoveryStep {
-			return rebuildAgentResult(state), err
-		}
-	}
-	if state.Operation.Phase == domain.PhaseRuntimeUpdate {
-		state, err = service.updateRebuildRuntime(ctx, state)
-		if err != nil || state.Operation.State != domain.OperationRunning ||
-			state.Operation.Phase == domain.PhaseRuntimeUpdate || recoveryStep {
-			return rebuildAgentResult(state), err
-		}
-	}
-	if state.Operation.Phase == domain.PhaseNetworkEnsure {
-		state, err = service.reopenRebuildNetwork(ctx, state)
-		if err != nil || state.Operation.State != domain.OperationRunning || recoveryStep {
-			return rebuildAgentResult(state), err
-		}
-	}
-	if state.Operation.Phase != domain.PhasePublish {
-		return RebuildAgentResult{}, fmt.Errorf("invalid rebuild operation phase %q", state.Operation.Phase)
-	}
-	state, err = service.publishAgentRebuild(ctx, state)
-	if err != nil {
-		return RebuildAgentResult{}, err
-	}
-	return rebuildAgentResult(state), nil
 }
 
 func (service *LifecycleService) fenceRebuildNetwork(

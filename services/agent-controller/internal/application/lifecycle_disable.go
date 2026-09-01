@@ -126,49 +126,48 @@ func (service *LifecycleService) continueAgentDisable(
 	if state.Operation.State != domain.OperationRunning {
 		return disableAgentResult(state), nil
 	}
-	if lifecycleOperationReservedForRecovery(ctx, state.Operation) {
+	if lifecycleOperationReservedForRecovery(state.Operation) {
 		return disableAgentResult(state), nil
 	}
-	_, recoveryStep := ports.LifecycleRecoveryTokenFromContext(ctx)
-	var err error
-	if state.Operation.Phase == domain.PhaseDrain {
+	for state.Operation.State == domain.OperationRunning {
+		phase := state.Operation.Phase
+		next, err := service.stepAgentDisable(ctx, state)
+		if err != nil {
+			return disableAgentResult(next), err
+		}
+		state = next
+		if state.Operation.Phase == phase {
+			break
+		}
+	}
+	return disableAgentResult(state), nil
+}
+
+func (service *LifecycleService) stepAgentDisable(
+	ctx context.Context, state ports.AgentDisableState,
+) (ports.AgentDisableState, error) {
+	switch state.Operation.Phase {
+	case domain.PhaseDrain:
 		if !service.clock.Now().Before(state.Operation.CreatedAt.Add(service.drainTimeout)) {
-			state, err = service.failAgentDisable(
+			return service.failAgentDisable(
 				ctx, state, "run_drain_timeout",
 				"active Run did not drain before the deadline", true, nil, nil,
 			)
-			return disableAgentResult(state), err
 		}
-		state, err = service.store.SettleAgentDisableDrain(
+		return service.store.SettleAgentDisableDrain(
 			ctx, state.Operation.RequestID, state.Operation.RequestFingerprint,
 			domain.ChildRequestID(state.Operation.RequestID, domain.PhaseNetworkFence),
 			service.clock.Now(),
 		)
-		if err != nil || state.Operation.Phase == domain.PhaseDrain || recoveryStep {
-			return disableAgentResult(state), err
-		}
+	case domain.PhaseNetworkFence:
+		return service.fenceDisableNetwork(ctx, state)
+	case domain.PhaseRuntimeDisable:
+		return service.disableRuntime(ctx, state)
+	case domain.PhasePublish:
+		return service.publishAgentDisable(ctx, state)
+	default:
+		return state, fmt.Errorf("invalid disable operation phase %q", state.Operation.Phase)
 	}
-	if state.Operation.Phase == domain.PhaseNetworkFence {
-		state, err = service.fenceDisableNetwork(ctx, state)
-		if err != nil || state.Operation.State != domain.OperationRunning || recoveryStep {
-			return disableAgentResult(state), err
-		}
-	}
-	if state.Operation.Phase == domain.PhaseRuntimeDisable {
-		state, err = service.disableRuntime(ctx, state)
-		if err != nil || state.Operation.State != domain.OperationRunning ||
-			state.Operation.Phase == domain.PhaseRuntimeDisable || recoveryStep {
-			return disableAgentResult(state), err
-		}
-	}
-	if state.Operation.Phase != domain.PhasePublish {
-		return DisableAgentResult{}, fmt.Errorf("invalid disable operation phase %q", state.Operation.Phase)
-	}
-	state, err = service.publishAgentDisable(ctx, state)
-	if err != nil {
-		return DisableAgentResult{}, err
-	}
-	return disableAgentResult(state), nil
 }
 
 func (service *LifecycleService) fenceDisableNetwork(

@@ -199,8 +199,14 @@ func (service *LifecycleService) ResumeLifecycleOperation(
 		if err != nil || !found {
 			return LifecycleRecoveryResult{}, lifecycleRecoveryReplayError("create", found, err)
 		}
-		result, err := service.continueAgentCreate(ctx, state)
-		return lifecycleRecoveryResult(operation, result.Operation), err
+		if state.Operation.State != domain.OperationRunning {
+			return lifecycleRecoveryResult(operation, createAgentResult(state).Operation), nil
+		}
+		if err := service.validateLifecycleRecoveryClaim(token, state.Operation); err != nil {
+			return LifecycleRecoveryResult{}, err
+		}
+		next, err := service.stepAgentCreate(ctx, state)
+		return lifecycleRecoveryResult(operation, createAgentResult(next).Operation), err
 	case domain.OperationRebuild:
 		state, found, err := service.store.ReplayAgentRebuild(
 			ctx, operation.RequestID, operation.RequestFingerprint,
@@ -208,8 +214,14 @@ func (service *LifecycleService) ResumeLifecycleOperation(
 		if err != nil || !found {
 			return LifecycleRecoveryResult{}, lifecycleRecoveryReplayError("rebuild", found, err)
 		}
-		result, err := service.continueAgentRebuild(ctx, state)
-		return lifecycleRecoveryResult(operation, result.Operation), err
+		if state.Operation.State != domain.OperationRunning {
+			return lifecycleRecoveryResult(operation, rebuildAgentResult(state).Operation), nil
+		}
+		if err := service.validateLifecycleRecoveryClaim(token, state.Operation); err != nil {
+			return LifecycleRecoveryResult{}, err
+		}
+		next, err := service.stepAgentRebuild(ctx, state)
+		return lifecycleRecoveryResult(operation, rebuildAgentResult(next).Operation), err
 	case domain.OperationDisable:
 		state, found, err := service.store.ReplayAgentDisable(
 			ctx, operation.RequestID, operation.RequestFingerprint,
@@ -217,8 +229,14 @@ func (service *LifecycleService) ResumeLifecycleOperation(
 		if err != nil || !found {
 			return LifecycleRecoveryResult{}, lifecycleRecoveryReplayError("disable", found, err)
 		}
-		result, err := service.continueAgentDisable(ctx, state)
-		return lifecycleRecoveryResult(operation, result.Operation), err
+		if state.Operation.State != domain.OperationRunning {
+			return lifecycleRecoveryResult(operation, disableAgentResult(state).Operation), nil
+		}
+		if err := service.validateLifecycleRecoveryClaim(token, state.Operation); err != nil {
+			return LifecycleRecoveryResult{}, err
+		}
+		next, err := service.stepAgentDisable(ctx, state)
+		return lifecycleRecoveryResult(operation, disableAgentResult(next).Operation), err
 	case domain.OperationEnable:
 		state, found, err := service.store.ReplayAgentEnable(
 			ctx, operation.RequestID, operation.RequestFingerprint,
@@ -226,8 +244,14 @@ func (service *LifecycleService) ResumeLifecycleOperation(
 		if err != nil || !found {
 			return LifecycleRecoveryResult{}, lifecycleRecoveryReplayError("enable", found, err)
 		}
-		result, err := service.continueAgentEnable(ctx, state)
-		return lifecycleRecoveryResult(operation, result.Operation), err
+		if state.Operation.State != domain.OperationRunning {
+			return lifecycleRecoveryResult(operation, enableAgentResult(state).Operation), nil
+		}
+		if err := service.validateLifecycleRecoveryClaim(token, state.Operation); err != nil {
+			return LifecycleRecoveryResult{}, err
+		}
+		next, err := service.stepAgentEnable(ctx, state)
+		return lifecycleRecoveryResult(operation, enableAgentResult(next).Operation), err
 	case domain.OperationDelete:
 		state, found, err := service.store.ReplayAgentDelete(
 			ctx, operation.RequestID, operation.RequestFingerprint,
@@ -235,8 +259,14 @@ func (service *LifecycleService) ResumeLifecycleOperation(
 		if err != nil || !found {
 			return LifecycleRecoveryResult{}, lifecycleRecoveryReplayError("delete", found, err)
 		}
-		result, err := service.continueAgentDelete(ctx, state)
-		return lifecycleRecoveryResult(operation, result.Operation), err
+		if state.Operation.State != domain.OperationRunning {
+			return lifecycleRecoveryResult(operation, deleteAgentResult(state).Operation), nil
+		}
+		if err := service.validateLifecycleRecoveryClaim(token, state.Operation); err != nil {
+			return LifecycleRecoveryResult{}, err
+		}
+		next, err := service.stepAgentDelete(ctx, state)
+		return lifecycleRecoveryResult(operation, deleteAgentResult(next).Operation), err
 	default:
 		return LifecycleRecoveryResult{}, fmt.Errorf("unsupported lifecycle recovery kind %q", operation.Kind)
 	}
@@ -265,15 +295,20 @@ func lifecycleRecoveryReplayError(kind string, found bool, err error) error {
 	return nil
 }
 
-func lifecycleOperationReservedForRecovery(
-	ctx context.Context, operation ports.LifecycleOperationRecord,
-) bool {
-	if operation.RecoveryOwner == "" {
-		return false
+func (service *LifecycleService) validateLifecycleRecoveryClaim(
+	token ports.LifecycleRecoveryToken, operation ports.LifecycleOperationRecord,
+) error {
+	if token.RequestID != operation.RequestID || token.WorkerID == "" ||
+		token.WorkerID != operation.RecoveryOwner || token.Attempt != operation.Attempt ||
+		operation.RecoveryLeaseUntil == nil ||
+		!service.clock.Now().Before(*operation.RecoveryLeaseUntil) {
+		return ports.ErrLifecycleRecoveryClaimLost
 	}
-	token, ok := ports.LifecycleRecoveryTokenFromContext(ctx)
-	return !ok || token.RequestID != operation.RequestID ||
-		token.WorkerID != operation.RecoveryOwner || token.Attempt != operation.Attempt
+	return nil
+}
+
+func lifecycleOperationReservedForRecovery(operation ports.LifecycleOperationRecord) bool {
+	return operation.RecoveryOwner != ""
 }
 
 var _ LifecycleOperationResumer = (*LifecycleService)(nil)

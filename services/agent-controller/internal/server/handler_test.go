@@ -289,6 +289,33 @@ func TestLifecycleHandlerGetsDurableOperation(t *testing.T) {
 	}
 }
 
+func TestLifecycleHandlerUsesOperationSpecificNotFoundError(t *testing.T) {
+	t.Parallel()
+
+	lifecycle := &lifecycleServiceStub{err: ports.ErrNotFound}
+	handler, err := NewHandler(
+		&catalogServiceStub{}, lifecycle, &runServiceStub{}, &agentQueryServiceStub{},
+		&agentEventServiceStub{}, func(context.Context) error { return nil },
+	)
+	if err != nil {
+		t.Fatalf("new handler: %v", err)
+	}
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/internal/agent-operations/missing-operation", nil)
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("status = %d body=%s", response.Code, response.Body.String())
+	}
+	var payload errorResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.Code != "operation_not_found" || payload.Retryable {
+		t.Fatalf("operation error = %+v", payload)
+	}
+}
+
 func TestLifecycleHandlerRequestsAgentRebuildWithStableContract(t *testing.T) {
 	t.Parallel()
 

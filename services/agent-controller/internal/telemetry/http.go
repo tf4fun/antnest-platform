@@ -29,7 +29,7 @@ func HTTPHandler(next http.Handler, logger *slog.Logger) http.Handler {
 		logger = slog.Default()
 	}
 	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if request.URL.Path == "/status" {
+		if isStatusRoute(request.URL.Path) {
 			observeReadinessFailure(next, response, request, logger)
 			return
 		}
@@ -74,10 +74,10 @@ func observeReadinessFailure(
 		request.Context(), propagation.HeaderCarrier(request.Header),
 	)
 	ctx, span := otel.Tracer(instrumentationName+"/http").Start(
-		ctx, "HTTP "+request.Method+" /status",
+		ctx, "HTTP "+request.Method+" "+request.URL.Path,
 		trace.WithSpanKind(trace.SpanKindServer), trace.WithTimestamp(started),
 	)
-	finishHTTPRequest(ctx, span, logger, request.Method, "/status", observed.status, started)
+	finishHTTPRequest(ctx, span, logger, request.Method, request.URL.Path, observed.status, started)
 }
 
 func finishHTTPRequest(
@@ -107,7 +107,7 @@ func finishHTTPRequest(
 	span.End()
 	httpRequests.Add(ctx, 1, metric.WithAttributes(attributes...))
 	httpDuration.Record(ctx, time.Since(started).Seconds(), metric.WithAttributes(attributes...))
-	if route != "/status" || result == "error" {
+	if !isStatusRoute(route) || result == "error" {
 		logger.InfoContext(ctx, "Agent Controller HTTP request completed",
 			"method", method, "route", route, "status_code", status, "result", result,
 		)
@@ -127,14 +127,30 @@ func routePattern(request *http.Request) string {
 
 type statusWriter struct {
 	http.ResponseWriter
-	status int
+	status      int
+	wroteHeader bool
 }
 
 func (writer *statusWriter) Unwrap() http.ResponseWriter { return writer.ResponseWriter }
 
 func (writer *statusWriter) WriteHeader(status int) {
+	if writer.wroteHeader {
+		return
+	}
+	writer.wroteHeader = true
 	writer.status = status
 	writer.ResponseWriter.WriteHeader(status)
+}
+
+func (writer *statusWriter) Write(payload []byte) (int, error) {
+	if !writer.wroteHeader {
+		writer.WriteHeader(http.StatusOK)
+	}
+	return writer.ResponseWriter.Write(payload)
+}
+
+func isStatusRoute(path string) bool {
+	return path == "/status" || path == "/rpc/agent-controller/status"
 }
 
 func mustCounter(instrument metric.Int64Counter, err error) metric.Int64Counter {

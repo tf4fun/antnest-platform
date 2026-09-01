@@ -118,6 +118,11 @@ turn a downstream outage into a restart loop.
   expires and execution overlaps, those dependency guarantees plus repository
   phase CAS decide the winner; the expired attempt cannot mutate, release, or
   reschedule a newer claim.
+- Parent-context cancellation and fatal recovery invariants stop the worker
+  immediately instead of issuing another release write. In those two cases the
+  bounded lease expires naturally and makes the operation claimable again; a
+  terminal operation is protected by a database constraint from retaining a
+  recovery owner or lease.
 - A fatal recovery-store or state-machine invariant error stops the service;
   retryable dependency failures remain inside the worker and use bounded
   backoff. Shutdown stops new claims, starts HTTP draining immediately, and

@@ -99,6 +99,11 @@ type handler struct {
 	lifecycleTimeout time.Duration
 }
 
+type routeDefinition struct {
+	pattern string
+	handler http.HandlerFunc
+}
+
 type HandlerOption func(*handler) error
 
 func WithLifecycleTimeout(timeout time.Duration) HandlerOption {
@@ -150,33 +155,41 @@ func NewHandler(
 		}
 	}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /status", h.status)
-	mux.HandleFunc("GET /rpc/agent-controller/status", h.status)
-	mux.HandleFunc("POST /rpc/agent-controller/resolve-agent-access", h.resolveAgentAccess)
-	mux.HandleFunc("POST /rpc/agent-controller/acquire-run", h.acquireRun)
-	mux.HandleFunc("POST /rpc/agent-controller/resolve-credential", h.resolveCredential)
-	mux.HandleFunc("POST /rpc/agent-controller/finish-run", h.finishRun)
-	mux.HandleFunc("POST /internal/model-profiles", h.createModelProfile)
-	mux.HandleFunc("GET /internal/model-profiles", h.listModelProfiles)
-	mux.HandleFunc("GET /internal/model-profiles/{model_profile_id}", h.getModelProfile)
-	mux.HandleFunc("POST /internal/model-profiles/{model_profile_id}/revisions", h.reviseModelProfile)
-	mux.HandleFunc("POST /internal/agent-templates", h.createTemplate)
-	mux.HandleFunc("GET /internal/agent-templates", h.listTemplates)
-	mux.HandleFunc("GET /internal/agent-templates/{template_id}", h.getTemplate)
-	mux.HandleFunc("POST /internal/agent-templates/{template_id}/revisions", h.reviseTemplate)
-	mux.HandleFunc("POST /internal/agents", h.createAgent)
-	mux.HandleFunc("GET /internal/agents", h.listAgents)
-	mux.HandleFunc("GET /internal/agents/{agent_id}", h.getAgent)
-	mux.HandleFunc("POST /internal/agents/{agent_id}/rebuild", h.rebuildAgent)
-	mux.HandleFunc("POST /internal/agents/{agent_id}/disable", h.disableAgent)
-	mux.HandleFunc("POST /internal/agents/{agent_id}/enable", h.enableAgent)
-	mux.HandleFunc("POST /internal/agents/{agent_id}/delete", h.deleteAgent)
-	mux.HandleFunc("GET /internal/agent-operations/{request_id}", h.getLifecycleOperation)
-	mux.HandleFunc("GET /internal/agent-events", h.listGlobalAgentEvents)
-	mux.HandleFunc("GET /internal/agent-events/watch", h.watchGlobalAgentEvents)
-	mux.HandleFunc("GET /internal/agents/{agent_id}/events", h.listAgentEvents)
-	mux.HandleFunc("GET /internal/agents/{agent_id}/events/watch", h.watchAgentEvents)
+	for _, route := range h.routes() {
+		mux.HandleFunc(route.pattern, route.handler)
+	}
 	return mux, nil
+}
+
+func (h *handler) routes() []routeDefinition {
+	return []routeDefinition{
+		{pattern: "GET /status", handler: h.status},
+		{pattern: "GET /rpc/agent-controller/status", handler: h.status},
+		{pattern: "POST /rpc/agent-controller/resolve-agent-access", handler: h.resolveAgentAccess},
+		{pattern: "POST /rpc/agent-controller/acquire-run", handler: h.acquireRun},
+		{pattern: "POST /rpc/agent-controller/resolve-credential", handler: h.resolveCredential},
+		{pattern: "POST /rpc/agent-controller/finish-run", handler: h.finishRun},
+		{pattern: "POST /internal/model-profiles", handler: h.createModelProfile},
+		{pattern: "GET /internal/model-profiles", handler: h.listModelProfiles},
+		{pattern: "GET /internal/model-profiles/{model_profile_id}", handler: h.getModelProfile},
+		{pattern: "POST /internal/model-profiles/{model_profile_id}/revisions", handler: h.reviseModelProfile},
+		{pattern: "POST /internal/agent-templates", handler: h.createTemplate},
+		{pattern: "GET /internal/agent-templates", handler: h.listTemplates},
+		{pattern: "GET /internal/agent-templates/{template_id}", handler: h.getTemplate},
+		{pattern: "POST /internal/agent-templates/{template_id}/revisions", handler: h.reviseTemplate},
+		{pattern: "POST /internal/agents", handler: h.createAgent},
+		{pattern: "GET /internal/agents", handler: h.listAgents},
+		{pattern: "GET /internal/agents/{agent_id}", handler: h.getAgent},
+		{pattern: "POST /internal/agents/{agent_id}/rebuild", handler: h.rebuildAgent},
+		{pattern: "POST /internal/agents/{agent_id}/disable", handler: h.disableAgent},
+		{pattern: "POST /internal/agents/{agent_id}/enable", handler: h.enableAgent},
+		{pattern: "POST /internal/agents/{agent_id}/delete", handler: h.deleteAgent},
+		{pattern: "GET /internal/agent-operations/{request_id}", handler: h.getLifecycleOperation},
+		{pattern: "GET /internal/agent-events", handler: h.listGlobalAgentEvents},
+		{pattern: "GET /internal/agent-events/watch", handler: h.watchGlobalAgentEvents},
+		{pattern: "GET /internal/agents/{agent_id}/events", handler: h.listAgentEvents},
+		{pattern: "GET /internal/agents/{agent_id}/events/watch", handler: h.watchAgentEvents},
+	}
 }
 
 type credentialInput struct {
@@ -942,6 +955,10 @@ func (h *handler) deleteAgent(response http.ResponseWriter, request *http.Reques
 func (h *handler) getLifecycleOperation(response http.ResponseWriter, request *http.Request) {
 	operation, err := h.lifecycle.GetLifecycleOperation(request.Context(), request.PathValue("request_id"))
 	if err != nil {
+		if errors.Is(err, ports.ErrNotFound) {
+			writeError(response, http.StatusNotFound, "operation_not_found", "lifecycle operation was not found", false)
+			return
+		}
 		writeServiceError(request.Context(), response, err)
 		return
 	}

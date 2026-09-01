@@ -266,32 +266,36 @@ func (service *LifecycleService) continueAgentCreate(
 	if state.Operation.State != domain.OperationRunning {
 		return createAgentResult(state), nil
 	}
-	if lifecycleOperationReservedForRecovery(ctx, state.Operation) {
+	if lifecycleOperationReservedForRecovery(state.Operation) {
 		return createAgentResult(state), nil
 	}
-	_, recoveryStep := ports.LifecycleRecoveryTokenFromContext(ctx)
-	var err error
-	if state.Operation.Phase == domain.PhaseNetworkEnsure {
-		state, err = service.ensureCreateNetwork(ctx, state)
-		if err != nil || state.Operation.State != domain.OperationRunning || recoveryStep {
-			return createAgentResult(state), err
+	for state.Operation.State == domain.OperationRunning {
+		phase := state.Operation.Phase
+		next, err := service.stepAgentCreate(ctx, state)
+		if err != nil {
+			return createAgentResult(next), err
 		}
-	}
-	if state.Operation.Phase == domain.PhaseRuntimeInitialize {
-		state, err = service.initializeCreateRuntime(ctx, state)
-		if err != nil || state.Operation.State != domain.OperationRunning ||
-			state.Operation.Phase == domain.PhaseRuntimeInitialize || recoveryStep {
-			return createAgentResult(state), err
+		state = next
+		if state.Operation.Phase == phase {
+			break
 		}
-	}
-	if state.Operation.Phase != domain.PhasePublish {
-		return CreateAgentResult{}, fmt.Errorf("invalid create operation phase %q", state.Operation.Phase)
-	}
-	state, err = service.publishAgentCreate(ctx, state)
-	if err != nil {
-		return CreateAgentResult{}, err
 	}
 	return createAgentResult(state), nil
+}
+
+func (service *LifecycleService) stepAgentCreate(
+	ctx context.Context, state ports.AgentCreateState,
+) (ports.AgentCreateState, error) {
+	switch state.Operation.Phase {
+	case domain.PhaseNetworkEnsure:
+		return service.ensureCreateNetwork(ctx, state)
+	case domain.PhaseRuntimeInitialize:
+		return service.initializeCreateRuntime(ctx, state)
+	case domain.PhasePublish:
+		return service.publishAgentCreate(ctx, state)
+	default:
+		return state, fmt.Errorf("invalid create operation phase %q", state.Operation.Phase)
+	}
 }
 
 func (service *LifecycleService) ensureCreateNetwork(

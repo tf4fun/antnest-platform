@@ -46,8 +46,12 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 		t.Fatalf("create SecretBox: %v", err)
 	}
 
-	var egressCalls, runtimeCalls, initializeCalls atomic.Int64
+	var egressCalls, runtimeCalls atomic.Int64
+	var initializeCalls, updateCalls, disableCalls, enableCalls, deleteCalls atomic.Int64
 	var policyMu sync.Mutex
+	var runtimeMu sync.Mutex
+	var currentRuntimeRevision, currentRuntimeExecutionID, currentRuntimeEndpoint string
+	var currentRuntimeLifecycle, currentRuntimeHealth string
 	policyID := "internet-enabled"
 	policyVersion := uint64(1)
 	egressServer := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
@@ -124,7 +128,26 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 	runtimeServer := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		runtimeCalls.Add(1)
 		path := strings.TrimPrefix(request.URL.Path, "/internal/runtimes/")
+		if request.Method == http.MethodGet && path != "" && !strings.Contains(path, "/") {
+			runtimeMu.Lock()
+			inspection := map[string]any{
+				"agent_id": path, "runtime_revision": currentRuntimeRevision,
+				"lifecycle_state": currentRuntimeLifecycle, "health": currentRuntimeHealth,
+				"restart_count": 0, "observed_at": "2026-09-01T00:00:00Z",
+			}
+			if currentRuntimeExecutionID != "" {
+				inspection["runtime_execution_id"] = currentRuntimeExecutionID
+			}
+			if currentRuntimeEndpoint != "" {
+				inspection["mcp_endpoint"] = currentRuntimeEndpoint
+			}
+			runtimeMu.Unlock()
+			response.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(response).Encode(inspection)
+			return
+		}
 		action := "initialize"
+		actionCalls := &initializeCalls
 		agentID := strings.TrimSuffix(path, "/initialize")
 		kind := "initialize_runtime"
 		revision := "rtv_22222222222222222222222222222222"
@@ -132,6 +155,7 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 		endpoint := "http://runtime-e2e:8091/mcp"
 		if strings.HasSuffix(path, "/update") {
 			action = "update"
+			actionCalls = &updateCalls
 			agentID = strings.TrimSuffix(path, "/update")
 			kind = "update_runtime"
 			revision = "rtv_33333333333333333333333333333333"
@@ -146,6 +170,7 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 			}
 		} else if strings.HasSuffix(path, "/disable") {
 			action = "disable"
+			actionCalls = &disableCalls
 			agentID = strings.TrimSuffix(path, "/disable")
 			kind = "disable_runtime"
 			revision = "rtv_44444444444444444444444444444444"
@@ -160,6 +185,7 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 			}
 		} else if strings.HasSuffix(path, "/enable") {
 			action = "enable"
+			actionCalls = &enableCalls
 			agentID = strings.TrimSuffix(path, "/enable")
 			kind = "enable_runtime"
 			revision = "rtv_55555555555555555555555555555555"
@@ -174,6 +200,7 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 			}
 		} else if strings.HasSuffix(path, "/delete") {
 			action = "delete"
+			actionCalls = &deleteCalls
 			agentID = strings.TrimSuffix(path, "/delete")
 			kind = "delete_runtime"
 			revision = "rtv_66666666666666666666666666666666"
@@ -187,7 +214,7 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 				t.Fatalf("Runtime delete payload = %+v err=%v", payload, err)
 			}
 		}
-		if action == "initialize" && initializeCalls.Add(1) == 1 {
+		if actionCalls.Add(1) == 1 {
 			response.Header().Set("Content-Type", "application/json")
 			response.WriteHeader(http.StatusServiceUnavailable)
 			_ = json.NewEncoder(response).Encode(map[string]any{
@@ -219,6 +246,13 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 			delete(inspection, "mcp_endpoint")
 			delete(inspection, "runtime_execution_id")
 		}
+		runtimeMu.Lock()
+		currentRuntimeRevision = revision
+		currentRuntimeExecutionID = executionID
+		currentRuntimeEndpoint = endpoint
+		currentRuntimeLifecycle = inspection["lifecycle_state"].(string)
+		currentRuntimeHealth = inspection["health"].(string)
+		runtimeMu.Unlock()
 		_ = json.NewEncoder(response).Encode(map[string]any{
 			"request_id": requestID, "kind": kind, "agent_id": agentID,
 			"target_revision": revision, "state": "completed", "effect": "completed",
@@ -287,23 +321,27 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 		repository, restartedLifecycle, nil,
 		application.LifecycleRecoveryWorkerConfig{
 			WorkerID: "agent-e2e-recovery", PollInterval: 10 * time.Millisecond,
-			StaleAfter: time.Second, AttemptTimeout: 500 * time.Millisecond,
-			LeaseDuration: time.Second, RetryMax: time.Second,
+			StaleAfter: 500 * time.Millisecond, AttemptTimeout: 200 * time.Millisecond,
+			LeaseDuration: 500 * time.Millisecond, RetryMax: 500 * time.Millisecond,
 		},
 	)
 	if err != nil {
 		t.Fatalf("create lifecycle recovery worker: %v", err)
 	}
-	time.Sleep(1100 * time.Millisecond)
-	processed, err := recoveryWorker.RunOnce(ctx)
-	if err != nil || !processed {
-		t.Fatalf("recover interrupted create: processed=%v err=%v", processed, err)
+	recoverPhase := func(requestID string, wantPhase string) {
+		t.Helper()
+		time.Sleep(550 * time.Millisecond)
+		processed, err := recoveryWorker.RunOnce(ctx)
+		if err != nil || !processed {
+			t.Fatalf("recover interrupted %s: processed=%v err=%v", requestID, processed, err)
+		}
+		recoveredStep, err := repository.GetLifecycleOperation(ctx, requestID)
+		if err != nil || recoveredStep.State != "running" || string(recoveredStep.Phase) != wantPhase ||
+			recoveredStep.RecoveryOwner != "" || recoveredStep.RecoveryLeaseUntil != nil {
+			t.Fatalf("single recovered %s phase = %+v err=%v", requestID, recoveredStep, err)
+		}
 	}
-	recoveredStep, err := repository.GetLifecycleOperation(ctx, "agent-e2e-create")
-	if err != nil || recoveredStep.State != "running" || recoveredStep.Phase != "publish" ||
-		recoveredStep.RecoveryOwner != "" || recoveredStep.RecoveryLeaseUntil != nil {
-		t.Fatalf("single recovered create phase = %+v err=%v", recoveredStep, err)
-	}
+	recoverPhase("agent-e2e-create", "publish")
 	created := serveJSON(t, handler, http.MethodPost, "/internal/agents", createBody, http.StatusAccepted)
 	agent := created["agent"].(map[string]any)
 	operation := created["operation"].(map[string]any)
@@ -339,6 +377,18 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 		"template_id":"` + templateID + `",
 		"template_revision":1
 	}`
+	failedRebuild := serveJSON(
+		t, handler, http.MethodPost, "/internal/agents/"+agentID+"/rebuild",
+		rebuildBody, http.StatusServiceUnavailable,
+	)
+	if failedRebuild["code"] != "dependency_unavailable" || failedRebuild["retryable"] != true {
+		t.Fatalf("failed rebuild response = %+v", failedRebuild)
+	}
+	persisted, err = repository.GetLifecycleOperation(ctx, "agent-e2e-rebuild")
+	if err != nil || persisted.State != "running" || persisted.Phase != "runtime_update" {
+		t.Fatalf("persisted interrupted rebuild = %+v err=%v", persisted, err)
+	}
+	recoverPhase("agent-e2e-rebuild", "network_ensure")
 	rebuilt := serveJSON(
 		t, handler, http.MethodPost, "/internal/agents/"+agentID+"/rebuild",
 		rebuildBody, http.StatusAccepted,
@@ -367,6 +417,18 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 	}
 
 	disableBody := `{"request_id":"agent-e2e-disable"}`
+	failedDisable := serveJSON(
+		t, handler, http.MethodPost, "/internal/agents/"+agentID+"/disable",
+		disableBody, http.StatusServiceUnavailable,
+	)
+	if failedDisable["code"] != "dependency_unavailable" || failedDisable["retryable"] != true {
+		t.Fatalf("failed disable response = %+v", failedDisable)
+	}
+	persisted, err = repository.GetLifecycleOperation(ctx, "agent-e2e-disable")
+	if err != nil || persisted.State != "running" || persisted.Phase != "runtime_disable" {
+		t.Fatalf("persisted interrupted disable = %+v err=%v", persisted, err)
+	}
+	recoverPhase("agent-e2e-disable", "publish")
 	disabled := serveJSON(
 		t, handler, http.MethodPost, "/internal/agents/"+agentID+"/disable",
 		disableBody, http.StatusAccepted,
@@ -398,6 +460,18 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 	}
 
 	enableBody := `{"request_id":"agent-e2e-enable"}`
+	failedEnable := serveJSON(
+		t, handler, http.MethodPost, "/internal/agents/"+agentID+"/enable",
+		enableBody, http.StatusServiceUnavailable,
+	)
+	if failedEnable["code"] != "dependency_unavailable" || failedEnable["retryable"] != true {
+		t.Fatalf("failed enable response = %+v", failedEnable)
+	}
+	persisted, err = repository.GetLifecycleOperation(ctx, "agent-e2e-enable")
+	if err != nil || persisted.State != "running" || persisted.Phase != "runtime_enable" {
+		t.Fatalf("persisted interrupted enable = %+v err=%v", persisted, err)
+	}
+	recoverPhase("agent-e2e-enable", "network_restore")
 	enabled := serveJSON(
 		t, handler, http.MethodPost, "/internal/agents/"+agentID+"/enable",
 		enableBody, http.StatusAccepted,
@@ -430,6 +504,18 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 	}
 
 	deleteBody := `{"request_id":"agent-e2e-delete"}`
+	failedDelete := serveJSON(
+		t, handler, http.MethodPost, "/internal/agents/"+agentID+"/delete",
+		deleteBody, http.StatusServiceUnavailable,
+	)
+	if failedDelete["code"] != "dependency_unavailable" || failedDelete["retryable"] != true {
+		t.Fatalf("failed delete response = %+v", failedDelete)
+	}
+	persisted, err = repository.GetLifecycleOperation(ctx, "agent-e2e-delete")
+	if err != nil || persisted.State != "running" || persisted.Phase != "runtime_delete" {
+		t.Fatalf("persisted interrupted delete = %+v err=%v", persisted, err)
+	}
+	recoverPhase("agent-e2e-delete", "network_release")
 	deleted := serveJSON(
 		t, handler, http.MethodPost, "/internal/agents/"+agentID+"/delete",
 		deleteBody, http.StatusAccepted,

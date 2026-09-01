@@ -130,39 +130,38 @@ func (service *LifecycleService) continueAgentEnable(
 	if state.Operation.State != domain.OperationRunning {
 		return enableAgentResult(state), nil
 	}
-	if lifecycleOperationReservedForRecovery(ctx, state.Operation) {
+	if lifecycleOperationReservedForRecovery(state.Operation) {
 		return enableAgentResult(state), nil
 	}
-	_, recoveryStep := ports.LifecycleRecoveryTokenFromContext(ctx)
-	var err error
-	if state.Operation.Phase == domain.PhaseNetworkEnsure {
-		state, err = service.ensureEnableNetwork(ctx, state)
-		if err != nil || state.Operation.State != domain.OperationRunning || recoveryStep {
-			return enableAgentResult(state), err
+	for state.Operation.State == domain.OperationRunning {
+		phase := state.Operation.Phase
+		next, err := service.stepAgentEnable(ctx, state)
+		if err != nil {
+			return enableAgentResult(next), err
 		}
-	}
-	if state.Operation.Phase == domain.PhaseRuntimeEnable {
-		state, err = service.enableRuntime(ctx, state)
-		if err != nil || state.Operation.State != domain.OperationRunning ||
-			state.Operation.Phase == domain.PhaseRuntimeEnable || recoveryStep {
-			return enableAgentResult(state), err
+		state = next
+		if state.Operation.Phase == phase {
+			break
 		}
-	}
-	if state.Operation.Phase == domain.PhaseNetworkRestore {
-		state, err = service.restoreEnableNetwork(ctx, state)
-		if err != nil || state.Operation.State != domain.OperationRunning ||
-			state.Operation.Phase == domain.PhaseNetworkRestore || recoveryStep {
-			return enableAgentResult(state), err
-		}
-	}
-	if state.Operation.Phase != domain.PhasePublish {
-		return EnableAgentResult{}, fmt.Errorf("invalid enable operation phase %q", state.Operation.Phase)
-	}
-	state, err = service.publishAgentEnable(ctx, state)
-	if err != nil {
-		return EnableAgentResult{}, err
 	}
 	return enableAgentResult(state), nil
+}
+
+func (service *LifecycleService) stepAgentEnable(
+	ctx context.Context, state ports.AgentEnableState,
+) (ports.AgentEnableState, error) {
+	switch state.Operation.Phase {
+	case domain.PhaseNetworkEnsure:
+		return service.ensureEnableNetwork(ctx, state)
+	case domain.PhaseRuntimeEnable:
+		return service.enableRuntime(ctx, state)
+	case domain.PhaseNetworkRestore:
+		return service.restoreEnableNetwork(ctx, state)
+	case domain.PhasePublish:
+		return service.publishAgentEnable(ctx, state)
+	default:
+		return state, fmt.Errorf("invalid enable operation phase %q", state.Operation.Phase)
+	}
 }
 
 func (service *LifecycleService) ensureEnableNetwork(
