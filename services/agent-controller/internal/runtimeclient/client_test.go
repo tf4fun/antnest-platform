@@ -141,6 +141,127 @@ func TestUpdateRuntimeUsesExpectedRevisionAndCompleteConfiguration(t *testing.T)
 	}
 }
 
+func TestDisableRuntimeAcceptsAbsentComputeAndRetainedWorkspaceRevision(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost || request.URL.Path != "/internal/runtimes/agent-1/disable" {
+			t.Fatalf("request = %s %s", request.Method, request.URL.Path)
+		}
+		if request.Header.Get("Idempotency-Key") != "child-request-disable" {
+			t.Fatalf("Idempotency-Key = %q", request.Header.Get("Idempotency-Key"))
+		}
+		var payload struct {
+			ExpectedRevision string `json:"expected_revision"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if payload.ExpectedRevision != "rtv_11111111111111111111111111111111" {
+			t.Fatalf("disable payload = %+v", payload)
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = response.Write([]byte(`{
+			"request_id":"child-request-disable",
+			"kind":"disable_runtime",
+			"agent_id":"agent-1",
+			"target_revision":"rtv_33333333333333333333333333333333",
+			"state":"completed",
+			"effect":"completed",
+			"inspection":{
+				"agent_id":"agent-1",
+				"runtime_revision":"rtv_33333333333333333333333333333333",
+				"lifecycle_state":"disabled",
+				"health":"absent",
+				"restart_count":0,
+				"observed_at":"2026-09-01T00:00:00Z"
+			}
+		}`))
+	}))
+	t.Cleanup(server.Close)
+	client, err := New(server.URL, time.Second, server.Client())
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+
+	result, err := client.DisableRuntime(
+		context.Background(), "child-request-disable", "agent-1",
+		"rtv_11111111111111111111111111111111",
+	)
+	if err != nil {
+		t.Fatalf("disable Runtime: %v", err)
+	}
+	if result.RuntimeRevision != "rtv_33333333333333333333333333333333" ||
+		result.LifecycleState != "disabled" || result.Health != "absent" ||
+		result.RuntimeExecutionID != "" || result.MCPEndpoint != "" {
+		t.Fatalf("Runtime operation = %+v", result)
+	}
+}
+
+func TestInspectRuntimeReturnsAuthoritativeReadyBinding(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet || request.URL.Path != "/internal/runtimes/agent-1" {
+			t.Fatalf("request = %s %s", request.Method, request.URL.Path)
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = response.Write([]byte(`{
+			"agent_id":"agent-1",
+			"runtime_revision":"rtv_11111111111111111111111111111111",
+			"lifecycle_state":"ready",
+			"health":"healthy",
+			"mcp_endpoint":"http://runtime-agent:8091/mcp",
+			"runtime_execution_id":"execution-1",
+			"restart_count":0,
+			"observed_at":"2026-09-01T00:00:00Z"
+		}`))
+	}))
+	t.Cleanup(server.Close)
+	client, err := New(server.URL, time.Second, server.Client())
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+
+	inspection, err := client.InspectRuntime(context.Background(), "agent-1")
+	if err != nil {
+		t.Fatalf("inspect Runtime: %v", err)
+	}
+	if inspection.AgentID != "agent-1" ||
+		inspection.RuntimeRevision != "rtv_11111111111111111111111111111111" ||
+		inspection.RuntimeExecutionID != "execution-1" ||
+		inspection.MCPEndpoint != "http://runtime-agent:8091/mcp" ||
+		inspection.LifecycleState != "ready" || inspection.Health != "healthy" {
+		t.Fatalf("Runtime inspection = %+v", inspection)
+	}
+}
+
+func TestInspectRuntimeRejectsIncoherentReadyBinding(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = response.Write([]byte(`{
+			"agent_id":"agent-1",
+			"runtime_revision":"rtv_11111111111111111111111111111111",
+			"lifecycle_state":"ready",
+			"health":"healthy"
+		}`))
+	}))
+	t.Cleanup(server.Close)
+	client, err := New(server.URL, time.Second, server.Client())
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+
+	_, err = client.InspectRuntime(context.Background(), "agent-1")
+	var dependencyError *ports.DependencyError
+	if !errors.As(err, &dependencyError) || dependencyError.Code != "invalid_response" ||
+		!dependencyError.Retryable {
+		t.Fatalf("dependency error = %#v (%v)", dependencyError, err)
+	}
+}
+
 func TestInitializeRuntimeReturnsStableDependencyFailure(t *testing.T) {
 	t.Parallel()
 
@@ -238,6 +359,7 @@ func TestInitializeRuntimeRejectsContradictoryCompletedResponse(t *testing.T) {
 		{name: "invalid endpoint", body: strings.Replace(valid, "http://runtime-agent:8091/mcp", "not-a-uri", 1)},
 		{name: "non canonical endpoint", body: strings.Replace(valid, "http://runtime-agent:8091/mcp", " http://runtime-agent:8091/mcp ", 1)},
 		{name: "invalid revision", body: strings.ReplaceAll(valid, "rtv_11111111111111111111111111111111", "runtime-revision")},
+		{name: "failed but effect completed", body: strings.Replace(valid, `"state":"completed"`, `"state":"failed"`, 1)},
 	}
 	for _, test := range tests {
 		test := test

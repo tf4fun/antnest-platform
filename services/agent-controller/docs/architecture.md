@@ -225,12 +225,43 @@ Runtime; there is no implicit rollback.
 
 ### Disable, Enable, Delete
 
-Disable fences traffic and removes compute while retaining workspace through
-Runtime Controller. Enable reuses the last valid AgentSpec; configuration
-changes always use explicit rebuild. It publishes a new ExecutionRevision.
-Delete removes compute and workspace,
-releases the Egress attachment, keeps immutable events/revisions for retention,
-and hides the Agent from default active queries.
+Disable is a restartable Saga, not a projection-only flag:
+
+1. atomically set desired state `disabled`, attach the operation, append
+   `agent_disable_requested`, and reject new Run admission;
+2. wait for an active Run to settle; a `blocked_unknown_effect` admission may
+   cross the deletion barrier only when Runtime Controller later proves the
+   source Runtime compute absent;
+3. persist the current Egress policy assignment as recovery evidence, then
+   fence the Agent to durable deny-all;
+4. call Runtime Controller `DisableRuntime` with the frozen source Runtime
+   revision; completed success must prove lifecycle `disabled` and health
+   `absent`, and returns the retained-workspace Runtime revision;
+5. atomically publish desired/lifecycle state `disabled`, retain the current
+   AgentSpec and last successful ExecutionRevision, clear the executable
+   execution/MCP binding, store the disabled Runtime revision, and append
+   `agent_disabled`.
+
+A conclusive failure before Runtime disable restores the captured Egress
+policy, desired state `enabled`, and the old executable binding. Once Runtime
+Controller has received a disable request, restoration additionally requires
+an authoritative inspection proving the exact frozen Runtime revision,
+execution identity, MCP endpoint, lifecycle `ready`, and health `healthy`.
+Mismatch projects the Agent as unavailable and leaves it fenced; ambiguous
+effect or inspection remains running and fail-closed for exact-request replay.
+
+Enable reuses the disabled Agent's last valid AgentSpec; configuration changes
+always use explicit rebuild. It ensures the retained network attachment, calls
+Runtime Controller with the disabled Runtime revision, restores the policy
+captured by the matching completed Disable operation only after Runtime enable
+is proven ready, and publishes a new ExecutionRevision. No policy reference is
+copied into the Agent projection.
+
+Delete removes compute and workspace, releases the Egress attachment into
+quarantine, keeps immutable events/revisions for retention, deactivates the
+owner binding, and hides the Agent from default active queries. Once deletion
+intent is persisted it is not rolled back to an executable Agent; ambiguous
+external effects remain on the same operation until reconciled.
 
 ### Run Admission
 

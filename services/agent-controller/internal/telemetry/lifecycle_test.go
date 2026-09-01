@@ -137,3 +137,45 @@ func (store *lifecycleStoreStub) FailAgentRebuild(
 ) (ports.AgentRebuildState, error) {
 	return ports.AgentRebuildState{}, store.err
 }
+
+func (store *lifecycleStoreStub) ReplayAgentDisable(
+	context.Context, string, string,
+) (ports.AgentDisableState, bool, error) {
+	return ports.AgentDisableState{}, false, store.err
+}
+
+func (store *lifecycleStoreStub) BeginAgentDisable(
+	context.Context, ports.BeginAgentDisable,
+) (ports.AgentDisableState, bool, error) {
+	return ports.AgentDisableState{}, false, store.err
+}
+
+func (store *lifecycleStoreStub) RecordAgentDisablePolicy(
+	context.Context, string, string, ports.NetworkPolicyAssignment, time.Time,
+) (ports.AgentDisableState, error) {
+	return ports.AgentDisableState{}, store.err
+}
+
+func (store *lifecycleStoreStub) SettleAgentDisableDrain(
+	context.Context, string, string, string, time.Time,
+) (ports.AgentDisableState, error) {
+	return ports.AgentDisableState{}, store.err
+}
+
+func (store *lifecycleStoreStub) AdvanceAgentDisable(
+	context.Context, ports.AdvanceAgentDisable,
+) (ports.AgentDisableState, error) {
+	return ports.AgentDisableState{}, store.err
+}
+
+func (store *lifecycleStoreStub) PublishAgentDisable(
+	context.Context, ports.PublishAgentDisable,
+) (ports.AgentDisableState, error) {
+	return ports.AgentDisableState{}, store.err
+}
+
+func (store *lifecycleStoreStub) FailAgentDisable(
+	context.Context, ports.FailAgentDisable,
+) (ports.AgentDisableState, error) {
+	return ports.AgentDisableState{}, store.err
+}

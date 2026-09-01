@@ -14,6 +14,9 @@ const (
 	EventAgentBuildFailed      = "agent_build_failed"
 	EventAgentRebuildRequested = "agent_rebuild_requested"
 	EventAgentRebuilt          = "agent_rebuilt"
+	EventAgentDisableRequested = "agent_disable_requested"
+	EventAgentDisabled         = "agent_disabled"
+	EventAgentDisableFailed    = "agent_disable_failed"
 )
 
 type AgentSpecSource interface {
@@ -56,6 +59,15 @@ type RuntimeOperation struct {
 	ErrorDetail        string `json:"error_detail,omitempty"`
 }
 
+type RuntimeInspection struct {
+	AgentID            string `json:"agent_id"`
+	RuntimeRevision    string `json:"runtime_revision"`
+	RuntimeExecutionID string `json:"runtime_execution_id,omitempty"`
+	MCPEndpoint        string `json:"mcp_endpoint,omitempty"`
+	LifecycleState     string `json:"lifecycle_state"`
+	Health             string `json:"health"`
+}
+
 type EgressClient interface {
 	GetAgentNetwork(context.Context, string) (NetworkAttachment, error)
 	EnsureAgentNetwork(context.Context, string) (NetworkAttachment, error)
@@ -68,6 +80,8 @@ type EgressClient interface {
 type RuntimeClient interface {
 	InitializeRuntime(context.Context, string, string, RuntimeConfiguration) (RuntimeOperation, error)
 	UpdateRuntime(context.Context, string, string, string, RuntimeConfiguration) (RuntimeOperation, error)
+	DisableRuntime(context.Context, string, string, string) (RuntimeOperation, error)
+	InspectRuntime(context.Context, string) (RuntimeInspection, error)
 }
 
 type DependencyError struct {
@@ -123,28 +137,30 @@ type AgentSpecRecord struct {
 }
 
 type LifecycleOperationRecord struct {
-	RequestID               string
-	RequestFingerprint      string
-	AgentID                 string
-	Kind                    domain.OperationKind
-	Phase                   domain.OperationPhase
-	State                   domain.OperationState
-	SourceSpecRevisionID    string
-	SourceRuntimeRevision   string
-	SourceRuntimeAbsent     bool
-	TargetSpecRevisionID    string
-	ChildRequestID          string
-	NetworkAttachment       *NetworkAttachment
-	NetworkPolicyAssignment *NetworkPolicyAssignment
-	RuntimeResult           *RuntimeOperation
-	InitialTraceParent      string
-	PreviousAttemptTraceID  string
-	Attempt                 int64
-	ErrorCode               string
-	ErrorDetail             string
-	Retryable               bool
-	CreatedAt               time.Time
-	UpdatedAt               time.Time
+	RequestID                 string
+	RequestFingerprint        string
+	AgentID                   string
+	Kind                      domain.OperationKind
+	Phase                     domain.OperationPhase
+	State                     domain.OperationState
+	SourceSpecRevisionID      string
+	SourceExecutionRevisionID string
+	SourceRuntimeRevision     string
+	SourceRuntimeAbsent       bool
+	TargetSpecRevisionID      string
+	ChildRequestID            string
+	NetworkAttachment         *NetworkAttachment
+	NetworkPolicyAssignment   *NetworkPolicyAssignment
+	SourceRuntimeInspection   *RuntimeInspection
+	RuntimeResult             *RuntimeOperation
+	InitialTraceParent        string
+	PreviousAttemptTraceID    string
+	Attempt                   int64
+	ErrorCode                 string
+	ErrorDetail               string
+	Retryable                 bool
+	CreatedAt                 time.Time
+	UpdatedAt                 time.Time
 }
 
 type AgentEventRecord struct {
@@ -192,6 +208,13 @@ type AgentRebuildState struct {
 	SourceSpec      AgentSpecRecord
 	SourceExecution ExecutionRecord
 	TargetSpec      AgentSpecRecord
+	Operation       LifecycleOperationRecord
+}
+
+type AgentDisableState struct {
+	Agent           AgentRecord
+	SourceSpec      AgentSpecRecord
+	SourceExecution ExecutionRecord
 	Operation       LifecycleOperationRecord
 }
 
@@ -265,6 +288,46 @@ type FailAgentRebuild struct {
 	Now                time.Time
 }
 
+type BeginAgentDisable struct {
+	AgentID                     string
+	ExpectedAggregateSequence   int64
+	ExpectedSpecRevisionID      string
+	ExpectedExecutionRevisionID string
+	ExpectedRuntimeRevision     string
+	Operation                   LifecycleOperationRecord
+	RequestedEvent              AgentEventRecord
+	Now                         time.Time
+}
+
+type AdvanceAgentDisable struct {
+	RequestID          string
+	Fingerprint        string
+	ExpectedPhase      domain.OperationPhase
+	NextPhase          domain.OperationPhase
+	NextChildRequestID string
+	RuntimeResult      *RuntimeOperation
+	Now                time.Time
+}
+
+type PublishAgentDisable struct {
+	RequestID     string
+	Fingerprint   string
+	DisabledEvent AgentEventRecord
+	Now           time.Time
+}
+
+type FailAgentDisable struct {
+	RequestID               string
+	Fingerprint             string
+	Stage                   domain.OperationPhase
+	Code                    string
+	Detail                  string
+	PreserveExecutable      bool
+	SourceRuntimeInspection *RuntimeInspection
+	FailedEvent             AgentEventRecord
+	Now                     time.Time
+}
+
 type LifecycleStore interface {
 	GetLifecycleOperation(context.Context, string) (LifecycleOperationRecord, error)
 	GetAgentLifecycleBase(context.Context, string) (AgentLifecycleBase, error)
@@ -283,4 +346,13 @@ type LifecycleStore interface {
 	AdvanceAgentRebuild(context.Context, AdvanceAgentRebuild) (AgentRebuildState, error)
 	PublishAgentRebuild(context.Context, PublishAgentRebuild) (AgentRebuildState, error)
 	FailAgentRebuild(context.Context, FailAgentRebuild) (AgentRebuildState, error)
+	ReplayAgentDisable(context.Context, string, string) (AgentDisableState, bool, error)
+	BeginAgentDisable(context.Context, BeginAgentDisable) (AgentDisableState, bool, error)
+	RecordAgentDisablePolicy(
+		context.Context, string, string, NetworkPolicyAssignment, time.Time,
+	) (AgentDisableState, error)
+	SettleAgentDisableDrain(context.Context, string, string, string, time.Time) (AgentDisableState, error)
+	AdvanceAgentDisable(context.Context, AdvanceAgentDisable) (AgentDisableState, error)
+	PublishAgentDisable(context.Context, PublishAgentDisable) (AgentDisableState, error)
+	FailAgentDisable(context.Context, FailAgentDisable) (AgentDisableState, error)
 }

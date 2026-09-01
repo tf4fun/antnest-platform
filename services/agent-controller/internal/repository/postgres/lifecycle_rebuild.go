@@ -106,6 +106,7 @@ func (repository *Repository) BeginAgentRebuild(
 	}
 	if input.TargetSpec.AgentID != input.AgentID || input.TargetSpec.Revision != nextSpec ||
 		input.Operation.SourceSpecRevisionID != input.ExpectedSpecRevisionID ||
+		input.Operation.SourceExecutionRevisionID != input.ExpectedExecutionRevisionID ||
 		input.Operation.SourceRuntimeRevision != input.ExpectedRuntimeRevision ||
 		input.Operation.TargetSpecRevisionID != input.TargetSpec.ID ||
 		input.RequestedEvent.AggregateSequence != agent.AggregateSequence+1 {
@@ -187,7 +188,7 @@ ORDER BY admission_id LIMIT 1 FOR UPDATE`, operation.AgentID).Scan(&admissionSta
 	default:
 		return ports.AgentRebuildState{}, fmt.Errorf("unsupported Run admission state %q", admissionState)
 	}
-	if err := advanceRebuildOperation(
+	if err := advanceLifecycleOperation(
 		ctx, transaction, operation, domain.PhaseDrain, domain.PhaseNetworkFence,
 		nextChildRequestID, nil, nil, now,
 	); err != nil {
@@ -289,7 +290,7 @@ func (repository *Repository) AdvanceAgentRebuild(
 	if input.ExpectedPhase == domain.PhaseNetworkFence && operation.NetworkPolicyAssignment == nil {
 		return ports.AgentRebuildState{}, ports.ErrConcurrentChange
 	}
-	if err := advanceRebuildOperation(
+	if err := advanceLifecycleOperation(
 		ctx, transaction, operation, input.ExpectedPhase, input.NextPhase,
 		input.NextChildRequestID, input.NetworkAttachment, input.RuntimeResult, input.Now,
 	); err != nil {
@@ -491,7 +492,7 @@ WHERE request_id = $1`, input.RequestID, input.Code, input.Detail, input.Retryab
 	return state, nil
 }
 
-func advanceRebuildOperation(
+func advanceLifecycleOperation(
 	ctx context.Context,
 	transaction pgx.Tx,
 	operation ports.LifecycleOperationRecord,
@@ -526,7 +527,7 @@ WHERE request_id = $1 AND state = 'running' AND phase = $7`,
 		nullJSON(networkPayload), nullJSON(runtimePayload), now, expected,
 	)
 	if err != nil {
-		return fmt.Errorf("advance Agent rebuild phase: %w", err)
+		return fmt.Errorf("advance Agent lifecycle phase: %w", err)
 	}
 	if result.RowsAffected() != 1 {
 		return ports.ErrConcurrentChange
@@ -580,9 +581,8 @@ func loadAgentRebuildState(
 	if err != nil {
 		return ports.AgentRebuildState{}, err
 	}
-	sourceExecution, err := loadSourceExecution(
-		ctx, queryer, operation.AgentID,
-		operation.SourceSpecRevisionID, operation.SourceRuntimeRevision,
+	sourceExecution, err := loadExecutionRevision(
+		ctx, queryer, operation.SourceExecutionRevisionID,
 	)
 	if err != nil {
 		return ports.AgentRebuildState{}, err
@@ -605,22 +605,6 @@ SELECT id, agent_id, revision, agent_spec_revision_id, runtime_revision,
        runtime_execution_id, runtime_mcp_endpoint, runtime_mcp_source_digest,
        change_summary, published_at
 FROM agent_controller.execution_revisions WHERE id = $1`, executionID))
-}
-
-func loadSourceExecution(
-	ctx context.Context,
-	queryer catalogQueryer,
-	agentID string,
-	specRevisionID string,
-	runtimeRevision string,
-) (ports.ExecutionRecord, error) {
-	return scanExecutionRevision(queryer.QueryRow(ctx, `
-SELECT id, agent_id, revision, agent_spec_revision_id, runtime_revision,
-       runtime_execution_id, runtime_mcp_endpoint, runtime_mcp_source_digest,
-       change_summary, published_at
-FROM agent_controller.execution_revisions
-WHERE agent_id = $1 AND agent_spec_revision_id = $2 AND runtime_revision = $3
-ORDER BY revision DESC LIMIT 1`, agentID, specRevisionID, runtimeRevision))
 }
 
 func scanExecutionRevision(scanner lifecycleRowScanner) (ports.ExecutionRecord, error) {

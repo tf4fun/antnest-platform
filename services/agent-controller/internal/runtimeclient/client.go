@@ -27,6 +27,13 @@ var tracer = otel.Tracer("soft/antnest-platform/agent-controller/runtimeclient")
 
 var runtimeRevisionPattern = regexp.MustCompile(`^rtv_[0-9a-f]{32}$`)
 
+type completionKind string
+
+const (
+	completionReady    completionKind = "ready"
+	completionDisabled completionKind = "disabled"
+)
+
 type Client struct {
 	baseURL    *url.URL
 	httpClient *http.Client
@@ -59,7 +66,7 @@ func (client *Client) InitializeRuntime(
 		Configuration runtimeConfigurationDTO `json:"configuration"`
 	}{Configuration: runtimeConfigurationPayload(configuration)}
 	return client.callRuntimeOperation(
-		ctx, requestID, agentID, "initialize", "initialize_runtime", payload,
+		ctx, requestID, agentID, "initialize", "initialize_runtime", payload, completionReady,
 	)
 }
 
@@ -81,8 +88,76 @@ func (client *Client) UpdateRuntime(
 		Configuration:    runtimeConfigurationPayload(configuration),
 	}
 	return client.callRuntimeOperation(
-		ctx, requestID, agentID, "update", "update_runtime", payload,
+		ctx, requestID, agentID, "update", "update_runtime", payload, completionReady,
 	)
+}
+
+func (client *Client) DisableRuntime(
+	ctx context.Context, requestID string, agentID string, expectedRevision string,
+) (ports.RuntimeOperation, error) {
+	if !runtimeRevisionPattern.MatchString(expectedRevision) {
+		return ports.RuntimeOperation{}, dependencyFailure("invalid_request", false)
+	}
+	payload := struct {
+		ExpectedRevision string `json:"expected_revision"`
+	}{ExpectedRevision: expectedRevision}
+	return client.callRuntimeOperation(
+		ctx, requestID, agentID, "disable", "disable_runtime", payload, completionDisabled,
+	)
+}
+
+func (client *Client) InspectRuntime(
+	ctx context.Context, agentID string,
+) (result ports.RuntimeInspection, resultErr error) {
+	ctx, cancel := context.WithTimeout(ctx, client.timeout)
+	defer cancel()
+	ctx, span := tracer.Start(
+		ctx, "agent_controller.runtime.inspect",
+		trace.WithSpanKind(trace.SpanKindClient),
+		trace.WithAttributes(
+			attribute.String("server.address", client.baseURL.Hostname()),
+			attribute.String("antnest.agent.id", agentID),
+			attribute.String("rpc.system", "http_json"),
+		),
+	)
+	defer func() {
+		if resultErr != nil {
+			span.SetStatus(codes.Error, dependencyCode(resultErr))
+		}
+		span.End()
+	}()
+
+	endpoint := *client.baseURL
+	endpoint.Path = "/internal/runtimes/" + url.PathEscape(agentID)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
+	if err != nil {
+		return ports.RuntimeInspection{}, dependencyFailure("invalid_request", false)
+	}
+	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(request.Header))
+	response, err := client.httpClient.Do(request)
+	if err != nil {
+		return ports.RuntimeInspection{}, dependencyFailure("control_plane_unavailable", true)
+	}
+	span.SetAttributes(attribute.Int("http.response.status_code", response.StatusCode))
+	responseBody, err := io.ReadAll(io.LimitReader(response.Body, maximumResponseBytes+1))
+	closeErr := response.Body.Close()
+	if err != nil || closeErr != nil || len(responseBody) > maximumResponseBytes {
+		return ports.RuntimeInspection{}, dependencyFailure("invalid_response", true)
+	}
+	if response.StatusCode != http.StatusOK {
+		return ports.RuntimeInspection{}, decodeFailure(responseBody, response.StatusCode)
+	}
+	var inspection runtimeInspectionDTO
+	if err := json.Unmarshal(responseBody, &inspection); err != nil ||
+		inspection.AgentID != agentID || !validRuntimeInspection(inspection) {
+		return ports.RuntimeInspection{}, dependencyFailure("invalid_response", true)
+	}
+	return ports.RuntimeInspection{
+		AgentID: inspection.AgentID, RuntimeRevision: inspection.RuntimeRevision,
+		RuntimeExecutionID: inspection.RuntimeExecutionID,
+		MCPEndpoint:        inspection.MCPEndpoint,
+		LifecycleState:     inspection.LifecycleState, Health: inspection.Health,
+	}, nil
 }
 
 func (client *Client) callRuntimeOperation(
@@ -92,6 +167,7 @@ func (client *Client) callRuntimeOperation(
 	action string,
 	kind string,
 	payload any,
+	completion completionKind,
 ) (result ports.RuntimeOperation, resultErr error) {
 	ctx, cancel := context.WithTimeout(ctx, client.timeout)
 	defer cancel()
@@ -141,7 +217,7 @@ func (client *Client) callRuntimeOperation(
 	var operation runtimeOperationDTO
 	if err := json.Unmarshal(responseBody, &operation); err != nil ||
 		operation.RequestID != requestID || operation.AgentID != agentID ||
-		operation.Kind != kind || !validRuntimeOperation(operation) {
+		operation.Kind != kind || !validRuntimeOperation(operation, completion) {
 		return ports.RuntimeOperation{}, dependencyFailure("invalid_response", true)
 	}
 	result = ports.RuntimeOperation{
@@ -163,7 +239,7 @@ func (client *Client) callRuntimeOperation(
 	return result, nil
 }
 
-func validRuntimeOperation(operation runtimeOperationDTO) bool {
+func validRuntimeOperation(operation runtimeOperationDTO, completion completionKind) bool {
 	if !runtimeRevisionPattern.MatchString(operation.TargetRevision) ||
 		!oneOf(operation.State, "running", "completed", "failed", "unknown") ||
 		!oneOf(operation.Effect, "completed", "not_started", "unknown") {
@@ -173,13 +249,56 @@ func validRuntimeOperation(operation runtimeOperationDTO) bool {
 		operation.Inspection.RuntimeRevision != operation.TargetRevision) {
 		return false
 	}
-	if operation.State != "completed" {
+	switch operation.State {
+	case "running", "unknown":
+		return operation.Effect == "unknown"
+	case "failed":
+		return operation.Effect == "not_started"
+	case "completed":
+	default:
+		return false
+	}
+	if operation.Effect != "completed" || operation.Inspection == nil {
+		return false
+	}
+	switch completion {
+	case completionReady:
+		return operation.Inspection.LifecycleState == "ready" &&
+			operation.Inspection.Health == "healthy" &&
+			strings.TrimSpace(operation.Inspection.RuntimeExecutionID) != "" &&
+			validMCPEndpoint(operation.Inspection.MCPEndpoint)
+	case completionDisabled:
+		return operation.Inspection.LifecycleState == "disabled" &&
+			operation.Inspection.Health == "absent" &&
+			operation.Inspection.RuntimeExecutionID == "" && operation.Inspection.MCPEndpoint == ""
+	default:
+		return false
+	}
+}
+
+func validRuntimeInspection(inspection runtimeInspectionDTO) bool {
+	if !runtimeRevisionPattern.MatchString(inspection.RuntimeRevision) ||
+		!oneOf(
+			inspection.LifecycleState,
+			"initializing", "ready", "updating", "disabling", "disabled",
+			"enabling", "deleting", "deleted", "unknown",
+		) || !oneOf(inspection.Health, "absent", "starting", "healthy", "unhealthy", "unknown") {
+		return false
+	}
+	if inspection.MCPEndpoint != "" && !validMCPEndpoint(inspection.MCPEndpoint) {
+		return false
+	}
+	switch inspection.LifecycleState {
+	case "ready":
+		return inspection.Health == "healthy" &&
+			strings.TrimSpace(inspection.RuntimeExecutionID) != "" &&
+			validMCPEndpoint(inspection.MCPEndpoint)
+	case "disabled", "deleted":
+		return inspection.Health == "absent" &&
+			inspection.RuntimeExecutionID == "" && inspection.MCPEndpoint == ""
+	default:
 		return true
 	}
-	return operation.Effect == "completed" && operation.Inspection != nil &&
-		operation.Inspection.LifecycleState == "ready" && operation.Inspection.Health == "healthy" &&
-		strings.TrimSpace(operation.Inspection.RuntimeExecutionID) != "" &&
-		validMCPEndpoint(operation.Inspection.MCPEndpoint)
 }
 
 func validMCPEndpoint(value string) bool {
@@ -233,22 +352,24 @@ func runtimeConfigurationPayload(configuration ports.RuntimeConfiguration) runti
 }
 
 type runtimeOperationDTO struct {
-	RequestID      string `json:"request_id"`
-	Kind           string `json:"kind"`
-	AgentID        string `json:"agent_id"`
-	TargetRevision string `json:"target_revision"`
-	State          string `json:"state"`
-	Effect         string `json:"effect"`
-	Inspection     *struct {
-		AgentID            string `json:"agent_id"`
-		RuntimeRevision    string `json:"runtime_revision"`
-		LifecycleState     string `json:"lifecycle_state"`
-		Health             string `json:"health"`
-		MCPEndpoint        string `json:"mcp_endpoint"`
-		RuntimeExecutionID string `json:"runtime_execution_id"`
-	} `json:"inspection"`
-	ErrorCode   string `json:"error_code"`
-	ErrorDetail string `json:"error_detail"`
+	RequestID      string                `json:"request_id"`
+	Kind           string                `json:"kind"`
+	AgentID        string                `json:"agent_id"`
+	TargetRevision string                `json:"target_revision"`
+	State          string                `json:"state"`
+	Effect         string                `json:"effect"`
+	Inspection     *runtimeInspectionDTO `json:"inspection"`
+	ErrorCode      string                `json:"error_code"`
+	ErrorDetail    string                `json:"error_detail"`
+}
+
+type runtimeInspectionDTO struct {
+	AgentID            string `json:"agent_id"`
+	RuntimeRevision    string `json:"runtime_revision"`
+	LifecycleState     string `json:"lifecycle_state"`
+	Health             string `json:"health"`
+	MCPEndpoint        string `json:"mcp_endpoint"`
+	RuntimeExecutionID string `json:"runtime_execution_id"`
 }
 
 func decodeFailure(payload []byte, status int) error {

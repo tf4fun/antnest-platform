@@ -116,10 +116,11 @@ func TestRebuildAgentDrainTimeoutPreservesExecutableSource(t *testing.T) {
 			RequestID: "request-rebuild-timeout", RequestFingerprint: "fingerprint",
 			AgentID: base.Agent.AgentID, Kind: domain.OperationRebuild,
 			Phase: domain.PhaseDrain, State: domain.OperationRunning,
-			SourceSpecRevisionID:  base.ExecutableSpec.ID,
-			SourceRuntimeRevision: base.Agent.RuntimeRevision,
-			TargetSpecRevisionID:  base.ExecutableSpec.ID,
-			CreatedAt:             createdAt, UpdatedAt: createdAt,
+			SourceSpecRevisionID:      base.ExecutableSpec.ID,
+			SourceExecutionRevisionID: base.ExecutableExecution.ID,
+			SourceRuntimeRevision:     base.Agent.RuntimeRevision,
+			TargetSpecRevisionID:      base.ExecutableSpec.ID,
+			CreatedAt:                 createdAt, UpdatedAt: createdAt,
 		},
 	}
 	state.Agent.ActiveOperationRequestID = state.Operation.RequestID
@@ -426,6 +427,18 @@ func (dependency *rebuildDependenciesStub) UpdateRuntime(
 	return dependency.runtime, nil
 }
 
+func (dependency *rebuildDependenciesStub) DisableRuntime(
+	context.Context, string, string, string,
+) (ports.RuntimeOperation, error) {
+	return ports.RuntimeOperation{}, errors.New("unexpected Runtime disable")
+}
+
+func (dependency *rebuildDependenciesStub) InspectRuntime(
+	context.Context, string,
+) (ports.RuntimeInspection, error) {
+	return ports.RuntimeInspection{}, errors.New("unexpected Runtime inspection")
+}
+
 type rebuildLifecycleStoreStub struct {
 	lifecycleStoreStub
 	base         ports.AgentLifecycleBase
@@ -587,9 +600,10 @@ func completedRebuildState(t *testing.T, base ports.AgentLifecycleBase) ports.Ag
 			RequestID: "request-rebuild-agent", RequestFingerprint: "fingerprint",
 			AgentID: agent.AgentID, Kind: domain.OperationRebuild,
 			Phase: domain.PhaseCompleted, State: domain.OperationCompleted,
-			SourceSpecRevisionID:  base.ExecutableSpec.ID,
-			SourceRuntimeRevision: base.Agent.RuntimeRevision,
-			TargetSpecRevisionID:  target.ID,
+			SourceSpecRevisionID:      base.ExecutableSpec.ID,
+			SourceExecutionRevisionID: base.ExecutableExecution.ID,
+			SourceRuntimeRevision:     base.Agent.RuntimeRevision,
+			TargetSpecRevisionID:      target.ID,
 		},
 	}
 }

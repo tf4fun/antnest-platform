@@ -354,7 +354,7 @@ INSERT INTO agent_controller.agent_access_bindings (
 func insertLifecycleOperation(
 	ctx context.Context, transaction pgx.Tx, record ports.LifecycleOperationRecord,
 ) error {
-	var policyPayload []byte
+	var policyPayload, inspectionPayload []byte
 	var err error
 	if record.NetworkPolicyAssignment != nil {
 		policyPayload, err = json.Marshal(record.NetworkPolicyAssignment)
@@ -362,19 +362,31 @@ func insertLifecycleOperation(
 			return fmt.Errorf("encode Agent network policy assignment: %w", err)
 		}
 	}
+	if record.SourceRuntimeInspection != nil {
+		inspectionPayload, err = json.Marshal(record.SourceRuntimeInspection)
+		if err != nil {
+			return fmt.Errorf("encode source Runtime inspection: %w", err)
+		}
+	}
 	_, err = transaction.Exec(ctx, `
 	INSERT INTO agent_controller.agent_lifecycle_operations (
     request_id, request_fingerprint, agent_id, kind, phase, state,
-    source_spec_revision_id, source_runtime_revision, source_runtime_absent,
-	    target_spec_revision_id, child_request_id, network_policy_assignment,
-	    initial_trace_parent, previous_attempt_trace_id, attempt, created_at, updated_at
-	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
+    source_spec_revision_id, source_execution_revision_id,
+    source_runtime_revision, source_runtime_absent,
+    target_spec_revision_id, child_request_id, network_policy_assignment,
+    source_runtime_inspection,
+    initial_trace_parent, previous_attempt_trace_id, attempt, created_at, updated_at
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+    $11, $12, $13, $14, $15, $16, $17, $18, $19
+)`,
 		record.RequestID, record.RequestFingerprint, record.AgentID, record.Kind,
-		record.Phase, record.State, record.SourceSpecRevisionID, record.SourceRuntimeRevision,
+		record.Phase, record.State, record.SourceSpecRevisionID,
+		record.SourceExecutionRevisionID, record.SourceRuntimeRevision,
 		record.SourceRuntimeAbsent, record.TargetSpecRevisionID, record.ChildRequestID,
-		nullJSON(policyPayload),
-		record.InitialTraceParent, record.PreviousAttemptTraceID, record.Attempt,
-		record.CreatedAt, record.UpdatedAt,
+		nullJSON(policyPayload), nullJSON(inspectionPayload),
+		record.InitialTraceParent, record.PreviousAttemptTraceID,
+		record.Attempt, record.CreatedAt, record.UpdatedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("insert Agent lifecycle operation: %w", err)
@@ -569,9 +581,11 @@ func loadLifecycleOperation(
 ) (ports.LifecycleOperationRecord, error) {
 	query := `
 SELECT request_id, request_fingerprint, agent_id, kind, phase, state,
-	       source_spec_revision_id, source_runtime_revision, source_runtime_absent,
+	       source_spec_revision_id, source_execution_revision_id,
+	       source_runtime_revision, source_runtime_absent,
 	       target_spec_revision_id, child_request_id, network_attachment,
-	       network_policy_assignment, runtime_result, initial_trace_parent, previous_attempt_trace_id,
+	       network_policy_assignment, source_runtime_inspection, runtime_result,
+	       initial_trace_parent, previous_attempt_trace_id,
        attempt, error_code, error_detail, retryable, created_at, updated_at
 FROM agent_controller.agent_lifecycle_operations
 WHERE request_id = $1`
@@ -583,13 +597,15 @@ WHERE request_id = $1`
 
 func scanLifecycleOperation(scanner lifecycleRowScanner) (ports.LifecycleOperationRecord, error) {
 	var record ports.LifecycleOperationRecord
-	var networkPayload, policyPayload, runtimePayload []byte
+	var networkPayload, policyPayload, inspectionPayload, runtimePayload []byte
 	err := scanner.Scan(
 		&record.RequestID, &record.RequestFingerprint, &record.AgentID,
 		&record.Kind, &record.Phase, &record.State,
-		&record.SourceSpecRevisionID, &record.SourceRuntimeRevision,
+		&record.SourceSpecRevisionID, &record.SourceExecutionRevisionID,
+		&record.SourceRuntimeRevision,
 		&record.SourceRuntimeAbsent, &record.TargetSpecRevisionID,
-		&record.ChildRequestID, &networkPayload, &policyPayload, &runtimePayload,
+		&record.ChildRequestID, &networkPayload, &policyPayload,
+		&inspectionPayload, &runtimePayload,
 		&record.InitialTraceParent, &record.PreviousAttemptTraceID,
 		&record.Attempt, &record.ErrorCode,
 		&record.ErrorDetail, &record.Retryable, &record.CreatedAt, &record.UpdatedAt,
@@ -613,6 +629,13 @@ func scanLifecycleOperation(scanner lifecycleRowScanner) (ports.LifecycleOperati
 			return ports.LifecycleOperationRecord{}, fmt.Errorf("decode Agent network policy assignment: %w", err)
 		}
 		record.NetworkPolicyAssignment = &assignment
+	}
+	if len(inspectionPayload) != 0 {
+		var inspection ports.RuntimeInspection
+		if err := json.Unmarshal(inspectionPayload, &inspection); err != nil {
+			return ports.LifecycleOperationRecord{}, fmt.Errorf("decode source Runtime inspection: %w", err)
+		}
+		record.SourceRuntimeInspection = &inspection
 	}
 	if len(runtimePayload) != 0 {
 		var runtime ports.RuntimeOperation

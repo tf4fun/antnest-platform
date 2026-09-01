@@ -46,6 +46,7 @@ type CatalogService interface {
 type LifecycleService interface {
 	CreateAgent(context.Context, application.CreateAgentInput) (application.CreateAgentResult, error)
 	RebuildAgent(context.Context, application.RebuildAgentInput) (application.RebuildAgentResult, error)
+	DisableAgent(context.Context, application.DisableAgentInput) (application.DisableAgentResult, error)
 	GetLifecycleOperation(context.Context, string) (application.OperationView, error)
 }
 
@@ -82,6 +83,7 @@ func NewHandler(
 	mux.HandleFunc("POST /internal/agent-templates/{template_id}/revisions", h.reviseTemplate)
 	mux.HandleFunc("POST /internal/agents", h.createAgent)
 	mux.HandleFunc("POST /internal/agents/{agent_id}/rebuild", h.rebuildAgent)
+	mux.HandleFunc("POST /internal/agents/{agent_id}/disable", h.disableAgent)
 	mux.HandleFunc("GET /internal/agent-operations/{request_id}", h.getLifecycleOperation)
 	return mux, nil
 }
@@ -142,6 +144,10 @@ type rebuildAgentRequest struct {
 	RequestID        string `json:"request_id"`
 	TemplateID       string `json:"template_id"`
 	TemplateRevision int64  `json:"template_revision"`
+}
+
+type lifecycleRequest struct {
+	RequestID string `json:"request_id"`
 }
 
 type modelProfileResponse struct {
@@ -404,6 +410,23 @@ func (h *handler) rebuildAgent(response http.ResponseWriter, request *http.Reque
 	result, err := h.lifecycle.RebuildAgent(request.Context(), application.RebuildAgentInput{
 		RequestID: payload.RequestID, AgentID: request.PathValue("agent_id"),
 		TemplateID: payload.TemplateID, TemplateRevision: payload.TemplateRevision,
+		InitialTraceParent: request.Header.Get("traceparent"),
+	})
+	if err != nil {
+		writeServiceError(request.Context(), response, err)
+		return
+	}
+	observeLifecycleResult(request.Context(), result.Operation)
+	writeJSON(response, http.StatusAccepted, operationPayload(result.Operation))
+}
+
+func (h *handler) disableAgent(response http.ResponseWriter, request *http.Request) {
+	var payload lifecycleRequest
+	if !decodeJSON(response, request, &payload) {
+		return
+	}
+	result, err := h.lifecycle.DisableAgent(request.Context(), application.DisableAgentInput{
+		RequestID: payload.RequestID, AgentID: request.PathValue("agent_id"),
 		InitialTraceParent: request.Header.Get("traceparent"),
 	})
 	if err != nil {

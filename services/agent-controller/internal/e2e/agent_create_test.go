@@ -20,7 +20,7 @@ import (
 	"soft/antnest-platform/services/agent-controller/internal/server"
 )
 
-func TestCreateAndRebuildAgentAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
+func TestCreateRebuildAndDisableAgentAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 	databaseURL := os.Getenv("ANTNEST_AGENT_CONTROLLER_TEST_DATABASE_URL")
 	if databaseURL == "" {
 		t.Skip("ANTNEST_AGENT_CONTROLLER_TEST_DATABASE_URL is not set")
@@ -124,21 +124,42 @@ func TestCreateAndRebuildAgentAcrossHTTPPostgresAndDependencyContracts(t *testin
 				payload.ExpectedRevision != "rtv_22222222222222222222222222222222" {
 				t.Fatalf("Runtime update payload = %+v err=%v", payload, err)
 			}
+		} else if strings.HasSuffix(path, "/disable") {
+			action = "disable"
+			agentID = strings.TrimSuffix(path, "/disable")
+			kind = "disable_runtime"
+			revision = "rtv_44444444444444444444444444444444"
+			executionID = ""
+			endpoint = ""
+			var payload struct {
+				ExpectedRevision string `json:"expected_revision"`
+			}
+			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil ||
+				payload.ExpectedRevision != "rtv_33333333333333333333333333333333" {
+				t.Fatalf("Runtime disable payload = %+v err=%v", payload, err)
+			}
 		}
 		requestID := request.Header.Get("Idempotency-Key")
 		if request.Method != http.MethodPost || path != agentID+"/"+action || agentID == "" || requestID == "" {
 			t.Fatalf("Runtime request = %s %s idempotency=%q", request.Method, request.URL.Path, requestID)
 		}
 		response.Header().Set("Content-Type", "application/json")
+		inspection := map[string]any{
+			"agent_id": agentID, "runtime_revision": revision,
+			"lifecycle_state": "ready", "health": "healthy",
+			"mcp_endpoint": endpoint, "runtime_execution_id": executionID,
+			"restart_count": 0, "observed_at": "2026-09-01T00:00:00Z",
+		}
+		if action == "disable" {
+			inspection["lifecycle_state"] = "disabled"
+			inspection["health"] = "absent"
+			delete(inspection, "mcp_endpoint")
+			delete(inspection, "runtime_execution_id")
+		}
 		_ = json.NewEncoder(response).Encode(map[string]any{
 			"request_id": requestID, "kind": kind, "agent_id": agentID,
 			"target_revision": revision, "state": "completed", "effect": "completed",
-			"inspection": map[string]any{
-				"agent_id": agentID, "runtime_revision": revision,
-				"lifecycle_state": "ready", "health": "healthy",
-				"mcp_endpoint": endpoint, "runtime_execution_id": executionID,
-				"restart_count": 0, "observed_at": "2026-09-01T00:00:00Z",
-			},
+			"inspection": inspection,
 			"created_at": "2026-09-01T00:00:00Z", "updated_at": "2026-09-01T00:00:01Z",
 		})
 	}))
@@ -227,5 +248,34 @@ func TestCreateAndRebuildAgentAcrossHTTPPostgresAndDependencyContracts(t *testin
 	if replayedRebuild["state"] != "completed" || egressCalls.Load() != 9 || runtimeCalls.Load() != 2 {
 		t.Fatalf("idempotent rebuild repeated effects: egress=%d runtime=%d replay=%+v",
 			egressCalls.Load(), runtimeCalls.Load(), replayedRebuild)
+	}
+
+	disableBody := `{"request_id":"agent-e2e-disable"}`
+	disabled := serveJSON(
+		t, handler, http.MethodPost, "/internal/agents/"+agentID+"/disable",
+		disableBody, http.StatusAccepted,
+	)
+	if disabled["state"] != "completed" || disabled["kind"] != "disable" {
+		t.Fatalf("disable operation = %+v", disabled)
+	}
+	disabledBase, err := repository.GetAgentLifecycleBase(ctx, agentID)
+	if err != nil {
+		t.Fatalf("load disabled Agent: %v", err)
+	}
+	if disabledBase.Agent.DesiredState != "disabled" ||
+		disabledBase.Agent.LifecycleState != "disabled" ||
+		disabledBase.Agent.ExecutionRevisionID != "" ||
+		disabledBase.Agent.LastSuccessfulExecutionRevisionID != rebuiltBase.Agent.ExecutionRevisionID ||
+		disabledBase.Agent.RuntimeRevision != "rtv_44444444444444444444444444444444" ||
+		disabledBase.Agent.RuntimeExecutionID != "" || disabledBase.Agent.RuntimeMCPEndpoint != "" {
+		t.Fatalf("disabled Agent = %+v", disabledBase.Agent)
+	}
+	replayedDisable := serveJSON(
+		t, handler, http.MethodPost, "/internal/agents/"+agentID+"/disable",
+		disableBody, http.StatusAccepted,
+	)
+	if replayedDisable["state"] != "completed" || egressCalls.Load() != 11 || runtimeCalls.Load() != 3 {
+		t.Fatalf("idempotent disable repeated effects: egress=%d runtime=%d replay=%+v",
+			egressCalls.Load(), runtimeCalls.Load(), replayedDisable)
 	}
 }

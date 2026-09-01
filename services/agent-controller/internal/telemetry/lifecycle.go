@@ -172,6 +172,72 @@ func (store *ObservedLifecycleStore) FailAgentRebuild(
 	})
 }
 
+func (store *ObservedLifecycleStore) ReplayAgentDisable(
+	ctx context.Context, requestID string, fingerprint string,
+) (ports.AgentDisableState, bool, error) {
+	return observeLifecycleReplay(ctx, store, "replay_agent_disable", func(callCtx context.Context) (ports.AgentDisableState, bool, error) {
+		return store.next.ReplayAgentDisable(callCtx, requestID, fingerprint)
+	})
+}
+
+func (store *ObservedLifecycleStore) BeginAgentDisable(
+	ctx context.Context, input ports.BeginAgentDisable,
+) (ports.AgentDisableState, bool, error) {
+	return observeLifecycleReplay(ctx, store, "begin_agent_disable", func(callCtx context.Context) (ports.AgentDisableState, bool, error) {
+		return store.next.BeginAgentDisable(callCtx, input)
+	})
+}
+
+func (store *ObservedLifecycleStore) RecordAgentDisablePolicy(
+	ctx context.Context,
+	requestID string,
+	fingerprint string,
+	assignment ports.NetworkPolicyAssignment,
+	now time.Time,
+) (ports.AgentDisableState, error) {
+	return observeLifecycleValue(ctx, store, "record_agent_disable_policy", func(callCtx context.Context) (ports.AgentDisableState, error) {
+		return store.next.RecordAgentDisablePolicy(callCtx, requestID, fingerprint, assignment, now)
+	})
+}
+
+func (store *ObservedLifecycleStore) SettleAgentDisableDrain(
+	ctx context.Context,
+	requestID string,
+	fingerprint string,
+	nextChildRequestID string,
+	now time.Time,
+) (ports.AgentDisableState, error) {
+	return observeLifecycleValue(ctx, store, "settle_agent_disable_drain", func(callCtx context.Context) (ports.AgentDisableState, error) {
+		return store.next.SettleAgentDisableDrain(
+			callCtx, requestID, fingerprint, nextChildRequestID, now,
+		)
+	})
+}
+
+func (store *ObservedLifecycleStore) AdvanceAgentDisable(
+	ctx context.Context, input ports.AdvanceAgentDisable,
+) (ports.AgentDisableState, error) {
+	return observeLifecycleValue(ctx, store, "advance_agent_disable", func(callCtx context.Context) (ports.AgentDisableState, error) {
+		return store.next.AdvanceAgentDisable(callCtx, input)
+	})
+}
+
+func (store *ObservedLifecycleStore) PublishAgentDisable(
+	ctx context.Context, input ports.PublishAgentDisable,
+) (ports.AgentDisableState, error) {
+	return observeLifecycleValue(ctx, store, "publish_agent_disable", func(callCtx context.Context) (ports.AgentDisableState, error) {
+		return store.next.PublishAgentDisable(callCtx, input)
+	})
+}
+
+func (store *ObservedLifecycleStore) FailAgentDisable(
+	ctx context.Context, input ports.FailAgentDisable,
+) (ports.AgentDisableState, error) {
+	return observeLifecycleValue(ctx, store, "fail_agent_disable", func(callCtx context.Context) (ports.AgentDisableState, error) {
+		return store.next.FailAgentDisable(callCtx, input)
+	})
+}
+
 func observeLifecycleValue[T any](
 	ctx context.Context,
 	store *ObservedLifecycleStore,

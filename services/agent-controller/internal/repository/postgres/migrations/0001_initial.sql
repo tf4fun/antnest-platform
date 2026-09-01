@@ -191,12 +191,14 @@ CREATE TABLE IF NOT EXISTS agent_controller.agent_lifecycle_operations (
     )),
     state TEXT NOT NULL CHECK (state IN ('running', 'completed', 'failed')),
     source_spec_revision_id TEXT NOT NULL DEFAULT '',
+    source_execution_revision_id TEXT NOT NULL DEFAULT '',
     source_runtime_revision TEXT NOT NULL DEFAULT '',
     source_runtime_absent BOOLEAN NOT NULL DEFAULT FALSE,
     target_spec_revision_id TEXT NOT NULL DEFAULT '',
     child_request_id TEXT NOT NULL DEFAULT '',
     network_attachment JSONB,
     network_policy_assignment JSONB,
+    source_runtime_inspection JSONB,
     runtime_result JSONB,
     initial_trace_parent TEXT NOT NULL DEFAULT '',
     previous_attempt_trace_id TEXT NOT NULL DEFAULT '',
@@ -207,17 +209,23 @@ CREATE TABLE IF NOT EXISTS agent_controller.agent_lifecycle_operations (
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL,
     CHECK (
-        (kind = 'create' AND source_spec_revision_id = '' AND source_runtime_revision = ''
+        (kind = 'create' AND source_spec_revision_id = '' AND source_execution_revision_id = ''
+            AND source_runtime_revision = ''
             AND NOT source_runtime_absent AND target_spec_revision_id <> '') OR
-        (kind = 'rebuild' AND source_spec_revision_id <> '' AND source_runtime_revision <> ''
+        (kind = 'rebuild' AND source_spec_revision_id <> '' AND source_execution_revision_id <> ''
+            AND source_runtime_revision <> ''
             AND NOT source_runtime_absent AND target_spec_revision_id <> '') OR
-        (kind = 'disable' AND source_spec_revision_id <> '' AND source_runtime_revision <> ''
+        (kind = 'disable' AND source_spec_revision_id <> '' AND source_execution_revision_id <> ''
+            AND source_runtime_revision <> ''
             AND NOT source_runtime_absent AND target_spec_revision_id = '') OR
-        (kind = 'enable' AND source_spec_revision_id <> '' AND source_runtime_revision <> ''
+        (kind = 'enable' AND source_spec_revision_id <> '' AND source_execution_revision_id <> ''
+            AND source_runtime_revision <> ''
             AND NOT source_runtime_absent AND target_spec_revision_id <> '') OR
         (kind = 'delete' AND target_spec_revision_id = '' AND (
-            (source_runtime_revision <> '' AND source_spec_revision_id <> '' AND NOT source_runtime_absent) OR
-            (source_runtime_revision = '' AND source_runtime_absent)
+            (source_runtime_revision <> '' AND source_spec_revision_id <> ''
+                AND source_execution_revision_id <> '' AND NOT source_runtime_absent) OR
+            (source_runtime_revision = '' AND source_spec_revision_id = ''
+                AND source_execution_revision_id = '' AND source_runtime_absent)
         ))
     )
 );

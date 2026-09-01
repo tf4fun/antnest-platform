@@ -360,6 +360,18 @@ func (dependency *lifecycleDependenciesStub) UpdateRuntime(
 	return ports.RuntimeOperation{}, errors.New("unexpected Runtime update")
 }
 
+func (dependency *lifecycleDependenciesStub) DisableRuntime(
+	context.Context, string, string, string,
+) (ports.RuntimeOperation, error) {
+	return ports.RuntimeOperation{}, errors.New("unexpected Runtime disable")
+}
+
+func (dependency *lifecycleDependenciesStub) InspectRuntime(
+	context.Context, string,
+) (ports.RuntimeInspection, error) {
+	return ports.RuntimeInspection{}, errors.New("unexpected Runtime inspection")
+}
+
 type lifecycleStoreStub struct {
 	initial            ports.BeginAgentCreate
 	beginState         ports.AgentCreateState
@@ -423,6 +435,48 @@ func (store *lifecycleStoreStub) FailAgentRebuild(
 	context.Context, ports.FailAgentRebuild,
 ) (ports.AgentRebuildState, error) {
 	return ports.AgentRebuildState{}, errors.New("unexpected Agent rebuild failure")
+}
+
+func (store *lifecycleStoreStub) ReplayAgentDisable(
+	context.Context, string, string,
+) (ports.AgentDisableState, bool, error) {
+	return ports.AgentDisableState{}, false, errors.New("unexpected Agent disable replay")
+}
+
+func (store *lifecycleStoreStub) BeginAgentDisable(
+	context.Context, ports.BeginAgentDisable,
+) (ports.AgentDisableState, bool, error) {
+	return ports.AgentDisableState{}, false, errors.New("unexpected Agent disable begin")
+}
+
+func (store *lifecycleStoreStub) RecordAgentDisablePolicy(
+	context.Context, string, string, ports.NetworkPolicyAssignment, time.Time,
+) (ports.AgentDisableState, error) {
+	return ports.AgentDisableState{}, errors.New("unexpected Agent disable policy record")
+}
+
+func (store *lifecycleStoreStub) SettleAgentDisableDrain(
+	context.Context, string, string, string, time.Time,
+) (ports.AgentDisableState, error) {
+	return ports.AgentDisableState{}, errors.New("unexpected Agent disable drain")
+}
+
+func (store *lifecycleStoreStub) AdvanceAgentDisable(
+	context.Context, ports.AdvanceAgentDisable,
+) (ports.AgentDisableState, error) {
+	return ports.AgentDisableState{}, errors.New("unexpected Agent disable advance")
+}
+
+func (store *lifecycleStoreStub) PublishAgentDisable(
+	context.Context, ports.PublishAgentDisable,
+) (ports.AgentDisableState, error) {
+	return ports.AgentDisableState{}, errors.New("unexpected Agent disable publish")
+}
+
+func (store *lifecycleStoreStub) FailAgentDisable(
+	context.Context, ports.FailAgentDisable,
+) (ports.AgentDisableState, error) {
+	return ports.AgentDisableState{}, errors.New("unexpected Agent disable failure")
 }
 
 func (store *lifecycleStoreStub) ReplayAgentCreate(

@@ -9,15 +9,16 @@ func TestLifecycleOperationAdvancesOnlyInPlanOrder(t *testing.T) {
 	t.Parallel()
 
 	operation, err := NewLifecycleOperation(NewLifecycleOperationInput{
-		RequestID:             "request-1",
-		RequestFingerprint:    "fingerprint-1",
-		AgentID:               "agent-1",
-		Kind:                  OperationRebuild,
-		SourceSpecRevision:    "spec-1",
-		SourceRuntimeRevision: "runtime-1",
-		TargetSpecRevision:    "spec-2",
-		InitialTraceParent:    "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01",
-		Now:                   time.Unix(1, 0).UTC(),
+		RequestID:               "request-1",
+		RequestFingerprint:      "fingerprint-1",
+		AgentID:                 "agent-1",
+		Kind:                    OperationRebuild,
+		SourceSpecRevision:      "spec-1",
+		SourceExecutionRevision: "execution-1",
+		SourceRuntimeRevision:   "runtime-1",
+		TargetSpecRevision:      "spec-2",
+		InitialTraceParent:      "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01",
+		Now:                     time.Unix(1, 0).UTC(),
 	})
 	if err != nil {
 		t.Fatalf("create operation: %v", err)
@@ -148,6 +149,12 @@ func operationInput(
 	return NewLifecycleOperationInput{
 		RequestID: "request-1", RequestFingerprint: "fingerprint-1", AgentID: "agent-1",
 		Kind: kind, SourceSpecRevision: sourceSpec, SourceRuntimeRevision: sourceRuntime,
+		SourceExecutionRevision: func() string {
+			if sourceSpec == "" {
+				return ""
+			}
+			return "execution-old"
+		}(),
 		SourceRuntimeAbsent: sourceRuntimeAbsent, TargetSpecRevision: targetSpec,
 		Now: time.Unix(1, 0).UTC(),
 	}

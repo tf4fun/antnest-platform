@@ -336,6 +336,34 @@ Deletion is a durable, restartable workflow:
 An ambiguous Runtime or storage deletion keeps the workflow non-terminal. It
 never releases the network address or reports successful deletion early.
 
+### 4.7 Agent disable and enable
+
+Disable persists desired state `disabled` and `agent_disable_requested` before
+waiting for the Agent-wide Run admission to settle. It captures the current
+Egress policy assignment as operation recovery evidence, fences the active
+attachment to deny-all, and calls Runtime Controller `DisableRuntime` with the
+frozen Runtime revision. Completed success must prove compute absent while the
+workspace remains owned by the logical Runtime. Publication retains the
+AgentSpec and last successful ExecutionRevision, clears the executable MCP
+binding, stores the disabled Runtime revision, and appends `agent_disabled`.
+
+If Runtime Controller reports that disable was not started, Agent Controller
+independently inspects the exact frozen Runtime revision, execution identity,
+MCP endpoint, lifecycle, and health before restoring the captured policy and
+old executable projection. A changed or unhealthy Runtime is never restored:
+the Agent becomes unavailable and remains fenced for operator recovery. A
+transport timeout, failed inspection, or unknown effect is not evidence of
+failure; the operation remains running and fail-closed for exact-request
+replay.
+
+Enable is valid only from the published disabled state. The new operation
+freezes the current AgentSpec, disabled Runtime revision, and policy captured by
+the matching completed Disable operation. It ensures the existing network
+attachment, calls `EnableRuntime` with the complete Runtime configuration, then
+restores the captured policy and verifies unchanged network coordinates before
+publishing a new ExecutionRevision and `agent_enabled`. Agent configuration is
+never changed implicitly by Disable or Enable.
+
 ## 5. Serialized Run Admission
 
 Run serialization is Agent-wide, not Session-wide. Two ACP Sessions for one
@@ -830,6 +858,7 @@ broker. Useful immutable events include:
 - `agent_create_requested` and `agent_ready`;
 - `agent_rebuild_requested`, `agent_draining`, and `agent_rebuilt`;
 - `agent_build_failed`;
+- `agent_disable_requested`, `agent_disabled`, and `agent_disable_failed`;
 - `run_admission_unresolved`;
 - `agent_delete_requested` and `agent_deleted`.
 

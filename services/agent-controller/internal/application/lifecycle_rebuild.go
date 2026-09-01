@@ -66,10 +66,11 @@ func (service *LifecycleService) RebuildAgent(
 	operation, err := domain.NewLifecycleOperation(domain.NewLifecycleOperationInput{
 		RequestID: input.RequestID, RequestFingerprint: fingerprint,
 		AgentID: input.AgentID, Kind: domain.OperationRebuild,
-		SourceSpecRevision:    base.ExecutableSpec.ID,
-		SourceRuntimeRevision: base.Agent.RuntimeRevision,
-		TargetSpecRevision:    targetSpecID,
-		InitialTraceParent:    input.InitialTraceParent, Now: now,
+		SourceSpecRevision:      base.ExecutableSpec.ID,
+		SourceExecutionRevision: base.ExecutableExecution.ID,
+		SourceRuntimeRevision:   base.Agent.RuntimeRevision,
+		TargetSpecRevision:      targetSpecID,
+		InitialTraceParent:      input.InitialTraceParent, Now: now,
 	})
 	if err != nil {
 		return RebuildAgentResult{}, fmt.Errorf("%w: %v", ErrInvalidInput, err)
@@ -88,11 +89,12 @@ func (service *LifecycleService) RebuildAgent(
 			RequestID: input.RequestID, RequestFingerprint: fingerprint,
 			AgentID: input.AgentID, Kind: domain.OperationRebuild,
 			Phase: operation.Phase(), State: operation.State(),
-			SourceSpecRevisionID:  base.ExecutableSpec.ID,
-			SourceRuntimeRevision: base.Agent.RuntimeRevision,
-			TargetSpecRevisionID:  targetSpecID,
-			ChildRequestID:        operation.ChildRequestID(),
-			InitialTraceParent:    input.InitialTraceParent, Attempt: 1,
+			SourceSpecRevisionID:      base.ExecutableSpec.ID,
+			SourceExecutionRevisionID: base.ExecutableExecution.ID,
+			SourceRuntimeRevision:     base.Agent.RuntimeRevision,
+			TargetSpecRevisionID:      targetSpecID,
+			ChildRequestID:            operation.ChildRequestID(),
+			InitialTraceParent:        input.InitialTraceParent, Attempt: 1,
 			CreatedAt: now, UpdatedAt: now,
 		},
 		RequestedEvent: ports.AgentEventRecord{
@@ -315,7 +317,12 @@ func (service *LifecycleService) reopenRebuildNetwork(
 	if state.Operation.NetworkAttachment == nil {
 		return ports.AgentRebuildState{}, fmt.Errorf("rebuild operation has no network attachment")
 	}
-	attachment, err := service.restoreRebuildNetwork(ctx, state)
+	if state.Operation.NetworkPolicyAssignment == nil {
+		return ports.AgentRebuildState{}, fmt.Errorf("rebuild operation has no policy assignment")
+	}
+	attachment, err := service.restoreCapturedNetwork(
+		ctx, state.Agent.AgentID, *state.Operation.NetworkPolicyAssignment,
+	)
 	if err != nil {
 		return service.handleRebuildDependencyFailure(ctx, state, "runtime-egress", err)
 	}
@@ -406,7 +413,9 @@ func (service *LifecycleService) failRebuildPreservingSource(
 	retryable bool,
 ) (ports.AgentRebuildState, error) {
 	if state.Operation.NetworkPolicyAssignment != nil {
-		if _, err := service.restoreRebuildNetwork(ctx, state); err != nil {
+		if _, err := service.restoreCapturedNetwork(
+			ctx, state.Agent.AgentID, *state.Operation.NetworkPolicyAssignment,
+		); err != nil {
 			return state, fmt.Errorf("%w: runtime-egress policy restoration", ErrDependencyUnavailable)
 		}
 	}
@@ -457,16 +466,10 @@ func validateRebuildSource(base ports.AgentLifecycleBase) error {
 	return nil
 }
 
-func (service *LifecycleService) restoreRebuildNetwork(
-	ctx context.Context, state ports.AgentRebuildState,
+func (service *LifecycleService) restoreCapturedNetwork(
+	ctx context.Context, agentID string, original ports.NetworkPolicyAssignment,
 ) (ports.NetworkAttachment, error) {
-	if state.Operation.NetworkPolicyAssignment == nil {
-		return ports.NetworkAttachment{}, &ports.DependencyError{
-			Service: "runtime-egress", Code: "missing_policy_assignment", Retryable: false,
-		}
-	}
-	original := *state.Operation.NetworkPolicyAssignment
-	current, err := service.egress.GetAgentPolicyAssignment(ctx, state.Agent.AgentID)
+	current, err := service.egress.GetAgentPolicyAssignment(ctx, agentID)
 	if err != nil {
 		return ports.NetworkAttachment{}, err
 	}
@@ -479,7 +482,7 @@ func (service *LifecycleService) restoreRebuildNetwork(
 			Service: "runtime-egress", Code: "policy_restore_mismatch", Retryable: true,
 		}
 	}
-	return service.egress.EnsureAgentNetwork(ctx, state.Agent.AgentID)
+	return service.egress.EnsureAgentNetwork(ctx, agentID)
 }
 
 func networkPolicyAssignmentReady(assignment ports.NetworkPolicyAssignment, agentID string) bool {

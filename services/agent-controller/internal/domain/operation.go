@@ -79,16 +79,17 @@ var operationPlans = map[OperationKind][]OperationPhase{
 }
 
 type NewLifecycleOperationInput struct {
-	RequestID             string
-	RequestFingerprint    string
-	AgentID               string
-	Kind                  OperationKind
-	SourceSpecRevision    string
-	SourceRuntimeRevision string
-	SourceRuntimeAbsent   bool
-	TargetSpecRevision    string
-	InitialTraceParent    string
-	Now                   time.Time
+	RequestID               string
+	RequestFingerprint      string
+	AgentID                 string
+	Kind                    OperationKind
+	SourceSpecRevision      string
+	SourceExecutionRevision string
+	SourceRuntimeRevision   string
+	SourceRuntimeAbsent     bool
+	TargetSpecRevision      string
+	InitialTraceParent      string
+	Now                     time.Time
 }
 
 type LifecycleOperation struct {
@@ -198,31 +199,39 @@ func validateOperationInput(input NewLifecycleOperationInput) error {
 		return fmt.Errorf("operation time is required")
 	}
 	sourceSpec := strings.TrimSpace(input.SourceSpecRevision)
+	sourceExecution := strings.TrimSpace(input.SourceExecutionRevision)
 	sourceRuntime := strings.TrimSpace(input.SourceRuntimeRevision)
 	targetSpec := strings.TrimSpace(input.TargetSpecRevision)
 	switch input.Kind {
 	case OperationCreate:
-		if targetSpec == "" || sourceSpec != "" || sourceRuntime != "" || input.SourceRuntimeAbsent {
+		if targetSpec == "" || sourceSpec != "" || sourceExecution != "" ||
+			sourceRuntime != "" || input.SourceRuntimeAbsent {
 			return fmt.Errorf("create operation requires only a target Agent spec revision")
 		}
 	case OperationRebuild:
-		if sourceSpec == "" || sourceRuntime == "" || targetSpec == "" || input.SourceRuntimeAbsent {
+		if sourceSpec == "" || sourceExecution == "" || sourceRuntime == "" ||
+			targetSpec == "" || input.SourceRuntimeAbsent {
 			return fmt.Errorf("rebuild operation requires source Agent spec, source Runtime, and target Agent spec revisions")
 		}
 	case OperationDisable:
-		if sourceSpec == "" || sourceRuntime == "" || targetSpec != "" || input.SourceRuntimeAbsent {
+		if sourceSpec == "" || sourceExecution == "" || sourceRuntime == "" ||
+			targetSpec != "" || input.SourceRuntimeAbsent {
 			return fmt.Errorf("disable operation requires only source Agent spec and Runtime revisions")
 		}
 	case OperationEnable:
-		if sourceSpec == "" || sourceRuntime == "" || targetSpec == "" || input.SourceRuntimeAbsent {
+		if sourceSpec == "" || sourceExecution == "" || sourceRuntime == "" ||
+			targetSpec == "" || input.SourceRuntimeAbsent {
 			return fmt.Errorf("enable operation requires source Agent spec, source Runtime, and target Agent spec revisions")
 		}
 	case OperationDelete:
 		if targetSpec != "" || (sourceRuntime != "") == input.SourceRuntimeAbsent {
 			return fmt.Errorf("delete operation requires exactly one of a source Runtime revision or proof that Runtime is absent")
 		}
-		if sourceRuntime != "" && sourceSpec == "" {
-			return fmt.Errorf("delete operation with a source Runtime requires its source Agent spec revision")
+		if sourceRuntime != "" && (sourceSpec == "" || sourceExecution == "") {
+			return fmt.Errorf("delete operation with a source Runtime requires source Agent spec and execution revisions")
+		}
+		if input.SourceRuntimeAbsent && (sourceSpec != "" || sourceExecution != "") {
+			return fmt.Errorf("delete operation with an absent Runtime cannot name source revisions")
 		}
 	default:
 		return fmt.Errorf("unknown operation kind %q", input.Kind)

@@ -185,6 +185,7 @@
       "agent_rebuilt",
       "agent_disable_requested",
       "agent_disabled",
+      "agent_disable_failed",
       "agent_enable_requested",
       "agent_enabled",
       "agent_delete_requested",
