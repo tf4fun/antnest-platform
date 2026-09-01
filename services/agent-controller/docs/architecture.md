@@ -13,9 +13,10 @@ service implementation or inspect another service database.
 The document describes the completed target boundary. Implementation proceeds
 as vertical business slices. At present ModelProfile/Template Catalog, current
 Agent projection queries, Run admission, and the Agent create, explicit rebuild,
-disable, enable, and delete Sagas are runnable. The recovery worker, complete
-lifecycle-to-Run release events remain in progress and must not be inferred
-from table or contract presence alone. Authoritative event replay and
+disable, enable, and delete Sagas are runnable. Lifecycle Runtime barriers
+atomically release unresolved Run occupancy and append the corresponding Agent
+event. The background recovery worker remains in progress and must not be
+inferred from table or contract presence alone. Authoritative event replay and
 best-effort SSE watch are runnable.
 
 ## Aggregate Model
@@ -148,7 +149,13 @@ admission. A terminal report is immutable and idempotent.
 
 An unresolved Tool effect leaves the Agent fail-closed until an explicit
 lifecycle operation removes the bound Runtime. Timeouts are never treated as
-proof that a side effect did or did not happen.
+proof that a side effect did or did not happen. When rebuild, disable, or delete
+proves the Runtime absent, one transaction advances the lifecycle phase,
+changes the admission from `blocked_unknown_effect` to `released`, advances the
+Agent aggregate sequence, and appends `run_admission_released` correlated to
+both operation and admission. The immutable terminal report is not rewritten.
+If no unresolved admission exists, the barrier appends no synthetic release
+event.
 
 ### AgentEvent
 
@@ -227,7 +234,8 @@ operation without changing the stable `available` projection. New Run
 admissions are rejected from that point. The drain phase remains pending while
 an active admission exists; an admission whose executor is terminal but whose
 Tool effect is unknown may cross the deletion barrier and is released only
-after Runtime replacement proves the old compute absent.
+after Runtime replacement proves the old compute absent. The Runtime-update
+barrier and the resulting `run_admission_released` event commit atomically.
 
 Once drained, the Saga first persists the authoritative Egress policy assignment,
 then fences Egress to durable deny-all, reads and persists the authoritative
@@ -265,7 +273,8 @@ Disable is a restartable Saga, not a projection-only flag:
    fence the Agent to durable deny-all;
 4. call Runtime Controller `DisableRuntime` with the frozen source Runtime
    revision; completed success must prove lifecycle `disabled` and health
-   `absent`, and returns the retained-workspace Runtime revision;
+   `absent`, returns the retained-workspace Runtime revision, and atomically
+   releases any unresolved admission bound to the removed source Runtime;
 5. atomically publish desired/lifecycle state `disabled`, retain the current
    AgentSpec and last successful ExecutionRevision, clear the executable
    execution/MCP binding, store the disabled Runtime revision, and append
@@ -304,6 +313,9 @@ quarantine, keeps immutable events/revisions for retention, deactivates the
 owner binding, and hides the Agent from default active queries. Once deletion
 intent is persisted it is not rolled back to an executable Agent; ambiguous
 external effects remain on the same operation until reconciled.
+The proven Runtime-deletion barrier, or an authoritative pre-existing absence
+proof, atomically releases unresolved occupancy and records
+`run_admission_released` before network allocation release continues.
 The deletion fence contains only the frozen Runtime revision, or an
 authoritative proof that no Runtime exists. AgentSpec and Execution revision
 identities are deliberately excluded because they cannot strengthen Runtime

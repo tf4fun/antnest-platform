@@ -325,12 +325,26 @@ func (service *LifecycleService) advanceAgentDelete(
 	runtime *ports.RuntimeOperation,
 	networkReleaseOutcome string,
 ) (ports.AgentDeleteState, error) {
+	now := service.clock.Now()
+	releaseEvent := ports.RunAdmissionEvent{}
+	if expected == domain.PhaseRuntimeDelete ||
+		(expected == domain.PhaseFlowReset && state.Operation.SourceRuntimeAbsent) {
+		reason := "runtime_deleted"
+		if state.Operation.SourceRuntimeAbsent {
+			reason = "runtime_absent"
+		}
+		releaseEvent = lifecycleRunReleaseEvent(
+			ctx, state.Operation.RequestID, reason,
+			state.Operation.SourceRuntimeRevision, now,
+		)
+	}
 	return service.store.AdvanceAgentDelete(ctx, ports.AdvanceAgentDelete{
 		RequestID: state.Operation.RequestID, Fingerprint: state.Operation.RequestFingerprint,
 		ExpectedPhase: expected, NextPhase: next,
 		NextChildRequestID: domain.ChildRequestID(state.Operation.RequestID, next),
 		NetworkAttachment:  attachment, RuntimeResult: runtime,
-		NetworkReleaseOutcome: networkReleaseOutcome, Now: service.clock.Now(),
+		RunReleaseEvent:       releaseEvent,
+		NetworkReleaseOutcome: networkReleaseOutcome, Now: now,
 	})
 }
 

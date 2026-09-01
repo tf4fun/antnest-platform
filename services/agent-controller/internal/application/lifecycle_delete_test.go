@@ -47,6 +47,11 @@ func TestDeleteAgentFencesDeletesReleasesThenPublishes(t *testing.T) {
 	if store.published.DeletedEvent.EventType != ports.EventAgentDeleted {
 		t.Fatalf("deleted event = %+v", store.published.DeletedEvent)
 	}
+	if store.runReleaseEvent.EventType != ports.EventRunAdmissionReleased ||
+		store.runReleaseEvent.Data["release_reason"] != "runtime_deleted" ||
+		store.runReleaseEvent.Data["source_runtime_revision"] != base.Agent.RuntimeRevision {
+		t.Fatalf("delete Run release event = %+v", store.runReleaseEvent)
+	}
 }
 
 func TestDeleteAgentWithAuthoritativelyAbsentRuntimeSkipsRuntimeDelete(t *testing.T) {
@@ -91,6 +96,11 @@ func TestDeleteAgentWithAuthoritativelyAbsentRuntimeSkipsRuntimeDelete(t *testin
 		store.begin.Operation.SourceRuntimeAbsenceProof.Reason != "runtime_not_found" ||
 		result.Operation.State != domain.OperationCompleted {
 		t.Fatalf("absent Runtime delete = %+v begin=%+v", result, store.begin)
+	}
+	if store.runReleaseEvent.EventType != ports.EventRunAdmissionReleased ||
+		store.runReleaseEvent.Data["release_reason"] != "runtime_absent" ||
+		store.runReleaseEvent.Data["source_runtime_revision"] != "" {
+		t.Fatalf("absent Runtime Run release event = %+v", store.runReleaseEvent)
 	}
 }
 
@@ -352,12 +362,13 @@ func (dependency *deleteDependenciesStub) EnableRuntime(
 
 type deleteLifecycleStoreStub struct {
 	lifecycleStoreStub
-	base         ports.AgentDeleteBase
-	begin        ports.BeginAgentDelete
-	state        ports.AgentDeleteState
-	replayed     bool
-	drainBlocked bool
-	published    ports.PublishAgentDelete
+	base            ports.AgentDeleteBase
+	begin           ports.BeginAgentDelete
+	state           ports.AgentDeleteState
+	replayed        bool
+	drainBlocked    bool
+	published       ports.PublishAgentDelete
+	runReleaseEvent ports.RunAdmissionEvent
 }
 
 func (store *deleteLifecycleStoreStub) GetAgentDeleteBase(
@@ -403,6 +414,9 @@ func (store *deleteLifecycleStoreStub) SettleAgentDeleteDrain(
 func (store *deleteLifecycleStoreStub) AdvanceAgentDelete(
 	_ context.Context, input ports.AdvanceAgentDelete,
 ) (ports.AgentDeleteState, error) {
+	if input.RunReleaseEvent.EventID != "" {
+		store.runReleaseEvent = input.RunReleaseEvent
+	}
 	store.state.Operation.Phase = input.NextPhase
 	store.state.Operation.ChildRequestID = input.NextChildRequestID
 	store.state.Operation.UpdatedAt = input.Now

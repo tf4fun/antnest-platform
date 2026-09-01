@@ -312,6 +312,7 @@ type AdvanceAgentRebuild struct {
 	NextChildRequestID string
 	NetworkAttachment  *NetworkAttachment
 	RuntimeResult      *RuntimeOperation
+	RunReleaseEvent    RunAdmissionEvent
 	Now                time.Time
 }
 
@@ -353,6 +354,7 @@ type AdvanceAgentDisable struct {
 	NextPhase          domain.OperationPhase
 	NextChildRequestID string
 	RuntimeResult      *RuntimeOperation
+	RunReleaseEvent    RunAdmissionEvent
 	Now                time.Time
 }
 
@@ -435,6 +437,7 @@ type AdvanceAgentDelete struct {
 	NextChildRequestID    string
 	NetworkAttachment     *NetworkAttachment
 	RuntimeResult         *RuntimeOperation
+	RunReleaseEvent       RunAdmissionEvent
 	NetworkReleaseOutcome string
 	Now                   time.Time
 }

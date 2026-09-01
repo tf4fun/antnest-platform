@@ -18,7 +18,10 @@ Run admission is served at `/rpc/agent-controller`: access resolution binds an
 ACP connection to one Agent, acquire serializes on the Agent row and persists a
 complete immutable execution snapshot, credential resolution is restricted to
 an active admission, and finish seals one immutable terminal report. Admission
-deadline expiry is not an automatic release condition.
+deadline expiry is not an automatic release condition. Rebuild, disable, and
+delete release `blocked_unknown_effect` only after a Runtime-absence barrier;
+the phase transition, admission release, Agent aggregate sequence, and
+`run_admission_released` event share one PostgreSQL transaction.
 Current projection reads are served from `GET /internal/agents` and
 `GET /internal/agents/{agent_id}`. Lists use `(created_at, agent_id)` keyset
 pagination, hide desired state `deleted` by default, and may filter by opaque
@@ -107,7 +110,11 @@ turn a downstream outage into a restart loop.
 - A policy changed independently after Disable is not overwritten by Enable;
   resolve the policy conflict and replay the original enable request.
 - An unresolved Run remains fail-closed until rebuild/delete proves its Runtime
-  absent.
+  absent. Disable provides the same proof when Runtime Controller confirms the
+  source Runtime is disabled with no running compute. The event-journal append
+  counter records the resulting `run_admission_released` fact, and lifecycle
+  repository spans identify the barrier by bounded expected/next phase
+  attributes.
 - Delete intent is irreversible. A timeout or ambiguous Runtime/Egress effect
   leaves the same delete operation running; replay the original request ID.
   `deleted` is never published before Runtime absence and Egress quarantine are

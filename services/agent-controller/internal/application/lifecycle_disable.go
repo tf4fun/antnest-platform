@@ -236,11 +236,17 @@ func (service *LifecycleService) disableRuntime(
 			"%w: runtime-controller returned an unknown state", ErrDependencyUnavailable,
 		)
 	}
+	now := service.clock.Now()
 	return service.store.AdvanceAgentDisable(ctx, ports.AdvanceAgentDisable{
 		RequestID: state.Operation.RequestID, Fingerprint: state.Operation.RequestFingerprint,
 		ExpectedPhase: domain.PhaseRuntimeDisable, NextPhase: domain.PhasePublish,
 		NextChildRequestID: domain.ChildRequestID(state.Operation.RequestID, domain.PhasePublish),
-		RuntimeResult:      &result, Now: service.clock.Now(),
+		RuntimeResult:      &result,
+		RunReleaseEvent: lifecycleRunReleaseEvent(
+			ctx, state.Operation.RequestID, "runtime_disabled",
+			state.Operation.SourceRuntimeRevision, now,
+		),
+		Now: now,
 	})
 }
 

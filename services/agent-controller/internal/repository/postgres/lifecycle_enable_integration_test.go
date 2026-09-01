@@ -200,7 +200,12 @@ func seedDisabledAgentForEnable(
 		RequestID: requestID, Fingerprint: fingerprint,
 		ExpectedPhase: domain.PhaseRuntimeDisable, NextPhase: domain.PhasePublish,
 		NextChildRequestID: domain.ChildRequestID(requestID, domain.PhasePublish),
-		RuntimeResult:      &runtime, Now: now.Add(4 * time.Second),
+		RuntimeResult:      &runtime,
+		RunReleaseEvent: lifecycleRunReleaseEvent(
+			"event-run-release-disable-before-enable", "runtime_disabled",
+			base.Agent.RuntimeRevision, now.Add(4*time.Second),
+		),
+		Now: now.Add(4 * time.Second),
 	}); err != nil {
 		t.Fatalf("record prerequisite Runtime disable: %v", err)
 	}

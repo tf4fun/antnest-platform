@@ -71,6 +71,11 @@ func TestRebuildAgentReplacesRuntimeAndPublishesTargetSpecAtomically(t *testing.
 		store.published.RebuiltEvent.EventType != ports.EventAgentRebuilt {
 		t.Fatalf("rebuild publication = %+v", store.published)
 	}
+	if store.runReleaseEvent.EventType != ports.EventRunAdmissionReleased ||
+		store.runReleaseEvent.Data["release_reason"] != "runtime_replaced" ||
+		store.runReleaseEvent.Data["source_runtime_revision"] != base.Agent.RuntimeRevision {
+		t.Fatalf("rebuild Run release event = %+v", store.runReleaseEvent)
+	}
 }
 
 func TestRebuildAgentWaitsForActiveRunWithoutExternalEffects(t *testing.T) {
@@ -459,14 +464,15 @@ func (dependency *rebuildDependenciesStub) InspectRuntime(
 
 type rebuildLifecycleStoreStub struct {
 	lifecycleStoreStub
-	base         ports.AgentLifecycleBase
-	baseErr      error
-	begin        ports.BeginAgentRebuild
-	state        ports.AgentRebuildState
-	replayed     bool
-	drainBlocked bool
-	published    ports.PublishAgentRebuild
-	failed       ports.FailAgentRebuild
+	base            ports.AgentLifecycleBase
+	baseErr         error
+	begin           ports.BeginAgentRebuild
+	state           ports.AgentRebuildState
+	replayed        bool
+	drainBlocked    bool
+	published       ports.PublishAgentRebuild
+	failed          ports.FailAgentRebuild
+	runReleaseEvent ports.RunAdmissionEvent
 }
 
 func (store *rebuildLifecycleStoreStub) GetAgentLifecycleBase(
@@ -524,6 +530,9 @@ func (store *rebuildLifecycleStoreStub) RecordAgentRebuildPolicy(
 func (store *rebuildLifecycleStoreStub) AdvanceAgentRebuild(
 	_ context.Context, input ports.AdvanceAgentRebuild,
 ) (ports.AgentRebuildState, error) {
+	if input.RunReleaseEvent.EventID != "" {
+		store.runReleaseEvent = input.RunReleaseEvent
+	}
 	store.state.Operation.Phase = input.NextPhase
 	store.state.Operation.ChildRequestID = input.NextChildRequestID
 	store.state.Operation.UpdatedAt = input.Now

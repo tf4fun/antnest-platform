@@ -251,10 +251,12 @@ func (repository *Repository) AdvanceAgentDisable(
 	); err != nil {
 		return ports.AgentDisableState{}, err
 	}
+	releasedRun := false
 	if input.ExpectedPhase == domain.PhaseRuntimeDisable {
-		if err := releaseResolvedRunAdmission(
-			ctx, transaction, operation, input.Now,
-		); err != nil {
+		releasedRun, err = repository.releaseBlockedRunAdmission(
+			ctx, transaction, operation, input.RunReleaseEvent, input.Now,
+		)
+		if err != nil {
 			return ports.AgentDisableState{}, err
 		}
 	}
@@ -268,6 +270,9 @@ func (repository *Repository) AdvanceAgentDisable(
 	}
 	if err := transaction.Commit(ctx); err != nil {
 		return ports.AgentDisableState{}, fmt.Errorf("commit Agent disable phase: %w", err)
+	}
+	if releasedRun {
+		repository.recordEventAppend(ctx, ports.EventRunAdmissionReleased)
 	}
 	return state, nil
 }
@@ -475,33 +480,6 @@ ORDER BY admission_id LIMIT 1 FOR UPDATE`, agentID).Scan(&admissionState)
 	}
 }
 
-func releaseResolvedRunAdmission(
-	ctx context.Context, transaction pgx.Tx,
-	operation ports.LifecycleOperationRecord, now time.Time,
-) error {
-	var mismatched int
-	if err := transaction.QueryRow(ctx, `
-SELECT COUNT(*) FROM agent_controller.run_admissions
-WHERE agent_id = $1 AND state = 'blocked_unknown_effect' AND runtime_revision <> $2`,
-		operation.AgentID, operation.SourceRuntimeRevision,
-	).Scan(&mismatched); err != nil {
-		return fmt.Errorf("verify unresolved Run Runtime revision: %w", err)
-	}
-	if mismatched != 0 {
-		return fmt.Errorf("unresolved Run belongs to another Runtime revision")
-	}
-	if _, err := transaction.Exec(ctx, `
-UPDATE agent_controller.run_admissions
-SET state = 'released', released_by_operation_request_id = $2,
-    released_at = $3, updated_at = $3
-WHERE agent_id = $1 AND state = 'blocked_unknown_effect' AND runtime_revision = $4`,
-		operation.AgentID, operation.RequestID, now, operation.SourceRuntimeRevision,
-	); err != nil {
-		return fmt.Errorf("release unresolved Run after Runtime removal: %w", err)
-	}
-	return nil
-}
-
 func validDisableBegin(
 	input ports.BeginAgentDisable,
 	agent ports.AgentRecord,
@@ -526,10 +504,11 @@ func validateDisableAdvance(input ports.AdvanceAgentDisable) error {
 	switch {
 	case input.ExpectedPhase == domain.PhaseNetworkFence &&
 		input.NextPhase == domain.PhaseRuntimeDisable:
-		valid = input.RuntimeResult == nil
+		valid = input.RuntimeResult == nil && emptyRunAdmissionEvent(input.RunReleaseEvent)
 	case input.ExpectedPhase == domain.PhaseRuntimeDisable &&
 		input.NextPhase == domain.PhasePublish:
-		valid = input.RuntimeResult != nil && disabledRuntimeResult(*input.RuntimeResult)
+		valid = input.RuntimeResult != nil && disabledRuntimeResult(*input.RuntimeResult) &&
+			validRunEvent(input.RunReleaseEvent, domain.AdmissionReleased)
 	}
 	if !valid || input.RequestID == "" || input.Fingerprint == "" ||
 		input.NextChildRequestID == "" || input.Now.IsZero() {

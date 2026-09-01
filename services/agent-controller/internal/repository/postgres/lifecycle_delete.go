@@ -199,12 +199,25 @@ WHERE request_id = $1 AND state = 'running' AND phase = 'publish'`,
 			return ports.AgentDeleteState{}, ports.ErrConcurrentChange
 		}
 	}
+	releasedRun := false
 	if deleteCrossedRuntimeBarrier(operation, input) {
-		if err := releaseDeleteAdmissions(ctx, transaction, operation, input.Now); err != nil {
+		releasedRun, err = repository.releaseBlockedRunAdmission(
+			ctx, transaction, operation, input.RunReleaseEvent, input.Now,
+		)
+		if err != nil {
 			return ports.AgentDeleteState{}, err
 		}
 	}
-	return commitAgentDeleteState(ctx, transaction, input.RequestID, "commit Agent delete phase")
+	state, err := commitAgentDeleteState(
+		ctx, transaction, input.RequestID, "commit Agent delete phase",
+	)
+	if err != nil {
+		return ports.AgentDeleteState{}, err
+	}
+	if releasedRun {
+		repository.recordEventAppend(ctx, ports.EventRunAdmissionReleased)
+	}
+	return state, nil
 }
 
 func (repository *Repository) PublishAgentDelete(
@@ -319,21 +332,27 @@ func validDeleteAdvance(
 	case domain.PhaseNetworkFence:
 		return input.NextPhase == domain.PhaseFlowReset &&
 			input.NetworkAttachment == nil && input.RuntimeResult == nil &&
-			input.NetworkReleaseOutcome == ""
+			input.NetworkReleaseOutcome == "" && emptyRunAdmissionEvent(input.RunReleaseEvent)
 	case domain.PhaseFlowReset:
 		next := domain.PhaseRuntimeDelete
 		if operation.SourceRuntimeAbsent {
 			next = domain.PhaseNetworkRelease
 		}
+		validReleaseEvent := emptyRunAdmissionEvent(input.RunReleaseEvent)
+		if operation.SourceRuntimeAbsent {
+			validReleaseEvent = validRunEvent(input.RunReleaseEvent, domain.AdmissionReleased)
+		}
 		return input.NextPhase == next && input.NetworkAttachment == nil &&
-			input.RuntimeResult == nil && input.NetworkReleaseOutcome == ""
+			input.RuntimeResult == nil && input.NetworkReleaseOutcome == "" && validReleaseEvent
 	case domain.PhaseRuntimeDelete:
 		return !operation.SourceRuntimeAbsent && input.NextPhase == domain.PhaseNetworkRelease &&
 			input.NetworkAttachment == nil && input.RuntimeResult != nil &&
-			input.NetworkReleaseOutcome == "" && deletedRuntimeResult(*input.RuntimeResult)
+			input.NetworkReleaseOutcome == "" && deletedRuntimeResult(*input.RuntimeResult) &&
+			validRunEvent(input.RunReleaseEvent, domain.AdmissionReleased)
 	case domain.PhaseNetworkRelease:
 		return input.NextPhase == domain.PhasePublish && input.RuntimeResult == nil &&
-			validDeleteNetworkReleaseInput(operation.AgentID, input)
+			validDeleteNetworkReleaseInput(operation.AgentID, input) &&
+			emptyRunAdmissionEvent(input.RunReleaseEvent)
 	default:
 		return false
 	}
@@ -410,39 +429,6 @@ func deleteCrossedRuntimeBarrier(
 ) bool {
 	return input.ExpectedPhase == domain.PhaseRuntimeDelete ||
 		(operation.SourceRuntimeAbsent && input.ExpectedPhase == domain.PhaseFlowReset)
-}
-
-func releaseDeleteAdmissions(
-	ctx context.Context, transaction pgx.Tx,
-	operation ports.LifecycleOperationRecord, now time.Time,
-) error {
-	if !operation.SourceRuntimeAbsent {
-		var mismatched int
-		if err := transaction.QueryRow(ctx, `
-SELECT COUNT(*) FROM agent_controller.run_admissions
-WHERE agent_id = $1 AND state = 'blocked_unknown_effect' AND runtime_revision <> $2`,
-			operation.AgentID, operation.SourceRuntimeRevision,
-		).Scan(&mismatched); err != nil {
-			return fmt.Errorf("verify unresolved delete Run Runtime revision: %w", err)
-		}
-		if mismatched != 0 {
-			return fmt.Errorf("unresolved Run belongs to another Runtime revision")
-		}
-	}
-	query := `
-UPDATE agent_controller.run_admissions
-SET state = 'released', released_by_operation_request_id = $2,
-    released_at = $3, updated_at = $3
-WHERE agent_id = $1 AND state = 'blocked_unknown_effect'`
-	arguments := []any{operation.AgentID, operation.RequestID, now}
-	if !operation.SourceRuntimeAbsent {
-		query += " AND runtime_revision = $4"
-		arguments = append(arguments, operation.SourceRuntimeRevision)
-	}
-	if _, err := transaction.Exec(ctx, query, arguments...); err != nil {
-		return fmt.Errorf("release unresolved Run after Runtime deletion: %w", err)
-	}
-	return nil
 }
 
 func activeRunBlocksDrain(ctx context.Context, transaction pgx.Tx, agentID string) (bool, error) {

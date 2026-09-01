@@ -297,26 +297,13 @@ func (repository *Repository) AdvanceAgentRebuild(
 	); err != nil {
 		return ports.AgentRebuildState{}, err
 	}
+	releasedRun := false
 	if input.ExpectedPhase == domain.PhaseRuntimeUpdate {
-		var mismatched int
-		if err := transaction.QueryRow(ctx, `
-SELECT COUNT(*) FROM agent_controller.run_admissions
-WHERE agent_id = $1 AND state = 'blocked_unknown_effect' AND runtime_revision <> $2`,
-			operation.AgentID, operation.SourceRuntimeRevision,
-		).Scan(&mismatched); err != nil {
-			return ports.AgentRebuildState{}, fmt.Errorf("verify unresolved Run Runtime revision: %w", err)
-		}
-		if mismatched != 0 {
-			return ports.AgentRebuildState{}, fmt.Errorf("unresolved Run belongs to another Runtime revision")
-		}
-		if _, err := transaction.Exec(ctx, `
-UPDATE agent_controller.run_admissions
-SET state = 'released', released_by_operation_request_id = $2,
-    released_at = $3, updated_at = $3
-WHERE agent_id = $1 AND state = 'blocked_unknown_effect' AND runtime_revision = $4`,
-			operation.AgentID, operation.RequestID, input.Now, operation.SourceRuntimeRevision,
-		); err != nil {
-			return ports.AgentRebuildState{}, fmt.Errorf("release unresolved Run after Runtime replacement: %w", err)
+		releasedRun, err = repository.releaseBlockedRunAdmission(
+			ctx, transaction, operation, input.RunReleaseEvent, input.Now,
+		)
+		if err != nil {
+			return ports.AgentRebuildState{}, err
 		}
 	}
 	operation, err = loadLifecycleOperation(ctx, transaction, input.RequestID, "")
@@ -329,6 +316,9 @@ WHERE agent_id = $1 AND state = 'blocked_unknown_effect' AND runtime_revision = 
 	}
 	if err := transaction.Commit(ctx); err != nil {
 		return ports.AgentRebuildState{}, fmt.Errorf("commit Agent rebuild phase: %w", err)
+	}
+	if releasedRun {
+		repository.recordEventAppend(ctx, ports.EventRunAdmissionReleased)
 	}
 	return state, nil
 }
@@ -542,13 +532,17 @@ func validateRebuildAdvance(input ports.AdvanceAgentRebuild) error {
 	valid := false
 	switch {
 	case input.ExpectedPhase == domain.PhaseNetworkFence && input.NextPhase == domain.PhaseFlowReset:
-		valid = input.NetworkAttachment != nil && input.RuntimeResult == nil
+		valid = input.NetworkAttachment != nil && input.RuntimeResult == nil &&
+			emptyRunAdmissionEvent(input.RunReleaseEvent)
 	case input.ExpectedPhase == domain.PhaseFlowReset && input.NextPhase == domain.PhaseRuntimeUpdate:
-		valid = input.NetworkAttachment == nil && input.RuntimeResult == nil
+		valid = input.NetworkAttachment == nil && input.RuntimeResult == nil &&
+			emptyRunAdmissionEvent(input.RunReleaseEvent)
 	case input.ExpectedPhase == domain.PhaseRuntimeUpdate && input.NextPhase == domain.PhaseNetworkEnsure:
-		valid = input.NetworkAttachment == nil && input.RuntimeResult != nil
+		valid = input.NetworkAttachment == nil && input.RuntimeResult != nil &&
+			validRunEvent(input.RunReleaseEvent, domain.AdmissionReleased)
 	case input.ExpectedPhase == domain.PhaseNetworkEnsure && input.NextPhase == domain.PhasePublish:
-		valid = input.NetworkAttachment != nil && input.RuntimeResult == nil
+		valid = input.NetworkAttachment != nil && input.RuntimeResult == nil &&
+			emptyRunAdmissionEvent(input.RunReleaseEvent)
 	}
 	if !valid || input.RequestID == "" || input.Fingerprint == "" ||
 		input.NextChildRequestID == "" || input.Now.IsZero() {

@@ -530,6 +530,24 @@ func currentTraceID(ctx context.Context) string {
 	return spanContext.TraceID().String()
 }
 
+func lifecycleRunReleaseEvent(
+	ctx context.Context,
+	requestID string,
+	reason string,
+	sourceRuntimeRevision string,
+	now time.Time,
+) ports.RunAdmissionEvent {
+	return ports.RunAdmissionEvent{
+		EventID:   derivedID("event-run-release", requestID),
+		EventType: ports.EventRunAdmissionReleased, TraceID: currentTraceID(ctx),
+		Data: map[string]any{
+			"release_reason":          reason,
+			"source_runtime_revision": sourceRuntimeRevision,
+		},
+		OccurredAt: now,
+	}
+}
+
 func digestString(value string) string {
 	digest := sha256.Sum256([]byte(value))
 	return hex.EncodeToString(digest[:])

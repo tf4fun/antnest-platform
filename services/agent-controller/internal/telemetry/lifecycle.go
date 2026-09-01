@@ -9,6 +9,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
+	"soft/antnest-platform/services/agent-controller/internal/domain"
 	"soft/antnest-platform/services/agent-controller/internal/ports"
 )
 
@@ -149,9 +150,12 @@ func (store *ObservedLifecycleStore) SettleAgentRebuildDrain(
 func (store *ObservedLifecycleStore) AdvanceAgentRebuild(
 	ctx context.Context, input ports.AdvanceAgentRebuild,
 ) (ports.AgentRebuildState, error) {
-	return observeLifecycleValue(ctx, store, "advance_agent_rebuild", func(callCtx context.Context) (ports.AgentRebuildState, error) {
-		return store.next.AdvanceAgentRebuild(callCtx, input)
-	})
+	return observeLifecycleAdvance(
+		ctx, store, "advance_agent_rebuild", input.ExpectedPhase, input.NextPhase,
+		func(callCtx context.Context) (ports.AgentRebuildState, error) {
+			return store.next.AdvanceAgentRebuild(callCtx, input)
+		},
+	)
 }
 
 func (store *ObservedLifecycleStore) PublishAgentRebuild(
@@ -215,9 +219,12 @@ func (store *ObservedLifecycleStore) SettleAgentDisableDrain(
 func (store *ObservedLifecycleStore) AdvanceAgentDisable(
 	ctx context.Context, input ports.AdvanceAgentDisable,
 ) (ports.AgentDisableState, error) {
-	return observeLifecycleValue(ctx, store, "advance_agent_disable", func(callCtx context.Context) (ports.AgentDisableState, error) {
-		return store.next.AdvanceAgentDisable(callCtx, input)
-	})
+	return observeLifecycleAdvance(
+		ctx, store, "advance_agent_disable", input.ExpectedPhase, input.NextPhase,
+		func(callCtx context.Context) (ports.AgentDisableState, error) {
+			return store.next.AdvanceAgentDisable(callCtx, input)
+		},
+	)
 }
 
 func (store *ObservedLifecycleStore) PublishAgentDisable(
@@ -262,16 +269,13 @@ func (store *ObservedLifecycleStore) BeginAgentEnable(
 
 func (store *ObservedLifecycleStore) AdvanceAgentEnable(
 	ctx context.Context, input ports.AdvanceAgentEnable,
-) (value ports.AgentEnableState, resultErr error) {
-	ctx, span, started := startRepositorySpan(ctx, "advance_agent_enable")
-	span.SetAttributes(
-		attribute.String("antnest.lifecycle.expected_phase", string(input.ExpectedPhase)),
-		attribute.String("antnest.lifecycle.next_phase", string(input.NextPhase)),
+) (ports.AgentEnableState, error) {
+	return observeLifecycleAdvance(
+		ctx, store, "advance_agent_enable", input.ExpectedPhase, input.NextPhase,
+		func(callCtx context.Context) (ports.AgentEnableState, error) {
+			return store.next.AdvanceAgentEnable(callCtx, input)
+		},
 	)
-	defer func() {
-		store.finish(ctx, span, started, "advance_agent_enable", resultErr)
-	}()
-	return store.next.AdvanceAgentEnable(ctx, input)
 }
 
 func (store *ObservedLifecycleStore) PublishAgentEnable(
@@ -330,16 +334,13 @@ func (store *ObservedLifecycleStore) SettleAgentDeleteDrain(
 
 func (store *ObservedLifecycleStore) AdvanceAgentDelete(
 	ctx context.Context, input ports.AdvanceAgentDelete,
-) (value ports.AgentDeleteState, resultErr error) {
-	ctx, span, started := startRepositorySpan(ctx, "advance_agent_delete")
-	span.SetAttributes(
-		attribute.String("antnest.lifecycle.expected_phase", string(input.ExpectedPhase)),
-		attribute.String("antnest.lifecycle.next_phase", string(input.NextPhase)),
+) (ports.AgentDeleteState, error) {
+	return observeLifecycleAdvance(
+		ctx, store, "advance_agent_delete", input.ExpectedPhase, input.NextPhase,
+		func(callCtx context.Context) (ports.AgentDeleteState, error) {
+			return store.next.AdvanceAgentDelete(callCtx, input)
+		},
 	)
-	defer func() {
-		store.finish(ctx, span, started, "advance_agent_delete", resultErr)
-	}()
-	return store.next.AdvanceAgentDelete(ctx, input)
 }
 
 func (store *ObservedLifecycleStore) PublishAgentDelete(
@@ -368,6 +369,23 @@ func observeLifecycleReplay[T any](
 	call func(context.Context) (T, bool, error),
 ) (value T, replayed bool, resultErr error) {
 	ctx, span, started := startRepositorySpan(ctx, operation)
+	defer func() { store.finish(ctx, span, started, operation, resultErr) }()
+	return call(ctx)
+}
+
+func observeLifecycleAdvance[T any](
+	ctx context.Context,
+	store *ObservedLifecycleStore,
+	operation string,
+	expectedPhase domain.OperationPhase,
+	nextPhase domain.OperationPhase,
+	call func(context.Context) (T, error),
+) (value T, resultErr error) {
+	ctx, span, started := startRepositorySpan(ctx, operation)
+	span.SetAttributes(
+		attribute.String("antnest.lifecycle.expected_phase", string(expectedPhase)),
+		attribute.String("antnest.lifecycle.next_phase", string(nextPhase)),
+	)
 	defer func() { store.finish(ctx, span, started, operation, resultErr) }()
 	return call(ctx)
 }

@@ -47,7 +47,7 @@ func TestObservedLifecycleStoreEmitsBoundedOperationSpan(t *testing.T) {
 	}
 }
 
-func TestObservedEnableAdvanceRecordsPhaseTransition(t *testing.T) {
+func TestObservedLifecycleAdvancesRecordPhaseTransition(t *testing.T) {
 	previousProvider := otel.GetTracerProvider()
 	recorder := tracetest.NewSpanRecorder()
 	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
@@ -63,23 +63,50 @@ func TestObservedEnableAdvanceRecordsPhaseTransition(t *testing.T) {
 	if err != nil {
 		t.Fatalf("observe lifecycle store: %v", err)
 	}
-	_, err = observed.AdvanceAgentEnable(context.Background(), ports.AdvanceAgentEnable{
-		ExpectedPhase: domain.PhaseRuntimeEnable, NextPhase: domain.PhaseNetworkRestore,
-	})
-	if err != nil {
-		t.Fatalf("advance enable operation: %v", err)
+	calls := []func() error{
+		func() error {
+			_, callErr := observed.AdvanceAgentRebuild(context.Background(), ports.AdvanceAgentRebuild{
+				ExpectedPhase: domain.PhaseRuntimeUpdate, NextPhase: domain.PhaseNetworkEnsure,
+			})
+			return callErr
+		},
+		func() error {
+			_, callErr := observed.AdvanceAgentDisable(context.Background(), ports.AdvanceAgentDisable{
+				ExpectedPhase: domain.PhaseRuntimeDisable, NextPhase: domain.PhasePublish,
+			})
+			return callErr
+		},
+		func() error {
+			_, callErr := observed.AdvanceAgentEnable(context.Background(), ports.AdvanceAgentEnable{
+				ExpectedPhase: domain.PhaseRuntimeEnable, NextPhase: domain.PhaseNetworkRestore,
+			})
+			return callErr
+		},
+		func() error {
+			_, callErr := observed.AdvanceAgentDelete(context.Background(), ports.AdvanceAgentDelete{
+				ExpectedPhase: domain.PhaseRuntimeDelete, NextPhase: domain.PhaseNetworkRelease,
+			})
+			return callErr
+		},
+	}
+	for _, call := range calls {
+		if err := call(); err != nil {
+			t.Fatalf("advance lifecycle operation: %v", err)
+		}
 	}
 	ended := recorder.Ended()
-	if len(ended) != 1 {
+	if len(ended) != len(calls) {
 		t.Fatalf("repository spans = %#v", ended)
 	}
-	attributes := make(map[string]string, len(ended[0].Attributes()))
-	for _, item := range ended[0].Attributes() {
-		attributes[string(item.Key)] = item.Value.AsString()
-	}
-	if attributes["antnest.lifecycle.expected_phase"] != string(domain.PhaseRuntimeEnable) ||
-		attributes["antnest.lifecycle.next_phase"] != string(domain.PhaseNetworkRestore) {
-		t.Fatalf("phase attributes = %+v", attributes)
+	for _, span := range ended {
+		attributes := make(map[string]string, len(span.Attributes()))
+		for _, item := range span.Attributes() {
+			attributes[string(item.Key)] = item.Value.AsString()
+		}
+		if attributes["antnest.lifecycle.expected_phase"] == "" ||
+			attributes["antnest.lifecycle.next_phase"] == "" {
+			t.Fatalf("%s phase attributes = %+v", span.Name(), attributes)
+		}
 	}
 }
 

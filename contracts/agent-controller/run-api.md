@@ -105,7 +105,12 @@ separate facts. Completed, cancelled, and failed reports release admission. An
 unresolved report is sealed once, while admission becomes
 `blocked_unknown_effect` and continues excluding new Runs. A rebuild/delete
 barrier may later prove the bound Runtime absent and release that occupancy; it
-must not rewrite the original executor report.
+must not rewrite the original executor report. Disable has the same authority
+after Runtime Controller proves the source Runtime has no running compute. The
+barrier transition, admission release, Agent aggregate-sequence advance, and
+`run_admission_released` event are one transaction. Its event envelope carries
+both `operation_request_id` and `admission_id`; no event is synthesized when
+there is no unresolved admission.
 
 ## Error Classes
 

@@ -107,7 +107,12 @@ WHERE admission_id = $1`,
 		RequestID: requestID, Fingerprint: fingerprint,
 		ExpectedPhase: domain.PhaseRuntimeDisable, NextPhase: domain.PhasePublish,
 		NextChildRequestID: domain.ChildRequestID(requestID, domain.PhasePublish),
-		RuntimeResult:      &runtime, Now: now.Add(5 * time.Second),
+		RuntimeResult:      &runtime,
+		RunReleaseEvent: lifecycleRunReleaseEvent(
+			"event-run-release-disable-integration", "runtime_disabled",
+			base.Agent.RuntimeRevision, now.Add(5*time.Second),
+		),
+		Now: now.Add(5 * time.Second),
 	}
 	if _, err := repository.pool.Exec(ctx, `
 UPDATE agent_controller.run_admissions
@@ -145,12 +150,17 @@ FROM agent_controller.run_admissions WHERE admission_id = $1`,
 	if admissionState != "released" || releasedBy != requestID {
 		t.Fatalf("released Run state=%q operation=%q", admissionState, releasedBy)
 	}
+	assertLifecycleRunRelease(
+		t, ctx, repository, "event-run-release-disable-integration", base.Agent.AgentID,
+		"admission-disable-integration", requestID,
+		begin.RequestedEvent.AggregateSequence+1,
+	)
 
 	published, err := repository.PublishAgentDisable(ctx, ports.PublishAgentDisable{
 		RequestID: requestID, Fingerprint: fingerprint,
 		DisabledEvent: ports.AgentEventRecord{
 			EventID: "event-disabled-integration", AgentID: base.Agent.AgentID,
-			AggregateSequence: begin.RequestedEvent.AggregateSequence + 1,
+			AggregateSequence: withRuntime.Agent.AggregateSequence + 1,
 			SchemaVersion:     1, EventType: ports.EventAgentDisabled,
 			OperationRequestID: requestID, Data: map[string]any{},
 			OccurredAt: now.Add(6 * time.Second),

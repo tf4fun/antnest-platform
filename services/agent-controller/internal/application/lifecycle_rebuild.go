@@ -302,12 +302,18 @@ func (service *LifecycleService) updateRebuildRuntime(
 			"%w: runtime-controller returned an unknown state", ErrDependencyUnavailable,
 		)
 	}
+	now := service.clock.Now()
 	return service.store.AdvanceAgentRebuild(ctx, ports.AdvanceAgentRebuild{
 		RequestID:     state.Operation.RequestID,
 		Fingerprint:   state.Operation.RequestFingerprint,
 		ExpectedPhase: domain.PhaseRuntimeUpdate, NextPhase: domain.PhaseNetworkEnsure,
 		NextChildRequestID: domain.ChildRequestID(state.Operation.RequestID, domain.PhaseNetworkEnsure),
-		RuntimeResult:      &result, Now: service.clock.Now(),
+		RuntimeResult:      &result,
+		RunReleaseEvent: lifecycleRunReleaseEvent(
+			ctx, state.Operation.RequestID, "runtime_replaced",
+			state.Operation.SourceRuntimeRevision, now,
+		),
+		Now: now,
 	})
 }
 

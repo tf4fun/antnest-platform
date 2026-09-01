@@ -44,6 +44,11 @@ func TestDisableAgentFencesRuntimeAndPublishesDisabledProjection(t *testing.T) {
 		store.published.DisabledEvent.EventType != ports.EventAgentDisabled {
 		t.Fatalf("disable events: begin=%+v publish=%+v", store.begin, store.published)
 	}
+	if store.runReleaseEvent.EventType != ports.EventRunAdmissionReleased ||
+		store.runReleaseEvent.Data["release_reason"] != "runtime_disabled" ||
+		store.runReleaseEvent.Data["source_runtime_revision"] != base.Agent.RuntimeRevision {
+		t.Fatalf("disable Run release event = %+v", store.runReleaseEvent)
+	}
 	if result.Operation.State != domain.OperationCompleted ||
 		result.Agent.DesiredState != domain.DesiredDisabled ||
 		result.Agent.LifecycleState != domain.AgentDisabled ||
@@ -314,13 +319,14 @@ func (dependency *disableDependenciesStub) InspectRuntime(
 
 type disableLifecycleStoreStub struct {
 	lifecycleStoreStub
-	base         ports.AgentLifecycleBase
-	begin        ports.BeginAgentDisable
-	state        ports.AgentDisableState
-	replayed     bool
-	drainBlocked bool
-	published    ports.PublishAgentDisable
-	failed       ports.FailAgentDisable
+	base            ports.AgentLifecycleBase
+	begin           ports.BeginAgentDisable
+	state           ports.AgentDisableState
+	replayed        bool
+	drainBlocked    bool
+	published       ports.PublishAgentDisable
+	failed          ports.FailAgentDisable
+	runReleaseEvent ports.RunAdmissionEvent
 }
 
 func (store *disableLifecycleStoreStub) GetAgentLifecycleBase(
@@ -378,6 +384,9 @@ func (store *disableLifecycleStoreStub) SettleAgentDisableDrain(
 func (store *disableLifecycleStoreStub) AdvanceAgentDisable(
 	_ context.Context, input ports.AdvanceAgentDisable,
 ) (ports.AgentDisableState, error) {
+	if input.RunReleaseEvent.EventID != "" {
+		store.runReleaseEvent = input.RunReleaseEvent
+	}
 	store.state.Operation.Phase = input.NextPhase
 	store.state.Operation.ChildRequestID = input.NextChildRequestID
 	store.state.Operation.UpdatedAt = input.Now

@@ -167,7 +167,12 @@ WHERE admission_id = $1`,
 		RequestID: begin.Operation.RequestID, Fingerprint: fingerprint,
 		ExpectedPhase: domain.PhaseRuntimeUpdate, NextPhase: domain.PhaseNetworkEnsure,
 		NextChildRequestID: domain.ChildRequestID(begin.Operation.RequestID, domain.PhaseNetworkEnsure),
-		RuntimeResult:      &runtime, Now: now.Add(5 * time.Second),
+		RuntimeResult:      &runtime,
+		RunReleaseEvent: lifecycleRunReleaseEvent(
+			"event-run-release-rebuild-integration", "runtime_replaced",
+			base.Agent.RuntimeRevision, now.Add(5*time.Second),
+		),
+		Now: now.Add(5 * time.Second),
 	}
 	if _, err := repository.AdvanceAgentRebuild(ctx, runtimeAdvance); err == nil {
 		t.Fatal("Runtime replacement released an unresolved Run from another Runtime revision")
@@ -196,6 +201,11 @@ FROM agent_controller.run_admissions WHERE admission_id = $1`,
 	if admissionState != "released" || releasedBy != begin.Operation.RequestID {
 		t.Fatalf("released Run admission state=%q operation=%q", admissionState, releasedBy)
 	}
+	assertLifecycleRunRelease(
+		t, ctx, repository, "event-run-release-rebuild-integration", base.Agent.AgentID,
+		"admission-rebuild-integration", begin.Operation.RequestID,
+		begin.RequestedEvent.AggregateSequence+1,
+	)
 	replayedFinish, err := repository.FinishRun(ctx, finishRunCommand(
 		ports.RunAdmissionRecord{AdmissionID: "admission-rebuild-integration"},
 		"request-finish-rebuild-replay",
@@ -234,7 +244,7 @@ FROM agent_controller.run_admissions WHERE admission_id = $1`,
 		},
 		RebuiltEvent: ports.AgentEventRecord{
 			EventID: "event-rebuilt-integration", AgentID: base.Agent.AgentID,
-			AggregateSequence: begin.RequestedEvent.AggregateSequence + 1,
+			AggregateSequence: withNetwork.Agent.AggregateSequence + 1,
 			SchemaVersion:     1, EventType: ports.EventAgentRebuilt,
 			OperationRequestID: begin.Operation.RequestID,
 			Data:               map[string]any{"execution_revision_id": "execution-rebuild-integration"},

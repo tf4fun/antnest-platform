@@ -158,7 +158,12 @@ INSERT INTO agent_controller.run_admissions (
 		RequestID: requestID, Fingerprint: fingerprint,
 		ExpectedPhase: domain.PhaseRuntimeDelete, NextPhase: domain.PhaseNetworkRelease,
 		NextChildRequestID: domain.ChildRequestID(requestID, domain.PhaseNetworkRelease),
-		RuntimeResult:      &runtime, Now: now.Add(4 * time.Second),
+		RuntimeResult:      &runtime,
+		RunReleaseEvent: lifecycleRunReleaseEvent(
+			"event-run-release-delete-integration", "runtime_deleted",
+			base.Agent.RuntimeRevision, now.Add(4*time.Second),
+		),
+		Now: now.Add(4 * time.Second),
 	})
 	if err != nil || state.Operation.Phase != domain.PhaseNetworkRelease {
 		t.Fatalf("record Runtime deletion: state=%+v err=%v", state, err)
@@ -174,6 +179,11 @@ FROM agent_controller.run_admissions WHERE admission_id = $1`,
 	if admissionState != "released" || releasedBy != requestID {
 		t.Fatalf("released Run state=%q operation=%q", admissionState, releasedBy)
 	}
+	assertLifecycleRunRelease(
+		t, ctx, repository, "event-run-release-delete-integration", base.Agent.AgentID,
+		"admission-delete-integration", requestID,
+		begin.RequestedEvent.AggregateSequence+1,
+	)
 
 	attachment := ports.NetworkAttachment{
 		AgentID: base.Agent.AgentID, TunnelIPv4: "100.64.0.2", ResolverIPv4: "100.64.0.1",
@@ -196,7 +206,7 @@ FROM agent_controller.run_admissions WHERE admission_id = $1`,
 		RequestID: requestID, Fingerprint: fingerprint,
 		DeletedEvent: ports.AgentEventRecord{
 			EventID: "event-deleted-integration", AgentID: base.Agent.AgentID,
-			AggregateSequence: begin.RequestedEvent.AggregateSequence + 1,
+			AggregateSequence: state.Agent.AggregateSequence + 1,
 			SchemaVersion:     1, EventType: ports.EventAgentDeleted,
 			OperationRequestID: requestID, Data: map[string]any{},
 			OccurredAt: now.Add(6 * time.Second),
@@ -217,6 +227,97 @@ FROM agent_controller.run_admissions WHERE admission_id = $1`,
 	if err != nil || !found || replayedState.Operation.State != domain.OperationCompleted {
 		t.Fatalf("replay Agent delete: state=%+v found=%t err=%v", replayedState, found, err)
 	}
+}
+
+func TestLifecycleRepositoryAuthoritativeAbsenceBarrierReleasesUnresolvedRun(t *testing.T) {
+	databaseURL := os.Getenv("ANTNEST_AGENT_CONTROLLER_TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("ANTNEST_AGENT_CONTROLLER_TEST_DATABASE_URL is not set")
+	}
+	ctx := context.Background()
+	repository, err := Open(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("open repository: %v", err)
+	}
+	t.Cleanup(repository.Close)
+	base, _ := seedAvailableAgentForRebuild(t, ctx, repository)
+	now := time.Unix(850, 0).UTC()
+
+	if _, err := repository.pool.Exec(ctx, `
+UPDATE agent_controller.agents
+SET lifecycle_state = 'unavailable', runtime_revision = '',
+    runtime_execution_id = '', runtime_mcp_endpoint = '', updated_at = $2
+WHERE id = $1`, base.Agent.AgentID, now); err != nil {
+		t.Fatalf("project authoritatively absent Runtime: %v", err)
+	}
+	base.Agent.LifecycleState = domain.AgentUnavailable
+	base.Agent.RuntimeRevision = ""
+	base.Agent.RuntimeExecutionID = ""
+	base.Agent.RuntimeMCPEndpoint = ""
+
+	requestID := "request-delete-absent-runtime-integration"
+	fingerprint := strings.Repeat("f", 64)
+	begin := deleteBegin(base.Agent, requestID, fingerprint, now)
+	begin.Operation.SourceRuntimeAbsent = true
+	begin.Operation.SourceRuntimeAbsenceProof = &ports.RuntimeAbsenceProof{
+		Reason: "runtime_not_found", ObservedAt: now,
+	}
+	started, replayed, err := repository.BeginAgentDelete(ctx, begin)
+	if err != nil || replayed {
+		t.Fatalf("begin absent Runtime delete: state=%+v replayed=%t err=%v", started, replayed, err)
+	}
+
+	const admissionID = "admission-delete-absent-runtime-integration"
+	if _, err := repository.pool.Exec(ctx, `
+INSERT INTO agent_controller.run_admissions (
+    admission_id, request_id, request_fingerprint, agent_id, session_id,
+    principal_id, access_revision, state, deadline, runtime_revision,
+    snapshot, terminal_report, finished_at, created_at, updated_at
+) VALUES ($1, $2, $3, $4, $5, $6, $7, 'blocked_unknown_effect', $8, $9,
+          jsonb_build_object('runtime', jsonb_build_object('runtime_revision', $9::text)),
+          '{"terminal_class":"unresolved","tool_effect_state":"unknown","stop_reason":"","error_class":"tool_outcome_unknown"}'::jsonb,
+          $10, $10, $10)`,
+		admissionID, "request-run-delete-absent-runtime-integration",
+		strings.Repeat("1", 64), base.Agent.AgentID, "session-delete-absent-runtime-integration",
+		base.Agent.OwnerUserID, base.Agent.AccessRevision, now.Add(time.Hour),
+		"rtv_orphaned_runtime", now,
+	); err != nil {
+		t.Fatalf("insert unresolved Run for absent Runtime: %v", err)
+	}
+
+	state, err := repository.SettleAgentDeleteDrain(
+		ctx, requestID, fingerprint,
+		domain.ChildRequestID(requestID, domain.PhaseNetworkFence), now.Add(time.Second),
+	)
+	if err != nil || state.Operation.Phase != domain.PhaseNetworkFence {
+		t.Fatalf("settle absent Runtime delete drain: state=%+v err=%v", state, err)
+	}
+	state, err = repository.AdvanceAgentDelete(ctx, ports.AdvanceAgentDelete{
+		RequestID: requestID, Fingerprint: fingerprint,
+		ExpectedPhase: domain.PhaseNetworkFence, NextPhase: domain.PhaseFlowReset,
+		NextChildRequestID: domain.ChildRequestID(requestID, domain.PhaseFlowReset),
+		Now:                now.Add(2 * time.Second),
+	})
+	if err != nil || state.Operation.Phase != domain.PhaseFlowReset {
+		t.Fatalf("record absent Runtime delete fence: state=%+v err=%v", state, err)
+	}
+	const eventID = "event-run-release-delete-absent-runtime-integration"
+	state, err = repository.AdvanceAgentDelete(ctx, ports.AdvanceAgentDelete{
+		RequestID: requestID, Fingerprint: fingerprint,
+		ExpectedPhase: domain.PhaseFlowReset, NextPhase: domain.PhaseNetworkRelease,
+		NextChildRequestID: domain.ChildRequestID(requestID, domain.PhaseNetworkRelease),
+		RunReleaseEvent: lifecycleRunReleaseEvent(
+			eventID, "runtime_absent", "", now.Add(3*time.Second),
+		),
+		Now: now.Add(3 * time.Second),
+	})
+	if err != nil || state.Operation.Phase != domain.PhaseNetworkRelease {
+		t.Fatalf("cross absent Runtime barrier: state=%+v err=%v", state, err)
+	}
+	assertLifecycleRunRelease(
+		t, ctx, repository, eventID, base.Agent.AgentID, admissionID, requestID,
+		begin.RequestedEvent.AggregateSequence+1,
+	)
 }
 
 func deleteBegin(
@@ -282,7 +383,7 @@ SELECT
 	).Scan(&specs, &executions, &events); err != nil {
 		t.Fatalf("load retained audit facts: %v", err)
 	}
-	if specs != 1 || executions != 1 || events != 4 {
+	if specs != 1 || executions != 1 || events != 5 {
 		t.Fatalf("retained facts specs=%d executions=%d events=%d", specs, executions, events)
 	}
 }
