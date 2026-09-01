@@ -233,7 +233,7 @@ and Runtime revisions, appends `agent_rebuild_requested`, and attaches the
 operation without changing the stable `available` projection. New Run
 admissions are rejected from that point. The drain phase remains pending while
 an active admission exists; an admission whose executor is terminal but whose
-Tool effect is unknown may cross the deletion barrier and is released only
+Tool effect is unknown may cross the Runtime-replacement barrier and is released only
 after Runtime replacement proves the old compute absent. The Runtime-update
 barrier and the resulting `run_admission_released` event commit atomically.
 
@@ -259,6 +259,13 @@ for exact-request replay. A conclusive pre-replacement failure restores the old
 policy and executable source. After Runtime replacement is confirmed, failure
 remains non-terminal and fail-closed until exact replay can publish the observed
 Runtime; there is no implicit rollback.
+If Runtime Controller returns a stable deleted inspection for the exact source
+Runtime revision, the source executable cannot be preserved. The same failure
+transaction releases any unresolved admission, records the absence proof,
+clears the unusable executable projection, and appends release and
+build-failure facts in aggregate order. A plain `runtime_not_found` response
+does not prove physical Runtime absence and therefore leaves the operation
+running and fail-closed for inspection or replay.
 
 ### Disable, Enable, Delete
 
@@ -267,7 +274,7 @@ Disable is a restartable Saga, not a projection-only flag:
 1. atomically set desired state `disabled`, attach the operation, append
    `agent_disable_requested`, and reject new Run admission;
 2. wait for an active Run to settle; a `blocked_unknown_effect` admission may
-   cross the deletion barrier only when Runtime Controller later proves the
+   cross the Runtime-disable/absence barrier only when Runtime Controller later proves the
    source Runtime compute absent;
 3. persist the current Egress policy assignment as recovery evidence, then
    fence the Agent to durable deny-all;
@@ -287,6 +294,11 @@ an authoritative inspection proving the exact frozen Runtime revision,
 execution identity, MCP endpoint, lifecycle `ready`, and health `healthy`.
 Mismatch projects the Agent as unavailable and leaves it fenced; ambiguous
 effect or inspection remains running and fail-closed for exact-request replay.
+A stable deleted inspection for the exact source Runtime revision is not
+ambiguous: the failure, absence proof, unresolved-admission release, Agent
+projection, and ordered audit facts commit atomically. With no blocked
+admission, no synthetic release event or sequence increment is produced. A
+plain missing-record response remains ambiguous and cannot cross this barrier.
 
 Enable reuses the disabled Agent's last valid AgentSpec; configuration changes
 always use explicit rebuild. It freezes the disabled Runtime revision, last

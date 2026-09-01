@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"go.opentelemetry.io/otel/trace"
+
 	"soft/antnest-platform/services/agent-controller/internal/domain"
 	"soft/antnest-platform/services/agent-controller/internal/ports"
 )
@@ -168,6 +170,12 @@ func TestRebuildAgentKnownRuntimeFailureRestoresPolicyAndSource(t *testing.T) {
 		runtime: ports.RuntimeOperation{
 			State: "failed", Effect: "not_started", ErrorCode: "image_not_found",
 		},
+		inspection: ports.RuntimeInspection{
+			AgentID: base.Agent.AgentID, RuntimeRevision: base.Agent.RuntimeRevision,
+			RuntimeExecutionID: base.ExecutableExecution.RuntimeExecutionID,
+			MCPEndpoint:        base.ExecutableExecution.RuntimeMCPEndpoint,
+			LifecycleState:     "ready", Health: "healthy",
+		},
 	}
 	service := NewLifecycleService(
 		lifecycleSpecSourceStub{template: template, model: model},
@@ -188,10 +196,105 @@ func TestRebuildAgentKnownRuntimeFailureRestoresPolicyAndSource(t *testing.T) {
 	}
 	wantCalls := []string{
 		"egress.policy.get", "egress.fence", "egress.get", "egress.reset",
-		"runtime.update", "egress.policy.get", "egress.policy.assign", "egress.ensure",
+		"runtime.update", "runtime.inspect",
+		"egress.policy.get", "egress.policy.assign", "egress.ensure",
 	}
 	if !reflect.DeepEqual(dependencies.calls, wantCalls) {
 		t.Fatalf("dependency order = %v, want %v", dependencies.calls, wantCalls)
+	}
+}
+
+func TestRebuildAgentRuntimeNotFoundRemainsRunningAndFenced(t *testing.T) {
+	t.Parallel()
+
+	template := mustLifecycleTemplate(t)
+	model := mustLifecycleModel(t)
+	base := rebuildLifecycleBase(t, template, model)
+	store := &rebuildLifecycleStoreStub{base: base}
+	network := validLifecycleNetwork()
+	network.AgentID = base.Agent.AgentID
+	missing := &ports.DependencyError{
+		Service: "runtime-controller", Code: "runtime_not_found", Retryable: false,
+	}
+	dependencies := &rebuildDependenciesStub{
+		network: network, runtimeErr: missing, inspectionErr: missing,
+	}
+	service := NewLifecycleService(
+		lifecycleSpecSourceStub{template: template, model: model},
+		store, dependencies, dependencies, fixedClock{now: time.Unix(117, 0).UTC()},
+	)
+	result, err := service.RebuildAgent(context.Background(), RebuildAgentInput{
+		RequestID: "request-rebuild-runtime-missing", AgentID: base.Agent.AgentID,
+		TemplateID: "template-1", TemplateRevision: 1,
+	})
+	if !errors.Is(err, ErrDependencyUnavailable) {
+		t.Fatalf("rebuild Agent runtime_not_found error = %v", err)
+	}
+	if result.Operation.State != domain.OperationRunning ||
+		result.Operation.Phase != domain.PhaseRuntimeUpdate ||
+		result.Agent.ActiveOperationRequestID == "" || store.failed.RequestID != "" {
+		t.Fatalf("runtime_not_found rebuild result=%+v failure=%+v", result, store.failed)
+	}
+	wantCalls := []string{
+		"egress.policy.get", "egress.fence", "egress.get", "egress.reset",
+		"runtime.update", "runtime.inspect",
+	}
+	if !reflect.DeepEqual(dependencies.calls, wantCalls) {
+		t.Fatalf("Runtime-absence rebuild calls = %v, want %v", dependencies.calls, wantCalls)
+	}
+}
+
+func TestRebuildAgentDeletedRuntimeInspectionFailsClosedAndReleasesBlockedRun(t *testing.T) {
+	t.Parallel()
+
+	template := mustLifecycleTemplate(t)
+	model := mustLifecycleModel(t)
+	base := rebuildLifecycleBase(t, template, model)
+	store := &rebuildLifecycleStoreStub{base: base}
+	network := validLifecycleNetwork()
+	network.AgentID = base.Agent.AgentID
+	dependencies := &rebuildDependenciesStub{
+		network: network,
+		runtimeErr: &ports.DependencyError{
+			Service: "runtime-controller", Code: "runtime_drift", Retryable: false,
+		},
+		inspection: ports.RuntimeInspection{
+			AgentID: base.Agent.AgentID, RuntimeRevision: base.Agent.RuntimeRevision,
+			LifecycleState: "deleted", Health: "absent",
+		},
+	}
+	service := NewLifecycleService(
+		lifecycleSpecSourceStub{template: template, model: model},
+		store, dependencies, dependencies, fixedClock{now: time.Unix(118, 0).UTC()},
+	)
+	traceID := trace.TraceID{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}
+	spanID := trace.SpanID{1, 2, 3, 4, 5, 6, 7, 8}
+	ctx := trace.ContextWithSpanContext(context.Background(), trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID: traceID, SpanID: spanID, TraceFlags: trace.FlagsSampled,
+	}))
+
+	result, err := service.RebuildAgent(ctx, RebuildAgentInput{
+		RequestID: "request-rebuild-runtime-deleted", AgentID: base.Agent.AgentID,
+		TemplateID: "template-1", TemplateRevision: 1,
+	})
+	if err != nil {
+		t.Fatalf("rebuild Agent after deleted Runtime inspection: %v", err)
+	}
+	if result.Operation.State != domain.OperationFailed ||
+		result.Agent.LifecycleState != domain.AgentUnavailable ||
+		store.failed.RuntimeAbsenceProof == nil ||
+		store.failed.RuntimeAbsenceProof.Reason != "runtime_deleted" ||
+		store.failed.RunReleaseEvent.Data["release_reason"] != "runtime_deleted" ||
+		store.failed.RunReleaseEvent.TraceID != traceID.String() ||
+		store.failed.FailedEvent.TraceID != traceID.String() {
+		t.Fatalf("deleted-Runtime rebuild result=%+v failure=%+v", result, store.failed)
+	}
+	wantCalls := []string{
+		"egress.policy.get", "egress.fence", "egress.get", "egress.reset",
+		"runtime.update", "runtime.inspect",
+	}
+	if !reflect.DeepEqual(dependencies.calls, wantCalls) {
+		t.Fatalf("deleted-Runtime rebuild calls = %v, want %v", dependencies.calls, wantCalls)
 	}
 }
 
@@ -355,6 +458,9 @@ type rebuildDependenciesStub struct {
 	network                 ports.NetworkAttachment
 	ensuredNetwork          ports.NetworkAttachment
 	runtime                 ports.RuntimeOperation
+	runtimeErr              error
+	inspection              ports.RuntimeInspection
+	inspectionErr           error
 	expectedRuntimeRevision string
 	runtimeConfiguration    ports.RuntimeConfiguration
 	policyGets              int
@@ -435,7 +541,7 @@ func (dependency *rebuildDependenciesStub) UpdateRuntime(
 	dependency.calls = append(dependency.calls, "runtime.update")
 	dependency.expectedRuntimeRevision = expectedRevision
 	dependency.runtimeConfiguration = configuration
-	return dependency.runtime, nil
+	return dependency.runtime, dependency.runtimeErr
 }
 
 func (dependency *rebuildDependenciesStub) DisableRuntime(
@@ -457,9 +563,10 @@ func (dependency *rebuildDependenciesStub) DeleteRuntime(
 }
 
 func (dependency *rebuildDependenciesStub) InspectRuntime(
-	context.Context, string,
+	_ context.Context, _ string,
 ) (ports.RuntimeInspection, error) {
-	return ports.RuntimeInspection{}, errors.New("unexpected Runtime inspection")
+	dependency.calls = append(dependency.calls, "runtime.inspect")
+	return dependency.inspection, dependency.inspectionErr
 }
 
 type rebuildLifecycleStoreStub struct {
@@ -571,7 +678,9 @@ func (store *rebuildLifecycleStoreStub) PublishAgentRebuild(
 func (store *rebuildLifecycleStoreStub) FailAgentRebuild(
 	_ context.Context, input ports.FailAgentRebuild,
 ) (ports.AgentRebuildState, error) {
+	input.FailedEvent.AggregateSequence = input.ExpectedAggregateSequence + 1
 	store.failed = input
+	store.state.Operation.SourceRuntimeAbsenceProof = input.RuntimeAbsenceProof
 	if !input.PreserveExecutable {
 		store.state.Agent.LifecycleState = domain.AgentUnavailable
 		store.state.Agent.AgentSpecRevisionID = ""

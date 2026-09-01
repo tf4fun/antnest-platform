@@ -548,6 +548,35 @@ func lifecycleRunReleaseEvent(
 	}
 }
 
+func deletedRuntimeAbsenceProof(
+	expectedAgentID string,
+	expectedRuntimeRevision string,
+	inspection ports.RuntimeInspection,
+	now time.Time,
+) (*ports.RuntimeAbsenceProof, bool) {
+	if inspection.RuntimeRevision != expectedRuntimeRevision ||
+		!runtimeInspectionProvesDeleted(expectedAgentID, inspection) {
+		return nil, false
+	}
+	return &ports.RuntimeAbsenceProof{
+		Reason: "runtime_deleted", RuntimeRevision: inspection.RuntimeRevision, ObservedAt: now,
+	}, true
+}
+
+func exactReadyRuntime(
+	expectedAgentID string,
+	expectedRevision string,
+	expectedExecutionID string,
+	expectedMCPEndpoint string,
+	inspection ports.RuntimeInspection,
+) bool {
+	return inspection.AgentID == expectedAgentID &&
+		inspection.RuntimeRevision == expectedRevision &&
+		inspection.RuntimeExecutionID == expectedExecutionID &&
+		inspection.MCPEndpoint == expectedMCPEndpoint &&
+		inspection.LifecycleState == "ready" && inspection.Health == "healthy"
+}
+
 func digestString(value string) string {
 	digest := sha256.Sum256([]byte(value))
 	return hex.EncodeToString(digest[:])

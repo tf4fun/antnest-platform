@@ -214,6 +214,7 @@ WHERE request_id = $1 AND state = 'running' AND phase = 'publish'`,
 	if err != nil {
 		return ports.AgentDeleteState{}, err
 	}
+	state.RunReleaseOutcome = runReleaseOutcome(deleteCrossedRuntimeBarrier(operation, input), releasedRun)
 	if releasedRun {
 		repository.recordEventAppend(ctx, ports.EventRunAdmissionReleased)
 	}

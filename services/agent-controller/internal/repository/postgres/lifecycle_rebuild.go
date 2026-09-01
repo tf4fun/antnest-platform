@@ -317,6 +317,9 @@ func (repository *Repository) AdvanceAgentRebuild(
 	if err := transaction.Commit(ctx); err != nil {
 		return ports.AgentRebuildState{}, fmt.Errorf("commit Agent rebuild phase: %w", err)
 	}
+	state.RunReleaseOutcome = runReleaseOutcome(
+		input.ExpectedPhase == domain.PhaseRuntimeUpdate, releasedRun,
+	)
 	if releasedRun {
 		repository.recordEventAppend(ctx, ports.EventRunAdmissionReleased)
 	}
@@ -409,6 +412,14 @@ WHERE request_id = $1`, input.RequestID, input.Now); err != nil {
 func (repository *Repository) FailAgentRebuild(
 	ctx context.Context, input ports.FailAgentRebuild,
 ) (ports.AgentRebuildState, error) {
+	var absenceProofPayload []byte
+	var err error
+	if input.RuntimeAbsenceProof != nil {
+		absenceProofPayload, err = json.Marshal(input.RuntimeAbsenceProof)
+		if err != nil {
+			return ports.AgentRebuildState{}, fmt.Errorf("encode Runtime absence proof: %w", err)
+		}
+	}
 	transaction, err := repository.pool.Begin(ctx)
 	if err != nil {
 		return ports.AgentRebuildState{}, fmt.Errorf("begin Agent rebuild failure transaction: %w", err)
@@ -431,9 +442,33 @@ func (repository *Repository) FailAgentRebuild(
 	if err != nil {
 		return ports.AgentRebuildState{}, err
 	}
-	if input.FailedEvent.AggregateSequence != agent.AggregateSequence+1 {
+	if input.ExpectedAggregateSequence != agent.AggregateSequence ||
+		input.FailedEvent.AggregateSequence != 0 {
 		return ports.AgentRebuildState{}, ports.ErrConcurrentChange
 	}
+	releasedRun := false
+	switch {
+	case input.RuntimeAbsenceProof == nil && !emptyRunAdmissionEvent(input.RunReleaseEvent):
+		return ports.AgentRebuildState{}, fmt.Errorf("run release event requires Runtime absence proof")
+	case input.RuntimeAbsenceProof != nil:
+		if input.PreserveExecutable || !validLifecycleFailureRunBarrier(
+			operation, domain.PhaseRuntimeUpdate, input.RuntimeAbsenceProof,
+			input.RunReleaseEvent, input.Now,
+		) {
+			return ports.AgentRebuildState{}, fmt.Errorf("invalid rebuild Runtime absence failure")
+		}
+		releasedRun, err = repository.releaseBlockedRunAdmission(
+			ctx, transaction, operation, input.RunReleaseEvent, input.Now,
+		)
+		if err != nil {
+			return ports.AgentRebuildState{}, err
+		}
+		if releasedRun {
+			agent.AggregateSequence++
+		}
+	}
+	failedEvent := input.FailedEvent
+	failedEvent.AggregateSequence = agent.AggregateSequence + 1
 	query := `
 UPDATE agent_controller.agents
 SET lifecycle_state = 'unavailable', executable_spec_revision_id = '',
@@ -451,8 +486,8 @@ WHERE id = $1 AND active_operation_request_id = $7 AND aggregate_sequence = $8`
 	}
 	result, err := transaction.Exec(ctx, query,
 		operation.AgentID, input.Stage, input.Code, input.Detail,
-		input.FailedEvent.AggregateSequence, input.Now, input.RequestID,
-		input.FailedEvent.AggregateSequence-1,
+		failedEvent.AggregateSequence, input.Now, input.RequestID,
+		failedEvent.AggregateSequence-1,
 	)
 	if err != nil {
 		return ports.AgentRebuildState{}, fmt.Errorf("mark Agent rebuild failure: %w", err)
@@ -460,14 +495,16 @@ WHERE id = $1 AND active_operation_request_id = $7 AND aggregate_sequence = $8`
 	if result.RowsAffected() != 1 {
 		return ports.AgentRebuildState{}, ports.ErrConcurrentChange
 	}
-	if err := repository.insertAgentEvent(ctx, transaction, input.FailedEvent); err != nil {
+	if err := repository.insertAgentEvent(ctx, transaction, failedEvent); err != nil {
 		return ports.AgentRebuildState{}, err
 	}
 	if _, err := transaction.Exec(ctx, `
 UPDATE agent_controller.agent_lifecycle_operations
 SET state = 'failed', child_request_id = '', error_code = $2,
-    error_detail = $3, retryable = $4, updated_at = $5
-WHERE request_id = $1`, input.RequestID, input.Code, input.Detail, input.Retryable, input.Now); err != nil {
+    error_detail = $3, retryable = $4, source_runtime_absence_proof = $5,
+    updated_at = $6
+WHERE request_id = $1`, input.RequestID, input.Code, input.Detail, input.Retryable,
+		nullJSON(absenceProofPayload), input.Now); err != nil {
 		return ports.AgentRebuildState{}, fmt.Errorf("fail Agent rebuild operation: %w", err)
 	}
 	operation, err = loadLifecycleOperation(ctx, transaction, input.RequestID, "")
@@ -480,6 +517,10 @@ WHERE request_id = $1`, input.RequestID, input.Code, input.Detail, input.Retryab
 	}
 	if err := transaction.Commit(ctx); err != nil {
 		return ports.AgentRebuildState{}, fmt.Errorf("commit Agent rebuild failure: %w", err)
+	}
+	state.RunReleaseOutcome = runReleaseOutcome(input.RuntimeAbsenceProof != nil, releasedRun)
+	if releasedRun {
+		repository.recordEventAppend(ctx, ports.EventRunAdmissionReleased)
 	}
 	repository.recordEventAppend(ctx, input.FailedEvent.EventType)
 	return state, nil

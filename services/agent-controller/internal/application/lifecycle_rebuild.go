@@ -289,7 +289,7 @@ func (service *LifecycleService) updateRebuildRuntime(
 		if code == "" {
 			code = "runtime_update_failed"
 		}
-		return service.failRebuildPreservingSource(ctx, state, code, result.ErrorDetail, false)
+		return service.reconcileRejectedRebuildRuntime(ctx, state, code, result.ErrorDetail)
 	case "completed":
 		if !completedReadyRuntime(result) {
 			return state, fmt.Errorf(
@@ -406,6 +406,11 @@ func (service *LifecycleService) handleRebuildDependencyFailure(
 	if state.Operation.RuntimeResult != nil {
 		return state, fmt.Errorf("%w: %s", ErrDependencyUnavailable, serviceName)
 	}
+	if serviceName == "runtime-controller" && state.Operation.Phase == domain.PhaseRuntimeUpdate {
+		return service.reconcileRejectedRebuildRuntime(
+			ctx, state, dependencyFailure.Code, dependencyFailure.Error(),
+		)
+	}
 	return service.failRebuildPreservingSource(
 		ctx, state, dependencyFailure.Code, dependencyFailure.Error(), false,
 	)
@@ -425,16 +430,75 @@ func (service *LifecycleService) failRebuildPreservingSource(
 			return state, fmt.Errorf("%w: runtime-egress policy restoration", ErrDependencyUnavailable)
 		}
 	}
+	return service.failAgentRebuild(ctx, state, code, detail, retryable, true, nil)
+}
+
+func (service *LifecycleService) failRebuildAfterRuntimeAbsence(
+	ctx context.Context,
+	state ports.AgentRebuildState,
+	code string,
+	detail string,
+	proof *ports.RuntimeAbsenceProof,
+) (ports.AgentRebuildState, error) {
+	return service.failAgentRebuild(ctx, state, code, detail, false, false, proof)
+}
+
+func (service *LifecycleService) reconcileRejectedRebuildRuntime(
+	ctx context.Context,
+	state ports.AgentRebuildState,
+	code string,
+	detail string,
+) (ports.AgentRebuildState, error) {
+	inspection, err := service.runtime.InspectRuntime(ctx, state.Agent.AgentID)
+	if err != nil {
+		if dependencyHasCode(err, "runtime-controller", "runtime_not_found") {
+			return state, fmt.Errorf("%w: runtime-controller inspection", ErrDependencyUnavailable)
+		}
+		return state, fmt.Errorf("%w: runtime-controller inspection", ErrDependencyUnavailable)
+	}
+	if exactReadyRuntime(
+		state.Agent.AgentID, state.Operation.SourceRuntimeRevision,
+		state.SourceExecution.RuntimeExecutionID,
+		state.SourceExecution.RuntimeMCPEndpoint, inspection,
+	) {
+		return service.failRebuildPreservingSource(ctx, state, code, detail, false)
+	}
+	proof, absent := deletedRuntimeAbsenceProof(
+		state.Agent.AgentID, state.Operation.SourceRuntimeRevision,
+		inspection, service.clock.Now(),
+	)
+	if absent {
+		return service.failRebuildAfterRuntimeAbsence(ctx, state, code, detail, proof)
+	}
+	return state, fmt.Errorf("%w: runtime-controller inspection", ErrDependencyUnavailable)
+}
+
+func (service *LifecycleService) failAgentRebuild(
+	ctx context.Context,
+	state ports.AgentRebuildState,
+	code string,
+	detail string,
+	retryable bool,
+	preserveExecutable bool,
+	proof *ports.RuntimeAbsenceProof,
+) (ports.AgentRebuildState, error) {
 	now := service.clock.Now()
+	releaseEvent := ports.RunAdmissionEvent{}
+	if proof != nil {
+		releaseEvent = lifecycleRunReleaseEvent(
+			ctx, state.Operation.RequestID, proof.Reason,
+			state.Operation.SourceRuntimeRevision, now,
+		)
+	}
 	return service.store.FailAgentRebuild(ctx, ports.FailAgentRebuild{
-		RequestID:   state.Operation.RequestID,
-		Fingerprint: state.Operation.RequestFingerprint,
-		Stage:       state.Operation.Phase, Code: code, Detail: detail, Retryable: retryable,
+		RequestID:                 state.Operation.RequestID,
+		Fingerprint:               state.Operation.RequestFingerprint,
+		ExpectedAggregateSequence: state.Agent.AggregateSequence,
+		Stage:                     state.Operation.Phase, Code: code, Detail: detail, Retryable: retryable,
 		FailedEvent: ports.AgentEventRecord{
-			EventID:           derivedID("event-rebuild-failed", state.Operation.RequestID),
-			AgentID:           state.Agent.AgentID,
-			AggregateSequence: state.Agent.AggregateSequence + 1,
-			SchemaVersion:     1, EventType: ports.EventAgentBuildFailed,
+			EventID:       derivedID("event-rebuild-failed", state.Operation.RequestID),
+			AgentID:       state.Agent.AgentID,
+			SchemaVersion: 1, EventType: ports.EventAgentBuildFailed,
 			OperationRequestID: state.Operation.RequestID, TraceID: currentTraceID(ctx),
 			Data: map[string]any{
 				"failure_stage": state.Operation.Phase,
@@ -442,7 +506,8 @@ func (service *LifecycleService) failRebuildPreservingSource(
 			},
 			OccurredAt: now,
 		},
-		PreserveExecutable: true, Now: now,
+		PreserveExecutable: preserveExecutable, RuntimeAbsenceProof: proof,
+		RunReleaseEvent: releaseEvent, Now: now,
 	})
 }
 

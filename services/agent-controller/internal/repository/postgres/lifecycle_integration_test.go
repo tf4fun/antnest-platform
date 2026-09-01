@@ -188,26 +188,24 @@ func assertLifecycleRunRelease(
 ) {
 	t.Helper()
 	var eventType, eventAgentID, eventAdmissionID, eventOperationRequestID string
-	var eventSequence, agentSequence int64
+	var eventSequence int64
 	err := repository.pool.QueryRow(ctx, `
-SELECT e.event_type, e.agent_id, e.admission_id, e.operation_request_id,
-       e.aggregate_sequence, a.aggregate_sequence
-FROM agent_controller.agent_events e
-JOIN agent_controller.agents a ON a.id = e.agent_id
-WHERE e.event_id = $1`, eventID).Scan(
+SELECT event_type, agent_id, admission_id, operation_request_id, aggregate_sequence
+FROM agent_controller.agent_events
+WHERE event_id = $1`, eventID).Scan(
 		&eventType, &eventAgentID, &eventAdmissionID, &eventOperationRequestID,
-		&eventSequence, &agentSequence,
+		&eventSequence,
 	)
 	if err != nil {
 		t.Fatalf("load lifecycle Run release event: %v", err)
 	}
 	if eventType != ports.EventRunAdmissionReleased || eventAgentID != agentID ||
 		eventAdmissionID != admissionID || eventOperationRequestID != operationRequestID ||
-		eventSequence != wantAggregateSequence || agentSequence != wantAggregateSequence {
+		eventSequence != wantAggregateSequence {
 		t.Fatalf(
-			"lifecycle Run release event type=%q agent=%q admission=%q operation=%q event_sequence=%d agent_sequence=%d",
+			"lifecycle Run release event type=%q agent=%q admission=%q operation=%q event_sequence=%d",
 			eventType, eventAgentID, eventAdmissionID, eventOperationRequestID,
-			eventSequence, agentSequence,
+			eventSequence,
 		)
 	}
 }

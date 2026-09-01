@@ -45,7 +45,10 @@ ORDER BY admission_id LIMIT 1 FOR UPDATE`, operation.AgentID).Scan(
 		return false, fmt.Errorf("load unresolved Run admission: %w", err)
 	}
 	if !operation.SourceRuntimeAbsent && runtimeRevision != operation.SourceRuntimeRevision {
-		return false, fmt.Errorf("unresolved Run belongs to another Runtime revision")
+		return false, fmt.Errorf(
+			"%w: unresolved Run belongs to another Runtime revision",
+			ports.ErrRunAdmissionRuntimeMismatch,
+		)
 	}
 
 	released, err := transaction.Exec(ctx, `
@@ -85,6 +88,35 @@ WHERE id = $1 AND active_operation_request_id = $4 AND aggregate_sequence = $5`,
 		return false, err
 	}
 	return true, nil
+}
+
+func runReleaseOutcome(requested bool, released bool) string {
+	if !requested {
+		return ""
+	}
+	if released {
+		return ports.RunReleaseOutcomeReleased
+	}
+	return ports.RunReleaseOutcomeNotBlocked
+}
+
+func validLifecycleFailureRunBarrier(
+	operation ports.LifecycleOperationRecord,
+	expectedPhase domain.OperationPhase,
+	proof *ports.RuntimeAbsenceProof,
+	event ports.RunAdmissionEvent,
+	now time.Time,
+) bool {
+	if operation.Phase != expectedPhase || proof == nil || proof.Reason != "runtime_deleted" ||
+		proof.RuntimeRevision != operation.SourceRuntimeRevision ||
+		proof.ObservedAt.IsZero() || proof.ObservedAt.After(now) ||
+		!validRunEvent(event, domain.AdmissionReleased) || !event.OccurredAt.Equal(now) {
+		return false
+	}
+	reason, reasonOK := event.Data["release_reason"].(string)
+	sourceRevision, revisionOK := event.Data["source_runtime_revision"].(string)
+	return reasonOK && revisionOK && reason == proof.Reason &&
+		sourceRevision == operation.SourceRuntimeRevision
 }
 
 func emptyRunAdmissionEvent(event ports.RunAdmissionEvent) bool {

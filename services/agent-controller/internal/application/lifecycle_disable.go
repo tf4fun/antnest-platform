@@ -131,7 +131,7 @@ func (service *LifecycleService) continueAgentDisable(
 		if !service.clock.Now().Before(state.Operation.CreatedAt.Add(service.drainTimeout)) {
 			state, err = service.failAgentDisable(
 				ctx, state, "run_drain_timeout",
-				"active Run did not drain before the deadline", true, nil,
+				"active Run did not drain before the deadline", true, nil, nil,
 			)
 			return disableAgentResult(state), err
 		}
@@ -178,7 +178,7 @@ func (service *LifecycleService) fenceDisableNetwork(
 		if !networkPolicyAssignmentReady(assignment, state.Agent.AgentID) {
 			return service.failAgentDisable(
 				ctx, state, "invalid_network_policy_assignment",
-				"Runtime Egress did not return the current policy assignment", true, nil,
+				"Runtime Egress did not return the current policy assignment", true, nil, nil,
 			)
 		}
 		state, err = service.store.RecordAgentDisablePolicy(
@@ -289,7 +289,7 @@ func (service *LifecycleService) handleDisableDependencyFailure(
 		)
 	}
 	return service.failAgentDisable(
-		ctx, state, dependencyFailure.Code, dependencyFailure.Error(), true, nil,
+		ctx, state, dependencyFailure.Code, dependencyFailure.Error(), true, nil, nil,
 	)
 }
 
@@ -300,6 +300,7 @@ func (service *LifecycleService) failAgentDisable(
 	detail string,
 	preserveExecutable bool,
 	inspection *ports.RuntimeInspection,
+	absenceProof *ports.RuntimeAbsenceProof,
 ) (ports.AgentDisableState, error) {
 	if preserveExecutable && state.Operation.NetworkPolicyAssignment != nil {
 		if _, err := service.restoreCapturedNetwork(
@@ -309,15 +310,23 @@ func (service *LifecycleService) failAgentDisable(
 		}
 	}
 	now := service.clock.Now()
+	releaseEvent := ports.RunAdmissionEvent{}
+	if absenceProof != nil {
+		releaseEvent = lifecycleRunReleaseEvent(
+			ctx, state.Operation.RequestID, absenceProof.Reason,
+			state.Operation.SourceRuntimeRevision, now,
+		)
+	}
 	return service.store.FailAgentDisable(ctx, ports.FailAgentDisable{
 		RequestID: state.Operation.RequestID, Fingerprint: state.Operation.RequestFingerprint,
-		Stage: state.Operation.Phase, Code: code, Detail: detail,
+		ExpectedAggregateSequence: state.Agent.AggregateSequence,
+		Stage:                     state.Operation.Phase, Code: code, Detail: detail,
 		PreserveExecutable: preserveExecutable, SourceRuntimeInspection: inspection,
+		RuntimeAbsenceProof: absenceProof, RunReleaseEvent: releaseEvent,
 		FailedEvent: ports.AgentEventRecord{
-			EventID:           derivedID("event-disable-failed", state.Operation.RequestID),
-			AgentID:           state.Agent.AgentID,
-			AggregateSequence: state.Agent.AggregateSequence + 1,
-			SchemaVersion:     1, EventType: ports.EventAgentDisableFailed,
+			EventID:       derivedID("event-disable-failed", state.Operation.RequestID),
+			AgentID:       state.Agent.AgentID,
+			SchemaVersion: 1, EventType: ports.EventAgentDisableFailed,
 			OperationRequestID: state.Operation.RequestID, TraceID: currentTraceID(ctx),
 			Data: map[string]any{
 				"failure_stage": state.Operation.Phase,
@@ -334,20 +343,33 @@ func (service *LifecycleService) failDisableAfterRuntimeRejection(
 ) (ports.AgentDisableState, error) {
 	inspection, err := service.runtime.InspectRuntime(ctx, state.Agent.AgentID)
 	if err != nil {
+		if dependencyHasCode(err, "runtime-controller", "runtime_not_found") {
+			return state, fmt.Errorf("%w: runtime-controller inspection", ErrDependencyUnavailable)
+		}
 		return state, fmt.Errorf("%w: runtime-controller inspection", ErrDependencyUnavailable)
 	}
 	preserve := exactDisableSourceRuntime(state, inspection)
-	return service.failAgentDisable(ctx, state, code, detail, preserve, &inspection)
+	if preserve {
+		return service.failAgentDisable(ctx, state, code, detail, true, &inspection, nil)
+	}
+	proof, absent := deletedRuntimeAbsenceProof(
+		state.Agent.AgentID, state.Operation.SourceRuntimeRevision,
+		inspection, service.clock.Now(),
+	)
+	if absent {
+		return service.failAgentDisable(ctx, state, code, detail, false, nil, proof)
+	}
+	return service.failAgentDisable(ctx, state, code, detail, false, &inspection, nil)
 }
 
 func exactDisableSourceRuntime(
 	state ports.AgentDisableState, inspection ports.RuntimeInspection,
 ) bool {
-	return inspection.AgentID == state.Agent.AgentID &&
-		inspection.RuntimeRevision == state.Operation.SourceRuntimeRevision &&
-		inspection.RuntimeExecutionID == state.SourceExecution.RuntimeExecutionID &&
-		inspection.MCPEndpoint == state.SourceExecution.RuntimeMCPEndpoint &&
-		inspection.LifecycleState == "ready" && inspection.Health == "healthy"
+	return exactReadyRuntime(
+		state.Agent.AgentID, state.Operation.SourceRuntimeRevision,
+		state.SourceExecution.RuntimeExecutionID,
+		state.SourceExecution.RuntimeMCPEndpoint, inspection,
+	)
 }
 
 func completedDisabledRuntime(result ports.RuntimeOperation) bool {

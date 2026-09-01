@@ -159,6 +159,80 @@ func TestDisableAgentDoesNotRestoreUnverifiedRuntime(t *testing.T) {
 	}
 }
 
+func TestDisableAgentRuntimeNotFoundRemainsRunningAndFenced(t *testing.T) {
+	t.Parallel()
+
+	base := disableLifecycleBase(t)
+	store := &disableLifecycleStoreStub{base: base}
+	missing := &ports.DependencyError{
+		Service: "runtime-controller", Code: "runtime_not_found", Retryable: false,
+	}
+	dependencies := newDisableDependencies(base, ports.RuntimeOperation{})
+	dependencies.runtimeErr = missing
+	dependencies.inspectionErr = missing
+	service := NewLifecycleService(
+		lifecycleSpecSourceStub{}, store, dependencies, dependencies,
+		fixedClock{now: time.Unix(227, 0).UTC()},
+	)
+
+	result, err := service.DisableAgent(context.Background(), DisableAgentInput{
+		RequestID: "request-disable-runtime-missing", AgentID: base.Agent.AgentID,
+	})
+	if !errors.Is(err, ErrDependencyUnavailable) {
+		t.Fatalf("disable Agent runtime_not_found error = %v", err)
+	}
+	if result.Operation.State != domain.OperationRunning ||
+		result.Operation.Phase != domain.PhaseRuntimeDisable ||
+		result.Agent.ActiveOperationRequestID == "" || store.failed.RequestID != "" {
+		t.Fatalf("runtime_not_found disable result=%+v failure=%+v", result, store.failed)
+	}
+	wantCalls := []string{
+		"egress.policy.get", "egress.fence", "runtime.disable", "runtime.inspect",
+	}
+	if !reflect.DeepEqual(dependencies.calls, wantCalls) {
+		t.Fatalf("Runtime-absence disable calls = %v, want %v", dependencies.calls, wantCalls)
+	}
+}
+
+func TestDisableAgentDeletedRuntimeInspectionFailsClosedAndReleasesBlockedRun(t *testing.T) {
+	t.Parallel()
+
+	base := disableLifecycleBase(t)
+	store := &disableLifecycleStoreStub{base: base}
+	dependencies := newDisableDependencies(base, ports.RuntimeOperation{
+		State: "failed", Effect: "not_started", ErrorCode: "runtime_lifecycle_conflict",
+	})
+	dependencies.inspection = ports.RuntimeInspection{
+		AgentID: base.Agent.AgentID, RuntimeRevision: base.Agent.RuntimeRevision,
+		LifecycleState: "deleted", Health: "absent",
+	}
+	service := NewLifecycleService(
+		lifecycleSpecSourceStub{}, store, dependencies, dependencies,
+		fixedClock{now: time.Unix(228, 0).UTC()},
+	)
+
+	result, err := service.DisableAgent(context.Background(), DisableAgentInput{
+		RequestID: "request-disable-runtime-deleted", AgentID: base.Agent.AgentID,
+	})
+	if err != nil {
+		t.Fatalf("disable Agent after deleted Runtime inspection: %v", err)
+	}
+	if result.Operation.State != domain.OperationFailed ||
+		result.Agent.LifecycleState != domain.AgentUnavailable ||
+		store.failed.RuntimeAbsenceProof == nil ||
+		store.failed.RuntimeAbsenceProof.Reason != "runtime_deleted" ||
+		store.failed.SourceRuntimeInspection != nil ||
+		store.failed.RunReleaseEvent.Data["release_reason"] != "runtime_deleted" {
+		t.Fatalf("deleted-Runtime disable result=%+v failure=%+v", result, store.failed)
+	}
+	wantCalls := []string{
+		"egress.policy.get", "egress.fence", "runtime.disable", "runtime.inspect",
+	}
+	if !reflect.DeepEqual(dependencies.calls, wantCalls) {
+		t.Fatalf("deleted-Runtime disable calls = %v, want %v", dependencies.calls, wantCalls)
+	}
+}
+
 func TestDisableAgentAmbiguousRuntimeRemainsRunningAndFenced(t *testing.T) {
 	t.Parallel()
 
@@ -421,8 +495,10 @@ func (store *disableLifecycleStoreStub) PublishAgentDisable(
 func (store *disableLifecycleStoreStub) FailAgentDisable(
 	_ context.Context, input ports.FailAgentDisable,
 ) (ports.AgentDisableState, error) {
+	input.FailedEvent.AggregateSequence = input.ExpectedAggregateSequence + 1
 	store.failed = input
 	store.state.Operation.SourceRuntimeInspection = input.SourceRuntimeInspection
+	store.state.Operation.SourceRuntimeAbsenceProof = input.RuntimeAbsenceProof
 	if input.PreserveExecutable {
 		store.state.Agent.DesiredState = domain.DesiredEnabled
 		store.state.Agent.LifecycleState = domain.AgentAvailable

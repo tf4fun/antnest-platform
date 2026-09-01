@@ -115,6 +115,14 @@ turn a downstream outage into a restart loop.
   counter records the resulting `run_admission_released` fact, and lifecycle
   repository spans identify the barrier by bounded expected/next phase
   attributes.
+- A stable deleted inspection for the exact source Runtime revision during
+  rebuild/disable is an authoritative source-absence result. Agent Controller
+  atomically stores that proof, releases any matching unresolved admission,
+  projects the Agent unavailable, and appends the release fact before the
+  lifecycle-failure fact. If no blocked admission exists, no release event is
+  synthesized. Replaying the terminal operation changes neither sequence. A
+  plain `runtime_not_found` response is ambiguous and leaves the operation
+  running and fenced for inspection or replay.
 - Delete intent is irreversible. A timeout or ambiguous Runtime/Egress effect
   leaves the same delete operation running; replay the original request ID.
   `deleted` is never published before Runtime absence and Egress quarantine are

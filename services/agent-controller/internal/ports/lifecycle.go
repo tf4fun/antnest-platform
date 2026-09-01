@@ -2,6 +2,7 @@ package ports
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -13,6 +14,9 @@ const (
 
 	NetworkReleaseQuarantined       = "quarantined"
 	NetworkReleaseAuthoritativeNone = "authoritative_absent"
+
+	RunReleaseOutcomeReleased   = "released"
+	RunReleaseOutcomeNotBlocked = "not_blocked"
 
 	EventAgentCreateRequested  = "agent_create_requested"
 	EventAgentReady            = "agent_ready"
@@ -28,6 +32,8 @@ const (
 	EventAgentDeleteRequested  = "agent_delete_requested"
 	EventAgentDeleted          = "agent_deleted"
 )
+
+var ErrRunAdmissionRuntimeMismatch = errors.New("run admission Runtime does not match lifecycle barrier")
 
 type AgentSpecSource interface {
 	GetTemplateRevision(context.Context, string, int64) (domain.TemplateRevision, error)
@@ -227,18 +233,20 @@ type AgentLifecycleBase struct {
 }
 
 type AgentRebuildState struct {
-	Agent           AgentRecord
-	SourceSpec      AgentSpecRecord
-	SourceExecution ExecutionRecord
-	TargetSpec      AgentSpecRecord
-	Operation       LifecycleOperationRecord
+	Agent             AgentRecord
+	SourceSpec        AgentSpecRecord
+	SourceExecution   ExecutionRecord
+	TargetSpec        AgentSpecRecord
+	Operation         LifecycleOperationRecord
+	RunReleaseOutcome string
 }
 
 type AgentDisableState struct {
-	Agent           AgentRecord
-	SourceSpec      AgentSpecRecord
-	SourceExecution ExecutionRecord
-	Operation       LifecycleOperationRecord
+	Agent             AgentRecord
+	SourceSpec        AgentSpecRecord
+	SourceExecution   ExecutionRecord
+	Operation         LifecycleOperationRecord
+	RunReleaseOutcome string
 }
 
 type AgentEnableBase struct {
@@ -261,8 +269,9 @@ type AgentDeleteBase struct {
 }
 
 type AgentDeleteState struct {
-	Agent     AgentRecord
-	Operation LifecycleOperationRecord
+	Agent             AgentRecord
+	Operation         LifecycleOperationRecord
+	RunReleaseOutcome string
 }
 
 type BeginAgentCreate struct {
@@ -325,15 +334,18 @@ type PublishAgentRebuild struct {
 }
 
 type FailAgentRebuild struct {
-	RequestID          string
-	Fingerprint        string
-	Stage              domain.OperationPhase
-	Code               string
-	Detail             string
-	Retryable          bool
-	PreserveExecutable bool
-	FailedEvent        AgentEventRecord
-	Now                time.Time
+	RequestID                 string
+	Fingerprint               string
+	ExpectedAggregateSequence int64
+	Stage                     domain.OperationPhase
+	Code                      string
+	Detail                    string
+	Retryable                 bool
+	PreserveExecutable        bool
+	RuntimeAbsenceProof       *RuntimeAbsenceProof
+	RunReleaseEvent           RunAdmissionEvent
+	FailedEvent               AgentEventRecord
+	Now                       time.Time
 }
 
 type BeginAgentDisable struct {
@@ -366,15 +378,18 @@ type PublishAgentDisable struct {
 }
 
 type FailAgentDisable struct {
-	RequestID               string
-	Fingerprint             string
-	Stage                   domain.OperationPhase
-	Code                    string
-	Detail                  string
-	PreserveExecutable      bool
-	SourceRuntimeInspection *RuntimeInspection
-	FailedEvent             AgentEventRecord
-	Now                     time.Time
+	RequestID                 string
+	Fingerprint               string
+	ExpectedAggregateSequence int64
+	Stage                     domain.OperationPhase
+	Code                      string
+	Detail                    string
+	PreserveExecutable        bool
+	SourceRuntimeInspection   *RuntimeInspection
+	RuntimeAbsenceProof       *RuntimeAbsenceProof
+	RunReleaseEvent           RunAdmissionEvent
+	FailedEvent               AgentEventRecord
+	Now                       time.Time
 }
 
 type BeginAgentEnable struct {

@@ -310,12 +310,12 @@ FROM agent_controller.run_admissions WHERE admission_id = $1`,
 	}
 	failed, err := repository.FailAgentRebuild(ctx, ports.FailAgentRebuild{
 		RequestID: failureRequestID, Fingerprint: failureFingerprint,
-		Stage: domain.PhaseDrain, Code: "run_drain_timeout",
+		ExpectedAggregateSequence: startedFailure.Agent.AggregateSequence,
+		Stage:                     domain.PhaseDrain, Code: "run_drain_timeout",
 		Detail: "Run did not settle", PreserveExecutable: true,
 		FailedEvent: ports.AgentEventRecord{
 			EventID: "event-pre-barrier-failed", AgentID: retryBase.Agent.AgentID,
-			AggregateSequence: startedFailure.Agent.AggregateSequence + 1,
-			SchemaVersion:     1, EventType: ports.EventAgentBuildFailed,
+			SchemaVersion: 1, EventType: ports.EventAgentBuildFailed,
 			OperationRequestID: failureRequestID, Data: map[string]any{}, OccurredAt: now.Add(9 * time.Second),
 		},
 		Now: now.Add(9 * time.Second),

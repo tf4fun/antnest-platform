@@ -58,7 +58,8 @@ func TestObservedLifecycleAdvancesRecordPhaseTransition(t *testing.T) {
 	})
 
 	observed, err := ObserveLifecycleStore(
-		&lifecycleStoreStub{}, slog.New(slog.NewTextHandler(io.Discard, nil)),
+		&lifecycleStoreStub{releaseOutcome: ports.RunReleaseOutcomeReleased},
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
 	)
 	if err != nil {
 		t.Fatalf("observe lifecycle store: %v", err)
@@ -110,7 +111,54 @@ func TestObservedLifecycleAdvancesRecordPhaseTransition(t *testing.T) {
 	}
 }
 
-type lifecycleStoreStub struct{ err error }
+func TestObservedLifecycleFailureRecordsRuntimeAbsenceBarrier(t *testing.T) {
+	previousProvider := otel.GetTracerProvider()
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	otel.SetTracerProvider(provider)
+	t.Cleanup(func() {
+		_ = provider.Shutdown(context.Background())
+		otel.SetTracerProvider(previousProvider)
+	})
+
+	observed, err := ObserveLifecycleStore(
+		&lifecycleStoreStub{releaseOutcome: ports.RunReleaseOutcomeReleased},
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
+	if err != nil {
+		t.Fatalf("observe lifecycle store: %v", err)
+	}
+	_, err = observed.FailAgentDisable(context.Background(), ports.FailAgentDisable{
+		Stage: domain.PhaseRuntimeDisable, Code: "runtime_deleted",
+		RuntimeAbsenceProof: &ports.RuntimeAbsenceProof{
+			Reason: "runtime_deleted", ObservedAt: time.Unix(1, 0).UTC(),
+		},
+	})
+	if err != nil {
+		t.Fatalf("observe lifecycle failure: %v", err)
+	}
+	ended := recorder.Ended()
+	if len(ended) != 1 || ended[0].Name() != "agent_controller.repository.fail_agent_disable" {
+		t.Fatalf("repository spans = %#v", ended)
+	}
+	attributes := make(map[string]any, len(ended[0].Attributes()))
+	for _, item := range ended[0].Attributes() {
+		attributes[string(item.Key)] = item.Value.AsInterface()
+	}
+	if attributes["antnest.lifecycle.failure_phase"] != "runtime_disable" ||
+		attributes["antnest.lifecycle.failure_code"] != "runtime_deleted" ||
+		attributes["antnest.lifecycle.source_preserved"] != false ||
+		attributes["antnest.run_admission.release_candidate"] != true ||
+		attributes["antnest.runtime.absence_reason"] != "runtime_deleted" ||
+		attributes["antnest.run_admission.release_outcome"] != "released" {
+		t.Fatalf("failure attributes = %+v", attributes)
+	}
+}
+
+type lifecycleStoreStub struct {
+	err            error
+	releaseOutcome string
+}
 
 func (store *lifecycleStoreStub) GetLifecycleOperation(
 	context.Context, string,
@@ -187,7 +235,7 @@ func (store *lifecycleStoreStub) SettleAgentRebuildDrain(
 func (store *lifecycleStoreStub) AdvanceAgentRebuild(
 	context.Context, ports.AdvanceAgentRebuild,
 ) (ports.AgentRebuildState, error) {
-	return ports.AgentRebuildState{}, store.err
+	return ports.AgentRebuildState{RunReleaseOutcome: store.releaseOutcome}, store.err
 }
 
 func (store *lifecycleStoreStub) PublishAgentRebuild(
@@ -199,7 +247,7 @@ func (store *lifecycleStoreStub) PublishAgentRebuild(
 func (store *lifecycleStoreStub) FailAgentRebuild(
 	context.Context, ports.FailAgentRebuild,
 ) (ports.AgentRebuildState, error) {
-	return ports.AgentRebuildState{}, store.err
+	return ports.AgentRebuildState{RunReleaseOutcome: store.releaseOutcome}, store.err
 }
 
 func (store *lifecycleStoreStub) ReplayAgentDisable(
@@ -229,7 +277,7 @@ func (store *lifecycleStoreStub) SettleAgentDisableDrain(
 func (store *lifecycleStoreStub) AdvanceAgentDisable(
 	context.Context, ports.AdvanceAgentDisable,
 ) (ports.AgentDisableState, error) {
-	return ports.AgentDisableState{}, store.err
+	return ports.AgentDisableState{RunReleaseOutcome: store.releaseOutcome}, store.err
 }
 
 func (store *lifecycleStoreStub) PublishAgentDisable(
@@ -241,7 +289,7 @@ func (store *lifecycleStoreStub) PublishAgentDisable(
 func (store *lifecycleStoreStub) FailAgentDisable(
 	context.Context, ports.FailAgentDisable,
 ) (ports.AgentDisableState, error) {
-	return ports.AgentDisableState{}, store.err
+	return ports.AgentDisableState{RunReleaseOutcome: store.releaseOutcome}, store.err
 }
 
 func (store *lifecycleStoreStub) GetAgentEnableBase(
@@ -307,7 +355,7 @@ func (store *lifecycleStoreStub) SettleAgentDeleteDrain(
 func (store *lifecycleStoreStub) AdvanceAgentDelete(
 	context.Context, ports.AdvanceAgentDelete,
 ) (ports.AgentDeleteState, error) {
-	return ports.AgentDeleteState{}, store.err
+	return ports.AgentDeleteState{RunReleaseOutcome: store.releaseOutcome}, store.err
 }
 
 func (store *lifecycleStoreStub) PublishAgentDelete(

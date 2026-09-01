@@ -271,6 +271,9 @@ func (repository *Repository) AdvanceAgentDisable(
 	if err := transaction.Commit(ctx); err != nil {
 		return ports.AgentDisableState{}, fmt.Errorf("commit Agent disable phase: %w", err)
 	}
+	state.RunReleaseOutcome = runReleaseOutcome(
+		input.ExpectedPhase == domain.PhaseRuntimeDisable, releasedRun,
+	)
 	if releasedRun {
 		repository.recordEventAppend(ctx, ports.EventRunAdmissionReleased)
 	}
@@ -358,12 +361,18 @@ WHERE request_id = $1`, input.RequestID, input.Now); err != nil {
 func (repository *Repository) FailAgentDisable(
 	ctx context.Context, input ports.FailAgentDisable,
 ) (ports.AgentDisableState, error) {
-	var inspectionPayload []byte
+	var inspectionPayload, absenceProofPayload []byte
 	var err error
 	if input.SourceRuntimeInspection != nil {
 		inspectionPayload, err = json.Marshal(input.SourceRuntimeInspection)
 		if err != nil {
 			return ports.AgentDisableState{}, fmt.Errorf("encode source Runtime inspection: %w", err)
+		}
+	}
+	if input.RuntimeAbsenceProof != nil {
+		absenceProofPayload, err = json.Marshal(input.RuntimeAbsenceProof)
+		if err != nil {
+			return ports.AgentDisableState{}, fmt.Errorf("encode Runtime absence proof: %w", err)
 		}
 	}
 	transaction, err := repository.pool.Begin(ctx)
@@ -388,9 +397,34 @@ func (repository *Repository) FailAgentDisable(
 	if err != nil {
 		return ports.AgentDisableState{}, err
 	}
-	if input.FailedEvent.AggregateSequence != agent.AggregateSequence+1 {
+	if input.ExpectedAggregateSequence != agent.AggregateSequence ||
+		input.FailedEvent.AggregateSequence != 0 {
 		return ports.AgentDisableState{}, ports.ErrConcurrentChange
 	}
+	releasedRun := false
+	switch {
+	case input.RuntimeAbsenceProof == nil && !emptyRunAdmissionEvent(input.RunReleaseEvent):
+		return ports.AgentDisableState{}, fmt.Errorf("run release event requires Runtime absence proof")
+	case input.RuntimeAbsenceProof != nil:
+		if input.PreserveExecutable || input.SourceRuntimeInspection != nil ||
+			!validLifecycleFailureRunBarrier(
+				operation, domain.PhaseRuntimeDisable, input.RuntimeAbsenceProof,
+				input.RunReleaseEvent, input.Now,
+			) {
+			return ports.AgentDisableState{}, fmt.Errorf("invalid disable Runtime absence failure")
+		}
+		releasedRun, err = repository.releaseBlockedRunAdmission(
+			ctx, transaction, operation, input.RunReleaseEvent, input.Now,
+		)
+		if err != nil {
+			return ports.AgentDisableState{}, err
+		}
+		if releasedRun {
+			agent.AggregateSequence++
+		}
+	}
+	failedEvent := input.FailedEvent
+	failedEvent.AggregateSequence = agent.AggregateSequence + 1
 	var result pgconn.CommandTag
 	if input.PreserveExecutable {
 		result, err = transaction.Exec(ctx, `
@@ -403,8 +437,8 @@ WHERE id = $1 AND desired_state = 'disabled' AND lifecycle_state = 'available'
   AND executable_spec_revision_id = $9
   AND executable_execution_revision_id = $10 AND runtime_revision = $11`,
 			operation.AgentID, input.Stage, input.Code, input.Detail,
-			input.FailedEvent.AggregateSequence, input.Now, input.RequestID,
-			input.FailedEvent.AggregateSequence-1, operation.SourceSpecRevisionID,
+			failedEvent.AggregateSequence, input.Now, input.RequestID,
+			failedEvent.AggregateSequence-1, operation.SourceSpecRevisionID,
 			operation.SourceExecutionRevisionID, operation.SourceRuntimeRevision,
 		)
 	} else {
@@ -420,8 +454,8 @@ WHERE id = $1 AND desired_state = 'disabled' AND lifecycle_state = 'available'
   AND executable_spec_revision_id = $9
   AND executable_execution_revision_id = $10 AND runtime_revision = $11`,
 			operation.AgentID, input.Stage, input.Code, input.Detail,
-			input.FailedEvent.AggregateSequence, input.Now, input.RequestID,
-			input.FailedEvent.AggregateSequence-1, operation.SourceSpecRevisionID,
+			failedEvent.AggregateSequence, input.Now, input.RequestID,
+			failedEvent.AggregateSequence-1, operation.SourceSpecRevisionID,
 			operation.SourceExecutionRevisionID, operation.SourceRuntimeRevision,
 		)
 	}
@@ -431,16 +465,16 @@ WHERE id = $1 AND desired_state = 'disabled' AND lifecycle_state = 'available'
 	if result.RowsAffected() != 1 {
 		return ports.AgentDisableState{}, ports.ErrConcurrentChange
 	}
-	if err := repository.insertAgentEvent(ctx, transaction, input.FailedEvent); err != nil {
+	if err := repository.insertAgentEvent(ctx, transaction, failedEvent); err != nil {
 		return ports.AgentDisableState{}, err
 	}
 	if _, err := transaction.Exec(ctx, `
 UPDATE agent_controller.agent_lifecycle_operations
 SET state = 'failed', child_request_id = '', error_code = $2,
     error_detail = $3, retryable = FALSE, source_runtime_inspection = $4,
-    updated_at = $5
+    source_runtime_absence_proof = $5, updated_at = $6
 WHERE request_id = $1`, input.RequestID, input.Code, input.Detail,
-		nullJSON(inspectionPayload), input.Now); err != nil {
+		nullJSON(inspectionPayload), nullJSON(absenceProofPayload), input.Now); err != nil {
 		return ports.AgentDisableState{}, fmt.Errorf("fail Agent disable operation: %w", err)
 	}
 	operation, err = loadLifecycleOperation(ctx, transaction, input.RequestID, "")
@@ -453,6 +487,10 @@ WHERE request_id = $1`, input.RequestID, input.Code, input.Detail,
 	}
 	if err := transaction.Commit(ctx); err != nil {
 		return ports.AgentDisableState{}, fmt.Errorf("commit Agent disable failure: %w", err)
+	}
+	state.RunReleaseOutcome = runReleaseOutcome(input.RuntimeAbsenceProof != nil, releasedRun)
+	if releasedRun {
+		repository.recordEventAppend(ctx, ports.EventRunAdmissionReleased)
 	}
 	repository.recordEventAppend(ctx, input.FailedEvent.EventType)
 	return state, nil
