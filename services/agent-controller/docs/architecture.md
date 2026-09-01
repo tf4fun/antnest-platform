@@ -11,11 +11,11 @@ It depends on language-neutral HTTP contracts. It does not import another
 service implementation or inspect another service database.
 
 The document describes the completed target boundary. Implementation proceeds
-as vertical business slices. At present ModelProfile/Template Catalog, Run
-admission, and the Agent create, explicit rebuild, disable, enable, and delete
-Sagas are runnable. Agent queries, the recovery worker, complete lifecycle-to-Run
-release events, and event replay remain in progress and must not be inferred
-from table or contract presence alone.
+as vertical business slices. At present ModelProfile/Template Catalog, current
+Agent projection queries, Run admission, and the Agent create, explicit rebuild,
+disable, enable, and delete Sagas are runnable. The recovery worker, complete
+lifecycle-to-Run release events, and event replay remain in progress and must
+not be inferred from table or contract presence alone.
 
 ## Aggregate Model
 
@@ -70,6 +70,7 @@ Agent
   last_successful_execution_revision?
   active_operation_request_id?
   failure?
+  aggregate_sequence
 ```
 
 The desired state is business intent. The lifecycle state contains only stable
@@ -91,6 +92,13 @@ opaque keyset cursor. They do not hold database snapshots across HTTP requests.
 `aggregate_sequence` identifies the last domain event reflected in each row;
 ordered change consumption belongs to the event journal rather than list
 pagination.
+
+The persistence projection may retain a Runtime revision while an Agent is
+disabled so a later Enable can describe its source state. The control API's
+`runtime` object has narrower semantics: it is emitted only when revision,
+execution identity, and MCP endpoint form one complete currently executable
+binding. A retained revision alone is lifecycle evidence, not a partial wire
+binding.
 
 ### AgentSpecRevision
 

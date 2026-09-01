@@ -49,7 +49,7 @@ func TestRunHandlerServesAgentACPContract(t *testing.T) {
 		},
 	}
 	handler, err := NewHandler(
-		&catalogServiceStub{}, &lifecycleServiceStub{}, runs,
+		&catalogServiceStub{}, &lifecycleServiceStub{}, runs, &agentQueryServiceStub{},
 		func(context.Context) error { return nil },
 	)
 	if err != nil {
@@ -107,7 +107,7 @@ func TestFinishRunRequiresExplicitNullableFields(t *testing.T) {
 
 	runs := &runServiceStub{}
 	handler, err := NewHandler(
-		&catalogServiceStub{}, &lifecycleServiceStub{}, runs,
+		&catalogServiceStub{}, &lifecycleServiceStub{}, runs, &agentQueryServiceStub{},
 		func(context.Context) error { return nil },
 	)
 	if err != nil {
@@ -129,7 +129,7 @@ func TestRunHandlerUsesConsumerSpecificErrorClasses(t *testing.T) {
 
 	runs := &runServiceStub{err: application.ErrAgentBusy}
 	handler, err := NewHandler(
-		&catalogServiceStub{}, &lifecycleServiceStub{}, runs,
+		&catalogServiceStub{}, &lifecycleServiceStub{}, runs, &agentQueryServiceStub{},
 		func(context.Context) error { return nil },
 	)
 	if err != nil {

@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -59,17 +60,27 @@ type RunService interface {
 	FinishRun(context.Context, application.FinishRunInput) (application.FinishRunResult, error)
 }
 
+type AgentQueryService interface {
+	GetAgent(context.Context, string) (application.AgentView, error)
+	ListAgents(context.Context, application.ListAgentsInput) (application.AgentPage, error)
+}
+
 type HealthCheck func(context.Context) error
 
 type handler struct {
 	catalog   CatalogService
 	lifecycle LifecycleService
 	runs      RunService
+	queries   AgentQueryService
 	health    HealthCheck
 }
 
 func NewHandler(
-	catalog CatalogService, lifecycle LifecycleService, runs RunService, health HealthCheck,
+	catalog CatalogService,
+	lifecycle LifecycleService,
+	runs RunService,
+	queries AgentQueryService,
+	health HealthCheck,
 ) (http.Handler, error) {
 	if catalog == nil {
 		return nil, fmt.Errorf("catalog service is required")
@@ -80,10 +91,13 @@ func NewHandler(
 	if runs == nil {
 		return nil, fmt.Errorf("run service is required")
 	}
+	if queries == nil {
+		return nil, fmt.Errorf("agent query service is required")
+	}
 	if health == nil {
 		return nil, fmt.Errorf("health check is required")
 	}
-	h := &handler{catalog: catalog, lifecycle: lifecycle, runs: runs, health: health}
+	h := &handler{catalog: catalog, lifecycle: lifecycle, runs: runs, queries: queries, health: health}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /status", h.status)
 	mux.HandleFunc("GET /rpc/agent-controller/status", h.status)
@@ -100,6 +114,8 @@ func NewHandler(
 	mux.HandleFunc("GET /internal/agent-templates/{template_id}", h.getTemplate)
 	mux.HandleFunc("POST /internal/agent-templates/{template_id}/revisions", h.reviseTemplate)
 	mux.HandleFunc("POST /internal/agents", h.createAgent)
+	mux.HandleFunc("GET /internal/agents", h.listAgents)
+	mux.HandleFunc("GET /internal/agents/{agent_id}", h.getAgent)
 	mux.HandleFunc("POST /internal/agents/{agent_id}/rebuild", h.rebuildAgent)
 	mux.HandleFunc("POST /internal/agents/{agent_id}/disable", h.disableAgent)
 	mux.HandleFunc("POST /internal/agents/{agent_id}/enable", h.enableAgent)
@@ -275,8 +291,14 @@ type agentResponse struct {
 	ActiveOperationRequestID        string                  `json:"active_operation_request_id,omitempty"`
 	FailureStage                    string                  `json:"failure_stage,omitempty"`
 	FailureCode                     string                  `json:"failure_code,omitempty"`
+	AggregateSequence               int64                   `json:"aggregate_sequence"`
 	CreatedAt                       time.Time               `json:"created_at"`
 	UpdatedAt                       time.Time               `json:"updated_at"`
+}
+
+type agentListResponse struct {
+	Items      []agentResponse `json:"items"`
+	NextCursor *string         `json:"next_cursor"`
 }
 
 type operationResponse struct {
@@ -581,6 +603,40 @@ func (h *handler) createAgent(response http.ResponseWriter, request *http.Reques
 	writeJSON(response, http.StatusAccepted, createAgentPayload(result))
 }
 
+func (h *handler) getAgent(response http.ResponseWriter, request *http.Request) {
+	response.Header().Set("Cache-Control", "no-store")
+	if request.URL.RawQuery != "" {
+		writeError(response, http.StatusBadRequest, "invalid_request", "request is invalid", false)
+		return
+	}
+	agent, err := h.queries.GetAgent(request.Context(), request.PathValue("agent_id"))
+	if err != nil {
+		writeServiceError(request.Context(), response, err)
+		return
+	}
+	writeJSON(response, http.StatusOK, agentPayload(agent))
+}
+
+func (h *handler) listAgents(response http.ResponseWriter, request *http.Request) {
+	response.Header().Set("Cache-Control", "no-store")
+	input, ok := agentListInput(response, request)
+	if !ok {
+		return
+	}
+	page, err := h.queries.ListAgents(request.Context(), input)
+	if err != nil {
+		writeServiceError(request.Context(), response, err)
+		return
+	}
+	items := make([]agentResponse, 0, len(page.Items))
+	for _, item := range page.Items {
+		items = append(items, agentPayload(item))
+	}
+	writeJSON(response, http.StatusOK, agentListResponse{
+		Items: items, NextCursor: optionalString(page.NextCursor),
+	})
+}
+
 func (h *handler) rebuildAgent(response http.ResponseWriter, request *http.Request) {
 	var payload rebuildAgentRequest
 	if !decodeJSON(response, request, &payload) {
@@ -681,6 +737,58 @@ func catalogListInput(response http.ResponseWriter, request *http.Request) (appl
 	}, true
 }
 
+func agentListInput(response http.ResponseWriter, request *http.Request) (application.ListAgentsInput, bool) {
+	query, err := url.ParseQuery(request.URL.RawQuery)
+	if err != nil {
+		writeError(response, http.StatusBadRequest, "invalid_request", "request is invalid", false)
+		return application.ListAgentsInput{}, false
+	}
+	allowed := map[string]struct{}{
+		"organization_id": {}, "owner_user_id": {}, "lifecycle_state": {},
+		"include_deleted": {}, "limit": {}, "cursor": {},
+	}
+	for key, values := range query {
+		if _, ok := allowed[key]; !ok || len(values) != 1 {
+			writeError(response, http.StatusBadRequest, "invalid_request", "request is invalid", false)
+			return application.ListAgentsInput{}, false
+		}
+	}
+	for _, key := range []string{
+		"organization_id", "owner_user_id", "lifecycle_state", "include_deleted", "limit", "cursor",
+	} {
+		if values, present := query[key]; present && values[0] == "" {
+			writeError(response, http.StatusBadRequest, "invalid_request", "request is invalid", false)
+			return application.ListAgentsInput{}, false
+		}
+	}
+	includeDeleted := false
+	if values, present := query["include_deleted"]; present {
+		switch values[0] {
+		case "false":
+		case "true":
+			includeDeleted = true
+		default:
+			writeError(response, http.StatusBadRequest, "invalid_request", "request is invalid", false)
+			return application.ListAgentsInput{}, false
+		}
+	}
+	limit := 0
+	if values, present := query["limit"]; present {
+		raw := values[0]
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 {
+			writeError(response, http.StatusBadRequest, "invalid_request", "request is invalid", false)
+			return application.ListAgentsInput{}, false
+		}
+		limit = parsed
+	}
+	return application.ListAgentsInput{
+		OrganizationID: query.Get("organization_id"), OwnerUserID: query.Get("owner_user_id"),
+		LifecycleState: domain.AgentState(query.Get("lifecycle_state")),
+		IncludeDeleted: includeDeleted, Limit: limit, Cursor: query.Get("cursor"),
+	}, true
+}
+
 func decodeJSON(response http.ResponseWriter, request *http.Request, target any) bool {
 	request.Body = http.MaxBytesReader(response, request.Body, maximumRequestBytes)
 	decoder := json.NewDecoder(request.Body)
@@ -735,9 +843,10 @@ func agentPayload(agent application.AgentView) agentResponse {
 		LastSuccessfulExecutionRevision: agent.LastSuccessfulExecutionRevisionID,
 		ActiveOperationRequestID:        agent.ActiveOperationRequestID,
 		FailureStage:                    agent.FailureStage, FailureCode: agent.FailureCode,
-		CreatedAt: agent.CreatedAt, UpdatedAt: agent.UpdatedAt,
+		AggregateSequence: agent.AggregateSequence,
+		CreatedAt:         agent.CreatedAt, UpdatedAt: agent.UpdatedAt,
 	}
-	if agent.RuntimeRevision != "" || agent.RuntimeExecutionID != "" || agent.RuntimeMCPEndpoint != "" {
+	if agent.RuntimeRevision != "" && agent.RuntimeExecutionID != "" && agent.RuntimeMCPEndpoint != "" {
 		response.Runtime = &runtimeBindingResponse{
 			RuntimeRevision: agent.RuntimeRevision, RuntimeExecutionID: agent.RuntimeExecutionID,
 			MCPEndpoint: agent.RuntimeMCPEndpoint,

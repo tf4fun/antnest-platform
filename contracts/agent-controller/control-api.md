@@ -78,6 +78,9 @@ user identity frozen at Agent creation; Agent Controller neither copies user
 profiles nor joins the Identity Service database. Results are ordered by the
 immutable `(created_at, agent_id)` pair. `cursor` is an opaque, versioned
 continuation token for that pair, and `limit` is bounded to 1–200 (default 100).
+Clients must continue with the same filter set; changing filters starts a new
+query. Present-but-empty, duplicate, malformed, and unknown query parameters
+are rejected rather than interpreted as a broader query.
 An explicit `lifecycle_state=deleting|deleted` filter does not override deletion
 visibility: callers must also set `include_deleted=true`. Explicit get remains
 available for deleted Agents so audit and administrator workflows can resolve a
@@ -114,6 +117,7 @@ idempotency conflicts, lifecycle conflicts, dependency failure, and internal
 failure. SQL, secrets, Provider responses, and platform stderr are never
 returned.
 
-The machine-readable route catalog and message definitions are in
-[`control-contract.json`](control-contract.json). Run admission remains a
-separate consumer-specific contract in [`run-contract.json`](run-contract.json).
+The machine-readable route catalog is in
+[`control-contract.json`](control-contract.json), and message definitions are
+in [`control-api.schema.json`](control-api.schema.json). Run admission remains
+a separate consumer-specific contract in [`run-contract.json`](run-contract.json).

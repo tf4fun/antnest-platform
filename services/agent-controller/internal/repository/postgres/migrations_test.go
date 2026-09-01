@@ -51,6 +51,11 @@ func TestInitialMigrationHasFinalSerializationConstraints(t *testing.T) {
 		"model_profile_credential_fk",
 		"template_head_fk",
 		"template_model_revision_fk",
+		"agents_projection_idx",
+		"agents_organization_projection_idx",
+		"agents_owner_projection_idx",
+		"agents_state_projection_idx",
+		"agents_global_projection_idx",
 	}
 	for _, constraint := range required {
 		if !strings.Contains(initialSchemaSQL, constraint) {

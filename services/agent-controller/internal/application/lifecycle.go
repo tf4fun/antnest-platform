@@ -86,6 +86,7 @@ type AgentView struct {
 	ActiveOperationRequestID          string
 	FailureStage                      string
 	FailureCode                       string
+	AggregateSequence                 int64
 	CreatedAt                         time.Time
 	UpdatedAt                         time.Time
 }
@@ -506,6 +507,7 @@ func agentView(agent ports.AgentRecord) AgentView {
 		ActiveOperationRequestID:          agent.ActiveOperationRequestID,
 		FailureStage:                      agent.FailureStage,
 		FailureCode:                       agent.FailureCode,
+		AggregateSequence:                 agent.AggregateSequence,
 		CreatedAt:                         agent.CreatedAt,
 		UpdatedAt:                         agent.UpdatedAt,
 	}

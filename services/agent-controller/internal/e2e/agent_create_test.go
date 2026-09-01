@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -226,6 +227,7 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 		application.NewCatalogService(repository, secretBox, clock),
 		application.NewLifecycleService(repository, repository, egress, runtime, clock),
 		application.NewRunService(repository, secretBox, clock, 30*time.Minute),
+		application.NewAgentQueryService(repository),
 		repository.Ping,
 	)
 	if err != nil {
@@ -261,6 +263,21 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 		agent["owner_user_id"] != "agent-e2e-user" {
 		t.Fatalf("created Agent = %+v operation=%+v", agent, operation)
 	}
+	agentID := agent["agent_id"].(string)
+	queried := serveJSON(
+		t, handler, http.MethodGet, "/internal/agents/"+agentID, "", http.StatusOK,
+	)
+	if queried["owner_user_id"] != "agent-e2e-user" || queried["aggregate_sequence"] != float64(2) {
+		t.Fatalf("queried Agent projection = %+v", queried)
+	}
+	listed := serveJSON(
+		t, handler, http.MethodGet,
+		"/internal/agents?organization_id=agent-e2e-org&owner_user_id=agent-e2e-user",
+		"", http.StatusOK,
+	)
+	if items, ok := listed["items"].([]any); !ok || len(items) != 1 {
+		t.Fatalf("owner Agent projection = %+v", listed)
+	}
 	replayed := serveJSON(t, handler, http.MethodPost, "/internal/agents", createBody, http.StatusAccepted)
 	if replayed["agent_access_subject"] != created["agent_access_subject"] ||
 		egressCalls.Load() != 2 || runtimeCalls.Load() != 1 {
@@ -268,7 +285,6 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 			egressCalls.Load(), runtimeCalls.Load(), replayed)
 	}
 
-	agentID := agent["agent_id"].(string)
 	rebuildBody := `{
 		"request_id":"agent-e2e-rebuild",
 		"template_id":"` + templateID + `",
@@ -385,5 +401,61 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 	if replayedDelete["state"] != "completed" || egressCalls.Load() != 21 || runtimeCalls.Load() != 5 {
 		t.Fatalf("idempotent delete repeated effects: egress=%d runtime=%d replay=%+v",
 			egressCalls.Load(), runtimeCalls.Load(), replayedDelete)
+	}
+	hidden := serveJSON(
+		t, handler, http.MethodGet,
+		"/internal/agents?organization_id=agent-e2e-org&owner_user_id=agent-e2e-user",
+		"", http.StatusOK,
+	)
+	if items, ok := hidden["items"].([]any); !ok || len(items) != 0 {
+		t.Fatalf("deleted Agent remained in default projection = %+v", hidden)
+	}
+	visible := serveJSON(
+		t, handler, http.MethodGet,
+		"/internal/agents?organization_id=agent-e2e-org&owner_user_id=agent-e2e-user&include_deleted=true",
+		"", http.StatusOK,
+	)
+	if items, ok := visible["items"].([]any); !ok || len(items) != 1 {
+		t.Fatalf("deleted Agent was not available to explicit audit query = %+v", visible)
+	}
+	createdIDs := make(map[string]struct{}, 2)
+	for _, suffix := range []string{"b", "c"} {
+		createdAgent := serveJSON(
+			t, handler, http.MethodPost, "/internal/agents", `{
+				"request_id":"agent-e2e-create-`+suffix+`","organization_id":"agent-e2e-org",
+				"owner_user_id":"agent-e2e-user","name":"Research Agent `+suffix+`",
+				"template_id":"`+templateID+`","template_revision":1
+			}`, http.StatusAccepted,
+		)
+		createdIDs[createdAgent["agent"].(map[string]any)["agent_id"].(string)] = struct{}{}
+	}
+	firstPage := serveJSON(
+		t, handler, http.MethodGet,
+		"/internal/agents?organization_id=agent-e2e-org&owner_user_id=agent-e2e-user&limit=1",
+		"", http.StatusOK,
+	)
+	firstItems := firstPage["items"].([]any)
+	nextCursor, ok := firstPage["next_cursor"].(string)
+	if len(firstItems) != 1 || !ok || nextCursor == "" {
+		t.Fatalf("first Agent cursor page = %+v", firstPage)
+	}
+	firstID := firstItems[0].(map[string]any)["agent_id"].(string)
+	secondPage := serveJSON(
+		t, handler, http.MethodGet,
+		"/internal/agents?organization_id=agent-e2e-org&owner_user_id=agent-e2e-user&limit=1&cursor="+url.QueryEscape(nextCursor),
+		"", http.StatusOK,
+	)
+	secondItems := secondPage["items"].([]any)
+	if len(secondItems) != 1 || secondPage["next_cursor"] != nil {
+		t.Fatalf("second Agent cursor page = %+v", secondPage)
+	}
+	secondID := secondItems[0].(map[string]any)["agent_id"].(string)
+	if firstID == secondID {
+		t.Fatalf("Agent cursor repeated %q", firstID)
+	}
+	delete(createdIDs, firstID)
+	delete(createdIDs, secondID)
+	if len(createdIDs) != 0 {
+		t.Fatalf("Agent cursor omitted identities: %+v", createdIDs)
 	}
 }

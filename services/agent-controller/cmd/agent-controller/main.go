@@ -151,6 +151,10 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 	if err != nil {
 		return classifyFailure("service_composition", err)
 	}
+	observedAgentQueryStore, err := telemetry.ObserveAgentQueryStore(repository, logger)
+	if err != nil {
+		return classifyFailure("service_composition", err)
+	}
 	egress, err := egressclient.New(cfg.RuntimeEgressURL, cfg.DependencyTimeout, nil)
 	if err != nil {
 		return classifyFailure("service_composition", err)
@@ -166,7 +170,8 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 	runs := application.NewRunService(
 		observedRunStore, secretBox, systemClock{}, cfg.RunAdmissionTTL,
 	)
-	handler, err := server.NewHandler(catalog, lifecycle, runs, repository.Ping)
+	queries := application.NewAgentQueryService(observedAgentQueryStore)
+	handler, err := server.NewHandler(catalog, lifecycle, runs, queries, repository.Ping)
 	if err != nil {
 		return classifyFailure("service_composition", err)
 	}

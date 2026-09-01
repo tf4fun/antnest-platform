@@ -16,8 +16,8 @@ after Runtime readiness. Delete removes Runtime compute and workspace, releases
 the Egress attachment, deactivates owner access, and retains immutable audit
 facts. Agent-wide Run admission resolves access, freezes one immutable execution
 snapshot, scopes Provider credential access, and seals terminal Tool-effect
-facts. Agent queries and event replay routes remain target contracts until their
-corresponding slices are completed.
+facts. Current Agent projection queries are runnable; event replay routes remain
+target contracts until their corresponding slice is completed.
 
 ## Owns
 

@@ -135,7 +135,19 @@ CREATE TABLE IF NOT EXISTS agent_controller.agents (
 );
 
 CREATE INDEX IF NOT EXISTS agents_projection_idx
-    ON agent_controller.agents (organization_id, owner_user_id, lifecycle_state, id);
+    ON agent_controller.agents (organization_id, owner_user_id, created_at, id);
+
+CREATE INDEX IF NOT EXISTS agents_organization_projection_idx
+    ON agent_controller.agents (organization_id, created_at, id);
+
+CREATE INDEX IF NOT EXISTS agents_owner_projection_idx
+    ON agent_controller.agents (owner_user_id, created_at, id);
+
+CREATE INDEX IF NOT EXISTS agents_state_projection_idx
+    ON agent_controller.agents (lifecycle_state, created_at, id);
+
+CREATE INDEX IF NOT EXISTS agents_global_projection_idx
+    ON agent_controller.agents (created_at, id);
 
 CREATE TABLE IF NOT EXISTS agent_controller.agent_spec_revisions (
     id TEXT PRIMARY KEY,

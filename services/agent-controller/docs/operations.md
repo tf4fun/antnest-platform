@@ -19,6 +19,15 @@ ACP connection to one Agent, acquire serializes on the Agent row and persists a
 complete immutable execution snapshot, credential resolution is restricted to
 an active admission, and finish seals one immutable terminal report. Admission
 deadline expiry is not an automatic release condition.
+Current projection reads are served from `GET /internal/agents` and
+`GET /internal/agents/{agent_id}`. Lists use `(created_at, agent_id)` keyset
+pagination, hide desired state `deleted` by default, and may filter by opaque
+organization/owner identities and lifecycle state. Exact lookup and
+`include_deleted=true` remain available for administrator and audit workflows.
+These are current-state reads; ordered change replay belongs to the Agent event
+journal and must not be inferred from list cursors. Callers preserve the same
+filters while following a cursor; malformed, duplicate, unknown, and explicitly
+empty query values fail closed.
 The background lifecycle recovery worker described below is not yet
 started by the process.
 
