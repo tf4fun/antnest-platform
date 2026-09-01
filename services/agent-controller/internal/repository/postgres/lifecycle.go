@@ -354,7 +354,7 @@ INSERT INTO agent_controller.agent_access_bindings (
 func insertLifecycleOperation(
 	ctx context.Context, transaction pgx.Tx, record ports.LifecycleOperationRecord,
 ) error {
-	var policyPayload, inspectionPayload []byte
+	var policyPayload, inspectionPayload, absenceProofPayload []byte
 	var err error
 	if record.NetworkPolicyAssignment != nil {
 		policyPayload, err = json.Marshal(record.NetworkPolicyAssignment)
@@ -368,23 +368,30 @@ func insertLifecycleOperation(
 			return fmt.Errorf("encode source Runtime inspection: %w", err)
 		}
 	}
+	if record.SourceRuntimeAbsenceProof != nil {
+		absenceProofPayload, err = json.Marshal(record.SourceRuntimeAbsenceProof)
+		if err != nil {
+			return fmt.Errorf("encode source Runtime absence proof: %w", err)
+		}
+	}
 	_, err = transaction.Exec(ctx, `
 	INSERT INTO agent_controller.agent_lifecycle_operations (
     request_id, request_fingerprint, agent_id, kind, phase, state,
     source_spec_revision_id, source_execution_revision_id,
     source_runtime_revision, source_runtime_absent,
     target_spec_revision_id, child_request_id, network_policy_assignment,
-    source_runtime_inspection,
+    source_runtime_inspection, source_runtime_absence_proof, network_release_outcome,
     initial_trace_parent, previous_attempt_trace_id, attempt, created_at, updated_at
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-    $11, $12, $13, $14, $15, $16, $17, $18, $19
+    $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21
 )`,
 		record.RequestID, record.RequestFingerprint, record.AgentID, record.Kind,
 		record.Phase, record.State, record.SourceSpecRevisionID,
 		record.SourceExecutionRevisionID, record.SourceRuntimeRevision,
 		record.SourceRuntimeAbsent, record.TargetSpecRevisionID, record.ChildRequestID,
-		nullJSON(policyPayload), nullJSON(inspectionPayload),
+		nullJSON(policyPayload), nullJSON(inspectionPayload), nullJSON(absenceProofPayload),
+		record.NetworkReleaseOutcome,
 		record.InitialTraceParent, record.PreviousAttemptTraceID,
 		record.Attempt, record.CreatedAt, record.UpdatedAt,
 	)
@@ -584,7 +591,8 @@ SELECT request_id, request_fingerprint, agent_id, kind, phase, state,
 	       source_spec_revision_id, source_execution_revision_id,
 	       source_runtime_revision, source_runtime_absent,
 	       target_spec_revision_id, child_request_id, network_attachment,
-	       network_policy_assignment, source_runtime_inspection, runtime_result,
+	       network_policy_assignment, source_runtime_inspection,
+	       source_runtime_absence_proof, runtime_result, network_release_outcome,
 	       initial_trace_parent, previous_attempt_trace_id,
        attempt, error_code, error_detail, retryable, created_at, updated_at
 FROM agent_controller.agent_lifecycle_operations
@@ -597,7 +605,7 @@ WHERE request_id = $1`
 
 func scanLifecycleOperation(scanner lifecycleRowScanner) (ports.LifecycleOperationRecord, error) {
 	var record ports.LifecycleOperationRecord
-	var networkPayload, policyPayload, inspectionPayload, runtimePayload []byte
+	var networkPayload, policyPayload, inspectionPayload, absenceProofPayload, runtimePayload []byte
 	err := scanner.Scan(
 		&record.RequestID, &record.RequestFingerprint, &record.AgentID,
 		&record.Kind, &record.Phase, &record.State,
@@ -605,7 +613,8 @@ func scanLifecycleOperation(scanner lifecycleRowScanner) (ports.LifecycleOperati
 		&record.SourceRuntimeRevision,
 		&record.SourceRuntimeAbsent, &record.TargetSpecRevisionID,
 		&record.ChildRequestID, &networkPayload, &policyPayload,
-		&inspectionPayload, &runtimePayload,
+		&inspectionPayload, &absenceProofPayload, &runtimePayload,
+		&record.NetworkReleaseOutcome,
 		&record.InitialTraceParent, &record.PreviousAttemptTraceID,
 		&record.Attempt, &record.ErrorCode,
 		&record.ErrorDetail, &record.Retryable, &record.CreatedAt, &record.UpdatedAt,
@@ -636,6 +645,13 @@ func scanLifecycleOperation(scanner lifecycleRowScanner) (ports.LifecycleOperati
 			return ports.LifecycleOperationRecord{}, fmt.Errorf("decode source Runtime inspection: %w", err)
 		}
 		record.SourceRuntimeInspection = &inspection
+	}
+	if len(absenceProofPayload) != 0 {
+		var proof ports.RuntimeAbsenceProof
+		if err := json.Unmarshal(absenceProofPayload, &proof); err != nil {
+			return ports.LifecycleOperationRecord{}, fmt.Errorf("decode source Runtime absence proof: %w", err)
+		}
+		record.SourceRuntimeAbsenceProof = &proof
 	}
 	if len(runtimePayload) != 0 {
 		var runtime ports.RuntimeOperation

@@ -252,3 +252,39 @@ func (store *lifecycleStoreStub) FailAgentEnable(
 ) (ports.AgentEnableState, error) {
 	return ports.AgentEnableState{}, store.err
 }
+
+func (store *lifecycleStoreStub) GetAgentDeleteBase(
+	context.Context, string,
+) (ports.AgentDeleteBase, error) {
+	return ports.AgentDeleteBase{}, store.err
+}
+
+func (store *lifecycleStoreStub) ReplayAgentDelete(
+	context.Context, string, string,
+) (ports.AgentDeleteState, bool, error) {
+	return ports.AgentDeleteState{}, false, store.err
+}
+
+func (store *lifecycleStoreStub) BeginAgentDelete(
+	context.Context, ports.BeginAgentDelete,
+) (ports.AgentDeleteState, bool, error) {
+	return ports.AgentDeleteState{}, false, store.err
+}
+
+func (store *lifecycleStoreStub) SettleAgentDeleteDrain(
+	context.Context, string, string, string, time.Time,
+) (ports.AgentDeleteState, error) {
+	return ports.AgentDeleteState{}, store.err
+}
+
+func (store *lifecycleStoreStub) AdvanceAgentDelete(
+	context.Context, ports.AdvanceAgentDelete,
+) (ports.AgentDeleteState, error) {
+	return ports.AgentDeleteState{}, store.err
+}
+
+func (store *lifecycleStoreStub) PublishAgentDelete(
+	context.Context, ports.PublishAgentDelete,
+) (ports.AgentDeleteState, error) {
+	return ports.AgentDeleteState{}, store.err
+}

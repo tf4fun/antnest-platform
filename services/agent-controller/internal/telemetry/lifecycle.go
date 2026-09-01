@@ -292,6 +292,66 @@ func (store *ObservedLifecycleStore) FailAgentEnable(
 	})
 }
 
+func (store *ObservedLifecycleStore) GetAgentDeleteBase(
+	ctx context.Context, agentID string,
+) (ports.AgentDeleteBase, error) {
+	return observeLifecycleValue(ctx, store, "get_agent_delete_base", func(callCtx context.Context) (ports.AgentDeleteBase, error) {
+		return store.next.GetAgentDeleteBase(callCtx, agentID)
+	})
+}
+
+func (store *ObservedLifecycleStore) ReplayAgentDelete(
+	ctx context.Context, requestID string, fingerprint string,
+) (ports.AgentDeleteState, bool, error) {
+	return observeLifecycleReplay(ctx, store, "replay_agent_delete", func(callCtx context.Context) (ports.AgentDeleteState, bool, error) {
+		return store.next.ReplayAgentDelete(callCtx, requestID, fingerprint)
+	})
+}
+
+func (store *ObservedLifecycleStore) BeginAgentDelete(
+	ctx context.Context, input ports.BeginAgentDelete,
+) (ports.AgentDeleteState, bool, error) {
+	return observeLifecycleReplay(ctx, store, "begin_agent_delete", func(callCtx context.Context) (ports.AgentDeleteState, bool, error) {
+		return store.next.BeginAgentDelete(callCtx, input)
+	})
+}
+
+func (store *ObservedLifecycleStore) SettleAgentDeleteDrain(
+	ctx context.Context,
+	requestID string,
+	fingerprint string,
+	nextChildRequestID string,
+	now time.Time,
+) (ports.AgentDeleteState, error) {
+	return observeLifecycleValue(ctx, store, "settle_agent_delete_drain", func(callCtx context.Context) (ports.AgentDeleteState, error) {
+		return store.next.SettleAgentDeleteDrain(
+			callCtx, requestID, fingerprint, nextChildRequestID, now,
+		)
+	})
+}
+
+func (store *ObservedLifecycleStore) AdvanceAgentDelete(
+	ctx context.Context, input ports.AdvanceAgentDelete,
+) (value ports.AgentDeleteState, resultErr error) {
+	ctx, span, started := startRepositorySpan(ctx, "advance_agent_delete")
+	span.SetAttributes(
+		attribute.String("antnest.lifecycle.expected_phase", string(input.ExpectedPhase)),
+		attribute.String("antnest.lifecycle.next_phase", string(input.NextPhase)),
+	)
+	defer func() {
+		store.finish(ctx, span, started, "advance_agent_delete", resultErr)
+	}()
+	return store.next.AdvanceAgentDelete(ctx, input)
+}
+
+func (store *ObservedLifecycleStore) PublishAgentDelete(
+	ctx context.Context, input ports.PublishAgentDelete,
+) (ports.AgentDeleteState, error) {
+	return observeLifecycleValue(ctx, store, "publish_agent_delete", func(callCtx context.Context) (ports.AgentDeleteState, error) {
+		return store.next.PublishAgentDelete(callCtx, input)
+	})
+}
+
 func observeLifecycleValue[T any](
 	ctx context.Context,
 	store *ObservedLifecycleStore,

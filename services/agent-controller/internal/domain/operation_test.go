@@ -109,6 +109,10 @@ func TestLifecycleOperationRejectsIncompleteOrContradictoryPreconditions(t *test
 			name:  "delete with ambiguous Runtime",
 			input: operationInput(OperationDelete, "spec-old", "runtime-old", true, ""),
 		},
+		{
+			name:  "delete with unrelated Agent revisions",
+			input: operationInput(OperationDelete, "spec-old", "runtime-old", false, ""),
+		},
 	}
 	for _, testCase := range tests {
 		testCase := testCase
@@ -118,6 +122,19 @@ func TestLifecycleOperationRejectsIncompleteOrContradictoryPreconditions(t *test
 				t.Fatal("invalid lifecycle preconditions were accepted")
 			}
 		})
+	}
+}
+
+func TestDeleteWithRuntimeNeedsOnlyRevisionFence(t *testing.T) {
+	t.Parallel()
+
+	input := operationInput(OperationDelete, "", "runtime-old", false, "")
+	operation, err := NewLifecycleOperation(input)
+	if err != nil {
+		t.Fatalf("create delete operation: %v", err)
+	}
+	if operation.Phase() != PhaseDrain {
+		t.Fatalf("delete phase = %q, want %q", operation.Phase(), PhaseDrain)
 	}
 }
 

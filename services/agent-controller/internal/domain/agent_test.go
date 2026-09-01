@@ -11,7 +11,6 @@ func TestAgentStateContainsOnlyStableAvailability(t *testing.T) {
 	}{
 		{AgentProvisioning, AgentAvailable},
 		{AgentProvisioning, AgentUnavailable},
-		{AgentProvisioning, AgentDeleting},
 		{AgentAvailable, AgentDisabled},
 		{AgentAvailable, AgentUnavailable},
 		{AgentAvailable, AgentDeleting},
@@ -33,6 +32,7 @@ func TestAgentStateContainsOnlyStableAvailability(t *testing.T) {
 		to   AgentState
 	}{
 		{AgentProvisioning, AgentDisabled},
+		{AgentProvisioning, AgentDeleting},
 		{AgentAvailable, AgentProvisioning},
 		{AgentDisabled, AgentProvisioning},
 		{AgentDeleted, AgentAvailable},

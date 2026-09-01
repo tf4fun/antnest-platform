@@ -330,11 +330,18 @@ Deletion is a durable, restartable workflow:
 3. fence the Agent network and clear Egress flows;
 4. call Runtime Controller `DeleteRuntime`, which removes compute and workspace
    as one revision-fenced lifecycle operation;
-5. mark the Agent `DELETED` and append the domain event atomically;
-6. release the Tunnel address into Egress quarantine.
+5. release the Tunnel address into Egress quarantine;
+6. mark the Agent `DELETED`, deactivate its access binding, and append the
+   domain event atomically.
 
 An ambiguous Runtime or storage deletion keeps the workflow non-terminal. It
 never releases the network address or reports successful deletion early.
+Runtime deletion needs only the frozen Runtime revision or an authoritative
+`runtime_not_found`/`deleted` observation; AgentSpec and Execution revisions do
+not participate in the Runtime deletion fence. Immutable AgentSpec,
+ExecutionRevision, lifecycle operation, Run admission, and Agent event facts
+remain available for the configured audit-retention window. Physical purge is
+a separate future retention job, never part of the interactive delete request.
 
 ### 4.7 Agent disable and enable
 

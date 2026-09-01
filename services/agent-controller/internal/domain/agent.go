@@ -22,7 +22,7 @@ const (
 )
 
 var agentStateTransitions = map[AgentState]map[AgentState]struct{}{
-	AgentProvisioning: stateSet(AgentAvailable, AgentUnavailable, AgentDeleting),
+	AgentProvisioning: stateSet(AgentAvailable, AgentUnavailable),
 	AgentAvailable:    stateSet(AgentDisabled, AgentUnavailable, AgentDeleting),
 	AgentDisabled:     stateSet(AgentAvailable, AgentUnavailable, AgentDeleting),
 	AgentUnavailable:  stateSet(AgentAvailable, AgentDeleting),

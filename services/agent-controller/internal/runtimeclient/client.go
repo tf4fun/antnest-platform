@@ -32,6 +32,7 @@ type completionKind string
 const (
 	completionReady    completionKind = "ready"
 	completionDisabled completionKind = "disabled"
+	completionDeleted  completionKind = "deleted"
 )
 
 type Client struct {
@@ -125,6 +126,20 @@ func (client *Client) EnableRuntime(
 	}
 	return client.callRuntimeOperation(
 		ctx, requestID, agentID, "enable", "enable_runtime", payload, completionReady,
+	)
+}
+
+func (client *Client) DeleteRuntime(
+	ctx context.Context, requestID string, agentID string, expectedRevision string,
+) (ports.RuntimeOperation, error) {
+	if !runtimeRevisionPattern.MatchString(expectedRevision) {
+		return ports.RuntimeOperation{}, dependencyFailure("invalid_request", false)
+	}
+	payload := struct {
+		ExpectedRevision string `json:"expected_revision"`
+	}{ExpectedRevision: expectedRevision}
+	return client.callRuntimeOperation(
+		ctx, requestID, agentID, "delete", "delete_runtime", payload, completionDeleted,
 	)
 }
 
@@ -291,6 +306,10 @@ func validRuntimeOperation(operation runtimeOperationDTO, completion completionK
 			validMCPEndpoint(operation.Inspection.MCPEndpoint)
 	case completionDisabled:
 		return operation.Inspection.LifecycleState == "disabled" &&
+			operation.Inspection.Health == "absent" &&
+			operation.Inspection.RuntimeExecutionID == "" && operation.Inspection.MCPEndpoint == ""
+	case completionDeleted:
+		return operation.Inspection.LifecycleState == "deleted" &&
 			operation.Inspection.Health == "absent" &&
 			operation.Inspection.RuntimeExecutionID == "" && operation.Inspection.MCPEndpoint == ""
 	default:

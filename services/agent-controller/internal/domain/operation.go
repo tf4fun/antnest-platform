@@ -229,11 +229,8 @@ func validateOperationInput(input NewLifecycleOperationInput) error {
 		if targetSpec != "" || (sourceRuntime != "") == input.SourceRuntimeAbsent {
 			return fmt.Errorf("delete operation requires exactly one of a source Runtime revision or proof that Runtime is absent")
 		}
-		if sourceRuntime != "" && (sourceSpec == "" || sourceExecution == "") {
-			return fmt.Errorf("delete operation with a source Runtime requires source Agent spec and execution revisions")
-		}
-		if input.SourceRuntimeAbsent && (sourceSpec != "" || sourceExecution != "") {
-			return fmt.Errorf("delete operation with an absent Runtime cannot name source revisions")
+		if sourceSpec != "" || sourceExecution != "" {
+			return fmt.Errorf("delete operation does not accept unrelated Agent spec or execution revisions")
 		}
 	default:
 		return fmt.Errorf("unknown operation kind %q", input.Kind)

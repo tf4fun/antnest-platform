@@ -411,6 +411,12 @@ func (dependency *rebuildDependenciesStub) ResetAgentFlows(context.Context, stri
 	return nil
 }
 
+func (dependency *rebuildDependenciesStub) ReleaseAgentNetwork(
+	context.Context, string,
+) (ports.NetworkAttachment, error) {
+	return ports.NetworkAttachment{}, errors.New("unexpected Egress network release")
+}
+
 func (dependency *rebuildDependenciesStub) InitializeRuntime(
 	context.Context, string, string, ports.RuntimeConfiguration,
 ) (ports.RuntimeOperation, error) {
@@ -437,6 +443,12 @@ func (dependency *rebuildDependenciesStub) EnableRuntime(
 	context.Context, string, string, string, ports.RuntimeConfiguration,
 ) (ports.RuntimeOperation, error) {
 	return ports.RuntimeOperation{}, errors.New("unexpected Runtime enable")
+}
+
+func (dependency *rebuildDependenciesStub) DeleteRuntime(
+	context.Context, string, string, string,
+) (ports.RuntimeOperation, error) {
+	return ports.RuntimeOperation{}, errors.New("unexpected Runtime delete")
 }
 
 func (dependency *rebuildDependenciesStub) InspectRuntime(

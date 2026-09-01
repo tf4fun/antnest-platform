@@ -162,3 +162,9 @@ func (catalogOnlyLifecycle) EnableAgent(
 ) (application.EnableAgentResult, error) {
 	return application.EnableAgentResult{}, application.ErrDependencyUnavailable
 }
+
+func (catalogOnlyLifecycle) DeleteAgent(
+	context.Context, application.DeleteAgentInput,
+) (application.DeleteAgentResult, error) {
+	return application.DeleteAgentResult{}, application.ErrDependencyUnavailable
+}

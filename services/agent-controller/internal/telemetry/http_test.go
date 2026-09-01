@@ -50,6 +50,8 @@ func TestHTTPHandlerPropagatesTraceWithoutLoggingResourceIdentity(t *testing.T) 
 }
 
 func TestSetupRunsWithTelemetryDisabled(t *testing.T) {
+	previousPropagator := otel.GetTextMapPropagator()
+	t.Cleanup(func() { otel.SetTextMapPropagator(previousPropagator) })
 	t.Setenv("OTEL_SDK_DISABLED", "true")
 	runtime, err := Setup(t.Context(), slog.NewTextHandler(&bytes.Buffer{}, nil), Config{ServiceVersion: "test"})
 	if err != nil {
@@ -57,6 +59,11 @@ func TestSetupRunsWithTelemetryDisabled(t *testing.T) {
 	}
 	if runtime.Logger() == nil {
 		t.Fatal("disabled telemetry did not provide a logger")
+	}
+	for _, field := range otel.GetTextMapPropagator().Fields() {
+		if field == "baggage" {
+			t.Fatal("agent-controller propagates untrusted baggage to internal dependencies")
+		}
 	}
 	if err := runtime.Shutdown(t.Context()); err != nil {
 		t.Fatalf("shutdown disabled telemetry: %v", err)

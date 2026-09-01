@@ -21,7 +21,7 @@ import (
 	"soft/antnest-platform/services/agent-controller/internal/server"
 )
 
-func TestCreateRebuildDisableAndEnableAgentAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
+func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 	databaseURL := os.Getenv("ANTNEST_AGENT_CONTROLLER_TEST_DATABASE_URL")
 	if databaseURL == "" {
 		t.Skip("ANTNEST_AGENT_CONTROLLER_TEST_DATABASE_URL is not set")
@@ -73,9 +73,22 @@ func TestCreateRebuildDisableAndEnableAgentAcrossHTTPPostgresAndDependencyContra
 			return
 		}
 		path := strings.TrimPrefix(request.URL.Path, "/internal/agent-networks/")
-		agentID := strings.TrimSuffix(strings.TrimSuffix(path, "/fence"), "/reset-flows")
+		agentID := strings.TrimSuffix(
+			strings.TrimSuffix(strings.TrimSuffix(path, "/fence"), "/reset-flows"),
+			"/release",
+		)
 		if agentID == request.URL.Path || agentID == "" {
 			t.Fatalf("Egress request = %s %s", request.Method, request.URL.Path)
+		}
+		if request.Method == http.MethodPost && path == agentID+"/release" {
+			response.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"agent_id": agentID, "tunnel_ipv4": "100.64.0.2",
+				"resolver_ipv4": "100.64.0.1", "packet_contract_revision": 1,
+				"egress_endpoint": map[string]any{"ipv4": "10.20.0.8", "port": 8092},
+				"state":           "quarantined",
+			})
+			return
 		}
 		if request.Method == http.MethodPost &&
 			(path == agentID+"/fence" || path == agentID+"/reset-flows") {
@@ -153,6 +166,20 @@ func TestCreateRebuildDisableAndEnableAgentAcrossHTTPPostgresAndDependencyContra
 				payload.ExpectedRevision != "rtv_44444444444444444444444444444444" {
 				t.Fatalf("Runtime enable payload = %+v err=%v", payload, err)
 			}
+		} else if strings.HasSuffix(path, "/delete") {
+			action = "delete"
+			agentID = strings.TrimSuffix(path, "/delete")
+			kind = "delete_runtime"
+			revision = "rtv_66666666666666666666666666666666"
+			executionID = ""
+			endpoint = ""
+			var payload struct {
+				ExpectedRevision string `json:"expected_revision"`
+			}
+			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil ||
+				payload.ExpectedRevision != "rtv_55555555555555555555555555555555" {
+				t.Fatalf("Runtime delete payload = %+v err=%v", payload, err)
+			}
 		}
 		requestID := request.Header.Get("Idempotency-Key")
 		if request.Method != http.MethodPost || path != agentID+"/"+action || agentID == "" || requestID == "" {
@@ -165,8 +192,14 @@ func TestCreateRebuildDisableAndEnableAgentAcrossHTTPPostgresAndDependencyContra
 			"mcp_endpoint": endpoint, "runtime_execution_id": executionID,
 			"restart_count": 0, "observed_at": "2026-09-01T00:00:00Z",
 		}
-		if action == "disable" {
+		switch action {
+		case "disable":
 			inspection["lifecycle_state"] = "disabled"
+			inspection["health"] = "absent"
+			delete(inspection, "mcp_endpoint")
+			delete(inspection, "runtime_execution_id")
+		case "delete":
+			inspection["lifecycle_state"] = "deleted"
 			inspection["health"] = "absent"
 			delete(inspection, "mcp_endpoint")
 			delete(inspection, "runtime_execution_id")
@@ -322,5 +355,34 @@ func TestCreateRebuildDisableAndEnableAgentAcrossHTTPPostgresAndDependencyContra
 	if replayedEnable["state"] != "completed" || egressCalls.Load() != 18 || runtimeCalls.Load() != 4 {
 		t.Fatalf("idempotent enable repeated effects: egress=%d runtime=%d replay=%+v",
 			egressCalls.Load(), runtimeCalls.Load(), replayedEnable)
+	}
+
+	deleteBody := `{"request_id":"agent-e2e-delete"}`
+	deleted := serveJSON(
+		t, handler, http.MethodPost, "/internal/agents/"+agentID+"/delete",
+		deleteBody, http.StatusAccepted,
+	)
+	if deleted["state"] != "completed" || deleted["kind"] != "delete" {
+		t.Fatalf("delete operation = %+v", deleted)
+	}
+	deletedBase, err := repository.GetAgentDeleteBase(ctx, agentID)
+	if err != nil {
+		t.Fatalf("load deleted Agent: %v", err)
+	}
+	if deletedBase.Agent.DesiredState != "deleted" ||
+		deletedBase.Agent.LifecycleState != "deleted" ||
+		deletedBase.Agent.AgentSpecRevisionID != "" ||
+		deletedBase.Agent.ExecutionRevisionID != "" ||
+		deletedBase.Agent.RuntimeRevision != "" ||
+		deletedBase.Agent.ActiveOperationRequestID != "" {
+		t.Fatalf("deleted Agent = %+v", deletedBase.Agent)
+	}
+	replayedDelete := serveJSON(
+		t, handler, http.MethodPost, "/internal/agents/"+agentID+"/delete",
+		deleteBody, http.StatusAccepted,
+	)
+	if replayedDelete["state"] != "completed" || egressCalls.Load() != 21 || runtimeCalls.Load() != 5 {
+		t.Fatalf("idempotent delete repeated effects: egress=%d runtime=%d replay=%+v",
+			egressCalls.Load(), runtimeCalls.Load(), replayedDelete)
 	}
 }

@@ -4,14 +4,17 @@
 
 One binary serves internal HTTP RPC. PostgreSQL is authoritative. The current
 runnable slices serve ModelProfile/Template Catalog operations, Agent create,
-rebuild, disable, enable, and durable lifecycle-operation inspection. Create
+rebuild, disable, enable, delete, and durable lifecycle-operation inspection. Create
 advances through Egress ensure, Runtime initialize, an exact Egress attachment
 recheck, and atomic publication. Rebuild drains, fences, resets flows, replaces
 Runtime, restores the captured policy, and publishes. Disable drains, fences,
 removes compute while retaining workspace, and publishes the disabled state.
 Enable ensures the existing attachment, creates compute from the frozen spec,
 restores only the Disable-captured policy, and publishes a new Execution
-revision. The background lifecycle recovery worker described below is not yet
+revision. Delete drains Run occupancy, fences and resets Egress, proves Runtime
+compute and workspace absent, releases the Tunnel allocation into quarantine,
+then atomically publishes `deleted` and deactivates all Agent access bindings.
+The background lifecycle recovery worker described below is not yet
 started by the process.
 
 Multiple replicas may serve reads and Run admission. Lifecycle workers claim
@@ -80,6 +83,11 @@ turn a downstream outage into a restart loop.
   resolve the policy conflict and replay the original enable request.
 - An unresolved Run remains fail-closed until rebuild/delete proves its Runtime
   absent.
+- Delete intent is irreversible. A timeout or ambiguous Runtime/Egress effect
+  leaves the same delete operation running; replay the original request ID.
+  `deleted` is never published before Runtime absence and Egress quarantine are
+  proven. `runtime_not_found` and `agent_network_not_found` are authoritative
+  absence proofs, not failures that recreate resources.
 - Never edit operation phases or Agent projection rows by hand. Repair the
   dependency and replay the durable operation.
 

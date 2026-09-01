@@ -11,6 +11,9 @@ import (
 const (
 	BuiltinDenyAllPolicyID = "builtin/deny-all"
 
+	NetworkReleaseQuarantined       = "quarantined"
+	NetworkReleaseAuthoritativeNone = "authoritative_absent"
+
 	EventAgentCreateRequested  = "agent_create_requested"
 	EventAgentReady            = "agent_ready"
 	EventAgentBuildFailed      = "agent_build_failed"
@@ -22,6 +25,8 @@ const (
 	EventAgentEnableRequested  = "agent_enable_requested"
 	EventAgentEnabled          = "agent_enabled"
 	EventAgentEnableFailed     = "agent_enable_failed"
+	EventAgentDeleteRequested  = "agent_delete_requested"
+	EventAgentDeleted          = "agent_deleted"
 )
 
 type AgentSpecSource interface {
@@ -73,6 +78,12 @@ type RuntimeInspection struct {
 	Health             string `json:"health"`
 }
 
+type RuntimeAbsenceProof struct {
+	Reason          string    `json:"reason"`
+	RuntimeRevision string    `json:"runtime_revision,omitempty"`
+	ObservedAt      time.Time `json:"observed_at"`
+}
+
 type EgressClient interface {
 	GetAgentNetwork(context.Context, string) (NetworkAttachment, error)
 	EnsureAgentNetwork(context.Context, string) (NetworkAttachment, error)
@@ -80,6 +91,7 @@ type EgressClient interface {
 	AssignAgentPolicy(context.Context, NetworkPolicyAssignment, uint64) (NetworkPolicyAssignment, error)
 	FenceAgentNetwork(context.Context, string) error
 	ResetAgentFlows(context.Context, string) error
+	ReleaseAgentNetwork(context.Context, string) (NetworkAttachment, error)
 }
 
 type RuntimeClient interface {
@@ -87,6 +99,7 @@ type RuntimeClient interface {
 	UpdateRuntime(context.Context, string, string, string, RuntimeConfiguration) (RuntimeOperation, error)
 	DisableRuntime(context.Context, string, string, string) (RuntimeOperation, error)
 	EnableRuntime(context.Context, string, string, string, RuntimeConfiguration) (RuntimeOperation, error)
+	DeleteRuntime(context.Context, string, string, string) (RuntimeOperation, error)
 	InspectRuntime(context.Context, string) (RuntimeInspection, error)
 }
 
@@ -158,7 +171,9 @@ type LifecycleOperationRecord struct {
 	NetworkAttachment         *NetworkAttachment
 	NetworkPolicyAssignment   *NetworkPolicyAssignment
 	SourceRuntimeInspection   *RuntimeInspection
+	SourceRuntimeAbsenceProof *RuntimeAbsenceProof
 	RuntimeResult             *RuntimeOperation
+	NetworkReleaseOutcome     string
 	InitialTraceParent        string
 	PreviousAttemptTraceID    string
 	Attempt                   int64
@@ -237,6 +252,15 @@ type AgentEnableState struct {
 	Spec                    AgentSpecRecord
 	LastSuccessfulExecution ExecutionRecord
 	Operation               LifecycleOperationRecord
+}
+
+type AgentDeleteBase struct {
+	Agent AgentRecord
+}
+
+type AgentDeleteState struct {
+	Agent     AgentRecord
+	Operation LifecycleOperationRecord
 }
 
 type BeginAgentCreate struct {
@@ -390,6 +414,36 @@ type FailAgentEnable struct {
 	Now                     time.Time
 }
 
+type BeginAgentDelete struct {
+	AgentID                   string
+	ExpectedAggregateSequence int64
+	ExpectedDesiredState      domain.DesiredState
+	ExpectedLifecycleState    domain.AgentState
+	ExpectedRuntimeRevision   string
+	Operation                 LifecycleOperationRecord
+	RequestedEvent            AgentEventRecord
+	Now                       time.Time
+}
+
+type AdvanceAgentDelete struct {
+	RequestID             string
+	Fingerprint           string
+	ExpectedPhase         domain.OperationPhase
+	NextPhase             domain.OperationPhase
+	NextChildRequestID    string
+	NetworkAttachment     *NetworkAttachment
+	RuntimeResult         *RuntimeOperation
+	NetworkReleaseOutcome string
+	Now                   time.Time
+}
+
+type PublishAgentDelete struct {
+	RequestID    string
+	Fingerprint  string
+	DeletedEvent AgentEventRecord
+	Now          time.Time
+}
+
 type LifecycleStore interface {
 	GetLifecycleOperation(context.Context, string) (LifecycleOperationRecord, error)
 	GetAgentLifecycleBase(context.Context, string) (AgentLifecycleBase, error)
@@ -423,4 +477,10 @@ type LifecycleStore interface {
 	AdvanceAgentEnable(context.Context, AdvanceAgentEnable) (AgentEnableState, error)
 	PublishAgentEnable(context.Context, PublishAgentEnable) (AgentEnableState, error)
 	FailAgentEnable(context.Context, FailAgentEnable) (AgentEnableState, error)
+	GetAgentDeleteBase(context.Context, string) (AgentDeleteBase, error)
+	ReplayAgentDelete(context.Context, string, string) (AgentDeleteState, bool, error)
+	BeginAgentDelete(context.Context, BeginAgentDelete) (AgentDeleteState, bool, error)
+	SettleAgentDeleteDrain(context.Context, string, string, string, time.Time) (AgentDeleteState, error)
+	AdvanceAgentDelete(context.Context, AdvanceAgentDelete) (AgentDeleteState, error)
+	PublishAgentDelete(context.Context, PublishAgentDelete) (AgentDeleteState, error)
 }

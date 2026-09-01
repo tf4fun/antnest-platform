@@ -415,6 +415,53 @@ func TestLifecycleHandlerRequestsAgentEnableWithStableContract(t *testing.T) {
 	}
 }
 
+func TestLifecycleHandlerRequestsAgentDeleteWithStableContract(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(60, 0).UTC()
+	lifecycle := &lifecycleServiceStub{deleteResult: application.DeleteAgentResult{
+		Agent: application.AgentView{
+			AgentID: "agent-1", DesiredState: domain.DesiredDeleted,
+			LifecycleState: domain.AgentDeleted,
+		},
+		Operation: application.OperationView{
+			RequestID: "request-delete-1", AgentID: "agent-1",
+			Kind: domain.OperationDelete, Phase: domain.PhaseCompleted,
+			State: domain.OperationCompleted, CreatedAt: now, UpdatedAt: now,
+		},
+	}}
+	handler, err := NewHandler(
+		&catalogServiceStub{}, lifecycle, func(context.Context) error { return nil },
+	)
+	if err != nil {
+		t.Fatalf("new handler: %v", err)
+	}
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(
+		http.MethodPost, "/internal/agents/agent-1/delete",
+		strings.NewReader(`{"request_id":"request-delete-1"}`),
+	)
+	request.Header.Set("traceparent", "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01")
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("status = %d body=%s", response.Code, response.Body.String())
+	}
+	if lifecycle.deleteInput.AgentID != "agent-1" ||
+		lifecycle.deleteInput.RequestID != "request-delete-1" ||
+		lifecycle.deleteInput.InitialTraceParent != request.Header.Get("traceparent") {
+		t.Fatalf("DeleteAgent input = %+v", lifecycle.deleteInput)
+	}
+	var payload operationResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.Kind != domain.OperationDelete || payload.State != domain.OperationCompleted ||
+		payload.RequestID != "request-delete-1" {
+		t.Fatalf("response = %+v", payload)
+	}
+}
+
 func TestObserveLifecycleResultMarksTerminalBusinessFailure(t *testing.T) {
 	previousProvider := otel.GetTracerProvider()
 	recorder := tracetest.NewSpanRecorder()
@@ -457,6 +504,8 @@ type lifecycleServiceStub struct {
 	disableResult      application.DisableAgentResult
 	enableInput        application.EnableAgentInput
 	enableResult       application.EnableAgentResult
+	deleteInput        application.DeleteAgentInput
+	deleteResult       application.DeleteAgentResult
 	operation          application.OperationView
 	operationRequestID string
 	err                error
@@ -495,6 +544,13 @@ func (service *lifecycleServiceStub) EnableAgent(
 ) (application.EnableAgentResult, error) {
 	service.enableInput = input
 	return service.enableResult, service.err
+}
+
+func (service *lifecycleServiceStub) DeleteAgent(
+	_ context.Context, input application.DeleteAgentInput,
+) (application.DeleteAgentResult, error) {
+	service.deleteInput = input
+	return service.deleteResult, service.err
 }
 
 func (service *catalogServiceStub) CreateModelProfile(

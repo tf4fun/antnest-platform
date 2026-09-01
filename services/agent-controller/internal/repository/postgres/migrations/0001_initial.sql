@@ -200,7 +200,11 @@ CREATE TABLE IF NOT EXISTS agent_controller.agent_lifecycle_operations (
     network_attachment JSONB,
     network_policy_assignment JSONB,
     source_runtime_inspection JSONB,
+    source_runtime_absence_proof JSONB,
     runtime_result JSONB,
+    network_release_outcome TEXT NOT NULL DEFAULT '' CHECK (
+        network_release_outcome IN ('', 'quarantined', 'authoritative_absent')
+    ),
     initial_trace_parent TEXT NOT NULL DEFAULT '',
     previous_attempt_trace_id TEXT NOT NULL DEFAULT '',
     attempt BIGINT NOT NULL DEFAULT 1 CHECK (attempt > 0),
@@ -222,9 +226,9 @@ CREATE TABLE IF NOT EXISTS agent_controller.agent_lifecycle_operations (
         (kind = 'enable' AND source_spec_revision_id <> '' AND source_execution_revision_id <> ''
             AND source_runtime_revision <> ''
             AND NOT source_runtime_absent AND target_spec_revision_id <> '') OR
-        (kind = 'delete' AND target_spec_revision_id = '' AND (
-            (source_runtime_revision <> '' AND source_spec_revision_id <> ''
-                AND source_execution_revision_id <> '' AND NOT source_runtime_absent) OR
+        (kind = 'delete' AND source_spec_revision_id = ''
+            AND source_execution_revision_id = '' AND target_spec_revision_id = '' AND (
+            (source_runtime_revision <> '' AND NOT source_runtime_absent) OR
             (source_runtime_revision = '' AND source_spec_revision_id = ''
                 AND source_execution_revision_id = '' AND source_runtime_absent)
         ))

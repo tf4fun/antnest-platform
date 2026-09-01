@@ -264,6 +264,61 @@ func TestEnableRuntimeUsesDisabledRevisionAndCompleteConfiguration(t *testing.T)
 	}
 }
 
+func TestDeleteRuntimeUsesRevisionFenceAndRequiresDeletedInspection(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost || request.URL.Path != "/internal/runtimes/agent-1/delete" {
+			t.Fatalf("request = %s %s", request.Method, request.URL.Path)
+		}
+		if request.Header.Get("Idempotency-Key") != "child-request-delete" {
+			t.Fatalf("Idempotency-Key = %q", request.Header.Get("Idempotency-Key"))
+		}
+		var payload struct {
+			ExpectedRevision string `json:"expected_revision"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if payload.ExpectedRevision != "rtv_11111111111111111111111111111111" {
+			t.Fatalf("delete payload = %+v", payload)
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = response.Write([]byte(`{
+			"request_id":"child-request-delete",
+			"kind":"delete_runtime",
+			"agent_id":"agent-1",
+			"target_revision":"rtv_22222222222222222222222222222222",
+			"state":"completed",
+			"effect":"completed",
+			"inspection":{
+				"agent_id":"agent-1",
+				"runtime_revision":"rtv_22222222222222222222222222222222",
+				"lifecycle_state":"deleted",
+				"health":"absent"
+			}
+		}`))
+	}))
+	t.Cleanup(server.Close)
+	client, err := New(server.URL, time.Second, server.Client())
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+
+	result, err := client.DeleteRuntime(
+		context.Background(), "child-request-delete", "agent-1",
+		"rtv_11111111111111111111111111111111",
+	)
+	if err != nil {
+		t.Fatalf("delete Runtime: %v", err)
+	}
+	if result.RuntimeRevision != "rtv_22222222222222222222222222222222" ||
+		result.LifecycleState != "deleted" || result.Health != "absent" ||
+		result.RuntimeExecutionID != "" || result.MCPEndpoint != "" {
+		t.Fatalf("Runtime operation = %+v", result)
+	}
+}
+
 func TestInspectRuntimeReturnsAuthoritativeReadyBinding(t *testing.T) {
 	t.Parallel()
 

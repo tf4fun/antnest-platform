@@ -67,6 +67,12 @@ func (client *Client) ResetAgentFlows(ctx context.Context, agentID string) error
 	return client.postAgentNetworkAction(ctx, agentID, "reset-flows", "reset_agent_flows")
 }
 
+func (client *Client) ReleaseAgentNetwork(
+	ctx context.Context, agentID string,
+) (ports.NetworkAttachment, error) {
+	return client.readAgentNetworkAction(ctx, agentID, "release", "release_agent_network", "quarantined")
+}
+
 func (client *Client) GetAgentPolicyAssignment(
 	ctx context.Context, agentID string,
 ) (ports.NetworkPolicyAssignment, error) {
@@ -202,31 +208,67 @@ func (client *Client) readAgentNetwork(
 	if response.StatusCode != http.StatusOK {
 		return ports.NetworkAttachment{}, decodeFailure(body, response.StatusCode)
 	}
-	var payload struct {
-		AgentID                string `json:"agent_id"`
-		TunnelIPv4             string `json:"tunnel_ipv4"`
-		ResolverIPv4           string `json:"resolver_ipv4"`
-		PacketContractRevision uint32 `json:"packet_contract_revision"`
-		EgressEndpoint         struct {
-			IPv4 string `json:"ipv4"`
-			Port uint16 `json:"port"`
-		} `json:"egress_endpoint"`
-		State string `json:"state"`
+	requiredState := ""
+	if requireActive {
+		requiredState = "active"
 	}
-	if err := json.Unmarshal(body, &payload); err != nil || payload.AgentID != agentID ||
-		!validIPv4(payload.TunnelIPv4) || !validIPv4(payload.ResolverIPv4) ||
-		!validIPv4(payload.EgressEndpoint.IPv4) || payload.EgressEndpoint.Port == 0 ||
-		payload.PacketContractRevision == 0 || !validNetworkState(payload.State) ||
-		(requireActive && payload.State != "active") {
+	result, err = decodeNetworkAttachment(body, agentID, requiredState)
+	if err != nil {
 		return ports.NetworkAttachment{}, dependencyFailure("invalid_response", true)
 	}
-	return ports.NetworkAttachment{
-		AgentID: payload.AgentID, TunnelIPv4: payload.TunnelIPv4,
-		ResolverIPv4:           payload.ResolverIPv4,
-		PacketContractRevision: payload.PacketContractRevision,
-		EgressIPv4:             payload.EgressEndpoint.IPv4, EgressPort: payload.EgressEndpoint.Port,
-		State: payload.State,
-	}, nil
+	return result, nil
+}
+
+func (client *Client) readAgentNetworkAction(
+	ctx context.Context,
+	agentID string,
+	action string,
+	operation string,
+	requiredState string,
+) (result ports.NetworkAttachment, resultErr error) {
+	ctx, cancel := context.WithTimeout(ctx, client.timeout)
+	defer cancel()
+	ctx, span := tracer.Start(
+		ctx, "agent_controller.egress."+operation,
+		trace.WithSpanKind(trace.SpanKindClient),
+		trace.WithAttributes(
+			attribute.String("server.address", client.baseURL.Hostname()),
+			attribute.String("antnest.agent.id", agentID),
+			attribute.String("rpc.system", "http_json"),
+		),
+	)
+	defer func() {
+		if resultErr != nil {
+			span.SetStatus(codes.Error, dependencyCode(resultErr))
+		}
+		span.End()
+	}()
+
+	endpoint := *client.baseURL
+	endpoint.Path = "/internal/agent-networks/" + url.PathEscape(agentID) + "/" + action
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), http.NoBody)
+	if err != nil {
+		return ports.NetworkAttachment{}, dependencyFailure("invalid_request", false)
+	}
+	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(request.Header))
+	response, err := client.httpClient.Do(request)
+	if err != nil {
+		return ports.NetworkAttachment{}, dependencyFailure("control_plane_unavailable", true)
+	}
+	span.SetAttributes(attribute.Int("http.response.status_code", response.StatusCode))
+	body, err := io.ReadAll(io.LimitReader(response.Body, maximumResponseBytes+1))
+	closeErr := response.Body.Close()
+	if err != nil || closeErr != nil || len(body) > maximumResponseBytes {
+		return ports.NetworkAttachment{}, dependencyFailure("invalid_response", true)
+	}
+	if response.StatusCode != http.StatusOK {
+		return ports.NetworkAttachment{}, decodeFailure(body, response.StatusCode)
+	}
+	result, err = decodeNetworkAttachment(body, agentID, requiredState)
+	if err != nil {
+		return ports.NetworkAttachment{}, dependencyFailure("invalid_response", true)
+	}
+	return result, nil
 }
 
 func (client *Client) postAgentNetworkAction(
@@ -305,6 +347,36 @@ func validIPv4(value string) bool {
 
 func validNetworkState(value string) bool {
 	return value == "active" || value == "quarantined"
+}
+
+func decodeNetworkAttachment(
+	body []byte, agentID string, requiredState string,
+) (ports.NetworkAttachment, error) {
+	var payload struct {
+		AgentID                string `json:"agent_id"`
+		TunnelIPv4             string `json:"tunnel_ipv4"`
+		ResolverIPv4           string `json:"resolver_ipv4"`
+		PacketContractRevision uint32 `json:"packet_contract_revision"`
+		EgressEndpoint         struct {
+			IPv4 string `json:"ipv4"`
+			Port uint16 `json:"port"`
+		} `json:"egress_endpoint"`
+		State string `json:"state"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil || payload.AgentID != agentID ||
+		!validIPv4(payload.TunnelIPv4) || !validIPv4(payload.ResolverIPv4) ||
+		!validIPv4(payload.EgressEndpoint.IPv4) || payload.EgressEndpoint.Port == 0 ||
+		payload.PacketContractRevision == 0 || !validNetworkState(payload.State) ||
+		(requiredState != "" && payload.State != requiredState) {
+		return ports.NetworkAttachment{}, fmt.Errorf("invalid Agent network attachment")
+	}
+	return ports.NetworkAttachment{
+		AgentID: payload.AgentID, TunnelIPv4: payload.TunnelIPv4,
+		ResolverIPv4:           payload.ResolverIPv4,
+		PacketContractRevision: payload.PacketContractRevision,
+		EgressIPv4:             payload.EgressEndpoint.IPv4, EgressPort: payload.EgressEndpoint.Port,
+		State: payload.State,
+	}, nil
 }
 
 var _ ports.EgressClient = (*Client)(nil)

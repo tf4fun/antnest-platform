@@ -48,6 +48,7 @@ type LifecycleService interface {
 	RebuildAgent(context.Context, application.RebuildAgentInput) (application.RebuildAgentResult, error)
 	DisableAgent(context.Context, application.DisableAgentInput) (application.DisableAgentResult, error)
 	EnableAgent(context.Context, application.EnableAgentInput) (application.EnableAgentResult, error)
+	DeleteAgent(context.Context, application.DeleteAgentInput) (application.DeleteAgentResult, error)
 	GetLifecycleOperation(context.Context, string) (application.OperationView, error)
 }
 
@@ -86,6 +87,7 @@ func NewHandler(
 	mux.HandleFunc("POST /internal/agents/{agent_id}/rebuild", h.rebuildAgent)
 	mux.HandleFunc("POST /internal/agents/{agent_id}/disable", h.disableAgent)
 	mux.HandleFunc("POST /internal/agents/{agent_id}/enable", h.enableAgent)
+	mux.HandleFunc("POST /internal/agents/{agent_id}/delete", h.deleteAgent)
 	mux.HandleFunc("GET /internal/agent-operations/{request_id}", h.getLifecycleOperation)
 	return mux, nil
 }
@@ -397,6 +399,7 @@ func (h *handler) createAgent(response http.ResponseWriter, request *http.Reques
 		TemplateID: payload.TemplateID, TemplateRevision: payload.TemplateRevision,
 		InitialTraceParent: request.Header.Get("traceparent"),
 	})
+	observeLifecycleResult(request.Context(), result.Operation)
 	if err != nil {
 		writeServiceError(request.Context(), response, err)
 		return
@@ -414,11 +417,11 @@ func (h *handler) rebuildAgent(response http.ResponseWriter, request *http.Reque
 		TemplateID: payload.TemplateID, TemplateRevision: payload.TemplateRevision,
 		InitialTraceParent: request.Header.Get("traceparent"),
 	})
+	observeLifecycleResult(request.Context(), result.Operation)
 	if err != nil {
 		writeServiceError(request.Context(), response, err)
 		return
 	}
-	observeLifecycleResult(request.Context(), result.Operation)
 	writeJSON(response, http.StatusAccepted, operationPayload(result.Operation))
 }
 
@@ -431,11 +434,11 @@ func (h *handler) disableAgent(response http.ResponseWriter, request *http.Reque
 		RequestID: payload.RequestID, AgentID: request.PathValue("agent_id"),
 		InitialTraceParent: request.Header.Get("traceparent"),
 	})
+	observeLifecycleResult(request.Context(), result.Operation)
 	if err != nil {
 		writeServiceError(request.Context(), response, err)
 		return
 	}
-	observeLifecycleResult(request.Context(), result.Operation)
 	writeJSON(response, http.StatusAccepted, operationPayload(result.Operation))
 }
 
@@ -448,11 +451,28 @@ func (h *handler) enableAgent(response http.ResponseWriter, request *http.Reques
 		RequestID: payload.RequestID, AgentID: request.PathValue("agent_id"),
 		InitialTraceParent: request.Header.Get("traceparent"),
 	})
+	observeLifecycleResult(request.Context(), result.Operation)
 	if err != nil {
 		writeServiceError(request.Context(), response, err)
 		return
 	}
+	writeJSON(response, http.StatusAccepted, operationPayload(result.Operation))
+}
+
+func (h *handler) deleteAgent(response http.ResponseWriter, request *http.Request) {
+	var payload lifecycleRequest
+	if !decodeJSON(response, request, &payload) {
+		return
+	}
+	result, err := h.lifecycle.DeleteAgent(request.Context(), application.DeleteAgentInput{
+		RequestID: payload.RequestID, AgentID: request.PathValue("agent_id"),
+		InitialTraceParent: request.Header.Get("traceparent"),
+	})
 	observeLifecycleResult(request.Context(), result.Operation)
+	if err != nil {
+		writeServiceError(request.Context(), response, err)
+		return
+	}
 	writeJSON(response, http.StatusAccepted, operationPayload(result.Operation))
 }
 
@@ -612,6 +632,9 @@ func publicError(err error) (int, errorResponse) {
 }
 
 func observeLifecycleResult(ctx context.Context, operation application.OperationView) {
+	if operation.RequestID == "" {
+		return
+	}
 	span := trace.SpanFromContext(ctx)
 	metricAttributes := []attribute.KeyValue{
 		attribute.String("antnest.lifecycle.kind", string(operation.Kind)),

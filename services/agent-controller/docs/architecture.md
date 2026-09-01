@@ -274,6 +274,10 @@ quarantine, keeps immutable events/revisions for retention, deactivates the
 owner binding, and hides the Agent from default active queries. Once deletion
 intent is persisted it is not rolled back to an executable Agent; ambiguous
 external effects remain on the same operation until reconciled.
+The deletion fence contains only the frozen Runtime revision, or an
+authoritative proof that no Runtime exists. AgentSpec and Execution revision
+identities are deliberately excluded because they cannot strengthen Runtime
+deletion and would make failed initial provisioning impossible to clean up.
 
 ### Run Admission
 

@@ -267,6 +267,12 @@ func (dependency *disableDependenciesStub) ResetAgentFlows(context.Context, stri
 	return errors.New("unexpected Egress flow reset")
 }
 
+func (dependency *disableDependenciesStub) ReleaseAgentNetwork(
+	context.Context, string,
+) (ports.NetworkAttachment, error) {
+	return ports.NetworkAttachment{}, errors.New("unexpected Egress network release")
+}
+
 func (dependency *disableDependenciesStub) InitializeRuntime(
 	context.Context, string, string, ports.RuntimeConfiguration,
 ) (ports.RuntimeOperation, error) {
@@ -291,6 +297,12 @@ func (dependency *disableDependenciesStub) EnableRuntime(
 	context.Context, string, string, string, ports.RuntimeConfiguration,
 ) (ports.RuntimeOperation, error) {
 	return ports.RuntimeOperation{}, errors.New("unexpected Runtime enable")
+}
+
+func (dependency *disableDependenciesStub) DeleteRuntime(
+	context.Context, string, string, string,
+) (ports.RuntimeOperation, error) {
+	return ports.RuntimeOperation{}, errors.New("unexpected Runtime delete")
 }
 
 func (dependency *disableDependenciesStub) InspectRuntime(

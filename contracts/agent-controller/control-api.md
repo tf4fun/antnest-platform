@@ -59,6 +59,15 @@ operation. It returns the Agent projection, access subject, and operation.
 Lifecycle methods return the durable operation; callers inspect by request ID
 after any timeout.
 
+Delete persists desired state `deleted` and lifecycle state `deleting` before
+draining Run occupancy. It then fences and resets Egress, removes Runtime
+compute and workspace behind the frozen Runtime revision, releases the network
+attachment into quarantine, deactivates Agent access, and publishes `deleted`.
+An absent Runtime or network is an idempotent success only when the owning
+service returns its stable not-found code. Ambiguous effects keep the same
+operation non-terminal. Immutable revisions, events, terminal operations, and
+Run admissions remain available for retention and audit.
+
 `GET /internal/agents` is the global current-state projection. Deleted Agents
 are excluded unless `include_deleted=true`. `GET /internal/agents/{agent_id}`
 returns the current projection and active immutable revision identifiers.

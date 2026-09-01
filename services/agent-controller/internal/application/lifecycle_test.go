@@ -346,6 +346,12 @@ func (dependency *lifecycleDependenciesStub) ResetAgentFlows(context.Context, st
 	return errors.New("unexpected Egress flow reset")
 }
 
+func (dependency *lifecycleDependenciesStub) ReleaseAgentNetwork(
+	context.Context, string,
+) (ports.NetworkAttachment, error) {
+	return ports.NetworkAttachment{}, errors.New("unexpected Egress network release")
+}
+
 func (dependency *lifecycleDependenciesStub) InitializeRuntime(
 	_ context.Context, _ string, _ string, configuration ports.RuntimeConfiguration,
 ) (ports.RuntimeOperation, error) {
@@ -370,6 +376,12 @@ func (dependency *lifecycleDependenciesStub) EnableRuntime(
 	context.Context, string, string, string, ports.RuntimeConfiguration,
 ) (ports.RuntimeOperation, error) {
 	return ports.RuntimeOperation{}, errors.New("unexpected Runtime enable")
+}
+
+func (dependency *lifecycleDependenciesStub) DeleteRuntime(
+	context.Context, string, string, string,
+) (ports.RuntimeOperation, error) {
+	return ports.RuntimeOperation{}, errors.New("unexpected Runtime delete")
 }
 
 func (dependency *lifecycleDependenciesStub) InspectRuntime(
@@ -519,6 +531,42 @@ func (store *lifecycleStoreStub) FailAgentEnable(
 	context.Context, ports.FailAgentEnable,
 ) (ports.AgentEnableState, error) {
 	return ports.AgentEnableState{}, errors.New("unexpected Agent enable failure")
+}
+
+func (store *lifecycleStoreStub) GetAgentDeleteBase(
+	context.Context, string,
+) (ports.AgentDeleteBase, error) {
+	return ports.AgentDeleteBase{}, errors.New("unexpected Agent delete base read")
+}
+
+func (store *lifecycleStoreStub) ReplayAgentDelete(
+	context.Context, string, string,
+) (ports.AgentDeleteState, bool, error) {
+	return ports.AgentDeleteState{}, false, errors.New("unexpected Agent delete replay")
+}
+
+func (store *lifecycleStoreStub) BeginAgentDelete(
+	context.Context, ports.BeginAgentDelete,
+) (ports.AgentDeleteState, bool, error) {
+	return ports.AgentDeleteState{}, false, errors.New("unexpected Agent delete begin")
+}
+
+func (store *lifecycleStoreStub) SettleAgentDeleteDrain(
+	context.Context, string, string, string, time.Time,
+) (ports.AgentDeleteState, error) {
+	return ports.AgentDeleteState{}, errors.New("unexpected Agent delete drain")
+}
+
+func (store *lifecycleStoreStub) AdvanceAgentDelete(
+	context.Context, ports.AdvanceAgentDelete,
+) (ports.AgentDeleteState, error) {
+	return ports.AgentDeleteState{}, errors.New("unexpected Agent delete advance")
+}
+
+func (store *lifecycleStoreStub) PublishAgentDelete(
+	context.Context, ports.PublishAgentDelete,
+) (ports.AgentDeleteState, error) {
+	return ports.AgentDeleteState{}, errors.New("unexpected Agent delete publish")
 }
 
 func (store *lifecycleStoreStub) ReplayAgentCreate(

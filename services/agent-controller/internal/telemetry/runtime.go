@@ -47,9 +47,7 @@ func Setup(ctx context.Context, base slog.Handler, config Config) (*Runtime, err
 	}
 	local := correlatedHandler{next: base}
 	runtime := &Runtime{logger: slog.New(local)}
-	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
-		propagation.TraceContext{}, propagation.Baggage{},
-	))
+	otel.SetTextMapPropagator(propagation.TraceContext{})
 	otel.SetErrorHandler(otel.ErrorHandlerFunc(func(error) {
 		runtime.Logger().Error("OpenTelemetry export failed", "error_class", "export_error")
 	}))
