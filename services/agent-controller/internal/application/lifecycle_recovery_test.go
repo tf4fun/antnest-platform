@@ -193,6 +193,32 @@ func TestLifecycleRecoveryWorkerTreatsLostClaimAsSuperseded(t *testing.T) {
 	}
 }
 
+func TestLifecycleRecoveryWorkerReleasesClaimAfterGracefulCancellation(t *testing.T) {
+	t.Parallel()
+
+	operation := recoveryOperation(domain.OperationCreate)
+	store := &recoveryStoreStub{
+		claim: ports.LifecycleRecoveryClaim{
+			Operation: operation, WorkerID: "worker-1", Attempt: 2,
+			LeaseUntil: time.Now().Add(time.Minute),
+		},
+		found: true,
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	worker := mustRecoveryWorker(t, store, &recoveryResumerStub{
+		cancel: cancel, err: context.Canceled,
+	})
+	processed, err := worker.RunOnce(ctx)
+	if !processed || !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled recovery processed=%v err=%v", processed, err)
+	}
+	if store.released.RequestID != operation.RequestID || store.released.WorkerID != "worker-1" ||
+		store.released.Attempt != 2 || store.released.RetryAfter != 0 ||
+		store.releaseContextErr != nil {
+		t.Fatalf("cancelled recovery release=%+v context_err=%v", store.released, store.releaseContextErr)
+	}
+}
+
 func TestResumeLifecycleOperationDispatchesPersistedKind(t *testing.T) {
 	t.Parallel()
 
@@ -258,10 +284,6 @@ func TestResumeLifecycleOperationRejectsStaleAuthoritativeClaim(t *testing.T) {
 		"missing lease": func(operation *ports.LifecycleOperationRecord, _ *ports.LifecycleRecoveryToken) {
 			operation.RecoveryLeaseUntil = nil
 		},
-		"expired lease": func(operation *ports.LifecycleOperationRecord, _ *ports.LifecycleRecoveryToken) {
-			expired := time.Unix(49, 0).UTC()
-			operation.RecoveryLeaseUntil = &expired
-		},
 	}
 	for name, mutate := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -296,6 +318,43 @@ func TestResumeLifecycleOperationRejectsStaleAuthoritativeClaim(t *testing.T) {
 				t.Fatalf("stale claim reached dependency: %v", dependencies.calls)
 			}
 		})
+	}
+}
+
+func TestResumeLifecycleOperationDefersLeaseExpiryToRepositoryClock(t *testing.T) {
+	t.Parallel()
+
+	store := &lifecycleStoreStub{}
+	dependencies := &lifecycleDependenciesStub{
+		network: validLifecycleNetwork(), runtime: ports.RuntimeOperation{State: "running"},
+	}
+	service := newLifecycleTestService(t, store, dependencies)
+	result, err := service.CreateAgent(
+		context.Background(), lifecycleCreateInput("request-database-clock-claim"),
+	)
+	if err != nil || result.Operation.Phase != domain.PhaseRuntimeInitialize {
+		t.Fatalf("interrupt create: result=%+v err=%v", result, err)
+	}
+	store.replayed = true
+	operation := &store.beginState.Operation
+	operation.Attempt++
+	operation.RecoveryOwner = "recovery-worker"
+	leaseBeforeApplicationClock := time.Unix(49, 0).UTC()
+	operation.RecoveryLeaseUntil = &leaseBeforeApplicationClock
+	token := ports.LifecycleRecoveryToken{
+		RequestID: operation.RequestID, WorkerID: operation.RecoveryOwner, Attempt: operation.Attempt,
+	}
+	dependencies.runtime = readyRecoveryRuntime("database-clock")
+	dependencies.calls = nil
+
+	recovered, err := service.ResumeLifecycleOperation(
+		ports.WithLifecycleRecoveryToken(context.Background(), token), *operation,
+	)
+	if err != nil || recovered.Phase != domain.PhasePublish || !recovered.Progressed {
+		t.Fatalf("database-authoritative lease recovery = %+v err=%v", recovered, err)
+	}
+	if !slices.Equal(dependencies.calls, []string{"runtime.initialize"}) {
+		t.Fatalf("database-authoritative lease calls = %v", dependencies.calls)
 	}
 }
 
@@ -346,6 +405,47 @@ func TestLifecycleRecoveryDoesNotExecuteSecondPhaseAfterConcurrentAdvance(t *tes
 	if !recoveryStore.released || store.beginState.Operation.RecoveryOwner != "" ||
 		store.beginState.Operation.RecoveryLeaseUntil != nil {
 		t.Fatalf("concurrent recovery retained claim: %+v", store.beginState.Operation)
+	}
+}
+
+func TestOrdinaryLifecycleReplayNeverExecutesRecoveryOwnedOperation(t *testing.T) {
+	t.Parallel()
+
+	operation := ports.LifecycleOperationRecord{
+		RequestID: "request-recovery-owned", Attempt: 2,
+		State: domain.OperationRunning, Phase: domain.PhaseNetworkEnsure,
+	}
+	service := &LifecycleService{}
+
+	create, err := service.continueAgentCreate(
+		context.Background(), ports.AgentCreateState{Operation: operation},
+	)
+	if err != nil || create.Operation != lifecycleOperationView(operation) {
+		t.Fatalf("create replay crossed recovery ownership: result=%+v err=%v", create, err)
+	}
+	rebuild, err := service.continueAgentRebuild(
+		context.Background(), ports.AgentRebuildState{Operation: operation},
+	)
+	if err != nil || rebuild.Operation != lifecycleOperationView(operation) {
+		t.Fatalf("rebuild replay crossed recovery ownership: result=%+v err=%v", rebuild, err)
+	}
+	disable, err := service.continueAgentDisable(
+		context.Background(), ports.AgentDisableState{Operation: operation},
+	)
+	if err != nil || disable.Operation != lifecycleOperationView(operation) {
+		t.Fatalf("disable replay crossed recovery ownership: result=%+v err=%v", disable, err)
+	}
+	enable, err := service.continueAgentEnable(
+		context.Background(), ports.AgentEnableState{Operation: operation},
+	)
+	if err != nil || enable.Operation != lifecycleOperationView(operation) {
+		t.Fatalf("enable replay crossed recovery ownership: result=%+v err=%v", enable, err)
+	}
+	deleted, err := service.continueAgentDelete(
+		context.Background(), ports.AgentDeleteState{Operation: operation},
+	)
+	if err != nil || deleted.Operation != lifecycleOperationView(operation) {
+		t.Fatalf("delete replay crossed recovery ownership: result=%+v err=%v", deleted, err)
 	}
 }
 
@@ -832,14 +932,15 @@ func mustRecoveryWorker(
 }
 
 type recoveryStoreStub struct {
-	claimInput ports.ClaimLifecycleRecovery
-	claim      ports.LifecycleRecoveryClaim
-	found      bool
-	claimErr   error
-	started    ports.StartLifecycleRecoveryAttempt
-	startErr   error
-	released   ports.ReleaseLifecycleRecoveryClaim
-	releaseErr error
+	claimInput        ports.ClaimLifecycleRecovery
+	claim             ports.LifecycleRecoveryClaim
+	found             bool
+	claimErr          error
+	started           ports.StartLifecycleRecoveryAttempt
+	startErr          error
+	released          ports.ReleaseLifecycleRecoveryClaim
+	releaseErr        error
+	releaseContextErr error
 }
 
 func (store *recoveryStoreStub) ClaimLifecycleRecovery(
@@ -857,9 +958,10 @@ func (store *recoveryStoreStub) StartLifecycleRecoveryAttempt(
 }
 
 func (store *recoveryStoreStub) ReleaseLifecycleRecoveryClaim(
-	_ context.Context, input ports.ReleaseLifecycleRecoveryClaim,
+	ctx context.Context, input ports.ReleaseLifecycleRecoveryClaim,
 ) error {
 	store.released = input
+	store.releaseContextErr = ctx.Err()
 	return store.releaseErr
 }
 
@@ -869,6 +971,7 @@ type recoveryResumerStub struct {
 	err       error
 	token     ports.LifecycleRecoveryToken
 	hasToken  bool
+	cancel    context.CancelFunc
 }
 
 func (resumer *recoveryResumerStub) ResumeLifecycleOperation(
@@ -876,6 +979,9 @@ func (resumer *recoveryResumerStub) ResumeLifecycleOperation(
 ) (LifecycleRecoveryResult, error) {
 	resumer.operation = operation
 	resumer.token, resumer.hasToken = ports.LifecycleRecoveryTokenFromContext(ctx)
+	if resumer.cancel != nil {
+		resumer.cancel()
+	}
 	return resumer.result, resumer.err
 }
 

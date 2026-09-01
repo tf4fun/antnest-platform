@@ -120,6 +120,8 @@ func TestShutdownHTTPAndRecoveryWaitsForHTTPAfterRecoveryStops(t *testing.T) {
 		<-releaseHandler
 		response.WriteHeader(http.StatusNoContent)
 	})}
+	httpShutdownStarted := make(chan struct{})
+	httpServer.RegisterOnShutdown(func() { close(httpShutdownStarted) })
 	serverConnection, clientConnection := net.Pipe()
 	listener := &singleConnectionListener{
 		connection: serverConnection,
@@ -157,14 +159,28 @@ func TestShutdownHTTPAndRecoveryWaitsForHTTPAfterRecoveryStops(t *testing.T) {
 		t.Fatal("HTTP request did not reach handler")
 	}
 
-	recoveryErrors := make(chan error, 1)
-	recoveryErrors <- nil
+	recoveryErrors := make(chan error)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	result := make(chan error, 1)
 	go func() {
 		result <- shutdownHTTPAndRecovery(ctx, httpServer, recoveryErrors, false)
 	}()
+	select {
+	case <-httpShutdownStarted:
+	case <-time.After(time.Second):
+		t.Fatal("HTTP shutdown did not start")
+	}
+	recoveryDelivered := make(chan struct{})
+	go func() {
+		recoveryErrors <- nil
+		close(recoveryDelivered)
+	}()
+	select {
+	case <-recoveryDelivered:
+	case <-time.After(time.Second):
+		t.Fatal("shutdown did not consume recovery completion")
+	}
 	select {
 	case err := <-result:
 		t.Fatalf("shutdown returned before HTTP request drained: %v", err)
@@ -198,12 +214,56 @@ func TestShutdownHTTPAndRecoveryReportsRecoveryFailureAndDeadline(t *testing.T) 
 			t.Fatalf("already stopped recovery: %v", err)
 		}
 	})
-	t.Run("deadline", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
-		defer cancel()
-		err := shutdownHTTPAndRecovery(ctx, &http.Server{}, make(chan error), false)
-		if err == nil || serviceFailureClass(err) != "lifecycle_recovery_shutdown" {
-			t.Fatalf("deadline error = %v", err)
+	t.Run("HTTP drain deadline forces connection close", func(t *testing.T) {
+		handlerStarted := make(chan struct{})
+		releaseHandler := make(chan struct{})
+		httpServer := &http.Server{Handler: http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+			close(handlerStarted)
+			<-releaseHandler
+		})}
+		serverConnection, clientConnection := net.Pipe()
+		listener := &singleConnectionListener{
+			connection: serverConnection,
+			closed:     make(chan struct{}),
+		}
+		serveDone := make(chan error, 1)
+		go func() { serveDone <- httpServer.Serve(listener) }()
+		clientDone := make(chan error, 1)
+		go func() {
+			_, writeErr := io.WriteString(clientConnection, "GET / HTTP/1.1\r\nHost: controller.test\r\n\r\n")
+			if writeErr != nil {
+				clientDone <- writeErr
+				return
+			}
+			_, readErr := http.ReadResponse(
+				bufio.NewReader(clientConnection), &http.Request{Method: http.MethodGet},
+			)
+			clientDone <- readErr
+		}()
+		select {
+		case <-handlerStarted:
+		case <-time.After(time.Second):
+			t.Fatal("deadline request did not reach handler")
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+		err := shutdownHTTPAndRecovery(ctx, httpServer, nil, true)
+		cancel()
+		if err == nil || serviceFailureClass(err) != "http_shutdown" {
+			t.Fatalf("HTTP deadline error = %v", err)
+		}
+		select {
+		case readErr := <-clientDone:
+			if readErr == nil {
+				t.Fatal("forced HTTP close returned a complete response")
+			}
+		case <-time.After(time.Second):
+			t.Fatal("forced HTTP close left client connection open")
+		}
+		close(releaseHandler)
+		_ = clientConnection.Close()
+		_ = listener.Close()
+		if serveErr := <-serveDone; serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+			t.Fatalf("serve HTTP: %v", serveErr)
 		}
 	})
 }

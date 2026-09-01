@@ -85,6 +85,15 @@ func TestObserveLifecycleRecoveryAttemptStartsNewTraceWithCausalLinks(t *testing
 	if dependency.Parent().SpanID() != recovery.SpanContext().SpanID() {
 		t.Fatalf("dependency parent = %s recovery = %s", dependency.Parent().SpanID(), recovery.SpanContext().SpanID())
 	}
+	workerID := ""
+	for _, attr := range recovery.Attributes() {
+		if string(attr.Key) == "antnest.lifecycle.recovery.worker_id" {
+			workerID = attr.Value.AsString()
+		}
+	}
+	if workerID != "worker-1" {
+		t.Fatalf("recovery worker attribute = %q", workerID)
+	}
 	linked := map[string]bool{}
 	for _, link := range recovery.Links() {
 		linked[link.SpanContext.TraceID().String()] = true

@@ -11,6 +11,8 @@ import (
 	"soft/antnest-platform/services/agent-controller/internal/ports"
 )
 
+const lifecycleRecoveryReleaseTimeout = 5 * time.Second
+
 type LifecycleOperationResumer interface {
 	ResumeLifecycleOperation(
 		context.Context, ports.LifecycleOperationRecord,
@@ -126,14 +128,30 @@ func (worker *LifecycleRecoveryWorker) RunOnce(ctx context.Context) (bool, error
 		},
 	)
 	cancel()
-	if ctx.Err() != nil {
-		return true, ctx.Err()
-	}
 	if errors.Is(attemptErr, ports.ErrLifecycleRecoveryClaimLost) {
 		return true, nil
 	}
 	if result.Terminal {
+		if ctx.Err() != nil {
+			return true, ctx.Err()
+		}
 		return true, nil
+	}
+	if ctx.Err() != nil {
+		releaseCtx, releaseCancel := context.WithTimeout(
+			context.WithoutCancel(ctx), lifecycleRecoveryReleaseTimeout,
+		)
+		releaseErr := worker.store.ReleaseLifecycleRecoveryClaim(
+			releaseCtx, ports.ReleaseLifecycleRecoveryClaim{
+				RequestID: claim.Operation.RequestID, WorkerID: claim.WorkerID,
+				Attempt: claim.Attempt, RetryAfter: 0,
+			},
+		)
+		releaseCancel()
+		if releaseErr != nil && !errors.Is(releaseErr, ports.ErrLifecycleRecoveryClaimLost) {
+			return true, fmt.Errorf("release lifecycle recovery claim during shutdown: %w", releaseErr)
+		}
+		return true, ctx.Err()
 	}
 	if attemptErr != nil && !retryableLifecycleRecoveryError(attemptErr) {
 		return true, fmt.Errorf("resume lifecycle operation %s: %w", claim.Operation.RequestID, attemptErr)
@@ -300,15 +318,14 @@ func (service *LifecycleService) validateLifecycleRecoveryClaim(
 ) error {
 	if token.RequestID != operation.RequestID || token.WorkerID == "" ||
 		token.WorkerID != operation.RecoveryOwner || token.Attempt != operation.Attempt ||
-		operation.RecoveryLeaseUntil == nil ||
-		!service.clock.Now().Before(*operation.RecoveryLeaseUntil) {
+		operation.RecoveryLeaseUntil == nil {
 		return ports.ErrLifecycleRecoveryClaimLost
 	}
 	return nil
 }
 
 func lifecycleOperationReservedForRecovery(operation ports.LifecycleOperationRecord) bool {
-	return operation.RecoveryOwner != ""
+	return operation.RecoveryOwner != "" || operation.Attempt > 1
 }
 
 var _ LifecycleOperationResumer = (*LifecycleService)(nil)

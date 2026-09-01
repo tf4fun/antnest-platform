@@ -178,3 +178,102 @@ func TestHTTPHandlerTracesFailedStatusProbe(t *testing.T) {
 		t.Fatalf("failed status log = %s", logs.String())
 	}
 }
+
+func TestHTTPHandlerTracesWrongMethodForStatusRoute(t *testing.T) {
+	previousProvider := otel.GetTracerProvider()
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	otel.SetTracerProvider(provider)
+	t.Cleanup(func() {
+		_ = provider.Shutdown(context.Background())
+		otel.SetTracerProvider(previousProvider)
+	})
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /status", func(http.ResponseWriter, *http.Request) {})
+	response := httptest.NewRecorder()
+	HTTPHandler(mux, slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))).ServeHTTP(
+		response, httptest.NewRequest(http.MethodPost, "http://controller.test/status", nil),
+	)
+	if response.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("wrong-method status code = %d", response.Code)
+	}
+	ended := recorder.Ended()
+	if len(ended) != 1 || ended[0].Name() != "HTTP POST unmatched" {
+		t.Fatalf("wrong-method status spans = %#v", ended)
+	}
+}
+
+func TestHTTPHandlerRecordsPanicWithoutOverwritingCommittedStatus(t *testing.T) {
+	previousProvider := otel.GetTracerProvider()
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	otel.SetTracerProvider(provider)
+	t.Cleanup(func() {
+		_ = provider.Shutdown(context.Background())
+		otel.SetTracerProvider(previousProvider)
+	})
+
+	handler := HTTPHandler(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		response.WriteHeader(http.StatusAccepted)
+		panic("handler failed after commit")
+	}), slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)))
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("handler panic was swallowed")
+			}
+		}()
+		handler.ServeHTTP(
+			httptest.NewRecorder(),
+			httptest.NewRequest(http.MethodPost, "http://controller.test/internal/agents", nil),
+		)
+	}()
+	ended := recorder.Ended()
+	if len(ended) != 1 || ended[0].Status().Code != codes.Error {
+		t.Fatalf("panic spans = %#v", ended)
+	}
+	status := int64(0)
+	result := ""
+	for _, attr := range ended[0].Attributes() {
+		switch string(attr.Key) {
+		case "http.response.status_code":
+			status = attr.Value.AsInt64()
+		case "antnest.result":
+			result = attr.Value.AsString()
+		}
+	}
+	if status != http.StatusAccepted || result != "error" {
+		t.Fatalf("panic telemetry status=%d result=%q", status, result)
+	}
+}
+
+func TestHTTPHandlerTracesPanickingStatusProbe(t *testing.T) {
+	previousProvider := otel.GetTracerProvider()
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	otel.SetTracerProvider(provider)
+	t.Cleanup(func() {
+		_ = provider.Shutdown(context.Background())
+		otel.SetTracerProvider(previousProvider)
+	})
+
+	handler := HTTPHandler(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		panic("status failed")
+	}), slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)))
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("status panic was swallowed")
+			}
+		}()
+		handler.ServeHTTP(
+			httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "http://controller.test/status", nil),
+		)
+	}()
+	ended := recorder.Ended()
+	if len(ended) != 1 || ended[0].Name() != "HTTP GET /status" ||
+		ended[0].Status().Code != codes.Error {
+		t.Fatalf("status panic spans = %#v", ended)
+	}
+}

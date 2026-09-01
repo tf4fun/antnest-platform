@@ -3,6 +3,7 @@
   "revision": 6,
   "transport": "json-over-http",
   "trust": "internal-network",
+  "schema_dialect": "https://json-schema.org/draft/2020-12/schema",
   "base_path": "/rpc/agent-controller",
   "status": {
     "method": "GET",
@@ -21,6 +22,32 @@
   "error": {
     "type": "object",
     "response_content_type": "application/json",
+    "status_by_code": {
+      "access_denied": 403,
+      "agent_not_found": 404,
+      "agent_busy": 409,
+      "agent_rebuilding": 409,
+      "agent_build_failed": 409,
+      "agent_not_ready": 409,
+      "admission_not_found": 404,
+      "credential_not_allowed": 403,
+      "invalid_request": 400,
+      "dependency_unavailable": 503,
+      "internal_error": 500
+    },
+    "retryable_by_code": {
+      "access_denied": false,
+      "agent_not_found": false,
+      "agent_busy": true,
+      "agent_rebuilding": true,
+      "agent_build_failed": false,
+      "agent_not_ready": true,
+      "admission_not_found": false,
+      "credential_not_allowed": false,
+      "invalid_request": false,
+      "dependency_unavailable": true,
+      "internal_error": true
+    },
     "required": ["code", "message", "retryable"],
     "properties": {
       "code": {

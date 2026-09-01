@@ -3,6 +3,10 @@
   "revision": 3,
   "transport": "json-over-http",
   "trust": "internal-network",
+  "media_types": {
+    "request": "application/json",
+    "response": "application/json"
+  },
   "schemas": { "messages": "control-api.schema.json" },
   "status": { "method": "GET", "path": "/status", "success_status": 200 },
   "resources": {

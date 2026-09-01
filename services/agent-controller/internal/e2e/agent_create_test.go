@@ -3,6 +3,8 @@ package e2e
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -13,6 +15,11 @@ import (
 	"testing"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+
 	"soft/antnest-platform/services/agent-controller/internal/application"
 	"soft/antnest-platform/services/agent-controller/internal/credentials"
 	"soft/antnest-platform/services/agent-controller/internal/egressclient"
@@ -20,6 +27,7 @@ import (
 	"soft/antnest-platform/services/agent-controller/internal/repository/postgres"
 	"soft/antnest-platform/services/agent-controller/internal/runtimeclient"
 	"soft/antnest-platform/services/agent-controller/internal/server"
+	"soft/antnest-platform/services/agent-controller/internal/telemetry"
 )
 
 func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
@@ -28,6 +36,17 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 		t.Skip("ANTNEST_AGENT_CONTROLLER_TEST_DATABASE_URL is not set")
 	}
 	ctx := context.Background()
+	previousProvider := otel.GetTracerProvider()
+	previousPropagator := otel.GetTextMapPropagator()
+	spanRecorder := tracetest.NewSpanRecorder()
+	traceProvider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spanRecorder))
+	otel.SetTracerProvider(traceProvider)
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+	t.Cleanup(func() {
+		_ = traceProvider.Shutdown(context.Background())
+		otel.SetTracerProvider(previousProvider)
+		otel.SetTextMapPropagator(previousPropagator)
+	})
 	repository, err := postgres.Open(ctx, databaseURL)
 	if err != nil {
 		t.Fatalf("open repository: %v", err)
@@ -45,13 +64,28 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create SecretBox: %v", err)
 	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	observedLifecycleStore, err := telemetry.ObserveLifecycleStore(repository, logger)
+	if err != nil {
+		t.Fatalf("observe lifecycle store: %v", err)
+	}
+	observedRecoveryStore, err := telemetry.ObserveLifecycleRecoveryStore(repository, logger)
+	if err != nil {
+		t.Fatalf("observe lifecycle recovery store: %v", err)
+	}
+	recoveryInstrumentation, err := telemetry.ObserveLifecycleRecoveryAttempt(logger)
+	if err != nil {
+		t.Fatalf("observe lifecycle recovery attempt: %v", err)
+	}
 
 	var egressCalls, runtimeCalls atomic.Int64
 	var initializeCalls, updateCalls, disableCalls, enableCalls, deleteCalls atomic.Int64
+	var failNextDeleteInspection atomic.Bool
 	var policyMu sync.Mutex
 	var runtimeMu sync.Mutex
 	var currentRuntimeRevision, currentRuntimeExecutionID, currentRuntimeEndpoint string
 	var currentRuntimeLifecycle, currentRuntimeHealth string
+	runtimeRequestIDs := make(map[string]string)
 	policyID := "internet-enabled"
 	policyVersion := uint64(1)
 	egressServer := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
@@ -142,6 +176,11 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 				inspection["mcp_endpoint"] = currentRuntimeEndpoint
 			}
 			runtimeMu.Unlock()
+			if inspection["lifecycle_state"] == "deleted" &&
+				failNextDeleteInspection.CompareAndSwap(true, false) {
+				http.Error(response, "runtime inspection temporarily unavailable", http.StatusServiceUnavailable)
+				return
+			}
 			response.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(response).Encode(inspection)
 			return
@@ -214,20 +253,10 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 				t.Fatalf("Runtime delete payload = %+v err=%v", payload, err)
 			}
 		}
-		if actionCalls.Add(1) == 1 {
-			response.Header().Set("Content-Type", "application/json")
-			response.WriteHeader(http.StatusServiceUnavailable)
-			_ = json.NewEncoder(response).Encode(map[string]any{
-				"code": "runtime_unavailable", "message": "Runtime Controller is unavailable",
-				"retryable": true,
-			})
-			return
-		}
 		requestID := request.Header.Get("Idempotency-Key")
 		if request.Method != http.MethodPost || path != agentID+"/"+action || agentID == "" || requestID == "" {
 			t.Fatalf("Runtime request = %s %s idempotency=%q", request.Method, request.URL.Path, requestID)
 		}
-		response.Header().Set("Content-Type", "application/json")
 		inspection := map[string]any{
 			"agent_id": agentID, "runtime_revision": revision,
 			"lifecycle_state": "ready", "health": "healthy",
@@ -247,12 +276,45 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 			delete(inspection, "runtime_execution_id")
 		}
 		runtimeMu.Lock()
+		requestKey := agentID + ":" + action
+		if previous := runtimeRequestIDs[requestKey]; previous != "" && previous != requestID {
+			runtimeMu.Unlock()
+			t.Fatalf("Runtime %s retry changed idempotency key from %q to %q", action, previous, requestID)
+		}
+		runtimeRequestIDs[requestKey] = requestID
 		currentRuntimeRevision = revision
 		currentRuntimeExecutionID = executionID
 		currentRuntimeEndpoint = endpoint
 		currentRuntimeLifecycle = inspection["lifecycle_state"].(string)
 		currentRuntimeHealth = inspection["health"].(string)
 		runtimeMu.Unlock()
+		if actionCalls.Add(1) == 1 {
+			if action == "delete" {
+				failNextDeleteInspection.Store(true)
+			}
+			hijacker, ok := response.(http.Hijacker)
+			if !ok {
+				t.Fatalf("Runtime response does not support connection failure injection")
+			}
+			connection, buffered, err := hijacker.Hijack()
+			if err != nil {
+				t.Fatalf("hijack Runtime response: %v", err)
+			}
+			if _, err := io.WriteString(
+				buffered,
+				"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 4096\r\n\r\n{\"request_id\":",
+			); err != nil {
+				_ = connection.Close()
+				t.Fatalf("write partial Runtime response: %v", err)
+			}
+			if err := buffered.Flush(); err != nil {
+				_ = connection.Close()
+				t.Fatalf("flush partial Runtime response: %v", err)
+			}
+			_ = connection.Close()
+			return
+		}
+		response.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(response).Encode(map[string]any{
 			"request_id": requestID, "kind": kind, "agent_id": agentID,
 			"target_revision": revision, "state": "completed", "effect": "completed",
@@ -270,8 +332,10 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create Runtime client: %v", err)
 	}
-	clock := fixedClock{now: time.Unix(20, 0).UTC()}
-	lifecycle := application.NewLifecycleService(repository, repository, egress, runtime, clock)
+	clock := wallClock{}
+	lifecycle := application.NewLifecycleService(
+		repository, observedLifecycleStore, egress, runtime, clock,
+	)
 	handler, err := server.NewHandler(
 		application.NewCatalogService(repository, secretBox, clock),
 		lifecycle,
@@ -316,9 +380,11 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 	if err != nil || persisted.State != "running" || persisted.Phase != "runtime_initialize" {
 		t.Fatalf("persisted interrupted create = %+v err=%v", persisted, err)
 	}
-	restartedLifecycle := application.NewLifecycleService(repository, repository, egress, runtime, clock)
+	restartedLifecycle := application.NewLifecycleService(
+		repository, observedLifecycleStore, egress, runtime, clock,
+	)
 	recoveryWorker, err := application.NewLifecycleRecoveryWorker(
-		repository, restartedLifecycle, nil,
+		observedRecoveryStore, restartedLifecycle, recoveryInstrumentation,
 		application.LifecycleRecoveryWorkerConfig{
 			WorkerID: "agent-e2e-recovery", PollInterval: 10 * time.Millisecond,
 			StaleAfter: 500 * time.Millisecond, AttemptTimeout: 200 * time.Millisecond,
@@ -328,20 +394,39 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create lifecycle recovery worker: %v", err)
 	}
-	recoverPhase := func(requestID string, wantPhase string) {
+	recoverOperation := func(requestID string, wantFirstPhase string) {
 		t.Helper()
-		time.Sleep(550 * time.Millisecond)
 		processed, err := recoveryWorker.RunOnce(ctx)
+		if err != nil || processed {
+			t.Fatalf("fresh %s was recoverable before stale threshold: processed=%v err=%v", requestID, processed, err)
+		}
+		time.Sleep(550 * time.Millisecond)
+		processed, err = recoveryWorker.RunOnce(ctx)
 		if err != nil || !processed {
 			t.Fatalf("recover interrupted %s: processed=%v err=%v", requestID, processed, err)
 		}
 		recoveredStep, err := repository.GetLifecycleOperation(ctx, requestID)
-		if err != nil || recoveredStep.State != "running" || string(recoveredStep.Phase) != wantPhase ||
+		if err != nil || recoveredStep.State != "running" || string(recoveredStep.Phase) != wantFirstPhase ||
 			recoveredStep.RecoveryOwner != "" || recoveredStep.RecoveryLeaseUntil != nil {
 			t.Fatalf("single recovered %s phase = %+v err=%v", requestID, recoveredStep, err)
 		}
+		for recoveredStep.State == "running" {
+			time.Sleep(15 * time.Millisecond)
+			processed, err = recoveryWorker.RunOnce(ctx)
+			if err != nil || !processed {
+				t.Fatalf("continue recovery %s: processed=%v err=%v", requestID, processed, err)
+			}
+			recoveredStep, err = repository.GetLifecycleOperation(ctx, requestID)
+			if err != nil {
+				t.Fatalf("read recovered %s: %v", requestID, err)
+			}
+		}
+		if recoveredStep.State != "completed" || recoveredStep.Phase != "completed" ||
+			recoveredStep.RecoveryOwner != "" || recoveredStep.RecoveryLeaseUntil != nil {
+			t.Fatalf("terminal recovered %s = %+v", requestID, recoveredStep)
+		}
 	}
-	recoverPhase("agent-e2e-create", "publish")
+	recoverOperation("agent-e2e-create", "publish")
 	created := serveJSON(t, handler, http.MethodPost, "/internal/agents", createBody, http.StatusAccepted)
 	agent := created["agent"].(map[string]any)
 	operation := created["operation"].(map[string]any)
@@ -388,7 +473,7 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 	if err != nil || persisted.State != "running" || persisted.Phase != "runtime_update" {
 		t.Fatalf("persisted interrupted rebuild = %+v err=%v", persisted, err)
 	}
-	recoverPhase("agent-e2e-rebuild", "network_ensure")
+	recoverOperation("agent-e2e-rebuild", "network_ensure")
 	rebuilt := serveJSON(
 		t, handler, http.MethodPost, "/internal/agents/"+agentID+"/rebuild",
 		rebuildBody, http.StatusAccepted,
@@ -428,7 +513,7 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 	if err != nil || persisted.State != "running" || persisted.Phase != "runtime_disable" {
 		t.Fatalf("persisted interrupted disable = %+v err=%v", persisted, err)
 	}
-	recoverPhase("agent-e2e-disable", "publish")
+	recoverOperation("agent-e2e-disable", "publish")
 	disabled := serveJSON(
 		t, handler, http.MethodPost, "/internal/agents/"+agentID+"/disable",
 		disableBody, http.StatusAccepted,
@@ -471,7 +556,7 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 	if err != nil || persisted.State != "running" || persisted.Phase != "runtime_enable" {
 		t.Fatalf("persisted interrupted enable = %+v err=%v", persisted, err)
 	}
-	recoverPhase("agent-e2e-enable", "network_restore")
+	recoverOperation("agent-e2e-enable", "network_restore")
 	enabled := serveJSON(
 		t, handler, http.MethodPost, "/internal/agents/"+agentID+"/enable",
 		enableBody, http.StatusAccepted,
@@ -515,7 +600,7 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 	if err != nil || persisted.State != "running" || persisted.Phase != "runtime_delete" {
 		t.Fatalf("persisted interrupted delete = %+v err=%v", persisted, err)
 	}
-	recoverPhase("agent-e2e-delete", "network_release")
+	recoverOperation("agent-e2e-delete", "network_release")
 	deleted := serveJSON(
 		t, handler, http.MethodPost, "/internal/agents/"+agentID+"/delete",
 		deleteBody, http.StatusAccepted,
@@ -600,5 +685,66 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 	delete(createdIDs, secondID)
 	if len(createdIDs) != 0 {
 		t.Fatalf("Agent cursor omitted identities: %+v", createdIDs)
+	}
+	assertLifecycleRecoveryTraceEvidence(t, spanRecorder.Ended())
+}
+
+type wallClock struct{}
+
+func (wallClock) Now() time.Time { return time.Now().UTC() }
+
+func assertLifecycleRecoveryTraceEvidence(t *testing.T, spans []sdktrace.ReadOnlySpan) {
+	t.Helper()
+
+	recoveryRoots := make(map[string]string)
+	for _, span := range spans {
+		if span.Name() != "recover Agent lifecycle operation" {
+			continue
+		}
+		if span.Parent().IsValid() {
+			t.Fatalf("recovery span inherited parent: %s", span.Parent().SpanID())
+		}
+		workerID := ""
+		for _, attr := range span.Attributes() {
+			if string(attr.Key) == "antnest.lifecycle.recovery.worker_id" {
+				workerID = attr.Value.AsString()
+			}
+		}
+		if workerID != "agent-e2e-recovery" {
+			t.Fatalf("recovery worker attribute = %q", workerID)
+		}
+		recoveryRoots[span.SpanContext().TraceID().String()] = span.SpanContext().SpanID().String()
+	}
+	if len(recoveryRoots) < 5 {
+		t.Fatalf("recovery root traces = %d, want at least one per Saga", len(recoveryRoots))
+	}
+	requiredDependencies := map[string]bool{
+		"agent_controller.runtime.initialize": false,
+		"agent_controller.runtime.update":     false,
+		"agent_controller.runtime.disable":    false,
+		"agent_controller.runtime.enable":     false,
+		"agent_controller.runtime.delete":     false,
+	}
+	repositoryChild := false
+	for _, span := range spans {
+		rootSpanID, recovered := recoveryRoots[span.SpanContext().TraceID().String()]
+		if !recovered || span.Name() == "recover Agent lifecycle operation" ||
+			span.Parent().SpanID().String() != rootSpanID {
+			continue
+		}
+		if _, required := requiredDependencies[span.Name()]; required {
+			requiredDependencies[span.Name()] = true
+		}
+		if strings.HasPrefix(span.Name(), "agent_controller.repository.") {
+			repositoryChild = true
+		}
+	}
+	for name, found := range requiredDependencies {
+		if !found {
+			t.Fatalf("recovery trace is missing dependency span %q", name)
+		}
+	}
+	if !repositoryChild {
+		t.Fatal("recovery trace is missing repository child spans")
 	}
 }

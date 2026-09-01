@@ -24,11 +24,15 @@ import (
 )
 
 type machineControlContract struct {
-	Contract  string `json:"contract"`
-	Revision  int    `json:"revision"`
-	Transport string `json:"transport"`
-	Trust     string `json:"trust"`
-	Schemas   struct {
+	Contract   string `json:"contract"`
+	Revision   int    `json:"revision"`
+	Transport  string `json:"transport"`
+	Trust      string `json:"trust"`
+	MediaTypes struct {
+		Request  string `json:"request"`
+		Response string `json:"response"`
+	} `json:"media_types"`
+	Schemas struct {
 		Messages string `json:"messages"`
 	} `json:"schemas"`
 	Status    controlContractRoute                       `json:"status"`
@@ -79,6 +83,10 @@ func TestMachineControlContractMatchesRegisteredBoundary(t *testing.T) {
 	readContractJSON(t, filepath.Join(root, "contracts/agent-controller/control-api.schema.json"), &schema)
 	if contract.Revision != 3 {
 		t.Fatalf("control contract revision = %d", contract.Revision)
+	}
+	if contract.MediaTypes.Request != "application/json" ||
+		contract.MediaTypes.Response != "application/json" {
+		t.Fatalf("control contract media types = %+v", contract.MediaTypes)
 	}
 
 	endpoint, err := NewHandler(
@@ -366,13 +374,17 @@ func TestMachineControlContractValidatesSuccessfulHTTPBoundary(t *testing.T) {
 				path += "?organization_id=org-1"
 			}
 			request := httptest.NewRequest(route.Method, path, body)
+			if route.Request != "" {
+				request.Header.Set("Content-Type", contract.MediaTypes.Request)
+			}
+			request.Header.Set("Accept", contract.MediaTypes.Response)
 			response := httptest.NewRecorder()
 			boundary.ServeHTTP(response, request)
 			if response.Code != route.SuccessStatus {
 				t.Fatalf("%s.%s status=%d want=%d body=%s", resource, operationName, response.Code, route.SuccessStatus, response.Body.String())
 			}
-			if mediaType := strings.Split(response.Header().Get("Content-Type"), ";")[0]; mediaType != "application/json" {
-				t.Fatalf("%s.%s content type=%q", resource, operationName, mediaType)
+			if mediaType := strings.Split(response.Header().Get("Content-Type"), ";")[0]; mediaType != contract.MediaTypes.Response {
+				t.Fatalf("%s.%s content type=%q want=%q", resource, operationName, mediaType, contract.MediaTypes.Response)
 			}
 			assertControlResponseSchema(t, compiler, route.Response, response.Body.Bytes())
 		}
@@ -381,8 +393,89 @@ func TestMachineControlContractValidatesSuccessfulHTTPBoundary(t *testing.T) {
 	status := httptest.NewRecorder()
 	boundary.ServeHTTP(status, httptest.NewRequest(contract.Status.Method, contract.Status.Path, nil))
 	if status.Code != contract.Status.SuccessStatus ||
-		strings.Split(status.Header().Get("Content-Type"), ";")[0] != "application/json" {
+		strings.Split(status.Header().Get("Content-Type"), ";")[0] != contract.MediaTypes.Response {
 		t.Fatalf("status boundary code=%d content_type=%q body=%s", status.Code, status.Header().Get("Content-Type"), status.Body.String())
+	}
+}
+
+func TestMachineControlContractValidatesActualHTTPErrorBoundary(t *testing.T) {
+	t.Parallel()
+
+	root := repositoryRoot(t)
+	var contract machineControlContract
+	readStrictContractJSON(t, filepath.Join(root, "contracts/agent-controller/control-contract.json"), &contract)
+	compiler := compileControlSchema(
+		t, filepath.Join(root, "contracts/agent-controller/control-api.schema.json"),
+	)
+	tests := []struct {
+		code   string
+		err    error
+		method string
+		path   string
+		body   string
+	}{
+		{code: "invalid_request", method: http.MethodPost, path: "/internal/agents", body: "{"},
+		{code: "request_id_conflict", err: ports.ErrRequestConflict},
+		{code: "reference_not_found", err: application.ErrInvalidReference},
+		{code: "reference_disabled", err: ports.ErrDisabledReference},
+		{code: "agent_not_found", err: application.ErrAgentNotFound},
+		{code: "agent_not_ready", err: application.ErrAgentNotReady},
+		{code: "lifecycle_conflict", err: application.ErrLifecycleConflict},
+		{
+			code: "operation_not_found", err: ports.ErrNotFound,
+			method: http.MethodGet, path: "/internal/agent-operations/missing-operation",
+		},
+		{code: "dependency_unavailable", err: application.ErrDependencyUnavailable},
+		{code: "lifecycle_timeout", err: context.DeadlineExceeded},
+		{code: "internal_error", err: errors.New("unexpected failure")},
+	}
+	seen := make(map[string]struct{}, len(tests))
+	for _, test := range tests {
+		t.Run(test.code, func(t *testing.T) {
+			lifecycle := &lifecycleServiceStub{err: test.err}
+			boundary, err := NewHandler(
+				&catalogServiceStub{}, lifecycle, &runServiceStub{}, &agentQueryServiceStub{},
+				&agentEventServiceStub{}, func(context.Context) error { return nil },
+			)
+			if err != nil {
+				t.Fatalf("new control boundary: %v", err)
+			}
+			method, path, body := test.method, test.path, test.body
+			if method == "" {
+				method = http.MethodPost
+				path = "/internal/agents"
+				body = `{"request_id":"request-error","organization_id":"org-1","owner_user_id":"user-1","name":"Agent","template_id":"template-1","template_revision":1}`
+			}
+			request := httptest.NewRequest(method, path, strings.NewReader(body))
+			if body != "" {
+				request.Header.Set("Content-Type", contract.MediaTypes.Request)
+			}
+			request.Header.Set("Accept", contract.MediaTypes.Response)
+			response := httptest.NewRecorder()
+			boundary.ServeHTTP(response, request)
+
+			wantStatus, statusExists := contract.Errors.StatusByCode[test.code]
+			wantRetryable, retryExists := contract.Errors.RetryableByCode[test.code]
+			if !statusExists || !retryExists {
+				t.Fatalf("error %q is missing contract metadata", test.code)
+			}
+			var payload errorResponse
+			if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+				t.Fatalf("decode error response: %v body=%s", err, response.Body.String())
+			}
+			if response.Code != wantStatus || payload.Code != test.code ||
+				payload.Retryable != wantRetryable {
+				t.Fatalf("error boundary status=%d payload=%+v want_status=%d retryable=%v", response.Code, payload, wantStatus, wantRetryable)
+			}
+			if mediaType := strings.Split(response.Header().Get("Content-Type"), ";")[0]; mediaType != contract.MediaTypes.Response {
+				t.Fatalf("error content type=%q", mediaType)
+			}
+			assertControlResponseSchema(t, compiler, contract.Errors.Response, response.Body.Bytes())
+			seen[test.code] = struct{}{}
+		})
+	}
+	if len(seen) != len(contract.Errors.StatusByCode) {
+		t.Fatalf("error boundary coverage=%v contract=%v", seen, contract.Errors.StatusByCode)
 	}
 }
 
@@ -412,6 +505,59 @@ func TestMachineEventContractDeclaresReplayAndResumeInputs(t *testing.T) {
 			if !slices.Contains(route.Headers, "Last-Event-ID") {
 				t.Fatalf("watch route %s omits Last-Event-ID: %+v", name, route)
 			}
+		}
+	}
+}
+
+func TestMachineControlContractValidatesActualSSEBoundary(t *testing.T) {
+	t.Parallel()
+
+	root := repositoryRoot(t)
+	var contract machineControlContract
+	readStrictContractJSON(t, filepath.Join(root, "contracts/agent-controller/control-contract.json"), &contract)
+	compiler := compileControlSchema(
+		t, filepath.Join(root, "contracts/agent-controller/control-api.schema.json"),
+	)
+	now := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	event := sampleControlEvent(now, "contract-fixture", "request-1")
+	event.GlobalSequence = 1
+
+	for _, operationName := range []string{"watch_global", "watch"} {
+		route := contract.Resources["events"][operationName]
+		events := &agentEventServiceStub{page: application.AgentEventPage{
+			Events: []application.AgentEventView{event}, NextSequence: 1,
+		}}
+		boundary, err := NewHandler(
+			&catalogServiceStub{}, &lifecycleServiceStub{}, &runServiceStub{},
+			&agentQueryServiceStub{}, events, func(context.Context) error { return nil },
+		)
+		if err != nil {
+			t.Fatalf("new SSE boundary: %v", err)
+		}
+		response := httptest.NewRecorder()
+		boundary.ServeHTTP(
+			response, httptest.NewRequest(route.Method, concreteControlPath(route.Path), nil),
+		)
+		if response.Code != route.SuccessStatus ||
+			strings.Split(response.Header().Get("Content-Type"), ";")[0] != route.ContentType {
+			t.Fatalf("%s status=%d content_type=%q body=%s", operationName, response.Code, response.Header().Get("Content-Type"), response.Body.String())
+		}
+		frame := strings.SplitN(response.Body.String(), "\n\n", 2)[0]
+		fields := make(map[string]string)
+		for _, line := range strings.Split(frame, "\n") {
+			key, value, ok := strings.Cut(line, ":")
+			if ok {
+				fields[key] = strings.TrimSpace(value)
+			}
+		}
+		if fields["event"] != route.Event || fields["id"] != "1" {
+			t.Fatalf("%s SSE frame fields=%v", operationName, fields)
+		}
+		payload := []byte(fields["data"])
+		assertControlResponseSchema(t, compiler, route.Data, payload)
+		var decoded map[string]any
+		if err := json.Unmarshal(payload, &decoded); err != nil || decoded[route.EventID] != float64(1) {
+			t.Fatalf("%s SSE event ID payload=%v err=%v", operationName, decoded, err)
 		}
 	}
 }
@@ -533,12 +679,22 @@ func assertControlWireType(
 }
 
 const controlSchemaID = "https://antnest.local/agent-controller/control-api.schema.json"
+const draft202012Schema = "https://json-schema.org/draft/2020-12/schema"
 
 func compileControlSchema(t *testing.T, path string) *jsonschema.Compiler {
 	t.Helper()
 	payload, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
+	}
+	var metadata struct {
+		Dialect string `json:"$schema"`
+	}
+	if err := json.Unmarshal(payload, &metadata); err != nil {
+		t.Fatalf("decode control schema metadata: %v", err)
+	}
+	if metadata.Dialect != draft202012Schema {
+		t.Fatalf("control schema dialect = %q", metadata.Dialect)
 	}
 	document, err := jsonschema.UnmarshalJSON(bytes.NewReader(payload))
 	if err != nil {
@@ -622,7 +778,7 @@ func assertControlErrorContract(t *testing.T, contract machineControlContract) {
 		context.DeadlineExceeded,
 		errors.New("unexpected failure"),
 	}
-	seen := map[string]struct{}{"operation_not_found": {}}
+	seen := make(map[string]struct{})
 	for _, behavior := range behaviors {
 		status, response := publicError(behavior)
 		if contract.Errors.StatusByCode[response.Code] != status {
@@ -633,6 +789,15 @@ func assertControlErrorContract(t *testing.T, contract machineControlContract) {
 		}
 		seen[response.Code] = struct{}{}
 	}
+	if contract.Errors.StatusByCode["operation_not_found"] != http.StatusNotFound ||
+		contract.Errors.RetryableByCode["operation_not_found"] {
+		t.Fatalf(
+			"operation_not_found contract status=%d retryable=%v",
+			contract.Errors.StatusByCode["operation_not_found"],
+			contract.Errors.RetryableByCode["operation_not_found"],
+		)
+	}
+	seen["operation_not_found"] = struct{}{}
 	if len(seen) != len(contract.Errors.StatusByCode) {
 		missing := make([]string, 0)
 		for code := range contract.Errors.StatusByCode {

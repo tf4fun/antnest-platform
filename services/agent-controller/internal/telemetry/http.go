@@ -29,7 +29,7 @@ func HTTPHandler(next http.Handler, logger *slog.Logger) http.Handler {
 		logger = slog.Default()
 	}
 	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if isStatusRoute(request.URL.Path) {
+		if request.Method == http.MethodGet && isStatusRoute(request.URL.Path) {
 			observeReadinessFailure(next, response, request, logger)
 			return
 		}
@@ -44,11 +44,13 @@ func HTTPHandler(next http.Handler, logger *slog.Logger) http.Handler {
 		instrumented := request.WithContext(ctx)
 		defer func() {
 			panicValue := recover()
-			if panicValue != nil {
-				observed.status = http.StatusInternalServerError
+			status := observed.status
+			if panicValue != nil && !observed.wroteHeader {
+				status = http.StatusInternalServerError
 			}
 			finishHTTPRequest(
-				ctx, span, logger, request.Method, routePattern(instrumented), observed.status, started,
+				ctx, span, logger, request.Method, routePattern(instrumented), status,
+				panicValue != nil, started,
 			)
 			if panicValue != nil {
 				panic(panicValue)
@@ -66,9 +68,17 @@ func observeReadinessFailure(
 ) {
 	started := time.Now()
 	observed := &statusWriter{ResponseWriter: response, status: http.StatusOK}
-	next.ServeHTTP(observed, request)
-	if observed.status < http.StatusInternalServerError {
+	var panicValue any
+	func() {
+		defer func() { panicValue = recover() }()
+		next.ServeHTTP(observed, request)
+	}()
+	if observed.status < http.StatusBadRequest && panicValue == nil {
 		return
+	}
+	status := observed.status
+	if panicValue != nil && !observed.wroteHeader {
+		status = http.StatusInternalServerError
 	}
 	ctx := otel.GetTextMapPropagator().Extract(
 		request.Context(), propagation.HeaderCarrier(request.Header),
@@ -77,7 +87,12 @@ func observeReadinessFailure(
 		ctx, "HTTP "+request.Method+" "+request.URL.Path,
 		trace.WithSpanKind(trace.SpanKindServer), trace.WithTimestamp(started),
 	)
-	finishHTTPRequest(ctx, span, logger, request.Method, request.URL.Path, observed.status, started)
+	finishHTTPRequest(
+		ctx, span, logger, request.Method, request.URL.Path, status, panicValue != nil, started,
+	)
+	if panicValue != nil {
+		panic(panicValue)
+	}
 }
 
 func finishHTTPRequest(
@@ -87,10 +102,11 @@ func finishHTTPRequest(
 	method string,
 	route string,
 	status int,
+	executionFailed bool,
 	started time.Time,
 ) {
 	result := "success"
-	if status >= http.StatusBadRequest {
+	if status >= http.StatusBadRequest || executionFailed {
 		result = "error"
 	}
 	attributes := []attribute.KeyValue{
@@ -101,7 +117,7 @@ func finishHTTPRequest(
 	}
 	span.SetName("HTTP " + method + " " + route)
 	span.SetAttributes(attributes...)
-	if status >= http.StatusInternalServerError {
+	if status >= http.StatusInternalServerError || executionFailed {
 		span.SetStatus(codes.Error, strconv.Itoa(status))
 	}
 	span.End()

@@ -104,10 +104,13 @@ turn a downstream outage into a restart loop.
   one operation at a time with `FOR UPDATE SKIP LOCKED`, a bounded lease, and a
   monotonically increasing fencing attempt. Multiple replicas may run the same
   worker safely.
-- The stale threshold prevents the worker from racing a normally active request
-  before its dependency timeout. A claimed attempt has a shorter execution
-  timeout than its lease. Failure releases the claim with bounded exponential
-  backoff; successful progress resets the backoff.
+- The stale threshold is longer than the complete online lifecycle budget and
+  is evaluated by PostgreSQL. Once an operation has entered recovery
+  (`attempt > 1`), ordinary request replay becomes read-only for that operation;
+  only the recovery worker may execute another phase. A claimed attempt has a
+  shorter execution timeout than its database lease. Failure releases the
+  claim with bounded exponential backoff; successful progress resets the
+  backoff.
 - Recovery reloads the persisted operation and invokes the same create,
   rebuild, disable, enable, or delete phase handler. One claim invokes exactly
   one phase handler and then releases or atomically clears its lease; a handler
@@ -116,13 +119,15 @@ turn a downstream outage into a restart loop.
   request IDs. Egress ensure/fence/reset/release operations are convergent, and
   policy replacement remains protected by resource-version CAS. If a lease
   expires and execution overlaps, those dependency guarantees plus repository
-  phase CAS decide the winner; the expired attempt cannot mutate, release, or
-  reschedule a newer claim.
-- Parent-context cancellation and fatal recovery invariants stop the worker
-  immediately instead of issuing another release write. In those two cases the
-  bounded lease expires naturally and makes the operation claimable again; a
-  terminal operation is protected by a database constraint from retaining a
-  recovery owner or lease.
+  phase CAS decide the winner. An expired attempt cannot commit Agent
+  Controller state, release, or reschedule a newer claim; a late external
+  effect may still complete and is reconciled through the stable child request
+  identity and the dependency's idempotent contract.
+- Graceful parent-context cancellation releases a live claim with an
+  independent bounded context before the worker exits. A hard process failure
+  or fatal persisted-state invariant leaves the claim to its bounded lease;
+  only those cases wait for natural expiry. A terminal operation is protected
+  by a database constraint from retaining a recovery owner or lease.
 - A fatal recovery-store or state-machine invariant error stops the service;
   retryable dependency failures remain inside the worker and use bounded
   backoff. Shutdown stops new claims, starts HTTP draining immediately, and
@@ -131,8 +136,11 @@ turn a downstream outage into a restart loop.
 - Inspect `/internal/agent-operations/{request_id}` before creating a new
   operation. Stage 2 uses the idempotency request ID as the lifecycle operation
   identity; there is no second alias to lose or reconcile.
-- A create transport timeout leaves the operation at the last committed phase;
-  replay the exact request ID and body to continue with the same child request.
+- A create transport timeout leaves the operation at the last committed phase.
+  Replay the exact request ID and body to inspect the same operation. If no
+  recovery attempt has taken ownership yet, the replay may continue the online
+  attempt; after recovery ownership begins, the replay remains read-only while
+  the worker converges the same durable child requests.
 - A rebuild transport timeout follows the same rule. Before Runtime replacement,
   a conclusive failure restores the captured policy and old executable binding.
   After replacement, replay the exact command until policy restoration, network

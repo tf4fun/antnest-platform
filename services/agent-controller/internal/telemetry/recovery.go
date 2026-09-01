@@ -131,6 +131,7 @@ func ObserveLifecycleRecoveryAttempt(
 				attribute.String("antnest.lifecycle.request_id", claim.Operation.RequestID),
 				attribute.String("antnest.lifecycle.kind", string(claim.Operation.Kind)),
 				attribute.String("antnest.lifecycle.phase", string(claim.Operation.Phase)),
+				attribute.String("antnest.lifecycle.recovery.worker_id", claim.WorkerID),
 				attribute.Int64("antnest.lifecycle.recovery.attempt", claim.Attempt),
 			),
 		)
@@ -162,6 +163,7 @@ func ObserveLifecycleRecoveryAttempt(
 				"request_id", claim.Operation.RequestID,
 				"operation_kind", claim.Operation.Kind,
 				"phase", claim.Operation.Phase,
+				"worker_id", claim.WorkerID,
 				"attempt", claim.Attempt,
 				"result", outcome,
 			)
