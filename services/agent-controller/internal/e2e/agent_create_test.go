@@ -225,6 +225,7 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 	handler, err := server.NewHandler(
 		application.NewCatalogService(repository, secretBox, clock),
 		application.NewLifecycleService(repository, repository, egress, runtime, clock),
+		application.NewRunService(repository, secretBox, clock, 30*time.Minute),
 		repository.Ping,
 	)
 	if err != nil {

@@ -32,74 +32,93 @@ export type AgentControllerStatusOptions = {
   timeoutMs: number;
 };
 
-const errorSchema = z.object({
-  code: z.enum(AGENT_CONTROLLER_ERROR_CODES),
-  message: z.string().min(1),
-  retryable: z.boolean(),
-});
+const errorSchema = z
+  .object({
+    code: z.enum(AGENT_CONTROLLER_ERROR_CODES),
+    message: z.string().min(1),
+    retryable: z.boolean(),
+  })
+  .strict();
 
-const statusSchema = z.object({ status: z.literal("ready") });
+const statusSchema = z.object({ status: z.literal("ready") }).strict();
 
-const accessSchema = z.object({
-  principal_id: z.string().min(1),
-  agent_id: z.string().min(1),
-  access_revision: z.string().min(1),
-  prompt_capabilities: z
-    .object({
-      image: z.boolean().default(false),
-      embedded_context: z.boolean().default(false),
-    })
-    .default({ image: false, embedded_context: false }),
-});
+const accessSchema = z
+  .object({
+    principal_id: z.string().min(1),
+    agent_id: z.string().min(1),
+    access_revision: z.string().min(1),
+    prompt_capabilities: z
+      .object({
+        image: z.boolean().default(false),
+        embedded_context: z.boolean().default(false),
+      })
+      .strict()
+      .default({ image: false, embedded_context: false }),
+  })
+  .strict();
 
-const acquireSchema = z.object({
-  admission_id: z.string().min(1),
-  admission_deadline: z.iso.datetime(),
-  agent_spec_revision: z.string().min(1),
-  execution_revision: z.string().min(1),
-  runtime_mcp_source_digest: z.string().regex(/^[a-f0-9]{64}$/u),
-  agent_execution_spec_digest: z.string().regex(/^[a-f0-9]{64}$/u),
-  credential_version: z.string().min(1),
-  runtime: z.object({
-    runtime_revision: z.string().min(1),
-    runtime_execution_id: z.string().min(1),
-    mcp_endpoint: z.url(),
-  }),
-  execution_spec: z.object({
-    system_prompt: z.string(),
-    context_policy_version: z.literal("context-v1"),
-    skill_instructions: z
-      .array(
-        z.object({
-          skill_key: z.string().min(1),
-          version: z.string().min(1),
-          instructions: z.string(),
-        }),
-      )
-      .default([]),
-    model: z.object({
-      base_url: z.url(),
-      model: z.string().min(1),
-      context_window: z.number().int().min(1024),
-      max_output_tokens: z.number().int().positive(),
-      temperature: z.number().min(0).max(2).optional(),
-      supports_images: z.boolean().default(false),
-    }),
-    max_model_requests: z.number().int().min(1).max(128),
-    credential_ref: z.string().min(1),
-  }),
-});
+const acquireSchema = z
+  .object({
+    admission_id: z.string().min(1),
+    admission_deadline: z.iso.datetime(),
+    agent_spec_revision: z.string().min(1),
+    execution_revision: z.string().min(1),
+    runtime_mcp_source_digest: z.string().regex(/^[a-f0-9]{64}$/u),
+    agent_execution_spec_digest: z.string().regex(/^[a-f0-9]{64}$/u),
+    credential_version: z.string().min(1),
+    runtime: z
+      .object({
+        runtime_revision: z.string().min(1),
+        runtime_execution_id: z.string().min(1),
+        mcp_endpoint: z.url(),
+      })
+      .strict(),
+    execution_spec: z
+      .object({
+        system_prompt: z.string(),
+        context_policy_version: z.literal("context-v1"),
+        skill_instructions: z
+          .array(
+            z
+              .object({
+                skill_key: z.string().min(1),
+                version: z.string().min(1),
+                instructions: z.string(),
+              })
+              .strict(),
+          )
+          .default([]),
+        model: z
+          .object({
+            base_url: z.url(),
+            model: z.string().min(1),
+            context_window: z.number().int().min(1024),
+            max_output_tokens: z.number().int().positive(),
+            temperature: z.number().min(0).max(2).optional(),
+            supports_images: z.boolean().default(false),
+          })
+          .strict(),
+        max_model_requests: z.number().int().min(1).max(128),
+        credential_ref: z.string().min(1),
+      })
+      .strict(),
+  })
+  .strict();
 
-const credentialSchema = z.object({
-  credential_version: z.string().min(1),
-  secret_type: z.literal("bearer"),
-  secret: z.string().min(1),
-});
+const credentialSchema = z
+  .object({
+    credential_version: z.string().min(1),
+    secret_type: z.literal("bearer"),
+    secret: z.string().min(1),
+  })
+  .strict();
 
-const finishSchema = z.object({
-  status: z.enum(["finished", "already_finished"]),
-  admission_state: z.enum(["released", "blocked_unknown_effect"]),
-});
+const finishSchema = z
+  .object({
+    status: z.enum(["finished", "already_finished"]),
+    admission_state: z.enum(["released", "blocked_unknown_effect"]),
+  })
+  .strict();
 
 export async function requireAgentControllerReady(
   options: AgentControllerStatusOptions,

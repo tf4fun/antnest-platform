@@ -81,7 +81,8 @@ INSERT INTO agent_controller.run_admissions (
     admission_id, request_id, request_fingerprint, agent_id, session_id,
     principal_id, access_revision, state, deadline, runtime_revision,
     snapshot, created_at, updated_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, 'active', $8, $9, '{}'::jsonb, $10, $10)`,
+) VALUES ($1, $2, $3, $4, $5, $6, $7, 'active', $8, $9,
+          jsonb_build_object('runtime', jsonb_build_object('runtime_revision', $9::text)), $10, $10)`,
 		"admission-rebuild-integration", "request-run-rebuild-integration",
 		strings.Repeat("e", 64), base.Agent.AgentID, "session-rebuild-integration",
 		base.Agent.OwnerUserID, base.Agent.AccessRevision, now.Add(time.Hour),
@@ -98,7 +99,10 @@ INSERT INTO agent_controller.run_admissions (
 	}
 	if _, err := repository.pool.Exec(ctx, `
 UPDATE agent_controller.run_admissions
-SET state = 'blocked_unknown_effect', updated_at = $2
+SET state = 'blocked_unknown_effect',
+    terminal_report = '{"terminal_class":"unresolved","tool_effect_state":"unknown","stop_reason":"","error_class":"tool_outcome_unknown"}'::jsonb,
+    finished_at = $2,
+    updated_at = $2
 WHERE admission_id = $1`, "admission-rebuild-integration", now.Add(time.Second)); err != nil {
 		t.Fatalf("mark Run effect unresolved: %v", err)
 	}
@@ -151,7 +155,10 @@ WHERE admission_id = $1`, "admission-rebuild-integration", now.Add(time.Second))
 		LifecycleState:     "ready", Health: "healthy",
 	}
 	if _, err := repository.pool.Exec(ctx, `
-UPDATE agent_controller.run_admissions SET runtime_revision = $2 WHERE admission_id = $1`,
+UPDATE agent_controller.run_admissions
+SET runtime_revision = $2,
+    snapshot = jsonb_set(snapshot, '{runtime,runtime_revision}', to_jsonb($2::text))
+WHERE admission_id = $1`,
 		"admission-rebuild-integration", "rtv_wrong_runtime",
 	); err != nil {
 		t.Fatalf("set mismatched unresolved Run revision: %v", err)
@@ -166,7 +173,10 @@ UPDATE agent_controller.run_admissions SET runtime_revision = $2 WHERE admission
 		t.Fatal("Runtime replacement released an unresolved Run from another Runtime revision")
 	}
 	if _, err := repository.pool.Exec(ctx, `
-UPDATE agent_controller.run_admissions SET runtime_revision = $2 WHERE admission_id = $1`,
+UPDATE agent_controller.run_admissions
+SET runtime_revision = $2,
+    snapshot = jsonb_set(snapshot, '{runtime,runtime_revision}', to_jsonb($2::text))
+WHERE admission_id = $1`,
 		"admission-rebuild-integration", base.Agent.RuntimeRevision,
 	); err != nil {
 		t.Fatalf("restore unresolved Run revision: %v", err)
@@ -185,6 +195,19 @@ FROM agent_controller.run_admissions WHERE admission_id = $1`,
 	}
 	if admissionState != "released" || releasedBy != begin.Operation.RequestID {
 		t.Fatalf("released Run admission state=%q operation=%q", admissionState, releasedBy)
+	}
+	replayedFinish, err := repository.FinishRun(ctx, finishRunCommand(
+		ports.RunAdmissionRecord{AdmissionID: "admission-rebuild-integration"},
+		"request-finish-rebuild-replay",
+		domain.TerminalReport{
+			Class: domain.TerminalUnresolved, ToolEffectState: domain.ToolEffectUnknown,
+			ErrorClass: "tool_outcome_unknown",
+		},
+		now.Add(6*time.Second),
+	))
+	if err != nil || replayedFinish.Status != "already_finished" ||
+		replayedFinish.AdmissionState != domain.AdmissionReleased {
+		t.Fatalf("replay unresolved FinishRun after barrier: result=%+v err=%v", replayedFinish, err)
 	}
 	withNetwork, err := repository.AdvanceAgentRebuild(ctx, ports.AdvanceAgentRebuild{
 		RequestID: begin.Operation.RequestID, Fingerprint: fingerprint,

@@ -7,8 +7,6 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/codes"
-	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 
 	"soft/antnest-platform/services/agent-controller/internal/ports"
@@ -381,24 +379,7 @@ func (store *ObservedLifecycleStore) finish(
 	operation string,
 	err error,
 ) {
-	result := "success"
-	if err != nil {
-		result = "error"
-		errorClass := catalogStoreErrorClass(err)
-		span.SetStatus(codes.Error, errorClass)
-		store.logger.ErrorContext(ctx, "Agent Controller repository operation failed",
-			"operation", operation, "error_class", errorClass,
-		)
-	}
-	attributes := []attribute.KeyValue{
-		attribute.String("db.system.name", "postgresql"),
-		attribute.String("antnest.repository.operation", operation),
-		attribute.String("antnest.result", result),
-	}
-	span.SetAttributes(attributes...)
-	span.End()
-	repositoryCalls.Add(ctx, 1, metric.WithAttributes(attributes...))
-	repositoryDuration.Record(ctx, time.Since(started).Seconds(), metric.WithAttributes(attributes...))
+	finishRepositorySpan(ctx, store.logger, span, started, operation, err)
 }
 
 var _ ports.LifecycleStore = (*ObservedLifecycleStore)(nil)

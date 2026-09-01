@@ -147,6 +147,10 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 	if err != nil {
 		return classifyFailure("service_composition", err)
 	}
+	observedRunStore, err := telemetry.ObserveRunStore(repository, logger)
+	if err != nil {
+		return classifyFailure("service_composition", err)
+	}
 	egress, err := egressclient.New(cfg.RuntimeEgressURL, cfg.DependencyTimeout, nil)
 	if err != nil {
 		return classifyFailure("service_composition", err)
@@ -159,7 +163,10 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 	lifecycle := application.NewLifecycleServiceWithDrainTimeout(
 		observedStore, observedLifecycleStore, egress, runtime, systemClock{}, cfg.DrainTimeout,
 	)
-	handler, err := server.NewHandler(catalog, lifecycle, repository.Ping)
+	runs := application.NewRunService(
+		observedRunStore, secretBox, systemClock{}, cfg.RunAdmissionTTL,
+	)
+	handler, err := server.NewHandler(catalog, lifecycle, runs, repository.Ping)
 	if err != nil {
 		return classifyFailure("service_composition", err)
 	}

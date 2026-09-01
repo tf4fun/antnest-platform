@@ -409,10 +409,11 @@ func insertAgentEvent(ctx context.Context, transaction pgx.Tx, record ports.Agen
 	_, err = transaction.Exec(ctx, `
 INSERT INTO agent_controller.agent_events (
     event_id, agent_id, aggregate_sequence, schema_version, event_type,
-    operation_request_id, trace_id, data, occurred_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+    operation_request_id, admission_id, trace_id, data, occurred_at
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
 		record.EventID, record.AgentID, record.AggregateSequence, record.SchemaVersion,
-		record.EventType, record.OperationRequestID, record.TraceID, payload, record.OccurredAt,
+		record.EventType, record.OperationRequestID, record.AdmissionID,
+		record.TraceID, payload, record.OccurredAt,
 	)
 	if err != nil {
 		return fmt.Errorf("insert Agent event: %w", err)

@@ -182,12 +182,23 @@ func (store *ObservedCatalogStore) finish(
 	operation string,
 	err error,
 ) {
+	finishRepositorySpan(ctx, store.logger, span, started, operation, err)
+}
+
+func finishRepositorySpan(
+	ctx context.Context,
+	logger *slog.Logger,
+	span trace.Span,
+	started time.Time,
+	operation string,
+	err error,
+) {
 	result := "success"
 	if err != nil {
 		result = "error"
 		errorClass := catalogStoreErrorClass(err)
 		span.SetStatus(codes.Error, errorClass)
-		store.logger.ErrorContext(ctx, "Agent Controller repository operation failed",
+		logger.ErrorContext(ctx, "Agent Controller repository operation failed",
 			"operation", operation, "error_class", errorClass,
 		)
 	}
@@ -212,6 +223,20 @@ func catalogStoreErrorClass(err error) string {
 		return "request_conflict"
 	case errors.Is(err, ports.ErrConcurrentChange):
 		return "concurrent_change"
+	case errors.Is(err, ports.ErrRunAccessDenied):
+		return "access_denied"
+	case errors.Is(err, ports.ErrAgentBusy):
+		return "agent_busy"
+	case errors.Is(err, ports.ErrAgentRebuilding):
+		return "agent_rebuilding"
+	case errors.Is(err, ports.ErrAgentBuildFailed):
+		return "agent_build_failed"
+	case errors.Is(err, ports.ErrAgentNotReady):
+		return "agent_not_ready"
+	case errors.Is(err, ports.ErrAdmissionNotFound):
+		return "admission_not_found"
+	case errors.Is(err, ports.ErrCredentialNotAllowed):
+		return "credential_not_allowed"
 	default:
 		return "persistence_error"
 	}

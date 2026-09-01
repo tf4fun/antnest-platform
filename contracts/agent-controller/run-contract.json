@@ -1,6 +1,6 @@
 {
   "contract": "antnest.agent-controller.run-admission",
-  "revision": 4,
+  "revision": 5,
   "transport": "json-over-http",
   "trust": "internal-network",
   "base_path": "/rpc/agent-controller",
@@ -14,7 +14,8 @@
       "required": ["status"],
       "properties": {
         "status": { "const": "ready" }
-      }
+      },
+      "additionalProperties": false
     }
   },
   "error": {
@@ -29,6 +30,7 @@
           "agent_busy",
           "agent_rebuilding",
           "agent_build_failed",
+          "agent_not_ready",
           "admission_not_found",
           "credential_not_allowed",
           "invalid_request",
@@ -36,9 +38,10 @@
           "internal_error"
         ]
       },
-      "message": { "type": "string" },
+      "message": { "type": "string", "minLength": 1 },
       "retryable": { "type": "boolean" }
-    }
+    },
+    "additionalProperties": false
   },
   "methods": {
     "resolve_agent_access": {
@@ -71,7 +74,8 @@
             },
             "additionalProperties": false
           }
-        }
+        },
+        "additionalProperties": false
       }
     },
     "acquire_run": {
@@ -195,7 +199,8 @@
             },
             "additionalProperties": false
           }
-        }
+        },
+        "additionalProperties": false
       }
     },
     "resolve_credential": {
@@ -221,7 +226,8 @@
           "credential_version": { "type": "string", "minLength": 1 },
           "secret_type": { "enum": ["bearer"] },
           "secret": { "type": "string", "minLength": 1 }
-        }
+        },
+        "additionalProperties": false
       }
     },
     "finish_run": {
@@ -259,7 +265,11 @@
               null
             ]
           },
-          "error_class": { "type": ["string", "null"] }
+          "error_class": {
+            "type": ["string", "null"],
+            "maxLength": 64,
+            "pattern": "^[a-z][a-z0-9_]{0,63}$"
+          }
         },
         "additionalProperties": false,
         "oneOf": [
@@ -282,7 +292,8 @@
             "properties": {
               "terminal_class": { "const": "cancelled" },
               "tool_effect_state": { "enum": ["none", "settled"] },
-              "stop_reason": { "const": null }
+              "stop_reason": { "const": null },
+              "error_class": { "const": null }
             }
           },
           {
@@ -311,7 +322,8 @@
           "admission_state": {
             "enum": ["released", "blocked_unknown_effect"]
           }
-        }
+        },
+        "additionalProperties": false
       }
     }
   }

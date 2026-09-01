@@ -11,6 +11,7 @@ export const AGENT_CONTROLLER_ERROR_CODES = [
   "agent_busy",
   "agent_rebuilding",
   "agent_build_failed",
+  "agent_not_ready",
   "admission_not_found",
   "credential_not_allowed",
   "invalid_request",

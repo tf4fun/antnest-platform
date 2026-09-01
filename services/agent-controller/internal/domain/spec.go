@@ -243,6 +243,10 @@ func validateModel(model ModelSpec) error {
 	return nil
 }
 
+func ValidateModelSpec(model ModelSpec) error {
+	return validateModel(model)
+}
+
 func validateRuntime(runtime RuntimeSpecInput) error {
 	if !immutableImagePattern.MatchString(runtime.ImageRef) {
 		return fmt.Errorf("runtime image must be immutable")

@@ -179,6 +179,34 @@ describe("PromptCoordinator", () => {
     expect(recoveryRequired).toHaveBeenCalledOnce();
   });
 
+  it("treats an internal Controller error as an uncertain admission result", async () => {
+    const { repository, accepted, rejectRun } = createRepository();
+    const recoveryRequired = vi.fn();
+    const acquireRun = vi.fn<AgentControllerPort["acquireRun"]>(() =>
+      Promise.reject(new AgentControllerError("internal_error", "internal service error", true)),
+    );
+    const coordinator = new PromptCoordinator({
+      repository,
+      agentController: createController(acquireRun),
+      executions: { markAdmissionFinished: vi.fn() },
+      recoveryRequired,
+      id: sequentialIds(),
+      now: () => new Date("2026-08-30T00:00:00Z"),
+    });
+
+    await expect(
+      coordinator.accept({
+        binding,
+        sessionId: session.id,
+        prompt: [{ type: "text", text: "hello" }],
+      }),
+    ).rejects.toMatchObject({ code: "internal_error" });
+
+    expect(accepted).toEqual([]);
+    expect(rejectRun).not.toHaveBeenCalled();
+    expect(recoveryRequired).toHaveBeenCalledOnce();
+  });
+
   it("keeps the admitted intent recoverable when local acceptance fails", async () => {
     const { repository, acceptRun, rejectRun } = createRepository();
     const recoveryRequired = vi.fn();

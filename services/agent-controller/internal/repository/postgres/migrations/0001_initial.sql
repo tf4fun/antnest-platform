@@ -256,7 +256,22 @@ CREATE TABLE IF NOT EXISTS agent_controller.run_admissions (
     released_by_operation_request_id TEXT NOT NULL DEFAULT '',
     released_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL
+    updated_at TIMESTAMPTZ NOT NULL,
+    CHECK (deadline > created_at),
+    CHECK (jsonb_typeof(snapshot) = 'object'),
+    CHECK (
+        snapshot #>> '{runtime,runtime_revision}' IS NOT NULL AND
+        snapshot #>> '{runtime,runtime_revision}' = runtime_revision
+    ),
+    CHECK (
+        (state = 'active' AND terminal_report IS NULL AND finished_at IS NULL
+            AND released_at IS NULL AND released_by_operation_request_id = '') OR
+        (state = 'blocked_unknown_effect' AND terminal_report IS NOT NULL
+            AND finished_at IS NOT NULL AND released_at IS NULL
+            AND released_by_operation_request_id = '') OR
+        (state = 'released' AND terminal_report IS NOT NULL
+            AND finished_at IS NOT NULL AND released_at IS NOT NULL)
+    )
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS admissions_agent_occupancy_unique

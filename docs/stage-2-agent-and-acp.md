@@ -423,6 +423,9 @@ The response contains `admission_id`, deadline, Runtime endpoint, expected
 Runtime execution ID, and Agent execution spec. It contains no client MCP
 configuration and no Provider secret. A partial unique database constraint is
 the final guard against concurrent acquisitions.
+Until Skill Registry is implemented, every admitted execution snapshot carries
+an empty `skill_instructions` list. Agent Controller does not synthesize Skill
+content or read another service's storage.
 
 After receiving the response, Agent ACP Service stores RunExecutionSnapshot and
 promotes the pending prompt to accepted history in one local transaction. If it

@@ -11,10 +11,11 @@ It depends on language-neutral HTTP contracts. It does not import another
 service implementation or inspect another service database.
 
 The document describes the completed target boundary. Implementation proceeds
-as vertical business slices. At present ModelProfile/Template Catalog and the
-Agent create, explicit rebuild, disable, and enable Sagas are runnable. Delete,
-Agent queries, Run admission, the recovery worker, and event replay remain in
-progress and must not be inferred from table or contract presence alone.
+as vertical business slices. At present ModelProfile/Template Catalog, Run
+admission, and the Agent create, explicit rebuild, disable, enable, and delete
+Sagas are runnable. Agent queries, the recovery worker, complete lifecycle-to-Run
+release events, and event replay remain in progress and must not be inferred
+from table or contract presence alone.
 
 ## Aggregate Model
 
@@ -283,7 +284,8 @@ deletion and would make failed initial provisioning impossible to clean up.
 
 Resolve access maps one trusted subject to one owner principal and Agent.
 Acquire checks mapping revision, locks the Agent, requires `available`, rejects an
-existing admission, and returns the complete immutable snapshot. Finish seals
+existing admission, and returns the complete immutable snapshot. The snapshot
+contains an empty Skill instruction list until Skill Registry is runnable. Finish seals
 the terminal report. The ACP service owns all messages and detailed Tool facts.
 
 ## Persistence Ownership

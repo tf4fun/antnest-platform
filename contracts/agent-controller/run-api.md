@@ -118,13 +118,16 @@ Every non-success response uses the error envelope from the JSON contract.
 | `agent_busy`             | yes     | Another Run owns the Agent admission                                     |
 | `agent_rebuilding`       | yes     | Agent is temporarily unavailable during rebuild                          |
 | `agent_build_failed`     | no      | Administrator action is required before another Run                      |
+| `agent_not_ready`        | yes     | Agent is disabled, deleting, or otherwise not executable                 |
 | `admission_not_found`    | inspect | Admission is absent or no longer visible                                 |
 | `credential_not_allowed` | no      | Reference is not part of the admitted snapshot                           |
+| `invalid_request`        | no      | Request shape or immutable terminal facts violate the contract           |
 | `dependency_unavailable` | yes     | Request outcome is unknown unless the method is retried with the same ID |
+| `internal_error`         | yes     | Request outcome is unknown unless the method is retried with the same ID |
 
 ## Compatibility Rules
 
-1. This document and machine catalog describe contract revision 4.
+1. This document and machine catalog describe contract revision 5.
 2. Contract fields are `snake_case`; ACP wire fields remain the ACP-defined
    `camelCase` shapes.
 3. New optional response fields may be added. Existing required fields cannot
@@ -134,3 +137,13 @@ Every non-success response uses the error envelope from the JSON contract.
    implemented. A fake is not an alternate production authority.
 6. Every method's HTTP verb, successful status, and content type are part of
    the machine contract rather than transport-adapter convention.
+
+## Admission Lifetime
+
+Agent Controller assigns one bounded deadline from
+`ANTNEST_AGENT_CONTROLLER_RUN_ADMISSION_TTL` (default `30m`). Expiration never
+releases occupancy by itself because it does not prove that a dispatched Tool
+has stopped. Agent ACP Service must recover the Run and call `finish_run`; an
+unknown Tool effect remains blocked until a Runtime-absence barrier releases
+it. The deadline bounds model and Tool calls, not the durability of the
+admission fact.

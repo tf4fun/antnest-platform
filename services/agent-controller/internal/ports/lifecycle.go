@@ -191,6 +191,7 @@ type AgentEventRecord struct {
 	SchemaVersion      int
 	EventType          string
 	OperationRequestID string
+	AdmissionID        string
 	TraceID            string
 	Data               map[string]any
 	OccurredAt         time.Time

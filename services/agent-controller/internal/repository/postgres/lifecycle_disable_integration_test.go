@@ -43,7 +43,8 @@ INSERT INTO agent_controller.run_admissions (
     admission_id, request_id, request_fingerprint, agent_id, session_id,
     principal_id, access_revision, state, deadline, runtime_revision,
     snapshot, created_at, updated_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, 'active', $8, $9, '{}'::jsonb, $10, $10)`,
+) VALUES ($1, $2, $3, $4, $5, $6, $7, 'active', $8, $9,
+          jsonb_build_object('runtime', jsonb_build_object('runtime_revision', $9::text)), $10, $10)`,
 		"admission-disable-integration", "request-run-disable-integration",
 		strings.Repeat("5", 64), base.Agent.AgentID, "session-disable-integration",
 		base.Agent.OwnerUserID, base.Agent.AccessRevision, now.Add(time.Hour),
@@ -60,7 +61,11 @@ INSERT INTO agent_controller.run_admissions (
 	}
 	if _, err := repository.pool.Exec(ctx, `
 UPDATE agent_controller.run_admissions
-SET state = 'blocked_unknown_effect', updated_at = $2 WHERE admission_id = $1`,
+SET state = 'blocked_unknown_effect',
+    terminal_report = '{"terminal_class":"unresolved","tool_effect_state":"unknown","stop_reason":"","error_class":"tool_outcome_unknown"}'::jsonb,
+    finished_at = $2,
+    updated_at = $2
+WHERE admission_id = $1`,
 		"admission-disable-integration", now.Add(time.Second),
 	); err != nil {
 		t.Fatalf("mark Run effect unresolved: %v", err)
@@ -105,7 +110,10 @@ SET state = 'blocked_unknown_effect', updated_at = $2 WHERE admission_id = $1`,
 		RuntimeResult:      &runtime, Now: now.Add(5 * time.Second),
 	}
 	if _, err := repository.pool.Exec(ctx, `
-UPDATE agent_controller.run_admissions SET runtime_revision = $2 WHERE admission_id = $1`,
+UPDATE agent_controller.run_admissions
+SET runtime_revision = $2,
+    snapshot = jsonb_set(snapshot, '{runtime,runtime_revision}', to_jsonb($2::text))
+WHERE admission_id = $1`,
 		"admission-disable-integration", "rtv_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 	); err != nil {
 		t.Fatalf("set mismatched unresolved Run revision: %v", err)
@@ -114,7 +122,10 @@ UPDATE agent_controller.run_admissions SET runtime_revision = $2 WHERE admission
 		t.Fatal("Runtime disable released an unresolved Run from another Runtime revision")
 	}
 	if _, err := repository.pool.Exec(ctx, `
-UPDATE agent_controller.run_admissions SET runtime_revision = $2 WHERE admission_id = $1`,
+UPDATE agent_controller.run_admissions
+SET runtime_revision = $2,
+    snapshot = jsonb_set(snapshot, '{runtime,runtime_revision}', to_jsonb($2::text))
+WHERE admission_id = $1`,
 		"admission-disable-integration", base.Agent.RuntimeRevision,
 	); err != nil {
 		t.Fatalf("restore unresolved Run revision: %v", err)

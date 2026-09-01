@@ -2,9 +2,12 @@ package domain
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 )
+
+var errorClassPattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
 
 type AdmissionState string
 
@@ -32,10 +35,14 @@ const (
 )
 
 type TerminalReport struct {
-	Class           TerminalClass
-	ToolEffectState ToolEffectState
-	StopReason      string
-	ErrorClass      string
+	Class           TerminalClass   `json:"terminal_class"`
+	ToolEffectState ToolEffectState `json:"tool_effect_state"`
+	StopReason      string          `json:"stop_reason"`
+	ErrorClass      string          `json:"error_class"`
+}
+
+func ValidateTerminalReport(report TerminalReport) (AdmissionState, error) {
+	return report.admissionState()
 }
 
 type RunAdmission struct {
@@ -109,27 +116,59 @@ func (admission *RunAdmission) ReleaseAfterRuntimeAbsent(operationRequestID stri
 func (report TerminalReport) admissionState() (AdmissionState, error) {
 	switch report.Class {
 	case TerminalCompleted:
-		if !settledEffect(report.ToolEffectState) || report.StopReason == "" || report.ErrorClass != "" {
+		if !settledEffect(report.ToolEffectState) || !validStopReason(report.StopReason) || report.ErrorClass != "" {
 			return "", fmt.Errorf("completed report is invalid")
 		}
 		return AdmissionReleased, nil
 	case TerminalCancelled:
-		if !settledEffect(report.ToolEffectState) || report.StopReason != "" {
+		if !settledEffect(report.ToolEffectState) || report.StopReason != "" || report.ErrorClass != "" {
 			return "", fmt.Errorf("cancelled report is invalid")
 		}
 		return AdmissionReleased, nil
 	case TerminalFailed:
-		if !settledEffect(report.ToolEffectState) || report.StopReason != "" || report.ErrorClass == "" {
+		if !settledEffect(report.ToolEffectState) || report.StopReason != "" ||
+			!errorClassPattern.MatchString(report.ErrorClass) {
 			return "", fmt.Errorf("failed report is invalid")
 		}
 		return AdmissionReleased, nil
 	case TerminalUnresolved:
-		if report.ToolEffectState != ToolEffectUnknown || report.StopReason != "" || report.ErrorClass == "" {
+		if report.ToolEffectState != ToolEffectUnknown || report.StopReason != "" ||
+			!errorClassPattern.MatchString(report.ErrorClass) {
 			return "", fmt.Errorf("unresolved report must preserve an unknown Tool effect")
 		}
 		return AdmissionBlockedUnknownEffect, nil
 	default:
 		return "", fmt.Errorf("unknown terminal class %q", report.Class)
+	}
+}
+
+func ValidateTerminalReplay(
+	currentState AdmissionState,
+	existing *TerminalReport,
+	requested TerminalReport,
+) error {
+	resultingState, err := requested.admissionState()
+	if err != nil {
+		return err
+	}
+	if existing == nil || *existing != requested {
+		return fmt.Errorf("admission already has a different terminal report")
+	}
+	if currentState == resultingState {
+		return nil
+	}
+	if resultingState == AdmissionBlockedUnknownEffect && currentState == AdmissionReleased {
+		return nil
+	}
+	return fmt.Errorf("admission state %s does not match its terminal report", currentState)
+}
+
+func validStopReason(reason string) bool {
+	switch reason {
+	case "end_turn", "max_tokens", "max_turn_requests", "refusal":
+		return true
+	default:
+		return false
 	}
 }
 

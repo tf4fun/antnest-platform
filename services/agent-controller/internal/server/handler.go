@@ -52,16 +52,24 @@ type LifecycleService interface {
 	GetLifecycleOperation(context.Context, string) (application.OperationView, error)
 }
 
+type RunService interface {
+	ResolveAgentAccess(context.Context, application.ResolveAgentAccessInput) (application.AgentAccessView, error)
+	AcquireRun(context.Context, application.AcquireRunInput) (application.AcquireRunResult, error)
+	ResolveCredential(context.Context, application.ResolveCredentialInput) (application.CredentialView, error)
+	FinishRun(context.Context, application.FinishRunInput) (application.FinishRunResult, error)
+}
+
 type HealthCheck func(context.Context) error
 
 type handler struct {
 	catalog   CatalogService
 	lifecycle LifecycleService
+	runs      RunService
 	health    HealthCheck
 }
 
 func NewHandler(
-	catalog CatalogService, lifecycle LifecycleService, health HealthCheck,
+	catalog CatalogService, lifecycle LifecycleService, runs RunService, health HealthCheck,
 ) (http.Handler, error) {
 	if catalog == nil {
 		return nil, fmt.Errorf("catalog service is required")
@@ -69,12 +77,20 @@ func NewHandler(
 	if lifecycle == nil {
 		return nil, fmt.Errorf("lifecycle service is required")
 	}
+	if runs == nil {
+		return nil, fmt.Errorf("run service is required")
+	}
 	if health == nil {
 		return nil, fmt.Errorf("health check is required")
 	}
-	h := &handler{catalog: catalog, lifecycle: lifecycle, health: health}
+	h := &handler{catalog: catalog, lifecycle: lifecycle, runs: runs, health: health}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /status", h.status)
+	mux.HandleFunc("GET /rpc/agent-controller/status", h.status)
+	mux.HandleFunc("POST /rpc/agent-controller/resolve-agent-access", h.resolveAgentAccess)
+	mux.HandleFunc("POST /rpc/agent-controller/acquire-run", h.acquireRun)
+	mux.HandleFunc("POST /rpc/agent-controller/resolve-credential", h.resolveCredential)
+	mux.HandleFunc("POST /rpc/agent-controller/finish-run", h.finishRun)
 	mux.HandleFunc("POST /internal/model-profiles", h.createModelProfile)
 	mux.HandleFunc("GET /internal/model-profiles", h.listModelProfiles)
 	mux.HandleFunc("GET /internal/model-profiles/{model_profile_id}", h.getModelProfile)
@@ -152,6 +168,48 @@ type rebuildAgentRequest struct {
 
 type lifecycleRequest struct {
 	RequestID string `json:"request_id"`
+}
+
+type resolveAgentAccessRequest struct {
+	RequestID          string `json:"request_id"`
+	AgentAccessSubject string `json:"agent_access_subject"`
+}
+
+type acquireRunRequest struct {
+	RequestID              string `json:"request_id"`
+	AgentID                string `json:"agent_id"`
+	PrincipalID            string `json:"principal_id"`
+	ExpectedAccessRevision string `json:"expected_access_revision"`
+	SessionID              string `json:"session_id"`
+}
+
+type resolveCredentialRequest struct {
+	RequestID     string `json:"request_id"`
+	AdmissionID   string `json:"admission_id"`
+	CredentialRef string `json:"credential_ref"`
+}
+
+type nullableString struct {
+	Present bool
+	Value   string
+}
+
+func (value *nullableString) UnmarshalJSON(payload []byte) error {
+	value.Present = true
+	if string(payload) == "null" {
+		value.Value = ""
+		return nil
+	}
+	return json.Unmarshal(payload, &value.Value)
+}
+
+type finishRunRequest struct {
+	RequestID       string                 `json:"request_id"`
+	AdmissionID     string                 `json:"admission_id"`
+	TerminalClass   domain.TerminalClass   `json:"terminal_class"`
+	ToolEffectState domain.ToolEffectState `json:"tool_effect_state"`
+	StopReason      nullableString         `json:"stop_reason"`
+	ErrorClass      nullableString         `json:"error_class"`
 }
 
 type modelProfileResponse struct {
@@ -239,6 +297,36 @@ type createAgentResponse struct {
 	Operation          operationResponse `json:"operation"`
 }
 
+type resolveAgentAccessResponse struct {
+	PrincipalID        string                   `json:"principal_id"`
+	AgentID            string                   `json:"agent_id"`
+	AccessRevision     string                   `json:"access_revision"`
+	PromptCapabilities ports.PromptCapabilities `json:"prompt_capabilities"`
+}
+
+type acquireRunResponse struct {
+	AdmissionID              string                      `json:"admission_id"`
+	AdmissionDeadline        time.Time                   `json:"admission_deadline"`
+	AgentSpecRevision        string                      `json:"agent_spec_revision"`
+	ExecutionRevision        string                      `json:"execution_revision"`
+	RuntimeMCPSourceDigest   string                      `json:"runtime_mcp_source_digest"`
+	AgentExecutionSpecDigest string                      `json:"agent_execution_spec_digest"`
+	CredentialVersion        string                      `json:"credential_version"`
+	Runtime                  ports.AdmittedRuntime       `json:"runtime"`
+	ExecutionSpec            ports.AdmittedExecutionSpec `json:"execution_spec"`
+}
+
+type resolveCredentialResponse struct {
+	CredentialVersion string `json:"credential_version"`
+	SecretType        string `json:"secret_type"`
+	Secret            string `json:"secret"`
+}
+
+type finishRunResponse struct {
+	Status         string                `json:"status"`
+	AdmissionState domain.AdmissionState `json:"admission_state"`
+}
+
 type errorResponse struct {
 	Code      string `json:"code"`
 	Message   string `json:"message"`
@@ -251,6 +339,92 @@ func (h *handler) status(response http.ResponseWriter, request *http.Request) {
 		return
 	}
 	writeJSON(response, http.StatusOK, map[string]string{"status": "ready"})
+}
+
+func (h *handler) resolveAgentAccess(response http.ResponseWriter, request *http.Request) {
+	var payload resolveAgentAccessRequest
+	if !decodeJSON(response, request, &payload) {
+		return
+	}
+	result, err := h.runs.ResolveAgentAccess(request.Context(), application.ResolveAgentAccessInput{
+		RequestID: payload.RequestID, AgentAccessSubject: payload.AgentAccessSubject,
+	})
+	if err != nil {
+		writeRunError(request.Context(), response, err)
+		return
+	}
+	writeJSON(response, http.StatusOK, resolveAgentAccessResponse{
+		PrincipalID: result.PrincipalID, AgentID: result.AgentID,
+		AccessRevision: result.AccessRevision, PromptCapabilities: result.PromptCapabilities,
+	})
+}
+
+func (h *handler) acquireRun(response http.ResponseWriter, request *http.Request) {
+	var payload acquireRunRequest
+	if !decodeJSON(response, request, &payload) {
+		return
+	}
+	result, err := h.runs.AcquireRun(request.Context(), application.AcquireRunInput{
+		RequestID: payload.RequestID, AgentID: payload.AgentID,
+		PrincipalID: payload.PrincipalID, ExpectedAccessRevision: payload.ExpectedAccessRevision,
+		SessionID: payload.SessionID,
+	})
+	if err != nil {
+		writeRunError(request.Context(), response, err)
+		return
+	}
+	writeJSON(response, http.StatusOK, acquireRunResponse{
+		AdmissionID: result.AdmissionID, AdmissionDeadline: result.AdmissionDeadline,
+		AgentSpecRevision: result.AgentSpecRevision, ExecutionRevision: result.ExecutionRevision,
+		RuntimeMCPSourceDigest:   result.RuntimeMCPSourceDigest,
+		AgentExecutionSpecDigest: result.AgentExecutionSpecDigest,
+		CredentialVersion:        result.CredentialVersion, Runtime: result.Runtime,
+		ExecutionSpec: result.ExecutionSpec,
+	})
+}
+
+func (h *handler) resolveCredential(response http.ResponseWriter, request *http.Request) {
+	response.Header().Set("Cache-Control", "no-store")
+	response.Header().Set("Pragma", "no-cache")
+	var payload resolveCredentialRequest
+	if !decodeJSON(response, request, &payload) {
+		return
+	}
+	result, err := h.runs.ResolveCredential(request.Context(), application.ResolveCredentialInput{
+		RequestID: payload.RequestID, AdmissionID: payload.AdmissionID,
+		CredentialRef: payload.CredentialRef,
+	})
+	if err != nil {
+		writeRunError(request.Context(), response, err)
+		return
+	}
+	writeJSON(response, http.StatusOK, resolveCredentialResponse{
+		CredentialVersion: result.CredentialVersion,
+		SecretType:        result.SecretType, Secret: result.Secret,
+	})
+}
+
+func (h *handler) finishRun(response http.ResponseWriter, request *http.Request) {
+	var payload finishRunRequest
+	if !decodeJSON(response, request, &payload) {
+		return
+	}
+	if !payload.StopReason.Present || !payload.ErrorClass.Present {
+		writeRunError(request.Context(), response, application.ErrInvalidInput)
+		return
+	}
+	result, err := h.runs.FinishRun(request.Context(), application.FinishRunInput{
+		RequestID: payload.RequestID, AdmissionID: payload.AdmissionID,
+		TerminalClass: payload.TerminalClass, ToolEffectState: payload.ToolEffectState,
+		StopReason: payload.StopReason.Value, ErrorClass: payload.ErrorClass.Value,
+	})
+	if err != nil {
+		writeRunError(request.Context(), response, err)
+		return
+	}
+	writeJSON(response, http.StatusOK, finishRunResponse{
+		Status: result.Status, AdmissionState: result.AdmissionState,
+	})
 }
 
 func (h *handler) createModelProfile(response http.ResponseWriter, request *http.Request) {
@@ -594,6 +768,60 @@ func writeServiceError(ctx context.Context, response http.ResponseWriter, err er
 		slog.ErrorContext(ctx, "Agent Controller request failed", "error_class", payload.Code, "error", err)
 	}
 	writeJSON(response, status, payload)
+}
+
+func writeRunError(ctx context.Context, response http.ResponseWriter, err error) {
+	status, payload := publicRunError(err)
+	if status == http.StatusInternalServerError {
+		slog.ErrorContext(ctx, "Agent Controller Run request failed", "error_class", payload.Code)
+	}
+	writeJSON(response, status, payload)
+}
+
+func publicRunError(err error) (int, errorResponse) {
+	switch {
+	case errors.Is(err, application.ErrInvalidInput):
+		return http.StatusBadRequest, errorResponse{Code: "invalid_request", Message: "request is invalid"}
+	case errors.Is(err, application.ErrAccessDenied):
+		return http.StatusForbidden, errorResponse{Code: "access_denied", Message: "Agent access is denied"}
+	case errors.Is(err, application.ErrAgentNotFound):
+		return http.StatusNotFound, errorResponse{Code: "agent_not_found", Message: "Agent was not found"}
+	case errors.Is(err, application.ErrAgentBusy):
+		return http.StatusConflict, errorResponse{Code: "agent_busy", Message: "Agent is busy", Retryable: true}
+	case errors.Is(err, application.ErrAgentRebuilding):
+		return http.StatusConflict, errorResponse{
+			Code: "agent_rebuilding", Message: "Agent lifecycle is changing", Retryable: true,
+		}
+	case errors.Is(err, application.ErrAgentBuildFailed):
+		return http.StatusConflict, errorResponse{
+			Code: "agent_build_failed", Message: "Agent build requires administrator action",
+		}
+	case errors.Is(err, application.ErrAgentNotReady):
+		return http.StatusConflict, errorResponse{
+			Code: "agent_not_ready", Message: "Agent is not executable", Retryable: true,
+		}
+	case errors.Is(err, application.ErrAdmissionNotFound):
+		return http.StatusNotFound, errorResponse{
+			Code: "admission_not_found", Message: "Run admission was not found",
+		}
+	case errors.Is(err, application.ErrCredentialNotAllowed):
+		return http.StatusForbidden, errorResponse{
+			Code: "credential_not_allowed", Message: "credential is not allowed for this Run",
+		}
+	case errors.Is(err, application.ErrLifecycleConflict), errors.Is(err, ports.ErrRequestConflict):
+		return http.StatusConflict, errorResponse{
+			Code: "invalid_request", Message: "Run terminal facts conflict with the stored report",
+		}
+	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled),
+		errors.Is(err, application.ErrDependencyUnavailable):
+		return http.StatusServiceUnavailable, errorResponse{
+			Code: "dependency_unavailable", Message: "dependency is unavailable", Retryable: true,
+		}
+	default:
+		return http.StatusInternalServerError, errorResponse{
+			Code: "internal_error", Message: "internal service error", Retryable: true,
+		}
+	}
 }
 
 func publicError(err error) (int, errorResponse) {

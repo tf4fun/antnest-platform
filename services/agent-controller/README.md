@@ -14,8 +14,10 @@ barrier. Disable retains the workspace and captures the previous Egress policy;
 Enable creates a new Execution revision and restores only that captured policy
 after Runtime readiness. Delete removes Runtime compute and workspace, releases
 the Egress attachment, deactivates owner access, and retains immutable audit
-facts. Run admission, Agent queries, and event replay routes remain target
-contracts until their corresponding slices are completed.
+facts. Agent-wide Run admission resolves access, freezes one immutable execution
+snapshot, scopes Provider credential access, and seals terminal Tool-effect
+facts. Agent queries and event replay routes remain target contracts until their
+corresponding slices are completed.
 
 ## Owns
 

@@ -14,6 +14,11 @@ restores only the Disable-captured policy, and publishes a new Execution
 revision. Delete drains Run occupancy, fences and resets Egress, proves Runtime
 compute and workspace absent, releases the Tunnel allocation into quarantine,
 then atomically publishes `deleted` and deactivates all Agent access bindings.
+Run admission is served at `/rpc/agent-controller`: access resolution binds an
+ACP connection to one Agent, acquire serializes on the Agent row and persists a
+complete immutable execution snapshot, credential resolution is restricted to
+an active admission, and finish seals one immutable terminal report. Admission
+deadline expiry is not an automatic release condition.
 The background lifecycle recovery worker described below is not yet
 started by the process.
 
@@ -38,6 +43,7 @@ Optional:
 - `ANTNEST_AGENT_CONTROLLER_LISTEN` (default `:8080`);
 - `ANTNEST_AGENT_CONTROLLER_DEPENDENCY_TIMEOUT` (default `150s`);
 - `ANTNEST_AGENT_CONTROLLER_DRAIN_TIMEOUT` (default `5m`);
+- `ANTNEST_AGENT_CONTROLLER_RUN_ADMISSION_TTL` (default `30m`);
 - `ANTNEST_AGENT_CONTROLLER_SHUTDOWN_TIMEOUT` (default `15s`);
 - standard OTEL environment variables using OTLP HTTP/protobuf.
 

@@ -134,6 +134,27 @@ describe("AgentControllerClient", () => {
     ).rejects.toMatchObject({ code: "dependency_unavailable" });
   });
 
+  it("rejects response fields outside the closed dependency contract", async () => {
+    const client = new AgentControllerClient({
+      baseUrl: new URL("http://agent-controller:8080/rpc/agent-controller/"),
+      fetchFn: vi.fn(() =>
+        Promise.resolve(
+          Response.json({
+            principal_id: "principal-1",
+            agent_id: "agent-1",
+            access_revision: "access-1",
+            unexpected: "contract drift",
+          }),
+        ),
+      ),
+      timeoutMs: 5_000,
+    });
+
+    await expect(
+      client.resolveAgentAccess({ requestId: "request-1", agentAccessSubject: "subject-1" }),
+    ).rejects.toMatchObject({ code: "dependency_unavailable" });
+  });
+
   it("requires the contracted ready status response", async () => {
     const fetchFn = vi.fn(() => Promise.resolve(Response.json({ status: "ready" })));
 

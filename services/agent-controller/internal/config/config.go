@@ -15,6 +15,7 @@ type Config struct {
 	RuntimeControllerURL string
 	DependencyTimeout    time.Duration
 	DrainTimeout         time.Duration
+	RunAdmissionTTL      time.Duration
 	ShutdownTimeout      time.Duration
 }
 
@@ -46,6 +47,14 @@ func Load(lookup func(string) string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	runAdmissionTTL, err := positiveDuration(
+		lookup("ANTNEST_AGENT_CONTROLLER_RUN_ADMISSION_TTL"),
+		"ANTNEST_AGENT_CONTROLLER_RUN_ADMISSION_TTL",
+		30*time.Minute,
+	)
+	if err != nil {
+		return Config{}, err
+	}
 	config := Config{
 		ListenAddress:        strings.TrimSpace(lookup("ANTNEST_AGENT_CONTROLLER_LISTEN")),
 		DatabaseURL:          strings.TrimSpace(lookup("ANTNEST_AGENT_CONTROLLER_DATABASE_URL")),
@@ -53,6 +62,7 @@ func Load(lookup func(string) string) (Config, error) {
 		RuntimeControllerURL: strings.TrimSpace(lookup("ANTNEST_RUNTIME_CONTROLLER_URL")),
 		DependencyTimeout:    dependencyTimeout,
 		DrainTimeout:         drainTimeout,
+		RunAdmissionTTL:      runAdmissionTTL,
 		ShutdownTimeout:      shutdownTimeout,
 	}
 	if config.ListenAddress == "" {

@@ -37,6 +37,9 @@ func TestCatalogHappyPathThroughHTTPAndPostgres(t *testing.T) {
 	handler, err := server.NewHandler(
 		application.NewCatalogService(repository, secretBox, fixedClock{now: time.Unix(1, 0).UTC()}),
 		catalogOnlyLifecycle{},
+		application.NewRunService(
+			repository, secretBox, fixedClock{now: time.Unix(1, 0).UTC()}, 30*time.Minute,
+		),
 		repository.Ping,
 	)
 	if err != nil {

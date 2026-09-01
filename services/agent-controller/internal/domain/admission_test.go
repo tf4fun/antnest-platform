@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -71,5 +72,49 @@ func TestSettledTerminalReportReleasesImmediately(t *testing.T) {
 	}
 	if admission.State() != AdmissionReleased {
 		t.Fatalf("state = %s", admission.State())
+	}
+}
+
+func TestCompletedReportRejectsUnknownStopReason(t *testing.T) {
+	t.Parallel()
+
+	_, err := ValidateTerminalReport(TerminalReport{
+		Class: TerminalCompleted, ToolEffectState: ToolEffectSettled,
+		StopReason: "invented_stop_reason",
+	})
+	if err == nil {
+		t.Fatal("completed report accepted an unknown stop reason")
+	}
+}
+
+func TestTerminalReportBoundsErrorClassAndCancelledFacts(t *testing.T) {
+	t.Parallel()
+
+	testCases := []TerminalReport{
+		{Class: TerminalCancelled, ToolEffectState: ToolEffectNone, ErrorClass: "run_cancelled"},
+		{Class: TerminalFailed, ToolEffectState: ToolEffectSettled, ErrorClass: "contains secret"},
+		{Class: TerminalUnresolved, ToolEffectState: ToolEffectUnknown, ErrorClass: strings.Repeat("a", 65)},
+	}
+	for _, report := range testCases {
+		if _, err := ValidateTerminalReport(report); err == nil {
+			t.Fatalf("accepted invalid terminal report %+v", report)
+		}
+	}
+}
+
+func TestTerminalReplayAllowsRuntimeBarrierRelease(t *testing.T) {
+	t.Parallel()
+
+	report := TerminalReport{
+		Class: TerminalUnresolved, ToolEffectState: ToolEffectUnknown,
+		ErrorClass: "tool_outcome_unknown",
+	}
+	if err := ValidateTerminalReplay(AdmissionReleased, &report, report); err != nil {
+		t.Fatalf("replay after Runtime barrier: %v", err)
+	}
+	different := report
+	different.ErrorClass = "different_outcome"
+	if err := ValidateTerminalReplay(AdmissionReleased, &report, different); err == nil {
+		t.Fatal("accepted a different replayed terminal report")
 	}
 }
