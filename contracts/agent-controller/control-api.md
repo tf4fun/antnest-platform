@@ -100,6 +100,22 @@ The corresponding `/watch` routes are best-effort SSE; disconnect and resume
 from the last global sequence. Each event also carries a per-Agent aggregate
 sequence for local ordering and optimistic projection checks.
 
+`after_sequence` is an exclusive global cursor and defaults to zero. List
+limits are bounded to 1–500 (default 100). `next_sequence` is the last returned
+global sequence, or the caller's unchanged cursor when no event is available.
+Per-Agent routes return `agent_not_found` for an unknown Agent, including an
+Agent with no events yet. Query parameters use the same fail-closed rules as
+Agent projection queries.
+
+Watch first replays every event after the requested sequence and then waits for
+new commits. SSE `id` is the global sequence and `event` is `agent_event`.
+Callers may resume with `after_sequence` or `Last-Event-ID`; conflicting values
+are rejected. Watch is only a wake-up/streaming convenience: after disconnect,
+consumers resume through authoritative List. Each consumer persists the last
+fully applied global sequence in its own service database and applies events
+idempotently by `event_id`; Agent Controller does not own consumer offsets or
+delivery acknowledgements.
+
 ## Errors
 
 All errors use:

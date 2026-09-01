@@ -14,8 +14,9 @@ The document describes the completed target boundary. Implementation proceeds
 as vertical business slices. At present ModelProfile/Template Catalog, current
 Agent projection queries, Run admission, and the Agent create, explicit rebuild,
 disable, enable, and delete Sagas are runnable. The recovery worker, complete
-lifecycle-to-Run release events, and event replay remain in progress and must
-not be inferred from table or contract presence alone.
+lifecycle-to-Run release events remain in progress and must not be inferred
+from table or contract presence alone. Authoritative event replay and
+best-effort SSE watch are runnable.
 
 ## Aggregate Model
 
@@ -158,6 +159,13 @@ ID, event type, optional operation/admission correlation, timestamp, trace ID,
 and non-secret data. Global and per-Agent List are authoritative; Watch is a
 best-effort wake-up channel resumed by global sequence. Agent Controller is not
 a generic event broker.
+
+Global sequence is an exclusive, consumer-owned replay cursor. Consumers store
+their last fully applied sequence in their own database, replay with at-least-once
+semantics, and deduplicate by event ID. Agent Controller never writes another
+service's acknowledgement or offset. PostgreSQL commit notification wakes SSE
+watchers, while a post-subscription journal check closes the List/LISTEN race;
+the journal remains authoritative if a notification or connection is lost.
 
 ## State Transitions
 

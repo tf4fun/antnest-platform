@@ -56,6 +56,8 @@ func TestInitialMigrationHasFinalSerializationConstraints(t *testing.T) {
 		"agents_owner_projection_idx",
 		"agents_state_projection_idx",
 		"agents_global_projection_idx",
+		"notify_agent_event_commit",
+		"agent_events_notify_commit",
 	}
 	for _, constraint := range required {
 		if !strings.Contains(initialSchemaSQL, constraint) {

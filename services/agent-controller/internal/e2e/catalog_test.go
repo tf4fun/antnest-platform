@@ -41,6 +41,7 @@ func TestCatalogHappyPathThroughHTTPAndPostgres(t *testing.T) {
 			repository, secretBox, fixedClock{now: time.Unix(1, 0).UTC()}, 30*time.Minute,
 		),
 		application.NewAgentQueryService(repository),
+		application.NewEventService(repository, repository),
 		repository.Ping,
 	)
 	if err != nil {

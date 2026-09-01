@@ -25,7 +25,7 @@ func TestCatalogHandlerCreatesModelProfileWithoutEchoingSecret(t *testing.T) {
 	t.Parallel()
 
 	service := &catalogServiceStub{modelView: sampleModelProfileView()}
-	handler, err := NewHandler(service, &lifecycleServiceStub{}, &runServiceStub{}, &agentQueryServiceStub{}, func(context.Context) error { return nil })
+	handler, err := NewHandler(service, &lifecycleServiceStub{}, &runServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, func(context.Context) error { return nil })
 	if err != nil {
 		t.Fatalf("new handler: %v", err)
 	}
@@ -69,7 +69,7 @@ func TestCatalogHandlerRejectsUnknownFieldsAndTrailingJSON(t *testing.T) {
 	t.Parallel()
 
 	service := &catalogServiceStub{}
-	handler, err := NewHandler(service, &lifecycleServiceStub{}, &runServiceStub{}, &agentQueryServiceStub{}, func(context.Context) error { return nil })
+	handler, err := NewHandler(service, &lifecycleServiceStub{}, &runServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, func(context.Context) error { return nil })
 	if err != nil {
 		t.Fatalf("new handler: %v", err)
 	}
@@ -96,7 +96,7 @@ func TestCatalogHandlerListsCurrentTemplatesWithNullableCursor(t *testing.T) {
 	service := &catalogServiceStub{templatePage: application.TemplatePage{
 		Items: []application.TemplateView{sampleTemplateView()}, NextAfterID: "template-1",
 	}}
-	handler, err := NewHandler(service, &lifecycleServiceStub{}, &runServiceStub{}, &agentQueryServiceStub{}, func(context.Context) error { return nil })
+	handler, err := NewHandler(service, &lifecycleServiceStub{}, &runServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, func(context.Context) error { return nil })
 	if err != nil {
 		t.Fatalf("new handler: %v", err)
 	}
@@ -148,7 +148,7 @@ func TestCatalogHandlerMapsStableErrors(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			service := &catalogServiceStub{getModelErr: test.err}
-			handler, err := NewHandler(service, &lifecycleServiceStub{}, &runServiceStub{}, &agentQueryServiceStub{}, func(context.Context) error { return nil })
+			handler, err := NewHandler(service, &lifecycleServiceStub{}, &runServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, func(context.Context) error { return nil })
 			if err != nil {
 				t.Fatalf("new handler: %v", err)
 			}
@@ -190,7 +190,7 @@ func TestLifecycleHandlerCreatesAgentWithStableContract(t *testing.T) {
 			CreatedAt: now, UpdatedAt: now,
 		},
 	}}
-	handler, err := NewHandler(&catalogServiceStub{}, lifecycle, &runServiceStub{}, &agentQueryServiceStub{}, func(context.Context) error { return nil })
+	handler, err := NewHandler(&catalogServiceStub{}, lifecycle, &runServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, func(context.Context) error { return nil })
 	if err != nil {
 		t.Fatalf("new handler: %v", err)
 	}
@@ -245,7 +245,7 @@ func TestLifecycleHandlerGetsDurableOperation(t *testing.T) {
 		Phase: domain.PhaseRuntimeInitialize, State: domain.OperationRunning,
 		CreatedAt: now, UpdatedAt: now,
 	}}
-	handler, err := NewHandler(&catalogServiceStub{}, lifecycle, &runServiceStub{}, &agentQueryServiceStub{}, func(context.Context) error { return nil })
+	handler, err := NewHandler(&catalogServiceStub{}, lifecycle, &runServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, func(context.Context) error { return nil })
 	if err != nil {
 		t.Fatalf("new handler: %v", err)
 	}
@@ -287,7 +287,7 @@ func TestLifecycleHandlerRequestsAgentRebuildWithStableContract(t *testing.T) {
 			State: domain.OperationCompleted, CreatedAt: now, UpdatedAt: now,
 		},
 	}}
-	handler, err := NewHandler(&catalogServiceStub{}, lifecycle, &runServiceStub{}, &agentQueryServiceStub{}, func(context.Context) error { return nil })
+	handler, err := NewHandler(&catalogServiceStub{}, lifecycle, &runServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, func(context.Context) error { return nil })
 	if err != nil {
 		t.Fatalf("new handler: %v", err)
 	}
@@ -338,6 +338,7 @@ func TestLifecycleHandlerRequestsAgentDisableWithStableContract(t *testing.T) {
 	}}
 	handler, err := NewHandler(
 		&catalogServiceStub{}, lifecycle, &runServiceStub{}, &agentQueryServiceStub{},
+		&agentEventServiceStub{},
 		func(context.Context) error { return nil },
 	)
 	if err != nil {
@@ -386,6 +387,7 @@ func TestLifecycleHandlerRequestsAgentEnableWithStableContract(t *testing.T) {
 	}}
 	handler, err := NewHandler(
 		&catalogServiceStub{}, lifecycle, &runServiceStub{}, &agentQueryServiceStub{},
+		&agentEventServiceStub{},
 		func(context.Context) error { return nil },
 	)
 	if err != nil {
@@ -434,6 +436,7 @@ func TestLifecycleHandlerRequestsAgentDeleteWithStableContract(t *testing.T) {
 	}}
 	handler, err := NewHandler(
 		&catalogServiceStub{}, lifecycle, &runServiceStub{}, &agentQueryServiceStub{},
+		&agentEventServiceStub{},
 		func(context.Context) error { return nil },
 	)
 	if err != nil {

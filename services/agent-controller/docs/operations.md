@@ -28,6 +28,13 @@ These are current-state reads; ordered change replay belongs to the Agent event
 journal and must not be inferred from list cursors. Callers preserve the same
 filters while following a cursor; malformed, duplicate, unknown, and explicitly
 empty query values fail closed.
+Event consumers use `/internal/agent-events` or the per-Agent event route for
+authoritative replay. The cursor is the exclusive `after_sequence`; the
+consumer stores its last fully applied value in its own database. `/watch`
+serves SSE backlog followed by PostgreSQL commit notifications and supports
+`Last-Event-ID`, but carries no delivery acknowledgement. A disconnect is
+recovered by List from the consumer-owned cursor, never by assuming the last
+socket write was applied.
 The background lifecycle recovery worker described below is not yet
 started by the process.
 

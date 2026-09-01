@@ -171,7 +171,8 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 		observedRunStore, secretBox, systemClock{}, cfg.RunAdmissionTTL,
 	)
 	queries := application.NewAgentQueryService(observedAgentQueryStore)
-	handler, err := server.NewHandler(catalog, lifecycle, runs, queries, repository.Ping)
+	events := application.NewEventService(repository, observedAgentQueryStore)
+	handler, err := server.NewHandler(catalog, lifecycle, runs, queries, events, repository.Ping)
 	if err != nil {
 		return classifyFailure("service_composition", err)
 	}

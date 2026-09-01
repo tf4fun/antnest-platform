@@ -309,3 +309,17 @@ CREATE UNIQUE INDEX IF NOT EXISTS agent_events_aggregate_sequence_unique
 
 CREATE INDEX IF NOT EXISTS agent_events_global_replay_idx
     ON agent_controller.agent_events (global_sequence);
+
+CREATE OR REPLACE FUNCTION agent_controller.notify_agent_event_commit()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    PERFORM pg_notify('agent_controller_events', NEW.global_sequence::TEXT);
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER agent_events_notify_commit
+AFTER INSERT ON agent_controller.agent_events
+FOR EACH ROW EXECUTE FUNCTION agent_controller.notify_agent_event_commit();

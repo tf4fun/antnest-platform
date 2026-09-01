@@ -25,6 +25,7 @@ func TestAgentQueryHandlerGetsKnownDeletedProjection(t *testing.T) {
 	}}
 	handler, err := NewHandler(
 		&catalogServiceStub{}, &lifecycleServiceStub{}, &runServiceStub{}, queries,
+		&agentEventServiceStub{},
 		func(context.Context) error { return nil },
 	)
 	if err != nil {
@@ -65,6 +66,7 @@ func TestAgentQueryHandlerOmitsNonExecutableRuntimeRevision(t *testing.T) {
 	}}
 	handler, err := NewHandler(
 		&catalogServiceStub{}, &lifecycleServiceStub{}, &runServiceStub{}, queries,
+		&agentEventServiceStub{},
 		func(context.Context) error { return nil },
 	)
 	if err != nil {
@@ -90,6 +92,7 @@ func TestAgentQueryHandlerRejectsQueryOnExactGet(t *testing.T) {
 	queries := &agentQueryServiceStub{}
 	handler, err := NewHandler(
 		&catalogServiceStub{}, &lifecycleServiceStub{}, &runServiceStub{}, queries,
+		&agentEventServiceStub{},
 		func(context.Context) error { return nil },
 	)
 	if err != nil {
@@ -119,6 +122,7 @@ func TestAgentQueryHandlerListsWithStrictFilters(t *testing.T) {
 	}}
 	handler, err := NewHandler(
 		&catalogServiceStub{}, &lifecycleServiceStub{}, &runServiceStub{}, queries,
+		&agentEventServiceStub{},
 		func(context.Context) error { return nil },
 	)
 	if err != nil {
@@ -177,6 +181,7 @@ func TestAgentQueryHandlerRejectsAmbiguousOrUnknownQuery(t *testing.T) {
 			queries := &agentQueryServiceStub{}
 			handler, err := NewHandler(
 				&catalogServiceStub{}, &lifecycleServiceStub{}, &runServiceStub{}, queries,
+				&agentEventServiceStub{},
 				func(context.Context) error { return nil },
 			)
 			if err != nil {
@@ -197,6 +202,7 @@ func TestAgentQueryHandlerMapsServiceError(t *testing.T) {
 	queries := &agentQueryServiceStub{err: application.ErrAgentNotFound}
 	handler, err := NewHandler(
 		&catalogServiceStub{}, &lifecycleServiceStub{}, &runServiceStub{}, queries,
+		&agentEventServiceStub{},
 		func(context.Context) error { return nil },
 	)
 	if err != nil {

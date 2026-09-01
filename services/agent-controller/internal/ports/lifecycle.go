@@ -185,6 +185,7 @@ type LifecycleOperationRecord struct {
 }
 
 type AgentEventRecord struct {
+	GlobalSequence     int64
 	EventID            string
 	AgentID            string
 	AggregateSequence  int64

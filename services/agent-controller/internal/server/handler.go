@@ -65,6 +65,13 @@ type AgentQueryService interface {
 	ListAgents(context.Context, application.ListAgentsInput) (application.AgentPage, error)
 }
 
+type AgentEventService interface {
+	ListGlobalEvents(context.Context, application.ListEventsInput) (application.AgentEventPage, error)
+	ListAgentEvents(context.Context, application.ListAgentEventsInput) (application.AgentEventPage, error)
+	WatchGlobalEvents(context.Context, int64, application.AgentEventEmitter) error
+	WatchAgentEvents(context.Context, string, int64, application.AgentEventEmitter) error
+}
+
 type HealthCheck func(context.Context) error
 
 type handler struct {
@@ -72,6 +79,7 @@ type handler struct {
 	lifecycle LifecycleService
 	runs      RunService
 	queries   AgentQueryService
+	events    AgentEventService
 	health    HealthCheck
 }
 
@@ -80,6 +88,7 @@ func NewHandler(
 	lifecycle LifecycleService,
 	runs RunService,
 	queries AgentQueryService,
+	events AgentEventService,
 	health HealthCheck,
 ) (http.Handler, error) {
 	if catalog == nil {
@@ -94,10 +103,15 @@ func NewHandler(
 	if queries == nil {
 		return nil, fmt.Errorf("agent query service is required")
 	}
+	if events == nil {
+		return nil, fmt.Errorf("agent event service is required")
+	}
 	if health == nil {
 		return nil, fmt.Errorf("health check is required")
 	}
-	h := &handler{catalog: catalog, lifecycle: lifecycle, runs: runs, queries: queries, health: health}
+	h := &handler{
+		catalog: catalog, lifecycle: lifecycle, runs: runs, queries: queries, events: events, health: health,
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /status", h.status)
 	mux.HandleFunc("GET /rpc/agent-controller/status", h.status)
@@ -121,6 +135,10 @@ func NewHandler(
 	mux.HandleFunc("POST /internal/agents/{agent_id}/enable", h.enableAgent)
 	mux.HandleFunc("POST /internal/agents/{agent_id}/delete", h.deleteAgent)
 	mux.HandleFunc("GET /internal/agent-operations/{request_id}", h.getLifecycleOperation)
+	mux.HandleFunc("GET /internal/agent-events", h.listGlobalAgentEvents)
+	mux.HandleFunc("GET /internal/agent-events/watch", h.watchGlobalAgentEvents)
+	mux.HandleFunc("GET /internal/agents/{agent_id}/events", h.listAgentEvents)
+	mux.HandleFunc("GET /internal/agents/{agent_id}/events/watch", h.watchAgentEvents)
 	return mux, nil
 }
 
@@ -299,6 +317,25 @@ type agentResponse struct {
 type agentListResponse struct {
 	Items      []agentResponse `json:"items"`
 	NextCursor *string         `json:"next_cursor"`
+}
+
+type agentEventResponse struct {
+	EventID            string         `json:"event_id"`
+	GlobalSequence     int64          `json:"global_sequence"`
+	AggregateSequence  int64          `json:"aggregate_sequence"`
+	SchemaVersion      int            `json:"schema_version"`
+	AgentID            string         `json:"agent_id"`
+	EventType          string         `json:"event_type"`
+	OperationRequestID string         `json:"operation_request_id,omitempty"`
+	AdmissionID        string         `json:"admission_id,omitempty"`
+	TraceID            string         `json:"trace_id,omitempty"`
+	OccurredAt         time.Time      `json:"occurred_at"`
+	Data               map[string]any `json:"data"`
+}
+
+type agentEventListResponse struct {
+	Events       []agentEventResponse `json:"events"`
+	NextSequence int64                `json:"next_sequence"`
 }
 
 type operationResponse struct {
@@ -637,6 +674,115 @@ func (h *handler) listAgents(response http.ResponseWriter, request *http.Request
 	})
 }
 
+func (h *handler) listGlobalAgentEvents(response http.ResponseWriter, request *http.Request) {
+	input, ok := eventListInput(response, request)
+	if !ok {
+		return
+	}
+	page, err := h.events.ListGlobalEvents(request.Context(), input)
+	if err != nil {
+		writeServiceError(request.Context(), response, err)
+		return
+	}
+	writeJSON(response, http.StatusOK, agentEventListPayload(page))
+}
+
+func (h *handler) listAgentEvents(response http.ResponseWriter, request *http.Request) {
+	input, ok := eventListInput(response, request)
+	if !ok {
+		return
+	}
+	page, err := h.events.ListAgentEvents(request.Context(), application.ListAgentEventsInput{
+		AgentID:       request.PathValue("agent_id"),
+		AfterSequence: input.AfterSequence, Limit: input.Limit,
+	})
+	if err != nil {
+		writeServiceError(request.Context(), response, err)
+		return
+	}
+	writeJSON(response, http.StatusOK, agentEventListPayload(page))
+}
+
+func (h *handler) watchGlobalAgentEvents(response http.ResponseWriter, request *http.Request) {
+	afterSequence, ok := eventWatchCursor(response, request)
+	if !ok {
+		return
+	}
+	page, err := h.events.ListGlobalEvents(request.Context(), application.ListEventsInput{
+		AfterSequence: afterSequence,
+	})
+	if err != nil {
+		writeServiceError(request.Context(), response, err)
+		return
+	}
+	h.streamAgentEvents(response, request, page, func(
+		ctx context.Context, cursor int64, emit application.AgentEventEmitter,
+	) error {
+		return h.events.WatchGlobalEvents(ctx, cursor, emit)
+	})
+}
+
+func (h *handler) watchAgentEvents(response http.ResponseWriter, request *http.Request) {
+	afterSequence, ok := eventWatchCursor(response, request)
+	if !ok {
+		return
+	}
+	agentID := request.PathValue("agent_id")
+	page, err := h.events.ListAgentEvents(request.Context(), application.ListAgentEventsInput{
+		AgentID: agentID, AfterSequence: afterSequence,
+	})
+	if err != nil {
+		writeServiceError(request.Context(), response, err)
+		return
+	}
+	h.streamAgentEvents(response, request, page, func(
+		ctx context.Context, cursor int64, emit application.AgentEventEmitter,
+	) error {
+		return h.events.WatchAgentEvents(ctx, agentID, cursor, emit)
+	})
+}
+
+type watchAgentEvents func(context.Context, int64, application.AgentEventEmitter) error
+
+func (h *handler) streamAgentEvents(
+	response http.ResponseWriter,
+	request *http.Request,
+	page application.AgentEventPage,
+	watch watchAgentEvents,
+) {
+	flusher, ok := response.(http.Flusher)
+	if !ok {
+		writeError(response, http.StatusInternalServerError, "internal_error", "streaming is unavailable", true)
+		return
+	}
+	response.Header().Set("Content-Type", "text/event-stream")
+	response.Header().Set("Cache-Control", "no-cache, no-store")
+	response.Header().Set("X-Accel-Buffering", "no")
+	response.WriteHeader(http.StatusOK)
+	flusher.Flush()
+	emit := func(event application.AgentEventView) error {
+		payload, err := json.Marshal(agentEventPayload(event))
+		if err != nil {
+			return fmt.Errorf("encode Agent SSE event: %w", err)
+		}
+		if _, err := fmt.Fprintf(
+			response, "id: %d\nevent: agent_event\ndata: %s\n\n", event.GlobalSequence, payload,
+		); err != nil {
+			return fmt.Errorf("write Agent SSE event: %w", err)
+		}
+		flusher.Flush()
+		return nil
+	}
+	for _, event := range page.Events {
+		if err := emit(event); err != nil {
+			return
+		}
+	}
+	if err := watch(request.Context(), page.NextSequence, emit); err != nil && request.Context().Err() == nil {
+		slog.WarnContext(request.Context(), "Agent event watch ended", "error_class", "event_watch_failed")
+	}
+}
+
 func (h *handler) rebuildAgent(response http.ResponseWriter, request *http.Request) {
 	var payload rebuildAgentRequest
 	if !decodeJSON(response, request, &payload) {
@@ -738,28 +884,13 @@ func catalogListInput(response http.ResponseWriter, request *http.Request) (appl
 }
 
 func agentListInput(response http.ResponseWriter, request *http.Request) (application.ListAgentsInput, bool) {
-	query, err := url.ParseQuery(request.URL.RawQuery)
-	if err != nil {
-		writeError(response, http.StatusBadRequest, "invalid_request", "request is invalid", false)
-		return application.ListAgentsInput{}, false
-	}
 	allowed := map[string]struct{}{
 		"organization_id": {}, "owner_user_id": {}, "lifecycle_state": {},
 		"include_deleted": {}, "limit": {}, "cursor": {},
 	}
-	for key, values := range query {
-		if _, ok := allowed[key]; !ok || len(values) != 1 {
-			writeError(response, http.StatusBadRequest, "invalid_request", "request is invalid", false)
-			return application.ListAgentsInput{}, false
-		}
-	}
-	for _, key := range []string{
-		"organization_id", "owner_user_id", "lifecycle_state", "include_deleted", "limit", "cursor",
-	} {
-		if values, present := query[key]; present && values[0] == "" {
-			writeError(response, http.StatusBadRequest, "invalid_request", "request is invalid", false)
-			return application.ListAgentsInput{}, false
-		}
+	query, ok := strictQuery(response, request, allowed)
+	if !ok {
+		return application.ListAgentsInput{}, false
 	}
 	includeDeleted := false
 	if values, present := query["include_deleted"]; present {
@@ -787,6 +918,86 @@ func agentListInput(response http.ResponseWriter, request *http.Request) (applic
 		LifecycleState: domain.AgentState(query.Get("lifecycle_state")),
 		IncludeDeleted: includeDeleted, Limit: limit, Cursor: query.Get("cursor"),
 	}, true
+}
+
+func eventListInput(response http.ResponseWriter, request *http.Request) (application.ListEventsInput, bool) {
+	query, ok := strictQuery(response, request, map[string]struct{}{
+		"after_sequence": {}, "limit": {},
+	})
+	if !ok {
+		return application.ListEventsInput{}, false
+	}
+	afterSequence, ok := nonnegativeInt64(response, query.Get("after_sequence"))
+	if !ok {
+		return application.ListEventsInput{}, false
+	}
+	limit := 0
+	if raw := query.Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 {
+			writeError(response, http.StatusBadRequest, "invalid_request", "request is invalid", false)
+			return application.ListEventsInput{}, false
+		}
+		limit = parsed
+	}
+	return application.ListEventsInput{AfterSequence: afterSequence, Limit: limit}, true
+}
+
+func eventWatchCursor(response http.ResponseWriter, request *http.Request) (int64, bool) {
+	query, ok := strictQuery(response, request, map[string]struct{}{"after_sequence": {}})
+	if !ok {
+		return 0, false
+	}
+	querySequence, ok := nonnegativeInt64(response, query.Get("after_sequence"))
+	if !ok {
+		return 0, false
+	}
+	headerValues := request.Header.Values("Last-Event-ID")
+	if len(headerValues) > 1 || (len(headerValues) == 1 && strings.TrimSpace(headerValues[0]) == "") {
+		writeError(response, http.StatusBadRequest, "invalid_request", "request is invalid", false)
+		return 0, false
+	}
+	if len(headerValues) == 0 {
+		return querySequence, true
+	}
+	headerSequence, ok := nonnegativeInt64(response, strings.TrimSpace(headerValues[0]))
+	if !ok {
+		return 0, false
+	}
+	if _, queryPresent := query["after_sequence"]; queryPresent && querySequence != headerSequence {
+		writeError(response, http.StatusBadRequest, "invalid_request", "request is invalid", false)
+		return 0, false
+	}
+	return headerSequence, true
+}
+
+func strictQuery(
+	response http.ResponseWriter, request *http.Request, allowed map[string]struct{},
+) (url.Values, bool) {
+	query, err := url.ParseQuery(request.URL.RawQuery)
+	if err != nil {
+		writeError(response, http.StatusBadRequest, "invalid_request", "request is invalid", false)
+		return nil, false
+	}
+	for key, values := range query {
+		if _, ok := allowed[key]; !ok || len(values) != 1 || values[0] == "" {
+			writeError(response, http.StatusBadRequest, "invalid_request", "request is invalid", false)
+			return nil, false
+		}
+	}
+	return query, true
+}
+
+func nonnegativeInt64(response http.ResponseWriter, raw string) (int64, bool) {
+	if raw == "" {
+		return 0, true
+	}
+	value, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || value < 0 {
+		writeError(response, http.StatusBadRequest, "invalid_request", "request is invalid", false)
+		return 0, false
+	}
+	return value, true
 }
 
 func decodeJSON(response http.ResponseWriter, request *http.Request, target any) bool {
@@ -861,6 +1072,24 @@ func operationPayload(operation application.OperationView) operationResponse {
 		Kind: operation.Kind, Phase: operation.Phase, State: operation.State,
 		ErrorCode: operation.ErrorCode, ErrorDetail: operation.ErrorDetail,
 		CreatedAt: operation.CreatedAt, UpdatedAt: operation.UpdatedAt,
+	}
+}
+
+func agentEventListPayload(page application.AgentEventPage) agentEventListResponse {
+	events := make([]agentEventResponse, 0, len(page.Events))
+	for _, event := range page.Events {
+		events = append(events, agentEventPayload(event))
+	}
+	return agentEventListResponse{Events: events, NextSequence: page.NextSequence}
+}
+
+func agentEventPayload(event application.AgentEventView) agentEventResponse {
+	return agentEventResponse{
+		EventID: event.EventID, GlobalSequence: event.GlobalSequence,
+		AggregateSequence: event.AggregateSequence, SchemaVersion: event.SchemaVersion,
+		AgentID: event.AgentID, EventType: event.EventType,
+		OperationRequestID: event.OperationRequestID, AdmissionID: event.AdmissionID,
+		TraceID: event.TraceID, OccurredAt: event.OccurredAt, Data: event.Data,
 	}
 }
 
