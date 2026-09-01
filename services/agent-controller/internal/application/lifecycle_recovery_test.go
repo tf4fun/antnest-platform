@@ -461,13 +461,18 @@ func TestLifecycleRecoveryWorkerAdvancesEachSagaByOneClaimedPhase(t *testing.T) 
 			t.Fatalf("interrupt create: result=%+v err=%v", result, err)
 		}
 		store.replayed = true
-		dependencies.runtime = readyRecoveryRuntime("created")
+		store.beginState.Operation.Phase = domain.PhaseNetworkEnsure
+		store.beginState.Operation.ChildRequestID = domain.ChildRequestID(
+			store.beginState.Operation.RequestID, domain.PhaseNetworkEnsure,
+		)
+		store.beginState.Operation.NetworkAttachment = nil
+		dependencies.networkIndex = 0
 		dependencies.calls = nil
 		runClaimedLifecycleRecovery(
 			t, service, &claimingRecoveryStore{operation: func() *ports.LifecycleOperationRecord {
 				return &store.beginState.Operation
 			}}, &store.beginState.Operation, func() []string { return dependencies.calls },
-			domain.PhasePublish, []string{"runtime.initialize"},
+			domain.PhaseRuntimeInitialize, []string{"egress.ensure"},
 		)
 	})
 
@@ -475,7 +480,7 @@ func TestLifecycleRecoveryWorkerAdvancesEachSagaByOneClaimedPhase(t *testing.T) 
 		template := mustLifecycleTemplate(t)
 		model := mustLifecycleModel(t)
 		base := rebuildLifecycleBase(t, template, model)
-		store := &rebuildLifecycleStoreStub{base: base}
+		store := &rebuildLifecycleStoreStub{base: base, drainBlocked: true}
 		dependencies := &rebuildDependenciesStub{
 			network: validLifecycleNetwork(), runtime: ports.RuntimeOperation{State: "running"},
 		}
@@ -487,42 +492,39 @@ func TestLifecycleRecoveryWorkerAdvancesEachSagaByOneClaimedPhase(t *testing.T) 
 			RequestID: "request-worker-rebuild", AgentID: base.Agent.AgentID,
 			TemplateID: "template-1", TemplateRevision: 1,
 		})
-		if err != nil || result.Operation.Phase != domain.PhaseRuntimeUpdate {
+		if err != nil || result.Operation.Phase != domain.PhaseDrain {
 			t.Fatalf("interrupt rebuild: result=%+v err=%v", result, err)
 		}
 		store.replayed = true
-		dependencies.runtime = readyRecoveryRuntime("rebuilt")
+		store.drainBlocked = false
 		dependencies.calls = nil
 		runClaimedLifecycleRecovery(
 			t, service, &claimingRecoveryStore{operation: func() *ports.LifecycleOperationRecord {
 				return &store.state.Operation
 			}}, &store.state.Operation, func() []string { return dependencies.calls },
-			domain.PhaseNetworkEnsure, []string{"runtime.update"},
+			domain.PhaseNetworkFence, nil,
 		)
 	})
 
 	t.Run("disable", func(t *testing.T) {
 		base := disableLifecycleBase(t)
-		store := &disableLifecycleStoreStub{base: base}
+		store := &disableLifecycleStoreStub{base: base, drainBlocked: true}
 		dependencies := newDisableDependencies(base, ports.RuntimeOperation{State: "running"})
 		service := newLifecycleTestService(t, store, dependencies)
 		result, err := service.DisableAgent(context.Background(), DisableAgentInput{
 			RequestID: "request-worker-disable", AgentID: base.Agent.AgentID,
 		})
-		if err != nil || result.Operation.Phase != domain.PhaseRuntimeDisable {
+		if err != nil || result.Operation.Phase != domain.PhaseDrain {
 			t.Fatalf("interrupt disable: result=%+v err=%v", result, err)
 		}
 		store.replayed = true
-		dependencies.runtime = ports.RuntimeOperation{
-			State: "completed", Effect: "completed", RuntimeRevision: base.Agent.RuntimeRevision,
-			LifecycleState: "disabled", Health: "absent",
-		}
+		store.drainBlocked = false
 		dependencies.calls = nil
 		runClaimedLifecycleRecovery(
 			t, service, &claimingRecoveryStore{operation: func() *ports.LifecycleOperationRecord {
 				return &store.state.Operation
 			}}, &store.state.Operation, func() []string { return dependencies.calls },
-			domain.PhasePublish, []string{"runtime.disable"},
+			domain.PhaseNetworkFence, nil,
 		)
 	})
 
@@ -538,19 +540,25 @@ func TestLifecycleRecoveryWorkerAdvancesEachSagaByOneClaimedPhase(t *testing.T) 
 			t.Fatalf("interrupt enable: result=%+v err=%v", result, err)
 		}
 		store.replayed = true
-		dependencies.runtime = readyEnableRuntime()
+		store.state.Operation.Phase = domain.PhaseNetworkEnsure
+		store.state.Operation.ChildRequestID = domain.ChildRequestID(
+			store.state.Operation.RequestID, domain.PhaseNetworkEnsure,
+		)
+		store.state.Operation.NetworkAttachment = nil
+		dependencies.policyIndex = 0
 		dependencies.calls = nil
 		runClaimedLifecycleRecovery(
 			t, service, &claimingRecoveryStore{operation: func() *ports.LifecycleOperationRecord {
 				return &store.state.Operation
 			}}, &store.state.Operation, func() []string { return dependencies.calls },
-			domain.PhaseNetworkRestore, []string{"runtime.enable"},
+			domain.PhaseRuntimeEnable,
+			[]string{"egress.policy.get", "egress.network.get", "egress.fence", "egress.policy.get"},
 		)
 	})
 
 	t.Run("delete", func(t *testing.T) {
 		base := deleteAgentBase(domain.AgentAvailable)
-		store := &deleteLifecycleStoreStub{base: base}
+		store := &deleteLifecycleStoreStub{base: base, drainBlocked: true}
 		dependencies := newDeleteDependencies(base.Agent)
 		dependencies.runtime = ports.RuntimeOperation{State: "running"}
 		service := NewLifecycleService(
@@ -560,21 +568,17 @@ func TestLifecycleRecoveryWorkerAdvancesEachSagaByOneClaimedPhase(t *testing.T) 
 		result, err := service.DeleteAgent(context.Background(), DeleteAgentInput{
 			RequestID: "request-worker-delete", AgentID: base.Agent.AgentID,
 		})
-		if err != nil || result.Operation.Phase != domain.PhaseRuntimeDelete {
+		if err != nil || result.Operation.Phase != domain.PhaseDrain {
 			t.Fatalf("interrupt delete: result=%+v err=%v", result, err)
 		}
 		store.replayed = true
-		dependencies.runtime = ports.RuntimeOperation{
-			State: "completed", Effect: "completed",
-			RuntimeRevision: "rtv_99999999999999999999999999999999",
-			LifecycleState:  "deleted", Health: "absent",
-		}
+		store.drainBlocked = false
 		dependencies.calls = nil
 		runClaimedLifecycleRecovery(
 			t, service, &claimingRecoveryStore{operation: func() *ports.LifecycleOperationRecord {
 				return &store.state.Operation
 			}}, &store.state.Operation, func() []string { return dependencies.calls },
-			domain.PhaseNetworkRelease, []string{"runtime.delete"},
+			domain.PhaseNetworkFence, nil,
 		)
 	})
 }
@@ -674,13 +678,51 @@ func (store *claimingRecoveryStore) ReleaseLifecycleRecoveryClaim(
 	return nil
 }
 
+func TestCreateLifecycleRecoveryAdvancesOneDurablePhasePerClaim(t *testing.T) {
+	t.Parallel()
+
+	store := &lifecycleStoreStub{}
+	dependencies := &lifecycleDependenciesStub{
+		network: validLifecycleNetwork(), runtime: ports.RuntimeOperation{State: "running"},
+	}
+	service := newLifecycleTestService(t, store, dependencies)
+	result, err := service.CreateAgent(
+		context.Background(), lifecycleCreateInput("request-recovery-create"),
+	)
+	if err != nil || result.Operation.Phase != domain.PhaseRuntimeInitialize {
+		t.Fatalf("start recoverable create: result=%+v err=%v", result, err)
+	}
+	store.replayed = true
+	store.beginState.Operation.Phase = domain.PhaseNetworkEnsure
+	store.beginState.Operation.ChildRequestID = domain.ChildRequestID(
+		store.beginState.Operation.RequestID, domain.PhaseNetworkEnsure,
+	)
+	store.beginState.Operation.NetworkAttachment = nil
+	dependencies.runtime = readyRecoveryRuntime("created")
+	dependencies.networkIndex = 0
+	dependencies.calls = nil
+
+	steps := []lifecycleRecoveryStepExpectation{
+		{domain.PhaseRuntimeInitialize, domain.OperationRunning, false, []string{"egress.ensure"}},
+		{domain.PhasePublish, domain.OperationRunning, false, []string{"runtime.initialize"}},
+		{domain.PhaseCompleted, domain.OperationCompleted, true, []string{"egress.ensure"}},
+	}
+	assertLifecycleRecoveryPlan(t, domain.OperationCreate, steps)
+	for _, step := range steps {
+		resumeLifecycleRecoveryStep(
+			t, service, &store.beginState.Operation, func() []string { return dependencies.calls },
+			step.phase, step.state, step.terminal, step.calls,
+		)
+	}
+}
+
 func TestRebuildLifecycleRecoveryAdvancesOneDurablePhasePerClaim(t *testing.T) {
 	t.Parallel()
 
 	template := mustLifecycleTemplate(t)
 	model := mustLifecycleModel(t)
 	base := rebuildLifecycleBase(t, template, model)
-	store := &rebuildLifecycleStoreStub{base: base}
+	store := &rebuildLifecycleStoreStub{base: base, drainBlocked: true}
 	dependencies := &rebuildDependenciesStub{
 		network: validLifecycleNetwork(),
 		runtime: ports.RuntimeOperation{State: "running"},
@@ -700,20 +742,27 @@ func TestRebuildLifecycleRecoveryAdvancesOneDurablePhasePerClaim(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start recoverable rebuild: %v", err)
 	}
-	if result.Operation.Phase != domain.PhaseRuntimeUpdate || result.Operation.State != domain.OperationRunning {
+	if result.Operation.Phase != domain.PhaseDrain || result.Operation.State != domain.OperationRunning {
 		t.Fatalf("interrupted rebuild = %+v", result.Operation)
 	}
 	store.replayed = true
+	store.drainBlocked = false
 	dependencies.runtime = readyRecoveryRuntime("rebuilt")
 	dependencies.calls = nil
 
 	steps := []lifecycleRecoveryStepExpectation{
+		{domain.PhaseNetworkFence, domain.OperationRunning, false, nil},
+		{domain.PhaseFlowReset, domain.OperationRunning, false,
+			[]string{"egress.policy.get", "egress.fence", "egress.get"}},
+		{domain.PhaseRuntimeUpdate, domain.OperationRunning, false,
+			[]string{"egress.policy.get", "egress.reset"}},
 		{domain.PhaseNetworkEnsure, domain.OperationRunning, false,
 			[]string{"runtime.update"}},
 		{domain.PhasePublish, domain.OperationRunning, false,
 			[]string{"egress.policy.get", "egress.policy.assign", "egress.ensure"}},
 		{domain.PhaseCompleted, domain.OperationCompleted, true, nil},
 	}
+	assertLifecycleRecoveryPlan(t, domain.OperationRebuild, steps)
 	for _, step := range steps {
 		resumeLifecycleRecoveryStep(
 			t, service, &store.state.Operation, func() []string { return dependencies.calls },
@@ -726,7 +775,7 @@ func TestDisableLifecycleRecoveryAdvancesOneDurablePhasePerClaim(t *testing.T) {
 	t.Parallel()
 
 	base := disableLifecycleBase(t)
-	store := &disableLifecycleStoreStub{base: base}
+	store := &disableLifecycleStoreStub{base: base, drainBlocked: true}
 	dependencies := newDisableDependencies(base, ports.RuntimeOperation{State: "running"})
 	service := newLifecycleTestService(t, store, dependencies)
 
@@ -737,10 +786,11 @@ func TestDisableLifecycleRecoveryAdvancesOneDurablePhasePerClaim(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start recoverable disable: %v", err)
 	}
-	if result.Operation.Phase != domain.PhaseRuntimeDisable || result.Operation.State != domain.OperationRunning {
+	if result.Operation.Phase != domain.PhaseDrain || result.Operation.State != domain.OperationRunning {
 		t.Fatalf("interrupted disable = %+v", result.Operation)
 	}
 	store.replayed = true
+	store.drainBlocked = false
 	dependencies.runtime = ports.RuntimeOperation{
 		State: "completed", Effect: "completed", RuntimeRevision: base.Agent.RuntimeRevision,
 		LifecycleState: "disabled", Health: "absent",
@@ -748,9 +798,13 @@ func TestDisableLifecycleRecoveryAdvancesOneDurablePhasePerClaim(t *testing.T) {
 	dependencies.calls = nil
 
 	steps := []lifecycleRecoveryStepExpectation{
+		{domain.PhaseNetworkFence, domain.OperationRunning, false, nil},
+		{domain.PhaseRuntimeDisable, domain.OperationRunning, false,
+			[]string{"egress.policy.get", "egress.fence"}},
 		{domain.PhasePublish, domain.OperationRunning, false, []string{"runtime.disable"}},
 		{domain.PhaseCompleted, domain.OperationCompleted, true, nil},
 	}
+	assertLifecycleRecoveryPlan(t, domain.OperationDisable, steps)
 	for _, step := range steps {
 		resumeLifecycleRecoveryStep(
 			t, service, &store.state.Operation, func() []string { return dependencies.calls },
@@ -778,15 +832,24 @@ func TestEnableLifecycleRecoveryAdvancesOneDurablePhasePerClaim(t *testing.T) {
 		t.Fatalf("interrupted enable = %+v", result.Operation)
 	}
 	store.replayed = true
+	store.state.Operation.Phase = domain.PhaseNetworkEnsure
+	store.state.Operation.ChildRequestID = domain.ChildRequestID(
+		store.state.Operation.RequestID, domain.PhaseNetworkEnsure,
+	)
+	store.state.Operation.NetworkAttachment = nil
 	dependencies.runtime = readyEnableRuntime()
+	dependencies.policyIndex = 0
 	dependencies.calls = nil
 
 	steps := []lifecycleRecoveryStepExpectation{
+		{domain.PhaseRuntimeEnable, domain.OperationRunning, false,
+			[]string{"egress.policy.get", "egress.network.get", "egress.fence", "egress.policy.get"}},
 		{domain.PhaseNetworkRestore, domain.OperationRunning, false, []string{"runtime.enable"}},
 		{domain.PhasePublish, domain.OperationRunning, false,
 			[]string{"egress.policy.get", "egress.policy.assign", "egress.ensure"}},
 		{domain.PhaseCompleted, domain.OperationCompleted, true, nil},
 	}
+	assertLifecycleRecoveryPlan(t, domain.OperationEnable, steps)
 	for _, step := range steps {
 		resumeLifecycleRecoveryStep(
 			t, service, &store.state.Operation, func() []string { return dependencies.calls },
@@ -799,7 +862,7 @@ func TestDeleteLifecycleRecoveryAdvancesOneDurablePhasePerClaim(t *testing.T) {
 	t.Parallel()
 
 	base := deleteAgentBase(domain.AgentAvailable)
-	store := &deleteLifecycleStoreStub{base: base}
+	store := &deleteLifecycleStoreStub{base: base, drainBlocked: true}
 	dependencies := newDeleteDependencies(base.Agent)
 	dependencies.runtime = ports.RuntimeOperation{State: "running"}
 	service := NewLifecycleService(
@@ -814,10 +877,11 @@ func TestDeleteLifecycleRecoveryAdvancesOneDurablePhasePerClaim(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start recoverable delete: %v", err)
 	}
-	if result.Operation.Phase != domain.PhaseRuntimeDelete || result.Operation.State != domain.OperationRunning {
+	if result.Operation.Phase != domain.PhaseDrain || result.Operation.State != domain.OperationRunning {
 		t.Fatalf("interrupted delete = %+v", result.Operation)
 	}
 	store.replayed = true
+	store.drainBlocked = false
 	dependencies.runtime = ports.RuntimeOperation{
 		State: "completed", Effect: "completed",
 		RuntimeRevision: "rtv_99999999999999999999999999999999",
@@ -826,11 +890,17 @@ func TestDeleteLifecycleRecoveryAdvancesOneDurablePhasePerClaim(t *testing.T) {
 	dependencies.calls = nil
 
 	steps := []lifecycleRecoveryStepExpectation{
+		{domain.PhaseNetworkFence, domain.OperationRunning, false, nil},
+		{domain.PhaseFlowReset, domain.OperationRunning, false,
+			[]string{"egress.policy.get", "egress.fence"}},
+		{domain.PhaseRuntimeDelete, domain.OperationRunning, false,
+			[]string{"egress.policy.get", "egress.reset"}},
 		{domain.PhaseNetworkRelease, domain.OperationRunning, false, []string{"runtime.delete"}},
 		{domain.PhasePublish, domain.OperationRunning, false,
 			[]string{"egress.policy.get", "egress.release"}},
 		{domain.PhaseCompleted, domain.OperationCompleted, true, nil},
 	}
+	assertLifecycleRecoveryPlan(t, domain.OperationDelete, steps)
 	for _, step := range steps {
 		resumeLifecycleRecoveryStep(
 			t, service, &store.state.Operation, func() []string { return dependencies.calls },
@@ -839,11 +909,131 @@ func TestDeleteLifecycleRecoveryAdvancesOneDurablePhasePerClaim(t *testing.T) {
 	}
 }
 
+func TestRebuildRecoveryReusesPolicyCapturedBeforeFenceFailure(t *testing.T) {
+	t.Parallel()
+
+	template := mustLifecycleTemplate(t)
+	model := mustLifecycleModel(t)
+	base := rebuildLifecycleBase(t, template, model)
+	store := &rebuildLifecycleStoreStub{base: base, drainBlocked: true}
+	dependencies := &rebuildDependenciesStub{
+		network: validLifecycleNetwork(), runtime: ports.RuntimeOperation{State: "running"},
+	}
+	service := NewLifecycleService(
+		lifecycleSpecSourceStub{template: template, model: model},
+		store, dependencies, dependencies, fixedClock{now: time.Unix(100, 0).UTC()},
+	)
+	result, err := service.RebuildAgent(context.Background(), RebuildAgentInput{
+		RequestID: "request-recovery-rebuild-policy", AgentID: base.Agent.AgentID,
+		TemplateID: "template-1", TemplateRevision: 1,
+	})
+	if err != nil || result.Operation.Phase != domain.PhaseDrain {
+		t.Fatalf("start policy recovery rebuild: result=%+v err=%v", result, err)
+	}
+	store.replayed = true
+	store.drainBlocked = false
+	runClaimedLifecycleRecovery(
+		t, service, &claimingRecoveryStore{operation: func() *ports.LifecycleOperationRecord {
+			return &store.state.Operation
+		}}, &store.state.Operation, func() []string { return dependencies.calls },
+		domain.PhaseNetworkFence, nil,
+	)
+
+	dependencies.calls = nil
+	dependencies.fenceErr = errors.New("fence response lost")
+	runClaimedLifecycleRecovery(
+		t, service, &claimingRecoveryStore{operation: func() *ports.LifecycleOperationRecord {
+			return &store.state.Operation
+		}}, &store.state.Operation, func() []string { return dependencies.calls },
+		domain.PhaseNetworkFence, []string{"egress.policy.get", "egress.fence"},
+	)
+	if store.state.Operation.NetworkPolicyAssignment == nil || dependencies.policyGets != 1 {
+		t.Fatalf(
+			"captured rebuild policy=%+v reads=%d",
+			store.state.Operation.NetworkPolicyAssignment, dependencies.policyGets,
+		)
+	}
+
+	dependencies.calls = nil
+	dependencies.fenceErr = nil
+	runClaimedLifecycleRecovery(
+		t, service, &claimingRecoveryStore{operation: func() *ports.LifecycleOperationRecord {
+			return &store.state.Operation
+		}}, &store.state.Operation, func() []string { return dependencies.calls },
+		domain.PhaseFlowReset, []string{"egress.fence", "egress.get"},
+	)
+	if dependencies.policyGets != 1 {
+		t.Fatalf("rebuild recovery reread captured policy: reads=%d", dependencies.policyGets)
+	}
+}
+
+func TestDisableRecoveryReusesPolicyCapturedBeforeFenceFailure(t *testing.T) {
+	t.Parallel()
+
+	base := disableLifecycleBase(t)
+	store := &disableLifecycleStoreStub{base: base, drainBlocked: true}
+	dependencies := newDisableDependencies(base, ports.RuntimeOperation{State: "running"})
+	service := newLifecycleTestService(t, store, dependencies)
+	result, err := service.DisableAgent(context.Background(), DisableAgentInput{
+		RequestID: "request-recovery-disable-policy", AgentID: base.Agent.AgentID,
+	})
+	if err != nil || result.Operation.Phase != domain.PhaseDrain {
+		t.Fatalf("start policy recovery disable: result=%+v err=%v", result, err)
+	}
+	store.replayed = true
+	store.drainBlocked = false
+	runClaimedLifecycleRecovery(
+		t, service, &claimingRecoveryStore{operation: func() *ports.LifecycleOperationRecord {
+			return &store.state.Operation
+		}}, &store.state.Operation, func() []string { return dependencies.calls },
+		domain.PhaseNetworkFence, nil,
+	)
+
+	dependencies.calls = nil
+	dependencies.fenceErr = errors.New("fence response lost")
+	runClaimedLifecycleRecovery(
+		t, service, &claimingRecoveryStore{operation: func() *ports.LifecycleOperationRecord {
+			return &store.state.Operation
+		}}, &store.state.Operation, func() []string { return dependencies.calls },
+		domain.PhaseNetworkFence, []string{"egress.policy.get", "egress.fence"},
+	)
+	if store.state.Operation.NetworkPolicyAssignment == nil {
+		t.Fatal("disable recovery did not retain captured policy")
+	}
+
+	dependencies.calls = nil
+	dependencies.fenceErr = nil
+	runClaimedLifecycleRecovery(
+		t, service, &claimingRecoveryStore{operation: func() *ports.LifecycleOperationRecord {
+			return &store.state.Operation
+		}}, &store.state.Operation, func() []string { return dependencies.calls },
+		domain.PhaseRuntimeDisable, []string{"egress.fence"},
+	)
+}
+
 type lifecycleRecoveryStepExpectation struct {
 	phase    domain.OperationPhase
 	state    domain.OperationState
 	terminal bool
 	calls    []string
+}
+
+func assertLifecycleRecoveryPlan(
+	t *testing.T, kind domain.OperationKind, steps []lifecycleRecoveryStepExpectation,
+) {
+	t.Helper()
+	plan, err := domain.OperationPlan(kind)
+	if err != nil {
+		t.Fatalf("load %s operation plan: %v", kind, err)
+	}
+	want := append(slices.Clone(plan[1:]), domain.PhaseCompleted)
+	got := make([]domain.OperationPhase, 0, len(steps))
+	for _, step := range steps {
+		got = append(got, step.phase)
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("%s recovery phases = %v, want operation plan continuation %v", kind, got, want)
+	}
 }
 
 func resumeLifecycleRecoveryStep(
@@ -859,30 +1049,49 @@ func resumeLifecycleRecoveryStep(
 	t.Helper()
 
 	before := len(dependencyCalls())
-	operation.RecoveryOwner = "recovery-worker"
-	operation.Attempt++
-	leaseUntil := time.Now().Add(time.Minute)
-	operation.RecoveryLeaseUntil = &leaseUntil
-	ctx := ports.WithLifecycleRecoveryToken(context.Background(), ports.LifecycleRecoveryToken{
-		RequestID: operation.RequestID, WorkerID: operation.RecoveryOwner, Attempt: operation.Attempt,
-	})
-	result, err := service.ResumeLifecycleOperation(ctx, *operation)
+	recoveryStore := &claimingRecoveryStore{operation: func() *ports.LifecycleOperationRecord {
+		return operation
+	}}
+	worker, err := NewLifecycleRecoveryWorker(
+		recoveryStore, service, nil,
+		LifecycleRecoveryWorkerConfig{
+			WorkerID: "recovery-worker", PollInterval: 10 * time.Millisecond,
+			StaleAfter: 2 * time.Second, AttemptTimeout: time.Second,
+			LeaseDuration: 2 * time.Second, RetryMax: 2 * time.Second,
+		},
+	)
 	if err != nil {
-		t.Fatalf("resume %s at %s: %v", operation.Kind, operation.Phase, err)
+		t.Fatalf("create %s recovery worker: %v", operation.Kind, err)
 	}
-	if !result.Progressed || result.Terminal != wantTerminal {
-		t.Fatalf("recovery result = %+v, want progressed=true terminal=%v", result, wantTerminal)
+	processed, err := worker.RunOnce(context.Background())
+	if err != nil || !processed {
+		t.Fatalf("resume %s at %s: processed=%v err=%v", operation.Kind, operation.Phase, processed, err)
+	}
+	if !wantTerminal {
+		wantChildRequestID := domain.ChildRequestID(operation.RequestID, wantPhase)
+		if operation.ChildRequestID != wantChildRequestID {
+			t.Fatalf(
+				"recovered %s child request = %q, want %q",
+				operation.Kind, operation.ChildRequestID, wantChildRequestID,
+			)
+		}
 	}
 	assertRecoveryBoundary(
 		t,
-		OperationView{Phase: result.Phase, State: result.State},
+		OperationView{Phase: operation.Phase, State: operation.State},
 		wantPhase,
 		wantState,
 		dependencyCalls()[before:],
 		wantCalls,
 	)
-	if wantTerminal && (operation.RecoveryOwner != "" || operation.RecoveryLeaseUntil != nil) {
-		t.Fatalf("terminal recovery retained reservation: %+v", *operation)
+	if !recoveryStore.started || (!wantTerminal && !recoveryStore.released) {
+		t.Fatalf(
+			"%s recovery claim lifecycle started=%v released=%v terminal=%v",
+			operation.Kind, recoveryStore.started, recoveryStore.released, wantTerminal,
+		)
+	}
+	if operation.RecoveryOwner != "" || operation.RecoveryLeaseUntil != nil {
+		t.Fatalf("recovery retained reservation: %+v", *operation)
 	}
 }
 

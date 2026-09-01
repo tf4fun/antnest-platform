@@ -305,6 +305,8 @@ type lifecycleDependenciesStub struct {
 	networkIndex         int
 	runtime              ports.RuntimeOperation
 	runtimeConfiguration ports.RuntimeConfiguration
+	runtimeRequestID     string
+	runtimeAgentID       string
 }
 
 func (dependency *lifecycleDependenciesStub) EnsureAgentNetwork(
@@ -353,9 +355,11 @@ func (dependency *lifecycleDependenciesStub) ReleaseAgentNetwork(
 }
 
 func (dependency *lifecycleDependenciesStub) InitializeRuntime(
-	_ context.Context, _ string, _ string, configuration ports.RuntimeConfiguration,
+	_ context.Context, requestID string, agentID string, configuration ports.RuntimeConfiguration,
 ) (ports.RuntimeOperation, error) {
 	dependency.calls = append(dependency.calls, "runtime.initialize")
+	dependency.runtimeRequestID = requestID
+	dependency.runtimeAgentID = agentID
 	dependency.runtimeConfiguration = configuration
 	return dependency.runtime, nil
 }
@@ -592,9 +596,12 @@ func (store *lifecycleStoreStub) RecordCreateNetwork(
 	_ context.Context, requestID string, fingerprint string,
 	attachment ports.NetworkAttachment, nextChildRequestID string, now time.Time,
 ) (ports.AgentCreateState, error) {
-	state := ports.AgentCreateState{
-		Agent: store.initial.Agent, Access: store.initial.Access, Spec: store.initial.Spec,
-		Operation: store.initial.Operation,
+	state := store.beginState
+	if state.Agent.AgentID == "" {
+		state = ports.AgentCreateState{
+			Agent: store.initial.Agent, Access: store.initial.Access, Spec: store.initial.Spec,
+			Operation: store.initial.Operation,
+		}
 	}
 	state.Operation.Phase = domain.PhaseRuntimeInitialize
 	state.Operation.ChildRequestID = nextChildRequestID

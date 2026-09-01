@@ -156,6 +156,39 @@ func TestRebuildAgentDrainTimeoutPreservesExecutableSource(t *testing.T) {
 	}
 }
 
+func TestRebuildAgentRechecksDrainBeforeApplyingTimeout(t *testing.T) {
+	t.Parallel()
+
+	template := mustLifecycleTemplate(t)
+	model := mustLifecycleModel(t)
+	base := rebuildLifecycleBase(t, template, model)
+	now := time.Unix(160, 0).UTC()
+	state := ports.AgentRebuildState{
+		Agent: base.Agent, SourceSpec: base.ExecutableSpec,
+		SourceExecution: base.ExecutableExecution, TargetSpec: base.ExecutableSpec,
+		Operation: ports.LifecycleOperationRecord{
+			RequestID: "request-rebuild-expired-drain", RequestFingerprint: "fingerprint",
+			AgentID: base.Agent.AgentID, Kind: domain.OperationRebuild,
+			Phase: domain.PhaseDrain, State: domain.OperationRunning,
+			CreatedAt: now.Add(-2 * time.Minute), UpdatedAt: now.Add(-2 * time.Minute),
+		},
+	}
+	store := &rebuildLifecycleStoreStub{base: base, state: state, replayed: true}
+	dependencies := &rebuildDependenciesStub{}
+	service := NewLifecycleServiceWithDrainTimeout(
+		lifecycleSpecSourceStub{template: template, model: model},
+		store, dependencies, dependencies, fixedClock{now: now}, time.Minute,
+	)
+
+	settled, err := service.settleRebuildDrain(context.Background(), state)
+	if err != nil {
+		t.Fatalf("settle expired but empty rebuild drain: %v", err)
+	}
+	if settled.Operation.Phase != domain.PhaseNetworkFence || store.failed.Code != "" {
+		t.Fatalf("settled rebuild phase = %q failed=%+v", settled.Operation.Phase, store.failed)
+	}
+}
+
 func TestRebuildAgentKnownRuntimeFailureRestoresPolicyAndSource(t *testing.T) {
 	t.Parallel()
 
@@ -459,9 +492,12 @@ type rebuildDependenciesStub struct {
 	ensuredNetwork          ports.NetworkAttachment
 	runtime                 ports.RuntimeOperation
 	runtimeErr              error
+	fenceErr                error
 	inspection              ports.RuntimeInspection
 	inspectionErr           error
 	expectedRuntimeRevision string
+	runtimeRequestID        string
+	runtimeAgentID          string
 	runtimeConfiguration    ports.RuntimeConfiguration
 	policyGets              int
 }
@@ -514,7 +550,7 @@ func (dependency *rebuildDependenciesStub) AssignAgentPolicy(
 
 func (dependency *rebuildDependenciesStub) FenceAgentNetwork(context.Context, string, uint64) error {
 	dependency.calls = append(dependency.calls, "egress.fence")
-	return nil
+	return dependency.fenceErr
 }
 
 func (dependency *rebuildDependenciesStub) ResetAgentFlows(context.Context, string, uint64) error {
@@ -535,10 +571,12 @@ func (dependency *rebuildDependenciesStub) InitializeRuntime(
 }
 
 func (dependency *rebuildDependenciesStub) UpdateRuntime(
-	_ context.Context, _ string, _ string, expectedRevision string,
+	_ context.Context, requestID string, agentID string, expectedRevision string,
 	configuration ports.RuntimeConfiguration,
 ) (ports.RuntimeOperation, error) {
 	dependency.calls = append(dependency.calls, "runtime.update")
+	dependency.runtimeRequestID = requestID
+	dependency.runtimeAgentID = agentID
 	dependency.expectedRuntimeRevision = expectedRevision
 	dependency.runtimeConfiguration = configuration
 	return dependency.runtime, dependency.runtimeErr

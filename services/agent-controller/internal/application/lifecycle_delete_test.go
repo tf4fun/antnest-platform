@@ -261,6 +261,8 @@ type deleteDependenciesStub struct {
 	inspection              ports.RuntimeInspection
 	inspectionErr           error
 	expectedRuntimeRevision string
+	runtimeRequestID        string
+	runtimeAgentID          string
 	policyGets              int
 }
 
@@ -301,9 +303,11 @@ func (dependency *deleteDependenciesStub) ReleaseAgentNetwork(
 }
 
 func (dependency *deleteDependenciesStub) DeleteRuntime(
-	_ context.Context, _ string, _ string, expected string,
+	_ context.Context, requestID string, agentID string, expected string,
 ) (ports.RuntimeOperation, error) {
 	dependency.calls = append(dependency.calls, "runtime.delete")
+	dependency.runtimeRequestID = requestID
+	dependency.runtimeAgentID = agentID
 	dependency.expectedRuntimeRevision = expected
 	return dependency.runtime, dependency.runtimeErr
 }

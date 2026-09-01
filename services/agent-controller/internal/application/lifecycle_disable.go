@@ -148,17 +148,7 @@ func (service *LifecycleService) stepAgentDisable(
 ) (ports.AgentDisableState, error) {
 	switch state.Operation.Phase {
 	case domain.PhaseDrain:
-		if !service.clock.Now().Before(state.Operation.CreatedAt.Add(service.drainTimeout)) {
-			return service.failAgentDisable(
-				ctx, state, "run_drain_timeout",
-				"active Run did not drain before the deadline", true, nil, nil,
-			)
-		}
-		return service.store.SettleAgentDisableDrain(
-			ctx, state.Operation.RequestID, state.Operation.RequestFingerprint,
-			domain.ChildRequestID(state.Operation.RequestID, domain.PhaseNetworkFence),
-			service.clock.Now(),
-		)
+		return service.settleDisableDrain(ctx, state)
 	case domain.PhaseNetworkFence:
 		return service.fenceDisableNetwork(ctx, state)
 	case domain.PhaseRuntimeDisable:
@@ -168,6 +158,26 @@ func (service *LifecycleService) stepAgentDisable(
 	default:
 		return state, fmt.Errorf("invalid disable operation phase %q", state.Operation.Phase)
 	}
+}
+
+func (service *LifecycleService) settleDisableDrain(
+	ctx context.Context, state ports.AgentDisableState,
+) (ports.AgentDisableState, error) {
+	settled, err := service.store.SettleAgentDisableDrain(
+		ctx, state.Operation.RequestID, state.Operation.RequestFingerprint,
+		domain.ChildRequestID(state.Operation.RequestID, domain.PhaseNetworkFence),
+		service.clock.Now(),
+	)
+	if err != nil || settled.Operation.Phase != domain.PhaseDrain {
+		return settled, err
+	}
+	if !service.clock.Now().Before(state.Operation.CreatedAt.Add(service.drainTimeout)) {
+		return service.failAgentDisable(
+			ctx, settled, "run_drain_timeout",
+			"active Run did not drain before the deadline", true, nil, nil,
+		)
+	}
+	return settled, nil
 }
 
 func (service *LifecycleService) fenceDisableNetwork(

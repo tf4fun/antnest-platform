@@ -170,17 +170,7 @@ func (service *LifecycleService) stepAgentRebuild(
 ) (ports.AgentRebuildState, error) {
 	switch state.Operation.Phase {
 	case domain.PhaseDrain:
-		now := service.clock.Now()
-		if !now.Before(state.Operation.CreatedAt.Add(service.drainTimeout)) {
-			return service.failRebuildPreservingSource(
-				ctx, state, "run_drain_timeout", "active Run did not drain before the deadline", false,
-			)
-		}
-		return service.store.SettleAgentRebuildDrain(
-			ctx, state.Operation.RequestID, state.Operation.RequestFingerprint,
-			domain.ChildRequestID(state.Operation.RequestID, domain.PhaseNetworkFence),
-			service.clock.Now(),
-		)
+		return service.settleRebuildDrain(ctx, state)
 	case domain.PhaseNetworkFence:
 		return service.fenceRebuildNetwork(ctx, state)
 	case domain.PhaseFlowReset:
@@ -194,6 +184,25 @@ func (service *LifecycleService) stepAgentRebuild(
 	default:
 		return state, fmt.Errorf("invalid rebuild operation phase %q", state.Operation.Phase)
 	}
+}
+
+func (service *LifecycleService) settleRebuildDrain(
+	ctx context.Context, state ports.AgentRebuildState,
+) (ports.AgentRebuildState, error) {
+	settled, err := service.store.SettleAgentRebuildDrain(
+		ctx, state.Operation.RequestID, state.Operation.RequestFingerprint,
+		domain.ChildRequestID(state.Operation.RequestID, domain.PhaseNetworkFence),
+		service.clock.Now(),
+	)
+	if err != nil || settled.Operation.Phase != domain.PhaseDrain {
+		return settled, err
+	}
+	if !service.clock.Now().Before(state.Operation.CreatedAt.Add(service.drainTimeout)) {
+		return service.failRebuildPreservingSource(
+			ctx, settled, "run_drain_timeout", "active Run did not drain before the deadline", false,
+		)
+	}
+	return settled, nil
 }
 
 func (service *LifecycleService) fenceRebuildNetwork(

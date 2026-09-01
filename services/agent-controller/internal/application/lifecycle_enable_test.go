@@ -293,6 +293,7 @@ type enableDependenciesStub struct {
 	runtimeConfiguration    ports.RuntimeConfiguration
 	expectedRuntimeRevision string
 	runtimeRequestIDs       []string
+	runtimeAgentID          string
 }
 
 func newEnableDependencies(
@@ -382,11 +383,12 @@ func (dependency *enableDependenciesStub) DisableRuntime(
 }
 
 func (dependency *enableDependenciesStub) EnableRuntime(
-	_ context.Context, requestID string, _ string, expected string,
+	_ context.Context, requestID string, agentID string, expected string,
 	configuration ports.RuntimeConfiguration,
 ) (ports.RuntimeOperation, error) {
 	dependency.calls = append(dependency.calls, "runtime.enable")
 	dependency.runtimeRequestIDs = append(dependency.runtimeRequestIDs, requestID)
+	dependency.runtimeAgentID = agentID
 	dependency.expectedRuntimeRevision = expected
 	dependency.runtimeConfiguration = configuration
 	return dependency.runtime, nil

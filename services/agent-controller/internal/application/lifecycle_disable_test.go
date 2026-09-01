@@ -88,6 +88,37 @@ func TestDisableAgentWaitsForActiveRunWithoutExternalEffects(t *testing.T) {
 	}
 }
 
+func TestDisableAgentRechecksDrainBeforeApplyingTimeout(t *testing.T) {
+	t.Parallel()
+
+	base := disableLifecycleBase(t)
+	now := time.Unix(215, 0).UTC()
+	state := ports.AgentDisableState{
+		Agent: base.Agent, SourceSpec: base.ExecutableSpec,
+		SourceExecution: base.ExecutableExecution,
+		Operation: ports.LifecycleOperationRecord{
+			RequestID: "request-disable-expired-drain", RequestFingerprint: "fingerprint",
+			AgentID: base.Agent.AgentID, Kind: domain.OperationDisable,
+			Phase: domain.PhaseDrain, State: domain.OperationRunning,
+			CreatedAt: now.Add(-2 * time.Minute), UpdatedAt: now.Add(-2 * time.Minute),
+		},
+	}
+	store := &disableLifecycleStoreStub{base: base, state: state, replayed: true}
+	dependencies := newDisableDependencies(base, ports.RuntimeOperation{})
+	service := NewLifecycleServiceWithDrainTimeout(
+		lifecycleSpecSourceStub{}, store, dependencies, dependencies,
+		fixedClock{now: now}, time.Minute,
+	)
+
+	settled, err := service.settleDisableDrain(context.Background(), state)
+	if err != nil {
+		t.Fatalf("settle expired but empty disable drain: %v", err)
+	}
+	if settled.Operation.Phase != domain.PhaseNetworkFence || store.failed.Code != "" {
+		t.Fatalf("settled disable phase = %q failed=%+v", settled.Operation.Phase, store.failed)
+	}
+}
+
 func TestDisableAgentKnownRuntimeFailureRestoresPolicyAndExecutable(t *testing.T) {
 	t.Parallel()
 
@@ -278,9 +309,12 @@ type disableDependenciesStub struct {
 	network                 ports.NetworkAttachment
 	runtime                 ports.RuntimeOperation
 	runtimeErr              error
+	fenceErr                error
 	inspection              ports.RuntimeInspection
 	inspectionErr           error
 	expectedRuntimeRevision string
+	runtimeRequestID        string
+	runtimeAgentID          string
 }
 
 func newDisableDependencies(
@@ -339,7 +373,7 @@ func (dependency *disableDependenciesStub) AssignAgentPolicy(
 
 func (dependency *disableDependenciesStub) FenceAgentNetwork(context.Context, string, uint64) error {
 	dependency.calls = append(dependency.calls, "egress.fence")
-	return nil
+	return dependency.fenceErr
 }
 
 func (dependency *disableDependenciesStub) ResetAgentFlows(context.Context, string, uint64) error {
@@ -365,9 +399,11 @@ func (dependency *disableDependenciesStub) UpdateRuntime(
 }
 
 func (dependency *disableDependenciesStub) DisableRuntime(
-	_ context.Context, _ string, _ string, expectedRevision string,
+	_ context.Context, requestID string, agentID string, expectedRevision string,
 ) (ports.RuntimeOperation, error) {
 	dependency.calls = append(dependency.calls, "runtime.disable")
+	dependency.runtimeRequestID = requestID
+	dependency.runtimeAgentID = agentID
 	dependency.expectedRuntimeRevision = expectedRevision
 	return dependency.runtime, dependency.runtimeErr
 }
