@@ -7,12 +7,13 @@ executable Agent by coordinating Runtime Controller and Runtime Egress.
 ## Status
 
 Stage 2B implementation is in progress. The runnable slices provide
-ModelProfile and Template Catalog RPC plus Agent creation. Create freezes an
-exact Template/Model graph, persists owner access and the initial event,
-ensures Egress, initializes Runtime through deterministic child idempotency,
-and publishes an executable revision only after Runtime readiness. Rebuild,
-disable, enable, delete, Run admission, and event replay routes remain target
-contracts until their corresponding slices are completed.
+ModelProfile and Template Catalog RPC plus Agent create, rebuild, disable, and
+enable. Create freezes an exact Template/Model graph and publishes only after
+Runtime readiness. Rebuild replaces the Runtime behind a durable network
+barrier. Disable retains the workspace and captures the previous Egress policy;
+Enable creates a new Execution revision and restores only that captured policy
+after Runtime readiness. Delete, Run admission, Agent queries, and event replay
+routes remain target contracts until their corresponding slices are completed.
 
 ## Owns
 

@@ -39,6 +39,7 @@ const (
 	PhaseRuntimeEnable     OperationPhase = "runtime_enable"
 	PhaseRuntimeDelete     OperationPhase = "runtime_delete"
 	PhaseNetworkRelease    OperationPhase = "network_release"
+	PhaseNetworkRestore    OperationPhase = "network_restore"
 	PhasePublish           OperationPhase = "publish"
 	PhaseCompleted         OperationPhase = "completed"
 )
@@ -66,6 +67,7 @@ var operationPlans = map[OperationKind][]OperationPhase{
 	OperationEnable: {
 		PhaseNetworkEnsure,
 		PhaseRuntimeEnable,
+		PhaseNetworkRestore,
 		PhasePublish,
 	},
 	OperationDelete: {

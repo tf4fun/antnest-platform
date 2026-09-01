@@ -15,12 +15,13 @@ import (
 	"soft/antnest-platform/services/agent-controller/internal/application"
 	"soft/antnest-platform/services/agent-controller/internal/credentials"
 	"soft/antnest-platform/services/agent-controller/internal/egressclient"
+	"soft/antnest-platform/services/agent-controller/internal/ports"
 	"soft/antnest-platform/services/agent-controller/internal/repository/postgres"
 	"soft/antnest-platform/services/agent-controller/internal/runtimeclient"
 	"soft/antnest-platform/services/agent-controller/internal/server"
 )
 
-func TestCreateRebuildAndDisableAgentAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
+func TestCreateRebuildDisableAndEnableAgentAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 	databaseURL := os.Getenv("ANTNEST_AGENT_CONTROLLER_TEST_DATABASE_URL")
 	if databaseURL == "" {
 		t.Skip("ANTNEST_AGENT_CONTROLLER_TEST_DATABASE_URL is not set")
@@ -80,8 +81,8 @@ func TestCreateRebuildAndDisableAgentAcrossHTTPPostgresAndDependencyContracts(t 
 			(path == agentID+"/fence" || path == agentID+"/reset-flows") {
 			if path == agentID+"/fence" {
 				policyMu.Lock()
-				if policyID != "builtin-deny-all" {
-					policyID = "builtin-deny-all"
+				if policyID != ports.BuiltinDenyAllPolicyID {
+					policyID = ports.BuiltinDenyAllPolicyID
 					policyVersion++
 				}
 				policyMu.Unlock()
@@ -137,6 +138,20 @@ func TestCreateRebuildAndDisableAgentAcrossHTTPPostgresAndDependencyContracts(t 
 			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil ||
 				payload.ExpectedRevision != "rtv_33333333333333333333333333333333" {
 				t.Fatalf("Runtime disable payload = %+v err=%v", payload, err)
+			}
+		} else if strings.HasSuffix(path, "/enable") {
+			action = "enable"
+			agentID = strings.TrimSuffix(path, "/enable")
+			kind = "enable_runtime"
+			revision = "rtv_55555555555555555555555555555555"
+			executionID = "runtime-execution-enabled-e2e"
+			endpoint = "http://runtime-enabled-e2e:8091/mcp"
+			var payload struct {
+				ExpectedRevision string `json:"expected_revision"`
+			}
+			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil ||
+				payload.ExpectedRevision != "rtv_44444444444444444444444444444444" {
+				t.Fatalf("Runtime enable payload = %+v err=%v", payload, err)
 			}
 		}
 		requestID := request.Header.Get("Idempotency-Key")
@@ -277,5 +292,35 @@ func TestCreateRebuildAndDisableAgentAcrossHTTPPostgresAndDependencyContracts(t 
 	if replayedDisable["state"] != "completed" || egressCalls.Load() != 11 || runtimeCalls.Load() != 3 {
 		t.Fatalf("idempotent disable repeated effects: egress=%d runtime=%d replay=%+v",
 			egressCalls.Load(), runtimeCalls.Load(), replayedDisable)
+	}
+
+	enableBody := `{"request_id":"agent-e2e-enable"}`
+	enabled := serveJSON(
+		t, handler, http.MethodPost, "/internal/agents/"+agentID+"/enable",
+		enableBody, http.StatusAccepted,
+	)
+	if enabled["state"] != "completed" || enabled["kind"] != "enable" {
+		t.Fatalf("enable operation = %+v", enabled)
+	}
+	enabledBase, err := repository.GetAgentLifecycleBase(ctx, agentID)
+	if err != nil {
+		t.Fatalf("load enabled Agent: %v", err)
+	}
+	if enabledBase.Agent.DesiredState != "enabled" ||
+		enabledBase.Agent.LifecycleState != "available" ||
+		enabledBase.Agent.ExecutionRevisionID == rebuiltBase.Agent.ExecutionRevisionID ||
+		enabledBase.Agent.LastSuccessfulExecutionRevisionID != enabledBase.Agent.ExecutionRevisionID ||
+		enabledBase.Agent.RuntimeRevision != "rtv_55555555555555555555555555555555" ||
+		enabledBase.Agent.RuntimeExecutionID != "runtime-execution-enabled-e2e" ||
+		enabledBase.Agent.RuntimeMCPEndpoint != "http://runtime-enabled-e2e:8091/mcp" {
+		t.Fatalf("enabled Agent = %+v", enabledBase.Agent)
+	}
+	replayedEnable := serveJSON(
+		t, handler, http.MethodPost, "/internal/agents/"+agentID+"/enable",
+		enableBody, http.StatusAccepted,
+	)
+	if replayedEnable["state"] != "completed" || egressCalls.Load() != 18 || runtimeCalls.Load() != 4 {
+		t.Fatalf("idempotent enable repeated effects: egress=%d runtime=%d replay=%+v",
+			egressCalls.Load(), runtimeCalls.Load(), replayedEnable)
 	}
 }

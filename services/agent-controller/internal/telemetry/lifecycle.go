@@ -238,6 +238,60 @@ func (store *ObservedLifecycleStore) FailAgentDisable(
 	})
 }
 
+func (store *ObservedLifecycleStore) GetAgentEnableBase(
+	ctx context.Context, agentID string,
+) (ports.AgentEnableBase, error) {
+	return observeLifecycleValue(ctx, store, "get_agent_enable_base", func(callCtx context.Context) (ports.AgentEnableBase, error) {
+		return store.next.GetAgentEnableBase(callCtx, agentID)
+	})
+}
+
+func (store *ObservedLifecycleStore) ReplayAgentEnable(
+	ctx context.Context, requestID string, fingerprint string,
+) (ports.AgentEnableState, bool, error) {
+	return observeLifecycleReplay(ctx, store, "replay_agent_enable", func(callCtx context.Context) (ports.AgentEnableState, bool, error) {
+		return store.next.ReplayAgentEnable(callCtx, requestID, fingerprint)
+	})
+}
+
+func (store *ObservedLifecycleStore) BeginAgentEnable(
+	ctx context.Context, input ports.BeginAgentEnable,
+) (ports.AgentEnableState, bool, error) {
+	return observeLifecycleReplay(ctx, store, "begin_agent_enable", func(callCtx context.Context) (ports.AgentEnableState, bool, error) {
+		return store.next.BeginAgentEnable(callCtx, input)
+	})
+}
+
+func (store *ObservedLifecycleStore) AdvanceAgentEnable(
+	ctx context.Context, input ports.AdvanceAgentEnable,
+) (value ports.AgentEnableState, resultErr error) {
+	ctx, span, started := startRepositorySpan(ctx, "advance_agent_enable")
+	span.SetAttributes(
+		attribute.String("antnest.lifecycle.expected_phase", string(input.ExpectedPhase)),
+		attribute.String("antnest.lifecycle.next_phase", string(input.NextPhase)),
+	)
+	defer func() {
+		store.finish(ctx, span, started, "advance_agent_enable", resultErr)
+	}()
+	return store.next.AdvanceAgentEnable(ctx, input)
+}
+
+func (store *ObservedLifecycleStore) PublishAgentEnable(
+	ctx context.Context, input ports.PublishAgentEnable,
+) (ports.AgentEnableState, error) {
+	return observeLifecycleValue(ctx, store, "publish_agent_enable", func(callCtx context.Context) (ports.AgentEnableState, error) {
+		return store.next.PublishAgentEnable(callCtx, input)
+	})
+}
+
+func (store *ObservedLifecycleStore) FailAgentEnable(
+	ctx context.Context, input ports.FailAgentEnable,
+) (ports.AgentEnableState, error) {
+	return observeLifecycleValue(ctx, store, "fail_agent_enable", func(callCtx context.Context) (ports.AgentEnableState, error) {
+		return store.next.FailAgentEnable(callCtx, input)
+	})
+}
+
 func observeLifecycleValue[T any](
 	ctx context.Context,
 	store *ObservedLifecycleStore,

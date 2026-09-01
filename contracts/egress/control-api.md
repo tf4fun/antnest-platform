@@ -61,8 +61,10 @@ durable assignment and packet snapshot have been reconciled.
 }
 ```
 
-A new Agent is assigned the built-in deny-all policy before the allocation is
-returned. Allocation never exposes an address without a policy snapshot.
+A new Agent is assigned the built-in deny-all policy
+`(policy_id="builtin/deny-all", revision=1)` before the allocation is returned.
+Allocation never exposes an address without a policy snapshot. This identifier
+is part of the control contract; lifecycle clients must not invent an alias.
 
 ### Inspect
 

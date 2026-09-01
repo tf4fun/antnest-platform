@@ -47,6 +47,7 @@ type LifecycleService interface {
 	CreateAgent(context.Context, application.CreateAgentInput) (application.CreateAgentResult, error)
 	RebuildAgent(context.Context, application.RebuildAgentInput) (application.RebuildAgentResult, error)
 	DisableAgent(context.Context, application.DisableAgentInput) (application.DisableAgentResult, error)
+	EnableAgent(context.Context, application.EnableAgentInput) (application.EnableAgentResult, error)
 	GetLifecycleOperation(context.Context, string) (application.OperationView, error)
 }
 
@@ -84,6 +85,7 @@ func NewHandler(
 	mux.HandleFunc("POST /internal/agents", h.createAgent)
 	mux.HandleFunc("POST /internal/agents/{agent_id}/rebuild", h.rebuildAgent)
 	mux.HandleFunc("POST /internal/agents/{agent_id}/disable", h.disableAgent)
+	mux.HandleFunc("POST /internal/agents/{agent_id}/enable", h.enableAgent)
 	mux.HandleFunc("GET /internal/agent-operations/{request_id}", h.getLifecycleOperation)
 	return mux, nil
 }
@@ -426,6 +428,23 @@ func (h *handler) disableAgent(response http.ResponseWriter, request *http.Reque
 		return
 	}
 	result, err := h.lifecycle.DisableAgent(request.Context(), application.DisableAgentInput{
+		RequestID: payload.RequestID, AgentID: request.PathValue("agent_id"),
+		InitialTraceParent: request.Header.Get("traceparent"),
+	})
+	if err != nil {
+		writeServiceError(request.Context(), response, err)
+		return
+	}
+	observeLifecycleResult(request.Context(), result.Operation)
+	writeJSON(response, http.StatusAccepted, operationPayload(result.Operation))
+}
+
+func (h *handler) enableAgent(response http.ResponseWriter, request *http.Request) {
+	var payload lifecycleRequest
+	if !decodeJSON(response, request, &payload) {
+		return
+	}
+	result, err := h.lifecycle.EnableAgent(request.Context(), application.EnableAgentInput{
 		RequestID: payload.RequestID, AgentID: request.PathValue("agent_id"),
 		InitialTraceParent: request.Header.Get("traceparent"),
 	})

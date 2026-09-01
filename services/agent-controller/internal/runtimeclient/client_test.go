@@ -198,6 +198,72 @@ func TestDisableRuntimeAcceptsAbsentComputeAndRetainedWorkspaceRevision(t *testi
 	}
 }
 
+func TestEnableRuntimeUsesDisabledRevisionAndCompleteConfiguration(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost || request.URL.Path != "/internal/runtimes/agent-1/enable" {
+			t.Fatalf("request = %s %s", request.Method, request.URL.Path)
+		}
+		if request.Header.Get("Idempotency-Key") != "child-request-enable" {
+			t.Fatalf("Idempotency-Key = %q", request.Header.Get("Idempotency-Key"))
+		}
+		var payload struct {
+			ExpectedRevision string                  `json:"expected_revision"`
+			Configuration    runtimeConfigurationDTO `json:"configuration"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if payload.ExpectedRevision != "rtv_33333333333333333333333333333333" ||
+			payload.Configuration.ImageRef == "" ||
+			payload.Configuration.Network.TunnelIPv4 != "100.64.0.2" ||
+			payload.Configuration.Network.ResolverIPv4 != "100.64.0.1" ||
+			payload.Configuration.Network.PacketContractRevision != 1 ||
+			payload.Configuration.Network.EgressEndpoint.IPv4 != "10.20.0.8" ||
+			payload.Configuration.Network.EgressEndpoint.Port != 8092 ||
+			payload.Configuration.Resources.MemoryBytes != 536870912 ||
+			payload.Configuration.Resources.PIDsLimit != 256 ||
+			payload.Configuration.Resources.TmpfsBytes != 67108864 {
+			t.Fatalf("enable payload = %+v", payload)
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = response.Write([]byte(`{
+			"request_id":"child-request-enable",
+			"kind":"enable_runtime",
+			"agent_id":"agent-1",
+			"target_revision":"rtv_44444444444444444444444444444444",
+			"state":"completed",
+			"effect":"completed",
+			"inspection":{
+				"agent_id":"agent-1",
+				"runtime_revision":"rtv_44444444444444444444444444444444",
+				"lifecycle_state":"ready",
+				"health":"healthy",
+				"mcp_endpoint":"http://runtime-enabled:8091/mcp",
+				"runtime_execution_id":"execution-enabled"
+			}
+		}`))
+	}))
+	t.Cleanup(server.Close)
+	client, err := New(server.URL, time.Second, server.Client())
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+
+	result, err := client.EnableRuntime(
+		context.Background(), "child-request-enable", "agent-1",
+		"rtv_33333333333333333333333333333333", runtimeConfiguration(),
+	)
+	if err != nil {
+		t.Fatalf("enable Runtime: %v", err)
+	}
+	if result.RuntimeRevision != "rtv_44444444444444444444444444444444" ||
+		result.RuntimeExecutionID != "execution-enabled" || result.LifecycleState != "ready" {
+		t.Fatalf("Runtime operation = %+v", result)
+	}
+}
+
 func TestInspectRuntimeReturnsAuthoritativeReadyBinding(t *testing.T) {
 	t.Parallel()
 

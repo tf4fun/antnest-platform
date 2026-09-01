@@ -385,7 +385,7 @@ func (dependency *rebuildDependenciesStub) GetAgentPolicyAssignment(
 	policyID := "internet-enabled"
 	resourceVersion := uint64(7)
 	if dependency.policyGets > 1 {
-		policyID = "builtin-deny-all"
+		policyID = ports.BuiltinDenyAllPolicyID
 		resourceVersion = 8
 	}
 	return ports.NetworkPolicyAssignment{
@@ -431,6 +431,12 @@ func (dependency *rebuildDependenciesStub) DisableRuntime(
 	context.Context, string, string, string,
 ) (ports.RuntimeOperation, error) {
 	return ports.RuntimeOperation{}, errors.New("unexpected Runtime disable")
+}
+
+func (dependency *rebuildDependenciesStub) EnableRuntime(
+	context.Context, string, string, string, ports.RuntimeConfiguration,
+) (ports.RuntimeOperation, error) {
+	return ports.RuntimeOperation{}, errors.New("unexpected Runtime enable")
 }
 
 func (dependency *rebuildDependenciesStub) InspectRuntime(

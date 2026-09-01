@@ -358,11 +358,27 @@ replay.
 
 Enable is valid only from the published disabled state. The new operation
 freezes the current AgentSpec, disabled Runtime revision, and policy captured by
-the matching completed Disable operation. It ensures the existing network
-attachment, calls `EnableRuntime` with the complete Runtime configuration, then
-restores the captured policy and verifies unchanged network coordinates before
-publishing a new ExecutionRevision and `agent_enabled`. Agent configuration is
-never changed implicitly by Disable or Enable.
+the matching completed Disable operation. It first verifies that the current
+policy is either the captured policy or Runtime Egress's canonical deny-all
+policy, reads the retained network attachment without reopening data flow, and
+reasserts and verifies the canonical deny-all fence. It then calls
+`EnableRuntime` with the complete Runtime configuration and
+persists the proven ready result before entering a distinct `network_restore`
+phase. That phase restores only the captured policy (or recognizes it as
+already restored), rejects an unrelated policy assignment, and verifies
+unchanged network coordinates before publishing a new ExecutionRevision and
+`agent_enabled`. Any post-ready restore failure re-fences the Agent before the
+operation returns as retryable. A crash after Runtime readiness or policy
+restoration replays
+the same phase and child identity; it never creates another Runtime. Agent
+configuration is never changed implicitly by Disable or Enable.
+
+A conclusive pre-effect Enable failure returns the Agent to desired/lifecycle
+state `disabled` only after Runtime inspection proves the exact retained
+disabled Runtime revision. If that source can no longer be proven, the
+operation remains non-terminal and the network is fenced; no live Runtime
+binding is discarded. An ambiguous Runtime effect or any failure after a ready
+Runtime result likewise remains non-terminal and fail-closed.
 
 ## 5. Serialized Run Admission
 

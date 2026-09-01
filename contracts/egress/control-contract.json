@@ -3,6 +3,9 @@
   "transport": "json-over-http",
   "trust_boundary": "internal-network",
   "status_values": ["ready", "degraded"],
+  "builtin_policies": {
+    "deny_all": {"policy_id": "builtin/deny-all", "revision": 1}
+  },
   "routes": [
     {"method": "GET", "path": "/status"},
     {"method": "GET", "path": "/internal/agent-networks/{agent_id}"},

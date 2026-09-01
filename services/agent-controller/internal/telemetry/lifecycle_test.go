@@ -13,6 +13,7 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
+	"soft/antnest-platform/services/agent-controller/internal/domain"
 	"soft/antnest-platform/services/agent-controller/internal/ports"
 )
 
@@ -43,6 +44,42 @@ func TestObservedLifecycleStoreEmitsBoundedOperationSpan(t *testing.T) {
 	}
 	if len(ended[0].Events()) != 0 {
 		t.Fatalf("repository span recorded raw error events: %+v", ended[0].Events())
+	}
+}
+
+func TestObservedEnableAdvanceRecordsPhaseTransition(t *testing.T) {
+	previousProvider := otel.GetTracerProvider()
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	otel.SetTracerProvider(provider)
+	t.Cleanup(func() {
+		_ = provider.Shutdown(context.Background())
+		otel.SetTracerProvider(previousProvider)
+	})
+
+	observed, err := ObserveLifecycleStore(
+		&lifecycleStoreStub{}, slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
+	if err != nil {
+		t.Fatalf("observe lifecycle store: %v", err)
+	}
+	_, err = observed.AdvanceAgentEnable(context.Background(), ports.AdvanceAgentEnable{
+		ExpectedPhase: domain.PhaseRuntimeEnable, NextPhase: domain.PhaseNetworkRestore,
+	})
+	if err != nil {
+		t.Fatalf("advance enable operation: %v", err)
+	}
+	ended := recorder.Ended()
+	if len(ended) != 1 {
+		t.Fatalf("repository spans = %#v", ended)
+	}
+	attributes := make(map[string]string, len(ended[0].Attributes()))
+	for _, item := range ended[0].Attributes() {
+		attributes[string(item.Key)] = item.Value.AsString()
+	}
+	if attributes["antnest.lifecycle.expected_phase"] != string(domain.PhaseRuntimeEnable) ||
+		attributes["antnest.lifecycle.next_phase"] != string(domain.PhaseNetworkRestore) {
+		t.Fatalf("phase attributes = %+v", attributes)
 	}
 }
 
@@ -178,4 +215,40 @@ func (store *lifecycleStoreStub) FailAgentDisable(
 	context.Context, ports.FailAgentDisable,
 ) (ports.AgentDisableState, error) {
 	return ports.AgentDisableState{}, store.err
+}
+
+func (store *lifecycleStoreStub) GetAgentEnableBase(
+	context.Context, string,
+) (ports.AgentEnableBase, error) {
+	return ports.AgentEnableBase{}, store.err
+}
+
+func (store *lifecycleStoreStub) ReplayAgentEnable(
+	context.Context, string, string,
+) (ports.AgentEnableState, bool, error) {
+	return ports.AgentEnableState{}, false, store.err
+}
+
+func (store *lifecycleStoreStub) BeginAgentEnable(
+	context.Context, ports.BeginAgentEnable,
+) (ports.AgentEnableState, bool, error) {
+	return ports.AgentEnableState{}, false, store.err
+}
+
+func (store *lifecycleStoreStub) AdvanceAgentEnable(
+	context.Context, ports.AdvanceAgentEnable,
+) (ports.AgentEnableState, error) {
+	return ports.AgentEnableState{}, store.err
+}
+
+func (store *lifecycleStoreStub) PublishAgentEnable(
+	context.Context, ports.PublishAgentEnable,
+) (ports.AgentEnableState, error) {
+	return ports.AgentEnableState{}, store.err
+}
+
+func (store *lifecycleStoreStub) FailAgentEnable(
+	context.Context, ports.FailAgentEnable,
+) (ports.AgentEnableState, error) {
+	return ports.AgentEnableState{}, store.err
 }

@@ -187,7 +187,8 @@ CREATE TABLE IF NOT EXISTS agent_controller.agent_lifecycle_operations (
     phase TEXT NOT NULL CHECK (phase IN (
         'drain', 'network_ensure', 'network_fence', 'flow_reset',
         'runtime_initialize', 'runtime_update', 'runtime_disable',
-        'runtime_enable', 'runtime_delete', 'network_release', 'publish', 'completed'
+        'runtime_enable', 'runtime_delete', 'network_release', 'network_restore',
+        'publish', 'completed'
     )),
     state TEXT NOT NULL CHECK (state IN ('running', 'completed', 'failed')),
     source_spec_revision_id TEXT NOT NULL DEFAULT '',

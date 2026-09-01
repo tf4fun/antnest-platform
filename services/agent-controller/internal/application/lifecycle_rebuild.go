@@ -473,6 +473,11 @@ func (service *LifecycleService) restoreCapturedNetwork(
 	if err != nil {
 		return ports.NetworkAttachment{}, err
 	}
+	if !restorableNetworkPolicy(agentID, original, current) {
+		return ports.NetworkAttachment{}, &ports.DependencyError{
+			Service: "runtime-egress", Code: "policy_restore_conflict", Retryable: true,
+		}
+	}
 	restored, err := service.egress.AssignAgentPolicy(ctx, original, current.ResourceVersion)
 	if err != nil {
 		return ports.NetworkAttachment{}, err

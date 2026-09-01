@@ -353,6 +353,7 @@
             "runtime_enable",
             "runtime_delete",
             "network_release",
+            "network_restore",
             "publish",
             "completed"
           ]

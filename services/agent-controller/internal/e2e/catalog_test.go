@@ -156,3 +156,9 @@ func (catalogOnlyLifecycle) DisableAgent(
 ) (application.DisableAgentResult, error) {
 	return application.DisableAgentResult{}, application.ErrDependencyUnavailable
 }
+
+func (catalogOnlyLifecycle) EnableAgent(
+	context.Context, application.EnableAgentInput,
+) (application.EnableAgentResult, error) {
+	return application.EnableAgentResult{}, application.ErrDependencyUnavailable
+}

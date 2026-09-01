@@ -12,10 +12,9 @@ service implementation or inspect another service database.
 
 The document describes the completed target boundary. Implementation proceeds
 as vertical business slices. At present ModelProfile/Template Catalog and the
-Agent create and explicit rebuild Sagas are runnable. The other Agent lifecycle
-commands, Run admission, recovery worker, and event
-replay remain in progress and must not be inferred from table or contract
-presence alone.
+Agent create, explicit rebuild, disable, and enable Sagas are runnable. Delete,
+Agent queries, Run admission, the recovery worker, and event replay remain in
+progress and must not be inferred from table or contract presence alone.
 
 ## Aggregate Model
 
@@ -108,7 +107,7 @@ create  validate -> network_ensured -> runtime_initialized -> published
 rebuild drain -> network_fenced -> flows_reset -> runtime_updated
         -> network_reopened -> published
 disable drain -> network_fenced -> runtime_disabled -> published
-enable  network_ensured -> runtime_enabled -> published
+enable  network_verified -> runtime_enabled -> network_restored -> published
 delete  drain -> network_fenced -> flows_reset -> runtime_deleted
         -> network_released -> published
 ```
@@ -251,11 +250,24 @@ Mismatch projects the Agent as unavailable and leaves it fenced; ambiguous
 effect or inspection remains running and fail-closed for exact-request replay.
 
 Enable reuses the disabled Agent's last valid AgentSpec; configuration changes
-always use explicit rebuild. It ensures the retained network attachment, calls
-Runtime Controller with the disabled Runtime revision, restores the policy
-captured by the matching completed Disable operation only after Runtime enable
-is proven ready, and publishes a new ExecutionRevision. No policy reference is
-copied into the Agent projection.
+always use explicit rebuild. It freezes the disabled Runtime revision, last
+successful ExecutionRevision, and policy captured by the matching completed
+Disable operation. It records the retained network attachment, calls Runtime
+Controller with the disabled Runtime revision, persists the proven ready
+result, enters a durable `network_restore` phase, restores only the captured
+policy, verifies unchanged network coordinates, and publishes a new
+ExecutionRevision. Before Runtime startup it verifies the current assignment is
+the captured policy or canonical deny-all and reads the retained attachment
+without reopening data flow, then reasserts and verifies deny-all before
+Runtime startup. A changed unrelated policy is never overwritten; post-ready
+restore failure re-fences the Agent. No policy reference is copied into the
+Agent projection.
+
+A conclusive Runtime `not_started` result is terminal only when authoritative
+inspection still proves the exact disabled Runtime. Otherwise the projection
+is not changed and the operation remains running and fenced. Once a ready
+Runtime result exists, dependency ambiguity likewise leaves the operation
+running and fenced for exact replay.
 
 Delete removes compute and workspace, releases the Egress attachment into
 quarantine, keeps immutable events/revisions for retention, deactivates the

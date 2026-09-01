@@ -366,6 +366,12 @@ func (dependency *lifecycleDependenciesStub) DisableRuntime(
 	return ports.RuntimeOperation{}, errors.New("unexpected Runtime disable")
 }
 
+func (dependency *lifecycleDependenciesStub) EnableRuntime(
+	context.Context, string, string, string, ports.RuntimeConfiguration,
+) (ports.RuntimeOperation, error) {
+	return ports.RuntimeOperation{}, errors.New("unexpected Runtime enable")
+}
+
 func (dependency *lifecycleDependenciesStub) InspectRuntime(
 	context.Context, string,
 ) (ports.RuntimeInspection, error) {
@@ -477,6 +483,42 @@ func (store *lifecycleStoreStub) FailAgentDisable(
 	context.Context, ports.FailAgentDisable,
 ) (ports.AgentDisableState, error) {
 	return ports.AgentDisableState{}, errors.New("unexpected Agent disable failure")
+}
+
+func (store *lifecycleStoreStub) GetAgentEnableBase(
+	context.Context, string,
+) (ports.AgentEnableBase, error) {
+	return ports.AgentEnableBase{}, errors.New("unexpected Agent enable base read")
+}
+
+func (store *lifecycleStoreStub) ReplayAgentEnable(
+	context.Context, string, string,
+) (ports.AgentEnableState, bool, error) {
+	return ports.AgentEnableState{}, false, errors.New("unexpected Agent enable replay")
+}
+
+func (store *lifecycleStoreStub) BeginAgentEnable(
+	context.Context, ports.BeginAgentEnable,
+) (ports.AgentEnableState, bool, error) {
+	return ports.AgentEnableState{}, false, errors.New("unexpected Agent enable begin")
+}
+
+func (store *lifecycleStoreStub) AdvanceAgentEnable(
+	context.Context, ports.AdvanceAgentEnable,
+) (ports.AgentEnableState, error) {
+	return ports.AgentEnableState{}, errors.New("unexpected Agent enable advance")
+}
+
+func (store *lifecycleStoreStub) PublishAgentEnable(
+	context.Context, ports.PublishAgentEnable,
+) (ports.AgentEnableState, error) {
+	return ports.AgentEnableState{}, errors.New("unexpected Agent enable publish")
+}
+
+func (store *lifecycleStoreStub) FailAgentEnable(
+	context.Context, ports.FailAgentEnable,
+) (ports.AgentEnableState, error) {
+	return ports.AgentEnableState{}, errors.New("unexpected Agent enable failure")
 }
 
 func (store *lifecycleStoreStub) ReplayAgentCreate(
@@ -607,8 +649,13 @@ func mustLifecycleTemplate(t *testing.T) domain.TemplateRevision {
 	return revision
 }
 
+type lifecycleDependencies interface {
+	ports.EgressClient
+	ports.RuntimeClient
+}
+
 func newLifecycleTestService(
-	t *testing.T, store *lifecycleStoreStub, dependencies *lifecycleDependenciesStub,
+	t *testing.T, store ports.LifecycleStore, dependencies lifecycleDependencies,
 ) *LifecycleService {
 	t.Helper()
 	return NewLifecycleService(

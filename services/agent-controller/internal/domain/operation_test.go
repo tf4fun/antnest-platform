@@ -139,6 +139,29 @@ func TestDeleteWithoutRuntimeSkipsRuntimeDeletePhase(t *testing.T) {
 	}
 }
 
+func TestEnableRestoresNetworkAfterRuntimeIsReady(t *testing.T) {
+	t.Parallel()
+
+	plan, err := OperationPlan(OperationEnable)
+	if err != nil {
+		t.Fatalf("enable operation plan: %v", err)
+	}
+	want := []OperationPhase{
+		PhaseNetworkEnsure,
+		PhaseRuntimeEnable,
+		PhaseNetworkRestore,
+		PhasePublish,
+	}
+	if len(plan) != len(want) {
+		t.Fatalf("enable plan = %v, want %v", plan, want)
+	}
+	for index := range want {
+		if plan[index] != want[index] {
+			t.Fatalf("enable plan = %v, want %v", plan, want)
+		}
+	}
+}
+
 func operationInput(
 	kind OperationKind,
 	sourceSpec string,

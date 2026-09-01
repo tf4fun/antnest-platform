@@ -3,13 +3,16 @@
 ## Process Model
 
 One binary serves internal HTTP RPC. PostgreSQL is authoritative. The current
-runnable slices serve ModelProfile/Template Catalog operations, the Agent
-create Saga, and durable lifecycle-operation inspection. The request thread
-advances create through Egress ensure, Runtime initialize, an exact Egress
-attachment recheck, and atomic publication. Explicit rebuild is implemented as
-the next request-driven durable Saga: drain, Egress fence/read/reset, Runtime
-update, exact active-network barrier, and atomic publication. The background
-lifecycle recovery worker described below is not yet started by the process.
+runnable slices serve ModelProfile/Template Catalog operations, Agent create,
+rebuild, disable, enable, and durable lifecycle-operation inspection. Create
+advances through Egress ensure, Runtime initialize, an exact Egress attachment
+recheck, and atomic publication. Rebuild drains, fences, resets flows, replaces
+Runtime, restores the captured policy, and publishes. Disable drains, fences,
+removes compute while retaining workspace, and publishes the disabled state.
+Enable ensures the existing attachment, creates compute from the frozen spec,
+restores only the Disable-captured policy, and publishes a new Execution
+revision. The background lifecycle recovery worker described below is not yet
+started by the process.
 
 Multiple replicas may serve reads and Run admission. Lifecycle workers claim
 operations with PostgreSQL row locking; Agent-row constraints remain the final
@@ -37,6 +40,12 @@ Optional:
 
 Secrets must come from environment/secret mounts and must never be printed.
 
+Stage 2 is a pre-release, empty-database build. `0001_initial.sql` is the
+authoritative baseline rather than a compatibility migration chain. When its
+checksum changes, drop and recreate the development or acceptance database;
+do not bypass the checksum guard. Numbered forward migrations begin once a
+released database must be preserved.
+
 ## Readiness
 
 `GET /status` returns ready when PostgreSQL is reachable and its migrations
@@ -62,7 +71,13 @@ turn a downstream outage into a restart loop.
   readiness, and publication are conclusive.
 - A rebuild in `drain` has made no external mutation. It advances only after no
   active Run executor occupies the Agent.
-- A draining Agent with a settled Run is resumed by the worker.
+- Until the recovery worker is implemented, a draining Agent with a settled
+  Run advances only when the original lifecycle request is replayed.
+- An enable timeout before Runtime readiness is retried with the same request
+  ID. After Runtime readiness, policy restoration remains a durable phase and
+  must complete before the Agent becomes available.
+- A policy changed independently after Disable is not overwritten by Enable;
+  resolve the policy conflict and replay the original enable request.
 - An unresolved Run remains fail-closed until rebuild/delete proves its Runtime
   absent.
 - Never edit operation phases or Agent projection rows by hand. Repair the

@@ -368,6 +368,53 @@ func TestLifecycleHandlerRequestsAgentDisableWithStableContract(t *testing.T) {
 	}
 }
 
+func TestLifecycleHandlerRequestsAgentEnableWithStableContract(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(50, 0).UTC()
+	lifecycle := &lifecycleServiceStub{enableResult: application.EnableAgentResult{
+		Agent: application.AgentView{
+			AgentID: "agent-1", DesiredState: domain.DesiredEnabled,
+			LifecycleState: domain.AgentAvailable, RuntimeRevision: "runtime-enabled",
+		},
+		Operation: application.OperationView{
+			RequestID: "request-enable-1", AgentID: "agent-1",
+			Kind: domain.OperationEnable, Phase: domain.PhaseCompleted,
+			State: domain.OperationCompleted, CreatedAt: now, UpdatedAt: now,
+		},
+	}}
+	handler, err := NewHandler(
+		&catalogServiceStub{}, lifecycle, func(context.Context) error { return nil },
+	)
+	if err != nil {
+		t.Fatalf("new handler: %v", err)
+	}
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(
+		http.MethodPost, "/internal/agents/agent-1/enable",
+		strings.NewReader(`{"request_id":"request-enable-1"}`),
+	)
+	request.Header.Set("traceparent", "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01")
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("status = %d body=%s", response.Code, response.Body.String())
+	}
+	if lifecycle.enableInput.AgentID != "agent-1" ||
+		lifecycle.enableInput.RequestID != "request-enable-1" ||
+		lifecycle.enableInput.InitialTraceParent != request.Header.Get("traceparent") {
+		t.Fatalf("EnableAgent input = %+v", lifecycle.enableInput)
+	}
+	var payload operationResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.Kind != domain.OperationEnable || payload.State != domain.OperationCompleted ||
+		payload.RequestID != "request-enable-1" {
+		t.Fatalf("response = %+v", payload)
+	}
+}
+
 func TestObserveLifecycleResultMarksTerminalBusinessFailure(t *testing.T) {
 	previousProvider := otel.GetTracerProvider()
 	recorder := tracetest.NewSpanRecorder()
@@ -408,6 +455,8 @@ type lifecycleServiceStub struct {
 	rebuildResult      application.RebuildAgentResult
 	disableInput       application.DisableAgentInput
 	disableResult      application.DisableAgentResult
+	enableInput        application.EnableAgentInput
+	enableResult       application.EnableAgentResult
 	operation          application.OperationView
 	operationRequestID string
 	err                error
@@ -439,6 +488,13 @@ func (service *lifecycleServiceStub) DisableAgent(
 ) (application.DisableAgentResult, error) {
 	service.disableInput = input
 	return service.disableResult, service.err
+}
+
+func (service *lifecycleServiceStub) EnableAgent(
+	_ context.Context, input application.EnableAgentInput,
+) (application.EnableAgentResult, error) {
+	service.enableInput = input
+	return service.enableResult, service.err
 }
 
 func (service *catalogServiceStub) CreateModelProfile(

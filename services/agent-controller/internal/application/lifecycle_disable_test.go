@@ -214,7 +214,8 @@ func newDisableDependencies(
 			AgentID: base.Agent.AgentID, PolicyID: "internet-enabled", Revision: 1, ResourceVersion: 7,
 		},
 		currentPolicy: ports.NetworkPolicyAssignment{
-			AgentID: base.Agent.AgentID, PolicyID: "builtin-deny-all", Revision: 1, ResourceVersion: 8,
+			AgentID: base.Agent.AgentID, PolicyID: ports.BuiltinDenyAllPolicyID,
+			Revision: 1, ResourceVersion: 8,
 		},
 		network: network, runtime: runtime,
 		inspection: ports.RuntimeInspection{
@@ -284,6 +285,12 @@ func (dependency *disableDependenciesStub) DisableRuntime(
 	dependency.calls = append(dependency.calls, "runtime.disable")
 	dependency.expectedRuntimeRevision = expectedRevision
 	return dependency.runtime, dependency.runtimeErr
+}
+
+func (dependency *disableDependenciesStub) EnableRuntime(
+	context.Context, string, string, string, ports.RuntimeConfiguration,
+) (ports.RuntimeOperation, error) {
+	return ports.RuntimeOperation{}, errors.New("unexpected Runtime enable")
 }
 
 func (dependency *disableDependenciesStub) InspectRuntime(

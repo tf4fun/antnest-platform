@@ -9,6 +9,8 @@ import (
 )
 
 const (
+	BuiltinDenyAllPolicyID = "builtin/deny-all"
+
 	EventAgentCreateRequested  = "agent_create_requested"
 	EventAgentReady            = "agent_ready"
 	EventAgentBuildFailed      = "agent_build_failed"
@@ -17,6 +19,9 @@ const (
 	EventAgentDisableRequested = "agent_disable_requested"
 	EventAgentDisabled         = "agent_disabled"
 	EventAgentDisableFailed    = "agent_disable_failed"
+	EventAgentEnableRequested  = "agent_enable_requested"
+	EventAgentEnabled          = "agent_enabled"
+	EventAgentEnableFailed     = "agent_enable_failed"
 )
 
 type AgentSpecSource interface {
@@ -81,6 +86,7 @@ type RuntimeClient interface {
 	InitializeRuntime(context.Context, string, string, RuntimeConfiguration) (RuntimeOperation, error)
 	UpdateRuntime(context.Context, string, string, string, RuntimeConfiguration) (RuntimeOperation, error)
 	DisableRuntime(context.Context, string, string, string) (RuntimeOperation, error)
+	EnableRuntime(context.Context, string, string, string, RuntimeConfiguration) (RuntimeOperation, error)
 	InspectRuntime(context.Context, string) (RuntimeInspection, error)
 }
 
@@ -218,6 +224,21 @@ type AgentDisableState struct {
 	Operation       LifecycleOperationRecord
 }
 
+type AgentEnableBase struct {
+	Agent                   AgentRecord
+	Spec                    AgentSpecRecord
+	LastSuccessfulExecution ExecutionRecord
+	NetworkPolicyAssignment NetworkPolicyAssignment
+	NextExecutionRevision   int64
+}
+
+type AgentEnableState struct {
+	Agent                   AgentRecord
+	Spec                    AgentSpecRecord
+	LastSuccessfulExecution ExecutionRecord
+	Operation               LifecycleOperationRecord
+}
+
 type BeginAgentCreate struct {
 	Agent          AgentRecord
 	Access         AgentAccessRecord
@@ -328,6 +349,47 @@ type FailAgentDisable struct {
 	Now                     time.Time
 }
 
+type BeginAgentEnable struct {
+	AgentID                     string
+	ExpectedAggregateSequence   int64
+	ExpectedSpecRevisionID      string
+	ExpectedExecutionRevisionID string
+	ExpectedRuntimeRevision     string
+	Operation                   LifecycleOperationRecord
+	RequestedEvent              AgentEventRecord
+	Now                         time.Time
+}
+
+type AdvanceAgentEnable struct {
+	RequestID          string
+	Fingerprint        string
+	ExpectedPhase      domain.OperationPhase
+	NextPhase          domain.OperationPhase
+	NextChildRequestID string
+	NetworkAttachment  *NetworkAttachment
+	RuntimeResult      *RuntimeOperation
+	Now                time.Time
+}
+
+type PublishAgentEnable struct {
+	RequestID    string
+	Fingerprint  string
+	Execution    ExecutionRecord
+	EnabledEvent AgentEventRecord
+	Now          time.Time
+}
+
+type FailAgentEnable struct {
+	RequestID               string
+	Fingerprint             string
+	Stage                   domain.OperationPhase
+	Code                    string
+	Detail                  string
+	SourceRuntimeInspection *RuntimeInspection
+	FailedEvent             AgentEventRecord
+	Now                     time.Time
+}
+
 type LifecycleStore interface {
 	GetLifecycleOperation(context.Context, string) (LifecycleOperationRecord, error)
 	GetAgentLifecycleBase(context.Context, string) (AgentLifecycleBase, error)
@@ -355,4 +417,10 @@ type LifecycleStore interface {
 	AdvanceAgentDisable(context.Context, AdvanceAgentDisable) (AgentDisableState, error)
 	PublishAgentDisable(context.Context, PublishAgentDisable) (AgentDisableState, error)
 	FailAgentDisable(context.Context, FailAgentDisable) (AgentDisableState, error)
+	GetAgentEnableBase(context.Context, string) (AgentEnableBase, error)
+	ReplayAgentEnable(context.Context, string, string) (AgentEnableState, bool, error)
+	BeginAgentEnable(context.Context, BeginAgentEnable) (AgentEnableState, bool, error)
+	AdvanceAgentEnable(context.Context, AdvanceAgentEnable) (AgentEnableState, error)
+	PublishAgentEnable(context.Context, PublishAgentEnable) (AgentEnableState, error)
+	FailAgentEnable(context.Context, FailAgentEnable) (AgentEnableState, error)
 }

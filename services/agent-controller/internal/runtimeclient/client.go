@@ -106,6 +106,28 @@ func (client *Client) DisableRuntime(
 	)
 }
 
+func (client *Client) EnableRuntime(
+	ctx context.Context,
+	requestID string,
+	agentID string,
+	expectedRevision string,
+	configuration ports.RuntimeConfiguration,
+) (ports.RuntimeOperation, error) {
+	if !runtimeRevisionPattern.MatchString(expectedRevision) {
+		return ports.RuntimeOperation{}, dependencyFailure("invalid_request", false)
+	}
+	payload := struct {
+		ExpectedRevision string                  `json:"expected_revision"`
+		Configuration    runtimeConfigurationDTO `json:"configuration"`
+	}{
+		ExpectedRevision: expectedRevision,
+		Configuration:    runtimeConfigurationPayload(configuration),
+	}
+	return client.callRuntimeOperation(
+		ctx, requestID, agentID, "enable", "enable_runtime", payload, completionReady,
+	)
+}
+
 func (client *Client) InspectRuntime(
 	ctx context.Context, agentID string,
 ) (result ports.RuntimeInspection, resultErr error) {
