@@ -76,3 +76,33 @@ func TestValidEnableFailureCannotTerminateAfterRuntimeEffect(t *testing.T) {
 		t.Fatal("post-ready Runtime failure was accepted as terminal")
 	}
 }
+
+func TestValidEnableFailureRequiresExactDisabledRuntimeBeforeRuntimeEffect(t *testing.T) {
+	t.Parallel()
+
+	operation := ports.LifecycleOperationRecord{
+		RequestID: "request-enable", AgentID: "agent-1",
+		Kind: domain.OperationEnable, Phase: domain.PhaseNetworkEnsure,
+		State:                 domain.OperationRunning,
+		SourceRuntimeRevision: "rtv_11111111111111111111111111111111",
+	}
+	input := ports.FailAgentEnable{
+		Stage: domain.PhaseNetworkEnsure, Code: "policy_restore_conflict",
+		Now: time.Unix(1, 0).UTC(),
+	}
+	if validEnableFailure(input, operation) {
+		t.Fatal("Enable failure without Runtime proof was accepted")
+	}
+	inspection := ports.RuntimeInspection{
+		AgentID: "agent-1", RuntimeRevision: operation.SourceRuntimeRevision,
+		LifecycleState: "disabled", Health: "absent",
+	}
+	input.SourceRuntimeInspection = &inspection
+	if !validEnableFailure(input, operation) {
+		t.Fatal("Enable failure with exact disabled Runtime proof was rejected")
+	}
+	inspection.RuntimeRevision = "rtv_22222222222222222222222222222222"
+	if validEnableFailure(input, operation) {
+		t.Fatal("Enable failure with mismatched Runtime proof was accepted")
+	}
+}

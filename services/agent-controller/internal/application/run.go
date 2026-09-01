@@ -204,22 +204,22 @@ func (service *RunService) FinishRun(
 	if err != nil {
 		return FinishRunResult{}, fmt.Errorf("%w: %v", ErrInvalidInput, err)
 	}
-	eventType := ports.EventRunAdmissionReleased
-	if state == domain.AdmissionBlockedUnknownEffect {
-		eventType = ports.EventRunAdmissionUnresolved
-	}
 	now := service.clock.Now()
-	result, err := service.store.FinishRun(ctx, ports.FinishRunCommand{
-		RequestID: input.RequestID, AdmissionID: input.AdmissionID, Report: report,
-		Event: ports.RunAdmissionEvent{
-			EventID: derivedID("event-run-finished", input.RequestID), EventType: eventType,
-			TraceID: currentTraceID(ctx), Data: map[string]any{
+	var event *ports.RunAdmissionEvent
+	if state == domain.AdmissionBlockedUnknownEffect {
+		event = &ports.RunAdmissionEvent{
+			EventID:   derivedID("event-run-finished", input.RequestID),
+			EventType: ports.EventRunAdmissionUnresolved,
+			TraceID:   currentTraceID(ctx), Data: map[string]any{
 				"terminal_class":    string(report.Class),
 				"tool_effect_state": string(report.ToolEffectState),
 				"stop_reason":       report.StopReason, "error_class": report.ErrorClass,
 			}, OccurredAt: now,
-		},
-		Now: now,
+		}
+	}
+	result, err := service.store.FinishRun(ctx, ports.FinishRunCommand{
+		RequestID: input.RequestID, AdmissionID: input.AdmissionID, Report: report,
+		Event: event, Now: now,
 	})
 	if err != nil {
 		return FinishRunResult{}, mapRunError("finish Run", err)

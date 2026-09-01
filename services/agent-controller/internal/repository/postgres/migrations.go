@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"embed"
 	"encoding/hex"
-	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
@@ -16,9 +15,7 @@ var migrationFiles embed.FS
 
 const migrationLockID int64 = 0x41544e4553544147
 
-const (
-	initialMigrationName = "initial_agent_controller_schema"
-	migrationJournalSQL  = `
+const migrationJournalSQL = `
 CREATE SCHEMA IF NOT EXISTS agent_controller;
 CREATE TABLE IF NOT EXISTS agent_controller.schema_migrations (
     version BIGINT PRIMARY KEY CHECK (version > 0),
@@ -26,9 +23,21 @@ CREATE TABLE IF NOT EXISTS agent_controller.schema_migrations (
     checksum TEXT NOT NULL CHECK (checksum ~ '^[0-9a-f]{64}$'),
     applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 )`
-)
 
-var initialSchemaSQL = mustMigration("migrations/0001_initial.sql")
+type schemaMigration struct {
+	version int64
+	name    string
+	sql     string
+}
+
+var (
+	initialSchemaSQL       = mustMigration("migrations/0001_initial.sql")
+	ownerAndEmptySkillsSQL = mustMigration("migrations/0002_enforce_owner_and_empty_skills.sql")
+	schemaMigrations       = []schemaMigration{
+		{version: 1, name: "initial_agent_controller_schema", sql: initialSchemaSQL},
+		{version: 2, name: "enforce_owner_and_empty_skills", sql: ownerAndEmptySkillsSQL},
+	}
+)
 
 func (repository *Repository) Migrate(ctx context.Context) error {
 	transaction, err := repository.pool.Begin(ctx)
@@ -42,41 +51,96 @@ func (repository *Repository) Migrate(ctx context.Context) error {
 	if _, err := transaction.Exec(ctx, migrationJournalSQL); err != nil {
 		return fmt.Errorf("initialize Agent Controller migration journal: %w", err)
 	}
-	checksum := sha256.Sum256([]byte(initialSchemaSQL))
-	expectedChecksum := hex.EncodeToString(checksum[:])
-	var storedName, storedChecksum string
-	err = transaction.QueryRow(ctx, `
-SELECT name, checksum
-FROM agent_controller.schema_migrations
-WHERE version = 1`).Scan(&storedName, &storedChecksum)
-	switch {
-	case errors.Is(err, pgx.ErrNoRows):
-		if _, err := transaction.Exec(ctx, initialSchemaSQL); err != nil {
-			return fmt.Errorf("apply Agent Controller initial schema: %w", err)
+	applied, err := readMigrationRecords(ctx, transaction)
+	if err != nil {
+		return err
+	}
+	if err := validateMigrationHistory(applied); err != nil {
+		return err
+	}
+	for _, candidate := range schemaMigrations[len(applied):] {
+		if _, err := transaction.Exec(ctx, candidate.sql); err != nil {
+			return fmt.Errorf("apply Agent Controller migration %d (%s): %w", candidate.version, candidate.name, err)
 		}
 		if _, err := transaction.Exec(ctx, `
 INSERT INTO agent_controller.schema_migrations (version, name, checksum)
-VALUES (1, $1, $2)`, initialMigrationName, expectedChecksum); err != nil {
-			return fmt.Errorf("record Agent Controller migration: %w", err)
-		}
-	case err != nil:
-		return fmt.Errorf("read Agent Controller migration journal: %w", err)
-	default:
-		if err := validateMigrationRecord(initialMigrationName, expectedChecksum, storedName, storedChecksum); err != nil {
-			return err
+VALUES ($1, $2, $3)`, candidate.version, candidate.name, migrationChecksum(candidate.sql)); err != nil {
+			return fmt.Errorf("record Agent Controller migration %d (%s): %w", candidate.version, candidate.name, err)
 		}
 	}
 	return transaction.Commit(ctx)
 }
 
-func validateMigrationRecord(expectedName string, expectedChecksum string, storedName string, storedChecksum string) error {
+type migrationRecord struct {
+	version  int64
+	name     string
+	checksum string
+}
+
+func readMigrationRecords(ctx context.Context, transaction pgx.Tx) ([]migrationRecord, error) {
+	rows, err := transaction.Query(ctx, `
+SELECT version, name, checksum
+FROM agent_controller.schema_migrations
+ORDER BY version`)
+	if err != nil {
+		return nil, fmt.Errorf("read Agent Controller migration journal: %w", err)
+	}
+	defer rows.Close()
+	records := make([]migrationRecord, 0, len(schemaMigrations))
+	for rows.Next() {
+		var record migrationRecord
+		if err := rows.Scan(&record.version, &record.name, &record.checksum); err != nil {
+			return nil, fmt.Errorf("scan Agent Controller migration journal: %w", err)
+		}
+		records = append(records, record)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate Agent Controller migration journal: %w", err)
+	}
+	return records, nil
+}
+
+func validateMigrationHistory(applied []migrationRecord) error {
+	if len(applied) > len(schemaMigrations) {
+		return fmt.Errorf("agent controller database has migrations newer than this service")
+	}
+	for index, record := range applied {
+		candidate := schemaMigrations[index]
+		if record.version != candidate.version {
+			return fmt.Errorf("agent controller migration history is not a prefix at version %d", record.version)
+		}
+		if err := validateMigrationRecord(
+			candidate.version,
+			candidate.name,
+			migrationChecksum(candidate.sql),
+			record.name,
+			record.checksum,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateMigrationRecord(
+	version int64,
+	expectedName string,
+	expectedChecksum string,
+	storedName string,
+	storedChecksum string,
+) error {
 	if storedName != expectedName || storedChecksum != expectedChecksum {
 		return fmt.Errorf(
-			"agent controller migration drift: version 1 stores name=%q checksum=%q, expected name=%q checksum=%q",
-			storedName, storedChecksum, expectedName, expectedChecksum,
+			"agent controller migration drift: version %d stores name=%q checksum=%q, expected name=%q checksum=%q",
+			version, storedName, storedChecksum, expectedName, expectedChecksum,
 		)
 	}
 	return nil
+}
+
+func migrationChecksum(statement string) string {
+	checksum := sha256.Sum256([]byte(statement))
+	return hex.EncodeToString(checksum[:])
 }
 
 func mustMigration(path string) string {

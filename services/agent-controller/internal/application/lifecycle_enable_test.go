@@ -169,6 +169,35 @@ func TestEnableAgentRuntimeMismatchRemainsReplayableAndFenced(t *testing.T) {
 	}
 }
 
+func TestEnableAgentInspectionFailureRemainsReplayableAndFenced(t *testing.T) {
+	t.Parallel()
+
+	base := enableLifecycleBase(t)
+	store := &enableLifecycleStoreStub{base: base}
+	dependencies := newEnableDependencies(base, ports.RuntimeOperation{
+		State: "failed", Effect: "not_started", RuntimeRevision: base.Agent.RuntimeRevision,
+		ErrorCode: "runtime_enable_rejected", ErrorDetail: "revision changed",
+	})
+	dependencies.inspectionErr = &ports.DependencyError{
+		Service: "runtime-controller", Code: "runtime_inspection_failed", Retryable: true,
+	}
+	service := newLifecycleTestService(t, store, dependencies)
+
+	result, err := service.EnableAgent(context.Background(), EnableAgentInput{
+		RequestID: "request-enable-inspection-failed", AgentID: base.Agent.AgentID,
+	})
+	if !errors.Is(err, ErrDependencyUnavailable) {
+		t.Fatalf("Runtime inspection error = %v", err)
+	}
+	if result.Operation.State != domain.OperationRunning ||
+		result.Operation.Phase != domain.PhaseRuntimeEnable || store.failed.Code != "" {
+		t.Fatalf("Runtime inspection result = %+v failure=%+v", result, store.failed)
+	}
+	if dependencies.calls[len(dependencies.calls)-1] != "egress.fence" {
+		t.Fatalf("Runtime inspection failure did not fence network: %v", dependencies.calls)
+	}
+}
+
 func TestEnableAgentPolicyConflictAfterRuntimeReadyRemainsReplayable(t *testing.T) {
 	t.Parallel()
 
@@ -223,11 +252,43 @@ func TestEnableAgentRejectsUnrelatedPolicyBeforeRuntimeStartup(t *testing.T) {
 	}
 	if result.Agent.DesiredState != domain.DesiredDisabled ||
 		result.Operation.State != domain.OperationFailed ||
-		store.failed.Code != "policy_restore_conflict" {
+		store.failed.Code != "policy_restore_conflict" ||
+		store.failed.SourceRuntimeInspection == nil {
 		t.Fatalf("preflight conflict result = %+v failure=%+v", result, store.failed)
 	}
-	if !reflect.DeepEqual(dependencies.calls, []string{"egress.policy.get"}) {
+	if !reflect.DeepEqual(dependencies.calls, []string{"egress.policy.get", "runtime.inspect"}) {
 		t.Fatalf("preflight conflict calls = %v", dependencies.calls)
+	}
+}
+
+func TestEnableAgentKeepsRunningWhenPreflightFailureCannotProveDisabledRuntime(t *testing.T) {
+	t.Parallel()
+
+	base := enableLifecycleBase(t)
+	store := &enableLifecycleStoreStub{base: base}
+	dependencies := newEnableDependencies(base, readyEnableRuntime())
+	dependencies.currentPolicy = ports.NetworkPolicyAssignment{
+		AgentID: base.Agent.AgentID, PolicyID: "unrelated-policy",
+		Revision: 3, ResourceVersion: 12,
+	}
+	dependencies.inspection.RuntimeRevision = "rtv_99999999999999999999999999999999"
+	service := newLifecycleTestService(t, store, dependencies)
+
+	result, err := service.EnableAgent(context.Background(), EnableAgentInput{
+		RequestID: "request-enable-preflight-runtime-drift", AgentID: base.Agent.AgentID,
+	})
+	if !errors.Is(err, ErrDependencyUnavailable) {
+		t.Fatalf("preflight Runtime drift error = %v", err)
+	}
+	if result.Operation.State != domain.OperationRunning ||
+		result.Operation.Phase != domain.PhaseNetworkEnsure || store.failed.Code != "" {
+		t.Fatalf("preflight Runtime drift result = %+v failure=%+v", result, store.failed)
+	}
+	wantCalls := []string{
+		"egress.policy.get", "runtime.inspect", "egress.policy.get", "egress.fence",
+	}
+	if !reflect.DeepEqual(dependencies.calls, wantCalls) {
+		t.Fatalf("preflight Runtime drift calls = %v, want %v", dependencies.calls, wantCalls)
 	}
 }
 
@@ -290,6 +351,7 @@ type enableDependenciesStub struct {
 	policyIndex             int
 	runtime                 ports.RuntimeOperation
 	inspection              ports.RuntimeInspection
+	inspectionErr           error
 	runtimeConfiguration    ports.RuntimeConfiguration
 	expectedRuntimeRevision string
 	runtimeRequestIDs       []string
@@ -404,7 +466,7 @@ func (dependency *enableDependenciesStub) InspectRuntime(
 	context.Context, string,
 ) (ports.RuntimeInspection, error) {
 	dependency.calls = append(dependency.calls, "runtime.inspect")
-	return dependency.inspection, nil
+	return dependency.inspection, dependency.inspectionErr
 }
 
 type enableLifecycleStoreStub struct {

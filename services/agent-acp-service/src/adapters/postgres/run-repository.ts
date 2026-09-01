@@ -171,7 +171,7 @@ export class PostgresRunRepository implements RunRepository {
               SET state = 'cancelled', admission_id = $2, execution_snapshot = $3::jsonb,
                   pending_user_message_id = NULL, pending_prompt = NULL,
                   terminal_class = 'cancelled', executor_state = 'quiescent',
-                  tool_effect_state = 'none', error_class = 'run_cancelled',
+                  tool_effect_state = 'none', error_class = NULL,
                   cancel_requested_at = COALESCE(cancel_requested_at, $4), updated_at = $4
             WHERE id = $1`,
           [
@@ -243,7 +243,7 @@ export class PostgresRunRepository implements RunRepository {
               terminal_class = CASE WHEN cancel_requested_at IS NULL THEN NULL ELSE 'cancelled' END,
               executor_state = CASE WHEN cancel_requested_at IS NULL THEN NULL ELSE 'quiescent' END,
               tool_effect_state = CASE WHEN cancel_requested_at IS NULL THEN NULL ELSE 'none' END,
-              error_class = CASE WHEN cancel_requested_at IS NULL THEN $2 ELSE 'run_cancelled' END,
+              error_class = CASE WHEN cancel_requested_at IS NULL THEN $2 ELSE NULL END,
               updated_at = $3
         WHERE id = $1 AND state = 'admitting'
         RETURNING state`,

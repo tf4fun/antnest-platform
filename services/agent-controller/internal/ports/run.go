@@ -134,7 +134,7 @@ type FinishRunCommand struct {
 	RequestID   string
 	AdmissionID string
 	Report      domain.TerminalReport
-	Event       RunAdmissionEvent
+	Event       *RunAdmissionEvent
 	Now         time.Time
 }
 

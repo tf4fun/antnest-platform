@@ -140,7 +140,6 @@ export class RunRecovery {
           terminalClass: "cancelled",
           executorState: "quiescent",
           toolEffectState: "none",
-          errorClass: "run_cancelled",
         },
         signal,
       );

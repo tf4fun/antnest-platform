@@ -38,9 +38,10 @@ func TestInitialMigrationOwnsCompleteAgentControllerBoundary(t *testing.T) {
 	}
 }
 
-func TestInitialMigrationHasFinalSerializationConstraints(t *testing.T) {
+func TestSchemaMigrationsHaveFinalSerializationConstraints(t *testing.T) {
 	t.Parallel()
 
+	allMigrations := initialSchemaSQL + ownerAndEmptySkillsSQL
 	required := []string{
 		"operations_agent_nonterminal_unique",
 		"admissions_agent_occupancy_unique",
@@ -61,10 +62,14 @@ func TestInitialMigrationHasFinalSerializationConstraints(t *testing.T) {
 		"agent_events_notify_commit",
 		"event_journal_cursor_singleton",
 		"agent_events_type_known",
+		"agents_owner_access_revision_unique",
+		"access_bindings_agent_unique",
+		"access_bindings_owner_fk",
+		"run_admissions_empty_skills",
 	}
 	for _, constraint := range required {
-		if !strings.Contains(initialSchemaSQL, constraint) {
-			t.Errorf("initial migration lacks %s", constraint)
+		if !strings.Contains(allMigrations, constraint) {
+			t.Errorf("schema migrations lack %s", constraint)
 		}
 	}
 }
@@ -72,13 +77,31 @@ func TestInitialMigrationHasFinalSerializationConstraints(t *testing.T) {
 func TestMigrationRecordRejectsNameOrChecksumDrift(t *testing.T) {
 	t.Parallel()
 
-	if err := validateMigrationRecord("initial_agent_controller_schema", "checksum", "initial_agent_controller_schema", "checksum"); err != nil {
+	if err := validateMigrationRecord(1, "initial_agent_controller_schema", "checksum", "initial_agent_controller_schema", "checksum"); err != nil {
 		t.Fatalf("matching migration record: %v", err)
 	}
-	if err := validateMigrationRecord("initial_agent_controller_schema", "checksum", "renamed", "checksum"); err == nil {
+	if err := validateMigrationRecord(1, "initial_agent_controller_schema", "checksum", "renamed", "checksum"); err == nil {
 		t.Fatal("migration name drift was accepted")
 	}
-	if err := validateMigrationRecord("initial_agent_controller_schema", "checksum", "initial_agent_controller_schema", "changed"); err == nil {
+	if err := validateMigrationRecord(1, "initial_agent_controller_schema", "checksum", "initial_agent_controller_schema", "changed"); err == nil {
 		t.Fatal("migration checksum drift was accepted")
+	}
+}
+
+func TestMigrationHistoryMustBeAnExactPrefix(t *testing.T) {
+	t.Parallel()
+
+	versionOne := schemaMigrations[0]
+	valid := []migrationRecord{{
+		version: versionOne.version, name: versionOne.name, checksum: migrationChecksum(versionOne.sql),
+	}}
+	if err := validateMigrationHistory(valid); err != nil {
+		t.Fatalf("valid prefix rejected: %v", err)
+	}
+	invalid := []migrationRecord{{
+		version: 2, name: schemaMigrations[1].name, checksum: migrationChecksum(schemaMigrations[1].sql),
+	}}
+	if err := validateMigrationHistory(invalid); err == nil {
+		t.Fatal("migration history with a missing first version was accepted")
 	}
 }

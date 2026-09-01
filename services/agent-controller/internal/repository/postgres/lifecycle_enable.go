@@ -506,10 +506,8 @@ func validEnableFailure(
 		return false
 	}
 	inspection := input.SourceRuntimeInspection
-	if operation.Phase == domain.PhaseNetworkEnsure {
-		return inspection == nil
-	}
-	if operation.Phase != domain.PhaseRuntimeEnable || inspection == nil ||
+	if (operation.Phase != domain.PhaseNetworkEnsure && operation.Phase != domain.PhaseRuntimeEnable) ||
+		inspection == nil ||
 		inspection.AgentID != operation.AgentID {
 		return false
 	}

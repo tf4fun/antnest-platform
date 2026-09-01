@@ -105,7 +105,7 @@ export type RunOutcome =
       executorState: "quiescent";
       toolEffectState: "none" | "settled";
       stopReason?: never;
-      errorClass?: string;
+      errorClass?: never;
     }
   | {
       terminalClass: "failed";

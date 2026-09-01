@@ -473,12 +473,78 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP private PostgreSQL reposit
       state: string;
       cancel_requested_at: Date | null;
       admission_id: string | null;
-    }>("SELECT state, cancel_requested_at, admission_id FROM runs WHERE id = $1", [runId]);
+      error_class: string | null;
+    }>("SELECT state, cancel_requested_at, admission_id, error_class FROM runs WHERE id = $1", [
+      runId,
+    ]);
     expect(persisted.rows[0]?.state).toBe("cancelled");
     expect(persisted.rows[0]?.admission_id).not.toBeNull();
     expect(persisted.rows[0]?.cancel_requested_at).not.toBeNull();
+    expect(persisted.rows[0]?.error_class).toBeNull();
     const messages = await pool.query("SELECT id FROM session_messages WHERE run_id = $1", [runId]);
     expect(messages.rowCount).toBe(0);
+  });
+
+  it("persists an unresolved Run only after the executor is quiescent", async () => {
+    const sessionId = randomUUID();
+    const revisionId = randomUUID();
+    const runId = randomUUID();
+    await sessions.create({
+      sessionId,
+      binding: {
+        connectionId: "connection-unresolved",
+        agentAccessSubject: "subject-unresolved",
+        principalId: "principal-unresolved",
+        agentId: "agent-unresolved",
+        accessRevision: "access-unresolved",
+      },
+      cwd: "/workspace",
+      mcpRevisionId: revisionId,
+      mcpSources: [],
+    });
+    await runs.createRunIntent({
+      runId,
+      requestId: randomUUID(),
+      sessionId,
+      expectedAccessRevision: "access-unresolved",
+      userMessageId: randomUUID(),
+      prompt: [{ type: "text", text: "perform one Tool call" }],
+      createdAt: new Date("2026-08-30T02:15:00Z"),
+    });
+    await runs.acceptRun({
+      runId,
+      snapshot: snapshot(revisionId),
+      environmentFact: null,
+      acceptedAt: new Date("2026-08-30T02:15:01Z"),
+    });
+
+    await expect(
+      executions.finish({
+        runId,
+        terminalClass: "unresolved",
+        executorState: "quiescent",
+        toolEffectState: "unknown",
+        errorClass: "runtime_tool_effect_unknown",
+        finishedAt: new Date("2026-08-30T02:15:02Z"),
+      }),
+    ).resolves.toBeUndefined();
+
+    const persisted = await pool.query<{
+      state: string;
+      executor_state: string;
+      tool_effect_state: string;
+      error_class: string;
+    }>(
+      `SELECT state, executor_state, tool_effect_state, error_class
+         FROM runs WHERE id = $1`,
+      [runId],
+    );
+    expect(persisted.rows[0]).toEqual({
+      state: "unresolved",
+      executor_state: "quiescent",
+      tool_effect_state: "unknown",
+      error_class: "runtime_tool_effect_unknown",
+    });
   });
 
   it("uses Session-before-Run lock ordering during admission acceptance", async () => {

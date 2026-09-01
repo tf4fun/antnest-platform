@@ -269,8 +269,8 @@ func (repository *Repository) PublishAgentDelete(
 UPDATE agent_controller.agents
 SET desired_state = 'deleted', lifecycle_state = 'deleted',
     executable_spec_revision_id = '', executable_execution_revision_id = '',
-    last_successful_execution_revision_id = '', runtime_revision = '',
-    runtime_execution_id = '', runtime_mcp_endpoint = '', active_operation_request_id = '',
+    runtime_revision = '', runtime_execution_id = '', runtime_mcp_endpoint = '',
+    active_operation_request_id = '',
     failure_stage = '', failure_code = '', failure_detail = '',
     aggregate_sequence = $2, updated_at = $3
 WHERE id = $1 AND desired_state = 'deleted' AND lifecycle_state = 'deleting'

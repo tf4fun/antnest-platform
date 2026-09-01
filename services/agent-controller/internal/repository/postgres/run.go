@@ -111,7 +111,9 @@ func (repository *Repository) FinishRun(
 	ctx context.Context, input ports.FinishRunCommand,
 ) (ports.FinishRunRecord, error) {
 	resultingState, err := domain.ValidateTerminalReport(input.Report)
-	if err != nil || !validRunEvent(input.Event, resultingState) || input.Now.IsZero() {
+	if err != nil || strings.TrimSpace(input.RequestID) == "" ||
+		strings.TrimSpace(input.AdmissionID) == "" ||
+		!validFinishRunEvent(input.Event, resultingState) || input.Now.IsZero() {
 		return ports.FinishRunRecord{}, fmt.Errorf("invalid FinishRun command")
 	}
 	transaction, err := repository.pool.Begin(ctx)
@@ -119,20 +121,23 @@ func (repository *Repository) FinishRun(
 		return ports.FinishRunRecord{}, fmt.Errorf("begin FinishRun transaction: %w", err)
 	}
 	defer func() { _ = transaction.Rollback(ctx) }()
-	var agentID string
-	err = transaction.QueryRow(ctx, `
+	var agent ports.AgentRecord
+	if resultingState == domain.AdmissionBlockedUnknownEffect {
+		var agentID string
+		err = transaction.QueryRow(ctx, `
 SELECT agent_id FROM agent_controller.run_admissions WHERE admission_id = $1`,
-		input.AdmissionID,
-	).Scan(&agentID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return ports.FinishRunRecord{}, ports.ErrAdmissionNotFound
-	}
-	if err != nil {
-		return ports.FinishRunRecord{}, fmt.Errorf("load FinishRun Agent identity: %w", err)
-	}
-	agent, err := loadAgentRecordForUpdate(ctx, transaction, agentID)
-	if err != nil {
-		return ports.FinishRunRecord{}, err
+			input.AdmissionID,
+		).Scan(&agentID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ports.FinishRunRecord{}, ports.ErrAdmissionNotFound
+		}
+		if err != nil {
+			return ports.FinishRunRecord{}, fmt.Errorf("load FinishRun Agent identity: %w", err)
+		}
+		agent, err = loadAgentRecordForUpdate(ctx, transaction, agentID)
+		if err != nil {
+			return ports.FinishRunRecord{}, err
+		}
 	}
 	admission, err := loadRunAdmissionByID(ctx, transaction, input.AdmissionID, "FOR UPDATE")
 	if err != nil {
@@ -172,31 +177,35 @@ WHERE admission_id = $1 AND state = 'active' AND terminal_report IS NULL`,
 	if updated.RowsAffected() != 1 {
 		return ports.FinishRunRecord{}, ports.ErrConcurrentChange
 	}
-	nextSequence := agent.AggregateSequence + 1
-	projected, err := transaction.Exec(ctx, `
+	if input.Event != nil {
+		nextSequence := agent.AggregateSequence + 1
+		projected, err := transaction.Exec(ctx, `
 UPDATE agent_controller.agents
 SET aggregate_sequence = $2, updated_at = $3
 WHERE id = $1 AND aggregate_sequence = $4`,
-		agent.AgentID, nextSequence, input.Now, agent.AggregateSequence,
-	)
-	if err != nil {
-		return ports.FinishRunRecord{}, fmt.Errorf("advance Agent Run event sequence: %w", err)
-	}
-	if projected.RowsAffected() != 1 {
-		return ports.FinishRunRecord{}, ports.ErrConcurrentChange
-	}
-	if err := repository.insertAgentEvent(ctx, transaction, ports.AgentEventRecord{
-		EventID: input.Event.EventID, AgentID: agent.AgentID,
-		AggregateSequence: nextSequence, SchemaVersion: 1, EventType: input.Event.EventType,
-		AdmissionID: input.AdmissionID, TraceID: input.Event.TraceID,
-		Data: input.Event.Data, OccurredAt: input.Event.OccurredAt,
-	}); err != nil {
-		return ports.FinishRunRecord{}, mapRunConstraintError(err)
+			agent.AgentID, nextSequence, input.Now, agent.AggregateSequence,
+		)
+		if err != nil {
+			return ports.FinishRunRecord{}, fmt.Errorf("advance Agent Run event sequence: %w", err)
+		}
+		if projected.RowsAffected() != 1 {
+			return ports.FinishRunRecord{}, ports.ErrConcurrentChange
+		}
+		if err := repository.insertAgentEvent(ctx, transaction, ports.AgentEventRecord{
+			EventID: input.Event.EventID, AgentID: agent.AgentID,
+			AggregateSequence: nextSequence, SchemaVersion: 1, EventType: input.Event.EventType,
+			AdmissionID: input.AdmissionID, TraceID: input.Event.TraceID,
+			Data: input.Event.Data, OccurredAt: input.Event.OccurredAt,
+		}); err != nil {
+			return ports.FinishRunRecord{}, mapRunConstraintError(err)
+		}
 	}
 	if err := transaction.Commit(ctx); err != nil {
 		return ports.FinishRunRecord{}, fmt.Errorf("commit FinishRun: %w", err)
 	}
-	repository.recordEventAppend(ctx, input.Event.EventType)
+	if input.Event != nil {
+		repository.recordEventAppend(ctx, input.Event.EventType)
+	}
 	return ports.FinishRunRecord{Status: "finished", AdmissionState: resultingState}, nil
 }
 
@@ -429,12 +438,22 @@ func validAcquireRunRecord(input ports.AcquireRunRecord) bool {
 		strings.TrimSpace(input.SessionID) != "" && !input.Now.IsZero() && input.Deadline.After(input.Now)
 }
 
+func validFinishRunEvent(event *ports.RunAdmissionEvent, state domain.AdmissionState) bool {
+	if state == domain.AdmissionReleased {
+		return event == nil
+	}
+	return event != nil && event.EventID != "" &&
+		event.EventType == ports.EventRunAdmissionUnresolved &&
+		event.Data != nil && !event.OccurredAt.IsZero()
+}
+
 func validRunEvent(event ports.RunAdmissionEvent, state domain.AdmissionState) bool {
 	want := ports.EventRunAdmissionReleased
 	if state == domain.AdmissionBlockedUnknownEffect {
 		want = ports.EventRunAdmissionUnresolved
 	}
-	return event.EventID != "" && event.EventType == want && event.Data != nil && !event.OccurredAt.IsZero()
+	return event.EventID != "" && event.EventType == want &&
+		event.Data != nil && !event.OccurredAt.IsZero()
 }
 
 func mapRunConstraintError(err error) error {

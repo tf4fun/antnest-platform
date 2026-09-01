@@ -265,10 +265,14 @@ describe("RunRecovery", () => {
     await recovery.recover();
 
     expect(runner.execute).not.toHaveBeenCalled();
-    expect(controller.finishRun).toHaveBeenCalledWith(
-      expect.objectContaining({ admissionId: "admission-1", terminalClass: "cancelled" }),
-      expect.anything(),
-    );
+    const finishInput = controller.finishRun.mock.calls[0]?.[0];
+    expect(finishInput).toMatchObject({
+      admissionId: "admission-1",
+      terminalClass: "cancelled",
+      executorState: "quiescent",
+      toolEffectState: "none",
+    });
+    expect(finishInput).not.toHaveProperty("errorClass");
     expect(executions.markAdmissionFinished).toHaveBeenCalledWith(
       "run-closed",
       new Date("2026-08-30T00:00:00Z"),

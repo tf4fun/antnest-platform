@@ -82,7 +82,10 @@ INSERT INTO agent_controller.run_admissions (
     principal_id, access_revision, state, deadline, runtime_revision,
     snapshot, created_at, updated_at
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'active', $8, $9,
-          jsonb_build_object('runtime', jsonb_build_object('runtime_revision', $9::text)), $10, $10)`,
+          jsonb_build_object(
+              'runtime', jsonb_build_object('runtime_revision', $9::text),
+              'execution_spec', jsonb_build_object('skill_instructions', '[]'::jsonb)
+          ), $10, $10)`,
 		"admission-rebuild-integration", "request-run-rebuild-integration",
 		strings.Repeat("e", 64), base.Agent.AgentID, "session-rebuild-integration",
 		base.Agent.OwnerUserID, base.Agent.AccessRevision, now.Add(time.Hour),

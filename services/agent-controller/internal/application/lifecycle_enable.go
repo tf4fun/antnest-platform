@@ -177,9 +177,9 @@ func (service *LifecycleService) ensureEnableNetwork(
 	if !restorableNetworkPolicy(
 		state.Agent.AgentID, *state.Operation.NetworkPolicyAssignment, currentPolicy,
 	) {
-		return service.failAgentEnable(
+		return service.failEnableBeforeRuntimeEffect(
 			ctx, state, "policy_restore_conflict",
-			"current Egress policy is unrelated to the captured Disable policy", nil,
+			"current Egress policy is unrelated to the captured Disable policy",
 		)
 	}
 	attachment, err := service.egress.GetAgentNetwork(ctx, state.Agent.AgentID)
@@ -187,9 +187,9 @@ func (service *LifecycleService) ensureEnableNetwork(
 		return service.handleEnableDependencyFailure(ctx, state, "runtime-egress", err)
 	}
 	if !networkAttachmentReady(attachment, state.Agent.AgentID) {
-		return service.failAgentEnable(
+		return service.failEnableBeforeRuntimeEffect(
 			ctx, state, "invalid_network_attachment",
-			"Runtime Egress returned an incomplete attachment", nil,
+			"Runtime Egress returned an incomplete attachment",
 		)
 	}
 	if err := service.egress.FenceAgentNetwork(
@@ -202,9 +202,9 @@ func (service *LifecycleService) ensureEnableNetwork(
 		return service.handleEnableDependencyFailure(ctx, state, "runtime-egress", err)
 	}
 	if !denyAllNetworkPolicy(fencedPolicy, state.Agent.AgentID) {
-		return service.failAgentEnable(
+		return service.failEnableBeforeRuntimeEffect(
 			ctx, state, "network_fence_unconfirmed",
-			"Runtime Egress did not confirm the canonical deny-all policy", nil,
+			"Runtime Egress did not confirm the canonical deny-all policy",
 		)
 	}
 	return service.store.AdvanceAgentEnable(ctx, ports.AdvanceAgentEnable{
@@ -383,27 +383,38 @@ func (service *LifecycleService) handleEnableDependencyFailure(
 	if state.Operation.RuntimeResult != nil {
 		return state, fmt.Errorf("%w: %s", ErrDependencyUnavailable, serviceName)
 	}
-	return service.failAgentEnable(
-		ctx, state, dependencyFailure.Code, dependencyFailure.Error(), nil,
+	return service.failEnableBeforeRuntimeEffect(
+		ctx, state, dependencyFailure.Code, dependencyFailure.Error(),
 	)
 }
 
-func (service *LifecycleService) failEnableAfterRuntimeRejection(
-	ctx context.Context, state ports.AgentEnableState, code string, detail string,
+func (service *LifecycleService) failEnableBeforeRuntimeEffect(
+	ctx context.Context,
+	state ports.AgentEnableState,
+	code string,
+	detail string,
 ) (ports.AgentEnableState, error) {
 	inspection, err := service.runtime.InspectRuntime(ctx, state.Agent.AgentID)
 	if err != nil {
-		return state, fmt.Errorf("%w: runtime-controller inspection", ErrDependencyUnavailable)
+		return service.fenceIncompleteEnable(
+			ctx, state, "Runtime source inspection after "+code, err,
+		)
 	}
 	if !exactDisabledSourceRuntime(state, inspection) {
 		return service.fenceIncompleteEnable(
-			ctx, state, "Runtime source inspection mismatch",
+			ctx, state, "Runtime source inspection mismatch after "+code,
 			&ports.DependencyError{
 				Service: "runtime-controller", Code: "runtime_source_mismatch", Retryable: true,
 			},
 		)
 	}
 	return service.failAgentEnable(ctx, state, code, detail, &inspection)
+}
+
+func (service *LifecycleService) failEnableAfterRuntimeRejection(
+	ctx context.Context, state ports.AgentEnableState, code string, detail string,
+) (ports.AgentEnableState, error) {
+	return service.failEnableBeforeRuntimeEffect(ctx, state, code, detail)
 }
 
 func (service *LifecycleService) failAgentEnable(

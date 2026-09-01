@@ -89,6 +89,16 @@ func TestRunRepositoryAcquiresFinishesAndScopesCredential(t *testing.T) {
 	if err != nil || replayedFinish.Status != "already_finished" {
 		t.Fatalf("replay FinishRun: result=%+v err=%v", replayedFinish, err)
 	}
+	var finishEvents int
+	if err := repository.pool.QueryRow(ctx, `
+SELECT count(*) FROM agent_controller.agent_events WHERE admission_id = $1`,
+		admission.AdmissionID,
+	).Scan(&finishEvents); err != nil {
+		t.Fatalf("count normal FinishRun events: %v", err)
+	}
+	if finishEvents != 0 {
+		t.Fatalf("normal FinishRun emitted %d lifecycle release events", finishEvents)
+	}
 	if _, err := repository.GetAdmissionCredential(
 		ctx, admission.AdmissionID, admission.Snapshot.ExecutionSpec.CredentialRef, now,
 	); !errors.Is(err, ports.ErrCredentialNotAllowed) {
@@ -151,6 +161,72 @@ func TestRunRepositorySerializesConcurrentAcquisitions(t *testing.T) {
 	}
 }
 
+func TestRunRepositoryRecordsUnresolvedOutcomeExactlyOnce(t *testing.T) {
+	databaseURL := os.Getenv("ANTNEST_AGENT_CONTROLLER_TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("ANTNEST_AGENT_CONTROLLER_TEST_DATABASE_URL is not set")
+	}
+	ctx := context.Background()
+	repository, err := Open(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("open repository: %v", err)
+	}
+	t.Cleanup(repository.Close)
+	base, _ := seedAvailableAgentForRebuild(t, ctx, repository)
+
+	now := time.Unix(1500, 0).UTC()
+	admission, replayed, err := repository.AcquireRun(ctx,
+		acquireRunCommand(base.Agent, "request-run-unresolved", "admission-unresolved", now),
+	)
+	if err != nil || replayed {
+		t.Fatalf("acquire unresolved Run: admission=%+v replayed=%t err=%v", admission, replayed, err)
+	}
+	report := domain.TerminalReport{
+		Class: domain.TerminalUnresolved, ToolEffectState: domain.ToolEffectUnknown,
+		ErrorClass: "runtime_result_unknown",
+	}
+	finish := finishRunCommand(admission, "request-finish-unresolved", report, now.Add(time.Second))
+	result, err := repository.FinishRun(ctx, finish)
+	if err != nil || result.AdmissionState != domain.AdmissionBlockedUnknownEffect {
+		t.Fatalf("finish unresolved Run: result=%+v err=%v", result, err)
+	}
+
+	assertUnresolvedRunEventState(t, ctx, repository, base.Agent.AgentID, admission.AdmissionID, 1)
+	replayedResult, err := repository.FinishRun(ctx, finish)
+	if err != nil || replayedResult.Status != "already_finished" {
+		t.Fatalf("replay unresolved FinishRun: result=%+v err=%v", replayedResult, err)
+	}
+	assertUnresolvedRunEventState(t, ctx, repository, base.Agent.AgentID, admission.AdmissionID, 1)
+}
+
+func assertUnresolvedRunEventState(
+	t *testing.T,
+	ctx context.Context,
+	repository *Repository,
+	agentID string,
+	admissionID string,
+	wantEvents int,
+) {
+	t.Helper()
+	var eventCount int
+	var eventSequence, aggregateSequence int64
+	if err := repository.pool.QueryRow(ctx, `
+SELECT count(*), COALESCE(max(aggregate_sequence), 0)
+FROM agent_controller.agent_events
+WHERE admission_id = $1 AND event_type = 'run_admission_unresolved'`, admissionID,
+	).Scan(&eventCount, &eventSequence); err != nil {
+		t.Fatalf("read unresolved Run event: %v", err)
+	}
+	if err := repository.pool.QueryRow(ctx, `
+SELECT aggregate_sequence FROM agent_controller.agents WHERE id = $1`, agentID,
+	).Scan(&aggregateSequence); err != nil {
+		t.Fatalf("read Agent aggregate sequence: %v", err)
+	}
+	if eventCount != wantEvents || eventSequence != aggregateSequence {
+		t.Fatalf("unresolved events=%d sequence=%d Agent sequence=%d", eventCount, eventSequence, aggregateSequence)
+	}
+}
+
 func acquireRunCommand(
 	agent ports.AgentRecord, requestID string, admissionID string, now time.Time,
 ) ports.AcquireRunRecord {
@@ -168,16 +244,15 @@ func finishRunCommand(
 	report domain.TerminalReport,
 	now time.Time,
 ) ports.FinishRunCommand {
-	eventType := ports.EventRunAdmissionReleased
+	var event *ports.RunAdmissionEvent
 	if report.Class == domain.TerminalUnresolved {
-		eventType = ports.EventRunAdmissionUnresolved
+		event = &ports.RunAdmissionEvent{
+			EventID: "event-" + requestID, EventType: ports.EventRunAdmissionUnresolved,
+			Data: map[string]any{"terminal_class": string(report.Class)}, OccurredAt: now,
+		}
 	}
 	return ports.FinishRunCommand{
 		RequestID: requestID, AdmissionID: admission.AdmissionID, Report: report,
-		Event: ports.RunAdmissionEvent{
-			EventID: "event-" + requestID, EventType: eventType,
-			Data: map[string]any{"terminal_class": string(report.Class)}, OccurredAt: now,
-		},
-		Now: now,
+		Event: event, Now: now,
 	}
 }

@@ -180,6 +180,36 @@ describe("Agent Controller consumer contract", () => {
       }),
     ).toBe(false);
   });
+
+  it("serializes cancellation without fabricated error or stop fields", async () => {
+    let body: Record<string, unknown> | undefined;
+    const client = new AgentControllerClient({
+      baseUrl: new URL("http://agent-controller:8080/internal/v1/runs/"),
+      fetchFn: (_url, init) => {
+        body = parseRequestBody(init.body);
+        return Promise.resolve(Response.json({ status: "finished", admission_state: "released" }));
+      },
+      timeoutMs: 5_000,
+    });
+
+    await client.finishRun({
+      requestId: "request-cancelled",
+      admissionId: "admission-cancelled",
+      terminalClass: "cancelled",
+      executorState: "quiescent",
+      toolEffectState: "settled",
+    });
+
+    expect(body).toEqual({
+      request_id: "request-cancelled",
+      admission_id: "admission-cancelled",
+      terminal_class: "cancelled",
+      tool_effect_state: "settled",
+      stop_reason: null,
+      error_class: null,
+    });
+    expect(body).not.toHaveProperty("executor_state");
+  });
 });
 
 type Contract = z.infer<typeof contractSchema>;

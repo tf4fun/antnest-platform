@@ -113,7 +113,10 @@ INSERT INTO agent_controller.run_admissions (
     principal_id, access_revision, state, deadline, runtime_revision,
     snapshot, terminal_report, finished_at, created_at, updated_at
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'blocked_unknown_effect', $8, $9,
-          jsonb_build_object('runtime', jsonb_build_object('runtime_revision', $9::text)),
+          jsonb_build_object(
+              'runtime', jsonb_build_object('runtime_revision', $9::text),
+              'execution_spec', jsonb_build_object('skill_instructions', '[]'::jsonb)
+          ),
           '{"terminal_class":"unresolved","tool_effect_state":"unknown","stop_reason":"","error_class":"tool_outcome_unknown"}'::jsonb,
           $10, $10, $10)`,
 		"admission-delete-integration", "request-run-delete-integration",
@@ -222,7 +225,9 @@ FROM agent_controller.run_admissions WHERE admission_id = $1`,
 		published.Agent.RuntimeRevision != "" || published.Operation.State != domain.OperationCompleted {
 		t.Fatalf("published delete = %+v", published)
 	}
-	assertDeletedAgentRetention(t, ctx, repository, base.Agent.AgentID)
+	assertDeletedAgentRetention(
+		t, ctx, repository, base.Agent.AgentID, base.Agent.LastSuccessfulExecutionRevisionID,
+	)
 	replayedState, found, err := repository.ReplayAgentDelete(ctx, requestID, fingerprint)
 	if err != nil || !found || replayedState.Operation.State != domain.OperationCompleted {
 		t.Fatalf("replay Agent delete: state=%+v found=%t err=%v", replayedState, found, err)
@@ -274,7 +279,10 @@ INSERT INTO agent_controller.run_admissions (
     principal_id, access_revision, state, deadline, runtime_revision,
     snapshot, terminal_report, finished_at, created_at, updated_at
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'blocked_unknown_effect', $8, $9,
-          jsonb_build_object('runtime', jsonb_build_object('runtime_revision', $9::text)),
+          jsonb_build_object(
+              'runtime', jsonb_build_object('runtime_revision', $9::text),
+              'execution_spec', jsonb_build_object('skill_instructions', '[]'::jsonb)
+          ),
           '{"terminal_class":"unresolved","tool_effect_state":"unknown","stop_reason":"","error_class":"tool_outcome_unknown"}'::jsonb,
           $10, $10, $10)`,
 		admissionID, "request-run-delete-absent-runtime-integration",
@@ -360,7 +368,11 @@ func deleteAgentBaseRecord() ports.AgentRecord {
 }
 
 func assertDeletedAgentRetention(
-	t *testing.T, ctx context.Context, repository *Repository, agentID string,
+	t *testing.T,
+	ctx context.Context,
+	repository *Repository,
+	agentID string,
+	wantLastSuccessfulExecution string,
 ) {
 	t.Helper()
 	var accessActive bool
@@ -372,6 +384,15 @@ SELECT active FROM agent_controller.agent_access_bindings WHERE agent_id = $1`,
 	}
 	if accessActive {
 		t.Fatal("deleted Agent owner access remains active")
+	}
+	var lastSuccessfulExecution string
+	if err := repository.pool.QueryRow(ctx, `
+SELECT last_successful_execution_revision_id
+FROM agent_controller.agents WHERE id = $1`, agentID).Scan(&lastSuccessfulExecution); err != nil {
+		t.Fatalf("load deleted Agent audit pointer: %v", err)
+	}
+	if lastSuccessfulExecution != wantLastSuccessfulExecution {
+		t.Fatalf("deleted Agent last successful execution = %q", lastSuccessfulExecution)
 	}
 	var specs, executions, events int
 	if err := repository.pool.QueryRow(ctx, `

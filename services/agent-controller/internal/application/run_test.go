@@ -132,6 +132,7 @@ func TestFinishRunValidatesClosedUnionAndPreservesUnknownEffect(t *testing.T) {
 	}
 	if result.AdmissionState != domain.AdmissionBlockedUnknownEffect ||
 		store.finish.Report.Class != domain.TerminalUnresolved ||
+		store.finish.Event == nil ||
 		store.finish.Event.EventType != ports.EventRunAdmissionUnresolved {
 		t.Fatalf("finish result=%+v command=%+v", result, store.finish)
 	}
@@ -154,6 +155,18 @@ func TestFinishRunValidatesClosedUnionAndPreservesUnknownEffect(t *testing.T) {
 	})
 	if !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("invalid terminal union error = %v", err)
+	}
+
+	store.finished = ports.FinishRunRecord{
+		Status: "finished", AdmissionState: domain.AdmissionReleased,
+	}
+	_, err = service.FinishRun(context.Background(), FinishRunInput{
+		RequestID: "request-finish-completed", AdmissionID: "admission-completed",
+		TerminalClass: domain.TerminalCompleted, ToolEffectState: domain.ToolEffectSettled,
+		StopReason: "end_turn",
+	})
+	if err != nil || store.finish.Event != nil {
+		t.Fatalf("completed Run emitted lifecycle release event: command=%+v err=%v", store.finish, err)
 	}
 }
 

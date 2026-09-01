@@ -260,7 +260,8 @@ function storedOutcome(row: TerminalOutcomeRow): RunOutcome {
         row.executor_state !== "quiescent" ||
         row.tool_effect_state === null ||
         row.tool_effect_state === "unknown" ||
-        row.stop_reason !== null
+        row.stop_reason !== null ||
+        row.error_class !== null
       ) {
         throw new Error("Cancelled Run has invalid terminal facts");
       }
@@ -268,7 +269,6 @@ function storedOutcome(row: TerminalOutcomeRow): RunOutcome {
         terminalClass: "cancelled",
         executorState: "quiescent",
         toolEffectState: row.tool_effect_state,
-        ...(row.error_class === null ? {} : { errorClass: row.error_class }),
       };
     case "failed":
       if (

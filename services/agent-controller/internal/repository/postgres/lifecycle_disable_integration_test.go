@@ -44,7 +44,10 @@ INSERT INTO agent_controller.run_admissions (
     principal_id, access_revision, state, deadline, runtime_revision,
     snapshot, created_at, updated_at
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'active', $8, $9,
-          jsonb_build_object('runtime', jsonb_build_object('runtime_revision', $9::text)), $10, $10)`,
+          jsonb_build_object(
+              'runtime', jsonb_build_object('runtime_revision', $9::text),
+              'execution_spec', jsonb_build_object('skill_instructions', '[]'::jsonb)
+          ), $10, $10)`,
 		"admission-disable-integration", "request-run-disable-integration",
 		strings.Repeat("5", 64), base.Agent.AgentID, "session-disable-integration",
 		base.Agent.OwnerUserID, base.Agent.AccessRevision, now.Add(time.Hour),
@@ -589,7 +592,10 @@ INSERT INTO agent_controller.run_admissions (
     principal_id, access_revision, state, deadline, runtime_revision,
     snapshot, terminal_report, finished_at, created_at, updated_at
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'blocked_unknown_effect', $8, $9,
-          jsonb_build_object('runtime', jsonb_build_object('runtime_revision', $9::text)),
+          jsonb_build_object(
+              'runtime', jsonb_build_object('runtime_revision', $9::text),
+              'execution_spec', jsonb_build_object('skill_instructions', '[]'::jsonb)
+          ),
           '{"terminal_class":"unresolved","tool_effect_state":"unknown","stop_reason":"","error_class":"tool_outcome_unknown"}'::jsonb,
           $10, $10, $10)`,
 			admissionID, "run-"+requestID, strings.Repeat("d", 64), base.Agent.AgentID,

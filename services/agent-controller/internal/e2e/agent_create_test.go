@@ -616,6 +616,7 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 		deletedBase.Agent.LifecycleState != "deleted" ||
 		deletedBase.Agent.AgentSpecRevisionID != "" ||
 		deletedBase.Agent.ExecutionRevisionID != "" ||
+		deletedBase.Agent.LastSuccessfulExecutionRevisionID != enabledBase.Agent.ExecutionRevisionID ||
 		deletedBase.Agent.RuntimeRevision != "" ||
 		deletedBase.Agent.ActiveOperationRequestID != "" {
 		t.Fatalf("deleted Agent = %+v", deletedBase.Agent)

@@ -41,6 +41,7 @@ func TestDeleteAgentFencesDeletesReleasesThenPublishes(t *testing.T) {
 	if result.Agent.DesiredState != domain.DesiredDeleted ||
 		result.Agent.LifecycleState != domain.AgentDeleted ||
 		result.Agent.RuntimeRevision != "" || result.Agent.ExecutionRevisionID != "" ||
+		result.Agent.LastSuccessfulExecutionRevisionID != base.Agent.ExecutionRevisionID ||
 		result.Agent.ActiveOperationRequestID != "" ||
 		result.Operation.State != domain.OperationCompleted {
 		t.Fatalf("deleted Agent result = %+v", result)
@@ -459,7 +460,6 @@ func (store *deleteLifecycleStoreStub) PublishAgentDelete(
 	store.state.Agent.LifecycleState = domain.AgentDeleted
 	store.state.Agent.AgentSpecRevisionID = ""
 	store.state.Agent.ExecutionRevisionID = ""
-	store.state.Agent.LastSuccessfulExecutionRevisionID = ""
 	store.state.Agent.RuntimeRevision = ""
 	store.state.Agent.RuntimeExecutionID = ""
 	store.state.Agent.RuntimeMCPEndpoint = ""
