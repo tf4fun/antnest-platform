@@ -70,6 +70,7 @@ describe("AgentControllerClient", () => {
       new URL("http://agent-controller:8080/rpc/agent-controller/acquire-run"),
       expect.objectContaining({
         method: "POST",
+        redirect: "error",
         body: JSON.stringify({
           request_id: "request-1",
           agent_id: "agent-1",
@@ -134,6 +135,21 @@ describe("AgentControllerClient", () => {
     ).rejects.toMatchObject({ code: "dependency_unavailable" });
   });
 
+  it.each([
+    [500, { code: "access_denied", message: "denied", retryable: false }],
+    [403, { code: "access_denied", message: "denied", retryable: true }],
+  ])("rejects contradictory Agent Controller error contracts", async (status, body) => {
+    const client = new AgentControllerClient({
+      baseUrl: new URL("http://agent-controller:8080/rpc/agent-controller/"),
+      fetchFn: vi.fn(() => Promise.resolve(Response.json(body, { status }))),
+      timeoutMs: 5_000,
+    });
+
+    await expect(
+      client.resolveAgentAccess({ requestId: "request-1", agentAccessSubject: "subject-1" }),
+    ).rejects.toMatchObject({ code: "dependency_unavailable", retryable: true });
+  });
+
   it("rejects response fields outside the closed dependency contract", async () => {
     const client = new AgentControllerClient({
       baseUrl: new URL("http://agent-controller:8080/rpc/agent-controller/"),
@@ -155,6 +171,30 @@ describe("AgentControllerClient", () => {
     ).rejects.toMatchObject({ code: "dependency_unavailable" });
   });
 
+  it.each([
+    {
+      principal_id: "principal-1",
+      agent_id: "agent-1",
+      access_revision: "access-1",
+    },
+    {
+      principal_id: "principal-1",
+      agent_id: "agent-1",
+      access_revision: "access-1",
+      prompt_capabilities: { embedded_context: false },
+    },
+  ])("rejects access responses missing required capability facts", async (body) => {
+    const client = new AgentControllerClient({
+      baseUrl: new URL("http://agent-controller:8080/rpc/agent-controller/"),
+      fetchFn: vi.fn(() => Promise.resolve(Response.json(body))),
+      timeoutMs: 5_000,
+    });
+
+    await expect(
+      client.resolveAgentAccess({ requestId: "request-1", agentAccessSubject: "subject-1" }),
+    ).rejects.toMatchObject({ code: "dependency_unavailable", retryable: true });
+  });
+
   it("requires the contracted ready status response", async () => {
     const fetchFn = vi.fn(() => Promise.resolve(Response.json({ status: "ready" })));
 
@@ -167,8 +207,26 @@ describe("AgentControllerClient", () => {
     ).resolves.toBeUndefined();
     expect(fetchFn).toHaveBeenCalledWith(
       new URL("http://agent-controller:8080/status"),
-      expect.objectContaining({ method: "GET" }),
+      expect.objectContaining({ method: "GET", redirect: "error" }),
     );
+  });
+
+  it("rejects an oversized response without trusting its JSON", async () => {
+    const client = new AgentControllerClient({
+      baseUrl: new URL("http://agent-controller:8080/rpc/agent-controller/"),
+      fetchFn: vi.fn(() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ padding: "x".repeat(1_048_576) }), {
+            headers: { "content-type": "application/json" },
+          }),
+        ),
+      ),
+      timeoutMs: 5_000,
+    });
+
+    await expect(
+      client.resolveAgentAccess({ requestId: "request-1", agentAccessSubject: "subject-1" }),
+    ).rejects.toMatchObject({ code: "dependency_unavailable", retryable: true });
   });
 
   it("never retries an uncertain request inside the transport adapter", async () => {

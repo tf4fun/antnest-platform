@@ -11,7 +11,8 @@ The Stage 2 ACP core surface is implemented and independently testable. ACP v1
 is the compatibility baseline; ACP v2 is an explicitly draft, side-by-side
 adapter. Optional editor, authentication, and Provider administration methods
 are not claimed as implemented. The Stage 2 cross-service path remains pending
-Agent Controller. The
+full disposable-stack and Jaeger acceptance; Agent Controller integration is
+implemented. The
 authoritative cross-service design is
 [`../../docs/stage-2-agent-and-acp.md`](../../docs/stage-2-agent-and-acp.md);
 this directory is the only implementation authority for Agent ACP Service.
@@ -46,7 +47,7 @@ this directory is the only implementation authority for Agent ACP Service.
 | Private PostgreSQL              | owned     | Sessions, messages, checkpoints, Runs, Tool attempts   |
 
 The Agent Controller dependency surface is owned by Agent Controller and
-consumed here at contract revision 7. Its normative status, method, request,
+consumed here at contract revision 8. Its normative status, method, request,
 response, error, and
 compatibility rules are [`../../contracts/agent-controller/run-api.md`](../../contracts/agent-controller/run-api.md),
 with machine-readable shapes in
@@ -116,11 +117,11 @@ Build the production image from the repository root:
 docker compose --profile stage2 build agent-acp-service
 ```
 
-The Compose service is deliberately in the `stage2` profile. It requires the
-future `agent-controller` service at `ANTNEST_AGENT_CONTROLLER_URL`; it is not
-silently replaced by a local database or an embedded fake. Unit and PostgreSQL
-integration tests remain independently runnable while that dependency is under
-construction.
+The Compose service is deliberately in the `stage2` profile. It requires Agent
+Controller at `ANTNEST_AGENT_CONTROLLER_URL`; that dependency is not silently
+replaced by a local database or an embedded fake. Unit and PostgreSQL
+integration tests remain independently runnable without starting the complete
+Stage 2 stack.
 
 See [`docs/architecture.md`](docs/architecture.md) for the domain and module
 map, and [`docs/operations.md`](docs/operations.md) for configuration,

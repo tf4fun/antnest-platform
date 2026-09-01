@@ -1257,7 +1257,7 @@ func publicRunError(err error) (int, errorResponse) {
 			Code: "credential_not_allowed", Message: "credential is not allowed for this Run",
 		}
 	case errors.Is(err, application.ErrLifecycleConflict), errors.Is(err, ports.ErrRequestConflict):
-		return http.StatusConflict, errorResponse{
+		return http.StatusBadRequest, errorResponse{
 			Code: "invalid_request", Message: "Run terminal facts conflict with the stored report",
 		}
 	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled),

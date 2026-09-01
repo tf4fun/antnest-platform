@@ -6,7 +6,7 @@ import { context, propagation, type TextMapGetter } from "@opentelemetry/api";
 import { WebSocketServer, type WebSocket } from "ws";
 
 import type { AcpApplicationPort } from "../ports/acp-application.js";
-import type { AgentControllerPort } from "../ports/agent-controller.js";
+import { AgentControllerError, type AgentControllerPort } from "../ports/agent-controller.js";
 import { NOOP_TELEMETRY, type TelemetryPort } from "../ports/telemetry.js";
 import {
   createAcpV1WebSocketStream,
@@ -174,9 +174,13 @@ export class AgentAcpHttpServer {
       });
       socket.resume();
     } catch (error) {
-      this.telemetry.count("antnest.acp.connections", { result: "rejected", reason: "forbidden" });
+      const rejection = accessRejection(error);
+      this.telemetry.count("antnest.acp.connections", {
+        result: "rejected",
+        reason: rejection.metricReason,
+      });
       this.report(error, "upgrade_authentication");
-      rejectUpgrade(socket, 403, "Forbidden");
+      rejectUpgrade(socket, rejection.status, rejection.reason);
     }
   }
 
@@ -228,6 +232,24 @@ function oneHeader(request: IncomingMessage, name: string): string | null {
   }
   const normalized = value.trim();
   return normalized.length === 0 ? null : normalized;
+}
+
+function accessRejection(error: unknown): {
+  status: number;
+  reason: string;
+  metricReason: string;
+} {
+  if (error instanceof AgentControllerError && error.code === "access_denied" && !error.retryable) {
+    return { status: 403, reason: "Forbidden", metricReason: "forbidden" };
+  }
+  if (
+    error instanceof AgentControllerError &&
+    error.code === "invalid_request" &&
+    !error.retryable
+  ) {
+    return { status: 400, reason: "Bad Request", metricReason: "invalid_request" };
+  }
+  return { status: 503, reason: "Service Unavailable", metricReason: "dependency_unavailable" };
 }
 
 function json(response: ServerResponse, status: number, body: unknown): void {

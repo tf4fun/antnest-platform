@@ -17,6 +17,7 @@ import (
 	"soft/antnest-platform/services/agent-controller/internal/config"
 	"soft/antnest-platform/services/agent-controller/internal/credentials"
 	"soft/antnest-platform/services/agent-controller/internal/egressclient"
+	"soft/antnest-platform/services/agent-controller/internal/identityclient"
 	"soft/antnest-platform/services/agent-controller/internal/repository/postgres"
 	"soft/antnest-platform/services/agent-controller/internal/runtimeclient"
 	"soft/antnest-platform/services/agent-controller/internal/server"
@@ -189,9 +190,14 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 	if err != nil {
 		return classifyFailure("service_composition", err)
 	}
+	identity, err := identityclient.New(cfg.IdentityServiceURL, cfg.DependencyTimeout, nil)
+	if err != nil {
+		return classifyFailure("service_composition", err)
+	}
 	catalog := application.NewCatalogService(observedStore, secretBox, systemClock{})
 	lifecycle := application.NewLifecycleServiceWithDrainTimeout(
 		observedStore, observedLifecycleStore, egress, runtime, systemClock{}, cfg.DrainTimeout,
+		application.WithIdentityDirectory(identity),
 	)
 	recoveryInstrumentation, err := telemetry.ObserveLifecycleRecoveryAttempt(logger)
 	if err != nil {
@@ -218,6 +224,7 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 	}
 	runs := application.NewRunService(
 		observedRunStore, secretBox, systemClock{}, cfg.RunAdmissionTTL,
+		application.WithRunIdentityDirectory(identity),
 	)
 	queries := application.NewAgentQueryService(observedAgentQueryStore)
 	events := application.NewEventService(observedAgentEventStore, eventNotifier, observedAgentQueryStore)

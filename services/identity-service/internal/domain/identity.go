@@ -113,7 +113,14 @@ const (
 	SCIMScopeWrite = "scim:write"
 )
 
-var slugPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
+var (
+	idPattern   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,199}$`)
+	slugPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
+)
+
+func ValidID(value string) bool {
+	return idPattern.MatchString(value)
+}
 
 func NormalizeEmail(value string) (string, error) {
 	normalized := strings.ToLower(strings.TrimSpace(value))

@@ -1,11 +1,16 @@
 {
   "contract": "antnest.identity",
-  "revision": 5,
+  "revision": 6,
   "transport": "json-over-http",
   "trust": "internal-network",
   "base_path": "/rpc/identity",
   "definitions": {
-    "id": { "type": "string", "minLength": 1 },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,199}$"
+    },
     "timestamp": { "type": "string", "format": "date-time" },
     "organization_role": { "type": "string", "enum": ["member", "admin"] },
     "system_role": { "type": "string", "enum": ["user", "admin"] },
@@ -111,6 +116,17 @@
         "organization_role": { "$ref": "#/definitions/organization_role" },
         "active": { "type": "boolean" }
       }
+    },
+    "organization_principal_binding": {
+      "type": "object",
+      "required": ["user_id", "organization_id", "membership_id", "active"],
+      "properties": {
+        "user_id": { "$ref": "#/definitions/id" },
+        "organization_id": { "$ref": "#/definitions/id" },
+        "membership_id": { "$ref": "#/definitions/id" },
+        "active": { "type": "boolean" }
+      },
+      "additionalProperties": false
     },
     "scim_token": {
       "type": "object",
@@ -434,6 +450,24 @@
             "type": "array",
             "items": { "$ref": "#/definitions/group" }
           }
+        }
+      }
+    },
+    "resolve_principal": {
+      "method": "POST",
+      "path": "/resolve-principal",
+      "audience": "internal-service",
+      "request": {
+        "required": ["user_id", "organization_id"],
+        "properties": {
+          "user_id": { "$ref": "#/definitions/id" },
+          "organization_id": { "$ref": "#/definitions/id" }
+        }
+      },
+      "response": {
+        "required": ["principal"],
+        "properties": {
+          "principal": { "$ref": "#/definitions/organization_principal_binding" }
         }
       }
     },

@@ -20,6 +20,7 @@ type Config struct {
 	EncryptionKey          []byte
 	RuntimeEgressURL       string
 	RuntimeControllerURL   string
+	IdentityServiceURL     string
 	DependencyTimeout      time.Duration
 	DrainTimeout           time.Duration
 	RunAdmissionTTL        time.Duration
@@ -113,6 +114,7 @@ func Load(lookup func(string) string) (Config, error) {
 		DatabaseURL:            strings.TrimSpace(lookup("ANTNEST_AGENT_CONTROLLER_DATABASE_URL")),
 		RuntimeEgressURL:       strings.TrimSpace(lookup("ANTNEST_RUNTIME_EGRESS_URL")),
 		RuntimeControllerURL:   strings.TrimSpace(lookup("ANTNEST_RUNTIME_CONTROLLER_URL")),
+		IdentityServiceURL:     strings.TrimSpace(lookup("ANTNEST_IDENTITY_SERVICE_URL")),
 		DependencyTimeout:      dependencyTimeout,
 		DrainTimeout:           drainTimeout,
 		RunAdmissionTTL:        runAdmissionTTL,
@@ -135,6 +137,9 @@ func Load(lookup func(string) string) (Config, error) {
 	}
 	if config.RuntimeControllerURL == "" {
 		return Config{}, fmt.Errorf("ANTNEST_RUNTIME_CONTROLLER_URL is required")
+	}
+	if config.IdentityServiceURL == "" {
+		return Config{}, fmt.Errorf("ANTNEST_IDENTITY_SERVICE_URL is required")
 	}
 	key, err := decodeEncryptionKey(strings.TrimSpace(lookup("ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY")))
 	if err != nil {

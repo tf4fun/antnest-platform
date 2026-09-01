@@ -8,8 +8,12 @@ model credentials.
 ## Status
 
 The identity model and the documented OIDC/SCIM profile are independently
-deployable. Cross-service Identity event delivery is intentionally deferred
-until Agent Controller defines its consumer contract. The service contract is
+deployable. A narrow `resolve_principal` RPC lets Agent Controller validate an
+opaque organization/user binding without reading Identity storage or receiving
+profile data. It requires an active organization membership even for a system
+administrator; it is intentionally stricter than administrative authorization.
+Cross-service Identity event delivery remains deliberately separate from this
+synchronous authorization query. The service contract is
 [`../../docs/stage-2-identity.md`](../../docs/stage-2-identity.md); this
 directory is the only implementation authority for this service.
 

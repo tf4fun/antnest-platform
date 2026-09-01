@@ -180,6 +180,32 @@ func TestRPCLocalIdentityLifecycleBindings(t *testing.T) {
 	}
 }
 
+func TestRPCResolvesOpaquePrincipalForInternalServices(t *testing.T) {
+	services := &rpcServicesStub{resolvedPrincipal: domain.Principal{
+		UserID: "user-1", OrganizationID: "org-1", MembershipID: "membership-1",
+		SystemRole: domain.SystemRoleUser, OrganizationRole: domain.OrganizationRoleMember,
+		Active: true,
+	}}
+	handler := newRPCHandler(t, services)
+	request := httptest.NewRequest(
+		http.MethodPost,
+		ContractRoutes["resolve_principal"],
+		strings.NewReader(`{"user_id":"user-1","organization_id":"org-1"}`),
+	)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK || services.resolvePrincipalUserID != "user-1" ||
+		services.resolvePrincipalOrganizationID != "org-1" ||
+		!strings.Contains(response.Body.String(), `"membership_id":"membership-1"`) ||
+		strings.Contains(response.Body.String(), "system_role") ||
+		strings.Contains(response.Body.String(), "organization_role") {
+		t.Fatalf("status=%d user=%q organization=%q body=%s",
+			response.Code, services.resolvePrincipalUserID,
+			services.resolvePrincipalOrganizationID, response.Body.String())
+	}
+}
+
 func TestRPCRequiresExplicitIdentityLifecycleState(t *testing.T) {
 	services := &rpcServicesStub{}
 	handler := newRPCHandler(t, services)
@@ -253,12 +279,35 @@ func TestRPCRequiresExplicitOIDCProviderEnabledState(t *testing.T) {
 	}
 }
 
+func TestRPCRejectsIdentityIDsOutsideTheContract(t *testing.T) {
+	t.Parallel()
+
+	services := &rpcServicesStub{}
+	handler := newRPCHandler(t, services)
+	request := httptest.NewRequest(
+		http.MethodPost,
+		ContractRoutes["resolve_principal"],
+		strings.NewReader(`{"user_id":" user-1 ","organization_id":"org-1"}`),
+	)
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadRequest || services.resolvePrincipalCalls != 0 {
+		t.Fatalf(
+			"invalid Identity ID status=%d calls=%d body=%s",
+			response.Code, services.resolvePrincipalCalls, response.Body.String(),
+		)
+	}
+}
+
 func TestRPCBindingsConformToCentralIdentityContract(t *testing.T) {
 	encoded, err := os.ReadFile("../../../../contracts/identity/identity-contract.json")
 	if err != nil {
 		t.Fatalf("read contract: %v", err)
 	}
 	var contract struct {
+		Revision    int `json:"revision"`
 		Definitions struct {
 			Source struct {
 				Enum []string `json:"enum"`
@@ -272,6 +321,9 @@ func TestRPCBindingsConformToCentralIdentityContract(t *testing.T) {
 			Membership struct {
 				Required []string `json:"required"`
 			} `json:"membership"`
+			OrganizationPrincipalBinding struct {
+				Required []string `json:"required"`
+			} `json:"organization_principal_binding"`
 			OIDCProvider struct {
 				Required   []string                   `json:"required"`
 				Properties map[string]json.RawMessage `json:"properties"`
@@ -309,6 +361,9 @@ func TestRPCBindingsConformToCentralIdentityContract(t *testing.T) {
 	if err := json.Unmarshal(encoded, &contract); err != nil {
 		t.Fatalf("decode contract: %v", err)
 	}
+	if contract.Revision != 6 {
+		t.Fatalf("identity contract revision=%d want=6", contract.Revision)
+	}
 	if len(contract.Methods) != len(ContractRoutes) {
 		t.Fatalf("contract methods=%d route bindings=%d", len(contract.Methods), len(ContractRoutes))
 	}
@@ -333,6 +388,16 @@ func TestRPCBindingsConformToCentralIdentityContract(t *testing.T) {
 	}
 	if !contains(contract.Methods["add_organization_membership"].Request.Required, "user_id") {
 		t.Fatal("add_organization_membership contract must identify the stable user")
+	}
+	if !contains(contract.Methods["resolve_principal"].Request.Required, "user_id") ||
+		!contains(contract.Methods["resolve_principal"].Request.Required, "organization_id") ||
+		!contains(contract.Methods["resolve_principal"].Response.Required, "principal") {
+		t.Fatal("resolve_principal must expose one opaque organization principal")
+	}
+	for _, field := range []string{"user_id", "organization_id", "membership_id", "active"} {
+		if !contains(contract.Definitions.OrganizationPrincipalBinding.Required, field) {
+			t.Fatalf("organization principal binding omits %q", field)
+		}
 	}
 	if _, hasEmail := contract.Definitions.User.Properties["email"]; hasEmail {
 		t.Fatal("User contract must not own an organization-scoped email")
@@ -400,20 +465,24 @@ func newRPCHandler(t *testing.T, services *rpcServicesStub) http.Handler {
 }
 
 type rpcServicesStub struct {
-	loginCalls              int
-	resolveErr              error
-	createOrganizationInput directory.CreateOrganizationInput
-	createLocalUserInput    directory.CreateLocalUserInput
-	addMembershipInput      directory.AddOrganizationMembershipInput
-	changePasswordInput     directory.ChangeLocalPasswordInput
-	updateMembershipInput   directory.UpdateMembershipInput
-	setUserActiveInput      directory.SetUserActiveInput
-	upsertProviderCalls     int
-	upsertProviderInput     oidcflow.UpsertProviderInput
-	setProviderEnabledCalls int
-	setProviderEnabledInput oidcflow.SetProviderEnabledInput
-	completeLoginInput      oidcflow.CompleteLoginInput
-	completeLoginErr        error
+	loginCalls                     int
+	resolveErr                     error
+	createOrganizationInput        directory.CreateOrganizationInput
+	createLocalUserInput           directory.CreateLocalUserInput
+	addMembershipInput             directory.AddOrganizationMembershipInput
+	changePasswordInput            directory.ChangeLocalPasswordInput
+	updateMembershipInput          directory.UpdateMembershipInput
+	setUserActiveInput             directory.SetUserActiveInput
+	upsertProviderCalls            int
+	upsertProviderInput            oidcflow.UpsertProviderInput
+	setProviderEnabledCalls        int
+	setProviderEnabledInput        oidcflow.SetProviderEnabledInput
+	completeLoginInput             oidcflow.CompleteLoginInput
+	completeLoginErr               error
+	resolvedPrincipal              domain.Principal
+	resolvePrincipalCalls          int
+	resolvePrincipalUserID         string
+	resolvePrincipalOrganizationID string
 }
 
 func (s *rpcServicesStub) CreateOrganization(_ context.Context, input directory.CreateOrganizationInput) (domain.Organization, error) {
@@ -454,6 +523,15 @@ func (s *rpcServicesStub) SetUserActive(_ context.Context, input directory.SetUs
 
 func (*rpcServicesStub) List(context.Context, string, string) (directory.Directory, error) {
 	return directory.Directory{}, nil
+}
+
+func (s *rpcServicesStub) ResolvePrincipal(
+	_ context.Context, userID, organizationID string,
+) (domain.Principal, error) {
+	s.resolvePrincipalCalls++
+	s.resolvePrincipalUserID = userID
+	s.resolvePrincipalOrganizationID = organizationID
+	return s.resolvedPrincipal, nil
 }
 
 func (s *rpcServicesStub) Login(context.Context, localauth.LoginInput) (localauth.LoginResult, error) {

@@ -1,7 +1,7 @@
 # Agent Controller Lifecycle And Management Contract
 
 > Status: Stage 2B implementation contract<br>
-> Revision: 3<br>
+> Revision: 4<br>
 > Transport: trusted internal JSON over HTTP<br>
 > Owner: Agent Controller
 
@@ -53,7 +53,14 @@ newer head.
 ## Agents
 
 `POST /internal/agents` freezes a Template revision and starts a durable create
-operation. It returns the Agent projection, access subject, and operation.
+operation. Before persisting a new intent, Agent Controller resolves
+`(owner_user_id, organization_id)` through Identity Service and requires an
+active organization membership. A system administrator without an active
+membership in that organization is not a valid Agent owner. Persisting the
+create intent freezes that authorization decision. Every exact replay of that
+intent, whether running, failed, or completed, continues or returns the same
+durable operation without reinterpreting historical ownership under current
+Identity state.
 
 `POST /internal/agents/{agent_id}/rebuild` freezes a target Template revision.
 `disable`, `enable`, and `delete` express explicit desired-state transitions.

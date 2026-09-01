@@ -31,12 +31,30 @@ func TestRunRepositoryAcquiresFinishesAndScopesCredential(t *testing.T) {
 		t.Fatalf("resolve Agent access: %v", err)
 	}
 	if access.AgentID != base.Agent.AgentID || access.PrincipalID != base.Agent.OwnerUserID ||
+		access.OrganizationID != base.Agent.OrganizationID ||
 		access.AccessRevision != base.Agent.AccessRevision {
 		t.Fatalf("access resolution = %+v", access)
+	}
+	authorization, err := repository.ResolveRunAuthorization(
+		ctx, base.Agent.AgentID, base.Agent.OwnerUserID, base.Agent.AccessRevision,
+	)
+	if err != nil || authorization.OrganizationID != base.Agent.OrganizationID ||
+		authorization.OwnerUserID != base.Agent.OwnerUserID {
+		t.Fatalf("Run authorization = %+v, %v", authorization, err)
+	}
+	if _, err := repository.ResolveRunAuthorization(
+		ctx, base.Agent.AgentID, "another-user", base.Agent.AccessRevision,
+	); !errors.Is(err, ports.ErrRunAccessDenied) {
+		t.Fatalf("foreign Run principal error = %v", err)
 	}
 
 	now := time.Unix(1200, 0).UTC()
 	command := acquireRunCommand(base.Agent, "request-run-integration", "admission-integration", now)
+	if replay, found, err := repository.ReplayRunAdmission(
+		ctx, command.RequestID, command.RequestFingerprint,
+	); err != nil || found || replay.AdmissionID != "" {
+		t.Fatalf("pre-admission replay = %+v found=%t err=%v", replay, found, err)
+	}
 	admission, replayed, err := repository.AcquireRun(ctx, command)
 	if err != nil || replayed {
 		t.Fatalf("acquire Run: admission=%+v replayed=%t err=%v", admission, replayed, err)
@@ -49,7 +67,13 @@ func TestRunRepositoryAcquiresFinishesAndScopesCredential(t *testing.T) {
 		len(admission.Snapshot.ExecutionSpec.SkillInstructions) != 0 {
 		t.Fatalf("admission snapshot = %+v", admission)
 	}
-	replayedAdmission, replayed, err := repository.AcquireRun(ctx, command)
+	replayedAdmission, found, err := repository.ReplayRunAdmission(
+		ctx, command.RequestID, command.RequestFingerprint,
+	)
+	if err != nil || !found || replayedAdmission.AdmissionID != admission.AdmissionID {
+		t.Fatalf("query Run replay: admission=%+v found=%t err=%v", replayedAdmission, found, err)
+	}
+	replayedAdmission, replayed, err = repository.AcquireRun(ctx, command)
 	if err != nil || !replayed || replayedAdmission.AdmissionID != admission.AdmissionID {
 		t.Fatalf("replay Run: admission=%+v replayed=%t err=%v", replayedAdmission, replayed, err)
 	}

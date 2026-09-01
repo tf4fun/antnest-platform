@@ -6,7 +6,10 @@ import WebSocket, { type RawData } from "ws";
 
 import { AgentAcpHttpServer } from "../../src/transport/http-server.js";
 import type { AcpApplicationPort, AcceptedAcpRun } from "../../src/ports/acp-application.js";
-import type { AgentControllerPort } from "../../src/ports/agent-controller.js";
+import {
+  AgentControllerError,
+  type AgentControllerPort,
+} from "../../src/ports/agent-controller.js";
 
 describe("AgentAcpHttpServer", () => {
   let server: AgentAcpHttpServer | undefined;
@@ -256,7 +259,9 @@ describe("AgentAcpHttpServer", () => {
     "rejects an access subject denied by Agent Controller on %s",
     async (path) => {
       const controller = controllerPort();
-      controller.resolveAgentAccess.mockRejectedValue(new Error("access denied"));
+      controller.resolveAgentAccess.mockRejectedValue(
+        new AgentControllerError("access_denied", "access denied", false),
+      );
       server = new AgentAcpHttpServer({
         agentController: controller.port,
         application: applicationPort(),
@@ -268,6 +273,48 @@ describe("AgentAcpHttpServer", () => {
       await expect(
         upgradeStatus(server, path, { "x-antnest-agent-access-subject": "subject-1" }),
       ).resolves.toBe(403);
+    },
+  );
+
+  it.each(["/v1/acp", "/v2/acp"])(
+    "returns service unavailable when Agent access cannot be resolved on %s",
+    async (path) => {
+      const controller = controllerPort();
+      controller.resolveAgentAccess.mockRejectedValue(
+        new AgentControllerError("dependency_unavailable", "Identity unavailable", true),
+      );
+      server = new AgentAcpHttpServer({
+        agentController: controller.port,
+        application: applicationPort(),
+        ready: vi.fn(() => Promise.resolve(true)),
+        maxWebSocketPayloadBytes: 64 * 1024,
+      });
+      await server.listen("127.0.0.1", 0);
+
+      await expect(
+        upgradeStatus(server, path, { "x-antnest-agent-access-subject": "subject-1" }),
+      ).resolves.toBe(503);
+    },
+  );
+
+  it.each(["/v1/acp", "/v2/acp"])(
+    "returns bad request for an invalid access subject on %s",
+    async (path) => {
+      const controller = controllerPort();
+      controller.resolveAgentAccess.mockRejectedValue(
+        new AgentControllerError("invalid_request", "invalid access subject", false),
+      );
+      server = new AgentAcpHttpServer({
+        agentController: controller.port,
+        application: applicationPort(),
+        ready: vi.fn(() => Promise.resolve(true)),
+        maxWebSocketPayloadBytes: 64 * 1024,
+      });
+      await server.listen("127.0.0.1", 0);
+
+      await expect(
+        upgradeStatus(server, path, { "x-antnest-agent-access-subject": "invalid subject" }),
+      ).resolves.toBe(400);
     },
   );
 

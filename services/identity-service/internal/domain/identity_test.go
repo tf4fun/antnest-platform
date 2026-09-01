@@ -30,6 +30,21 @@ func TestNormalizeEmailAndSlug(t *testing.T) {
 	}
 }
 
+func TestIdentityIDContract(t *testing.T) {
+	t.Parallel()
+
+	for _, value := range []string{"user-1", "id_user.1", "A", strings.Repeat("x", 200)} {
+		if !ValidID(value) {
+			t.Fatalf("valid Identity ID %q was rejected", value)
+		}
+	}
+	for _, value := range []string{"", " user-1", "user/1", "用户", strings.Repeat("x", 201)} {
+		if ValidID(value) {
+			t.Fatalf("invalid Identity ID %q was accepted", value)
+		}
+	}
+}
+
 func TestNormalizeSCIMUserNameDoesNotRequireAnEmail(t *testing.T) {
 	t.Parallel()
 

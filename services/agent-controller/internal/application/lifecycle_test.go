@@ -38,6 +38,7 @@ func TestCreateAgentMaterializesSpecAndPublishesOnlyAfterRuntimeReady(t *testing
 		dependencies,
 		dependencies,
 		fixedClock{now: time.Unix(10, 0).UTC()},
+		WithIdentityDirectory(activeIdentityDirectory()),
 	)
 
 	result, err := service.CreateAgent(context.Background(), CreateAgentInput{
@@ -96,6 +97,7 @@ func TestCreateAgentCompletedRetryDoesNotRepeatDependencies(t *testing.T) {
 		dependencies,
 		dependencies,
 		fixedClock{now: time.Unix(20, 0).UTC()},
+		WithIdentityDirectory(&identityDirectoryStub{err: errors.New("identity unavailable")}),
 	)
 
 	result, err := service.CreateAgent(context.Background(), CreateAgentInput{
@@ -111,6 +113,86 @@ func TestCreateAgentCompletedRetryDoesNotRepeatDependencies(t *testing.T) {
 	}
 	if result.Agent.LifecycleState != domain.AgentAvailable || result.Operation.State != domain.OperationCompleted {
 		t.Fatalf("completed result was not replayed: %+v", result)
+	}
+}
+
+func TestCreateAgentRunningRetryKeepsPersistedAuthorizationDecision(t *testing.T) {
+	t.Parallel()
+
+	template := mustLifecycleTemplate(t)
+	model := mustLifecycleModel(t)
+	input := lifecycleCreateInput("request-create-agent")
+	fingerprint, err := createAgentFingerprint(input)
+	if err != nil {
+		t.Fatalf("fingerprint create intent: %v", err)
+	}
+	running := completedCreateState(t, template, model)
+	running.Agent.LifecycleState = domain.AgentProvisioning
+	running.Agent.AgentSpecRevisionID = ""
+	running.Agent.ExecutionRevisionID = ""
+	running.Agent.LastSuccessfulExecutionRevisionID = ""
+	running.Agent.RuntimeRevision = ""
+	running.Agent.RuntimeExecutionID = ""
+	running.Agent.RuntimeMCPEndpoint = ""
+	running.Operation.Phase = domain.PhaseNetworkEnsure
+	running.Operation.State = domain.OperationRunning
+	running.Operation.RequestFingerprint = fingerprint
+	running.Operation.ChildRequestID = domain.ChildRequestID(
+		running.Operation.RequestID, domain.PhaseNetworkEnsure,
+	)
+	store := &lifecycleStoreStub{beginState: running, replayed: true}
+	dependencies := &lifecycleDependenciesStub{
+		network: validLifecycleNetwork(),
+		runtime: ports.RuntimeOperation{
+			State: "completed", Effect: "completed", RuntimeRevision: "runtime-revision-1",
+			RuntimeExecutionID: "execution-identity-1", MCPEndpoint: "http://runtime-agent:8091/mcp",
+			LifecycleState: "ready", Health: "healthy",
+		},
+	}
+	identities := &identityDirectoryStub{err: errors.New("identity unavailable")}
+	service := NewLifecycleService(
+		lifecycleSpecSourceStub{template: template, model: model}, store,
+		dependencies, dependencies, fixedClock{now: time.Unix(20, 0).UTC()},
+		WithIdentityDirectory(identities),
+	)
+
+	result, err := service.CreateAgent(context.Background(), input)
+	if err != nil {
+		t.Fatalf("continue persisted create intent: %v", err)
+	}
+	if identities.calls != 0 {
+		t.Fatalf("persisted create intent revalidated Identity %d times", identities.calls)
+	}
+	if result.Agent.LifecycleState != domain.AgentAvailable ||
+		result.Operation.State != domain.OperationCompleted {
+		t.Fatalf("persisted create intent did not converge: %+v", result)
+	}
+}
+
+func TestCreateAgentReplaysConcurrentIntentAfterIdentityFailure(t *testing.T) {
+	t.Parallel()
+
+	template := mustLifecycleTemplate(t)
+	model := mustLifecycleModel(t)
+	store := &lifecycleStoreStub{
+		beginState: completedCreateState(t, template, model), replayOnCall: 2,
+	}
+	identities := &identityDirectoryStub{err: errors.New("identity unavailable")}
+	service := NewLifecycleService(
+		lifecycleSpecSourceStub{template: template, model: model}, store,
+		&lifecycleDependenciesStub{}, &lifecycleDependenciesStub{},
+		fixedClock{now: time.Unix(20, 0).UTC()}, WithIdentityDirectory(identities),
+	)
+
+	result, err := service.CreateAgent(context.Background(), lifecycleCreateInput("request-create-agent"))
+	if err != nil {
+		t.Fatalf("replay concurrently persisted create intent: %v", err)
+	}
+	if result.Operation.State != domain.OperationCompleted || store.replayCalls != 2 {
+		t.Fatalf("concurrent create was not replayed: result=%+v calls=%d", result, store.replayCalls)
+	}
+	if identities.calls != 1 {
+		t.Fatalf("Identity calls=%d want=1", identities.calls)
 	}
 }
 
@@ -151,6 +233,7 @@ func TestCreateAgentDoesNotStartRuntimeWithInactiveNetwork(t *testing.T) {
 	service := NewLifecycleService(
 		lifecycleSpecSourceStub{template: template, model: model},
 		store, dependencies, dependencies, fixedClock{now: time.Unix(30, 0).UTC()},
+		WithIdentityDirectory(activeIdentityDirectory()),
 	)
 
 	result, err := service.CreateAgent(context.Background(), CreateAgentInput{
@@ -194,6 +277,50 @@ func TestCreateAgentRejectsRuntimeWithoutConfirmedEffect(t *testing.T) {
 	}
 	if store.published.Execution.ID != "" {
 		t.Fatalf("unconfirmed Runtime was published: %+v", store.published)
+	}
+}
+
+func TestCreateAgentRequiresActiveOrganizationOwnerBeforePersistingIntent(t *testing.T) {
+	t.Parallel()
+
+	store := &lifecycleStoreStub{}
+	dependencies := &lifecycleDependenciesStub{}
+	identities := &identityDirectoryStub{principal: ports.IdentityPrincipal{
+		UserID: "user-1", OrganizationID: "org-1", MembershipID: "membership-1", Active: false,
+	}}
+	service := NewLifecycleService(
+		lifecycleSpecSourceStub{template: mustLifecycleTemplate(t), model: mustLifecycleModel(t)},
+		store, dependencies, dependencies, fixedClock{now: time.Unix(40, 0).UTC()},
+		WithIdentityDirectory(identities),
+	)
+
+	_, err := service.CreateAgent(context.Background(), lifecycleCreateInput("request-inactive-owner"))
+	if !errors.Is(err, ErrInvalidReference) {
+		t.Fatalf("inactive owner error = %v, want invalid reference", err)
+	}
+	if identities.calls != 1 || store.initial.Agent.AgentID != "" || len(dependencies.calls) != 0 {
+		t.Fatalf("owner validation leaked effects: identity=%d initial=%+v dependencies=%v",
+			identities.calls, store.initial, dependencies.calls)
+	}
+}
+
+func TestCreateAgentFailsAsDependencyUnavailableWithoutIdentityDirectory(t *testing.T) {
+	t.Parallel()
+
+	store := &lifecycleStoreStub{}
+	dependencies := &lifecycleDependenciesStub{}
+	service := NewLifecycleService(
+		lifecycleSpecSourceStub{template: mustLifecycleTemplate(t), model: mustLifecycleModel(t)},
+		store, dependencies, dependencies, fixedClock{now: time.Unix(41, 0).UTC()},
+	)
+
+	_, err := service.CreateAgent(context.Background(), lifecycleCreateInput("request-missing-identity"))
+	if !errors.Is(err, ErrDependencyUnavailable) {
+		t.Fatalf("missing Identity directory error = %v, want dependency unavailable", err)
+	}
+	if store.initial.Agent.AgentID != "" || len(dependencies.calls) != 0 {
+		t.Fatalf("missing Identity directory leaked effects: initial=%+v dependencies=%v",
+			store.initial, dependencies.calls)
 	}
 }
 
@@ -398,6 +525,8 @@ type lifecycleStoreStub struct {
 	initial            ports.BeginAgentCreate
 	beginState         ports.AgentCreateState
 	replayed           bool
+	replayCalls        int
+	replayOnCall       int
 	published          ports.PublishAgentCreate
 	failed             ports.FailAgentCreate
 	operation          ports.LifecycleOperationRecord
@@ -576,7 +705,9 @@ func (store *lifecycleStoreStub) PublishAgentDelete(
 func (store *lifecycleStoreStub) ReplayAgentCreate(
 	_ context.Context, _ string, _ string,
 ) (ports.AgentCreateState, bool, error) {
-	return store.beginState, store.replayed, nil
+	store.replayCalls++
+	found := store.replayed || store.replayOnCall > 0 && store.replayCalls >= store.replayOnCall
+	return store.beginState, found, nil
 }
 
 func (store *lifecycleStoreStub) BeginAgentCreate(
@@ -720,7 +851,27 @@ func newLifecycleTestService(
 	return NewLifecycleService(
 		lifecycleSpecSourceStub{template: mustLifecycleTemplate(t), model: mustLifecycleModel(t)},
 		store, dependencies, dependencies, fixedClock{now: time.Unix(50, 0).UTC()},
+		WithIdentityDirectory(activeIdentityDirectory()),
 	)
+}
+
+type identityDirectoryStub struct {
+	principal ports.IdentityPrincipal
+	err       error
+	calls     int
+}
+
+func (stub *identityDirectoryStub) ResolvePrincipal(
+	context.Context, string, string,
+) (ports.IdentityPrincipal, error) {
+	stub.calls++
+	return stub.principal, stub.err
+}
+
+func activeIdentityDirectory() *identityDirectoryStub {
+	return &identityDirectoryStub{principal: ports.IdentityPrincipal{
+		UserID: "user-1", OrganizationID: "org-1", MembershipID: "membership-1", Active: true,
+	}}
 }
 
 func lifecycleCreateInput(requestID string) CreateAgentInput {

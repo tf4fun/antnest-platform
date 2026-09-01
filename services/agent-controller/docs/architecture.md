@@ -82,12 +82,18 @@ state. A failed replacement clears `executable_execution_revision` once the old
 Runtime is absent while retaining `last_successful_execution_revision` for
 audit.
 
-`owner_user_id` is immutable ownership, not a copied user profile. Agent
-Controller accepts the opaque Identity Service identity at creation and never
-joins or writes Identity Service storage. Owner-filtered reads are served from
-the local Agent projection. A future Identity lifecycle consumer may issue
-explicit Agent commands, but it cannot mutate this projection by sharing a
-database.
+`owner_user_id` is immutable ownership, not a copied user profile. Before first
+creation, Agent Controller resolves the opaque `(organization_id,
+owner_user_id)` pair through Identity Service and requires an active
+organization membership. Persisting the create intent freezes that decision;
+exact replay of a running, failed, or completed operation does not revalidate
+and change its historical meaning. Agent access resolution repeats the same
+non-secret check, so a disabled user or membership is rejected on the next ACP
+business request. New Run admission performs the authoritative check again
+before the local admission transaction. A request already admitted before a
+concurrent Identity change keeps its immutable authorization snapshot. Agent
+Controller never joins or writes Identity Service storage.
+Owner-filtered reads are served from the local Agent projection.
 
 Current-state queries order by immutable `(created_at, agent_id)` and use an
 opaque keyset cursor. They do not hold database snapshots across HTTP requests.
@@ -216,20 +222,21 @@ candidate Runtime.
 
 ### Create Agent
 
-1. Resolve and freeze the requested Template revision.
-2. Persist Agent, AgentSpecRevision, owner access binding, create operation,
+1. Resolve and require one active Identity Service organization/user binding.
+2. Resolve and freeze the requested Template revision.
+3. Persist Agent, AgentSpecRevision, owner access binding, create operation,
    projection state `provisioning`, and `agent_create_requested` atomically.
-3. Ensure the Egress network attachment.
-4. Construct Runtime Controller configuration from the frozen Runtime inputs
+4. Ensure the Egress network attachment.
+5. Construct Runtime Controller configuration from the frozen Runtime inputs
    plus returned network attachment.
-5. Initialize Runtime with the durable child request ID and wait for a completed,
+6. Initialize Runtime with the durable child request ID and wait for a completed,
    healthy result whose effect is confirmed complete.
-6. Re-read the Egress attachment and require the same active tunnel, resolver,
+7. Re-read the Egress attachment and require the same active tunnel, resolver,
    packet contract, and endpoint used to initialize Runtime. This closes the
    readiness race without publishing a Runtime configured for stale network
    facts.
-7. Atomically publish ExecutionRevision, set `available`, and append `agent_ready`.
-8. Any terminal failure sets `unavailable`, records exact phase/class, and
+8. Atomically publish ExecutionRevision, set `available`, and append `agent_ready`.
+9. Any terminal failure sets `unavailable`, records exact phase/class, and
    appends `agent_build_failed`.
 
 The request thread normally drives these three durable create phases. A
@@ -352,9 +359,13 @@ deletion and would make failed initial provisioning impossible to clean up.
 ### Run Admission
 
 Resolve access maps one trusted subject to one owner principal and Agent.
-Acquire checks mapping revision, locks the Agent, requires `available`, rejects an
-existing admission, and returns the complete immutable snapshot. The snapshot
-contains an empty Skill instruction list until Skill Registry is runnable. Finish seals
+It then revalidates that principal's active organization membership through
+Identity Service before returning the binding.
+Acquire first returns an exact durable replay when one exists. For a new
+admission, it revalidates the same active Identity binding, checks the local
+mapping revision, locks the Agent, requires `available`, rejects an existing
+admission, and returns the complete immutable snapshot. The snapshot contains
+an empty Skill instruction list until Skill Registry is runnable. Finish seals
 the terminal report. The ACP service owns all messages and detailed Tool facts.
 
 ## Persistence Ownership

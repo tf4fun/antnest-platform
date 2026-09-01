@@ -54,6 +54,7 @@ Required:
 - `ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY`: base64-encoded 32-byte AES key;
 - `ANTNEST_RUNTIME_CONTROLLER_URL`;
 - `ANTNEST_RUNTIME_EGRESS_URL`.
+- `ANTNEST_IDENTITY_SERVICE_URL`.
 
 The Runtime-reachable Egress endpoint is returned by Runtime Egress and is not
 duplicated in Agent Controller configuration.
@@ -96,6 +97,10 @@ otherwise a downstream outage would cause an unrelated restart loop.
 Dependency failures after startup are reported per business request and in
 metrics; liveness remains process-level so the deployment platform does not
 turn a downstream outage into a restart loop.
+
+Identity Service is checked before initial Agent creation and before Agent
+access resolution. Missing or inactive organization membership fails closed;
+an Identity transport failure is retryable and does not create or admit work.
 
 ## Lifecycle Failure Recovery
 
@@ -191,13 +196,15 @@ OTEL_SERVICE_NAME=agent-controller
 ```
 
 The Compose `observability` profile starts Jaeger and exposes its UI on the
-configured loopback port. A create trace shows the bounded HTTP route,
-repository phases, Runtime Egress ensure call, Runtime Controller initialize
-call, and atomic publication. Once Stage 2 is complete, a Run trace must show:
+configured loopback port. A create trace shows the bounded HTTP route, Identity
+owner resolution, repository phases, Runtime Egress ensure call, Runtime
+Controller initialize call, and atomic publication. Once Stage 2 is complete,
+a Run trace must show:
 
 ```text
 ACP session/prompt
-  -> Agent Controller acquire_run
+  -> Agent Controller resolve_agent_access -> Identity resolve_principal
+  -> Agent Controller acquire_run -> Identity resolve_principal
   -> model / Runtime MCP work
   -> Agent Controller finish_run
 ```

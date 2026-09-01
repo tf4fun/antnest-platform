@@ -12,6 +12,7 @@ import (
 
 type Repository interface {
 	GetPrincipal(context.Context, string, string) (domain.Principal, error)
+	ResolveOrganizationPrincipal(context.Context, string, string) (domain.Principal, error)
 	CreateOrganization(context.Context, CreateOrganizationCommand) (domain.Organization, error)
 	CreateLocalUser(context.Context, CreateLocalUserCommand) (CreateLocalUserResult, error)
 	AddOrganizationMembership(context.Context, AddOrganizationMembershipCommand) (domain.OrganizationMembership, error)
@@ -390,4 +391,25 @@ func (s *Service) List(ctx context.Context, actorPrincipalID, organizationID str
 		return Directory{}, domain.ErrForbidden
 	}
 	return s.repository.ListDirectory(ctx, organizationID)
+}
+
+func (s *Service) ResolvePrincipal(
+	ctx context.Context, userID string, organizationID string,
+) (domain.Principal, error) {
+	if !domain.ValidID(userID) || !domain.ValidID(organizationID) {
+		return domain.Principal{}, domain.InvalidArgument(
+			"user ID and organization ID are invalid",
+		)
+	}
+	principal, err := s.repository.ResolveOrganizationPrincipal(ctx, userID, organizationID)
+	if err != nil {
+		return domain.Principal{}, fmt.Errorf("resolve organization principal: %w", err)
+	}
+	if principal.UserID != userID || principal.OrganizationID != organizationID {
+		return domain.Principal{}, fmt.Errorf("resolve organization principal returned mismatched identity")
+	}
+	if strings.TrimSpace(principal.MembershipID) == "" {
+		return domain.Principal{}, domain.ErrNotFound
+	}
+	return principal, nil
 }

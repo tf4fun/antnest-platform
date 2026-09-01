@@ -42,20 +42,27 @@ does not replace per-request failure handling.
 ### `resolve_agent_access`
 
 Resolves an Agent-scoped access subject before an ACP connection accepts
-Session methods and during request-time revalidation. It returns no model
-credential and no Runtime endpoint.
+Session methods and during request-time revalidation. Agent Controller also
+revalidates that the frozen owner is still an active member of the Agent's
+organization through Identity Service. A definitive inactive or absent binding
+is `access_denied`; an unavailable or contract-invalid Identity response is
+`dependency_unavailable`. It returns no model credential and no Runtime
+endpoint.
 
 ### `acquire_run`
 
-Atomically admits a Run only when the Agent is ready and no other Run is
-active. In that same transaction it verifies that `principal_id` is still
-authorized for `agent_id` at `expected_access_revision`. The non-secret access
-facts are captured in the durable Run intent so startup recovery performs the
-same check; a pre-admission access check is only a fast failure path, not the
-authorization authority. The stable `request_id` makes retry after an uncertain
-response idempotent. A successful response is a complete, immutable, non-secret
-input for one Run. The response is copied into Agent ACP Service's private
-`RunExecutionSnapshot` before the prompt is acknowledged.
+An exact replay first returns the already admitted immutable snapshot without
+reinterpreting it under current Identity state. A new admission revalidates the
+Agent owner through Identity Service, then atomically admits the Run only when
+the Agent is ready and no other Run is active. In that transaction it verifies
+that `principal_id` is still authorized for `agent_id` at
+`expected_access_revision`. The Identity response and local transaction form
+the admission authorization boundary; `resolve_agent_access` remains a fast
+failure and connection-routing check, not the authority for a later Run. The
+stable `request_id` makes retry after an uncertain response idempotent. A
+successful response is a complete, immutable, non-secret input for one Run. The
+response is copied into Agent ACP Service's private `RunExecutionSnapshot`
+before the prompt is acknowledged.
 
 The snapshot includes one opaque Runtime revision, MCP endpoint, and execution
 identity. Physical Runtime generation and instance identifiers are private to
@@ -122,7 +129,7 @@ Every non-success response uses the error envelope from the JSON contract.
 
 | Code                     | Retry   | Meaning                                                                  |
 | ------------------------ | ------- | ------------------------------------------------------------------------ |
-| `access_denied`          | no      | Subject is not mapped to the requested connection context                |
+| `access_denied`          | no      | Subject mapping or current owner membership is no longer authorized      |
 | `agent_not_found`        | no      | Mapped Agent no longer exists                                            |
 | `agent_busy`             | yes     | Another Run owns the Agent admission                                     |
 | `agent_rebuilding`       | yes     | Agent is temporarily unavailable during rebuild                          |
@@ -131,12 +138,12 @@ Every non-success response uses the error envelope from the JSON contract.
 | `admission_not_found`    | inspect | Admission is absent or no longer visible                                 |
 | `credential_not_allowed` | no      | Reference is not part of the admitted snapshot                           |
 | `invalid_request`        | no      | Request shape or immutable terminal facts violate the contract           |
-| `dependency_unavailable` | yes     | Request outcome is unknown unless the method is retried with the same ID |
+| `dependency_unavailable` | yes     | A required service could not provide a trustworthy response; retry later |
 | `internal_error`         | yes     | Request outcome is unknown unless the method is retried with the same ID |
 
 ## Compatibility Rules
 
-1. This document and machine catalog describe contract revision 7.
+1. This document and machine catalog describe contract revision 8.
 2. Contract fields are `snake_case`; ACP wire fields remain the ACP-defined
    `camelCase` shapes.
 3. New optional response fields may be added. Existing required fields cannot

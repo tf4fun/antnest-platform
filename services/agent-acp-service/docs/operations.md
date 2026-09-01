@@ -50,7 +50,7 @@ lifetime of the service-owned database.
 
 `ANTNEST_AGENT_CONTROLLER_URL` names the service root. Readiness calls
 `GET /status`; business calls use `/rpc/agent-controller/*` beneath that root.
-The complete revision-7 dependency contract is
+The complete revision-8 dependency contract is
 [`../../../contracts/agent-controller/run-api.md`](../../../contracts/agent-controller/run-api.md),
 with machine-readable shapes in
 [`../../../contracts/agent-controller/run-contract.json`](../../../contracts/agent-controller/run-contract.json).

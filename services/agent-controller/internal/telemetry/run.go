@@ -32,6 +32,25 @@ func (store *ObservedRunStore) ResolveAgentAccess(
 	return store.next.ResolveAgentAccess(ctx, subject)
 }
 
+func (store *ObservedRunStore) ReplayRunAdmission(
+	ctx context.Context, requestID string, requestFingerprint string,
+) (result ports.RunAdmissionRecord, found bool, resultErr error) {
+	ctx, span, started := startRepositorySpan(ctx, "replay_run_admission")
+	defer func() {
+		span.SetAttributes(attribute.Bool("antnest.run_admission.replayed", found))
+		store.finish(ctx, span, started, "replay_run_admission", resultErr)
+	}()
+	return store.next.ReplayRunAdmission(ctx, requestID, requestFingerprint)
+}
+
+func (store *ObservedRunStore) ResolveRunAuthorization(
+	ctx context.Context, agentID string, principalID string, expectedAccessRevision string,
+) (result ports.RunAuthorization, resultErr error) {
+	ctx, span, started := startRepositorySpan(ctx, "resolve_run_authorization")
+	defer func() { store.finish(ctx, span, started, "resolve_run_authorization", resultErr) }()
+	return store.next.ResolveRunAuthorization(ctx, agentID, principalID, expectedAccessRevision)
+}
+
 func (store *ObservedRunStore) AcquireRun(
 	ctx context.Context, input ports.AcquireRunRecord,
 ) (result ports.RunAdmissionRecord, replayed bool, resultErr error) {

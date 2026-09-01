@@ -25,8 +25,17 @@ const defaultRunAdmissionTTL = 30 * time.Minute
 type RunService struct {
 	store        ports.RunStore
 	credentials  ports.CredentialOpener
+	identities   ports.IdentityDirectory
 	clock        ports.Clock
 	admissionTTL time.Duration
+}
+
+type RunServiceOption func(*RunService)
+
+func WithRunIdentityDirectory(directory ports.IdentityDirectory) RunServiceOption {
+	return func(service *RunService) {
+		service.identities = directory
+	}
 }
 
 func NewRunService(
@@ -34,13 +43,20 @@ func NewRunService(
 	credentials ports.CredentialOpener,
 	clock ports.Clock,
 	admissionTTL time.Duration,
+	options ...RunServiceOption,
 ) *RunService {
 	if admissionTTL <= 0 {
 		admissionTTL = defaultRunAdmissionTTL
 	}
-	return &RunService{
+	service := &RunService{
 		store: store, credentials: credentials, clock: clock, admissionTTL: admissionTTL,
 	}
+	for _, option := range options {
+		if option != nil {
+			option(service)
+		}
+	}
+	return service
 }
 
 type ResolveAgentAccessInput struct {
@@ -66,8 +82,27 @@ func (service *RunService) ResolveAgentAccess(
 		return AgentAccessView{}, mapRunError("resolve Agent access", err)
 	}
 	if !validIdentifier(record.PrincipalID) || !validIdentifier(record.AgentID) ||
-		!validIdentifier(record.AccessRevision) {
+		!validIdentifier(record.OrganizationID) || !validIdentifier(record.AccessRevision) {
 		return AgentAccessView{}, fmt.Errorf("invalid Agent access resolution")
+	}
+	if service.identities == nil {
+		return AgentAccessView{}, fmt.Errorf(
+			"%w: agent owner identity directory is not configured",
+			ErrDependencyUnavailable,
+		)
+	}
+	principal, err := service.identities.ResolvePrincipal(
+		ctx, record.OrganizationID, record.PrincipalID,
+	)
+	if err != nil {
+		if identityReferenceMissing(err) {
+			return AgentAccessView{}, ErrAccessDenied
+		}
+		return AgentAccessView{}, fmt.Errorf("%w: resolve Agent owner", ErrDependencyUnavailable)
+	}
+	if principal.UserID != record.PrincipalID || principal.OrganizationID != record.OrganizationID ||
+		strings.TrimSpace(principal.MembershipID) == "" || !principal.Active {
+		return AgentAccessView{}, ErrAccessDenied
 	}
 	return AgentAccessView{
 		PrincipalID: record.PrincipalID, AgentID: record.AgentID,
@@ -105,6 +140,32 @@ func (service *RunService) AcquireRun(
 	if err != nil {
 		return AcquireRunResult{}, err
 	}
+	replay, found, err := service.store.ReplayRunAdmission(ctx, input.RequestID, fingerprint)
+	if err != nil {
+		return AcquireRunResult{}, mapRunError("replay Run admission", err)
+	}
+	if found {
+		return acquireRunResult(replay, true)
+	}
+	authorization, err := service.store.ResolveRunAuthorization(
+		ctx, input.AgentID, input.PrincipalID, input.ExpectedAccessRevision,
+	)
+	if err != nil {
+		return service.replayRunAfterFailure(
+			ctx, input.RequestID, fingerprint, mapRunError("resolve Run authorization", err),
+		)
+	}
+	if !validIdentifier(authorization.OrganizationID) ||
+		authorization.OwnerUserID != input.PrincipalID {
+		return service.replayRunAfterFailure(
+			ctx, input.RequestID, fingerprint, ErrAccessDenied,
+		)
+	}
+	if err := service.requireActiveRunOwner(
+		ctx, authorization.OrganizationID, authorization.OwnerUserID,
+	); err != nil {
+		return service.replayRunAfterFailure(ctx, input.RequestID, fingerprint, err)
+	}
 	now := service.clock.Now()
 	record, replayed, err := service.store.AcquireRun(ctx, ports.AcquireRunRecord{
 		RequestID: input.RequestID, RequestFingerprint: fingerprint,
@@ -115,6 +176,25 @@ func (service *RunService) AcquireRun(
 	if err != nil {
 		return AcquireRunResult{}, mapRunError("acquire Run", err)
 	}
+	return acquireRunResult(record, replayed)
+}
+
+func (service *RunService) replayRunAfterFailure(
+	ctx context.Context, requestID string, fingerprint string, cause error,
+) (AcquireRunResult, error) {
+	record, found, err := service.store.ReplayRunAdmission(ctx, requestID, fingerprint)
+	if err != nil {
+		return AcquireRunResult{}, fmt.Errorf(
+			"%w (replay Run admission after failure: %v)", cause, err,
+		)
+	}
+	if found {
+		return acquireRunResult(record, true)
+	}
+	return AcquireRunResult{}, cause
+}
+
+func acquireRunResult(record ports.RunAdmissionRecord, replayed bool) (AcquireRunResult, error) {
 	if err := validateAdmissionRecord(record, replayed); err != nil {
 		return AcquireRunResult{}, err
 	}
@@ -131,6 +211,29 @@ func (service *RunService) AcquireRun(
 		CredentialVersion:        snapshot.CredentialVersion, Runtime: snapshot.Runtime,
 		ExecutionSpec: snapshot.ExecutionSpec,
 	}, nil
+}
+
+func (service *RunService) requireActiveRunOwner(
+	ctx context.Context, organizationID string, ownerUserID string,
+) error {
+	if service.identities == nil {
+		return fmt.Errorf(
+			"%w: agent owner identity directory is not configured",
+			ErrDependencyUnavailable,
+		)
+	}
+	principal, err := service.identities.ResolvePrincipal(ctx, organizationID, ownerUserID)
+	if err != nil {
+		if identityReferenceMissing(err) {
+			return ErrAccessDenied
+		}
+		return fmt.Errorf("%w: resolve Agent owner", ErrDependencyUnavailable)
+	}
+	if principal.UserID != ownerUserID || principal.OrganizationID != organizationID ||
+		strings.TrimSpace(principal.MembershipID) == "" || !principal.Active {
+		return ErrAccessDenied
+	}
+	return nil
 }
 
 type ResolveCredentialInput struct {
@@ -281,7 +384,7 @@ func mapRunError(action string, err error) error {
 	case errors.Is(err, ports.ErrCredentialNotAllowed):
 		return fmt.Errorf("%w: %s", ErrCredentialNotAllowed, action)
 	case errors.Is(err, ports.ErrRequestConflict):
-		return fmt.Errorf("%w: %s", ErrLifecycleConflict, action)
+		return fmt.Errorf("%w: %s", ErrInvalidInput, action)
 	default:
 		return fmt.Errorf("%s: %w", action, err)
 	}

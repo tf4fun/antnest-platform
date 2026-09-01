@@ -214,6 +214,10 @@ whose Organization, User, and Membership match the session result.
 
 Identity mutations continue to append `identity_events` in the same database
 transaction. This is an audit/outbox foundation only. Listing, watching,
-consumer cursors, replay, and Agent Controller reactions are deferred until the
-Agent Controller contract is implemented; this service must not claim that the
-cross-service business flow is complete before then.
+consumer cursors, replay, and asynchronous Agent Controller reactions remain
+deferred. Agent owner validation instead uses the narrow synchronous
+`resolve_principal` RPC: it returns opaque principal facts only and neither
+enumerates the directory nor exposes profile data. Its dedicated repository
+projection requires a Membership row and computes active state from User,
+Membership, and Organization activity without the system-administrator bypass
+used by administrative mutations.

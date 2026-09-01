@@ -99,6 +99,37 @@ func TestListDirectoryIsOrganizationScoped(t *testing.T) {
 	}
 }
 
+func TestResolvePrincipalReturnsOnlyTheRequestedOrganizationBinding(t *testing.T) {
+	t.Parallel()
+
+	repository := &directoryRepositoryStub{principal: domain.Principal{
+		UserID: "user-1", OrganizationID: "org-1", MembershipID: "membership-1",
+		SystemRole: domain.SystemRoleUser, OrganizationRole: domain.OrganizationRoleMember,
+		Active: true,
+	}}
+	service := NewService(repository, sequentialIDs(), fixedNow)
+
+	principal, err := service.ResolvePrincipal(context.Background(), "user-1", "org-1")
+	if err != nil {
+		t.Fatalf("resolve principal: %v", err)
+	}
+	if principal != repository.principal || repository.principalUserID != "user-1" ||
+		repository.principalOrganizationID != "org-1" {
+		t.Fatalf("principal=%#v query=%q/%q", principal, repository.principalUserID, repository.principalOrganizationID)
+	}
+	if _, err := service.ResolvePrincipal(context.Background(), " user-1 ", "org-1"); !errors.Is(err, domain.ErrInvalidArgument) {
+		t.Fatalf("whitespace user ID error = %v, want invalid argument", err)
+	}
+
+	if _, err := service.ResolvePrincipal(context.Background(), "", "org-1"); !errors.Is(err, domain.ErrInvalidArgument) {
+		t.Fatalf("empty user error = %v, want invalid argument", err)
+	}
+	repository.principal.MembershipID = ""
+	if _, err := service.ResolvePrincipal(context.Background(), "user-1", "org-1"); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("missing membership error = %v, want not found", err)
+	}
+}
+
 func TestAddOrganizationMembershipUsesStableUserIdentity(t *testing.T) {
 	t.Parallel()
 	repository := &directoryRepositoryStub{principal: domain.Principal{
@@ -199,19 +230,33 @@ func TestUpdateLocalMembershipAndGlobalUserActivationRespectOwnership(t *testing
 }
 
 type directoryRepositoryStub struct {
-	principal           domain.Principal
-	createdOrganization CreateOrganizationCommand
-	created             CreateLocalUserCommand
-	addedMembership     AddOrganizationMembershipCommand
-	credential          domain.LocalCredential
-	membership          domain.OrganizationMembership
-	changedPassword     ChangeLocalPasswordCommand
-	updatedMembership   UpdateMembershipCommand
-	userActivation      SetUserActiveCommand
-	directory           Directory
+	principal               domain.Principal
+	principalUserID         string
+	principalOrganizationID string
+	createdOrganization     CreateOrganizationCommand
+	created                 CreateLocalUserCommand
+	addedMembership         AddOrganizationMembershipCommand
+	credential              domain.LocalCredential
+	membership              domain.OrganizationMembership
+	changedPassword         ChangeLocalPasswordCommand
+	updatedMembership       UpdateMembershipCommand
+	userActivation          SetUserActiveCommand
+	directory               Directory
 }
 
-func (r *directoryRepositoryStub) GetPrincipal(context.Context, string, string) (domain.Principal, error) {
+func (r *directoryRepositoryStub) GetPrincipal(_ context.Context, userID, organizationID string) (domain.Principal, error) {
+	r.principalUserID = userID
+	r.principalOrganizationID = organizationID
+	return r.principal, nil
+}
+
+func (r *directoryRepositoryStub) ResolveOrganizationPrincipal(
+	_ context.Context,
+	userID string,
+	organizationID string,
+) (domain.Principal, error) {
+	r.principalUserID = userID
+	r.principalOrganizationID = organizationID
 	return r.principal, nil
 }
 

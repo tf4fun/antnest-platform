@@ -25,10 +25,12 @@ func (repository *Repository) ResolveAgentAccess(
 ) (ports.AgentAccessResolution, error) {
 	var result ports.AgentAccessResolution
 	err := repository.pool.QueryRow(ctx, `
-SELECT principal_id, agent_id, access_revision, prompt_image, prompt_embedded_context
-FROM agent_controller.agent_access_bindings
-WHERE access_subject = $1 AND active`, accessSubject).Scan(
-		&result.PrincipalID, &result.AgentID, &result.AccessRevision,
+SELECT access.principal_id, access.agent_id, agent.organization_id,
+       access.access_revision, access.prompt_image, access.prompt_embedded_context
+FROM agent_controller.agent_access_bindings access
+JOIN agent_controller.agents agent ON agent.id = access.agent_id
+WHERE access.access_subject = $1 AND access.active`, accessSubject).Scan(
+		&result.PrincipalID, &result.AgentID, &result.OrganizationID, &result.AccessRevision,
 		&result.PromptCapabilities.Image, &result.PromptCapabilities.EmbeddedContext,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -36,6 +38,63 @@ WHERE access_subject = $1 AND active`, accessSubject).Scan(
 	}
 	if err != nil {
 		return ports.AgentAccessResolution{}, fmt.Errorf("resolve Agent access binding: %w", err)
+	}
+	return result, nil
+}
+
+func (repository *Repository) ReplayRunAdmission(
+	ctx context.Context, requestID string, requestFingerprint string,
+) (ports.RunAdmissionRecord, bool, error) {
+	if strings.TrimSpace(requestID) == "" || !runFingerprintPattern.MatchString(requestFingerprint) {
+		return ports.RunAdmissionRecord{}, false, fmt.Errorf("invalid Run replay query")
+	}
+	record, err := loadRunAdmissionByRequest(ctx, repository.pool, requestID, "")
+	switch {
+	case err == nil:
+		if record.RequestFingerprint != requestFingerprint {
+			return ports.RunAdmissionRecord{}, false, ports.ErrRequestConflict
+		}
+		return record, true, nil
+	case errors.Is(err, ports.ErrAdmissionNotFound):
+		return ports.RunAdmissionRecord{}, false, nil
+	default:
+		return ports.RunAdmissionRecord{}, false, err
+	}
+}
+
+func (repository *Repository) ResolveRunAuthorization(
+	ctx context.Context,
+	agentID string,
+	principalID string,
+	expectedAccessRevision string,
+) (ports.RunAuthorization, error) {
+	if strings.TrimSpace(agentID) == "" || strings.TrimSpace(principalID) == "" ||
+		strings.TrimSpace(expectedAccessRevision) == "" {
+		return ports.RunAuthorization{}, fmt.Errorf("invalid Run authorization query")
+	}
+	var result ports.RunAuthorization
+	var authorized bool
+	err := repository.pool.QueryRow(ctx, `
+SELECT agent.organization_id, agent.owner_user_id,
+       EXISTS (
+           SELECT 1 FROM agent_controller.agent_access_bindings access
+           WHERE access.agent_id = agent.id
+             AND access.principal_id = $2
+             AND access.access_revision = $3
+             AND access.active
+       )
+FROM agent_controller.agents agent
+WHERE agent.id = $1`, agentID, principalID, expectedAccessRevision).Scan(
+		&result.OrganizationID, &result.OwnerUserID, &authorized,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ports.RunAuthorization{}, ports.ErrNotFound
+	}
+	if err != nil {
+		return ports.RunAuthorization{}, fmt.Errorf("resolve Run authorization: %w", err)
+	}
+	if !authorized || result.OwnerUserID != principalID {
+		return ports.RunAuthorization{}, ports.ErrRunAccessDenied
 	}
 	return result, nil
 }

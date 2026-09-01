@@ -139,6 +139,45 @@ func TestPostgresIdentityHappyPathAndOwnershipBoundaries(t *testing.T) {
 	).Scan(&bootstrapCredentialRows); err != nil || bootstrapCredentialRows != 1 {
 		t.Fatalf("bootstrap credential/profile boundary rows=%d err=%v", bootstrapCredentialRows, err)
 	}
+	strictPrincipal, err := store.Directory().ResolveOrganizationPrincipal(
+		ctx, bootstrap.User.ID, bootstrap.Organization.ID,
+	)
+	if err != nil || !strictPrincipal.Active || strictPrincipal.MembershipID != bootstrap.Membership.ID {
+		t.Fatalf("resolve active organization principal = %#v, %v", strictPrincipal, err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE organization_memberships SET active = FALSE WHERE id = $1`,
+		bootstrap.Membership.ID,
+	); err != nil {
+		t.Fatalf("deactivate bootstrap membership: %v", err)
+	}
+	strictPrincipal, err = store.Directory().ResolveOrganizationPrincipal(
+		ctx, bootstrap.User.ID, bootstrap.Organization.ID,
+	)
+	if err != nil || strictPrincipal.Active {
+		t.Fatalf("resolve inactive organization principal = %#v, %v", strictPrincipal, err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE organization_memberships SET active = TRUE WHERE id = $1`,
+		bootstrap.Membership.ID,
+	); err != nil {
+		t.Fatalf("reactivate bootstrap membership: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO users (id, system_role, active, created_at, updated_at)
+		VALUES ('system-admin-without-membership', 'admin', TRUE, $1, $1)`, now,
+	); err != nil {
+		t.Fatalf("insert membership-less system administrator: %v", err)
+	}
+	if _, err := store.Directory().ResolveOrganizationPrincipal(
+		ctx, "system-admin-without-membership", bootstrap.Organization.ID,
+	); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("membership-less system administrator error = %v, want not found", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		DELETE FROM users WHERE id = 'system-admin-without-membership'`); err != nil {
+		t.Fatalf("remove membership-less system administrator fixture: %v", err)
+	}
 	repeated, err := store.Bootstrap(ctx, BootstrapInput{
 		OrganizationSlug: "engineering", OrganizationName: "Engineering",
 		AdminEmail: "admin@example.com", AdminDisplayName: "Antnest Administrator",

@@ -24,8 +24,17 @@ type LifecycleService struct {
 	store        ports.LifecycleStore
 	egress       ports.EgressClient
 	runtime      ports.RuntimeClient
+	identities   ports.IdentityDirectory
 	clock        ports.Clock
 	drainTimeout time.Duration
+}
+
+type LifecycleOption func(*LifecycleService)
+
+func WithIdentityDirectory(directory ports.IdentityDirectory) LifecycleOption {
+	return func(service *LifecycleService) {
+		service.identities = directory
+	}
 }
 
 const defaultDrainTimeout = 5 * time.Minute
@@ -36,9 +45,10 @@ func NewLifecycleService(
 	egress ports.EgressClient,
 	runtime ports.RuntimeClient,
 	clock ports.Clock,
+	options ...LifecycleOption,
 ) *LifecycleService {
 	return NewLifecycleServiceWithDrainTimeout(
-		specs, store, egress, runtime, clock, defaultDrainTimeout,
+		specs, store, egress, runtime, clock, defaultDrainTimeout, options...,
 	)
 }
 
@@ -49,14 +59,21 @@ func NewLifecycleServiceWithDrainTimeout(
 	runtime ports.RuntimeClient,
 	clock ports.Clock,
 	drainTimeout time.Duration,
+	options ...LifecycleOption,
 ) *LifecycleService {
 	if drainTimeout <= 0 {
 		drainTimeout = defaultDrainTimeout
 	}
-	return &LifecycleService{
+	service := &LifecycleService{
 		specs: specs, store: store, egress: egress, runtime: runtime,
 		clock: clock, drainTimeout: drainTimeout,
 	}
+	for _, option := range options {
+		if option != nil {
+			option(service)
+		}
+	}
+	return service
 }
 
 type CreateAgentInput struct {
@@ -126,14 +143,19 @@ func (service *LifecycleService) CreateAgent(
 	if found {
 		return service.convergeAgentCreate(ctx, state, fingerprint)
 	}
+	if err := service.requireActiveOwner(ctx, input.OrganizationID, input.OwnerUserID); err != nil {
+		return service.replayAgentCreateAfterFailure(ctx, input.RequestID, fingerprint, err)
+	}
 
 	template, model, spec, err := service.resolveAgentSpec(ctx, input)
 	if err != nil {
-		return CreateAgentResult{}, err
+		return service.replayAgentCreateAfterFailure(ctx, input.RequestID, fingerprint, err)
 	}
 	digest, err := spec.Digest()
 	if err != nil {
-		return CreateAgentResult{}, fmt.Errorf("digest Agent spec: %w", err)
+		return service.replayAgentCreateAfterFailure(
+			ctx, input.RequestID, fingerprint, fmt.Errorf("digest Agent spec: %w", err),
+		)
 	}
 	now := service.clock.Now()
 	agentID := derivedID("agent", input.RequestID)
@@ -146,7 +168,9 @@ func (service *LifecycleService) CreateAgent(
 		InitialTraceParent: input.InitialTraceParent, Now: now,
 	})
 	if err != nil {
-		return CreateAgentResult{}, fmt.Errorf("%w: %v", ErrInvalidInput, err)
+		return service.replayAgentCreateAfterFailure(
+			ctx, input.RequestID, fingerprint, fmt.Errorf("%w: %v", ErrInvalidInput, err),
+		)
 	}
 	initial := ports.BeginAgentCreate{
 		Agent: ports.AgentRecord{
@@ -191,6 +215,47 @@ func (service *LifecycleService) CreateAgent(
 	}
 	_ = model
 	return service.convergeAgentCreate(ctx, state, fingerprint)
+}
+
+func (service *LifecycleService) replayAgentCreateAfterFailure(
+	ctx context.Context, requestID string, fingerprint string, cause error,
+) (CreateAgentResult, error) {
+	state, found, err := service.store.ReplayAgentCreate(ctx, requestID, fingerprint)
+	if err != nil {
+		return CreateAgentResult{}, fmt.Errorf(
+			"%w (replay Agent create after failure: %v)", cause, err,
+		)
+	}
+	if found {
+		return service.convergeAgentCreate(ctx, state, fingerprint)
+	}
+	return CreateAgentResult{}, cause
+}
+
+func (service *LifecycleService) requireActiveOwner(
+	ctx context.Context, organizationID string, ownerUserID string,
+) error {
+	if service.identities == nil {
+		return fmt.Errorf("%w: agent owner identity directory is not configured", ErrDependencyUnavailable)
+	}
+	principal, err := service.identities.ResolvePrincipal(ctx, organizationID, ownerUserID)
+	if err != nil {
+		if identityReferenceMissing(err) {
+			return fmt.Errorf("%w: Agent owner does not belong to the organization", ErrInvalidReference)
+		}
+		return fmt.Errorf("%w: resolve Agent owner", ErrDependencyUnavailable)
+	}
+	if principal.UserID != ownerUserID || principal.OrganizationID != organizationID ||
+		strings.TrimSpace(principal.MembershipID) == "" || !principal.Active {
+		return fmt.Errorf("%w: Agent owner is not an active organization member", ErrInvalidReference)
+	}
+	return nil
+}
+
+func identityReferenceMissing(err error) bool {
+	var failure *ports.DependencyError
+	return errors.As(err, &failure) && !failure.Retryable &&
+		(failure.Code == "not_found" || failure.Code == "inactive_principal")
 }
 
 func (service *LifecycleService) GetLifecycleOperation(

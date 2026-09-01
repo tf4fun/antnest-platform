@@ -5,6 +5,10 @@ import WebSocket from "ws";
 const acpUrl = required("ANTNEST_STAGE2_ACP_URL");
 const accessSubject = required("ANTNEST_STAGE2_AGENT_ACCESS_SUBJECT");
 const traceparent = required("ANTNEST_STAGE2_TRACEPARENT");
+const identityUrl = new URL(required("ANTNEST_STAGE2_IDENTITY_URL"));
+const organizationId = required("ANTNEST_STAGE2_ORGANIZATION_ID");
+const ownerUserId = required("ANTNEST_STAGE2_OWNER_USER_ID");
+const ownerMembershipId = required("ANTNEST_STAGE2_OWNER_MEMBERSHIP_ID");
 const updates = [];
 const idle = Promise.withResolvers();
 
@@ -56,8 +60,15 @@ try {
   if (text !== "Stage 2 Runtime Tool execution completed.") {
     throw new Error(`unexpected final Agent message: ${String(text)}`);
   }
+  await deactivateOwnerMembership();
+  const accessRevalidationCode = await expectPromptAccessDenied(created.sessionId);
   process.stdout.write(
-    `${JSON.stringify({ session_id: created.sessionId, update_kinds: updateKinds, message: text })}\n`,
+    `${JSON.stringify({
+      session_id: created.sessionId,
+      update_kinds: updateKinds,
+      message: text,
+      access_revalidation_code: accessRevalidationCode,
+    })}\n`,
   );
 } finally {
   connection.close();
@@ -76,4 +87,41 @@ function requireUpdate(kinds, expected) {
   if (!kinds.includes(expected)) {
     throw new Error(`ACP updates did not include ${expected}: ${kinds.join(",")}`);
   }
+}
+
+async function deactivateOwnerMembership() {
+  const response = await fetch(new URL("/rpc/identity/update-membership", identityUrl), {
+    method: "POST",
+    headers: { accept: "application/json", "content-type": "application/json" },
+    body: JSON.stringify({
+      request_id: "stage2-owner-deactivate",
+      actor_principal_id: ownerUserId,
+      organization_id: organizationId,
+      membership_id: ownerMembershipId,
+      email: "stage2-admin@example.com",
+      display_name: "Stage 2 Administrator",
+      role: "admin",
+      active: false,
+    }),
+  });
+  const payload = await response.json();
+  if (!response.ok || payload?.membership?.active !== false) {
+    throw new Error(`could not deactivate Stage 2 owner membership: ${JSON.stringify(payload)}`);
+  }
+}
+
+async function expectPromptAccessDenied(sessionId) {
+  try {
+    await connection.agent.request(acp.methods.agent.session.prompt, {
+      sessionId,
+      prompt: [{ type: "text", text: "This prompt must not be admitted." }],
+      _meta: { traceparent },
+    });
+  } catch (error) {
+    if (error?.data?.code === "access_denied" && error.data.retryable === false) {
+      return error.data.code;
+    }
+    throw error;
+  }
+  throw new Error("inactive owner prompt was admitted on an existing ACP connection");
 }

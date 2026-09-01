@@ -56,7 +56,7 @@ func TestMachineRunContractMatchesRegisteredBoundary(t *testing.T) {
 	t.Parallel()
 
 	contract := readMachineRunContract(t)
-	if contract.Revision != 7 || contract.SchemaDialect != draft202012Schema ||
+	if contract.Revision != 8 || contract.SchemaDialect != draft202012Schema ||
 		contract.BasePath != "/rpc/agent-controller" {
 		t.Fatalf("Run contract identity = %+v", contract)
 	}
@@ -222,6 +222,17 @@ func TestMachineRunContractValidatesActualHTTPErrorBoundary(t *testing.T) {
 	}
 	if len(seen) != len(contract.Error.StatusByCode) {
 		t.Fatalf("Run error boundary coverage=%v contract=%v", seen, contract.Error.StatusByCode)
+	}
+}
+
+func TestRunRequestFingerprintConflictUsesTheInvalidRequestContract(t *testing.T) {
+	t.Parallel()
+
+	contract := readMachineRunContract(t)
+	status, response := publicRunError(ports.ErrRequestConflict)
+	if status != contract.Error.StatusByCode["invalid_request"] ||
+		response.Code != "invalid_request" || response.Retryable {
+		t.Fatalf("request conflict status=%d response=%+v", status, response)
 	}
 }
 

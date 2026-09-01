@@ -14,6 +14,7 @@ func TestLoadRequiresDatabaseAndCanonicalEncryptionKey(t *testing.T) {
 		"ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY": base64.StdEncoding.EncodeToString(make([]byte, 32)),
 		"ANTNEST_RUNTIME_EGRESS_URL":              "http://runtime-egress:8081",
 		"ANTNEST_RUNTIME_CONTROLLER_URL":          "http://runtime-controller:8080",
+		"ANTNEST_IDENTITY_SERVICE_URL":            "http://identity-service:8080",
 	}
 	loaded, err := Load(func(key string) string { return values[key] })
 	if err != nil {
@@ -30,7 +31,8 @@ func TestLoadRequiresDatabaseAndCanonicalEncryptionKey(t *testing.T) {
 		t.Fatalf("defaults = %+v", loaded)
 	}
 	if loaded.RuntimeEgressURL != values["ANTNEST_RUNTIME_EGRESS_URL"] ||
-		loaded.RuntimeControllerURL != values["ANTNEST_RUNTIME_CONTROLLER_URL"] {
+		loaded.RuntimeControllerURL != values["ANTNEST_RUNTIME_CONTROLLER_URL"] ||
+		loaded.IdentityServiceURL != values["ANTNEST_IDENTITY_SERVICE_URL"] {
 		t.Fatalf("dependency URLs = %+v", loaded)
 	}
 	if len(loaded.EncryptionKey) != 32 {
@@ -51,6 +53,7 @@ func TestLoadRejectsInvalidEncryptionKeyAndDuration(t *testing.T) {
 		"ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY": "not-base64",
 		"ANTNEST_RUNTIME_EGRESS_URL":              "http://runtime-egress:8081",
 		"ANTNEST_RUNTIME_CONTROLLER_URL":          "http://runtime-controller:8080",
+		"ANTNEST_IDENTITY_SERVICE_URL":            "http://identity-service:8080",
 	}
 	if _, err := Load(func(key string) string { return values[key] }); err == nil {
 		t.Fatal("invalid encryption key was accepted")
@@ -84,5 +87,10 @@ func TestLoadRejectsInvalidEncryptionKeyAndDuration(t *testing.T) {
 	delete(values, "ANTNEST_RUNTIME_EGRESS_URL")
 	if _, err := Load(func(key string) string { return values[key] }); err == nil {
 		t.Fatal("missing Runtime Egress URL was accepted")
+	}
+	values["ANTNEST_RUNTIME_EGRESS_URL"] = "http://runtime-egress:8081"
+	delete(values, "ANTNEST_IDENTITY_SERVICE_URL")
+	if _, err := Load(func(key string) string { return values[key] }); err == nil {
+		t.Fatal("missing Identity Service URL was accepted")
 	}
 }

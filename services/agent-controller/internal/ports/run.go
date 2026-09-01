@@ -37,8 +37,14 @@ type PromptCapabilities struct {
 type AgentAccessResolution struct {
 	PrincipalID        string
 	AgentID            string
+	OrganizationID     string
 	AccessRevision     string
 	PromptCapabilities PromptCapabilities
+}
+
+type RunAuthorization struct {
+	OrganizationID string
+	OwnerUserID    string
 }
 
 type SkillInstruction struct {
@@ -163,6 +169,8 @@ type CredentialOpener interface {
 
 type RunStore interface {
 	ResolveAgentAccess(context.Context, string) (AgentAccessResolution, error)
+	ReplayRunAdmission(context.Context, string, string) (RunAdmissionRecord, bool, error)
+	ResolveRunAuthorization(context.Context, string, string, string) (RunAuthorization, error)
 	AcquireRun(context.Context, AcquireRunRecord) (RunAdmissionRecord, bool, error)
 	FinishRun(context.Context, FinishRunCommand) (FinishRunRecord, error)
 	GetAdmissionCredential(context.Context, string, string, time.Time) (AdmissionCredential, error)

@@ -335,6 +335,7 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 	clock := wallClock{}
 	lifecycle := application.NewLifecycleService(
 		repository, observedLifecycleStore, egress, runtime, clock,
+		application.WithIdentityDirectory(e2eIdentityDirectory{}),
 	)
 	handler, err := server.NewHandler(
 		application.NewCatalogService(repository, secretBox, clock),
@@ -693,6 +694,17 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 type wallClock struct{}
 
 func (wallClock) Now() time.Time { return time.Now().UTC() }
+
+type e2eIdentityDirectory struct{}
+
+func (e2eIdentityDirectory) ResolvePrincipal(
+	_ context.Context, organizationID, userID string,
+) (ports.IdentityPrincipal, error) {
+	return ports.IdentityPrincipal{
+		UserID: userID, OrganizationID: organizationID,
+		MembershipID: "agent-e2e-membership", Active: true,
+	}, nil
+}
 
 func assertLifecycleRecoveryTraceEvidence(t *testing.T, spans []sdktrace.ReadOnlySpan) {
 	t.Helper()

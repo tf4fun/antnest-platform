@@ -131,6 +131,18 @@ func (store *observedRunStoreStub) ResolveAgentAccess(
 	return ports.AgentAccessResolution{}, store.err
 }
 
+func (store *observedRunStoreStub) ReplayRunAdmission(
+	context.Context, string, string,
+) (ports.RunAdmissionRecord, bool, error) {
+	return ports.RunAdmissionRecord{}, false, store.err
+}
+
+func (store *observedRunStoreStub) ResolveRunAuthorization(
+	context.Context, string, string, string,
+) (ports.RunAuthorization, error) {
+	return ports.RunAuthorization{}, store.err
+}
+
 func (store *observedRunStoreStub) AcquireRun(
 	context.Context, ports.AcquireRunRecord,
 ) (ports.RunAdmissionRecord, bool, error) {

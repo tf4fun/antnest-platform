@@ -25,6 +25,20 @@ func (a *DirectoryAdapter) GetPrincipal(
 	})
 }
 
+func (a *DirectoryAdapter) ResolveOrganizationPrincipal(
+	ctx context.Context,
+	userID string,
+	organizationID string,
+) (domain.Principal, error) {
+	return observeRepositoryValue(
+		ctx,
+		"resolve_organization_principal",
+		func(ctx context.Context) (domain.Principal, error) {
+			return a.store.resolveOrganizationPrincipal(ctx, userID, organizationID)
+		},
+	)
+}
+
 func (a *DirectoryAdapter) CreateOrganization(
 	ctx context.Context,
 	command directory.CreateOrganizationCommand,

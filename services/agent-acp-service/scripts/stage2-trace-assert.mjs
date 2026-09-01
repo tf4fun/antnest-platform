@@ -11,11 +11,14 @@ const forbiddenValues = [
   "Create the Stage 2 acceptance evidence file.",
   "stage2-runtime-tool-ok",
   "stage2-evidence.txt",
+  "stage2-admin@example.com",
+  "stage2-admin-password",
+  "This prompt must not be admitted.",
 ];
 const forbiddenAttribute = /(?:^|[._])(prompt|secret|tool[._](?:arguments|result))(?:$|[._])/iu;
 
 const trace = await waitForTrace();
-const { processService, spanService, observedServices } = indexTrace(trace);
+const { processService, spanService, spanOperation, observedServices } = indexTrace(trace);
 
 for (const expected of expectation.services) {
   if (!observedServices.has(expected)) {
@@ -41,6 +44,18 @@ for (const [service, operations] of Object.entries(expectation.operations)) {
 for (const [parentService, childService] of expectation.edges) {
   if (!hasServiceEdge(parentService, childService)) {
     throw new Error(`${traceKind} trace lacks ${parentService} -> ${childService} parent edge`);
+  }
+}
+for (const edge of expectation.operationEdges) {
+  if (!hasOperationEdge(...edge)) {
+    throw new Error(`${traceKind} trace lacks operation edge ${edge.join("/")}`);
+  }
+}
+for (const chain of expectation.operationChains) {
+  if (!hasOperationChain(trace, processService, chain)) {
+    throw new Error(
+      `${traceKind} trace lacks operation chain ${chain.map((node) => node.join("/")).join(" -> ")}`,
+    );
   }
 }
 
@@ -73,6 +88,43 @@ function hasServiceEdge(parentService, childService) {
   });
 }
 
+function hasOperationEdge(parentService, parentOperation, childService, childOperation) {
+  return trace.spans.some((span) => {
+    if (
+      processService.get(span.processID) !== childService ||
+      span.operationName !== childOperation
+    ) {
+      return false;
+    }
+    return (span.references ?? []).some(
+      (reference) =>
+        reference.refType === "CHILD_OF" &&
+        spanService.get(reference.spanID) === parentService &&
+        spanOperation.get(reference.spanID) === parentOperation,
+    );
+  });
+}
+
+function hasOperationChain(candidateTrace, services, chain) {
+  const matches = (span, node) =>
+    services.get(span.processID) === node[0] && span.operationName === node[1];
+  const childrenOf = (parent) =>
+    candidateTrace.spans.filter((span) =>
+      (span.references ?? []).some(
+        (reference) => reference.refType === "CHILD_OF" && reference.spanID === parent.spanID,
+      ),
+    );
+  const follows = (span, index) => {
+    if (index === chain.length - 1) {
+      return true;
+    }
+    return childrenOf(span).some(
+      (child) => matches(child, chain[index + 1]) && follows(child, index + 1),
+    );
+  };
+  return candidateTrace.spans.some((span) => matches(span, chain[0]) && follows(span, 0));
+}
+
 async function waitForTrace() {
   const endpoint = new URL(`/api/traces/${traceId}`, jaegerUrl);
   let observedSpanCount = 0;
@@ -102,7 +154,7 @@ async function waitForTrace() {
 }
 
 function missingExpectations(trace) {
-  const { processService, spanService, observedServices } = indexTrace(trace);
+  const { processService, spanService, spanOperation, observedServices } = indexTrace(trace);
   const missing = expectation.services
     .filter((service) => !observedServices.has(service))
     .map((service) => `service ${service}`);
@@ -130,6 +182,34 @@ function missingExpectations(trace) {
       missing.push(`edge ${parentService}->${childService}`);
     }
   }
+  for (const [
+    parentService,
+    parentOperation,
+    childService,
+    childOperation,
+  ] of expectation.operationEdges) {
+    const found = trace.spans.some(
+      (span) =>
+        processService.get(span.processID) === childService &&
+        span.operationName === childOperation &&
+        (span.references ?? []).some(
+          (reference) =>
+            reference.refType === "CHILD_OF" &&
+            spanService.get(reference.spanID) === parentService &&
+            spanOperation.get(reference.spanID) === parentOperation,
+        ),
+    );
+    if (!found) {
+      missing.push(
+        `operation edge ${parentService}/${parentOperation}->${childService}/${childOperation}`,
+      );
+    }
+  }
+  for (const chain of expectation.operationChains) {
+    if (!hasOperationChain(trace, processService, chain)) {
+      missing.push(`operation chain ${chain.map((node) => node.join("/")).join("->")}`);
+    }
+  }
   return missing;
 }
 
@@ -142,6 +222,7 @@ function indexTrace(trace) {
     spanService: new Map(
       trace.spans.map((span) => [span.spanID, processService.get(span.processID)]),
     ),
+    spanOperation: new Map(trace.spans.map((span) => [span.spanID, span.operationName])),
     observedServices: new Set(processService.values()),
   };
 }
@@ -149,25 +230,55 @@ function indexTrace(trace) {
 function expectations() {
   return {
     lifecycle: {
-      services: ["agent-controller", "antnest-runtime-egress", "runtime-controller"],
+      services: [
+        "agent-controller",
+        "identity-service",
+        "antnest-runtime-egress",
+        "runtime-controller",
+      ],
       operations: {
         "agent-controller": [
           "HTTP POST /internal/agents",
+          "agent_controller.identity.resolve_principal",
           "agent_controller.egress.ensure_agent_network",
           "agent_controller.runtime.initialize",
         ],
+        "identity-service": ["HTTP POST /rpc/identity/resolve-principal"],
         "antnest-runtime-egress": ["egress.control"],
         "runtime-controller": ["runtime.lifecycle.initialize_runtime", "runtime.platform.create"],
       },
       edges: [
+        ["agent-controller", "identity-service"],
         ["agent-controller", "antnest-runtime-egress"],
         ["agent-controller", "runtime-controller"],
       ],
+      operationEdges: [
+        [
+          "agent-controller",
+          "HTTP POST /internal/agents",
+          "agent-controller",
+          "agent_controller.identity.resolve_principal",
+        ],
+        [
+          "agent-controller",
+          "agent_controller.identity.resolve_principal",
+          "identity-service",
+          "HTTP POST /rpc/identity/resolve-principal",
+        ],
+      ],
+      operationChains: [
+        [
+          ["agent-controller", "HTTP POST /internal/agents"],
+          ["agent-controller", "agent_controller.identity.resolve_principal"],
+          ["identity-service", "HTTP POST /rpc/identity/resolve-principal"],
+        ],
+      ],
     },
     execution: {
-      services: ["agent-acp-service", "agent-controller", "antnest-runtime"],
+      services: ["agent-acp-service", "agent-controller", "identity-service", "antnest-runtime"],
       operations: {
         "agent-acp-service": [
+          "agent_controller.resolve_agent_access",
           "acp.session.prompt",
           "agent.run",
           "agent_controller.acquire_run",
@@ -177,9 +288,12 @@ function expectations() {
           "agent_controller.finish_run",
         ],
         "agent-controller": [
+          "HTTP POST /rpc/agent-controller/resolve-agent-access",
+          "agent_controller.identity.resolve_principal",
           "HTTP POST /rpc/agent-controller/acquire-run",
           "HTTP POST /rpc/agent-controller/finish-run",
         ],
+        "identity-service": ["HTTP POST /rpc/identity/resolve-principal"],
         "antnest-runtime": [
           "runtime.http",
           "runtime.mcp.operation",
@@ -189,7 +303,42 @@ function expectations() {
       },
       edges: [
         ["agent-acp-service", "agent-controller"],
+        ["agent-controller", "identity-service"],
         ["agent-acp-service", "antnest-runtime"],
+      ],
+      operationEdges: [
+        [
+          "agent-acp-service",
+          "agent_controller.resolve_agent_access",
+          "agent-controller",
+          "HTTP POST /rpc/agent-controller/resolve-agent-access",
+        ],
+        [
+          "agent-controller",
+          "HTTP POST /rpc/agent-controller/resolve-agent-access",
+          "agent-controller",
+          "agent_controller.identity.resolve_principal",
+        ],
+        [
+          "agent-controller",
+          "agent_controller.identity.resolve_principal",
+          "identity-service",
+          "HTTP POST /rpc/identity/resolve-principal",
+        ],
+      ],
+      operationChains: [
+        [
+          ["agent-acp-service", "agent_controller.resolve_agent_access"],
+          ["agent-controller", "HTTP POST /rpc/agent-controller/resolve-agent-access"],
+          ["agent-controller", "agent_controller.identity.resolve_principal"],
+          ["identity-service", "HTTP POST /rpc/identity/resolve-principal"],
+        ],
+        [
+          ["agent-acp-service", "agent_controller.acquire_run"],
+          ["agent-controller", "HTTP POST /rpc/agent-controller/acquire-run"],
+          ["agent-controller", "agent_controller.identity.resolve_principal"],
+          ["identity-service", "HTTP POST /rpc/identity/resolve-principal"],
+        ],
       ],
     },
   };

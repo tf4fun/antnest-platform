@@ -106,12 +106,26 @@ Stage 2 exposes trusted-network JSON RPC for:
 - local password login;
 - resolving and revoking opaque access tokens;
 - listing the organization directory;
+- resolving one non-secret organization principal for another internal service;
 - issuing and revoking SCIM bearer tokens;
 - configuring OIDC Providers and starting login.
 
 Internal transport is trusted but domain authorization is not skipped. Admin
 mutations carry an `actor_principal_id`; Identity Service verifies system or
 organization administration itself.
+
+`resolve_principal` is the narrow service-to-service exception to the actor
+rule. It accepts an opaque `user_id` and `organization_id` and returns only the
+non-secret principal binding and its effective active state. This projection
+requires a real organization membership even for a system administrator, and
+its `active` value is the conjunction of active User, Membership, and
+Organization state. The broader administrator authorization projection remains
+separate. It does not expose
+email, display name, credentials, or directory enumeration. Agent Controller
+uses it to validate an Agent owner before initial creation and to revalidate the
+owner before resolving Agent access. A request already admitted before a
+concurrent Identity change keeps its immutable authorization snapshot; the next
+business request observes the new Identity state.
 
 ## OIDC Protocol
 

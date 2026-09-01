@@ -253,6 +253,33 @@ func (s *Store) getPrincipal(
 	return principal, nil
 }
 
+func (s *Store) resolveOrganizationPrincipal(
+	ctx context.Context,
+	userID string,
+	organizationID string,
+) (domain.Principal, error) {
+	var principal domain.Principal
+	var userActive, membershipActive, organizationActive bool
+	err := s.pool.QueryRow(ctx, `
+		SELECT u.id, o.id, m.id, u.system_role, m.role,
+		       u.active, m.active, o.active
+		FROM users u
+		JOIN organization_memberships m
+		  ON m.user_id = u.id AND m.organization_id = $2 AND m.scim_deleted_at IS NULL
+		JOIN organizations o ON o.id = m.organization_id
+		WHERE u.id = $1`, userID, organizationID,
+	).Scan(
+		&principal.UserID, &principal.OrganizationID, &principal.MembershipID,
+		&principal.SystemRole, &principal.OrganizationRole,
+		&userActive, &membershipActive, &organizationActive,
+	)
+	if err != nil {
+		return domain.Principal{}, normalizeError(err)
+	}
+	principal.Active = userActive && membershipActive && organizationActive
+	return principal, nil
+}
+
 func (s *Store) requireSystemAdmin(ctx context.Context, tx pgx.Tx, actorUserID string) error {
 	var role domain.SystemRole
 	var active bool

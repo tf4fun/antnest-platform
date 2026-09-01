@@ -1,6 +1,6 @@
 # Stage 2 Agent And ACP Architecture
 
-> Status: reviewed target design, pending implementation<br>
+> Status: implementation complete, integrated acceptance pending<br>
 > Updated: 2026-08-31<br>
 > Compatibility: greenfield service rewrite; no prototype wire or database
 > compatibility is retained<br>
@@ -127,6 +127,15 @@ until lifecycle publication creates a matching ExecutionRevision.
 
 Network policy is absent. Egress policy has an independent lifecycle and does
 not rebuild Runtime.
+
+Initial Agent creation resolves the opaque `(organization_id, owner_user_id)`
+pair through Identity Service and requires one active organization membership.
+Agent access resolution repeats that check before ACP work. No user profile is
+copied and no cross-service database relation is introduced. Authorization is
+snapshot-based: new Run admission revalidates Identity and then freezes its
+local authorization facts. A request admitted before a concurrent Identity
+change may finish, while the next new request observes the changed principal
+state. Retrying that already admitted request ID returns its original snapshot.
 
 ### 3.3 Runtime Environment binding
 
@@ -1080,18 +1089,21 @@ Runtime Controller proxy into the Tool data path merely to manufacture one
 four-service trace:
 
 1. the lifecycle trace starts at `POST /internal/agents` and contains Agent
-   Controller, Runtime Egress control RPC, and Runtime Controller spans through
-   Runtime readiness and atomic Agent publication;
+   Controller, Identity Service owner resolution, Runtime Egress control RPC,
+   and Runtime Controller spans through Runtime readiness and atomic Agent
+   publication;
 2. the execution trace starts at the ACP WebSocket connection and contains ACP
-   Session/Run spans, Agent Controller access and Run-admission RPC spans, model
-   spans, and Runtime MCP list/call spans.
+   Session/Run spans, Agent Controller access and Run-admission RPC spans,
+   Identity Service owner revalidation, model spans, and Runtime MCP list/call
+   spans.
 
 Together the traces must contain `agent-controller`, `runtime-controller`,
-`agent-acp-service`, and `antnest-runtime`. Parent/child continuity is required
-inside each business operation. Runtime Egress packet forwarding is excluded
-from tracing; only its control RPC is observable. The acceptance must also
-assert that no Provider secret, prompt text, Tool arguments, Tool results, or
-workspace file content appears in exported span attributes.
+`identity-service`, `agent-acp-service`, and `antnest-runtime`. Parent/child
+continuity is required inside each business operation. Runtime Egress packet
+forwarding is excluded from tracing; only its control RPC is observable. The
+acceptance must also assert that no Provider secret, prompt text, Tool
+arguments, Tool results, or workspace file content appears in exported span
+attributes.
 
 The deterministic acceptance conversation asks the model to call Runtime
 `write`, verifies the resulting file in the Agent workspace, observes Tool and

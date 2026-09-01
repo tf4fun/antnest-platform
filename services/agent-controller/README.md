@@ -6,10 +6,11 @@ executable Agent by coordinating Runtime Controller and Runtime Egress.
 
 ## Status
 
-Stage 2B implementation is in progress. The runnable slices provide
+The Stage 2B service surface is implemented. The runnable slices provide
 ModelProfile and Template Catalog RPC plus Agent create, rebuild, disable,
 enable, and delete. Create freezes an exact Template/Model graph and publishes only after
-Runtime readiness. Rebuild replaces the Runtime behind a durable network
+validating the active owner binding through Identity Service and proving Runtime
+readiness. Rebuild replaces the Runtime behind a durable network
 barrier. Disable retains the workspace and captures the previous Egress policy;
 Enable creates a new Execution revision and restores only that captured policy
 after Runtime readiness. Delete removes Runtime compute and workspace, releases
@@ -19,7 +20,9 @@ snapshot, scopes Provider credential access, and seals terminal Tool-effect
 facts. Current Agent projection queries and authoritative event replay/watch
 routes are runnable. A supervised PostgreSQL-leased recovery worker resumes
 stale running lifecycle operations, fences overlapping attempts, and emits a
-new trace linked to the original request and previous recovery attempt.
+new trace linked to the original request and previous recovery attempt. Full
+Stage 2 integrated Docker and Jaeger acceptance is tracked separately from this
+service-local implementation status.
 
 ## Owns
 
@@ -55,6 +58,7 @@ state.
   [`../../contracts/agent-controller/run-api.md`](../../contracts/agent-controller/run-api.md);
 - Runtime lifecycle dependency: Runtime Controller internal control API;
 - network lifecycle dependency: Runtime Egress control API.
+- owner-binding dependency: Identity Service `resolve_principal` internal RPC.
 
 All interfaces are trusted internal JSON-over-HTTP RPC. Authentication belongs
 to the future Edge Gateway. Organization ownership, owner-user binding, and

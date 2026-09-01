@@ -16,10 +16,14 @@ func TestResolveAgentAccessReturnsOnlyActiveBindingFacts(t *testing.T) {
 	t.Parallel()
 
 	store := &runStoreStub{access: ports.AgentAccessResolution{
-		PrincipalID: "user-1", AgentID: "agent-1", AccessRevision: "access-1",
+		PrincipalID: "user-1", AgentID: "agent-1", OrganizationID: "org-1",
+		AccessRevision:     "access-1",
 		PromptCapabilities: ports.PromptCapabilities{Image: true},
 	}}
-	service := NewRunService(store, &credentialOpenerStub{}, fixedClock{}, time.Minute)
+	service := NewRunService(
+		store, &credentialOpenerStub{}, fixedClock{}, time.Minute,
+		WithRunIdentityDirectory(activeIdentityDirectory()),
+	)
 	result, err := service.ResolveAgentAccess(context.Background(), ResolveAgentAccessInput{
 		RequestID: "request-access-1", AgentAccessSubject: "subject-1",
 	})
@@ -35,6 +39,55 @@ func TestResolveAgentAccessReturnsOnlyActiveBindingFacts(t *testing.T) {
 	}
 }
 
+func TestResolveAgentAccessFailsClosedForInactiveOrUnavailableOwner(t *testing.T) {
+	t.Parallel()
+
+	access := ports.AgentAccessResolution{
+		PrincipalID: "user-1", AgentID: "agent-1", OrganizationID: "org-1",
+		AccessRevision: "access-1",
+	}
+	for _, test := range []struct {
+		name       string
+		identities *identityDirectoryStub
+		want       error
+	}{
+		{
+			name: "inactive",
+			identities: &identityDirectoryStub{principal: ports.IdentityPrincipal{
+				UserID: "user-1", OrganizationID: "org-1", MembershipID: "membership-1", Active: false,
+			}},
+			want: ErrAccessDenied,
+		},
+		{
+			name: "dependency",
+			identities: &identityDirectoryStub{err: &ports.DependencyError{
+				Service: "identity", Code: "dependency_unavailable", Retryable: true,
+			}},
+			want: ErrDependencyUnavailable,
+		},
+		{name: "missing dependency", identities: nil, want: ErrDependencyUnavailable},
+	} {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			var options []RunServiceOption
+			if test.identities != nil {
+				options = append(options, WithRunIdentityDirectory(test.identities))
+			}
+			service := NewRunService(
+				&runStoreStub{access: access}, &credentialOpenerStub{}, fixedClock{}, time.Minute,
+				options...,
+			)
+			_, err := service.ResolveAgentAccess(context.Background(), ResolveAgentAccessInput{
+				RequestID: "request-access", AgentAccessSubject: "subject-1",
+			})
+			if !errors.Is(err, test.want) {
+				t.Fatalf("ResolveAgentAccess error = %v, want %v", err, test.want)
+			}
+		})
+	}
+}
+
 func TestAcquireRunCreatesBoundedImmutableSnapshotRequest(t *testing.T) {
 	t.Parallel()
 
@@ -44,8 +97,12 @@ func TestAcquireRunCreatesBoundedImmutableSnapshotRequest(t *testing.T) {
 		AdmissionID: "admission-1", AgentID: "agent-1", PrincipalID: "user-1",
 		AccessRevision: "access-1", SessionID: "session-1", State: domain.AdmissionActive,
 		Deadline: now.Add(30 * time.Minute), RuntimeRevision: "runtime-1", Snapshot: snapshot,
-	}}
-	service := NewRunService(store, &credentialOpenerStub{}, fixedClock{now: now}, 30*time.Minute)
+	}, authorization: ports.RunAuthorization{OrganizationID: "org-1", OwnerUserID: "user-1"}}
+	identities := activeIdentityDirectory()
+	service := NewRunService(
+		store, &credentialOpenerStub{}, fixedClock{now: now}, 30*time.Minute,
+		WithRunIdentityDirectory(identities),
+	)
 	result, err := service.AcquireRun(context.Background(), AcquireRunInput{
 		RequestID: "request-run-1", AgentID: "agent-1", PrincipalID: "user-1",
 		ExpectedAccessRevision: "access-1", SessionID: "session-1",
@@ -54,13 +111,60 @@ func TestAcquireRunCreatesBoundedImmutableSnapshotRequest(t *testing.T) {
 		t.Fatalf("acquire Run: %v", err)
 	}
 	if store.acquire.AdmissionID == "" || store.acquire.RequestFingerprint == "" ||
-		!store.acquire.Deadline.Equal(now.Add(30*time.Minute)) {
+		!store.acquire.Deadline.Equal(now.Add(30*time.Minute)) || identities.calls != 1 {
 		t.Fatalf("acquire command = %+v", store.acquire)
 	}
 	if result.AdmissionID != "admission-1" ||
 		result.AgentExecutionSpecDigest != snapshot.AgentExecutionSpecDigest ||
 		len(result.ExecutionSpec.SkillInstructions) != 0 {
 		t.Fatalf("acquire result = %+v", result)
+	}
+}
+
+func TestAcquireRunRequiresCurrentIdentityOnlyForANewAdmission(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name       string
+		identities *identityDirectoryStub
+		want       error
+	}{
+		{
+			name: "inactive owner",
+			identities: &identityDirectoryStub{principal: ports.IdentityPrincipal{
+				UserID: "user-1", OrganizationID: "org-1", MembershipID: "membership-1",
+			}},
+			want: ErrAccessDenied,
+		},
+		{
+			name: "Identity unavailable",
+			identities: &identityDirectoryStub{err: &ports.DependencyError{
+				Service: "identity", Code: "internal_error", Retryable: true,
+			}},
+			want: ErrDependencyUnavailable,
+		},
+	} {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			store := &runStoreStub{authorization: ports.RunAuthorization{
+				OrganizationID: "org-1", OwnerUserID: "user-1",
+			}}
+			service := NewRunService(
+				store, &credentialOpenerStub{}, fixedClock{}, time.Minute,
+				WithRunIdentityDirectory(test.identities),
+			)
+			_, err := service.AcquireRun(context.Background(), AcquireRunInput{
+				RequestID: "request-run-denied", AgentID: "agent-1", PrincipalID: "user-1",
+				ExpectedAccessRevision: "access-1", SessionID: "session-1",
+			})
+			if !errors.Is(err, test.want) {
+				t.Fatalf("AcquireRun error=%v want=%v", err, test.want)
+			}
+			if store.acquire.AdmissionID != "" {
+				t.Fatalf("denied Run persisted admission: %+v", store.acquire)
+			}
+		})
 	}
 }
 
@@ -77,6 +181,7 @@ func TestAcquireRunMapsCoordinationFailures(t *testing.T) {
 		{name: "lifecycle", from: ports.ErrAgentRebuilding, want: ErrAgentRebuilding},
 		{name: "build", from: ports.ErrAgentBuildFailed, want: ErrAgentBuildFailed},
 		{name: "not ready", from: ports.ErrAgentNotReady, want: ErrAgentNotReady},
+		{name: "request fingerprint", from: ports.ErrRequestConflict, want: ErrInvalidInput},
 	}
 	for _, testCase := range testCases {
 		testCase := testCase
@@ -114,6 +219,42 @@ func TestAcquireRunReplaysOriginalSnapshotAfterAdmissionRelease(t *testing.T) {
 	}
 }
 
+func TestAcquireRunReplaysConcurrentAdmissionAfterIdentityFailure(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1075, 0).UTC()
+	store := &runStoreStub{
+		replayOnCall: 2,
+		authorization: ports.RunAuthorization{
+			OrganizationID: "org-1", OwnerUserID: "user-1",
+		},
+		admission: ports.RunAdmissionRecord{
+			AdmissionID: "admission-1", AgentID: "agent-1", PrincipalID: "user-1",
+			AccessRevision: "access-1", SessionID: "session-1", State: domain.AdmissionActive,
+			Deadline: now.Add(time.Minute), RuntimeRevision: "runtime-1", Snapshot: validRunSnapshot(),
+		},
+	}
+	identities := &identityDirectoryStub{err: errors.New("identity unavailable")}
+	service := NewRunService(
+		store, &credentialOpenerStub{}, fixedClock{now: now}, time.Minute,
+		WithRunIdentityDirectory(identities),
+	)
+
+	result, err := service.AcquireRun(context.Background(), AcquireRunInput{
+		RequestID: "request-run-replay", AgentID: "agent-1", PrincipalID: "user-1",
+		ExpectedAccessRevision: "access-1", SessionID: "session-1",
+	})
+	if err != nil {
+		t.Fatalf("replay concurrently persisted Run admission: %v", err)
+	}
+	if result.AdmissionID != "admission-1" || store.replayCalls != 2 {
+		t.Fatalf("concurrent admission was not replayed: result=%+v calls=%d", result, store.replayCalls)
+	}
+	if store.acquire.AdmissionID != "" || identities.calls != 1 {
+		t.Fatalf("unexpected second admission or Identity calls: acquire=%+v calls=%d", store.acquire, identities.calls)
+	}
+}
+
 func TestFinishRunValidatesClosedUnionAndPreservesUnknownEffect(t *testing.T) {
 	t.Parallel()
 
@@ -121,7 +262,11 @@ func TestFinishRunValidatesClosedUnionAndPreservesUnknownEffect(t *testing.T) {
 	store := &runStoreStub{finished: ports.FinishRunRecord{
 		Status: "finished", AdmissionState: domain.AdmissionBlockedUnknownEffect,
 	}}
-	service := NewRunService(store, &credentialOpenerStub{}, fixedClock{now: now}, time.Minute)
+	identities := &identityDirectoryStub{err: errors.New("Identity state changed after admission")}
+	service := NewRunService(
+		store, &credentialOpenerStub{}, fixedClock{now: now}, time.Minute,
+		WithRunIdentityDirectory(identities),
+	)
 	result, err := service.FinishRun(context.Background(), FinishRunInput{
 		RequestID: "request-finish-1", AdmissionID: "admission-1",
 		TerminalClass: domain.TerminalUnresolved, ToolEffectState: domain.ToolEffectUnknown,
@@ -170,6 +315,9 @@ func TestFinishRunValidatesClosedUnionAndPreservesUnknownEffect(t *testing.T) {
 	if err != nil || store.finish.Event != nil {
 		t.Fatalf("completed Run emitted lifecycle release event: command=%+v err=%v", store.finish, err)
 	}
+	if identities.calls != 0 {
+		t.Fatalf("FinishRun revalidated an already admitted authorization snapshot %d times", identities.calls)
+	}
 }
 
 func TestResolveCredentialOpensOnlyStoreAuthorizedSecret(t *testing.T) {
@@ -209,6 +357,9 @@ type runStoreStub struct {
 	credential    ports.AdmissionCredential
 	credentialAt  time.Time
 	replayed      bool
+	replayCalls   int
+	replayOnCall  int
+	authorization ports.RunAuthorization
 	err           error
 }
 
@@ -219,11 +370,27 @@ func (store *runStoreStub) ResolveAgentAccess(
 	return store.access, store.err
 }
 
+func (store *runStoreStub) ReplayRunAdmission(
+	_ context.Context, _ string, _ string,
+) (ports.RunAdmissionRecord, bool, error) {
+	store.replayCalls++
+	if store.replayed || store.replayOnCall > 0 && store.replayCalls >= store.replayOnCall {
+		return store.admission, true, store.err
+	}
+	return ports.RunAdmissionRecord{}, false, nil
+}
+
+func (store *runStoreStub) ResolveRunAuthorization(
+	_ context.Context, _ string, _ string, _ string,
+) (ports.RunAuthorization, error) {
+	return store.authorization, store.err
+}
+
 func (store *runStoreStub) AcquireRun(
 	_ context.Context, input ports.AcquireRunRecord,
 ) (ports.RunAdmissionRecord, bool, error) {
 	store.acquire = input
-	return store.admission, store.replayed, store.err
+	return store.admission, false, store.err
 }
 
 func (store *runStoreStub) FinishRun(

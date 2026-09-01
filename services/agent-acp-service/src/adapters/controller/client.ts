@@ -14,11 +14,14 @@ import type {
 import {
   AGENT_CONTROLLER_ERROR_CODES,
   AgentControllerError,
+  type AgentControllerErrorCode,
 } from "../../ports/agent-controller.js";
 
 export { AgentControllerError } from "../../ports/agent-controller.js";
 
 type FetchFn = (input: URL, init: RequestInit) => Promise<Response>;
+
+const maximumResponseBytes = 1_048_576;
 
 export type AgentControllerClientOptions = {
   baseUrl: URL;
@@ -40,6 +43,23 @@ const errorSchema = z
   })
   .strict();
 
+const errorContract: Record<
+  AgentControllerErrorCode,
+  { readonly status: number; readonly retryable: boolean }
+> = {
+  access_denied: { status: 403, retryable: false },
+  agent_not_found: { status: 404, retryable: false },
+  agent_busy: { status: 409, retryable: true },
+  agent_rebuilding: { status: 409, retryable: true },
+  agent_build_failed: { status: 409, retryable: false },
+  agent_not_ready: { status: 409, retryable: true },
+  admission_not_found: { status: 404, retryable: false },
+  credential_not_allowed: { status: 403, retryable: false },
+  invalid_request: { status: 400, retryable: false },
+  dependency_unavailable: { status: 503, retryable: true },
+  internal_error: { status: 500, retryable: true },
+};
+
 const statusSchema = z.object({ status: z.literal("ready") }).strict();
 
 const accessSchema = z
@@ -49,11 +69,10 @@ const accessSchema = z
     access_revision: z.string().min(1),
     prompt_capabilities: z
       .object({
-        image: z.boolean().default(false),
-        embedded_context: z.boolean().default(false),
+        image: z.boolean(),
+        embedded_context: z.boolean(),
       })
-      .strict()
-      .default({ image: false, embedded_context: false }),
+      .strict(),
   })
   .strict();
 
@@ -77,17 +96,15 @@ const acquireSchema = z
       .object({
         system_prompt: z.string(),
         context_policy_version: z.literal("context-v1"),
-        skill_instructions: z
-          .array(
-            z
-              .object({
-                skill_key: z.string().min(1),
-                version: z.string().min(1),
-                instructions: z.string(),
-              })
-              .strict(),
-          )
-          .default([]),
+        skill_instructions: z.array(
+          z
+            .object({
+              skill_key: z.string().min(1),
+              version: z.string().min(1),
+              instructions: z.string(),
+            })
+            .strict(),
+        ),
         model: z
           .object({
             base_url: z.url(),
@@ -95,7 +112,7 @@ const acquireSchema = z
             context_window: z.number().int().min(1024),
             max_output_tokens: z.number().int().positive(),
             temperature: z.number().min(0).max(2).optional(),
-            supports_images: z.boolean().default(false),
+            supports_images: z.boolean(),
           })
           .strict(),
         max_model_requests: z.number().int().min(1).max(128),
@@ -132,6 +149,7 @@ export async function requireAgentControllerReady(
     response = await fetchFn(new URL("status", options.serviceUrl), {
       method: "GET",
       headers: propagatedHeaders(false),
+      redirect: "error",
       signal: requestSignal,
     });
   } catch (error) {
@@ -280,6 +298,7 @@ export class AgentControllerClient implements AgentControllerPort {
         method: "POST",
         headers,
         body: JSON.stringify(body),
+        redirect: "error",
         signal: requestSignal,
       });
     } catch (error) {
@@ -296,18 +315,18 @@ export class AgentControllerClient implements AgentControllerPort {
     const payload = await readJson(response);
     if (response.status !== 200) {
       const parsed = errorSchema.safeParse(payload);
-      if (parsed.success) {
+      if (
+        parsed.success &&
+        errorContract[parsed.data.code].status === response.status &&
+        errorContract[parsed.data.code].retryable === parsed.data.retryable
+      ) {
         throw new AgentControllerError(
           parsed.data.code,
           parsed.data.message,
           parsed.data.retryable,
         );
       }
-      throw new AgentControllerError(
-        "dependency_unavailable",
-        `Agent Controller returned HTTP ${response.status}`,
-        response.status >= 500,
-      );
+      throw dependencyUnavailable(`Agent Controller returned invalid HTTP ${response.status}`);
     }
     const parsed = schema.safeParse(payload);
     if (!parsed.success) {
@@ -324,7 +343,34 @@ export class AgentControllerClient implements AgentControllerPort {
 
 async function readJson(response: Response): Promise<unknown> {
   try {
-    return await response.json();
+    const declaredLength = response.headers.get("content-length");
+    if (declaredLength !== null && Number(declaredLength) > maximumResponseBytes) {
+      throw new Error("response exceeds the maximum size");
+    }
+    if (response.body === null) {
+      throw new Error("response has no body");
+    }
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let length = 0;
+    let read = await reader.read();
+    while (!read.done) {
+      const { value } = read;
+      length += value.byteLength;
+      if (length > maximumResponseBytes) {
+        await reader.cancel().catch(() => undefined);
+        throw new Error("response exceeds the maximum size");
+      }
+      chunks.push(value);
+      read = await reader.read();
+    }
+    const body = new Uint8Array(length);
+    let offset = 0;
+    for (const chunk of chunks) {
+      body.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body)) as unknown;
   } catch (error) {
     throw dependencyUnavailable("Agent Controller returned a non-JSON response", error);
   }

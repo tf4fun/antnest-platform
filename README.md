@@ -11,7 +11,7 @@ than around one shared application package.
 | Antnest Runtime    | Executes one Agent's process and filesystem operations and transports Agent packets                                               | Implemented and aligned with Egress    |
 | Runtime Egress     | Rust service owning Agent addresses, network policy, UDP/TUN forwarding, rejection, and address reuse                             | Implemented and accepted with Runtime  |
 | Runtime Controller | Logical Runtime Environment lifecycle, private deployment realization, and platform observation with an in-process Docker adapter | Implemented and accepted for Docker    |
-| Agent Controller   | Owns Agent lifecycle, immutable configuration/execution revisions, explicit Runtime rebuild, Run admission, and Agent events      | Future service                         |
+| Agent Controller   | Owns Agent lifecycle, immutable configuration/execution revisions, explicit Runtime rebuild, Run admission, and Agent events      | Implemented; integrated acceptance pending |
 | Agent ACP Service  | Owns ACP v1/v2 Sessions, Runs, context, model/Tool loop, and per-Run Runtime MCP calls                                            | Implemented for Stage 2                |
 | Identity Service   | Owns Organizations, Users, local login, OIDC, SCIM, credentials, and the directory journal                                        | Implemented for Stage 2                |
 | Contracts          | Language-neutral Runtime, Egress, Agent Controller, ACP, and Identity contracts                                                   | Evolving with each rewritten component |
@@ -29,11 +29,11 @@ for the future Agent Controller and Agent ACP Service.
 ## Current Integration Status
 
 The Rust Runtime, Runtime Egress, and thin Go Runtime Controller are implemented
-and accepted together. Stage 2 adds the independently deployable Agent ACP and
-Identity services; Agent Controller remains the missing lifecycle authority
-needed to connect those services into the complete Agent creation path. Stage
-1 and completed Stage 2 services have isolated PostgreSQL and protocol
-acceptance paths; this is not yet an end-user quick start.
+and accepted together. Stage 2 adds independently deployable Agent ACP,
+Identity, and Agent Controller services. Their contracts and cross-service
+implementation now connect Identity-backed Agent creation, lifecycle, Run
+admission, ACP execution, Runtime MCP, and Agent events. Full disposable-stack
+and Jaeger acceptance remains pending; this is not yet an end-user quick start.
 
 ## Repository Commands
 
@@ -51,3 +51,17 @@ make test-identity-postgres   # Identity persistence, OIDC, and SCIM acceptance
 
 Use the service-local README before changing a component. It states what that
 component owns, what it must not own, and which narrower command validates it.
+
+## Test Resource Hygiene
+
+Container-backed verification must run serially and clean up resources created
+only for that verification when it finishes or is interrupted. After each run,
+check for residual test containers and stop or remove the ones that are no
+longer needed; remove volumes only when they belong to a disposable test
+project. Repository E2E scripts must keep cleanup traps for both success and
+failure paths.
+
+Periodic CPU spikes have been observed in otherwise idle containers after test
+runs. The root cause is not yet established. Until it is diagnosed, treat
+post-test container inspection and cleanup as part of verification rather than
+leaving an idle test stack running indefinitely.

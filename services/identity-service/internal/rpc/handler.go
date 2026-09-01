@@ -26,6 +26,7 @@ var ContractRoutes = map[string]string{
 	"update_membership":           "/rpc/identity/update-membership",
 	"set_user_active":             "/rpc/identity/set-user-active",
 	"list_directory":              "/rpc/identity/list-directory",
+	"resolve_principal":           "/rpc/identity/resolve-principal",
 	"local_login":                 "/rpc/identity/local-login",
 	"resolve_access_token":        "/rpc/identity/resolve-access-token",
 	"revoke_access_token":         "/rpc/identity/revoke-access-token",
@@ -45,6 +46,7 @@ type DirectoryService interface {
 	UpdateMembership(context.Context, directory.UpdateMembershipInput) (domain.OrganizationMembership, error)
 	SetUserActive(context.Context, directory.SetUserActiveInput) error
 	List(context.Context, string, string) (directory.Directory, error)
+	ResolvePrincipal(context.Context, string, string) (domain.Principal, error)
 }
 
 type LocalAuthService interface {
@@ -91,6 +93,7 @@ func NewHandler(dependencies Dependencies) (*Handler, error) {
 	handler.mux.HandleFunc("POST /rpc/identity/update-membership", handler.updateMembership)
 	handler.mux.HandleFunc("POST /rpc/identity/set-user-active", handler.setUserActive)
 	handler.mux.HandleFunc("POST /rpc/identity/list-directory", handler.listDirectory)
+	handler.mux.HandleFunc("POST /rpc/identity/resolve-principal", handler.resolvePrincipal)
 	handler.mux.HandleFunc("POST /rpc/identity/local-login", handler.localLogin)
 	handler.mux.HandleFunc("POST /rpc/identity/resolve-access-token", handler.resolveAccessToken)
 	handler.mux.HandleFunc("POST /rpc/identity/revoke-access-token", handler.revokeAccessToken)
@@ -120,7 +123,8 @@ type createOrganizationRequest struct {
 func (h *Handler) createOrganization(response http.ResponseWriter, request *http.Request) {
 	var body createOrganizationRequest
 	if !decodeRequest(response, request, &body) ||
-		!require(response, body.RequestID, body.ActorPrincipalID, body.OwnerEmail, body.OwnerDisplayName) {
+		!require(response, body.OwnerEmail, body.OwnerDisplayName) ||
+		!requireIDs(response, body.RequestID, body.ActorPrincipalID) {
 		return
 	}
 	organization, err := h.dependencies.Directory.CreateOrganization(request.Context(), directory.CreateOrganizationInput{
@@ -143,7 +147,7 @@ type createLocalUserRequest struct {
 func (h *Handler) createLocalUser(response http.ResponseWriter, request *http.Request) {
 	var body createLocalUserRequest
 	if !decodeRequest(response, request, &body) ||
-		!require(response, body.RequestID, body.ActorPrincipalID, body.OrganizationID) {
+		!requireIDs(response, body.RequestID, body.ActorPrincipalID, body.OrganizationID) {
 		return
 	}
 	result, err := h.dependencies.Directory.CreateLocalUser(request.Context(), directory.CreateLocalUserInput{
@@ -167,13 +171,9 @@ func (h *Handler) addOrganizationMembership(response http.ResponseWriter, reques
 	var body addOrganizationMembershipRequest
 	if !decodeRequest(response, request, &body) || !require(
 		response,
-		body.RequestID,
-		body.ActorPrincipalID,
-		body.OrganizationID,
-		body.UserID,
 		body.Email,
 		body.DisplayName,
-	) {
+	) || !requireIDs(response, body.RequestID, body.ActorPrincipalID, body.OrganizationID, body.UserID) {
 		return
 	}
 	membership, err := h.dependencies.Directory.AddOrganizationMembership(
@@ -197,14 +197,9 @@ type changeLocalPasswordRequest struct {
 
 func (h *Handler) changeLocalPassword(response http.ResponseWriter, request *http.Request) {
 	var body changeLocalPasswordRequest
-	if !decodeRequest(response, request, &body) || !require(
-		response,
-		body.RequestID,
-		body.ActorPrincipalID,
-		body.UserID,
-		body.CurrentPassword,
-		body.NewPassword,
-	) {
+	if !decodeRequest(response, request, &body) ||
+		!require(response, body.CurrentPassword, body.NewPassword) ||
+		!requireIDs(response, body.RequestID, body.ActorPrincipalID, body.UserID) {
 		return
 	}
 	err := h.dependencies.Directory.ChangeLocalPassword(request.Context(), directory.ChangeLocalPasswordInput{
@@ -229,12 +224,10 @@ func (h *Handler) updateMembership(response http.ResponseWriter, request *http.R
 	var body updateMembershipRequest
 	if !decodeRequest(response, request, &body) || !require(
 		response,
-		body.RequestID,
-		body.ActorPrincipalID,
-		body.OrganizationID,
-		body.MembershipID,
 		body.Email,
 		body.DisplayName,
+	) || !requireIDs(
+		response, body.RequestID, body.ActorPrincipalID, body.OrganizationID, body.MembershipID,
 	) {
 		return
 	}
@@ -260,7 +253,7 @@ type setUserActiveRequest struct {
 func (h *Handler) setUserActive(response http.ResponseWriter, request *http.Request) {
 	var body setUserActiveRequest
 	if !decodeRequest(response, request, &body) ||
-		!require(response, body.RequestID, body.ActorPrincipalID, body.UserID) {
+		!requireIDs(response, body.RequestID, body.ActorPrincipalID, body.UserID) {
 		return
 	}
 	if body.Active == nil {
@@ -281,11 +274,39 @@ type directoryRequest struct {
 
 func (h *Handler) listDirectory(response http.ResponseWriter, request *http.Request) {
 	var body directoryRequest
-	if !decodeRequest(response, request, &body) || !require(response, body.ActorPrincipalID, body.OrganizationID) {
+	if !decodeRequest(response, request, &body) ||
+		!requireIDs(response, body.ActorPrincipalID, body.OrganizationID) {
 		return
 	}
 	result, err := h.dependencies.Directory.List(request.Context(), body.ActorPrincipalID, body.OrganizationID)
 	writeResult(response, result, err)
+}
+
+type resolvePrincipalRequest struct {
+	UserID         string `json:"user_id"`
+	OrganizationID string `json:"organization_id"`
+}
+
+type organizationPrincipalBinding struct {
+	UserID         string `json:"user_id"`
+	OrganizationID string `json:"organization_id"`
+	MembershipID   string `json:"membership_id"`
+	Active         bool   `json:"active"`
+}
+
+func (h *Handler) resolvePrincipal(response http.ResponseWriter, request *http.Request) {
+	var body resolvePrincipalRequest
+	if !decodeRequest(response, request, &body) ||
+		!requireIDs(response, body.UserID, body.OrganizationID) {
+		return
+	}
+	principal, err := h.dependencies.Directory.ResolvePrincipal(
+		request.Context(), body.UserID, body.OrganizationID,
+	)
+	writeResult(response, map[string]any{"principal": organizationPrincipalBinding{
+		UserID: principal.UserID, OrganizationID: principal.OrganizationID,
+		MembershipID: principal.MembershipID, Active: principal.Active,
+	}}, err)
 }
 
 type localLoginRequest struct {
@@ -297,7 +318,9 @@ type localLoginRequest struct {
 
 func (h *Handler) localLogin(response http.ResponseWriter, request *http.Request) {
 	var body localLoginRequest
-	if !decodeRequest(response, request, &body) || !require(response, body.RequestID, body.OrganizationSlug, body.Email, body.Password) {
+	if !decodeRequest(response, request, &body) ||
+		!require(response, body.OrganizationSlug, body.Email, body.Password) ||
+		!requireIDs(response, body.RequestID) {
 		return
 	}
 	result, err := h.dependencies.LocalAuth.Login(request.Context(), localauth.LoginInput{
@@ -327,7 +350,8 @@ type revokeTokenRequest struct {
 
 func (h *Handler) revokeAccessToken(response http.ResponseWriter, request *http.Request) {
 	var body revokeTokenRequest
-	if !decodeRequest(response, request, &body) || !require(response, body.ActorPrincipalID, body.TokenID) {
+	if !decodeRequest(response, request, &body) ||
+		!requireIDs(response, body.ActorPrincipalID, body.TokenID) {
 		return
 	}
 	err := h.dependencies.LocalAuth.Revoke(request.Context(), body.ActorPrincipalID, body.TokenID)
@@ -345,7 +369,8 @@ type issueSCIMTokenRequest struct {
 func (h *Handler) issueSCIMToken(response http.ResponseWriter, request *http.Request) {
 	var body issueSCIMTokenRequest
 	if !decodeRequest(response, request, &body) ||
-		!require(response, body.RequestID, body.ActorPrincipalID, body.OrganizationID, body.Name) {
+		!require(response, body.Name) ||
+		!requireIDs(response, body.RequestID, body.ActorPrincipalID, body.OrganizationID) {
 		return
 	}
 	result, err := h.dependencies.SCIM.IssueToken(request.Context(), scim.IssueTokenInput{
@@ -357,7 +382,8 @@ func (h *Handler) issueSCIMToken(response http.ResponseWriter, request *http.Req
 
 func (h *Handler) revokeSCIMToken(response http.ResponseWriter, request *http.Request) {
 	var body revokeTokenRequest
-	if !decodeRequest(response, request, &body) || !require(response, body.ActorPrincipalID, body.TokenID) {
+	if !decodeRequest(response, request, &body) ||
+		!requireIDs(response, body.ActorPrincipalID, body.TokenID) {
 		return
 	}
 	err := h.dependencies.SCIM.RevokeToken(request.Context(), body.ActorPrincipalID, body.TokenID)
@@ -379,7 +405,8 @@ type upsertOIDCProviderRequest struct {
 func (h *Handler) upsertOIDCProvider(response http.ResponseWriter, request *http.Request) {
 	var body upsertOIDCProviderRequest
 	if !decodeRequest(response, request, &body) ||
-		!require(response, body.RequestID, body.ActorPrincipalID, body.OrganizationID, body.Name, body.Issuer, body.ClientID) {
+		!require(response, body.Name, body.Issuer, body.ClientID) ||
+		!requireIDs(response, body.RequestID, body.ActorPrincipalID, body.OrganizationID) {
 		return
 	}
 	if body.Enabled == nil {
@@ -406,7 +433,8 @@ type setOIDCProviderEnabledRequest struct {
 func (h *Handler) setOIDCProviderEnabled(response http.ResponseWriter, request *http.Request) {
 	var body setOIDCProviderEnabledRequest
 	if !decodeRequest(response, request, &body) ||
-		!require(response, body.RequestID, body.ActorPrincipalID, body.OrganizationID, body.Name) {
+		!require(response, body.Name) ||
+		!requireIDs(response, body.RequestID, body.ActorPrincipalID, body.OrganizationID) {
 		return
 	}
 	if body.Enabled == nil {
@@ -444,7 +472,9 @@ type startOIDCLoginRequest struct {
 
 func (h *Handler) startOIDCLogin(response http.ResponseWriter, request *http.Request) {
 	var body startOIDCLoginRequest
-	if !decodeRequest(response, request, &body) || !require(response, body.RequestID, body.OrganizationSlug, body.ProviderName) {
+	if !decodeRequest(response, request, &body) ||
+		!require(response, body.OrganizationSlug, body.ProviderName) ||
+		!requireIDs(response, body.RequestID) {
 		return
 	}
 	result, err := h.dependencies.OIDC.StartLogin(request.Context(), oidcflow.StartLoginInput{
@@ -491,6 +521,16 @@ func require(response http.ResponseWriter, values ...string) bool {
 	for _, value := range values {
 		if strings.TrimSpace(value) == "" {
 			writeError(response, domain.NewError("bad_request", "Required request field is empty", false))
+			return false
+		}
+	}
+	return true
+}
+
+func requireIDs(response http.ResponseWriter, values ...string) bool {
+	for _, value := range values {
+		if !domain.ValidID(value) {
+			writeError(response, domain.NewError("bad_request", "Identity field is invalid", false))
 			return false
 		}
 	}
