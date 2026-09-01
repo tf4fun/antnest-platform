@@ -94,6 +94,15 @@ func TestRebuildNetworkBarriersUseEgressControlContract(t *testing.T) {
 		if request.Method != http.MethodPost || call >= len(wantPaths) || request.URL.Path != wantPaths[call] {
 			t.Fatalf("request %d = %s %s", call, request.Method, request.URL.Path)
 		}
+		var payload struct {
+			ExpectedResourceVersion uint64 `json:"expected_resource_version"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode network barrier request: %v", err)
+		}
+		if payload.ExpectedResourceVersion != uint64(call+7) {
+			t.Fatalf("request %d resource version = %d", call, payload.ExpectedResourceVersion)
+		}
 		call++
 		response.WriteHeader(http.StatusNoContent)
 	}))
@@ -103,10 +112,10 @@ func TestRebuildNetworkBarriersUseEgressControlContract(t *testing.T) {
 		t.Fatalf("new client: %v", err)
 	}
 
-	if err := client.FenceAgentNetwork(context.Background(), "agent-1"); err != nil {
+	if err := client.FenceAgentNetwork(context.Background(), "agent-1", 7); err != nil {
 		t.Fatalf("fence Agent network: %v", err)
 	}
-	if err := client.ResetAgentFlows(context.Background(), "agent-1"); err != nil {
+	if err := client.ResetAgentFlows(context.Background(), "agent-1", 8); err != nil {
 		t.Fatalf("reset Agent flows: %v", err)
 	}
 	if call != len(wantPaths) {
@@ -120,6 +129,13 @@ func TestReleaseAgentNetworkRequiresQuarantinedAttachment(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if request.Method != http.MethodPost || request.URL.Path != "/internal/agent-networks/agent-1/release" {
 			t.Fatalf("request = %s %s", request.Method, request.URL.Path)
+		}
+		var payload struct {
+			ExpectedResourceVersion uint64 `json:"expected_resource_version"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil ||
+			payload.ExpectedResourceVersion != 11 {
+			t.Fatalf("release request = %+v, %v", payload, err)
 		}
 		response.Header().Set("Content-Type", "application/json")
 		_, _ = response.Write([]byte(`{
@@ -137,7 +153,7 @@ func TestReleaseAgentNetworkRequiresQuarantinedAttachment(t *testing.T) {
 		t.Fatalf("new client: %v", err)
 	}
 
-	attachment, err := client.ReleaseAgentNetwork(context.Background(), "agent-1")
+	attachment, err := client.ReleaseAgentNetwork(context.Background(), "agent-1", 11)
 	if err != nil {
 		t.Fatalf("release Agent network: %v", err)
 	}

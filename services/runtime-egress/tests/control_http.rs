@@ -20,6 +20,7 @@ struct ControlContract {
     transport: String,
     trust_boundary: String,
     status_values: Vec<String>,
+    builtin_policies: std::collections::BTreeMap<String, BuiltinPolicy>,
     routes: Vec<ContractRoute>,
     schemas: std::collections::BTreeMap<String, String>,
     error_codes: Vec<String>,
@@ -30,6 +31,14 @@ struct ControlContract {
 struct ContractRoute {
     method: String,
     path: String,
+    request_schema: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BuiltinPolicy {
+    policy_id: String,
+    revision: u64,
 }
 
 struct NoopKernel;
@@ -73,10 +82,15 @@ fn machine_contract_matches_the_complete_control_surface() {
     )))
     .expect("control contract");
 
-    assert_eq!(contract.revision, 1);
+    assert_eq!(contract.revision, 2);
     assert_eq!(contract.transport, "json-over-http");
     assert_eq!(contract.trust_boundary, "internal-network");
     assert_eq!(contract.status_values, ["ready", "degraded"]);
+    assert_eq!(
+        contract.builtin_policies["deny_all"].policy_id,
+        "builtin/deny-all"
+    );
+    assert_eq!(contract.builtin_policies["deny_all"].revision, 1);
     assert_eq!(
         contract
             .routes
@@ -94,6 +108,23 @@ fn machine_contract_matches_the_complete_control_surface() {
         contract.schemas["packet"],
         "../runtime/packet-contract.json"
     );
+    assert_eq!(
+        contract.schemas["resource_version_request"],
+        "resource-version-request.schema.json"
+    );
+    let fenced_routes = contract
+        .routes
+        .iter()
+        .filter(|route| {
+            route.path.ends_with("/fence")
+                || route.path.ends_with("/reset-flows")
+                || route.path.ends_with("/release")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(fenced_routes.len(), 3);
+    assert!(fenced_routes.iter().all(|route| {
+        route.request_schema.as_deref() == Some("resource-version-request.schema.json")
+    }));
 
     let prose = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),

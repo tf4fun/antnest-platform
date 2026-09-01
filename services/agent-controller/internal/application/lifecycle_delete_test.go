@@ -29,7 +29,8 @@ func TestDeleteAgentFencesDeletesReleasesThenPublishes(t *testing.T) {
 		t.Fatalf("delete Agent: %v", err)
 	}
 	wantCalls := []string{
-		"egress.fence", "egress.reset", "runtime.delete", "egress.release",
+		"egress.policy.get", "egress.fence", "egress.policy.get", "egress.reset",
+		"runtime.delete", "egress.policy.get", "egress.release",
 	}
 	if !reflect.DeepEqual(dependencies.calls, wantCalls) {
 		t.Fatalf("dependency order = %v, want %v", dependencies.calls, wantCalls)
@@ -85,7 +86,8 @@ func TestDeleteAgentWithAuthoritativelyAbsentRuntimeSkipsRuntimeDelete(t *testin
 		t.Fatalf("delete absent Agent Runtime: %v", err)
 	}
 	wantCalls := []string{
-		"runtime.inspect", "egress.fence", "egress.reset", "egress.release",
+		"runtime.inspect", "egress.policy.get", "egress.fence",
+		"egress.policy.get", "egress.reset", "egress.policy.get", "egress.release",
 	}
 	if !reflect.DeepEqual(dependencies.calls, wantCalls) {
 		t.Fatalf("dependency order = %v, want %v", dependencies.calls, wantCalls)
@@ -259,6 +261,7 @@ type deleteDependenciesStub struct {
 	inspection              ports.RuntimeInspection
 	inspectionErr           error
 	expectedRuntimeRevision string
+	policyGets              int
 }
 
 func newDeleteDependencies(agent ports.AgentRecord) *deleteDependenciesStub {
@@ -280,18 +283,18 @@ func newDeleteDependencies(agent ports.AgentRecord) *deleteDependenciesStub {
 	}
 }
 
-func (dependency *deleteDependenciesStub) FenceAgentNetwork(context.Context, string) error {
+func (dependency *deleteDependenciesStub) FenceAgentNetwork(context.Context, string, uint64) error {
 	dependency.calls = append(dependency.calls, "egress.fence")
 	return dependency.fenceErr
 }
 
-func (dependency *deleteDependenciesStub) ResetAgentFlows(context.Context, string) error {
+func (dependency *deleteDependenciesStub) ResetAgentFlows(context.Context, string, uint64) error {
 	dependency.calls = append(dependency.calls, "egress.reset")
 	return dependency.resetErr
 }
 
 func (dependency *deleteDependenciesStub) ReleaseAgentNetwork(
-	context.Context, string,
+	context.Context, string, uint64,
 ) (ports.NetworkAttachment, error) {
 	dependency.calls = append(dependency.calls, "egress.release")
 	return dependency.attachment, dependency.releaseErr
@@ -325,9 +328,19 @@ func (dependency *deleteDependenciesStub) EnsureAgentNetwork(
 }
 
 func (dependency *deleteDependenciesStub) GetAgentPolicyAssignment(
-	context.Context, string,
+	_ context.Context, agentID string,
 ) (ports.NetworkPolicyAssignment, error) {
-	return ports.NetworkPolicyAssignment{}, errors.New("unexpected Egress policy read")
+	dependency.calls = append(dependency.calls, "egress.policy.get")
+	dependency.policyGets++
+	policyID := "internet-enabled"
+	resourceVersion := uint64(7)
+	if dependency.policyGets > 1 {
+		policyID = ports.BuiltinDenyAllPolicyID
+		resourceVersion = 8
+	}
+	return ports.NetworkPolicyAssignment{
+		AgentID: agentID, PolicyID: policyID, Revision: 1, ResourceVersion: resourceVersion,
+	}, nil
 }
 
 func (dependency *deleteDependenciesStub) AssignAgentPolicy(

@@ -1186,7 +1186,7 @@ func optionalString(value string) *string {
 func writeServiceError(ctx context.Context, response http.ResponseWriter, err error) {
 	status, payload := publicError(err)
 	if status == http.StatusInternalServerError {
-		slog.ErrorContext(ctx, "Agent Controller request failed", "error_class", payload.Code, "error", err)
+		slog.ErrorContext(ctx, "Agent Controller request failed", "error_class", payload.Code)
 	}
 	writeJSON(response, status, payload)
 }
@@ -1296,7 +1296,8 @@ func observeLifecycleResult(ctx context.Context, operation application.Operation
 	}
 	if operation.State == domain.OperationFailed {
 		metricAttributes = append(
-			metricAttributes, attribute.String("antnest.lifecycle.error_class", operation.ErrorCode),
+			metricAttributes,
+			attribute.String("antnest.lifecycle.error_class", lifecycleMetricErrorClass(operation.ErrorCode)),
 		)
 	}
 	span.SetAttributes(append(
@@ -1307,15 +1308,36 @@ func observeLifecycleResult(ctx context.Context, operation application.Operation
 	if operation.State != domain.OperationFailed {
 		return
 	}
-	span.SetStatus(codes.Error, operation.ErrorCode)
+	errorClass := lifecycleMetricErrorClass(operation.ErrorCode)
+	span.SetStatus(codes.Error, errorClass)
 	slog.WarnContext(
 		ctx, "Agent lifecycle operation failed",
 		"agent_id", operation.AgentID,
 		"request_id", operation.RequestID,
 		"operation_kind", operation.Kind,
 		"failure_stage", operation.Phase,
-		"failure_code", operation.ErrorCode,
+		"error_class", errorClass,
 	)
+}
+
+func lifecycleMetricErrorClass(code string) string {
+	code = strings.ToLower(strings.TrimSpace(code))
+	switch {
+	case code == "run_drain_timeout", code == "lifecycle_timeout", strings.Contains(code, "timeout"):
+		return "timeout"
+	case strings.Contains(code, "policy"):
+		return "policy"
+	case strings.Contains(code, "network"), strings.Contains(code, "egress"):
+		return "network"
+	case strings.Contains(code, "runtime"):
+		return "runtime"
+	case strings.HasPrefix(code, "invalid_"):
+		return "invalid_dependency_result"
+	case code == "":
+		return "unspecified"
+	default:
+		return "other"
+	}
 }
 
 func mustLifecycleCounter(counter metric.Int64Counter, err error) metric.Int64Counter {

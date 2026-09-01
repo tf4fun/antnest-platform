@@ -161,34 +161,35 @@ func (service *LifecycleService) continueAgentDelete(
 	if lifecycleOperationReservedForRecovery(ctx, state.Operation) {
 		return deleteAgentResult(state), nil
 	}
+	_, recoveryStep := ports.LifecycleRecoveryTokenFromContext(ctx)
 	var err error
 	if state.Operation.Phase == domain.PhaseDrain {
 		state, err = service.settleDeleteDrain(ctx, state)
-		if err != nil || state.Operation.Phase == domain.PhaseDrain {
+		if err != nil || state.Operation.Phase == domain.PhaseDrain || recoveryStep {
 			return deleteAgentResult(state), err
 		}
 	}
 	if state.Operation.Phase == domain.PhaseNetworkFence {
 		state, err = service.fenceDeleteNetwork(ctx, state)
-		if err != nil {
+		if err != nil || recoveryStep {
 			return deleteAgentResult(state), err
 		}
 	}
 	if state.Operation.Phase == domain.PhaseFlowReset {
 		state, err = service.resetDeleteFlows(ctx, state)
-		if err != nil {
+		if err != nil || recoveryStep {
 			return deleteAgentResult(state), err
 		}
 	}
 	if state.Operation.Phase == domain.PhaseRuntimeDelete {
 		state, err = service.deleteRuntime(ctx, state)
-		if err != nil || state.Operation.Phase == domain.PhaseRuntimeDelete {
+		if err != nil || state.Operation.Phase == domain.PhaseRuntimeDelete || recoveryStep {
 			return deleteAgentResult(state), err
 		}
 	}
 	if state.Operation.Phase == domain.PhaseNetworkRelease {
 		state, err = service.releaseDeleteNetwork(ctx, state)
-		if err != nil {
+		if err != nil || recoveryStep {
 			return deleteAgentResult(state), err
 		}
 	}
@@ -223,7 +224,18 @@ func (service *LifecycleService) settleDeleteDrain(
 func (service *LifecycleService) fenceDeleteNetwork(
 	ctx context.Context, state ports.AgentDeleteState,
 ) (ports.AgentDeleteState, error) {
-	err := service.egress.FenceAgentNetwork(ctx, state.Agent.AgentID)
+	assignment, err := service.egress.GetAgentPolicyAssignment(ctx, state.Agent.AgentID)
+	if err != nil && dependencyHasCode(err, "runtime-egress", "agent_network_not_found") {
+		return service.advanceAgentDelete(
+			ctx, state, domain.PhaseNetworkFence, domain.PhaseFlowReset, nil, nil, "",
+		)
+	}
+	if err != nil {
+		return state, fmt.Errorf("%w: runtime-egress policy read", ErrDependencyUnavailable)
+	}
+	err = service.egress.FenceAgentNetwork(
+		ctx, state.Agent.AgentID, assignment.ResourceVersion,
+	)
 	if err != nil && !dependencyHasCode(err, "runtime-egress", "agent_network_not_found") {
 		return state, fmt.Errorf("%w: runtime-egress fence", ErrDependencyUnavailable)
 	}
@@ -235,7 +247,18 @@ func (service *LifecycleService) fenceDeleteNetwork(
 func (service *LifecycleService) resetDeleteFlows(
 	ctx context.Context, state ports.AgentDeleteState,
 ) (ports.AgentDeleteState, error) {
-	err := service.egress.ResetAgentFlows(ctx, state.Agent.AgentID)
+	assignment, err := service.egress.GetAgentPolicyAssignment(ctx, state.Agent.AgentID)
+	if err != nil && dependencyHasCode(err, "runtime-egress", "agent_network_not_found") {
+		next := domain.PhaseRuntimeDelete
+		if state.Operation.SourceRuntimeAbsent {
+			next = domain.PhaseNetworkRelease
+		}
+		return service.advanceAgentDelete(ctx, state, domain.PhaseFlowReset, next, nil, nil, "")
+	}
+	if err != nil || !denyAllNetworkPolicy(assignment, state.Agent.AgentID) {
+		return state, fmt.Errorf("%w: runtime-egress network fence is not current", ErrDependencyUnavailable)
+	}
+	err = service.egress.ResetAgentFlows(ctx, state.Agent.AgentID, assignment.ResourceVersion)
 	if err != nil && !dependencyHasCode(err, "runtime-egress", "agent_network_not_found") {
 		return state, fmt.Errorf("%w: runtime-egress flow reset", ErrDependencyUnavailable)
 	}
@@ -300,7 +323,19 @@ func (service *LifecycleService) recordDeletedRuntime(
 func (service *LifecycleService) releaseDeleteNetwork(
 	ctx context.Context, state ports.AgentDeleteState,
 ) (ports.AgentDeleteState, error) {
-	attachment, err := service.egress.ReleaseAgentNetwork(ctx, state.Agent.AgentID)
+	assignment, err := service.egress.GetAgentPolicyAssignment(ctx, state.Agent.AgentID)
+	if err != nil && dependencyHasCode(err, "runtime-egress", "agent_network_not_found") {
+		return service.advanceAgentDelete(
+			ctx, state, domain.PhaseNetworkRelease, domain.PhasePublish, nil, nil,
+			ports.NetworkReleaseAuthoritativeNone,
+		)
+	}
+	if err != nil || !denyAllNetworkPolicy(assignment, state.Agent.AgentID) {
+		return state, fmt.Errorf("%w: runtime-egress release fence is not current", ErrDependencyUnavailable)
+	}
+	attachment, err := service.egress.ReleaseAgentNetwork(
+		ctx, state.Agent.AgentID, assignment.ResourceVersion,
+	)
 	if err != nil {
 		if dependencyHasCode(err, "runtime-egress", "agent_network_not_found") {
 			return service.advanceAgentDelete(

@@ -158,7 +158,9 @@ func (service *LifecycleService) CreateAgent(
 		},
 		Access: ports.AgentAccessRecord{
 			AccessSubject: accessSubject, AgentID: agentID, PrincipalID: input.OwnerUserID,
-			AccessRevision: accessRevision, Active: true, CreatedAt: now, UpdatedAt: now,
+			AccessRevision:     accessRevision,
+			PromptCapabilities: ports.PromptCapabilities{Image: spec.Snapshot().Model.SupportsImages},
+			Active:             true, CreatedAt: now, UpdatedAt: now,
 		},
 		Spec: ports.AgentSpecRecord{
 			ID: specID, AgentID: agentID, Revision: 1,
@@ -267,17 +269,18 @@ func (service *LifecycleService) continueAgentCreate(
 	if lifecycleOperationReservedForRecovery(ctx, state.Operation) {
 		return createAgentResult(state), nil
 	}
+	_, recoveryStep := ports.LifecycleRecoveryTokenFromContext(ctx)
 	var err error
 	if state.Operation.Phase == domain.PhaseNetworkEnsure {
 		state, err = service.ensureCreateNetwork(ctx, state)
-		if err != nil || state.Operation.State != domain.OperationRunning {
+		if err != nil || state.Operation.State != domain.OperationRunning || recoveryStep {
 			return createAgentResult(state), err
 		}
 	}
 	if state.Operation.Phase == domain.PhaseRuntimeInitialize {
 		state, err = service.initializeCreateRuntime(ctx, state)
 		if err != nil || state.Operation.State != domain.OperationRunning ||
-			state.Operation.Phase == domain.PhaseRuntimeInitialize {
+			state.Operation.Phase == domain.PhaseRuntimeInitialize || recoveryStep {
 			return createAgentResult(state), err
 		}
 	}

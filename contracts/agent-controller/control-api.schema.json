@@ -466,6 +466,7 @@
             "lifecycle_conflict",
             "operation_not_found",
             "dependency_unavailable",
+            "lifecycle_timeout",
             "internal_error"
           ]
         },

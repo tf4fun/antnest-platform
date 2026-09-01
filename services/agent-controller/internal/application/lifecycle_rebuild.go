@@ -151,6 +151,7 @@ func (service *LifecycleService) continueAgentRebuild(
 	if lifecycleOperationReservedForRecovery(ctx, state.Operation) {
 		return rebuildAgentResult(state), nil
 	}
+	_, recoveryStep := ports.LifecycleRecoveryTokenFromContext(ctx)
 	var err error
 	if state.Operation.Phase == domain.PhaseDrain {
 		now := service.clock.Now()
@@ -165,32 +166,32 @@ func (service *LifecycleService) continueAgentRebuild(
 			domain.ChildRequestID(state.Operation.RequestID, domain.PhaseNetworkFence),
 			service.clock.Now(),
 		)
-		if err != nil || state.Operation.Phase == domain.PhaseDrain {
+		if err != nil || state.Operation.Phase == domain.PhaseDrain || recoveryStep {
 			return rebuildAgentResult(state), err
 		}
 	}
 	if state.Operation.Phase == domain.PhaseNetworkFence {
 		state, err = service.fenceRebuildNetwork(ctx, state)
-		if err != nil || state.Operation.State != domain.OperationRunning {
+		if err != nil || state.Operation.State != domain.OperationRunning || recoveryStep {
 			return rebuildAgentResult(state), err
 		}
 	}
 	if state.Operation.Phase == domain.PhaseFlowReset {
 		state, err = service.resetRebuildFlows(ctx, state)
-		if err != nil || state.Operation.State != domain.OperationRunning {
+		if err != nil || state.Operation.State != domain.OperationRunning || recoveryStep {
 			return rebuildAgentResult(state), err
 		}
 	}
 	if state.Operation.Phase == domain.PhaseRuntimeUpdate {
 		state, err = service.updateRebuildRuntime(ctx, state)
 		if err != nil || state.Operation.State != domain.OperationRunning ||
-			state.Operation.Phase == domain.PhaseRuntimeUpdate {
+			state.Operation.Phase == domain.PhaseRuntimeUpdate || recoveryStep {
 			return rebuildAgentResult(state), err
 		}
 	}
 	if state.Operation.Phase == domain.PhaseNetworkEnsure {
 		state, err = service.reopenRebuildNetwork(ctx, state)
-		if err != nil || state.Operation.State != domain.OperationRunning {
+		if err != nil || state.Operation.State != domain.OperationRunning || recoveryStep {
 			return rebuildAgentResult(state), err
 		}
 	}
@@ -226,7 +227,9 @@ func (service *LifecycleService) fenceRebuildNetwork(
 			return ports.AgentRebuildState{}, err
 		}
 	}
-	if err := service.egress.FenceAgentNetwork(ctx, state.Agent.AgentID); err != nil {
+	if err := service.egress.FenceAgentNetwork(
+		ctx, state.Agent.AgentID, state.Operation.NetworkPolicyAssignment.ResourceVersion,
+	); err != nil {
 		return service.handleRebuildDependencyFailure(ctx, state, "runtime-egress", err)
 	}
 	attachment, err := service.egress.GetAgentNetwork(ctx, state.Agent.AgentID)
@@ -251,7 +254,19 @@ func (service *LifecycleService) fenceRebuildNetwork(
 func (service *LifecycleService) resetRebuildFlows(
 	ctx context.Context, state ports.AgentRebuildState,
 ) (ports.AgentRebuildState, error) {
-	if err := service.egress.ResetAgentFlows(ctx, state.Agent.AgentID); err != nil {
+	assignment, err := service.egress.GetAgentPolicyAssignment(ctx, state.Agent.AgentID)
+	if err != nil {
+		return service.handleRebuildDependencyFailure(ctx, state, "runtime-egress", err)
+	}
+	if !denyAllNetworkPolicy(assignment, state.Agent.AgentID) {
+		return service.handleRebuildDependencyFailure(
+			ctx, state, "runtime-egress",
+			&ports.DependencyError{Service: "runtime-egress", Code: "network_fence_lost", Retryable: true},
+		)
+	}
+	if err := service.egress.ResetAgentFlows(
+		ctx, state.Agent.AgentID, assignment.ResourceVersion,
+	); err != nil {
 		return service.handleRebuildDependencyFailure(ctx, state, "runtime-egress", err)
 	}
 	return service.store.AdvanceAgentRebuild(ctx, ports.AdvanceAgentRebuild{
@@ -364,9 +379,14 @@ func (service *LifecycleService) publishAgentRebuild(
 	runtime := *state.Operation.RuntimeResult
 	now := service.clock.Now()
 	executionID := derivedID("execution-rebuild", state.Operation.RequestID)
+	accessRevision := derivedID("access-rebuild", state.Operation.RequestID)
 	return service.store.PublishAgentRebuild(ctx, ports.PublishAgentRebuild{
-		RequestID:   state.Operation.RequestID,
-		Fingerprint: state.Operation.RequestFingerprint,
+		RequestID:      state.Operation.RequestID,
+		Fingerprint:    state.Operation.RequestFingerprint,
+		AccessRevision: accessRevision,
+		PromptCapabilities: ports.PromptCapabilities{
+			Image: state.TargetSpec.Snapshot.Model.SupportsImages,
+		},
 		Execution: ports.ExecutionRecord{
 			ID: executionID, AgentID: state.Agent.AgentID,
 			Revision:               state.SourceExecution.Revision + 1,

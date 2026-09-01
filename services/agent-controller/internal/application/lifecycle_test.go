@@ -338,16 +338,16 @@ func (dependency *lifecycleDependenciesStub) AssignAgentPolicy(
 	return ports.NetworkPolicyAssignment{}, errors.New("unexpected Egress policy assignment")
 }
 
-func (dependency *lifecycleDependenciesStub) FenceAgentNetwork(context.Context, string) error {
+func (dependency *lifecycleDependenciesStub) FenceAgentNetwork(context.Context, string, uint64) error {
 	return errors.New("unexpected Egress network fence")
 }
 
-func (dependency *lifecycleDependenciesStub) ResetAgentFlows(context.Context, string) error {
+func (dependency *lifecycleDependenciesStub) ResetAgentFlows(context.Context, string, uint64) error {
 	return errors.New("unexpected Egress flow reset")
 }
 
 func (dependency *lifecycleDependenciesStub) ReleaseAgentNetwork(
-	context.Context, string,
+	context.Context, string, uint64,
 ) (ports.NetworkAttachment, error) {
 	return ports.NetworkAttachment{}, errors.New("unexpected Egress network release")
 }

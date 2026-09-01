@@ -1,6 +1,7 @@
 # Agent Controller Lifecycle And Management Contract
 
 > Status: Stage 2B implementation contract<br>
+> Revision: 3<br>
 > Transport: trusted internal JSON over HTTP<br>
 > Owner: Agent Controller
 
@@ -143,8 +144,9 @@ All errors use:
 
 Stable classes distinguish invalid input, missing/disabled references,
 idempotency conflicts, lifecycle conflicts, dependency failure, and internal
-failure. SQL, secrets, Provider responses, and platform stderr are never
-returned.
+failure. A bounded lifecycle request returns retryable `lifecycle_timeout`
+with HTTP 504; replay uses the original request ID. SQL, secrets, Provider
+responses, and platform stderr are never returned.
 
 The machine-readable route catalog is in
 [`control-contract.json`](control-contract.json), and message definitions are

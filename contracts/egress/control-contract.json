@@ -1,5 +1,5 @@
 {
-  "revision": 1,
+  "revision": 2,
   "transport": "json-over-http",
   "trust_boundary": "internal-network",
   "status_values": ["ready", "degraded"],
@@ -10,16 +10,17 @@
     {"method": "GET", "path": "/status"},
     {"method": "GET", "path": "/internal/agent-networks/{agent_id}"},
     {"method": "PUT", "path": "/internal/agent-networks/{agent_id}"},
-    {"method": "POST", "path": "/internal/agent-networks/{agent_id}/fence"},
-    {"method": "POST", "path": "/internal/agent-networks/{agent_id}/reset-flows"},
-    {"method": "POST", "path": "/internal/agent-networks/{agent_id}/release"},
+    {"method": "POST", "path": "/internal/agent-networks/{agent_id}/fence", "request_schema": "resource-version-request.schema.json"},
+    {"method": "POST", "path": "/internal/agent-networks/{agent_id}/reset-flows", "request_schema": "resource-version-request.schema.json"},
+    {"method": "POST", "path": "/internal/agent-networks/{agent_id}/release", "request_schema": "resource-version-request.schema.json"},
     {"method": "PUT", "path": "/internal/policies/{policy_id}/revisions/{revision}"},
     {"method": "GET", "path": "/internal/agent-policy-assignments/{agent_id}"},
     {"method": "PUT", "path": "/internal/agent-policy-assignments/{agent_id}"}
   ],
   "schemas": {
     "policy": "policy.schema.json",
-    "packet": "../runtime/packet-contract.json"
+    "packet": "../runtime/packet-contract.json",
+    "resource_version_request": "resource-version-request.schema.json"
   },
   "error_codes": [
     "invalid_request",

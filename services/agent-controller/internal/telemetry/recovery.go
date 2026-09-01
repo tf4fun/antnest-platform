@@ -55,21 +55,27 @@ func ObserveLifecycleRecoveryStore(
 func (store *ObservedLifecycleRecoveryStore) ClaimLifecycleRecovery(
 	ctx context.Context, input ports.ClaimLifecycleRecovery,
 ) (claim ports.LifecycleRecoveryClaim, found bool, resultErr error) {
-	ctx, span, started := startRepositorySpan(ctx, "claim_lifecycle_recovery")
-	defer func() {
-		result := "claimed"
-		switch {
-		case resultErr != nil:
-			result = "error"
-		case !found:
-			result = "empty"
-		}
-		attributes := []attribute.KeyValue{attribute.String("antnest.result", result)}
-		span.SetAttributes(attributes...)
-		recoveryClaims.Add(ctx, 1, metric.WithAttributes(attributes...))
-		finishRepositorySpan(ctx, store.logger, span, started, "claim_lifecycle_recovery", resultErr)
-	}()
-	return store.next.ClaimLifecycleRecovery(ctx, input)
+	started := time.Now()
+	claim, found, resultErr = store.next.ClaimLifecycleRecovery(ctx, input)
+	result := "claimed"
+	switch {
+	case resultErr != nil:
+		result = "error"
+	case !found:
+		result = "empty"
+	}
+	attributes := []attribute.KeyValue{attribute.String("antnest.result", result)}
+	recoveryClaims.Add(ctx, 1, metric.WithAttributes(attributes...))
+	if result == "empty" {
+		return claim, found, resultErr
+	}
+	ctx, span := otel.Tracer(instrumentationName+"/repository").Start(
+		ctx, "agent_controller.repository.claim_lifecycle_recovery",
+		trace.WithSpanKind(trace.SpanKindClient), trace.WithTimestamp(started),
+	)
+	span.SetAttributes(attributes...)
+	finishRepositorySpan(ctx, store.logger, span, started, "claim_lifecycle_recovery", resultErr)
+	return claim, found, resultErr
 }
 
 func (store *ObservedLifecycleRecoveryStore) StartLifecycleRecoveryAttempt(
@@ -144,7 +150,6 @@ func ObserveLifecycleRecoveryAttempt(
 				attribute.Bool("antnest.lifecycle.recovery.terminal", result.Terminal),
 			)
 			if resultErr != nil {
-				span.RecordError(resultErr)
 				span.SetStatus(codes.Error, outcome)
 			}
 			recoveryAttempts.Add(ctx, 1, metric.WithAttributes(attributes...))

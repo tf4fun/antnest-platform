@@ -159,21 +159,24 @@ CREATE TABLE IF NOT EXISTS agent_controller.agent_spec_revisions (
     canonical_digest TEXT NOT NULL CHECK (canonical_digest ~ '^[0-9a-f]{64}$'),
     snapshot JSONB NOT NULL,
     created_at TIMESTAMPTZ NOT NULL,
-    UNIQUE (agent_id, revision)
+    UNIQUE (agent_id, revision),
+    UNIQUE (agent_id, id)
 );
 
 CREATE TABLE IF NOT EXISTS agent_controller.execution_revisions (
     id TEXT PRIMARY KEY,
     agent_id TEXT NOT NULL REFERENCES agent_controller.agents(id),
     revision BIGINT NOT NULL CHECK (revision > 0),
-    agent_spec_revision_id TEXT NOT NULL REFERENCES agent_controller.agent_spec_revisions(id),
+    agent_spec_revision_id TEXT NOT NULL,
     runtime_revision TEXT NOT NULL,
     runtime_execution_id TEXT NOT NULL,
     runtime_mcp_endpoint TEXT NOT NULL,
     runtime_mcp_source_digest TEXT NOT NULL CHECK (runtime_mcp_source_digest ~ '^[0-9a-f]{64}$'),
     change_summary JSONB NOT NULL,
     published_at TIMESTAMPTZ NOT NULL,
-    UNIQUE (agent_id, revision)
+    UNIQUE (agent_id, revision),
+    FOREIGN KEY (agent_id, agent_spec_revision_id)
+        REFERENCES agent_controller.agent_spec_revisions(agent_id, id)
 );
 
 CREATE TABLE IF NOT EXISTS agent_controller.agent_access_bindings (
@@ -203,6 +206,30 @@ CREATE TABLE IF NOT EXISTS agent_controller.agent_lifecycle_operations (
         'publish', 'completed'
     )),
     state TEXT NOT NULL CHECK (state IN ('running', 'completed', 'failed')),
+    CHECK (
+        phase = 'completed'
+        OR (kind = 'create' AND phase IN (
+            'network_ensure', 'runtime_initialize', 'publish'
+        ))
+        OR (kind = 'rebuild' AND phase IN (
+            'drain', 'network_fence', 'flow_reset', 'runtime_update',
+            'network_ensure', 'publish'
+        ))
+        OR (kind = 'disable' AND phase IN (
+            'drain', 'network_fence', 'runtime_disable', 'publish'
+        ))
+        OR (kind = 'enable' AND phase IN (
+            'network_ensure', 'runtime_enable', 'network_restore', 'publish'
+        ))
+        OR (kind = 'delete' AND phase IN (
+            'drain', 'network_fence', 'flow_reset', 'runtime_delete',
+            'network_release', 'publish'
+        ))
+    ),
+    CHECK (
+        (state = 'completed' AND phase = 'completed')
+        OR (state IN ('running', 'failed') AND phase <> 'completed')
+    ),
     source_spec_revision_id TEXT NOT NULL DEFAULT '',
     source_execution_revision_id TEXT NOT NULL DEFAULT '',
     source_runtime_revision TEXT NOT NULL DEFAULT '',

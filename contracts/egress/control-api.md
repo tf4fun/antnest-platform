@@ -17,6 +17,8 @@ Control callers propagate W3C `traceparent` and optional `tracestate` headers.
 Invalid trace context is ignored without rejecting the business request.
 Runtime Egress does not accept `baggage` as part of its control contract.
 
+This document describes control contract revision 2.
+
 ## Status
 
 `GET /status`
@@ -75,25 +77,42 @@ Agent returns `agent_network_not_found`.
 
 `POST /internal/agent-networks/{agent_id}/fence`
 
+```json
+{"expected_resource_version": 7}
+```
+
 Fence publishes deny-all, drains packet writers, clears userspace flows, and
-clears matching conntrack before acknowledging. Repeating fence is idempotent.
+clears matching conntrack before acknowledging. The resource version fences
+the lifecycle mutation against a newer policy assignment. Repeating a fence
+that already produced deny-all is idempotent; a stale fence cannot overwrite a
+policy restored by a newer lifecycle operation.
 
 ### Reset Flows
 
 `POST /internal/agent-networks/{agent_id}/reset-flows`
 
+```json
+{"expected_resource_version": 8}
+```
+
 Reset drains packet writers and clears userspace flows and matching conntrack
-without changing the durable policy assignment. Agent Controller calls it
-after the old Runtime is confirmed absent and before activating a candidate.
+without changing the durable policy assignment. The request must name the
+current deny-all assignment version. Agent Controller calls it after the old
+Runtime is confirmed absent and before activating a candidate.
 
 ### Release
 
 `POST /internal/agent-networks/{agent_id}/release`
 
+```json
+{"expected_resource_version": 8}
+```
+
 Release fences the Agent, completes flow and conntrack cleanup, and moves its
-address into durable quarantine. Repeating release returns the current state.
-An address becomes allocatable only after its quarantine deadline and a final
-cleanup check.
+address into durable quarantine. The request must name the current deny-all
+assignment version. Repeating release with that version returns the current
+state. An address becomes allocatable only after its quarantine deadline and a
+final cleanup check.
 
 ## Policy Revisions
 

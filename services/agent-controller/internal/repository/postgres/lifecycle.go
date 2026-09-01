@@ -368,9 +368,10 @@ func insertAgentAccess(ctx context.Context, transaction pgx.Tx, record ports.Age
 INSERT INTO agent_controller.agent_access_bindings (
     access_subject, agent_id, principal_id, access_revision, active,
     prompt_image, prompt_embedded_context, created_at, updated_at
-) VALUES ($1, $2, $3, $4, $5, FALSE, FALSE, $6, $7)`,
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
 		record.AccessSubject, record.AgentID, record.PrincipalID, record.AccessRevision,
-		record.Active, record.CreatedAt, record.UpdatedAt,
+		record.Active, record.PromptCapabilities.Image,
+		record.PromptCapabilities.EmbeddedContext, record.CreatedAt, record.UpdatedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("insert Agent access binding: %w", err)
@@ -412,7 +413,8 @@ func insertLifecycleOperation(
     recovery_after, created_at, updated_at
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-    $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22
+    $11, $12, $13, $14, $15, $16, $17, $18, $19,
+    clock_timestamp(), clock_timestamp(), clock_timestamp()
 )`,
 		record.RequestID, record.RequestFingerprint, record.AgentID, record.Kind,
 		record.Phase, record.State, record.SourceSpecRevisionID,
@@ -421,7 +423,7 @@ func insertLifecycleOperation(
 		nullJSON(policyPayload), nullJSON(inspectionPayload), nullJSON(absenceProofPayload),
 		record.NetworkReleaseOutcome,
 		record.InitialTraceParent, record.PreviousRecoveryTraceParent,
-		record.Attempt, record.CreatedAt, record.CreatedAt, record.UpdatedAt,
+		record.Attempt,
 	)
 	if err != nil {
 		return fmt.Errorf("insert Agent lifecycle operation: %w", err)

@@ -264,29 +264,57 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 	stopRecovery()
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer cancel()
-	if !recoveryStopped {
+	resultErr = errors.Join(
+		resultErr,
+		shutdownHTTPAndRecovery(shutdownCtx, httpServer, recoveryErrors, recoveryStopped),
+	)
+	return resultErr
+}
+
+func shutdownHTTPAndRecovery(
+	ctx context.Context,
+	httpServer *http.Server,
+	recoveryErrors <-chan error,
+	recoveryStopped bool,
+) error {
+	httpStopped := make(chan error, 1)
+	go func() { httpStopped <- httpServer.Shutdown(ctx) }()
+	waitingHTTP := true
+	waitingRecovery := !recoveryStopped
+	var result error
+	for waitingHTTP || waitingRecovery {
 		select {
-		case recoveryErr := <-recoveryErrors:
-			if recoveryErr != nil && !errors.Is(recoveryErr, context.Canceled) {
-				resultErr = errors.Join(
-					resultErr, classifyFailure("lifecycle_recovery_shutdown", recoveryErr),
+		case err := <-httpStopped:
+			waitingHTTP = false
+			if err != nil {
+				result = errors.Join(
+					result, classifyFailure("http_shutdown", err),
+					classifyFailure("http_close", httpServer.Close()),
 				)
 			}
-		case <-shutdownCtx.Done():
-			resultErr = errors.Join(
-				resultErr,
-				classifyFailure("lifecycle_recovery_shutdown", shutdownCtx.Err()),
-			)
+		case err := <-recoveryErrors:
+			waitingRecovery = false
+			if err != nil && !errors.Is(err, context.Canceled) {
+				result = errors.Join(
+					result, classifyFailure("lifecycle_recovery_shutdown", err),
+				)
+			}
+		case <-ctx.Done():
+			if waitingHTTP {
+				result = errors.Join(
+					result, classifyFailure("http_shutdown", ctx.Err()),
+					classifyFailure("http_close", httpServer.Close()),
+				)
+			}
+			if waitingRecovery {
+				result = errors.Join(
+					result, classifyFailure("lifecycle_recovery_shutdown", ctx.Err()),
+				)
+			}
+			return result
 		}
 	}
-	if err := httpServer.Shutdown(shutdownCtx); err != nil {
-		resultErr = errors.Join(
-			resultErr,
-			classifyFailure("http_shutdown", err),
-			classifyFailure("http_close", httpServer.Close()),
-		)
-	}
-	return resultErr
+	return result
 }
 
 func lifecycleRecoveryWorkerID(hostname string, pid int) (string, error) {

@@ -23,7 +23,7 @@ WITH candidate AS (
     SELECT request_id
     FROM agent_controller.agent_lifecycle_operations
     WHERE state = 'running'
-      AND updated_at <= clock_timestamp() - $1::interval
+      AND (attempt > 1 OR created_at <= clock_timestamp() - $1::interval)
       AND recovery_after <= clock_timestamp()
       AND (recovery_lease_until IS NULL OR recovery_lease_until <= clock_timestamp())
     ORDER BY recovery_after ASC, updated_at ASC, request_id ASC

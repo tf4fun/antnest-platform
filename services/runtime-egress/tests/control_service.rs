@@ -66,7 +66,7 @@ async fn ensure_reconciles_cleanup_before_reopening_a_fenced_agent() {
 
     kernel.fail_next.store(true, Ordering::Release);
     assert_eq!(
-        service.reset_agent_flows(&agent).await,
+        service.reset_agent_flows(&agent, 1).await,
         Err(ControlError::CleanupFailed(FailureContext::new(
             "reset_agent_flows.kernel_cleanup",
             "kernel_command_failed",
@@ -160,12 +160,47 @@ async fn assignment_is_cas_and_exact_retry_is_idempotent() {
 }
 
 #[tokio::test]
+async fn stale_lifecycle_fence_cannot_override_a_restored_policy() {
+    let (service, _) = service();
+    let agent = AgentId::parse("agent-fenced-cas").unwrap();
+    let policy_id = PolicyId::parse("internet-enabled").unwrap();
+    service.ensure_agent_network(agent.clone()).await.unwrap();
+    service
+        .put_policy_revision(policy_id.clone(), 1, PolicySpec::allow_all())
+        .await
+        .unwrap();
+
+    let enabled = service
+        .assign_policy(agent.clone(), policy_id.clone(), 1, 1)
+        .await
+        .unwrap();
+    service
+        .fence_agent(agent.clone(), enabled.resource_version)
+        .await
+        .unwrap();
+    let fenced = service.policy_assignment(&agent).await.unwrap();
+    let restored = service
+        .assign_policy(agent.clone(), policy_id, 1, fenced.resource_version)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        service.fence_agent(agent, enabled.resource_version).await,
+        Err(ControlError::ResourceVersionConflict)
+    );
+    assert_eq!(restored.policy_id.as_str(), "internet-enabled");
+}
+
+#[tokio::test]
 async fn release_cleans_before_entering_quarantine() {
     let (service, kernel) = service();
     let agent = AgentId::parse("agent-1").unwrap();
     let network = service.ensure_agent_network(agent.clone()).await.unwrap();
 
-    let released = service.release_agent_network(agent.clone()).await.unwrap();
+    let released = service
+        .release_agent_network(agent.clone(), 1)
+        .await
+        .unwrap();
 
     assert_eq!(released.state, NetworkState::Quarantined);
     assert_eq!(
@@ -183,7 +218,10 @@ async fn quarantine_sweeper_rechecks_cleanup_before_deleting_the_allocation() {
     let (service, kernel) = service();
     let agent = AgentId::parse("agent-1").unwrap();
     service.ensure_agent_network(agent.clone()).await.unwrap();
-    service.release_agent_network(agent.clone()).await.unwrap();
+    service
+        .release_agent_network(agent.clone(), 1)
+        .await
+        .unwrap();
 
     let report = service
         .sweep_quarantine(SystemTime::now() + Duration::from_secs(301))
@@ -227,8 +265,14 @@ async fn quarantine_sweeper_isolates_one_agents_cleanup_failure() {
     let second = AgentId::parse("agent-second").unwrap();
     service.ensure_agent_network(first.clone()).await.unwrap();
     service.ensure_agent_network(second.clone()).await.unwrap();
-    service.release_agent_network(first.clone()).await.unwrap();
-    service.release_agent_network(second.clone()).await.unwrap();
+    service
+        .release_agent_network(first.clone(), 1)
+        .await
+        .unwrap();
+    service
+        .release_agent_network(second.clone(), 1)
+        .await
+        .unwrap();
     kernel.fail_next.store(true, Ordering::Release);
 
     let report = service

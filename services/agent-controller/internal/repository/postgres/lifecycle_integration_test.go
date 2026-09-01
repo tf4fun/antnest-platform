@@ -102,8 +102,9 @@ func TestLifecycleRepositoryPersistsCreateSagaAndPublishesAtomically(t *testing.
 	if operation.RequestID != begin.Operation.RequestID || operation.Phase != domain.PhaseNetworkEnsure {
 		t.Fatalf("lifecycle operation = %+v", operation)
 	}
+	time.Sleep(10 * time.Millisecond)
 	claim, found, err := repository.ClaimLifecycleRecovery(ctx, ports.ClaimLifecycleRecovery{
-		WorkerID: "worker-create-integration", StaleAfter: time.Second,
+		WorkerID: "worker-create-integration", StaleAfter: 5 * time.Millisecond,
 		LeaseDuration: time.Minute,
 	})
 	if err != nil || !found || claim.Operation.RequestID != begin.Operation.RequestID {

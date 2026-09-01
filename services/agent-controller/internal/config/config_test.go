@@ -23,7 +23,7 @@ func TestLoadRequiresDatabaseAndCanonicalEncryptionKey(t *testing.T) {
 		loaded.DependencyTimeout != 150*time.Second || loaded.DrainTimeout != 5*time.Minute ||
 		loaded.RunAdmissionTTL != 30*time.Minute || loaded.LifecycleTimeout != 25*time.Minute+30*time.Second ||
 		loaded.RecoveryPollInterval != 2*time.Second ||
-		loaded.RecoveryStaleAfter != 10*time.Minute+35*time.Second ||
+		loaded.RecoveryStaleAfter != 26*time.Minute ||
 		loaded.RecoveryAttemptTimeout != 10*time.Minute+5*time.Second ||
 		loaded.RecoveryLeaseDuration != 10*time.Minute+35*time.Second ||
 		loaded.RecoveryRetryMax != time.Minute {
@@ -78,7 +78,7 @@ func TestLoadRejectsInvalidEncryptionKeyAndDuration(t *testing.T) {
 	delete(values, "ANTNEST_AGENT_CONTROLLER_RECOVERY_POLL_INTERVAL")
 	values["ANTNEST_AGENT_CONTROLLER_RECOVERY_STALE_AFTER"] = "149s"
 	if _, err := Load(func(key string) string { return values[key] }); err == nil {
-		t.Fatal("recovery stale threshold shorter than dependency timeout was accepted")
+		t.Fatal("recovery stale threshold shorter than the online lifecycle budget was accepted")
 	}
 	delete(values, "ANTNEST_AGENT_CONTROLLER_RECOVERY_STALE_AFTER")
 	delete(values, "ANTNEST_RUNTIME_EGRESS_URL")

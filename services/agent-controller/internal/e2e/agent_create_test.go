@@ -287,13 +287,14 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 		repository, restartedLifecycle, nil,
 		application.LifecycleRecoveryWorkerConfig{
 			WorkerID: "agent-e2e-recovery", PollInterval: 10 * time.Millisecond,
-			StaleAfter: 15 * time.Second, AttemptTimeout: 10 * time.Second,
-			LeaseDuration: 15 * time.Second, RetryMax: time.Second,
+			StaleAfter: time.Second, AttemptTimeout: 500 * time.Millisecond,
+			LeaseDuration: time.Second, RetryMax: time.Second,
 		},
 	)
 	if err != nil {
 		t.Fatalf("create lifecycle recovery worker: %v", err)
 	}
+	time.Sleep(1100 * time.Millisecond)
 	processed, err := recoveryWorker.RunOnce(ctx)
 	if err != nil || !processed {
 		t.Fatalf("recover interrupted create: processed=%v err=%v", processed, err)
@@ -320,9 +321,10 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 	if items, ok := listed["items"].([]any); !ok || len(items) != 1 {
 		t.Fatalf("owner Agent projection = %+v", listed)
 	}
+	createEgressCalls, createRuntimeCalls := egressCalls.Load(), runtimeCalls.Load()
 	replayed := serveJSON(t, handler, http.MethodPost, "/internal/agents", createBody, http.StatusAccepted)
 	if replayed["agent_access_subject"] != created["agent_access_subject"] ||
-		egressCalls.Load() != 2 || runtimeCalls.Load() != 2 {
+		egressCalls.Load() != createEgressCalls || runtimeCalls.Load() != createRuntimeCalls {
 		t.Fatalf("idempotent replay repeated effects: egress=%d runtime=%d replay=%+v",
 			egressCalls.Load(), runtimeCalls.Load(), replayed)
 	}
@@ -348,11 +350,13 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 		rebuiltBase.Agent.RuntimeRevision != "rtv_33333333333333333333333333333333" {
 		t.Fatalf("rebuilt Agent = %+v", rebuiltBase.Agent)
 	}
+	rebuildEgressCalls, rebuildRuntimeCalls := egressCalls.Load(), runtimeCalls.Load()
 	replayedRebuild := serveJSON(
 		t, handler, http.MethodPost, "/internal/agents/"+agentID+"/rebuild",
 		rebuildBody, http.StatusAccepted,
 	)
-	if replayedRebuild["state"] != "completed" || egressCalls.Load() != 9 || runtimeCalls.Load() != 3 {
+	if replayedRebuild["state"] != "completed" ||
+		egressCalls.Load() != rebuildEgressCalls || runtimeCalls.Load() != rebuildRuntimeCalls {
 		t.Fatalf("idempotent rebuild repeated effects: egress=%d runtime=%d replay=%+v",
 			egressCalls.Load(), runtimeCalls.Load(), replayedRebuild)
 	}
@@ -377,11 +381,13 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 		disabledBase.Agent.RuntimeExecutionID != "" || disabledBase.Agent.RuntimeMCPEndpoint != "" {
 		t.Fatalf("disabled Agent = %+v", disabledBase.Agent)
 	}
+	disableEgressCalls, disableRuntimeCalls := egressCalls.Load(), runtimeCalls.Load()
 	replayedDisable := serveJSON(
 		t, handler, http.MethodPost, "/internal/agents/"+agentID+"/disable",
 		disableBody, http.StatusAccepted,
 	)
-	if replayedDisable["state"] != "completed" || egressCalls.Load() != 11 || runtimeCalls.Load() != 4 {
+	if replayedDisable["state"] != "completed" ||
+		egressCalls.Load() != disableEgressCalls || runtimeCalls.Load() != disableRuntimeCalls {
 		t.Fatalf("idempotent disable repeated effects: egress=%d runtime=%d replay=%+v",
 			egressCalls.Load(), runtimeCalls.Load(), replayedDisable)
 	}
@@ -407,11 +413,13 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 		enabledBase.Agent.RuntimeMCPEndpoint != "http://runtime-enabled-e2e:8091/mcp" {
 		t.Fatalf("enabled Agent = %+v", enabledBase.Agent)
 	}
+	enableEgressCalls, enableRuntimeCalls := egressCalls.Load(), runtimeCalls.Load()
 	replayedEnable := serveJSON(
 		t, handler, http.MethodPost, "/internal/agents/"+agentID+"/enable",
 		enableBody, http.StatusAccepted,
 	)
-	if replayedEnable["state"] != "completed" || egressCalls.Load() != 18 || runtimeCalls.Load() != 5 {
+	if replayedEnable["state"] != "completed" ||
+		egressCalls.Load() != enableEgressCalls || runtimeCalls.Load() != enableRuntimeCalls {
 		t.Fatalf("idempotent enable repeated effects: egress=%d runtime=%d replay=%+v",
 			egressCalls.Load(), runtimeCalls.Load(), replayedEnable)
 	}
@@ -436,11 +444,13 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 		deletedBase.Agent.ActiveOperationRequestID != "" {
 		t.Fatalf("deleted Agent = %+v", deletedBase.Agent)
 	}
+	deleteEgressCalls, deleteRuntimeCalls := egressCalls.Load(), runtimeCalls.Load()
 	replayedDelete := serveJSON(
 		t, handler, http.MethodPost, "/internal/agents/"+agentID+"/delete",
 		deleteBody, http.StatusAccepted,
 	)
-	if replayedDelete["state"] != "completed" || egressCalls.Load() != 21 || runtimeCalls.Load() != 6 {
+	if replayedDelete["state"] != "completed" ||
+		egressCalls.Load() != deleteEgressCalls || runtimeCalls.Load() != deleteRuntimeCalls {
 		t.Fatalf("idempotent delete repeated effects: egress=%d runtime=%d replay=%+v",
 			egressCalls.Load(), runtimeCalls.Load(), replayedDelete)
 	}

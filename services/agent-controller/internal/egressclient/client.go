@@ -59,18 +59,28 @@ func (client *Client) GetAgentNetwork(
 	return client.readAgentNetwork(ctx, http.MethodGet, agentID, "get_agent_network", false)
 }
 
-func (client *Client) FenceAgentNetwork(ctx context.Context, agentID string) error {
-	return client.postAgentNetworkAction(ctx, agentID, "fence", "fence_agent_network")
+func (client *Client) FenceAgentNetwork(
+	ctx context.Context, agentID string, expectedResourceVersion uint64,
+) error {
+	return client.postAgentNetworkAction(
+		ctx, agentID, "fence", "fence_agent_network", expectedResourceVersion,
+	)
 }
 
-func (client *Client) ResetAgentFlows(ctx context.Context, agentID string) error {
-	return client.postAgentNetworkAction(ctx, agentID, "reset-flows", "reset_agent_flows")
+func (client *Client) ResetAgentFlows(
+	ctx context.Context, agentID string, expectedResourceVersion uint64,
+) error {
+	return client.postAgentNetworkAction(
+		ctx, agentID, "reset-flows", "reset_agent_flows", expectedResourceVersion,
+	)
 }
 
 func (client *Client) ReleaseAgentNetwork(
-	ctx context.Context, agentID string,
+	ctx context.Context, agentID string, expectedResourceVersion uint64,
 ) (ports.NetworkAttachment, error) {
-	return client.readAgentNetworkAction(ctx, agentID, "release", "release_agent_network", "quarantined")
+	return client.readAgentNetworkAction(
+		ctx, agentID, "release", "release_agent_network", "quarantined", expectedResourceVersion,
+	)
 }
 
 func (client *Client) GetAgentPolicyAssignment(
@@ -225,6 +235,7 @@ func (client *Client) readAgentNetworkAction(
 	action string,
 	operation string,
 	requiredState string,
+	expectedResourceVersion uint64,
 ) (result ports.NetworkAttachment, resultErr error) {
 	ctx, cancel := context.WithTimeout(ctx, client.timeout)
 	defer cancel()
@@ -246,25 +257,30 @@ func (client *Client) readAgentNetworkAction(
 
 	endpoint := *client.baseURL
 	endpoint.Path = "/internal/agent-networks/" + url.PathEscape(agentID) + "/" + action
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), http.NoBody)
+	requestBody, err := resourceVersionBody(expectedResourceVersion)
 	if err != nil {
 		return ports.NetworkAttachment{}, dependencyFailure("invalid_request", false)
 	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), requestBody)
+	if err != nil {
+		return ports.NetworkAttachment{}, dependencyFailure("invalid_request", false)
+	}
+	request.Header.Set("Content-Type", "application/json")
 	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(request.Header))
 	response, err := client.httpClient.Do(request)
 	if err != nil {
 		return ports.NetworkAttachment{}, dependencyFailure("control_plane_unavailable", true)
 	}
 	span.SetAttributes(attribute.Int("http.response.status_code", response.StatusCode))
-	body, err := io.ReadAll(io.LimitReader(response.Body, maximumResponseBytes+1))
+	responseBody, err := io.ReadAll(io.LimitReader(response.Body, maximumResponseBytes+1))
 	closeErr := response.Body.Close()
-	if err != nil || closeErr != nil || len(body) > maximumResponseBytes {
+	if err != nil || closeErr != nil || len(responseBody) > maximumResponseBytes {
 		return ports.NetworkAttachment{}, dependencyFailure("invalid_response", true)
 	}
 	if response.StatusCode != http.StatusOK {
-		return ports.NetworkAttachment{}, decodeFailure(body, response.StatusCode)
+		return ports.NetworkAttachment{}, decodeFailure(responseBody, response.StatusCode)
 	}
-	result, err = decodeNetworkAttachment(body, agentID, requiredState)
+	result, err = decodeNetworkAttachment(responseBody, agentID, requiredState)
 	if err != nil {
 		return ports.NetworkAttachment{}, dependencyFailure("invalid_response", true)
 	}
@@ -273,6 +289,7 @@ func (client *Client) readAgentNetworkAction(
 
 func (client *Client) postAgentNetworkAction(
 	ctx context.Context, agentID string, action string, operation string,
+	expectedResourceVersion uint64,
 ) (resultErr error) {
 	ctx, cancel := context.WithTimeout(ctx, client.timeout)
 	defer cancel()
@@ -294,28 +311,46 @@ func (client *Client) postAgentNetworkAction(
 
 	endpoint := *client.baseURL
 	endpoint.Path = "/internal/agent-networks/" + url.PathEscape(agentID) + "/" + action
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), http.NoBody)
+	requestBody, err := resourceVersionBody(expectedResourceVersion)
 	if err != nil {
 		return dependencyFailure("invalid_request", false)
 	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), requestBody)
+	if err != nil {
+		return dependencyFailure("invalid_request", false)
+	}
+	request.Header.Set("Content-Type", "application/json")
 	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(request.Header))
 	response, err := client.httpClient.Do(request)
 	if err != nil {
 		return dependencyFailure("control_plane_unavailable", true)
 	}
 	span.SetAttributes(attribute.Int("http.response.status_code", response.StatusCode))
-	body, err := io.ReadAll(io.LimitReader(response.Body, maximumResponseBytes+1))
+	responseBody, err := io.ReadAll(io.LimitReader(response.Body, maximumResponseBytes+1))
 	closeErr := response.Body.Close()
-	if err != nil || closeErr != nil || len(body) > maximumResponseBytes {
+	if err != nil || closeErr != nil || len(responseBody) > maximumResponseBytes {
 		return dependencyFailure("invalid_response", true)
 	}
 	if response.StatusCode != http.StatusNoContent {
-		return decodeFailure(body, response.StatusCode)
+		return decodeFailure(responseBody, response.StatusCode)
 	}
-	if len(body) != 0 {
+	if len(responseBody) != 0 {
 		return dependencyFailure("invalid_response", true)
 	}
 	return nil
+}
+
+func resourceVersionBody(expectedResourceVersion uint64) (io.Reader, error) {
+	if expectedResourceVersion == 0 {
+		return nil, fmt.Errorf("expected resource version must be positive")
+	}
+	payload, err := json.Marshal(struct {
+		ExpectedResourceVersion uint64 `json:"expected_resource_version"`
+	}{ExpectedResourceVersion: expectedResourceVersion})
+	if err != nil {
+		return nil, err
+	}
+	return bytes.NewReader(payload), nil
 }
 
 func decodeFailure(payload []byte, status int) error {

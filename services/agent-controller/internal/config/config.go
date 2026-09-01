@@ -11,6 +11,7 @@ import (
 const (
 	maximumLifecycleDependencyCalls = 10
 	maximumRecoveryPhaseCalls       = 4
+	recoveryFinalizationGrace       = 30 * time.Second
 )
 
 type Config struct {
@@ -89,18 +90,22 @@ func Load(lookup func(string) string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	recoveryLeaseDuration := recoveryAttemptTimeout + 30*time.Second
+	recoveryLeaseDuration := recoveryAttemptTimeout + recoveryFinalizationGrace
+	minimumRecoveryStaleAfter := lifecycleTimeout + recoveryFinalizationGrace
+	if recoveryLeaseDuration > minimumRecoveryStaleAfter {
+		minimumRecoveryStaleAfter = recoveryLeaseDuration
+	}
 	recoveryStaleAfter, err := positiveDuration(
 		lookup("ANTNEST_AGENT_CONTROLLER_RECOVERY_STALE_AFTER"),
 		"ANTNEST_AGENT_CONTROLLER_RECOVERY_STALE_AFTER",
-		recoveryLeaseDuration,
+		minimumRecoveryStaleAfter,
 	)
 	if err != nil {
 		return Config{}, err
 	}
-	if recoveryStaleAfter < recoveryLeaseDuration {
+	if recoveryStaleAfter < minimumRecoveryStaleAfter {
 		return Config{}, fmt.Errorf(
-			"ANTNEST_AGENT_CONTROLLER_RECOVERY_STALE_AFTER must cover the lifecycle attempt timeout and finalization grace",
+			"ANTNEST_AGENT_CONTROLLER_RECOVERY_STALE_AFTER must cover the online lifecycle timeout and finalization grace",
 		)
 	}
 	config := Config{

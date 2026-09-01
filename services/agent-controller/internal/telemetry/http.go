@@ -30,7 +30,7 @@ func HTTPHandler(next http.Handler, logger *slog.Logger) http.Handler {
 	}
 	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if request.URL.Path == "/status" {
-			next.ServeHTTP(response, request)
+			observeReadinessFailure(next, response, request, logger)
 			return
 		}
 		ctx := otel.GetTextMapPropagator().Extract(
@@ -56,6 +56,28 @@ func HTTPHandler(next http.Handler, logger *slog.Logger) http.Handler {
 		}()
 		next.ServeHTTP(observed, instrumented)
 	})
+}
+
+func observeReadinessFailure(
+	next http.Handler,
+	response http.ResponseWriter,
+	request *http.Request,
+	logger *slog.Logger,
+) {
+	started := time.Now()
+	observed := &statusWriter{ResponseWriter: response, status: http.StatusOK}
+	next.ServeHTTP(observed, request)
+	if observed.status < http.StatusInternalServerError {
+		return
+	}
+	ctx := otel.GetTextMapPropagator().Extract(
+		request.Context(), propagation.HeaderCarrier(request.Header),
+	)
+	ctx, span := otel.Tracer(instrumentationName+"/http").Start(
+		ctx, "HTTP "+request.Method+" /status",
+		trace.WithSpanKind(trace.SpanKindServer), trace.WithTimestamp(started),
+	)
+	finishHTTPRequest(ctx, span, logger, request.Method, "/status", observed.status, started)
 }
 
 func finishHTTPRequest(

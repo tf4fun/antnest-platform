@@ -1,6 +1,6 @@
 {
   "contract": "antnest.agent-controller.lifecycle",
-  "revision": 2,
+  "revision": 3,
   "transport": "json-over-http",
   "trust": "internal-network",
   "schemas": { "messages": "control-api.schema.json" },
@@ -184,7 +184,6 @@
       "agent_create_requested",
       "agent_ready",
       "agent_rebuild_requested",
-      "agent_draining",
       "agent_rebuilt",
       "agent_disable_requested",
       "agent_disabled",
@@ -212,6 +211,7 @@
       "lifecycle_conflict": 409,
       "operation_not_found": 404,
       "dependency_unavailable": 503,
+      "lifecycle_timeout": 504,
       "internal_error": 500
     },
     "retryable_by_code": {
@@ -224,6 +224,7 @@
       "lifecycle_conflict": false,
       "operation_not_found": false,
       "dependency_unavailable": true,
+      "lifecycle_timeout": true,
       "internal_error": true
     }
   },

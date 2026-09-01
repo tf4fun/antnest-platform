@@ -499,8 +499,26 @@ where
         Ok(assignment)
     }
 
-    pub async fn reset_agent_flows(&self, agent_id: &AgentId) -> Result<(), ControlError> {
+    pub async fn reset_agent_flows(
+        &self,
+        agent_id: &AgentId,
+        expected_resource_version: u64,
+    ) -> Result<(), ControlError> {
+        if expected_resource_version == 0 {
+            return Err(ControlError::ResourceVersionConflict);
+        }
         let _guard = self.operations.lock(agent_id).await;
+        let assignment = self
+            .repository
+            .policy_assignment(agent_id)
+            .await
+            .map_err(|error| ControlError::repository("reset_agent_flows.repository", error))?;
+        if assignment.policy_id.as_str() != BUILTIN_DENY_ALL
+            || assignment.revision != BUILTIN_REVISION
+            || assignment.resource_version != expected_resource_version
+        {
+            return Err(ControlError::ResourceVersionConflict);
+        }
         let network = self
             .repository
             .agent_network(agent_id)
@@ -517,11 +535,22 @@ where
         Ok(())
     }
 
-    pub async fn fence_agent(&self, agent_id: AgentId) -> Result<(), ControlError> {
+    pub async fn fence_agent(
+        &self,
+        agent_id: AgentId,
+        expected_resource_version: u64,
+    ) -> Result<(), ControlError> {
+        if expected_resource_version == 0 {
+            return Err(ControlError::ResourceVersionConflict);
+        }
         let _guard = self.operations.lock(&agent_id).await;
         self.fence_dataplane(agent_id.clone()).await;
-        self.fence_locked(&agent_id, "fence_agent.kernel_cleanup")
-            .await?;
+        self.fence_locked(
+            &agent_id,
+            expected_resource_version,
+            "fence_agent.kernel_cleanup",
+        )
+        .await?;
         self.reopen_dataplane(&agent_id);
         Ok(())
     }
@@ -529,11 +558,19 @@ where
     pub async fn release_agent_network(
         &self,
         agent_id: AgentId,
+        expected_resource_version: u64,
     ) -> Result<RuntimeNetworkAttachment, ControlError> {
+        if expected_resource_version == 0 {
+            return Err(ControlError::ResourceVersionConflict);
+        }
         let _guard = self.operations.lock(&agent_id).await;
         self.fence_dataplane(agent_id.clone()).await;
-        self.fence_locked(&agent_id, "release_agent_network.kernel_cleanup")
-            .await?;
+        self.fence_locked(
+            &agent_id,
+            expected_resource_version,
+            "release_agent_network.kernel_cleanup",
+        )
+        .await?;
         let network = self
             .repository
             .quarantine_agent_network(&agent_id, SystemTime::now())
@@ -618,6 +655,7 @@ where
     async fn fence_locked(
         &self,
         agent_id: &AgentId,
+        expected_resource_version: u64,
         cleanup_stage: &'static str,
     ) -> Result<(), ControlError> {
         let network = self
@@ -633,22 +671,32 @@ where
             .policy_assignment(agent_id)
             .await
             .map_err(|error| ControlError::repository("fence.repository", error))?;
+        let already_fenced =
+            current.policy_id.as_str() == BUILTIN_DENY_ALL && current.revision == BUILTIN_REVISION;
+        if (!already_fenced && current.resource_version != expected_resource_version)
+            || (already_fenced && current.resource_version < expected_resource_version)
+        {
+            return Err(ControlError::ResourceVersionConflict);
+        }
         let deny_id = PolicyId::parse(BUILTIN_DENY_ALL).map_err(|_| {
             ControlError::ControlPlaneUnavailable(FailureContext::new(
                 "fence.builtin_policy",
                 "built_in_policy_invalid",
             ))
         })?;
-        let assignment = self
-            .repository
-            .compare_and_swap_assignment(
-                agent_id,
-                deny_id,
-                BUILTIN_REVISION,
-                current.resource_version,
-            )
-            .await
-            .map_err(|error| ControlError::repository("fence.repository", error))?;
+        let assignment = if already_fenced {
+            current
+        } else {
+            self.repository
+                .compare_and_swap_assignment(
+                    agent_id,
+                    deny_id,
+                    BUILTIN_REVISION,
+                    expected_resource_version,
+                )
+                .await
+                .map_err(|error| ControlError::repository("fence.repository", error))?
+        };
         self.reset_flows_and_kernel(agent_id, network.tunnel_ipv4, cleanup_stage)
             .await?;
         self.replace_route(

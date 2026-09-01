@@ -371,6 +371,7 @@ func (repository *Repository) PublishAgentRebuild(
 	}
 	if operation.State != domain.OperationRunning || operation.Phase != domain.PhasePublish ||
 		operation.RuntimeResult == nil || operation.NetworkPolicyAssignment == nil ||
+		input.AccessRevision == "" ||
 		input.Execution.AgentID != operation.AgentID ||
 		input.Execution.AgentSpecRevisionID != operation.TargetSpecRevisionID ||
 		input.Execution.RuntimeRevision != operation.RuntimeResult.RuntimeRevision ||
@@ -395,16 +396,31 @@ SET lifecycle_state = 'available', executable_spec_revision_id = $2,
     executable_execution_revision_id = $3,
     last_successful_execution_revision_id = $3,
     runtime_revision = $4, runtime_execution_id = $5, runtime_mcp_endpoint = $6,
+    access_revision = $7,
     active_operation_request_id = '', failure_stage = '', failure_code = '', failure_detail = '',
-    aggregate_sequence = $7, updated_at = $8
-WHERE id = $1 AND active_operation_request_id = $9 AND aggregate_sequence = $10`,
+    aggregate_sequence = $8, updated_at = $9
+WHERE id = $1 AND active_operation_request_id = $10 AND aggregate_sequence = $11`,
 		operation.AgentID, input.Execution.AgentSpecRevisionID, input.Execution.ID,
 		input.Execution.RuntimeRevision, input.Execution.RuntimeExecutionID,
-		input.Execution.RuntimeMCPEndpoint, input.RebuiltEvent.AggregateSequence,
-		input.Now, input.RequestID, input.RebuiltEvent.AggregateSequence-1,
+		input.Execution.RuntimeMCPEndpoint, input.AccessRevision,
+		input.RebuiltEvent.AggregateSequence, input.Now, input.RequestID,
+		input.RebuiltEvent.AggregateSequence-1,
 	)
 	if err != nil {
 		return ports.AgentRebuildState{}, fmt.Errorf("publish rebuilt Agent projection: %w", err)
+	}
+	if result.RowsAffected() != 1 {
+		return ports.AgentRebuildState{}, ports.ErrConcurrentChange
+	}
+	result, err = transaction.Exec(ctx, `
+UPDATE agent_controller.agent_access_bindings
+SET access_revision = $2, prompt_image = $3, prompt_embedded_context = $4,
+    updated_at = $5
+WHERE agent_id = $1 AND active = TRUE`, operation.AgentID, input.AccessRevision,
+		input.PromptCapabilities.Image, input.PromptCapabilities.EmbeddedContext, input.Now,
+	)
+	if err != nil {
+		return ports.AgentRebuildState{}, fmt.Errorf("update rebuilt Agent access: %w", err)
 	}
 	if result.RowsAffected() != 1 {
 		return ports.AgentRebuildState{}, ports.ErrConcurrentChange

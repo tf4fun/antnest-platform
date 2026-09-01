@@ -348,17 +348,17 @@ func (dependency *enableDependenciesStub) AssignAgentPolicy(
 	return assignment, nil
 }
 
-func (dependency *enableDependenciesStub) FenceAgentNetwork(context.Context, string) error {
+func (dependency *enableDependenciesStub) FenceAgentNetwork(context.Context, string, uint64) error {
 	dependency.calls = append(dependency.calls, "egress.fence")
 	return nil
 }
 
-func (dependency *enableDependenciesStub) ResetAgentFlows(context.Context, string) error {
+func (dependency *enableDependenciesStub) ResetAgentFlows(context.Context, string, uint64) error {
 	return errors.New("unexpected Egress flow reset")
 }
 
 func (dependency *enableDependenciesStub) ReleaseAgentNetwork(
-	context.Context, string,
+	context.Context, string, uint64,
 ) (ports.NetworkAttachment, error) {
 	return ports.NetworkAttachment{}, errors.New("unexpected Egress network release")
 }

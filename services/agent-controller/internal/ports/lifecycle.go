@@ -95,9 +95,9 @@ type EgressClient interface {
 	EnsureAgentNetwork(context.Context, string) (NetworkAttachment, error)
 	GetAgentPolicyAssignment(context.Context, string) (NetworkPolicyAssignment, error)
 	AssignAgentPolicy(context.Context, NetworkPolicyAssignment, uint64) (NetworkPolicyAssignment, error)
-	FenceAgentNetwork(context.Context, string) error
-	ResetAgentFlows(context.Context, string) error
-	ReleaseAgentNetwork(context.Context, string) (NetworkAttachment, error)
+	FenceAgentNetwork(context.Context, string, uint64) error
+	ResetAgentFlows(context.Context, string, uint64) error
+	ReleaseAgentNetwork(context.Context, string, uint64) (NetworkAttachment, error)
 }
 
 type RuntimeClient interface {
@@ -143,13 +143,14 @@ type AgentRecord struct {
 }
 
 type AgentAccessRecord struct {
-	AccessSubject  string
-	AgentID        string
-	PrincipalID    string
-	AccessRevision string
-	Active         bool
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	AccessSubject      string
+	AgentID            string
+	PrincipalID        string
+	AccessRevision     string
+	PromptCapabilities PromptCapabilities
+	Active             bool
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 }
 
 type AgentSpecRecord struct {
@@ -330,11 +331,13 @@ type AdvanceAgentRebuild struct {
 }
 
 type PublishAgentRebuild struct {
-	RequestID    string
-	Fingerprint  string
-	Execution    ExecutionRecord
-	RebuiltEvent AgentEventRecord
-	Now          time.Time
+	RequestID          string
+	Fingerprint        string
+	AccessRevision     string
+	PromptCapabilities PromptCapabilities
+	Execution          ExecutionRecord
+	RebuiltEvent       AgentEventRecord
+	Now                time.Time
 }
 
 type FailAgentRebuild struct {

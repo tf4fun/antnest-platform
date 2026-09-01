@@ -231,6 +231,10 @@ FROM agent_controller.run_admissions WHERE admission_id = $1`,
 
 	publishInput := ports.PublishAgentRebuild{
 		RequestID: begin.Operation.RequestID, Fingerprint: fingerprint,
+		AccessRevision: "access-rebuild-integration",
+		PromptCapabilities: ports.PromptCapabilities{
+			Image: targetSpec.Snapshot().Model.SupportsImages,
+		},
 		Execution: ports.ExecutionRecord{
 			ID: "execution-rebuild-integration", AgentID: base.Agent.AgentID,
 			Revision:               base.NextExecutionRevision,

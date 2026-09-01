@@ -1,6 +1,6 @@
 {
   "contract": "antnest.agent-controller.run-admission",
-  "revision": 5,
+  "revision": 6,
   "transport": "json-over-http",
   "trust": "internal-network",
   "base_path": "/rpc/agent-controller",
@@ -61,13 +61,14 @@
       },
       "response": {
         "type": "object",
-        "required": ["principal_id", "agent_id", "access_revision"],
+        "required": ["principal_id", "agent_id", "access_revision", "prompt_capabilities"],
         "properties": {
           "principal_id": { "type": "string", "minLength": 1 },
           "agent_id": { "type": "string", "minLength": 1 },
           "access_revision": { "type": "string", "minLength": 1 },
           "prompt_capabilities": {
             "type": "object",
+            "required": ["image", "embedded_context"],
             "properties": {
               "image": { "type": "boolean" },
               "embedded_context": { "type": "boolean" }
@@ -148,6 +149,7 @@
             "required": [
               "system_prompt",
               "context_policy_version",
+              "skill_instructions",
               "model",
               "max_model_requests",
               "credential_ref"
@@ -174,7 +176,8 @@
                   "base_url",
                   "model",
                   "context_window",
-                  "max_output_tokens"
+                  "max_output_tokens",
+                  "supports_images"
                 ],
                 "properties": {
                   "base_url": { "type": "string", "format": "uri" },

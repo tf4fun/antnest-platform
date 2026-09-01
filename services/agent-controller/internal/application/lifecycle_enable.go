@@ -133,24 +133,25 @@ func (service *LifecycleService) continueAgentEnable(
 	if lifecycleOperationReservedForRecovery(ctx, state.Operation) {
 		return enableAgentResult(state), nil
 	}
+	_, recoveryStep := ports.LifecycleRecoveryTokenFromContext(ctx)
 	var err error
 	if state.Operation.Phase == domain.PhaseNetworkEnsure {
 		state, err = service.ensureEnableNetwork(ctx, state)
-		if err != nil || state.Operation.State != domain.OperationRunning {
+		if err != nil || state.Operation.State != domain.OperationRunning || recoveryStep {
 			return enableAgentResult(state), err
 		}
 	}
 	if state.Operation.Phase == domain.PhaseRuntimeEnable {
 		state, err = service.enableRuntime(ctx, state)
 		if err != nil || state.Operation.State != domain.OperationRunning ||
-			state.Operation.Phase == domain.PhaseRuntimeEnable {
+			state.Operation.Phase == domain.PhaseRuntimeEnable || recoveryStep {
 			return enableAgentResult(state), err
 		}
 	}
 	if state.Operation.Phase == domain.PhaseNetworkRestore {
 		state, err = service.restoreEnableNetwork(ctx, state)
 		if err != nil || state.Operation.State != domain.OperationRunning ||
-			state.Operation.Phase == domain.PhaseNetworkRestore {
+			state.Operation.Phase == domain.PhaseNetworkRestore || recoveryStep {
 			return enableAgentResult(state), err
 		}
 	}
@@ -192,7 +193,9 @@ func (service *LifecycleService) ensureEnableNetwork(
 			"Runtime Egress returned an incomplete attachment", nil,
 		)
 	}
-	if err := service.egress.FenceAgentNetwork(ctx, state.Agent.AgentID); err != nil {
+	if err := service.egress.FenceAgentNetwork(
+		ctx, state.Agent.AgentID, currentPolicy.ResourceVersion,
+	); err != nil {
 		return service.handleEnableDependencyFailure(ctx, state, "runtime-egress", err)
 	}
 	fencedPolicy, err := service.egress.GetAgentPolicyAssignment(ctx, state.Agent.AgentID)
@@ -303,7 +306,16 @@ func (service *LifecycleService) fenceIncompleteEnable(
 	stage string,
 	cause error,
 ) (ports.AgentEnableState, error) {
-	if err := service.egress.FenceAgentNetwork(ctx, state.Agent.AgentID); err != nil {
+	currentPolicy, policyErr := service.egress.GetAgentPolicyAssignment(ctx, state.Agent.AgentID)
+	if policyErr != nil {
+		return state, fmt.Errorf(
+			"%w: runtime-egress %s and policy read failed: %v: %w",
+			ErrDependencyUnavailable, stage, cause, policyErr,
+		)
+	}
+	if err := service.egress.FenceAgentNetwork(
+		ctx, state.Agent.AgentID, currentPolicy.ResourceVersion,
+	); err != nil {
 		return state, fmt.Errorf(
 			"%w: runtime-egress %s and network fence failed: %v: %w",
 			ErrDependencyUnavailable, stage, cause, err,

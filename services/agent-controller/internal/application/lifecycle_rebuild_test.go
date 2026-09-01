@@ -46,7 +46,7 @@ func TestRebuildAgentReplacesRuntimeAndPublishesTargetSpecAtomically(t *testing.
 	}
 
 	wantCalls := []string{
-		"egress.policy.get", "egress.fence", "egress.get", "egress.reset",
+		"egress.policy.get", "egress.fence", "egress.get", "egress.policy.get", "egress.reset",
 		"runtime.update", "egress.policy.get", "egress.policy.assign", "egress.ensure",
 	}
 	if !reflect.DeepEqual(dependencies.calls, wantCalls) {
@@ -195,7 +195,7 @@ func TestRebuildAgentKnownRuntimeFailureRestoresPolicyAndSource(t *testing.T) {
 		t.Fatalf("known Runtime failure result = %+v failed=%+v", result, store.failed)
 	}
 	wantCalls := []string{
-		"egress.policy.get", "egress.fence", "egress.get", "egress.reset",
+		"egress.policy.get", "egress.fence", "egress.get", "egress.policy.get", "egress.reset",
 		"runtime.update", "runtime.inspect",
 		"egress.policy.get", "egress.policy.assign", "egress.ensure",
 	}
@@ -236,7 +236,7 @@ func TestRebuildAgentRuntimeNotFoundRemainsRunningAndFenced(t *testing.T) {
 		t.Fatalf("runtime_not_found rebuild result=%+v failure=%+v", result, store.failed)
 	}
 	wantCalls := []string{
-		"egress.policy.get", "egress.fence", "egress.get", "egress.reset",
+		"egress.policy.get", "egress.fence", "egress.get", "egress.policy.get", "egress.reset",
 		"runtime.update", "runtime.inspect",
 	}
 	if !reflect.DeepEqual(dependencies.calls, wantCalls) {
@@ -290,7 +290,7 @@ func TestRebuildAgentDeletedRuntimeInspectionFailsClosedAndReleasesBlockedRun(t 
 		t.Fatalf("deleted-Runtime rebuild result=%+v failure=%+v", result, store.failed)
 	}
 	wantCalls := []string{
-		"egress.policy.get", "egress.fence", "egress.get", "egress.reset",
+		"egress.policy.get", "egress.fence", "egress.get", "egress.policy.get", "egress.reset",
 		"runtime.update", "runtime.inspect",
 	}
 	if !reflect.DeepEqual(dependencies.calls, wantCalls) {
@@ -512,18 +512,18 @@ func (dependency *rebuildDependenciesStub) AssignAgentPolicy(
 	return assignment, nil
 }
 
-func (dependency *rebuildDependenciesStub) FenceAgentNetwork(context.Context, string) error {
+func (dependency *rebuildDependenciesStub) FenceAgentNetwork(context.Context, string, uint64) error {
 	dependency.calls = append(dependency.calls, "egress.fence")
 	return nil
 }
 
-func (dependency *rebuildDependenciesStub) ResetAgentFlows(context.Context, string) error {
+func (dependency *rebuildDependenciesStub) ResetAgentFlows(context.Context, string, uint64) error {
 	dependency.calls = append(dependency.calls, "egress.reset")
 	return nil
 }
 
 func (dependency *rebuildDependenciesStub) ReleaseAgentNetwork(
-	context.Context, string,
+	context.Context, string, uint64,
 ) (ports.NetworkAttachment, error) {
 	return ports.NetworkAttachment{}, errors.New("unexpected Egress network release")
 }

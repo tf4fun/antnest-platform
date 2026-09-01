@@ -557,7 +557,7 @@ func TestObserveLifecycleResultMarksTerminalBusinessFailure(t *testing.T) {
 	span.End()
 	ended := recorder.Ended()
 	if len(ended) != 1 || ended[0].Status().Code != codes.Error ||
-		ended[0].Status().Description != "run_drain_timeout" {
+		ended[0].Status().Description != "timeout" {
 		t.Fatalf("failed lifecycle span = %+v", ended)
 	}
 }

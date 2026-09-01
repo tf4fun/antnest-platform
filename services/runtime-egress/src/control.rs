@@ -68,9 +68,21 @@ trait ControlApi: Send + Sync {
     fn status(&self) -> ServiceStatus;
     async fn ensure(&self, agent_id: AgentId) -> Result<RuntimeNetworkAttachment, ControlError>;
     async fn network(&self, agent_id: &AgentId) -> Result<RuntimeNetworkAttachment, ControlError>;
-    async fn fence(&self, agent_id: AgentId) -> Result<(), ControlError>;
-    async fn reset(&self, agent_id: &AgentId) -> Result<(), ControlError>;
-    async fn release(&self, agent_id: AgentId) -> Result<RuntimeNetworkAttachment, ControlError>;
+    async fn fence(
+        &self,
+        agent_id: AgentId,
+        expected_resource_version: u64,
+    ) -> Result<(), ControlError>;
+    async fn reset(
+        &self,
+        agent_id: &AgentId,
+        expected_resource_version: u64,
+    ) -> Result<(), ControlError>;
+    async fn release(
+        &self,
+        agent_id: AgentId,
+        expected_resource_version: u64,
+    ) -> Result<RuntimeNetworkAttachment, ControlError>;
     async fn put_policy(
         &self,
         policy_id: PolicyId,
@@ -109,20 +121,36 @@ where
         result
     }
 
-    async fn fence(&self, agent_id: AgentId) -> Result<(), ControlError> {
-        let result = self.fence_agent(agent_id).await;
+    async fn fence(
+        &self,
+        agent_id: AgentId,
+        expected_resource_version: u64,
+    ) -> Result<(), ControlError> {
+        let result = self.fence_agent(agent_id, expected_resource_version).await;
         self.observe_control_result(&result);
         result
     }
 
-    async fn reset(&self, agent_id: &AgentId) -> Result<(), ControlError> {
-        let result = self.reset_agent_flows(agent_id).await;
+    async fn reset(
+        &self,
+        agent_id: &AgentId,
+        expected_resource_version: u64,
+    ) -> Result<(), ControlError> {
+        let result = self
+            .reset_agent_flows(agent_id, expected_resource_version)
+            .await;
         self.observe_control_result(&result);
         result
     }
 
-    async fn release(&self, agent_id: AgentId) -> Result<RuntimeNetworkAttachment, ControlError> {
-        let result = self.release_agent_network(agent_id).await;
+    async fn release(
+        &self,
+        agent_id: AgentId,
+        expected_resource_version: u64,
+    ) -> Result<RuntimeNetworkAttachment, ControlError> {
+        let result = self
+            .release_agent_network(agent_id, expected_resource_version)
+            .await;
         self.observe_control_result(&result);
         result
     }
@@ -354,12 +382,15 @@ async fn get_network(
 async fn fence_network(
     State(state): State<AppState>,
     Path(agent_id): Path<String>,
+    request: Result<Json<ExpectedResourceVersionRequest>, JsonRejection>,
 ) -> Result<StatusCode, ApiError> {
+    let Json(request) = request.map_err(|_| ApiError::invalid_request())?;
+    validate_resource_version(request.expected_resource_version)?;
     let agent_id = parse_agent_id(agent_id)?;
     record_agent_id(&agent_id);
     state
         .api
-        .fence(agent_id)
+        .fence(agent_id, request.expected_resource_version)
         .await
         .map(|()| StatusCode::NO_CONTENT)
         .map_err(ApiError::from)
@@ -368,12 +399,15 @@ async fn fence_network(
 async fn reset_flows(
     State(state): State<AppState>,
     Path(agent_id): Path<String>,
+    request: Result<Json<ExpectedResourceVersionRequest>, JsonRejection>,
 ) -> Result<StatusCode, ApiError> {
+    let Json(request) = request.map_err(|_| ApiError::invalid_request())?;
+    validate_resource_version(request.expected_resource_version)?;
     let agent_id = parse_agent_id(agent_id)?;
     record_agent_id(&agent_id);
     state
         .api
-        .reset(&agent_id)
+        .reset(&agent_id, request.expected_resource_version)
         .await
         .map(|()| StatusCode::NO_CONTENT)
         .map_err(ApiError::from)
@@ -382,16 +416,32 @@ async fn reset_flows(
 async fn release_network(
     State(state): State<AppState>,
     Path(agent_id): Path<String>,
+    request: Result<Json<ExpectedResourceVersionRequest>, JsonRejection>,
 ) -> Result<Json<NetworkResponse>, ApiError> {
+    let Json(request) = request.map_err(|_| ApiError::invalid_request())?;
+    validate_resource_version(request.expected_resource_version)?;
     let agent_id = parse_agent_id(agent_id)?;
     record_agent_id(&agent_id);
     state
         .api
-        .release(agent_id)
+        .release(agent_id, request.expected_resource_version)
         .await
         .map(NetworkResponse::from)
         .map(Json)
         .map_err(ApiError::from)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExpectedResourceVersionRequest {
+    expected_resource_version: u64,
+}
+
+fn validate_resource_version(resource_version: u64) -> Result<(), ApiError> {
+    if resource_version == 0 {
+        return Err(ApiError::invalid_request());
+    }
+    Ok(())
 }
 
 #[derive(Deserialize)]

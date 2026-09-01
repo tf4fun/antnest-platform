@@ -132,7 +132,7 @@ Every non-success response uses the error envelope from the JSON contract.
 
 ## Compatibility Rules
 
-1. This document and machine catalog describe contract revision 5.
+1. This document and machine catalog describe contract revision 6.
 2. Contract fields are `snake_case`; ACP wire fields remain the ACP-defined
    `camelCase` shapes.
 3. New optional response fields may be added. Existing required fields cannot

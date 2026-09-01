@@ -129,6 +129,7 @@ func (service *LifecycleService) continueAgentDisable(
 	if lifecycleOperationReservedForRecovery(ctx, state.Operation) {
 		return disableAgentResult(state), nil
 	}
+	_, recoveryStep := ports.LifecycleRecoveryTokenFromContext(ctx)
 	var err error
 	if state.Operation.Phase == domain.PhaseDrain {
 		if !service.clock.Now().Before(state.Operation.CreatedAt.Add(service.drainTimeout)) {
@@ -143,20 +144,20 @@ func (service *LifecycleService) continueAgentDisable(
 			domain.ChildRequestID(state.Operation.RequestID, domain.PhaseNetworkFence),
 			service.clock.Now(),
 		)
-		if err != nil || state.Operation.Phase == domain.PhaseDrain {
+		if err != nil || state.Operation.Phase == domain.PhaseDrain || recoveryStep {
 			return disableAgentResult(state), err
 		}
 	}
 	if state.Operation.Phase == domain.PhaseNetworkFence {
 		state, err = service.fenceDisableNetwork(ctx, state)
-		if err != nil || state.Operation.State != domain.OperationRunning {
+		if err != nil || state.Operation.State != domain.OperationRunning || recoveryStep {
 			return disableAgentResult(state), err
 		}
 	}
 	if state.Operation.Phase == domain.PhaseRuntimeDisable {
 		state, err = service.disableRuntime(ctx, state)
 		if err != nil || state.Operation.State != domain.OperationRunning ||
-			state.Operation.Phase == domain.PhaseRuntimeDisable {
+			state.Operation.Phase == domain.PhaseRuntimeDisable || recoveryStep {
 			return disableAgentResult(state), err
 		}
 	}
@@ -192,7 +193,9 @@ func (service *LifecycleService) fenceDisableNetwork(
 			return ports.AgentDisableState{}, err
 		}
 	}
-	if err := service.egress.FenceAgentNetwork(ctx, state.Agent.AgentID); err != nil {
+	if err := service.egress.FenceAgentNetwork(
+		ctx, state.Agent.AgentID, state.Operation.NetworkPolicyAssignment.ResourceVersion,
+	); err != nil {
 		return service.handleDisableDependencyFailure(ctx, state, "runtime-egress", err)
 	}
 	return service.store.AdvanceAgentDisable(ctx, ports.AdvanceAgentDisable{

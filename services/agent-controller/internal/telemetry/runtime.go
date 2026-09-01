@@ -46,10 +46,11 @@ func Setup(ctx context.Context, base slog.Handler, config Config) (*Runtime, err
 		return nil, fmt.Errorf("base log handler is required")
 	}
 	local := correlatedHandler{next: base}
-	runtime := &Runtime{logger: slog.New(local)}
+	localLogger := slog.New(local)
+	runtime := &Runtime{logger: localLogger}
 	otel.SetTextMapPropagator(propagation.TraceContext{})
 	otel.SetErrorHandler(otel.ErrorHandlerFunc(func(error) {
-		runtime.Logger().Error("OpenTelemetry export failed", "error_class", "export_error")
+		localLogger.Error("OpenTelemetry export failed", "error_class", "export_error")
 	}))
 	if strings.EqualFold(strings.TrimSpace(os.Getenv("OTEL_SDK_DISABLED")), "true") {
 		return runtime, nil
