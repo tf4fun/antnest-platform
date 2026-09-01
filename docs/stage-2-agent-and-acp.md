@@ -768,6 +768,13 @@ ListAgentEventsGlobal(after_sequence)
 WatchAgentEventsGlobal(after_sequence)
 ```
 
+`ListAgents` reads the Agent Controller-owned current projection with optional
+organization, owner-user, and lifecycle-state filters. It defaults to excluding
+desired state `deleted`, orders by immutable `(created_at, agent_id)`, and uses
+a versioned opaque keyset cursor. Every result carries the Agent aggregate
+sequence already reflected by the projection. Identity Service IDs remain
+opaque values without cross-service foreign keys or shared-table reads.
+
 The create and rebuild methods return durable operation identity and current
 phase. A caller can inspect after timeout using the same `request_id`.
 AcquireRun returns the complete immutable non-secret execution input needed by

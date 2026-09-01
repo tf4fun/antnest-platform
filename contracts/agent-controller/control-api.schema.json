@@ -301,6 +301,7 @@
         "desired_state",
         "lifecycle_state",
         "access_revision",
+        "aggregate_sequence",
         "created_at",
         "updated_at"
       ],
@@ -312,6 +313,7 @@
         "desired_state": { "$ref": "#/$defs/desired_state" },
         "lifecycle_state": { "$ref": "#/$defs/lifecycle_state" },
         "access_revision": { "$ref": "#/$defs/id" },
+        "aggregate_sequence": { "type": "integer", "minimum": 0 },
         "agent_spec_revision": { "$ref": "#/$defs/id" },
         "executable_execution_revision": { "$ref": "#/$defs/id" },
         "last_successful_execution_revision": { "$ref": "#/$defs/id" },
@@ -321,6 +323,22 @@
         "failure_code": { "type": "string" },
         "created_at": { "$ref": "#/$defs/timestamp" },
         "updated_at": { "$ref": "#/$defs/timestamp" }
+      }
+    },
+    "agent_list": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["items", "next_cursor"],
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/agent" }
+        },
+        "next_cursor": {
+          "type": ["string", "null"],
+          "minLength": 1,
+          "maxLength": 2048
+        }
       }
     },
     "operation": {

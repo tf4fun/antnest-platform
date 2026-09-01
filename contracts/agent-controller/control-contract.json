@@ -1,6 +1,6 @@
 {
   "contract": "antnest.agent-controller.lifecycle",
-  "revision": 1,
+  "revision": 2,
   "transport": "json-over-http",
   "trust": "internal-network",
   "schemas": { "messages": "control-api.schema.json" },
@@ -89,7 +89,8 @@
           "limit",
           "cursor"
         ],
-        "success_status": 200
+        "success_status": 200,
+        "response": "control-api.schema.json#/$defs/agent_list"
       },
       "rebuild": {
         "method": "POST",

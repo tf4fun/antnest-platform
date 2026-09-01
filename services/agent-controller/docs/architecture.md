@@ -79,6 +79,19 @@ state. A failed replacement clears `executable_execution_revision` once the old
 Runtime is absent while retaining `last_successful_execution_revision` for
 audit.
 
+`owner_user_id` is immutable ownership, not a copied user profile. Agent
+Controller accepts the opaque Identity Service identity at creation and never
+joins or writes Identity Service storage. Owner-filtered reads are served from
+the local Agent projection. A future Identity lifecycle consumer may issue
+explicit Agent commands, but it cannot mutate this projection by sharing a
+database.
+
+Current-state queries order by immutable `(created_at, agent_id)` and use an
+opaque keyset cursor. They do not hold database snapshots across HTTP requests.
+`aggregate_sequence` identifies the last domain event reflected in each row;
+ordered change consumption belongs to the event journal rather than list
+pagination.
+
 ### AgentSpecRevision
 
 An AgentSpecRevision is a complete immutable non-secret snapshot derived

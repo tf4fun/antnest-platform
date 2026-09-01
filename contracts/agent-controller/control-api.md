@@ -72,6 +72,22 @@ Run admissions remain available for retention and audit.
 are excluded unless `include_deleted=true`. `GET /internal/agents/{agent_id}`
 returns the current projection and active immutable revision identifiers.
 
+The list route accepts optional `organization_id`, `owner_user_id`, and
+`lifecycle_state` filters. `owner_user_id` is the immutable Identity Service
+user identity frozen at Agent creation; Agent Controller neither copies user
+profiles nor joins the Identity Service database. Results are ordered by the
+immutable `(created_at, agent_id)` pair. `cursor` is an opaque, versioned
+continuation token for that pair, and `limit` is bounded to 1–200 (default 100).
+An explicit `lifecycle_state=deleting|deleted` filter does not override deletion
+visibility: callers must also set `include_deleted=true`. Explicit get remains
+available for deleted Agents so audit and administrator workflows can resolve a
+known identity.
+
+Every Agent response includes `aggregate_sequence`. It is the sequence of the
+last event already reflected by the current projection, allowing callers to
+correlate query state with the event journal without treating query pagination
+as an event stream.
+
 ## Operations And Events
 
 `GET /internal/agent-operations/{request_id}` returns one durable Saga state.
