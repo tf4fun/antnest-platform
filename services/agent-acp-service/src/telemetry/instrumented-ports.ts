@@ -205,7 +205,13 @@ export class InstrumentedAgentController implements AgentControllerPort {
   public finishRun(input: FinishRunInput, signal?: AbortSignal): Promise<void> {
     return this.rpc(
       "finish_run",
-      { "request.id": input.requestId, "admission.id": input.admissionId },
+      {
+        "request.id": input.requestId,
+        "admission.id": input.admissionId,
+        "run.terminal_class": input.terminalClass,
+        "run.tool_effect_state": input.toolEffectState,
+        "run.unknown_effect_source": input.unknownEffectSource,
+      },
       () => this.delegate.finishRun(input, signal),
     );
   }

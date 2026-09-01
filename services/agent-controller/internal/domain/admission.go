@@ -34,11 +34,20 @@ const (
 	ToolEffectUnknown ToolEffectState = "unknown"
 )
 
+type UnknownEffectSource string
+
+const (
+	UnknownEffectRuntimeMCP   UnknownEffectSource = "runtime_mcp"
+	UnknownEffectClientMCP    UnknownEffectSource = "client_mcp"
+	UnknownEffectUnclassified UnknownEffectSource = "unclassified"
+)
+
 type TerminalReport struct {
-	Class           TerminalClass   `json:"terminal_class"`
-	ToolEffectState ToolEffectState `json:"tool_effect_state"`
-	StopReason      string          `json:"stop_reason"`
-	ErrorClass      string          `json:"error_class"`
+	Class               TerminalClass       `json:"terminal_class"`
+	ToolEffectState     ToolEffectState     `json:"tool_effect_state"`
+	UnknownEffectSource UnknownEffectSource `json:"unknown_effect_source,omitempty"`
+	StopReason          string              `json:"stop_reason"`
+	ErrorClass          string              `json:"error_class"`
 }
 
 func ValidateTerminalReport(report TerminalReport) (AdmissionState, error) {
@@ -104,6 +113,9 @@ func (admission *RunAdmission) ReleaseAfterRuntimeAbsent(operationRequestID stri
 	if admission.state != AdmissionBlockedUnknownEffect {
 		return fmt.Errorf("admission state %s cannot use the Runtime absence barrier", admission.state)
 	}
+	if admission.report == nil || admission.report.UnknownEffectSource != UnknownEffectRuntimeMCP {
+		return fmt.Errorf("only a Runtime MCP unknown effect can use the Runtime absence barrier")
+	}
 	if strings.TrimSpace(operationRequestID) == "" || runtimeRevision != admission.runtimeRevision || now.IsZero() {
 		return fmt.Errorf("runtime absence evidence does not match the blocked admission")
 	}
@@ -119,10 +131,16 @@ func (report TerminalReport) admissionState() (AdmissionState, error) {
 		if !settledEffect(report.ToolEffectState) || !validStopReason(report.StopReason) || report.ErrorClass != "" {
 			return "", fmt.Errorf("completed report is invalid")
 		}
+		if report.UnknownEffectSource != "" {
+			return "", fmt.Errorf("completed report cannot carry an unknown effect source")
+		}
 		return AdmissionReleased, nil
 	case TerminalCancelled:
 		if !settledEffect(report.ToolEffectState) || report.StopReason != "" || report.ErrorClass != "" {
 			return "", fmt.Errorf("cancelled report is invalid")
+		}
+		if report.UnknownEffectSource != "" {
+			return "", fmt.Errorf("cancelled report cannot carry an unknown effect source")
 		}
 		return AdmissionReleased, nil
 	case TerminalFailed:
@@ -130,16 +148,25 @@ func (report TerminalReport) admissionState() (AdmissionState, error) {
 			!errorClassPattern.MatchString(report.ErrorClass) {
 			return "", fmt.Errorf("failed report is invalid")
 		}
+		if report.UnknownEffectSource != "" {
+			return "", fmt.Errorf("failed report cannot carry an unknown effect source")
+		}
 		return AdmissionReleased, nil
 	case TerminalUnresolved:
 		if report.ToolEffectState != ToolEffectUnknown || report.StopReason != "" ||
-			!errorClassPattern.MatchString(report.ErrorClass) {
+			!errorClassPattern.MatchString(report.ErrorClass) ||
+			!validUnknownEffectSource(report.UnknownEffectSource) {
 			return "", fmt.Errorf("unresolved report must preserve an unknown Tool effect")
 		}
 		return AdmissionBlockedUnknownEffect, nil
 	default:
 		return "", fmt.Errorf("unknown terminal class %q", report.Class)
 	}
+}
+
+func validUnknownEffectSource(source UnknownEffectSource) bool {
+	return source == UnknownEffectRuntimeMCP || source == UnknownEffectClientMCP ||
+		source == UnknownEffectUnclassified
 }
 
 func ValidateTerminalReplay(

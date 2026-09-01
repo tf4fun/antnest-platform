@@ -91,12 +91,14 @@ export type ModelStopReason = "end_turn" | "max_tokens" | "refusal";
 export type RunStopReason = ModelStopReason | "max_turn_requests";
 export type ExecutorState = "quiescent" | "cancellation_requested" | "unknown";
 export type ToolEffectState = "none" | "settled" | "unknown";
+export type UnknownEffectSource = "runtime_mcp" | "client_mcp" | "unclassified";
 
 export type RunOutcome =
   | {
       terminalClass: "completed";
       executorState: "quiescent";
       toolEffectState: "none" | "settled";
+      unknownEffectSource?: never;
       stopReason: RunStopReason;
       errorClass?: never;
     }
@@ -104,6 +106,7 @@ export type RunOutcome =
       terminalClass: "cancelled";
       executorState: "quiescent";
       toolEffectState: "none" | "settled";
+      unknownEffectSource?: never;
       stopReason?: never;
       errorClass?: never;
     }
@@ -111,6 +114,7 @@ export type RunOutcome =
       terminalClass: "failed";
       executorState: "quiescent";
       toolEffectState: "none" | "settled";
+      unknownEffectSource?: never;
       stopReason?: never;
       errorClass: string;
     }
@@ -118,6 +122,7 @@ export type RunOutcome =
       terminalClass: "unresolved";
       executorState: "quiescent";
       toolEffectState: "unknown";
+      unknownEffectSource: UnknownEffectSource;
       stopReason?: never;
       errorClass: string;
     };

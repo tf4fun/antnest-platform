@@ -82,7 +82,8 @@ database, logs, traces, errors, or Tool results.
 Closes an admission idempotently. `tool_effect_state` covers every dispatched
 Tool source, not only Runtime MCP. `unknown` is a real terminal report, not
 permission to replay a Tool. Timeout or connection loss does not prove whether
-an effect happened.
+an effect happened. `unknown_effect_source` is null for every settled outcome;
+an unresolved outcome requires `runtime_mcp`, `client_mcp`, or `unclassified`.
 
 The terminal facts form one closed union:
 
@@ -91,7 +92,8 @@ The terminal facts form one closed union:
 - `cancelled`: `none|settled` Tool effect, no stop reason;
 - `failed`: `none|settled` Tool effect, required error
   class, no stop reason;
-- `unresolved`: unknown Tool effect, required error class, no stop reason.
+- `unresolved`: unknown Tool effect, required source and error class, no stop
+  reason.
 
 `finish_run` is accepted only after the local executor is quiescent and can no
 longer issue model or MCP requests. That is a method precondition, not a second
@@ -104,13 +106,15 @@ The immutable executor report and the admission's coordination occupancy are
 separate facts. Completed, cancelled, and failed reports release admission. An
 unresolved report is sealed once, while admission becomes
 `blocked_unknown_effect` and continues excluding new Runs. A rebuild/delete
-barrier may later prove the bound Runtime absent and release that occupancy; it
-must not rewrite the original executor report. Disable has the same authority
-after Runtime Controller proves the source Runtime has no running compute. The
-barrier transition, admission release, Agent aggregate-sequence advance, and
-`run_admission_released` event are one transaction. Its event envelope carries
-both `operation_request_id` and `admission_id`; no event is synthesized when
-there is no unresolved admission.
+barrier may later prove the bound Runtime absent and release that occupancy only
+for `runtime_mcp`; it must not rewrite the original executor report. Disable has
+the same authority after Runtime Controller proves the source Runtime has no
+running compute. `client_mcp` and `unclassified` effects remain blocked because
+Runtime absence is unrelated evidence. The barrier transition, admission
+release, Agent aggregate-sequence advance, and `run_admission_released` event
+are one transaction. Its event envelope carries both `operation_request_id`
+and `admission_id`; no event is synthesized when there is no releasable
+admission.
 
 ## Error Classes
 
@@ -132,7 +136,7 @@ Every non-success response uses the error envelope from the JSON contract.
 
 ## Compatibility Rules
 
-1. This document and machine catalog describe contract revision 6.
+1. This document and machine catalog describe contract revision 7.
 2. Contract fields are `snake_case`; ACP wire fields remain the ACP-defined
    `camelCase` shapes.
 3. New optional response fields may be added. Existing required fields cannot
@@ -149,6 +153,7 @@ Agent Controller assigns one bounded deadline from
 `ANTNEST_AGENT_CONTROLLER_RUN_ADMISSION_TTL` (default `30m`). Expiration never
 releases occupancy by itself because it does not prove that a dispatched Tool
 has stopped. Agent ACP Service must recover the Run and call `finish_run`; an
-unknown Tool effect remains blocked until a Runtime-absence barrier releases
-it. The deadline bounds model and Tool calls, not the durability of the
-admission fact.
+unknown Tool effect remains blocked. Only a `runtime_mcp` effect can later use
+the Runtime-absence barrier. Client MCP and unclassified effects remain
+fail-closed pending an explicit recovery decision. The deadline bounds model
+and Tool calls, not the durability of the admission fact.

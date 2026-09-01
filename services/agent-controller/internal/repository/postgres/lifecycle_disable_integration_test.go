@@ -65,7 +65,7 @@ INSERT INTO agent_controller.run_admissions (
 	if _, err := repository.pool.Exec(ctx, `
 UPDATE agent_controller.run_admissions
 SET state = 'blocked_unknown_effect',
-    terminal_report = '{"terminal_class":"unresolved","tool_effect_state":"unknown","stop_reason":"","error_class":"tool_outcome_unknown"}'::jsonb,
+    terminal_report = '{"terminal_class":"unresolved","tool_effect_state":"unknown","unknown_effect_source":"runtime_mcp","stop_reason":"","error_class":"tool_outcome_unknown"}'::jsonb,
     finished_at = $2,
     updated_at = $2
 WHERE admission_id = $1`,
@@ -596,7 +596,7 @@ INSERT INTO agent_controller.run_admissions (
               'runtime', jsonb_build_object('runtime_revision', $9::text),
               'execution_spec', jsonb_build_object('skill_instructions', '[]'::jsonb)
           ),
-          '{"terminal_class":"unresolved","tool_effect_state":"unknown","stop_reason":"","error_class":"tool_outcome_unknown"}'::jsonb,
+          '{"terminal_class":"unresolved","tool_effect_state":"unknown","unknown_effect_source":"runtime_mcp","stop_reason":"","error_class":"tool_outcome_unknown"}'::jsonb,
           $10, $10, $10)`,
 			admissionID, "run-"+requestID, strings.Repeat("d", 64), base.Agent.AgentID,
 			"session-"+requestID, base.Agent.OwnerUserID, base.Agent.AccessRevision,

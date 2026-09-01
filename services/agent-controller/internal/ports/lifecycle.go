@@ -17,6 +17,7 @@ const (
 
 	RunReleaseOutcomeReleased   = "released"
 	RunReleaseOutcomeNotBlocked = "not_blocked"
+	RunReleaseOutcomeRetained   = "retained_source_not_runtime_mcp"
 
 	EventAgentCreateRequested  = "agent_create_requested"
 	EventAgentReady            = "agent_ready"

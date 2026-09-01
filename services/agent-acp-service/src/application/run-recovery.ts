@@ -66,6 +66,7 @@ export class RunRecovery {
       terminalClass: "unresolved" as const,
       executorState: "quiescent" as const,
       toolEffectState: "unknown" as const,
+      unknownEffectSource: "unclassified" as const,
       errorClass: work.errorClass,
     };
     await withWorkerOwnership(signal, () =>
@@ -165,21 +166,22 @@ export class RunRecovery {
     signal: AbortSignal,
   ): Promise<void> {
     assertWorkerOwnership(signal);
-    const effectState = await withWorkerOwnership(signal, () =>
+    const effects = await withWorkerOwnership(signal, () =>
       this.dependencies.events.interruptToolAttempts(work.id, this.dependencies.now()),
     );
     const terminal: RunOutcome =
-      effectState === "unknown"
+      effects.toolEffectState === "unknown"
         ? {
             terminalClass: "unresolved",
             executorState: "quiescent",
             toolEffectState: "unknown",
+            unknownEffectSource: effects.unknownEffectSource,
             errorClass: "service_restarted_during_tool",
           }
         : {
             terminalClass: "failed",
             executorState: "quiescent",
-            toolEffectState: effectState,
+            toolEffectState: effects.toolEffectState,
             errorClass: "service_restarted_during_run",
           };
     if (terminal.terminalClass === "unresolved") {

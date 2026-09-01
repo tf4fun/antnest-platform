@@ -273,10 +273,12 @@ func (repository *Repository) AdvanceAgentDisable(
 	); err != nil {
 		return ports.AgentDisableState{}, err
 	}
-	releasedRun := false
+	releasedRun, retainedRun := false, false
 	if input.ExpectedPhase == domain.PhaseRuntimeDisable {
-		releasedRun, err = repository.releaseBlockedRunAdmission(
-			ctx, transaction, operation, input.RunReleaseEvent, input.Now,
+		releasedRun, retainedRun, err = repository.releaseBlockedRunAdmission(
+			ctx, transaction, operation,
+			runReleaseBarrier{runtimeResult: input.RuntimeResult},
+			input.RunReleaseEvent, input.Now,
 		)
 		if err != nil {
 			return ports.AgentDisableState{}, err
@@ -294,7 +296,7 @@ func (repository *Repository) AdvanceAgentDisable(
 		return ports.AgentDisableState{}, fmt.Errorf("commit Agent disable phase: %w", err)
 	}
 	state.RunReleaseOutcome = runReleaseOutcome(
-		input.ExpectedPhase == domain.PhaseRuntimeDisable, releasedRun,
+		input.ExpectedPhase == domain.PhaseRuntimeDisable, releasedRun, retainedRun,
 	)
 	if releasedRun {
 		repository.recordEventAppend(ctx, ports.EventRunAdmissionReleased)
@@ -430,20 +432,18 @@ func (repository *Repository) FailAgentDisable(
 		input.FailedEvent.AggregateSequence != 0 {
 		return ports.AgentDisableState{}, ports.ErrConcurrentChange
 	}
-	releasedRun := false
+	releasedRun, retainedRun := false, false
 	switch {
 	case input.RuntimeAbsenceProof == nil && !emptyRunAdmissionEvent(input.RunReleaseEvent):
 		return ports.AgentDisableState{}, fmt.Errorf("run release event requires Runtime absence proof")
 	case input.RuntimeAbsenceProof != nil:
-		if input.PreserveExecutable || input.SourceRuntimeInspection != nil ||
-			!validLifecycleFailureRunBarrier(
-				operation, domain.PhaseRuntimeDisable, input.RuntimeAbsenceProof,
-				input.RunReleaseEvent, input.Now,
-			) {
+		if input.PreserveExecutable || input.SourceRuntimeInspection != nil {
 			return ports.AgentDisableState{}, fmt.Errorf("invalid disable Runtime absence failure")
 		}
-		releasedRun, err = repository.releaseBlockedRunAdmission(
-			ctx, transaction, operation, input.RunReleaseEvent, input.Now,
+		releasedRun, retainedRun, err = repository.releaseBlockedRunAdmission(
+			ctx, transaction, operation,
+			runReleaseBarrier{absenceProof: input.RuntimeAbsenceProof},
+			input.RunReleaseEvent, input.Now,
 		)
 		if err != nil {
 			return ports.AgentDisableState{}, err
@@ -518,7 +518,9 @@ WHERE request_id = $1`, input.RequestID, input.Code, input.Detail,
 	if err := transaction.Commit(ctx); err != nil {
 		return ports.AgentDisableState{}, fmt.Errorf("commit Agent disable failure: %w", err)
 	}
-	state.RunReleaseOutcome = runReleaseOutcome(input.RuntimeAbsenceProof != nil, releasedRun)
+	state.RunReleaseOutcome = runReleaseOutcome(
+		input.RuntimeAbsenceProof != nil, releasedRun, retainedRun,
+	)
 	if releasedRun {
 		repository.recordEventAppend(ctx, ports.EventRunAdmissionReleased)
 	}

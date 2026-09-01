@@ -287,8 +287,8 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP private PostgreSQL reposit
       runId,
       toolCallId: "call-1",
       tool: {
-        source: "runtime",
-        sourceId: "runtime",
+        source: "client",
+        sourceId: "client-mcp-1",
         name: "read",
         modelName: "read",
         description: "Read",
@@ -304,7 +304,7 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP private PostgreSQL reposit
       status: "completed",
       content: [{ type: "text", text: "data" }],
       resultSummary: [{ type: "text", text: "data" }],
-      toolEffectState: "settled",
+      toolEffectState: "unknown",
       createdAt: new Date("2026-08-30T01:00:03Z"),
     });
     await events.startToolAttempt({
@@ -322,7 +322,12 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP private PostgreSQL reposit
       requestDigest: "b".repeat(64),
       createdAt: new Date("2026-08-30T01:00:03Z"),
     });
-    await events.interruptToolAttempts(runId, new Date("2026-08-30T01:00:04Z"));
+    await expect(
+      events.interruptToolAttempts(runId, new Date("2026-08-30T01:00:04Z")),
+    ).resolves.toEqual({
+      toolEffectState: "unknown",
+      unknownEffectSource: "unclassified",
+    });
     await events.appendAgentMessage({
       id: randomUUID(),
       runId,
@@ -427,7 +432,7 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP private PostgreSQL reposit
       [runId],
     );
     expect(attempt.rows).toEqual([
-      { state: "completed", tool_effect_state: "settled" },
+      { state: "completed", tool_effect_state: "unknown" },
       { state: "failed", tool_effect_state: "unknown" },
     ]);
   });
@@ -524,6 +529,7 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP private PostgreSQL reposit
         terminalClass: "unresolved",
         executorState: "quiescent",
         toolEffectState: "unknown",
+        unknownEffectSource: "runtime_mcp",
         errorClass: "runtime_tool_effect_unknown",
         finishedAt: new Date("2026-08-30T02:15:02Z"),
       }),
@@ -533,9 +539,10 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP private PostgreSQL reposit
       state: string;
       executor_state: string;
       tool_effect_state: string;
+      unknown_effect_source: string;
       error_class: string;
     }>(
-      `SELECT state, executor_state, tool_effect_state, error_class
+      `SELECT state, executor_state, tool_effect_state, unknown_effect_source, error_class
          FROM runs WHERE id = $1`,
       [runId],
     );
@@ -543,6 +550,7 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP private PostgreSQL reposit
       state: "unresolved",
       executor_state: "quiescent",
       tool_effect_state: "unknown",
+      unknown_effect_source: "runtime_mcp",
       error_class: "runtime_tool_effect_unknown",
     });
   });

@@ -125,7 +125,8 @@ func TestFinishRunValidatesClosedUnionAndPreservesUnknownEffect(t *testing.T) {
 	result, err := service.FinishRun(context.Background(), FinishRunInput{
 		RequestID: "request-finish-1", AdmissionID: "admission-1",
 		TerminalClass: domain.TerminalUnresolved, ToolEffectState: domain.ToolEffectUnknown,
-		ErrorClass: "tool_outcome_unknown",
+		UnknownEffectSource: domain.UnknownEffectRuntimeMCP,
+		ErrorClass:          "tool_outcome_unknown",
 	})
 	if err != nil {
 		t.Fatalf("finish unresolved Run: %v", err)
@@ -142,7 +143,8 @@ func TestFinishRunValidatesClosedUnionAndPreservesUnknownEffect(t *testing.T) {
 	result, err = service.FinishRun(context.Background(), FinishRunInput{
 		RequestID: "request-finish-replay", AdmissionID: "admission-1",
 		TerminalClass: domain.TerminalUnresolved, ToolEffectState: domain.ToolEffectUnknown,
-		ErrorClass: "tool_outcome_unknown",
+		UnknownEffectSource: domain.UnknownEffectRuntimeMCP,
+		ErrorClass:          "tool_outcome_unknown",
 	})
 	if err != nil || result.AdmissionState != domain.AdmissionReleased {
 		t.Fatalf("finish replay after Runtime barrier: result=%+v err=%v", result, err)

@@ -256,11 +256,12 @@ the former is cleared while the latter remains audit history.
    point `AcquireRun` rejects new Runs with a retryable rebuilding result while
    the stable Agent availability remains unchanged until an external barrier.
 3. Wait until any active Run executor is quiescent. A normally settled admission
-   closes before rebuild continues. An `unresolved` admission may continue to
-   the deletion barrier only after its executor can issue no more model or MCP
-   requests; Runtime absence then settles that admission without claiming that
-   the Tool succeeded or failed. Runtime is never changed while a Run executor
-   is still active.
+   closes before rebuild continues. An `unresolved` admission whose unknown
+   effect came from `runtime_mcp` may continue to the deletion barrier only
+   after its executor can issue no more model or MCP requests; Runtime absence
+   then settles that admission without claiming that the Tool succeeded or
+   failed. Client MCP and unclassified effects remain fail-closed. Runtime is
+   never changed while a Run executor is still active.
 4. Advance the operation from drain to its network barrier.
 5. Read and persist the Agent's current immutable policy assignment, then fence
 	the Agent network. Runtime Egress durably assigns deny-all while fencing.
@@ -299,9 +300,11 @@ transport cancellation signal, but cancellation still does not prove that a
 side effect was never started.
 
 If the local executor is terminal while any Tool effect remains unknown,
-the admission stays unresolved. An explicit rebuild may then delete the old
-Runtime conclusively and close that admission before creating its replacement.
-No new Run is admitted in the interval.
+the admission stays unresolved. An explicit rebuild may close it through the
+Runtime barrier only when the source is `runtime_mcp` and the old Runtime is
+conclusively removed. Client MCP and unclassified effects require a separate
+explicit recovery decision and remain fail-closed in Stage 2. No new Run is
+admitted in the interval.
 
 ### 4.5 Build failure and retry
 
@@ -438,7 +441,8 @@ build a hidden queue. The caller can present waiting state and retry later.
 ### 5.2 FinishRun
 
 ```text
-FinishRun(admission_id, terminal_class, tool_effect_state, stop_reason, error_class)
+FinishRun(admission_id, terminal_class, tool_effect_state,
+          unknown_effect_source, stop_reason, error_class)
 ```
 
 is idempotent. Calling it asserts the local Agent loop is quiescent and cannot
@@ -446,17 +450,21 @@ issue another model or MCP request. `terminal_class` is a small coordination
 result: completed, cancelled, failed, or unresolved. Once recorded, the report
 is immutable.
 `tool_effect_state` is `none`, `settled`, or `unknown` and covers both Runtime
-and client MCP Tools.
+and client MCP Tools. An unresolved report also records
+`unknown_effect_source` as `runtime_mcp`, `client_mcp`, or `unclassified`;
+all other terminal reports require it to be null.
 
 `FinishRun` seals one immutable terminal report. A successful RPC response means
 that report is stored, not necessarily that the Agent is available for another
 Run. Completed, cancelled, and failed reports release admission. An unknown
 Tool effect seals an unresolved report but moves admission occupancy to
-`blocked_unknown_effect`; Agent Controller stays fail-closed until an explicit
-lifecycle operation proves the bound Runtime absent. That barrier releases the
-occupancy without rewriting the report. Agent ACP Service never replays or
-later rewrites the ambiguous Tool outcome. Agent Controller does not copy
-messages, Turns, Tool results, or detailed Run history from Agent ACP Service.
+`blocked_unknown_effect`. Agent Controller stays fail-closed. An explicit
+lifecycle operation may release the occupancy only when the unknown effect came
+from `runtime_mcp` and the bound Runtime is proven absent. Runtime absence says
+nothing about `client_mcp` or `unclassified` effects, so those admissions remain
+blocked without rewriting the report. Agent ACP Service never replays or later
+rewrites the ambiguous Tool outcome. Agent Controller does not copy messages,
+Turns, Tool results, or detailed Run history from Agent ACP Service.
 
 ### 5.3 Crash recovery
 
@@ -475,9 +483,10 @@ and reports terminal state. Agent Controller never calls back into Agent ACP
 Service, so the dependency direction remains acyclic.
 
 If a crash happened during an ambiguous Tool attempt, recovery does not resume
-the Tool loop or start another worker. The Run remains unresolved until the
-effect is observed terminal or the bound Runtime is removed by an explicit
-rebuild. This is fail-closed recovery, not automatic replay.
+the Tool loop or start another worker. The Run remains unresolved. Runtime
+removal can release only a persisted `runtime_mcp` attempt; client or
+unclassified effects require a future explicit recovery mechanism. This is
+fail-closed recovery, not automatic replay.
 
 ## 6. ACP Boundary
 

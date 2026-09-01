@@ -31,7 +31,7 @@ const methodSchema = z.object({
 });
 
 const contractSchema = z.object({
-  revision: z.literal(6),
+  revision: z.literal(7),
   base_path: z.string().startsWith("/"),
   status: z.object({
     method: z.literal("GET"),
@@ -205,10 +205,45 @@ describe("Agent Controller consumer contract", () => {
       admission_id: "admission-cancelled",
       terminal_class: "cancelled",
       tool_effect_state: "settled",
+      unknown_effect_source: null,
       stop_reason: null,
       error_class: null,
     });
     expect(body).not.toHaveProperty("executor_state");
+  });
+
+  it("serializes unresolved Tool effect provenance", async () => {
+    let body: Record<string, unknown> | undefined;
+    const client = new AgentControllerClient({
+      baseUrl: new URL("http://agent-controller:8080/internal/v1/runs/"),
+      fetchFn: (_url, init) => {
+        body = parseRequestBody(init.body);
+        return Promise.resolve(
+          Response.json({ status: "finished", admission_state: "blocked_unknown_effect" }),
+        );
+      },
+      timeoutMs: 5_000,
+    });
+
+    await client.finishRun({
+      requestId: "request-unresolved",
+      admissionId: "admission-unresolved",
+      terminalClass: "unresolved",
+      executorState: "quiescent",
+      toolEffectState: "unknown",
+      unknownEffectSource: "client_mcp",
+      errorClass: "tool_effect_unknown",
+    });
+
+    expect(body).toEqual({
+      request_id: "request-unresolved",
+      admission_id: "admission-unresolved",
+      terminal_class: "unresolved",
+      tool_effect_state: "unknown",
+      unknown_effect_source: "client_mcp",
+      stop_reason: null,
+      error_class: "tool_effect_unknown",
+    });
   });
 });
 

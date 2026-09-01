@@ -205,10 +205,14 @@ WHERE request_id = $1 AND state = 'running' AND phase = 'publish'`,
 			return ports.AgentDeleteState{}, ports.ErrConcurrentChange
 		}
 	}
-	releasedRun := false
+	releasedRun, retainedRun := false, false
 	if deleteCrossedRuntimeBarrier(operation, input) {
-		releasedRun, err = repository.releaseBlockedRunAdmission(
-			ctx, transaction, operation, input.RunReleaseEvent, input.Now,
+		barrier := runReleaseBarrier{runtimeResult: input.RuntimeResult}
+		if operation.SourceRuntimeAbsent {
+			barrier = runReleaseBarrier{absenceProof: operation.SourceRuntimeAbsenceProof}
+		}
+		releasedRun, retainedRun, err = repository.releaseBlockedRunAdmission(
+			ctx, transaction, operation, barrier, input.RunReleaseEvent, input.Now,
 		)
 		if err != nil {
 			return ports.AgentDeleteState{}, err
@@ -220,7 +224,9 @@ WHERE request_id = $1 AND state = 'running' AND phase = 'publish'`,
 	if err != nil {
 		return ports.AgentDeleteState{}, err
 	}
-	state.RunReleaseOutcome = runReleaseOutcome(deleteCrossedRuntimeBarrier(operation, input), releasedRun)
+	state.RunReleaseOutcome = runReleaseOutcome(
+		deleteCrossedRuntimeBarrier(operation, input), releasedRun, retainedRun,
+	)
 	if releasedRun {
 		repository.recordEventAppend(ctx, ports.EventRunAdmissionReleased)
 	}

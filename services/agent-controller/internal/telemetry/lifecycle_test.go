@@ -155,6 +155,44 @@ func TestObservedLifecycleFailureRecordsRuntimeAbsenceBarrier(t *testing.T) {
 	}
 }
 
+func TestObservedLifecycleRecordsRetainedUnknownEffectSource(t *testing.T) {
+	previousProvider := otel.GetTracerProvider()
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	otel.SetTracerProvider(provider)
+	t.Cleanup(func() {
+		_ = provider.Shutdown(context.Background())
+		otel.SetTracerProvider(previousProvider)
+	})
+
+	observed, err := ObserveLifecycleStore(
+		&lifecycleStoreStub{releaseOutcome: ports.RunReleaseOutcomeRetained},
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
+	if err != nil {
+		t.Fatalf("observe lifecycle store: %v", err)
+	}
+	if _, err := observed.AdvanceAgentDisable(
+		context.Background(),
+		ports.AdvanceAgentDisable{
+			ExpectedPhase: domain.PhaseRuntimeDisable, NextPhase: domain.PhasePublish,
+		},
+	); err != nil {
+		t.Fatalf("advance Agent disable: %v", err)
+	}
+	ended := recorder.Ended()
+	if len(ended) != 1 {
+		t.Fatalf("repository spans = %#v", ended)
+	}
+	attributes := make(map[string]any, len(ended[0].Attributes()))
+	for _, item := range ended[0].Attributes() {
+		attributes[string(item.Key)] = item.Value.AsInterface()
+	}
+	if attributes["antnest.run_admission.release_outcome"] != ports.RunReleaseOutcomeRetained {
+		t.Fatalf("retained release attributes = %+v", attributes)
+	}
+}
+
 type lifecycleStoreStub struct {
 	err            error
 	releaseOutcome string

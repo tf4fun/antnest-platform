@@ -103,7 +103,7 @@ INSERT INTO agent_controller.run_admissions (
 	if _, err := repository.pool.Exec(ctx, `
 UPDATE agent_controller.run_admissions
 SET state = 'blocked_unknown_effect',
-    terminal_report = '{"terminal_class":"unresolved","tool_effect_state":"unknown","stop_reason":"","error_class":"tool_outcome_unknown"}'::jsonb,
+    terminal_report = '{"terminal_class":"unresolved","tool_effect_state":"unknown","unknown_effect_source":"runtime_mcp","stop_reason":"","error_class":"tool_outcome_unknown"}'::jsonb,
     finished_at = $2,
     updated_at = $2
 WHERE admission_id = $1`, "admission-rebuild-integration", now.Add(time.Second)); err != nil {
@@ -189,6 +189,14 @@ WHERE admission_id = $1`,
 	); err != nil {
 		t.Fatalf("restore unresolved Run revision: %v", err)
 	}
+	forgedBarrier := runtimeAdvance
+	forgedBarrier.RunReleaseEvent = lifecycleRunReleaseEvent(
+		"event-forged-run-release-rebuild", "runtime_deleted",
+		base.Agent.RuntimeRevision, now.Add(5*time.Second),
+	)
+	if _, err := repository.AdvanceAgentRebuild(ctx, forgedBarrier); err == nil {
+		t.Fatal("Runtime replacement accepted a forged Run release reason")
+	}
 	withRuntime, err := repository.AdvanceAgentRebuild(ctx, runtimeAdvance)
 	if err != nil || withRuntime.Operation.Phase != domain.PhaseNetworkEnsure {
 		t.Fatalf("record Runtime update: state=%+v err=%v", withRuntime, err)
@@ -214,7 +222,8 @@ FROM agent_controller.run_admissions WHERE admission_id = $1`,
 		"request-finish-rebuild-replay",
 		domain.TerminalReport{
 			Class: domain.TerminalUnresolved, ToolEffectState: domain.ToolEffectUnknown,
-			ErrorClass: "tool_outcome_unknown",
+			UnknownEffectSource: domain.UnknownEffectRuntimeMCP,
+			ErrorClass:          "tool_outcome_unknown",
 		},
 		now.Add(6*time.Second),
 	))

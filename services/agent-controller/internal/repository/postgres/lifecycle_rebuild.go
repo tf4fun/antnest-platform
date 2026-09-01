@@ -319,10 +319,12 @@ func (repository *Repository) AdvanceAgentRebuild(
 	); err != nil {
 		return ports.AgentRebuildState{}, err
 	}
-	releasedRun := false
+	releasedRun, retainedRun := false, false
 	if input.ExpectedPhase == domain.PhaseRuntimeUpdate {
-		releasedRun, err = repository.releaseBlockedRunAdmission(
-			ctx, transaction, operation, input.RunReleaseEvent, input.Now,
+		releasedRun, retainedRun, err = repository.releaseBlockedRunAdmission(
+			ctx, transaction, operation,
+			runReleaseBarrier{runtimeResult: input.RuntimeResult},
+			input.RunReleaseEvent, input.Now,
 		)
 		if err != nil {
 			return ports.AgentRebuildState{}, err
@@ -340,7 +342,7 @@ func (repository *Repository) AdvanceAgentRebuild(
 		return ports.AgentRebuildState{}, fmt.Errorf("commit Agent rebuild phase: %w", err)
 	}
 	state.RunReleaseOutcome = runReleaseOutcome(
-		input.ExpectedPhase == domain.PhaseRuntimeUpdate, releasedRun,
+		input.ExpectedPhase == domain.PhaseRuntimeUpdate, releasedRun, retainedRun,
 	)
 	if releasedRun {
 		repository.recordEventAppend(ctx, ports.EventRunAdmissionReleased)
@@ -491,19 +493,18 @@ func (repository *Repository) FailAgentRebuild(
 		input.FailedEvent.AggregateSequence != 0 {
 		return ports.AgentRebuildState{}, ports.ErrConcurrentChange
 	}
-	releasedRun := false
+	releasedRun, retainedRun := false, false
 	switch {
 	case input.RuntimeAbsenceProof == nil && !emptyRunAdmissionEvent(input.RunReleaseEvent):
 		return ports.AgentRebuildState{}, fmt.Errorf("run release event requires Runtime absence proof")
 	case input.RuntimeAbsenceProof != nil:
-		if input.PreserveExecutable || !validLifecycleFailureRunBarrier(
-			operation, domain.PhaseRuntimeUpdate, input.RuntimeAbsenceProof,
-			input.RunReleaseEvent, input.Now,
-		) {
+		if input.PreserveExecutable {
 			return ports.AgentRebuildState{}, fmt.Errorf("invalid rebuild Runtime absence failure")
 		}
-		releasedRun, err = repository.releaseBlockedRunAdmission(
-			ctx, transaction, operation, input.RunReleaseEvent, input.Now,
+		releasedRun, retainedRun, err = repository.releaseBlockedRunAdmission(
+			ctx, transaction, operation,
+			runReleaseBarrier{absenceProof: input.RuntimeAbsenceProof},
+			input.RunReleaseEvent, input.Now,
 		)
 		if err != nil {
 			return ports.AgentRebuildState{}, err
@@ -563,7 +564,9 @@ WHERE request_id = $1`, input.RequestID, input.Code, input.Detail, input.Retryab
 	if err := transaction.Commit(ctx); err != nil {
 		return ports.AgentRebuildState{}, fmt.Errorf("commit Agent rebuild failure: %w", err)
 	}
-	state.RunReleaseOutcome = runReleaseOutcome(input.RuntimeAbsenceProof != nil, releasedRun)
+	state.RunReleaseOutcome = runReleaseOutcome(
+		input.RuntimeAbsenceProof != nil, releasedRun, retainedRun,
+	)
 	if releasedRun {
 		repository.recordEventAppend(ctx, ports.EventRunAdmissionReleased)
 	}

@@ -1,4 +1,9 @@
-import type { ContentBlock, ModelToolDefinition, ToolEffectState } from "../domain/types.js";
+import type {
+  ContentBlock,
+  ModelToolDefinition,
+  ToolEffectState,
+  UnknownEffectSource,
+} from "../domain/types.js";
 import type { SessionEvent } from "./acp-application.js";
 import type { ModelToolCall, ModelUsage } from "./model.js";
 
@@ -39,6 +44,10 @@ export type FinishToolAttemptInput = {
   createdAt: Date;
 };
 
+export type InterruptedToolEffects =
+  | { toolEffectState: "none" | "settled"; unknownEffectSource?: never }
+  | { toolEffectState: "unknown"; unknownEffectSource: UnknownEffectSource };
+
 export interface RunEventRepository {
   appendAgentMessage(input: AppendAgentMessageInput): Promise<SessionEvent>;
   appendAgentThought(input: AppendAgentMessageInput): Promise<SessionEvent>;
@@ -52,5 +61,5 @@ export interface RunEventRepository {
   startToolAttempt(input: StartToolAttemptInput): Promise<SessionEvent>;
   appendRejectedToolCall(input: AppendRejectedToolCallInput): Promise<SessionEvent>;
   finishToolAttempt(input: FinishToolAttemptInput): Promise<SessionEvent>;
-  interruptToolAttempts(runId: string, interruptedAt: Date): Promise<ToolEffectState>;
+  interruptToolAttempts(runId: string, interruptedAt: Date): Promise<InterruptedToolEffects>;
 }

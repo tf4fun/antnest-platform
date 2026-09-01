@@ -117,7 +117,7 @@ INSERT INTO agent_controller.run_admissions (
               'runtime', jsonb_build_object('runtime_revision', $9::text),
               'execution_spec', jsonb_build_object('skill_instructions', '[]'::jsonb)
           ),
-          '{"terminal_class":"unresolved","tool_effect_state":"unknown","stop_reason":"","error_class":"tool_outcome_unknown"}'::jsonb,
+          '{"terminal_class":"unresolved","tool_effect_state":"unknown","unknown_effect_source":"runtime_mcp","stop_reason":"","error_class":"tool_outcome_unknown"}'::jsonb,
           $10, $10, $10)`,
 		"admission-delete-integration", "request-run-delete-integration",
 		strings.Repeat("e", 64), base.Agent.AgentID, "session-delete-integration",
@@ -157,7 +157,7 @@ INSERT INTO agent_controller.run_admissions (
 		RuntimeRevision: "rtv_99999999999999999999999999999999",
 		LifecycleState:  "deleted", Health: "absent",
 	}
-	state, err = repository.AdvanceAgentDelete(ctx, ports.AdvanceAgentDelete{
+	runtimeAdvance := ports.AdvanceAgentDelete{
 		RequestID: requestID, Fingerprint: fingerprint,
 		ExpectedPhase: domain.PhaseRuntimeDelete, NextPhase: domain.PhaseNetworkRelease,
 		NextChildRequestID: domain.ChildRequestID(requestID, domain.PhaseNetworkRelease),
@@ -167,7 +167,23 @@ INSERT INTO agent_controller.run_admissions (
 			base.Agent.RuntimeRevision, now.Add(4*time.Second),
 		),
 		Now: now.Add(4 * time.Second),
-	})
+	}
+	if _, err := repository.pool.Exec(ctx, `
+UPDATE agent_controller.run_admissions
+SET terminal_report = '{"unknown_effect_source":"runtime_mcp"}'::jsonb
+WHERE admission_id = $1`, "admission-delete-integration"); err != nil {
+		t.Fatalf("set malformed unresolved terminal report: %v", err)
+	}
+	if _, err := repository.AdvanceAgentDelete(ctx, runtimeAdvance); err == nil {
+		t.Fatal("Runtime deletion released a malformed unresolved terminal report")
+	}
+	if _, err := repository.pool.Exec(ctx, `
+UPDATE agent_controller.run_admissions
+SET terminal_report = '{"terminal_class":"unresolved","tool_effect_state":"unknown","unknown_effect_source":"runtime_mcp","stop_reason":"","error_class":"tool_outcome_unknown"}'::jsonb
+WHERE admission_id = $1`, "admission-delete-integration"); err != nil {
+		t.Fatalf("restore unresolved terminal report: %v", err)
+	}
+	state, err = repository.AdvanceAgentDelete(ctx, runtimeAdvance)
 	if err != nil || state.Operation.Phase != domain.PhaseNetworkRelease {
 		t.Fatalf("record Runtime deletion: state=%+v err=%v", state, err)
 	}
@@ -283,7 +299,7 @@ INSERT INTO agent_controller.run_admissions (
               'runtime', jsonb_build_object('runtime_revision', $9::text),
               'execution_spec', jsonb_build_object('skill_instructions', '[]'::jsonb)
           ),
-          '{"terminal_class":"unresolved","tool_effect_state":"unknown","stop_reason":"","error_class":"tool_outcome_unknown"}'::jsonb,
+          '{"terminal_class":"unresolved","tool_effect_state":"unknown","unknown_effect_source":"runtime_mcp","stop_reason":"","error_class":"tool_outcome_unknown"}'::jsonb,
           $10, $10, $10)`,
 		admissionID, "request-run-delete-absent-runtime-integration",
 		strings.Repeat("1", 64), base.Agent.AgentID, "session-delete-absent-runtime-integration",
@@ -326,6 +342,101 @@ INSERT INTO agent_controller.run_admissions (
 		t, ctx, repository, eventID, base.Agent.AgentID, admissionID, requestID,
 		begin.RequestedEvent.AggregateSequence+1,
 	)
+}
+
+func TestRuntimeAbsenceRetainsClientMCPUnknownEffect(t *testing.T) {
+	databaseURL := os.Getenv("ANTNEST_AGENT_CONTROLLER_TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("ANTNEST_AGENT_CONTROLLER_TEST_DATABASE_URL is not set")
+	}
+	ctx := context.Background()
+	repository, err := Open(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("open repository: %v", err)
+	}
+	t.Cleanup(repository.Close)
+	base, _ := seedAvailableAgentForRebuild(t, ctx, repository)
+	now := time.Unix(860, 0).UTC()
+	requestID := "request-delete-client-effect-integration"
+	fingerprint := strings.Repeat("e", 64)
+	begin := deleteBegin(base.Agent, requestID, fingerprint, now)
+	if _, _, err := repository.BeginAgentDelete(ctx, begin); err != nil {
+		t.Fatalf("begin delete: %v", err)
+	}
+	const admissionID = "admission-client-effect-integration"
+	if _, err := repository.pool.Exec(ctx, `
+INSERT INTO agent_controller.run_admissions (
+    admission_id, request_id, request_fingerprint, agent_id, session_id,
+    principal_id, access_revision, state, deadline, runtime_revision,
+    snapshot, terminal_report, finished_at, created_at, updated_at
+) VALUES ($1, $2, $3, $4, $5, $6, $7, 'blocked_unknown_effect', $8, $9,
+          jsonb_build_object(
+              'runtime', jsonb_build_object('runtime_revision', $9::text),
+              'execution_spec', jsonb_build_object('skill_instructions', '[]'::jsonb)
+          ),
+          '{"terminal_class":"unresolved","tool_effect_state":"unknown","unknown_effect_source":"client_mcp","stop_reason":"","error_class":"tool_outcome_unknown"}'::jsonb,
+          $10, $10, $10)`,
+		admissionID, "request-run-client-effect-integration", strings.Repeat("2", 64),
+		base.Agent.AgentID, "session-client-effect-integration", base.Agent.OwnerUserID,
+		base.Agent.AccessRevision, now.Add(time.Hour), base.Agent.RuntimeRevision, now,
+	); err != nil {
+		t.Fatalf("insert client MCP unresolved admission: %v", err)
+	}
+
+	state, err := repository.SettleAgentDeleteDrain(
+		ctx, requestID, fingerprint,
+		domain.ChildRequestID(requestID, domain.PhaseNetworkFence), now.Add(time.Second),
+	)
+	if err != nil || state.Operation.Phase != domain.PhaseNetworkFence {
+		t.Fatalf("settle delete drain: state=%+v err=%v", state, err)
+	}
+	state, err = repository.AdvanceAgentDelete(ctx, ports.AdvanceAgentDelete{
+		RequestID: requestID, Fingerprint: fingerprint,
+		ExpectedPhase: domain.PhaseNetworkFence, NextPhase: domain.PhaseFlowReset,
+		NextChildRequestID: domain.ChildRequestID(requestID, domain.PhaseFlowReset),
+		Now:                now.Add(2 * time.Second),
+	})
+	if err != nil || state.Operation.Phase != domain.PhaseFlowReset {
+		t.Fatalf("record delete fence: state=%+v err=%v", state, err)
+	}
+	state, err = repository.AdvanceAgentDelete(ctx, ports.AdvanceAgentDelete{
+		RequestID: requestID, Fingerprint: fingerprint,
+		ExpectedPhase: domain.PhaseFlowReset, NextPhase: domain.PhaseRuntimeDelete,
+		NextChildRequestID: domain.ChildRequestID(requestID, domain.PhaseRuntimeDelete),
+		Now:                now.Add(3 * time.Second),
+	})
+	if err != nil || state.Operation.Phase != domain.PhaseRuntimeDelete {
+		t.Fatalf("record delete flow reset: state=%+v err=%v", state, err)
+	}
+	runtime := ports.RuntimeOperation{
+		State: "completed", Effect: "completed", RuntimeRevision: base.Agent.RuntimeRevision,
+		LifecycleState: "deleted", Health: "absent",
+	}
+	state, err = repository.AdvanceAgentDelete(ctx, ports.AdvanceAgentDelete{
+		RequestID: requestID, Fingerprint: fingerprint,
+		ExpectedPhase: domain.PhaseRuntimeDelete, NextPhase: domain.PhaseNetworkRelease,
+		NextChildRequestID: domain.ChildRequestID(requestID, domain.PhaseNetworkRelease),
+		RuntimeResult:      &runtime,
+		RunReleaseEvent: lifecycleRunReleaseEvent(
+			"event-client-effect-release", "runtime_deleted", base.Agent.RuntimeRevision,
+			now.Add(4*time.Second),
+		),
+		Now: now.Add(4 * time.Second),
+	})
+	if err != nil || state.RunReleaseOutcome != ports.RunReleaseOutcomeRetained {
+		t.Fatalf("client MCP delete barrier: state=%+v err=%v", state, err)
+	}
+	var admissionState string
+	var events int
+	if err := repository.pool.QueryRow(ctx, `
+SELECT state,
+       (SELECT count(*) FROM agent_controller.agent_events WHERE event_id = 'event-client-effect-release')
+FROM agent_controller.run_admissions WHERE admission_id = $1`, admissionID).Scan(&admissionState, &events); err != nil {
+		t.Fatalf("read retained admission: %v", err)
+	}
+	if admissionState != "blocked_unknown_effect" || events != 0 {
+		t.Fatalf("retained admission state=%q release events=%d", admissionState, events)
+	}
 }
 
 func deleteBegin(

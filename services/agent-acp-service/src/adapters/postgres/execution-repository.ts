@@ -5,6 +5,7 @@ import type {
   RunOutcome,
   RunState,
   RunStopReason,
+  UnknownEffectSource,
 } from "../../domain/types.js";
 import type {
   ExecutionRepository,
@@ -62,13 +63,15 @@ export class PostgresExecutionRepository implements ExecutionRepository {
     const result = await this.kernel.query(
       `UPDATE runs
           SET state = $2, terminal_class = $2, executor_state = $3,
-              tool_effect_state = $4, stop_reason = $5, error_class = $6, updated_at = $7
+              tool_effect_state = $4, unknown_effect_source = $5,
+              stop_reason = $6, error_class = $7, updated_at = $8
         WHERE id = $1 AND state = 'running'`,
       [
         input.runId,
         input.terminalClass,
         input.executorState,
         input.toolEffectState,
+        input.unknownEffectSource ?? null,
         input.stopReason ?? null,
         input.errorClass ?? null,
         input.finishedAt,
@@ -85,7 +88,8 @@ export class PostgresExecutionRepository implements ExecutionRepository {
 
   private async loadTerminalOutcome(runId: string): Promise<RunOutcome | null> {
     const result = await this.kernel.query<TerminalOutcomeRow>(
-      `SELECT terminal_class, executor_state, tool_effect_state, stop_reason, error_class
+      `SELECT terminal_class, executor_state, tool_effect_state,
+              unknown_effect_source, stop_reason, error_class
          FROM runs
         WHERE id = $1`,
       [runId],
@@ -102,7 +106,8 @@ export class PostgresExecutionRepository implements ExecutionRepository {
       `UPDATE runs
           SET state = 'unresolved', pending_user_message_id = NULL, pending_prompt = NULL,
               terminal_class = 'unresolved', executor_state = 'quiescent',
-              tool_effect_state = 'unknown', error_class = $2, updated_at = $3
+              tool_effect_state = 'unknown', unknown_effect_source = 'unclassified',
+              error_class = $2, updated_at = $3
         WHERE id = $1 AND admission_finished_at IS NULL`,
       [runId, errorClass, finishedAt],
     );
@@ -137,6 +142,7 @@ export class PostgresExecutionRepository implements ExecutionRepository {
       terminal_class: "completed" | "cancelled" | "failed" | "unresolved" | null;
       executor_state: "quiescent" | "cancellation_requested" | "unknown" | null;
       tool_effect_state: "none" | "settled" | "unknown" | null;
+      unknown_effect_source: UnknownEffectSource | null;
       stop_reason: RunStopReason | null;
       error_class: string | null;
     }>(
@@ -144,7 +150,8 @@ export class PostgresExecutionRepository implements ExecutionRepository {
               expected_access_revision, state,
               pending_user_message_id,
               pending_prompt, execution_snapshot, admission_id, terminal_class,
-              executor_state, tool_effect_state, stop_reason, error_class
+              executor_state, tool_effect_state, unknown_effect_source,
+              stop_reason, error_class
          FROM runs
         WHERE state IN ('admitting', 'running')
            OR (state IN ('completed', 'cancelled', 'failed', 'unresolved')
@@ -183,6 +190,7 @@ function mapRecoveryWork(row: {
   terminal_class: "completed" | "cancelled" | "failed" | "unresolved" | null;
   executor_state: "quiescent" | "cancellation_requested" | "unknown" | null;
   tool_effect_state: "none" | "settled" | "unknown" | null;
+  unknown_effect_source: UnknownEffectSource | null;
   stop_reason: RunStopReason | null;
   error_class: string | null;
 }): RecoveryWork {
@@ -234,6 +242,7 @@ type TerminalOutcomeRow = {
   terminal_class: "completed" | "cancelled" | "failed" | "unresolved" | null;
   executor_state: "quiescent" | "cancellation_requested" | "unknown" | null;
   tool_effect_state: "none" | "settled" | "unknown" | null;
+  unknown_effect_source: UnknownEffectSource | null;
   stop_reason: RunStopReason | null;
   error_class: string | null;
 };
@@ -245,7 +254,8 @@ function storedOutcome(row: TerminalOutcomeRow): RunOutcome {
         row.executor_state !== "quiescent" ||
         row.tool_effect_state === null ||
         row.tool_effect_state === "unknown" ||
-        row.stop_reason === null
+        row.stop_reason === null ||
+        row.unknown_effect_source !== null
       ) {
         throw new Error("Completed Run has invalid terminal facts");
       }
@@ -261,7 +271,8 @@ function storedOutcome(row: TerminalOutcomeRow): RunOutcome {
         row.tool_effect_state === null ||
         row.tool_effect_state === "unknown" ||
         row.stop_reason !== null ||
-        row.error_class !== null
+        row.error_class !== null ||
+        row.unknown_effect_source !== null
       ) {
         throw new Error("Cancelled Run has invalid terminal facts");
       }
@@ -276,7 +287,8 @@ function storedOutcome(row: TerminalOutcomeRow): RunOutcome {
         row.tool_effect_state === null ||
         row.tool_effect_state === "unknown" ||
         row.error_class === null ||
-        row.stop_reason !== null
+        row.stop_reason !== null ||
+        row.unknown_effect_source !== null
       ) {
         throw new Error("Failed Run has invalid terminal facts");
       }
@@ -291,7 +303,8 @@ function storedOutcome(row: TerminalOutcomeRow): RunOutcome {
         row.executor_state !== "quiescent" ||
         row.tool_effect_state !== "unknown" ||
         row.error_class === null ||
-        row.stop_reason !== null
+        row.stop_reason !== null ||
+        !isUnknownEffectSource(row.unknown_effect_source)
       ) {
         throw new Error("Unresolved Run has invalid terminal facts");
       }
@@ -299,6 +312,7 @@ function storedOutcome(row: TerminalOutcomeRow): RunOutcome {
         terminalClass: "unresolved",
         executorState: "quiescent",
         toolEffectState: "unknown",
+        unknownEffectSource: row.unknown_effect_source,
         errorClass: row.error_class,
       };
     case null:
@@ -310,7 +324,12 @@ function sameOutcome(left: RunOutcome, right: RunOutcome): boolean {
   return (
     left.terminalClass === right.terminalClass &&
     left.toolEffectState === right.toolEffectState &&
+    (left.unknownEffectSource ?? null) === (right.unknownEffectSource ?? null) &&
     (left.stopReason ?? null) === (right.stopReason ?? null) &&
     (left.errorClass ?? null) === (right.errorClass ?? null)
   );
+}
+
+function isUnknownEffectSource(value: unknown): value is UnknownEffectSource {
+  return value === "runtime_mcp" || value === "client_mcp" || value === "unclassified";
 }

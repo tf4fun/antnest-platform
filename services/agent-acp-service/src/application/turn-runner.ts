@@ -3,6 +3,7 @@ import type {
   RunExecutionSnapshot,
   RunOutcome,
   ToolEffectState,
+  UnknownEffectSource,
 } from "../domain/types.js";
 import { boundToolResult } from "../domain/tool-result.js";
 import type { ModelPort } from "../ports/model.js";
@@ -109,9 +110,9 @@ export class TurnRunner {
       }
       effectState = combineEffects(effectState, effectFromError(error));
       if (input.signal.aborted) {
-        return cancelled(effectState);
+        return cancelled(effectState, unknownSourceFromError(error));
       }
-      return failure(effectState, errorClass(error));
+      return failure(effectState, errorClass(error), unknownSourceFromError(error));
     }
   }
 
@@ -139,6 +140,7 @@ export class TurnRunner {
     terminal: RunTurnResult | null;
   }> {
     const { call, tool } = prepared;
+    const unknownEffectSource = unknownSourceForTool(tool.source);
     await this.dependencies.events.toolStarted(input.runId, call.id, tool, call.arguments);
     assertAuthority(input.authoritySignal);
     let result: Awaited<ReturnType<ToolCatalogPort["call"]>>;
@@ -175,14 +177,14 @@ export class TurnRunner {
         if (auditError instanceof RunEventPersistenceError) {
           throw auditError;
         }
-        throw effectAwareError(auditError, effectState);
+        throw effectAwareError(auditError, effectState, unknownEffectSource);
       }
       assertAuthority(input.authoritySignal);
       if (input.signal.aborted) {
         return {
           effectState,
           message: { role: "tool", toolCallId: call.id, content },
-          terminal: cancelled(effectState),
+          terminal: cancelled(effectState, unknownEffectSource),
         };
       }
       if (effectState === "unknown") {
@@ -193,6 +195,7 @@ export class TurnRunner {
             terminalClass: "unresolved",
             executorState: "quiescent",
             toolEffectState: "unknown",
+            unknownEffectSource,
             errorClass: "tool_outcome_unknown",
           },
         };
@@ -218,9 +221,22 @@ export class TurnRunner {
       if (error instanceof RunEventPersistenceError) {
         throw error;
       }
-      throw effectAwareError(error, effectState);
+      throw effectAwareError(error, effectState, unknownEffectSource);
     }
     assertAuthority(input.authoritySignal);
+    if (effectState === "unknown") {
+      return {
+        effectState,
+        message: { role: "tool", toolCallId: call.id, content },
+        terminal: {
+          terminalClass: "unresolved",
+          executorState: "quiescent",
+          toolEffectState: "unknown",
+          unknownEffectSource,
+          errorClass: "tool_outcome_unknown",
+        },
+      };
+    }
     return {
       effectState,
       message: { role: "tool", toolCallId: call.id, content },
@@ -262,12 +278,17 @@ function effectFromError(error: unknown): ToolEffectState {
   return "none";
 }
 
-function failure(effect: ToolEffectState, errorClass: string): RunTurnResult {
+function failure(
+  effect: ToolEffectState,
+  errorClass: string,
+  unknownEffectSource: UnknownEffectSource = "unclassified",
+): RunTurnResult {
   if (effect === "unknown") {
     return {
       terminalClass: "unresolved",
       executorState: "quiescent",
       toolEffectState: "unknown",
+      unknownEffectSource,
       errorClass,
     };
   }
@@ -279,12 +300,16 @@ function failure(effect: ToolEffectState, errorClass: string): RunTurnResult {
   };
 }
 
-function cancelled(effect: ToolEffectState): RunTurnResult {
+function cancelled(
+  effect: ToolEffectState,
+  unknownEffectSource: UnknownEffectSource = "unclassified",
+): RunTurnResult {
   if (effect === "unknown") {
     return {
       terminalClass: "unresolved",
       executorState: "quiescent",
       toolEffectState: "unknown",
+      unknownEffectSource,
       errorClass: "cancelled_tool_outcome_unknown",
     };
   }
@@ -304,6 +329,7 @@ function completed(
       terminalClass: "unresolved",
       executorState: "quiescent",
       toolEffectState: "unknown",
+      unknownEffectSource: "unclassified",
       errorClass: "tool_outcome_unknown",
     };
   }
@@ -319,8 +345,31 @@ function errorClass(error: unknown): string {
   return error instanceof ToolPreflightError ? error.code : "run_failed";
 }
 
-function effectAwareError(error: unknown, effectState: ToolEffectState): Error {
+function effectAwareError(
+  error: unknown,
+  effectState: ToolEffectState,
+  unknownEffectSource: UnknownEffectSource,
+): Error {
   return Object.assign(new Error("Tool audit persistence failed", { cause: error }), {
     effectState,
+    ...(effectState === "unknown" ? { unknownEffectSource } : {}),
   });
+}
+
+function unknownSourceForTool(source: "runtime" | "client"): UnknownEffectSource {
+  return source === "runtime" ? "runtime_mcp" : "client_mcp";
+}
+
+function unknownSourceFromError(error: unknown): UnknownEffectSource {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "unknownEffectSource" in error &&
+    (error.unknownEffectSource === "runtime_mcp" ||
+      error.unknownEffectSource === "client_mcp" ||
+      error.unknownEffectSource === "unclassified")
+  ) {
+    return error.unknownEffectSource;
+  }
+  return "unclassified";
 }

@@ -33,9 +33,11 @@ type schemaMigration struct {
 var (
 	initialSchemaSQL       = mustMigration("migrations/0001_initial.sql")
 	ownerAndEmptySkillsSQL = mustMigration("migrations/0002_enforce_owner_and_empty_skills.sql")
+	unknownEffectSourceSQL = mustMigration("migrations/0003_backfill_unknown_effect_source.sql")
 	schemaMigrations       = []schemaMigration{
 		{version: 1, name: "initial_agent_controller_schema", sql: initialSchemaSQL},
 		{version: 2, name: "enforce_owner_and_empty_skills", sql: ownerAndEmptySkillsSQL},
+		{version: 3, name: "backfill_unknown_effect_source", sql: unknownEffectSourceSQL},
 	}
 )
 

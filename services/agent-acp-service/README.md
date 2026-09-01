@@ -46,7 +46,7 @@ this directory is the only implementation authority for Agent ACP Service.
 | Private PostgreSQL              | owned     | Sessions, messages, checkpoints, Runs, Tool attempts   |
 
 The Agent Controller dependency surface is owned by Agent Controller and
-consumed here at contract revision 6. Its normative status, method, request,
+consumed here at contract revision 7. Its normative status, method, request,
 response, error, and
 compatibility rules are [`../../contracts/agent-controller/run-api.md`](../../contracts/agent-controller/run-api.md),
 with machine-readable shapes in

@@ -176,6 +176,7 @@ describe("TurnRunner", () => {
       terminalClass: "unresolved",
       executorState: "quiescent",
       toolEffectState: "unknown",
+      unknownEffectSource: "runtime_mcp",
     });
     expect(call).toHaveBeenCalledTimes(1);
     expect(complete).toHaveBeenCalledTimes(1);
@@ -184,6 +185,57 @@ describe("TurnRunner", () => {
       { id: "call-2", name: "write", arguments: { path: "later.txt" } },
       "Tool was not executed because this Run ended before dispatch.",
     );
+  });
+
+  it("stops after an unconfirmed client MCP transport outcome and preserves its source", async () => {
+    const complete = vi.fn<ModelPort["complete"]>(() =>
+      Promise.resolve({
+        kind: "tool_calls",
+        content: [],
+        calls: [{ id: "call-client", name: "client_read_abcd1234", arguments: {} }],
+        usage: { inputTokens: 10, outputTokens: 4 },
+      }),
+    );
+    const call = vi.fn<ToolCatalogPort["call"]>(() =>
+      Promise.reject(Object.assign(new Error("timeout"), { effectState: "unknown" })),
+    );
+    const runner = new TurnRunner({
+      model: { complete },
+      tools: {
+        list: vi.fn(() =>
+          Promise.resolve([
+            {
+              source: "client" as const,
+              sourceId: "client-source",
+              name: "read",
+              modelName: "client_read_abcd1234",
+              description: "Read through client MCP",
+              inputSchema: { type: "object" },
+            },
+          ]),
+        ),
+        call,
+      },
+      events: createEvents().port,
+    });
+
+    await expect(
+      runner.run({
+        runId: "run-client",
+        sessionId: "session-1",
+        snapshot,
+        credential: "secret",
+        context: [{ role: "user", content: [{ type: "text", text: "read" }] }],
+        signal: new AbortController().signal,
+        authoritySignal: new AbortController().signal,
+      }),
+    ).resolves.toMatchObject({
+      terminalClass: "unresolved",
+      toolEffectState: "unknown",
+      unknownEffectSource: "client_mcp",
+    });
+    expect(complete).toHaveBeenCalledTimes(1);
+    expect(call).toHaveBeenCalledTimes(1);
   });
 
   it("leaves recovery in charge when terminal Tool audit persistence fails", async () => {

@@ -275,25 +275,29 @@ type resolveCredentialRequest struct {
 
 type nullableString struct {
 	Present bool
+	Null    bool
 	Value   string
 }
 
 func (value *nullableString) UnmarshalJSON(payload []byte) error {
 	value.Present = true
 	if string(payload) == "null" {
+		value.Null = true
 		value.Value = ""
 		return nil
 	}
+	value.Null = false
 	return json.Unmarshal(payload, &value.Value)
 }
 
 type finishRunRequest struct {
-	RequestID       string                 `json:"request_id"`
-	AdmissionID     string                 `json:"admission_id"`
-	TerminalClass   domain.TerminalClass   `json:"terminal_class"`
-	ToolEffectState domain.ToolEffectState `json:"tool_effect_state"`
-	StopReason      nullableString         `json:"stop_reason"`
-	ErrorClass      nullableString         `json:"error_class"`
+	RequestID           string                 `json:"request_id"`
+	AdmissionID         string                 `json:"admission_id"`
+	TerminalClass       domain.TerminalClass   `json:"terminal_class"`
+	ToolEffectState     domain.ToolEffectState `json:"tool_effect_state"`
+	UnknownEffectSource nullableString         `json:"unknown_effect_source"`
+	StopReason          nullableString         `json:"stop_reason"`
+	ErrorClass          nullableString         `json:"error_class"`
 }
 
 type modelProfileResponse struct {
@@ -518,14 +522,20 @@ func (h *handler) finishRun(response http.ResponseWriter, request *http.Request)
 	if !decodeJSON(response, request, &payload) {
 		return
 	}
-	if !payload.StopReason.Present || !payload.ErrorClass.Present {
+	if !payload.UnknownEffectSource.Present || !payload.StopReason.Present || !payload.ErrorClass.Present {
+		writeRunError(request.Context(), response, application.ErrInvalidInput)
+		return
+	}
+	if (payload.TerminalClass == domain.TerminalUnresolved && payload.UnknownEffectSource.Null) ||
+		(payload.TerminalClass != domain.TerminalUnresolved && !payload.UnknownEffectSource.Null) {
 		writeRunError(request.Context(), response, application.ErrInvalidInput)
 		return
 	}
 	result, err := h.runs.FinishRun(request.Context(), application.FinishRunInput{
 		RequestID: payload.RequestID, AdmissionID: payload.AdmissionID,
 		TerminalClass: payload.TerminalClass, ToolEffectState: payload.ToolEffectState,
-		StopReason: payload.StopReason.Value, ErrorClass: payload.ErrorClass.Value,
+		UnknownEffectSource: domain.UnknownEffectSource(payload.UnknownEffectSource.Value),
+		StopReason:          payload.StopReason.Value, ErrorClass: payload.ErrorClass.Value,
 	})
 	if err != nil {
 		writeRunError(request.Context(), response, err)

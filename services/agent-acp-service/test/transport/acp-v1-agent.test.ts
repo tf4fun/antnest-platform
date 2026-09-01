@@ -570,6 +570,7 @@ describe("ACP v1 agent mapping", () => {
                 terminalClass,
                 executorState: "quiescent",
                 toolEffectState: "unknown",
+                unknownEffectSource: "unclassified",
                 errorClass,
               },
         ),

@@ -2,11 +2,13 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   InstrumentedAcpApplication,
+  InstrumentedAgentController,
   InstrumentedModel,
 } from "../../src/telemetry/instrumented-ports.js";
 import type { AcpApplicationPort } from "../../src/ports/acp-application.js";
 import type { ModelPort } from "../../src/ports/model.js";
 import type { TelemetryAttributes, TelemetryPort } from "../../src/ports/telemetry.js";
+import type { AgentControllerPort } from "../../src/ports/agent-controller.js";
 import { AgentControllerError } from "../../src/ports/agent-controller.js";
 import { binding, snapshot } from "../support/fixtures.js";
 
@@ -121,6 +123,41 @@ describe("instrumented ports", () => {
 
     expect(complete).toHaveBeenCalledOnce();
     expect(JSON.stringify(telemetry)).not.toContain("provider-secret");
+  });
+
+  it("records unresolved Tool effect provenance on the Controller RPC span", async () => {
+    const telemetry = recordingTelemetry();
+    const finishRun = vi.fn<AgentControllerPort["finishRun"]>(() => Promise.resolve());
+    const controller = new InstrumentedAgentController(
+      {
+        resolveAgentAccess: vi.fn(),
+        acquireRun: vi.fn(),
+        resolveCredential: vi.fn(),
+        finishRun,
+      },
+      telemetry.port,
+    );
+
+    await controller.finishRun({
+      requestId: "request-1",
+      admissionId: "admission-1",
+      terminalClass: "unresolved",
+      executorState: "quiescent",
+      toolEffectState: "unknown",
+      unknownEffectSource: "client_mcp",
+      errorClass: "tool_effect_unknown",
+    });
+
+    expect(telemetry.spans).toContainEqual({
+      name: "agent_controller.finish_run",
+      attributes: {
+        "request.id": "request-1",
+        "admission.id": "admission-1",
+        "run.terminal_class": "unresolved",
+        "run.tool_effect_state": "unknown",
+        "run.unknown_effect_source": "client_mcp",
+      },
+    });
   });
 });
 

@@ -183,7 +183,8 @@ func TestRunRepositoryRecordsUnresolvedOutcomeExactlyOnce(t *testing.T) {
 	}
 	report := domain.TerminalReport{
 		Class: domain.TerminalUnresolved, ToolEffectState: domain.ToolEffectUnknown,
-		ErrorClass: "runtime_result_unknown",
+		UnknownEffectSource: domain.UnknownEffectRuntimeMCP,
+		ErrorClass:          "runtime_result_unknown",
 	}
 	finish := finishRunCommand(admission, "request-finish-unresolved", report, now.Add(time.Second))
 	result, err := repository.FinishRun(ctx, finish)

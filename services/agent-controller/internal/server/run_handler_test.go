@@ -91,7 +91,7 @@ func TestRunHandlerServesAgentACPContract(t *testing.T) {
 		t.Fatalf("credential cache headers = %v", credentialResponse.Header())
 	}
 	assertJSONRequest(t, handler, "/rpc/agent-controller/finish-run",
-		`{"request_id":"request-finish-1","admission_id":"admission-1","terminal_class":"completed","tool_effect_state":"settled","stop_reason":"end_turn","error_class":null}`,
+		`{"request_id":"request-finish-1","admission_id":"admission-1","terminal_class":"completed","tool_effect_state":"settled","unknown_effect_source":null,"stop_reason":"end_turn","error_class":null}`,
 		func(payload map[string]any) {
 			if payload["status"] != "finished" || payload["admission_state"] != "released" {
 				t.Fatalf("finish response = %+v", payload)
@@ -123,6 +123,34 @@ func TestFinishRunRequiresExplicitNullableFields(t *testing.T) {
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusBadRequest || runs.finish.RequestID != "" {
 		t.Fatalf("missing nullable fields status=%d input=%+v", response.Code, runs.finish)
+	}
+}
+
+func TestFinishRunRejectsUnknownEffectSourceNullabilityMismatch(t *testing.T) {
+	t.Parallel()
+
+	testCases := []string{
+		`{"request_id":"request-finish-1","admission_id":"admission-1","terminal_class":"completed","tool_effect_state":"settled","unknown_effect_source":"","stop_reason":"end_turn","error_class":null}`,
+		`{"request_id":"request-finish-2","admission_id":"admission-2","terminal_class":"unresolved","tool_effect_state":"unknown","unknown_effect_source":null,"stop_reason":null,"error_class":"tool_effect_unknown"}`,
+	}
+	for _, body := range testCases {
+		runs := &runServiceStub{}
+		handler, err := NewHandler(
+			&catalogServiceStub{}, &lifecycleServiceStub{}, runs, &agentQueryServiceStub{},
+			&agentEventServiceStub{},
+			func(context.Context) error { return nil },
+		)
+		if err != nil {
+			t.Fatalf("new handler: %v", err)
+		}
+		response := httptest.NewRecorder()
+		request := httptest.NewRequest(
+			http.MethodPost, "/rpc/agent-controller/finish-run", strings.NewReader(body),
+		)
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusBadRequest || runs.finish.RequestID != "" {
+			t.Fatalf("nullability mismatch status=%d input=%+v", response.Code, runs.finish)
+		}
 	}
 }
 

@@ -166,7 +166,10 @@ starting model or Tool work.
 
 Tool calls are not replayed automatically after timeout or process crash.
 Effect certainty is source-neutral: both Runtime and client MCP calls may leave
-`tool_effect_state=unknown` after an unconfirmed transport outcome.
+`tool_effect_state=unknown` after an unconfirmed transport outcome. The
+terminal report also preserves `unknown_effect_source` as `runtime_mcp`,
+`client_mcp`, or `unclassified`, so Runtime replacement cannot incorrectly
+settle an unrelated client Tool effect.
 
 ## Two MCP Sources
 

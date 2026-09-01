@@ -177,12 +177,13 @@ func (service *RunService) ResolveCredential(
 }
 
 type FinishRunInput struct {
-	RequestID       string
-	AdmissionID     string
-	TerminalClass   domain.TerminalClass
-	ToolEffectState domain.ToolEffectState
-	StopReason      string
-	ErrorClass      string
+	RequestID           string
+	AdmissionID         string
+	TerminalClass       domain.TerminalClass
+	ToolEffectState     domain.ToolEffectState
+	UnknownEffectSource domain.UnknownEffectSource
+	StopReason          string
+	ErrorClass          string
 }
 
 type FinishRunResult struct {
@@ -198,7 +199,8 @@ func (service *RunService) FinishRun(
 	}
 	report := domain.TerminalReport{
 		Class: input.TerminalClass, ToolEffectState: input.ToolEffectState,
-		StopReason: input.StopReason, ErrorClass: input.ErrorClass,
+		UnknownEffectSource: input.UnknownEffectSource,
+		StopReason:          input.StopReason, ErrorClass: input.ErrorClass,
 	}
 	state, err := domain.ValidateTerminalReport(report)
 	if err != nil {
@@ -211,9 +213,10 @@ func (service *RunService) FinishRun(
 			EventID:   derivedID("event-run-finished", input.RequestID),
 			EventType: ports.EventRunAdmissionUnresolved,
 			TraceID:   currentTraceID(ctx), Data: map[string]any{
-				"terminal_class":    string(report.Class),
-				"tool_effect_state": string(report.ToolEffectState),
-				"stop_reason":       report.StopReason, "error_class": report.ErrorClass,
+				"terminal_class":        string(report.Class),
+				"tool_effect_state":     string(report.ToolEffectState),
+				"unknown_effect_source": string(report.UnknownEffectSource),
+				"stop_reason":           report.StopReason, "error_class": report.ErrorClass,
 			}, OccurredAt: now,
 		}
 	}

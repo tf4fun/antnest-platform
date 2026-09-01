@@ -1,6 +1,7 @@
 import type { PoolClient } from "pg";
 
-import type { ToolEffectState } from "../../domain/types.js";
+import type { ToolEffectState, UnknownEffectSource } from "../../domain/types.js";
+import type { InterruptedToolEffects } from "../../ports/run-event-repository.js";
 
 import type { SessionEvent } from "../../ports/acp-application.js";
 import type {
@@ -139,17 +140,21 @@ export class PostgresRunEventRepository implements RunEventRepository {
     return event;
   }
 
-  public async interruptToolAttempts(runId: string, interruptedAt: Date): Promise<ToolEffectState> {
+  public async interruptToolAttempts(
+    runId: string,
+    interruptedAt: Date,
+  ): Promise<InterruptedToolEffects> {
     return this.kernel.transaction(async (client) => {
       const locked = await lockRunAndSession(client, runId);
       const attempts = await client.query<{
         id: string;
         tool_call_id: string;
         tool_name: string;
+        source: "runtime" | "client";
         state: string;
         tool_effect_state: ToolEffectState;
       }>(
-        `SELECT id, tool_call_id, tool_name, state, tool_effect_state
+        `SELECT id, tool_call_id, tool_name, source, state, tool_effect_state
            FROM tool_attempts
           WHERE run_id = $1
           ORDER BY created_at, id
@@ -157,13 +162,19 @@ export class PostgresRunEventRepository implements RunEventRepository {
         [runId],
       );
       let effectState: ToolEffectState = "none";
+      let unknownEffectSource: UnknownEffectSource | undefined;
       let interrupted = 0;
       for (const attempt of attempts.rows) {
         effectState = combineEffects(effectState, attempt.tool_effect_state);
+        const attemptEffectSource = attempt.source === "runtime" ? "runtime_mcp" : "client_mcp";
+        if (attempt.tool_effect_state === "unknown") {
+          unknownEffectSource = mergeUnknownEffectSource(unknownEffectSource, attemptEffectSource);
+        }
         if (attempt.state !== "in_progress") {
           continue;
         }
         effectState = "unknown";
+        unknownEffectSource = mergeUnknownEffectSource(unknownEffectSource, attemptEffectSource);
         const content = [
           {
             type: "text" as const,
@@ -195,7 +206,13 @@ export class PostgresRunEventRepository implements RunEventRepository {
         interrupted += 1;
       }
       await appendUnstartedToolResults(client, locked, runId, interruptedAt, interrupted);
-      return effectState;
+      if (effectState === "unknown") {
+        return {
+          toolEffectState: "unknown",
+          unknownEffectSource: unknownEffectSource ?? "unclassified",
+        };
+      }
+      return { toolEffectState: effectState };
     });
   }
 
@@ -212,6 +229,16 @@ export class PostgresRunEventRepository implements RunEventRepository {
       await appendLocked(client, locked, id, kind, event, createdAt, visible);
     });
   }
+}
+
+function mergeUnknownEffectSource(
+  current: UnknownEffectSource | undefined,
+  next: UnknownEffectSource,
+): UnknownEffectSource {
+  if (current === undefined || current === next) {
+    return next;
+  }
+  return "unclassified";
 }
 
 type LockedRun = { runId: string; sessionId: string; nextSequence: number };

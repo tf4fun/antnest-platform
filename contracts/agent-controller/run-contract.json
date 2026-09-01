@@ -1,6 +1,6 @@
 {
   "contract": "antnest.agent-controller.run-admission",
-  "revision": 6,
+  "revision": 7,
   "transport": "json-over-http",
   "trust": "internal-network",
   "schema_dialect": "https://json-schema.org/draft/2020-12/schema",
@@ -273,6 +273,7 @@
           "admission_id",
           "terminal_class",
           "tool_effect_state",
+          "unknown_effect_source",
           "stop_reason",
           "error_class"
         ],
@@ -284,6 +285,10 @@
           },
           "tool_effect_state": {
             "enum": ["none", "settled", "unknown"]
+          },
+          "unknown_effect_source": {
+            "type": ["string", "null"],
+            "enum": ["runtime_mcp", "client_mcp", "unclassified", null]
           },
           "stop_reason": {
             "type": ["string", "null"],
@@ -307,6 +312,7 @@
             "properties": {
               "terminal_class": { "const": "completed" },
               "tool_effect_state": { "enum": ["none", "settled"] },
+              "unknown_effect_source": { "const": null },
               "stop_reason": {
                 "enum": [
                   "end_turn",
@@ -322,6 +328,7 @@
             "properties": {
               "terminal_class": { "const": "cancelled" },
               "tool_effect_state": { "enum": ["none", "settled"] },
+              "unknown_effect_source": { "const": null },
               "stop_reason": { "const": null },
               "error_class": { "const": null }
             }
@@ -330,6 +337,7 @@
             "properties": {
               "terminal_class": { "const": "failed" },
               "tool_effect_state": { "enum": ["none", "settled"] },
+              "unknown_effect_source": { "const": null },
               "stop_reason": { "const": null },
               "error_class": { "type": "string", "minLength": 1 }
             }
@@ -338,6 +346,9 @@
             "properties": {
               "terminal_class": { "const": "unresolved" },
               "tool_effect_state": { "const": "unknown" },
+              "unknown_effect_source": {
+                "enum": ["runtime_mcp", "client_mcp", "unclassified"]
+              },
               "stop_reason": { "const": null },
               "error_class": { "type": "string", "minLength": 1 }
             }

@@ -77,7 +77,10 @@ export class RunExecutor implements RunExecutionPort {
     try {
       const result = await this.run({ ...input, signal });
       return deadline.aborted && !input.signal.aborted
-        ? deadlineResult(result.toolEffectState)
+        ? deadlineResult(
+            result.toolEffectState,
+            result.terminalClass === "unresolved" ? result.unknownEffectSource : undefined,
+          )
         : result;
     } catch (error) {
       if (error instanceof RunEventPersistenceError) {
@@ -201,12 +204,16 @@ function errorClass(error: unknown): string {
   return "run_setup_failed";
 }
 
-function deadlineResult(toolEffectState: "none" | "settled" | "unknown"): ExecuteRunResult {
+function deadlineResult(
+  toolEffectState: "none" | "settled" | "unknown",
+  unknownEffectSource: "runtime_mcp" | "client_mcp" | "unclassified" = "unclassified",
+): ExecuteRunResult {
   return toolEffectState === "unknown"
     ? {
         terminalClass: "unresolved",
         executorState: "quiescent",
         toolEffectState,
+        unknownEffectSource,
         errorClass: "run_deadline_exceeded",
       }
     : {

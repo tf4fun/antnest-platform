@@ -256,6 +256,7 @@ export class AgentControllerClient implements AgentControllerPort {
         admission_id: input.admissionId,
         terminal_class: input.terminalClass,
         tool_effect_state: input.toolEffectState,
+        unknown_effect_source: input.unknownEffectSource ?? null,
         stop_reason: input.stopReason ?? null,
         error_class: input.errorClass ?? null,
       },

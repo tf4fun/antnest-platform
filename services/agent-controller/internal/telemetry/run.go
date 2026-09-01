@@ -53,6 +53,7 @@ func (store *ObservedRunStore) FinishRun(
 	span.SetAttributes(
 		attribute.String("antnest.run.terminal_class", string(input.Report.Class)),
 		attribute.String("antnest.run.tool_effect_state", string(input.Report.ToolEffectState)),
+		attribute.String("antnest.run.unknown_effect_source", string(input.Report.UnknownEffectSource)),
 	)
 	defer func() {
 		span.SetAttributes(

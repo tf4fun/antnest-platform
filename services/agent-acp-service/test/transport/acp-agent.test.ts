@@ -590,6 +590,7 @@ describe("ACP v2 agent mapping", () => {
         terminalClass: "unresolved",
         executorState: "quiescent",
         toolEffectState: "unknown",
+        unknownEffectSource: "runtime_mcp",
         errorClass: "tool_effect_unknown",
       };
     });

@@ -14,6 +14,7 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
+	"soft/antnest-platform/services/agent-controller/internal/domain"
 	"soft/antnest-platform/services/agent-controller/internal/ports"
 )
 
@@ -69,6 +70,41 @@ func TestObservedRunStoreNeverRecordsCredentialMaterial(t *testing.T) {
 		if strings.Contains(serialized, forbidden) {
 			t.Fatalf("Run span leaked %q: %s", forbidden, serialized)
 		}
+	}
+}
+
+func TestObservedRunStoreRecordsUnknownEffectSource(t *testing.T) {
+	recorder, cleanup := installRunSpanRecorder(t)
+	defer cleanup()
+
+	observed, err := ObserveRunStore(
+		&observedRunStoreStub{}, slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
+	if err != nil {
+		t.Fatalf("observe Run store: %v", err)
+	}
+	_, err = observed.FinishRun(context.Background(), ports.FinishRunCommand{
+		RequestID: "request-1", AdmissionID: "admission-1",
+		Report: domain.TerminalReport{
+			Class: domain.TerminalUnresolved, ToolEffectState: domain.ToolEffectUnknown,
+			UnknownEffectSource: domain.UnknownEffectClientMCP,
+			ErrorClass:          "tool_effect_unknown",
+		},
+		Now: time.Unix(1, 0).UTC(),
+	})
+	if err != nil {
+		t.Fatalf("finish Run: %v", err)
+	}
+	ended := recorder.Ended()
+	if len(ended) != 1 {
+		t.Fatalf("Run repository spans = %#v", ended)
+	}
+	attributes := map[string]any{}
+	for _, item := range ended[0].Attributes() {
+		attributes[string(item.Key)] = item.Value.AsInterface()
+	}
+	if attributes["antnest.run.unknown_effect_source"] != "client_mcp" {
+		t.Fatalf("FinishRun attributes = %+v", attributes)
 	}
 }
 

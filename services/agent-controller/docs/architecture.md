@@ -162,15 +162,15 @@ one complete execution snapshot and a deadline. Provider secret resolution is
 allowed only for the credential reference and version captured by that active
 admission. A terminal report is immutable and idempotent.
 
-An unresolved Tool effect leaves the Agent fail-closed until an explicit
-lifecycle operation removes the bound Runtime. Timeouts are never treated as
-proof that a side effect did or did not happen. When rebuild, disable, or delete
-proves the Runtime absent, one transaction advances the lifecycle phase,
-changes the admission from `blocked_unknown_effect` to `released`, advances the
-Agent aggregate sequence, and appends `run_admission_released` correlated to
-both operation and admission. The immutable terminal report is not rewritten.
-If no unresolved admission exists, the barrier appends no synthetic release
-event.
+An unresolved Tool effect records `runtime_mcp`, `client_mcp`, or
+`unclassified` provenance and leaves the Agent fail-closed. Timeouts are never
+treated as proof that a side effect did or did not happen. When rebuild,
+disable, or delete proves the Runtime absent, one transaction may release only
+a `runtime_mcp` admission, advance the lifecycle phase and Agent aggregate
+sequence, and append `run_admission_released` correlated to both operation and
+admission. Runtime absence cannot settle a client or unclassified effect; those
+admissions remain blocked. The immutable terminal report is not rewritten. If
+no releasable admission exists, the barrier appends no synthetic release event.
 
 ### AgentEvent
 
@@ -248,8 +248,9 @@ and Runtime revisions, appends `agent_rebuild_requested`, and attaches the
 operation without changing the stable `available` projection. New Run
 admissions are rejected from that point. The drain phase remains pending while
 an active admission exists; an admission whose executor is terminal but whose
-Tool effect is unknown may cross the Runtime-replacement barrier and is released only
-after Runtime replacement proves the old compute absent. The Runtime-update
+`runtime_mcp` Tool effect is unknown may cross the Runtime-replacement barrier
+and is released only after Runtime replacement proves the old compute absent.
+Client MCP and unclassified effects remain blocked. The Runtime-update
 barrier and the resulting `run_admission_released` event commit atomically.
 
 Once drained, the Saga first persists the authoritative Egress policy assignment,
@@ -276,7 +277,7 @@ remains non-terminal and fail-closed until exact replay can publish the observed
 Runtime; there is no implicit rollback.
 If Runtime Controller returns a stable deleted inspection for the exact source
 Runtime revision, the source executable cannot be preserved. The same failure
-transaction releases any unresolved admission, records the absence proof,
+transaction releases any `runtime_mcp` unresolved admission, records the absence proof,
 clears the unusable executable projection, and appends release and
 build-failure facts in aggregate order. A plain `runtime_not_found` response
 does not prove physical Runtime absence and therefore leaves the operation
@@ -296,7 +297,7 @@ Disable is a restartable Saga, not a projection-only flag:
 4. call Runtime Controller `DisableRuntime` with the frozen source Runtime
    revision; completed success must prove lifecycle `disabled` and health
    `absent`, returns the retained-workspace Runtime revision, and atomically
-   releases any unresolved admission bound to the removed source Runtime;
+   releases any `runtime_mcp` unresolved admission bound to the removed source Runtime;
 5. atomically publish desired/lifecycle state `disabled`, retain the current
    AgentSpec and last successful ExecutionRevision, clear the executable
    execution/MCP binding, store the disabled Runtime revision, and append

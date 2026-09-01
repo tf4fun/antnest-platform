@@ -52,6 +52,7 @@ describe("RunRecovery", () => {
         runId: "run-1",
         terminalClass: "unresolved",
         toolEffectState: "unknown",
+        unknownEffectSource: "runtime_mcp",
       }),
     );
     expect(controller.finishRun).toHaveBeenCalledOnce();
@@ -68,7 +69,7 @@ describe("RunRecovery", () => {
     const executions = executionRepository([work]);
     const controller = controllerPort();
     const events = runEventRepository();
-    events.interruptToolAttempts.mockResolvedValueOnce("none");
+    events.interruptToolAttempts.mockResolvedValueOnce({ toolEffectState: "none" });
     const recovery = new RunRecovery({
       executions: executions.port,
       runs: runRepository().port,
@@ -332,7 +333,10 @@ describe("RunRecovery", () => {
     const events = runEventRepository();
     events.interruptToolAttempts.mockImplementationOnce(() => {
       ownership.abort(new WorkerOwnershipLostError());
-      return Promise.resolve("unknown");
+      return Promise.resolve({
+        toolEffectState: "unknown",
+        unknownEffectSource: "runtime_mcp",
+      });
     });
     const executions = executionRepository([work]);
     const controller = controllerPort();
@@ -432,7 +436,11 @@ describe("RunRecovery", () => {
       new Date("2026-08-30T00:00:00Z"),
     );
     expect(controller.finishRun).toHaveBeenCalledWith(
-      expect.objectContaining({ admissionId: "admission-invalid", terminalClass: "unresolved" }),
+      expect.objectContaining({
+        admissionId: "admission-invalid",
+        terminalClass: "unresolved",
+        unknownEffectSource: "unclassified",
+      }),
       expect.anything(),
     );
     expect(controller.acquireRun).toHaveBeenCalledWith(
@@ -519,7 +527,10 @@ function runExecutionPort() {
 
 function runEventRepository() {
   const interruptToolAttempts = vi.fn<RunEventRepository["interruptToolAttempts"]>(() =>
-    Promise.resolve("unknown"),
+    Promise.resolve({
+      toolEffectState: "unknown",
+      unknownEffectSource: "runtime_mcp",
+    }),
   );
   const port: RunEventRepository = {
     appendAgentMessage: vi.fn(),
