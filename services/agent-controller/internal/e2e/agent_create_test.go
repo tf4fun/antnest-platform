@@ -299,6 +299,11 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 	if err != nil || !processed {
 		t.Fatalf("recover interrupted create: processed=%v err=%v", processed, err)
 	}
+	recoveredStep, err := repository.GetLifecycleOperation(ctx, "agent-e2e-create")
+	if err != nil || recoveredStep.State != "running" || recoveredStep.Phase != "publish" ||
+		recoveredStep.RecoveryOwner != "" || recoveredStep.RecoveryLeaseUntil != nil {
+		t.Fatalf("single recovered create phase = %+v err=%v", recoveredStep, err)
+	}
 	created := serveJSON(t, handler, http.MethodPost, "/internal/agents", createBody, http.StatusAccepted)
 	agent := created["agent"].(map[string]any)
 	operation := created["operation"].(map[string]any)

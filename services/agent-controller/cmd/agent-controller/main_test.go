@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestServiceFailureClassIsStableAndBounded(t *testing.T) {
@@ -72,6 +74,31 @@ func TestLifecycleRecoveryWorkerIDIsReplicaLocalAndStable(t *testing.T) {
 		if _, err := lifecycleRecoveryWorkerID(input.hostname, input.pid); err == nil {
 			t.Fatalf("invalid worker identity was accepted: %+v", input)
 		}
+	}
+}
+
+func TestShutdownHTTPAndRecoveryStartsHTTPShutdownBeforeRecoveryStops(t *testing.T) {
+	t.Parallel()
+
+	httpServer := &http.Server{}
+	httpShutdownStarted := make(chan struct{})
+	httpServer.RegisterOnShutdown(func() { close(httpShutdownStarted) })
+	recoveryErrors := make(chan error, 1)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	result := make(chan error, 1)
+	go func() {
+		result <- shutdownHTTPAndRecovery(ctx, httpServer, recoveryErrors, false)
+	}()
+
+	select {
+	case <-httpShutdownStarted:
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("HTTP shutdown waited for lifecycle recovery to stop")
+	}
+	recoveryErrors <- nil
+	if err := <-result; err != nil {
+		t.Fatalf("shutdown HTTP and recovery: %v", err)
 	}
 }
 

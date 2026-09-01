@@ -639,6 +639,8 @@ func (store *lifecycleStoreStub) PublishAgentCreate(
 	state.Agent.UpdatedAt = input.Now
 	state.Operation.Phase = domain.PhaseCompleted
 	state.Operation.State = domain.OperationCompleted
+	state.Operation.RecoveryOwner = ""
+	state.Operation.RecoveryLeaseUntil = nil
 	state.Operation.ChildRequestID = ""
 	state.Operation.UpdatedAt = input.Now
 	store.beginState = state
@@ -676,6 +678,8 @@ func (store *lifecycleStoreStub) FailAgentCreate(
 	state.Agent.AggregateSequence = input.FailedEvent.AggregateSequence
 	state.Agent.UpdatedAt = input.Now
 	state.Operation.State = domain.OperationFailed
+	state.Operation.RecoveryOwner = ""
+	state.Operation.RecoveryLeaseUntil = nil
 	state.Operation.ErrorCode = input.Code
 	state.Operation.ErrorDetail = input.Detail
 	state.Operation.Retryable = input.Retryable

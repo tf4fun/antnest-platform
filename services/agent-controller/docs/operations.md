@@ -109,16 +109,20 @@ turn a downstream outage into a restart loop.
   timeout than its lease. Failure releases the claim with bounded exponential
   backoff; successful progress resets the backoff.
 - Recovery reloads the persisted operation and invokes the same create,
-  rebuild, disable, enable, or delete state machine. Runtime mutations reuse
-  their stored child request IDs. Egress ensure/fence/reset/release operations
-  are convergent, and policy replacement remains protected by resource-version
-  CAS. If a lease expires and execution overlaps, those dependency guarantees
-  plus repository phase CAS decide the winner; the expired attempt cannot
-  mutate, release, or reschedule a newer claim.
+  rebuild, disable, enable, or delete phase handler. One claim invokes exactly
+  one phase handler and then releases or atomically clears its lease; a handler
+  may persist prerequisite evidence before the final phase CAS, so this does
+  not mean one SQL statement. Runtime mutations reuse their stored child
+  request IDs. Egress ensure/fence/reset/release operations are convergent, and
+  policy replacement remains protected by resource-version CAS. If a lease
+  expires and execution overlaps, those dependency guarantees plus repository
+  phase CAS decide the winner; the expired attempt cannot mutate, release, or
+  reschedule a newer claim.
 - A fatal recovery-store or state-machine invariant error stops the service;
   retryable dependency failures remain inside the worker and use bounded
-  backoff. Shutdown stops new claims and waits for the active attempt before
-  draining HTTP.
+  backoff. Shutdown stops new claims, starts HTTP draining immediately, and
+  waits for both the active recovery attempt and HTTP server within the same
+  bounded deadline.
 - Inspect `/internal/agent-operations/{request_id}` before creating a new
   operation. Stage 2 uses the idempotency request ID as the lifecycle operation
   identity; there is no second alias to lose or reconcile.

@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"testing"
+	"time"
 
 	"go.opentelemetry.io/otel"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -100,4 +101,51 @@ func TestObserveLifecycleRecoveryAttemptRejectsNilLogger(t *testing.T) {
 	if _, err := ObserveLifecycleRecoveryAttempt(nil); err == nil {
 		t.Fatal("nil logger was accepted")
 	}
+}
+
+func TestObservedLifecycleRecoveryStoreDoesNotTraceEmptyPoll(t *testing.T) {
+	previousProvider := otel.GetTracerProvider()
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	otel.SetTracerProvider(provider)
+	t.Cleanup(func() {
+		_ = provider.Shutdown(context.Background())
+		otel.SetTracerProvider(previousProvider)
+	})
+
+	observed, err := ObserveLifecycleRecoveryStore(
+		&emptyLifecycleRecoveryStore{}, slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
+	if err != nil {
+		t.Fatalf("observe lifecycle recovery store: %v", err)
+	}
+	_, found, err := observed.ClaimLifecycleRecovery(context.Background(), ports.ClaimLifecycleRecovery{
+		WorkerID: "worker-1", StaleAfter: time.Minute, LeaseDuration: time.Minute,
+	})
+	if err != nil || found {
+		t.Fatalf("empty recovery poll found=%v err=%v", found, err)
+	}
+	if ended := recorder.Ended(); len(ended) != 0 {
+		t.Fatalf("empty recovery poll emitted spans: %#v", ended)
+	}
+}
+
+type emptyLifecycleRecoveryStore struct{}
+
+func (*emptyLifecycleRecoveryStore) ClaimLifecycleRecovery(
+	context.Context, ports.ClaimLifecycleRecovery,
+) (ports.LifecycleRecoveryClaim, bool, error) {
+	return ports.LifecycleRecoveryClaim{}, false, nil
+}
+
+func (*emptyLifecycleRecoveryStore) StartLifecycleRecoveryAttempt(
+	context.Context, ports.StartLifecycleRecoveryAttempt,
+) error {
+	return nil
+}
+
+func (*emptyLifecycleRecoveryStore) ReleaseLifecycleRecoveryClaim(
+	context.Context, ports.ReleaseLifecycleRecoveryClaim,
+) error {
+	return nil
 }

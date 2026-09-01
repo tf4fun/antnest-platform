@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/propagation"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
@@ -105,5 +106,34 @@ func TestHTTPHandlerDoesNotTraceSuccessfulStatusProbe(t *testing.T) {
 	)
 	if ended := recorder.Ended(); len(ended) != 0 {
 		t.Fatalf("status probe emitted traces: %#v", ended)
+	}
+}
+
+func TestHTTPHandlerTracesFailedStatusProbe(t *testing.T) {
+	previousProvider := otel.GetTracerProvider()
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	otel.SetTracerProvider(provider)
+	t.Cleanup(func() {
+		_ = provider.Shutdown(context.Background())
+		otel.SetTracerProvider(previousProvider)
+	})
+
+	var logs bytes.Buffer
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /status", func(response http.ResponseWriter, _ *http.Request) {
+		response.WriteHeader(http.StatusServiceUnavailable)
+	})
+	HTTPHandler(mux, slog.New(slog.NewJSONHandler(&logs, nil))).ServeHTTP(
+		httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "http://controller.test/status", nil),
+	)
+	ended := recorder.Ended()
+	if len(ended) != 1 || ended[0].Name() != "HTTP GET /status" ||
+		ended[0].Status().Code != codes.Error {
+		t.Fatalf("failed status spans = %#v", ended)
+	}
+	if !strings.Contains(logs.String(), `"route":"/status"`) ||
+		!strings.Contains(logs.String(), `"result":"error"`) {
+		t.Fatalf("failed status log = %s", logs.String())
 	}
 }

@@ -66,6 +66,26 @@ func TestCatalogHandlerCreatesModelProfileWithoutEchoingSecret(t *testing.T) {
 	}
 }
 
+func TestLifecycleMetricErrorClassHasBoundedVocabulary(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]string{
+		"":                           "unspecified",
+		"run_drain_timeout":          "timeout",
+		"provider_request_timeout":   "timeout",
+		"policy_restore_conflict":    "policy",
+		"network_attachment_changed": "network",
+		"runtime_not_found":          "runtime",
+		"invalid_dependency_value":   "invalid_dependency_result",
+		"arbitrary-provider-secret":  "other",
+	}
+	for code, want := range tests {
+		if got := lifecycleMetricErrorClass(code); got != want {
+			t.Errorf("error class for %q = %q, want %q", code, got, want)
+		}
+	}
+}
+
 func TestCatalogHandlerRejectsUnknownFieldsAndTrailingJSON(t *testing.T) {
 	t.Parallel()
 

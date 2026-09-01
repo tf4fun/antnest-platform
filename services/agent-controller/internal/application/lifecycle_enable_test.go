@@ -480,6 +480,8 @@ func (store *enableLifecycleStoreStub) PublishAgentEnable(
 	store.state.Agent.AggregateSequence = input.EnabledEvent.AggregateSequence
 	store.state.Operation.Phase = domain.PhaseCompleted
 	store.state.Operation.State = domain.OperationCompleted
+	store.state.Operation.RecoveryOwner = ""
+	store.state.Operation.RecoveryLeaseUntil = nil
 	store.state.Operation.ChildRequestID = ""
 	return store.state, nil
 }
@@ -495,6 +497,8 @@ func (store *enableLifecycleStoreStub) FailAgentEnable(
 	store.state.Agent.DesiredState = domain.DesiredDisabled
 	store.state.Agent.LifecycleState = domain.AgentDisabled
 	store.state.Operation.State = domain.OperationFailed
+	store.state.Operation.RecoveryOwner = ""
+	store.state.Operation.RecoveryLeaseUntil = nil
 	store.state.Operation.ErrorCode = input.Code
 	store.state.Operation.ErrorDetail = input.Detail
 	store.state.Operation.SourceRuntimeInspection = input.SourceRuntimeInspection

@@ -463,6 +463,8 @@ func (store *deleteLifecycleStoreStub) PublishAgentDelete(
 	store.state.Agent.AggregateSequence = input.DeletedEvent.AggregateSequence
 	store.state.Operation.Phase = domain.PhaseCompleted
 	store.state.Operation.State = domain.OperationCompleted
+	store.state.Operation.RecoveryOwner = ""
+	store.state.Operation.RecoveryLeaseUntil = nil
 	store.state.Operation.ChildRequestID = ""
 	return store.state, nil
 }

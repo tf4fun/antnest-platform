@@ -184,6 +184,10 @@ func lifecycleRecoveryBackoff(base time.Duration, maximum time.Duration, failure
 func (service *LifecycleService) ResumeLifecycleOperation(
 	ctx context.Context, operation ports.LifecycleOperationRecord,
 ) (LifecycleRecoveryResult, error) {
+	token, ok := ports.LifecycleRecoveryTokenFromContext(ctx)
+	if !ok || token.RequestID != operation.RequestID {
+		return LifecycleRecoveryResult{}, ports.ErrLifecycleRecoveryClaimLost
+	}
 	if operation.State != domain.OperationRunning {
 		return lifecycleRecoveryResult(operation, lifecycleOperationView(operation)), nil
 	}
@@ -195,7 +199,7 @@ func (service *LifecycleService) ResumeLifecycleOperation(
 		if err != nil || !found {
 			return LifecycleRecoveryResult{}, lifecycleRecoveryReplayError("create", found, err)
 		}
-		result, err := service.convergeAgentCreate(ctx, state, operation.RequestFingerprint)
+		result, err := service.continueAgentCreate(ctx, state)
 		return lifecycleRecoveryResult(operation, result.Operation), err
 	case domain.OperationRebuild:
 		state, found, err := service.store.ReplayAgentRebuild(
@@ -204,7 +208,7 @@ func (service *LifecycleService) ResumeLifecycleOperation(
 		if err != nil || !found {
 			return LifecycleRecoveryResult{}, lifecycleRecoveryReplayError("rebuild", found, err)
 		}
-		result, err := service.convergeAgentRebuild(ctx, state, operation.RequestFingerprint)
+		result, err := service.continueAgentRebuild(ctx, state)
 		return lifecycleRecoveryResult(operation, result.Operation), err
 	case domain.OperationDisable:
 		state, found, err := service.store.ReplayAgentDisable(
@@ -213,7 +217,7 @@ func (service *LifecycleService) ResumeLifecycleOperation(
 		if err != nil || !found {
 			return LifecycleRecoveryResult{}, lifecycleRecoveryReplayError("disable", found, err)
 		}
-		result, err := service.convergeAgentDisable(ctx, state, operation.RequestFingerprint)
+		result, err := service.continueAgentDisable(ctx, state)
 		return lifecycleRecoveryResult(operation, result.Operation), err
 	case domain.OperationEnable:
 		state, found, err := service.store.ReplayAgentEnable(
@@ -222,7 +226,7 @@ func (service *LifecycleService) ResumeLifecycleOperation(
 		if err != nil || !found {
 			return LifecycleRecoveryResult{}, lifecycleRecoveryReplayError("enable", found, err)
 		}
-		result, err := service.convergeAgentEnable(ctx, state, operation.RequestFingerprint)
+		result, err := service.continueAgentEnable(ctx, state)
 		return lifecycleRecoveryResult(operation, result.Operation), err
 	case domain.OperationDelete:
 		state, found, err := service.store.ReplayAgentDelete(
@@ -231,7 +235,7 @@ func (service *LifecycleService) ResumeLifecycleOperation(
 		if err != nil || !found {
 			return LifecycleRecoveryResult{}, lifecycleRecoveryReplayError("delete", found, err)
 		}
-		result, err := service.convergeAgentDelete(ctx, state, operation.RequestFingerprint)
+		result, err := service.continueAgentDelete(ctx, state)
 		return lifecycleRecoveryResult(operation, result.Operation), err
 	default:
 		return LifecycleRecoveryResult{}, fmt.Errorf("unsupported lifecycle recovery kind %q", operation.Kind)
@@ -241,6 +245,9 @@ func (service *LifecycleService) ResumeLifecycleOperation(
 func lifecycleRecoveryResult(
 	before ports.LifecycleOperationRecord, after OperationView,
 ) LifecycleRecoveryResult {
+	if after.RequestID == "" {
+		after = lifecycleOperationView(before)
+	}
 	return LifecycleRecoveryResult{
 		Phase: after.Phase, State: after.State,
 		Progressed: after.Phase != before.Phase || after.State != before.State,

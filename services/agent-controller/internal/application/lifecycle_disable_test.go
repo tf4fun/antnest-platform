@@ -487,6 +487,8 @@ func (store *disableLifecycleStoreStub) PublishAgentDisable(
 	store.state.Agent.UpdatedAt = input.Now
 	store.state.Operation.Phase = domain.PhaseCompleted
 	store.state.Operation.State = domain.OperationCompleted
+	store.state.Operation.RecoveryOwner = ""
+	store.state.Operation.RecoveryLeaseUntil = nil
 	store.state.Operation.ChildRequestID = ""
 	store.state.Operation.UpdatedAt = input.Now
 	return store.state, nil
@@ -517,6 +519,8 @@ func (store *disableLifecycleStoreStub) FailAgentDisable(
 	store.state.Agent.AggregateSequence = input.FailedEvent.AggregateSequence
 	store.state.Agent.UpdatedAt = input.Now
 	store.state.Operation.State = domain.OperationFailed
+	store.state.Operation.RecoveryOwner = ""
+	store.state.Operation.RecoveryLeaseUntil = nil
 	store.state.Operation.ErrorCode = input.Code
 	store.state.Operation.ErrorDetail = input.Detail
 	store.state.Operation.UpdatedAt = input.Now
