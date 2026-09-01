@@ -36,6 +36,11 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 	if err := repository.Migrate(ctx); err != nil {
 		t.Fatalf("migrate repository: %v", err)
 	}
+	eventNotifier, err := postgres.OpenEventNotifier(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("open Agent event notifier: %v", err)
+	}
+	t.Cleanup(eventNotifier.Close)
 	secretBox, err := credentials.NewSecretBox(make([]byte, 32))
 	if err != nil {
 		t.Fatalf("create SecretBox: %v", err)
@@ -228,7 +233,7 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 		application.NewLifecycleService(repository, repository, egress, runtime, clock),
 		application.NewRunService(repository, secretBox, clock, 30*time.Minute),
 		application.NewAgentQueryService(repository),
-		application.NewEventService(repository, repository),
+		application.NewEventService(repository, eventNotifier, repository),
 		repository.Ping,
 	)
 	if err != nil {

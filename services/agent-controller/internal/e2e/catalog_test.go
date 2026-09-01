@@ -30,6 +30,11 @@ func TestCatalogHappyPathThroughHTTPAndPostgres(t *testing.T) {
 	if err := repository.Migrate(ctx); err != nil {
 		t.Fatalf("migrate repository: %v", err)
 	}
+	eventNotifier, err := postgres.OpenEventNotifier(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("open Agent event notifier: %v", err)
+	}
+	t.Cleanup(eventNotifier.Close)
 	secretBox, err := credentials.NewSecretBox(make([]byte, 32))
 	if err != nil {
 		t.Fatalf("create SecretBox: %v", err)
@@ -41,7 +46,7 @@ func TestCatalogHappyPathThroughHTTPAndPostgres(t *testing.T) {
 			repository, secretBox, fixedClock{now: time.Unix(1, 0).UTC()}, 30*time.Minute,
 		),
 		application.NewAgentQueryService(repository),
-		application.NewEventService(repository, repository),
+		application.NewEventService(repository, eventNotifier, repository),
 		repository.Ping,
 	)
 	if err != nil {

@@ -2,7 +2,6 @@ package postgres
 
 import (
 	"context"
-	"errors"
 	"os"
 	"testing"
 	"time"
@@ -63,7 +62,7 @@ func TestAgentEventRepositoryReplaysGlobalAndPerAgentOrder(t *testing.T) {
 	}
 }
 
-func TestAgentEventRepositoryWaitClosesSubscribeRaceAndWakesOnCommit(t *testing.T) {
+func TestAgentEventNotifierFansOutCommitWithoutUsingBusinessPool(t *testing.T) {
 	databaseURL := os.Getenv("ANTNEST_AGENT_CONTROLLER_TEST_DATABASE_URL")
 	if databaseURL == "" {
 		t.Skip("ANTNEST_AGENT_CONTROLLER_TEST_DATABASE_URL is not set")
@@ -78,40 +77,107 @@ func TestAgentEventRepositoryWaitClosesSubscribeRaceAndWakesOnCommit(t *testing.
 	if err := repository.Migrate(ctx); err != nil {
 		t.Fatalf("migrate repository: %v", err)
 	}
+	notifier, err := OpenEventNotifier(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("open Agent event notifier: %v", err)
+	}
+	t.Cleanup(notifier.Close)
 
 	now := time.Date(2026, time.September, 1, 12, 0, 0, 0, time.UTC)
 	insertQueryAgent(t, ctx, repository, "agent-a", "org-a", "user-a", domain.DesiredEnabled, domain.AgentAvailable, now)
-	insertQueryAgent(t, ctx, repository, "agent-b", "org-a", "user-b", domain.DesiredEnabled, domain.AgentAvailable, now)
-	sequence1 := insertTestAgentEvent(t, ctx, repository, testRepositoryEvent("event-a-1", "agent-a", 1, now))
-
-	immediateCtx, immediateCancel := context.WithTimeout(ctx, time.Second)
-	defer immediateCancel()
-	if err := repository.WaitForAgentEvents(immediateCtx, "", sequence1-1); err != nil {
-		t.Fatalf("wait did not observe already-committed event: %v", err)
+	first, err := notifier.SubscribeAgentEvents()
+	if err != nil {
+		t.Fatalf("subscribe first watcher: %v", err)
 	}
-	insertTestAgentEvent(t, ctx, repository, testRepositoryEvent("event-b-1", "agent-b", 1, now.Add(time.Second)))
-	filteredCtx, filteredCancel := context.WithTimeout(ctx, 50*time.Millisecond)
-	err = repository.WaitForAgentEvents(filteredCtx, "agent-a", sequence1)
-	filteredCancel()
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("per-Agent wait observed unrelated event: %v", err)
+	second, err := notifier.SubscribeAgentEvents()
+	if err != nil {
+		t.Fatalf("subscribe second watcher: %v", err)
 	}
-
-	waitCtx, waitCancel := context.WithTimeout(ctx, 3*time.Second)
-	defer waitCancel()
-	waitResult := make(chan error, 1)
-	go func() { waitResult <- repository.WaitForAgentEvents(waitCtx, "agent-a", sequence1) }()
-	time.Sleep(100 * time.Millisecond)
-	insertTestAgentEvent(t, ctx, repository, testRepositoryEvent("event-a-2", "agent-a", 2, now.Add(2*time.Second)))
-	if err := <-waitResult; err != nil {
-		t.Fatalf("wait for committed event: %v", err)
+	if acquired := repository.pool.Stat().AcquiredConns(); acquired != 0 {
+		t.Fatalf("subscriptions acquired %d business-pool connections", acquired)
 	}
-
-	cancelledCtx, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
+	insertTestAgentEvent(t, ctx, repository, testRepositoryEvent("event-a-1", "agent-a", 1, now))
+	for index, signal := range []<-chan struct{}{first, second} {
+		select {
+		case <-signal:
+		case <-time.After(3 * time.Second):
+			t.Fatalf("watcher %d did not receive committed event hint", index+1)
+		}
+	}
+	pingCtx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
-	err = repository.WaitForAgentEvents(cancelledCtx, "", sequence1+2)
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("cancelled wait error = %v", err)
+	if err := repository.Ping(pingCtx); err != nil {
+		t.Fatalf("business pool unavailable after watcher fanout: %v", err)
+	}
+}
+
+func TestAgentEventSequenceSerializesCommitVisibility(t *testing.T) {
+	databaseURL := os.Getenv("ANTNEST_AGENT_CONTROLLER_TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("ANTNEST_AGENT_CONTROLLER_TEST_DATABASE_URL is not set")
+	}
+	ctx := context.Background()
+	repository, err := Open(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("open repository: %v", err)
+	}
+	t.Cleanup(repository.Close)
+	resetCatalogSchema(t, ctx, repository)
+	if err := repository.Migrate(ctx); err != nil {
+		t.Fatalf("migrate repository: %v", err)
+	}
+	now := time.Date(2026, time.September, 1, 12, 0, 0, 0, time.UTC)
+	insertQueryAgent(t, ctx, repository, "agent-a", "org-a", "user-a", domain.DesiredEnabled, domain.AgentAvailable, now)
+	insertQueryAgent(t, ctx, repository, "agent-b", "org-a", "user-b", domain.DesiredEnabled, domain.AgentAvailable, now)
+
+	first, err := repository.pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin first event transaction: %v", err)
+	}
+	defer func() { _ = first.Rollback(ctx) }()
+	if err := repository.insertAgentEvent(ctx, first, testRepositoryEvent("event-a-1", "agent-a", 1, now)); err != nil {
+		t.Fatalf("insert first event: %v", err)
+	}
+
+	secondStarted := make(chan struct{})
+	secondResult := make(chan error, 1)
+	go func() {
+		second, beginErr := repository.pool.Begin(ctx)
+		if beginErr != nil {
+			secondResult <- beginErr
+			return
+		}
+		defer func() { _ = second.Rollback(ctx) }()
+		close(secondStarted)
+		if insertErr := repository.insertAgentEvent(
+			ctx, second, testRepositoryEvent("event-b-1", "agent-b", 1, now.Add(time.Second)),
+		); insertErr != nil {
+			secondResult <- insertErr
+			return
+		}
+		secondResult <- second.Commit(ctx)
+	}()
+	<-secondStarted
+	select {
+	case err := <-secondResult:
+		t.Fatalf("second event transaction bypassed journal ordering lock: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if err := first.Commit(ctx); err != nil {
+		t.Fatalf("commit first event transaction: %v", err)
+	}
+	if err := <-secondResult; err != nil {
+		t.Fatalf("commit second event transaction: %v", err)
+	}
+
+	events, err := repository.ListAgentEvents(ctx, ports.AgentEventQuery{AfterSequence: 0, Limit: 10})
+	if err != nil {
+		t.Fatalf("list commit-ordered events: %v", err)
+	}
+	if len(events) != 2 || events[0].EventID != "event-a-1" ||
+		events[0].GlobalSequence != 1 || events[1].EventID != "event-b-1" ||
+		events[1].GlobalSequence != 2 {
+		t.Fatalf("commit-ordered events = %+v", events)
 	}
 }
 
@@ -120,7 +186,7 @@ func testRepositoryEvent(
 ) ports.AgentEventRecord {
 	return ports.AgentEventRecord{
 		EventID: eventID, AgentID: agentID, AggregateSequence: aggregateSequence,
-		SchemaVersion: 1, EventType: "agent_tested", TraceID: "0123456789abcdef0123456789abcdef",
+		SchemaVersion: 1, EventType: ports.EventAgentReady, TraceID: "0123456789abcdef0123456789abcdef",
 		Data: map[string]any{"step": eventID}, OccurredAt: occurredAt,
 	}
 }
@@ -134,7 +200,7 @@ func insertTestAgentEvent(
 		t.Fatalf("begin event transaction: %v", err)
 	}
 	defer func() { _ = transaction.Rollback(ctx) }()
-	if err := insertAgentEvent(ctx, transaction, event); err != nil {
+	if err := repository.insertAgentEvent(ctx, transaction, event); err != nil {
 		t.Fatalf("insert Agent event: %v", err)
 	}
 	if err := transaction.Commit(ctx); err != nil {

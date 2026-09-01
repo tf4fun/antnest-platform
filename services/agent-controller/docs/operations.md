@@ -32,7 +32,10 @@ Event consumers use `/internal/agent-events` or the per-Agent event route for
 authoritative replay. The cursor is the exclusive `after_sequence`; the
 consumer stores its last fully applied value in its own database. `/watch`
 serves SSE backlog followed by PostgreSQL commit notifications and supports
-`Last-Event-ID`, but carries no delivery acknowledgement. A disconnect is
+`Last-Event-ID`, which takes precedence over the original query cursor on an
+automatic EventSource reconnect, but carries no delivery acknowledgement. One
+dedicated listener connection fans hints out to every local watcher; watchers
+do not consume the lifecycle/query connection pool. A disconnect is
 recovered by List from the consumer-owned cursor, never by assuming the last
 socket write was applied.
 The background lifecycle recovery worker described below is not yet

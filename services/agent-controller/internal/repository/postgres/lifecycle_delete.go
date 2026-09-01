@@ -103,7 +103,7 @@ WHERE id = $1 AND active_operation_request_id = '' AND aggregate_sequence = $5
 	if result.RowsAffected() != 1 {
 		return ports.AgentDeleteState{}, false, ports.ErrConcurrentChange
 	}
-	if err := insertAgentEvent(ctx, transaction, input.RequestedEvent); err != nil {
+	if err := repository.insertAgentEvent(ctx, transaction, input.RequestedEvent); err != nil {
 		return ports.AgentDeleteState{}, false, err
 	}
 	agent.DesiredState = domain.DesiredDeleted
@@ -118,6 +118,7 @@ WHERE id = $1 AND active_operation_request_id = '' AND aggregate_sequence = $5
 	if err := transaction.Commit(ctx); err != nil {
 		return ports.AgentDeleteState{}, false, fmt.Errorf("commit Agent delete transaction: %w", err)
 	}
+	repository.recordEventAppend(ctx, input.RequestedEvent.EventType)
 	return state, false, nil
 }
 
@@ -266,7 +267,7 @@ SET active = FALSE, updated_at = $2
 WHERE agent_id = $1 AND active`, operation.AgentID, input.Now); err != nil {
 		return ports.AgentDeleteState{}, fmt.Errorf("deactivate deleted Agent access: %w", err)
 	}
-	if err := insertAgentEvent(ctx, transaction, input.DeletedEvent); err != nil {
+	if err := repository.insertAgentEvent(ctx, transaction, input.DeletedEvent); err != nil {
 		return ports.AgentDeleteState{}, err
 	}
 	completed, err := transaction.Exec(ctx, `
@@ -282,7 +283,12 @@ WHERE request_id = $1 AND state = 'running' AND phase = 'publish'`,
 	if completed.RowsAffected() != 1 {
 		return ports.AgentDeleteState{}, ports.ErrConcurrentChange
 	}
-	return commitAgentDeleteState(ctx, transaction, input.RequestID, "commit Agent delete publish")
+	state, err := commitAgentDeleteState(ctx, transaction, input.RequestID, "commit Agent delete publish")
+	if err != nil {
+		return ports.AgentDeleteState{}, err
+	}
+	repository.recordEventAppend(ctx, input.DeletedEvent.EventType)
+	return state, nil
 }
 
 func validDeleteBegin(agent ports.AgentRecord, input ports.BeginAgentDelete) bool {

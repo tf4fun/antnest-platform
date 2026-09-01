@@ -109,12 +109,25 @@ Agent projection queries.
 
 Watch first replays every event after the requested sequence and then waits for
 new commits. SSE `id` is the global sequence and `event` is `agent_event`.
-Callers may resume with `after_sequence` or `Last-Event-ID`; conflicting values
-are rejected. Watch is only a wake-up/streaming convenience: after disconnect,
+Callers may resume with `after_sequence` or `Last-Event-ID`. When EventSource
+automatically reconnects with both, `Last-Event-ID` takes precedence over the
+original URL query. Watch is only a wake-up/streaming convenience: after disconnect,
 consumers resume through authoritative List. Each consumer persists the last
 fully applied global sequence in its own service database and applies events
 idempotently by `event_id`; Agent Controller does not own consumer offsets or
 delivery acknowledgements.
+
+Global sequences are allocated by one transaction-locked journal cursor. Event
+transactions therefore commit in global-sequence order; a consumer that has
+persisted sequence `N` cannot later observe a newly committed sequence below
+`N`. PostgreSQL notifications are process-local wake-up hints delivered through
+one dedicated listener connection and never define replay order.
+
+The stable consumer contract is the event envelope and enumerated `event_type`.
+`data` is versioned audit detail, not a projection patch. A consumer that needs
+current Agent state treats the event as an invalidation signal and reads the
+Agent projection; it must not reconstruct business state from undocumented
+payload keys.
 
 ## Errors
 

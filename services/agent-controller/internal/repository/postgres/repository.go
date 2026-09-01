@@ -13,11 +13,22 @@ import (
 	"soft/antnest-platform/services/agent-controller/internal/ports"
 )
 
-type Repository struct{ pool *pgxpool.Pool }
+type EventAppendObserver func(context.Context, string)
+
+type Option func(*Repository)
+
+func WithEventAppendObserver(observer EventAppendObserver) Option {
+	return func(repository *Repository) { repository.eventAppended = observer }
+}
+
+type Repository struct {
+	pool          *pgxpool.Pool
+	eventAppended EventAppendObserver
+}
 
 const catalogRequestLockNamespace int32 = 0x414e544e
 
-func Open(ctx context.Context, databaseURL string) (*Repository, error) {
+func Open(ctx context.Context, databaseURL string, options ...Option) (*Repository, error) {
 	configuration, err := pgxpool.ParseConfig(databaseURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse Agent Controller database URL: %w", err)
@@ -31,7 +42,13 @@ func Open(ctx context.Context, databaseURL string) (*Repository, error) {
 		pool.Close()
 		return nil, fmt.Errorf("ping Agent Controller database: %w", err)
 	}
-	return &Repository{pool: pool}, nil
+	repository := &Repository{pool: pool}
+	for _, option := range options {
+		if option != nil {
+			option(repository)
+		}
+	}
+	return repository, nil
 }
 
 func (repository *Repository) Close() {

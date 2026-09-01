@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
-	"strings"
 	"time"
 
 	"soft/antnest-platform/services/agent-controller/internal/ports"
@@ -19,12 +18,17 @@ const (
 var traceIDPattern = regexp.MustCompile(`^[a-f0-9]{32}$`)
 
 type EventService struct {
-	events ports.AgentEventStore
-	agents ports.AgentQueryStore
+	events        ports.AgentEventStore
+	notifications ports.AgentEventNotifier
+	agents        ports.AgentQueryStore
 }
 
-func NewEventService(events ports.AgentEventStore, agents ports.AgentQueryStore) *EventService {
-	return &EventService{events: events, agents: agents}
+func NewEventService(
+	events ports.AgentEventStore,
+	notifications ports.AgentEventNotifier,
+	agents ports.AgentQueryStore,
+) *EventService {
+	return &EventService{events: events, notifications: notifications, agents: agents}
 }
 
 type ListEventsInput struct {
@@ -108,6 +112,10 @@ func (service *EventService) watchEvents(
 ) error {
 	cursor := afterSequence
 	for {
+		notification, err := service.notifications.SubscribeAgentEvents()
+		if err != nil {
+			return fmt.Errorf("subscribe to Agent events: %w", err)
+		}
 		page, err := service.listEvents(ctx, ports.AgentEventQuery{
 			AgentID: agentID, AfterSequence: cursor, Limit: maximumEventListLimit,
 		})
@@ -123,8 +131,10 @@ func (service *EventService) watchEvents(
 		if len(page.Events) == maximumEventListLimit {
 			continue
 		}
-		if err := service.events.WaitForAgentEvents(ctx, agentID, cursor); err != nil {
-			return fmt.Errorf("wait for Agent events: %w", err)
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("wait for Agent events: %w", ctx.Err())
+		case <-notification:
 		}
 	}
 }
@@ -181,7 +191,7 @@ func validateEventRecords(records []ports.AgentEventRecord, query ports.AgentEve
 	for _, record := range records {
 		if record.GlobalSequence <= previous || record.AggregateSequence < 1 ||
 			record.SchemaVersion != 1 || !validIdentifier(record.EventID) ||
-			!validIdentifier(record.AgentID) || strings.TrimSpace(record.EventType) == "" ||
+			!validIdentifier(record.AgentID) || !validAgentEventType(record.EventType) ||
 			record.OccurredAt.IsZero() || record.Data == nil ||
 			(query.AgentID != "" && record.AgentID != query.AgentID) ||
 			(record.OperationRequestID != "" && !validIdentifier(record.OperationRequestID)) ||
@@ -192,6 +202,29 @@ func validateEventRecords(records []ports.AgentEventRecord, query ports.AgentEve
 		previous = record.GlobalSequence
 	}
 	return nil
+}
+
+func validAgentEventType(eventType string) bool {
+	switch eventType {
+	case ports.EventAgentCreateRequested,
+		ports.EventAgentReady,
+		ports.EventAgentBuildFailed,
+		ports.EventAgentRebuildRequested,
+		ports.EventAgentRebuilt,
+		ports.EventAgentDisableRequested,
+		ports.EventAgentDisabled,
+		ports.EventAgentDisableFailed,
+		ports.EventAgentEnableRequested,
+		ports.EventAgentEnabled,
+		ports.EventAgentEnableFailed,
+		ports.EventAgentDeleteRequested,
+		ports.EventAgentDeleted,
+		ports.EventRunAdmissionReleased,
+		ports.EventRunAdmissionUnresolved:
+		return true
+	default:
+		return false
+	}
 }
 
 func agentEventView(record ports.AgentEventRecord) AgentEventView {

@@ -10,5 +10,8 @@ type AgentEventQuery struct {
 
 type AgentEventStore interface {
 	ListAgentEvents(context.Context, AgentEventQuery) ([]AgentEventRecord, error)
-	WaitForAgentEvents(context.Context, string, int64) error
+}
+
+type AgentEventNotifier interface {
+	SubscribeAgentEvents() (<-chan struct{}, error)
 }

@@ -185,7 +185,7 @@ WHERE id = $1 AND aggregate_sequence = $4`,
 	if projected.RowsAffected() != 1 {
 		return ports.FinishRunRecord{}, ports.ErrConcurrentChange
 	}
-	if err := insertAgentEvent(ctx, transaction, ports.AgentEventRecord{
+	if err := repository.insertAgentEvent(ctx, transaction, ports.AgentEventRecord{
 		EventID: input.Event.EventID, AgentID: agent.AgentID,
 		AggregateSequence: nextSequence, SchemaVersion: 1, EventType: input.Event.EventType,
 		AdmissionID: input.AdmissionID, TraceID: input.Event.TraceID,
@@ -196,6 +196,7 @@ WHERE id = $1 AND aggregate_sequence = $4`,
 	if err := transaction.Commit(ctx); err != nil {
 		return ports.FinishRunRecord{}, fmt.Errorf("commit FinishRun: %w", err)
 	}
+	repository.recordEventAppend(ctx, input.Event.EventType)
 	return ports.FinishRunRecord{Status: "finished", AdmissionState: resultingState}, nil
 }
 

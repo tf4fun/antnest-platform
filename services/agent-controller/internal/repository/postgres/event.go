@@ -4,14 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"time"
-
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"soft/antnest-platform/services/agent-controller/internal/ports"
 )
-
-const agentEventNotificationChannel = "agent_controller_events"
 
 func (repository *Repository) ListAgentEvents(
 	ctx context.Context, query ports.AgentEventQuery,
@@ -48,50 +43,6 @@ WHERE global_sequence > $1`
 		return nil, fmt.Errorf("iterate Agent events: %w", err)
 	}
 	return records, nil
-}
-
-func (repository *Repository) WaitForAgentEvents(
-	ctx context.Context, agentID string, afterSequence int64,
-) error {
-	if afterSequence < 0 {
-		return fmt.Errorf("wait for Agent events: invalid cursor")
-	}
-	connection, err := repository.pool.Acquire(ctx)
-	if err != nil {
-		return fmt.Errorf("acquire Agent event listener: %w", err)
-	}
-	defer releaseEventListener(connection)
-	if _, err := connection.Exec(ctx, "LISTEN "+agentEventNotificationChannel); err != nil {
-		return fmt.Errorf("listen for Agent events: %w", err)
-	}
-	statement := `SELECT EXISTS (
-    SELECT 1 FROM agent_controller.agent_events WHERE global_sequence > $1`
-	arguments := []any{afterSequence}
-	if agentID != "" {
-		statement += " AND agent_id = $2"
-		arguments = append(arguments, agentID)
-	}
-	statement += ")"
-	var available bool
-	if err := connection.QueryRow(ctx, statement, arguments...).Scan(&available); err != nil {
-		return fmt.Errorf("check Agent event journal after listen: %w", err)
-	}
-	if available {
-		return nil
-	}
-	if _, err := connection.Conn().WaitForNotification(ctx); err != nil {
-		return fmt.Errorf("wait for Agent event notification: %w", err)
-	}
-	return nil
-}
-
-func releaseEventListener(connection *pgxpool.Conn) {
-	cleanupContext, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	if _, err := connection.Exec(cleanupContext, "UNLISTEN "+agentEventNotificationChannel); err != nil {
-		_ = connection.Conn().Close(cleanupContext)
-	}
-	connection.Release()
 }
 
 func scanAgentEvent(scanner lifecycleRowScanner) (ports.AgentEventRecord, error) {

@@ -76,7 +76,7 @@ func (repository *Repository) BeginAgentCreate(
 	if err := insertLifecycleOperation(ctx, transaction, input.Operation); err != nil {
 		return ports.AgentCreateState{}, false, err
 	}
-	if err := insertAgentEvent(ctx, transaction, input.RequestedEvent); err != nil {
+	if err := repository.insertAgentEvent(ctx, transaction, input.RequestedEvent); err != nil {
 		return ports.AgentCreateState{}, false, err
 	}
 	state := ports.AgentCreateState{
@@ -85,6 +85,7 @@ func (repository *Repository) BeginAgentCreate(
 	if err := transaction.Commit(ctx); err != nil {
 		return ports.AgentCreateState{}, false, fmt.Errorf("commit Agent create transaction: %w", err)
 	}
+	repository.recordEventAppend(ctx, input.RequestedEvent.EventType)
 	return state, false, nil
 }
 
@@ -206,7 +207,7 @@ func (repository *Repository) PublishAgentCreate(
 	if err := publishAgentProjection(ctx, transaction, operation, input); err != nil {
 		return ports.AgentCreateState{}, err
 	}
-	if err := insertAgentEvent(ctx, transaction, input.ReadyEvent); err != nil {
+	if err := repository.insertAgentEvent(ctx, transaction, input.ReadyEvent); err != nil {
 		return ports.AgentCreateState{}, err
 	}
 	if _, err := transaction.Exec(ctx, `
@@ -227,6 +228,7 @@ WHERE request_id = $1`, input.RequestID, input.Now); err != nil {
 	if err := transaction.Commit(ctx); err != nil {
 		return ports.AgentCreateState{}, fmt.Errorf("commit Agent publish transaction: %w", err)
 	}
+	repository.recordEventAppend(ctx, input.ReadyEvent.EventType)
 	return state, nil
 }
 
@@ -267,7 +269,7 @@ WHERE id = $1 AND active_operation_request_id = $7 AND aggregate_sequence = $8`,
 	if result.RowsAffected() != 1 {
 		return ports.AgentCreateState{}, ports.ErrConcurrentChange
 	}
-	if err := insertAgentEvent(ctx, transaction, input.FailedEvent); err != nil {
+	if err := repository.insertAgentEvent(ctx, transaction, input.FailedEvent); err != nil {
 		return ports.AgentCreateState{}, err
 	}
 	if _, err := transaction.Exec(ctx, `
@@ -288,6 +290,7 @@ WHERE request_id = $1`, input.RequestID, input.Code, input.Detail, input.Retryab
 	if err := transaction.Commit(ctx); err != nil {
 		return ports.AgentCreateState{}, fmt.Errorf("commit Agent failure transaction: %w", err)
 	}
+	repository.recordEventAppend(ctx, input.FailedEvent.EventType)
 	return state, nil
 }
 
@@ -401,17 +404,27 @@ func insertLifecycleOperation(
 	return nil
 }
 
-func insertAgentEvent(ctx context.Context, transaction pgx.Tx, record ports.AgentEventRecord) error {
+func (repository *Repository) insertAgentEvent(
+	ctx context.Context, transaction pgx.Tx, record ports.AgentEventRecord,
+) error {
 	payload, err := json.Marshal(record.Data)
 	if err != nil {
 		return fmt.Errorf("encode Agent event: %w", err)
 	}
+	var globalSequence int64
+	if err := transaction.QueryRow(ctx, `
+UPDATE agent_controller.event_journal_cursor
+SET last_sequence = last_sequence + 1
+WHERE singleton = TRUE
+RETURNING last_sequence`).Scan(&globalSequence); err != nil {
+		return fmt.Errorf("allocate Agent event sequence: %w", err)
+	}
 	_, err = transaction.Exec(ctx, `
 INSERT INTO agent_controller.agent_events (
-    event_id, agent_id, aggregate_sequence, schema_version, event_type,
+    global_sequence, event_id, agent_id, aggregate_sequence, schema_version, event_type,
     operation_request_id, admission_id, trace_id, data, occurred_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-		record.EventID, record.AgentID, record.AggregateSequence, record.SchemaVersion,
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+		globalSequence, record.EventID, record.AgentID, record.AggregateSequence, record.SchemaVersion,
 		record.EventType, record.OperationRequestID, record.AdmissionID,
 		record.TraceID, payload, record.OccurredAt,
 	)
@@ -419,6 +432,12 @@ INSERT INTO agent_controller.agent_events (
 		return fmt.Errorf("insert Agent event: %w", err)
 	}
 	return nil
+}
+
+func (repository *Repository) recordEventAppend(ctx context.Context, eventType string) {
+	if repository.eventAppended != nil {
+		repository.eventAppended(ctx, eventType)
+	}
 }
 
 func insertExecutionRevision(

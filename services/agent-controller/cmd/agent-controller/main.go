@@ -127,7 +127,10 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 	logger := telemetryRuntime.Logger()
 	slog.SetDefault(logger)
 
-	repository, err := postgres.Open(ctx, cfg.DatabaseURL)
+	repository, err := postgres.Open(
+		ctx, cfg.DatabaseURL,
+		postgres.WithEventAppendObserver(telemetry.RecordAgentEventAppend),
+	)
 	if err != nil {
 		return classifyFailure("database_startup", err)
 	}
@@ -135,6 +138,21 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 	if err := repository.Migrate(ctx); err != nil {
 		return classifyFailure("database_migration", err)
 	}
+	eventNotifier, err := postgres.OpenEventNotifier(
+		ctx, cfg.DatabaseURL,
+		postgres.WithEventNotifierObserver(func(state string) {
+			telemetry.RecordAgentEventNotifierTransition(state)
+			if state == "disconnected" {
+				logger.Warn("Agent event notifier disconnected")
+				return
+			}
+			logger.Info("Agent event notifier reconnected")
+		}),
+	)
+	if err != nil {
+		return classifyFailure("event_notifier_startup", err)
+	}
+	defer eventNotifier.Close()
 	secretBox, err := credentials.NewSecretBox(cfg.EncryptionKey)
 	if err != nil {
 		return classifyFailure("service_composition", err)
@@ -155,6 +173,10 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 	if err != nil {
 		return classifyFailure("service_composition", err)
 	}
+	observedAgentEventStore, err := telemetry.ObserveAgentEventStore(repository, logger)
+	if err != nil {
+		return classifyFailure("service_composition", err)
+	}
 	egress, err := egressclient.New(cfg.RuntimeEgressURL, cfg.DependencyTimeout, nil)
 	if err != nil {
 		return classifyFailure("service_composition", err)
@@ -171,7 +193,7 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 		observedRunStore, secretBox, systemClock{}, cfg.RunAdmissionTTL,
 	)
 	queries := application.NewAgentQueryService(observedAgentQueryStore)
-	events := application.NewEventService(repository, observedAgentQueryStore)
+	events := application.NewEventService(observedAgentEventStore, eventNotifier, observedAgentQueryStore)
 	handler, err := server.NewHandler(catalog, lifecycle, runs, queries, events, repository.Ping)
 	if err != nil {
 		return classifyFailure("service_composition", err)

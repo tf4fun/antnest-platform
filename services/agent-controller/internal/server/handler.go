@@ -26,11 +26,26 @@ import (
 
 const maximumRequestBytes = 2 << 20
 
-var lifecycleOperations = mustLifecycleCounter(
-	otel.Meter("soft/antnest-platform/agent-controller/server").Int64Counter(
-		"antnest.agent_controller.lifecycle.operations",
-		metric.WithDescription("Agent lifecycle request outcomes"),
-	),
+var (
+	serverMeter         = otel.Meter("soft/antnest-platform/agent-controller/server")
+	lifecycleOperations = mustLifecycleCounter(
+		serverMeter.Int64Counter(
+			"antnest.agent_controller.lifecycle.operations",
+			metric.WithDescription("Agent lifecycle request outcomes"),
+		),
+	)
+	eventWatchConnections = mustEventWatchConnections(
+		serverMeter.Int64UpDownCounter(
+			"antnest.agent_controller.event_watch.connections",
+			metric.WithDescription("Current Agent event watch connections"),
+		),
+	)
+	eventWatchDisconnects = mustLifecycleCounter(
+		serverMeter.Int64Counter(
+			"antnest.agent_controller.event_watch.disconnects",
+			metric.WithDescription("Agent event watch termination outcomes"),
+		),
+	)
 )
 
 type CatalogService interface {
@@ -715,7 +730,7 @@ func (h *handler) watchGlobalAgentEvents(response http.ResponseWriter, request *
 		writeServiceError(request.Context(), response, err)
 		return
 	}
-	h.streamAgentEvents(response, request, page, func(
+	h.streamAgentEvents(response, request, "global", page, func(
 		ctx context.Context, cursor int64, emit application.AgentEventEmitter,
 	) error {
 		return h.events.WatchGlobalEvents(ctx, cursor, emit)
@@ -735,7 +750,7 @@ func (h *handler) watchAgentEvents(response http.ResponseWriter, request *http.R
 		writeServiceError(request.Context(), response, err)
 		return
 	}
-	h.streamAgentEvents(response, request, page, func(
+	h.streamAgentEvents(response, request, "agent", page, func(
 		ctx context.Context, cursor int64, emit application.AgentEventEmitter,
 	) error {
 		return h.events.WatchAgentEvents(ctx, agentID, cursor, emit)
@@ -747,11 +762,24 @@ type watchAgentEvents func(context.Context, int64, application.AgentEventEmitter
 func (h *handler) streamAgentEvents(
 	response http.ResponseWriter,
 	request *http.Request,
+	scope string,
 	page application.AgentEventPage,
 	watch watchAgentEvents,
 ) {
-	flusher, ok := response.(http.Flusher)
-	if !ok {
+	ctx := request.Context()
+	watchAttributes := []attribute.KeyValue{attribute.String("antnest.event_watch.scope", scope)}
+	eventWatchConnections.Add(ctx, 1, metric.WithAttributes(watchAttributes...))
+	result := "completed"
+	defer func() {
+		eventWatchConnections.Add(ctx, -1, metric.WithAttributes(watchAttributes...))
+		disconnectAttributes := append(
+			watchAttributes, attribute.String("antnest.result", result),
+		)
+		eventWatchDisconnects.Add(ctx, 1, metric.WithAttributes(disconnectAttributes...))
+	}()
+	controller := http.NewResponseController(response)
+	if err := controller.SetWriteDeadline(time.Time{}); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		result = "setup_error"
 		writeError(response, http.StatusInternalServerError, "internal_error", "streaming is unavailable", true)
 		return
 	}
@@ -759,7 +787,10 @@ func (h *handler) streamAgentEvents(
 	response.Header().Set("Cache-Control", "no-cache, no-store")
 	response.Header().Set("X-Accel-Buffering", "no")
 	response.WriteHeader(http.StatusOK)
-	flusher.Flush()
+	if err := controller.Flush(); err != nil {
+		result = "write_error"
+		return
+	}
 	emit := func(event application.AgentEventView) error {
 		payload, err := json.Marshal(agentEventPayload(event))
 		if err != nil {
@@ -770,16 +801,22 @@ func (h *handler) streamAgentEvents(
 		); err != nil {
 			return fmt.Errorf("write Agent SSE event: %w", err)
 		}
-		flusher.Flush()
-		return nil
+		return controller.Flush()
 	}
 	for _, event := range page.Events {
 		if err := emit(event); err != nil {
+			result = "write_error"
 			return
 		}
 	}
-	if err := watch(request.Context(), page.NextSequence, emit); err != nil && request.Context().Err() == nil {
-		slog.WarnContext(request.Context(), "Agent event watch ended", "error_class", "event_watch_failed")
+	if err := watch(ctx, page.NextSequence, emit); err != nil {
+		if ctx.Err() != nil {
+			result = "client_cancel"
+			return
+		}
+		result = "error"
+		trace.SpanFromContext(ctx).SetStatus(codes.Error, "event_watch_failed")
+		slog.WarnContext(ctx, "Agent event watch ended", "error_class", "event_watch_failed")
 	}
 }
 
@@ -962,10 +999,6 @@ func eventWatchCursor(response http.ResponseWriter, request *http.Request) (int6
 	}
 	headerSequence, ok := nonnegativeInt64(response, strings.TrimSpace(headerValues[0]))
 	if !ok {
-		return 0, false
-	}
-	if _, queryPresent := query["after_sequence"]; queryPresent && querySequence != headerSequence {
-		writeError(response, http.StatusBadRequest, "invalid_request", "request is invalid", false)
 		return 0, false
 	}
 	return headerSequence, true
@@ -1232,6 +1265,15 @@ func observeLifecycleResult(ctx context.Context, operation application.Operation
 }
 
 func mustLifecycleCounter(counter metric.Int64Counter, err error) metric.Int64Counter {
+	if err != nil {
+		panic(err)
+	}
+	return counter
+}
+
+func mustEventWatchConnections(
+	counter metric.Int64UpDownCounter, err error,
+) metric.Int64UpDownCounter {
 	if err != nil {
 		panic(err)
 	}

@@ -21,6 +21,7 @@ func TestInitialMigrationOwnsCompleteAgentControllerBoundary(t *testing.T) {
 		"agent_controller.agent_access_bindings",
 		"agent_controller.agent_lifecycle_operations",
 		"agent_controller.run_admissions",
+		"agent_controller.event_journal_cursor",
 		"agent_controller.agent_events",
 	}
 	for _, table := range required {
@@ -58,6 +59,8 @@ func TestInitialMigrationHasFinalSerializationConstraints(t *testing.T) {
 		"agents_global_projection_idx",
 		"notify_agent_event_commit",
 		"agent_events_notify_commit",
+		"event_journal_cursor_singleton",
+		"agent_events_type_known",
 	}
 	for _, constraint := range required {
 		if !strings.Contains(initialSchemaSQL, constraint) {

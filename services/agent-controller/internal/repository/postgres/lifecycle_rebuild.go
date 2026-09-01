@@ -135,7 +135,7 @@ WHERE id = $1 AND active_operation_request_id = '' AND aggregate_sequence = $5
 	if result.RowsAffected() != 1 {
 		return ports.AgentRebuildState{}, false, ports.ErrConcurrentChange
 	}
-	if err := insertAgentEvent(ctx, transaction, input.RequestedEvent); err != nil {
+	if err := repository.insertAgentEvent(ctx, transaction, input.RequestedEvent); err != nil {
 		return ports.AgentRebuildState{}, false, err
 	}
 	agent.ActiveOperationRequestID = input.Operation.RequestID
@@ -148,6 +148,7 @@ WHERE id = $1 AND active_operation_request_id = '' AND aggregate_sequence = $5
 	if err := transaction.Commit(ctx); err != nil {
 		return ports.AgentRebuildState{}, false, fmt.Errorf("commit Agent rebuild transaction: %w", err)
 	}
+	repository.recordEventAppend(ctx, input.RequestedEvent.EventType)
 	return state, false, nil
 }
 
@@ -390,7 +391,7 @@ WHERE id = $1 AND active_operation_request_id = $9 AND aggregate_sequence = $10`
 	if result.RowsAffected() != 1 {
 		return ports.AgentRebuildState{}, ports.ErrConcurrentChange
 	}
-	if err := insertAgentEvent(ctx, transaction, input.RebuiltEvent); err != nil {
+	if err := repository.insertAgentEvent(ctx, transaction, input.RebuiltEvent); err != nil {
 		return ports.AgentRebuildState{}, err
 	}
 	if _, err := transaction.Exec(ctx, `
@@ -411,6 +412,7 @@ WHERE request_id = $1`, input.RequestID, input.Now); err != nil {
 	if err := transaction.Commit(ctx); err != nil {
 		return ports.AgentRebuildState{}, fmt.Errorf("commit Agent rebuild publish: %w", err)
 	}
+	repository.recordEventAppend(ctx, input.RebuiltEvent.EventType)
 	return state, nil
 }
 
@@ -468,7 +470,7 @@ WHERE id = $1 AND active_operation_request_id = $7 AND aggregate_sequence = $8`
 	if result.RowsAffected() != 1 {
 		return ports.AgentRebuildState{}, ports.ErrConcurrentChange
 	}
-	if err := insertAgentEvent(ctx, transaction, input.FailedEvent); err != nil {
+	if err := repository.insertAgentEvent(ctx, transaction, input.FailedEvent); err != nil {
 		return ports.AgentRebuildState{}, err
 	}
 	if _, err := transaction.Exec(ctx, `
@@ -489,6 +491,7 @@ WHERE request_id = $1`, input.RequestID, input.Code, input.Detail, input.Retryab
 	if err := transaction.Commit(ctx); err != nil {
 		return ports.AgentRebuildState{}, fmt.Errorf("commit Agent rebuild failure: %w", err)
 	}
+	repository.recordEventAppend(ctx, input.FailedEvent.EventType)
 	return state, nil
 }
 

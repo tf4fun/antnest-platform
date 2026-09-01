@@ -412,7 +412,25 @@
         "aggregate_sequence": { "type": "integer", "minimum": 1 },
         "schema_version": { "type": "integer", "const": 1 },
         "agent_id": { "$ref": "#/$defs/id" },
-        "event_type": { "type": "string", "minLength": 1 },
+        "event_type": {
+          "enum": [
+            "agent_create_requested",
+            "agent_ready",
+            "agent_build_failed",
+            "agent_rebuild_requested",
+            "agent_rebuilt",
+            "agent_disable_requested",
+            "agent_disabled",
+            "agent_disable_failed",
+            "agent_enable_requested",
+            "agent_enabled",
+            "agent_enable_failed",
+            "agent_delete_requested",
+            "agent_deleted",
+            "run_admission_released",
+            "run_admission_unresolved"
+          ]
+        },
         "operation_request_id": { "$ref": "#/$defs/id" },
         "admission_id": { "$ref": "#/$defs/id" },
         "trace_id": { "type": "string", "pattern": "^[a-f0-9]{32}$" },

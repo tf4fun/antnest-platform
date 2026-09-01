@@ -1,8 +1,10 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,6 +12,8 @@ import (
 	"time"
 
 	"soft/antnest-platform/services/agent-controller/internal/application"
+	"soft/antnest-platform/services/agent-controller/internal/ports"
+	"soft/antnest-platform/services/agent-controller/internal/telemetry"
 )
 
 func TestEventHandlerListsGlobalAndPerAgentJournal(t *testing.T) {
@@ -109,18 +113,65 @@ func TestEventHandlerStreamsBacklogAndContinuesFromLastSequence(t *testing.T) {
 	}
 }
 
-func TestEventHandlerRejectsConflictingWatchResumeCursors(t *testing.T) {
+func TestEventHandlerPrefersLastEventIDOnAutomaticReconnect(t *testing.T) {
 	t.Parallel()
 
-	events := &agentEventServiceStub{}
+	events := &agentEventServiceStub{page: application.AgentEventPage{NextSequence: 10}}
 	handler := newEventTestHandler(t, events)
 	response := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/internal/agent-events/watch?after_sequence=9", nil)
 	request.Header.Set("Last-Event-ID", "10")
 	handler.ServeHTTP(response, request)
-	if response.Code != http.StatusBadRequest || events.listCalls != 0 {
+	if response.Code != http.StatusOK || events.globalInput.AfterSequence != 10 ||
+		events.watchAfterSequence != 10 {
 		t.Fatalf("status=%d calls=%d body=%s", response.Code, events.listCalls, response.Body.String())
 	}
+}
+
+func TestEventHandlerStreamsThroughProductionTelemetryWrapper(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name   string
+		target string
+	}{
+		{name: "global", target: "/internal/agent-events/watch"},
+		{name: "per Agent", target: "/internal/agents/agent-1/events/watch"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			events := &agentEventServiceStub{
+				page: application.AgentEventPage{
+					Events:       []application.AgentEventView{serverTestEvent(1, "event-1", "agent-1")},
+					NextSequence: 1,
+				},
+			}
+			handler := telemetry.HTTPHandler(
+				newEventTestHandler(t, events),
+				slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)),
+			)
+			response := &deadlineResponseRecorder{ResponseRecorder: httptest.NewRecorder()}
+			handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, test.target, nil))
+			if response.Code != http.StatusOK ||
+				response.Header().Get("Content-Type") != "text/event-stream" ||
+				!strings.Contains(response.Body.String(), "id: 1\nevent: agent_event") {
+				t.Fatalf("status=%d headers=%v body=%s", response.Code, response.Header(), response.Body.String())
+			}
+			if !response.writeDeadlineCleared {
+				t.Fatal("SSE handler did not clear the server write deadline")
+			}
+		})
+	}
+}
+
+type deadlineResponseRecorder struct {
+	*httptest.ResponseRecorder
+	writeDeadlineCleared bool
+}
+
+func (response *deadlineResponseRecorder) SetWriteDeadline(deadline time.Time) error {
+	response.writeDeadlineCleared = deadline.IsZero()
+	return nil
 }
 
 func newEventTestHandler(t *testing.T, events AgentEventService) http.Handler {
@@ -138,7 +189,7 @@ func newEventTestHandler(t *testing.T, events AgentEventService) http.Handler {
 func serverTestEvent(sequence int64, eventID string, agentID string) application.AgentEventView {
 	return application.AgentEventView{
 		EventID: eventID, GlobalSequence: sequence, AggregateSequence: sequence,
-		SchemaVersion: 1, AgentID: agentID, EventType: "agent_tested",
+		SchemaVersion: 1, AgentID: agentID, EventType: ports.EventAgentReady,
 		TraceID:    "0123456789abcdef0123456789abcdef",
 		OccurredAt: time.Unix(sequence, 0).UTC(), Data: map[string]any{"result": "ok"},
 	}

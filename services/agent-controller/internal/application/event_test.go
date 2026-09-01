@@ -16,7 +16,7 @@ func TestListGlobalAgentEventsReturnsAuthoritativeCursor(t *testing.T) {
 		testAgentEvent(11, "event-11", "agent-1", 3),
 		testAgentEvent(12, "event-12", "agent-2", 7),
 	}}
-	service := NewEventService(store, &agentQueryStoreStub{})
+	service := NewEventService(store, store, &agentQueryStoreStub{})
 
 	page, err := service.ListGlobalEvents(context.Background(), ListEventsInput{
 		AfterSequence: 10, Limit: 25,
@@ -37,7 +37,7 @@ func TestListGlobalAgentEventsKeepsCursorOnEmptyPage(t *testing.T) {
 	t.Parallel()
 
 	store := &agentEventStoreStub{}
-	service := NewEventService(store, &agentQueryStoreStub{})
+	service := NewEventService(store, store, &agentQueryStoreStub{})
 	page, err := service.ListGlobalEvents(context.Background(), ListEventsInput{AfterSequence: 42})
 	if err != nil {
 		t.Fatalf("list empty Agent events: %v", err)
@@ -52,7 +52,7 @@ func TestListAgentEventsValidatesAggregateBeforeReadingJournal(t *testing.T) {
 
 	agents := &agentQueryStoreStub{err: ports.ErrNotFound}
 	events := &agentEventStoreStub{}
-	service := NewEventService(events, agents)
+	service := NewEventService(events, events, agents)
 	_, err := service.ListAgentEvents(context.Background(), ListAgentEventsInput{
 		AgentID: "agent-missing", AfterSequence: 0,
 	})
@@ -85,7 +85,7 @@ func TestListAgentEventsRejectsInvalidInputAndCorruptOrder(t *testing.T) {
 	}
 	for _, input := range tests {
 		events := &agentEventStoreStub{}
-		service := NewEventService(events, &agentQueryStoreStub{})
+		service := NewEventService(events, events, &agentQueryStoreStub{})
 		_, err := service.ListAgentEvents(context.Background(), input)
 		if !errors.Is(err, ErrInvalidInput) || events.listCalls != 0 {
 			t.Fatalf("input=%+v error=%v calls=%d", input, err, events.listCalls)
@@ -96,10 +96,18 @@ func TestListAgentEventsRejectsInvalidInputAndCorruptOrder(t *testing.T) {
 		testAgentEvent(12, "event-12", "agent-1", 3),
 		testAgentEvent(11, "event-11", "agent-1", 2),
 	}}
-	service := NewEventService(events, &agentQueryStoreStub{})
+	service := NewEventService(events, events, &agentQueryStoreStub{})
 	_, err := service.ListGlobalEvents(context.Background(), ListEventsInput{AfterSequence: 10})
 	if !errors.Is(err, ErrQueryContract) {
 		t.Fatalf("corrupt event order error = %v", err)
+	}
+
+	unknown := testAgentEvent(11, "event-unknown", "agent-1", 2)
+	unknown.EventType = "undocumented_event"
+	events.events = []ports.AgentEventRecord{unknown}
+	_, err = service.ListGlobalEvents(context.Background(), ListEventsInput{AfterSequence: 10})
+	if !errors.Is(err, ErrQueryContract) {
+		t.Fatalf("unknown event type error = %v", err)
 	}
 }
 
@@ -110,12 +118,11 @@ func TestWatchGlobalAgentEventsReplaysThenWaitsWithoutGap(t *testing.T) {
 	store := &agentEventStoreStub{
 		events: []ports.AgentEventRecord{testAgentEvent(1, "event-1", "agent-1", 1)},
 	}
-	store.onWait = func(agentID string, afterSequence int64) {
-		if agentID == "" && afterSequence == 1 {
-			store.events = append(store.events, testAgentEvent(2, "event-2", "agent-1", 2))
-		}
+	store.onList = func() {
+		store.events = append(store.events, testAgentEvent(2, "event-2", "agent-1", 2))
+		store.notify()
 	}
-	service := NewEventService(store, &agentQueryStoreStub{})
+	service := NewEventService(store, store, &agentQueryStoreStub{})
 	received := make([]int64, 0, 2)
 	err := service.WatchGlobalEvents(ctx, 0, func(event AgentEventView) error {
 		received = append(received, event.GlobalSequence)
@@ -127,25 +134,24 @@ func TestWatchGlobalAgentEventsReplaysThenWaitsWithoutGap(t *testing.T) {
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("watch error = %v", err)
 	}
-	if len(received) != 2 || received[0] != 1 || received[1] != 2 || store.waitCalls == 0 {
-		t.Fatalf("watch events=%v waits=%d", received, store.waitCalls)
+	if len(received) != 2 || received[0] != 1 || received[1] != 2 || store.subscribeCalls == 0 {
+		t.Fatalf("watch events=%v subscriptions=%d", received, store.subscribeCalls)
 	}
 }
 
-func TestWatchAgentEventsCarriesAgentFilterIntoWait(t *testing.T) {
+func TestWatchAgentEventsFiltersJournalAfterSharedNotification(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	store := &agentEventStoreStub{
 		events: []ports.AgentEventRecord{testAgentEvent(1, "event-1", "agent-1", 1)},
 	}
-	store.onWait = func(agentID string, afterSequence int64) {
-		if agentID != "agent-1" || afterSequence != 1 {
-			t.Fatalf("wait filter Agent=%q cursor=%d", agentID, afterSequence)
-		}
+	store.onList = func() {
+		store.events = append(store.events, testAgentEvent(2, "event-other", "agent-2", 1))
 		store.events = append(store.events, testAgentEvent(2, "event-2", "agent-1", 2))
+		store.notify()
 	}
-	service := NewEventService(store, &agentQueryStoreStub{
+	service := NewEventService(store, store, &agentQueryStoreStub{
 		record: queryAgentRecord("agent-1", "user-1", "available", time.Unix(1, 0).UTC()),
 	})
 	received := make([]int64, 0, 2)
@@ -159,8 +165,8 @@ func TestWatchAgentEventsCarriesAgentFilterIntoWait(t *testing.T) {
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("watch error = %v", err)
 	}
-	if len(received) != 2 || store.waitAgentID != "agent-1" {
-		t.Fatalf("watch events=%v wait Agent=%q", received, store.waitAgentID)
+	if len(received) != 2 || received[0] != 1 || received[1] != 2 {
+		t.Fatalf("watch events=%v", received)
 	}
 }
 
@@ -170,19 +176,19 @@ func testAgentEvent(
 	return ports.AgentEventRecord{
 		GlobalSequence: globalSequence, EventID: eventID, AgentID: agentID,
 		AggregateSequence: aggregateSequence, SchemaVersion: 1,
-		EventType: "agent_tested", Data: map[string]any{"result": "ok"},
+		EventType: ports.EventAgentReady, Data: map[string]any{"result": "ok"},
 		OccurredAt: time.Unix(globalSequence, 0).UTC(),
 	}
 }
 
 type agentEventStoreStub struct {
-	events      []ports.AgentEventRecord
-	err         error
-	query       ports.AgentEventQuery
-	listCalls   int
-	waitCalls   int
-	waitAgentID string
-	onWait      func(string, int64)
+	events         []ports.AgentEventRecord
+	err            error
+	query          ports.AgentEventQuery
+	listCalls      int
+	subscribeCalls int
+	signal         chan struct{}
+	onList         func()
 }
 
 func (store *agentEventStoreStub) ListAgentEvents(
@@ -193,8 +199,14 @@ func (store *agentEventStoreStub) ListAgentEvents(
 	if store.err != nil {
 		return nil, store.err
 	}
+	snapshot := append([]ports.AgentEventRecord(nil), store.events...)
+	if store.onList != nil {
+		callback := store.onList
+		store.onList = nil
+		callback()
+	}
 	result := make([]ports.AgentEventRecord, 0, query.Limit)
-	for _, event := range store.events {
+	for _, event := range snapshot {
 		if event.GlobalSequence <= query.AfterSequence ||
 			(query.AgentID != "" && event.AgentID != query.AgentID) {
 			continue
@@ -207,19 +219,20 @@ func (store *agentEventStoreStub) ListAgentEvents(
 	return result, nil
 }
 
-func (store *agentEventStoreStub) WaitForAgentEvents(
-	ctx context.Context, agentID string, afterSequence int64,
-) error {
-	store.waitCalls++
-	store.waitAgentID = agentID
-	if store.onWait != nil {
-		callback := store.onWait
-		store.onWait = nil
-		callback(agentID, afterSequence)
-		return nil
+func (store *agentEventStoreStub) SubscribeAgentEvents() (<-chan struct{}, error) {
+	store.subscribeCalls++
+	if store.signal == nil {
+		store.signal = make(chan struct{})
 	}
-	<-ctx.Done()
-	return ctx.Err()
+	return store.signal, nil
+}
+
+func (store *agentEventStoreStub) notify() {
+	if store.signal != nil {
+		close(store.signal)
+		store.signal = nil
+	}
 }
 
 var _ ports.AgentEventStore = (*agentEventStoreStub)(nil)
+var _ ports.AgentEventNotifier = (*agentEventStoreStub)(nil)

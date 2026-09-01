@@ -334,6 +334,21 @@ The initial schema owns:
 reconstruction requirement. Events and immutable revisions provide audit and
 recovery evidence without forcing every query to replay history.
 
+`event_journal_cursor` is a singleton ordering primitive, not a consumer
+offset. Every event transaction advances it while holding its row lock and
+keeps that lock until commit. This deliberately serializes journal append so a
+higher global sequence can never become visible before a lower one. Each
+service instance maintains one dedicated PostgreSQL `LISTEN` connection and
+fans wake-up hints out in process; SSE clients never reserve business-pool
+connections. The journal remains authoritative if notifications are delayed,
+duplicated, or missed during listener reconnection.
+
+Event payload `data` is retained audit detail rather than a cross-service patch
+format. The stable event contract is its envelope and enumerated type. Consumers
+react idempotently by `event_id` and reload the authoritative Agent projection
+when they require current state. This keeps producer-internal Saga details from
+becoming an accidental distributed data model.
+
 ## Module Direction
 
 ```text

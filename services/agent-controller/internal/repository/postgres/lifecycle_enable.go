@@ -116,7 +116,7 @@ WHERE id = $1 AND desired_state = 'disabled' AND lifecycle_state = 'disabled'
 	if result.RowsAffected() != 1 {
 		return ports.AgentEnableState{}, false, ports.ErrConcurrentChange
 	}
-	if err := insertAgentEvent(ctx, transaction, input.RequestedEvent); err != nil {
+	if err := repository.insertAgentEvent(ctx, transaction, input.RequestedEvent); err != nil {
 		return ports.AgentEnableState{}, false, err
 	}
 	agent.DesiredState = domain.DesiredEnabled
@@ -131,6 +131,7 @@ WHERE id = $1 AND desired_state = 'disabled' AND lifecycle_state = 'disabled'
 	if err := transaction.Commit(ctx); err != nil {
 		return ports.AgentEnableState{}, false, fmt.Errorf("commit Agent enable transaction: %w", err)
 	}
+	repository.recordEventAppend(ctx, input.RequestedEvent.EventType)
 	return state, false, nil
 }
 
@@ -249,7 +250,7 @@ WHERE id = $1 AND desired_state = 'enabled' AND lifecycle_state = 'disabled'
 	if result.RowsAffected() != 1 {
 		return ports.AgentEnableState{}, ports.ErrConcurrentChange
 	}
-	if err := insertAgentEvent(ctx, transaction, input.EnabledEvent); err != nil {
+	if err := repository.insertAgentEvent(ctx, transaction, input.EnabledEvent); err != nil {
 		return ports.AgentEnableState{}, err
 	}
 	if _, err := transaction.Exec(ctx, `
@@ -270,6 +271,7 @@ WHERE request_id = $1`, input.RequestID, input.Now); err != nil {
 	if err := transaction.Commit(ctx); err != nil {
 		return ports.AgentEnableState{}, fmt.Errorf("commit Agent enable publish: %w", err)
 	}
+	repository.recordEventAppend(ctx, input.EnabledEvent.EventType)
 	return state, nil
 }
 
@@ -336,7 +338,7 @@ WHERE id = $1 AND desired_state = 'enabled' AND lifecycle_state = 'disabled'
 	if result.RowsAffected() != 1 {
 		return ports.AgentEnableState{}, ports.ErrConcurrentChange
 	}
-	if err := insertAgentEvent(ctx, transaction, input.FailedEvent); err != nil {
+	if err := repository.insertAgentEvent(ctx, transaction, input.FailedEvent); err != nil {
 		return ports.AgentEnableState{}, err
 	}
 	if _, err := transaction.Exec(ctx, `
@@ -359,6 +361,7 @@ WHERE request_id = $1`, input.RequestID, input.Code, input.Detail,
 	if err := transaction.Commit(ctx); err != nil {
 		return ports.AgentEnableState{}, fmt.Errorf("commit Agent enable failure: %w", err)
 	}
+	repository.recordEventAppend(ctx, input.FailedEvent.EventType)
 	return state, nil
 }
 

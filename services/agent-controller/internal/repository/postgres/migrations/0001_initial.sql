@@ -290,8 +290,18 @@ CREATE UNIQUE INDEX IF NOT EXISTS admissions_agent_occupancy_unique
     ON agent_controller.run_admissions (agent_id)
     WHERE state IN ('active', 'blocked_unknown_effect');
 
+CREATE TABLE IF NOT EXISTS agent_controller.event_journal_cursor (
+    singleton BOOLEAN PRIMARY KEY,
+    last_sequence BIGINT NOT NULL CHECK (last_sequence >= 0),
+    CONSTRAINT event_journal_cursor_singleton CHECK (singleton)
+);
+
+INSERT INTO agent_controller.event_journal_cursor (singleton, last_sequence)
+VALUES (TRUE, 0)
+ON CONFLICT (singleton) DO NOTHING;
+
 CREATE TABLE IF NOT EXISTS agent_controller.agent_events (
-    global_sequence BIGSERIAL PRIMARY KEY,
+    global_sequence BIGINT PRIMARY KEY CHECK (global_sequence > 0),
     event_id TEXT NOT NULL UNIQUE,
     agent_id TEXT NOT NULL REFERENCES agent_controller.agents(id),
     aggregate_sequence BIGINT NOT NULL CHECK (aggregate_sequence > 0),
@@ -301,7 +311,15 @@ CREATE TABLE IF NOT EXISTS agent_controller.agent_events (
     admission_id TEXT NOT NULL DEFAULT '',
     trace_id TEXT NOT NULL DEFAULT '',
     data JSONB NOT NULL,
-    occurred_at TIMESTAMPTZ NOT NULL
+    occurred_at TIMESTAMPTZ NOT NULL,
+    CONSTRAINT agent_events_type_known CHECK (event_type IN (
+        'agent_create_requested', 'agent_ready', 'agent_build_failed',
+        'agent_rebuild_requested', 'agent_rebuilt',
+        'agent_disable_requested', 'agent_disabled', 'agent_disable_failed',
+        'agent_enable_requested', 'agent_enabled', 'agent_enable_failed',
+        'agent_delete_requested', 'agent_deleted',
+        'run_admission_released', 'run_admission_unresolved'
+    ))
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS agent_events_aggregate_sequence_unique
