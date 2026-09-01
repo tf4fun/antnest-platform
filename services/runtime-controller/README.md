@@ -78,6 +78,9 @@ It has no Work lease, reverse Runtime session, MCP proxy, Egress client, or
 separate Docker Provider process.
 
 Runtime containers and workspaces use deterministic private names and labels.
+Every resource also carries a stable Controller ownership scope, preventing
+independent Controller databases on one Docker daemon from consuming each
+other's inventory.
 The trusted root
 Supervisor prepares TUN and the resolver; Agent-selected operations always run
 as UID/GID 1000 with an empty capability set. A persistent Agent workspace and

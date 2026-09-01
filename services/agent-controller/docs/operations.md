@@ -236,6 +236,10 @@ OTEL_SDK_DISABLED=false OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318 \
   agent-controller-postgres agent-controller jaeger
 ```
 
-Full Stage 2 E2E will additionally create an Agent, prove Runtime readiness and
-one ACP Tool Run, rebuild it, and verify one trace crosses ACP, Agent
-Controller, Runtime Controller, and Runtime MCP.
+`make e2e-stage2` builds an isolated blank deployment, creates an Agent, proves
+Runtime readiness and one ACP Runtime Tool Run, verifies workspace effects,
+and deletes the Agent with its external Runtime resources. It queries Jaeger
+for two real business traces: lifecycle through Agent Controller, Runtime
+Egress, and Runtime Controller; execution through Agent ACP Service, Agent
+Controller Run admission, and Runtime MCP. Runtime Controller is intentionally
+absent from the Tool data path.

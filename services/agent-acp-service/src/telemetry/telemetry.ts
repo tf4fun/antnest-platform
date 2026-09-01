@@ -107,7 +107,11 @@ export class ServiceTelemetry implements TelemetryPort {
 }
 
 export function startTelemetry(config: AgentAcpConfig["telemetry"]): Promise<TelemetryRuntime> {
-  if (config.disabled || config.endpoint === undefined) {
+  if (
+    config.disabled ||
+    config.endpoint === undefined ||
+    (!config.tracesEnabled && !config.metricsEnabled)
+  ) {
     return Promise.resolve({
       telemetry: new ServiceTelemetry(config.serviceName),
       shutdown: () => Promise.resolve(),
@@ -116,12 +120,24 @@ export function startTelemetry(config: AgentAcpConfig["telemetry"]): Promise<Tel
 
   const sdk = new NodeSDK({
     serviceName: config.serviceName,
-    traceExporter: new OTLPTraceExporter({ url: signalUrl(config.endpoint, "traces").href }),
-    metricReaders: [
-      new PeriodicExportingMetricReader({
-        exporter: new OTLPMetricExporter({ url: signalUrl(config.endpoint, "metrics").href }),
-      }),
-    ],
+    ...(config.tracesEnabled
+      ? {
+          traceExporter: new OTLPTraceExporter({
+            url: signalUrl(config.endpoint, "traces").href,
+          }),
+        }
+      : {}),
+    ...(config.metricsEnabled
+      ? {
+          metricReaders: [
+            new PeriodicExportingMetricReader({
+              exporter: new OTLPMetricExporter({
+                url: signalUrl(config.endpoint, "metrics").href,
+              }),
+            }),
+          ],
+        }
+      : {}),
   });
   sdk.start();
   return Promise.resolve({

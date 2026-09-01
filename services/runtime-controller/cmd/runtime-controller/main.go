@@ -122,6 +122,7 @@ func run(ctx context.Context) (resultErr error) {
 		return classified("platform", "docker_client_initialization_failed", err)
 	}
 	driver, err := platformdocker.NewDriver(dockerClient, platformdocker.Config{
+		ControllerScope:    configuration.ControllerScope,
 		ManagementNetwork:  configuration.ManagementNetwork,
 		SystemSkillsVolume: configuration.SystemSkillsVolume,
 		RuntimeOTEL:        configuration.RuntimeOTEL,

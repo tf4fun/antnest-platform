@@ -17,6 +17,7 @@ var _ platform.Port = (*Driver)(nil)
 
 const (
 	labelManaged    = "io.antnest.managed"
+	labelScope      = "io.antnest.runtime-controller-scope"
 	labelAgentID    = "io.antnest.agent-id"
 	labelGeneration = "io.antnest.runtime-generation"
 	labelSpecDigest = "io.antnest.runtime-spec-digest"
@@ -28,6 +29,7 @@ var (
 )
 
 type Config struct {
+	ControllerScope    string
 	ManagementNetwork  string
 	SystemSkillsVolume string
 	RuntimeOTEL        map[string]string
@@ -112,10 +114,11 @@ func NewDriver(engine Engine, config Config) (*Driver, error) {
 	if engine == nil {
 		return nil, fmt.Errorf("docker engine is required")
 	}
+	config.ControllerScope = strings.TrimSpace(config.ControllerScope)
 	config.ManagementNetwork = strings.TrimSpace(config.ManagementNetwork)
 	config.SystemSkillsVolume = strings.TrimSpace(config.SystemSkillsVolume)
-	if config.ManagementNetwork == "" || config.SystemSkillsVolume == "" {
-		return nil, fmt.Errorf("management network and system Skills volume are required")
+	if config.ControllerScope == "" || config.ManagementNetwork == "" || config.SystemSkillsVolume == "" {
+		return nil, fmt.Errorf("controller scope, management network, and system Skills volume are required")
 	}
 	return &Driver{engine: engine, config: config}, nil
 }
@@ -203,7 +206,7 @@ func (d *Driver) Create(
 	}
 	if err := d.engine.StartContainer(ctx, containerID); err != nil {
 		existing, inspectErr := d.engine.InspectContainer(ctx, name)
-		if inspectErr == nil && matches(existing, key, digest) && existing.Running {
+		if inspectErr == nil && d.matches(existing, key, digest) && existing.Running {
 			return completed()
 		}
 		return dockerFailure("platform_unavailable", errors.Join(err, inspectErr), true)
@@ -214,7 +217,7 @@ func (d *Driver) Create(
 func (d *Driver) convergeContainer(
 	ctx context.Context, existing Container, key deployment.Key, digest string,
 ) deployment.EffectOutcome {
-	if !matches(existing, key, digest) {
+	if !d.matches(existing, key, digest) {
 		return failed(
 			deployment.EffectNotStarted,
 			"runtime_drift",
@@ -226,7 +229,7 @@ func (d *Driver) convergeContainer(
 	}
 	if err := d.engine.StartContainer(ctx, existing.ID); err != nil {
 		current, inspectErr := d.engine.InspectContainer(ctx, existing.Name)
-		if inspectErr == nil && matches(current, key, digest) && current.Running {
+		if inspectErr == nil && d.matches(current, key, digest) && current.Running {
 			return completed()
 		}
 		return dockerFailure("platform_unavailable", errors.Join(err, inspectErr), true)
@@ -248,7 +251,7 @@ func (d *Driver) Inspect(
 	if err != nil {
 		return deployment.Inspection{}, err
 	}
-	if !matchesIdentity(container, key) {
+	if !d.matchesIdentity(container, key) {
 		return deployment.Inspection{}, deployment.ErrIdentityConflict
 	}
 	return d.inspectContainer(container)
@@ -267,7 +270,7 @@ func (d *Driver) Delete(
 	if err != nil {
 		return dockerFailure("platform_unavailable", err, false)
 	}
-	if !matches(container, key, digest) {
+	if !d.matches(container, key, digest) {
 		return failed(
 			deployment.EffectNotStarted,
 			"runtime_drift",
@@ -289,7 +292,7 @@ func (d *Driver) EnsureStorage(ctx context.Context, agentID string) deployment.E
 	name := workspaceVolume(agentID)
 	volume, err := d.engine.InspectVolume(ctx, name)
 	if errors.Is(err, ErrNotFound) {
-		createErr := d.engine.CreateVolume(ctx, name, workspaceLabels(agentID))
+		createErr := d.engine.CreateVolume(ctx, name, d.workspaceLabels(agentID))
 		volume, err = d.engine.InspectVolume(ctx, name)
 		if err != nil {
 			possiblyExists := createErr == nil || errors.Is(createErr, ErrConflict)
@@ -299,7 +302,7 @@ func (d *Driver) EnsureStorage(ctx context.Context, agentID string) deployment.E
 	if err != nil {
 		return dockerFailure("platform_unavailable", err, false)
 	}
-	if !workspaceOwnedBy(volume, agentID) {
+	if !d.workspaceOwnedBy(volume, agentID) {
 		return failed(deployment.EffectNotStarted, "storage_ownership_conflict",
 			errors.New("workspace volume ownership labels differ"))
 	}
@@ -326,7 +329,7 @@ func (d *Driver) DeleteStorage(ctx context.Context, agentID string) deployment.E
 		return dockerFailure("platform_unavailable", err, false)
 	}
 	for _, container := range containers {
-		if container.Labels[labelAgentID] == agentID {
+		if d.owns(container.Labels) && container.Labels[labelAgentID] == agentID {
 			return failed(deployment.EffectNotStarted, "storage_in_use", errors.New("managed Runtime still exists"))
 		}
 	}
@@ -338,7 +341,7 @@ func (d *Driver) DeleteStorage(ctx context.Context, agentID string) deployment.E
 	if err != nil {
 		return dockerFailure("platform_unavailable", err, false)
 	}
-	if !workspaceOwnedBy(volume, agentID) {
+	if !d.workspaceOwnedBy(volume, agentID) {
 		return failed(deployment.EffectNotStarted, "storage_ownership_conflict",
 			errors.New("workspace volume ownership labels differ"))
 	}
@@ -355,6 +358,9 @@ func (d *Driver) List(ctx context.Context) ([]deployment.Inspection, error) {
 	}
 	result := make([]deployment.Inspection, 0, len(containers))
 	for _, container := range containers {
+		if !d.owns(container.Labels) {
+			continue
+		}
 		inspection, inspectErr := d.inspectContainer(container)
 		if inspectErr != nil {
 			return nil, inspectErr
@@ -374,7 +380,7 @@ func (d *Driver) Watch(
 		return fmt.Errorf("docker observation readiness and sink callbacks are required")
 	}
 	return d.engine.WatchManagedEvents(ctx, since, func() error { return ready(ctx) }, func(event ContainerEvent) error {
-		if event.Attributes[labelManaged] != "runtime" {
+		if !d.owns(event.Attributes) {
 			return nil
 		}
 		key, digest, err := managedIdentity(event.Attributes)
@@ -454,7 +460,7 @@ func (d *Driver) requireWorkspace(ctx context.Context, agentID string) error {
 	if err != nil {
 		return fmt.Errorf("workspace volume: %w", err)
 	}
-	if !workspaceOwnedBy(workspace, agentID) {
+	if !d.workspaceOwnedBy(workspace, agentID) {
 		return fmt.Errorf("workspace volume: %w", deployment.ErrIdentityConflict)
 	}
 	return nil
@@ -484,7 +490,8 @@ func (d *Driver) containerSpec(value deployment.Deployment, digest string) (Cont
 		Name: containerName(value.RuntimeSpec.AgentID), Image: value.ImageRef, User: "0:0",
 		Environment: environment,
 		Labels: map[string]string{
-			labelManaged: "runtime", labelAgentID: value.RuntimeSpec.AgentID,
+			labelManaged: "runtime", labelScope: d.config.ControllerScope,
+			labelAgentID:    value.RuntimeSpec.AgentID,
 			labelGeneration: strconv.FormatUint(value.RuntimeSpec.Generation, 10),
 			labelSpecDigest: digest, "io.antnest.runtime-port": port,
 		},
@@ -514,15 +521,19 @@ func (d *Driver) containerSpec(value deployment.Deployment, digest string) (Cont
 	}, nil
 }
 
-func matches(container Container, key deployment.Key, digest string) bool {
-	return matchesIdentity(container, key) &&
+func (d *Driver) matches(container Container, key deployment.Key, digest string) bool {
+	return d.matchesIdentity(container, key) &&
 		container.Labels[labelSpecDigest] == digest
 }
 
-func matchesIdentity(container Container, key deployment.Key) bool {
-	return container.Labels[labelManaged] == "runtime" &&
+func (d *Driver) matchesIdentity(container Container, key deployment.Key) bool {
+	return d.owns(container.Labels) &&
 		container.Labels[labelAgentID] == key.AgentID &&
 		container.Labels[labelGeneration] == strconv.FormatUint(key.Generation, 10)
+}
+
+func (d *Driver) owns(labels map[string]string) bool {
+	return labels[labelManaged] == "runtime" && labels[labelScope] == d.config.ControllerScope
 }
 
 func observationKind(action string) (deployment.ObservationKind, bool) {
@@ -545,13 +556,17 @@ func observationKind(action string) (deployment.ObservationKind, bool) {
 func containerName(agentID string) string   { return "antnest-runtime-" + strings.TrimSpace(agentID) }
 func workspaceVolume(agentID string) string { return "antnest-workspace-" + strings.TrimSpace(agentID) }
 
-func workspaceLabels(agentID string) map[string]string {
-	return map[string]string{labelManaged: "workspace", labelAgentID: agentID}
+func (d *Driver) workspaceLabels(agentID string) map[string]string {
+	return map[string]string{
+		labelManaged: "workspace", labelScope: d.config.ControllerScope, labelAgentID: agentID,
+	}
 }
 
-func workspaceOwnedBy(volume Volume, agentID string) bool {
+func (d *Driver) workspaceOwnedBy(volume Volume, agentID string) bool {
 	return volume.Name == workspaceVolume(agentID) &&
-		volume.Labels[labelManaged] == "workspace" && volume.Labels[labelAgentID] == agentID
+		volume.Labels[labelManaged] == "workspace" &&
+		volume.Labels[labelScope] == d.config.ControllerScope &&
+		volume.Labels[labelAgentID] == agentID
 }
 
 func completed() deployment.EffectOutcome {

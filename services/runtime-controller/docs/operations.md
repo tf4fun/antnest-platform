@@ -29,6 +29,7 @@ identity or physical generation.
 | `ANTNEST_RUNTIME_CONTROLLER_LISTEN` | no | Go listen address; default `:8080` |
 | `ANTNEST_RUNTIME_PLATFORM` | no | `docker`; default and only current adapter |
 | `ANTNEST_DOCKER_HOST` | no | Unix Docker Engine URL; default `unix:///var/run/docker.sock`; TCP is rejected |
+| `ANTNEST_RUNTIME_CONTROLLER_SCOPE` | no | Stable ownership scope written to every managed Runtime and workspace; defaults to the management-network name |
 | `ANTNEST_RUNTIME_MANAGEMENT_NETWORK` | yes | Existing private Docker network shared with Runtime and internal callers |
 | `ANTNEST_RUNTIME_SYSTEM_SKILLS_VOLUME` | no | Existing read-only system-Skill volume name; defaults to `antnest-system-skills` |
 | `ANTNEST_RUNTIME_STATUS_TIMEOUT` | no | Go duration; one `/status` bound; default `5s` |
@@ -48,6 +49,14 @@ are `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_PROTOCOL`, and their
 `OTEL_RESOURCE_ATTRIBUTES`, and `OTEL_SDK_DISABLED` are also honored. A
 configured protocol other than `http/protobuf` is rejected at startup. Trace
 context propagation remains active when export is disabled.
+
+The same supported keys prefixed with `ANTNEST_RUNTIME_` override values passed
+to managed Runtime containers. This is required when the Controller can reach a
+collector by service DNS but Runtime's direct platform-network policy requires
+a literal IPv4 endpoint. For example,
+`ANTNEST_RUNTIME_OTEL_EXPORTER_OTLP_ENDPOINT=http://172.30.255.4:4318` affects
+only Runtime containers; the Controller may continue to use
+`OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318`.
 
 Only the explicitly allowlisted trace/metric variables documented in
 `internal/config` are copied into new Runtime containers. Controller log-export
@@ -127,7 +136,11 @@ List, then resumes from the returned reset sequence.
 ## Coordinated Resources
 
 Resource names and labels are deterministic from Agent identity, private generation,
-and the effective physical specification digest. This digest includes
+Controller ownership scope, and the effective physical specification digest. List,
+Watch, adoption, and deletion ignore resources belonging to another scope, so
+independent deployments may safely share one Docker daemon. Operators must keep a
+scope stable for a deployment and assign distinct scopes to independent Controller
+databases. This digest includes
 Controller-injected Docker configuration, so changing a management network,
 mount source, Runtime telemetry environment, privilege set, healthcheck, or
 restart policy requires a new private generation. Each lifecycle mutation
@@ -142,7 +155,7 @@ ambiguous effect. An exact recovery increments a private attempt number;
 terminal persistence is attempt-checked, and Docker create conflicts are
 re-inspected before exact resources are adopted. The Docker adapter owns:
 
-- one current Runtime container per Agent, labeled with its generation/digest;
+- one current Runtime container per Agent, labeled with its Controller scope and generation/digest;
 - Agent-scoped persistent workspace volume association;
 - system Skill mounts injected by Runtime Controller;
 - internal network attachment and Runtime endpoint discovery;
@@ -153,7 +166,7 @@ retaining workspace. Disable removes compute while retaining workspace. Enable
 recreates compute. Delete removes compute and then workspace. No workspace
 operation is exposed to another service.
 
-Workspace volumes carry Antnest managed and Agent ownership labels. A same-name
+Workspace volumes carry Antnest managed, Controller-scope, and Agent ownership labels. A same-name
 volume without exact labels is never adopted, mounted, or deleted. System Skill
 storage is deployment-owned and only checked for existence.
 

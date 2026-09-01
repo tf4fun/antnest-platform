@@ -1,4 +1,5 @@
-import { Ajv, type ErrorObject, type ValidateFunction } from "ajv";
+import type { ErrorObject, ValidateFunction } from "ajv";
+import { Ajv2020 } from "ajv/dist/2020.js";
 
 import type { ModelToolDefinition } from "../domain/types.js";
 import type { ModelToolCall } from "../ports/model.js";
@@ -28,7 +29,7 @@ export class ToolPreflightError extends Error {
 }
 
 export class ToolPreflight {
-  private readonly ajv = new Ajv({ allErrors: true, strict: false });
+  private readonly ajv = new Ajv2020({ allErrors: true, strict: false });
   private readonly validators = new Map<string, ValidateFunction>();
 
   public inspect(

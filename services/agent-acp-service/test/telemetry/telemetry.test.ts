@@ -41,7 +41,12 @@ describe("ServiceTelemetry", () => {
   });
 
   it("starts as a local no-export runtime when OTLP is disabled", async () => {
-    const runtime = await startTelemetry({ disabled: true, serviceName: "test-service" });
+    const runtime = await startTelemetry({
+      disabled: true,
+      serviceName: "test-service",
+      tracesEnabled: false,
+      metricsEnabled: false,
+    });
 
     runtime.telemetry.count("agent.runs", { terminal_class: "completed" });
     await expect(runtime.shutdown()).resolves.toBeUndefined();

@@ -32,6 +32,27 @@ describe("ToolPreflight", () => {
     expect(result).toMatchObject({ kind: "ready" });
   });
 
+  it("accepts the JSON Schema 2020-12 dialect published by Runtime MCP", () => {
+    const [tool] = tools;
+    if (tool === undefined) {
+      throw new Error("test Tool is required");
+    }
+    const result = new ToolPreflight().inspect(
+      [{ id: "call-1", name: "write", arguments: { path: "a.txt", text: "ok" } }],
+      [
+        {
+          ...tool,
+          inputSchema: {
+            ...tool.inputSchema,
+            $schema: "https://json-schema.org/draft/2020-12/schema",
+          },
+        },
+      ],
+    );
+
+    expect(result).toMatchObject({ kind: "ready" });
+  });
+
   it("rejects the whole batch when one call is invalid", () => {
     const result = new ToolPreflight().inspect(
       [

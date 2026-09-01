@@ -16,6 +16,8 @@ export type AgentAcpConfig = {
     disabled: boolean;
     serviceName: string;
     endpoint?: URL;
+    tracesEnabled: boolean;
+    metricsEnabled: boolean;
   };
 };
 
@@ -59,13 +61,30 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AgentA
 
 function telemetryConfig(environment: NodeJS.ProcessEnv): AgentAcpConfig["telemetry"] {
   const endpoint = optional(environment.OTEL_EXPORTER_OTLP_ENDPOINT);
+  const exportByDefault = endpoint !== undefined;
   return {
     disabled: parseBoolean(environment.OTEL_SDK_DISABLED ?? "false", "OTEL_SDK_DISABLED"),
     serviceName: optional(environment.OTEL_SERVICE_NAME) ?? "agent-acp-service",
+    tracesEnabled: signalEnabled(environment.OTEL_TRACES_EXPORTER, exportByDefault),
+    metricsEnabled: signalEnabled(environment.OTEL_METRICS_EXPORTER, exportByDefault),
     ...(endpoint === undefined
       ? {}
       : { endpoint: normalizedHttpUrl(endpoint, "OTEL_EXPORTER_OTLP_ENDPOINT") }),
   };
+}
+
+function signalEnabled(value: string | undefined, fallback: boolean): boolean {
+  const normalized = optional(value)?.toLowerCase();
+  if (normalized === undefined) {
+    return fallback;
+  }
+  if (normalized === "otlp") {
+    return true;
+  }
+  if (normalized === "none") {
+    return false;
+  }
+  throw new ConfigError("OTEL signal exporter must be otlp or none");
 }
 
 function required(environment: NodeJS.ProcessEnv, name: string): string {

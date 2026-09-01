@@ -1064,6 +1064,31 @@ Before Stage 2 is called complete, verification must include:
 - architecture checks preventing service implementation imports and shared DB
   access.
 
+### 16.1 Integrated Trace Topology
+
+The Stage 2 Docker acceptance uses two business traces. It must not introduce a
+Runtime Controller proxy into the Tool data path merely to manufacture one
+four-service trace:
+
+1. the lifecycle trace starts at `POST /internal/agents` and contains Agent
+   Controller, Runtime Egress control RPC, and Runtime Controller spans through
+   Runtime readiness and atomic Agent publication;
+2. the execution trace starts at the ACP WebSocket connection and contains ACP
+   Session/Run spans, Agent Controller access and Run-admission RPC spans, model
+   spans, and Runtime MCP list/call spans.
+
+Together the traces must contain `agent-controller`, `runtime-controller`,
+`agent-acp-service`, and `antnest-runtime`. Parent/child continuity is required
+inside each business operation. Runtime Egress packet forwarding is excluded
+from tracing; only its control RPC is observable. The acceptance must also
+assert that no Provider secret, prompt text, Tool arguments, Tool results, or
+workspace file content appears in exported span attributes.
+
+The deterministic acceptance conversation asks the model to call Runtime
+`write`, verifies the resulting file in the Agent workspace, observes Tool and
+assistant ACP updates, and then queries Jaeger by the two injected trace IDs.
+This gives repeatable evidence without depending on an external model Provider.
+
 ## 17. Deferred Decisions
 
 - Automatic rollback to a prior AgentSpecRevision.

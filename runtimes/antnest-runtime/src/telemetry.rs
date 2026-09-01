@@ -471,17 +471,38 @@ impl TelemetryConfig {
                 .filter(|value| !value.trim().is_empty())
                 .unwrap_or_else(|| "info,hyper=warn,reqwest=warn".into()),
             export,
-            endpoint: traces_endpoint
-                .or_else(|| endpoint.clone())
-                .filter(|value| !value.trim().is_empty())
-                .unwrap_or_else(|| "http://127.0.0.1:4318".into()),
+            endpoint: resolve_otlp_endpoint(
+                traces_endpoint.as_deref(),
+                endpoint.as_deref(),
+                "/v1/traces",
+            ),
             metrics_export,
-            metrics_endpoint: metrics_endpoint
-                .or(endpoint)
-                .filter(|value| !value.trim().is_empty())
-                .unwrap_or_else(|| "http://127.0.0.1:4318".into()),
+            metrics_endpoint: resolve_otlp_endpoint(
+                metrics_endpoint.as_deref(),
+                endpoint.as_deref(),
+                "/v1/metrics",
+            ),
         }
     }
+}
+
+fn resolve_otlp_endpoint(
+    signal_endpoint: Option<&str>,
+    common_endpoint: Option<&str>,
+    signal_path: &str,
+) -> String {
+    if let Some(endpoint) = signal_endpoint.filter(|value| !value.trim().is_empty()) {
+        return endpoint.to_owned();
+    }
+    let endpoint = common_endpoint
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("http://127.0.0.1:4318");
+    let Ok(mut endpoint) = url::Url::parse(endpoint) else {
+        return endpoint.to_owned();
+    };
+    let path = format!("{}{}", endpoint.path().trim_end_matches('/'), signal_path);
+    endpoint.set_path(&path);
+    endpoint.to_string()
 }
 
 fn validate_otlp_destination(endpoint: &str, platform: &PlatformNetwork) -> Result<String, String> {
@@ -1009,6 +1030,28 @@ mod tests {
         assert_eq!(config.endpoint, "http://127.0.0.1:9000");
         assert_eq!(config.metrics_export, ExportDecision::Otlp);
         assert_eq!(config.metrics_endpoint, "http://127.0.0.1:9001");
+    }
+
+    #[test]
+    fn common_otlp_endpoint_expands_standard_signal_paths() {
+        let config = TelemetryConfig::resolve(TelemetryEnvironment {
+            log_filter: None,
+            sdk_disabled: None,
+            exporter: Some("otlp".into()),
+            traces_endpoint: None,
+            endpoint: Some("http://127.0.0.1:4318/collector".into()),
+            traces_protocol: None,
+            protocol: Some("http/protobuf".into()),
+            metrics_exporter: Some("otlp".into()),
+            metrics_endpoint: None,
+            metrics_protocol: None,
+        });
+
+        assert_eq!(config.endpoint, "http://127.0.0.1:4318/collector/v1/traces");
+        assert_eq!(
+            config.metrics_endpoint,
+            "http://127.0.0.1:4318/collector/v1/metrics"
+        );
     }
 
     #[test]

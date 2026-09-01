@@ -18,7 +18,9 @@ describe("loadConfig", () => {
     expect(config.shutdownTimeoutMs).toBe(15_000);
     expect(config.telemetry).toEqual({
       disabled: false,
+      metricsEnabled: false,
       serviceName: "agent-acp-service",
+      tracesEnabled: false,
     });
   });
 
@@ -33,6 +35,8 @@ describe("loadConfig", () => {
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel:4318",
       OTEL_SERVICE_NAME: "antnest-acp-test",
       OTEL_SDK_DISABLED: "true",
+      OTEL_TRACES_EXPORTER: "otlp",
+      OTEL_METRICS_EXPORTER: "none",
     });
 
     expect(config.listen).toEqual({ host: "::1", port: 18080 });
@@ -43,7 +47,9 @@ describe("loadConfig", () => {
     expect(config.telemetry).toEqual({
       disabled: true,
       endpoint: new URL("http://otel:4318/"),
+      metricsEnabled: false,
       serviceName: "antnest-acp-test",
+      tracesEnabled: true,
     });
   });
 
@@ -57,6 +63,8 @@ describe("loadConfig", () => {
     ["zero timeout", { ANTNEST_ACP_CONTROLLER_TIMEOUT: "0s" }],
     ["oversized payload", { ANTNEST_ACP_MAX_PROMPT_BYTES: String(65 * 1024 * 1024) }],
     ["invalid OTEL disable flag", { OTEL_SDK_DISABLED: "yes" }],
+    ["invalid OTEL traces exporter", { OTEL_TRACES_EXPORTER: "console" }],
+    ["invalid OTEL metrics exporter", { OTEL_METRICS_EXPORTER: "prometheus" }],
   ])("rejects %s", (_name, overrides) => {
     expect(() => loadConfig({ ...requiredEnvironment(), ...overrides })).toThrow();
   });

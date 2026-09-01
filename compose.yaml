@@ -95,11 +95,21 @@ services:
       ANTNEST_RUNTIME_CONTROLLER_LISTEN: :8080
       ANTNEST_RUNTIME_PLATFORM: docker
       ANTNEST_DOCKER_HOST: unix:///var/run/docker.sock
+      ANTNEST_RUNTIME_CONTROLLER_SCOPE: ${ANTNEST_RUNTIME_CONTROLLER_SCOPE:-antnest-platform}
       ANTNEST_RUNTIME_MANAGEMENT_NETWORK: ${ANTNEST_RUNTIME_MANAGEMENT_NETWORK:-antnest-runtime-management}
       ANTNEST_RUNTIME_SYSTEM_SKILLS_VOLUME: ${ANTNEST_RUNTIME_SYSTEM_SKILLS_VOLUME:-antnest-system-skills}
       ANTNEST_RUNTIME_MUTATION_TIMEOUT: ${ANTNEST_RUNTIME_MUTATION_TIMEOUT:-2m}
       OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-true}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_EXPORTER_OTLP_PROTOCOL: ${OTEL_EXPORTER_OTLP_PROTOCOL:-http/protobuf}
+      OTEL_TRACES_EXPORTER: ${OTEL_TRACES_EXPORTER:-}
+      OTEL_METRICS_EXPORTER: ${OTEL_METRICS_EXPORTER:-}
+      OTEL_LOGS_EXPORTER: ${OTEL_LOGS_EXPORTER:-}
+      ANTNEST_RUNTIME_OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-true}
+      ANTNEST_RUNTIME_OTEL_TRACES_EXPORTER: ${OTEL_TRACES_EXPORTER:-}
+      ANTNEST_RUNTIME_OTEL_METRICS_EXPORTER: ${OTEL_METRICS_EXPORTER:-}
+      ANTNEST_RUNTIME_OTEL_EXPORTER_OTLP_ENDPOINT: ${ANTNEST_RUNTIME_OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      ANTNEST_RUNTIME_OTEL_EXPORTER_OTLP_PROTOCOL: ${OTEL_EXPORTER_OTLP_PROTOCOL:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - runtime-system-skills:/system-skills-volume:ro
@@ -110,7 +120,13 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
-    networks: [runtime-controller-database, runtime-management, development]
+    networks:
+      [
+        runtime-controller-database,
+        runtime-management,
+        development,
+        observability,
+      ]
     stop_grace_period: 10s
 
   agent-acp-postgres:
@@ -140,6 +156,8 @@ services:
     depends_on:
       agent-acp-postgres:
         condition: service_healthy
+      agent-controller:
+        condition: service_healthy
     environment:
       ANTNEST_ACP_DATABASE_URL: postgres://antnest_agent_acp:${ANTNEST_AGENT_ACP_POSTGRES_PASSWORD:-antnest-agent-acp-dev}@agent-acp-postgres:5432/antnest_agent_acp
       ANTNEST_AGENT_CONTROLLER_URL: ${ANTNEST_AGENT_CONTROLLER_URL:-http://agent-controller:8080}
@@ -150,6 +168,7 @@ services:
       ANTNEST_ACP_SHUTDOWN_TIMEOUT: ${ANTNEST_ACP_SHUTDOWN_TIMEOUT:-15s}
       OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-true}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_SERVICE_NAME: agent-acp-service
     ports:
       - 127.0.0.1:${ANTNEST_ACP_HOST_PORT:-58081}:8080
     healthcheck:
@@ -163,8 +182,39 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
-    networks: [agent-acp-database, runtime-management, development]
+    networks:
+      [agent-acp-database, runtime-management, development, observability]
     stop_grace_period: 20s
+
+  stage2-model:
+    profiles: [stage2-e2e]
+    image: node:24-bookworm-slim
+    command: ["node", "/fixtures/stage2-model-server.mjs"]
+    environment:
+      ANTNEST_STAGE2_MODEL_PORT: "8080"
+      ANTNEST_STAGE2_MODEL_CREDENTIAL: stage2-model-secret
+    volumes:
+      - ./services/agent-acp-service/scripts/stage2-model-server.mjs:/fixtures/stage2-model-server.mjs:ro
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:8080/status').then(r=>{if(!r.ok)process.exit(1)})",
+        ]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+    networks: [development]
+
+  stage2-client:
+    profiles: [stage2-e2e]
+    image: antnest/agent-acp-service:local
+    command: ["node", "/app/scripts/stage2-acp-client.mjs"]
+    volumes:
+      - ./services/agent-acp-service/scripts:/app/scripts:ro
+    networks: [development]
 
   identity-postgres:
     profiles: [stage2]
@@ -275,7 +325,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
-    networks: [agent-controller-database, control, development]
+    networks: [agent-controller-database, control, development, observability]
     stop_grace_period: 20s
 
   jaeger:
@@ -283,7 +333,11 @@ services:
     image: cr.jaegertracing.io/jaegertracing/jaeger:2.20.0
     ports:
       - 127.0.0.1:${ANTNEST_JAEGER_UI_HOST_PORT:-16686}:16686
-    networks: [development, observability]
+    networks:
+      development: {}
+      observability: {}
+      runtime-management:
+        ipv4_address: ${ANTNEST_JAEGER_RUNTIME_IPV4:-172.30.255.4}
 
 networks:
   control:

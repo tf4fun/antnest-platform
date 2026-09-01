@@ -83,7 +83,8 @@ func TestCreateMapsImmutableRuntimeSpecToHardenedContainer(t *testing.T) {
 	if spec.RestartPolicy != "unless-stopped" || len(spec.Healthcheck.Test) == 0 {
 		t.Fatalf("container lifecycle policy missing: %+v", spec)
 	}
-	if spec.Labels[labelSpecDigest] != testDigest || spec.Labels[labelGeneration] != "7" {
+	if spec.Labels[labelSpecDigest] != testDigest || spec.Labels[labelGeneration] != "7" ||
+		spec.Labels[labelScope] != "test-controller" {
 		t.Fatalf("immutable labels missing: %+v", spec.Labels)
 	}
 }
@@ -95,6 +96,7 @@ func TestDeploymentDigestCoversControllerPhysicalMapping(t *testing.T) {
 		t.Fatal(err)
 	}
 	second, err := NewDriver(newFakeEngine(), Config{
+		ControllerScope:    "test-controller",
 		ManagementNetwork:  "another-runtime-network",
 		SystemSkillsVolume: "antnest-system-skills",
 		RuntimeOTEL:        map[string]string{"OTEL_SDK_DISABLED": "true"},
@@ -339,14 +341,31 @@ func TestListRejectsMalformedManagedRuntime(t *testing.T) {
 	}
 }
 
+func TestListIgnoresRuntimeOwnedByAnotherController(t *testing.T) {
+	engine := newFakeEngine()
+	engine.container = exactContainer()
+	engine.container.Labels[labelScope] = "another-controller"
+	driver := newTestDriver(t, engine)
+	values, err := driver.List(context.Background())
+	if err != nil || len(values) != 0 {
+		t.Fatalf("foreign controller Runtime entered inventory: values=%+v err=%v", values, err)
+	}
+}
+
 func TestWatchNormalizesOnlyManagedRuntimeFacts(t *testing.T) {
 	engine := newFakeEngine()
 	engine.events = []ContainerEvent{
 		{ID: "container-1", Action: "health_status: healthy", Attributes: map[string]string{
-			labelManaged: "runtime", labelAgentID: "agent-1", labelGeneration: "7", labelSpecDigest: testDigest,
+			labelManaged: "runtime", labelScope: "test-controller",
+			labelAgentID: "agent-1", labelGeneration: "7", labelSpecDigest: testDigest,
 		}},
 		{ID: "container-3", Action: "rename", Attributes: map[string]string{
-			labelManaged: "runtime", labelAgentID: "agent-1", labelGeneration: "7", labelSpecDigest: testDigest,
+			labelManaged: "runtime", labelScope: "test-controller",
+			labelAgentID: "agent-1", labelGeneration: "7", labelSpecDigest: testDigest,
+		}},
+		{ID: "container-4", Action: "health_status: healthy", Attributes: map[string]string{
+			labelManaged: "runtime", labelScope: "another-controller",
+			labelAgentID: "agent-1", labelGeneration: "7", labelSpecDigest: testDigest,
 		}},
 	}
 	driver := newTestDriver(t, engine)
@@ -370,7 +389,9 @@ func TestWatchRejectsMalformedManagedRuntimeEvent(t *testing.T) {
 	engine := newFakeEngine()
 	engine.events = []ContainerEvent{{
 		ID: "container-1", Action: "start",
-		Attributes: map[string]string{labelManaged: "runtime", labelAgentID: "agent-1"},
+		Attributes: map[string]string{
+			labelManaged: "runtime", labelScope: "test-controller", labelAgentID: "agent-1",
+		},
 	}}
 	driver := newTestDriver(t, engine)
 	if err := driver.Watch(context.Background(), time.Time{}, func(context.Context) error {
@@ -415,7 +436,8 @@ func exactContainer() *Container {
 	return &Container{
 		ID: "container-1", Name: "antnest-runtime-agent-1", Running: true, Health: "healthy",
 		Labels: map[string]string{
-			labelManaged: "runtime", labelAgentID: "agent-1", labelGeneration: "7",
+			labelManaged: "runtime", labelScope: "test-controller",
+			labelAgentID: "agent-1", labelGeneration: "7",
 			labelSpecDigest: testDigest, "io.antnest.runtime-port": "8093",
 		},
 	}
@@ -432,7 +454,8 @@ func newTestDriver(t *testing.T, engine *fakeEngine) *Driver {
 
 func testDriverConfig() Config {
 	return Config{
-		ManagementNetwork: "antnest-runtime-management", SystemSkillsVolume: "antnest-system-skills",
+		ControllerScope: "test-controller", ManagementNetwork: "antnest-runtime-management",
+		SystemSkillsVolume: "antnest-system-skills",
 	}
 }
 
@@ -461,7 +484,7 @@ func newFakeEngine() *fakeEngine {
 		volumes: map[string]Volume{
 			"antnest-workspace-agent-1": {
 				Name: "antnest-workspace-agent-1", Labels: map[string]string{
-					labelManaged: "workspace", labelAgentID: "agent-1",
+					labelManaged: "workspace", labelScope: "test-controller", labelAgentID: "agent-1",
 				},
 			},
 			"antnest-system-skills": {Name: "antnest-system-skills"},

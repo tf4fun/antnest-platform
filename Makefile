@@ -1,4 +1,4 @@
-.PHONY: fmt fmt-check lint go-lint rust-clippy node-lint test test-go test-rust test-node test-egress-postgres test-runtime-controller-postgres test-agent-acp-postgres test-identity-postgres test-agent-controller-postgres docker-build docker-build-runtime-controller compose-up compose-down e2e-stage1 e2e-runtime-controller
+.PHONY: fmt fmt-check lint go-lint rust-clippy node-lint test test-go test-rust test-node test-egress-postgres test-runtime-controller-postgres test-agent-acp-postgres test-identity-postgres test-agent-controller-postgres docker-build docker-build-runtime-controller compose-up compose-down e2e-stage1 e2e-stage2 e2e-runtime-controller
 
 GOCACHE := $(CURDIR)/.cache/go-build
 GOMODCACHE := $(CURDIR)/.cache/go-mod
@@ -94,6 +94,9 @@ compose-down:
 
 e2e-stage1: docker-build-runtime-controller
 	sh scripts/e2e-stage1.sh
+
+e2e-stage2: docker-build
+	sh scripts/e2e-stage2.sh
 
 e2e-runtime-controller: docker-build-runtime-controller
 	sh services/runtime-controller/scripts/e2e.sh

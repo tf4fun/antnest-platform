@@ -27,6 +27,24 @@ func TestLoadUsesThinDockerAdapterDefaults(t *testing.T) {
 	if config.SystemSkillsVolume != "antnest-system-skills" {
 		t.Fatalf("unexpected system Skills volume: %s", config.SystemSkillsVolume)
 	}
+	if config.ControllerScope != "antnest-runtime-management" {
+		t.Fatalf("controller scope did not default to the management network: %s", config.ControllerScope)
+	}
+}
+
+func TestLoadAllowsAnExplicitControllerScope(t *testing.T) {
+	values := map[string]string{
+		"ANTNEST_RUNTIME_CONTROLLER_DATABASE_URL": "postgres://runtime:runtime@postgres/runtime",
+		"ANTNEST_RUNTIME_MANAGEMENT_NETWORK":      "antnest-runtime-management",
+		"ANTNEST_RUNTIME_CONTROLLER_SCOPE":        "deployment-a",
+	}
+	config, err := Load(func(key string) string { return values[key] })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.ControllerScope != "deployment-a" {
+		t.Fatalf("controller scope = %q", config.ControllerScope)
+	}
 }
 
 func TestLoadRejectsInvalidDeploymentBoundary(t *testing.T) {
@@ -90,5 +108,24 @@ func TestLoadPassesOnlyRuntimeSupportedOTELConfiguration(t *testing.T) {
 	if config.RuntimeOTEL["OTEL_EXPORTER_OTLP_ENDPOINT"] != "http://collector:4318" ||
 		config.RuntimeOTEL["OTEL_EXPORTER_OTLP_HEADERS"] != "" {
 		t.Fatalf("unexpected Runtime telemetry environment: %+v", config.RuntimeOTEL)
+	}
+}
+
+func TestLoadUsesRuntimeSpecificOTELOverrides(t *testing.T) {
+	values := map[string]string{
+		"ANTNEST_RUNTIME_CONTROLLER_DATABASE_URL":     "postgres://runtime:runtime@postgres/runtime",
+		"ANTNEST_RUNTIME_MANAGEMENT_NETWORK":          "antnest-runtime-management",
+		"OTEL_EXPORTER_OTLP_ENDPOINT":                 "http://collector:4318",
+		"OTEL_METRICS_EXPORTER":                       "otlp",
+		"ANTNEST_RUNTIME_OTEL_EXPORTER_OTLP_ENDPOINT": "http://172.30.255.4:4318",
+		"ANTNEST_RUNTIME_OTEL_METRICS_EXPORTER":       "none",
+	}
+	config, err := Load(func(key string) string { return values[key] })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.RuntimeOTEL["OTEL_EXPORTER_OTLP_ENDPOINT"] != "http://172.30.255.4:4318" ||
+		config.RuntimeOTEL["OTEL_METRICS_EXPORTER"] != "none" {
+		t.Fatalf("Runtime-specific telemetry did not override service telemetry: %+v", config.RuntimeOTEL)
 	}
 }

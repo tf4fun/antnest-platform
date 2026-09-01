@@ -12,6 +12,7 @@ type Config struct {
 	DatabaseURL           string
 	Platform              string
 	DockerSocketPath      string
+	ControllerScope       string
 	ManagementNetwork     string
 	SystemSkillsVolume    string
 	RuntimeStatusTimeout  time.Duration
@@ -64,10 +65,15 @@ func Load(lookup func(string) string) (Config, error) {
 		return Config{}, err
 	}
 	config := Config{
-		ListenAddress:         valueOr(lookup, "ANTNEST_RUNTIME_CONTROLLER_LISTEN", ":8080"),
-		DatabaseURL:           strings.TrimSpace(lookup("ANTNEST_RUNTIME_CONTROLLER_DATABASE_URL")),
-		Platform:              strings.ToLower(valueOr(lookup, "ANTNEST_RUNTIME_PLATFORM", "docker")),
-		ManagementNetwork:     strings.TrimSpace(lookup("ANTNEST_RUNTIME_MANAGEMENT_NETWORK")),
+		ListenAddress:     valueOr(lookup, "ANTNEST_RUNTIME_CONTROLLER_LISTEN", ":8080"),
+		DatabaseURL:       strings.TrimSpace(lookup("ANTNEST_RUNTIME_CONTROLLER_DATABASE_URL")),
+		Platform:          strings.ToLower(valueOr(lookup, "ANTNEST_RUNTIME_PLATFORM", "docker")),
+		ManagementNetwork: strings.TrimSpace(lookup("ANTNEST_RUNTIME_MANAGEMENT_NETWORK")),
+		ControllerScope: valueOr(
+			lookup,
+			"ANTNEST_RUNTIME_CONTROLLER_SCOPE",
+			strings.TrimSpace(lookup("ANTNEST_RUNTIME_MANAGEMENT_NETWORK")),
+		),
 		SystemSkillsVolume:    valueOr(lookup, "ANTNEST_RUNTIME_SYSTEM_SKILLS_VOLUME", "antnest-system-skills"),
 		RuntimeStatusTimeout:  statusTimeout,
 		MutationTimeout:       mutationTimeout,
@@ -87,6 +93,9 @@ func Load(lookup func(string) string) (Config, error) {
 	}
 	if config.ManagementNetwork == "" {
 		return Config{}, fmt.Errorf("ANTNEST_RUNTIME_MANAGEMENT_NETWORK is required")
+	}
+	if config.ControllerScope == "" {
+		return Config{}, fmt.Errorf("ANTNEST_RUNTIME_CONTROLLER_SCOPE is required")
 	}
 	dockerHost := valueOr(lookup, "ANTNEST_DOCKER_HOST", "unix:///var/run/docker.sock")
 	parsedHost, err := url.Parse(dockerHost)
@@ -114,7 +123,9 @@ func runtimeTelemetryEnvironment(lookup func(string) string) map[string]string {
 		"OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "OTEL_EXPORTER_OTLP_TRACES_PROTOCOL",
 		"OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", "OTEL_EXPORTER_OTLP_METRICS_PROTOCOL",
 	} {
-		if value := strings.TrimSpace(lookup(key)); value != "" {
+		if value := strings.TrimSpace(lookup("ANTNEST_RUNTIME_" + key)); value != "" {
+			result[key] = value
+		} else if value := strings.TrimSpace(lookup(key)); value != "" {
 			result[key] = value
 		}
 	}
