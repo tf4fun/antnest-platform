@@ -223,6 +223,8 @@ func catalogStoreErrorClass(err error) string {
 		return "request_conflict"
 	case errors.Is(err, ports.ErrConcurrentChange):
 		return "concurrent_change"
+	case errors.Is(err, ports.ErrLifecycleRecoveryClaimLost):
+		return "recovery_claim_lost"
 	case errors.Is(err, ports.ErrRunAccessDenied):
 		return "access_denied"
 	case errors.Is(err, ports.ErrAgentBusy):

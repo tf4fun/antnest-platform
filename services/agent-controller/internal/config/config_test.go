@@ -21,11 +21,11 @@ func TestLoadRequiresDatabaseAndCanonicalEncryptionKey(t *testing.T) {
 	}
 	if loaded.ListenAddress != ":8080" || loaded.ShutdownTimeout != 15*time.Second ||
 		loaded.DependencyTimeout != 150*time.Second || loaded.DrainTimeout != 5*time.Minute ||
-		loaded.RunAdmissionTTL != 30*time.Minute ||
+		loaded.RunAdmissionTTL != 30*time.Minute || loaded.LifecycleTimeout != 25*time.Minute+30*time.Second ||
 		loaded.RecoveryPollInterval != 2*time.Second ||
-		loaded.RecoveryStaleAfter != 185*time.Second ||
-		loaded.RecoveryAttemptTimeout != 155*time.Second ||
-		loaded.RecoveryLeaseDuration != 185*time.Second ||
+		loaded.RecoveryStaleAfter != 10*time.Minute+35*time.Second ||
+		loaded.RecoveryAttemptTimeout != 10*time.Minute+5*time.Second ||
+		loaded.RecoveryLeaseDuration != 10*time.Minute+35*time.Second ||
 		loaded.RecoveryRetryMax != time.Minute {
 		t.Fatalf("defaults = %+v", loaded)
 	}

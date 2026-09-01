@@ -17,7 +17,14 @@ import (
 func (repository *Repository) ReplayAgentDisable(
 	ctx context.Context, requestID string, fingerprint string,
 ) (ports.AgentDisableState, bool, error) {
-	operation, err := loadLifecycleOperation(ctx, repository.pool, requestID, "")
+	transaction, err := repository.pool.BeginTx(ctx, pgx.TxOptions{
+		IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly,
+	})
+	if err != nil {
+		return ports.AgentDisableState{}, false, fmt.Errorf("begin Agent disable replay: %w", err)
+	}
+	defer func() { _ = transaction.Rollback(ctx) }()
+	operation, err := loadLifecycleOperation(ctx, transaction, requestID, "")
 	if errors.Is(err, ports.ErrNotFound) {
 		return ports.AgentDisableState{}, false, nil
 	}
@@ -27,8 +34,14 @@ func (repository *Repository) ReplayAgentDisable(
 	if operation.Kind != domain.OperationDisable || operation.RequestFingerprint != fingerprint {
 		return ports.AgentDisableState{}, false, ports.ErrRequestConflict
 	}
-	state, err := loadAgentDisableState(ctx, repository.pool, operation)
-	return state, true, err
+	state, err := loadAgentDisableState(ctx, transaction, operation)
+	if err != nil {
+		return ports.AgentDisableState{}, false, err
+	}
+	if err := transaction.Commit(ctx); err != nil {
+		return ports.AgentDisableState{}, false, fmt.Errorf("commit Agent disable replay: %w", err)
+	}
+	return state, true, nil
 }
 
 func (repository *Repository) BeginAgentDisable(

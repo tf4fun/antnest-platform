@@ -88,9 +88,7 @@ func (worker *LifecycleRecoveryWorker) Run(ctx context.Context) error {
 		timer := time.NewTimer(worker.config.PollInterval)
 		select {
 		case <-ctx.Done():
-			if !timer.Stop() {
-				<-timer.C
-			}
+			timer.Stop()
 			return nil
 		case <-timer.C:
 		}

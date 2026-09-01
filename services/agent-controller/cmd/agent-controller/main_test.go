@@ -52,6 +52,29 @@ func TestHealthcheckUsesConfiguredPort(t *testing.T) {
 	}
 }
 
+func TestLifecycleRecoveryWorkerIDIsReplicaLocalAndStable(t *testing.T) {
+	t.Parallel()
+
+	workerID, err := lifecycleRecoveryWorkerID(" agent-controller-a ", 17)
+	if err != nil {
+		t.Fatalf("worker ID: %v", err)
+	}
+	if workerID != "agent-controller-a:17" {
+		t.Fatalf("worker ID = %q", workerID)
+	}
+	for _, input := range []struct {
+		hostname string
+		pid      int
+	}{
+		{hostname: "", pid: 17},
+		{hostname: "agent-controller-a", pid: 0},
+	} {
+		if _, err := lifecycleRecoveryWorkerID(input.hostname, input.pid); err == nil {
+			t.Fatalf("invalid worker identity was accepted: %+v", input)
+		}
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (roundTrip roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {

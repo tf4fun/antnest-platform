@@ -46,7 +46,7 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 		t.Fatalf("create SecretBox: %v", err)
 	}
 
-	var egressCalls, runtimeCalls atomic.Int64
+	var egressCalls, runtimeCalls, initializeCalls atomic.Int64
 	var policyMu sync.Mutex
 	policyID := "internet-enabled"
 	policyVersion := uint64(1)
@@ -187,6 +187,15 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 				t.Fatalf("Runtime delete payload = %+v err=%v", payload, err)
 			}
 		}
+		if action == "initialize" && initializeCalls.Add(1) == 1 {
+			response.Header().Set("Content-Type", "application/json")
+			response.WriteHeader(http.StatusServiceUnavailable)
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"code": "runtime_unavailable", "message": "Runtime Controller is unavailable",
+				"retryable": true,
+			})
+			return
+		}
 		requestID := request.Header.Get("Idempotency-Key")
 		if request.Method != http.MethodPost || path != agentID+"/"+action || agentID == "" || requestID == "" {
 			t.Fatalf("Runtime request = %s %s idempotency=%q", request.Method, request.URL.Path, requestID)
@@ -228,9 +237,10 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 		t.Fatalf("create Runtime client: %v", err)
 	}
 	clock := fixedClock{now: time.Unix(20, 0).UTC()}
+	lifecycle := application.NewLifecycleService(repository, repository, egress, runtime, clock)
 	handler, err := server.NewHandler(
 		application.NewCatalogService(repository, secretBox, clock),
-		application.NewLifecycleService(repository, repository, egress, runtime, clock),
+		lifecycle,
 		application.NewRunService(repository, secretBox, clock, 30*time.Minute),
 		application.NewAgentQueryService(repository),
 		application.NewEventService(repository, eventNotifier, repository),
@@ -262,6 +272,32 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 		"owner_user_id":"agent-e2e-user","name":"Research Agent",
 		"template_id":"` + templateID + `","template_revision":1
 	}`
+	failedCreate := serveJSON(
+		t, handler, http.MethodPost, "/internal/agents", createBody, http.StatusServiceUnavailable,
+	)
+	if failedCreate["code"] != "dependency_unavailable" || failedCreate["retryable"] != true {
+		t.Fatalf("failed create response = %+v", failedCreate)
+	}
+	persisted, err := repository.GetLifecycleOperation(ctx, "agent-e2e-create")
+	if err != nil || persisted.State != "running" || persisted.Phase != "runtime_initialize" {
+		t.Fatalf("persisted interrupted create = %+v err=%v", persisted, err)
+	}
+	restartedLifecycle := application.NewLifecycleService(repository, repository, egress, runtime, clock)
+	recoveryWorker, err := application.NewLifecycleRecoveryWorker(
+		repository, restartedLifecycle, nil,
+		application.LifecycleRecoveryWorkerConfig{
+			WorkerID: "agent-e2e-recovery", PollInterval: 10 * time.Millisecond,
+			StaleAfter: 15 * time.Second, AttemptTimeout: 10 * time.Second,
+			LeaseDuration: 15 * time.Second, RetryMax: time.Second,
+		},
+	)
+	if err != nil {
+		t.Fatalf("create lifecycle recovery worker: %v", err)
+	}
+	processed, err := recoveryWorker.RunOnce(ctx)
+	if err != nil || !processed {
+		t.Fatalf("recover interrupted create: processed=%v err=%v", processed, err)
+	}
 	created := serveJSON(t, handler, http.MethodPost, "/internal/agents", createBody, http.StatusAccepted)
 	agent := created["agent"].(map[string]any)
 	operation := created["operation"].(map[string]any)
@@ -286,7 +322,7 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 	}
 	replayed := serveJSON(t, handler, http.MethodPost, "/internal/agents", createBody, http.StatusAccepted)
 	if replayed["agent_access_subject"] != created["agent_access_subject"] ||
-		egressCalls.Load() != 2 || runtimeCalls.Load() != 1 {
+		egressCalls.Load() != 2 || runtimeCalls.Load() != 2 {
 		t.Fatalf("idempotent replay repeated effects: egress=%d runtime=%d replay=%+v",
 			egressCalls.Load(), runtimeCalls.Load(), replayed)
 	}
@@ -316,7 +352,7 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 		t, handler, http.MethodPost, "/internal/agents/"+agentID+"/rebuild",
 		rebuildBody, http.StatusAccepted,
 	)
-	if replayedRebuild["state"] != "completed" || egressCalls.Load() != 9 || runtimeCalls.Load() != 2 {
+	if replayedRebuild["state"] != "completed" || egressCalls.Load() != 9 || runtimeCalls.Load() != 3 {
 		t.Fatalf("idempotent rebuild repeated effects: egress=%d runtime=%d replay=%+v",
 			egressCalls.Load(), runtimeCalls.Load(), replayedRebuild)
 	}
@@ -345,7 +381,7 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 		t, handler, http.MethodPost, "/internal/agents/"+agentID+"/disable",
 		disableBody, http.StatusAccepted,
 	)
-	if replayedDisable["state"] != "completed" || egressCalls.Load() != 11 || runtimeCalls.Load() != 3 {
+	if replayedDisable["state"] != "completed" || egressCalls.Load() != 11 || runtimeCalls.Load() != 4 {
 		t.Fatalf("idempotent disable repeated effects: egress=%d runtime=%d replay=%+v",
 			egressCalls.Load(), runtimeCalls.Load(), replayedDisable)
 	}
@@ -375,7 +411,7 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 		t, handler, http.MethodPost, "/internal/agents/"+agentID+"/enable",
 		enableBody, http.StatusAccepted,
 	)
-	if replayedEnable["state"] != "completed" || egressCalls.Load() != 18 || runtimeCalls.Load() != 4 {
+	if replayedEnable["state"] != "completed" || egressCalls.Load() != 18 || runtimeCalls.Load() != 5 {
 		t.Fatalf("idempotent enable repeated effects: egress=%d runtime=%d replay=%+v",
 			egressCalls.Load(), runtimeCalls.Load(), replayedEnable)
 	}
@@ -404,7 +440,7 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 		t, handler, http.MethodPost, "/internal/agents/"+agentID+"/delete",
 		deleteBody, http.StatusAccepted,
 	)
-	if replayedDelete["state"] != "completed" || egressCalls.Load() != 21 || runtimeCalls.Load() != 5 {
+	if replayedDelete["state"] != "completed" || egressCalls.Load() != 21 || runtimeCalls.Load() != 6 {
 		t.Fatalf("idempotent delete repeated effects: egress=%d runtime=%d replay=%+v",
 			egressCalls.Load(), runtimeCalls.Load(), replayedDelete)
 	}

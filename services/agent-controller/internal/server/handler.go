@@ -90,12 +90,25 @@ type AgentEventService interface {
 type HealthCheck func(context.Context) error
 
 type handler struct {
-	catalog   CatalogService
-	lifecycle LifecycleService
-	runs      RunService
-	queries   AgentQueryService
-	events    AgentEventService
-	health    HealthCheck
+	catalog          CatalogService
+	lifecycle        LifecycleService
+	runs             RunService
+	queries          AgentQueryService
+	events           AgentEventService
+	health           HealthCheck
+	lifecycleTimeout time.Duration
+}
+
+type HandlerOption func(*handler) error
+
+func WithLifecycleTimeout(timeout time.Duration) HandlerOption {
+	return func(h *handler) error {
+		if timeout <= 0 {
+			return fmt.Errorf("lifecycle timeout must be positive")
+		}
+		h.lifecycleTimeout = timeout
+		return nil
+	}
 }
 
 func NewHandler(
@@ -105,6 +118,7 @@ func NewHandler(
 	queries AgentQueryService,
 	events AgentEventService,
 	health HealthCheck,
+	options ...HandlerOption,
 ) (http.Handler, error) {
 	if catalog == nil {
 		return nil, fmt.Errorf("catalog service is required")
@@ -126,6 +140,14 @@ func NewHandler(
 	}
 	h := &handler{
 		catalog: catalog, lifecycle: lifecycle, runs: runs, queries: queries, events: events, health: health,
+	}
+	for _, option := range options {
+		if option == nil {
+			return nil, fmt.Errorf("handler option is required")
+		}
+		if err := option(h); err != nil {
+			return nil, err
+		}
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /status", h.status)
@@ -641,18 +663,38 @@ func (h *handler) createAgent(response http.ResponseWriter, request *http.Reques
 	if !decodeJSON(response, request, &payload) {
 		return
 	}
-	result, err := h.lifecycle.CreateAgent(request.Context(), application.CreateAgentInput{
+	ctx, cancel := h.lifecycleContext(request.Context())
+	defer cancel()
+	result, err := h.lifecycle.CreateAgent(ctx, application.CreateAgentInput{
 		RequestID: payload.RequestID, OrganizationID: payload.OrganizationID,
 		OwnerUserID: payload.OwnerUserID, Name: payload.Name,
 		TemplateID: payload.TemplateID, TemplateRevision: payload.TemplateRevision,
-		InitialTraceParent: request.Header.Get("traceparent"),
+		InitialTraceParent: traceParentFromContext(ctx),
 	})
-	observeLifecycleResult(request.Context(), result.Operation)
+	observeLifecycleResult(ctx, result.Operation)
 	if err != nil {
-		writeServiceError(request.Context(), response, err)
+		writeServiceError(ctx, response, err)
 		return
 	}
 	writeJSON(response, http.StatusAccepted, createAgentPayload(result))
+}
+
+func (h *handler) lifecycleContext(parent context.Context) (context.Context, context.CancelFunc) {
+	if h.lifecycleTimeout <= 0 {
+		return context.WithCancel(parent)
+	}
+	return context.WithTimeout(parent, h.lifecycleTimeout)
+}
+
+func traceParentFromContext(ctx context.Context) string {
+	spanContext := trace.SpanContextFromContext(ctx)
+	if !spanContext.IsValid() {
+		return ""
+	}
+	return fmt.Sprintf(
+		"00-%s-%s-%02x",
+		spanContext.TraceID(), spanContext.SpanID(), byte(spanContext.TraceFlags()),
+	)
 }
 
 func (h *handler) getAgent(response http.ResponseWriter, request *http.Request) {
@@ -825,14 +867,16 @@ func (h *handler) rebuildAgent(response http.ResponseWriter, request *http.Reque
 	if !decodeJSON(response, request, &payload) {
 		return
 	}
-	result, err := h.lifecycle.RebuildAgent(request.Context(), application.RebuildAgentInput{
+	ctx, cancel := h.lifecycleContext(request.Context())
+	defer cancel()
+	result, err := h.lifecycle.RebuildAgent(ctx, application.RebuildAgentInput{
 		RequestID: payload.RequestID, AgentID: request.PathValue("agent_id"),
 		TemplateID: payload.TemplateID, TemplateRevision: payload.TemplateRevision,
-		InitialTraceParent: request.Header.Get("traceparent"),
+		InitialTraceParent: traceParentFromContext(ctx),
 	})
-	observeLifecycleResult(request.Context(), result.Operation)
+	observeLifecycleResult(ctx, result.Operation)
 	if err != nil {
-		writeServiceError(request.Context(), response, err)
+		writeServiceError(ctx, response, err)
 		return
 	}
 	writeJSON(response, http.StatusAccepted, operationPayload(result.Operation))
@@ -843,13 +887,15 @@ func (h *handler) disableAgent(response http.ResponseWriter, request *http.Reque
 	if !decodeJSON(response, request, &payload) {
 		return
 	}
-	result, err := h.lifecycle.DisableAgent(request.Context(), application.DisableAgentInput{
+	ctx, cancel := h.lifecycleContext(request.Context())
+	defer cancel()
+	result, err := h.lifecycle.DisableAgent(ctx, application.DisableAgentInput{
 		RequestID: payload.RequestID, AgentID: request.PathValue("agent_id"),
-		InitialTraceParent: request.Header.Get("traceparent"),
+		InitialTraceParent: traceParentFromContext(ctx),
 	})
-	observeLifecycleResult(request.Context(), result.Operation)
+	observeLifecycleResult(ctx, result.Operation)
 	if err != nil {
-		writeServiceError(request.Context(), response, err)
+		writeServiceError(ctx, response, err)
 		return
 	}
 	writeJSON(response, http.StatusAccepted, operationPayload(result.Operation))
@@ -860,13 +906,15 @@ func (h *handler) enableAgent(response http.ResponseWriter, request *http.Reques
 	if !decodeJSON(response, request, &payload) {
 		return
 	}
-	result, err := h.lifecycle.EnableAgent(request.Context(), application.EnableAgentInput{
+	ctx, cancel := h.lifecycleContext(request.Context())
+	defer cancel()
+	result, err := h.lifecycle.EnableAgent(ctx, application.EnableAgentInput{
 		RequestID: payload.RequestID, AgentID: request.PathValue("agent_id"),
-		InitialTraceParent: request.Header.Get("traceparent"),
+		InitialTraceParent: traceParentFromContext(ctx),
 	})
-	observeLifecycleResult(request.Context(), result.Operation)
+	observeLifecycleResult(ctx, result.Operation)
 	if err != nil {
-		writeServiceError(request.Context(), response, err)
+		writeServiceError(ctx, response, err)
 		return
 	}
 	writeJSON(response, http.StatusAccepted, operationPayload(result.Operation))
@@ -877,13 +925,15 @@ func (h *handler) deleteAgent(response http.ResponseWriter, request *http.Reques
 	if !decodeJSON(response, request, &payload) {
 		return
 	}
-	result, err := h.lifecycle.DeleteAgent(request.Context(), application.DeleteAgentInput{
+	ctx, cancel := h.lifecycleContext(request.Context())
+	defer cancel()
+	result, err := h.lifecycle.DeleteAgent(ctx, application.DeleteAgentInput{
 		RequestID: payload.RequestID, AgentID: request.PathValue("agent_id"),
-		InitialTraceParent: request.Header.Get("traceparent"),
+		InitialTraceParent: traceParentFromContext(ctx),
 	})
-	observeLifecycleResult(request.Context(), result.Operation)
+	observeLifecycleResult(ctx, result.Operation)
 	if err != nil {
-		writeServiceError(request.Context(), response, err)
+		writeServiceError(ctx, response, err)
 		return
 	}
 	writeJSON(response, http.StatusAccepted, operationPayload(result.Operation))
@@ -1215,7 +1265,11 @@ func publicError(err error) (int, errorResponse) {
 		return http.StatusConflict, errorResponse{Code: "request_id_conflict", Message: "request identity is already used"}
 	case errors.Is(err, ports.ErrConcurrentChange):
 		return http.StatusConflict, errorResponse{Code: "lifecycle_conflict", Message: "resource changed concurrently"}
-	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
+	case errors.Is(err, context.DeadlineExceeded):
+		return http.StatusGatewayTimeout, errorResponse{
+			Code: "lifecycle_timeout", Message: "lifecycle operation timed out", Retryable: true,
+		}
+	case errors.Is(err, context.Canceled):
 		return http.StatusServiceUnavailable, errorResponse{
 			Code: "dependency_unavailable", Message: "dependency is unavailable", Retryable: true,
 		}

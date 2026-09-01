@@ -28,7 +28,14 @@ func (repository *Repository) GetLifecycleOperation(
 func (repository *Repository) ReplayAgentCreate(
 	ctx context.Context, requestID string, fingerprint string,
 ) (ports.AgentCreateState, bool, error) {
-	operation, err := loadLifecycleOperation(ctx, repository.pool, requestID, "")
+	transaction, err := repository.pool.BeginTx(ctx, pgx.TxOptions{
+		IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly,
+	})
+	if err != nil {
+		return ports.AgentCreateState{}, false, fmt.Errorf("begin Agent create replay: %w", err)
+	}
+	defer func() { _ = transaction.Rollback(ctx) }()
+	operation, err := loadLifecycleOperation(ctx, transaction, requestID, "")
 	if errors.Is(err, ports.ErrNotFound) {
 		return ports.AgentCreateState{}, false, nil
 	}
@@ -38,8 +45,14 @@ func (repository *Repository) ReplayAgentCreate(
 	if operation.Kind != domain.OperationCreate || operation.RequestFingerprint != fingerprint {
 		return ports.AgentCreateState{}, false, ports.ErrRequestConflict
 	}
-	state, err := loadAgentCreateState(ctx, repository.pool, operation)
-	return state, true, err
+	state, err := loadAgentCreateState(ctx, transaction, operation)
+	if err != nil {
+		return ports.AgentCreateState{}, false, err
+	}
+	if err := transaction.Commit(ctx); err != nil {
+		return ports.AgentCreateState{}, false, fmt.Errorf("commit Agent create replay: %w", err)
+	}
+	return state, true, nil
 }
 
 func (repository *Repository) BeginAgentCreate(

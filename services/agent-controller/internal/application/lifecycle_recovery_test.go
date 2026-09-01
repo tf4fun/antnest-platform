@@ -2,6 +2,8 @@ package application
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -121,6 +123,71 @@ func TestLifecycleRecoveryWorkerRejectsLeaseShorterThanAttempt(t *testing.T) {
 	}
 }
 
+func TestLifecycleRecoveryWorkerLeavesTerminalClaimToAtomicSagaCommit(t *testing.T) {
+	t.Parallel()
+
+	store := &recoveryStoreStub{
+		claim: ports.LifecycleRecoveryClaim{
+			Operation: recoveryOperation(domain.OperationDelete), WorkerID: "worker-1", Attempt: 2,
+		},
+		found: true,
+	}
+	worker := mustRecoveryWorker(t, store, &recoveryResumerStub{
+		result: LifecycleRecoveryResult{
+			Phase: domain.PhaseCompleted, State: domain.OperationCompleted, Progressed: true, Terminal: true,
+		},
+	})
+
+	processed, err := worker.RunOnce(context.Background())
+	if err != nil || !processed {
+		t.Fatalf("terminal recovery processed=%v err=%v", processed, err)
+	}
+	if store.released.RequestID != "" {
+		t.Fatalf("terminal recovery issued a second lease release: %+v", store.released)
+	}
+}
+
+func TestLifecycleRecoveryWorkerPropagatesFatalInvariant(t *testing.T) {
+	t.Parallel()
+
+	store := &recoveryStoreStub{
+		claim: ports.LifecycleRecoveryClaim{
+			Operation: recoveryOperation(domain.OperationEnable), WorkerID: "worker-1", Attempt: 2,
+		},
+		found: true,
+	}
+	fatalErr := errors.New("invalid persisted phase")
+	worker := mustRecoveryWorker(t, store, &recoveryResumerStub{err: fatalErr})
+
+	processed, err := worker.RunOnce(context.Background())
+	if !processed || !errors.Is(err, fatalErr) {
+		t.Fatalf("fatal recovery processed=%v err=%v", processed, err)
+	}
+	if store.released.RequestID != "" {
+		t.Fatalf("fatal recovery hid invariant behind retry: %+v", store.released)
+	}
+}
+
+func TestLifecycleRecoveryWorkerTreatsLostClaimAsSuperseded(t *testing.T) {
+	t.Parallel()
+
+	store := &recoveryStoreStub{
+		claim: ports.LifecycleRecoveryClaim{
+			Operation: recoveryOperation(domain.OperationDisable), WorkerID: "worker-1", Attempt: 2,
+		},
+		found: true, startErr: ports.ErrLifecycleRecoveryClaimLost,
+	}
+	worker := mustRecoveryWorker(t, store, &recoveryResumerStub{})
+
+	processed, err := worker.RunOnce(context.Background())
+	if err != nil || !processed {
+		t.Fatalf("lost claim processed=%v err=%v", processed, err)
+	}
+	if store.released.RequestID != "" {
+		t.Fatalf("lost claim released a newer lease: %+v", store.released)
+	}
+}
+
 func TestResumeLifecycleOperationDispatchesPersistedKind(t *testing.T) {
 	t.Parallel()
 
@@ -151,7 +218,7 @@ func TestResumeLifecycleOperationDispatchesPersistedKind(t *testing.T) {
 
 func recoveryOperation(kind domain.OperationKind) ports.LifecycleOperationRecord {
 	return ports.LifecycleOperationRecord{
-		RequestID: "request-recovery-1", RequestFingerprint: string(make([]byte, 64)),
+		RequestID: "request-recovery-1", RequestFingerprint: strings.Repeat("f", 64),
 		AgentID: "agent-recovery-1", Kind: kind,
 		Phase: domain.PhaseRuntimeInitialize, State: domain.OperationRunning,
 		ChildRequestID: "child-recovery-1", Attempt: 1,
@@ -211,6 +278,7 @@ func (store *recoveryStoreStub) ReleaseLifecycleRecoveryClaim(
 
 type recoveryResumerStub struct {
 	operation ports.LifecycleOperationRecord
+	result    LifecycleRecoveryResult
 	err       error
 }
 
@@ -218,7 +286,7 @@ func (resumer *recoveryResumerStub) ResumeLifecycleOperation(
 	_ context.Context, operation ports.LifecycleOperationRecord,
 ) (LifecycleRecoveryResult, error) {
 	resumer.operation = operation
-	return LifecycleRecoveryResult{}, resumer.err
+	return resumer.result, resumer.err
 }
 
 type recoveryDispatchStore struct {
@@ -273,7 +341,7 @@ func (store *recoveryDispatchStore) ReplayAgentDelete(
 
 func completedRecoveryOperation(kind domain.OperationKind) ports.LifecycleOperationRecord {
 	return ports.LifecycleOperationRecord{
-		RequestID: "request-recovery-1", RequestFingerprint: string(make([]byte, 64)),
+		RequestID: "request-recovery-1", RequestFingerprint: strings.Repeat("f", 64),
 		AgentID: "agent-recovery-1", Kind: kind,
 		Phase: domain.PhaseCompleted, State: domain.OperationCompleted,
 	}

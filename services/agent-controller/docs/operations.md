@@ -65,11 +65,18 @@ Optional:
 - `ANTNEST_AGENT_CONTROLLER_DRAIN_TIMEOUT` (default `5m`);
 - `ANTNEST_AGENT_CONTROLLER_RUN_ADMISSION_TTL` (default `30m`);
 - `ANTNEST_AGENT_CONTROLLER_RECOVERY_POLL_INTERVAL` (default `2s`);
-- `ANTNEST_AGENT_CONTROLLER_RECOVERY_STALE_AFTER` (default dependency timeout
-  plus `35s`; it must cover the lifecycle attempt timeout and finalization
-  grace);
+- `ANTNEST_AGENT_CONTROLLER_RECOVERY_STALE_AFTER` (default four dependency
+  timeouts plus `35s`; it must not be shorter than the derived recovery lease);
 - `ANTNEST_AGENT_CONTROLLER_SHUTDOWN_TIMEOUT` (default `15s`);
 - standard OTEL environment variables using OTLP HTTP/protobuf.
+
+The online lifecycle command timeout is ten dependency timeouts plus `30s`.
+The recovery attempt timeout is four dependency timeouts plus `5s`; its lease
+adds a `30s` finalization grace. The larger online budget covers the longest
+complete Saga, while the recovery budget covers the largest single durable
+phase and may make progress across multiple claims. These values are derived
+from the dependency timeout so operators cannot configure a lease shorter than
+the code path it fences.
 
 Secrets must come from environment/secret mounts and must never be printed.
 
@@ -93,9 +100,8 @@ turn a downstream outage into a restart loop.
 ## Lifecycle Failure Recovery
 
 - Retry an uncertain lifecycle command with the original request ID.
-- The recovery worker implementation can resume stale `running` operations. It
-  claims one
-  operation at a time with `FOR UPDATE SKIP LOCKED`, a bounded lease, and a
+- A supervised recovery worker resumes stale `running` operations. It claims
+  one operation at a time with `FOR UPDATE SKIP LOCKED`, a bounded lease, and a
   monotonically increasing fencing attempt. Multiple replicas may run the same
   worker safely.
 - The stale threshold prevents the worker from racing a normally active request
@@ -103,13 +109,16 @@ turn a downstream outage into a restart loop.
   timeout than its lease. Failure releases the claim with bounded exponential
   backoff; successful progress resets the backoff.
 - Recovery reloads the persisted operation and invokes the same create,
-  rebuild, disable, enable, or delete state machine. Stored child request IDs
-  are reused exactly. If a lease expires and execution overlaps, downstream
-  idempotency and repository CAS decide the winner; the expired attempt cannot
-  release or reschedule a newer claim.
-- Startup supervision and recovery-attempt OpenTelemetry wiring are not yet
-  connected. Until they are, operators must retry an uncertain command with
-  its original request ID to trigger replay.
+  rebuild, disable, enable, or delete state machine. Runtime mutations reuse
+  their stored child request IDs. Egress ensure/fence/reset/release operations
+  are convergent, and policy replacement remains protected by resource-version
+  CAS. If a lease expires and execution overlaps, those dependency guarantees
+  plus repository phase CAS decide the winner; the expired attempt cannot
+  mutate, release, or reschedule a newer claim.
+- A fatal recovery-store or state-machine invariant error stops the service;
+  retryable dependency failures remain inside the worker and use bounded
+  backoff. Shutdown stops new claims and waits for the active attempt before
+  draining HTTP.
 - Inspect `/internal/agent-operations/{request_id}` before creating a new
   operation. Stage 2 uses the idempotency request ID as the lifecycle operation
   identity; there is no second alias to lose or reconcile.
@@ -183,8 +192,11 @@ Request-driven work propagates W3C context through both dependency clients and
 correlates retries by durable request ID. Each background recovery attempt
 creates a new trace with Span Links to the initial request and previous recovery
 attempt; it never fabricates one continuous parent/child timeline across
-process restarts. Trace identities are correlation data, not metric labels. No
-packet-level or secret-bearing spans are emitted.
+process restarts. The initial link is the Agent Controller server span, not a
+raw unvalidated inbound header. Recovery metrics use only operation kind,
+phase, and bounded outcome labels; request, Agent, worker, and trace identities
+remain span/log correlation data. No packet-level or secret-bearing spans are
+emitted.
 
 ## Retention And Backup
 

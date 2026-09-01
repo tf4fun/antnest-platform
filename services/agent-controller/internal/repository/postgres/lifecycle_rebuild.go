@@ -46,7 +46,14 @@ func (repository *Repository) GetAgentLifecycleBase(
 func (repository *Repository) ReplayAgentRebuild(
 	ctx context.Context, requestID string, fingerprint string,
 ) (ports.AgentRebuildState, bool, error) {
-	operation, err := loadLifecycleOperation(ctx, repository.pool, requestID, "")
+	transaction, err := repository.pool.BeginTx(ctx, pgx.TxOptions{
+		IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly,
+	})
+	if err != nil {
+		return ports.AgentRebuildState{}, false, fmt.Errorf("begin Agent rebuild replay: %w", err)
+	}
+	defer func() { _ = transaction.Rollback(ctx) }()
+	operation, err := loadLifecycleOperation(ctx, transaction, requestID, "")
 	if errors.Is(err, ports.ErrNotFound) {
 		return ports.AgentRebuildState{}, false, nil
 	}
@@ -56,8 +63,14 @@ func (repository *Repository) ReplayAgentRebuild(
 	if operation.Kind != domain.OperationRebuild || operation.RequestFingerprint != fingerprint {
 		return ports.AgentRebuildState{}, false, ports.ErrRequestConflict
 	}
-	state, err := loadAgentRebuildState(ctx, repository.pool, operation)
-	return state, true, err
+	state, err := loadAgentRebuildState(ctx, transaction, operation)
+	if err != nil {
+		return ports.AgentRebuildState{}, false, err
+	}
+	if err := transaction.Commit(ctx); err != nil {
+		return ports.AgentRebuildState{}, false, fmt.Errorf("commit Agent rebuild replay: %w", err)
+	}
+	return state, true, nil
 }
 
 func (repository *Repository) BeginAgentRebuild(

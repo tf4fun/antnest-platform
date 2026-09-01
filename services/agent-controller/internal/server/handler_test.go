@@ -15,6 +15,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace"
 
 	"soft/antnest-platform/services/agent-controller/internal/application"
 	"soft/antnest-platform/services/agent-controller/internal/domain"
@@ -203,13 +204,13 @@ func TestLifecycleHandlerCreatesAgentWithStableContract(t *testing.T) {
 		"template_id":"template-1",
 		"template_revision":1
 	}`))
-	request.Header.Set("traceparent", "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01")
+	request = requestWithServerSpan(t, request)
 	handler.ServeHTTP(response, request)
 
 	if response.Code != http.StatusAccepted {
 		t.Fatalf("status = %d body=%s", response.Code, response.Body.String())
 	}
-	if lifecycle.input.InitialTraceParent != request.Header.Get("traceparent") ||
+	if lifecycle.input.InitialTraceParent != testServerTraceParent ||
 		lifecycle.input.OwnerUserID != "user-1" || lifecycle.input.TemplateRevision != 1 {
 		t.Fatalf("CreateAgent input = %+v", lifecycle.input)
 	}
@@ -300,7 +301,7 @@ func TestLifecycleHandlerRequestsAgentRebuildWithStableContract(t *testing.T) {
 			"template_revision":2
 		}`),
 	)
-	request.Header.Set("traceparent", "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01")
+	request = requestWithServerSpan(t, request)
 	handler.ServeHTTP(response, request)
 
 	if response.Code != http.StatusAccepted {
@@ -308,7 +309,7 @@ func TestLifecycleHandlerRequestsAgentRebuildWithStableContract(t *testing.T) {
 	}
 	if lifecycle.rebuildInput.AgentID != "agent-1" ||
 		lifecycle.rebuildInput.TemplateRevision != 2 ||
-		lifecycle.rebuildInput.InitialTraceParent != request.Header.Get("traceparent") {
+		lifecycle.rebuildInput.InitialTraceParent != testServerTraceParent {
 		t.Fatalf("RebuildAgent input = %+v", lifecycle.rebuildInput)
 	}
 	var payload operationResponse
@@ -349,7 +350,7 @@ func TestLifecycleHandlerRequestsAgentDisableWithStableContract(t *testing.T) {
 		http.MethodPost, "/internal/agents/agent-1/disable",
 		strings.NewReader(`{"request_id":"request-disable-1"}`),
 	)
-	request.Header.Set("traceparent", "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01")
+	request = requestWithServerSpan(t, request)
 	handler.ServeHTTP(response, request)
 
 	if response.Code != http.StatusAccepted {
@@ -357,7 +358,7 @@ func TestLifecycleHandlerRequestsAgentDisableWithStableContract(t *testing.T) {
 	}
 	if lifecycle.disableInput.AgentID != "agent-1" ||
 		lifecycle.disableInput.RequestID != "request-disable-1" ||
-		lifecycle.disableInput.InitialTraceParent != request.Header.Get("traceparent") {
+		lifecycle.disableInput.InitialTraceParent != testServerTraceParent {
 		t.Fatalf("DisableAgent input = %+v", lifecycle.disableInput)
 	}
 	var payload operationResponse
@@ -398,7 +399,7 @@ func TestLifecycleHandlerRequestsAgentEnableWithStableContract(t *testing.T) {
 		http.MethodPost, "/internal/agents/agent-1/enable",
 		strings.NewReader(`{"request_id":"request-enable-1"}`),
 	)
-	request.Header.Set("traceparent", "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01")
+	request = requestWithServerSpan(t, request)
 	handler.ServeHTTP(response, request)
 
 	if response.Code != http.StatusAccepted {
@@ -406,7 +407,7 @@ func TestLifecycleHandlerRequestsAgentEnableWithStableContract(t *testing.T) {
 	}
 	if lifecycle.enableInput.AgentID != "agent-1" ||
 		lifecycle.enableInput.RequestID != "request-enable-1" ||
-		lifecycle.enableInput.InitialTraceParent != request.Header.Get("traceparent") {
+		lifecycle.enableInput.InitialTraceParent != testServerTraceParent {
 		t.Fatalf("EnableAgent input = %+v", lifecycle.enableInput)
 	}
 	var payload operationResponse
@@ -447,7 +448,7 @@ func TestLifecycleHandlerRequestsAgentDeleteWithStableContract(t *testing.T) {
 		http.MethodPost, "/internal/agents/agent-1/delete",
 		strings.NewReader(`{"request_id":"request-delete-1"}`),
 	)
-	request.Header.Set("traceparent", "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01")
+	request = requestWithServerSpan(t, request)
 	handler.ServeHTTP(response, request)
 
 	if response.Code != http.StatusAccepted {
@@ -455,7 +456,7 @@ func TestLifecycleHandlerRequestsAgentDeleteWithStableContract(t *testing.T) {
 	}
 	if lifecycle.deleteInput.AgentID != "agent-1" ||
 		lifecycle.deleteInput.RequestID != "request-delete-1" ||
-		lifecycle.deleteInput.InitialTraceParent != request.Header.Get("traceparent") {
+		lifecycle.deleteInput.InitialTraceParent != testServerTraceParent {
 		t.Fatalf("DeleteAgent input = %+v", lifecycle.deleteInput)
 	}
 	var payload operationResponse
@@ -466,6 +467,75 @@ func TestLifecycleHandlerRequestsAgentDeleteWithStableContract(t *testing.T) {
 		payload.RequestID != "request-delete-1" {
 		t.Fatalf("response = %+v", payload)
 	}
+}
+
+func TestLifecycleHandlerAppliesTotalAttemptTimeout(t *testing.T) {
+	t.Parallel()
+
+	lifecycle := &lifecycleServiceStub{waitForCreateCancellation: true}
+	handler, err := NewHandler(
+		&catalogServiceStub{}, lifecycle, &runServiceStub{}, &agentQueryServiceStub{},
+		&agentEventServiceStub{}, func(context.Context) error { return nil },
+		WithLifecycleTimeout(10*time.Millisecond),
+	)
+	if err != nil {
+		t.Fatalf("new handler: %v", err)
+	}
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(
+		http.MethodPost, "/internal/agents",
+		strings.NewReader(`{
+			"request_id":"request-timeout-1",
+			"organization_id":"org-1",
+			"owner_user_id":"user-1",
+			"name":"Timeout Agent",
+			"template_id":"template-1",
+			"template_revision":1
+		}`),
+	)
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusGatewayTimeout {
+		t.Fatalf("status = %d body=%s", response.Code, response.Body.String())
+	}
+	var payload errorResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.Code != "lifecycle_timeout" || !payload.Retryable || !lifecycle.createHadDeadline {
+		t.Fatalf("timeout response=%+v deadline=%v", payload, lifecycle.createHadDeadline)
+	}
+}
+
+func TestNewHandlerRejectsInvalidLifecycleTimeout(t *testing.T) {
+	t.Parallel()
+
+	_, err := NewHandler(
+		&catalogServiceStub{}, &lifecycleServiceStub{}, &runServiceStub{},
+		&agentQueryServiceStub{}, &agentEventServiceStub{},
+		func(context.Context) error { return nil }, WithLifecycleTimeout(0),
+	)
+	if err == nil {
+		t.Fatal("zero lifecycle timeout was accepted")
+	}
+}
+
+const testServerTraceParent = "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01"
+
+func requestWithServerSpan(t *testing.T, request *http.Request) *http.Request {
+	t.Helper()
+	traceID, err := trace.TraceIDFromHex("0123456789abcdef0123456789abcdef")
+	if err != nil {
+		t.Fatalf("parse test trace ID: %v", err)
+	}
+	spanID, err := trace.SpanIDFromHex("0123456789abcdef")
+	if err != nil {
+		t.Fatalf("parse test span ID: %v", err)
+	}
+	spanContext := trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID: traceID, SpanID: spanID, TraceFlags: trace.FlagsSampled,
+	})
+	return request.WithContext(trace.ContextWithSpanContext(request.Context(), spanContext))
 }
 
 func TestObserveLifecycleResultMarksTerminalBusinessFailure(t *testing.T) {
@@ -502,25 +572,32 @@ type catalogServiceStub struct {
 }
 
 type lifecycleServiceStub struct {
-	input              application.CreateAgentInput
-	result             application.CreateAgentResult
-	rebuildInput       application.RebuildAgentInput
-	rebuildResult      application.RebuildAgentResult
-	disableInput       application.DisableAgentInput
-	disableResult      application.DisableAgentResult
-	enableInput        application.EnableAgentInput
-	enableResult       application.EnableAgentResult
-	deleteInput        application.DeleteAgentInput
-	deleteResult       application.DeleteAgentResult
-	operation          application.OperationView
-	operationRequestID string
-	err                error
+	input                     application.CreateAgentInput
+	result                    application.CreateAgentResult
+	rebuildInput              application.RebuildAgentInput
+	rebuildResult             application.RebuildAgentResult
+	disableInput              application.DisableAgentInput
+	disableResult             application.DisableAgentResult
+	enableInput               application.EnableAgentInput
+	enableResult              application.EnableAgentResult
+	deleteInput               application.DeleteAgentInput
+	deleteResult              application.DeleteAgentResult
+	operation                 application.OperationView
+	operationRequestID        string
+	err                       error
+	waitForCreateCancellation bool
+	createHadDeadline         bool
 }
 
 func (service *lifecycleServiceStub) CreateAgent(
-	_ context.Context, input application.CreateAgentInput,
+	ctx context.Context, input application.CreateAgentInput,
 ) (application.CreateAgentResult, error) {
 	service.input = input
+	_, service.createHadDeadline = ctx.Deadline()
+	if service.waitForCreateCancellation {
+		<-ctx.Done()
+		return application.CreateAgentResult{}, ctx.Err()
+	}
 	return service.result, service.err
 }
 

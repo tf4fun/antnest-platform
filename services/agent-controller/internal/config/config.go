@@ -3,8 +3,14 @@ package config
 import (
 	"encoding/base64"
 	"fmt"
+	"math"
 	"strings"
 	"time"
+)
+
+const (
+	maximumLifecycleDependencyCalls = 10
+	maximumRecoveryPhaseCalls       = 4
 )
 
 type Config struct {
@@ -16,6 +22,7 @@ type Config struct {
 	DependencyTimeout      time.Duration
 	DrainTimeout           time.Duration
 	RunAdmissionTTL        time.Duration
+	LifecycleTimeout       time.Duration
 	RecoveryPollInterval   time.Duration
 	RecoveryStaleAfter     time.Duration
 	RecoveryAttemptTimeout time.Duration
@@ -44,6 +51,13 @@ func Load(lookup func(string) string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	lifecycleTimeout, err := durationBudget(
+		dependencyTimeout, maximumLifecycleDependencyCalls, 30*time.Second,
+		"lifecycle timeout",
+	)
+	if err != nil {
+		return Config{}, err
+	}
 	drainTimeout, err := positiveDuration(
 		lookup("ANTNEST_AGENT_CONTROLLER_DRAIN_TIMEOUT"),
 		"ANTNEST_AGENT_CONTROLLER_DRAIN_TIMEOUT",
@@ -68,7 +82,13 @@ func Load(lookup func(string) string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	recoveryAttemptTimeout := dependencyTimeout + 5*time.Second
+	recoveryAttemptTimeout, err := durationBudget(
+		dependencyTimeout, maximumRecoveryPhaseCalls, 5*time.Second,
+		"lifecycle recovery attempt timeout",
+	)
+	if err != nil {
+		return Config{}, err
+	}
 	recoveryLeaseDuration := recoveryAttemptTimeout + 30*time.Second
 	recoveryStaleAfter, err := positiveDuration(
 		lookup("ANTNEST_AGENT_CONTROLLER_RECOVERY_STALE_AFTER"),
@@ -91,6 +111,7 @@ func Load(lookup func(string) string) (Config, error) {
 		DependencyTimeout:      dependencyTimeout,
 		DrainTimeout:           drainTimeout,
 		RunAdmissionTTL:        runAdmissionTTL,
+		LifecycleTimeout:       lifecycleTimeout,
 		RecoveryPollInterval:   recoveryPollInterval,
 		RecoveryStaleAfter:     recoveryStaleAfter,
 		RecoveryAttemptTimeout: recoveryAttemptTimeout,
@@ -116,6 +137,15 @@ func Load(lookup func(string) string) (Config, error) {
 	}
 	config.EncryptionKey = key
 	return config, nil
+}
+
+func durationBudget(
+	base time.Duration, calls int64, grace time.Duration, name string,
+) (time.Duration, error) {
+	if calls <= 0 || grace < 0 || base > (time.Duration(math.MaxInt64)-grace)/time.Duration(calls) {
+		return 0, fmt.Errorf("%s exceeds the supported duration", name)
+	}
+	return base*time.Duration(calls) + grace, nil
 }
 
 func decodeEncryptionKey(raw string) ([]byte, error) {

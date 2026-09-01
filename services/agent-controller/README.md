@@ -17,10 +17,9 @@ the Egress attachment, deactivates owner access, and retains immutable audit
 facts. Agent-wide Run admission resolves access, freezes one immutable execution
 snapshot, scopes Provider credential access, and seals terminal Tool-effect
 facts. Current Agent projection queries and authoritative event replay/watch
-routes are runnable. PostgreSQL leasing, fencing, retry scheduling, and the
-recovery worker state-machine adapter are implemented and tested. Startup
-supervision and recovery-attempt OpenTelemetry wiring remain pending, so stale
-operations still require explicit replay until that integration is complete.
+routes are runnable. A supervised PostgreSQL-leased recovery worker resumes
+stale running lifecycle operations, fences overlapping attempts, and emits a
+new trace linked to the original request and previous recovery attempt.
 
 ## Owns
 

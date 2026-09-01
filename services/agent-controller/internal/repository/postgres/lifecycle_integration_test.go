@@ -102,13 +102,30 @@ func TestLifecycleRepositoryPersistsCreateSagaAndPublishesAtomically(t *testing.
 	if operation.RequestID != begin.Operation.RequestID || operation.Phase != domain.PhaseNetworkEnsure {
 		t.Fatalf("lifecycle operation = %+v", operation)
 	}
+	claim, found, err := repository.ClaimLifecycleRecovery(ctx, ports.ClaimLifecycleRecovery{
+		WorkerID: "worker-create-integration", StaleAfter: time.Second,
+		LeaseDuration: time.Minute,
+	})
+	if err != nil || !found || claim.Operation.RequestID != begin.Operation.RequestID {
+		t.Fatalf("claim create recovery: claim=%+v found=%v err=%v", claim, found, err)
+	}
+	if err := repository.StartLifecycleRecoveryAttempt(ctx, ports.StartLifecycleRecoveryAttempt{
+		RequestID: begin.Operation.RequestID, WorkerID: claim.WorkerID,
+		Attempt:     claim.Attempt,
+		TraceParent: "00-33333333333333333333333333333333-3333333333333333-01",
+	}); err != nil {
+		t.Fatalf("start create recovery: %v", err)
+	}
+	recoveryCtx := ports.WithLifecycleRecoveryToken(ctx, ports.LifecycleRecoveryToken{
+		RequestID: begin.Operation.RequestID, WorkerID: claim.WorkerID, Attempt: claim.Attempt,
+	})
 
 	attachment := ports.NetworkAttachment{
 		AgentID: "agent-integration", TunnelIPv4: "100.64.0.2", ResolverIPv4: "100.64.0.1",
 		PacketContractRevision: 1, EgressIPv4: "10.20.0.8", EgressPort: 8092, State: "active",
 	}
 	withNetwork, err := repository.RecordCreateNetwork(
-		ctx, begin.Operation.RequestID, fingerprint, attachment,
+		recoveryCtx, begin.Operation.RequestID, fingerprint, attachment,
 		domain.ChildRequestID(begin.Operation.RequestID, domain.PhaseRuntimeInitialize), now.Add(time.Second),
 	)
 	if err != nil || withNetwork.Operation.Phase != domain.PhaseRuntimeInitialize {
@@ -120,14 +137,14 @@ func TestLifecycleRepositoryPersistsCreateSagaAndPublishesAtomically(t *testing.
 		LifecycleState: "ready", Health: "healthy",
 	}
 	withRuntime, err := repository.RecordCreateRuntime(
-		ctx, begin.Operation.RequestID, fingerprint, runtime,
+		recoveryCtx, begin.Operation.RequestID, fingerprint, runtime,
 		domain.ChildRequestID(begin.Operation.RequestID, domain.PhasePublish), now.Add(2*time.Second),
 	)
 	if err != nil || withRuntime.Operation.Phase != domain.PhasePublish {
 		t.Fatalf("record Runtime: state=%+v err=%v", withRuntime, err)
 	}
 
-	published, err := repository.PublishAgentCreate(ctx, ports.PublishAgentCreate{
+	published, err := repository.PublishAgentCreate(recoveryCtx, ports.PublishAgentCreate{
 		RequestID: begin.Operation.RequestID, Fingerprint: fingerprint,
 		Execution: ports.ExecutionRecord{
 			ID: "execution-integration", AgentID: begin.Agent.AgentID, Revision: 1,
@@ -150,8 +167,15 @@ func TestLifecycleRepositoryPersistsCreateSagaAndPublishesAtomically(t *testing.
 	}
 	if published.Agent.LifecycleState != domain.AgentAvailable ||
 		published.Agent.ExecutionRevisionID != "execution-integration" ||
-		published.Operation.State != domain.OperationCompleted || published.Operation.Phase != domain.PhaseCompleted {
+		published.Operation.State != domain.OperationCompleted || published.Operation.Phase != domain.PhaseCompleted ||
+		published.Operation.RecoveryOwner != "" || published.Operation.RecoveryLeaseUntil != nil {
 		t.Fatalf("published state = %+v", published)
+	}
+	if err := repository.ReleaseLifecycleRecoveryClaim(ctx, ports.ReleaseLifecycleRecoveryClaim{
+		RequestID: begin.Operation.RequestID, WorkerID: claim.WorkerID,
+		Attempt: claim.Attempt, RetryAfter: time.Second,
+	}); !errors.Is(err, ports.ErrLifecycleRecoveryClaimLost) {
+		t.Fatalf("terminal create retained recovery lease: %v", err)
 	}
 	var eventCount int
 	if err := repository.pool.QueryRow(ctx, `

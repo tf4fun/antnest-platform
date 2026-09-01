@@ -78,6 +78,41 @@ WHERE request_id = 'request-stale'`); err != nil {
 	}); err != nil {
 		t.Fatalf("start current attempt: %v", err)
 	}
+	attachment := ports.NetworkAttachment{AgentID: "agent-stale", State: "active"}
+	if _, err := repository.RecordCreateNetwork(
+		ctx, "request-stale", strings.Repeat("a", 64), attachment,
+		domain.ChildRequestID("request-stale", domain.PhaseRuntimeInitialize), time.Now().UTC(),
+	); !errors.Is(err, ports.ErrConcurrentChange) {
+		t.Fatalf("explicit replay bypassed recovery lease: %v", err)
+	}
+	expiredCtx := ports.WithLifecycleRecoveryToken(ctx, ports.LifecycleRecoveryToken{
+		RequestID: "request-stale", WorkerID: "worker-a", Attempt: 2,
+	})
+	if _, err := repository.RecordCreateNetwork(
+		expiredCtx, "request-stale", strings.Repeat("a", 64), attachment,
+		domain.ChildRequestID("request-stale", domain.PhaseRuntimeInitialize), time.Now().UTC(),
+	); !errors.Is(err, ports.ErrLifecycleRecoveryClaimLost) {
+		t.Fatalf("expired recovery attempt mutated operation: %v", err)
+	}
+	currentCtx := ports.WithLifecycleRecoveryToken(ctx, ports.LifecycleRecoveryToken{
+		RequestID: "request-stale", WorkerID: "worker-b", Attempt: 3,
+	})
+	transaction, err := repository.pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin current lease verification: %v", err)
+	}
+	operation, err := loadLifecycleOperation(ctx, transaction, "request-stale", "FOR UPDATE")
+	if err != nil {
+		_ = transaction.Rollback(ctx)
+		t.Fatalf("load current recovery operation: %v", err)
+	}
+	if err := authorizeLifecycleMutation(currentCtx, transaction, operation); err != nil {
+		_ = transaction.Rollback(ctx)
+		t.Fatalf("current recovery attempt was fenced: %v", err)
+	}
+	if err := transaction.Rollback(ctx); err != nil {
+		t.Fatalf("rollback current lease verification: %v", err)
+	}
 	if err := repository.ReleaseLifecycleRecoveryClaim(ctx, ports.ReleaseLifecycleRecoveryClaim{
 		RequestID: "request-stale", WorkerID: "worker-a", Attempt: 2,
 		Failed: true, RetryAfter: time.Minute,
@@ -95,7 +130,7 @@ WHERE request_id = 'request-stale'`); err != nil {
 		t.Fatalf("release current attempt: %v", err)
 	}
 
-	operation, err := repository.GetLifecycleOperation(ctx, "request-stale")
+	operation, err = repository.GetLifecycleOperation(ctx, "request-stale")
 	if err != nil {
 		t.Fatalf("load released operation: %v", err)
 	}
