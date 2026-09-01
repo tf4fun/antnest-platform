@@ -264,6 +264,9 @@ func (service *LifecycleService) continueAgentCreate(
 	if state.Operation.State != domain.OperationRunning {
 		return createAgentResult(state), nil
 	}
+	if lifecycleOperationReservedForRecovery(ctx, state.Operation) {
+		return createAgentResult(state), nil
+	}
 	var err error
 	if state.Operation.Phase == domain.PhaseNetworkEnsure {
 		state, err = service.ensureCreateNetwork(ctx, state)

@@ -130,6 +130,9 @@ func (repository *Repository) SettleAgentDisableDrain(
 	if err != nil {
 		return ports.AgentDisableState{}, err
 	}
+	if err := authorizeLifecycleMutation(ctx, transaction, operation); err != nil {
+		return ports.AgentDisableState{}, err
+	}
 	if operation.Kind != domain.OperationDisable || operation.RequestFingerprint != fingerprint {
 		return ports.AgentDisableState{}, ports.ErrRequestConflict
 	}
@@ -183,6 +186,9 @@ func (repository *Repository) RecordAgentDisablePolicy(
 	if err != nil {
 		return ports.AgentDisableState{}, err
 	}
+	if err := authorizeLifecycleMutation(ctx, transaction, operation); err != nil {
+		return ports.AgentDisableState{}, err
+	}
 	if operation.Kind != domain.OperationDisable || operation.RequestFingerprint != fingerprint {
 		return ports.AgentDisableState{}, ports.ErrRequestConflict
 	}
@@ -234,6 +240,9 @@ func (repository *Repository) AdvanceAgentDisable(
 	defer func() { _ = transaction.Rollback(ctx) }()
 	operation, err := loadLifecycleOperation(ctx, transaction, input.RequestID, "FOR UPDATE")
 	if err != nil {
+		return ports.AgentDisableState{}, err
+	}
+	if err := authorizeLifecycleMutation(ctx, transaction, operation); err != nil {
 		return ports.AgentDisableState{}, err
 	}
 	if operation.Kind != domain.OperationDisable || operation.RequestFingerprint != input.Fingerprint {
@@ -292,6 +301,9 @@ func (repository *Repository) PublishAgentDisable(
 	if err != nil {
 		return ports.AgentDisableState{}, err
 	}
+	if err := authorizeLifecycleMutation(ctx, transaction, operation); err != nil {
+		return ports.AgentDisableState{}, err
+	}
 	if operation.Kind != domain.OperationDisable || operation.RequestFingerprint != input.Fingerprint {
 		return ports.AgentDisableState{}, ports.ErrRequestConflict
 	}
@@ -339,7 +351,8 @@ WHERE id = $1 AND desired_state = 'disabled' AND lifecycle_state = 'available'
 	if _, err := transaction.Exec(ctx, `
 UPDATE agent_controller.agent_lifecycle_operations
 SET phase = 'completed', state = 'completed', child_request_id = '',
-    error_code = '', error_detail = '', retryable = FALSE, updated_at = $2
+    error_code = '', error_detail = '', retryable = FALSE,
+    recovery_owner = '', recovery_lease_until = NULL, updated_at = $2
 WHERE request_id = $1`, input.RequestID, input.Now); err != nil {
 		return ports.AgentDisableState{}, fmt.Errorf("complete Agent disable operation: %w", err)
 	}
@@ -382,6 +395,9 @@ func (repository *Repository) FailAgentDisable(
 	defer func() { _ = transaction.Rollback(ctx) }()
 	operation, err := loadLifecycleOperation(ctx, transaction, input.RequestID, "FOR UPDATE")
 	if err != nil {
+		return ports.AgentDisableState{}, err
+	}
+	if err := authorizeLifecycleMutation(ctx, transaction, operation); err != nil {
 		return ports.AgentDisableState{}, err
 	}
 	if operation.Kind != domain.OperationDisable || operation.RequestFingerprint != input.Fingerprint {
@@ -472,7 +488,8 @@ WHERE id = $1 AND desired_state = 'disabled' AND lifecycle_state = 'available'
 UPDATE agent_controller.agent_lifecycle_operations
 SET state = 'failed', child_request_id = '', error_code = $2,
     error_detail = $3, retryable = FALSE, source_runtime_inspection = $4,
-    source_runtime_absence_proof = $5, updated_at = $6
+    source_runtime_absence_proof = $5,
+    recovery_owner = '', recovery_lease_until = NULL, updated_at = $6
 WHERE request_id = $1`, input.RequestID, input.Code, input.Detail,
 		nullJSON(inspectionPayload), nullJSON(absenceProofPayload), input.Now); err != nil {
 		return ports.AgentDisableState{}, fmt.Errorf("fail Agent disable operation: %w", err)

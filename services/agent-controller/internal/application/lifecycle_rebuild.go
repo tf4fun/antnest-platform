@@ -148,6 +148,9 @@ func (service *LifecycleService) continueAgentRebuild(
 	if state.Operation.State != domain.OperationRunning {
 		return rebuildAgentResult(state), nil
 	}
+	if lifecycleOperationReservedForRecovery(ctx, state.Operation) {
+		return rebuildAgentResult(state), nil
+	}
 	var err error
 	if state.Operation.Phase == domain.PhaseDrain {
 		now := service.clock.Now()

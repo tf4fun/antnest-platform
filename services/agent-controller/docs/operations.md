@@ -41,8 +41,6 @@ dedicated listener connection fans hints out to every local watcher; watchers
 do not consume the lifecycle/query connection pool. A disconnect is
 recovered by List from the consumer-owned cursor, never by assuming the last
 socket write was applied.
-The background lifecycle recovery worker described below is not yet
-started by the process.
 
 Multiple replicas may serve reads and Run admission. Lifecycle workers claim
 operations with PostgreSQL row locking; Agent-row constraints remain the final
@@ -66,6 +64,10 @@ Optional:
 - `ANTNEST_AGENT_CONTROLLER_DEPENDENCY_TIMEOUT` (default `150s`);
 - `ANTNEST_AGENT_CONTROLLER_DRAIN_TIMEOUT` (default `5m`);
 - `ANTNEST_AGENT_CONTROLLER_RUN_ADMISSION_TTL` (default `30m`);
+- `ANTNEST_AGENT_CONTROLLER_RECOVERY_POLL_INTERVAL` (default `2s`);
+- `ANTNEST_AGENT_CONTROLLER_RECOVERY_STALE_AFTER` (default dependency timeout
+  plus `35s`; it must cover the lifecycle attempt timeout and finalization
+  grace);
 - `ANTNEST_AGENT_CONTROLLER_SHUTDOWN_TIMEOUT` (default `15s`);
 - standard OTEL environment variables using OTLP HTTP/protobuf.
 
@@ -91,6 +93,23 @@ turn a downstream outage into a restart loop.
 ## Lifecycle Failure Recovery
 
 - Retry an uncertain lifecycle command with the original request ID.
+- The recovery worker implementation can resume stale `running` operations. It
+  claims one
+  operation at a time with `FOR UPDATE SKIP LOCKED`, a bounded lease, and a
+  monotonically increasing fencing attempt. Multiple replicas may run the same
+  worker safely.
+- The stale threshold prevents the worker from racing a normally active request
+  before its dependency timeout. A claimed attempt has a shorter execution
+  timeout than its lease. Failure releases the claim with bounded exponential
+  backoff; successful progress resets the backoff.
+- Recovery reloads the persisted operation and invokes the same create,
+  rebuild, disable, enable, or delete state machine. Stored child request IDs
+  are reused exactly. If a lease expires and execution overlaps, downstream
+  idempotency and repository CAS decide the winner; the expired attempt cannot
+  release or reschedule a newer claim.
+- Startup supervision and recovery-attempt OpenTelemetry wiring are not yet
+  connected. Until they are, operators must retry an uncertain command with
+  its original request ID to trigger replay.
 - Inspect `/internal/agent-operations/{request_id}` before creating a new
   operation. Stage 2 uses the idempotency request ID as the lifecycle operation
   identity; there is no second alias to lose or reconcile.
@@ -102,8 +121,8 @@ turn a downstream outage into a restart loop.
   readiness, and publication are conclusive.
 - A rebuild in `drain` has made no external mutation. It advances only after no
   active Run executor occupies the Agent.
-- Until the recovery worker is implemented, a draining Agent with a settled
-  Run advances only when the original lifecycle request is replayed.
+- A draining Agent is revisited by the worker after the active Run settles; no
+  manual request replay is required.
 - An enable timeout before Runtime readiness is retried with the same request
   ID. After Runtime readiness, policy restoration remains a durable phase and
   must complete before the Agent becomes available.
@@ -160,12 +179,12 @@ ACP session/prompt
 Lifecycle traces must show each Saga phase and all downstream control calls.
 Create has two Egress calls by design: initial allocation and the exact active
 attachment barrier immediately before publication.
-The current request-driven slice propagates W3C context through both dependency
-clients and correlates retries by durable request ID. The future recovery worker
-must create a new trace with Span Links to prior attempts; it must not fabricate
-one continuous parent/child timeline across process restarts. Trace identities
-are correlation data, not metric labels. No packet-level or secret-bearing spans
-are emitted.
+Request-driven work propagates W3C context through both dependency clients and
+correlates retries by durable request ID. Each background recovery attempt
+creates a new trace with Span Links to the initial request and previous recovery
+attempt; it never fabricates one continuous parent/child timeline across
+process restarts. Trace identities are correlation data, not metric labels. No
+packet-level or secret-bearing spans are emitted.
 
 ## Retention And Backup
 

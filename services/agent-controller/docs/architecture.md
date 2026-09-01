@@ -15,9 +15,9 @@ as vertical business slices. At present ModelProfile/Template Catalog, current
 Agent projection queries, Run admission, and the Agent create, explicit rebuild,
 disable, enable, and delete Sagas are runnable. Lifecycle Runtime barriers
 atomically release unresolved Run occupancy and append the corresponding Agent
-event. The background recovery worker remains in progress and must not be
-inferred from table or contract presence alone. Authoritative event replay and
-best-effort SSE watch are runnable.
+event. A background recovery worker claims stale running operations through
+PostgreSQL leases and resumes the same persisted state machines. Authoritative
+event replay and best-effort SSE watch are runnable.
 
 ## Aggregate Model
 
@@ -124,6 +124,21 @@ may be retried only with the same canonical fingerprint. The operation stores
 its source preconditions, target revision, child request IDs, phase, result,
 and failure class before or after each external effect as applicable.
 
+Recovery ownership is execution metadata, not Agent state. A worker claims one
+stale running operation with `FOR UPDATE SKIP LOCKED`, a bounded lease, and a
+monotonic attempt fencing token. It reloads the operation by its stored request
+fingerprint and resumes the existing phase machine. It never reconstructs the
+original command body and never allocates a replacement child request ID.
+Operation phase CAS, Agent aggregate CAS, and downstream child-request
+idempotency remain authoritative if an expired worker overlaps a newer worker
+or an explicit client replay.
+
+Initial request and recovery attempts are separate traces. Each recovery
+attempt stores its own W3C trace parent before making an external call and
+starts a new root span linked to the initial request and previous recovery
+attempt. Recovery ownership, lease expiry, and retry scheduling are not emitted
+as domain events or copied into the Agent projection.
+
 Operation kinds and successful paths are:
 
 ```text
@@ -217,10 +232,10 @@ candidate Runtime.
 8. Any terminal failure sets `unavailable`, records exact phase/class, and
    appends `agent_build_failed`.
 
-The request thread currently drives these three durable create phases. A transport
-timeout leaves the durable operation at its last committed phase; replaying the
-same request continues with the same child request identity. Background claim
-and recovery are added with the lifecycle-recovery slice.
+The request thread normally drives these three durable create phases. A
+transport timeout leaves the durable operation at its last committed phase;
+replaying the same request or background recovery continues with the same child
+request identity.
 
 ### Explicit Rebuild
 

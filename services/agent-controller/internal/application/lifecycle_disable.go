@@ -126,6 +126,9 @@ func (service *LifecycleService) continueAgentDisable(
 	if state.Operation.State != domain.OperationRunning {
 		return disableAgentResult(state), nil
 	}
+	if lifecycleOperationReservedForRecovery(ctx, state.Operation) {
+		return disableAgentResult(state), nil
+	}
 	var err error
 	if state.Operation.Phase == domain.PhaseDrain {
 		if !service.clock.Now().Before(state.Operation.CreatedAt.Add(service.drainTimeout)) {

@@ -138,6 +138,9 @@ func (repository *Repository) SettleAgentDeleteDrain(
 	if err != nil {
 		return ports.AgentDeleteState{}, err
 	}
+	if err := authorizeLifecycleMutation(ctx, transaction, operation); err != nil {
+		return ports.AgentDeleteState{}, err
+	}
 	if operation.Kind != domain.OperationDelete || operation.RequestFingerprint != fingerprint {
 		return ports.AgentDeleteState{}, ports.ErrRequestConflict
 	}
@@ -170,6 +173,9 @@ func (repository *Repository) AdvanceAgentDelete(
 	defer func() { _ = transaction.Rollback(ctx) }()
 	operation, err := loadLifecycleOperation(ctx, transaction, input.RequestID, "FOR UPDATE")
 	if err != nil {
+		return ports.AgentDeleteState{}, err
+	}
+	if err := authorizeLifecycleMutation(ctx, transaction, operation); err != nil {
 		return ports.AgentDeleteState{}, err
 	}
 	if operation.Kind != domain.OperationDelete || operation.RequestFingerprint != input.Fingerprint {
@@ -233,6 +239,9 @@ func (repository *Repository) PublishAgentDelete(
 	if err != nil {
 		return ports.AgentDeleteState{}, err
 	}
+	if err := authorizeLifecycleMutation(ctx, transaction, operation); err != nil {
+		return ports.AgentDeleteState{}, err
+	}
 	if operation.Kind != domain.OperationDelete || operation.RequestFingerprint != input.Fingerprint {
 		return ports.AgentDeleteState{}, ports.ErrRequestConflict
 	}
@@ -287,7 +296,8 @@ WHERE agent_id = $1 AND active`, operation.AgentID, input.Now); err != nil {
 	completed, err := transaction.Exec(ctx, `
 UPDATE agent_controller.agent_lifecycle_operations
 SET phase = 'completed', state = 'completed', child_request_id = '',
-    error_code = '', error_detail = '', retryable = FALSE, updated_at = $2
+    error_code = '', error_detail = '', retryable = FALSE,
+    recovery_owner = '', recovery_lease_until = NULL, updated_at = $2
 WHERE request_id = $1 AND state = 'running' AND phase = 'publish'`,
 		operation.RequestID, input.Now,
 	)

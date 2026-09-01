@@ -145,6 +145,9 @@ func (repository *Repository) advanceCreatePhase(
 	if err != nil {
 		return ports.AgentCreateState{}, err
 	}
+	if err := authorizeLifecycleMutation(ctx, transaction, operation); err != nil {
+		return ports.AgentCreateState{}, err
+	}
 	if operation.Kind != domain.OperationCreate || operation.RequestFingerprint != fingerprint {
 		return ports.AgentCreateState{}, ports.ErrRequestConflict
 	}
@@ -191,6 +194,9 @@ func (repository *Repository) PublishAgentCreate(
 	if err != nil {
 		return ports.AgentCreateState{}, err
 	}
+	if err := authorizeLifecycleMutation(ctx, transaction, operation); err != nil {
+		return ports.AgentCreateState{}, err
+	}
 	if operation.RequestFingerprint != input.Fingerprint || operation.Kind != domain.OperationCreate {
 		return ports.AgentCreateState{}, ports.ErrRequestConflict
 	}
@@ -213,7 +219,8 @@ func (repository *Repository) PublishAgentCreate(
 	if _, err := transaction.Exec(ctx, `
 UPDATE agent_controller.agent_lifecycle_operations
 SET phase = 'completed', state = 'completed', child_request_id = '',
-    error_code = '', error_detail = '', retryable = FALSE, updated_at = $2
+    error_code = '', error_detail = '', retryable = FALSE,
+    recovery_owner = '', recovery_lease_until = NULL, updated_at = $2
 WHERE request_id = $1`, input.RequestID, input.Now); err != nil {
 		return ports.AgentCreateState{}, fmt.Errorf("complete Agent create operation: %w", err)
 	}
@@ -242,6 +249,9 @@ func (repository *Repository) FailAgentCreate(
 	defer func() { _ = transaction.Rollback(ctx) }()
 	operation, err := loadLifecycleOperation(ctx, transaction, input.RequestID, "FOR UPDATE")
 	if err != nil {
+		return ports.AgentCreateState{}, err
+	}
+	if err := authorizeLifecycleMutation(ctx, transaction, operation); err != nil {
 		return ports.AgentCreateState{}, err
 	}
 	if operation.RequestFingerprint != input.Fingerprint || operation.Kind != domain.OperationCreate {
@@ -275,7 +285,8 @@ WHERE id = $1 AND active_operation_request_id = $7 AND aggregate_sequence = $8`,
 	if _, err := transaction.Exec(ctx, `
 UPDATE agent_controller.agent_lifecycle_operations
 SET state = 'failed', child_request_id = '', error_code = $2,
-    error_detail = $3, retryable = $4, updated_at = $5
+    error_detail = $3, retryable = $4,
+    recovery_owner = '', recovery_lease_until = NULL, updated_at = $5
 WHERE request_id = $1`, input.RequestID, input.Code, input.Detail, input.Retryable, input.Now); err != nil {
 		return ports.AgentCreateState{}, fmt.Errorf("fail Agent create operation: %w", err)
 	}
@@ -384,10 +395,11 @@ func insertLifecycleOperation(
     source_runtime_revision, source_runtime_absent,
     target_spec_revision_id, child_request_id, network_policy_assignment,
     source_runtime_inspection, source_runtime_absence_proof, network_release_outcome,
-    initial_trace_parent, previous_attempt_trace_id, attempt, created_at, updated_at
+    initial_attempt_trace_parent, previous_recovery_trace_parent, attempt,
+    recovery_after, created_at, updated_at
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-    $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21
+    $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22
 )`,
 		record.RequestID, record.RequestFingerprint, record.AgentID, record.Kind,
 		record.Phase, record.State, record.SourceSpecRevisionID,
@@ -395,8 +407,8 @@ func insertLifecycleOperation(
 		record.SourceRuntimeAbsent, record.TargetSpecRevisionID, record.ChildRequestID,
 		nullJSON(policyPayload), nullJSON(inspectionPayload), nullJSON(absenceProofPayload),
 		record.NetworkReleaseOutcome,
-		record.InitialTraceParent, record.PreviousAttemptTraceID,
-		record.Attempt, record.CreatedAt, record.UpdatedAt,
+		record.InitialTraceParent, record.PreviousRecoveryTraceParent,
+		record.Attempt, record.CreatedAt, record.CreatedAt, record.UpdatedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("insert Agent lifecycle operation: %w", err)
@@ -613,8 +625,10 @@ SELECT request_id, request_fingerprint, agent_id, kind, phase, state,
 	       target_spec_revision_id, child_request_id, network_attachment,
 	       network_policy_assignment, source_runtime_inspection,
 	       source_runtime_absence_proof, runtime_result, network_release_outcome,
-	       initial_trace_parent, previous_attempt_trace_id,
-       attempt, error_code, error_detail, retryable, created_at, updated_at
+	       initial_attempt_trace_parent, previous_recovery_trace_parent,
+	       attempt, recovery_owner, recovery_lease_until, recovery_after,
+	       recovery_failure_count, error_code, error_detail, retryable,
+	       created_at, updated_at
 FROM agent_controller.agent_lifecycle_operations
 WHERE request_id = $1`
 	if lockClause == "FOR UPDATE" {
@@ -635,8 +649,9 @@ func scanLifecycleOperation(scanner lifecycleRowScanner) (ports.LifecycleOperati
 		&record.ChildRequestID, &networkPayload, &policyPayload,
 		&inspectionPayload, &absenceProofPayload, &runtimePayload,
 		&record.NetworkReleaseOutcome,
-		&record.InitialTraceParent, &record.PreviousAttemptTraceID,
-		&record.Attempt, &record.ErrorCode,
+		&record.InitialTraceParent, &record.PreviousRecoveryTraceParent,
+		&record.Attempt, &record.RecoveryOwner, &record.RecoveryLeaseUntil,
+		&record.RecoveryAfter, &record.RecoveryFailureCount, &record.ErrorCode,
 		&record.ErrorDetail, &record.Retryable, &record.CreatedAt, &record.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {

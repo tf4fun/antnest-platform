@@ -21,7 +21,12 @@ func TestLoadRequiresDatabaseAndCanonicalEncryptionKey(t *testing.T) {
 	}
 	if loaded.ListenAddress != ":8080" || loaded.ShutdownTimeout != 15*time.Second ||
 		loaded.DependencyTimeout != 150*time.Second || loaded.DrainTimeout != 5*time.Minute ||
-		loaded.RunAdmissionTTL != 30*time.Minute {
+		loaded.RunAdmissionTTL != 30*time.Minute ||
+		loaded.RecoveryPollInterval != 2*time.Second ||
+		loaded.RecoveryStaleAfter != 185*time.Second ||
+		loaded.RecoveryAttemptTimeout != 155*time.Second ||
+		loaded.RecoveryLeaseDuration != 185*time.Second ||
+		loaded.RecoveryRetryMax != time.Minute {
 		t.Fatalf("defaults = %+v", loaded)
 	}
 	if loaded.RuntimeEgressURL != values["ANTNEST_RUNTIME_EGRESS_URL"] ||
@@ -66,6 +71,16 @@ func TestLoadRejectsInvalidEncryptionKeyAndDuration(t *testing.T) {
 		t.Fatal("non-positive Run admission TTL was accepted")
 	}
 	delete(values, "ANTNEST_AGENT_CONTROLLER_RUN_ADMISSION_TTL")
+	values["ANTNEST_AGENT_CONTROLLER_RECOVERY_POLL_INTERVAL"] = "not-a-duration"
+	if _, err := Load(func(key string) string { return values[key] }); err == nil {
+		t.Fatal("invalid recovery poll interval was accepted")
+	}
+	delete(values, "ANTNEST_AGENT_CONTROLLER_RECOVERY_POLL_INTERVAL")
+	values["ANTNEST_AGENT_CONTROLLER_RECOVERY_STALE_AFTER"] = "149s"
+	if _, err := Load(func(key string) string { return values[key] }); err == nil {
+		t.Fatal("recovery stale threshold shorter than dependency timeout was accepted")
+	}
+	delete(values, "ANTNEST_AGENT_CONTROLLER_RECOVERY_STALE_AFTER")
 	delete(values, "ANTNEST_RUNTIME_EGRESS_URL")
 	if _, err := Load(func(key string) string { return values[key] }); err == nil {
 		t.Fatal("missing Runtime Egress URL was accepted")

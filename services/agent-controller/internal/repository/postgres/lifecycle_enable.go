@@ -150,6 +150,9 @@ func (repository *Repository) AdvanceAgentEnable(
 	if err != nil {
 		return ports.AgentEnableState{}, err
 	}
+	if err := authorizeLifecycleMutation(ctx, transaction, operation); err != nil {
+		return ports.AgentEnableState{}, err
+	}
 	if operation.Kind != domain.OperationEnable || operation.RequestFingerprint != input.Fingerprint {
 		return ports.AgentEnableState{}, ports.ErrRequestConflict
 	}
@@ -193,6 +196,9 @@ func (repository *Repository) PublishAgentEnable(
 	defer func() { _ = transaction.Rollback(ctx) }()
 	operation, err := loadLifecycleOperation(ctx, transaction, input.RequestID, "FOR UPDATE")
 	if err != nil {
+		return ports.AgentEnableState{}, err
+	}
+	if err := authorizeLifecycleMutation(ctx, transaction, operation); err != nil {
 		return ports.AgentEnableState{}, err
 	}
 	if operation.Kind != domain.OperationEnable || operation.RequestFingerprint != input.Fingerprint {
@@ -256,7 +262,8 @@ WHERE id = $1 AND desired_state = 'enabled' AND lifecycle_state = 'disabled'
 	if _, err := transaction.Exec(ctx, `
 UPDATE agent_controller.agent_lifecycle_operations
 SET phase = 'completed', state = 'completed', child_request_id = '',
-    error_code = '', error_detail = '', retryable = FALSE, updated_at = $2
+    error_code = '', error_detail = '', retryable = FALSE,
+    recovery_owner = '', recovery_lease_until = NULL, updated_at = $2
 WHERE request_id = $1`, input.RequestID, input.Now); err != nil {
 		return ports.AgentEnableState{}, fmt.Errorf("complete Agent enable operation: %w", err)
 	}
@@ -293,6 +300,9 @@ func (repository *Repository) FailAgentEnable(
 	defer func() { _ = transaction.Rollback(ctx) }()
 	operation, err := loadLifecycleOperation(ctx, transaction, input.RequestID, "FOR UPDATE")
 	if err != nil {
+		return ports.AgentEnableState{}, err
+	}
+	if err := authorizeLifecycleMutation(ctx, transaction, operation); err != nil {
 		return ports.AgentEnableState{}, err
 	}
 	if operation.Kind != domain.OperationEnable || operation.RequestFingerprint != input.Fingerprint {
@@ -345,7 +355,7 @@ WHERE id = $1 AND desired_state = 'enabled' AND lifecycle_state = 'disabled'
 UPDATE agent_controller.agent_lifecycle_operations
 SET state = 'failed', child_request_id = '', error_code = $2,
     error_detail = $3, retryable = FALSE, source_runtime_inspection = $4,
-    updated_at = $5
+    recovery_owner = '', recovery_lease_until = NULL, updated_at = $5
 WHERE request_id = $1`, input.RequestID, input.Code, input.Detail,
 		nullJSON(inspectionPayload), input.Now); err != nil {
 		return ports.AgentEnableState{}, fmt.Errorf("fail Agent enable operation: %w", err)

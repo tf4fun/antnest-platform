@@ -217,14 +217,22 @@ CREATE TABLE IF NOT EXISTS agent_controller.agent_lifecycle_operations (
     network_release_outcome TEXT NOT NULL DEFAULT '' CHECK (
         network_release_outcome IN ('', 'quarantined', 'authoritative_absent')
     ),
-    initial_trace_parent TEXT NOT NULL DEFAULT '',
-    previous_attempt_trace_id TEXT NOT NULL DEFAULT '',
+    initial_attempt_trace_parent TEXT NOT NULL DEFAULT '',
+    previous_recovery_trace_parent TEXT NOT NULL DEFAULT '',
     attempt BIGINT NOT NULL DEFAULT 1 CHECK (attempt > 0),
+    recovery_owner TEXT NOT NULL DEFAULT '',
+    recovery_lease_until TIMESTAMPTZ,
+    recovery_after TIMESTAMPTZ NOT NULL,
+    recovery_failure_count BIGINT NOT NULL DEFAULT 0 CHECK (recovery_failure_count >= 0),
     error_code TEXT NOT NULL DEFAULT '',
     error_detail TEXT NOT NULL DEFAULT '',
     retryable BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL,
+    CHECK (
+        (recovery_owner = '' AND recovery_lease_until IS NULL) OR
+        (recovery_owner <> '' AND recovery_lease_until IS NOT NULL)
+    ),
     CHECK (
         (kind = 'create' AND source_spec_revision_id = '' AND source_execution_revision_id = ''
             AND source_runtime_revision = ''
@@ -249,6 +257,12 @@ CREATE TABLE IF NOT EXISTS agent_controller.agent_lifecycle_operations (
 
 CREATE UNIQUE INDEX IF NOT EXISTS operations_agent_nonterminal_unique
     ON agent_controller.agent_lifecycle_operations (agent_id)
+    WHERE state = 'running';
+
+CREATE INDEX IF NOT EXISTS operations_recovery_claim_idx
+    ON agent_controller.agent_lifecycle_operations (
+        recovery_after, updated_at, request_id
+    )
     WHERE state = 'running';
 
 CREATE TABLE IF NOT EXISTS agent_controller.run_admissions (

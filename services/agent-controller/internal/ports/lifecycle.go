@@ -162,32 +162,36 @@ type AgentSpecRecord struct {
 }
 
 type LifecycleOperationRecord struct {
-	RequestID                 string
-	RequestFingerprint        string
-	AgentID                   string
-	Kind                      domain.OperationKind
-	Phase                     domain.OperationPhase
-	State                     domain.OperationState
-	SourceSpecRevisionID      string
-	SourceExecutionRevisionID string
-	SourceRuntimeRevision     string
-	SourceRuntimeAbsent       bool
-	TargetSpecRevisionID      string
-	ChildRequestID            string
-	NetworkAttachment         *NetworkAttachment
-	NetworkPolicyAssignment   *NetworkPolicyAssignment
-	SourceRuntimeInspection   *RuntimeInspection
-	SourceRuntimeAbsenceProof *RuntimeAbsenceProof
-	RuntimeResult             *RuntimeOperation
-	NetworkReleaseOutcome     string
-	InitialTraceParent        string
-	PreviousAttemptTraceID    string
-	Attempt                   int64
-	ErrorCode                 string
-	ErrorDetail               string
-	Retryable                 bool
-	CreatedAt                 time.Time
-	UpdatedAt                 time.Time
+	RequestID                   string
+	RequestFingerprint          string
+	AgentID                     string
+	Kind                        domain.OperationKind
+	Phase                       domain.OperationPhase
+	State                       domain.OperationState
+	SourceSpecRevisionID        string
+	SourceExecutionRevisionID   string
+	SourceRuntimeRevision       string
+	SourceRuntimeAbsent         bool
+	TargetSpecRevisionID        string
+	ChildRequestID              string
+	NetworkAttachment           *NetworkAttachment
+	NetworkPolicyAssignment     *NetworkPolicyAssignment
+	SourceRuntimeInspection     *RuntimeInspection
+	SourceRuntimeAbsenceProof   *RuntimeAbsenceProof
+	RuntimeResult               *RuntimeOperation
+	NetworkReleaseOutcome       string
+	InitialTraceParent          string
+	PreviousRecoveryTraceParent string
+	Attempt                     int64
+	RecoveryOwner               string
+	RecoveryLeaseUntil          *time.Time
+	RecoveryAfter               time.Time
+	RecoveryFailureCount        int64
+	ErrorCode                   string
+	ErrorDetail                 string
+	Retryable                   bool
+	CreatedAt                   time.Time
+	UpdatedAt                   time.Time
 }
 
 type AgentEventRecord struct {

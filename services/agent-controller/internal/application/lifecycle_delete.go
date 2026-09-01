@@ -158,6 +158,9 @@ func (service *LifecycleService) continueAgentDelete(
 	if state.Operation.State != domain.OperationRunning {
 		return deleteAgentResult(state), nil
 	}
+	if lifecycleOperationReservedForRecovery(ctx, state.Operation) {
+		return deleteAgentResult(state), nil
+	}
 	var err error
 	if state.Operation.Phase == domain.PhaseDrain {
 		state, err = service.settleDeleteDrain(ctx, state)

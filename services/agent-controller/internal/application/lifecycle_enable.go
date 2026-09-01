@@ -130,6 +130,9 @@ func (service *LifecycleService) continueAgentEnable(
 	if state.Operation.State != domain.OperationRunning {
 		return enableAgentResult(state), nil
 	}
+	if lifecycleOperationReservedForRecovery(ctx, state.Operation) {
+		return enableAgentResult(state), nil
+	}
 	var err error
 	if state.Operation.Phase == domain.PhaseNetworkEnsure {
 		state, err = service.ensureEnableNetwork(ctx, state)

@@ -168,6 +168,9 @@ func (repository *Repository) SettleAgentRebuildDrain(
 	if err != nil {
 		return ports.AgentRebuildState{}, err
 	}
+	if err := authorizeLifecycleMutation(ctx, transaction, operation); err != nil {
+		return ports.AgentRebuildState{}, err
+	}
 	if operation.Kind != domain.OperationRebuild || operation.RequestFingerprint != fingerprint {
 		return ports.AgentRebuildState{}, ports.ErrRequestConflict
 	}
@@ -229,6 +232,9 @@ func (repository *Repository) RecordAgentRebuildPolicy(
 	if err != nil {
 		return ports.AgentRebuildState{}, err
 	}
+	if err := authorizeLifecycleMutation(ctx, transaction, operation); err != nil {
+		return ports.AgentRebuildState{}, err
+	}
 	if operation.Kind != domain.OperationRebuild || operation.RequestFingerprint != fingerprint {
 		return ports.AgentRebuildState{}, ports.ErrRequestConflict
 	}
@@ -280,6 +286,9 @@ func (repository *Repository) AdvanceAgentRebuild(
 	defer func() { _ = transaction.Rollback(ctx) }()
 	operation, err := loadLifecycleOperation(ctx, transaction, input.RequestID, "FOR UPDATE")
 	if err != nil {
+		return ports.AgentRebuildState{}, err
+	}
+	if err := authorizeLifecycleMutation(ctx, transaction, operation); err != nil {
 		return ports.AgentRebuildState{}, err
 	}
 	if operation.Kind != domain.OperationRebuild || operation.RequestFingerprint != input.Fingerprint {
@@ -338,6 +347,9 @@ func (repository *Repository) PublishAgentRebuild(
 	if err != nil {
 		return ports.AgentRebuildState{}, err
 	}
+	if err := authorizeLifecycleMutation(ctx, transaction, operation); err != nil {
+		return ports.AgentRebuildState{}, err
+	}
 	if operation.Kind != domain.OperationRebuild || operation.RequestFingerprint != input.Fingerprint {
 		return ports.AgentRebuildState{}, ports.ErrRequestConflict
 	}
@@ -390,7 +402,8 @@ WHERE id = $1 AND active_operation_request_id = $9 AND aggregate_sequence = $10`
 	if _, err := transaction.Exec(ctx, `
 UPDATE agent_controller.agent_lifecycle_operations
 SET phase = 'completed', state = 'completed', child_request_id = '',
-    error_code = '', error_detail = '', retryable = FALSE, updated_at = $2
+    error_code = '', error_detail = '', retryable = FALSE,
+    recovery_owner = '', recovery_lease_until = NULL, updated_at = $2
 WHERE request_id = $1`, input.RequestID, input.Now); err != nil {
 		return ports.AgentRebuildState{}, fmt.Errorf("complete Agent rebuild operation: %w", err)
 	}
@@ -427,6 +440,9 @@ func (repository *Repository) FailAgentRebuild(
 	defer func() { _ = transaction.Rollback(ctx) }()
 	operation, err := loadLifecycleOperation(ctx, transaction, input.RequestID, "FOR UPDATE")
 	if err != nil {
+		return ports.AgentRebuildState{}, err
+	}
+	if err := authorizeLifecycleMutation(ctx, transaction, operation); err != nil {
 		return ports.AgentRebuildState{}, err
 	}
 	if operation.Kind != domain.OperationRebuild || operation.RequestFingerprint != input.Fingerprint {
@@ -502,7 +518,7 @@ WHERE id = $1 AND active_operation_request_id = $7 AND aggregate_sequence = $8`
 UPDATE agent_controller.agent_lifecycle_operations
 SET state = 'failed', child_request_id = '', error_code = $2,
     error_detail = $3, retryable = $4, source_runtime_absence_proof = $5,
-    updated_at = $6
+    recovery_owner = '', recovery_lease_until = NULL, updated_at = $6
 WHERE request_id = $1`, input.RequestID, input.Code, input.Detail, input.Retryable,
 		nullJSON(absenceProofPayload), input.Now); err != nil {
 		return ports.AgentRebuildState{}, fmt.Errorf("fail Agent rebuild operation: %w", err)
