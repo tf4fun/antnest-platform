@@ -240,7 +240,7 @@ make test-agent-controller-postgres
 OTEL_SDK_DISABLED=false OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318 \
   OTEL_TRACES_EXPORTER=otlp OTEL_METRICS_EXPORTER=none OTEL_LOGS_EXPORTER=none \
   docker compose --profile stage2 --profile observability up -d --wait \
-  agent-controller-postgres agent-controller jaeger
+  postgres agent-controller jaeger
 ```
 
 `make e2e-stage2` builds an isolated blank deployment, creates an Agent, proves

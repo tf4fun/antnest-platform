@@ -139,12 +139,14 @@ async fn postgres_reconnects_after_warm_transport_loss() {
 async fn postgres_rejects_a_foreign_schema_before_writing_it() {
     let database_url =
         env::var("ANTNEST_EGRESS_TEST_DATABASE_URL").expect("ANTNEST_EGRESS_TEST_DATABASE_URL");
+    let admin_database_url = env::var("ANTNEST_EGRESS_TEST_ADMIN_DATABASE_URL")
+        .expect("ANTNEST_EGRESS_TEST_ADMIN_DATABASE_URL");
     let role = format!(
         "foreign_owner_{}_{}",
         std::process::id(),
         monotonic_suffix()
     );
-    let (admin, connection) = tokio_postgres::connect(&database_url, tokio_postgres::NoTls)
+    let (admin, connection) = tokio_postgres::connect(&admin_database_url, tokio_postgres::NoTls)
         .await
         .unwrap();
     tokio::spawn(async move {

@@ -5,7 +5,7 @@ repository_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$repository_root"
 
 export COMPOSE_PROJECT_NAME="antnest-stage1-e2e-$$"
-export ANTNEST_EGRESS_POSTGRES_HOST_PORT=$((30000 + ($$ % 10000)))
+export ANTNEST_POSTGRES_HOST_PORT=$((30000 + ($$ % 10000)))
 export ANTNEST_RUNTIME_MANAGEMENT_NETWORK="${COMPOSE_PROJECT_NAME}-runtime-management"
 network_octet=$((1 + ($$ % 200)))
 export ANTNEST_RUNTIME_MANAGEMENT_SUBNET="10.253.${network_octet}.0/24"
@@ -38,7 +38,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 control_request() {
-  docker compose exec -T runtime-egress curl -fsS "$@"
+  docker compose exec -T runtime-egress curl --fail-with-body -sS "$@"
 }
 
 mcp_request() {
@@ -221,6 +221,8 @@ docker exec --user 1000 "$runtime_name" \
   | grep -q 'Example Domain'
 
 control_request -X POST \
+  -H 'content-type: application/json' \
+  -d '{"expected_resource_version":4}' \
   "$control_url/internal/agent-networks/agent-stage1-e2e/release" \
   | grep -q '"state":"quarantined"'
 

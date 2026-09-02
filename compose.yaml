@@ -4,19 +4,38 @@ services:
   postgres:
     image: postgres:17-bookworm
     environment:
-      POSTGRES_DB: antnest_egress
-      POSTGRES_USER: antnest_egress
-      POSTGRES_PASSWORD: ${ANTNEST_EGRESS_POSTGRES_PASSWORD:-antnest-egress-dev}
+      POSTGRES_DB: postgres
+      POSTGRES_USER: antnest_test_admin
+      POSTGRES_PASSWORD: ${ANTNEST_POSTGRES_ADMIN_PASSWORD:-antnest-postgres-dev}
+      ANTNEST_EGRESS_POSTGRES_PASSWORD: ${ANTNEST_EGRESS_POSTGRES_PASSWORD:-antnest-egress-dev}
+      ANTNEST_RUNTIME_CONTROLLER_POSTGRES_PASSWORD: ${ANTNEST_RUNTIME_CONTROLLER_POSTGRES_PASSWORD:-antnest-runtime-controller-dev}
+      ANTNEST_AGENT_ACP_POSTGRES_PASSWORD: ${ANTNEST_AGENT_ACP_POSTGRES_PASSWORD:-antnest-agent-acp-dev}
+      ANTNEST_IDENTITY_POSTGRES_PASSWORD: ${ANTNEST_IDENTITY_POSTGRES_PASSWORD:-antnest-identity-dev}
+      ANTNEST_AGENT_CONTROLLER_POSTGRES_PASSWORD: ${ANTNEST_AGENT_CONTROLLER_POSTGRES_PASSWORD:-antnest-agent-controller-dev}
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U antnest_egress -d antnest_egress"]
-      interval: 2s
-      timeout: 2s
-      retries: 30
+      test:
+        [
+          "CMD-SHELL",
+          'test -f "$$PGDATA/.antnest-init-complete" && pg_isready -h 127.0.0.1 -U antnest_test_admin -d postgres',
+        ]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 60s
+      start_interval: 1s
     volumes:
-      - egress-postgres:/var/lib/postgresql/data
+      - postgres-data:/var/lib/postgresql/data
+      - ./scripts/postgres-init.sh:/docker-entrypoint-initdb.d/10-antnest-services.sh:ro
     ports:
-      - 127.0.0.1:${ANTNEST_EGRESS_POSTGRES_HOST_PORT:-55432}:5432
-    networks: [egress-database]
+      - 127.0.0.1:${ANTNEST_POSTGRES_HOST_PORT:-55432}:5432
+    networks:
+      [
+        egress-database,
+        runtime-controller-database,
+        agent-acp-database,
+        identity-database,
+        agent-controller-database,
+      ]
 
   runtime-egress:
     image: antnest/runtime-egress:local
@@ -47,9 +66,11 @@ services:
           "CMD-SHELL",
           'curl --fail --silent http://${ANTNEST_EGRESS_CONTROL_IPV4:-172.31.255.3}:8081/status | grep -q ''"status":"ready"''',
         ]
-      interval: 5s
-      timeout: 2s
-      retries: 12
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 30s
+      start_interval: 2s
     networks:
       control:
         ipv4_address: ${ANTNEST_EGRESS_CONTROL_IPV4:-172.31.255.3}
@@ -61,37 +82,16 @@ services:
         ipv4_address: ${ANTNEST_EGRESS_IPV4:-172.30.255.3}
     stop_grace_period: 10s
 
-  runtime-controller-postgres:
-    image: postgres:17-bookworm
-    environment:
-      POSTGRES_DB: antnest_runtime_controller
-      POSTGRES_USER: antnest_runtime_controller
-      POSTGRES_PASSWORD: ${ANTNEST_RUNTIME_CONTROLLER_POSTGRES_PASSWORD:-antnest-runtime-controller-dev}
-    healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "pg_isready -U antnest_runtime_controller -d antnest_runtime_controller",
-        ]
-      interval: 2s
-      timeout: 2s
-      retries: 30
-    volumes:
-      - runtime-controller-postgres:/var/lib/postgresql/data
-    ports:
-      - 127.0.0.1:${ANTNEST_RUNTIME_CONTROLLER_POSTGRES_HOST_PORT:-55433}:5432
-    networks: [runtime-controller-database]
-
   runtime-controller:
     image: antnest/runtime-controller:local
     build:
       context: .
       dockerfile: services/runtime-controller/Dockerfile
     depends_on:
-      runtime-controller-postgres:
+      postgres:
         condition: service_healthy
     environment:
-      ANTNEST_RUNTIME_CONTROLLER_DATABASE_URL: postgres://antnest_runtime_controller:${ANTNEST_RUNTIME_CONTROLLER_POSTGRES_PASSWORD:-antnest-runtime-controller-dev}@runtime-controller-postgres:5432/antnest_runtime_controller
+      ANTNEST_RUNTIME_CONTROLLER_DATABASE_URL: postgres://antnest_runtime_controller:${ANTNEST_RUNTIME_CONTROLLER_POSTGRES_PASSWORD:-antnest-runtime-controller-dev}@postgres:5432/antnest_runtime_controller
       ANTNEST_RUNTIME_CONTROLLER_LISTEN: :8080
       ANTNEST_RUNTIME_PLATFORM: docker
       ANTNEST_DOCKER_HOST: unix:///var/run/docker.sock
@@ -117,9 +117,11 @@ services:
       - 127.0.0.1:${ANTNEST_RUNTIME_CONTROLLER_HOST_PORT:-58080}:8080
     healthcheck:
       test: ["CMD", "/usr/local/bin/runtime-controller", "--healthcheck"]
-      interval: 5s
+      interval: 30s
       timeout: 3s
-      retries: 20
+      retries: 3
+      start_period: 30s
+      start_interval: 2s
     networks:
       [
         runtime-controller-database,
@@ -129,23 +131,6 @@ services:
       ]
     stop_grace_period: 10s
 
-  agent-acp-postgres:
-    image: postgres:17-bookworm
-    environment:
-      POSTGRES_DB: antnest_agent_acp
-      POSTGRES_USER: antnest_agent_acp
-      POSTGRES_PASSWORD: ${ANTNEST_AGENT_ACP_POSTGRES_PASSWORD:-antnest-agent-acp-dev}
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U antnest_agent_acp -d antnest_agent_acp"]
-      interval: 2s
-      timeout: 2s
-      retries: 30
-    volumes:
-      - agent-acp-postgres:/var/lib/postgresql/data
-    ports:
-      - 127.0.0.1:${ANTNEST_AGENT_ACP_POSTGRES_HOST_PORT:-55434}:5432
-    networks: [agent-acp-database]
-
   agent-acp-service:
     profiles: [stage2]
     image: antnest/agent-acp-service:local
@@ -153,12 +138,12 @@ services:
       context: .
       dockerfile: services/agent-acp-service/Dockerfile
     depends_on:
-      agent-acp-postgres:
+      postgres:
         condition: service_healthy
       agent-controller:
         condition: service_healthy
     environment:
-      ANTNEST_ACP_DATABASE_URL: postgres://antnest_agent_acp:${ANTNEST_AGENT_ACP_POSTGRES_PASSWORD:-antnest-agent-acp-dev}@agent-acp-postgres:5432/antnest_agent_acp
+      ANTNEST_ACP_DATABASE_URL: postgres://antnest_agent_acp:${ANTNEST_AGENT_ACP_POSTGRES_PASSWORD:-antnest-agent-acp-dev}@postgres:5432/antnest_agent_acp
       ANTNEST_AGENT_CONTROLLER_URL: ${ANTNEST_AGENT_CONTROLLER_URL:-http://agent-controller:8080}
       ANTNEST_ACP_CLIENT_MCP_KEY: ${ANTNEST_ACP_CLIENT_MCP_KEY:-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=}
       ANTNEST_ACP_LISTEN: :8080
@@ -174,13 +159,16 @@ services:
       test:
         [
           "CMD",
-          "node",
-          "-e",
-          "fetch('http://127.0.0.1:8080/status').then(r=>{if(!r.ok)process.exit(1)})",
+          "curl",
+          "--fail",
+          "--silent",
+          "http://127.0.0.1:8080/status",
         ]
-      interval: 5s
+      interval: 30s
       timeout: 3s
-      retries: 20
+      retries: 3
+      start_period: 30s
+      start_interval: 2s
     networks:
       [agent-acp-database, runtime-management, development, observability]
     stop_grace_period: 20s
@@ -202,9 +190,11 @@ services:
           "-e",
           "fetch('http://127.0.0.1:8080/status').then(r=>{if(!r.ok)process.exit(1)})",
         ]
-      interval: 2s
+      interval: 30s
       timeout: 2s
-      retries: 20
+      retries: 3
+      start_period: 20s
+      start_interval: 1s
     networks: [development]
 
   stage2-client:
@@ -215,24 +205,6 @@ services:
       - ./services/agent-acp-service/scripts:/app/scripts:ro
     networks: [development]
 
-  identity-postgres:
-    profiles: [stage2]
-    image: postgres:17-bookworm
-    environment:
-      POSTGRES_DB: antnest_identity
-      POSTGRES_USER: antnest_identity
-      POSTGRES_PASSWORD: ${ANTNEST_IDENTITY_POSTGRES_PASSWORD:-antnest-identity-dev}
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U antnest_identity -d antnest_identity"]
-      interval: 2s
-      timeout: 2s
-      retries: 30
-    volumes:
-      - identity-postgres:/var/lib/postgresql/data
-    ports:
-      - 127.0.0.1:${ANTNEST_IDENTITY_POSTGRES_HOST_PORT:-55435}:5432
-    networks: [identity-database]
-
   identity-service:
     profiles: [stage2]
     image: antnest/identity-service:local
@@ -240,10 +212,10 @@ services:
       context: .
       dockerfile: services/identity-service/Dockerfile
     depends_on:
-      identity-postgres:
+      postgres:
         condition: service_healthy
     environment:
-      ANTNEST_IDENTITY_DATABASE_URL: postgres://antnest_identity:${ANTNEST_IDENTITY_POSTGRES_PASSWORD:-antnest-identity-dev}@identity-postgres:5432/antnest_identity
+      ANTNEST_IDENTITY_DATABASE_URL: postgres://antnest_identity:${ANTNEST_IDENTITY_POSTGRES_PASSWORD:-antnest-identity-dev}@postgres:5432/antnest_identity
       ANTNEST_IDENTITY_ENCRYPTION_KEY: ${ANTNEST_IDENTITY_ENCRYPTION_KEY:-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=}
       ANTNEST_IDENTITY_PUBLIC_BASE_URL: http://127.0.0.1:${ANTNEST_IDENTITY_HOST_PORT:-58082}
       ANTNEST_IDENTITY_LISTEN: :8080
@@ -262,33 +234,13 @@ services:
       - 127.0.0.1:${ANTNEST_IDENTITY_HOST_PORT:-58082}:8080
     healthcheck:
       test: ["CMD", "/usr/local/bin/identity-service", "--healthcheck"]
-      interval: 5s
+      interval: 30s
       timeout: 3s
-      retries: 20
+      retries: 3
+      start_period: 30s
+      start_interval: 2s
     networks: [identity-database, development]
     stop_grace_period: 20s
-
-  agent-controller-postgres:
-    profiles: [stage2]
-    image: postgres:17-bookworm
-    environment:
-      POSTGRES_DB: antnest_agent_controller
-      POSTGRES_USER: antnest_agent_controller
-      POSTGRES_PASSWORD: ${ANTNEST_AGENT_CONTROLLER_POSTGRES_PASSWORD:-antnest-agent-controller-dev}
-    healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "pg_isready -U antnest_agent_controller -d antnest_agent_controller",
-        ]
-      interval: 2s
-      timeout: 2s
-      retries: 30
-    volumes:
-      - agent-controller-postgres:/var/lib/postgresql/data
-    ports:
-      - 127.0.0.1:${ANTNEST_AGENT_CONTROLLER_POSTGRES_HOST_PORT:-55436}:5432
-    networks: [agent-controller-database]
 
   agent-controller:
     profiles: [stage2]
@@ -297,7 +249,7 @@ services:
       context: .
       dockerfile: services/agent-controller/Dockerfile
     depends_on:
-      agent-controller-postgres:
+      postgres:
         condition: service_healthy
       runtime-egress:
         condition: service_healthy
@@ -306,7 +258,7 @@ services:
       identity-service:
         condition: service_healthy
     environment:
-      ANTNEST_AGENT_CONTROLLER_DATABASE_URL: postgres://antnest_agent_controller:${ANTNEST_AGENT_CONTROLLER_POSTGRES_PASSWORD:-antnest-agent-controller-dev}@agent-controller-postgres:5432/antnest_agent_controller
+      ANTNEST_AGENT_CONTROLLER_DATABASE_URL: postgres://antnest_agent_controller:${ANTNEST_AGENT_CONTROLLER_POSTGRES_PASSWORD:-antnest-agent-controller-dev}@postgres:5432/antnest_agent_controller
       ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY: ${ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY:-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=}
       ANTNEST_AGENT_CONTROLLER_LISTEN: :8080
       ANTNEST_AGENT_CONTROLLER_DEPENDENCY_TIMEOUT: ${ANTNEST_AGENT_CONTROLLER_DEPENDENCY_TIMEOUT:-150s}
@@ -329,9 +281,11 @@ services:
       - 127.0.0.1:${ANTNEST_AGENT_CONTROLLER_HOST_PORT:-58083}:8080
     healthcheck:
       test: ["CMD", "/usr/local/bin/agent-controller", "--healthcheck"]
-      interval: 5s
+      interval: 30s
       timeout: 3s
-      retries: 20
+      retries: 3
+      start_period: 30s
+      start_interval: 2s
     networks: [agent-controller-database, control, development, observability]
     stop_grace_period: 20s
 
@@ -369,10 +323,6 @@ networks:
   agent-controller-database: {}
 
 volumes:
-  egress-postgres:
-  runtime-controller-postgres:
+  postgres-data:
   runtime-system-skills:
     name: ${ANTNEST_RUNTIME_SYSTEM_SKILLS_VOLUME:-antnest-system-skills}
-  agent-acp-postgres:
-  identity-postgres:
-  agent-controller-postgres:

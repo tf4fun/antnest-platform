@@ -45,8 +45,7 @@ make docker-build
 make compose-up
 make e2e-stage1  # Isolated disposable Stage 1 Runtime/Egress acceptance
 make e2e-runtime-controller  # Isolated Runtime Controller lifecycle acceptance
-make test-agent-acp-postgres  # Agent ACP persistence and protocol acceptance
-make test-identity-postgres   # Identity persistence, OIDC, and SCIM acceptance
+make test-postgres  # All persistence suites against one disposable PostgreSQL instance
 ```
 
 Use the service-local README before changing a component. It states what that
@@ -60,6 +59,12 @@ check for residual test containers and stop or remove the ones that are no
 longer needed; remove volumes only when they belong to a disposable test
 project. Repository E2E scripts must keep cleanup traps for both success and
 failure paths.
+
+Development and test Compose reuse one physical PostgreSQL server to reduce
+resource use. Every service still owns a separate database, login role,
+migration journal, and DSN; sharing the test server does not permit cross-service
+table access. Production may place those logical databases on separate servers
+without changing service code.
 
 Periodic CPU spikes have been observed in otherwise idle containers after test
 runs. The root cause is not yet established. Until it is diagnosed, treat

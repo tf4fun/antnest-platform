@@ -105,7 +105,7 @@ From the platform repository root:
 ```bash
 docker build -f runtimes/antnest-runtime/Dockerfile -t antnest/antnest-runtime:local .
 docker compose build runtime-controller
-docker compose up -d --wait runtime-controller-postgres runtime-controller
+docker compose up -d --wait postgres runtime-controller
 curl --fail http://127.0.0.1:58080/status
 ```
 

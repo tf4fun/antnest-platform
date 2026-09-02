@@ -14,6 +14,10 @@ FROM node:24-bookworm-slim AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY services/agent-acp-service/package.json services/agent-acp-service/package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 

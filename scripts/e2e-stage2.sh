@@ -7,16 +7,12 @@ cd "$repository_root"
 port_base=$((40000 + ($$ % 10000)))
 network_octet=$((1 + ($$ % 200)))
 export COMPOSE_PROJECT_NAME="antnest-stage2-e2e-$$"
-export ANTNEST_EGRESS_POSTGRES_HOST_PORT=$port_base
-export ANTNEST_RUNTIME_CONTROLLER_POSTGRES_HOST_PORT=$((port_base + 1))
-export ANTNEST_AGENT_ACP_POSTGRES_HOST_PORT=$((port_base + 2))
-export ANTNEST_AGENT_CONTROLLER_POSTGRES_HOST_PORT=$((port_base + 3))
-export ANTNEST_RUNTIME_CONTROLLER_HOST_PORT=$((port_base + 4))
-export ANTNEST_ACP_HOST_PORT=$((port_base + 5))
-export ANTNEST_AGENT_CONTROLLER_HOST_PORT=$((port_base + 6))
-export ANTNEST_JAEGER_UI_HOST_PORT=$((port_base + 7))
-export ANTNEST_IDENTITY_HOST_PORT=$((port_base + 8))
-export ANTNEST_IDENTITY_POSTGRES_HOST_PORT=$((port_base + 9))
+export ANTNEST_POSTGRES_HOST_PORT=$port_base
+export ANTNEST_RUNTIME_CONTROLLER_HOST_PORT=$((port_base + 1))
+export ANTNEST_ACP_HOST_PORT=$((port_base + 2))
+export ANTNEST_AGENT_CONTROLLER_HOST_PORT=$((port_base + 3))
+export ANTNEST_JAEGER_UI_HOST_PORT=$((port_base + 4))
+export ANTNEST_IDENTITY_HOST_PORT=$((port_base + 5))
 export ANTNEST_RUNTIME_CONTROLLER_SCOPE="$COMPOSE_PROJECT_NAME"
 export ANTNEST_RUNTIME_MANAGEMENT_NETWORK="${COMPOSE_PROJECT_NAME}-runtime-management"
 export ANTNEST_RUNTIME_SYSTEM_SKILLS_VOLUME="${COMPOSE_PROJECT_NAME}-system-skills"
@@ -125,8 +121,7 @@ assert_json_field() {
 }
 
 docker compose --profile stage2 --profile stage2-e2e --profile observability up -d --wait \
-  postgres runtime-controller-postgres agent-controller-postgres agent-acp-postgres \
-  stage2-model jaeger
+  postgres stage2-model jaeger
 docker compose --profile stage2 --profile stage2-e2e --profile observability up -d --wait \
   runtime-egress runtime-controller
 docker compose --profile stage2 --profile stage2-e2e --profile observability up -d --wait \

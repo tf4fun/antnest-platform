@@ -5,8 +5,7 @@ repository_root=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
 cd "$repository_root"
 
 export COMPOSE_PROJECT_NAME="antnest-runtime-controller-e2e-$$"
-export ANTNEST_EGRESS_POSTGRES_HOST_PORT=$((30000 + ($$ % 5000)))
-export ANTNEST_RUNTIME_CONTROLLER_POSTGRES_HOST_PORT=$((35000 + ($$ % 5000)))
+export ANTNEST_POSTGRES_HOST_PORT=$((30000 + ($$ % 5000)))
 export ANTNEST_RUNTIME_CONTROLLER_HOST_PORT=$((40000 + ($$ % 5000)))
 export ANTNEST_RUNTIME_MANAGEMENT_NETWORK="${COMPOSE_PROJECT_NAME}-runtime-management"
 export ANTNEST_RUNTIME_SYSTEM_SKILLS_VOLUME="${COMPOSE_PROJECT_NAME}-system-skills"
@@ -59,7 +58,7 @@ wait_for_controller() {
   return 1
 }
 
-docker compose up -d --wait postgres runtime-egress runtime-controller-postgres runtime-controller
+docker compose up -d --wait postgres runtime-egress runtime-controller
 
 runtime_image=$(docker image inspect --format '{{.Id}}' antnest/antnest-runtime:local)
 case "$runtime_image" in
