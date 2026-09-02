@@ -32,6 +32,7 @@ func TestLifecycleRepositoryPersistsAndPublishesDisableSaga(t *testing.T) {
 	if err != nil || replayed {
 		t.Fatalf("begin Agent disable: state=%+v replayed=%t err=%v", started, replayed, err)
 	}
+	ctx = claimLifecycleForTest(t, ctx, repository, requestID)
 	if started.Agent.DesiredState != domain.DesiredDisabled ||
 		started.Agent.LifecycleState != domain.AgentAvailable ||
 		started.Agent.ActiveOperationRequestID != requestID {
@@ -81,20 +82,11 @@ WHERE admission_id = $1`,
 		t.Fatalf("settle disable drain: state=%+v err=%v", drained, err)
 	}
 
-	policy := ports.NetworkPolicyAssignment{
-		AgentID: base.Agent.AgentID, PolicyID: "internet-enabled", Revision: 3, ResourceVersion: 7,
-	}
-	withPolicy, err := repository.RecordAgentDisablePolicy(
-		ctx, requestID, fingerprint, policy, now.Add(3*time.Second),
-	)
-	if err != nil || withPolicy.Operation.NetworkPolicyAssignment == nil ||
-		*withPolicy.Operation.NetworkPolicyAssignment != policy {
-		t.Fatalf("record disable policy: state=%+v err=%v", withPolicy, err)
-	}
 	withFence, err := repository.AdvanceAgentDisable(ctx, ports.AdvanceAgentDisable{
 		RequestID: requestID, Fingerprint: fingerprint,
 		ExpectedPhase: domain.PhaseNetworkFence, NextPhase: domain.PhaseRuntimeDisable,
 		NextChildRequestID: domain.ChildRequestID(requestID, domain.PhaseRuntimeDisable),
+		NetworkAttachment:  closedNetworkAttachment(base.Agent.AgentID),
 		Now:                now.Add(4 * time.Second),
 	})
 	if err != nil || withFence.Operation.Phase != domain.PhaseRuntimeDisable {
@@ -210,6 +202,7 @@ func TestLifecycleRepositoryDisableFailureRestoresExecutableSource(t *testing.T)
 	if err != nil {
 		t.Fatalf("begin Agent disable: %v", err)
 	}
+	ctx = claimLifecycleForTest(t, ctx, repository, requestID)
 	if _, err := repository.FailAgentDisable(ctx, ports.FailAgentDisable{
 		RequestID: requestID, Fingerprint: fingerprint,
 		ExpectedAggregateSequence: started.Agent.AggregateSequence,
@@ -283,24 +276,18 @@ func TestLifecycleRepositoryDisableFailureWithoutSourceProofFailsClosed(t *testi
 	if err != nil {
 		t.Fatalf("begin Agent disable: %v", err)
 	}
+	ctx = claimLifecycleForTest(t, ctx, repository, requestID)
 	if _, err := repository.SettleAgentDisableDrain(
 		ctx, requestID, fingerprint,
 		domain.ChildRequestID(requestID, domain.PhaseNetworkFence), now.Add(time.Second),
 	); err != nil {
 		t.Fatalf("settle Agent disable drain: %v", err)
 	}
-	policy := ports.NetworkPolicyAssignment{
-		AgentID: base.Agent.AgentID, PolicyID: "internet-enabled", Revision: 1, ResourceVersion: 7,
-	}
-	if _, err := repository.RecordAgentDisablePolicy(
-		ctx, requestID, fingerprint, policy, now.Add(2*time.Second),
-	); err != nil {
-		t.Fatalf("record Agent disable policy: %v", err)
-	}
 	if _, err := repository.AdvanceAgentDisable(ctx, ports.AdvanceAgentDisable{
 		RequestID: requestID, Fingerprint: fingerprint,
 		ExpectedPhase: domain.PhaseNetworkFence, NextPhase: domain.PhaseRuntimeDisable,
 		NextChildRequestID: domain.ChildRequestID(requestID, domain.PhaseRuntimeDisable),
+		NetworkAttachment:  closedNetworkAttachment(base.Agent.AgentID),
 		Now:                now.Add(3 * time.Second),
 	}); err != nil {
 		t.Fatalf("advance Agent disable to Runtime: %v", err)
@@ -354,7 +341,7 @@ func TestLifecycleRepositoryRuntimeAbsenceFailureReleasesRunExactlyOnce(t *testi
 	now := time.Unix(600, 0).UTC()
 	requestID := "request-disable-runtime-absent"
 	fingerprint := strings.Repeat("8", 64)
-	started, admissionID := prepareDisableRuntimeFailure(
+	started, admissionID, ctx := prepareDisableRuntimeFailure(
 		t, ctx, repository, base, requestID, fingerprint, now, true,
 	)
 	input := ports.FailAgentDisable{
@@ -435,7 +422,7 @@ func TestLifecycleRepositoryRuntimeAbsenceFailureRollsBackReleaseWithEventConfli
 	now := time.Unix(700, 0).UTC()
 	requestID := "request-disable-runtime-absence-rollback"
 	fingerprint := strings.Repeat("9", 64)
-	started, admissionID := prepareDisableRuntimeFailure(
+	started, admissionID, ctx := prepareDisableRuntimeFailure(
 		t, ctx, repository, base, requestID, fingerprint, now, true,
 	)
 	var cursorBefore int64
@@ -527,7 +514,7 @@ func TestLifecycleRepositoryRuntimeAbsenceFailureWithoutBlockedRunAddsNoReleaseE
 	now := time.Unix(800, 0).UTC()
 	requestID := "request-disable-runtime-absent-no-run"
 	fingerprint := strings.Repeat("b", 64)
-	started, _ := prepareDisableRuntimeFailure(
+	started, _, ctx := prepareDisableRuntimeFailure(
 		t, ctx, repository, base, requestID, fingerprint, now, false,
 	)
 	failed, err := repository.FailAgentDisable(ctx, ports.FailAgentDisable{
@@ -575,7 +562,7 @@ func prepareDisableRuntimeFailure(
 	fingerprint string,
 	now time.Time,
 	withBlockedRun bool,
-) (ports.AgentDisableState, string) {
+) (ports.AgentDisableState, string, context.Context) {
 	t.Helper()
 	_, _, err := repository.BeginAgentDisable(
 		ctx, disableBegin(base, requestID, fingerprint, now),
@@ -583,6 +570,7 @@ func prepareDisableRuntimeFailure(
 	if err != nil {
 		t.Fatalf("begin Agent disable: %v", err)
 	}
+	ctx = claimLifecycleForTest(t, ctx, repository, requestID)
 	admissionID := ""
 	if withBlockedRun {
 		admissionID = "admission-" + requestID
@@ -611,26 +599,17 @@ INSERT INTO agent_controller.run_admissions (
 	); err != nil {
 		t.Fatalf("settle Agent disable drain: %v", err)
 	}
-	if _, err := repository.RecordAgentDisablePolicy(
-		ctx, requestID, fingerprint,
-		ports.NetworkPolicyAssignment{
-			AgentID: base.Agent.AgentID, PolicyID: "internet-enabled",
-			Revision: 1, ResourceVersion: 7,
-		},
-		now.Add(2*time.Second),
-	); err != nil {
-		t.Fatalf("record Agent disable policy: %v", err)
-	}
 	state, err := repository.AdvanceAgentDisable(ctx, ports.AdvanceAgentDisable{
 		RequestID: requestID, Fingerprint: fingerprint,
 		ExpectedPhase: domain.PhaseNetworkFence, NextPhase: domain.PhaseRuntimeDisable,
 		NextChildRequestID: domain.ChildRequestID(requestID, domain.PhaseRuntimeDisable),
+		NetworkAttachment:  closedNetworkAttachment(base.Agent.AgentID),
 		Now:                now.Add(3 * time.Second),
 	})
 	if err != nil {
 		t.Fatalf("advance Agent disable to Runtime: %v", err)
 	}
-	return state, admissionID
+	return state, admissionID, ctx
 }
 
 func disableBegin(
@@ -659,5 +638,14 @@ func disableBegin(
 			OperationRequestID: requestID, Data: map[string]any{}, OccurredAt: now,
 		},
 		Now: now,
+	}
+}
+
+func closedNetworkAttachment(agentID string) *ports.NetworkAttachment {
+	return &ports.NetworkAttachment{
+		AgentID: agentID, TunnelIPv4: "100.64.0.2", ResolverIPv4: "100.64.0.1",
+		PacketContractRevision: 1, EgressIPv4: "10.20.0.8", EgressPort: 8092,
+		State: ports.NetworkStateActive, NetworkResourceVersion: 1,
+		AttachmentState: ports.NetworkAttachmentClosed, AttachmentResourceVersion: 2,
 	}
 }

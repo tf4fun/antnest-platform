@@ -3,9 +3,10 @@ package ports
 import "context"
 
 type AgentEventQuery struct {
-	AgentID       string
-	AfterSequence int64
-	Limit         int
+	OrganizationID string
+	AgentID        string
+	AfterSequence  int64
+	Limit          int
 }
 
 type AgentEventStore interface {

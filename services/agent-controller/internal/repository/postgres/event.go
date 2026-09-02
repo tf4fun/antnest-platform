@@ -15,17 +15,24 @@ func (repository *Repository) ListAgentEvents(
 		return nil, fmt.Errorf("query Agent events: invalid cursor or limit")
 	}
 	statement := `
-SELECT global_sequence, event_id, agent_id, aggregate_sequence, schema_version,
-       event_type, operation_request_id, admission_id, trace_id, data, occurred_at
-FROM agent_controller.agent_events
-WHERE global_sequence > $1`
+	SELECT event.global_sequence, event.event_id, event.agent_id,
+	       event.aggregate_sequence, event.schema_version, event.event_type,
+	       event.operation_request_id, event.admission_id, event.trace_id,
+	       event.data, event.occurred_at
+	FROM agent_controller.agent_events AS event
+	JOIN agent_controller.agents AS agent ON agent.id = event.agent_id
+	WHERE event.global_sequence > $1`
 	arguments := []any{query.AfterSequence}
+	if query.OrganizationID != "" {
+		arguments = append(arguments, query.OrganizationID)
+		statement += fmt.Sprintf(" AND agent.organization_id = $%d", len(arguments))
+	}
 	if query.AgentID != "" {
-		statement += " AND agent_id = $2"
 		arguments = append(arguments, query.AgentID)
+		statement += fmt.Sprintf(" AND event.agent_id = $%d", len(arguments))
 	}
 	arguments = append(arguments, query.Limit)
-	statement += fmt.Sprintf(" ORDER BY global_sequence LIMIT $%d", len(arguments))
+	statement += fmt.Sprintf(" ORDER BY event.global_sequence LIMIT $%d", len(arguments))
 	rows, err := repository.pool.Query(ctx, statement, arguments...)
 	if err != nil {
 		return nil, fmt.Errorf("query Agent events: %w", err)

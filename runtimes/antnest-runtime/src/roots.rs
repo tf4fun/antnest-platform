@@ -40,14 +40,23 @@ mod platform {
         InvalidPath(String),
         #[error("file exceeds the {MAX_FILE_BYTES}-byte Runtime limit")]
         TooLarge,
-        #[error("atomic write readback did not match committed content")]
-        WriteVerificationFailed,
+        #[error("atomic write may have committed during {operation}: {detail}")]
+        OutcomeUnknown {
+            operation: &'static str,
+            detail: String,
+        },
         #[error("{operation}: {source}")]
         System {
             operation: &'static str,
             #[source]
             source: io::Error,
         },
+    }
+
+    impl RootError {
+        pub fn outcome_unknown(&self) -> bool {
+            matches!(self, Self::OutcomeUnknown { .. })
+        }
     }
 
     pub struct ReadResult {
@@ -147,9 +156,17 @@ mod platform {
             }
             committed.extend_from_slice(data);
             atomic_replace(root_fd, path, &committed)?;
-            let retained = self.read(root, path)?;
+            let retained = self
+                .read(root, path)
+                .map_err(|error| RootError::OutcomeUnknown {
+                    operation: "read back committed file",
+                    detail: error.to_string(),
+                })?;
             if retained.data != committed {
-                return Err(RootError::WriteVerificationFailed);
+                return Err(RootError::OutcomeUnknown {
+                    operation: "verify committed file",
+                    detail: "readback did not match committed content".into(),
+                });
             }
             u64::try_from(data.len()).map_err(|_| RootError::TooLarge)
         }
@@ -286,10 +303,10 @@ mod platform {
             }
             let synced = unsafe { libc::fsync(parent_fd.as_raw_fd()) };
             if synced != 0 {
-                return Err(system(
-                    "sync atomic named-root parent directory",
-                    io::Error::last_os_error(),
-                ));
+                return Err(RootError::OutcomeUnknown {
+                    operation: "sync atomic named-root parent directory",
+                    detail: io::Error::last_os_error().to_string(),
+                });
             }
             Ok(())
         })();
@@ -421,6 +438,12 @@ mod platform {
     }
 
     pub struct NamedRoots;
+
+    impl RootError {
+        pub fn outcome_unknown(&self) -> bool {
+            false
+        }
+    }
 
     impl NamedRoots {
         pub fn open(_workspace: &Path, _system_skills: &Path) -> Result<Self, RootError> {

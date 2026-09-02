@@ -37,7 +37,7 @@ func TestRebuildAgentReplacesRuntimeAndPublishesTargetSpecAtomically(t *testing.
 		store, dependencies, dependencies, fixedClock{now: time.Unix(100, 0).UTC()},
 	)
 
-	result, err := service.RebuildAgent(context.Background(), RebuildAgentInput{
+	result, err := executeRebuildForTest(service, context.Background(), RebuildAgentInput{
 		RequestID: "request-rebuild-agent", AgentID: base.Agent.AgentID,
 		TemplateID: "template-1", TemplateRevision: 1,
 	})
@@ -46,8 +46,7 @@ func TestRebuildAgentReplacesRuntimeAndPublishesTargetSpecAtomically(t *testing.
 	}
 
 	wantCalls := []string{
-		"egress.policy.get", "egress.fence", "egress.get", "egress.policy.get", "egress.reset",
-		"runtime.update", "egress.policy.get", "egress.policy.assign", "egress.ensure",
+		"egress.get", "egress.attachment.closed", "runtime.update", "egress.attachment.open",
 	}
 	if !reflect.DeepEqual(dependencies.calls, wantCalls) {
 		t.Fatalf("dependency order = %v, want %v", dependencies.calls, wantCalls)
@@ -80,6 +79,47 @@ func TestRebuildAgentReplacesRuntimeAndPublishesTargetSpecAtomically(t *testing.
 	}
 }
 
+func TestRebuildAgentTreatsAlreadyClosedAttachmentAsLostResponseReplay(t *testing.T) {
+	t.Parallel()
+
+	template := mustLifecycleTemplate(t)
+	model := mustLifecycleModel(t)
+	base := rebuildLifecycleBase(t, template, model)
+	store := &rebuildLifecycleStoreStub{base: base}
+	network := validLifecycleNetwork()
+	network.AgentID = base.Agent.AgentID
+	network.AttachmentState = ports.NetworkAttachmentClosed
+	dependencies := &rebuildDependenciesStub{
+		network: network, attachmentClosed: true,
+		runtime: ports.RuntimeOperation{
+			State: "completed", Effect: "completed",
+			RuntimeRevision:    "rtv_33333333333333333333333333333333",
+			RuntimeExecutionID: "runtime-execution-replayed-close",
+			MCPEndpoint:        "http://runtime-replayed-close:8091/mcp",
+			LifecycleState:     "ready", Health: "healthy",
+		},
+	}
+	service := NewLifecycleService(
+		lifecycleSpecSourceStub{template: template, model: model},
+		store, dependencies, dependencies, fixedClock{now: time.Unix(105, 0).UTC()},
+	)
+
+	result, err := executeRebuildForTest(service, context.Background(), RebuildAgentInput{
+		RequestID: "request-rebuild-closed-replay", AgentID: base.Agent.AgentID,
+		TemplateID: "template-1", TemplateRevision: 1,
+	})
+	if err != nil {
+		t.Fatalf("rebuild Agent after lost close response: %v", err)
+	}
+	wantCalls := []string{"egress.get", "runtime.update", "egress.attachment.open"}
+	if !reflect.DeepEqual(dependencies.calls, wantCalls) {
+		t.Fatalf("dependency order = %v, want %v", dependencies.calls, wantCalls)
+	}
+	if result.Operation.State != domain.OperationCompleted {
+		t.Fatalf("replayed close rebuild = %+v", result)
+	}
+}
+
 func TestRebuildAgentWaitsForActiveRunWithoutExternalEffects(t *testing.T) {
 	t.Parallel()
 
@@ -94,7 +134,7 @@ func TestRebuildAgentWaitsForActiveRunWithoutExternalEffects(t *testing.T) {
 		store, dependencies, dependencies, fixedClock{now: time.Unix(110, 0).UTC()},
 	)
 
-	result, err := service.RebuildAgent(context.Background(), RebuildAgentInput{
+	result, err := executeRebuildForTest(service, context.Background(), RebuildAgentInput{
 		RequestID: "request-rebuild-drain", AgentID: store.base.Agent.AgentID,
 		TemplateID: "template-1", TemplateRevision: 1,
 	})
@@ -138,7 +178,7 @@ func TestRebuildAgentDrainTimeoutPreservesExecutableSource(t *testing.T) {
 		store, dependencies, dependencies, fixedClock{now: createdAt.Add(6 * time.Minute)}, 5*time.Minute,
 	)
 
-	result, err := service.RebuildAgent(context.Background(), RebuildAgentInput{
+	result, err := executeRebuildForTest(service, context.Background(), RebuildAgentInput{
 		RequestID: state.Operation.RequestID, AgentID: base.Agent.AgentID,
 		TemplateID: "template-1", TemplateRevision: 1,
 	})
@@ -215,7 +255,7 @@ func TestRebuildAgentKnownRuntimeFailureRestoresPolicyAndSource(t *testing.T) {
 		store, dependencies, dependencies, fixedClock{now: time.Unix(115, 0).UTC()},
 	)
 
-	result, err := service.RebuildAgent(context.Background(), RebuildAgentInput{
+	result, err := executeRebuildForTest(service, context.Background(), RebuildAgentInput{
 		RequestID: "request-rebuild-runtime-failed", AgentID: base.Agent.AgentID,
 		TemplateID: "template-1", TemplateRevision: 1,
 	})
@@ -228,9 +268,8 @@ func TestRebuildAgentKnownRuntimeFailureRestoresPolicyAndSource(t *testing.T) {
 		t.Fatalf("known Runtime failure result = %+v failed=%+v", result, store.failed)
 	}
 	wantCalls := []string{
-		"egress.policy.get", "egress.fence", "egress.get", "egress.policy.get", "egress.reset",
-		"runtime.update", "runtime.inspect",
-		"egress.policy.get", "egress.policy.assign", "egress.ensure",
+		"egress.get", "egress.attachment.closed", "runtime.update", "runtime.inspect",
+		"egress.get", "egress.attachment.open",
 	}
 	if !reflect.DeepEqual(dependencies.calls, wantCalls) {
 		t.Fatalf("dependency order = %v, want %v", dependencies.calls, wantCalls)
@@ -256,7 +295,7 @@ func TestRebuildAgentRuntimeNotFoundRemainsRunningAndFenced(t *testing.T) {
 		lifecycleSpecSourceStub{template: template, model: model},
 		store, dependencies, dependencies, fixedClock{now: time.Unix(117, 0).UTC()},
 	)
-	result, err := service.RebuildAgent(context.Background(), RebuildAgentInput{
+	result, err := executeRebuildForTest(service, context.Background(), RebuildAgentInput{
 		RequestID: "request-rebuild-runtime-missing", AgentID: base.Agent.AgentID,
 		TemplateID: "template-1", TemplateRevision: 1,
 	})
@@ -269,8 +308,7 @@ func TestRebuildAgentRuntimeNotFoundRemainsRunningAndFenced(t *testing.T) {
 		t.Fatalf("runtime_not_found rebuild result=%+v failure=%+v", result, store.failed)
 	}
 	wantCalls := []string{
-		"egress.policy.get", "egress.fence", "egress.get", "egress.policy.get", "egress.reset",
-		"runtime.update", "runtime.inspect",
+		"egress.get", "egress.attachment.closed", "runtime.update", "runtime.inspect",
 	}
 	if !reflect.DeepEqual(dependencies.calls, wantCalls) {
 		t.Fatalf("Runtime-absence rebuild calls = %v, want %v", dependencies.calls, wantCalls)
@@ -306,7 +344,7 @@ func TestRebuildAgentDeletedRuntimeInspectionFailsClosedAndReleasesBlockedRun(t 
 		TraceID: traceID, SpanID: spanID, TraceFlags: trace.FlagsSampled,
 	}))
 
-	result, err := service.RebuildAgent(ctx, RebuildAgentInput{
+	result, err := executeRebuildForTest(service, ctx, RebuildAgentInput{
 		RequestID: "request-rebuild-runtime-deleted", AgentID: base.Agent.AgentID,
 		TemplateID: "template-1", TemplateRevision: 1,
 	})
@@ -323,8 +361,7 @@ func TestRebuildAgentDeletedRuntimeInspectionFailsClosedAndReleasesBlockedRun(t 
 		t.Fatalf("deleted-Runtime rebuild result=%+v failure=%+v", result, store.failed)
 	}
 	wantCalls := []string{
-		"egress.policy.get", "egress.fence", "egress.get", "egress.policy.get", "egress.reset",
-		"runtime.update", "runtime.inspect",
+		"egress.get", "egress.attachment.closed", "runtime.update", "runtime.inspect",
 	}
 	if !reflect.DeepEqual(dependencies.calls, wantCalls) {
 		t.Fatalf("deleted-Runtime rebuild calls = %v, want %v", dependencies.calls, wantCalls)
@@ -345,7 +382,7 @@ func TestRebuildAgentCompletedReplayDoesNotRepeatDependencies(t *testing.T) {
 		store, dependencies, dependencies, fixedClock{now: time.Unix(120, 0).UTC()},
 	)
 
-	result, err := service.RebuildAgent(context.Background(), RebuildAgentInput{
+	result, err := executeRebuildForTest(service, context.Background(), RebuildAgentInput{
 		RequestID: "request-rebuild-agent", AgentID: base.Agent.AgentID,
 		TemplateID: "template-1", TemplateRevision: 1,
 	})
@@ -397,7 +434,7 @@ func TestRebuildAgentReturnsStableAgentStateErrors(t *testing.T) {
 				lifecycleSpecSourceStub{template: template, model: model},
 				store, dependencies, dependencies, fixedClock{now: time.Unix(125, 0).UTC()},
 			)
-			_, err := service.RebuildAgent(context.Background(), RebuildAgentInput{
+			_, err := executeRebuildForTest(service, context.Background(), RebuildAgentInput{
 				RequestID: "request-rebuild-state-error", AgentID: base.Agent.AgentID,
 				TemplateID: "template-1", TemplateRevision: 1,
 			})
@@ -435,7 +472,7 @@ func TestRebuildAgentRejectsChangedNetworkBeforePublication(t *testing.T) {
 		store, dependencies, dependencies, fixedClock{now: time.Unix(130, 0).UTC()},
 	)
 
-	result, err := service.RebuildAgent(context.Background(), RebuildAgentInput{
+	result, err := executeRebuildForTest(service, context.Background(), RebuildAgentInput{
 		RequestID: "request-rebuild-changed-network", AgentID: base.Agent.AgentID,
 		TemplateID: "template-1", TemplateRevision: 1,
 	})
@@ -473,7 +510,7 @@ func TestRebuildAgentKeepsAmbiguousRuntimeUpdateReplayable(t *testing.T) {
 		store, dependencies, dependencies, fixedClock{now: time.Unix(140, 0).UTC()},
 	)
 
-	result, err := service.RebuildAgent(context.Background(), RebuildAgentInput{
+	result, err := executeRebuildForTest(service, context.Background(), RebuildAgentInput{
 		RequestID: "request-rebuild-unknown", AgentID: base.Agent.AgentID,
 		TemplateID: "template-1", TemplateRevision: 1,
 	})
@@ -499,7 +536,7 @@ type rebuildDependenciesStub struct {
 	runtimeRequestID        string
 	runtimeAgentID          string
 	runtimeConfiguration    ports.RuntimeConfiguration
-	policyGets              int
+	attachmentClosed        bool
 }
 
 func (dependency *rebuildDependenciesStub) EnsureAgentNetwork(
@@ -521,41 +558,35 @@ func (dependency *rebuildDependenciesStub) GetAgentNetwork(
 	dependency.calls = append(dependency.calls, "egress.get")
 	result := dependency.network
 	result.AgentID = agentID
+	if dependency.attachmentClosed {
+		result.AttachmentState = ports.NetworkAttachmentClosed
+	} else {
+		result.AttachmentState = ports.NetworkAttachmentOpen
+	}
+	if result.AttachmentResourceVersion == 0 {
+		result.AttachmentResourceVersion = 1
+	}
 	return result, nil
 }
 
-func (dependency *rebuildDependenciesStub) GetAgentPolicyAssignment(
-	_ context.Context, agentID string,
-) (ports.NetworkPolicyAssignment, error) {
-	dependency.calls = append(dependency.calls, "egress.policy.get")
-	dependency.policyGets++
-	policyID := "internet-enabled"
-	resourceVersion := uint64(7)
-	if dependency.policyGets > 1 {
-		policyID = ports.BuiltinDenyAllPolicyID
-		resourceVersion = 8
+func (dependency *rebuildDependenciesStub) SetAgentNetworkAttachment(
+	_ context.Context, agentID string, state string, expectedResourceVersion uint64,
+) (ports.NetworkAttachment, error) {
+	dependency.calls = append(dependency.calls, "egress.attachment."+state)
+	if state == ports.NetworkAttachmentClosed && dependency.fenceErr != nil {
+		return ports.NetworkAttachment{}, dependency.fenceErr
 	}
-	return ports.NetworkPolicyAssignment{
-		AgentID: agentID, PolicyID: policyID, Revision: 1, ResourceVersion: resourceVersion,
-	}, nil
-}
-
-func (dependency *rebuildDependenciesStub) AssignAgentPolicy(
-	_ context.Context, assignment ports.NetworkPolicyAssignment, expectedResourceVersion uint64,
-) (ports.NetworkPolicyAssignment, error) {
-	dependency.calls = append(dependency.calls, "egress.policy.assign")
-	assignment.ResourceVersion = expectedResourceVersion + 1
-	return assignment, nil
-}
-
-func (dependency *rebuildDependenciesStub) FenceAgentNetwork(context.Context, string, uint64) error {
-	dependency.calls = append(dependency.calls, "egress.fence")
-	return dependency.fenceErr
-}
-
-func (dependency *rebuildDependenciesStub) ResetAgentFlows(context.Context, string, uint64) error {
-	dependency.calls = append(dependency.calls, "egress.reset")
-	return nil
+	result := dependency.network
+	if state == ports.NetworkAttachmentOpen && dependency.ensuredNetwork.AgentID != "" {
+		result = dependency.ensuredNetwork
+	}
+	result.AgentID = agentID
+	result.State = ports.NetworkStateActive
+	result.AttachmentState = state
+	result.AttachmentResourceVersion = expectedResourceVersion + 1
+	dependency.network = result
+	dependency.attachmentClosed = state == ports.NetworkAttachmentClosed
+	return result, nil
 }
 
 func (dependency *rebuildDependenciesStub) ReleaseAgentNetwork(
@@ -648,6 +679,7 @@ func (store *rebuildLifecycleStoreStub) BeginAgentRebuild(
 		SourceExecution: store.base.ExecutableExecution,
 		TargetSpec:      input.TargetSpec, Operation: input.Operation,
 	}
+	store.replayed = true
 	return store.state, false, nil
 }
 
@@ -659,15 +691,6 @@ func (store *rebuildLifecycleStoreStub) SettleAgentRebuildDrain(
 	}
 	store.state.Operation.Phase = domain.PhaseNetworkFence
 	store.state.Operation.ChildRequestID = nextChildRequestID
-	store.state.Operation.UpdatedAt = now
-	return store.state, nil
-}
-
-func (store *rebuildLifecycleStoreStub) RecordAgentRebuildPolicy(
-	_ context.Context, _ string, _ string,
-	assignment ports.NetworkPolicyAssignment, now time.Time,
-) (ports.AgentRebuildState, error) {
-	store.state.Operation.NetworkPolicyAssignment = &assignment
 	store.state.Operation.UpdatedAt = now
 	return store.state, nil
 }

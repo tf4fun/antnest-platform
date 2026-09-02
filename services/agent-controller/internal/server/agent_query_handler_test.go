@@ -32,10 +32,10 @@ func TestAgentQueryHandlerGetsKnownDeletedProjection(t *testing.T) {
 		t.Fatalf("new handler: %v", err)
 	}
 	response := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet, "/internal/agents/agent-1", nil)
+	request := httptest.NewRequest(http.MethodGet, "/internal/agents/agent-1?organization_id=org-1", nil)
 	handler.ServeHTTP(response, request)
 
-	if response.Code != http.StatusOK || queries.agentID != "agent-1" {
+	if response.Code != http.StatusOK || queries.agentID != "agent-1" || queries.organizationID != "org-1" {
 		t.Fatalf("status=%d agent_id=%q body=%s", response.Code, queries.agentID, response.Body.String())
 	}
 	if response.Header().Get("Cache-Control") != "no-store" {
@@ -73,7 +73,9 @@ func TestAgentQueryHandlerOmitsNonExecutableRuntimeRevision(t *testing.T) {
 		t.Fatalf("new handler: %v", err)
 	}
 	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/internal/agents/agent-1", nil))
+	handler.ServeHTTP(response, httptest.NewRequest(
+		http.MethodGet, "/internal/agents/agent-1?organization_id=org-1", nil,
+	))
 	if response.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 	}
@@ -209,7 +211,9 @@ func TestAgentQueryHandlerMapsServiceError(t *testing.T) {
 		t.Fatalf("new handler: %v", err)
 	}
 	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/internal/agents/agent-missing", nil))
+	handler.ServeHTTP(response, httptest.NewRequest(
+		http.MethodGet, "/internal/agents/agent-missing?organization_id=org-1", nil,
+	))
 	if response.Code != http.StatusNotFound {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 	}
@@ -223,17 +227,26 @@ func TestAgentQueryHandlerMapsServiceError(t *testing.T) {
 }
 
 type agentQueryServiceStub struct {
-	agent     application.AgentView
-	page      application.AgentPage
-	err       error
-	agentID   string
-	listInput application.ListAgentsInput
-	listCalls int
+	agent          application.AgentView
+	page           application.AgentPage
+	err            error
+	agentID        string
+	organizationID string
+	listInput      application.ListAgentsInput
+	listCalls      int
 }
 
 func (service *agentQueryServiceStub) GetAgent(
 	_ context.Context, agentID string,
 ) (application.AgentView, error) {
+	service.agentID = agentID
+	return service.agent, service.err
+}
+
+func (service *agentQueryServiceStub) GetAgentForOrganization(
+	_ context.Context, organizationID string, agentID string,
+) (application.AgentView, error) {
+	service.organizationID = organizationID
 	service.agentID = agentID
 	return service.agent, service.err
 }

@@ -14,7 +14,7 @@ type Repository interface {
 	FindLocalCredential(context.Context, string, string) (LocalCredential, error)
 	IssueToken(context.Context, IssueTokenCommand) (Token, error)
 	ResolveToken(context.Context, string, time.Time) (domain.Principal, error)
-	RevokeToken(context.Context, string, string, time.Time) error
+	RevokeByTokenHash(context.Context, string, time.Time) (RevokeStatus, error)
 }
 
 type LocalCredential struct {
@@ -49,6 +49,13 @@ type LoginResult struct {
 	AccessToken string           `json:"access_token"`
 	ExpiresAt   time.Time        `json:"expires_at"`
 }
+
+type RevokeStatus string
+
+const (
+	RevokeStatusRevoked        RevokeStatus = "revoked"
+	RevokeStatusAlreadyInvalid RevokeStatus = "already_invalid"
+)
 
 type Service struct {
 	repository Repository
@@ -136,19 +143,19 @@ func (s *Service) Resolve(ctx context.Context, rawToken string) (domain.Principa
 	return principal, nil
 }
 
-func (s *Service) Revoke(ctx context.Context, actorPrincipalID, tokenID string) error {
-	if tokenID == "" {
-		return domain.ErrNotFound
+func (s *Service) RevokeByAccessToken(
+	ctx context.Context, rawToken string,
+) (RevokeStatus, error) {
+	if rawToken == "" {
+		return RevokeStatusAlreadyInvalid, nil
 	}
-	if err := s.repository.RevokeToken(
-		ctx,
-		actorPrincipalID,
-		tokenID,
-		s.now().UTC(),
-	); err != nil {
-		return fmt.Errorf("revoke access token: %w", err)
+	status, err := s.repository.RevokeByTokenHash(
+		ctx, credentials.HashToken(rawToken), s.now().UTC(),
+	)
+	if err != nil {
+		return "", fmt.Errorf("revoke access token: %w", err)
 	}
-	return nil
+	return status, nil
 }
 
 func normalizeLoginIdentity(organizationSlug, email string) (string, string, bool) {

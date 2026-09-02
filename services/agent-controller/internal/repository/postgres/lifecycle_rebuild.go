@@ -225,67 +225,6 @@ ORDER BY admission_id LIMIT 1 FOR UPDATE`, operation.AgentID).Scan(&admissionSta
 	return state, nil
 }
 
-func (repository *Repository) RecordAgentRebuildPolicy(
-	ctx context.Context,
-	requestID string,
-	fingerprint string,
-	assignment ports.NetworkPolicyAssignment,
-	now time.Time,
-) (ports.AgentRebuildState, error) {
-	payload, err := json.Marshal(assignment)
-	if err != nil {
-		return ports.AgentRebuildState{}, fmt.Errorf("encode rebuild policy assignment: %w", err)
-	}
-	transaction, err := repository.pool.Begin(ctx)
-	if err != nil {
-		return ports.AgentRebuildState{}, fmt.Errorf("begin rebuild policy transaction: %w", err)
-	}
-	defer func() { _ = transaction.Rollback(ctx) }()
-	operation, err := loadLifecycleOperation(ctx, transaction, requestID, "FOR UPDATE")
-	if err != nil {
-		return ports.AgentRebuildState{}, err
-	}
-	if err := authorizeLifecycleMutation(ctx, transaction, operation); err != nil {
-		return ports.AgentRebuildState{}, err
-	}
-	if operation.Kind != domain.OperationRebuild || operation.RequestFingerprint != fingerprint {
-		return ports.AgentRebuildState{}, ports.ErrRequestConflict
-	}
-	if operation.State != domain.OperationRunning || operation.Phase != domain.PhaseNetworkFence ||
-		assignment.AgentID != operation.AgentID {
-		return ports.AgentRebuildState{}, ports.ErrConcurrentChange
-	}
-	if operation.NetworkPolicyAssignment != nil {
-		if *operation.NetworkPolicyAssignment != assignment {
-			return ports.AgentRebuildState{}, ports.ErrConcurrentChange
-		}
-		return loadAgentRebuildState(ctx, transaction, operation)
-	}
-	result, err := transaction.Exec(ctx, `
-UPDATE agent_controller.agent_lifecycle_operations
-SET network_policy_assignment = $2, updated_at = $3
-WHERE request_id = $1 AND state = 'running' AND phase = 'network_fence'
-  AND network_policy_assignment IS NULL`, requestID, payload, now)
-	if err != nil {
-		return ports.AgentRebuildState{}, fmt.Errorf("record rebuild policy assignment: %w", err)
-	}
-	if result.RowsAffected() != 1 {
-		return ports.AgentRebuildState{}, ports.ErrConcurrentChange
-	}
-	operation, err = loadLifecycleOperation(ctx, transaction, requestID, "")
-	if err != nil {
-		return ports.AgentRebuildState{}, err
-	}
-	state, err := loadAgentRebuildState(ctx, transaction, operation)
-	if err != nil {
-		return ports.AgentRebuildState{}, err
-	}
-	if err := transaction.Commit(ctx); err != nil {
-		return ports.AgentRebuildState{}, fmt.Errorf("commit rebuild policy assignment: %w", err)
-	}
-	return state, nil
-}
-
 func (repository *Repository) AdvanceAgentRebuild(
 	ctx context.Context, input ports.AdvanceAgentRebuild,
 ) (ports.AgentRebuildState, error) {
@@ -308,9 +247,6 @@ func (repository *Repository) AdvanceAgentRebuild(
 		return ports.AgentRebuildState{}, ports.ErrRequestConflict
 	}
 	if operation.State != domain.OperationRunning || operation.Phase != input.ExpectedPhase {
-		return ports.AgentRebuildState{}, ports.ErrConcurrentChange
-	}
-	if input.ExpectedPhase == domain.PhaseNetworkFence && operation.NetworkPolicyAssignment == nil {
 		return ports.AgentRebuildState{}, ports.ErrConcurrentChange
 	}
 	if err := advanceLifecycleOperation(
@@ -362,17 +298,18 @@ func (repository *Repository) PublishAgentRebuild(
 	if err != nil {
 		return ports.AgentRebuildState{}, err
 	}
-	if err := authorizeLifecycleMutation(ctx, transaction, operation); err != nil {
+	replayed, err := authorizeLifecycleMutationOrReplay(
+		ctx, transaction, operation, domain.OperationRebuild, input.Fingerprint, domain.OperationCompleted,
+	)
+	if err != nil {
 		return ports.AgentRebuildState{}, err
 	}
-	if operation.Kind != domain.OperationRebuild || operation.RequestFingerprint != input.Fingerprint {
-		return ports.AgentRebuildState{}, ports.ErrRequestConflict
-	}
-	if operation.State == domain.OperationCompleted {
+	if replayed {
 		return loadAgentRebuildState(ctx, transaction, operation)
 	}
 	if operation.State != domain.OperationRunning || operation.Phase != domain.PhasePublish ||
-		operation.RuntimeResult == nil || operation.NetworkPolicyAssignment == nil ||
+		operation.RuntimeResult == nil || operation.NetworkAttachment == nil ||
+		operation.NetworkAttachment.AttachmentState != ports.NetworkAttachmentOpen ||
 		input.AccessRevision == "" ||
 		input.Execution.AgentID != operation.AgentID ||
 		input.Execution.AgentSpecRevisionID != operation.TargetSpecRevisionID ||
@@ -473,13 +410,13 @@ func (repository *Repository) FailAgentRebuild(
 	if err != nil {
 		return ports.AgentRebuildState{}, err
 	}
-	if err := authorizeLifecycleMutation(ctx, transaction, operation); err != nil {
+	replayed, err := authorizeLifecycleMutationOrReplay(
+		ctx, transaction, operation, domain.OperationRebuild, input.Fingerprint, domain.OperationFailed,
+	)
+	if err != nil {
 		return ports.AgentRebuildState{}, err
 	}
-	if operation.Kind != domain.OperationRebuild || operation.RequestFingerprint != input.Fingerprint {
-		return ports.AgentRebuildState{}, ports.ErrRequestConflict
-	}
-	if operation.State == domain.OperationFailed {
+	if replayed {
 		return loadAgentRebuildState(ctx, transaction, operation)
 	}
 	if operation.State != domain.OperationRunning || operation.Phase != input.Stage {
@@ -620,11 +557,8 @@ WHERE request_id = $1 AND state = 'running' AND phase = $7`,
 func validateRebuildAdvance(input ports.AdvanceAgentRebuild) error {
 	valid := false
 	switch {
-	case input.ExpectedPhase == domain.PhaseNetworkFence && input.NextPhase == domain.PhaseFlowReset:
+	case input.ExpectedPhase == domain.PhaseNetworkFence && input.NextPhase == domain.PhaseRuntimeUpdate:
 		valid = input.NetworkAttachment != nil && input.RuntimeResult == nil &&
-			emptyRunAdmissionEvent(input.RunReleaseEvent)
-	case input.ExpectedPhase == domain.PhaseFlowReset && input.NextPhase == domain.PhaseRuntimeUpdate:
-		valid = input.NetworkAttachment == nil && input.RuntimeResult == nil &&
 			emptyRunAdmissionEvent(input.RunReleaseEvent)
 	case input.ExpectedPhase == domain.PhaseRuntimeUpdate && input.NextPhase == domain.PhaseNetworkEnsure:
 		valid = input.NetworkAttachment == nil && input.RuntimeResult != nil &&

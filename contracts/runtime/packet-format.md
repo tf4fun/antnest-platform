@@ -31,13 +31,22 @@ maps the inner flow to that peer. A response datagram contains the complete
 return IPv4 packet and is written back to Runtime TUN. The current Agent always
 initiates the inner TCP flow, so no registration protocol is required.
 
-Before exposing Runtime readiness, Runtime sends one ordinary TCP SYN from its
-assigned Tunnel IPv4 to the reserved documentation address `192.0.2.1`. The
-Egress safety baseline always rejects that special-use destination with its
-normal TCP RST, so the probe creates no flow or external traffic. This is a
-bounded packet-path probe, not an additional tunnel envelope, heartbeat,
-registration protocol, or claim of public connectivity. Agent Controller must
-create the durable network allocation before starting the Runtime.
+Before exposing Runtime readiness, Runtime sends one canonical TCP SYN from its
+assigned Tunnel IPv4 and a dynamic source port (`49152..65535`) to the reserved
+documentation endpoint `192.0.2.1:9`. It has no acknowledgement or payload and
+uses only the SYN flag. Egress returns a local RST+ACK correlated by Tunnel
+address, ports, and acknowledgement number. The request and response shape is
+normative in `packet-contract.json`.
+
+An active allocation with a closed Runtime attachment is represented inside
+Egress as a probe-only route. It accepts only this canonical probe and never
+writes it to TUN, creates a flow, or reaches an upstream. Every malformed or
+near-miss packet remains fenced. An open attachment reaches the same local
+response through the immutable special-use-address policy baseline. This is a
+bounded packet-path liveness check, not Runtime identity, an additional tunnel
+envelope, heartbeat, registration protocol, or claim of public connectivity.
+Agent Controller must create the durable network allocation before starting the
+Runtime.
 
 Packet loss, duplication, and reordering retain ordinary IP semantics. Runtime
 and Egress do not retransmit tunnel datagrams; inner TCP owns reliability and

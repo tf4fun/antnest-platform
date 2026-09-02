@@ -119,6 +119,7 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP happy path", () => {
       cwd: "/workspace",
       mcpServers: [],
     });
+    const accessChecksBeforePrompt = controller.resolveAgentAccess.mock.calls.length;
     await connection.agent.request(acp.methods.agent.session.prompt, {
       sessionId: created.sessionId,
       prompt: [{ type: "text", text: "Read README and summarize it" }],
@@ -140,6 +141,8 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP happy path", () => {
     ]);
     expect(model.complete).toHaveBeenCalledTimes(2);
     expect(tools.call).toHaveBeenCalledOnce();
+    expect(controller.resolveAgentAccess).toHaveBeenCalledTimes(accessChecksBeforePrompt);
+    expect(controller.acquireRun).toHaveBeenCalledOnce();
     expect(controller.finishRun).toHaveBeenCalledWith(
       expect.objectContaining({
         terminalClass: "completed",
@@ -178,45 +181,47 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP happy path", () => {
 
 function controllerPort() {
   const finishRun = vi.fn<AgentControllerPort["finishRun"]>(() => Promise.resolve());
+  const resolveAgentAccess = vi.fn<AgentControllerPort["resolveAgentAccess"]>(() =>
+    Promise.resolve({
+      principalId: "principal-1",
+      agentId: "agent-1",
+      accessRevision: "access-1",
+      promptCapabilities: { image: true, embeddedContext: true },
+    }),
+  );
+  const acquireRun = vi.fn<AgentControllerPort["acquireRun"]>(() =>
+    Promise.resolve({
+      admissionId: "admission-1",
+      admissionDeadline: new Date(Date.now() + 60_000),
+      agentSpecRevision: "config-1",
+      executionRevision: "execution-1",
+      runtimeMcpSourceDigest: "a".repeat(64),
+      agentExecutionSpecDigest: "b".repeat(64),
+      credentialVersion: "credential-version-1",
+      runtime: {
+        revision: "runtime-1",
+        executionId: "runtime-execution-1",
+        mcpEndpoint: "http://runtime-1:8080/mcp",
+      },
+      executionSpec: {
+        systemPrompt: "You are useful.",
+        contextPolicyVersion: "context-v1",
+        skillInstructions: [],
+        model: {
+          baseUrl: "https://api.example.test/v1",
+          model: "example-model",
+          contextWindow: 64_000,
+          maxOutputTokens: 4_096,
+          supportsImages: true,
+        },
+        maxModelRequests: 4,
+        credentialRef: "credential-1",
+      },
+    }),
+  );
   const port: AgentControllerPort = {
-    resolveAgentAccess: vi.fn(() =>
-      Promise.resolve({
-        principalId: "principal-1",
-        agentId: "agent-1",
-        accessRevision: "access-1",
-        promptCapabilities: { image: true, embeddedContext: true },
-      }),
-    ),
-    acquireRun: vi.fn<AgentControllerPort["acquireRun"]>(() =>
-      Promise.resolve({
-        admissionId: "admission-1",
-        admissionDeadline: new Date(Date.now() + 60_000),
-        agentSpecRevision: "config-1",
-        executionRevision: "execution-1",
-        runtimeMcpSourceDigest: "a".repeat(64),
-        agentExecutionSpecDigest: "b".repeat(64),
-        credentialVersion: "credential-version-1",
-        runtime: {
-          revision: "runtime-1",
-          executionId: "runtime-execution-1",
-          mcpEndpoint: "http://runtime-1:8080/mcp",
-        },
-        executionSpec: {
-          systemPrompt: "You are useful.",
-          contextPolicyVersion: "context-v1",
-          skillInstructions: [],
-          model: {
-            baseUrl: "https://api.example.test/v1",
-            model: "example-model",
-            contextWindow: 64_000,
-            maxOutputTokens: 4_096,
-            supportsImages: true,
-          },
-          maxModelRequests: 4,
-          credentialRef: "credential-1",
-        },
-      }),
-    ),
+    resolveAgentAccess,
+    acquireRun,
     resolveCredential: vi.fn<AgentControllerPort["resolveCredential"]>(() =>
       Promise.resolve({
         credentialVersion: "credential-version-1",
@@ -226,7 +231,7 @@ function controllerPort() {
     ),
     finishRun,
   };
-  return { port, finishRun };
+  return { port, finishRun, resolveAgentAccess, acquireRun };
 }
 
 function modelPort() {

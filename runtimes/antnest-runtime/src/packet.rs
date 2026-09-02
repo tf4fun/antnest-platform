@@ -145,8 +145,7 @@ pub(crate) fn is_egress_readiness_reply(
         && reply.source_port == READINESS_PROBE_DESTINATION_PORT.to_be_bytes()
         && reply.destination_port == source_port.to_be_bytes()
         && reply.acknowledgement == sequence.wrapping_add(1)
-        && reply.flags & TCP_FLAG_ACK != 0
-        && reply.flags & (TCP_FLAG_SYN | TCP_FLAG_RST) != 0
+        && reply.flags == TCP_FLAG_RST | TCP_FLAG_ACK
 }
 
 fn unsupported_tcp_reset(packet: &[u8]) -> Option<Vec<u8>> {
@@ -333,6 +332,20 @@ mod tests {
         inner_mtu: usize,
         fragmentation: bool,
         one_packet_per_datagram: bool,
+        readiness_probe: ReadinessProbe,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct ReadinessProbe {
+        destination_ipv4: String,
+        destination_port: u16,
+        source_port_min: u16,
+        request_flags: Vec<String>,
+        request_acknowledgement: u32,
+        request_payload_bytes: usize,
+        response_flags: Vec<String>,
+        local_response_only: bool,
     }
 
     #[derive(Deserialize)]
@@ -362,6 +375,14 @@ mod tests {
         assert_eq!(contract.inner_mtu, usize::from(INNER_MTU));
         assert!(!contract.fragmentation);
         assert!(contract.one_packet_per_datagram);
+        assert_eq!(contract.readiness_probe.destination_ipv4, "192.0.2.1");
+        assert_eq!(contract.readiness_probe.destination_port, 9);
+        assert_eq!(contract.readiness_probe.source_port_min, 49_152);
+        assert_eq!(contract.readiness_probe.request_flags, ["syn"]);
+        assert_eq!(contract.readiness_probe.request_acknowledgement, 0);
+        assert_eq!(contract.readiness_probe.request_payload_bytes, 0);
+        assert_eq!(contract.readiness_probe.response_flags, ["rst", "ack"]);
+        assert!(contract.readiness_probe.local_response_only);
         for fixture in fixtures.fixtures {
             let packet = decode_hex(&fixture.hex).expect("fixture hex");
             assert_eq!(
@@ -437,6 +458,14 @@ mod tests {
         assert!(!is_egress_readiness_reply(
             &reply,
             Ipv4Addr::new(100, 64, 0, 3),
+            source_port,
+            sequence
+        ));
+        let mut syn_ack = reply;
+        syn_ack[IPV4_HEADER_LEN + 13] = TCP_FLAG_SYN | TCP_FLAG_ACK;
+        assert!(!is_egress_readiness_reply(
+            &syn_ack,
+            tunnel,
             source_port,
             sequence
         ));

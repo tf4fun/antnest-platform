@@ -1,5 +1,5 @@
 {
-  "revision": 2,
+  "revision": 3,
   "transport": "json-over-http",
   "trust_boundary": "internal-network",
   "status_values": ["ready", "degraded"],
@@ -10,8 +10,7 @@
     {"method": "GET", "path": "/status"},
     {"method": "GET", "path": "/internal/agent-networks/{agent_id}"},
     {"method": "PUT", "path": "/internal/agent-networks/{agent_id}"},
-    {"method": "POST", "path": "/internal/agent-networks/{agent_id}/fence", "request_schema": "resource-version-request.schema.json"},
-    {"method": "POST", "path": "/internal/agent-networks/{agent_id}/reset-flows", "request_schema": "resource-version-request.schema.json"},
+    {"method": "PUT", "path": "/internal/agent-network-attachments/{agent_id}", "request_schema": "attachment-state-request.schema.json"},
     {"method": "POST", "path": "/internal/agent-networks/{agent_id}/release", "request_schema": "resource-version-request.schema.json"},
     {"method": "PUT", "path": "/internal/policies/{policy_id}/revisions/{revision}"},
     {"method": "GET", "path": "/internal/agent-policy-assignments/{agent_id}"},
@@ -20,6 +19,7 @@
   "schemas": {
     "policy": "policy.schema.json",
     "packet": "../runtime/packet-contract.json",
+    "attachment_state_request": "attachment-state-request.schema.json",
     "resource_version_request": "resource-version-request.schema.json"
   },
   "error_codes": [

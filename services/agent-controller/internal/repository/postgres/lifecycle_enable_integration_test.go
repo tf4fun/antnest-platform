@@ -32,7 +32,6 @@ func TestLifecycleRepositoryPersistsAndPublishesEnableSaga(t *testing.T) {
 	if base.Agent.LifecycleState != domain.AgentDisabled ||
 		base.Spec.ID != available.ExecutableSpec.ID ||
 		base.LastSuccessfulExecution.ID != available.ExecutableExecution.ID ||
-		base.NetworkPolicyAssignment.PolicyID != "internet-enabled" ||
 		base.NextExecutionRevision != available.ExecutableExecution.Revision+1 {
 		t.Fatalf("enable base = %+v", base)
 	}
@@ -40,7 +39,6 @@ func TestLifecycleRepositoryPersistsAndPublishesEnableSaga(t *testing.T) {
 	now := time.Unix(700, 0).UTC()
 	requestID := "request-enable-integration"
 	fingerprint := strings.Repeat("8", 64)
-	policy := base.NetworkPolicyAssignment
 	begin := ports.BeginAgentEnable{
 		AgentID:                     base.Agent.AgentID,
 		ExpectedAggregateSequence:   base.Agent.AggregateSequence,
@@ -56,7 +54,6 @@ func TestLifecycleRepositoryPersistsAndPublishesEnableSaga(t *testing.T) {
 			SourceRuntimeRevision:     base.Agent.RuntimeRevision,
 			TargetSpecRevisionID:      base.Spec.ID,
 			ChildRequestID:            domain.ChildRequestID(requestID, domain.PhaseNetworkEnsure),
-			NetworkPolicyAssignment:   &policy,
 			Attempt:                   1, CreatedAt: now, UpdatedAt: now,
 		},
 		RequestedEvent: ports.AgentEventRecord{
@@ -71,16 +68,13 @@ func TestLifecycleRepositoryPersistsAndPublishesEnableSaga(t *testing.T) {
 	if err != nil || replayed {
 		t.Fatalf("begin Agent enable: state=%+v replayed=%t err=%v", started, replayed, err)
 	}
+	ctx = claimLifecycleForTest(t, ctx, repository, requestID)
 	if started.Agent.DesiredState != domain.DesiredEnabled ||
-		started.Agent.LifecycleState != domain.AgentDisabled ||
-		started.Operation.NetworkPolicyAssignment == nil {
+		started.Agent.LifecycleState != domain.AgentDisabled {
 		t.Fatalf("started enable = %+v", started)
 	}
 
-	attachment := ports.NetworkAttachment{
-		AgentID: base.Agent.AgentID, TunnelIPv4: "100.64.0.2", ResolverIPv4: "100.64.0.1",
-		PacketContractRevision: 1, EgressIPv4: "127.0.0.1", EgressPort: 19091, State: "active",
-	}
+	attachment := *closedNetworkAttachment(base.Agent.AgentID)
 	withNetwork, err := repository.AdvanceAgentEnable(ctx, ports.AdvanceAgentEnable{
 		RequestID: requestID, Fingerprint: fingerprint,
 		ExpectedPhase: domain.PhaseNetworkEnsure, NextPhase: domain.PhaseRuntimeEnable,
@@ -107,14 +101,17 @@ func TestLifecycleRepositoryPersistsAndPublishesEnableSaga(t *testing.T) {
 	if err != nil || withRuntime.Operation.Phase != domain.PhaseNetworkRestore {
 		t.Fatalf("record Runtime enable: state=%+v err=%v", withRuntime, err)
 	}
-	withPolicy, err := repository.AdvanceAgentEnable(ctx, ports.AdvanceAgentEnable{
+	openedAttachment := attachment
+	openedAttachment.AttachmentState = ports.NetworkAttachmentOpen
+	openedAttachment.AttachmentResourceVersion++
+	withAttachment, err := repository.AdvanceAgentEnable(ctx, ports.AdvanceAgentEnable{
 		RequestID: requestID, Fingerprint: fingerprint,
 		ExpectedPhase: domain.PhaseNetworkRestore, NextPhase: domain.PhasePublish,
 		NextChildRequestID: domain.ChildRequestID(requestID, domain.PhasePublish),
-		NetworkAttachment:  &attachment, Now: now.Add(3 * time.Second),
+		NetworkAttachment:  &openedAttachment, Now: now.Add(3 * time.Second),
 	})
-	if err != nil || withPolicy.Operation.Phase != domain.PhasePublish {
-		t.Fatalf("record policy restoration: state=%+v err=%v", withPolicy, err)
+	if err != nil || withAttachment.Operation.Phase != domain.PhasePublish {
+		t.Fatalf("record attachment open: state=%+v err=%v", withAttachment, err)
 	}
 
 	execution := ports.ExecutionRecord{
@@ -169,24 +166,18 @@ func seedDisabledAgentForEnable(
 	if _, _, err := repository.BeginAgentDisable(ctx, begin); err != nil {
 		t.Fatalf("begin prerequisite Agent disable: %v", err)
 	}
+	ctx = claimLifecycleForTest(t, ctx, repository, requestID)
 	if _, err := repository.SettleAgentDisableDrain(
 		ctx, requestID, fingerprint,
 		domain.ChildRequestID(requestID, domain.PhaseNetworkFence), now.Add(time.Second),
 	); err != nil {
 		t.Fatalf("settle prerequisite Agent disable: %v", err)
 	}
-	policy := ports.NetworkPolicyAssignment{
-		AgentID: base.Agent.AgentID, PolicyID: "internet-enabled", Revision: 1, ResourceVersion: 7,
-	}
-	if _, err := repository.RecordAgentDisablePolicy(
-		ctx, requestID, fingerprint, policy, now.Add(2*time.Second),
-	); err != nil {
-		t.Fatalf("record prerequisite Agent policy: %v", err)
-	}
 	if _, err := repository.AdvanceAgentDisable(ctx, ports.AdvanceAgentDisable{
 		RequestID: requestID, Fingerprint: fingerprint,
 		ExpectedPhase: domain.PhaseNetworkFence, NextPhase: domain.PhaseRuntimeDisable,
 		NextChildRequestID: domain.ChildRequestID(requestID, domain.PhaseRuntimeDisable),
+		NetworkAttachment:  closedNetworkAttachment(base.Agent.AgentID),
 		Now:                now.Add(3 * time.Second),
 	}); err != nil {
 		t.Fatalf("advance prerequisite Agent disable: %v", err)

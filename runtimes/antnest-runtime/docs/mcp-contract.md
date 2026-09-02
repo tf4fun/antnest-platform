@@ -153,7 +153,23 @@ resulting file cannot exceed 8 MiB.
 Arguments that fail SDK schema decoding are MCP request errors. Semantic input,
 filesystem, process, timeout, and content failures return an MCP tool result
 with `isError: true`, a concise text block, and structured content containing a
-stable `code`.
+stable `error_code`.
+
+Every completed MCP Tool response carries an explicit effect projection in
+`structuredContent`:
+
+| Field | Meaning |
+| --- | --- |
+| `effect_state=none` | the Tool did not produce an externally visible effect |
+| `effect_state=settled` | Runtime received the authoritative completed result |
+| `effect_state=unknown` | the operation may have produced an effect, but Runtime cannot prove its final outcome |
+| `effect_source` | `runtime_mcp` only when the state is `unknown`; otherwise `null` |
+
+Successful responses retain their existing result fields and add
+`effect_state=settled` plus `effect_source=null`. Error responses add
+`error_code`, `message`, `effect_state`, and `effect_source`. This projection
+is part of the Runtime contract rather than a hint inferred from text or HTTP
+status.
 
 A non-zero Bash exit is a completed Bash result, not a transport failure. MCP
 Streamable HTTP cancellation is owned by the official SDK; dropping the
@@ -182,9 +198,12 @@ valid Executor responses.
 
 `outcome_unknown` is returned when `bash`, `write`, or `edit` may have produced
 a side effect but Runtime did not receive a complete authoritative response.
-Filesystem writes use atomic replacement, but cancellation, timeout, process
-failure, or response loss can occur after commit. Callers should inspect state
-before retrying.
+Filesystem writes use atomic replacement. Failures before `renameat` are
+reported as `effect_state=none`; directory synchronization, readback, or
+verification failures after `renameat` are reported as
+`effect_state=unknown`. Cancellation, timeout, process failure, or response
+loss after dispatch is also unknown. Callers must not retry automatically and
+should inspect state first.
 
 Every tool path is relative to its named root, non-empty, and free of NUL,
 absolute/root components, platform prefixes, and `..` components. These

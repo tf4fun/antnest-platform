@@ -833,13 +833,12 @@ FenceAgentNetwork(agent_id)
 ReleaseAgentNetwork(agent_id)
 ```
 
-Before fencing, rebuild persists the authoritative policy assignment. Runtime
-Egress fence keeps the allocation `active` but durably changes its policy to
-deny-all and clears packet state. The operation then reads and persists the
-authoritative attachment, uses it to assemble the complete Runtime update
-configuration, restores the captured policy through assignment CAS, and
-requires `EnsureAgentNetwork` to return the same active attachment before
-publication.
+Before replacement, rebuild asks Runtime Egress to close the Agent attachment
+through resource-version CAS. Egress denies new packets, drains writers, and
+clears userspace/conntrack flow state without changing the Agent's desired
+policy. The operation uses the retained network allocation to assemble the
+complete Runtime update configuration and opens the attachment only after
+replacement Runtime readiness; open applies the current desired policy.
 
 ### 10.4 Agent ACP Service
 
@@ -869,8 +868,8 @@ execution_revisions
 agent_access_bindings
 agent_lifecycle_operations
 run_admissions
+runtime_observation_cursor
 agent_events
-credential_references
 ```
 
 ### 11.2 Agent ACP Service database

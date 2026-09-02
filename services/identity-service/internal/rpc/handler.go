@@ -52,7 +52,7 @@ type DirectoryService interface {
 type LocalAuthService interface {
 	Login(context.Context, localauth.LoginInput) (localauth.LoginResult, error)
 	Resolve(context.Context, string) (domain.Principal, error)
-	Revoke(context.Context, string, string) error
+	RevokeByAccessToken(context.Context, string) (localauth.RevokeStatus, error)
 }
 
 type OIDCService interface {
@@ -343,19 +343,24 @@ func (h *Handler) resolveAccessToken(response http.ResponseWriter, request *http
 	writeResult(response, map[string]any{"principal": principal}, err)
 }
 
-type revokeTokenRequest struct {
-	ActorPrincipalID string `json:"actor_principal_id"`
-	TokenID          string `json:"token_id"`
+type revokeAccessTokenRequest struct {
+	AccessToken string `json:"access_token"`
 }
 
 func (h *Handler) revokeAccessToken(response http.ResponseWriter, request *http.Request) {
-	var body revokeTokenRequest
-	if !decodeRequest(response, request, &body) ||
-		!requireIDs(response, body.ActorPrincipalID, body.TokenID) {
+	var body revokeAccessTokenRequest
+	if !decodeRequest(response, request, &body) || !require(response, body.AccessToken) {
 		return
 	}
-	err := h.dependencies.LocalAuth.Revoke(request.Context(), body.ActorPrincipalID, body.TokenID)
-	writeResult(response, map[string]string{"status": "revoked"}, err)
+	status, err := h.dependencies.LocalAuth.RevokeByAccessToken(
+		request.Context(), body.AccessToken,
+	)
+	writeResult(response, map[string]localauth.RevokeStatus{"status": status}, err)
+}
+
+type revokeTokenRequest struct {
+	ActorPrincipalID string `json:"actor_principal_id"`
+	TokenID          string `json:"token_id"`
 }
 
 type issueSCIMTokenRequest struct {

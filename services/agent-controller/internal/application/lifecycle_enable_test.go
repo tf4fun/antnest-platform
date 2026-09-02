@@ -4,14 +4,13 @@ import (
 	"context"
 	"errors"
 	"reflect"
-	"strings"
 	"testing"
 
 	"soft/antnest-platform/services/agent-controller/internal/domain"
 	"soft/antnest-platform/services/agent-controller/internal/ports"
 )
 
-func TestEnableAgentPublishesNewExecutionAfterPolicyRestoration(t *testing.T) {
+func TestEnableAgentPublishesNewExecutionAfterAttachmentOpen(t *testing.T) {
 	t.Parallel()
 
 	base := enableLifecycleBase(t)
@@ -19,7 +18,7 @@ func TestEnableAgentPublishesNewExecutionAfterPolicyRestoration(t *testing.T) {
 	dependencies := newEnableDependencies(base, readyEnableRuntime())
 	service := newLifecycleTestService(t, store, dependencies)
 
-	result, err := service.EnableAgent(context.Background(), EnableAgentInput{
+	result, err := executeEnableForTest(service, context.Background(), EnableAgentInput{
 		RequestID: "request-enable-1", AgentID: base.Agent.AgentID,
 	})
 	if err != nil {
@@ -40,8 +39,7 @@ func TestEnableAgentPublishesNewExecutionAfterPolicyRestoration(t *testing.T) {
 		t.Fatalf("enable publish = %+v", store.published)
 	}
 	wantCalls := []string{
-		"egress.policy.get", "egress.network.get", "egress.fence", "egress.policy.get",
-		"runtime.enable", "egress.policy.get", "egress.policy.assign", "egress.ensure",
+		"egress.ensure", "runtime.enable", "egress.attachment.open",
 	}
 	if !reflect.DeepEqual(dependencies.calls, wantCalls) {
 		t.Fatalf("enable calls = %v, want %v", dependencies.calls, wantCalls)
@@ -57,7 +55,7 @@ func TestEnableAgentCompletedReplayHasNoDependencyEffects(t *testing.T) {
 	dependencies := newEnableDependencies(base, readyEnableRuntime())
 	service := newLifecycleTestService(t, store, dependencies)
 
-	result, err := service.EnableAgent(context.Background(), EnableAgentInput{
+	result, err := executeEnableForTest(service, context.Background(), EnableAgentInput{
 		RequestID: store.state.Operation.RequestID, AgentID: base.Agent.AgentID,
 	})
 	if err != nil {
@@ -82,7 +80,7 @@ func TestEnableAgentReplaysRunningRuntimeWithSameChildRequest(t *testing.T) {
 		RequestID: "request-enable-running", AgentID: base.Agent.AgentID,
 	}
 
-	first, err := service.EnableAgent(context.Background(), input)
+	first, err := executeEnableForTest(service, context.Background(), input)
 	if err != nil {
 		t.Fatalf("start running enable: %v", err)
 	}
@@ -92,7 +90,7 @@ func TestEnableAgentReplaysRunningRuntimeWithSameChildRequest(t *testing.T) {
 	}
 	store.replayed = true
 	dependencies.runtime = readyEnableRuntime()
-	second, err := service.EnableAgent(context.Background(), input)
+	second, err := executeEnableForTest(service, context.Background(), input)
 	if err != nil {
 		t.Fatalf("replay running enable: %v", err)
 	}
@@ -114,7 +112,7 @@ func TestEnableAgentKnownRuntimeFailurePreservesDisabledProjection(t *testing.T)
 	})
 	service := newLifecycleTestService(t, store, dependencies)
 
-	result, err := service.EnableAgent(context.Background(), EnableAgentInput{
+	result, err := executeEnableForTest(service, context.Background(), EnableAgentInput{
 		RequestID: "request-enable-failed", AgentID: base.Agent.AgentID,
 	})
 	if err != nil {
@@ -127,10 +125,7 @@ func TestEnableAgentKnownRuntimeFailurePreservesDisabledProjection(t *testing.T)
 	}
 	if !reflect.DeepEqual(
 		dependencies.calls,
-		[]string{
-			"egress.policy.get", "egress.network.get", "egress.fence",
-			"egress.policy.get", "runtime.enable", "runtime.inspect",
-		},
+		[]string{"egress.ensure", "runtime.enable", "runtime.inspect"},
 	) {
 		t.Fatalf("failed enable calls = %v", dependencies.calls)
 	}
@@ -154,7 +149,7 @@ func TestEnableAgentRuntimeMismatchRemainsReplayableAndFenced(t *testing.T) {
 	}
 	service := newLifecycleTestService(t, store, dependencies)
 
-	result, err := service.EnableAgent(context.Background(), EnableAgentInput{
+	result, err := executeEnableForTest(service, context.Background(), EnableAgentInput{
 		RequestID: "request-enable-mismatch", AgentID: base.Agent.AgentID,
 	})
 	if !errors.Is(err, ErrDependencyUnavailable) {
@@ -164,8 +159,8 @@ func TestEnableAgentRuntimeMismatchRemainsReplayableAndFenced(t *testing.T) {
 		result.Operation.Phase != domain.PhaseRuntimeEnable || store.failed.Code != "" {
 		t.Fatalf("Runtime mismatch result = %+v failure=%+v", result, store.failed)
 	}
-	if dependencies.calls[len(dependencies.calls)-1] != "egress.fence" {
-		t.Fatalf("Runtime mismatch did not fence network: %v", dependencies.calls)
+	if dependencies.calls[len(dependencies.calls)-1] != "egress.network.get" {
+		t.Fatalf("Runtime mismatch did not confirm the closed attachment: %v", dependencies.calls)
 	}
 }
 
@@ -183,7 +178,7 @@ func TestEnableAgentInspectionFailureRemainsReplayableAndFenced(t *testing.T) {
 	}
 	service := newLifecycleTestService(t, store, dependencies)
 
-	result, err := service.EnableAgent(context.Background(), EnableAgentInput{
+	result, err := executeEnableForTest(service, context.Background(), EnableAgentInput{
 		RequestID: "request-enable-inspection-failed", AgentID: base.Agent.AgentID,
 	})
 	if !errors.Is(err, ErrDependencyUnavailable) {
@@ -193,71 +188,60 @@ func TestEnableAgentInspectionFailureRemainsReplayableAndFenced(t *testing.T) {
 		result.Operation.Phase != domain.PhaseRuntimeEnable || store.failed.Code != "" {
 		t.Fatalf("Runtime inspection result = %+v failure=%+v", result, store.failed)
 	}
-	if dependencies.calls[len(dependencies.calls)-1] != "egress.fence" {
-		t.Fatalf("Runtime inspection failure did not fence network: %v", dependencies.calls)
+	if dependencies.calls[len(dependencies.calls)-1] != "egress.network.get" {
+		t.Fatalf("Runtime inspection failure did not confirm the closed attachment: %v", dependencies.calls)
 	}
 }
 
-func TestEnableAgentPolicyConflictAfterRuntimeReadyRemainsReplayable(t *testing.T) {
+func TestEnableAgentAttachmentOpenFailureAfterRuntimeReadyRemainsReplayable(t *testing.T) {
 	t.Parallel()
 
 	base := enableLifecycleBase(t)
 	store := &enableLifecycleStoreStub{base: base}
 	dependencies := newEnableDependencies(base, readyEnableRuntime())
-	dependencies.policyResults = []ports.NetworkPolicyAssignment{
-		dependencies.currentPolicy,
-		dependencies.currentPolicy,
-		{
-			AgentID: base.Agent.AgentID, PolicyID: "unrelated-policy",
-			Revision: 3, ResourceVersion: 12,
-		},
+	dependencies.attachmentOpenErr = &ports.DependencyError{
+		Service: "runtime-egress", Code: "resource_version_conflict", Retryable: true,
 	}
 	service := newLifecycleTestService(t, store, dependencies)
 
-	result, err := service.EnableAgent(context.Background(), EnableAgentInput{
+	result, err := executeEnableForTest(service, context.Background(), EnableAgentInput{
 		RequestID: "request-enable-conflict", AgentID: base.Agent.AgentID,
 	})
 	if !errors.Is(err, ErrDependencyUnavailable) {
-		t.Fatalf("policy conflict error = %v", err)
-	}
-	if !strings.Contains(err.Error(), "policy_restore_conflict") {
-		t.Fatalf("policy conflict lost diagnostic code: %v", err)
+		t.Fatalf("attachment open error = %v", err)
 	}
 	if result.Operation.State != domain.OperationRunning ||
 		result.Operation.Phase != domain.PhaseNetworkRestore || store.published.Execution.ID != "" {
-		t.Fatalf("policy conflict result = %+v publish=%+v", result, store.published)
+		t.Fatalf("attachment conflict result = %+v publish=%+v", result, store.published)
 	}
-	if dependencies.calls[len(dependencies.calls)-1] != "egress.fence" {
-		t.Fatalf("policy conflict did not fence network: %v", dependencies.calls)
+	if dependencies.calls[len(dependencies.calls)-1] != "egress.network.get" {
+		t.Fatalf("attachment conflict did not confirm closure: %v", dependencies.calls)
 	}
 }
 
-func TestEnableAgentRejectsUnrelatedPolicyBeforeRuntimeStartup(t *testing.T) {
+func TestEnableAgentRejectsIncompleteAttachmentBeforeRuntimeStartup(t *testing.T) {
 	t.Parallel()
 
 	base := enableLifecycleBase(t)
 	store := &enableLifecycleStoreStub{base: base}
 	dependencies := newEnableDependencies(base, readyEnableRuntime())
-	dependencies.currentPolicy = ports.NetworkPolicyAssignment{
-		AgentID: base.Agent.AgentID, PolicyID: "unrelated-policy",
-		Revision: 3, ResourceVersion: 12,
-	}
+	dependencies.network.NetworkResourceVersion = 0
 	service := newLifecycleTestService(t, store, dependencies)
 
-	result, err := service.EnableAgent(context.Background(), EnableAgentInput{
-		RequestID: "request-enable-preflight-conflict", AgentID: base.Agent.AgentID,
+	result, err := executeEnableForTest(service, context.Background(), EnableAgentInput{
+		RequestID: "request-enable-invalid-network", AgentID: base.Agent.AgentID,
 	})
 	if err != nil {
-		t.Fatalf("preflight policy conflict: %v", err)
+		t.Fatalf("invalid preflight attachment: %v", err)
 	}
 	if result.Agent.DesiredState != domain.DesiredDisabled ||
 		result.Operation.State != domain.OperationFailed ||
-		store.failed.Code != "policy_restore_conflict" ||
+		store.failed.Code != "invalid_network_attachment" ||
 		store.failed.SourceRuntimeInspection == nil {
-		t.Fatalf("preflight conflict result = %+v failure=%+v", result, store.failed)
+		t.Fatalf("invalid preflight result = %+v failure=%+v", result, store.failed)
 	}
-	if !reflect.DeepEqual(dependencies.calls, []string{"egress.policy.get", "runtime.inspect"}) {
-		t.Fatalf("preflight conflict calls = %v", dependencies.calls)
+	if !reflect.DeepEqual(dependencies.calls, []string{"egress.ensure", "runtime.inspect"}) {
+		t.Fatalf("invalid preflight calls = %v", dependencies.calls)
 	}
 }
 
@@ -267,14 +251,11 @@ func TestEnableAgentKeepsRunningWhenPreflightFailureCannotProveDisabledRuntime(t
 	base := enableLifecycleBase(t)
 	store := &enableLifecycleStoreStub{base: base}
 	dependencies := newEnableDependencies(base, readyEnableRuntime())
-	dependencies.currentPolicy = ports.NetworkPolicyAssignment{
-		AgentID: base.Agent.AgentID, PolicyID: "unrelated-policy",
-		Revision: 3, ResourceVersion: 12,
-	}
+	dependencies.network.NetworkResourceVersion = 0
 	dependencies.inspection.RuntimeRevision = "rtv_99999999999999999999999999999999"
 	service := newLifecycleTestService(t, store, dependencies)
 
-	result, err := service.EnableAgent(context.Background(), EnableAgentInput{
+	result, err := executeEnableForTest(service, context.Background(), EnableAgentInput{
 		RequestID: "request-enable-preflight-runtime-drift", AgentID: base.Agent.AgentID,
 	})
 	if !errors.Is(err, ErrDependencyUnavailable) {
@@ -285,30 +266,30 @@ func TestEnableAgentKeepsRunningWhenPreflightFailureCannotProveDisabledRuntime(t
 		t.Fatalf("preflight Runtime drift result = %+v failure=%+v", result, store.failed)
 	}
 	wantCalls := []string{
-		"egress.policy.get", "runtime.inspect", "egress.policy.get", "egress.fence",
+		"egress.ensure", "runtime.inspect", "egress.network.get", "egress.attachment.closed",
 	}
 	if !reflect.DeepEqual(dependencies.calls, wantCalls) {
 		t.Fatalf("preflight Runtime drift calls = %v, want %v", dependencies.calls, wantCalls)
 	}
 }
 
-func TestEnableAgentRejectsDisabledProjectionWithoutCapturedPolicy(t *testing.T) {
+func TestEnableAgentRejectsIncompleteDisabledProjection(t *testing.T) {
 	t.Parallel()
 
 	base := enableLifecycleBase(t)
-	base.NetworkPolicyAssignment = ports.NetworkPolicyAssignment{}
+	base.Agent.RuntimeRevision = ""
 	store := &enableLifecycleStoreStub{base: base}
 	dependencies := newEnableDependencies(base, readyEnableRuntime())
 	service := newLifecycleTestService(t, store, dependencies)
 
-	_, err := service.EnableAgent(context.Background(), EnableAgentInput{
-		RequestID: "request-enable-without-policy", AgentID: base.Agent.AgentID,
+	_, err := executeEnableForTest(service, context.Background(), EnableAgentInput{
+		RequestID: "request-enable-incomplete", AgentID: base.Agent.AgentID,
 	})
 	if !errors.Is(err, ErrAgentNotReady) {
-		t.Fatalf("missing captured policy error = %v", err)
+		t.Fatalf("incomplete disabled projection error = %v", err)
 	}
 	if len(dependencies.calls) != 0 {
-		t.Fatalf("missing captured policy made dependency calls: %v", dependencies.calls)
+		t.Fatalf("incomplete disabled projection made dependency calls: %v", dependencies.calls)
 	}
 }
 
@@ -326,10 +307,7 @@ func enableLifecycleBase(t *testing.T) ports.AgentEnableBase {
 	return ports.AgentEnableBase{
 		Agent: agent, Spec: disabled.ExecutableSpec,
 		LastSuccessfulExecution: disabled.ExecutableExecution,
-		NetworkPolicyAssignment: ports.NetworkPolicyAssignment{
-			AgentID: agent.AgentID, PolicyID: "internet-enabled", Revision: 1, ResourceVersion: 7,
-		},
-		NextExecutionRevision: disabled.ExecutableExecution.Revision + 1,
+		NextExecutionRevision:   disabled.ExecutableExecution.Revision + 1,
 	}
 }
 
@@ -346,9 +324,8 @@ func readyEnableRuntime() ports.RuntimeOperation {
 type enableDependenciesStub struct {
 	calls                   []string
 	network                 ports.NetworkAttachment
-	currentPolicy           ports.NetworkPolicyAssignment
-	policyResults           []ports.NetworkPolicyAssignment
-	policyIndex             int
+	attachmentOpenErr       error
+	attachmentClosed        bool
 	runtime                 ports.RuntimeOperation
 	inspection              ports.RuntimeInspection
 	inspectionErr           error
@@ -364,12 +341,7 @@ func newEnableDependencies(
 	network := validLifecycleNetwork()
 	network.AgentID = base.Agent.AgentID
 	return &enableDependenciesStub{
-		network: network,
-		currentPolicy: ports.NetworkPolicyAssignment{
-			AgentID: base.Agent.AgentID, PolicyID: ports.BuiltinDenyAllPolicyID, Revision: 1,
-			ResourceVersion: base.NetworkPolicyAssignment.ResourceVersion + 1,
-		},
-		runtime: runtime,
+		network: network, attachmentClosed: true, runtime: runtime,
 		inspection: ports.RuntimeInspection{
 			AgentID: base.Agent.AgentID, RuntimeRevision: base.Agent.RuntimeRevision,
 			LifecycleState: "disabled", Health: "absent",
@@ -378,46 +350,46 @@ func newEnableDependencies(
 }
 
 func (dependency *enableDependenciesStub) GetAgentNetwork(
-	context.Context, string,
+	_ context.Context, agentID string,
 ) (ports.NetworkAttachment, error) {
 	dependency.calls = append(dependency.calls, "egress.network.get")
-	return dependency.network, nil
-}
-
-func (dependency *enableDependenciesStub) EnsureAgentNetwork(
-	context.Context, string,
-) (ports.NetworkAttachment, error) {
-	dependency.calls = append(dependency.calls, "egress.ensure")
-	return dependency.network, nil
-}
-
-func (dependency *enableDependenciesStub) GetAgentPolicyAssignment(
-	context.Context, string,
-) (ports.NetworkPolicyAssignment, error) {
-	dependency.calls = append(dependency.calls, "egress.policy.get")
-	result := dependency.currentPolicy
-	if dependency.policyIndex < len(dependency.policyResults) {
-		result = dependency.policyResults[dependency.policyIndex]
+	result := dependency.network
+	result.AgentID = agentID
+	if dependency.attachmentClosed {
+		result.AttachmentState = ports.NetworkAttachmentClosed
+	} else {
+		result.AttachmentState = ports.NetworkAttachmentOpen
 	}
-	dependency.policyIndex++
 	return result, nil
 }
 
-func (dependency *enableDependenciesStub) AssignAgentPolicy(
-	_ context.Context, assignment ports.NetworkPolicyAssignment, expected uint64,
-) (ports.NetworkPolicyAssignment, error) {
-	dependency.calls = append(dependency.calls, "egress.policy.assign")
-	assignment.ResourceVersion = expected + 1
-	return assignment, nil
+func (dependency *enableDependenciesStub) EnsureAgentNetwork(
+	_ context.Context, agentID string,
+) (ports.NetworkAttachment, error) {
+	dependency.calls = append(dependency.calls, "egress.ensure")
+	result := dependency.network
+	result.AgentID = agentID
+	result.AttachmentState = ports.NetworkAttachmentClosed
+	dependency.network = result
+	dependency.attachmentClosed = true
+	return result, nil
 }
 
-func (dependency *enableDependenciesStub) FenceAgentNetwork(context.Context, string, uint64) error {
-	dependency.calls = append(dependency.calls, "egress.fence")
-	return nil
-}
-
-func (dependency *enableDependenciesStub) ResetAgentFlows(context.Context, string, uint64) error {
-	return errors.New("unexpected Egress flow reset")
+func (dependency *enableDependenciesStub) SetAgentNetworkAttachment(
+	_ context.Context, agentID string, state string, expectedResourceVersion uint64,
+) (ports.NetworkAttachment, error) {
+	dependency.calls = append(dependency.calls, "egress.attachment."+state)
+	if state == ports.NetworkAttachmentOpen && dependency.attachmentOpenErr != nil {
+		return ports.NetworkAttachment{}, dependency.attachmentOpenErr
+	}
+	result := dependency.network
+	result.AgentID = agentID
+	result.State = ports.NetworkStateActive
+	result.AttachmentState = state
+	result.AttachmentResourceVersion = expectedResourceVersion + 1
+	dependency.network = result
+	dependency.attachmentClosed = state == ports.NetworkAttachmentClosed
+	return result, nil
 }
 
 func (dependency *enableDependenciesStub) ReleaseAgentNetwork(
@@ -501,13 +473,12 @@ func (store *enableLifecycleStoreStub) BeginAgentEnable(
 	agent.ActiveOperationRequestID = input.Operation.RequestID
 	agent.AggregateSequence = input.RequestedEvent.AggregateSequence
 	operation := input.Operation
-	policy := store.base.NetworkPolicyAssignment
-	operation.NetworkPolicyAssignment = &policy
 	store.state = ports.AgentEnableState{
 		Agent: agent, Spec: store.base.Spec,
 		LastSuccessfulExecution: store.base.LastSuccessfulExecution,
 		Operation:               operation,
 	}
+	store.replayed = true
 	return store.state, false, nil
 }
 

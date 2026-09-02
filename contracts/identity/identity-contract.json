@@ -1,6 +1,6 @@
 {
   "contract": "antnest.identity",
-  "revision": 6,
+  "revision": 7,
   "transport": "json-over-http",
   "trust": "internal-network",
   "base_path": "/rpc/identity",
@@ -511,15 +511,19 @@
       "method": "POST",
       "path": "/revoke-access-token",
       "request": {
-        "required": ["actor_principal_id", "token_id"],
+        "required": ["access_token"],
         "properties": {
-          "actor_principal_id": { "$ref": "#/definitions/id" },
-          "token_id": { "$ref": "#/definitions/id" }
+          "access_token": { "type": "string", "minLength": 1, "secret": true }
         }
       },
       "response": {
         "required": ["status"],
-        "properties": { "status": { "type": "string", "const": "revoked" } }
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": ["revoked", "already_invalid"]
+          }
+        }
       }
     },
     "issue_scim_token": {

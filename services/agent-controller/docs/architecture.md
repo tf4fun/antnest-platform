@@ -15,9 +15,18 @@ as vertical business slices. At present ModelProfile/Template Catalog, current
 Agent projection queries, Run admission, and the Agent create, explicit rebuild,
 disable, enable, and delete Sagas are runnable. Lifecycle Runtime barriers
 atomically release unresolved Run occupancy and append the corresponding Agent
-event. A background recovery worker claims stale running operations through
-PostgreSQL leases and resumes the same persisted state machines. Authoritative
+event. HTTP commands only commit durable intent. A background lifecycle worker
+claims fresh or retry-due running operations through PostgreSQL leases and is
+the sole executor of the persisted state machines. Authoritative
 event replay and best-effort SSE watch are runnable.
+
+A small Runtime-observation consumer is intentionally not a general event bus.
+It polls Runtime Controller's authoritative ordered journal with a persisted
+cursor. Initial startup and expired-cursor recovery reconcile current Runtime
+execution identities first. A `restarted` observation for the Agent's current
+opaque Runtime revision atomically clears the executable binding, transitions
+an otherwise idle available Agent to `unavailable`, and appends
+`agent_runtime_restarted`. Recovery is an explicit Agent rebuild.
 
 ## Aggregate Model
 
@@ -130,30 +139,34 @@ may be retried only with the same canonical fingerprint. The operation stores
 its source preconditions, target revision, child request IDs, phase, result,
 and failure class before or after each external effect as applicable.
 
-Recovery ownership is execution metadata, not Agent state. A worker claims one
-stale running operation with `FOR UPDATE SKIP LOCKED`, a bounded lease, and a
-monotonic attempt fencing token. It reloads the operation by its stored request
-fingerprint and resumes the existing phase machine. It never reconstructs the
+Worker ownership is execution metadata, not Agent state. A worker claims one
+due running operation with `FOR UPDATE SKIP LOCKED`, a bounded lease, and a
+monotonic attempt fencing token. Newly admitted operations are due immediately;
+dependency backoff changes only `recovery_after`. The worker reloads the
+operation by its stored request fingerprint and resumes the existing phase
+machine. It never reconstructs the
 original command body and never allocates a replacement child request ID.
 Operation phase CAS, Agent aggregate CAS, and downstream child-request
 idempotency remain authoritative if an expired worker overlaps a newer worker
-or an explicit client replay.
+or an explicit client replay. A non-retryable malformed operation is failed and
+audited under the live lease without stopping unrelated operations.
 
-Initial request and recovery attempts are separate traces. Each recovery
-attempt stores its own W3C trace parent before making an external call and
+Initial request and worker attempts are separate traces. Each worker attempt
+stores its own W3C trace parent before making an external call and
 starts a new root span linked to the initial request and previous recovery
-attempt. Recovery ownership, lease expiry, and retry scheduling are not emitted
+attempt. Worker ownership, lease expiry, and retry scheduling are not emitted
 as domain events or copied into the Agent projection.
 
 Operation kinds and successful paths are:
 
 ```text
-create  validate -> network_ensured -> runtime_initialized -> published
-rebuild drain -> network_fenced -> flows_reset -> runtime_updated
-        -> network_reopened -> published
-disable drain -> network_fenced -> runtime_disabled -> published
-enable  network_verified -> runtime_enabled -> network_restored -> published
-delete  drain -> network_fenced -> flows_reset -> runtime_deleted
+create  validate -> network_ensured_closed -> runtime_initialized
+        -> network_opened -> published
+rebuild drain -> network_closed -> runtime_updated
+        -> network_opened -> published
+disable drain -> network_closed -> runtime_disabled -> published
+enable  network_ensured_closed -> runtime_enabled -> network_opened -> published
+delete  drain -> network_closed -> runtime_deleted
         -> network_released -> published
 ```
 
@@ -226,15 +239,15 @@ candidate Runtime.
 2. Resolve and freeze the requested Template revision.
 3. Persist Agent, AgentSpecRevision, owner access binding, create operation,
    projection state `provisioning`, and `agent_create_requested` atomically.
-4. Ensure the Egress network attachment.
+4. Ensure the Egress network allocation and require its attachment to be closed.
 5. Construct Runtime Controller configuration from the frozen Runtime inputs
    plus returned network attachment.
 6. Initialize Runtime with the durable child request ID and wait for a completed,
    healthy result whose effect is confirmed complete.
-7. Re-read the Egress attachment and require the same active tunnel, resolver,
-   packet contract, and endpoint used to initialize Runtime. This closes the
-   readiness race without publishing a Runtime configured for stale network
-   facts.
+7. Open the attachment with resource-version CAS and require the same active
+   tunnel, resolver, packet contract, and endpoint used to initialize Runtime.
+   This closes the readiness race without publishing a Runtime configured for
+   stale network facts.
 8. Atomically publish ExecutionRevision, set `available`, and append `agent_ready`.
 9. Any terminal failure sets `unavailable`, records exact phase/class, and
    appends `agent_build_failed`.
@@ -260,26 +273,28 @@ and is released only after Runtime replacement proves the old compute absent.
 Client MCP and unclassified effects remain blocked. The Runtime-update
 barrier and the resulting `run_admission_released` event commit atomically.
 
-Once drained, the Saga first persists the authoritative Egress policy assignment,
-then fences Egress to durable deny-all, reads and persists the authoritative
-active network attachment, resets userspace/kernel flows, and calls Runtime
-Controller `UpdateRuntime` with the source opaque Runtime revision and the
-complete target Runtime configuration. Agent Controller never copies Tunnel
-allocation ownership into its Agent projection. After Runtime readiness it
-restores the captured policy assignment using Egress resource-version CAS,
-calls `EnsureAgentNetwork`, and requires the same Tunnel, resolver, packet
-contract, and Egress endpoint to be active before publication.
+Once drained, the Saga reads the current Egress allocation and closes its
+Runtime attachment with attachment resource-version CAS. Closing is one
+Egress-owned barrier: it blocks packets, drains packet writers, and clears
+userspace and conntrack flow state without changing desired policy. Agent
+Controller persists the returned closed attachment and calls Runtime Controller
+`UpdateRuntime` with the source opaque Runtime revision and complete target
+Runtime configuration. Agent Controller never copies Tunnel allocation
+ownership into its Agent projection. After Runtime readiness it opens that same
+attachment with CAS and requires unchanged Tunnel, resolver, packet contract,
+and Egress endpoint before publication.
 
-The Egress fence is not a third allocation state. Allocation remains `active`,
-but fence durably assigns deny-all and clears packet state. The captured policy
-is therefore part of the rebuild operation's recovery evidence.
+Desired Egress policy and lifecycle attachment state are independent. Policy
+updates made while an attachment is closed remain durable and are applied by
+Egress when the attachment opens. Lifecycle operations neither read nor rewrite
+policy assignments.
 
 Publication atomically installs the target AgentSpecRevision, one new
 ExecutionRevision, the ready Runtime binding, `available`, and
 `agent_rebuilt`. No partially published endpoint is usable. A transport or
 ambiguous dependency result leaves the durable operation at its current phase
-for exact-request replay. A conclusive pre-replacement failure restores the old
-policy and executable source. After Runtime replacement is confirmed, failure
+for exact-request replay. A conclusive pre-replacement failure reopens the
+attachment and preserves the executable source. After Runtime replacement is confirmed, failure
 remains non-terminal and fail-closed until exact replay can publish the observed
 Runtime; there is no implicit rollback.
 If Runtime Controller returns a stable deleted inspection for the exact source
@@ -299,8 +314,8 @@ Disable is a restartable Saga, not a projection-only flag:
 2. wait for an active Run to settle; a `blocked_unknown_effect` admission may
    cross the Runtime-disable/absence barrier only when Runtime Controller later proves the
    source Runtime compute absent;
-3. persist the current Egress policy assignment as recovery evidence, then
-   fence the Agent to durable deny-all;
+3. close the Runtime attachment with Egress CAS; Egress owns packet gating and
+   flow cleanup while preserving the desired policy;
 4. call Runtime Controller `DisableRuntime` with the frozen source Runtime
    revision; completed success must prove lifecycle `disabled` and health
    `absent`, returns the retained-workspace Runtime revision, and atomically
@@ -310,12 +325,12 @@ Disable is a restartable Saga, not a projection-only flag:
    execution/MCP binding, store the disabled Runtime revision, and append
    `agent_disabled`.
 
-A conclusive failure before Runtime disable restores the captured Egress
-policy, desired state `enabled`, and the old executable binding. Once Runtime
+A conclusive failure before Runtime disable reopens the attachment, restores
+desired state `enabled`, and preserves the old executable binding. Once Runtime
 Controller has received a disable request, restoration additionally requires
 an authoritative inspection proving the exact frozen Runtime revision,
 execution identity, MCP endpoint, lifecycle `ready`, and health `healthy`.
-Mismatch projects the Agent as unavailable and leaves it fenced; ambiguous
+Mismatch projects the Agent as unavailable and leaves its attachment closed; ambiguous
 effect or inspection remains running and fail-closed for exact-request replay.
 A stable deleted inspection for the exact source Runtime revision is not
 ambiguous: the failure, absence proof, unresolved-admission release, Agent
@@ -324,24 +339,20 @@ admission, no synthetic release event or sequence increment is produced. A
 plain missing-record response remains ambiguous and cannot cross this barrier.
 
 Enable reuses the disabled Agent's last valid AgentSpec; configuration changes
-always use explicit rebuild. It freezes the disabled Runtime revision, last
-successful ExecutionRevision, and policy captured by the matching completed
-Disable operation. It records the retained network attachment, calls Runtime
-Controller with the disabled Runtime revision, persists the proven ready
-result, enters a durable `network_restore` phase, restores only the captured
-policy, verifies unchanged network coordinates, and publishes a new
-ExecutionRevision. Before Runtime startup it verifies the current assignment is
-the captured policy or canonical deny-all and reads the retained attachment
-without reopening data flow, then reasserts and verifies deny-all before
-Runtime startup. A changed unrelated policy is never overwritten; post-ready
-restore failure re-fences the Agent. No policy reference is copied into the
-Agent projection.
+always use explicit rebuild. It freezes the disabled Runtime revision and last
+successful ExecutionRevision, ensures the retained network allocation remains
+active with a closed attachment, and calls Runtime Controller with that closed
+attachment. After persisting a proven ready Runtime result it enters the durable
+`network_restore` phase, opens the same attachment with CAS, verifies unchanged
+network coordinates, and publishes a new ExecutionRevision. Desired policy is
+not part of the lifecycle operation: any policy revision assigned while the
+Agent was disabled is applied by Egress during open.
 
 A conclusive Runtime `not_started` result is terminal only when authoritative
 inspection still proves the exact disabled Runtime. Otherwise the projection
-is not changed and the operation remains running and fenced. Once a ready
-Runtime result exists, dependency ambiguity likewise leaves the operation
-running and fenced for exact replay.
+is not changed and the operation remains running with a closed attachment. Once
+a ready Runtime result exists, dependency ambiguity likewise leaves the
+operation running with a closed attachment for exact replay.
 
 Delete removes compute and workspace, releases the Egress attachment into
 quarantine, keeps immutable events/revisions for retention, deactivates the
@@ -379,6 +390,7 @@ The initial schema owns:
 - `agent_access_bindings`;
 - `agent_lifecycle_operations`;
 - `run_admissions`;
+- `runtime_observation_cursor`;
 - `agent_events`.
 
 `agents` is the global current-state projection; it is not an event-sourced
@@ -400,6 +412,13 @@ react idempotently by `event_id` and reload the authoritative Agent projection
 when they require current state. This keeps producer-internal Saga details from
 becoming an accidental distributed data model.
 
+`runtime_observation_cursor` is Agent Controller's own consumer offset. It is
+not shared with Runtime Controller and does not grant authority over Runtime
+state. Multiple Agent Controller replicas may poll concurrently: cursor row
+locking makes observation application idempotent. Runtime list reconciliation
+repairs execution-identity drift when the upstream bounded journal no longer
+contains the original restart event.
+
 ## Module Direction
 
 ```text
@@ -414,10 +433,15 @@ Kubernetes, ACP, or PocketBase types.
 
 ## Observability
 
-Every inbound RPC creates or continues a W3C trace. Lifecycle root spans use
-the durable request ID, which is also the sole operation identity, and contain
-child spans for Egress, Runtime Controller,
-and database phases. Outbound clients propagate `traceparent` and `tracestate`.
+Every inbound RPC creates or continues a W3C trace. Each lifecycle worker
+attempt starts an independent root span carrying the durable request ID, which
+is also the sole operation identity. Across the request-ID-correlated trace set,
+those roots contain child spans for Egress, Runtime Controller, and database
+phases. They are joined causally with Span Links rather than a fabricated
+parent/child chain across scheduling or process restarts. Outbound clients
+propagate `traceparent` and `tracestate`.
+Runtime observation synchronization creates consumer spans; packet forwarding
+remains outside this tracing model.
 
 Allowed span attributes include Agent ID, organization ID, operation kind,
 phase, lifecycle state, configuration/execution/runtime revision, admission

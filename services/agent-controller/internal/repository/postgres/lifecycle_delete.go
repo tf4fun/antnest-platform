@@ -245,13 +245,13 @@ func (repository *Repository) PublishAgentDelete(
 	if err != nil {
 		return ports.AgentDeleteState{}, err
 	}
-	if err := authorizeLifecycleMutation(ctx, transaction, operation); err != nil {
+	replayed, err := authorizeLifecycleMutationOrReplay(
+		ctx, transaction, operation, domain.OperationDelete, input.Fingerprint, domain.OperationCompleted,
+	)
+	if err != nil {
 		return ports.AgentDeleteState{}, err
 	}
-	if operation.Kind != domain.OperationDelete || operation.RequestFingerprint != input.Fingerprint {
-		return ports.AgentDeleteState{}, ports.ErrRequestConflict
-	}
-	if operation.State == domain.OperationCompleted {
+	if replayed {
 		return loadAgentDeleteState(ctx, transaction, operation)
 	}
 	if operation.State != domain.OperationRunning || operation.Phase != domain.PhasePublish ||
@@ -347,10 +347,6 @@ func validDeleteAdvance(
 	}
 	switch input.ExpectedPhase {
 	case domain.PhaseNetworkFence:
-		return input.NextPhase == domain.PhaseFlowReset &&
-			input.NetworkAttachment == nil && input.RuntimeResult == nil &&
-			input.NetworkReleaseOutcome == "" && emptyRunAdmissionEvent(input.RunReleaseEvent)
-	case domain.PhaseFlowReset:
 		next := domain.PhaseRuntimeDelete
 		if operation.SourceRuntimeAbsent {
 			next = domain.PhaseNetworkRelease
@@ -359,8 +355,8 @@ func validDeleteAdvance(
 		if operation.SourceRuntimeAbsent {
 			validReleaseEvent = validRunEvent(input.RunReleaseEvent, domain.AdmissionReleased)
 		}
-		return input.NextPhase == next && input.NetworkAttachment == nil &&
-			input.RuntimeResult == nil && input.NetworkReleaseOutcome == "" && validReleaseEvent
+		return input.NextPhase == next && input.RuntimeResult == nil &&
+			input.NetworkReleaseOutcome == "" && validReleaseEvent
 	case domain.PhaseRuntimeDelete:
 		return !operation.SourceRuntimeAbsent && input.NextPhase == domain.PhaseNetworkRelease &&
 			input.NetworkAttachment == nil && input.RuntimeResult != nil &&
@@ -399,7 +395,7 @@ func validRuntimeAbsenceProof(proof *ports.RuntimeAbsenceProof) bool {
 		return false
 	}
 	switch proof.Reason {
-	case "runtime_not_found":
+	case "runtime_not_found", "agent_runtime_unassigned":
 		return proof.RuntimeRevision == ""
 	case "runtime_deleted":
 		return proof.RuntimeRevision != ""
@@ -445,7 +441,7 @@ func deleteCrossedRuntimeBarrier(
 	operation ports.LifecycleOperationRecord, input ports.AdvanceAgentDelete,
 ) bool {
 	return input.ExpectedPhase == domain.PhaseRuntimeDelete ||
-		(operation.SourceRuntimeAbsent && input.ExpectedPhase == domain.PhaseFlowReset)
+		(operation.SourceRuntimeAbsent && input.ExpectedPhase == domain.PhaseNetworkFence)
 }
 
 func activeRunBlocksDrain(ctx context.Context, transaction pgx.Tx, agentID string) (bool, error) {

@@ -200,7 +200,7 @@ CREATE TABLE IF NOT EXISTS agent_controller.agent_lifecycle_operations (
     agent_id TEXT NOT NULL REFERENCES agent_controller.agents(id),
     kind TEXT NOT NULL CHECK (kind IN ('create', 'rebuild', 'disable', 'enable', 'delete')),
     phase TEXT NOT NULL CHECK (phase IN (
-        'drain', 'network_ensure', 'network_fence', 'flow_reset',
+        'drain', 'network_ensure', 'network_fence',
         'runtime_initialize', 'runtime_update', 'runtime_disable',
         'runtime_enable', 'runtime_delete', 'network_release', 'network_restore',
         'publish', 'completed'
@@ -212,7 +212,7 @@ CREATE TABLE IF NOT EXISTS agent_controller.agent_lifecycle_operations (
             'network_ensure', 'runtime_initialize', 'publish'
         ))
         OR (kind = 'rebuild' AND phase IN (
-            'drain', 'network_fence', 'flow_reset', 'runtime_update',
+            'drain', 'network_fence', 'runtime_update',
             'network_ensure', 'publish'
         ))
         OR (kind = 'disable' AND phase IN (
@@ -222,7 +222,7 @@ CREATE TABLE IF NOT EXISTS agent_controller.agent_lifecycle_operations (
             'network_ensure', 'runtime_enable', 'network_restore', 'publish'
         ))
         OR (kind = 'delete' AND phase IN (
-            'drain', 'network_fence', 'flow_reset', 'runtime_delete',
+            'drain', 'network_fence', 'runtime_delete',
             'network_release', 'publish'
         ))
     ),
@@ -237,7 +237,6 @@ CREATE TABLE IF NOT EXISTS agent_controller.agent_lifecycle_operations (
     target_spec_revision_id TEXT NOT NULL DEFAULT '',
     child_request_id TEXT NOT NULL DEFAULT '',
     network_attachment JSONB,
-    network_policy_assignment JSONB,
     source_runtime_inspection JSONB,
     source_runtime_absence_proof JSONB,
     runtime_result JSONB,
@@ -246,7 +245,7 @@ CREATE TABLE IF NOT EXISTS agent_controller.agent_lifecycle_operations (
     ),
     initial_attempt_trace_parent TEXT NOT NULL DEFAULT '',
     previous_recovery_trace_parent TEXT NOT NULL DEFAULT '',
-    attempt BIGINT NOT NULL DEFAULT 1 CHECK (attempt > 0),
+    attempt BIGINT NOT NULL DEFAULT 0 CHECK (attempt >= 0),
     recovery_owner TEXT NOT NULL DEFAULT '',
     recovery_lease_until TIMESTAMPTZ,
     recovery_after TIMESTAMPTZ NOT NULL,
@@ -335,6 +334,18 @@ CREATE UNIQUE INDEX IF NOT EXISTS admissions_agent_occupancy_unique
     ON agent_controller.run_admissions (agent_id)
     WHERE state IN ('active', 'blocked_unknown_effect');
 
+CREATE TABLE IF NOT EXISTS agent_controller.runtime_observation_cursor (
+    singleton BOOLEAN PRIMARY KEY,
+    last_sequence BIGINT NOT NULL CHECK (last_sequence >= 0),
+    initialized BOOLEAN NOT NULL DEFAULT FALSE,
+    CONSTRAINT runtime_observation_cursor_singleton CHECK (singleton)
+);
+
+INSERT INTO agent_controller.runtime_observation_cursor (
+    singleton, last_sequence, initialized
+) VALUES (TRUE, 0, FALSE)
+ON CONFLICT (singleton) DO NOTHING;
+
 CREATE TABLE IF NOT EXISTS agent_controller.event_journal_cursor (
     singleton BOOLEAN PRIMARY KEY,
     last_sequence BIGINT NOT NULL CHECK (last_sequence >= 0),
@@ -362,7 +373,8 @@ CREATE TABLE IF NOT EXISTS agent_controller.agent_events (
         'agent_rebuild_requested', 'agent_rebuilt',
         'agent_disable_requested', 'agent_disabled', 'agent_disable_failed',
         'agent_enable_requested', 'agent_enabled', 'agent_enable_failed',
-        'agent_delete_requested', 'agent_deleted',
+		'agent_delete_requested', 'agent_deleted',
+		'agent_lifecycle_quarantined', 'agent_runtime_restarted',
         'run_admission_released', 'run_admission_unresolved'
     ))
 );

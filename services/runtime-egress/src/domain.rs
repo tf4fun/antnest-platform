@@ -5,11 +5,18 @@ use thiserror::Error;
 
 use crate::policy::PolicySpec;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NetworkState {
     Active,
     Quarantined,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AttachmentState {
+    Closed,
+    Open,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -39,8 +46,16 @@ pub struct PolicyAssignment {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RuntimeAttachment {
+    pub agent_id: AgentId,
+    pub state: AttachmentState,
+    pub resource_version: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ActiveBinding {
     pub network: AgentNetwork,
+    pub attachment: RuntimeAttachment,
     pub assignment: PolicyAssignment,
     pub revision: PolicyRevision,
 }

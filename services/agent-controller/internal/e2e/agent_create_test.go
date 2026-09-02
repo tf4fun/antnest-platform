@@ -86,14 +86,33 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 	var currentRuntimeRevision, currentRuntimeExecutionID, currentRuntimeEndpoint string
 	var currentRuntimeLifecycle, currentRuntimeHealth string
 	runtimeRequestIDs := make(map[string]string)
-	policyID := "internet-enabled"
-	policyVersion := uint64(1)
+	type egressAgentState struct {
+		policyID          string
+		policyVersion     uint64
+		attachmentState   string
+		attachmentVersion uint64
+		networkVersion    uint64
+	}
+	egressStates := make(map[string]*egressAgentState)
+	stateForAgent := func(agentID string) *egressAgentState {
+		state := egressStates[agentID]
+		if state == nil {
+			state = &egressAgentState{
+				policyID: "internet-enabled", policyVersion: 1,
+				attachmentState:   ports.NetworkAttachmentClosed,
+				attachmentVersion: 1, networkVersion: 1,
+			}
+			egressStates[agentID] = state
+		}
+		return state
+	}
 	egressServer := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		egressCalls.Add(1)
 		if strings.HasPrefix(request.URL.Path, "/internal/agent-policy-assignments/") {
 			agentID := strings.TrimPrefix(request.URL.Path, "/internal/agent-policy-assignments/")
 			policyMu.Lock()
 			defer policyMu.Unlock()
+			state := stateForAgent(agentID)
 			if request.Method == http.MethodPut {
 				var payload struct {
 					PolicyID                string `json:"policy_id"`
@@ -101,62 +120,84 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 					ExpectedResourceVersion uint64 `json:"expected_resource_version"`
 				}
 				if err := json.NewDecoder(request.Body).Decode(&payload); err != nil ||
-					payload.ExpectedResourceVersion != policyVersion {
+					payload.ExpectedResourceVersion != state.policyVersion {
 					t.Fatalf("Egress policy payload = %+v err=%v", payload, err)
 				}
-				policyID = payload.PolicyID
-				policyVersion++
+				state.policyID = payload.PolicyID
+				state.policyVersion++
 			} else if request.Method != http.MethodGet {
 				t.Fatalf("Egress policy request = %s %s", request.Method, request.URL.Path)
 			}
 			response.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(response).Encode(map[string]any{
-				"agent_id": agentID, "policy_id": policyID,
-				"revision": 1, "resource_version": policyVersion,
+				"agent_id": agentID, "policy_id": state.policyID,
+				"revision": 1, "resource_version": state.policyVersion,
 			})
 			return
 		}
+		if strings.HasPrefix(request.URL.Path, "/internal/agent-network-attachments/") {
+			agentID := strings.TrimPrefix(request.URL.Path, "/internal/agent-network-attachments/")
+			if request.Method != http.MethodPut || agentID == "" {
+				t.Fatalf("Egress attachment request = %s %s", request.Method, request.URL.Path)
+			}
+			var payload struct {
+				State                   string `json:"state"`
+				ExpectedResourceVersion uint64 `json:"expected_resource_version"`
+			}
+			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode Egress attachment payload: %v", err)
+			}
+			policyMu.Lock()
+			state := stateForAgent(agentID)
+			if payload.State != state.attachmentState {
+				if payload.ExpectedResourceVersion != state.attachmentVersion {
+					policyMu.Unlock()
+					t.Fatalf("Egress attachment version = %d, want %d", payload.ExpectedResourceVersion, state.attachmentVersion)
+				}
+				state.attachmentState = payload.State
+				state.attachmentVersion++
+			}
+			responsePayload := egressNetworkResponse(
+				agentID, ports.NetworkStateActive, state.networkVersion,
+				state.attachmentState, state.attachmentVersion,
+			)
+			policyMu.Unlock()
+			response.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(response).Encode(responsePayload)
+			return
+		}
 		path := strings.TrimPrefix(request.URL.Path, "/internal/agent-networks/")
-		agentID := strings.TrimSuffix(
-			strings.TrimSuffix(strings.TrimSuffix(path, "/fence"), "/reset-flows"),
-			"/release",
-		)
+		agentID := strings.TrimSuffix(path, "/release")
 		if agentID == request.URL.Path || agentID == "" {
 			t.Fatalf("Egress request = %s %s", request.Method, request.URL.Path)
 		}
 		if request.Method == http.MethodPost && path == agentID+"/release" {
+			policyMu.Lock()
+			state := stateForAgent(agentID)
+			state.attachmentState = ports.NetworkAttachmentClosed
+			state.attachmentVersion++
+			state.networkVersion++
+			responsePayload := egressNetworkResponse(
+				agentID, ports.NetworkStateQuarantined, state.networkVersion,
+				state.attachmentState, state.attachmentVersion,
+			)
+			policyMu.Unlock()
 			response.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(response).Encode(map[string]any{
-				"agent_id": agentID, "tunnel_ipv4": "100.64.0.2",
-				"resolver_ipv4": "100.64.0.1", "packet_contract_revision": 1,
-				"egress_endpoint": map[string]any{"ipv4": "10.20.0.8", "port": 8092},
-				"state":           "quarantined",
-			})
-			return
-		}
-		if request.Method == http.MethodPost &&
-			(path == agentID+"/fence" || path == agentID+"/reset-flows") {
-			if path == agentID+"/fence" {
-				policyMu.Lock()
-				if policyID != ports.BuiltinDenyAllPolicyID {
-					policyID = ports.BuiltinDenyAllPolicyID
-					policyVersion++
-				}
-				policyMu.Unlock()
-			}
-			response.WriteHeader(http.StatusNoContent)
+			_ = json.NewEncoder(response).Encode(responsePayload)
 			return
 		}
 		if (request.Method != http.MethodPut && request.Method != http.MethodGet) || path != agentID {
 			t.Fatalf("Egress request = %s %s", request.Method, request.URL.Path)
 		}
 		response.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(response).Encode(map[string]any{
-			"agent_id": agentID, "tunnel_ipv4": "100.64.0.2",
-			"resolver_ipv4": "100.64.0.1", "packet_contract_revision": 1,
-			"egress_endpoint": map[string]any{"ipv4": "10.20.0.8", "port": 8092},
-			"state":           "active",
-		})
+		policyMu.Lock()
+		state := stateForAgent(agentID)
+		responsePayload := egressNetworkResponse(
+			agentID, ports.NetworkStateActive, state.networkVersion,
+			state.attachmentState, state.attachmentVersion,
+		)
+		policyMu.Unlock()
+		_ = json.NewEncoder(response).Encode(responsePayload)
 	}))
 	t.Cleanup(egressServer.Close)
 	runtimeServer := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
@@ -348,6 +389,48 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create handler: %v", err)
 	}
+	restartedLifecycle := application.NewLifecycleService(
+		repository, observedLifecycleStore, egress, runtime, clock,
+	)
+	recoveryWorker, err := application.NewLifecycleRecoveryWorker(
+		observedRecoveryStore, restartedLifecycle, recoveryInstrumentation,
+		application.LifecycleRecoveryWorkerConfig{
+			WorkerID: "agent-e2e-recovery", PollInterval: 10 * time.Millisecond,
+			AttemptTimeout: 200 * time.Millisecond,
+			LeaseDuration:  500 * time.Millisecond, RetryMax: 500 * time.Millisecond,
+		},
+	)
+	if err != nil {
+		t.Fatalf("create lifecycle recovery worker: %v", err)
+	}
+	recoverOperation := func(requestID string) {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		first := true
+		for time.Now().Before(deadline) {
+			processed, runErr := recoveryWorker.RunOnce(ctx)
+			if runErr != nil {
+				t.Fatalf("execute lifecycle operation %s: %v", requestID, runErr)
+			}
+			if first && !processed {
+				t.Fatalf("fresh lifecycle operation %s was not immediately claimable", requestID)
+			}
+			first = false
+			operation, loadErr := repository.GetLifecycleOperation(ctx, requestID)
+			if loadErr != nil {
+				t.Fatalf("load lifecycle operation %s: %v", requestID, loadErr)
+			}
+			if operation.State != "running" {
+				if operation.State != "completed" || operation.Phase != "completed" ||
+					operation.RecoveryOwner != "" || operation.RecoveryLeaseUntil != nil {
+					t.Fatalf("terminal lifecycle operation %s = %+v", requestID, operation)
+				}
+				return
+			}
+			time.Sleep(15 * time.Millisecond)
+		}
+		t.Fatalf("lifecycle operation %s did not converge", requestID)
+	}
 
 	model := serveJSON(t, handler, http.MethodPost, "/internal/model-profiles", `{
 		"request_id":"agent-e2e-model","organization_id":"agent-e2e-org",
@@ -368,66 +451,20 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 	templateID := template["template_id"].(string)
 	createBody := `{
 		"request_id":"agent-e2e-create","organization_id":"agent-e2e-org",
+		"actor_principal_id":"agent-e2e-admin",
 		"owner_user_id":"agent-e2e-user","name":"Research Agent",
 		"template_id":"` + templateID + `","template_revision":1
 	}`
-	failedCreate := serveJSON(
-		t, handler, http.MethodPost, "/internal/agents", createBody, http.StatusServiceUnavailable,
-	)
-	if failedCreate["code"] != "dependency_unavailable" || failedCreate["retryable"] != true {
-		t.Fatalf("failed create response = %+v", failedCreate)
+	acceptedCreate := serveJSON(t, handler, http.MethodPost, "/internal/agents", createBody, http.StatusAccepted)
+	acceptedAgent := acceptedCreate["agent"].(map[string]any)
+	acceptedOperation := acceptedCreate["operation"].(map[string]any)
+	if acceptedAgent["lifecycle_state"] != "provisioning" ||
+		acceptedOperation["state"] != "running" || acceptedOperation["phase"] != "network_ensure" ||
+		egressCalls.Load() != 0 || runtimeCalls.Load() != 0 {
+		t.Fatalf("accepted create crossed asynchronous boundary: response=%+v egress=%d runtime=%d",
+			acceptedCreate, egressCalls.Load(), runtimeCalls.Load())
 	}
-	persisted, err := repository.GetLifecycleOperation(ctx, "agent-e2e-create")
-	if err != nil || persisted.State != "running" || persisted.Phase != "runtime_initialize" {
-		t.Fatalf("persisted interrupted create = %+v err=%v", persisted, err)
-	}
-	restartedLifecycle := application.NewLifecycleService(
-		repository, observedLifecycleStore, egress, runtime, clock,
-	)
-	recoveryWorker, err := application.NewLifecycleRecoveryWorker(
-		observedRecoveryStore, restartedLifecycle, recoveryInstrumentation,
-		application.LifecycleRecoveryWorkerConfig{
-			WorkerID: "agent-e2e-recovery", PollInterval: 10 * time.Millisecond,
-			StaleAfter: 500 * time.Millisecond, AttemptTimeout: 200 * time.Millisecond,
-			LeaseDuration: 500 * time.Millisecond, RetryMax: 500 * time.Millisecond,
-		},
-	)
-	if err != nil {
-		t.Fatalf("create lifecycle recovery worker: %v", err)
-	}
-	recoverOperation := func(requestID string, wantFirstPhase string) {
-		t.Helper()
-		processed, err := recoveryWorker.RunOnce(ctx)
-		if err != nil || processed {
-			t.Fatalf("fresh %s was recoverable before stale threshold: processed=%v err=%v", requestID, processed, err)
-		}
-		time.Sleep(550 * time.Millisecond)
-		processed, err = recoveryWorker.RunOnce(ctx)
-		if err != nil || !processed {
-			t.Fatalf("recover interrupted %s: processed=%v err=%v", requestID, processed, err)
-		}
-		recoveredStep, err := repository.GetLifecycleOperation(ctx, requestID)
-		if err != nil || recoveredStep.State != "running" || string(recoveredStep.Phase) != wantFirstPhase ||
-			recoveredStep.RecoveryOwner != "" || recoveredStep.RecoveryLeaseUntil != nil {
-			t.Fatalf("single recovered %s phase = %+v err=%v", requestID, recoveredStep, err)
-		}
-		for recoveredStep.State == "running" {
-			time.Sleep(15 * time.Millisecond)
-			processed, err = recoveryWorker.RunOnce(ctx)
-			if err != nil || !processed {
-				t.Fatalf("continue recovery %s: processed=%v err=%v", requestID, processed, err)
-			}
-			recoveredStep, err = repository.GetLifecycleOperation(ctx, requestID)
-			if err != nil {
-				t.Fatalf("read recovered %s: %v", requestID, err)
-			}
-		}
-		if recoveredStep.State != "completed" || recoveredStep.Phase != "completed" ||
-			recoveredStep.RecoveryOwner != "" || recoveredStep.RecoveryLeaseUntil != nil {
-			t.Fatalf("terminal recovered %s = %+v", requestID, recoveredStep)
-		}
-	}
-	recoverOperation("agent-e2e-create", "publish")
+	recoverOperation("agent-e2e-create")
 	created := serveJSON(t, handler, http.MethodPost, "/internal/agents", createBody, http.StatusAccepted)
 	agent := created["agent"].(map[string]any)
 	operation := created["operation"].(map[string]any)
@@ -437,7 +474,8 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 	}
 	agentID := agent["agent_id"].(string)
 	queried := serveJSON(
-		t, handler, http.MethodGet, "/internal/agents/"+agentID, "", http.StatusOK,
+		t, handler, http.MethodGet,
+		"/internal/agents/"+agentID+"?organization_id=agent-e2e-org", "", http.StatusOK,
 	)
 	if queried["owner_user_id"] != "agent-e2e-user" || queried["aggregate_sequence"] != float64(2) {
 		t.Fatalf("queried Agent projection = %+v", queried)
@@ -460,21 +498,20 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 
 	rebuildBody := `{
 		"request_id":"agent-e2e-rebuild",
+		"organization_id":"agent-e2e-org","actor_principal_id":"agent-e2e-admin",
 		"template_id":"` + templateID + `",
 		"template_revision":1
 	}`
-	failedRebuild := serveJSON(
+	beforeRebuildEgress, beforeRebuildRuntime := egressCalls.Load(), runtimeCalls.Load()
+	acceptedRebuild := serveJSON(
 		t, handler, http.MethodPost, "/internal/agents/"+agentID+"/rebuild",
-		rebuildBody, http.StatusServiceUnavailable,
+		rebuildBody, http.StatusAccepted,
 	)
-	if failedRebuild["code"] != "dependency_unavailable" || failedRebuild["retryable"] != true {
-		t.Fatalf("failed rebuild response = %+v", failedRebuild)
+	if acceptedRebuild["state"] != "running" || acceptedRebuild["phase"] != "drain" ||
+		egressCalls.Load() != beforeRebuildEgress || runtimeCalls.Load() != beforeRebuildRuntime {
+		t.Fatalf("accepted rebuild crossed asynchronous boundary: %+v", acceptedRebuild)
 	}
-	persisted, err = repository.GetLifecycleOperation(ctx, "agent-e2e-rebuild")
-	if err != nil || persisted.State != "running" || persisted.Phase != "runtime_update" {
-		t.Fatalf("persisted interrupted rebuild = %+v err=%v", persisted, err)
-	}
-	recoverOperation("agent-e2e-rebuild", "network_ensure")
+	recoverOperation("agent-e2e-rebuild")
 	rebuilt := serveJSON(
 		t, handler, http.MethodPost, "/internal/agents/"+agentID+"/rebuild",
 		rebuildBody, http.StatusAccepted,
@@ -502,19 +539,17 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 			egressCalls.Load(), runtimeCalls.Load(), replayedRebuild)
 	}
 
-	disableBody := `{"request_id":"agent-e2e-disable"}`
-	failedDisable := serveJSON(
+	disableBody := `{"request_id":"agent-e2e-disable","organization_id":"agent-e2e-org","actor_principal_id":"agent-e2e-admin"}`
+	beforeDisableEgress, beforeDisableRuntime := egressCalls.Load(), runtimeCalls.Load()
+	acceptedDisable := serveJSON(
 		t, handler, http.MethodPost, "/internal/agents/"+agentID+"/disable",
-		disableBody, http.StatusServiceUnavailable,
+		disableBody, http.StatusAccepted,
 	)
-	if failedDisable["code"] != "dependency_unavailable" || failedDisable["retryable"] != true {
-		t.Fatalf("failed disable response = %+v", failedDisable)
+	if acceptedDisable["state"] != "running" || acceptedDisable["phase"] != "drain" ||
+		egressCalls.Load() != beforeDisableEgress || runtimeCalls.Load() != beforeDisableRuntime {
+		t.Fatalf("accepted disable crossed asynchronous boundary: %+v", acceptedDisable)
 	}
-	persisted, err = repository.GetLifecycleOperation(ctx, "agent-e2e-disable")
-	if err != nil || persisted.State != "running" || persisted.Phase != "runtime_disable" {
-		t.Fatalf("persisted interrupted disable = %+v err=%v", persisted, err)
-	}
-	recoverOperation("agent-e2e-disable", "publish")
+	recoverOperation("agent-e2e-disable")
 	disabled := serveJSON(
 		t, handler, http.MethodPost, "/internal/agents/"+agentID+"/disable",
 		disableBody, http.StatusAccepted,
@@ -545,19 +580,17 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 			egressCalls.Load(), runtimeCalls.Load(), replayedDisable)
 	}
 
-	enableBody := `{"request_id":"agent-e2e-enable"}`
-	failedEnable := serveJSON(
+	enableBody := `{"request_id":"agent-e2e-enable","organization_id":"agent-e2e-org","actor_principal_id":"agent-e2e-admin"}`
+	beforeEnableEgress, beforeEnableRuntime := egressCalls.Load(), runtimeCalls.Load()
+	acceptedEnable := serveJSON(
 		t, handler, http.MethodPost, "/internal/agents/"+agentID+"/enable",
-		enableBody, http.StatusServiceUnavailable,
+		enableBody, http.StatusAccepted,
 	)
-	if failedEnable["code"] != "dependency_unavailable" || failedEnable["retryable"] != true {
-		t.Fatalf("failed enable response = %+v", failedEnable)
+	if acceptedEnable["state"] != "running" || acceptedEnable["phase"] != "network_ensure" ||
+		egressCalls.Load() != beforeEnableEgress || runtimeCalls.Load() != beforeEnableRuntime {
+		t.Fatalf("accepted enable crossed asynchronous boundary: %+v", acceptedEnable)
 	}
-	persisted, err = repository.GetLifecycleOperation(ctx, "agent-e2e-enable")
-	if err != nil || persisted.State != "running" || persisted.Phase != "runtime_enable" {
-		t.Fatalf("persisted interrupted enable = %+v err=%v", persisted, err)
-	}
-	recoverOperation("agent-e2e-enable", "network_restore")
+	recoverOperation("agent-e2e-enable")
 	enabled := serveJSON(
 		t, handler, http.MethodPost, "/internal/agents/"+agentID+"/enable",
 		enableBody, http.StatusAccepted,
@@ -589,19 +622,17 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 			egressCalls.Load(), runtimeCalls.Load(), replayedEnable)
 	}
 
-	deleteBody := `{"request_id":"agent-e2e-delete"}`
-	failedDelete := serveJSON(
+	deleteBody := `{"request_id":"agent-e2e-delete","organization_id":"agent-e2e-org","actor_principal_id":"agent-e2e-admin"}`
+	beforeDeleteEgress, beforeDeleteRuntime := egressCalls.Load(), runtimeCalls.Load()
+	acceptedDelete := serveJSON(
 		t, handler, http.MethodPost, "/internal/agents/"+agentID+"/delete",
-		deleteBody, http.StatusServiceUnavailable,
+		deleteBody, http.StatusAccepted,
 	)
-	if failedDelete["code"] != "dependency_unavailable" || failedDelete["retryable"] != true {
-		t.Fatalf("failed delete response = %+v", failedDelete)
+	if acceptedDelete["state"] != "running" || acceptedDelete["phase"] != "drain" ||
+		egressCalls.Load() != beforeDeleteEgress || runtimeCalls.Load() != beforeDeleteRuntime {
+		t.Fatalf("accepted delete crossed asynchronous boundary: %+v", acceptedDelete)
 	}
-	persisted, err = repository.GetLifecycleOperation(ctx, "agent-e2e-delete")
-	if err != nil || persisted.State != "running" || persisted.Phase != "runtime_delete" {
-		t.Fatalf("persisted interrupted delete = %+v err=%v", persisted, err)
-	}
-	recoverOperation("agent-e2e-delete", "network_release")
+	recoverOperation("agent-e2e-delete")
 	deleted := serveJSON(
 		t, handler, http.MethodPost, "/internal/agents/"+agentID+"/delete",
 		deleteBody, http.StatusAccepted,
@@ -653,11 +684,13 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 		createdAgent := serveJSON(
 			t, handler, http.MethodPost, "/internal/agents", `{
 				"request_id":"agent-e2e-create-`+suffix+`","organization_id":"agent-e2e-org",
+				"actor_principal_id":"agent-e2e-admin",
 				"owner_user_id":"agent-e2e-user","name":"Research Agent `+suffix+`",
 				"template_id":"`+templateID+`","template_revision":1
 			}`, http.StatusAccepted,
 		)
 		createdIDs[createdAgent["agent"].(map[string]any)["agent_id"].(string)] = struct{}{}
+		recoverOperation("agent-e2e-create-" + suffix)
 	}
 	firstPage := serveJSON(
 		t, handler, http.MethodGet,
@@ -689,6 +722,24 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 		t.Fatalf("Agent cursor omitted identities: %+v", createdIDs)
 	}
 	assertLifecycleRecoveryTraceEvidence(t, spanRecorder.Ended())
+}
+
+func egressNetworkResponse(
+	agentID string,
+	networkState string,
+	networkResourceVersion uint64,
+	attachmentState string,
+	attachmentResourceVersion uint64,
+) map[string]any {
+	return map[string]any{
+		"agent_id": agentID, "tunnel_ipv4": "100.64.0.2",
+		"resolver_ipv4": "100.64.0.1", "packet_contract_revision": 1,
+		"egress_endpoint":             map[string]any{"ipv4": "10.20.0.8", "port": 8092},
+		"state":                       networkState,
+		"network_resource_version":    networkResourceVersion,
+		"attachment_state":            attachmentState,
+		"attachment_resource_version": attachmentResourceVersion,
+	}
 }
 
 type wallClock struct{}

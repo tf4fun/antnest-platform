@@ -30,7 +30,10 @@ func TestEnsureAgentNetworkUsesEgressControlContract(t *testing.T) {
 			"resolver_ipv4":"100.64.0.1",
 			"packet_contract_revision":1,
 			"egress_endpoint":{"ipv4":"10.20.0.8","port":8092},
-			"state":"active"
+			"state":"active",
+			"network_resource_version":1,
+			"attachment_state":"closed",
+			"attachment_resource_version":1
 		}`))
 	}))
 	t.Cleanup(server.Close)
@@ -63,7 +66,10 @@ func TestGetAgentNetworkReadsAuthoritativeActiveAttachment(t *testing.T) {
 			"resolver_ipv4":"100.64.0.1",
 			"packet_contract_revision":1,
 			"egress_endpoint":{"ipv4":"10.20.0.8","port":8092},
-			"state":"active"
+			"state":"active",
+			"network_resource_version":1,
+			"attachment_state":"open",
+			"attachment_resource_version":2
 		}`))
 	}))
 	t.Cleanup(server.Close)
@@ -82,29 +88,33 @@ func TestGetAgentNetworkReadsAuthoritativeActiveAttachment(t *testing.T) {
 	}
 }
 
-func TestRebuildNetworkBarriersUseEgressControlContract(t *testing.T) {
+func TestSetAgentNetworkAttachmentUsesEgressControlContract(t *testing.T) {
 	t.Parallel()
 
-	wantPaths := []string{
-		"/internal/agent-networks/agent-1/fence",
-		"/internal/agent-networks/agent-1/reset-flows",
-	}
-	call := 0
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if request.Method != http.MethodPost || call >= len(wantPaths) || request.URL.Path != wantPaths[call] {
-			t.Fatalf("request %d = %s %s", call, request.Method, request.URL.Path)
+		if request.Method != http.MethodPut || request.URL.Path != "/internal/agent-network-attachments/agent-1" {
+			t.Fatalf("request = %s %s", request.Method, request.URL.Path)
 		}
 		var payload struct {
+			State                   string `json:"state"`
 			ExpectedResourceVersion uint64 `json:"expected_resource_version"`
 		}
-		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
-			t.Fatalf("decode network barrier request: %v", err)
+		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil ||
+			payload.State != ports.NetworkAttachmentClosed || payload.ExpectedResourceVersion != 7 {
+			t.Fatalf("attachment request = %+v, %v", payload, err)
 		}
-		if payload.ExpectedResourceVersion != uint64(call+7) {
-			t.Fatalf("request %d resource version = %d", call, payload.ExpectedResourceVersion)
-		}
-		call++
-		response.WriteHeader(http.StatusNoContent)
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = response.Write([]byte(`{
+			"agent_id":"agent-1",
+			"tunnel_ipv4":"100.64.0.2",
+			"resolver_ipv4":"100.64.0.1",
+			"packet_contract_revision":1,
+			"egress_endpoint":{"ipv4":"10.20.0.8","port":8092},
+			"state":"active",
+			"network_resource_version":3,
+			"attachment_state":"closed",
+			"attachment_resource_version":8
+		}`))
 	}))
 	t.Cleanup(server.Close)
 	client, err := New(server.URL, time.Second, server.Client())
@@ -112,14 +122,12 @@ func TestRebuildNetworkBarriersUseEgressControlContract(t *testing.T) {
 		t.Fatalf("new client: %v", err)
 	}
 
-	if err := client.FenceAgentNetwork(context.Background(), "agent-1", 7); err != nil {
-		t.Fatalf("fence Agent network: %v", err)
-	}
-	if err := client.ResetAgentFlows(context.Background(), "agent-1", 8); err != nil {
-		t.Fatalf("reset Agent flows: %v", err)
-	}
-	if call != len(wantPaths) {
-		t.Fatalf("calls = %d, want %d", call, len(wantPaths))
+	attachment, err := client.SetAgentNetworkAttachment(
+		context.Background(), "agent-1", ports.NetworkAttachmentClosed, 7,
+	)
+	if err != nil || attachment.AttachmentState != ports.NetworkAttachmentClosed ||
+		attachment.AttachmentResourceVersion != 8 {
+		t.Fatalf("set attachment = %+v, %v", attachment, err)
 	}
 }
 
@@ -144,7 +152,10 @@ func TestReleaseAgentNetworkRequiresQuarantinedAttachment(t *testing.T) {
 			"resolver_ipv4":"100.64.0.1",
 			"packet_contract_revision":1,
 			"egress_endpoint":{"ipv4":"10.20.0.8","port":8092},
-			"state":"quarantined"
+			"state":"quarantined",
+			"network_resource_version":12,
+			"attachment_state":"closed",
+			"attachment_resource_version":4
 		}`))
 	}))
 	t.Cleanup(server.Close)
@@ -160,53 +171,6 @@ func TestReleaseAgentNetworkRequiresQuarantinedAttachment(t *testing.T) {
 	if attachment.AgentID != "agent-1" || attachment.State != "quarantined" ||
 		attachment.TunnelIPv4 != "100.64.0.2" {
 		t.Fatalf("attachment = %+v", attachment)
-	}
-}
-
-func TestPolicyAssignmentRoundTripUsesEgressControlContract(t *testing.T) {
-	t.Parallel()
-
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if request.URL.Path != "/internal/agent-policy-assignments/agent-1" {
-			t.Fatalf("request path = %s", request.URL.Path)
-		}
-		resourceVersion := uint64(7)
-		if request.Method == http.MethodPut {
-			var payload struct {
-				PolicyID                string `json:"policy_id"`
-				Revision                uint64 `json:"revision"`
-				ExpectedResourceVersion uint64 `json:"expected_resource_version"`
-			}
-			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
-				t.Fatalf("decode assignment request: %v", err)
-			}
-			if payload.PolicyID != "internet-enabled" || payload.Revision != 3 ||
-				payload.ExpectedResourceVersion != 7 {
-				t.Fatalf("assignment request = %+v", payload)
-			}
-			resourceVersion = 8
-		} else if request.Method != http.MethodGet {
-			t.Fatalf("request method = %s", request.Method)
-		}
-		response.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(response).Encode(map[string]any{
-			"agent_id": "agent-1", "policy_id": "internet-enabled",
-			"revision": 3, "resource_version": resourceVersion,
-		})
-	}))
-	t.Cleanup(server.Close)
-	client, err := New(server.URL, time.Second, server.Client())
-	if err != nil {
-		t.Fatalf("new client: %v", err)
-	}
-
-	current, err := client.GetAgentPolicyAssignment(context.Background(), "agent-1")
-	if err != nil || current.ResourceVersion != 7 {
-		t.Fatalf("get assignment = %+v, %v", current, err)
-	}
-	restored, err := client.AssignAgentPolicy(context.Background(), current, current.ResourceVersion)
-	if err != nil || restored.ResourceVersion != 8 || restored.PolicyID != current.PolicyID {
-		t.Fatalf("assign policy = %+v, %v", restored, err)
 	}
 }
 
@@ -243,7 +207,10 @@ func TestEnsureAgentNetworkRejectsInactiveAttachment(t *testing.T) {
 			"resolver_ipv4":"100.64.0.1",
 			"packet_contract_revision":1,
 			"egress_endpoint":{"ipv4":"10.20.0.8","port":8092},
-			"state":"quarantined"
+			"state":"quarantined",
+			"network_resource_version":2,
+			"attachment_state":"closed",
+			"attachment_resource_version":1
 		}`))
 	}))
 	t.Cleanup(server.Close)
@@ -276,7 +243,10 @@ func TestEnsureAgentNetworkPropagatesTraceContext(t *testing.T) {
 			"resolver_ipv4":"100.64.0.1",
 			"packet_contract_revision":1,
 			"egress_endpoint":{"ipv4":"10.20.0.8","port":8092},
-			"state":"active"
+			"state":"active",
+			"network_resource_version":1,
+			"attachment_state":"closed",
+			"attachment_resource_version":1
 		}`))
 	}))
 	t.Cleanup(server.Close)

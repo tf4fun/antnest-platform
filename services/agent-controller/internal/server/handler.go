@@ -77,43 +77,31 @@ type RunService interface {
 
 type AgentQueryService interface {
 	GetAgent(context.Context, string) (application.AgentView, error)
+	GetAgentForOrganization(context.Context, string, string) (application.AgentView, error)
 	ListAgents(context.Context, application.ListAgentsInput) (application.AgentPage, error)
 }
 
 type AgentEventService interface {
 	ListGlobalEvents(context.Context, application.ListEventsInput) (application.AgentEventPage, error)
 	ListAgentEvents(context.Context, application.ListAgentEventsInput) (application.AgentEventPage, error)
-	WatchGlobalEvents(context.Context, int64, application.AgentEventEmitter) error
-	WatchAgentEvents(context.Context, string, int64, application.AgentEventEmitter) error
+	WatchGlobalEvents(context.Context, string, int64, application.AgentEventEmitter) error
+	WatchAgentEvents(context.Context, string, string, int64, application.AgentEventEmitter) error
 }
 
 type HealthCheck func(context.Context) error
 
 type handler struct {
-	catalog          CatalogService
-	lifecycle        LifecycleService
-	runs             RunService
-	queries          AgentQueryService
-	events           AgentEventService
-	health           HealthCheck
-	lifecycleTimeout time.Duration
+	catalog   CatalogService
+	lifecycle LifecycleService
+	runs      RunService
+	queries   AgentQueryService
+	events    AgentEventService
+	health    HealthCheck
 }
 
 type routeDefinition struct {
 	pattern string
 	handler http.HandlerFunc
-}
-
-type HandlerOption func(*handler) error
-
-func WithLifecycleTimeout(timeout time.Duration) HandlerOption {
-	return func(h *handler) error {
-		if timeout <= 0 {
-			return fmt.Errorf("lifecycle timeout must be positive")
-		}
-		h.lifecycleTimeout = timeout
-		return nil
-	}
 }
 
 func NewHandler(
@@ -123,7 +111,6 @@ func NewHandler(
 	queries AgentQueryService,
 	events AgentEventService,
 	health HealthCheck,
-	options ...HandlerOption,
 ) (http.Handler, error) {
 	if catalog == nil {
 		return nil, fmt.Errorf("catalog service is required")
@@ -145,14 +132,6 @@ func NewHandler(
 	}
 	h := &handler{
 		catalog: catalog, lifecycle: lifecycle, runs: runs, queries: queries, events: events, health: health,
-	}
-	for _, option := range options {
-		if option == nil {
-			return nil, fmt.Errorf("handler option is required")
-		}
-		if err := option(h); err != nil {
-			return nil, err
-		}
 	}
 	mux := http.NewServeMux()
 	for _, route := range h.routes() {
@@ -238,6 +217,7 @@ type reviseTemplateRequest struct {
 type createAgentRequest struct {
 	RequestID        string `json:"request_id"`
 	OrganizationID   string `json:"organization_id"`
+	ActorPrincipalID string `json:"actor_principal_id"`
 	OwnerUserID      string `json:"owner_user_id"`
 	Name             string `json:"name"`
 	TemplateID       string `json:"template_id"`
@@ -246,12 +226,16 @@ type createAgentRequest struct {
 
 type rebuildAgentRequest struct {
 	RequestID        string `json:"request_id"`
+	OrganizationID   string `json:"organization_id"`
+	ActorPrincipalID string `json:"actor_principal_id"`
 	TemplateID       string `json:"template_id"`
 	TemplateRevision int64  `json:"template_revision"`
 }
 
 type lifecycleRequest struct {
-	RequestID string `json:"request_id"`
+	RequestID        string `json:"request_id"`
+	OrganizationID   string `json:"organization_id"`
+	ActorPrincipalID string `json:"actor_principal_id"`
 }
 
 type resolveAgentAccessRequest struct {
@@ -686,11 +670,15 @@ func (h *handler) createAgent(response http.ResponseWriter, request *http.Reques
 	if !decodeJSON(response, request, &payload) {
 		return
 	}
-	ctx, cancel := h.lifecycleContext(request.Context())
-	defer cancel()
+	if strings.TrimSpace(payload.OrganizationID) == "" || strings.TrimSpace(payload.ActorPrincipalID) == "" {
+		writeError(response, http.StatusBadRequest, "invalid_request", "organization and actor are required", false)
+		return
+	}
+	ctx := request.Context()
 	result, err := h.lifecycle.CreateAgent(ctx, application.CreateAgentInput{
 		RequestID: payload.RequestID, OrganizationID: payload.OrganizationID,
-		OwnerUserID: payload.OwnerUserID, Name: payload.Name,
+		ActorPrincipalID: payload.ActorPrincipalID,
+		OwnerUserID:      payload.OwnerUserID, Name: payload.Name,
 		TemplateID: payload.TemplateID, TemplateRevision: payload.TemplateRevision,
 		InitialTraceParent: traceParentFromContext(ctx),
 	})
@@ -700,13 +688,6 @@ func (h *handler) createAgent(response http.ResponseWriter, request *http.Reques
 		return
 	}
 	writeJSON(response, http.StatusAccepted, createAgentPayload(result))
-}
-
-func (h *handler) lifecycleContext(parent context.Context) (context.Context, context.CancelFunc) {
-	if h.lifecycleTimeout <= 0 {
-		return context.WithCancel(parent)
-	}
-	return context.WithTimeout(parent, h.lifecycleTimeout)
 }
 
 func traceParentFromContext(ctx context.Context) string {
@@ -722,11 +703,20 @@ func traceParentFromContext(ctx context.Context) string {
 
 func (h *handler) getAgent(response http.ResponseWriter, request *http.Request) {
 	response.Header().Set("Cache-Control", "no-store")
-	if request.URL.RawQuery != "" {
+	query, ok := strictQuery(response, request, map[string]struct{}{"organization_id": {}})
+	if !ok || strings.TrimSpace(query.Get("organization_id")) == "" {
+		if ok {
+			writeError(response, http.StatusBadRequest, "invalid_request", "organization is required", false)
+		}
+		return
+	}
+	if len(query) != 1 {
 		writeError(response, http.StatusBadRequest, "invalid_request", "request is invalid", false)
 		return
 	}
-	agent, err := h.queries.GetAgent(request.Context(), request.PathValue("agent_id"))
+	agent, err := h.queries.GetAgentForOrganization(
+		request.Context(), query.Get("organization_id"), request.PathValue("agent_id"),
+	)
 	if err != nil {
 		writeServiceError(request.Context(), response, err)
 		return
@@ -773,7 +763,7 @@ func (h *handler) listAgentEvents(response http.ResponseWriter, request *http.Re
 		return
 	}
 	page, err := h.events.ListAgentEvents(request.Context(), application.ListAgentEventsInput{
-		AgentID:       request.PathValue("agent_id"),
+		OrganizationID: input.OrganizationID, AgentID: request.PathValue("agent_id"),
 		AfterSequence: input.AfterSequence, Limit: input.Limit,
 	})
 	if err != nil {
@@ -784,12 +774,12 @@ func (h *handler) listAgentEvents(response http.ResponseWriter, request *http.Re
 }
 
 func (h *handler) watchGlobalAgentEvents(response http.ResponseWriter, request *http.Request) {
-	afterSequence, ok := eventWatchCursor(response, request)
+	organizationID, afterSequence, ok := eventWatchInput(response, request)
 	if !ok {
 		return
 	}
 	page, err := h.events.ListGlobalEvents(request.Context(), application.ListEventsInput{
-		AfterSequence: afterSequence,
+		OrganizationID: organizationID, AfterSequence: afterSequence,
 	})
 	if err != nil {
 		writeServiceError(request.Context(), response, err)
@@ -798,18 +788,18 @@ func (h *handler) watchGlobalAgentEvents(response http.ResponseWriter, request *
 	h.streamAgentEvents(response, request, "global", page, func(
 		ctx context.Context, cursor int64, emit application.AgentEventEmitter,
 	) error {
-		return h.events.WatchGlobalEvents(ctx, cursor, emit)
+		return h.events.WatchGlobalEvents(ctx, organizationID, cursor, emit)
 	})
 }
 
 func (h *handler) watchAgentEvents(response http.ResponseWriter, request *http.Request) {
-	afterSequence, ok := eventWatchCursor(response, request)
+	organizationID, afterSequence, ok := eventWatchInput(response, request)
 	if !ok {
 		return
 	}
 	agentID := request.PathValue("agent_id")
 	page, err := h.events.ListAgentEvents(request.Context(), application.ListAgentEventsInput{
-		AgentID: agentID, AfterSequence: afterSequence,
+		OrganizationID: organizationID, AgentID: agentID, AfterSequence: afterSequence,
 	})
 	if err != nil {
 		writeServiceError(request.Context(), response, err)
@@ -818,7 +808,7 @@ func (h *handler) watchAgentEvents(response http.ResponseWriter, request *http.R
 	h.streamAgentEvents(response, request, "agent", page, func(
 		ctx context.Context, cursor int64, emit application.AgentEventEmitter,
 	) error {
-		return h.events.WatchAgentEvents(ctx, agentID, cursor, emit)
+		return h.events.WatchAgentEvents(ctx, organizationID, agentID, cursor, emit)
 	})
 }
 
@@ -890,10 +880,14 @@ func (h *handler) rebuildAgent(response http.ResponseWriter, request *http.Reque
 	if !decodeJSON(response, request, &payload) {
 		return
 	}
-	ctx, cancel := h.lifecycleContext(request.Context())
-	defer cancel()
+	if strings.TrimSpace(payload.OrganizationID) == "" || strings.TrimSpace(payload.ActorPrincipalID) == "" {
+		writeError(response, http.StatusBadRequest, "invalid_request", "organization and actor are required", false)
+		return
+	}
+	ctx := request.Context()
 	result, err := h.lifecycle.RebuildAgent(ctx, application.RebuildAgentInput{
-		RequestID: payload.RequestID, AgentID: request.PathValue("agent_id"),
+		RequestID: payload.RequestID, OrganizationID: payload.OrganizationID,
+		ActorPrincipalID: payload.ActorPrincipalID, AgentID: request.PathValue("agent_id"),
 		TemplateID: payload.TemplateID, TemplateRevision: payload.TemplateRevision,
 		InitialTraceParent: traceParentFromContext(ctx),
 	})
@@ -910,10 +904,14 @@ func (h *handler) disableAgent(response http.ResponseWriter, request *http.Reque
 	if !decodeJSON(response, request, &payload) {
 		return
 	}
-	ctx, cancel := h.lifecycleContext(request.Context())
-	defer cancel()
+	if strings.TrimSpace(payload.OrganizationID) == "" || strings.TrimSpace(payload.ActorPrincipalID) == "" {
+		writeError(response, http.StatusBadRequest, "invalid_request", "organization and actor are required", false)
+		return
+	}
+	ctx := request.Context()
 	result, err := h.lifecycle.DisableAgent(ctx, application.DisableAgentInput{
-		RequestID: payload.RequestID, AgentID: request.PathValue("agent_id"),
+		RequestID: payload.RequestID, OrganizationID: payload.OrganizationID,
+		ActorPrincipalID: payload.ActorPrincipalID, AgentID: request.PathValue("agent_id"),
 		InitialTraceParent: traceParentFromContext(ctx),
 	})
 	observeLifecycleResult(ctx, result.Operation)
@@ -929,10 +927,14 @@ func (h *handler) enableAgent(response http.ResponseWriter, request *http.Reques
 	if !decodeJSON(response, request, &payload) {
 		return
 	}
-	ctx, cancel := h.lifecycleContext(request.Context())
-	defer cancel()
+	if strings.TrimSpace(payload.OrganizationID) == "" || strings.TrimSpace(payload.ActorPrincipalID) == "" {
+		writeError(response, http.StatusBadRequest, "invalid_request", "organization and actor are required", false)
+		return
+	}
+	ctx := request.Context()
 	result, err := h.lifecycle.EnableAgent(ctx, application.EnableAgentInput{
-		RequestID: payload.RequestID, AgentID: request.PathValue("agent_id"),
+		RequestID: payload.RequestID, OrganizationID: payload.OrganizationID,
+		ActorPrincipalID: payload.ActorPrincipalID, AgentID: request.PathValue("agent_id"),
 		InitialTraceParent: traceParentFromContext(ctx),
 	})
 	observeLifecycleResult(ctx, result.Operation)
@@ -948,10 +950,14 @@ func (h *handler) deleteAgent(response http.ResponseWriter, request *http.Reques
 	if !decodeJSON(response, request, &payload) {
 		return
 	}
-	ctx, cancel := h.lifecycleContext(request.Context())
-	defer cancel()
+	if strings.TrimSpace(payload.OrganizationID) == "" || strings.TrimSpace(payload.ActorPrincipalID) == "" {
+		writeError(response, http.StatusBadRequest, "invalid_request", "organization and actor are required", false)
+		return
+	}
+	ctx := request.Context()
 	result, err := h.lifecycle.DeleteAgent(ctx, application.DeleteAgentInput{
-		RequestID: payload.RequestID, AgentID: request.PathValue("agent_id"),
+		RequestID: payload.RequestID, OrganizationID: payload.OrganizationID,
+		ActorPrincipalID: payload.ActorPrincipalID, AgentID: request.PathValue("agent_id"),
 		InitialTraceParent: traceParentFromContext(ctx),
 	})
 	observeLifecycleResult(ctx, result.Operation)
@@ -963,6 +969,10 @@ func (h *handler) deleteAgent(response http.ResponseWriter, request *http.Reques
 }
 
 func (h *handler) getLifecycleOperation(response http.ResponseWriter, request *http.Request) {
+	query, ok := requiredOrganizationQuery(response, request)
+	if !ok {
+		return
+	}
 	operation, err := h.lifecycle.GetLifecycleOperation(request.Context(), request.PathValue("request_id"))
 	if err != nil {
 		if errors.Is(err, ports.ErrNotFound) {
@@ -972,7 +982,28 @@ func (h *handler) getLifecycleOperation(response http.ResponseWriter, request *h
 		writeServiceError(request.Context(), response, err)
 		return
 	}
+	if _, err := h.queries.GetAgentForOrganization(request.Context(), query, operation.AgentID); err != nil {
+		if errors.Is(err, application.ErrAgentNotFound) {
+			writeError(response, http.StatusNotFound, "operation_not_found", "lifecycle operation was not found", false)
+			return
+		}
+		writeServiceError(request.Context(), response, err)
+		return
+	}
 	writeJSON(response, http.StatusOK, operationPayload(operation))
+}
+
+func requiredOrganizationQuery(response http.ResponseWriter, request *http.Request) (string, bool) {
+	query, ok := strictQuery(response, request, map[string]struct{}{"organization_id": {}})
+	if !ok {
+		return "", false
+	}
+	organizationID := strings.TrimSpace(query.Get("organization_id"))
+	if organizationID == "" {
+		writeError(response, http.StatusBadRequest, "invalid_request", "organization is required", false)
+		return "", false
+	}
+	return organizationID, true
 }
 
 func catalogListInput(response http.ResponseWriter, request *http.Request) (application.ListCatalogInput, bool) {
@@ -1036,7 +1067,7 @@ func agentListInput(response http.ResponseWriter, request *http.Request) (applic
 
 func eventListInput(response http.ResponseWriter, request *http.Request) (application.ListEventsInput, bool) {
 	query, ok := strictQuery(response, request, map[string]struct{}{
-		"after_sequence": {}, "limit": {},
+		"organization_id": {}, "after_sequence": {}, "limit": {},
 	})
 	if !ok {
 		return application.ListEventsInput{}, false
@@ -1054,31 +1085,47 @@ func eventListInput(response http.ResponseWriter, request *http.Request) (applic
 		}
 		limit = parsed
 	}
-	return application.ListEventsInput{AfterSequence: afterSequence, Limit: limit}, true
+	organizationID := strings.TrimSpace(query.Get("organization_id"))
+	if organizationID == "" {
+		writeError(response, http.StatusBadRequest, "invalid_request", "organization is required", false)
+		return application.ListEventsInput{}, false
+	}
+	return application.ListEventsInput{
+		OrganizationID: organizationID, AfterSequence: afterSequence, Limit: limit,
+	}, true
 }
 
-func eventWatchCursor(response http.ResponseWriter, request *http.Request) (int64, bool) {
-	query, ok := strictQuery(response, request, map[string]struct{}{"after_sequence": {}})
+func eventWatchInput(
+	response http.ResponseWriter, request *http.Request,
+) (string, int64, bool) {
+	query, ok := strictQuery(response, request, map[string]struct{}{
+		"organization_id": {}, "after_sequence": {},
+	})
 	if !ok {
-		return 0, false
+		return "", 0, false
+	}
+	organizationID := strings.TrimSpace(query.Get("organization_id"))
+	if organizationID == "" {
+		writeError(response, http.StatusBadRequest, "invalid_request", "organization is required", false)
+		return "", 0, false
 	}
 	querySequence, ok := nonnegativeInt64(response, query.Get("after_sequence"))
 	if !ok {
-		return 0, false
+		return "", 0, false
 	}
 	headerValues := request.Header.Values("Last-Event-ID")
 	if len(headerValues) > 1 || (len(headerValues) == 1 && strings.TrimSpace(headerValues[0]) == "") {
 		writeError(response, http.StatusBadRequest, "invalid_request", "request is invalid", false)
-		return 0, false
+		return "", 0, false
 	}
 	if len(headerValues) == 0 {
-		return querySequence, true
+		return organizationID, querySequence, true
 	}
 	headerSequence, ok := nonnegativeInt64(response, strings.TrimSpace(headerValues[0]))
 	if !ok {
-		return 0, false
+		return "", 0, false
 	}
-	return headerSequence, true
+	return organizationID, headerSequence, true
 }
 
 func strictQuery(

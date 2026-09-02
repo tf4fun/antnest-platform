@@ -100,12 +100,36 @@ func TestResolveHashesRawCredential(t *testing.T) {
 	}
 }
 
+func TestRevokeByAccessTokenIsOpaqueAndIdempotent(t *testing.T) {
+	t.Parallel()
+
+	repository := &authRepositoryStub{revokeStatus: RevokeStatusRevoked}
+	service, err := NewService(repository, sequentialIDs(), fixedNow, time.Hour)
+	if err != nil {
+		t.Fatalf("new auth service: %v", err)
+	}
+	status, err := service.RevokeByAccessToken(context.Background(), "ant_api_secret")
+	if err != nil || status != RevokeStatusRevoked {
+		t.Fatalf("revoke status=%q err=%v", status, err)
+	}
+	if repository.revokedHash != credentials.HashToken("ant_api_secret") {
+		t.Fatal("repository did not receive only the access-token hash")
+	}
+
+	status, err = service.RevokeByAccessToken(context.Background(), "")
+	if err != nil || status != RevokeStatusAlreadyInvalid {
+		t.Fatalf("empty credential status=%q err=%v", status, err)
+	}
+}
+
 type authRepositoryStub struct {
 	credential   LocalCredential
 	lookupErr    error
 	issued       IssueTokenCommand
 	resolved     domain.Principal
 	resolvedHash string
+	revokedHash  string
+	revokeStatus RevokeStatus
 }
 
 func (r *authRepositoryStub) FindLocalCredential(context.Context, string, string) (LocalCredential, error) {
@@ -122,8 +146,11 @@ func (r *authRepositoryStub) ResolveToken(_ context.Context, digest string, _ ti
 	return r.resolved, nil
 }
 
-func (r *authRepositoryStub) RevokeToken(context.Context, string, string, time.Time) error {
-	return nil
+func (r *authRepositoryStub) RevokeByTokenHash(
+	_ context.Context, digest string, _ time.Time,
+) (RevokeStatus, error) {
+	r.revokedHash = digest
+	return r.revokeStatus, nil
 }
 
 func activePrincipal() domain.Principal {

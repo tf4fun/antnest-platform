@@ -219,8 +219,10 @@ packet format do not change when policy grows.
 Assignment uses compare-and-swap on `resource_version`. One ephemeral Agent
 operation lock serializes policy assignment, flow reset, fence, release, and
 quarantine cleanup. The weak lock registry does not retain historical or
-invalid Agent IDs. Packet admission is separate immutable data-plane state and
-never waits for the operation lock.
+invalid Agent IDs. Each immutable route snapshot carries its admission gate:
+`open`, `probe_only`, or `hard_fenced`. Route identity, policy, and gate are
+therefore replaced atomically instead of being split across a route map and a
+second fence set. Packet admission never waits for the operation lock.
 
 The packet loop holds one short output barrier from classification through the
 actual UDP/TUN write. Closing Agent admission and then acquiring that barrier
@@ -283,16 +285,19 @@ unsolicited packets are dropped.
 The flow table is bounded globally and per Agent. The first structurally valid
 allowed outbound packet claims a flow, so retransmitted or mid-connection
 packets do not require a special SYN branch. Idle flows expire during packet
-processing; policy changes, Runtime replacement, fence, and release remove all
+processing; policy changes, attachment closure, and release remove all
 flows for that Agent explicitly.
 
 The table maintains forward lookup, reverse lookup, Agent ownership, and peer
 ownership under one consistency boundary. Capacity rejection and flow collision
 fail fast without evicting an unrelated active flow.
 
-At Runtime replacement, Agent Controller first confirms the old Runtime absent
-and then calls `ResetAgentFlows`. It creates no replacement until reset is
-acknowledged. Egress therefore does not model active/candidate generations.
+At Runtime replacement, Agent Controller closes the Runtime attachment before
+requesting replacement. Egress first installs `hard_fenced`, drains packet
+writers, and clears userspace and conntrack flows. Only then does it commit
+durable `closed` and publish `probe_only`. Opening after Runtime readiness
+applies the current desired policy. Egress therefore models neither
+active/candidate generations nor Runtime lifecycle phases.
 
 ## 11. Kernel Adapter
 
@@ -321,11 +326,13 @@ all DNS proxy slots, while metrics remain aggregate and never use an Agent or
 tunnel address as a label.
 
 Runtime readiness uses no Egress control RPC. Once Agent Controller has created
-the network allocation, Runtime sends an ordinary TCP SYN through the raw-packet
-UDP endpoint to `192.0.2.1`, which the immutable special-use-address baseline
-rejects with the normal policy RST. The matching reply proves the assigned
-Runtime-to-Egress packet path without creating a flow, reaching an upstream, or
-adding a session protocol to the data plane.
+the network allocation, Runtime sends the canonical TCP SYN defined by the
+shared packet contract through the raw-packet UDP endpoint to `192.0.2.1:9`.
+For a closed attachment, only the `probe_only` gate may return the local
+correlated RST+ACK; every near miss remains fenced. For an open attachment the
+immutable special-use-address baseline produces the same local rejection. The
+reply proves the assigned Runtime-to-Egress packet path without creating a
+flow, reaching an upstream, or adding a session protocol to the data plane.
 
 ## 12. Concurrency
 

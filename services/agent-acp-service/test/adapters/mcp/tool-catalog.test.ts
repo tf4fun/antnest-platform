@@ -130,6 +130,82 @@ describe("McpToolCatalog", () => {
     expect(runtime.callTool).toHaveBeenCalledTimes(1);
   });
 
+  it("classifies Runtime connection failure before callTool as no effect", async () => {
+    const runtime = fakeDialer([{ name: "write", description: "Write" }]);
+    runtime.connect.mockRejectedValueOnce(new TypeError("connection refused"));
+    const catalog = new McpToolCatalog({
+      runtimeDialer: runtime.dialer,
+      clientDialer: fakeDialer([]).dialer,
+      revisions: revisions(),
+    });
+    const tool = runtimeTool("write");
+
+    const error = await catalog
+      .call({
+        runId: "run-1",
+        snapshot: snapshot(),
+        tool,
+        arguments: { path: "notes.txt" },
+        signal: new AbortController().signal,
+      })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(McpToolCallError);
+    expect(error).toMatchObject({ effectState: "none" });
+    expect(runtime.callTool).not.toHaveBeenCalled();
+  });
+
+  it("preserves a declared Runtime error with no side effect", async () => {
+    const runtime = fakeDialer([{ name: "write", description: "Write" }], {
+      content: [{ type: "text", text: "invalid path" }],
+      isError: true,
+      structuredContent: {
+        error_code: "invalid_path",
+        message: "invalid path",
+        effect_state: "none",
+        effect_source: null,
+      },
+    });
+    const catalog = new McpToolCatalog({
+      runtimeDialer: runtime.dialer,
+      clientDialer: fakeDialer([]).dialer,
+      revisions: revisions(),
+    });
+
+    await expect(
+      catalog.call({
+        runId: "run-1",
+        snapshot: snapshot(),
+        tool: runtimeTool("write"),
+        arguments: { path: "../outside" },
+        signal: new AbortController().signal,
+      }),
+    ).resolves.toMatchObject({ isError: true, toolEffectState: "none" });
+  });
+
+  it("treats a received error without a valid effect declaration as unknown", async () => {
+    const runtime = fakeDialer([{ name: "write", description: "Write" }], {
+      content: [{ type: "text", text: "write failed" }],
+      isError: true,
+      structuredContent: { error_code: "write_failed", message: "write failed" },
+    });
+    const catalog = new McpToolCatalog({
+      runtimeDialer: runtime.dialer,
+      clientDialer: fakeDialer([]).dialer,
+      revisions: revisions(),
+    });
+
+    await expect(
+      catalog.call({
+        runId: "run-1",
+        snapshot: snapshot(),
+        tool: runtimeTool("write"),
+        arguments: { path: "notes.txt" },
+        signal: new AbortController().signal,
+      }),
+    ).resolves.toMatchObject({ isError: true, toolEffectState: "unknown" });
+  });
+
   it("treats an unconfirmed client Tool outcome as unknown side effects", async () => {
     const client = fakeDialer([{ name: "search", description: "Search" }]);
     client.callTool.mockRejectedValueOnce(new TypeError("connection reset"));
@@ -178,7 +254,11 @@ describe("McpToolCatalog", () => {
 
 function fakeDialer(
   tools: Array<{ name: string; description: string }>,
-  result = { content: [] as Array<{ type: string; [key: string]: unknown }>, isError: false },
+  result: {
+    content: Array<{ type: string; [key: string]: unknown }>;
+    isError: boolean;
+    structuredContent?: unknown;
+  } = { content: [], isError: false },
 ): {
   dialer: McpDialer;
   connect: ReturnType<typeof vi.fn>;
@@ -194,6 +274,17 @@ function fakeDialer(
   };
   const connect = vi.fn(() => Promise.resolve(connection));
   return { dialer: { connect }, connect, callTool, close };
+}
+
+function runtimeTool(name: string) {
+  return {
+    source: "runtime" as const,
+    sourceId: "runtime",
+    name,
+    modelName: name,
+    description: name,
+    inputSchema: { type: "object" },
+  };
 }
 
 function revisions(): ClientMcpRevisionPort {

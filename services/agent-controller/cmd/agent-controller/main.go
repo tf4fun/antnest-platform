@@ -190,6 +190,12 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 	if err != nil {
 		return classifyFailure("service_composition", err)
 	}
+	runtimeObservationWorker, err := application.NewRuntimeObservationWorker(
+		runtime, repository, cfg.ObservationPollInterval, logger,
+	)
+	if err != nil {
+		return classifyFailure("service_composition", err)
+	}
 	identity, err := identityclient.New(cfg.IdentityServiceURL, cfg.DependencyTimeout, nil)
 	if err != nil {
 		return classifyFailure("service_composition", err)
@@ -215,8 +221,8 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 		observedRecoveryStore, lifecycle, recoveryInstrumentation,
 		application.LifecycleRecoveryWorkerConfig{
 			WorkerID: recoveryWorkerID, PollInterval: cfg.RecoveryPollInterval,
-			StaleAfter: cfg.RecoveryStaleAfter, AttemptTimeout: cfg.RecoveryAttemptTimeout,
-			LeaseDuration: cfg.RecoveryLeaseDuration, RetryMax: cfg.RecoveryRetryMax,
+			AttemptTimeout: cfg.RecoveryAttemptTimeout,
+			LeaseDuration:  cfg.RecoveryLeaseDuration, RetryMax: cfg.RecoveryRetryMax,
 		},
 	)
 	if err != nil {
@@ -230,7 +236,6 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 	events := application.NewEventService(observedAgentEventStore, eventNotifier, observedAgentQueryStore)
 	handler, err := server.NewHandler(
 		catalog, lifecycle, runs, queries, events, repository.Ping,
-		server.WithLifecycleTimeout(cfg.LifecycleTimeout),
 	)
 	if err != nil {
 		return classifyFailure("service_composition", err)
@@ -238,7 +243,7 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 	httpServer := &http.Server{
 		Addr: cfg.ListenAddress, Handler: telemetry.HTTPHandler(handler, logger),
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second,
-		WriteTimeout: cfg.LifecycleTimeout + 5*time.Second, IdleTimeout: 90 * time.Second,
+		WriteTimeout: cfg.DependencyTimeout, IdleTimeout: 90 * time.Second,
 		MaxHeaderBytes: 1 << 20,
 	}
 	listener, err := net.Listen("tcp", cfg.ListenAddress)
@@ -251,6 +256,12 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 	recoveryCtx, stopRecovery := context.WithCancel(ctx)
 	recoveryErrors := make(chan error, 1)
 	go func() { recoveryErrors <- recoveryWorker.Run(recoveryCtx) }()
+	observationCtx, stopObservation := context.WithCancel(ctx)
+	observationStopped := make(chan struct{})
+	go func() {
+		defer close(observationStopped)
+		runtimeObservationWorker.Run(observationCtx)
+	}()
 	recoveryStopped := false
 	select {
 	case <-ctx.Done():
@@ -269,13 +280,24 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 		}
 	}
 	stopRecovery()
+	stopObservation()
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer cancel()
 	resultErr = errors.Join(
 		resultErr,
 		shutdownHTTPAndRecovery(shutdownCtx, httpServer, recoveryErrors, recoveryStopped),
+		waitForRuntimeObservationWorker(shutdownCtx, observationStopped),
 	)
 	return resultErr
+}
+
+func waitForRuntimeObservationWorker(ctx context.Context, stopped <-chan struct{}) error {
+	select {
+	case <-stopped:
+		return nil
+	case <-ctx.Done():
+		return classifyFailure("runtime_observation_shutdown", ctx.Err())
+	}
 }
 
 func shutdownHTTPAndRecovery(

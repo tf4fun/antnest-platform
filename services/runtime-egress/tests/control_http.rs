@@ -82,7 +82,7 @@ fn machine_contract_matches_the_complete_control_surface() {
     )))
     .expect("control contract");
 
-    assert_eq!(contract.revision, 2);
+    assert_eq!(contract.revision, 3);
     assert_eq!(contract.transport, "json-over-http");
     assert_eq!(contract.trust_boundary, "internal-network");
     assert_eq!(contract.status_values, ["ready", "degraded"]);
@@ -109,20 +109,23 @@ fn machine_contract_matches_the_complete_control_surface() {
         "../runtime/packet-contract.json"
     );
     assert_eq!(
+        contract.schemas["attachment_state_request"],
+        "attachment-state-request.schema.json"
+    );
+    assert_eq!(
         contract.schemas["resource_version_request"],
         "resource-version-request.schema.json"
     );
-    let fenced_routes = contract
+    let state_routes = contract
         .routes
         .iter()
-        .filter(|route| {
-            route.path.ends_with("/fence")
-                || route.path.ends_with("/reset-flows")
-                || route.path.ends_with("/release")
-        })
+        .filter(|route| route.request_schema.is_some())
         .collect::<Vec<_>>();
-    assert_eq!(fenced_routes.len(), 3);
-    assert!(fenced_routes.iter().all(|route| {
+    assert_eq!(state_routes.len(), 2);
+    assert!(state_routes.iter().any(|route| {
+        route.request_schema.as_deref() == Some("attachment-state-request.schema.json")
+    }));
+    assert!(state_routes.iter().any(|route| {
         route.request_schema.as_deref() == Some("resource-version-request.schema.json")
     }));
 
@@ -185,6 +188,9 @@ async fn ensure_endpoint_returns_runtime_attachment() {
     assert_eq!(document["packet_contract_revision"], 1);
     assert_eq!(document["egress_endpoint"]["ipv4"], "10.20.0.8");
     assert_eq!(document["egress_endpoint"]["port"], 8092);
+    assert_eq!(document["network_resource_version"], 1);
+    assert_eq!(document["attachment_state"], "closed");
+    assert_eq!(document["attachment_resource_version"], 1);
     assert_eq!(
         document
             .as_object()
@@ -194,13 +200,49 @@ async fn ensure_endpoint_returns_runtime_attachment() {
             .collect::<std::collections::BTreeSet<_>>(),
         std::collections::BTreeSet::from([
             "agent_id".to_owned(),
+            "attachment_resource_version".to_owned(),
+            "attachment_state".to_owned(),
             "egress_endpoint".to_owned(),
+            "network_resource_version".to_owned(),
             "packet_contract_revision".to_owned(),
             "resolver_ipv4".to_owned(),
             "state".to_owned(),
             "tunnel_ipv4".to_owned(),
         ])
     );
+}
+
+#[tokio::test]
+async fn attachment_endpoint_opens_with_a_versioned_cas() {
+    let app = app().await;
+    let ensure = app
+        .clone()
+        .oneshot(
+            Request::put("/internal/agent-networks/agent-attachment")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(ensure.status(), StatusCode::OK);
+
+    let response = app
+        .oneshot(
+            Request::put("/internal/agent-network-attachments/agent-attachment")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"state":"open","expected_resource_version":1}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), 4096).await.unwrap();
+    let document: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(document["attachment_state"], "open");
+    assert_eq!(document["attachment_resource_version"], 2);
 }
 
 #[tokio::test]

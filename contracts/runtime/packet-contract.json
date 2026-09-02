@@ -5,5 +5,15 @@
   "inner_transport_protocol": "tcp",
   "inner_mtu": 1400,
   "fragmentation": false,
-  "one_packet_per_datagram": true
+  "one_packet_per_datagram": true,
+  "readiness_probe": {
+    "destination_ipv4": "192.0.2.1",
+    "destination_port": 9,
+    "source_port_min": 49152,
+    "request_flags": ["syn"],
+    "request_acknowledgement": 0,
+    "request_payload_bytes": 0,
+    "response_flags": ["rst", "ack"],
+    "local_response_only": true
+  }
 }

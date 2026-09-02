@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     net::{Ipv4Addr, SocketAddr},
     time::{Duration, Instant},
 };
@@ -7,7 +7,7 @@ use std::{
 use crate::{
     domain::AgentId,
     flow::{ClaimResult, FlowTable},
-    packet::{PacketError, parse_ipv4_tcp, tcp_reset},
+    packet::{PacketError, is_readiness_probe, parse_ipv4_tcp, tcp_reset},
     policy::{CompiledPolicy, Decision},
 };
 
@@ -17,6 +17,14 @@ pub struct AgentRoute {
     pub tunnel_ipv4: Ipv4Addr,
     pub assignment_version: u64,
     pub policy: CompiledPolicy,
+    pub gate: RouteGate,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RouteGate {
+    Open,
+    ProbeOnly,
+    HardFenced,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -98,7 +106,6 @@ pub struct DataPlaneMetrics {
 #[derive(Debug)]
 pub struct DataPlaneEngine {
     snapshot: NetworkSnapshot,
-    fenced_agents: HashSet<AgentId>,
     flows: FlowTable,
     inner_mtu: usize,
     metrics: DataPlaneMetrics,
@@ -114,7 +121,6 @@ impl DataPlaneEngine {
     ) -> Self {
         Self {
             snapshot,
-            fenced_agents: HashSet::new(),
             flows: FlowTable::new(max_flows, max_agent_flows, flow_idle),
             inner_mtu,
             metrics: DataPlaneMetrics::default(),
@@ -136,8 +142,22 @@ impl DataPlaneEngine {
         let Some(route) = self.snapshot.route(packet.source) else {
             return self.drop(DropReason::UnknownAgent);
         };
-        if self.fenced_agents.contains(&route.agent_id) {
-            return self.drop(DropReason::AgentFenced);
+        match route.gate {
+            RouteGate::HardFenced => return self.drop(DropReason::AgentFenced),
+            RouteGate::ProbeOnly => {
+                if !is_readiness_probe(&packet, bytes.len()) {
+                    return self.drop(DropReason::AgentFenced);
+                }
+                let Some(packet) = tcp_reset(&packet) else {
+                    return self.drop(DropReason::AgentFenced);
+                };
+                return DataPlaneAction::SendUdp {
+                    agent_id: route.agent_id.clone(),
+                    peer,
+                    packet,
+                };
+            }
+            RouteGate::Open => {}
         }
         if route
             .policy
@@ -188,7 +208,7 @@ impl DataPlaneEngine {
         let Some(route) = self.snapshot.route(packet.destination) else {
             return self.drop(DropReason::UnknownAgent);
         };
-        if self.fenced_agents.contains(&route.agent_id) {
+        if route.gate != RouteGate::Open {
             return self.drop(DropReason::AgentFenced);
         }
         match self
@@ -213,7 +233,6 @@ impl DataPlaneEngine {
 
     pub fn replace_snapshot(&mut self, snapshot: NetworkSnapshot) {
         self.snapshot = snapshot;
-        self.fenced_agents.clear();
     }
 
     pub fn upsert_route(&mut self, route: AgentRoute) {
@@ -222,28 +241,48 @@ impl DataPlaneEngine {
 
     pub fn remove_agent(&mut self, agent_id: &AgentId) -> usize {
         self.snapshot.remove_agent(agent_id);
-        self.fenced_agents.remove(agent_id);
         self.flows.remove_agent(agent_id)
     }
 
     pub fn fence_agent(&mut self, agent_id: AgentId) {
-        self.fenced_agents.insert(agent_id);
+        self.set_gate(&agent_id, RouteGate::HardFenced);
+    }
+
+    pub fn probe_only_agent(&mut self, agent_id: &AgentId) {
+        self.set_gate(agent_id, RouteGate::ProbeOnly);
     }
 
     pub fn reopen_agent(&mut self, agent_id: &AgentId) {
-        self.fenced_agents.remove(agent_id);
+        self.set_gate(agent_id, RouteGate::Open);
     }
 
     pub fn is_agent_fenced(&self, agent_id: &AgentId) -> bool {
-        self.fenced_agents.contains(agent_id)
+        self.snapshot
+            .routes()
+            .find(|route| &route.agent_id == agent_id)
+            .is_some_and(|route| route.gate != RouteGate::Open)
     }
 
     pub fn fenced_agent_count(&self) -> usize {
-        self.fenced_agents.len()
+        self.snapshot
+            .routes()
+            .filter(|route| route.gate != RouteGate::Open)
+            .count()
     }
 
     pub fn reset_agent_flows(&mut self, agent_id: &AgentId) -> usize {
         self.flows.remove_agent(agent_id)
+    }
+
+    fn set_gate(&mut self, agent_id: &AgentId, gate: RouteGate) {
+        if let Some(route) = self
+            .snapshot
+            .routes
+            .values_mut()
+            .find(|route| &route.agent_id == agent_id)
+        {
+            route.gate = gate;
+        }
     }
 
     pub fn peer_output_failed(&mut self, agent_id: &AgentId, peer: SocketAddr) -> usize {

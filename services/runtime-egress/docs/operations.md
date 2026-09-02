@@ -188,9 +188,12 @@ named deterministically. Startup reconciles them idempotently. The process does
 not attempt fragile best-effort kernel teardown during shutdown; container
 network-namespace destruction is the cleanup boundary.
 
-`ResetAgentFlows`, policy assignment, fence, and release report success only
-after userspace writers have drained and the matching conntrack cleanup command
-has succeeded.
+Attachment close reports success only after userspace writers drain, the
+matching conntrack cleanup succeeds, durable `closed` is committed, and the
+probe-only route is published. Release first validates and quarantines the
+current network version, then removes the route and reconciles bounded cleanup;
+an already-quarantined retry repeats cleanup safely. Flow reset is an internal
+part of these Egress operations, not a public lifecycle RPC.
 
 ## 7. Telemetry
 

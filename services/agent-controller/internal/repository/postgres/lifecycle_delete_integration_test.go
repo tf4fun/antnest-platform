@@ -101,6 +101,7 @@ func TestLifecycleRepositoryPersistsDeleteBarrierAndRetainsAuditFacts(t *testing
 	if err != nil || replayed {
 		t.Fatalf("begin Agent delete: state=%+v replayed=%t err=%v", started, replayed, err)
 	}
+	ctx = claimLifecycleForTest(t, ctx, repository, requestID)
 	if started.Agent.DesiredState != domain.DesiredDeleted ||
 		started.Agent.LifecycleState != domain.AgentDeleting ||
 		started.Agent.ActiveOperationRequestID != requestID {
@@ -136,21 +137,12 @@ INSERT INTO agent_controller.run_admissions (
 	}
 	state, err = repository.AdvanceAgentDelete(ctx, ports.AdvanceAgentDelete{
 		RequestID: requestID, Fingerprint: fingerprint,
-		ExpectedPhase: domain.PhaseNetworkFence, NextPhase: domain.PhaseFlowReset,
-		NextChildRequestID: domain.ChildRequestID(requestID, domain.PhaseFlowReset),
+		ExpectedPhase: domain.PhaseNetworkFence, NextPhase: domain.PhaseRuntimeDelete,
+		NextChildRequestID: domain.ChildRequestID(requestID, domain.PhaseRuntimeDelete),
 		Now:                now.Add(2 * time.Second),
 	})
-	if err != nil || state.Operation.Phase != domain.PhaseFlowReset {
-		t.Fatalf("record delete fence: state=%+v err=%v", state, err)
-	}
-	state, err = repository.AdvanceAgentDelete(ctx, ports.AdvanceAgentDelete{
-		RequestID: requestID, Fingerprint: fingerprint,
-		ExpectedPhase: domain.PhaseFlowReset, NextPhase: domain.PhaseRuntimeDelete,
-		NextChildRequestID: domain.ChildRequestID(requestID, domain.PhaseRuntimeDelete),
-		Now:                now.Add(3 * time.Second),
-	})
 	if err != nil || state.Operation.Phase != domain.PhaseRuntimeDelete {
-		t.Fatalf("record delete flow reset: state=%+v err=%v", state, err)
+		t.Fatalf("record delete fence: state=%+v err=%v", state, err)
 	}
 	runtime := ports.RuntimeOperation{
 		State: "completed", Effect: "completed",
@@ -207,7 +199,8 @@ FROM agent_controller.run_admissions WHERE admission_id = $1`,
 	attachment := ports.NetworkAttachment{
 		AgentID: base.Agent.AgentID, TunnelIPv4: "100.64.0.2", ResolverIPv4: "100.64.0.1",
 		PacketContractRevision: 1, EgressIPv4: "10.20.0.8", EgressPort: 8092,
-		State: "quarantined",
+		State: ports.NetworkStateQuarantined, NetworkResourceVersion: 2,
+		AttachmentState: ports.NetworkAttachmentClosed, AttachmentResourceVersion: 2,
 	}
 	state, err = repository.AdvanceAgentDelete(ctx, ports.AdvanceAgentDelete{
 		RequestID: requestID, Fingerprint: fingerprint,
@@ -287,6 +280,7 @@ WHERE id = $1`, base.Agent.AgentID, now); err != nil {
 	if err != nil || replayed {
 		t.Fatalf("begin absent Runtime delete: state=%+v replayed=%t err=%v", started, replayed, err)
 	}
+	ctx = claimLifecycleForTest(t, ctx, repository, requestID)
 
 	const admissionID = "admission-delete-absent-runtime-integration"
 	if _, err := repository.pool.Exec(ctx, `
@@ -318,23 +312,15 @@ INSERT INTO agent_controller.run_admissions (
 	}
 	state, err = repository.AdvanceAgentDelete(ctx, ports.AdvanceAgentDelete{
 		RequestID: requestID, Fingerprint: fingerprint,
-		ExpectedPhase: domain.PhaseNetworkFence, NextPhase: domain.PhaseFlowReset,
-		NextChildRequestID: domain.ChildRequestID(requestID, domain.PhaseFlowReset),
-		Now:                now.Add(2 * time.Second),
-	})
-	if err != nil || state.Operation.Phase != domain.PhaseFlowReset {
-		t.Fatalf("record absent Runtime delete fence: state=%+v err=%v", state, err)
-	}
-	const eventID = "event-run-release-delete-absent-runtime-integration"
-	state, err = repository.AdvanceAgentDelete(ctx, ports.AdvanceAgentDelete{
-		RequestID: requestID, Fingerprint: fingerprint,
-		ExpectedPhase: domain.PhaseFlowReset, NextPhase: domain.PhaseNetworkRelease,
+		ExpectedPhase: domain.PhaseNetworkFence, NextPhase: domain.PhaseNetworkRelease,
 		NextChildRequestID: domain.ChildRequestID(requestID, domain.PhaseNetworkRelease),
 		RunReleaseEvent: lifecycleRunReleaseEvent(
-			eventID, "runtime_absent", "", now.Add(3*time.Second),
+			"event-run-release-delete-absent-runtime-integration",
+			"runtime_absent", "", now.Add(2*time.Second),
 		),
-		Now: now.Add(3 * time.Second),
+		Now: now.Add(2 * time.Second),
 	})
+	const eventID = "event-run-release-delete-absent-runtime-integration"
 	if err != nil || state.Operation.Phase != domain.PhaseNetworkRelease {
 		t.Fatalf("cross absent Runtime barrier: state=%+v err=%v", state, err)
 	}
@@ -363,6 +349,7 @@ func TestRuntimeAbsenceRetainsClientMCPUnknownEffect(t *testing.T) {
 	if _, _, err := repository.BeginAgentDelete(ctx, begin); err != nil {
 		t.Fatalf("begin delete: %v", err)
 	}
+	ctx = claimLifecycleForTest(t, ctx, repository, requestID)
 	const admissionID = "admission-client-effect-integration"
 	if _, err := repository.pool.Exec(ctx, `
 INSERT INTO agent_controller.run_admissions (
@@ -392,21 +379,12 @@ INSERT INTO agent_controller.run_admissions (
 	}
 	state, err = repository.AdvanceAgentDelete(ctx, ports.AdvanceAgentDelete{
 		RequestID: requestID, Fingerprint: fingerprint,
-		ExpectedPhase: domain.PhaseNetworkFence, NextPhase: domain.PhaseFlowReset,
-		NextChildRequestID: domain.ChildRequestID(requestID, domain.PhaseFlowReset),
+		ExpectedPhase: domain.PhaseNetworkFence, NextPhase: domain.PhaseRuntimeDelete,
+		NextChildRequestID: domain.ChildRequestID(requestID, domain.PhaseRuntimeDelete),
 		Now:                now.Add(2 * time.Second),
 	})
-	if err != nil || state.Operation.Phase != domain.PhaseFlowReset {
-		t.Fatalf("record delete fence: state=%+v err=%v", state, err)
-	}
-	state, err = repository.AdvanceAgentDelete(ctx, ports.AdvanceAgentDelete{
-		RequestID: requestID, Fingerprint: fingerprint,
-		ExpectedPhase: domain.PhaseFlowReset, NextPhase: domain.PhaseRuntimeDelete,
-		NextChildRequestID: domain.ChildRequestID(requestID, domain.PhaseRuntimeDelete),
-		Now:                now.Add(3 * time.Second),
-	})
 	if err != nil || state.Operation.Phase != domain.PhaseRuntimeDelete {
-		t.Fatalf("record delete flow reset: state=%+v err=%v", state, err)
+		t.Fatalf("record delete fence: state=%+v err=%v", state, err)
 	}
 	runtime := ports.RuntimeOperation{
 		State: "completed", Effect: "completed", RuntimeRevision: base.Agent.RuntimeRevision,

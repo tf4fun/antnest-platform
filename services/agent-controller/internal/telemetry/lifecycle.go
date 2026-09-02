@@ -122,18 +122,6 @@ func (store *ObservedLifecycleStore) BeginAgentRebuild(
 	})
 }
 
-func (store *ObservedLifecycleStore) RecordAgentRebuildPolicy(
-	ctx context.Context,
-	requestID string,
-	fingerprint string,
-	assignment ports.NetworkPolicyAssignment,
-	now time.Time,
-) (ports.AgentRebuildState, error) {
-	return observeLifecycleValue(ctx, store, "record_agent_rebuild_policy", func(callCtx context.Context) (ports.AgentRebuildState, error) {
-		return store.next.RecordAgentRebuildPolicy(callCtx, requestID, fingerprint, assignment, now)
-	})
-}
-
 func (store *ObservedLifecycleStore) SettleAgentRebuildDrain(
 	ctx context.Context,
 	requestID string,
@@ -194,18 +182,6 @@ func (store *ObservedLifecycleStore) BeginAgentDisable(
 ) (ports.AgentDisableState, bool, error) {
 	return observeLifecycleReplay(ctx, store, "begin_agent_disable", func(callCtx context.Context) (ports.AgentDisableState, bool, error) {
 		return store.next.BeginAgentDisable(callCtx, input)
-	})
-}
-
-func (store *ObservedLifecycleStore) RecordAgentDisablePolicy(
-	ctx context.Context,
-	requestID string,
-	fingerprint string,
-	assignment ports.NetworkPolicyAssignment,
-	now time.Time,
-) (ports.AgentDisableState, error) {
-	return observeLifecycleValue(ctx, store, "record_agent_disable_policy", func(callCtx context.Context) (ports.AgentDisableState, error) {
-		return store.next.RecordAgentDisablePolicy(callCtx, requestID, fingerprint, assignment, now)
 	})
 }
 

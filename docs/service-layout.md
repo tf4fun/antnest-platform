@@ -7,9 +7,15 @@ This document defines how Antnest Platform services are separated. Its goal is
 not to create more directories. Its goal is to let a maintainer understand and
 change one service without reconstructing the whole platform in their head.
 
-Antnest Runtime, Runtime Egress, Runtime Controller, Agent ACP Service, and
-Identity Service are implemented. Agent Controller and the remaining service
-directories are pending until their delivery stage says otherwise.
+Cross-service behavior must also remain understandable from its entrypoint.
+The implemented call chains and persistence boundaries are indexed in
+[`business-sequences.md`](business-sequences.md); a service-boundary change is
+incomplete until the affected sequence is updated.
+
+Antnest Runtime, Runtime Egress, Runtime Controller, Agent ACP Service,
+Identity Service, Agent Controller, Edge Gateway, and Admin Console are
+implemented. Agent UI, Channel Gateway, and Skill Registry remain pending until
+their delivery stage says otherwise.
 
 ## Repository Layers
 
@@ -55,7 +61,7 @@ under `contracts/`.
 | Antnest Runtime    | Expose one isolated Agent workspace through MCP          | Process-local execution state, TUN, four MCP tools                                                                                                             | Durable control state, containers, policy decisions, Agent loop                    |
 | Agent ACP Service  | Execute ACP v1/v2 Sessions and Agent Runs                | Sessions, Runs, Turns, context, compression checkpoints, client MCP, Tool attempts                                                                             | Agent construction, Runtime rebuild, platform APIs, Channel objects                |
 | Skill Registry     | Govern reusable organization Skill packages              | Skill identity, immutable versions, package, review, distribution manifest                                                                                     | Skill execution, Runtime construction, Agent lifecycle                             |
-| Edge Gateway       | Be the eventual sole external application entry          | External routing and rate-limit configuration                                                                                                                  | Business databases and domain state machines                                       |
+| Edge Gateway       | Be the sole external application entry                    | Browser sessions, trusted principal projection, external routing, admission, request limits, security headers, and trace propagation                           | Business databases and domain state machines                                       |
 
 The Edge Gateway can be absent during internal development stages. Trusted
 Compose clients may call internal RPCs directly, but those RPCs are not public

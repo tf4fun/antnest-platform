@@ -1,0 +1,58 @@
+{
+  "contract": "antnest.admin-console.bff",
+  "version": 2,
+  "base_path": "/api/admin",
+  "routes": {
+    "overview": {"method": "GET", "path": "/overview"},
+    "directory": {"method": "GET", "path": "/directory"},
+    "list_model_profiles": {"method": "GET", "path": "/model-profiles"},
+    "create_model_profile": {"method": "POST", "path": "/model-profiles"},
+    "list_templates": {"method": "GET", "path": "/templates"},
+    "create_template": {"method": "POST", "path": "/templates"},
+    "list_agents": {"method": "GET", "path": "/agents"},
+    "create_agent": {"method": "POST", "path": "/agents"},
+    "get_agent": {"method": "GET", "path": "/agents/{agent_id}"},
+    "rebuild_agent": {"method": "POST", "path": "/agents/{agent_id}/rebuild"},
+    "disable_agent": {"method": "POST", "path": "/agents/{agent_id}/disable"},
+    "enable_agent": {"method": "POST", "path": "/agents/{agent_id}/enable"},
+    "delete_agent": {"method": "POST", "path": "/agents/{agent_id}/delete"},
+    "get_operation": {"method": "GET", "path": "/operations/{request_id}"},
+    "list_agent_events": {"method": "GET", "path": "/agents/{agent_id}/events"},
+    "watch_agent_events": {"method": "GET", "path": "/agents/{agent_id}/events/watch"}
+  },
+  "server_fields": [
+    "request_id",
+    "actor_principal_id",
+    "organization_id"
+  ],
+  "dependencies": {
+    "identity": ["list_directory"],
+    "agent_controller": [
+      "model_profiles",
+      "agent_templates",
+      "agents",
+      "operations",
+      "events"
+    ]
+  },
+  "response_policy": {
+    "projection": "explicit_browser_allowlist",
+    "forbidden_fields": [
+      "credential_ref",
+      "credential_version",
+      "agent_access_subject",
+      "access_revision",
+      "runtime_execution_id",
+      "mcp_endpoint",
+      "scim_external_id",
+      "scim_user_name"
+    ],
+    "overview": {
+      "deadline": "single_bounded_deadline",
+      "fanout": "concurrent_buffered",
+      "required_sections": ["agents"],
+      "optional_sections": ["directory", "model_profiles", "templates"],
+      "section_status": ["available", "unavailable"]
+    }
+  }
+}

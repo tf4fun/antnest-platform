@@ -20,8 +20,8 @@ use super::{
 use crate::{
     allocator::{AddressPool, AllocationError},
     domain::{
-        ActiveBinding, AgentId, AgentNetwork, NetworkState, PolicyAssignment, PolicyId,
-        PolicyRevision,
+        ActiveBinding, AgentId, AgentNetwork, AttachmentState, NetworkState, PolicyAssignment,
+        PolicyId, PolicyRevision, RuntimeAttachment,
     },
     policy::PolicySpec,
 };
@@ -723,6 +723,15 @@ impl Repository for PostgresRepository {
                 .map_err(database_operation_error)?;
             transaction
                 .execute(
+                    "INSERT INTO runtime_egress.runtime_attachments
+                     (agent_id, state, resource_version)
+                     VALUES ($1, 'closed', 1)",
+                    &[&agent_id.as_str()],
+                )
+                .await
+                .map_err(database_operation_error)?;
+            transaction
+                .execute(
                     "INSERT INTO runtime_egress.agent_policy_assignments
                      (agent_id, policy_id, revision, resource_version)
                      VALUES ($1, $2, $3, 1)",
@@ -828,6 +837,83 @@ impl Repository for PostgresRepository {
         finish_operation(&mut client, result)
     }
 
+    async fn runtime_attachment(
+        &self,
+        agent_id: &AgentId,
+    ) -> Result<RuntimeAttachment, RepositoryError> {
+        let mut client = self.acquire_client().await?;
+        let result = tokio::time::timeout(CLIENT_OPERATION_TIMEOUT, async {
+            select_attachment_client(&client, agent_id)
+                .await?
+                .ok_or(RepositoryError::AgentNetworkNotFound)
+        })
+        .await;
+        finish_operation(&mut client, result)
+    }
+
+    async fn compare_and_swap_attachment(
+        &self,
+        agent_id: &AgentId,
+        desired: AttachmentState,
+        expected_resource_version: u64,
+    ) -> Result<RuntimeAttachment, RepositoryError> {
+        let mut client = self.acquire_client().await?;
+        let result = tokio::time::timeout(CLIENT_OPERATION_TIMEOUT, async {
+            let transaction = client
+                .transaction()
+                .await
+                .map_err(database_operation_error)?;
+            let network = select_network_for_update(&transaction, agent_id)
+                .await?
+                .ok_or(RepositoryError::AgentNetworkNotFound)?;
+            if network.state != NetworkState::Active {
+                return Err(RepositoryError::AgentNetworkUnavailable);
+            }
+            let current = select_attachment(&transaction, agent_id, true)
+                .await?
+                .ok_or(RepositoryError::AgentNetworkNotFound)?;
+            if current.state == desired {
+                if !retry_version_matches(current.resource_version, expected_resource_version) {
+                    return Err(RepositoryError::ResourceVersionConflict);
+                }
+                transaction
+                    .commit()
+                    .await
+                    .map_err(database_operation_error)?;
+                return Ok(current);
+            }
+            if current.resource_version != expected_resource_version {
+                return Err(RepositoryError::ResourceVersionConflict);
+            }
+            let attachment = RuntimeAttachment {
+                agent_id: agent_id.clone(),
+                state: desired,
+                resource_version: current.resource_version + 1,
+            };
+            transaction
+                .execute(
+                    "UPDATE runtime_egress.runtime_attachments
+                     SET state = $2, resource_version = $3,
+                         updated_at = CURRENT_TIMESTAMP
+                     WHERE agent_id = $1",
+                    &[
+                        &agent_id.as_str(),
+                        &attachment_state(attachment.state),
+                        &u64_to_i64(attachment.resource_version)?,
+                    ],
+                )
+                .await
+                .map_err(database_operation_error)?;
+            transaction
+                .commit()
+                .await
+                .map_err(database_operation_error)?;
+            Ok(attachment)
+        })
+        .await;
+        finish_operation(&mut client, result)
+    }
+
     async fn compare_and_swap_assignment(
         &self,
         agent_id: &AgentId,
@@ -853,10 +939,19 @@ impl Repository for PostgresRepository {
             {
                 return Err(RepositoryError::PolicyRevisionNotFound);
             }
+            let network = select_network_for_update(&transaction, agent_id)
+                .await?
+                .ok_or(RepositoryError::AgentNetworkNotFound)?;
+            if network.state != NetworkState::Active {
+                return Err(RepositoryError::AgentNetworkUnavailable);
+            }
             let current = select_assignment(&transaction, agent_id, true)
                 .await?
                 .ok_or(RepositoryError::AgentNetworkNotFound)?;
             if current.policy_id == policy_id && current.revision == revision {
+                if !retry_version_matches(current.resource_version, expected_resource_version) {
+                    return Err(RepositoryError::ResourceVersionConflict);
+                }
                 transaction
                     .commit()
                     .await
@@ -900,6 +995,7 @@ impl Repository for PostgresRepository {
     async fn quarantine_agent_network(
         &self,
         agent_id: &AgentId,
+        expected_resource_version: u64,
         now: SystemTime,
     ) -> Result<AgentNetwork, RepositoryError> {
         let mut client = self.acquire_client().await?;
@@ -912,11 +1008,23 @@ impl Repository for PostgresRepository {
                 .await?
                 .ok_or(RepositoryError::AgentNetworkNotFound)?;
             if current.state == NetworkState::Quarantined {
+                if !retry_version_matches(current.resource_version, expected_resource_version) {
+                    return Err(RepositoryError::ResourceVersionConflict);
+                }
                 transaction
                     .commit()
                     .await
                     .map_err(database_operation_error)?;
                 return Ok(current);
+            }
+            if current.resource_version != expected_resource_version {
+                return Err(RepositoryError::ResourceVersionConflict);
+            }
+            let attachment = select_attachment(&transaction, agent_id, true)
+                .await?
+                .ok_or(RepositoryError::AgentNetworkNotFound)?;
+            if attachment.state != AttachmentState::Closed {
+                return Err(RepositoryError::AgentNetworkUnavailable);
             }
             let quarantine_until = now + self.config.quarantine;
             let row = transaction
@@ -950,9 +1058,11 @@ impl Repository for PostgresRepository {
                 .query(
                     "SELECT n.agent_id, n.pool_id, host(n.tunnel_ipv4), n.state,
                             n.resource_version, n.quarantine_until,
+                            t.state, t.resource_version,
                             a.policy_id, a.revision, a.resource_version,
                             p.canonical_spec, p.digest
                      FROM runtime_egress.agent_networks n
+                     JOIN runtime_egress.runtime_attachments t USING (agent_id)
                      JOIN runtime_egress.agent_policy_assignments a USING (agent_id)
                      JOIN runtime_egress.policy_revisions p
                        ON p.policy_id = a.policy_id AND p.revision = a.revision
@@ -1016,23 +1126,29 @@ impl Repository for PostgresRepository {
 
 fn binding_from_row(row: Row) -> Result<ActiveBinding, RepositoryError> {
     let network = network_from_row(&row)?;
-    let policy_id = PolicyId::parse(row.get::<_, String>(6)).map_err(operation_failed)?;
-    let revision_number = i64_to_u64(row.get(7))?;
+    let attachment = RuntimeAttachment {
+        agent_id: network.agent_id.clone(),
+        state: parse_attachment_state(row.get(6))?,
+        resource_version: i64_to_u64(row.get(7))?,
+    };
+    let policy_id = PolicyId::parse(row.get::<_, String>(8)).map_err(operation_failed)?;
+    let revision_number = i64_to_u64(row.get(9))?;
     let assignment = PolicyAssignment {
         agent_id: network.agent_id.clone(),
         policy_id: policy_id.clone(),
         revision: revision_number,
-        resource_version: i64_to_u64(row.get(8))?,
+        resource_version: i64_to_u64(row.get(10))?,
     };
-    let spec = serde_json::from_value(row.get(9)).map_err(operation_failed)?;
+    let spec = serde_json::from_value(row.get(11)).map_err(operation_failed)?;
     let revision = PolicyRevision {
         policy_id,
         revision: revision_number,
         spec,
-        digest: row.get(10),
+        digest: row.get(12),
     };
     Ok(ActiveBinding {
         network,
+        attachment,
         assignment,
         revision,
     })
@@ -1186,6 +1302,70 @@ fn assignment_from_row(agent_id: AgentId, row: &Row) -> Result<PolicyAssignment,
         revision: i64_to_u64(row.get(1))?,
         resource_version: i64_to_u64(row.get(2))?,
     })
+}
+
+async fn select_attachment_client(
+    client: &Client,
+    agent_id: &AgentId,
+) -> Result<Option<RuntimeAttachment>, RepositoryError> {
+    client
+        .query_opt(
+            "SELECT state, resource_version
+             FROM runtime_egress.runtime_attachments WHERE agent_id = $1",
+            &[&agent_id.as_str()],
+        )
+        .await
+        .map_err(database_operation_error)?
+        .map(|row| attachment_from_row(agent_id.clone(), &row))
+        .transpose()
+}
+
+async fn select_attachment(
+    transaction: &tokio_postgres::Transaction<'_>,
+    agent_id: &AgentId,
+    for_update: bool,
+) -> Result<Option<RuntimeAttachment>, RepositoryError> {
+    let suffix = if for_update { " FOR UPDATE" } else { "" };
+    let query = format!(
+        "SELECT state, resource_version
+         FROM runtime_egress.runtime_attachments WHERE agent_id = $1{suffix}"
+    );
+    transaction
+        .query_opt(&query, &[&agent_id.as_str()])
+        .await
+        .map_err(database_operation_error)?
+        .map(|row| attachment_from_row(agent_id.clone(), &row))
+        .transpose()
+}
+
+fn attachment_from_row(agent_id: AgentId, row: &Row) -> Result<RuntimeAttachment, RepositoryError> {
+    Ok(RuntimeAttachment {
+        agent_id,
+        state: parse_attachment_state(row.get(0))?,
+        resource_version: i64_to_u64(row.get(1))?,
+    })
+}
+
+fn retry_version_matches(current: u64, expected: u64) -> bool {
+    current == expected
+        || expected
+            .checked_add(1)
+            .is_some_and(|version| version == current)
+}
+
+fn parse_attachment_state(value: String) -> Result<AttachmentState, RepositoryError> {
+    match value.as_str() {
+        "closed" => Ok(AttachmentState::Closed),
+        "open" => Ok(AttachmentState::Open),
+        _ => Err(operation_failed("invalid Runtime attachment state")),
+    }
+}
+
+const fn attachment_state(state: AttachmentState) -> &'static str {
+    match state {
+        AttachmentState::Closed => "closed",
+        AttachmentState::Open => "open",
+    }
 }
 
 fn map_allocation_error(error: AllocationError) -> RepositoryError {

@@ -38,8 +38,10 @@ ConnectionBinding
 ```
 
 It is immutable for one connection. The opaque Agent-scoped access subject is
-resolved before the WebSocket is accepted and re-resolved before every ACP
-business operation. Any change to its principal, Agent, access revision, or
+resolved before the WebSocket is accepted and re-resolved before ACP Session
+management operations. Prompt admission instead relies on Agent Controller
+`acquire_run`, which authoritatively validates the same binding and active
+Identity membership in one path. Any change to its principal, Agent, access revision, or
 prompt capabilities requires Agent Controller to advance `access_revision`;
 the old connection then fails closed and must reconnect. The subject is never
 supplied by ACP Session parameters and is not a reusable user identity token.
@@ -170,6 +172,15 @@ Effect certainty is source-neutral: both Runtime and client MCP calls may leave
 terminal report also preserves `unknown_effect_source` as `runtime_mcp`,
 `client_mcp`, or `unclassified`, so Runtime replacement cannot incorrectly
 settle an unrelated client Tool effect.
+
+The MCP invocation boundary is the call to the official SDK's `callTool`
+method. URL validation, connection, and initialization failures before that
+boundary have `tool_effect_state=none`. A received successful Tool response is
+`settled`. A received error may declare `none`, `settled`, or `unknown` through
+its structured content; a missing or malformed declaration is conservatively
+`unknown`. A rejected `callTool` promise is also `unknown`, because the adapter
+cannot prove whether the server executed the request. Once a Tool is unknown,
+the Run becomes `unresolved` before another model request can be issued.
 
 ## Two MCP Sources
 

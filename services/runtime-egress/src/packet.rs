@@ -5,6 +5,9 @@ use thiserror::Error;
 const IPV4_HEADER_LEN: usize = 20;
 const TCP_HEADER_LEN: usize = 20;
 const IP_PROTOCOL_TCP: u8 = 6;
+const READINESS_PROBE_DESTINATION: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 1);
+const READINESS_PROBE_DESTINATION_PORT: u16 = 9;
+const READINESS_PROBE_SOURCE_PORT_MIN: u16 = 49_152;
 pub const INNER_MTU: usize = 1400;
 pub const PACKET_CONTRACT_REVISION: u32 = 1;
 
@@ -210,6 +213,16 @@ pub fn tcp_reset(incoming: &Ipv4TcpPacket) -> Option<Vec<u8>> {
     );
     reset[tcp + 16..tcp + 18].copy_from_slice(&tcp_checksum.to_be_bytes());
     Some(reset)
+}
+
+pub fn is_readiness_probe(packet: &Ipv4TcpPacket, encoded_len: usize) -> bool {
+    encoded_len == IPV4_HEADER_LEN + TCP_HEADER_LEN
+        && packet.destination == READINESS_PROBE_DESTINATION
+        && packet.destination_port == READINESS_PROBE_DESTINATION_PORT
+        && packet.source_port >= READINESS_PROBE_SOURCE_PORT_MIN
+        && packet.acknowledgement == 0
+        && packet.flags == TcpFlags::SYN
+        && packet.payload_len == 0
 }
 
 fn tcp_checksum(source: [u8; 4], destination: [u8; 4], segment: &[u8]) -> u16 {

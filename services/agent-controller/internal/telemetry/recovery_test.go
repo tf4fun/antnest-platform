@@ -129,7 +129,7 @@ func TestObservedLifecycleRecoveryStoreDoesNotTraceEmptyPoll(t *testing.T) {
 		t.Fatalf("observe lifecycle recovery store: %v", err)
 	}
 	_, found, err := observed.ClaimLifecycleRecovery(context.Background(), ports.ClaimLifecycleRecovery{
-		WorkerID: "worker-1", StaleAfter: time.Minute, LeaseDuration: time.Minute,
+		WorkerID: "worker-1", LeaseDuration: time.Minute,
 	})
 	if err != nil || found {
 		t.Fatalf("empty recovery poll found=%v err=%v", found, err)
@@ -155,6 +155,12 @@ func (*emptyLifecycleRecoveryStore) StartLifecycleRecoveryAttempt(
 
 func (*emptyLifecycleRecoveryStore) ReleaseLifecycleRecoveryClaim(
 	context.Context, ports.ReleaseLifecycleRecoveryClaim,
+) error {
+	return nil
+}
+
+func (*emptyLifecycleRecoveryStore) QuarantineLifecycleRecoveryClaim(
+	context.Context, ports.QuarantineLifecycleRecoveryClaim,
 ) error {
 	return nil
 }

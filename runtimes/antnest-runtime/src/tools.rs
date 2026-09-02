@@ -13,7 +13,7 @@ use crate::execution::{
     BashRequest, BashResult, EditRequest, EditResult, MAX_FILE_CONTENT_BYTES, ReadRequest,
     ReadResult, RootName, WriteRequest, WriteResult,
 };
-use crate::roots::{NamedRoot, NamedRoots};
+use crate::roots::{NamedRoot, NamedRoots, RootError};
 use crate::tool_error::{ToolError, ToolErrorCode};
 
 const MAX_OUTPUT_BYTES: usize = 1024 * 1024;
@@ -97,17 +97,20 @@ impl ToolEngine {
             Exit::Wait(Err(error)) => {
                 terminate_and_reap(&mut child).await;
                 drain_outputs(stdout, stderr).await;
-                return Err(ToolError::new(ToolErrorCode::WaitFailed, error));
+                return Err(ToolError::unknown(ToolErrorCode::WaitFailed, error));
             }
             Exit::Canceled => {
                 terminate_and_reap(&mut child).await;
                 drain_outputs(stdout, stderr).await;
-                return Err(canceled());
+                return Err(ToolError::unknown(
+                    ToolErrorCode::Canceled,
+                    "request canceled after bash dispatch",
+                ));
             }
             Exit::TimedOut => {
                 terminate_and_reap(&mut child).await;
                 drain_outputs(stdout, stderr).await;
-                return Err(ToolError::new(
+                return Err(ToolError::unknown(
                     ToolErrorCode::Timeout,
                     "bash command timed out",
                 ));
@@ -116,7 +119,10 @@ impl ToolEngine {
         let (stdout, stdout_truncated, stdout_error) = join_output(stdout).await;
         let (stderr, stderr_truncated, stderr_error) = join_output(stderr).await;
         if let Some(error) = output_error(stdout_error, stderr_error) {
-            return Err(ToolError::new(ToolErrorCode::OutputCaptureFailed, error));
+            return Err(ToolError::unknown(
+                ToolErrorCode::OutputCaptureFailed,
+                error,
+            ));
         }
         Ok(BashResult {
             exit_code: status.code().unwrap_or(128),
@@ -166,8 +172,8 @@ impl ToolEngine {
             roots.write(NamedRoot::Workspace, &path, &content, false)
         })
         .await
-        .map_err(|error| ToolError::new(ToolErrorCode::RuntimeFailed, error))?
-        .map_err(|error| ToolError::new(ToolErrorCode::WriteFailed, error))?;
+        .map_err(ToolError::outcome_unknown)?
+        .map_err(|error| write_error(ToolErrorCode::WriteFailed, error))?;
         Ok(WriteResult { bytes_written })
     }
 
@@ -225,8 +231,8 @@ impl ToolEngine {
             roots.write(NamedRoot::Workspace, &path, &updated, false)
         })
         .await
-        .map_err(|error| ToolError::new(ToolErrorCode::RuntimeFailed, error))?
-        .map_err(|error| ToolError::new(ToolErrorCode::EditFailed, error))?;
+        .map_err(ToolError::outcome_unknown)?
+        .map_err(|error| write_error(ToolErrorCode::EditFailed, error))?;
         Ok(EditResult { bytes_written })
     }
 }
@@ -241,6 +247,14 @@ fn reject_canceled(cancel: &CancellationToken) -> Result<(), ToolError> {
 
 fn canceled() -> ToolError {
     ToolError::new(ToolErrorCode::Canceled, "request canceled")
+}
+
+fn write_error(code: ToolErrorCode, error: RootError) -> ToolError {
+    if error.outcome_unknown() {
+        ToolError::outcome_unknown(error)
+    } else {
+        ToolError::new(code, error)
+    }
 }
 
 fn storage_root(root: RootName) -> NamedRoot {
@@ -312,6 +326,25 @@ async fn join_output(task: OutputTask) -> CapturedOutput {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn post_commit_filesystem_failure_is_an_unknown_tool_outcome() {
+        use super::write_error;
+        use crate::roots::RootError;
+        use crate::tool_error::{ToolEffectState, ToolErrorCode};
+
+        let error = write_error(
+            ToolErrorCode::WriteFailed,
+            RootError::OutcomeUnknown {
+                operation: "verify committed file",
+                detail: "readback failed".into(),
+            },
+        );
+
+        assert_eq!(error.code, ToolErrorCode::OutcomeUnknown);
+        assert_eq!(error.effect_state, ToolEffectState::Unknown);
+    }
+
     #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn bash_home_matches_the_configured_workspace() {

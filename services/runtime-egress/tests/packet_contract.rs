@@ -21,6 +21,20 @@ struct PacketContract {
     inner_mtu: usize,
     fragmentation: bool,
     one_packet_per_datagram: bool,
+    readiness_probe: ReadinessProbe,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReadinessProbe {
+    destination_ipv4: String,
+    destination_port: u16,
+    source_port_min: u16,
+    request_flags: Vec<String>,
+    request_acknowledgement: u32,
+    request_payload_bytes: usize,
+    response_flags: Vec<String>,
+    local_response_only: bool,
 }
 
 #[derive(Deserialize)]
@@ -50,6 +64,14 @@ fn shared_fixtures_define_the_egress_packet_boundary() {
     assert_eq!(contract.inner_mtu, INNER_MTU);
     assert!(!contract.fragmentation);
     assert!(contract.one_packet_per_datagram);
+    assert_eq!(contract.readiness_probe.destination_ipv4, "192.0.2.1");
+    assert_eq!(contract.readiness_probe.destination_port, 9);
+    assert_eq!(contract.readiness_probe.source_port_min, 49_152);
+    assert_eq!(contract.readiness_probe.request_flags, ["syn"]);
+    assert_eq!(contract.readiness_probe.request_acknowledgement, 0);
+    assert_eq!(contract.readiness_probe.request_payload_bytes, 0);
+    assert_eq!(contract.readiness_probe.response_flags, ["rst", "ack"]);
+    assert!(contract.readiness_probe.local_response_only);
 
     for fixture in fixtures.fixtures {
         let packet = decode_hex(&fixture.hex).expect("fixture hex");

@@ -243,6 +243,39 @@ func TestPostgresIdentityHappyPathAndOwnershipBoundaries(t *testing.T) {
 	if err != nil || resolved != login.Principal {
 		t.Fatalf("resolve = %#v, %v; login=%#v", resolved, err, login.Principal)
 	}
+	var tokenVersionBefore, tokenVersionAfter string
+	var lastUsedAt time.Time
+	if err := pool.QueryRow(ctx, `
+		SELECT xmin::text, last_used_at FROM api_tokens WHERE id = $1`, login.TokenID,
+	).Scan(&tokenVersionBefore, &lastUsedAt); err != nil {
+		t.Fatalf("read access-token telemetry: %v", err)
+	}
+	if !lastUsedAt.Equal(now) {
+		t.Fatalf("last_used_at=%s want=%s", lastUsedAt, now)
+	}
+	if _, err := authService.Resolve(ctx, login.AccessToken); err != nil {
+		t.Fatalf("repeat token resolution: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `
+		SELECT xmin::text FROM api_tokens WHERE id = $1`, login.TokenID,
+	).Scan(&tokenVersionAfter); err != nil {
+		t.Fatalf("read repeated access-token version: %v", err)
+	}
+	if tokenVersionAfter != tokenVersionBefore {
+		t.Fatalf("fresh token resolution rewrote row: before=%s after=%s",
+			tokenVersionBefore, tokenVersionAfter)
+	}
+	status, err := authService.RevokeByAccessToken(ctx, login.AccessToken)
+	if err != nil || status != localauth.RevokeStatusRevoked {
+		t.Fatalf("revoke access token: status=%q err=%v", status, err)
+	}
+	status, err = authService.RevokeByAccessToken(ctx, login.AccessToken)
+	if err != nil || status != localauth.RevokeStatusAlreadyInvalid {
+		t.Fatalf("repeat revoke access token: status=%q err=%v", status, err)
+	}
+	if _, err := authService.Resolve(ctx, login.AccessToken); !errors.Is(err, domain.ErrUnauthenticated) {
+		t.Fatalf("revoked token resolution error=%v", err)
+	}
 	sharedUserLogin, err := authService.Login(ctx, localauth.LoginInput{
 		RequestID: "login-shared-primary", OrganizationSlug: "engineering",
 		Email: "research-admin@example.com", Password: "secondary correct password",

@@ -163,7 +163,7 @@ func validateDeleteRunBarrier(
 		return "runtime_deleted", operation.SourceRuntimeRevision, true
 	}
 	proof := barrier.absenceProof
-	if operation.Phase == domain.PhaseFlowReset && operation.SourceRuntimeAbsent &&
+	if operation.Phase == domain.PhaseNetworkFence && operation.SourceRuntimeAbsent &&
 		proof != nil && operation.SourceRuntimeAbsenceProof != nil &&
 		proof.Reason == "runtime_not_found" && proof.RuntimeRevision == "" &&
 		proof.Reason == operation.SourceRuntimeAbsenceProof.Reason &&

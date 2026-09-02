@@ -40,3 +40,11 @@ CREATE TABLE runtime_egress.agent_policy_assignments (
     FOREIGN KEY (policy_id, revision)
         REFERENCES runtime_egress.policy_revisions(policy_id, revision)
 );
+
+CREATE TABLE runtime_egress.runtime_attachments (
+    agent_id text PRIMARY KEY
+        REFERENCES runtime_egress.agent_networks(agent_id) ON DELETE CASCADE,
+    state text NOT NULL CHECK (state IN ('closed', 'open')),
+    resource_version bigint NOT NULL CHECK (resource_version > 0),
+    updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP
+);

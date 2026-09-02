@@ -10,17 +10,23 @@ The Stage 2B service surface is implemented. The runnable slices provide
 ModelProfile and Template Catalog RPC plus Agent create, rebuild, disable,
 enable, and delete. Create freezes an exact Template/Model graph and publishes only after
 validating the active owner binding through Identity Service and proving Runtime
-readiness. Rebuild replaces the Runtime behind a durable network
-barrier. Disable retains the workspace and captures the previous Egress policy;
-Enable creates a new Execution revision and restores only that captured policy
-after Runtime readiness. Delete removes Runtime compute and workspace, releases
+readiness. Rebuild replaces the Runtime behind a durable Egress attachment
+barrier. Disable closes the attachment and retains the workspace; Enable creates
+a new Execution revision and opens the attachment only after Runtime readiness.
+Desired network policy remains owned by Runtime Egress and is never rewritten by
+Agent lifecycle operations. Delete removes Runtime compute and workspace, releases
 the Egress attachment, deactivates owner access, and retains immutable audit
 facts. Agent-wide Run admission resolves access, freezes one immutable execution
 snapshot, scopes Provider credential access, and seals terminal Tool-effect
 facts. Current Agent projection queries and authoritative event replay/watch
-routes are runnable. A supervised PostgreSQL-leased recovery worker resumes
-stale running lifecycle operations, fences overlapping attempts, and emits a
-new trace linked to the original request and previous recovery attempt. Full
+routes are runnable. Lifecycle HTTP commands atomically persist intent and
+return `202`; a supervised PostgreSQL-leased worker is the sole phase executor
+and can claim fresh due operations immediately. It fences overlapping attempts,
+isolates malformed operations, and emits a new trace linked to the original
+request and previous worker attempt. A separate bounded observation consumer
+reads Runtime Controller's ordered journal. A same-revision process restart
+invalidates the executable binding, marks the Agent unavailable, and requires
+an explicit rebuild instead of silently using a stale execution identity. Full
 Stage 2 integrated Docker and Jaeger acceptance is tracked separately from this
 service-local implementation status.
 
@@ -35,6 +41,8 @@ service-local implementation status.
 - Agent-wide serialized Run admission and admission-scoped credential access;
 - Agent access-subject mappings and revisions;
 - the ordered Agent domain-event journal.
+- the persisted Runtime-observation consumer cursor and its Agent-state
+  projection.
 
 The `agents` record is the current global Agent status projection. Immutable
 revisions, operations, admissions, and events explain how it reached that

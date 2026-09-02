@@ -206,7 +206,7 @@ services:
     networks: [development]
 
   identity-service:
-    profiles: [stage2]
+    profiles: [stage2, stage3]
     image: antnest/identity-service:local
     build:
       context: .
@@ -243,7 +243,7 @@ services:
     stop_grace_period: 20s
 
   agent-controller:
-    profiles: [stage2]
+    profiles: [stage2, stage3]
     image: antnest/agent-controller:local
     build:
       context: .
@@ -287,6 +287,74 @@ services:
       start_period: 30s
       start_interval: 2s
     networks: [agent-controller-database, control, development, observability]
+    stop_grace_period: 20s
+
+  admin-console:
+    profiles: [stage3]
+    image: antnest/admin-console:local
+    build:
+      context: .
+      dockerfile: services/admin-console/Dockerfile
+    depends_on:
+      identity-service:
+        condition: service_healthy
+      agent-controller:
+        condition: service_healthy
+    environment:
+      ANTNEST_ADMIN_CONSOLE_LISTEN: :8080
+      ANTNEST_IDENTITY_SERVICE_URL: http://identity-service:8080
+      ANTNEST_AGENT_CONTROLLER_URL: http://agent-controller:8080
+      ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF: ${ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF:-}
+      ANTNEST_ADMIN_DEPENDENCY_TIMEOUT: ${ANTNEST_ADMIN_DEPENDENCY_TIMEOUT:-150s}
+      ANTNEST_ADMIN_SHUTDOWN_TIMEOUT: ${ANTNEST_ADMIN_SHUTDOWN_TIMEOUT:-15s}
+      OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-true}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_EXPORTER_OTLP_PROTOCOL: ${OTEL_EXPORTER_OTLP_PROTOCOL:-http/protobuf}
+      OTEL_TRACES_EXPORTER: ${OTEL_TRACES_EXPORTER:-}
+      OTEL_SERVICE_NAME: admin-console
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/admin-console", "--healthcheck"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 30s
+      start_interval: 2s
+    networks: [development, observability]
+    stop_grace_period: 20s
+
+  edge-gateway:
+    profiles: [stage3]
+    image: antnest/edge-gateway:local
+    build:
+      context: .
+      dockerfile: services/edge-gateway/Dockerfile
+    depends_on:
+      identity-service:
+        condition: service_healthy
+      admin-console:
+        condition: service_healthy
+    environment:
+      ANTNEST_EDGE_LISTEN: :8080
+      ANTNEST_IDENTITY_SERVICE_URL: http://identity-service:8080
+      ANTNEST_ADMIN_CONSOLE_URL: http://admin-console:8080
+      ANTNEST_EDGE_COOKIE_SECURE: ${ANTNEST_EDGE_COOKIE_SECURE:-false}
+      ANTNEST_EDGE_REQUEST_TIMEOUT: ${ANTNEST_EDGE_REQUEST_TIMEOUT:-150s}
+      ANTNEST_EDGE_SHUTDOWN_TIMEOUT: ${ANTNEST_EDGE_SHUTDOWN_TIMEOUT:-15s}
+      OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-true}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_EXPORTER_OTLP_PROTOCOL: ${OTEL_EXPORTER_OTLP_PROTOCOL:-http/protobuf}
+      OTEL_TRACES_EXPORTER: ${OTEL_TRACES_EXPORTER:-}
+      OTEL_SERVICE_NAME: edge-gateway
+    ports:
+      - 127.0.0.1:${ANTNEST_EDGE_HOST_PORT:-8090}:8080
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/edge-gateway", "--healthcheck"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 30s
+      start_interval: 2s
+    networks: [development, observability]
     stop_grace_period: 20s
 
   jaeger:

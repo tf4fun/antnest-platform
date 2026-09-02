@@ -119,8 +119,10 @@ PostgreSQL, HTTP handlers, OIDC SDK transports, or another service.
 ## Transactions
 
 Each command calls one repository operation that commits all domain records
-and one IdentityEvent atomically. Rate-limited token `last_used_at` touches are
-operational metadata, not domain events. This is local aggregate consistency,
+and one IdentityEvent atomically. Access-token resolution is an authoritative
+read. A conditional `last_used_at` update runs only when the previous sample is
+older than five minutes; failure of that operational metadata update does not
+change the authorization result and creates no domain event. This is local aggregate consistency,
 not a generic cross-module transaction manager. Network calls such as OIDC
 discovery and token exchange occur outside database transactions; durable
 AuthSession claims make their uncertainty explicit.

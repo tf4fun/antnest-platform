@@ -80,11 +80,14 @@ class OfficialMcpConnection implements McpConnection {
   public async callTool(
     input: { name: string; arguments: { [key: string]: unknown } },
     signal: AbortSignal,
-  ): Promise<{ content: ContentBlock[]; isError: boolean }> {
+  ): Promise<{ content: ContentBlock[]; isError: boolean; structuredContent?: unknown }> {
     const result = await this.client.callTool(input, { signal });
     return {
       content: result.content.map((block) => structuredClone(block) as ContentBlock),
       isError: result.isError ?? false,
+      ...(result.structuredContent === undefined
+        ? {}
+        : { structuredContent: structuredClone(result.structuredContent) }),
     };
   }
 

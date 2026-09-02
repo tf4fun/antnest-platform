@@ -179,67 +179,6 @@ func (repository *Repository) SettleAgentDisableDrain(
 	return state, nil
 }
 
-func (repository *Repository) RecordAgentDisablePolicy(
-	ctx context.Context,
-	requestID string,
-	fingerprint string,
-	assignment ports.NetworkPolicyAssignment,
-	now time.Time,
-) (ports.AgentDisableState, error) {
-	payload, err := json.Marshal(assignment)
-	if err != nil {
-		return ports.AgentDisableState{}, fmt.Errorf("encode disable policy assignment: %w", err)
-	}
-	transaction, err := repository.pool.Begin(ctx)
-	if err != nil {
-		return ports.AgentDisableState{}, fmt.Errorf("begin disable policy transaction: %w", err)
-	}
-	defer func() { _ = transaction.Rollback(ctx) }()
-	operation, err := loadLifecycleOperation(ctx, transaction, requestID, "FOR UPDATE")
-	if err != nil {
-		return ports.AgentDisableState{}, err
-	}
-	if err := authorizeLifecycleMutation(ctx, transaction, operation); err != nil {
-		return ports.AgentDisableState{}, err
-	}
-	if operation.Kind != domain.OperationDisable || operation.RequestFingerprint != fingerprint {
-		return ports.AgentDisableState{}, ports.ErrRequestConflict
-	}
-	if operation.State != domain.OperationRunning || operation.Phase != domain.PhaseNetworkFence ||
-		assignment.AgentID != operation.AgentID {
-		return ports.AgentDisableState{}, ports.ErrConcurrentChange
-	}
-	if operation.NetworkPolicyAssignment != nil {
-		if *operation.NetworkPolicyAssignment != assignment {
-			return ports.AgentDisableState{}, ports.ErrConcurrentChange
-		}
-		return loadAgentDisableState(ctx, transaction, operation)
-	}
-	result, err := transaction.Exec(ctx, `
-UPDATE agent_controller.agent_lifecycle_operations
-SET network_policy_assignment = $2, updated_at = $3
-WHERE request_id = $1 AND state = 'running' AND phase = 'network_fence'
-  AND network_policy_assignment IS NULL`, requestID, payload, now)
-	if err != nil {
-		return ports.AgentDisableState{}, fmt.Errorf("record disable policy assignment: %w", err)
-	}
-	if result.RowsAffected() != 1 {
-		return ports.AgentDisableState{}, ports.ErrConcurrentChange
-	}
-	operation, err = loadLifecycleOperation(ctx, transaction, requestID, "")
-	if err != nil {
-		return ports.AgentDisableState{}, err
-	}
-	state, err := loadAgentDisableState(ctx, transaction, operation)
-	if err != nil {
-		return ports.AgentDisableState{}, err
-	}
-	if err := transaction.Commit(ctx); err != nil {
-		return ports.AgentDisableState{}, fmt.Errorf("commit disable policy assignment: %w", err)
-	}
-	return state, nil
-}
-
 func (repository *Repository) AdvanceAgentDisable(
 	ctx context.Context, input ports.AdvanceAgentDisable,
 ) (ports.AgentDisableState, error) {
@@ -264,12 +203,9 @@ func (repository *Repository) AdvanceAgentDisable(
 	if operation.State != domain.OperationRunning || operation.Phase != input.ExpectedPhase {
 		return ports.AgentDisableState{}, ports.ErrConcurrentChange
 	}
-	if input.ExpectedPhase == domain.PhaseNetworkFence && operation.NetworkPolicyAssignment == nil {
-		return ports.AgentDisableState{}, ports.ErrConcurrentChange
-	}
 	if err := advanceLifecycleOperation(
 		ctx, transaction, operation, input.ExpectedPhase, input.NextPhase,
-		input.NextChildRequestID, nil, input.RuntimeResult, input.Now,
+		input.NextChildRequestID, input.NetworkAttachment, input.RuntimeResult, input.Now,
 	); err != nil {
 		return ports.AgentDisableState{}, err
 	}
@@ -316,17 +252,18 @@ func (repository *Repository) PublishAgentDisable(
 	if err != nil {
 		return ports.AgentDisableState{}, err
 	}
-	if err := authorizeLifecycleMutation(ctx, transaction, operation); err != nil {
+	replayed, err := authorizeLifecycleMutationOrReplay(
+		ctx, transaction, operation, domain.OperationDisable, input.Fingerprint, domain.OperationCompleted,
+	)
+	if err != nil {
 		return ports.AgentDisableState{}, err
 	}
-	if operation.Kind != domain.OperationDisable || operation.RequestFingerprint != input.Fingerprint {
-		return ports.AgentDisableState{}, ports.ErrRequestConflict
-	}
-	if operation.State == domain.OperationCompleted {
+	if replayed {
 		return loadAgentDisableState(ctx, transaction, operation)
 	}
 	if operation.State != domain.OperationRunning || operation.Phase != domain.PhasePublish ||
-		operation.RuntimeResult == nil || operation.NetworkPolicyAssignment == nil ||
+		operation.RuntimeResult == nil || operation.NetworkAttachment == nil ||
+		operation.NetworkAttachment.AttachmentState != ports.NetworkAttachmentClosed ||
 		!disabledRuntimeResult(*operation.RuntimeResult) {
 		return ports.AgentDisableState{}, ports.ErrConcurrentChange
 	}
@@ -412,13 +349,13 @@ func (repository *Repository) FailAgentDisable(
 	if err != nil {
 		return ports.AgentDisableState{}, err
 	}
-	if err := authorizeLifecycleMutation(ctx, transaction, operation); err != nil {
+	replayed, err := authorizeLifecycleMutationOrReplay(
+		ctx, transaction, operation, domain.OperationDisable, input.Fingerprint, domain.OperationFailed,
+	)
+	if err != nil {
 		return ports.AgentDisableState{}, err
 	}
-	if operation.Kind != domain.OperationDisable || operation.RequestFingerprint != input.Fingerprint {
-		return ports.AgentDisableState{}, ports.ErrRequestConflict
-	}
-	if operation.State == domain.OperationFailed {
+	if replayed {
 		return loadAgentDisableState(ctx, transaction, operation)
 	}
 	if operation.State != domain.OperationRunning || operation.Phase != input.Stage {
@@ -574,10 +511,12 @@ func validateDisableAdvance(input ports.AdvanceAgentDisable) error {
 	switch {
 	case input.ExpectedPhase == domain.PhaseNetworkFence &&
 		input.NextPhase == domain.PhaseRuntimeDisable:
-		valid = input.RuntimeResult == nil && emptyRunAdmissionEvent(input.RunReleaseEvent)
+		valid = input.NetworkAttachment != nil && input.RuntimeResult == nil &&
+			emptyRunAdmissionEvent(input.RunReleaseEvent)
 	case input.ExpectedPhase == domain.PhaseRuntimeDisable &&
 		input.NextPhase == domain.PhasePublish:
-		valid = input.RuntimeResult != nil && disabledRuntimeResult(*input.RuntimeResult) &&
+		valid = input.NetworkAttachment == nil && input.RuntimeResult != nil &&
+			disabledRuntimeResult(*input.RuntimeResult) &&
 			validRunEvent(input.RunReleaseEvent, domain.AdmissionReleased)
 	}
 	if !valid || input.RequestID == "" || input.Fingerprint == "" ||

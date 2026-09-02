@@ -26,14 +26,14 @@ func TestDisableAgentFencesRuntimeAndPublishesDisabledProjection(t *testing.T) {
 		fixedClock{now: time.Unix(200, 0).UTC()},
 	)
 
-	result, err := service.DisableAgent(context.Background(), DisableAgentInput{
+	result, err := executeDisableForTest(service, context.Background(), DisableAgentInput{
 		RequestID: "request-disable-agent", AgentID: base.Agent.AgentID,
 	})
 	if err != nil {
 		t.Fatalf("disable Agent: %v", err)
 	}
 
-	wantCalls := []string{"egress.policy.get", "egress.fence", "runtime.disable"}
+	wantCalls := []string{"egress.get", "egress.attachment.closed", "runtime.disable"}
 	if !reflect.DeepEqual(dependencies.calls, wantCalls) {
 		t.Fatalf("dependency order = %v, want %v", dependencies.calls, wantCalls)
 	}
@@ -72,7 +72,7 @@ func TestDisableAgentWaitsForActiveRunWithoutExternalEffects(t *testing.T) {
 		fixedClock{now: time.Unix(210, 0).UTC()},
 	)
 
-	result, err := service.DisableAgent(context.Background(), DisableAgentInput{
+	result, err := executeDisableForTest(service, context.Background(), DisableAgentInput{
 		RequestID: "request-disable-drain", AgentID: base.Agent.AgentID,
 	})
 	if err != nil {
@@ -132,15 +132,15 @@ func TestDisableAgentKnownRuntimeFailureRestoresPolicyAndExecutable(t *testing.T
 		fixedClock{now: time.Unix(220, 0).UTC()},
 	)
 
-	result, err := service.DisableAgent(context.Background(), DisableAgentInput{
+	result, err := executeDisableForTest(service, context.Background(), DisableAgentInput{
 		RequestID: "request-disable-failed", AgentID: base.Agent.AgentID,
 	})
 	if err != nil {
 		t.Fatalf("disable Agent with conclusive Runtime failure: %v", err)
 	}
 	wantCalls := []string{
-		"egress.policy.get", "egress.fence", "runtime.disable", "runtime.inspect",
-		"egress.policy.get", "egress.policy.assign", "egress.ensure",
+		"egress.get", "egress.attachment.closed", "runtime.disable", "runtime.inspect",
+		"egress.get", "egress.attachment.open",
 	}
 	if !reflect.DeepEqual(dependencies.calls, wantCalls) {
 		t.Fatalf("dependency order = %v, want %v", dependencies.calls, wantCalls)
@@ -169,7 +169,7 @@ func TestDisableAgentDoesNotRestoreUnverifiedRuntime(t *testing.T) {
 		fixedClock{now: time.Unix(225, 0).UTC()},
 	)
 
-	result, err := service.DisableAgent(context.Background(), DisableAgentInput{
+	result, err := executeDisableForTest(service, context.Background(), DisableAgentInput{
 		RequestID: "request-disable-unverified", AgentID: base.Agent.AgentID,
 	})
 	if err != nil {
@@ -177,7 +177,7 @@ func TestDisableAgentDoesNotRestoreUnverifiedRuntime(t *testing.T) {
 	}
 	if !reflect.DeepEqual(
 		dependencies.calls,
-		[]string{"egress.policy.get", "egress.fence", "runtime.disable", "runtime.inspect"},
+		[]string{"egress.get", "egress.attachment.closed", "runtime.disable", "runtime.inspect"},
 	) {
 		t.Fatalf("unverified disable calls = %v", dependencies.calls)
 	}
@@ -206,7 +206,7 @@ func TestDisableAgentRuntimeNotFoundRemainsRunningAndFenced(t *testing.T) {
 		fixedClock{now: time.Unix(227, 0).UTC()},
 	)
 
-	result, err := service.DisableAgent(context.Background(), DisableAgentInput{
+	result, err := executeDisableForTest(service, context.Background(), DisableAgentInput{
 		RequestID: "request-disable-runtime-missing", AgentID: base.Agent.AgentID,
 	})
 	if !errors.Is(err, ErrDependencyUnavailable) {
@@ -218,7 +218,7 @@ func TestDisableAgentRuntimeNotFoundRemainsRunningAndFenced(t *testing.T) {
 		t.Fatalf("runtime_not_found disable result=%+v failure=%+v", result, store.failed)
 	}
 	wantCalls := []string{
-		"egress.policy.get", "egress.fence", "runtime.disable", "runtime.inspect",
+		"egress.get", "egress.attachment.closed", "runtime.disable", "runtime.inspect",
 	}
 	if !reflect.DeepEqual(dependencies.calls, wantCalls) {
 		t.Fatalf("Runtime-absence disable calls = %v, want %v", dependencies.calls, wantCalls)
@@ -242,7 +242,7 @@ func TestDisableAgentDeletedRuntimeInspectionFailsClosedAndReleasesBlockedRun(t 
 		fixedClock{now: time.Unix(228, 0).UTC()},
 	)
 
-	result, err := service.DisableAgent(context.Background(), DisableAgentInput{
+	result, err := executeDisableForTest(service, context.Background(), DisableAgentInput{
 		RequestID: "request-disable-runtime-deleted", AgentID: base.Agent.AgentID,
 	})
 	if err != nil {
@@ -257,7 +257,7 @@ func TestDisableAgentDeletedRuntimeInspectionFailsClosedAndReleasesBlockedRun(t 
 		t.Fatalf("deleted-Runtime disable result=%+v failure=%+v", result, store.failed)
 	}
 	wantCalls := []string{
-		"egress.policy.get", "egress.fence", "runtime.disable", "runtime.inspect",
+		"egress.get", "egress.attachment.closed", "runtime.disable", "runtime.inspect",
 	}
 	if !reflect.DeepEqual(dependencies.calls, wantCalls) {
 		t.Fatalf("deleted-Runtime disable calls = %v, want %v", dependencies.calls, wantCalls)
@@ -278,7 +278,7 @@ func TestDisableAgentAmbiguousRuntimeRemainsRunningAndFenced(t *testing.T) {
 		fixedClock{now: time.Unix(230, 0).UTC()},
 	)
 
-	result, err := service.DisableAgent(context.Background(), DisableAgentInput{
+	result, err := executeDisableForTest(service, context.Background(), DisableAgentInput{
 		RequestID: "request-disable-unknown", AgentID: base.Agent.AgentID,
 	})
 	if err != nil {
@@ -291,7 +291,7 @@ func TestDisableAgentAmbiguousRuntimeRemainsRunningAndFenced(t *testing.T) {
 	}
 	if !reflect.DeepEqual(
 		dependencies.calls,
-		[]string{"egress.policy.get", "egress.fence", "runtime.disable"},
+		[]string{"egress.get", "egress.attachment.closed", "runtime.disable"},
 	) {
 		t.Fatalf("ambiguous disable calls = %v", dependencies.calls)
 	}
@@ -304,14 +304,13 @@ func disableLifecycleBase(t *testing.T) ports.AgentLifecycleBase {
 
 type disableDependenciesStub struct {
 	calls                   []string
-	policy                  ports.NetworkPolicyAssignment
-	currentPolicy           ports.NetworkPolicyAssignment
 	network                 ports.NetworkAttachment
 	runtime                 ports.RuntimeOperation
 	runtimeErr              error
 	fenceErr                error
 	inspection              ports.RuntimeInspection
 	inspectionErr           error
+	attachmentClosed        bool
 	expectedRuntimeRevision string
 	runtimeRequestID        string
 	runtimeAgentID          string
@@ -323,13 +322,6 @@ func newDisableDependencies(
 	network := validLifecycleNetwork()
 	network.AgentID = base.Agent.AgentID
 	return &disableDependenciesStub{
-		policy: ports.NetworkPolicyAssignment{
-			AgentID: base.Agent.AgentID, PolicyID: "internet-enabled", Revision: 1, ResourceVersion: 7,
-		},
-		currentPolicy: ports.NetworkPolicyAssignment{
-			AgentID: base.Agent.AgentID, PolicyID: ports.BuiltinDenyAllPolicyID,
-			Revision: 1, ResourceVersion: 8,
-		},
 		network: network, runtime: runtime,
 		inspection: ports.RuntimeInspection{
 			AgentID: base.Agent.AgentID, RuntimeRevision: base.Agent.RuntimeRevision,
@@ -348,36 +340,34 @@ func (dependency *disableDependenciesStub) EnsureAgentNetwork(
 }
 
 func (dependency *disableDependenciesStub) GetAgentNetwork(
-	context.Context, string,
+	_ context.Context, agentID string,
 ) (ports.NetworkAttachment, error) {
-	return ports.NetworkAttachment{}, errors.New("unexpected Egress network read")
-}
-
-func (dependency *disableDependenciesStub) GetAgentPolicyAssignment(
-	_ context.Context, _ string,
-) (ports.NetworkPolicyAssignment, error) {
-	dependency.calls = append(dependency.calls, "egress.policy.get")
-	if len(dependency.calls) > 3 {
-		return dependency.currentPolicy, nil
+	dependency.calls = append(dependency.calls, "egress.get")
+	result := dependency.network
+	result.AgentID = agentID
+	if dependency.attachmentClosed {
+		result.AttachmentState = ports.NetworkAttachmentClosed
+	} else {
+		result.AttachmentState = ports.NetworkAttachmentOpen
 	}
-	return dependency.policy, nil
+	return result, nil
 }
 
-func (dependency *disableDependenciesStub) AssignAgentPolicy(
-	_ context.Context, assignment ports.NetworkPolicyAssignment, expected uint64,
-) (ports.NetworkPolicyAssignment, error) {
-	dependency.calls = append(dependency.calls, "egress.policy.assign")
-	assignment.ResourceVersion = expected + 1
-	return assignment, nil
-}
-
-func (dependency *disableDependenciesStub) FenceAgentNetwork(context.Context, string, uint64) error {
-	dependency.calls = append(dependency.calls, "egress.fence")
-	return dependency.fenceErr
-}
-
-func (dependency *disableDependenciesStub) ResetAgentFlows(context.Context, string, uint64) error {
-	return errors.New("unexpected Egress flow reset")
+func (dependency *disableDependenciesStub) SetAgentNetworkAttachment(
+	_ context.Context, agentID string, state string, expectedResourceVersion uint64,
+) (ports.NetworkAttachment, error) {
+	dependency.calls = append(dependency.calls, "egress.attachment."+state)
+	if state == ports.NetworkAttachmentClosed && dependency.fenceErr != nil {
+		return ports.NetworkAttachment{}, dependency.fenceErr
+	}
+	result := dependency.network
+	result.AgentID = agentID
+	result.State = ports.NetworkStateActive
+	result.AttachmentState = state
+	result.AttachmentResourceVersion = expectedResourceVersion + 1
+	dependency.network = result
+	dependency.attachmentClosed = state == ports.NetworkAttachmentClosed
+	return result, nil
 }
 
 func (dependency *disableDependenciesStub) ReleaseAgentNetwork(
@@ -467,16 +457,8 @@ func (store *disableLifecycleStoreStub) BeginAgentDisable(
 		Agent: agent, SourceSpec: store.base.ExecutableSpec,
 		SourceExecution: store.base.ExecutableExecution, Operation: input.Operation,
 	}
+	store.replayed = true
 	return store.state, false, nil
-}
-
-func (store *disableLifecycleStoreStub) RecordAgentDisablePolicy(
-	_ context.Context, _ string, _ string,
-	assignment ports.NetworkPolicyAssignment, now time.Time,
-) (ports.AgentDisableState, error) {
-	store.state.Operation.NetworkPolicyAssignment = &assignment
-	store.state.Operation.UpdatedAt = now
-	return store.state, nil
 }
 
 func (store *disableLifecycleStoreStub) SettleAgentDisableDrain(
@@ -500,6 +482,10 @@ func (store *disableLifecycleStoreStub) AdvanceAgentDisable(
 	store.state.Operation.Phase = input.NextPhase
 	store.state.Operation.ChildRequestID = input.NextChildRequestID
 	store.state.Operation.UpdatedAt = input.Now
+	if input.NetworkAttachment != nil {
+		attachment := *input.NetworkAttachment
+		store.state.Operation.NetworkAttachment = &attachment
+	}
 	if input.RuntimeResult != nil {
 		result := *input.RuntimeResult
 		store.state.Operation.RuntimeResult = &result

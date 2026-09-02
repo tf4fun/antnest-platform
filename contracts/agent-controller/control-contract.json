@@ -1,6 +1,6 @@
 {
   "contract": "antnest.agent-controller.lifecycle",
-  "revision": 4,
+  "revision": 5,
   "transport": "json-over-http",
   "trust": "internal-network",
   "media_types": {
@@ -79,6 +79,7 @@
       "get": {
         "method": "GET",
         "path": "/internal/agents/{agent_id}",
+        "query": ["organization_id"],
         "success_status": 200,
         "response": "control-api.schema.json#/$defs/agent"
       },
@@ -129,6 +130,7 @@
       "get": {
         "method": "GET",
         "path": "/internal/agent-operations/{request_id}",
+        "query": ["organization_id"],
         "success_status": 200,
         "response": "control-api.schema.json#/$defs/operation"
       }
@@ -137,14 +139,14 @@
       "list_global": {
         "method": "GET",
         "path": "/internal/agent-events",
-        "query": ["after_sequence", "limit"],
+        "query": ["organization_id", "after_sequence", "limit"],
         "success_status": 200,
         "response": "control-api.schema.json#/$defs/event_list"
       },
       "watch_global": {
         "method": "GET",
         "path": "/internal/agent-events/watch",
-        "query": ["after_sequence"],
+        "query": ["organization_id", "after_sequence"],
         "headers": ["Last-Event-ID"],
         "success_status": 200,
         "content_type": "text/event-stream",
@@ -155,14 +157,14 @@
       "list": {
         "method": "GET",
         "path": "/internal/agents/{agent_id}/events",
-        "query": ["after_sequence", "limit"],
+        "query": ["organization_id", "after_sequence", "limit"],
         "success_status": 200,
         "response": "control-api.schema.json#/$defs/event_list"
       },
       "watch": {
         "method": "GET",
         "path": "/internal/agents/{agent_id}/events/watch",
-        "query": ["after_sequence"],
+        "query": ["organization_id", "after_sequence"],
         "headers": ["Last-Event-ID"],
         "success_status": 200,
         "content_type": "text/event-stream",
@@ -197,6 +199,7 @@
       "agent_enable_failed",
       "agent_delete_requested",
       "agent_deleted",
+      "agent_lifecycle_quarantined",
       "agent_build_failed",
       "run_admission_unresolved",
       "run_admission_released"

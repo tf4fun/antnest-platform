@@ -156,8 +156,7 @@ func (repository *Repository) AdvanceAgentEnable(
 	if operation.Kind != domain.OperationEnable || operation.RequestFingerprint != input.Fingerprint {
 		return ports.AgentEnableState{}, ports.ErrRequestConflict
 	}
-	if operation.State != domain.OperationRunning || operation.Phase != input.ExpectedPhase ||
-		operation.NetworkPolicyAssignment == nil {
+	if operation.State != domain.OperationRunning || operation.Phase != input.ExpectedPhase {
 		return ports.AgentEnableState{}, ports.ErrConcurrentChange
 	}
 	if input.ExpectedPhase != domain.PhaseNetworkEnsure && operation.NetworkAttachment == nil {
@@ -198,18 +197,19 @@ func (repository *Repository) PublishAgentEnable(
 	if err != nil {
 		return ports.AgentEnableState{}, err
 	}
-	if err := authorizeLifecycleMutation(ctx, transaction, operation); err != nil {
+	replayed, err := authorizeLifecycleMutationOrReplay(
+		ctx, transaction, operation, domain.OperationEnable, input.Fingerprint, domain.OperationCompleted,
+	)
+	if err != nil {
 		return ports.AgentEnableState{}, err
 	}
-	if operation.Kind != domain.OperationEnable || operation.RequestFingerprint != input.Fingerprint {
-		return ports.AgentEnableState{}, ports.ErrRequestConflict
-	}
-	if operation.State == domain.OperationCompleted {
+	if replayed {
 		return loadAgentEnableState(ctx, transaction, operation)
 	}
 	if operation.State != domain.OperationRunning || operation.Phase != domain.PhasePublish ||
 		operation.RuntimeResult == nil || operation.NetworkAttachment == nil ||
-		operation.NetworkPolicyAssignment == nil || !readyRuntimeResult(*operation.RuntimeResult) ||
+		operation.NetworkAttachment.AttachmentState != ports.NetworkAttachmentOpen ||
+		!readyRuntimeResult(*operation.RuntimeResult) ||
 		input.Execution.AgentID != operation.AgentID ||
 		input.Execution.AgentSpecRevisionID != operation.TargetSpecRevisionID ||
 		input.Execution.RuntimeRevision != operation.RuntimeResult.RuntimeRevision ||
@@ -302,13 +302,13 @@ func (repository *Repository) FailAgentEnable(
 	if err != nil {
 		return ports.AgentEnableState{}, err
 	}
-	if err := authorizeLifecycleMutation(ctx, transaction, operation); err != nil {
+	replayed, err := authorizeLifecycleMutationOrReplay(
+		ctx, transaction, operation, domain.OperationEnable, input.Fingerprint, domain.OperationFailed,
+	)
+	if err != nil {
 		return ports.AgentEnableState{}, err
 	}
-	if operation.Kind != domain.OperationEnable || operation.RequestFingerprint != input.Fingerprint {
-		return ports.AgentEnableState{}, ports.ErrRequestConflict
-	}
-	if operation.State == domain.OperationFailed {
+	if replayed {
 		return loadAgentEnableState(ctx, transaction, operation)
 	}
 	if operation.State != domain.OperationRunning || operation.Phase != input.Stage {
@@ -394,42 +394,10 @@ func loadAgentEnableBase(
 	if err != nil {
 		return ports.AgentEnableBase{}, err
 	}
-	policy, err := loadCompletedDisablePolicy(ctx, queryer, agent)
-	if err != nil {
-		return ports.AgentEnableBase{}, err
-	}
 	return ports.AgentEnableBase{
 		Agent: agent, Spec: spec, LastSuccessfulExecution: execution,
-		NetworkPolicyAssignment: policy, NextExecutionRevision: nextExecution,
+		NextExecutionRevision: nextExecution,
 	}, nil
-}
-
-func loadCompletedDisablePolicy(
-	ctx context.Context, queryer catalogQueryer, agent ports.AgentRecord,
-) (ports.NetworkPolicyAssignment, error) {
-	var payload []byte
-	err := queryer.QueryRow(ctx, `
-SELECT network_policy_assignment
-FROM agent_controller.agent_lifecycle_operations
-WHERE agent_id = $1 AND kind = 'disable' AND state = 'completed'
-  AND source_spec_revision_id = $2 AND source_execution_revision_id = $3
-  AND runtime_result->>'runtime_revision' = $4
-  AND network_policy_assignment IS NOT NULL
-ORDER BY updated_at DESC, request_id DESC LIMIT 1`,
-		agent.AgentID, agent.AgentSpecRevisionID,
-		agent.LastSuccessfulExecutionRevisionID, agent.RuntimeRevision,
-	).Scan(&payload)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return ports.NetworkPolicyAssignment{}, ports.ErrNotFound
-	}
-	if err != nil {
-		return ports.NetworkPolicyAssignment{}, fmt.Errorf("load disabled Agent policy: %w", err)
-	}
-	var assignment ports.NetworkPolicyAssignment
-	if err := json.Unmarshal(payload, &assignment); err != nil {
-		return ports.NetworkPolicyAssignment{}, fmt.Errorf("decode disabled Agent policy: %w", err)
-	}
-	return assignment, nil
 }
 
 func loadAgentEnableState(
@@ -475,8 +443,6 @@ func validEnableBegin(input ports.BeginAgentEnable, base ports.AgentEnableBase) 
 		input.Operation.SourceExecutionRevisionID == input.ExpectedExecutionRevisionID &&
 		input.Operation.SourceRuntimeRevision == input.ExpectedRuntimeRevision &&
 		input.Operation.TargetSpecRevisionID == input.ExpectedSpecRevisionID &&
-		input.Operation.NetworkPolicyAssignment != nil &&
-		*input.Operation.NetworkPolicyAssignment == base.NetworkPolicyAssignment &&
 		validEnableEvent(
 			input.RequestedEvent, input.Operation, ports.EventAgentEnableRequested,
 			base.Agent.AggregateSequence+1,

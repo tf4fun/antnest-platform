@@ -2,16 +2,20 @@
 
 ## Process Model
 
-One binary serves internal HTTP RPC. PostgreSQL is authoritative. The current
-runnable slices serve ModelProfile/Template Catalog operations, Agent create,
+One binary serves internal HTTP RPC, a supervised lifecycle worker, and a
+bounded Runtime-observation consumer.
+PostgreSQL is authoritative. Lifecycle mutations commit durable intent and
+return `202 Accepted`; only the worker calls Runtime Controller or Runtime
+Egress. The current runnable slices serve ModelProfile/Template Catalog
+operations, Agent create,
 rebuild, disable, enable, delete, and durable lifecycle-operation inspection. Create
-advances through Egress ensure, Runtime initialize, an exact Egress attachment
-recheck, and atomic publication. Rebuild drains, fences, resets flows, replaces
-Runtime, restores the captured policy, and publishes. Disable drains, fences,
-removes compute while retaining workspace, and publishes the disabled state.
-Enable ensures the existing attachment, creates compute from the frozen spec,
-restores only the Disable-captured policy, and publishes a new Execution
-revision. Delete drains Run occupancy, fences and resets Egress, proves Runtime
+advances through Egress ensure, Runtime initialize, attachment open, and atomic
+publication. Rebuild drains, closes the attachment, replaces Runtime, reopens
+the attachment, and publishes. Disable drains, closes the attachment, removes
+compute while retaining workspace, and publishes the disabled state. Enable
+ensures the closed attachment, creates compute from the frozen spec, opens the
+attachment, and publishes a new Execution revision. Delete drains Run occupancy,
+closes the attachment, proves Runtime
 compute and workspace absent, releases the Tunnel allocation into quarantine,
 then atomically publishes `deleted` and deactivates all Agent access bindings.
 Run admission is served at `/rpc/agent-controller`: access resolution binds an
@@ -66,16 +70,14 @@ Optional:
 - `ANTNEST_AGENT_CONTROLLER_DRAIN_TIMEOUT` (default `5m`);
 - `ANTNEST_AGENT_CONTROLLER_RUN_ADMISSION_TTL` (default `30m`);
 - `ANTNEST_AGENT_CONTROLLER_RECOVERY_POLL_INTERVAL` (default `2s`);
-- `ANTNEST_AGENT_CONTROLLER_RECOVERY_STALE_AFTER` (default four dependency
-  timeouts plus `35s`; it must not be shorter than the derived recovery lease);
+- `ANTNEST_AGENT_CONTROLLER_RUNTIME_OBSERVATION_POLL_INTERVAL` (default `2s`);
 - `ANTNEST_AGENT_CONTROLLER_SHUTDOWN_TIMEOUT` (default `15s`);
 - standard OTEL environment variables using OTLP HTTP/protobuf.
 
-The online lifecycle command timeout is ten dependency timeouts plus `30s`.
 The recovery attempt timeout is four dependency timeouts plus `5s`; its lease
-adds a `30s` finalization grace. The larger online budget covers the longest
-complete Saga, while the recovery budget covers the largest single durable
-phase and may make progress across multiple claims. These values are derived
+adds a `30s` finalization grace. The recovery budget covers the largest single
+durable phase and may make progress across multiple claims. These values are
+derived
 from the dependency timeout so operators cannot configure a lease shorter than
 the code path it fences.
 
@@ -91,28 +93,37 @@ released database must be preserved.
 
 `GET /status` returns ready when PostgreSQL is reachable and its migrations
 were accepted at startup. Runtime Controller and Runtime Egress outages are
-reported by the affected create request and do not make the process unready;
+recorded on the affected lifecycle operation and do not make the process unready;
 otherwise a downstream outage would cause an unrelated restart loop.
 
 Dependency failures after startup are reported per business request and in
 metrics; liveness remains process-level so the deployment platform does not
 turn a downstream outage into a restart loop.
 
+Runtime observation synchronization failure is retryable background
+degradation and does not stop HTTP or lifecycle execution. The consumer keeps
+its last committed cursor, retries from that sequence, and reconciles
+`GET /internal/runtimes` before resetting an expired cursor. An
+`agent_runtime_restarted` event means the prior execution binding is no longer
+runnable; operators or automation must issue an explicit rebuild.
+
 Identity Service is checked before initial Agent creation and before Agent
 access resolution. Missing or inactive organization membership fails closed;
 an Identity transport failure is retryable and does not create or admit work.
 
-## Lifecycle Failure Recovery
+## Lifecycle Execution And Recovery
 
-- Retry an uncertain lifecycle command with the original request ID.
-- A supervised recovery worker resumes stale `running` operations. It claims
+- Retry an uncertain lifecycle command with the original request ID and exact
+  body. Browser clients retain one organization-scoped idempotency key until a
+  conclusive HTTP response is observed.
+- A supervised lifecycle worker executes new and retrying `running` operations.
+  It claims
   one operation at a time with `FOR UPDATE SKIP LOCKED`, a bounded lease, and a
   monotonically increasing fencing attempt. Multiple replicas may run the same
   worker safely.
-- The stale threshold is longer than the complete online lifecycle budget and
-  is evaluated by PostgreSQL. Once an operation has entered recovery
-  (`attempt > 1`), ordinary request replay becomes read-only for that operation;
-  only the recovery worker may execute another phase. A claimed attempt has a
+- Every newly admitted operation is due immediately according to PostgreSQL's
+  clock. Ordinary request replay is always read-only for external effects; only
+  the lifecycle worker may execute a phase. A claimed attempt has a
   shorter execution timeout than its database lease. Failure releases the
   claim with bounded exponential backoff; successful progress resets the
   backoff.
@@ -121,8 +132,8 @@ an Identity transport failure is retryable and does not create or admit work.
   one phase handler and then releases or atomically clears its lease; a handler
   may persist prerequisite evidence before the final phase CAS, so this does
   not mean one SQL statement. Runtime mutations reuse their stored child
-  request IDs. Egress ensure/fence/reset/release operations are convergent, and
-  policy replacement remains protected by resource-version CAS. If a lease
+  request IDs. Egress ensure/attachment/release operations are convergent and
+  protected by their own resource-version CAS. If a lease
   expires and execution overlaps, those dependency guarantees plus repository
   phase CAS decide the winner. An expired attempt cannot commit Agent
   Controller state, release, or reschedule a newer claim; a late external
@@ -130,35 +141,35 @@ an Identity transport failure is retryable and does not create or admit work.
   identity and the dependency's idempotent contract.
 - Graceful parent-context cancellation releases a live claim with an
   independent bounded context before the worker exits. A hard process failure
-  or fatal persisted-state invariant leaves the claim to its bounded lease;
-  only those cases wait for natural expiry. A terminal operation is protected
-  by a database constraint from retaining a recovery owner or lease.
-- A fatal recovery-store or state-machine invariant error stops the service;
-  retryable dependency failures remain inside the worker and use bounded
-  backoff. Shutdown stops new claims, starts HTTP draining immediately, and
+  leaves the claim to its bounded lease. A terminal operation is protected by
+  a database constraint from retaining a worker owner or lease. A malformed
+  operation is atomically failed, releases Agent occupancy, and appends
+  `agent_lifecycle_quarantined`; it does not stop unrelated work.
+- A recovery-store failure stops the service instead of being hidden. Retryable
+  dependency failures remain inside the worker and use bounded backoff.
+  Shutdown stops new claims, starts HTTP draining immediately, and
   waits for both the active recovery attempt and HTTP server within the same
   bounded deadline.
 - Inspect `/internal/agent-operations/{request_id}` before creating a new
   operation. Stage 2 uses the idempotency request ID as the lifecycle operation
   identity; there is no second alias to lose or reconcile.
-- A create transport timeout leaves the operation at the last committed phase.
-  Replay the exact request ID and body to inspect the same operation. If no
-  recovery attempt has taken ownership yet, the replay may continue the online
-  attempt; after recovery ownership begins, the replay remains read-only while
-  the worker converges the same durable child requests.
+- A create transport timeout may occur before or after intent commit. Replay
+  the exact request ID and body to obtain the same operation. The replay never
+  executes a lifecycle phase; the worker converges the same durable child
+  requests.
 - A rebuild transport timeout follows the same rule. Before Runtime replacement,
-  a conclusive failure restores the captured policy and old executable binding.
-  After replacement, replay the exact command until policy restoration, network
-  readiness, and publication are conclusive.
+  a conclusive failure reopens the attachment and preserves the old executable
+  binding. After replacement, replay the exact command until attachment opening,
+  network readiness, and publication are conclusive.
 - A rebuild in `drain` has made no external mutation. It advances only after no
   active Run executor occupies the Agent.
 - A draining Agent is revisited by the worker after the active Run settles; no
   manual request replay is required.
 - An enable timeout before Runtime readiness is retried with the same request
-  ID. After Runtime readiness, policy restoration remains a durable phase and
-  must complete before the Agent becomes available.
-- A policy changed independently after Disable is not overwritten by Enable;
-  resolve the policy conflict and replay the original enable request.
+  ID. After Runtime readiness, attachment opening remains a durable phase and
+  must complete before the Agent becomes available. Policy changes made while
+  disabled remain durable in Runtime Egress and are applied when the attachment
+  opens.
 - An unresolved Run remains fail-closed until rebuild/delete proves its Runtime
   absent. Disable provides the same proof when Runtime Controller confirms the
   source Runtime is disabled with no running compute. The event-journal append
@@ -172,7 +183,7 @@ an Identity transport failure is retryable and does not create or admit work.
   lifecycle-failure fact. If no blocked admission exists, no release event is
   synthesized. Replaying the terminal operation changes neither sequence. A
   plain `runtime_not_found` response is ambiguous and leaves the operation
-  running and fenced for inspection or replay.
+  running with its attachment closed for inspection or replay.
 - Delete intent is irreversible. A timeout or ambiguous Runtime/Egress effect
   leaves the same delete operation running; replay the original request ID.
   `deleted` is never published before Runtime absence and Egress quarantine are
@@ -196,10 +207,11 @@ OTEL_SERVICE_NAME=agent-controller
 ```
 
 The Compose `observability` profile starts Jaeger and exposes its UI on the
-configured loopback port. A create trace shows the bounded HTTP route, Identity
-owner resolution, repository phases, Runtime Egress ensure call, Runtime
-Controller initialize call, and atomic publication. Once Stage 2 is complete,
-a Run trace must show:
+configured loopback port. The create admission trace shows the bounded HTTP
+route, Identity owner resolution, and atomic lifecycle-intent commit. The
+durable lifecycle attempts correlated by request ID collectively show Runtime
+Egress ensure, Runtime Controller initialize, and atomic publication. Once
+Stage 2 is complete, a Run trace must show:
 
 ```text
 ACP session/prompt
@@ -245,8 +257,9 @@ OTEL_SDK_DISABLED=false OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318 \
 
 `make e2e-stage2` builds an isolated blank deployment, creates an Agent, proves
 Runtime readiness and one ACP Runtime Tool Run, verifies workspace effects,
-and deletes the Agent with its external Runtime resources. It queries Jaeger
-for two real business traces: lifecycle through Agent Controller, Runtime
-Egress, and Runtime Controller; execution through Agent ACP Service, Agent
-Controller Run admission, and Runtime MCP. Runtime Controller is intentionally
-absent from the Tool data path.
+and deletes the Agent with its external Runtime resources. Lifecycle evidence
+is a request-ID-correlated set of independently rooted attempt traces through
+Agent Controller, Runtime Egress, and Runtime Controller. Execution remains one
+business trace through Agent ACP Service, Agent Controller Run admission, and
+Runtime MCP. Runtime Controller is intentionally absent from the Tool data
+path.

@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://antnest.local/contracts/egress/attachment-state-request.schema.json",
+  "title": "Runtime Egress attachment state request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["state", "expected_resource_version"],
+  "properties": {
+    "state": {"enum": ["closed", "open"]},
+    "expected_resource_version": {"type": "integer", "minimum": 1}
+  }
+}

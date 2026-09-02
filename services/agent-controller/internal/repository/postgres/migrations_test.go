@@ -21,6 +21,7 @@ func TestInitialMigrationOwnsCompleteAgentControllerBoundary(t *testing.T) {
 		"agent_controller.agent_access_bindings",
 		"agent_controller.agent_lifecycle_operations",
 		"agent_controller.run_admissions",
+		"agent_controller.runtime_observation_cursor",
 		"agent_controller.event_journal_cursor",
 		"agent_controller.agent_events",
 	}
@@ -61,6 +62,7 @@ func TestSchemaMigrationsHaveFinalSerializationConstraints(t *testing.T) {
 		"notify_agent_event_commit",
 		"agent_events_notify_commit",
 		"event_journal_cursor_singleton",
+		"runtime_observation_cursor_singleton",
 		"agent_events_type_known",
 		"agents_owner_access_revision_unique",
 		"access_bindings_agent_unique",

@@ -4,7 +4,9 @@ use std::{
 };
 
 use antnest_runtime_egress::{
-    dataplane::{AgentRoute, DataPlaneAction, DataPlaneEngine, DropReason, NetworkSnapshot},
+    dataplane::{
+        AgentRoute, DataPlaneAction, DataPlaneEngine, DropReason, NetworkSnapshot, RouteGate,
+    },
     domain::AgentId,
     policy::PolicySpec,
 };
@@ -20,6 +22,7 @@ fn route(policy: PolicySpec, version: u64) -> AgentRoute {
         tunnel_ipv4: "100.96.0.10".parse().unwrap(),
         assignment_version: version,
         policy: policy.compile(RESOLVER),
+        gate: RouteGate::Open,
     }
 }
 
@@ -211,6 +214,58 @@ fn fencing_one_agent_does_not_block_or_drop_another_agent() {
     );
 }
 
+#[test]
+fn probe_only_agent_accepts_only_the_canonical_local_readiness_probe() {
+    let agent = AgentId::parse("agent-1").unwrap();
+    let peer: SocketAddr = "10.0.0.2:41000".parse().unwrap();
+    let mut engine = engine(PolicySpec::allow_all());
+    engine.probe_only_agent(&agent);
+
+    let probe = readiness_probe();
+    let response = engine.handle_uplink(&probe, peer, Instant::now());
+    let DataPlaneAction::SendUdp {
+        agent_id,
+        peer: response_peer,
+        packet,
+    } = response
+    else {
+        panic!("canonical readiness probe was not answered locally");
+    };
+    assert_eq!(agent_id, agent);
+    assert_eq!(response_peer, peer);
+    let reset = antnest_runtime_egress::packet::parse_ipv4_tcp(&packet, 1400)
+        .expect("canonical readiness reset");
+    assert_eq!(reset.source, Ipv4Addr::new(192, 0, 2, 1));
+    assert_eq!(reset.destination, Ipv4Addr::new(100, 96, 0, 10));
+    assert_eq!(reset.source_port, 9);
+    assert_eq!(reset.destination_port, 49_153);
+    assert!(
+        reset
+            .flags
+            .contains(antnest_runtime_egress::packet::TcpFlags::RST)
+    );
+    assert!(
+        reset
+            .flags
+            .contains(antnest_runtime_egress::packet::TcpFlags::ACK)
+    );
+    assert_eq!(engine.flow_count(), 0);
+
+    for near_miss in readiness_near_misses() {
+        assert_eq!(
+            engine.handle_uplink(&near_miss, peer, Instant::now()),
+            DataPlaneAction::Drop(DropReason::AgentFenced)
+        );
+    }
+    assert_eq!(engine.flow_count(), 0);
+
+    engine.fence_agent(agent);
+    assert_eq!(
+        engine.handle_uplink(&probe, peer, Instant::now()),
+        DataPlaneAction::Drop(DropReason::AgentFenced)
+    );
+}
+
 fn reverse_packet(packet: &[u8]) -> Vec<u8> {
     let mut reply = packet.to_vec();
     reply[12..16].copy_from_slice(&packet[16..20]);
@@ -225,6 +280,24 @@ fn packet_to(destination: std::net::Ipv4Addr, port: u16) -> Vec<u8> {
     packet[16..20].copy_from_slice(&destination.octets());
     packet[22..24].copy_from_slice(&port.to_be_bytes());
     packet
+}
+
+fn readiness_probe() -> Vec<u8> {
+    let mut packet = packet_to(Ipv4Addr::new(192, 0, 2, 1), 9);
+    packet[20..22].copy_from_slice(&49_153_u16.to_be_bytes());
+    packet[28..32].fill(0);
+    packet[33] = 0x02;
+    packet
+}
+
+fn readiness_near_misses() -> Vec<Vec<u8>> {
+    let mut wrong_port = readiness_probe();
+    wrong_port[22..24].copy_from_slice(&10_u16.to_be_bytes());
+    let mut acknowledged = readiness_probe();
+    acknowledged[33] = 0x12;
+    let mut static_source_port = readiness_probe();
+    static_source_port[20..22].copy_from_slice(&40_000_u16.to_be_bytes());
+    vec![wrong_port, acknowledged, static_source_port]
 }
 
 fn decode_hex(value: &str) -> Vec<u8> {

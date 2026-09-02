@@ -75,7 +75,6 @@ export class AcpApplication implements AcpApplicationPort {
   public async acceptPrompt(
     input: Parameters<AcpApplicationPort["acceptPrompt"]>[0],
   ): Promise<AcceptedAcpRun> {
-    await this.assertAccess(input);
     return this.dependencies.runs.admit(input.sessionId, (signal) =>
       this.dependencies.prompts.accept(input, signal),
     );

@@ -85,6 +85,9 @@ protocol bodies are never telemetry.
 - The first successful callback returns the raw access token once. Replaying a
   completed callback returns only principal, token ID, expiry, and
   `already_completed=true`; it never returns the raw token again.
+- Browser logout revokes by the presented opaque access token. Identity returns
+  `revoked` when it commits revocation and `already_invalid` for an unknown,
+  expired, or previously revoked credential; repeating the request is safe.
 - Provider issuer is immutable for an existing Organization/name. Disable the
   old Provider, then create the new issuer under a new Provider name. Provider
   deletion is intentionally absent so existing external identities remain

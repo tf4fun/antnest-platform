@@ -14,10 +14,13 @@ use thiserror::Error;
 use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
 
 use crate::{
-    dataplane::{AgentRoute, DataPlaneEngine, NetworkSnapshot},
-    domain::{AgentId, AgentNetwork, NetworkState, PolicyAssignment, PolicyId, PolicyRevision},
+    dataplane::{AgentRoute, DataPlaneEngine, NetworkSnapshot, RouteGate},
+    domain::{
+        AgentId, AgentNetwork, AttachmentState, NetworkState, PolicyAssignment, PolicyId,
+        PolicyRevision, RuntimeAttachment,
+    },
     policy::{CompiledPolicy, PolicySpec},
-    repository::{BUILTIN_DENY_ALL, BUILTIN_REVISION, Repository, RepositoryError},
+    repository::{Repository, RepositoryError},
 };
 
 #[derive(Clone, Debug)]
@@ -36,6 +39,9 @@ pub struct RuntimeNetworkAttachment {
     pub resolver_ipv4: Ipv4Addr,
     pub egress_endpoint: SocketAddrV4,
     pub state: NetworkState,
+    pub network_resource_version: u64,
+    pub attachment_state: AttachmentState,
+    pub attachment_resource_version: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -363,11 +369,23 @@ where
             .ensure_agent_network(agent_id.clone())
             .await
             .map_err(|error| ControlError::repository("ensure_agent_network.repository", error))?;
+        let attachment = self
+            .repository
+            .runtime_attachment(&agent_id)
+            .await
+            .map_err(|error| ControlError::repository("ensure_agent_network.repository", error))?;
         let assignment = self
             .repository
             .policy_assignment(&agent_id)
             .await
             .map_err(|error| ControlError::repository("ensure_agent_network.repository", error))?;
+        if attachment.state == AttachmentState::Closed {
+            self.fence_dataplane(agent_id.clone()).await;
+            self.publish_route(&network, &assignment, RouteGate::ProbeOnly)
+                .await?;
+            self.applied_assignments.lock().await.remove(&agent_id);
+            return Ok(self.attachment(network, attachment));
+        }
         let was_fenced = self
             .dataplane
             .lock()
@@ -381,24 +399,14 @@ where
             .is_some_and(|version| *version == assignment.resource_version);
         if was_fenced || !already_applied {
             self.fence_dataplane(agent_id.clone()).await;
-            if was_fenced {
-                self.reset_flows_and_kernel(
-                    &agent_id,
-                    network.tunnel_ipv4,
-                    "ensure_agent_network.kernel_cleanup",
-                )
+            self.publish_route(&network, &assignment, RouteGate::Open)
                 .await?;
-            }
-            if !already_applied {
-                self.publish_route(&network, &assignment).await?;
-                self.applied_assignments
-                    .lock()
-                    .await
-                    .insert(agent_id.clone(), assignment.resource_version);
-            }
+            self.applied_assignments
+                .lock()
+                .await
+                .insert(agent_id.clone(), assignment.resource_version);
         }
-        self.reopen_dataplane(&agent_id);
-        Ok(self.attachment(network))
+        Ok(self.attachment(network, attachment))
     }
 
     pub async fn agent_network(
@@ -410,7 +418,101 @@ where
             .agent_network(agent_id)
             .await
             .map_err(|error| ControlError::repository("agent_network.repository", error))?;
-        Ok(self.attachment(network))
+        let attachment = self
+            .repository
+            .runtime_attachment(agent_id)
+            .await
+            .map_err(|error| ControlError::repository("agent_network.repository", error))?;
+        Ok(self.attachment(network, attachment))
+    }
+
+    pub async fn set_runtime_attachment(
+        &self,
+        agent_id: AgentId,
+        desired: AttachmentState,
+        expected_resource_version: u64,
+    ) -> Result<RuntimeNetworkAttachment, ControlError> {
+        if expected_resource_version == 0 {
+            return Err(ControlError::ResourceVersionConflict);
+        }
+        let _guard = self.operations.lock(&agent_id).await;
+        let network = self
+            .repository
+            .agent_network(&agent_id)
+            .await
+            .map_err(|error| {
+                ControlError::repository("set_runtime_attachment.repository", error)
+            })?;
+        if network.state != NetworkState::Active {
+            return Err(ControlError::AgentNetworkUnavailable);
+        }
+        let current = self
+            .repository
+            .runtime_attachment(&agent_id)
+            .await
+            .map_err(|error| {
+                ControlError::repository("set_runtime_attachment.repository", error)
+            })?;
+        if !attachment_request_matches(&current, desired, expected_resource_version) {
+            return Err(ControlError::ResourceVersionConflict);
+        }
+
+        let attachment = match desired {
+            AttachmentState::Closed => {
+                if current.state != AttachmentState::Closed {
+                    self.fence_dataplane(agent_id.clone()).await;
+                    self.reset_flows_and_kernel(
+                        &agent_id,
+                        network.tunnel_ipv4,
+                        "set_runtime_attachment.close_cleanup",
+                    )
+                    .await?;
+                }
+                let attachment = self
+                    .repository
+                    .compare_and_swap_attachment(&agent_id, desired, expected_resource_version)
+                    .await
+                    .map_err(|error| {
+                        ControlError::repository("set_runtime_attachment.repository", error)
+                    })?;
+                let assignment =
+                    self.repository
+                        .policy_assignment(&agent_id)
+                        .await
+                        .map_err(|error| {
+                            ControlError::repository("set_runtime_attachment.repository", error)
+                        })?;
+                self.publish_route(&network, &assignment, RouteGate::ProbeOnly)
+                    .await?;
+                self.applied_assignments.lock().await.remove(&agent_id);
+                attachment
+            }
+            AttachmentState::Open => {
+                let attachment = self
+                    .repository
+                    .compare_and_swap_attachment(&agent_id, desired, expected_resource_version)
+                    .await
+                    .map_err(|error| {
+                        ControlError::repository("set_runtime_attachment.repository", error)
+                    })?;
+                let assignment =
+                    self.repository
+                        .policy_assignment(&agent_id)
+                        .await
+                        .map_err(|error| {
+                            ControlError::repository("set_runtime_attachment.repository", error)
+                        })?;
+                self.fence_dataplane(agent_id.clone()).await;
+                self.publish_route(&network, &assignment, RouteGate::Open)
+                    .await?;
+                self.applied_assignments
+                    .lock()
+                    .await
+                    .insert(agent_id.clone(), assignment.resource_version);
+                attachment
+            }
+        };
+        Ok(self.attachment(network, attachment))
     }
 
     pub async fn put_policy_revision(
@@ -451,32 +553,17 @@ where
             .policy_revision(&policy_id, revision)
             .await
             .map_err(|error| ControlError::repository("assign_policy.repository", error))?;
-        let compiled_policy = policy.spec.compile(self.config.resolver_ipv4);
-        let before = self
+        let current = self
             .repository
             .policy_assignment(&agent_id)
             .await
             .map_err(|error| ControlError::repository("assign_policy.repository", error))?;
-        let already_applied = self
-            .applied_assignments
-            .lock()
-            .await
-            .get(&agent_id)
-            .is_some_and(|version| *version == before.resource_version);
-        if before.policy_id == policy_id && before.revision == revision && already_applied {
-            self.reopen_dataplane(&agent_id);
-            return Ok(before);
-        }
-        if (before.policy_id != policy_id || before.revision != revision)
-            && before.resource_version != expected_resource_version
-        {
+        if !assignment_request_matches(&current, &policy_id, revision, expected_resource_version) {
             return Err(ControlError::ResourceVersionConflict);
         }
-
-        self.fence_dataplane(agent_id.clone()).await;
-        let assignment = self
+        let attachment = self
             .repository
-            .compare_and_swap_assignment(&agent_id, policy_id, revision, expected_resource_version)
+            .runtime_attachment(&agent_id)
             .await
             .map_err(|error| ControlError::repository("assign_policy.repository", error))?;
         let network = self
@@ -484,75 +571,44 @@ where
             .agent_network(&agent_id)
             .await
             .map_err(|error| ControlError::repository("assign_policy.repository", error))?;
+        if network.state != NetworkState::Active {
+            return Err(ControlError::AgentNetworkUnavailable);
+        }
+        let compiled_policy = policy.spec.compile(self.config.resolver_ipv4);
+        if attachment.state == AttachmentState::Closed {
+            let assignment = self
+                .repository
+                .compare_and_swap_assignment(
+                    &agent_id,
+                    policy_id,
+                    revision,
+                    expected_resource_version,
+                )
+                .await
+                .map_err(|error| ControlError::repository("assign_policy.repository", error))?;
+            self.fence_dataplane(agent_id.clone()).await;
+            self.replace_route(&network, &assignment, compiled_policy, RouteGate::ProbeOnly);
+            self.applied_assignments.lock().await.remove(&agent_id);
+            return Ok(assignment);
+        }
+        self.fence_dataplane(agent_id.clone()).await;
         self.reset_flows_and_kernel(
             &agent_id,
             network.tunnel_ipv4,
             "assign_policy.kernel_cleanup",
         )
         .await?;
-        self.replace_route(&network, &assignment, compiled_policy);
+        let assignment = self
+            .repository
+            .compare_and_swap_assignment(&agent_id, policy_id, revision, expected_resource_version)
+            .await
+            .map_err(|error| ControlError::repository("assign_policy.repository", error))?;
+        self.replace_route(&network, &assignment, compiled_policy, RouteGate::Open);
         self.applied_assignments
             .lock()
             .await
             .insert(agent_id.clone(), assignment.resource_version);
-        self.reopen_dataplane(&agent_id);
         Ok(assignment)
-    }
-
-    pub async fn reset_agent_flows(
-        &self,
-        agent_id: &AgentId,
-        expected_resource_version: u64,
-    ) -> Result<(), ControlError> {
-        if expected_resource_version == 0 {
-            return Err(ControlError::ResourceVersionConflict);
-        }
-        let _guard = self.operations.lock(agent_id).await;
-        let assignment = self
-            .repository
-            .policy_assignment(agent_id)
-            .await
-            .map_err(|error| ControlError::repository("reset_agent_flows.repository", error))?;
-        if assignment.policy_id.as_str() != BUILTIN_DENY_ALL
-            || assignment.revision != BUILTIN_REVISION
-            || assignment.resource_version != expected_resource_version
-        {
-            return Err(ControlError::ResourceVersionConflict);
-        }
-        let network = self
-            .repository
-            .agent_network(agent_id)
-            .await
-            .map_err(|error| ControlError::repository("reset_agent_flows.repository", error))?;
-        self.fence_dataplane(agent_id.clone()).await;
-        self.reset_flows_and_kernel(
-            agent_id,
-            network.tunnel_ipv4,
-            "reset_agent_flows.kernel_cleanup",
-        )
-        .await?;
-        self.reopen_dataplane(agent_id);
-        Ok(())
-    }
-
-    pub async fn fence_agent(
-        &self,
-        agent_id: AgentId,
-        expected_resource_version: u64,
-    ) -> Result<(), ControlError> {
-        if expected_resource_version == 0 {
-            return Err(ControlError::ResourceVersionConflict);
-        }
-        let _guard = self.operations.lock(&agent_id).await;
-        self.fence_dataplane(agent_id.clone()).await;
-        self.fence_locked(
-            &agent_id,
-            expected_resource_version,
-            "fence_agent.kernel_cleanup",
-        )
-        .await?;
-        self.reopen_dataplane(&agent_id);
-        Ok(())
     }
 
     pub async fn release_agent_network(
@@ -564,25 +620,34 @@ where
             return Err(ControlError::ResourceVersionConflict);
         }
         let _guard = self.operations.lock(&agent_id).await;
-        self.fence_dataplane(agent_id.clone()).await;
-        self.fence_locked(
-            &agent_id,
-            expected_resource_version,
-            "release_agent_network.kernel_cleanup",
-        )
-        .await?;
-        let network = self
+        let attachment = self
             .repository
-            .quarantine_agent_network(&agent_id, SystemTime::now())
+            .runtime_attachment(&agent_id)
             .await
             .map_err(|error| ControlError::repository("release_agent_network.repository", error))?;
+        if attachment.state != AttachmentState::Closed {
+            return Err(ControlError::AgentNetworkUnavailable);
+        }
+        let network = self
+            .repository
+            .quarantine_agent_network(&agent_id, expected_resource_version, SystemTime::now())
+            .await
+            .map_err(|error| ControlError::repository("release_agent_network.repository", error))?;
+        self.fence_dataplane(agent_id.clone()).await;
         self.dataplane
             .lock()
             .expect("data-plane mutex poisoned")
             .remove_agent(&agent_id);
         self.health.snapshot_published();
         self.applied_assignments.lock().await.remove(&agent_id);
-        Ok(self.attachment(network))
+        self.kernel
+            .clear_agent(network.tunnel_ipv4)
+            .await
+            .map_err(|error| {
+                log_cleanup_failure(&agent_id, "release_agent_network.kernel_cleanup", &error);
+                ControlError::cleanup("release_agent_network.kernel_cleanup")
+            })?;
+        Ok(self.attachment(network, attachment))
     }
 
     pub async fn recover(&self) -> Result<usize, ControlError> {
@@ -596,6 +661,7 @@ where
             tunnel_ipv4: binding.network.tunnel_ipv4,
             assignment_version: binding.assignment.resource_version,
             policy: binding.revision.spec.compile(self.config.resolver_ipv4),
+            gate: route_gate(binding.attachment.state),
         });
         self.dataplane
             .lock()
@@ -603,12 +669,17 @@ where
             .replace_snapshot(NetworkSnapshot::from_routes(routes));
         let mut applied = self.applied_assignments.lock().await;
         applied.clear();
-        applied.extend(bindings.iter().map(|binding| {
-            (
-                binding.network.agent_id.clone(),
-                binding.assignment.resource_version,
-            )
-        }));
+        applied.extend(
+            bindings
+                .iter()
+                .filter(|binding| binding.attachment.state == AttachmentState::Open)
+                .map(|binding| {
+                    (
+                        binding.network.agent_id.clone(),
+                        binding.assignment.resource_version,
+                    )
+                }),
+        );
         self.health.recovered();
         Ok(bindings.len())
     }
@@ -652,69 +723,11 @@ where
         Ok(report)
     }
 
-    async fn fence_locked(
-        &self,
-        agent_id: &AgentId,
-        expected_resource_version: u64,
-        cleanup_stage: &'static str,
-    ) -> Result<(), ControlError> {
-        let network = self
-            .repository
-            .agent_network(agent_id)
-            .await
-            .map_err(|error| ControlError::repository("fence.repository", error))?;
-        if network.state != NetworkState::Active {
-            return Ok(());
-        }
-        let current = self
-            .repository
-            .policy_assignment(agent_id)
-            .await
-            .map_err(|error| ControlError::repository("fence.repository", error))?;
-        let already_fenced =
-            current.policy_id.as_str() == BUILTIN_DENY_ALL && current.revision == BUILTIN_REVISION;
-        if (!already_fenced && current.resource_version != expected_resource_version)
-            || (already_fenced && current.resource_version < expected_resource_version)
-        {
-            return Err(ControlError::ResourceVersionConflict);
-        }
-        let deny_id = PolicyId::parse(BUILTIN_DENY_ALL).map_err(|_| {
-            ControlError::ControlPlaneUnavailable(FailureContext::new(
-                "fence.builtin_policy",
-                "built_in_policy_invalid",
-            ))
-        })?;
-        let assignment = if already_fenced {
-            current
-        } else {
-            self.repository
-                .compare_and_swap_assignment(
-                    agent_id,
-                    deny_id,
-                    BUILTIN_REVISION,
-                    expected_resource_version,
-                )
-                .await
-                .map_err(|error| ControlError::repository("fence.repository", error))?
-        };
-        self.reset_flows_and_kernel(agent_id, network.tunnel_ipv4, cleanup_stage)
-            .await?;
-        self.replace_route(
-            &network,
-            &assignment,
-            PolicySpec::deny_all().compile(self.config.resolver_ipv4),
-        );
-        self.applied_assignments
-            .lock()
-            .await
-            .insert(agent_id.clone(), assignment.resource_version);
-        Ok(())
-    }
-
     async fn publish_route(
         &self,
         network: &AgentNetwork,
         assignment: &PolicyAssignment,
+        gate: RouteGate,
     ) -> Result<(), ControlError> {
         let revision = self
             .repository
@@ -722,7 +735,7 @@ where
             .await
             .map_err(|error| ControlError::repository("publish_route.repository", error))?;
         let policy = revision.spec.compile(self.config.resolver_ipv4);
-        self.replace_route(network, assignment, policy);
+        self.replace_route(network, assignment, policy, gate);
         Ok(())
     }
 
@@ -731,6 +744,7 @@ where
         network: &AgentNetwork,
         assignment: &PolicyAssignment,
         policy: CompiledPolicy,
+        gate: RouteGate,
     ) {
         self.dataplane
             .lock()
@@ -740,6 +754,7 @@ where
                 tunnel_ipv4: network.tunnel_ipv4,
                 assignment_version: assignment.resource_version,
                 policy,
+                gate,
             });
         self.health.snapshot_published();
     }
@@ -768,21 +783,57 @@ where
         let _drained = self.output_barrier.lock().await;
     }
 
-    fn reopen_dataplane(&self, agent_id: &AgentId) {
-        self.dataplane
-            .lock()
-            .expect("data-plane mutex poisoned")
-            .reopen_agent(agent_id);
-    }
-
-    fn attachment(&self, network: AgentNetwork) -> RuntimeNetworkAttachment {
+    fn attachment(
+        &self,
+        network: AgentNetwork,
+        attachment: RuntimeAttachment,
+    ) -> RuntimeNetworkAttachment {
         RuntimeNetworkAttachment {
             agent_id: network.agent_id,
             tunnel_ipv4: network.tunnel_ipv4,
             resolver_ipv4: self.config.resolver_ipv4,
             egress_endpoint: self.config.advertised_udp_endpoint,
             state: network.state,
+            network_resource_version: network.resource_version,
+            attachment_state: attachment.state,
+            attachment_resource_version: attachment.resource_version,
         }
+    }
+}
+
+fn attachment_request_matches(
+    current: &RuntimeAttachment,
+    desired: AttachmentState,
+    expected_resource_version: u64,
+) -> bool {
+    if current.state != desired {
+        return current.resource_version == expected_resource_version;
+    }
+    current.resource_version == expected_resource_version
+        || expected_resource_version
+            .checked_add(1)
+            .is_some_and(|version| version == current.resource_version)
+}
+
+fn assignment_request_matches(
+    current: &PolicyAssignment,
+    policy_id: &PolicyId,
+    revision: u64,
+    expected_resource_version: u64,
+) -> bool {
+    if current.policy_id != *policy_id || current.revision != revision {
+        return current.resource_version == expected_resource_version;
+    }
+    current.resource_version == expected_resource_version
+        || expected_resource_version
+            .checked_add(1)
+            .is_some_and(|version| version == current.resource_version)
+}
+
+const fn route_gate(state: AttachmentState) -> RouteGate {
+    match state {
+        AttachmentState::Open => RouteGate::Open,
+        AttachmentState::Closed => RouteGate::ProbeOnly,
     }
 }
 

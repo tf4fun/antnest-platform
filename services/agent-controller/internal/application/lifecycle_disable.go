@@ -12,6 +12,8 @@ import (
 
 type DisableAgentInput struct {
 	RequestID          string
+	OrganizationID     string
+	ActorPrincipalID   string
 	AgentID            string
 	InitialTraceParent string
 }
@@ -36,7 +38,10 @@ func (service *LifecycleService) DisableAgent(
 		return DisableAgentResult{}, fmt.Errorf("replay Agent disable: %w", err)
 	}
 	if found {
-		return service.convergeAgentDisable(ctx, state, fingerprint)
+		if !lifecycleScopeMatches(state.Agent.OrganizationID, input.OrganizationID) {
+			return DisableAgentResult{}, fmt.Errorf("%w: %s", ErrAgentNotFound, input.AgentID)
+		}
+		return disableAgentResult(state), nil
 	}
 
 	base, err := service.store.GetAgentLifecycleBase(ctx, input.AgentID)
@@ -48,6 +53,9 @@ func (service *LifecycleService) DisableAgent(
 	}
 	if err := validateDisableSource(base); err != nil {
 		return DisableAgentResult{}, err
+	}
+	if !lifecycleScopeMatches(base.Agent.OrganizationID, input.OrganizationID) {
+		return DisableAgentResult{}, fmt.Errorf("%w: %s", ErrAgentNotFound, input.AgentID)
 	}
 	now := service.clock.Now()
 	operation, err := domain.NewLifecycleOperation(domain.NewLifecycleOperationInput{
@@ -75,7 +83,7 @@ func (service *LifecycleService) DisableAgent(
 			SourceExecutionRevisionID: base.ExecutableExecution.ID,
 			SourceRuntimeRevision:     base.Agent.RuntimeRevision,
 			ChildRequestID:            operation.ChildRequestID(),
-			InitialTraceParent:        input.InitialTraceParent, Attempt: 1,
+			InitialTraceParent:        input.InitialTraceParent, Attempt: 0,
 			CreatedAt: now, UpdatedAt: now,
 		},
 		RequestedEvent: ports.AgentEventRecord{
@@ -84,6 +92,7 @@ func (service *LifecycleService) DisableAgent(
 			SchemaVersion: 1, EventType: ports.EventAgentDisableRequested,
 			OperationRequestID: input.RequestID, TraceID: currentTraceID(ctx),
 			Data: map[string]any{
+				"actor_principal_id":            input.ActorPrincipalID,
 				"source_agent_spec_revision_id": base.ExecutableSpec.ID,
 				"source_execution_revision_id":  base.ExecutableExecution.ID,
 				"source_runtime_revision":       base.Agent.RuntimeRevision,
@@ -94,51 +103,6 @@ func (service *LifecycleService) DisableAgent(
 	})
 	if err != nil {
 		return DisableAgentResult{}, fmt.Errorf("begin Agent disable: %w", err)
-	}
-	return service.convergeAgentDisable(ctx, state, fingerprint)
-}
-
-func (service *LifecycleService) convergeAgentDisable(
-	ctx context.Context, state ports.AgentDisableState, fingerprint string,
-) (DisableAgentResult, error) {
-	for range maximumLifecycleConvergenceAttempts {
-		result, err := service.continueAgentDisable(ctx, state)
-		if !errors.Is(err, ports.ErrConcurrentChange) {
-			return result, err
-		}
-		var found bool
-		state, found, err = service.store.ReplayAgentDisable(
-			ctx, state.Operation.RequestID, fingerprint,
-		)
-		if err != nil {
-			return DisableAgentResult{}, fmt.Errorf("replay concurrent Agent disable: %w", err)
-		}
-		if !found {
-			return DisableAgentResult{}, fmt.Errorf("concurrent Agent disable disappeared")
-		}
-	}
-	return DisableAgentResult{}, ports.ErrConcurrentChange
-}
-
-func (service *LifecycleService) continueAgentDisable(
-	ctx context.Context, state ports.AgentDisableState,
-) (DisableAgentResult, error) {
-	if state.Operation.State != domain.OperationRunning {
-		return disableAgentResult(state), nil
-	}
-	if lifecycleOperationReservedForRecovery(state.Operation) {
-		return disableAgentResult(state), nil
-	}
-	for state.Operation.State == domain.OperationRunning {
-		phase := state.Operation.Phase
-		next, err := service.stepAgentDisable(ctx, state)
-		if err != nil {
-			return disableAgentResult(next), err
-		}
-		state = next
-		if state.Operation.Phase == phase {
-			break
-		}
 	}
 	return disableAgentResult(state), nil
 }
@@ -183,29 +147,19 @@ func (service *LifecycleService) settleDisableDrain(
 func (service *LifecycleService) fenceDisableNetwork(
 	ctx context.Context, state ports.AgentDisableState,
 ) (ports.AgentDisableState, error) {
-	if state.Operation.NetworkPolicyAssignment == nil {
-		assignment, err := service.egress.GetAgentPolicyAssignment(ctx, state.Agent.AgentID)
-		if err != nil {
-			return service.handleDisableDependencyFailure(ctx, state, "runtime-egress", err)
-		}
-		if !networkPolicyAssignmentReady(assignment, state.Agent.AgentID) {
-			return service.failAgentDisable(
-				ctx, state, "invalid_network_policy_assignment",
-				"Runtime Egress did not return the current policy assignment", true, nil, nil,
-			)
-		}
-		state, err = service.store.RecordAgentDisablePolicy(
-			ctx, state.Operation.RequestID, state.Operation.RequestFingerprint,
-			assignment, service.clock.Now(),
-		)
-		if err != nil {
-			return ports.AgentDisableState{}, err
-		}
-	}
-	if err := service.egress.FenceAgentNetwork(
-		ctx, state.Agent.AgentID, state.Operation.NetworkPolicyAssignment.ResourceVersion,
-	); err != nil {
+	attachment, err := service.setCurrentNetworkAttachmentState(
+		ctx, state.Agent.AgentID, ports.NetworkAttachmentClosed,
+	)
+	if err != nil {
 		return service.handleDisableDependencyFailure(ctx, state, "runtime-egress", err)
+	}
+	if !networkAttachmentInState(
+		attachment, state.Agent.AgentID, ports.NetworkStateActive, ports.NetworkAttachmentClosed,
+	) {
+		return service.failAgentDisable(
+			ctx, state, "network_attachment_close_unconfirmed",
+			"Runtime Egress did not confirm the closed attachment", true, nil, nil,
+		)
 	}
 	return service.store.AdvanceAgentDisable(ctx, ports.AdvanceAgentDisable{
 		RequestID: state.Operation.RequestID, Fingerprint: state.Operation.RequestFingerprint,
@@ -213,7 +167,7 @@ func (service *LifecycleService) fenceDisableNetwork(
 		NextChildRequestID: domain.ChildRequestID(
 			state.Operation.RequestID, domain.PhaseRuntimeDisable,
 		),
-		Now: service.clock.Now(),
+		NetworkAttachment: &attachment, Now: service.clock.Now(),
 	})
 }
 
@@ -317,11 +271,11 @@ func (service *LifecycleService) failAgentDisable(
 	inspection *ports.RuntimeInspection,
 	absenceProof *ports.RuntimeAbsenceProof,
 ) (ports.AgentDisableState, error) {
-	if preserveExecutable && state.Operation.NetworkPolicyAssignment != nil {
-		if _, err := service.restoreCapturedNetwork(
-			ctx, state.Agent.AgentID, *state.Operation.NetworkPolicyAssignment,
+	if preserveExecutable && state.Operation.NetworkAttachment != nil {
+		if _, err := service.setCurrentNetworkAttachmentState(
+			ctx, state.Agent.AgentID, ports.NetworkAttachmentOpen,
 		); err != nil {
-			return state, fmt.Errorf("%w: runtime-egress policy restoration", ErrDependencyUnavailable)
+			return state, fmt.Errorf("%w: runtime-egress attachment restoration", ErrDependencyUnavailable)
 		}
 	}
 	now := service.clock.Now()
@@ -394,7 +348,8 @@ func completedDisabledRuntime(result ports.RuntimeOperation) bool {
 }
 
 func validateDisableAgentInput(input DisableAgentInput) error {
-	if !validIdentifier(input.RequestID) || !validIdentifier(input.AgentID) {
+	if !validIdentifier(input.RequestID) || !validIdentifier(input.AgentID) ||
+		!validLifecycleCaller(input.OrganizationID, input.ActorPrincipalID) {
 		return fmt.Errorf("%w: Agent disable input", ErrInvalidInput)
 	}
 	return nil
@@ -420,9 +375,14 @@ func validateDisableSource(base ports.AgentLifecycleBase) error {
 
 func disableAgentFingerprint(input DisableAgentInput) (string, error) {
 	return requestFingerprint(struct {
-		RequestID string
-		AgentID   string
-	}{RequestID: input.RequestID, AgentID: input.AgentID})
+		RequestID        string
+		OrganizationID   string
+		ActorPrincipalID string
+		AgentID          string
+	}{
+		RequestID: input.RequestID, OrganizationID: input.OrganizationID,
+		ActorPrincipalID: input.ActorPrincipalID, AgentID: input.AgentID,
+	})
 }
 
 func disableAgentResult(state ports.AgentDisableState) DisableAgentResult {

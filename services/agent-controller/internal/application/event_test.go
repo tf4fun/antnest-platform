@@ -19,7 +19,7 @@ func TestListGlobalAgentEventsReturnsAuthoritativeCursor(t *testing.T) {
 	service := NewEventService(store, store, &agentQueryStoreStub{})
 
 	page, err := service.ListGlobalEvents(context.Background(), ListEventsInput{
-		AfterSequence: 10, Limit: 25,
+		OrganizationID: "org-1", AfterSequence: 10, Limit: 25,
 	})
 	if err != nil {
 		t.Fatalf("list global Agent events: %v", err)
@@ -28,7 +28,8 @@ func TestListGlobalAgentEventsReturnsAuthoritativeCursor(t *testing.T) {
 		page.Events[0].GlobalSequence != 11 || page.Events[1].AgentID != "agent-2" {
 		t.Fatalf("global event page = %+v", page)
 	}
-	if store.query.AgentID != "" || store.query.AfterSequence != 10 || store.query.Limit != 25 {
+	if store.query.OrganizationID != "org-1" || store.query.AgentID != "" ||
+		store.query.AfterSequence != 10 || store.query.Limit != 25 {
 		t.Fatalf("global event query = %+v", store.query)
 	}
 }
@@ -54,7 +55,7 @@ func TestListAgentEventsValidatesAggregateBeforeReadingJournal(t *testing.T) {
 	events := &agentEventStoreStub{}
 	service := NewEventService(events, events, agents)
 	_, err := service.ListAgentEvents(context.Background(), ListAgentEventsInput{
-		AgentID: "agent-missing", AfterSequence: 0,
+		OrganizationID: "org-1", AgentID: "agent-missing", AfterSequence: 0,
 	})
 	if !errors.Is(err, ErrAgentNotFound) || events.listCalls != 0 {
 		t.Fatalf("missing Agent error=%v event_calls=%d", err, events.listCalls)
@@ -64,13 +65,38 @@ func TestListAgentEventsValidatesAggregateBeforeReadingJournal(t *testing.T) {
 	agents.record = queryAgentRecord("agent-1", "user-1", "available", time.Unix(1, 0).UTC())
 	events.events = []ports.AgentEventRecord{testAgentEvent(8, "event-8", "agent-1", 2)}
 	page, err := service.ListAgentEvents(context.Background(), ListAgentEventsInput{
-		AgentID: "agent-1", AfterSequence: 7, Limit: 10,
+		OrganizationID: "org-1", AgentID: "agent-1", AfterSequence: 7, Limit: 10,
 	})
 	if err != nil {
 		t.Fatalf("list per-Agent events: %v", err)
 	}
 	if len(page.Events) != 1 || events.query.AgentID != "agent-1" || agents.getAgentID != "agent-1" {
 		t.Fatalf("per-Agent page=%+v event_query=%+v Agent=%q", page, events.query, agents.getAgentID)
+	}
+}
+
+func TestAgentEventsMaskCrossOrganizationAggregate(t *testing.T) {
+	t.Parallel()
+
+	agents := &agentQueryStoreStub{record: queryAgentRecord(
+		"agent-1", "user-1", "available", time.Unix(1, 0).UTC(),
+	)}
+	events := &agentEventStoreStub{events: []ports.AgentEventRecord{
+		testAgentEvent(1, "event-1", "agent-1", 1),
+	}}
+	service := NewEventService(events, events, agents)
+
+	_, err := service.ListAgentEvents(context.Background(), ListAgentEventsInput{
+		OrganizationID: "org-2", AgentID: "agent-1",
+	})
+	if !errors.Is(err, ErrAgentNotFound) || events.listCalls != 0 {
+		t.Fatalf("cross-organization event error=%v event_calls=%d", err, events.listCalls)
+	}
+	watchErr := service.WatchAgentEvents(
+		context.Background(), "org-2", "agent-1", 0, func(AgentEventView) error { return nil },
+	)
+	if !errors.Is(watchErr, ErrAgentNotFound) || events.subscribeCalls != 0 {
+		t.Fatalf("cross-organization watch error=%v subscriptions=%d", watchErr, events.subscribeCalls)
 	}
 }
 
@@ -124,7 +150,7 @@ func TestWatchGlobalAgentEventsReplaysThenWaitsWithoutGap(t *testing.T) {
 	}
 	service := NewEventService(store, store, &agentQueryStoreStub{})
 	received := make([]int64, 0, 2)
-	err := service.WatchGlobalEvents(ctx, 0, func(event AgentEventView) error {
+	err := service.WatchGlobalEvents(ctx, "org-1", 0, func(event AgentEventView) error {
 		received = append(received, event.GlobalSequence)
 		if event.GlobalSequence == 2 {
 			cancel()
@@ -155,7 +181,7 @@ func TestWatchAgentEventsFiltersJournalAfterSharedNotification(t *testing.T) {
 		record: queryAgentRecord("agent-1", "user-1", "available", time.Unix(1, 0).UTC()),
 	})
 	received := make([]int64, 0, 2)
-	err := service.WatchAgentEvents(ctx, "agent-1", 0, func(event AgentEventView) error {
+	err := service.WatchAgentEvents(ctx, "org-1", "agent-1", 0, func(event AgentEventView) error {
 		received = append(received, event.GlobalSequence)
 		if event.GlobalSequence == 2 {
 			cancel()

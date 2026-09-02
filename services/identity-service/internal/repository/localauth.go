@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -12,6 +13,8 @@ import (
 )
 
 type LocalAuthAdapter struct{ store *Store }
+
+const tokenLastUsedSampleWindow = 5 * time.Minute
 
 func (a *LocalAuthAdapter) FindLocalCredential(
 	ctx context.Context,
@@ -76,22 +79,21 @@ func (a *LocalAuthAdapter) ResolveToken(
 	ctx, finish := startRepositoryOperation(ctx, "resolve_access_token")
 	defer func() { finish(resultErr) }()
 	var userActive, membershipActive, organizationActive bool
+	var tokenID string
+	var lastUsedAt *time.Time
 	err := a.store.pool.QueryRow(ctx, `
-		UPDATE api_tokens t
-		SET last_used_at = CASE
-			WHEN t.last_used_at IS NULL OR t.last_used_at < $2::timestamptz - interval '5 minutes'
-				THEN $2::timestamptz
-			ELSE t.last_used_at
-		END
-		FROM users u, organization_memberships m, organizations o
+		SELECT t.id, t.last_used_at,
+		       u.id, m.organization_id, m.id, u.system_role, m.role,
+		       u.active, m.active, o.active
+		FROM api_tokens t
+		JOIN users u ON u.id = t.user_id
+		JOIN organization_memberships m
+		  ON m.id = t.membership_id AND m.organization_id = t.organization_id AND m.user_id = u.id
+		JOIN organizations o ON o.id = t.organization_id
 		WHERE t.token_hash = $1 AND t.revoked_at IS NULL AND t.expires_at > $2
-		  AND u.id = t.user_id
-		  AND m.id = t.membership_id AND m.organization_id = t.organization_id AND m.user_id = u.id
-		  AND m.scim_deleted_at IS NULL
-		  AND o.id = t.organization_id
-		RETURNING u.id, m.organization_id, m.id, u.system_role, m.role,
-		          u.active, m.active, o.active`, digest, now,
+		  AND m.scim_deleted_at IS NULL`, digest, now,
 	).Scan(
+		&tokenID, &lastUsedAt,
 		&principal.UserID, &principal.OrganizationID, &principal.MembershipID,
 		&principal.SystemRole, &principal.OrganizationRole,
 		&userActive, &membershipActive, &organizationActive,
@@ -99,44 +101,62 @@ func (a *LocalAuthAdapter) ResolveToken(
 	if err != nil {
 		return domain.Principal{}, normalizeError(err)
 	}
+	if shouldTouchTokenLastUsed(lastUsedAt, now) {
+		_ = a.touchTokenLastUsed(ctx, tokenID, now)
+	}
 	principal.Active = userActive && membershipActive && organizationActive
 	return principal, nil
 }
 
-func (a *LocalAuthAdapter) RevokeToken(
-	ctx context.Context,
-	actorUserID string,
-	tokenID string,
-	now time.Time,
-) error {
-	return a.store.inTransaction(ctx, "revoke_access_token", func(tx pgx.Tx) error {
-		var ownerUserID, organizationID string
-		var alreadyRevoked bool
+func shouldTouchTokenLastUsed(lastUsedAt *time.Time, now time.Time) bool {
+	return lastUsedAt == nil || lastUsedAt.Before(now.Add(-tokenLastUsedSampleWindow))
+}
+
+func (a *LocalAuthAdapter) touchTokenLastUsed(ctx context.Context, tokenID string, now time.Time) error {
+	_, err := a.store.pool.Exec(ctx, `
+		UPDATE api_tokens
+		SET last_used_at = $2
+		WHERE id = $1
+		  AND (last_used_at IS NULL OR last_used_at < $2::timestamptz - interval '5 minutes')`,
+		tokenID, now,
+	)
+	return err
+}
+
+func (a *LocalAuthAdapter) RevokeByTokenHash(
+	ctx context.Context, digest string, now time.Time,
+) (status localauth.RevokeStatus, resultErr error) {
+	status = localauth.RevokeStatusAlreadyInvalid
+	resultErr = a.store.inTransaction(ctx, "revoke_access_token", func(tx pgx.Tx) error {
+		var tokenID, ownerUserID, organizationID string
+		var expiresAt time.Time
+		var revokedAt *time.Time
 		if err := tx.QueryRow(ctx, `
-			SELECT user_id, organization_id, revoked_at IS NOT NULL
+			SELECT id, user_id, organization_id, expires_at, revoked_at
 			FROM api_tokens
-			WHERE id = $1
-			FOR UPDATE`, tokenID,
-		).Scan(&ownerUserID, &organizationID, &alreadyRevoked); err != nil {
+			WHERE token_hash = $1
+			FOR UPDATE`, digest,
+		).Scan(&tokenID, &ownerUserID, &organizationID, &expiresAt, &revokedAt); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil
+			}
 			return err
 		}
-		principal, err := a.store.getPrincipal(ctx, tx, actorUserID, organizationID)
-		if err != nil {
-			return err
-		}
-		if actorUserID != ownerUserID && !principal.CanAdminister(organizationID) {
-			return domain.ErrForbidden
-		}
-		if alreadyRevoked {
+		if revokedAt != nil || !expiresAt.After(now) {
 			return nil
 		}
 		if _, err := tx.Exec(ctx, `UPDATE api_tokens SET revoked_at = $2 WHERE id = $1`, tokenID, now); err != nil {
 			return fmt.Errorf("revoke API token: %w", err)
 		}
-		return a.store.appendEvent(ctx, tx, event{
-			OrganizationID: organizationID, ActorPrincipalID: actorUserID,
+		if err := a.store.appendEvent(ctx, tx, event{
+			OrganizationID: organizationID, ActorPrincipalID: ownerUserID,
 			Type: "access_token.revoked", SubjectType: "access_token", SubjectID: tokenID,
 			CreatedAt: now,
-		})
+		}); err != nil {
+			return err
+		}
+		status = localauth.RevokeStatusRevoked
+		return nil
 	})
+	return status, resultErr
 }

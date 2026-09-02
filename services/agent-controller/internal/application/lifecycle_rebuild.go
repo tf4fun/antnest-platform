@@ -12,6 +12,8 @@ import (
 
 type RebuildAgentInput struct {
 	RequestID          string
+	OrganizationID     string
+	ActorPrincipalID   string
 	AgentID            string
 	TemplateID         string
 	TemplateRevision   int64
@@ -38,7 +40,10 @@ func (service *LifecycleService) RebuildAgent(
 		return RebuildAgentResult{}, fmt.Errorf("replay Agent rebuild: %w", err)
 	}
 	if found {
-		return service.convergeAgentRebuild(ctx, state, fingerprint)
+		if !lifecycleScopeMatches(state.Agent.OrganizationID, input.OrganizationID) {
+			return RebuildAgentResult{}, fmt.Errorf("%w: %s", ErrAgentNotFound, input.AgentID)
+		}
+		return rebuildAgentResult(state), nil
 	}
 
 	base, err := service.store.GetAgentLifecycleBase(ctx, input.AgentID)
@@ -50,6 +55,9 @@ func (service *LifecycleService) RebuildAgent(
 	}
 	if err := validateRebuildSource(base); err != nil {
 		return RebuildAgentResult{}, err
+	}
+	if !lifecycleScopeMatches(base.Agent.OrganizationID, input.OrganizationID) {
+		return RebuildAgentResult{}, fmt.Errorf("%w: %s", ErrAgentNotFound, input.AgentID)
 	}
 	template, _, targetSpec, err := service.resolveAgentSpecRevision(
 		ctx, base.Agent.OrganizationID, input.TemplateID, input.TemplateRevision,
@@ -94,7 +102,7 @@ func (service *LifecycleService) RebuildAgent(
 			SourceRuntimeRevision:     base.Agent.RuntimeRevision,
 			TargetSpecRevisionID:      targetSpecID,
 			ChildRequestID:            operation.ChildRequestID(),
-			InitialTraceParent:        input.InitialTraceParent, Attempt: 1,
+			InitialTraceParent:        input.InitialTraceParent, Attempt: 0,
 			CreatedAt: now, UpdatedAt: now,
 		},
 		RequestedEvent: ports.AgentEventRecord{
@@ -103,6 +111,7 @@ func (service *LifecycleService) RebuildAgent(
 			SchemaVersion: 1, EventType: ports.EventAgentRebuildRequested,
 			OperationRequestID: input.RequestID, TraceID: currentTraceID(ctx),
 			Data: map[string]any{
+				"actor_principal_id":            input.ActorPrincipalID,
 				"source_agent_spec_revision_id": base.ExecutableSpec.ID,
 				"source_runtime_revision":       base.Agent.RuntimeRevision,
 				"target_agent_spec_revision_id": targetSpecID,
@@ -117,51 +126,6 @@ func (service *LifecycleService) RebuildAgent(
 	if err != nil {
 		return RebuildAgentResult{}, fmt.Errorf("begin Agent rebuild: %w", err)
 	}
-	return service.convergeAgentRebuild(ctx, state, fingerprint)
-}
-
-func (service *LifecycleService) convergeAgentRebuild(
-	ctx context.Context, state ports.AgentRebuildState, fingerprint string,
-) (RebuildAgentResult, error) {
-	for range maximumLifecycleConvergenceAttempts {
-		result, err := service.continueAgentRebuild(ctx, state)
-		if !errors.Is(err, ports.ErrConcurrentChange) {
-			return result, err
-		}
-		var found bool
-		state, found, err = service.store.ReplayAgentRebuild(
-			ctx, state.Operation.RequestID, fingerprint,
-		)
-		if err != nil {
-			return RebuildAgentResult{}, fmt.Errorf("replay concurrent Agent rebuild: %w", err)
-		}
-		if !found {
-			return RebuildAgentResult{}, fmt.Errorf("concurrent Agent rebuild disappeared")
-		}
-	}
-	return RebuildAgentResult{}, ports.ErrConcurrentChange
-}
-
-func (service *LifecycleService) continueAgentRebuild(
-	ctx context.Context, state ports.AgentRebuildState,
-) (RebuildAgentResult, error) {
-	if state.Operation.State != domain.OperationRunning {
-		return rebuildAgentResult(state), nil
-	}
-	if lifecycleOperationReservedForRecovery(state.Operation) {
-		return rebuildAgentResult(state), nil
-	}
-	for state.Operation.State == domain.OperationRunning {
-		phase := state.Operation.Phase
-		next, err := service.stepAgentRebuild(ctx, state)
-		if err != nil {
-			return rebuildAgentResult(next), err
-		}
-		state = next
-		if state.Operation.Phase == phase {
-			break
-		}
-	}
 	return rebuildAgentResult(state), nil
 }
 
@@ -173,8 +137,6 @@ func (service *LifecycleService) stepAgentRebuild(
 		return service.settleRebuildDrain(ctx, state)
 	case domain.PhaseNetworkFence:
 		return service.fenceRebuildNetwork(ctx, state)
-	case domain.PhaseFlowReset:
-		return service.resetRebuildFlows(ctx, state)
 	case domain.PhaseRuntimeUpdate:
 		return service.updateRebuildRuntime(ctx, state)
 	case domain.PhaseNetworkEnsure:
@@ -208,73 +170,48 @@ func (service *LifecycleService) settleRebuildDrain(
 func (service *LifecycleService) fenceRebuildNetwork(
 	ctx context.Context, state ports.AgentRebuildState,
 ) (ports.AgentRebuildState, error) {
-	if state.Operation.NetworkPolicyAssignment == nil {
-		assignment, err := service.egress.GetAgentPolicyAssignment(ctx, state.Agent.AgentID)
-		if err != nil {
-			return service.handleRebuildDependencyFailure(ctx, state, "runtime-egress", err)
-		}
-		if !networkPolicyAssignmentReady(assignment, state.Agent.AgentID) {
-			return service.failRebuildPreservingSource(
-				ctx, state, "invalid_network_policy_assignment",
-				"Runtime Egress did not return the current policy assignment", false,
-			)
-		}
-		state, err = service.store.RecordAgentRebuildPolicy(
-			ctx, state.Operation.RequestID, state.Operation.RequestFingerprint,
-			assignment, service.clock.Now(),
-		)
-		if err != nil {
-			return ports.AgentRebuildState{}, err
-		}
-	}
-	if err := service.egress.FenceAgentNetwork(
-		ctx, state.Agent.AgentID, state.Operation.NetworkPolicyAssignment.ResourceVersion,
-	); err != nil {
-		return service.handleRebuildDependencyFailure(ctx, state, "runtime-egress", err)
-	}
 	attachment, err := service.egress.GetAgentNetwork(ctx, state.Agent.AgentID)
 	if err != nil {
 		return service.handleRebuildDependencyFailure(ctx, state, "runtime-egress", err)
 	}
+	if networkAttachmentInState(
+		attachment, state.Agent.AgentID, ports.NetworkStateActive, ports.NetworkAttachmentClosed,
+	) {
+		return service.advanceClosedRebuildNetwork(ctx, state, attachment)
+	}
 	if !networkAttachmentReady(attachment, state.Agent.AgentID) {
 		return service.failRebuildPreservingSource(
 			ctx, state, "invalid_network_attachment",
-			"Runtime Egress did not return the active attachment after fencing", false,
+			"Runtime Egress did not return the active open attachment", false,
 		)
 	}
-	return service.store.AdvanceAgentRebuild(ctx, ports.AdvanceAgentRebuild{
-		RequestID:     state.Operation.RequestID,
-		Fingerprint:   state.Operation.RequestFingerprint,
-		ExpectedPhase: domain.PhaseNetworkFence, NextPhase: domain.PhaseFlowReset,
-		NextChildRequestID: domain.ChildRequestID(state.Operation.RequestID, domain.PhaseFlowReset),
-		NetworkAttachment:  &attachment, Now: service.clock.Now(),
-	})
-}
-
-func (service *LifecycleService) resetRebuildFlows(
-	ctx context.Context, state ports.AgentRebuildState,
-) (ports.AgentRebuildState, error) {
-	assignment, err := service.egress.GetAgentPolicyAssignment(ctx, state.Agent.AgentID)
+	attachment, err = service.egress.SetAgentNetworkAttachment(
+		ctx, state.Agent.AgentID, ports.NetworkAttachmentClosed,
+		attachment.AttachmentResourceVersion,
+	)
 	if err != nil {
 		return service.handleRebuildDependencyFailure(ctx, state, "runtime-egress", err)
 	}
-	if !denyAllNetworkPolicy(assignment, state.Agent.AgentID) {
-		return service.handleRebuildDependencyFailure(
-			ctx, state, "runtime-egress",
-			&ports.DependencyError{Service: "runtime-egress", Code: "network_fence_lost", Retryable: true},
+	if !networkAttachmentInState(
+		attachment, state.Agent.AgentID, ports.NetworkStateActive, ports.NetworkAttachmentClosed,
+	) {
+		return service.failRebuildPreservingSource(
+			ctx, state, "network_attachment_close_unconfirmed",
+			"Runtime Egress did not confirm the closed attachment", false,
 		)
 	}
-	if err := service.egress.ResetAgentFlows(
-		ctx, state.Agent.AgentID, assignment.ResourceVersion,
-	); err != nil {
-		return service.handleRebuildDependencyFailure(ctx, state, "runtime-egress", err)
-	}
+	return service.advanceClosedRebuildNetwork(ctx, state, attachment)
+}
+
+func (service *LifecycleService) advanceClosedRebuildNetwork(
+	ctx context.Context, state ports.AgentRebuildState, attachment ports.NetworkAttachment,
+) (ports.AgentRebuildState, error) {
 	return service.store.AdvanceAgentRebuild(ctx, ports.AdvanceAgentRebuild{
 		RequestID:     state.Operation.RequestID,
 		Fingerprint:   state.Operation.RequestFingerprint,
-		ExpectedPhase: domain.PhaseFlowReset, NextPhase: domain.PhaseRuntimeUpdate,
+		ExpectedPhase: domain.PhaseNetworkFence, NextPhase: domain.PhaseRuntimeUpdate,
 		NextChildRequestID: domain.ChildRequestID(state.Operation.RequestID, domain.PhaseRuntimeUpdate),
-		Now:                service.clock.Now(),
+		NetworkAttachment:  &attachment, Now: service.clock.Now(),
 	})
 }
 
@@ -341,11 +278,9 @@ func (service *LifecycleService) reopenRebuildNetwork(
 	if state.Operation.NetworkAttachment == nil {
 		return ports.AgentRebuildState{}, fmt.Errorf("rebuild operation has no network attachment")
 	}
-	if state.Operation.NetworkPolicyAssignment == nil {
-		return ports.AgentRebuildState{}, fmt.Errorf("rebuild operation has no policy assignment")
-	}
-	attachment, err := service.restoreCapturedNetwork(
-		ctx, state.Agent.AgentID, *state.Operation.NetworkPolicyAssignment,
+	attachment, err := service.egress.SetAgentNetworkAttachment(
+		ctx, state.Agent.AgentID, ports.NetworkAttachmentOpen,
+		state.Operation.NetworkAttachment.AttachmentResourceVersion,
 	)
 	if err != nil {
 		return service.handleRebuildDependencyFailure(ctx, state, "runtime-egress", err)
@@ -446,11 +381,11 @@ func (service *LifecycleService) failRebuildPreservingSource(
 	detail string,
 	retryable bool,
 ) (ports.AgentRebuildState, error) {
-	if state.Operation.NetworkPolicyAssignment != nil {
-		if _, err := service.restoreCapturedNetwork(
-			ctx, state.Agent.AgentID, *state.Operation.NetworkPolicyAssignment,
+	if state.Operation.NetworkAttachment != nil {
+		if _, err := service.setCurrentNetworkAttachmentState(
+			ctx, state.Agent.AgentID, ports.NetworkAttachmentOpen,
 		); err != nil {
-			return state, fmt.Errorf("%w: runtime-egress policy restoration", ErrDependencyUnavailable)
+			return state, fmt.Errorf("%w: runtime-egress attachment restoration", ErrDependencyUnavailable)
 		}
 	}
 	return service.failAgentRebuild(ctx, state, code, detail, retryable, true, nil)
@@ -536,6 +471,7 @@ func (service *LifecycleService) failAgentRebuild(
 
 func validateRebuildAgentInput(input RebuildAgentInput) error {
 	if !validIdentifier(input.RequestID) || !validIdentifier(input.AgentID) ||
+		!validLifecycleCaller(input.OrganizationID, input.ActorPrincipalID) ||
 		!validIdentifier(input.TemplateID) || input.TemplateRevision < 1 {
 		return fmt.Errorf("%w: Agent rebuild input", ErrInvalidInput)
 	}
@@ -560,47 +496,17 @@ func validateRebuildSource(base ports.AgentLifecycleBase) error {
 	return nil
 }
 
-func (service *LifecycleService) restoreCapturedNetwork(
-	ctx context.Context, agentID string, original ports.NetworkPolicyAssignment,
-) (ports.NetworkAttachment, error) {
-	current, err := service.egress.GetAgentPolicyAssignment(ctx, agentID)
-	if err != nil {
-		return ports.NetworkAttachment{}, err
-	}
-	if !restorableNetworkPolicy(agentID, original, current) {
-		return ports.NetworkAttachment{}, &ports.DependencyError{
-			Service: "runtime-egress", Code: "policy_restore_conflict", Retryable: true,
-		}
-	}
-	restored, err := service.egress.AssignAgentPolicy(ctx, original, current.ResourceVersion)
-	if err != nil {
-		return ports.NetworkAttachment{}, err
-	}
-	if !sameNetworkPolicy(original, restored) {
-		return ports.NetworkAttachment{}, &ports.DependencyError{
-			Service: "runtime-egress", Code: "policy_restore_mismatch", Retryable: true,
-		}
-	}
-	return service.egress.EnsureAgentNetwork(ctx, agentID)
-}
-
-func networkPolicyAssignmentReady(assignment ports.NetworkPolicyAssignment, agentID string) bool {
-	return assignment.AgentID == agentID && strings.TrimSpace(assignment.PolicyID) != "" &&
-		assignment.Revision > 0 && assignment.ResourceVersion > 0
-}
-
-func sameNetworkPolicy(left ports.NetworkPolicyAssignment, right ports.NetworkPolicyAssignment) bool {
-	return left.AgentID == right.AgentID && left.PolicyID == right.PolicyID && left.Revision == right.Revision
-}
-
 func rebuildAgentFingerprint(input RebuildAgentInput) (string, error) {
 	return requestFingerprint(struct {
 		RequestID        string
+		OrganizationID   string
+		ActorPrincipalID string
 		AgentID          string
 		TemplateID       string
 		TemplateRevision int64
 	}{
-		RequestID: input.RequestID, AgentID: input.AgentID,
+		RequestID: input.RequestID, OrganizationID: input.OrganizationID,
+		ActorPrincipalID: input.ActorPrincipalID, AgentID: input.AgentID,
 		TemplateID: input.TemplateID, TemplateRevision: input.TemplateRevision,
 	})
 }

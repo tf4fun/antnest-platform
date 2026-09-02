@@ -1,0 +1,81 @@
+{
+  "contract": "antnest.edge-gateway.session",
+  "version": 3,
+  "routes": {
+    "status": {
+      "method": "GET",
+      "path": "/status",
+      "authentication": "none",
+      "success_status": 200
+    },
+    "login": {
+      "method": "POST",
+      "path": "/api/session/login",
+      "authentication": "none",
+      "success_status": 200,
+      "request_required": ["organization_slug", "email", "password"],
+      "response_required": ["principal", "expires_at"]
+    },
+    "get_session": {
+      "method": "GET",
+      "path": "/api/session",
+      "authentication": "browser_session",
+      "success_status": 200,
+      "response_required": ["principal"]
+    },
+    "logout": {
+      "method": "DELETE",
+      "path": "/api/session",
+      "authentication": "browser_session",
+      "success_status": 204
+    },
+    "admin": {
+      "method": "*",
+      "path": "/api/admin/{path...}",
+      "authentication": "administrator_session",
+      "success_status": "upstream",
+      "event_watch_authentication_lease": "bounded"
+    },
+    "reserved_oidc": {
+      "method": "*",
+      "path": "/protocol/oidc/{path...}",
+      "authentication": "none",
+      "success_status": "not_connected",
+      "unavailable_status": 503
+    },
+    "reserved_scim": {
+      "method": "*",
+      "path": "/scim/v2/{path...}",
+      "authentication": "protocol_defined_when_connected",
+      "success_status": "not_connected",
+      "unavailable_status": 503
+    },
+    "application": {
+      "method": "GET|HEAD",
+      "path": "/{path...}",
+      "authentication": "none",
+      "success_status": "upstream"
+    }
+  },
+  "trusted_headers": [
+    "X-Antnest-User-ID",
+    "X-Antnest-Organization-ID",
+    "X-Antnest-Membership-ID",
+    "X-Antnest-System-Role",
+    "X-Antnest-Organization-Role"
+  ],
+  "response_headers": ["X-Antnest-Trace-ID"],
+  "error": {
+    "required": ["code", "message"],
+    "codes": [
+      "invalid_request",
+      "unauthenticated",
+      "forbidden",
+      "csrf_failed",
+      "identity_unavailable",
+      "login_rate_limited",
+      "protocol_unavailable",
+      "console_unavailable"
+    ]
+  }
+}

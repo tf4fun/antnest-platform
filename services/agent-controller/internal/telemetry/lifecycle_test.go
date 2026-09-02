@@ -258,12 +258,6 @@ func (store *lifecycleStoreStub) BeginAgentRebuild(
 	return ports.AgentRebuildState{}, false, store.err
 }
 
-func (store *lifecycleStoreStub) RecordAgentRebuildPolicy(
-	context.Context, string, string, ports.NetworkPolicyAssignment, time.Time,
-) (ports.AgentRebuildState, error) {
-	return ports.AgentRebuildState{}, store.err
-}
-
 func (store *lifecycleStoreStub) SettleAgentRebuildDrain(
 	context.Context, string, string, string, time.Time,
 ) (ports.AgentRebuildState, error) {
@@ -298,12 +292,6 @@ func (store *lifecycleStoreStub) BeginAgentDisable(
 	context.Context, ports.BeginAgentDisable,
 ) (ports.AgentDisableState, bool, error) {
 	return ports.AgentDisableState{}, false, store.err
-}
-
-func (store *lifecycleStoreStub) RecordAgentDisablePolicy(
-	context.Context, string, string, ports.NetworkPolicyAssignment, time.Time,
-) (ports.AgentDisableState, error) {
-	return ports.AgentDisableState{}, store.err
 }
 
 func (store *lifecycleStoreStub) SettleAgentDisableDrain(

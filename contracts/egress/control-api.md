@@ -17,7 +17,7 @@ Control callers propagate W3C `traceparent` and optional `tracestate` headers.
 Invalid trace context is ignored without rejecting the business request.
 Runtime Egress does not accept `baggage` as part of its control contract.
 
-This document describes control contract revision 2.
+This document describes control contract revision 3.
 
 ## Status
 
@@ -47,10 +47,9 @@ while control mutations fail with a retryable stable error.
 
 The request has no body. Address-pool selection and allocator versions are
 private Egress implementation details. The operation is naturally idempotent:
-an Agent with an active allocation receives the same allocation. If that Agent
-is already fenced after an ambiguous mutation or cleanup failure, Ensure first
-repeats userspace-flow and conntrack cleanup and reopens traffic only after the
-durable assignment and packet snapshot have been reconciled.
+an Agent with an active allocation receives the same allocation and current
+attachment projection. Ensure never opens a closed Runtime attachment;
+lifecycle traffic changes only through the attachment CAS operation.
 
 ```json
 {
@@ -59,46 +58,49 @@ durable assignment and packet snapshot have been reconciled.
   "resolver_ipv4": "100.64.0.1",
   "packet_contract_revision": 1,
   "egress_endpoint": {"ipv4": "10.20.0.8", "port": 8092},
-  "state": "active"
+  "state": "active",
+  "network_resource_version": 1,
+  "attachment_state": "closed",
+  "attachment_resource_version": 1
 }
 ```
 
-A new Agent is assigned the built-in deny-all policy
+A new Agent is assigned the built-in deny-all desired policy
 `(policy_id="builtin/deny-all", revision=1)` before the allocation is returned.
-Allocation never exposes an address without a policy snapshot. This identifier
-is part of the control contract; lifecycle clients must not invent an alias.
+Its Runtime attachment starts closed. Egress installs a probe-only route that
+can answer the canonical local readiness probe defined by the Runtime packet
+contract, but cannot write TUN, create a flow, or reach an upstream. The desired
+policy and attachment state are independent durable records.
 
 ### Inspect
 
 `GET /internal/agent-networks/{agent_id}` returns the same document. A missing
 Agent returns `agent_network_not_found`.
 
-### Fence
+## Runtime Attachment
 
-`POST /internal/agent-networks/{agent_id}/fence`
-
-```json
-{"expected_resource_version": 7}
-```
-
-Fence publishes deny-all, drains packet writers, clears userspace flows, and
-clears matching conntrack before acknowledging. The resource version fences
-the lifecycle mutation against a newer policy assignment. Repeating a fence
-that already produced deny-all is idempotent; a stale fence cannot overwrite a
-policy restored by a newer lifecycle operation.
-
-### Reset Flows
-
-`POST /internal/agent-networks/{agent_id}/reset-flows`
+`PUT /internal/agent-network-attachments/{agent_id}`
 
 ```json
-{"expected_resource_version": 8}
+{"state":"closed","expected_resource_version":7}
 ```
 
-Reset drains packet writers and clears userspace flows and matching conntrack
-without changing the durable policy assignment. The request must name the
-current deny-all assignment version. Agent Controller calls it after the old
-Runtime is confirmed absent and before activating a candidate.
+Attachment state is `closed` or `open` and has its own monotonic resource
+version. It never rewrites the Agent's desired policy.
+
+- Closing first installs a hard fence, drains packet writers, and clears
+  userspace flow and conntrack state. It commits `closed` only after that
+  barrier succeeds, then publishes the probe-only route. Durable `closed`
+  therefore proves cleanup completed.
+- Opening commits the CAS, compiles the current desired policy, publishes the
+  route, and opens the packet gate only after the caller has established
+  Runtime readiness.
+- Every transition requires an active allocation. An exact same-state retry is
+  accepted only when its expected resource version is the current version or
+  the immediately preceding version consumed by that transition. Older-cycle
+  requests fail CAS and cannot replace newer state.
+
+The response is the complete Agent network document shown above.
 
 ### Release
 
@@ -108,11 +110,13 @@ Runtime is confirmed absent and before activating a candidate.
 {"expected_resource_version": 8}
 ```
 
-Release fences the Agent, completes flow and conntrack cleanup, and moves its
-address into durable quarantine. The request must name the current deny-all
-assignment version. Repeating release with that version returns the current
-state. An address becomes allocatable only after its quarantine deadline and a
-final cleanup check.
+Release requires the current **network** resource version and a closed
+attachment. Egress atomically validates and moves the allocation into durable
+quarantine before removing the probe-only route and repeating bounded cleanup.
+A stale release has no packet-gate or cleanup side effect. Repeating release
+reconciles cleanup and returns the current quarantined state.
+An address becomes allocatable only after its quarantine deadline and a final
+cleanup check.
 
 ## Policy Revisions
 
@@ -155,12 +159,12 @@ value returns `resource_version_conflict`. An exact retry that already produced
 the requested assignment returns the current assignment instead of advancing
 the version again.
 
-Before acknowledging a changed assignment, Egress compiles the policy, closes
-the Agent packet gate, commits the CAS, clears userspace flows and conntrack,
-publishes the new snapshot, and explicitly reopens the gate. A post-fence
-database ambiguity or cleanup failure leaves that Agent fenced until a complete
-retry reconciles durable state, kernel state, and the packet snapshot. Other
-Agents never wait for this Agent's gate.
+Policy assignment changes only desired policy. When the Runtime attachment is
+open, Egress closes the packet gate, commits the assignment CAS, clears flows,
+publishes the new policy snapshot, and reopens the gate. When the attachment is
+closed, the same CAS changes durable desired policy without opening traffic;
+the next attachment open applies the latest revision. Other Agents never wait
+for this Agent's gate.
 
 ```json
 {

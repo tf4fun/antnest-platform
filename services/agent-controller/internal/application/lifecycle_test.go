@@ -13,6 +13,36 @@ import (
 	"soft/antnest-platform/services/agent-controller/internal/ports"
 )
 
+func TestCreateAgentAcceptsDurableIntentWithoutCallingRuntimeDependencies(t *testing.T) {
+	t.Parallel()
+
+	store := &lifecycleStoreStub{}
+	dependencies := &lifecycleDependenciesStub{
+		network: validLifecycleNetwork(),
+		runtime: ports.RuntimeOperation{
+			State: "completed", Effect: "completed", RuntimeRevision: "runtime-revision-1",
+			RuntimeExecutionID: "execution-identity-1", MCPEndpoint: "http://runtime-agent:8091/mcp",
+			LifecycleState: "ready", Health: "healthy",
+		},
+	}
+	service := newLifecycleTestService(t, store, dependencies)
+
+	result, err := service.CreateAgent(
+		context.Background(), lifecycleCreateInput("request-accepted-intent"),
+	)
+	if err != nil {
+		t.Fatalf("accept Agent create: %v", err)
+	}
+	if len(dependencies.calls) != 0 {
+		t.Fatalf("request path called lifecycle dependencies: %v", dependencies.calls)
+	}
+	if result.Operation.State != domain.OperationRunning ||
+		result.Operation.Phase != domain.PhaseNetworkEnsure ||
+		result.Agent.LifecycleState != domain.AgentProvisioning {
+		t.Fatalf("accepted lifecycle intent = %+v", result)
+	}
+}
+
 func TestCreateAgentMaterializesSpecAndPublishesOnlyAfterRuntimeReady(t *testing.T) {
 	t.Parallel()
 
@@ -24,6 +54,8 @@ func TestCreateAgentMaterializesSpecAndPublishesOnlyAfterRuntimeReady(t *testing
 			AgentID: "agent_expected", TunnelIPv4: "100.64.0.2",
 			ResolverIPv4: "100.64.0.1", PacketContractRevision: 1,
 			EgressIPv4: "10.20.0.8", EgressPort: 8092, State: "active",
+			NetworkResourceVersion: 1, AttachmentState: ports.NetworkAttachmentClosed,
+			AttachmentResourceVersion: 1,
 		},
 		runtime: ports.RuntimeOperation{
 			State: "completed", Effect: "completed", RuntimeRevision: "runtime-revision-1",
@@ -41,7 +73,7 @@ func TestCreateAgentMaterializesSpecAndPublishesOnlyAfterRuntimeReady(t *testing
 		WithIdentityDirectory(activeIdentityDirectory()),
 	)
 
-	result, err := service.CreateAgent(context.Background(), CreateAgentInput{
+	result, err := executeCreateForTest(service, context.Background(), CreateAgentInput{
 		RequestID: "request-create-agent", OrganizationID: "org-1",
 		OwnerUserID: "user-1", Name: "Research Agent",
 		TemplateID: "template-1", TemplateRevision: 1,
@@ -50,7 +82,10 @@ func TestCreateAgentMaterializesSpecAndPublishesOnlyAfterRuntimeReady(t *testing
 		t.Fatalf("create Agent: %v", err)
 	}
 
-	if !reflect.DeepEqual(dependencies.calls, []string{"egress.ensure", "runtime.initialize", "egress.ensure"}) {
+	if !reflect.DeepEqual(
+		dependencies.calls,
+		[]string{"egress.ensure", "runtime.initialize", "egress.attachment.open"},
+	) {
 		t.Fatalf("dependency order = %v", dependencies.calls)
 	}
 	if result.Agent.LifecycleState != domain.AgentAvailable || result.Operation.State != domain.OperationCompleted {
@@ -100,7 +135,7 @@ func TestCreateAgentCompletedRetryDoesNotRepeatDependencies(t *testing.T) {
 		WithIdentityDirectory(&identityDirectoryStub{err: errors.New("identity unavailable")}),
 	)
 
-	result, err := service.CreateAgent(context.Background(), CreateAgentInput{
+	result, err := executeCreateForTest(service, context.Background(), CreateAgentInput{
 		RequestID: "request-create-agent", OrganizationID: "org-1",
 		OwnerUserID: "user-1", Name: "Research Agent",
 		TemplateID: "template-1", TemplateRevision: 1,
@@ -156,7 +191,7 @@ func TestCreateAgentRunningRetryKeepsPersistedAuthorizationDecision(t *testing.T
 		WithIdentityDirectory(identities),
 	)
 
-	result, err := service.CreateAgent(context.Background(), input)
+	result, err := executeCreateForTest(service, context.Background(), input)
 	if err != nil {
 		t.Fatalf("continue persisted create intent: %v", err)
 	}
@@ -184,7 +219,9 @@ func TestCreateAgentReplaysConcurrentIntentAfterIdentityFailure(t *testing.T) {
 		fixedClock{now: time.Unix(20, 0).UTC()}, WithIdentityDirectory(identities),
 	)
 
-	result, err := service.CreateAgent(context.Background(), lifecycleCreateInput("request-create-agent"))
+	result, err := executeCreateForTest(
+		service, context.Background(), lifecycleCreateInput("request-create-agent"),
+	)
 	if err != nil {
 		t.Fatalf("replay concurrently persisted create intent: %v", err)
 	}
@@ -228,7 +265,8 @@ func TestCreateAgentDoesNotStartRuntimeWithInactiveNetwork(t *testing.T) {
 	dependencies := &lifecycleDependenciesStub{network: ports.NetworkAttachment{
 		TunnelIPv4: "100.64.0.2", ResolverIPv4: "100.64.0.1",
 		PacketContractRevision: 1, EgressIPv4: "10.20.0.8", EgressPort: 8092,
-		State: "quarantined",
+		State: ports.NetworkStateQuarantined, NetworkResourceVersion: 2,
+		AttachmentState: ports.NetworkAttachmentClosed, AttachmentResourceVersion: 1,
 	}}
 	service := NewLifecycleService(
 		lifecycleSpecSourceStub{template: template, model: model},
@@ -236,7 +274,7 @@ func TestCreateAgentDoesNotStartRuntimeWithInactiveNetwork(t *testing.T) {
 		WithIdentityDirectory(activeIdentityDirectory()),
 	)
 
-	result, err := service.CreateAgent(context.Background(), CreateAgentInput{
+	result, err := executeCreateForTest(service, context.Background(), CreateAgentInput{
 		RequestID: "request-inactive-network", OrganizationID: "org-1",
 		OwnerUserID: "user-1", Name: "Research Agent",
 		TemplateID: "template-1", TemplateRevision: 1,
@@ -268,7 +306,9 @@ func TestCreateAgentRejectsRuntimeWithoutConfirmedEffect(t *testing.T) {
 	}
 	service := newLifecycleTestService(t, store, dependencies)
 
-	result, err := service.CreateAgent(context.Background(), lifecycleCreateInput("request-unconfirmed-effect"))
+	result, err := executeCreateForTest(
+		service, context.Background(), lifecycleCreateInput("request-unconfirmed-effect"),
+	)
 	if err != nil {
 		t.Fatalf("create Agent: %v", err)
 	}
@@ -341,7 +381,9 @@ func TestCreateAgentRejectsChangedNetworkAtPublicationBarrier(t *testing.T) {
 	}
 	service := newLifecycleTestService(t, store, dependencies)
 
-	result, err := service.CreateAgent(context.Background(), lifecycleCreateInput("request-network-changed"))
+	result, err := executeCreateForTest(
+		service, context.Background(), lifecycleCreateInput("request-network-changed"),
+	)
 	if err != nil {
 		t.Fatalf("create Agent: %v", err)
 	}
@@ -371,7 +413,9 @@ func TestCreateAgentConvergesAfterConcurrentExactReplay(t *testing.T) {
 			}
 			service := newLifecycleTestService(t, store, dependencies)
 
-			result, err := service.CreateAgent(context.Background(), lifecycleCreateInput("request-concurrent-"+phase))
+			result, err := executeCreateForTest(
+				service, context.Background(), lifecycleCreateInput("request-concurrent-"+phase),
+			)
 			if err != nil {
 				t.Fatalf("converge exact replay: %v", err)
 			}
@@ -455,24 +499,22 @@ func (dependency *lifecycleDependenciesStub) GetAgentNetwork(
 	return ports.NetworkAttachment{}, errors.New("unexpected Egress network read")
 }
 
-func (dependency *lifecycleDependenciesStub) GetAgentPolicyAssignment(
-	context.Context, string,
-) (ports.NetworkPolicyAssignment, error) {
-	return ports.NetworkPolicyAssignment{}, errors.New("unexpected Egress policy read")
-}
-
-func (dependency *lifecycleDependenciesStub) AssignAgentPolicy(
-	context.Context, ports.NetworkPolicyAssignment, uint64,
-) (ports.NetworkPolicyAssignment, error) {
-	return ports.NetworkPolicyAssignment{}, errors.New("unexpected Egress policy assignment")
-}
-
-func (dependency *lifecycleDependenciesStub) FenceAgentNetwork(context.Context, string, uint64) error {
-	return errors.New("unexpected Egress network fence")
-}
-
-func (dependency *lifecycleDependenciesStub) ResetAgentFlows(context.Context, string, uint64) error {
-	return errors.New("unexpected Egress flow reset")
+func (dependency *lifecycleDependenciesStub) SetAgentNetworkAttachment(
+	_ context.Context, agentID string, state string, _ uint64,
+) (ports.NetworkAttachment, error) {
+	dependency.calls = append(dependency.calls, "egress.attachment."+state)
+	result := dependency.network
+	if dependency.networkIndex < len(dependency.networkResults) {
+		result = dependency.networkResults[dependency.networkIndex]
+	}
+	dependency.networkIndex++
+	result.AgentID = agentID
+	result.AttachmentState = state
+	if result.AttachmentResourceVersion == 0 {
+		result.AttachmentResourceVersion = 1
+	}
+	result.AttachmentResourceVersion++
+	return result, nil
 }
 
 func (dependency *lifecycleDependenciesStub) ReleaseAgentNetwork(
@@ -558,12 +600,6 @@ func (store *lifecycleStoreStub) BeginAgentRebuild(
 	return ports.AgentRebuildState{}, false, errors.New("unexpected Agent rebuild begin")
 }
 
-func (store *lifecycleStoreStub) RecordAgentRebuildPolicy(
-	context.Context, string, string, ports.NetworkPolicyAssignment, time.Time,
-) (ports.AgentRebuildState, error) {
-	return ports.AgentRebuildState{}, errors.New("unexpected Agent rebuild policy record")
-}
-
 func (store *lifecycleStoreStub) SettleAgentRebuildDrain(
 	context.Context, string, string, string, time.Time,
 ) (ports.AgentRebuildState, error) {
@@ -598,12 +634,6 @@ func (store *lifecycleStoreStub) BeginAgentDisable(
 	context.Context, ports.BeginAgentDisable,
 ) (ports.AgentDisableState, bool, error) {
 	return ports.AgentDisableState{}, false, errors.New("unexpected Agent disable begin")
-}
-
-func (store *lifecycleStoreStub) RecordAgentDisablePolicy(
-	context.Context, string, string, ports.NetworkPolicyAssignment, time.Time,
-) (ports.AgentDisableState, error) {
-	return ports.AgentDisableState{}, errors.New("unexpected Agent disable policy record")
 }
 
 func (store *lifecycleStoreStub) SettleAgentDisableDrain(
@@ -717,10 +747,12 @@ func (store *lifecycleStoreStub) BeginAgentCreate(
 	if store.replayed {
 		return store.beginState, true, nil
 	}
-	return ports.AgentCreateState{
+	store.beginState = ports.AgentCreateState{
 		Agent: input.Agent, Access: input.Access, Spec: input.Spec,
 		Operation: input.Operation,
-	}, false, nil
+	}
+	store.replayed = true
+	return store.beginState, false, nil
 }
 
 func (store *lifecycleStoreStub) RecordCreateNetwork(
@@ -777,6 +809,7 @@ func (store *lifecycleStoreStub) PublishAgentCreate(
 	state.Agent.UpdatedAt = input.Now
 	state.Operation.Phase = domain.PhaseCompleted
 	state.Operation.State = domain.OperationCompleted
+	state.Operation.NetworkAttachment = &input.NetworkAttachment
 	state.Operation.RecoveryOwner = ""
 	state.Operation.RecoveryLeaseUntil = nil
 	state.Operation.ChildRequestID = ""
@@ -885,7 +918,8 @@ func validLifecycleNetwork() ports.NetworkAttachment {
 	return ports.NetworkAttachment{
 		TunnelIPv4: "100.64.0.2", ResolverIPv4: "100.64.0.1",
 		PacketContractRevision: 1, EgressIPv4: "10.20.0.8", EgressPort: 8092,
-		State: "active",
+		State: ports.NetworkStateActive, NetworkResourceVersion: 1,
+		AttachmentState: ports.NetworkAttachmentClosed, AttachmentResourceVersion: 1,
 	}
 }
 

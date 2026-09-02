@@ -1,5 +1,14 @@
+use schemars::JsonSchema;
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+#[derive(Clone, Copy, Debug, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ToolEffectState {
+    None,
+    Settled,
+    Unknown,
+}
 
 macro_rules! define_tool_error_codes {
     ($($variant:ident => $value:literal),+ $(,)?) => {
@@ -81,13 +90,36 @@ impl<'de> Deserialize<'de> for ToolErrorCode {
 pub(crate) struct ToolError {
     pub(crate) code: ToolErrorCode,
     pub(crate) message: String,
+    pub(crate) effect_state: ToolEffectState,
 }
 
 impl ToolError {
     pub(crate) fn new(code: ToolErrorCode, message: impl std::fmt::Display) -> Self {
+        let effect_state = if code == ToolErrorCode::OutcomeUnknown {
+            ToolEffectState::Unknown
+        } else {
+            ToolEffectState::None
+        };
+        Self::with_effect(code, message, effect_state)
+    }
+
+    pub(crate) fn unknown(code: ToolErrorCode, message: impl std::fmt::Display) -> Self {
+        Self::with_effect(code, message, ToolEffectState::Unknown)
+    }
+
+    pub(crate) fn outcome_unknown(message: impl std::fmt::Display) -> Self {
+        Self::unknown(ToolErrorCode::OutcomeUnknown, message)
+    }
+
+    fn with_effect(
+        code: ToolErrorCode,
+        message: impl std::fmt::Display,
+        effect_state: ToolEffectState,
+    ) -> Self {
         Self {
             code,
             message: message.to_string(),
+            effect_state,
         }
     }
 

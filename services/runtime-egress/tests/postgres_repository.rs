@@ -1,12 +1,112 @@
 use std::{env, sync::Arc, time::Duration};
 
 use antnest_runtime_egress::{
-    domain::{AgentId, NetworkState, PolicyId},
+    domain::{AgentId, AttachmentState, NetworkState, PolicyId},
     policy::PolicySpec,
     repository::{
         DatabaseTlsMode, PostgresRepository, Repository, RepositoryConfig, RepositoryError,
     },
 };
+
+#[tokio::test]
+#[ignore = "requires ANTNEST_EGRESS_TEST_DATABASE_URL"]
+async fn postgres_enforces_attachment_fencing_and_replay_bounds() {
+    let database_url =
+        env::var("ANTNEST_EGRESS_TEST_DATABASE_URL").expect("ANTNEST_EGRESS_TEST_DATABASE_URL");
+    let suffix = format!("{}-{}", std::process::id(), monotonic_suffix());
+    let repository = PostgresRepository::connect(
+        &database_url,
+        DatabaseTlsMode::Disable,
+        RepositoryConfig {
+            pool_id: format!("attachment-{suffix}"),
+            tunnel_cidr: "100.64.0.0/29".parse().unwrap(),
+            resolver_ipv4: "100.64.0.1".parse().unwrap(),
+            quarantine: Duration::from_secs(300),
+        },
+    )
+    .await
+    .expect("connect and migrate");
+    let agent = AgentId::parse(format!("agent-attachment-{suffix}")).unwrap();
+    repository
+        .ensure_agent_network(agent.clone())
+        .await
+        .unwrap();
+
+    let recovered = repository.active_bindings().await.unwrap();
+    assert!(recovered.iter().any(|binding| {
+        binding.network.agent_id == agent && binding.attachment.state == AttachmentState::Closed
+    }));
+
+    let opened = repository
+        .compare_and_swap_attachment(&agent, AttachmentState::Open, 1)
+        .await
+        .unwrap();
+    assert_eq!(opened.resource_version, 2);
+    assert_eq!(
+        repository
+            .compare_and_swap_attachment(&agent, AttachmentState::Open, 1)
+            .await
+            .unwrap(),
+        opened
+    );
+    assert_eq!(
+        repository
+            .quarantine_agent_network(&agent, 1, std::time::SystemTime::now())
+            .await,
+        Err(RepositoryError::AgentNetworkUnavailable)
+    );
+    let first_close = repository
+        .compare_and_swap_attachment(&agent, AttachmentState::Closed, 2)
+        .await
+        .unwrap();
+    let reopened = repository
+        .compare_and_swap_attachment(&agent, AttachmentState::Open, first_close.resource_version)
+        .await
+        .unwrap();
+    repository
+        .compare_and_swap_attachment(&agent, AttachmentState::Closed, reopened.resource_version)
+        .await
+        .unwrap();
+    assert_eq!(
+        repository
+            .compare_and_swap_attachment(&agent, AttachmentState::Closed, 2)
+            .await,
+        Err(RepositoryError::ResourceVersionConflict)
+    );
+
+    let quarantined = repository
+        .quarantine_agent_network(&agent, 1, std::time::SystemTime::now())
+        .await
+        .unwrap();
+    assert_eq!(quarantined.state, NetworkState::Quarantined);
+    assert_eq!(
+        repository
+            .quarantine_agent_network(&agent, 1, std::time::SystemTime::now())
+            .await
+            .unwrap(),
+        quarantined
+    );
+    assert_eq!(
+        repository
+            .compare_and_swap_attachment(
+                &agent,
+                AttachmentState::Open,
+                repository
+                    .runtime_attachment(&agent)
+                    .await
+                    .unwrap()
+                    .resource_version,
+            )
+            .await,
+        Err(RepositoryError::AgentNetworkUnavailable)
+    );
+    assert!(
+        repository
+            .delete_quarantined(&agent, quarantined.resource_version)
+            .await
+            .unwrap()
+    );
+}
 
 #[tokio::test]
 #[ignore = "requires ANTNEST_EGRESS_TEST_DATABASE_URL"]
@@ -70,7 +170,7 @@ async fn postgres_preserves_network_and_policy_semantics() {
     );
 
     let released = repository
-        .quarantine_agent_network(&agent, std::time::SystemTime::now())
+        .quarantine_agent_network(&agent, 1, std::time::SystemTime::now())
         .await
         .unwrap();
     assert_eq!(released.state, NetworkState::Quarantined);
@@ -246,7 +346,7 @@ async fn one_agents_row_lock_does_not_block_an_unrelated_agent() {
     let blocked_agent_for_task = blocked_agent.clone();
     let blocked = tokio::spawn(async move {
         blocked_repository
-            .quarantine_agent_network(&blocked_agent_for_task, std::time::SystemTime::now())
+            .quarantine_agent_network(&blocked_agent_for_task, 1, std::time::SystemTime::now())
             .await
     });
 
@@ -335,7 +435,7 @@ async fn one_agents_lock_timeout_is_scoped_and_bounded() {
 
     let started = tokio::time::Instant::now();
     let result = repository
-        .quarantine_agent_network(&agent, std::time::SystemTime::now())
+        .quarantine_agent_network(&agent, 1, std::time::SystemTime::now())
         .await;
     assert!(matches!(result, Err(RepositoryError::OperationFailed(_))));
     assert!(started.elapsed() < Duration::from_secs(6));

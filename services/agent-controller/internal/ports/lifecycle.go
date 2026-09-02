@@ -10,7 +10,11 @@ import (
 )
 
 const (
-	BuiltinDenyAllPolicyID = "builtin/deny-all"
+	NetworkStateActive      = "active"
+	NetworkStateQuarantined = "quarantined"
+
+	NetworkAttachmentClosed = "closed"
+	NetworkAttachmentOpen   = "open"
 
 	NetworkReleaseQuarantined       = "quarantined"
 	NetworkReleaseAuthoritativeNone = "authoritative_absent"
@@ -19,19 +23,21 @@ const (
 	RunReleaseOutcomeNotBlocked = "not_blocked"
 	RunReleaseOutcomeRetained   = "retained_source_not_runtime_mcp"
 
-	EventAgentCreateRequested  = "agent_create_requested"
-	EventAgentReady            = "agent_ready"
-	EventAgentBuildFailed      = "agent_build_failed"
-	EventAgentRebuildRequested = "agent_rebuild_requested"
-	EventAgentRebuilt          = "agent_rebuilt"
-	EventAgentDisableRequested = "agent_disable_requested"
-	EventAgentDisabled         = "agent_disabled"
-	EventAgentDisableFailed    = "agent_disable_failed"
-	EventAgentEnableRequested  = "agent_enable_requested"
-	EventAgentEnabled          = "agent_enabled"
-	EventAgentEnableFailed     = "agent_enable_failed"
-	EventAgentDeleteRequested  = "agent_delete_requested"
-	EventAgentDeleted          = "agent_deleted"
+	EventAgentCreateRequested      = "agent_create_requested"
+	EventAgentReady                = "agent_ready"
+	EventAgentBuildFailed          = "agent_build_failed"
+	EventAgentRebuildRequested     = "agent_rebuild_requested"
+	EventAgentRebuilt              = "agent_rebuilt"
+	EventAgentDisableRequested     = "agent_disable_requested"
+	EventAgentDisabled             = "agent_disabled"
+	EventAgentDisableFailed        = "agent_disable_failed"
+	EventAgentEnableRequested      = "agent_enable_requested"
+	EventAgentEnabled              = "agent_enabled"
+	EventAgentEnableFailed         = "agent_enable_failed"
+	EventAgentDeleteRequested      = "agent_delete_requested"
+	EventAgentDeleted              = "agent_deleted"
+	EventAgentLifecycleQuarantined = "agent_lifecycle_quarantined"
+	EventAgentRuntimeRestarted     = "agent_runtime_restarted"
 )
 
 var ErrRunAdmissionRuntimeMismatch = errors.New("run admission Runtime does not match lifecycle barrier")
@@ -42,20 +48,16 @@ type AgentSpecSource interface {
 }
 
 type NetworkAttachment struct {
-	AgentID                string `json:"agent_id"`
-	TunnelIPv4             string `json:"tunnel_ipv4"`
-	ResolverIPv4           string `json:"resolver_ipv4"`
-	PacketContractRevision uint32 `json:"packet_contract_revision"`
-	EgressIPv4             string `json:"egress_ipv4"`
-	EgressPort             uint16 `json:"egress_port"`
-	State                  string `json:"state"`
-}
-
-type NetworkPolicyAssignment struct {
-	AgentID         string `json:"agent_id"`
-	PolicyID        string `json:"policy_id"`
-	Revision        uint64 `json:"revision"`
-	ResourceVersion uint64 `json:"resource_version"`
+	AgentID                   string `json:"agent_id"`
+	TunnelIPv4                string `json:"tunnel_ipv4"`
+	ResolverIPv4              string `json:"resolver_ipv4"`
+	PacketContractRevision    uint32 `json:"packet_contract_revision"`
+	EgressIPv4                string `json:"egress_ipv4"`
+	EgressPort                uint16 `json:"egress_port"`
+	State                     string `json:"state"`
+	NetworkResourceVersion    uint64 `json:"network_resource_version"`
+	AttachmentState           string `json:"attachment_state"`
+	AttachmentResourceVersion uint64 `json:"attachment_resource_version"`
 }
 
 type RuntimeConfiguration struct {
@@ -94,10 +96,7 @@ type RuntimeAbsenceProof struct {
 type EgressClient interface {
 	GetAgentNetwork(context.Context, string) (NetworkAttachment, error)
 	EnsureAgentNetwork(context.Context, string) (NetworkAttachment, error)
-	GetAgentPolicyAssignment(context.Context, string) (NetworkPolicyAssignment, error)
-	AssignAgentPolicy(context.Context, NetworkPolicyAssignment, uint64) (NetworkPolicyAssignment, error)
-	FenceAgentNetwork(context.Context, string, uint64) error
-	ResetAgentFlows(context.Context, string, uint64) error
+	SetAgentNetworkAttachment(context.Context, string, string, uint64) (NetworkAttachment, error)
 	ReleaseAgentNetwork(context.Context, string, uint64) (NetworkAttachment, error)
 }
 
@@ -177,7 +176,6 @@ type LifecycleOperationRecord struct {
 	TargetSpecRevisionID        string
 	ChildRequestID              string
 	NetworkAttachment           *NetworkAttachment
-	NetworkPolicyAssignment     *NetworkPolicyAssignment
 	SourceRuntimeInspection     *RuntimeInspection
 	SourceRuntimeAbsenceProof   *RuntimeAbsenceProof
 	RuntimeResult               *RuntimeOperation
@@ -259,7 +257,6 @@ type AgentEnableBase struct {
 	Agent                   AgentRecord
 	Spec                    AgentSpecRecord
 	LastSuccessfulExecution ExecutionRecord
-	NetworkPolicyAssignment NetworkPolicyAssignment
 	NextExecutionRevision   int64
 }
 
@@ -289,11 +286,12 @@ type BeginAgentCreate struct {
 }
 
 type PublishAgentCreate struct {
-	RequestID   string
-	Fingerprint string
-	Execution   ExecutionRecord
-	ReadyEvent  AgentEventRecord
-	Now         time.Time
+	RequestID         string
+	Fingerprint       string
+	NetworkAttachment NetworkAttachment
+	Execution         ExecutionRecord
+	ReadyEvent        AgentEventRecord
+	Now               time.Time
 }
 
 type FailAgentCreate struct {
@@ -373,6 +371,7 @@ type AdvanceAgentDisable struct {
 	ExpectedPhase      domain.OperationPhase
 	NextPhase          domain.OperationPhase
 	NextChildRequestID string
+	NetworkAttachment  *NetworkAttachment
 	RuntimeResult      *RuntimeOperation
 	RunReleaseEvent    RunAdmissionEvent
 	Now                time.Time
@@ -483,18 +482,12 @@ type LifecycleStore interface {
 	FailAgentCreate(context.Context, FailAgentCreate) (AgentCreateState, error)
 	ReplayAgentRebuild(context.Context, string, string) (AgentRebuildState, bool, error)
 	BeginAgentRebuild(context.Context, BeginAgentRebuild) (AgentRebuildState, bool, error)
-	RecordAgentRebuildPolicy(
-		context.Context, string, string, NetworkPolicyAssignment, time.Time,
-	) (AgentRebuildState, error)
 	SettleAgentRebuildDrain(context.Context, string, string, string, time.Time) (AgentRebuildState, error)
 	AdvanceAgentRebuild(context.Context, AdvanceAgentRebuild) (AgentRebuildState, error)
 	PublishAgentRebuild(context.Context, PublishAgentRebuild) (AgentRebuildState, error)
 	FailAgentRebuild(context.Context, FailAgentRebuild) (AgentRebuildState, error)
 	ReplayAgentDisable(context.Context, string, string) (AgentDisableState, bool, error)
 	BeginAgentDisable(context.Context, BeginAgentDisable) (AgentDisableState, bool, error)
-	RecordAgentDisablePolicy(
-		context.Context, string, string, NetworkPolicyAssignment, time.Time,
-	) (AgentDisableState, error)
 	SettleAgentDisableDrain(context.Context, string, string, string, time.Time) (AgentDisableState, error)
 	AdvanceAgentDisable(context.Context, AdvanceAgentDisable) (AgentDisableState, error)
 	PublishAgentDisable(context.Context, PublishAgentDisable) (AgentDisableState, error)

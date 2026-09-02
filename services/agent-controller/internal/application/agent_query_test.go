@@ -55,6 +55,28 @@ func TestGetAgentMapsMissingProjectionAndRejectsInvalidIdentity(t *testing.T) {
 	}
 }
 
+func TestGetAgentForOrganizationMasksCrossOrganizationProjection(t *testing.T) {
+	t.Parallel()
+
+	store := &agentQueryStoreStub{record: ports.AgentRecord{
+		AgentID: "agent-1", OrganizationID: "org-1", OwnerUserID: "user-1",
+		Name: "Agent", DesiredState: domain.DesiredEnabled,
+		LifecycleState: domain.AgentAvailable, AccessRevision: "access-1",
+		AggregateSequence: 1, CreatedAt: time.Unix(1, 0).UTC(), UpdatedAt: time.Unix(1, 0).UTC(),
+	}}
+	service := NewAgentQueryService(store)
+
+	_, err := service.GetAgentForOrganization(context.Background(), "org-2", "agent-1")
+	if !errors.Is(err, ErrAgentNotFound) || store.calls != 1 {
+		t.Fatalf("cross-organization Agent error=%v calls=%d", err, store.calls)
+	}
+	store.calls = 0
+	_, err = service.GetAgentForOrganization(context.Background(), "not valid", "agent-1")
+	if !errors.Is(err, ErrInvalidInput) || store.calls != 0 {
+		t.Fatalf("invalid scope error=%v calls=%d", err, store.calls)
+	}
+}
+
 func TestListAgentsUsesStableOpaqueKeysetCursor(t *testing.T) {
 	t.Parallel()
 

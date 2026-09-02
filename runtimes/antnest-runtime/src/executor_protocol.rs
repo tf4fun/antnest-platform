@@ -38,6 +38,13 @@ impl ExecutorFailure {
             outcome: Outcome::Unknown,
         }
     }
+
+    pub(crate) fn into_tool_error(self) -> ToolError {
+        match self.outcome {
+            Outcome::Known => ToolError::new(self.code, self.message),
+            Outcome::Unknown => ToolError::unknown(self.code, self.message),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -309,9 +316,18 @@ fn decode_request<T: DeserializeOwned>(input: &[u8]) -> Result<T, ToolError> {
 fn encode_reply<T: Serialize>(result: Result<T, ToolError>) -> Result<Vec<u8>, serde_json::Error> {
     let reply = match result {
         Ok(result) => ExecutorReply::Success { result },
-        Err(error) => ExecutorReply::Failure {
-            error: ExecutorFailure::known(error.code, error.message),
-        },
+        Err(error) => {
+            let failure = match error.effect_state {
+                crate::tool_error::ToolEffectState::Unknown => {
+                    ExecutorFailure::unknown(error.code, error.message)
+                }
+                crate::tool_error::ToolEffectState::None
+                | crate::tool_error::ToolEffectState::Settled => {
+                    ExecutorFailure::known(error.code, error.message)
+                }
+            };
+            ExecutorReply::Failure { error: failure }
+        }
     };
     encode(&reply)
 }
@@ -335,12 +351,12 @@ mod tests {
         BashRequest, EditRequest, EnvironmentVariable, ReadRequest, ReadResult, RootName, RootPath,
         WriteRequest,
     };
-    use crate::tool_error::{ToolError, ToolErrorCode};
+    use crate::tool_error::{ToolEffectState, ToolError, ToolErrorCode};
 
     use super::{
-        decode_bash_request, decode_edit_request, decode_read_reply, decode_read_request,
-        decode_write_request, encode_bash_request, encode_edit_request, encode_read_reply,
-        encode_read_request, encode_write_request,
+        Outcome, decode_bash_request, decode_edit_request, decode_read_reply, decode_read_request,
+        decode_write_reply, decode_write_request, encode_bash_request, encode_edit_request,
+        encode_read_reply, encode_read_request, encode_write_reply, encode_write_request,
     };
 
     #[test]
@@ -384,6 +400,19 @@ mod tests {
         .unwrap();
         let failure = decode_read_reply(&encoded).unwrap().unwrap_err();
         assert_eq!(failure.code, ToolErrorCode::ReadFailed);
+        assert_eq!(failure.outcome, Outcome::Known);
+
+        let encoded = encode_write_reply(Err(ToolError::outcome_unknown(
+            "write may have committed before the executor response was lost",
+        )))
+        .unwrap();
+        let failure = decode_write_reply(&encoded).unwrap().unwrap_err();
+        assert_eq!(failure.code, ToolErrorCode::OutcomeUnknown);
+        assert_eq!(failure.outcome, Outcome::Unknown);
+        assert_eq!(
+            failure.into_tool_error().effect_state,
+            ToolEffectState::Unknown
+        );
 
         let unknown =
             br#"{"status":"failure","error":{"code":"made_up","message":"bad","outcome":"known"}}"#;

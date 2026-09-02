@@ -35,6 +35,11 @@ describe("OfficialMcpDialer", () => {
       ).resolves.toEqual({
         content: [{ type: "text", text: "hello" }],
         isError: false,
+        structuredContent: {
+          effect_source: null,
+          effect_state: "settled",
+          echoed: "hello",
+        },
       });
       expect(fixture.executionIds).toEqual(["execution-1", "execution-1", "execution-1"]);
     } finally {
@@ -61,7 +66,15 @@ async function startMcpFixture(): Promise<{
           description: "Echo text",
           inputSchema: z.object({ text: z.string() }),
         },
-        ({ text }) => Promise.resolve({ content: [{ type: "text", text }] }),
+        ({ text }) =>
+          Promise.resolve({
+            content: [{ type: "text", text }],
+            structuredContent: {
+              echoed: text,
+              effect_state: "settled",
+              effect_source: null,
+            },
+          }),
       );
       return server;
     },

@@ -61,6 +61,22 @@ func (service *AgentQueryService) GetAgent(
 	return agentView(record), nil
 }
 
+func (service *AgentQueryService) GetAgentForOrganization(
+	ctx context.Context, organizationID string, agentID string,
+) (AgentView, error) {
+	if !validIdentifier(organizationID) || !validIdentifier(agentID) {
+		return AgentView{}, fmt.Errorf("%w: Agent scope", ErrInvalidInput)
+	}
+	record, err := service.store.GetAgent(ctx, agentID)
+	if errors.Is(err, ports.ErrNotFound) || err == nil && record.OrganizationID != organizationID {
+		return AgentView{}, fmt.Errorf("%w: %s", ErrAgentNotFound, agentID)
+	}
+	if err != nil {
+		return AgentView{}, fmt.Errorf("get Agent projection: %w", err)
+	}
+	return agentView(record), nil
+}
+
 func (service *AgentQueryService) ListAgents(
 	ctx context.Context, input ListAgentsInput,
 ) (AgentPage, error) {

@@ -81,7 +81,7 @@ func TestMachineControlContractMatchesRegisteredBoundary(t *testing.T) {
 	readStrictContractJSON(t, filepath.Join(root, "contracts/agent-controller/control-contract.json"), &contract)
 	var schema machineControlSchema
 	readContractJSON(t, filepath.Join(root, "contracts/agent-controller/control-api.schema.json"), &schema)
-	if contract.Revision != 4 {
+	if contract.Revision != 5 {
 		t.Fatalf("control contract revision = %d", contract.Revision)
 	}
 	if contract.MediaTypes.Request != "application/json" ||
@@ -239,14 +239,18 @@ func TestMachineControlSchemaMatchesGoWireTypes(t *testing.T) {
 			ContextPolicyVersion: domain.ContextPolicyV1, Runtime: runtimeInput,
 		},
 		"create_agent_request": createAgentRequest{
-			RequestID: "request-1", OrganizationID: "org-1", OwnerUserID: "user-1",
-			Name: "Agent", TemplateID: "template-1", TemplateRevision: 1,
+			RequestID: "request-1", OrganizationID: "org-1", ActorPrincipalID: "admin-1",
+			OwnerUserID: "user-1",
+			Name:        "Agent", TemplateID: "template-1", TemplateRevision: 1,
 		},
 		"rebuild_agent_request": rebuildAgentRequest{
-			RequestID: "request-1", TemplateID: "template-1", TemplateRevision: 2,
+			RequestID: "request-1", OrganizationID: "org-1", ActorPrincipalID: "admin-1",
+			TemplateID: "template-1", TemplateRevision: 2,
 		},
-		"lifecycle_request": lifecycleRequest{RequestID: "request-1"},
-		"model_profile":     modelProfilePayload(sampleModelProfileView()),
+		"lifecycle_request": lifecycleRequest{
+			RequestID: "request-1", OrganizationID: "org-1", ActorPrincipalID: "admin-1",
+		},
+		"model_profile": modelProfilePayload(sampleModelProfileView()),
 		"model_profile_list": modelProfileListResponse{
 			Items: []modelProfileResponse{modelProfilePayload(sampleModelProfileView())},
 		},
@@ -341,15 +345,23 @@ func TestMachineControlContractValidatesSuccessfulHTTPBoundary(t *testing.T) {
 			MaxModelRequests: 12, ContextPolicyVersion: domain.ContextPolicyV1, Runtime: runtimeInput,
 		},
 		"POST /internal/agents": createAgentRequest{
-			RequestID: "request-agent", OrganizationID: "org-1", OwnerUserID: "user-1",
-			Name: "Agent", TemplateID: "template-1", TemplateRevision: 1,
+			RequestID: "request-agent", OrganizationID: "org-1", ActorPrincipalID: "admin-1",
+			OwnerUserID: "user-1",
+			Name:        "Agent", TemplateID: "template-1", TemplateRevision: 1,
 		},
 		"POST /internal/agents/{agent_id}/rebuild": rebuildAgentRequest{
-			RequestID: "request-rebuild", TemplateID: "template-1", TemplateRevision: 1,
+			RequestID: "request-rebuild", OrganizationID: "org-1", ActorPrincipalID: "admin-1",
+			TemplateID: "template-1", TemplateRevision: 1,
 		},
-		"POST /internal/agents/{agent_id}/disable": lifecycleRequest{RequestID: "request-disable"},
-		"POST /internal/agents/{agent_id}/enable":  lifecycleRequest{RequestID: "request-enable"},
-		"POST /internal/agents/{agent_id}/delete":  lifecycleRequest{RequestID: "request-delete"},
+		"POST /internal/agents/{agent_id}/disable": lifecycleRequest{
+			RequestID: "request-disable", OrganizationID: "org-1", ActorPrincipalID: "admin-1",
+		},
+		"POST /internal/agents/{agent_id}/enable": lifecycleRequest{
+			RequestID: "request-enable", OrganizationID: "org-1", ActorPrincipalID: "admin-1",
+		},
+		"POST /internal/agents/{agent_id}/delete": lifecycleRequest{
+			RequestID: "request-delete", OrganizationID: "org-1", ActorPrincipalID: "admin-1",
+		},
 	}
 
 	for resource, operations := range contract.Resources {
@@ -369,8 +381,7 @@ func TestMachineControlContractValidatesSuccessfulHTTPBoundary(t *testing.T) {
 				t.Fatalf("%s.%s has no executable request fixture", resource, operationName)
 			}
 			path := concreteControlPath(route.Path)
-			switch key {
-			case "GET /internal/model-profiles", "GET /internal/agent-templates", "GET /internal/agents":
+			if slices.Contains(route.Query, "organization_id") {
 				path += "?organization_id=org-1"
 			}
 			request := httptest.NewRequest(route.Method, path, body)
@@ -423,7 +434,8 @@ func TestMachineControlContractValidatesActualHTTPErrorBoundary(t *testing.T) {
 		{code: "lifecycle_conflict", err: application.ErrLifecycleConflict},
 		{
 			code: "operation_not_found", err: ports.ErrNotFound,
-			method: http.MethodGet, path: "/internal/agent-operations/missing-operation",
+			method: http.MethodGet,
+			path:   "/internal/agent-operations/missing-operation?organization_id=org-1",
 		},
 		{code: "dependency_unavailable", err: application.ErrDependencyUnavailable},
 		{code: "lifecycle_timeout", err: context.DeadlineExceeded},
@@ -444,7 +456,7 @@ func TestMachineControlContractValidatesActualHTTPErrorBoundary(t *testing.T) {
 			if method == "" {
 				method = http.MethodPost
 				path = "/internal/agents"
-				body = `{"request_id":"request-error","organization_id":"org-1","owner_user_id":"user-1","name":"Agent","template_id":"template-1","template_revision":1}`
+				body = `{"request_id":"request-error","organization_id":"org-1","actor_principal_id":"admin-1","owner_user_id":"user-1","name":"Agent","template_id":"template-1","template_revision":1}`
 			}
 			request := httptest.NewRequest(method, path, strings.NewReader(body))
 			if body != "" {
@@ -535,8 +547,9 @@ func TestMachineControlContractValidatesActualSSEBoundary(t *testing.T) {
 			t.Fatalf("new SSE boundary: %v", err)
 		}
 		response := httptest.NewRecorder()
+		path := concreteControlPath(route.Path) + "?organization_id=org-1"
 		boundary.ServeHTTP(
-			response, httptest.NewRequest(route.Method, concreteControlPath(route.Path), nil),
+			response, httptest.NewRequest(route.Method, path, nil),
 		)
 		if response.Code != route.SuccessStatus ||
 			strings.Split(response.Header().Get("Content-Type"), ";")[0] != route.ContentType {
@@ -589,6 +602,8 @@ func TestMachineEventTypesMatchProducerContract(t *testing.T) {
 		ports.EventAgentEnableFailed,
 		ports.EventAgentDeleteRequested,
 		ports.EventAgentDeleted,
+		ports.EventAgentLifecycleQuarantined,
+		ports.EventAgentRuntimeRestarted,
 		ports.EventRunAdmissionReleased,
 		ports.EventRunAdmissionUnresolved,
 	}

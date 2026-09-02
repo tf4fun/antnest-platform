@@ -90,6 +90,12 @@
     "wait_failed",
     "write_failed"
   ],
+  "tool_result": {
+    "effect_states": ["none", "settled", "unknown"],
+    "unknown_effect_source": "runtime_mcp",
+    "success_effect_state": "settled",
+    "error_code_field": "error_code"
+  },
   "execution": {
     "single_flight_enforced_by": "runtime",
     "max_active_calls_per_agent": 1,

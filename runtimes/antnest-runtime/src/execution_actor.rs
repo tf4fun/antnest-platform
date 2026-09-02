@@ -527,7 +527,7 @@ impl ExecutorCall {
             .map_err(|error| self.unobserved_error(format!("decode executor response: {error}")))?
         {
             Ok(result) => Ok(result),
-            Err(error) => Err(ToolError::new(error.code, error.message)),
+            Err(error) => Err(error.into_tool_error()),
         }
     }
 
@@ -546,7 +546,7 @@ impl ExecutorCall {
 
     fn interrupted_error(&self, code: ToolErrorCode, message: &'static str) -> ToolError {
         if self.tool.may_have_side_effects() {
-            ToolError::new(ToolErrorCode::OutcomeUnknown, message)
+            ToolError::outcome_unknown(message)
         } else {
             ToolError::new(code, message)
         }
@@ -566,7 +566,7 @@ impl ExecutorCall {
                 Outcome::Known
             }
         );
-        ToolError::new(failure.code, failure.message)
+        failure.into_tool_error()
     }
 }
 

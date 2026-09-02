@@ -207,18 +207,26 @@ func (repository *Repository) PublishAgentCreate(
 	if err != nil {
 		return ports.AgentCreateState{}, err
 	}
-	if err := authorizeLifecycleMutation(ctx, transaction, operation); err != nil {
+	replayed, err := authorizeLifecycleMutationOrReplay(
+		ctx, transaction, operation, domain.OperationCreate, input.Fingerprint, domain.OperationCompleted,
+	)
+	if err != nil {
 		return ports.AgentCreateState{}, err
 	}
-	if operation.RequestFingerprint != input.Fingerprint || operation.Kind != domain.OperationCreate {
-		return ports.AgentCreateState{}, ports.ErrRequestConflict
-	}
-	if operation.State == domain.OperationCompleted {
+	if replayed {
 		return loadAgentCreateState(ctx, transaction, operation)
 	}
 	if operation.State != domain.OperationRunning || operation.Phase != domain.PhasePublish ||
-		operation.RuntimeResult == nil {
+		operation.RuntimeResult == nil || operation.NetworkAttachment == nil ||
+		input.NetworkAttachment.AgentID != operation.AgentID ||
+		input.NetworkAttachment.State != ports.NetworkStateActive ||
+		input.NetworkAttachment.AttachmentState != ports.NetworkAttachmentOpen ||
+		input.NetworkAttachment.NetworkResourceVersion != operation.NetworkAttachment.NetworkResourceVersion {
 		return ports.AgentCreateState{}, ports.ErrConcurrentChange
+	}
+	networkPayload, err := json.Marshal(input.NetworkAttachment)
+	if err != nil {
+		return ports.AgentCreateState{}, fmt.Errorf("encode published Agent network attachment: %w", err)
 	}
 	if err := insertExecutionRevision(ctx, transaction, input.Execution); err != nil {
 		return ports.AgentCreateState{}, err
@@ -232,9 +240,10 @@ func (repository *Repository) PublishAgentCreate(
 	if _, err := transaction.Exec(ctx, `
 UPDATE agent_controller.agent_lifecycle_operations
 SET phase = 'completed', state = 'completed', child_request_id = '',
-    error_code = '', error_detail = '', retryable = FALSE,
-    recovery_owner = '', recovery_lease_until = NULL, updated_at = $2
-WHERE request_id = $1`, input.RequestID, input.Now); err != nil {
+    network_attachment = $2,
+	    error_code = '', error_detail = '', retryable = FALSE,
+	    recovery_owner = '', recovery_lease_until = NULL, updated_at = $3
+WHERE request_id = $1`, input.RequestID, networkPayload, input.Now); err != nil {
 		return ports.AgentCreateState{}, fmt.Errorf("complete Agent create operation: %w", err)
 	}
 	operation, err = loadLifecycleOperation(ctx, transaction, input.RequestID, "")
@@ -264,13 +273,13 @@ func (repository *Repository) FailAgentCreate(
 	if err != nil {
 		return ports.AgentCreateState{}, err
 	}
-	if err := authorizeLifecycleMutation(ctx, transaction, operation); err != nil {
+	replayed, err := authorizeLifecycleMutationOrReplay(
+		ctx, transaction, operation, domain.OperationCreate, input.Fingerprint, domain.OperationFailed,
+	)
+	if err != nil {
 		return ports.AgentCreateState{}, err
 	}
-	if operation.RequestFingerprint != input.Fingerprint || operation.Kind != domain.OperationCreate {
-		return ports.AgentCreateState{}, ports.ErrRequestConflict
-	}
-	if operation.State == domain.OperationFailed {
+	if replayed {
 		return loadAgentCreateState(ctx, transaction, operation)
 	}
 	if operation.State != domain.OperationRunning || operation.Phase != input.Stage {
@@ -382,14 +391,8 @@ INSERT INTO agent_controller.agent_access_bindings (
 func insertLifecycleOperation(
 	ctx context.Context, transaction pgx.Tx, record ports.LifecycleOperationRecord,
 ) error {
-	var policyPayload, inspectionPayload, absenceProofPayload []byte
+	var inspectionPayload, absenceProofPayload []byte
 	var err error
-	if record.NetworkPolicyAssignment != nil {
-		policyPayload, err = json.Marshal(record.NetworkPolicyAssignment)
-		if err != nil {
-			return fmt.Errorf("encode Agent network policy assignment: %w", err)
-		}
-	}
 	if record.SourceRuntimeInspection != nil {
 		inspectionPayload, err = json.Marshal(record.SourceRuntimeInspection)
 		if err != nil {
@@ -407,20 +410,20 @@ func insertLifecycleOperation(
     request_id, request_fingerprint, agent_id, kind, phase, state,
     source_spec_revision_id, source_execution_revision_id,
     source_runtime_revision, source_runtime_absent,
-    target_spec_revision_id, child_request_id, network_policy_assignment,
+    target_spec_revision_id, child_request_id,
     source_runtime_inspection, source_runtime_absence_proof, network_release_outcome,
     initial_attempt_trace_parent, previous_recovery_trace_parent, attempt,
     recovery_after, created_at, updated_at
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-    $11, $12, $13, $14, $15, $16, $17, $18, $19,
+    $11, $12, $13, $14, $15, $16, $17, $18,
     clock_timestamp(), clock_timestamp(), clock_timestamp()
 )`,
 		record.RequestID, record.RequestFingerprint, record.AgentID, record.Kind,
 		record.Phase, record.State, record.SourceSpecRevisionID,
 		record.SourceExecutionRevisionID, record.SourceRuntimeRevision,
 		record.SourceRuntimeAbsent, record.TargetSpecRevisionID, record.ChildRequestID,
-		nullJSON(policyPayload), nullJSON(inspectionPayload), nullJSON(absenceProofPayload),
+		nullJSON(inspectionPayload), nullJSON(absenceProofPayload),
 		record.NetworkReleaseOutcome,
 		record.InitialTraceParent, record.PreviousRecoveryTraceParent,
 		record.Attempt,
@@ -638,7 +641,7 @@ SELECT request_id, request_fingerprint, agent_id, kind, phase, state,
 	       source_spec_revision_id, source_execution_revision_id,
 	       source_runtime_revision, source_runtime_absent,
 	       target_spec_revision_id, child_request_id, network_attachment,
-	       network_policy_assignment, source_runtime_inspection,
+	       source_runtime_inspection,
 	       source_runtime_absence_proof, runtime_result, network_release_outcome,
 	       initial_attempt_trace_parent, previous_recovery_trace_parent,
 	       attempt, recovery_owner, recovery_lease_until, recovery_after,
@@ -654,14 +657,14 @@ WHERE request_id = $1`
 
 func scanLifecycleOperation(scanner lifecycleRowScanner) (ports.LifecycleOperationRecord, error) {
 	var record ports.LifecycleOperationRecord
-	var networkPayload, policyPayload, inspectionPayload, absenceProofPayload, runtimePayload []byte
+	var networkPayload, inspectionPayload, absenceProofPayload, runtimePayload []byte
 	err := scanner.Scan(
 		&record.RequestID, &record.RequestFingerprint, &record.AgentID,
 		&record.Kind, &record.Phase, &record.State,
 		&record.SourceSpecRevisionID, &record.SourceExecutionRevisionID,
 		&record.SourceRuntimeRevision,
 		&record.SourceRuntimeAbsent, &record.TargetSpecRevisionID,
-		&record.ChildRequestID, &networkPayload, &policyPayload,
+		&record.ChildRequestID, &networkPayload,
 		&inspectionPayload, &absenceProofPayload, &runtimePayload,
 		&record.NetworkReleaseOutcome,
 		&record.InitialTraceParent, &record.PreviousRecoveryTraceParent,
@@ -681,13 +684,6 @@ func scanLifecycleOperation(scanner lifecycleRowScanner) (ports.LifecycleOperati
 			return ports.LifecycleOperationRecord{}, fmt.Errorf("decode Agent network attachment: %w", err)
 		}
 		record.NetworkAttachment = &attachment
-	}
-	if len(policyPayload) != 0 {
-		var assignment ports.NetworkPolicyAssignment
-		if err := json.Unmarshal(policyPayload, &assignment); err != nil {
-			return ports.LifecycleOperationRecord{}, fmt.Errorf("decode Agent network policy assignment: %w", err)
-		}
-		record.NetworkPolicyAssignment = &assignment
 	}
 	if len(inspectionPayload) != 0 {
 		var inspection ports.RuntimeInspection

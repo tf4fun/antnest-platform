@@ -31,7 +31,6 @@ func LifecycleRecoveryTokenFromContext(
 
 type ClaimLifecycleRecovery struct {
 	WorkerID      string
-	StaleAfter    time.Duration
 	LeaseDuration time.Duration
 }
 
@@ -58,10 +57,23 @@ type ReleaseLifecycleRecoveryClaim struct {
 	RetryAfter time.Duration
 }
 
+type QuarantineLifecycleRecoveryClaim struct {
+	RequestID   string
+	WorkerID    string
+	Attempt     int64
+	ErrorCode   string
+	ErrorDetail string
+	EventID     string
+	TraceID     string
+}
+
 type LifecycleRecoveryStore interface {
 	ClaimLifecycleRecovery(
 		context.Context, ClaimLifecycleRecovery,
 	) (LifecycleRecoveryClaim, bool, error)
 	StartLifecycleRecoveryAttempt(context.Context, StartLifecycleRecoveryAttempt) error
 	ReleaseLifecycleRecoveryClaim(context.Context, ReleaseLifecycleRecoveryClaim) error
+	QuarantineLifecycleRecoveryClaim(
+		context.Context, QuarantineLifecycleRecoveryClaim,
+	) error
 }

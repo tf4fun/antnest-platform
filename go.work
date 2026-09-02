@@ -1,7 +1,9 @@
 go 1.25.0
 
 use (
+	./services/admin-console
 	./services/agent-controller
+	./services/edge-gateway
 	./services/identity-service
 	./services/runtime-controller
 )

@@ -71,6 +71,7 @@ func TestLifecycleRepositoryPersistsAndPublishesRebuildSaga(t *testing.T) {
 	if err != nil || replayed {
 		t.Fatalf("begin Agent rebuild: state=%+v replayed=%t err=%v", started, replayed, err)
 	}
+	ctx = claimLifecycleForTest(t, ctx, repository, begin.Operation.RequestID)
 	if started.Agent.LifecycleState != domain.AgentAvailable ||
 		started.Agent.ActiveOperationRequestID != begin.Operation.RequestID ||
 		started.Operation.SourceRuntimeRevision != base.Agent.RuntimeRevision {
@@ -117,38 +118,20 @@ WHERE admission_id = $1`, "admission-rebuild-integration", now.Add(time.Second))
 	if err != nil || drained.Operation.Phase != domain.PhaseNetworkFence {
 		t.Fatalf("settle rebuild drain: state=%+v err=%v", drained, err)
 	}
-	policy := ports.NetworkPolicyAssignment{
-		AgentID: base.Agent.AgentID, PolicyID: "internet-enabled",
-		Revision: 3, ResourceVersion: 7,
-	}
-	withPolicy, err := repository.RecordAgentRebuildPolicy(
-		ctx, begin.Operation.RequestID, fingerprint, policy, now.Add(2*time.Second),
-	)
-	if err != nil || withPolicy.Operation.NetworkPolicyAssignment == nil ||
-		*withPolicy.Operation.NetworkPolicyAssignment != policy {
-		t.Fatalf("record rebuild policy: state=%+v err=%v", withPolicy, err)
-	}
 	attachment := ports.NetworkAttachment{
 		AgentID: base.Agent.AgentID, TunnelIPv4: "100.64.0.2", ResolverIPv4: "100.64.0.1",
-		PacketContractRevision: 1, EgressIPv4: "10.20.0.8", EgressPort: 8092, State: "active",
+		PacketContractRevision: 1, EgressIPv4: "10.20.0.8", EgressPort: 8092,
+		State: ports.NetworkStateActive, NetworkResourceVersion: 1,
+		AttachmentState: ports.NetworkAttachmentClosed, AttachmentResourceVersion: 2,
 	}
 	withFence, err := repository.AdvanceAgentRebuild(ctx, ports.AdvanceAgentRebuild{
 		RequestID: begin.Operation.RequestID, Fingerprint: fingerprint,
-		ExpectedPhase: domain.PhaseNetworkFence, NextPhase: domain.PhaseFlowReset,
-		NextChildRequestID: domain.ChildRequestID(begin.Operation.RequestID, domain.PhaseFlowReset),
+		ExpectedPhase: domain.PhaseNetworkFence, NextPhase: domain.PhaseRuntimeUpdate,
+		NextChildRequestID: domain.ChildRequestID(begin.Operation.RequestID, domain.PhaseRuntimeUpdate),
 		NetworkAttachment:  &attachment, Now: now.Add(3 * time.Second),
 	})
-	if err != nil || withFence.Operation.Phase != domain.PhaseFlowReset {
+	if err != nil || withFence.Operation.Phase != domain.PhaseRuntimeUpdate {
 		t.Fatalf("record network fence: state=%+v err=%v", withFence, err)
-	}
-	withReset, err := repository.AdvanceAgentRebuild(ctx, ports.AdvanceAgentRebuild{
-		RequestID: begin.Operation.RequestID, Fingerprint: fingerprint,
-		ExpectedPhase: domain.PhaseFlowReset, NextPhase: domain.PhaseRuntimeUpdate,
-		NextChildRequestID: domain.ChildRequestID(begin.Operation.RequestID, domain.PhaseRuntimeUpdate),
-		Now:                now.Add(4 * time.Second),
-	})
-	if err != nil || withReset.Operation.Phase != domain.PhaseRuntimeUpdate {
-		t.Fatalf("record flow reset: state=%+v err=%v", withReset, err)
 	}
 	runtime := ports.RuntimeOperation{
 		State: "completed", Effect: "completed",
@@ -231,11 +214,14 @@ FROM agent_controller.run_admissions WHERE admission_id = $1`,
 		replayedFinish.AdmissionState != domain.AdmissionReleased {
 		t.Fatalf("replay unresolved FinishRun after barrier: result=%+v err=%v", replayedFinish, err)
 	}
+	reopenedAttachment := attachment
+	reopenedAttachment.AttachmentState = ports.NetworkAttachmentOpen
+	reopenedAttachment.AttachmentResourceVersion++
 	withNetwork, err := repository.AdvanceAgentRebuild(ctx, ports.AdvanceAgentRebuild{
 		RequestID: begin.Operation.RequestID, Fingerprint: fingerprint,
 		ExpectedPhase: domain.PhaseNetworkEnsure, NextPhase: domain.PhasePublish,
 		NextChildRequestID: domain.ChildRequestID(begin.Operation.RequestID, domain.PhasePublish),
-		NetworkAttachment:  &attachment, Now: now.Add(6 * time.Second),
+		NetworkAttachment:  &reopenedAttachment, Now: now.Add(6 * time.Second),
 	})
 	if err != nil || withNetwork.Operation.Phase != domain.PhasePublish {
 		t.Fatalf("record network reopen: state=%+v err=%v", withNetwork, err)
@@ -324,6 +310,7 @@ FROM agent_controller.run_admissions WHERE admission_id = $1`,
 	if err != nil {
 		t.Fatalf("begin pre-barrier failure rebuild: %v", err)
 	}
+	ctx = claimLifecycleForTest(t, ctx, repository, failureRequestID)
 	failed, err := repository.FailAgentRebuild(ctx, ports.FailAgentRebuild{
 		RequestID: failureRequestID, Fingerprint: failureFingerprint,
 		ExpectedAggregateSequence: startedFailure.Agent.AggregateSequence,
@@ -413,12 +400,10 @@ func seedAvailableAgentForRebuild(
 	if _, _, err := repository.BeginAgentCreate(ctx, begin); err != nil {
 		t.Fatalf("begin seed Agent create: %v", err)
 	}
-	attachment := ports.NetworkAttachment{
-		AgentID: begin.Agent.AgentID, TunnelIPv4: "100.64.0.2", ResolverIPv4: "100.64.0.1",
-		PacketContractRevision: 1, EgressIPv4: "10.20.0.8", EgressPort: 8092, State: "active",
-	}
+	mutationCtx := claimLifecycleForTest(t, ctx, repository, begin.Operation.RequestID)
+	attachment := *closedNetworkAttachment(begin.Agent.AgentID)
 	if _, err := repository.RecordCreateNetwork(
-		ctx, begin.Operation.RequestID, fingerprint, attachment,
+		mutationCtx, begin.Operation.RequestID, fingerprint, attachment,
 		domain.ChildRequestID(begin.Operation.RequestID, domain.PhaseRuntimeInitialize), now.Add(time.Second),
 	); err != nil {
 		t.Fatalf("record seed Agent network: %v", err)
@@ -430,13 +415,17 @@ func seedAvailableAgentForRebuild(
 		LifecycleState: "ready", Health: "healthy",
 	}
 	if _, err := repository.RecordCreateRuntime(
-		ctx, begin.Operation.RequestID, fingerprint, runtime,
+		mutationCtx, begin.Operation.RequestID, fingerprint, runtime,
 		domain.ChildRequestID(begin.Operation.RequestID, domain.PhasePublish), now.Add(2*time.Second),
 	); err != nil {
 		t.Fatalf("record seed Runtime: %v", err)
 	}
-	if _, err := repository.PublishAgentCreate(ctx, ports.PublishAgentCreate{
+	openedAttachment := attachment
+	openedAttachment.AttachmentState = ports.NetworkAttachmentOpen
+	openedAttachment.AttachmentResourceVersion++
+	if _, err := repository.PublishAgentCreate(mutationCtx, ports.PublishAgentCreate{
 		RequestID: begin.Operation.RequestID, Fingerprint: fingerprint,
+		NetworkAttachment: openedAttachment,
 		Execution: ports.ExecutionRecord{
 			ID: "execution-create-for-rebuild", AgentID: begin.Agent.AgentID, Revision: 1,
 			AgentSpecRevisionID: begin.Spec.ID, RuntimeRevision: runtime.RuntimeRevision,

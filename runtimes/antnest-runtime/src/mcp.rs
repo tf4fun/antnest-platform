@@ -29,6 +29,7 @@ use rmcp::{
         StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
     },
 };
+use schemars::JsonSchema;
 use serde::Serialize;
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
@@ -45,7 +46,7 @@ use crate::protocol::types::{
 use crate::roots::NamedRoots;
 use crate::spec::RuntimeIdentity;
 use crate::telemetry::RuntimeMetrics;
-use crate::tool_error::{ToolError, ToolErrorCode};
+use crate::tool_error::{ToolEffectState, ToolError, ToolErrorCode};
 #[cfg(test)]
 use crate::tools::ToolEngine;
 
@@ -54,6 +55,14 @@ pub(crate) const MCP_PATH: &str = "/mcp";
 pub(crate) const EXPECTED_EXECUTION_HEADER: &str = "X-Antnest-Expected-Execution-ID";
 #[cfg(test)]
 const TOOL_NAMES: [&str; 4] = ["bash", "edit", "read", "write"];
+
+#[derive(JsonSchema, Serialize)]
+struct ToolSuccess<T> {
+    #[serde(flatten)]
+    result: T,
+    effect_state: ToolEffectState,
+    effect_source: Option<&'static str>,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub(crate) struct RuntimeStatus {
@@ -540,7 +549,7 @@ impl RuntimeToolServer {
     /// Execute a shell command inside the Agent workspace.
     #[tool(
         description = "Execute a bash command in the Agent workspace with a hard timeout",
-        output_schema = rmcp::handler::server::tool::schema_for_type::<BashResult>(),
+        output_schema = rmcp::handler::server::tool::schema_for_type::<ToolSuccess<BashResult>>(),
         annotations(
             read_only_hint = false,
             destructive_hint = true,
@@ -566,7 +575,7 @@ impl RuntimeToolServer {
     /// Read UTF-8 text from the workspace or system Skill root.
     #[tool(
         description = "Read UTF-8 text from a file beneath a named Runtime root",
-        output_schema = rmcp::handler::server::tool::schema_for_type::<ReadFileResult>(),
+        output_schema = rmcp::handler::server::tool::schema_for_type::<ToolSuccess<ReadFileResult>>(),
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -592,7 +601,7 @@ impl RuntimeToolServer {
     /// Replace a workspace file atomically with UTF-8 text.
     #[tool(
         description = "Atomically replace a workspace file with UTF-8 text",
-        output_schema = rmcp::handler::server::tool::schema_for_type::<WriteFileResult>(),
+        output_schema = rmcp::handler::server::tool::schema_for_type::<ToolSuccess<WriteFileResult>>(),
         annotations(
             read_only_hint = false,
             destructive_hint = true,
@@ -618,7 +627,7 @@ impl RuntimeToolServer {
     /// Replace exactly one matching string in a workspace file.
     #[tool(
         description = "Replace exactly one matching string in a workspace file",
-        output_schema = rmcp::handler::server::tool::schema_for_type::<EditFileResult>(),
+        output_schema = rmcp::handler::server::tool::schema_for_type::<ToolSuccess<EditFileResult>>(),
         annotations(
             read_only_hint = false,
             destructive_hint = true,
@@ -821,7 +830,11 @@ fn tool_result<T: Serialize>(
 ) -> CallToolResult {
     let (trace_id, span_id) = crate::telemetry::span_identity(&tracing::Span::current());
     match result {
-        Ok(value) => match serde_json::to_value(value) {
+        Ok(value) => match serde_json::to_value(ToolSuccess {
+            result: value,
+            effect_state: ToolEffectState::Settled,
+            effect_source: None,
+        }) {
             Ok(value) => {
                 metrics.tool(name, "success", "", started.elapsed());
                 tracing::Span::current().record("mcp.tool.outcome", "success");
@@ -862,14 +875,17 @@ fn tool_result<T: Serialize>(
                     "Runtime MCP tool failed"
                 );
                 CallToolResult::structured_error(json!({
-                    "code": ToolErrorCode::EncodeResultFailed,
-                    "message": error.to_string()
+                    "error_code": ToolErrorCode::EncodeResultFailed,
+                    "message": error.to_string(),
+                    "effect_state": ToolEffectState::Settled,
+                    "effect_source": null
                 }))
             }
         },
         Err(error) => {
             let code = error.code;
             let message = error.message;
+            let effect_state = error.effect_state;
             metrics.tool(name, "error", code.as_str(), started.elapsed());
             tracing::Span::current().record("mcp.tool.outcome", "error");
             tracing::Span::current().record("otel.status_code", "ERROR");
@@ -886,8 +902,10 @@ fn tool_result<T: Serialize>(
                 "Runtime MCP tool failed"
             );
             CallToolResult::structured_error(json!({
-                "code": code,
-                "message": message
+                "error_code": code,
+                "message": message,
+                "effect_state": effect_state,
+                "effect_source": (effect_state == ToolEffectState::Unknown).then_some("runtime_mcp")
             }))
         }
     }
@@ -930,5 +948,65 @@ mod response_body_tests {
             observed.try_recv().unwrap(),
             BodyTermination::ClientDisconnected
         );
+    }
+}
+
+#[cfg(test)]
+mod tool_result_tests {
+    use std::time::Instant;
+
+    use serde_json::json;
+
+    use super::tool_result;
+    use crate::spec::RuntimeIdentity;
+    use crate::telemetry::RuntimeMetrics;
+    use crate::tool_error::{ToolError, ToolErrorCode};
+
+    #[test]
+    fn successful_result_declares_settled_effect() {
+        let result = tool_result(
+            "write",
+            &identity(),
+            &RuntimeMetrics::default(),
+            Instant::now(),
+            Ok(json!({"bytes_written": 5})),
+        );
+
+        assert_eq!(result.is_error, Some(false));
+        let structured = result.structured_content.expect("structured result");
+        assert_eq!(structured["bytes_written"], 5);
+        assert_eq!(structured["effect_state"], "settled");
+        assert!(structured["effect_source"].is_null());
+    }
+
+    #[test]
+    fn error_result_preserves_none_and_unknown_effects() {
+        let known = tool_result::<serde_json::Value>(
+            "write",
+            &identity(),
+            &RuntimeMetrics::default(),
+            Instant::now(),
+            Err(ToolError::new(ToolErrorCode::InvalidPath, "invalid path")),
+        );
+        let structured = known.structured_content.expect("known error");
+        assert_eq!(structured["error_code"], "invalid_path");
+        assert_eq!(structured["effect_state"], "none");
+        assert!(structured["effect_source"].is_null());
+
+        let unknown = tool_result::<serde_json::Value>(
+            "write",
+            &identity(),
+            &RuntimeMetrics::default(),
+            Instant::now(),
+            Err(ToolError::outcome_unknown("write outcome is unknown")),
+        );
+        let structured = unknown.structured_content.expect("unknown error");
+        assert_eq!(structured["error_code"], "outcome_unknown");
+        assert_eq!(structured["effect_state"], "unknown");
+        assert_eq!(structured["effect_source"], "runtime_mcp");
+    }
+
+    fn identity() -> RuntimeIdentity {
+        RuntimeIdentity::new("agent-1", 1).expect("identity")
     }
 }

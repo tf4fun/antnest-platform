@@ -250,6 +250,7 @@
       "required": [
         "request_id",
         "organization_id",
+        "actor_principal_id",
         "owner_user_id",
         "name",
         "template_id",
@@ -258,6 +259,7 @@
       "properties": {
         "request_id": { "$ref": "#/$defs/id" },
         "organization_id": { "$ref": "#/$defs/id" },
+        "actor_principal_id": { "$ref": "#/$defs/id" },
         "owner_user_id": { "$ref": "#/$defs/id" },
         "name": { "type": "string", "minLength": 1, "maxLength": 200 },
         "template_id": { "$ref": "#/$defs/id" },
@@ -267,9 +269,11 @@
     "rebuild_agent_request": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["request_id", "template_id", "template_revision"],
+      "required": ["request_id", "organization_id", "actor_principal_id", "template_id", "template_revision"],
       "properties": {
         "request_id": { "$ref": "#/$defs/id" },
+        "organization_id": { "$ref": "#/$defs/id" },
+        "actor_principal_id": { "$ref": "#/$defs/id" },
         "template_id": { "$ref": "#/$defs/id" },
         "template_revision": { "type": "integer", "minimum": 1 }
       }
@@ -277,8 +281,12 @@
     "lifecycle_request": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["request_id"],
-      "properties": { "request_id": { "$ref": "#/$defs/id" } }
+      "required": ["request_id", "organization_id", "actor_principal_id"],
+      "properties": {
+        "request_id": { "$ref": "#/$defs/id" },
+        "organization_id": { "$ref": "#/$defs/id" },
+        "actor_principal_id": { "$ref": "#/$defs/id" }
+      }
     },
     "runtime_binding": {
       "type": "object",
@@ -364,7 +372,6 @@
             "drain",
             "network_ensure",
             "network_fence",
-            "flow_reset",
             "runtime_initialize",
             "runtime_update",
             "runtime_disable",
@@ -427,6 +434,8 @@
             "agent_enable_failed",
             "agent_delete_requested",
             "agent_deleted",
+            "agent_lifecycle_quarantined",
+			"agent_runtime_restarted",
             "run_admission_released",
             "run_admission_unresolved"
           ]

@@ -17,8 +17,6 @@ import (
 
 var ErrDependencyUnavailable = errors.New("dependency unavailable")
 
-const maximumLifecycleConvergenceAttempts = 4
-
 type LifecycleService struct {
 	specs        ports.AgentSpecSource
 	store        ports.LifecycleStore
@@ -79,6 +77,7 @@ func NewLifecycleServiceWithDrainTimeout(
 type CreateAgentInput struct {
 	RequestID          string
 	OrganizationID     string
+	ActorPrincipalID   string
 	OwnerUserID        string
 	Name               string
 	TemplateID         string
@@ -141,7 +140,10 @@ func (service *LifecycleService) CreateAgent(
 		return CreateAgentResult{}, fmt.Errorf("replay Agent create: %w", err)
 	}
 	if found {
-		return service.convergeAgentCreate(ctx, state, fingerprint)
+		if state.Agent.OrganizationID != input.OrganizationID {
+			return CreateAgentResult{}, fmt.Errorf("%w: Agent create operation", ErrAgentNotFound)
+		}
+		return createAgentResult(state), nil
 	}
 	if err := service.requireActiveOwner(ctx, input.OrganizationID, input.OwnerUserID); err != nil {
 		return service.replayAgentCreateAfterFailure(ctx, input.RequestID, fingerprint, err)
@@ -194,7 +196,7 @@ func (service *LifecycleService) CreateAgent(
 			RequestID: input.RequestID, RequestFingerprint: fingerprint, AgentID: agentID,
 			Kind: domain.OperationCreate, Phase: operation.Phase(), State: operation.State(),
 			TargetSpecRevisionID: specID, ChildRequestID: operation.ChildRequestID(),
-			InitialTraceParent: input.InitialTraceParent, Attempt: 1,
+			InitialTraceParent: input.InitialTraceParent, Attempt: 0,
 			CreatedAt: now, UpdatedAt: now,
 		},
 		RequestedEvent: ports.AgentEventRecord{
@@ -203,8 +205,9 @@ func (service *LifecycleService) CreateAgent(
 			OperationRequestID: input.RequestID, TraceID: currentTraceID(ctx),
 			Data: map[string]any{
 				"organization_id": input.OrganizationID, "owner_user_id": input.OwnerUserID,
-				"template_id":       template.Snapshot().TemplateID,
-				"template_revision": template.Revision(), "agent_spec_revision_id": specID,
+				"actor_principal_id": input.ActorPrincipalID,
+				"template_id":        template.Snapshot().TemplateID,
+				"template_revision":  template.Revision(), "agent_spec_revision_id": specID,
 			},
 			OccurredAt: now,
 		},
@@ -214,7 +217,7 @@ func (service *LifecycleService) CreateAgent(
 		return CreateAgentResult{}, fmt.Errorf("begin Agent create: %w", err)
 	}
 	_ = model
-	return service.convergeAgentCreate(ctx, state, fingerprint)
+	return createAgentResult(state), nil
 }
 
 func (service *LifecycleService) replayAgentCreateAfterFailure(
@@ -227,7 +230,7 @@ func (service *LifecycleService) replayAgentCreateAfterFailure(
 		)
 	}
 	if found {
-		return service.convergeAgentCreate(ctx, state, fingerprint)
+		return createAgentResult(state), nil
 	}
 	return CreateAgentResult{}, cause
 }
@@ -271,26 +274,6 @@ func (service *LifecycleService) GetLifecycleOperation(
 	return lifecycleOperationView(record), nil
 }
 
-func (service *LifecycleService) convergeAgentCreate(
-	ctx context.Context, state ports.AgentCreateState, fingerprint string,
-) (CreateAgentResult, error) {
-	for range maximumLifecycleConvergenceAttempts {
-		result, err := service.continueAgentCreate(ctx, state)
-		if !errors.Is(err, ports.ErrConcurrentChange) {
-			return result, err
-		}
-		var found bool
-		state, found, err = service.store.ReplayAgentCreate(ctx, state.Operation.RequestID, fingerprint)
-		if err != nil {
-			return CreateAgentResult{}, fmt.Errorf("replay concurrent Agent create: %w", err)
-		}
-		if !found {
-			return CreateAgentResult{}, fmt.Errorf("concurrent Agent create disappeared")
-		}
-	}
-	return CreateAgentResult{}, ports.ErrConcurrentChange
-}
-
 func (service *LifecycleService) resolveAgentSpec(
 	ctx context.Context, input CreateAgentInput,
 ) (domain.TemplateRevision, domain.ModelProfileRevision, domain.AgentSpec, error) {
@@ -325,29 +308,6 @@ func (service *LifecycleService) resolveAgentSpecRevision(
 	return template, model, spec, nil
 }
 
-func (service *LifecycleService) continueAgentCreate(
-	ctx context.Context, state ports.AgentCreateState,
-) (CreateAgentResult, error) {
-	if state.Operation.State != domain.OperationRunning {
-		return createAgentResult(state), nil
-	}
-	if lifecycleOperationReservedForRecovery(state.Operation) {
-		return createAgentResult(state), nil
-	}
-	for state.Operation.State == domain.OperationRunning {
-		phase := state.Operation.Phase
-		next, err := service.stepAgentCreate(ctx, state)
-		if err != nil {
-			return createAgentResult(next), err
-		}
-		state = next
-		if state.Operation.Phase == phase {
-			break
-		}
-	}
-	return createAgentResult(state), nil
-}
-
 func (service *LifecycleService) stepAgentCreate(
 	ctx context.Context, state ports.AgentCreateState,
 ) (ports.AgentCreateState, error) {
@@ -370,7 +330,9 @@ func (service *LifecycleService) ensureCreateNetwork(
 	if err != nil {
 		return service.handleCreateDependencyFailure(ctx, state, "runtime-egress", err)
 	}
-	if !networkAttachmentReady(attachment, state.Agent.AgentID) {
+	if !networkAttachmentInState(
+		attachment, state.Agent.AgentID, ports.NetworkStateActive, ports.NetworkAttachmentClosed,
+	) {
 		return service.failCreate(ctx, state, "invalid_network_attachment", "Runtime Egress returned an incomplete attachment", false)
 	}
 	now := service.clock.Now()
@@ -440,14 +402,20 @@ func (service *LifecycleService) publishAgentCreate(
 	if state.Operation.NetworkAttachment == nil {
 		return ports.AgentCreateState{}, fmt.Errorf("create operation has no network attachment")
 	}
-	attachment, err := service.egress.EnsureAgentNetwork(ctx, state.Agent.AgentID)
+	attachment, err := service.egress.SetAgentNetworkAttachment(
+		ctx,
+		state.Agent.AgentID,
+		ports.NetworkAttachmentOpen,
+		state.Operation.NetworkAttachment.AttachmentResourceVersion,
+	)
 	if err != nil {
 		return service.handleCreateDependencyFailure(ctx, state, "runtime-egress", err)
 	}
 	if !networkAttachmentReady(attachment, state.Agent.AgentID) {
 		return service.failCreate(ctx, state, "invalid_network_attachment", "Runtime Egress did not confirm an active attachment", false)
 	}
-	if attachment != *state.Operation.NetworkAttachment {
+	if !sameNetworkCoordinates(attachment, *state.Operation.NetworkAttachment) ||
+		attachment.NetworkResourceVersion != state.Operation.NetworkAttachment.NetworkResourceVersion {
 		return service.failCreate(ctx, state, "network_attachment_changed", "Runtime Egress attachment changed after Runtime initialization", false)
 	}
 	runtime := *state.Operation.RuntimeResult
@@ -455,6 +423,7 @@ func (service *LifecycleService) publishAgentCreate(
 	executionID := derivedID("execution", state.Operation.RequestID)
 	published, err := service.store.PublishAgentCreate(ctx, ports.PublishAgentCreate{
 		RequestID: state.Operation.RequestID, Fingerprint: state.Operation.RequestFingerprint,
+		NetworkAttachment: attachment,
 		Execution: ports.ExecutionRecord{
 			ID: executionID, AgentID: state.Agent.AgentID, Revision: 1,
 			AgentSpecRevisionID: state.Spec.ID, RuntimeRevision: runtime.RuntimeRevision,
@@ -482,13 +451,46 @@ func (service *LifecycleService) publishAgentCreate(
 }
 
 func networkAttachmentReady(attachment ports.NetworkAttachment, agentID string) bool {
-	return networkAttachmentInState(attachment, agentID, "active")
+	return networkAttachmentInState(
+		attachment, agentID, ports.NetworkStateActive, ports.NetworkAttachmentOpen,
+	)
 }
 
-func networkAttachmentInState(attachment ports.NetworkAttachment, agentID string, state string) bool {
+func networkAttachmentInState(
+	attachment ports.NetworkAttachment,
+	agentID string,
+	networkState string,
+	attachmentState string,
+) bool {
 	return attachment.AgentID == agentID && attachment.TunnelIPv4 != "" &&
 		attachment.ResolverIPv4 != "" && attachment.EgressIPv4 != "" && attachment.EgressPort != 0 &&
-		attachment.PacketContractRevision != 0 && attachment.State == state
+		attachment.PacketContractRevision != 0 && attachment.State == networkState &&
+		attachment.NetworkResourceVersion != 0 && attachment.AttachmentState == attachmentState &&
+		attachment.AttachmentResourceVersion != 0
+}
+
+func (service *LifecycleService) setCurrentNetworkAttachmentState(
+	ctx context.Context,
+	agentID string,
+	state string,
+) (ports.NetworkAttachment, error) {
+	attachment, err := service.egress.GetAgentNetwork(ctx, agentID)
+	if err != nil {
+		return ports.NetworkAttachment{}, err
+	}
+	if attachment.AttachmentState == state &&
+		networkAttachmentInState(attachment, agentID, ports.NetworkStateActive, state) {
+		return attachment, nil
+	}
+	if attachment.State != ports.NetworkStateActive ||
+		attachment.AttachmentResourceVersion == 0 {
+		return ports.NetworkAttachment{}, &ports.DependencyError{
+			Service: "runtime-egress", Code: "invalid_network_attachment", Retryable: false,
+		}
+	}
+	return service.egress.SetAgentNetworkAttachment(
+		ctx, agentID, state, attachment.AttachmentResourceVersion,
+	)
 }
 
 func completedReadyRuntime(result ports.RuntimeOperation) bool {
@@ -536,6 +538,7 @@ func (service *LifecycleService) failCreate(
 
 func validateCreateAgentInput(input CreateAgentInput) error {
 	if !validIdentifier(input.RequestID) || !validIdentifier(input.OrganizationID) ||
+		(input.ActorPrincipalID != "" && !validIdentifier(input.ActorPrincipalID)) ||
 		!validIdentifier(input.OwnerUserID) || !validIdentifier(input.TemplateID) ||
 		input.TemplateRevision < 1 || strings.TrimSpace(input.Name) == "" || len(strings.TrimSpace(input.Name)) > 200 {
 		return fmt.Errorf("%w: Agent create input", ErrInvalidInput)
@@ -543,17 +546,30 @@ func validateCreateAgentInput(input CreateAgentInput) error {
 	return nil
 }
 
+func validLifecycleCaller(organizationID string, actorPrincipalID string) bool {
+	if organizationID == "" && actorPrincipalID == "" {
+		return true
+	}
+	return validIdentifier(organizationID) && validIdentifier(actorPrincipalID)
+}
+
+func lifecycleScopeMatches(actualOrganizationID string, requestedOrganizationID string) bool {
+	return requestedOrganizationID == "" || actualOrganizationID == requestedOrganizationID
+}
+
 func createAgentFingerprint(input CreateAgentInput) (string, error) {
 	return requestFingerprint(struct {
 		RequestID        string
 		OrganizationID   string
+		ActorPrincipalID string
 		OwnerUserID      string
 		Name             string
 		TemplateID       string
 		TemplateRevision int64
 	}{
 		RequestID: input.RequestID, OrganizationID: input.OrganizationID,
-		OwnerUserID: input.OwnerUserID, Name: strings.TrimSpace(input.Name),
+		ActorPrincipalID: input.ActorPrincipalID,
+		OwnerUserID:      input.OwnerUserID, Name: strings.TrimSpace(input.Name),
 		TemplateID: input.TemplateID, TemplateRevision: input.TemplateRevision,
 	})
 }

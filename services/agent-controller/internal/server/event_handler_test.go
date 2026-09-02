@@ -27,9 +27,11 @@ func TestEventHandlerListsGlobalAndPerAgentJournal(t *testing.T) {
 
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, httptest.NewRequest(
-		http.MethodGet, "/internal/agent-events?after_sequence=10&limit=25", nil,
+		http.MethodGet, "/internal/agent-events?organization_id=org-1&after_sequence=10&limit=25", nil,
 	))
-	if response.Code != http.StatusOK || events.globalInput != (application.ListEventsInput{AfterSequence: 10, Limit: 25}) {
+	if response.Code != http.StatusOK || events.globalInput != (application.ListEventsInput{
+		OrganizationID: "org-1", AfterSequence: 10, Limit: 25,
+	}) {
 		t.Fatalf("global status=%d input=%+v body=%s", response.Code, events.globalInput, response.Body.String())
 	}
 	var payload struct {
@@ -45,9 +47,10 @@ func TestEventHandlerListsGlobalAndPerAgentJournal(t *testing.T) {
 
 	response = httptest.NewRecorder()
 	handler.ServeHTTP(response, httptest.NewRequest(
-		http.MethodGet, "/internal/agents/agent-1/events?after_sequence=8", nil,
+		http.MethodGet, "/internal/agents/agent-1/events?organization_id=org-1&after_sequence=8", nil,
 	))
-	if response.Code != http.StatusOK || events.agentInput.AgentID != "agent-1" ||
+	if response.Code != http.StatusOK || events.agentInput.OrganizationID != "org-1" ||
+		events.agentInput.AgentID != "agent-1" ||
 		events.agentInput.AfterSequence != 8 {
 		t.Fatalf("per-Agent status=%d input=%+v body=%s", response.Code, events.agentInput, response.Body.String())
 	}
@@ -91,7 +94,9 @@ func TestEventHandlerStreamsBacklogAndContinuesFromLastSequence(t *testing.T) {
 	}
 	handler := newEventTestHandler(t, events)
 	response := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet, "/internal/agent-events/watch", nil)
+	request := httptest.NewRequest(
+		http.MethodGet, "/internal/agent-events/watch?organization_id=org-1", nil,
+	)
 	request.Header.Set("Last-Event-ID", "10")
 	handler.ServeHTTP(response, request)
 
@@ -119,7 +124,9 @@ func TestEventHandlerPrefersLastEventIDOnAutomaticReconnect(t *testing.T) {
 	events := &agentEventServiceStub{page: application.AgentEventPage{NextSequence: 10}}
 	handler := newEventTestHandler(t, events)
 	response := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet, "/internal/agent-events/watch?after_sequence=9", nil)
+	request := httptest.NewRequest(
+		http.MethodGet, "/internal/agent-events/watch?organization_id=org-1&after_sequence=9", nil,
+	)
 	request.Header.Set("Last-Event-ID", "10")
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusOK || events.globalInput.AfterSequence != 10 ||
@@ -135,8 +142,8 @@ func TestEventHandlerStreamsThroughProductionTelemetryWrapper(t *testing.T) {
 		name   string
 		target string
 	}{
-		{name: "global", target: "/internal/agent-events/watch"},
-		{name: "per Agent", target: "/internal/agents/agent-1/events/watch"},
+		{name: "global", target: "/internal/agent-events/watch?organization_id=org-1"},
+		{name: "per Agent", target: "/internal/agents/agent-1/events/watch?organization_id=org-1"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -196,14 +203,15 @@ func serverTestEvent(sequence int64, eventID string, agentID string) application
 }
 
 type agentEventServiceStub struct {
-	page               application.AgentEventPage
-	err                error
-	globalInput        application.ListEventsInput
-	agentInput         application.ListAgentEventsInput
-	watchAgentID       string
-	watchAfterSequence int64
-	watchEvents        []application.AgentEventView
-	listCalls          int
+	page                application.AgentEventPage
+	err                 error
+	globalInput         application.ListEventsInput
+	agentInput          application.ListAgentEventsInput
+	watchAgentID        string
+	watchOrganizationID string
+	watchAfterSequence  int64
+	watchEvents         []application.AgentEventView
+	listCalls           int
 }
 
 func (service *agentEventServiceStub) ListGlobalEvents(
@@ -223,8 +231,9 @@ func (service *agentEventServiceStub) ListAgentEvents(
 }
 
 func (service *agentEventServiceStub) WatchGlobalEvents(
-	_ context.Context, afterSequence int64, emit application.AgentEventEmitter,
+	_ context.Context, organizationID string, afterSequence int64, emit application.AgentEventEmitter,
 ) error {
+	service.watchOrganizationID = organizationID
 	service.watchAfterSequence = afterSequence
 	for _, event := range service.watchEvents {
 		if err := emit(event); err != nil {
@@ -235,8 +244,10 @@ func (service *agentEventServiceStub) WatchGlobalEvents(
 }
 
 func (service *agentEventServiceStub) WatchAgentEvents(
-	_ context.Context, agentID string, afterSequence int64, emit application.AgentEventEmitter,
+	_ context.Context, organizationID string, agentID string, afterSequence int64,
+	emit application.AgentEventEmitter,
 ) error {
+	service.watchOrganizationID = organizationID
 	service.watchAgentID = agentID
-	return service.WatchGlobalEvents(context.Background(), afterSequence, emit)
+	return service.WatchGlobalEvents(context.Background(), organizationID, afterSequence, emit)
 }

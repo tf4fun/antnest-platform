@@ -1,4 +1,4 @@
-.PHONY: fmt fmt-check lint go-lint rust-clippy node-lint test test-go test-rust test-node test-postgres test-egress-postgres test-runtime-controller-postgres test-agent-acp-postgres test-identity-postgres test-agent-controller-postgres docker-build docker-build-runtime-controller compose-up compose-down e2e-stage1 e2e-stage2 e2e-runtime-controller
+.PHONY: fmt fmt-check lint go-lint rust-clippy node-lint test test-go test-rust test-node test-postgres test-egress-postgres test-runtime-controller-postgres test-agent-acp-postgres test-identity-postgres test-agent-controller-postgres docker-build docker-build-runtime-controller docker-build-stage3 compose-up compose-down e2e-stage1 e2e-stage2 e2e-stage3 e2e-runtime-controller
 
 GOCACHE := $(CURDIR)/.cache/go-build
 GOMODCACHE := $(CURDIR)/.cache/go-mod
@@ -19,7 +19,8 @@ fmt:
 	npm --prefix services/agent-acp-service run format
 
 fmt-check:
-	@test -z "$$(gofmt -l $$(find services -name '*.go' -type f))"
+	@unformatted="$$(gofmt -l $$(find services -name '*.go' -type f))" || exit $$?; \
+		test -z "$$unformatted"
 	cargo fmt --manifest-path runtimes/antnest-runtime/Cargo.toml --all --check
 	cargo fmt --manifest-path services/runtime-egress/Cargo.toml --all --check
 	npm --prefix services/agent-acp-service run format:check
@@ -27,7 +28,7 @@ fmt-check:
 lint: go-lint rust-clippy node-lint
 
 go-lint:
-	GOLANGCI_LINT_CACHE=$(GOLANGCI_LINT_CACHE) GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) golangci-lint run ./services/runtime-controller/... ./services/identity-service/... ./services/agent-controller/...
+	GOLANGCI_LINT_CACHE=$(GOLANGCI_LINT_CACHE) GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) golangci-lint run ./services/runtime-controller/... ./services/identity-service/... ./services/agent-controller/... ./services/admin-console/... ./services/edge-gateway/...
 
 rust-clippy:
 	cargo clippy --manifest-path runtimes/antnest-runtime/Cargo.toml --locked --all-targets -- -D warnings
@@ -36,6 +37,7 @@ rust-clippy:
 node-lint:
 	npm --prefix services/agent-acp-service run lint
 	npm --prefix services/agent-acp-service run typecheck
+	npm --prefix services/admin-console/web run typecheck
 
 test:
 	$(MAKE) test-go
@@ -46,6 +48,8 @@ test-go:
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go test -p=1 ./services/runtime-controller/...
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go test -p=1 ./services/identity-service/...
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go test -p=1 ./services/agent-controller/...
+	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go test -p=1 ./services/admin-console/...
+	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go test -p=1 ./services/edge-gateway/...
 
 test-rust:
 	cargo test --manifest-path runtimes/antnest-runtime/Cargo.toml --locked
@@ -53,6 +57,7 @@ test-rust:
 
 test-node:
 	npm --prefix services/agent-acp-service test
+	npm --prefix services/admin-console/web test
 
 test-postgres:
 	sh scripts/test-postgres.sh
@@ -89,6 +94,9 @@ docker-build: docker-build-runtime-controller
 	docker compose --profile stage2 build identity-service
 	docker compose --profile stage2 build agent-controller
 
+docker-build-stage3: docker-build-runtime-controller
+	docker compose --profile stage3 build identity-service agent-controller admin-console edge-gateway
+
 compose-up: docker-build-runtime-controller
 	docker compose up -d --wait postgres runtime-egress runtime-controller
 
@@ -100,6 +108,9 @@ e2e-stage1: docker-build-runtime-controller
 
 e2e-stage2: docker-build
 	sh scripts/e2e-stage2.sh
+
+e2e-stage3: docker-build-stage3
+	sh scripts/e2e-stage3a.sh
 
 e2e-runtime-controller: docker-build-runtime-controller
 	sh services/runtime-controller/scripts/e2e.sh

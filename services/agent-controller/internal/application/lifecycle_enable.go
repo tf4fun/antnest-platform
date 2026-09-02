@@ -12,6 +12,8 @@ import (
 
 type EnableAgentInput struct {
 	RequestID          string
+	OrganizationID     string
+	ActorPrincipalID   string
 	AgentID            string
 	InitialTraceParent string
 }
@@ -36,7 +38,10 @@ func (service *LifecycleService) EnableAgent(
 		return EnableAgentResult{}, fmt.Errorf("replay Agent enable: %w", err)
 	}
 	if found {
-		return service.convergeAgentEnable(ctx, state, fingerprint)
+		if !lifecycleScopeMatches(state.Agent.OrganizationID, input.OrganizationID) {
+			return EnableAgentResult{}, fmt.Errorf("%w: %s", ErrAgentNotFound, input.AgentID)
+		}
+		return enableAgentResult(state), nil
 	}
 
 	base, err := service.store.GetAgentEnableBase(ctx, input.AgentID)
@@ -48,6 +53,9 @@ func (service *LifecycleService) EnableAgent(
 	}
 	if err := validateEnableSource(base); err != nil {
 		return EnableAgentResult{}, err
+	}
+	if !lifecycleScopeMatches(base.Agent.OrganizationID, input.OrganizationID) {
+		return EnableAgentResult{}, fmt.Errorf("%w: %s", ErrAgentNotFound, input.AgentID)
 	}
 	now := service.clock.Now()
 	operation, err := domain.NewLifecycleOperation(domain.NewLifecycleOperationInput{
@@ -62,7 +70,6 @@ func (service *LifecycleService) EnableAgent(
 	if err != nil {
 		return EnableAgentResult{}, fmt.Errorf("%w: %v", ErrInvalidInput, err)
 	}
-	policy := base.NetworkPolicyAssignment
 	state, _, err = service.store.BeginAgentEnable(ctx, ports.BeginAgentEnable{
 		AgentID:                     input.AgentID,
 		ExpectedAggregateSequence:   base.Agent.AggregateSequence,
@@ -78,8 +85,7 @@ func (service *LifecycleService) EnableAgent(
 			SourceRuntimeRevision:     base.Agent.RuntimeRevision,
 			TargetSpecRevisionID:      base.Spec.ID,
 			ChildRequestID:            operation.ChildRequestID(),
-			NetworkPolicyAssignment:   &policy,
-			InitialTraceParent:        input.InitialTraceParent, Attempt: 1,
+			InitialTraceParent:        input.InitialTraceParent, Attempt: 0,
 			CreatedAt: now, UpdatedAt: now,
 		},
 		RequestedEvent: ports.AgentEventRecord{
@@ -88,6 +94,7 @@ func (service *LifecycleService) EnableAgent(
 			SchemaVersion: 1, EventType: ports.EventAgentEnableRequested,
 			OperationRequestID: input.RequestID, TraceID: currentTraceID(ctx),
 			Data: map[string]any{
+				"actor_principal_id":           input.ActorPrincipalID,
 				"agent_spec_revision_id":       base.Spec.ID,
 				"source_execution_revision_id": base.LastSuccessfulExecution.ID,
 				"source_runtime_revision":      base.Agent.RuntimeRevision,
@@ -98,51 +105,6 @@ func (service *LifecycleService) EnableAgent(
 	})
 	if err != nil {
 		return EnableAgentResult{}, fmt.Errorf("begin Agent enable: %w", err)
-	}
-	return service.convergeAgentEnable(ctx, state, fingerprint)
-}
-
-func (service *LifecycleService) convergeAgentEnable(
-	ctx context.Context, state ports.AgentEnableState, fingerprint string,
-) (EnableAgentResult, error) {
-	for range maximumLifecycleConvergenceAttempts {
-		result, err := service.continueAgentEnable(ctx, state)
-		if !errors.Is(err, ports.ErrConcurrentChange) {
-			return result, err
-		}
-		var found bool
-		state, found, err = service.store.ReplayAgentEnable(
-			ctx, state.Operation.RequestID, fingerprint,
-		)
-		if err != nil {
-			return EnableAgentResult{}, fmt.Errorf("replay concurrent Agent enable: %w", err)
-		}
-		if !found {
-			return EnableAgentResult{}, fmt.Errorf("concurrent Agent enable disappeared")
-		}
-	}
-	return EnableAgentResult{}, ports.ErrConcurrentChange
-}
-
-func (service *LifecycleService) continueAgentEnable(
-	ctx context.Context, state ports.AgentEnableState,
-) (EnableAgentResult, error) {
-	if state.Operation.State != domain.OperationRunning {
-		return enableAgentResult(state), nil
-	}
-	if lifecycleOperationReservedForRecovery(state.Operation) {
-		return enableAgentResult(state), nil
-	}
-	for state.Operation.State == domain.OperationRunning {
-		phase := state.Operation.Phase
-		next, err := service.stepAgentEnable(ctx, state)
-		if err != nil {
-			return enableAgentResult(next), err
-		}
-		state = next
-		if state.Operation.Phase == phase {
-			break
-		}
 	}
 	return enableAgentResult(state), nil
 }
@@ -167,44 +129,33 @@ func (service *LifecycleService) stepAgentEnable(
 func (service *LifecycleService) ensureEnableNetwork(
 	ctx context.Context, state ports.AgentEnableState,
 ) (ports.AgentEnableState, error) {
-	if state.Operation.NetworkPolicyAssignment == nil {
-		return ports.AgentEnableState{}, fmt.Errorf("enable operation has no captured policy")
-	}
-	currentPolicy, err := service.egress.GetAgentPolicyAssignment(ctx, state.Agent.AgentID)
+	attachment, err := service.egress.EnsureAgentNetwork(ctx, state.Agent.AgentID)
 	if err != nil {
 		return service.handleEnableDependencyFailure(ctx, state, "runtime-egress", err)
 	}
-	if !restorableNetworkPolicy(
-		state.Agent.AgentID, *state.Operation.NetworkPolicyAssignment, currentPolicy,
+	if !networkAttachmentInState(
+		attachment, state.Agent.AgentID, ports.NetworkStateActive, attachment.AttachmentState,
 	) {
-		return service.failEnableBeforeRuntimeEffect(
-			ctx, state, "policy_restore_conflict",
-			"current Egress policy is unrelated to the captured Disable policy",
-		)
-	}
-	attachment, err := service.egress.GetAgentNetwork(ctx, state.Agent.AgentID)
-	if err != nil {
-		return service.handleEnableDependencyFailure(ctx, state, "runtime-egress", err)
-	}
-	if !networkAttachmentReady(attachment, state.Agent.AgentID) {
 		return service.failEnableBeforeRuntimeEffect(
 			ctx, state, "invalid_network_attachment",
 			"Runtime Egress returned an incomplete attachment",
 		)
 	}
-	if err := service.egress.FenceAgentNetwork(
-		ctx, state.Agent.AgentID, currentPolicy.ResourceVersion,
-	); err != nil {
-		return service.handleEnableDependencyFailure(ctx, state, "runtime-egress", err)
+	if attachment.AttachmentState != ports.NetworkAttachmentClosed {
+		attachment, err = service.egress.SetAgentNetworkAttachment(
+			ctx, state.Agent.AgentID, ports.NetworkAttachmentClosed,
+			attachment.AttachmentResourceVersion,
+		)
+		if err != nil {
+			return service.handleEnableDependencyFailure(ctx, state, "runtime-egress", err)
+		}
 	}
-	fencedPolicy, err := service.egress.GetAgentPolicyAssignment(ctx, state.Agent.AgentID)
-	if err != nil {
-		return service.handleEnableDependencyFailure(ctx, state, "runtime-egress", err)
-	}
-	if !denyAllNetworkPolicy(fencedPolicy, state.Agent.AgentID) {
+	if !networkAttachmentInState(
+		attachment, state.Agent.AgentID, ports.NetworkStateActive, ports.NetworkAttachmentClosed,
+	) {
 		return service.failEnableBeforeRuntimeEffect(
-			ctx, state, "network_fence_unconfirmed",
-			"Runtime Egress did not confirm the canonical deny-all policy",
+			ctx, state, "network_attachment_close_unconfirmed",
+			"Runtime Egress did not confirm the closed attachment",
 		)
 	}
 	return service.store.AdvanceAgentEnable(ctx, ports.AdvanceAgentEnable{
@@ -272,15 +223,15 @@ func (service *LifecycleService) enableRuntime(
 func (service *LifecycleService) restoreEnableNetwork(
 	ctx context.Context, state ports.AgentEnableState,
 ) (ports.AgentEnableState, error) {
-	if state.Operation.NetworkAttachment == nil || state.Operation.NetworkPolicyAssignment == nil ||
-		state.Operation.RuntimeResult == nil {
+	if state.Operation.NetworkAttachment == nil || state.Operation.RuntimeResult == nil {
 		return ports.AgentEnableState{}, fmt.Errorf("enable operation is missing a durable dependency result")
 	}
-	attachment, err := service.restoreCapturedNetwork(
-		ctx, state.Agent.AgentID, *state.Operation.NetworkPolicyAssignment,
+	attachment, err := service.egress.SetAgentNetworkAttachment(
+		ctx, state.Agent.AgentID, ports.NetworkAttachmentOpen,
+		state.Operation.NetworkAttachment.AttachmentResourceVersion,
 	)
 	if err != nil {
-		return service.fenceIncompleteEnable(ctx, state, "policy restoration", err)
+		return service.fenceIncompleteEnable(ctx, state, "attachment open", err)
 	}
 	if !networkAttachmentReady(attachment, state.Agent.AgentID) ||
 		!sameNetworkCoordinates(*state.Operation.NetworkAttachment, attachment) {
@@ -305,23 +256,16 @@ func (service *LifecycleService) fenceIncompleteEnable(
 	stage string,
 	cause error,
 ) (ports.AgentEnableState, error) {
-	currentPolicy, policyErr := service.egress.GetAgentPolicyAssignment(ctx, state.Agent.AgentID)
-	if policyErr != nil {
-		return state, fmt.Errorf(
-			"%w: runtime-egress %s and policy read failed: %v: %w",
-			ErrDependencyUnavailable, stage, cause, policyErr,
-		)
-	}
-	if err := service.egress.FenceAgentNetwork(
-		ctx, state.Agent.AgentID, currentPolicy.ResourceVersion,
+	if _, err := service.setCurrentNetworkAttachmentState(
+		ctx, state.Agent.AgentID, ports.NetworkAttachmentClosed,
 	); err != nil {
 		return state, fmt.Errorf(
-			"%w: runtime-egress %s and network fence failed: %v: %w",
+			"%w: runtime-egress %s and attachment close failed: %v: %w",
 			ErrDependencyUnavailable, stage, cause, err,
 		)
 	}
 	return state, fmt.Errorf(
-		"%w: runtime-egress %s; Agent remains fenced: %w",
+		"%w: runtime-egress %s; Agent attachment remains closed: %w",
 		ErrDependencyUnavailable, stage, cause,
 	)
 }
@@ -457,22 +401,9 @@ func exactDisabledSourceRuntime(
 		inspection.LifecycleState == "disabled" && inspection.Health == "absent"
 }
 
-func restorableNetworkPolicy(
-	agentID string,
-	original ports.NetworkPolicyAssignment,
-	current ports.NetworkPolicyAssignment,
-) bool {
-	return networkPolicyAssignmentReady(current, agentID) &&
-		(sameNetworkPolicy(current, original) || denyAllNetworkPolicy(current, agentID))
-}
-
-func denyAllNetworkPolicy(current ports.NetworkPolicyAssignment, agentID string) bool {
-	return current.AgentID == agentID && current.PolicyID == ports.BuiltinDenyAllPolicyID &&
-		current.Revision == 1 && current.ResourceVersion > 0
-}
-
 func validateEnableAgentInput(input EnableAgentInput) error {
-	if !validIdentifier(input.RequestID) || !validIdentifier(input.AgentID) {
+	if !validIdentifier(input.RequestID) || !validIdentifier(input.AgentID) ||
+		!validLifecycleCaller(input.OrganizationID, input.ActorPrincipalID) {
 		return fmt.Errorf("%w: Agent enable input", ErrInvalidInput)
 	}
 	return nil
@@ -491,8 +422,7 @@ func validateEnableSource(base ports.AgentEnableBase) error {
 		base.LastSuccessfulExecution.ID != agent.LastSuccessfulExecutionRevisionID ||
 		base.LastSuccessfulExecution.AgentID != agent.AgentID ||
 		base.LastSuccessfulExecution.AgentSpecRevisionID != base.Spec.ID ||
-		base.NextExecutionRevision <= base.LastSuccessfulExecution.Revision ||
-		!networkPolicyAssignmentReady(base.NetworkPolicyAssignment, agent.AgentID) {
+		base.NextExecutionRevision <= base.LastSuccessfulExecution.Revision {
 		return fmt.Errorf("%w: Agent is not a complete disabled enable source", ErrAgentNotReady)
 	}
 	return nil
@@ -500,9 +430,14 @@ func validateEnableSource(base ports.AgentEnableBase) error {
 
 func enableAgentFingerprint(input EnableAgentInput) (string, error) {
 	return requestFingerprint(struct {
-		RequestID string
-		AgentID   string
-	}{RequestID: input.RequestID, AgentID: input.AgentID})
+		RequestID        string
+		OrganizationID   string
+		ActorPrincipalID string
+		AgentID          string
+	}{
+		RequestID: input.RequestID, OrganizationID: input.OrganizationID,
+		ActorPrincipalID: input.ActorPrincipalID, AgentID: input.AgentID,
+	})
 }
 
 func enableAgentResult(state ports.AgentEnableState) EnableAgentResult {

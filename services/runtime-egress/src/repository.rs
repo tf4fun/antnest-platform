@@ -14,8 +14,8 @@ use tokio::sync::Mutex;
 use crate::{
     allocator::{AddressPool, AllocationError},
     domain::{
-        ActiveBinding, AgentId, AgentNetwork, NetworkState, PolicyAssignment, PolicyId,
-        PolicyRevision,
+        ActiveBinding, AgentId, AgentNetwork, AttachmentState, NetworkState, PolicyAssignment,
+        PolicyId, PolicyRevision, RuntimeAttachment,
     },
     policy::PolicySpec,
 };
@@ -93,6 +93,18 @@ pub trait Repository: Send + Sync + 'static {
         agent_id: &AgentId,
     ) -> Result<PolicyAssignment, RepositoryError>;
 
+    async fn runtime_attachment(
+        &self,
+        agent_id: &AgentId,
+    ) -> Result<RuntimeAttachment, RepositoryError>;
+
+    async fn compare_and_swap_attachment(
+        &self,
+        agent_id: &AgentId,
+        state: AttachmentState,
+        expected_resource_version: u64,
+    ) -> Result<RuntimeAttachment, RepositoryError>;
+
     async fn compare_and_swap_assignment(
         &self,
         agent_id: &AgentId,
@@ -104,6 +116,7 @@ pub trait Repository: Send + Sync + 'static {
     async fn quarantine_agent_network(
         &self,
         agent_id: &AgentId,
+        expected_resource_version: u64,
         now: SystemTime,
     ) -> Result<AgentNetwork, RepositoryError>;
 
@@ -133,6 +146,7 @@ struct MemoryState {
     networks: HashMap<AgentId, AgentNetwork>,
     revisions: HashMap<(PolicyId, u64), PolicyRevision>,
     assignments: HashMap<AgentId, PolicyAssignment>,
+    attachments: HashMap<AgentId, RuntimeAttachment>,
 }
 
 impl InMemoryRepository {
@@ -152,6 +166,7 @@ impl InMemoryRepository {
                 networks: HashMap::new(),
                 revisions,
                 assignments: HashMap::new(),
+                attachments: HashMap::new(),
             }),
         })
     }
@@ -203,8 +218,14 @@ impl Repository for InMemoryRepository {
             revision: BUILTIN_REVISION,
             resource_version: 1,
         };
+        let attachment = RuntimeAttachment {
+            agent_id: agent_id.clone(),
+            state: AttachmentState::Closed,
+            resource_version: 1,
+        };
         state.networks.insert(agent_id.clone(), network.clone());
-        state.assignments.insert(agent_id, assignment);
+        state.assignments.insert(agent_id.clone(), assignment);
+        state.attachments.insert(agent_id, attachment);
         Ok(network)
     }
 
@@ -265,6 +286,59 @@ impl Repository for InMemoryRepository {
             .ok_or(RepositoryError::AgentNetworkNotFound)
     }
 
+    async fn runtime_attachment(
+        &self,
+        agent_id: &AgentId,
+    ) -> Result<RuntimeAttachment, RepositoryError> {
+        self.state
+            .lock()
+            .await
+            .attachments
+            .get(agent_id)
+            .cloned()
+            .ok_or(RepositoryError::AgentNetworkNotFound)
+    }
+
+    async fn compare_and_swap_attachment(
+        &self,
+        agent_id: &AgentId,
+        desired: AttachmentState,
+        expected_resource_version: u64,
+    ) -> Result<RuntimeAttachment, RepositoryError> {
+        let mut state = self.state.lock().await;
+        let network = state
+            .networks
+            .get(agent_id)
+            .ok_or(RepositoryError::AgentNetworkNotFound)?;
+        if network.state != NetworkState::Active {
+            return Err(RepositoryError::AgentNetworkUnavailable);
+        }
+        let current = state
+            .attachments
+            .get(agent_id)
+            .cloned()
+            .ok_or(RepositoryError::AgentNetworkNotFound)?;
+        if current.state == desired {
+            return if retry_version_matches(current.resource_version, expected_resource_version) {
+                Ok(current)
+            } else {
+                Err(RepositoryError::ResourceVersionConflict)
+            };
+        }
+        if current.resource_version != expected_resource_version {
+            return Err(RepositoryError::ResourceVersionConflict);
+        }
+        let attachment = RuntimeAttachment {
+            agent_id: agent_id.clone(),
+            state: desired,
+            resource_version: current.resource_version + 1,
+        };
+        state
+            .attachments
+            .insert(agent_id.clone(), attachment.clone());
+        Ok(attachment)
+    }
+
     async fn compare_and_swap_assignment(
         &self,
         agent_id: &AgentId,
@@ -273,6 +347,13 @@ impl Repository for InMemoryRepository {
         expected_resource_version: u64,
     ) -> Result<PolicyAssignment, RepositoryError> {
         let mut state = self.state.lock().await;
+        let network = state
+            .networks
+            .get(agent_id)
+            .ok_or(RepositoryError::AgentNetworkNotFound)?;
+        if network.state != NetworkState::Active {
+            return Err(RepositoryError::AgentNetworkUnavailable);
+        }
         if !state.revisions.contains_key(&(policy_id.clone(), revision)) {
             return Err(RepositoryError::PolicyRevisionNotFound);
         }
@@ -282,7 +363,11 @@ impl Repository for InMemoryRepository {
             .cloned()
             .ok_or(RepositoryError::AgentNetworkNotFound)?;
         if current.policy_id == policy_id && current.revision == revision {
-            return Ok(current);
+            return if retry_version_matches(current.resource_version, expected_resource_version) {
+                Ok(current)
+            } else {
+                Err(RepositoryError::ResourceVersionConflict)
+            };
         }
         if current.resource_version != expected_resource_version {
             return Err(RepositoryError::ResourceVersionConflict);
@@ -302,17 +387,37 @@ impl Repository for InMemoryRepository {
     async fn quarantine_agent_network(
         &self,
         agent_id: &AgentId,
+        expected_resource_version: u64,
         now: SystemTime,
     ) -> Result<AgentNetwork, RepositoryError> {
         let mut state = self.state.lock().await;
         let quarantine = state.config.quarantine;
+        let current = state
+            .networks
+            .get(agent_id)
+            .cloned()
+            .ok_or(RepositoryError::AgentNetworkNotFound)?;
+        if current.state == NetworkState::Quarantined {
+            return if retry_version_matches(current.resource_version, expected_resource_version) {
+                Ok(current)
+            } else {
+                Err(RepositoryError::ResourceVersionConflict)
+            };
+        }
+        if current.resource_version != expected_resource_version {
+            return Err(RepositoryError::ResourceVersionConflict);
+        }
+        if state
+            .attachments
+            .get(agent_id)
+            .is_none_or(|attachment| attachment.state != AttachmentState::Closed)
+        {
+            return Err(RepositoryError::AgentNetworkUnavailable);
+        }
         let network = state
             .networks
             .get_mut(agent_id)
-            .ok_or(RepositoryError::AgentNetworkNotFound)?;
-        if network.state == NetworkState::Quarantined {
-            return Ok(network.clone());
-        }
+            .expect("validated Agent network exists");
         network.state = NetworkState::Quarantined;
         network.resource_version += 1;
         network.quarantine_until = Some(now + quarantine);
@@ -321,28 +426,35 @@ impl Repository for InMemoryRepository {
 
     async fn active_bindings(&self) -> Result<Vec<ActiveBinding>, RepositoryError> {
         let state = self.state.lock().await;
-        state
+        let mut bindings = Vec::new();
+        for network in state
             .networks
             .values()
             .filter(|network| network.state == NetworkState::Active)
-            .map(|network| {
-                let assignment = state
-                    .assignments
-                    .get(&network.agent_id)
-                    .cloned()
-                    .ok_or(RepositoryError::AgentNetworkNotFound)?;
-                let revision = state
-                    .revisions
-                    .get(&(assignment.policy_id.clone(), assignment.revision))
-                    .cloned()
-                    .ok_or(RepositoryError::PolicyRevisionNotFound)?;
-                Ok(ActiveBinding {
-                    network: network.clone(),
-                    assignment,
-                    revision,
-                })
-            })
-            .collect()
+        {
+            let attachment = state
+                .attachments
+                .get(&network.agent_id)
+                .cloned()
+                .ok_or(RepositoryError::AgentNetworkNotFound)?;
+            let assignment = state
+                .assignments
+                .get(&network.agent_id)
+                .cloned()
+                .ok_or(RepositoryError::AgentNetworkNotFound)?;
+            let revision = state
+                .revisions
+                .get(&(assignment.policy_id.clone(), assignment.revision))
+                .cloned()
+                .ok_or(RepositoryError::PolicyRevisionNotFound)?;
+            bindings.push(ActiveBinding {
+                network: network.clone(),
+                attachment,
+                assignment,
+                revision,
+            });
+        }
+        Ok(bindings)
     }
 
     async fn expired_quarantines(
@@ -380,6 +492,7 @@ impl Repository for InMemoryRepository {
         }
         state.networks.remove(agent_id);
         state.assignments.remove(agent_id);
+        state.attachments.remove(agent_id);
         Ok(true)
     }
 }
@@ -412,6 +525,13 @@ pub fn policy_revision(policy_id: PolicyId, revision: u64, spec: PolicySpec) -> 
         spec,
         digest,
     }
+}
+
+fn retry_version_matches(current: u64, expected: u64) -> bool {
+    current == expected
+        || expected
+            .checked_add(1)
+            .is_some_and(|version| version == current)
 }
 
 pub type SharedRepository<R> = Arc<R>;

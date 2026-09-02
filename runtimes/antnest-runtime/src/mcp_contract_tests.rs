@@ -21,6 +21,7 @@ struct Contract {
     lifecycle_errors: LifecycleErrors,
     bootstrap_stages: Vec<String>,
     tool_errors: Vec<String>,
+    tool_result: ToolResult,
     execution: Execution,
     tools: Vec<String>,
     egress_tunnel: EgressTunnel,
@@ -43,6 +44,14 @@ struct Execution {
     max_active_calls_per_agent: u8,
     busy_error: String,
     subcommands: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct ToolResult {
+    effect_states: Vec<String>,
+    unknown_effect_source: String,
+    success_effect_state: String,
+    error_code_field: String,
 }
 
 #[derive(Deserialize)]
@@ -87,6 +96,20 @@ struct PacketContract {
     inner_mtu: u16,
     fragmentation: bool,
     one_packet_per_datagram: bool,
+    readiness_probe: ReadinessProbe,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReadinessProbe {
+    destination_ipv4: String,
+    destination_port: u16,
+    source_port_min: u16,
+    request_flags: Vec<String>,
+    request_acknowledgement: u32,
+    request_payload_bytes: usize,
+    response_flags: Vec<String>,
+    local_response_only: bool,
 }
 
 #[test]
@@ -127,6 +150,14 @@ fn shared_contract_matches_runtime_http_surface() {
     assert_eq!(packet.inner_mtu, crate::packet::INNER_MTU);
     assert!(!packet.fragmentation);
     assert!(packet.one_packet_per_datagram);
+    assert_eq!(packet.readiness_probe.destination_ipv4, "192.0.2.1");
+    assert_eq!(packet.readiness_probe.destination_port, 9);
+    assert_eq!(packet.readiness_probe.source_port_min, 49_152);
+    assert_eq!(packet.readiness_probe.request_flags, ["syn"]);
+    assert_eq!(packet.readiness_probe.request_acknowledgement, 0);
+    assert_eq!(packet.readiness_probe.request_payload_bytes, 0);
+    assert_eq!(packet.readiness_probe.response_flags, ["rst", "ack"]);
+    assert!(packet.readiness_probe.local_response_only);
     assert!(!contract.egress_tunnel.traced);
     assert_eq!(contract.egress_tunnel.policy_owner, "runtime-egress");
     assert_eq!(contract.packet_format, "packet-format.md");
@@ -174,6 +205,13 @@ fn shared_contract_matches_runtime_http_surface() {
             .map(|code| code.as_str())
             .collect::<Vec<_>>()
     );
+    assert_eq!(
+        contract.tool_result.effect_states,
+        ["none", "settled", "unknown"]
+    );
+    assert_eq!(contract.tool_result.unknown_effect_source, "runtime_mcp");
+    assert_eq!(contract.tool_result.success_effect_state, "settled");
+    assert_eq!(contract.tool_result.error_code_field, "error_code");
     assert_eq!(contract.execution.single_flight_enforced_by, "runtime");
     assert_eq!(contract.execution.max_active_calls_per_agent, 1);
     assert_eq!(contract.execution.busy_error, "runtime_busy");
@@ -485,7 +523,10 @@ async fn official_mcp_client_observes_status_and_calls_all_runtime_tools() {
         }),
     )
     .await;
-    assert_eq!(read.structured_content.unwrap()["content"], "after");
+    let structured = read.structured_content.unwrap();
+    assert_eq!(structured["content"], "after");
+    assert_eq!(structured["effect_state"], "settled");
+    assert!(structured["effect_source"].is_null());
 
     let bash = call(
         &client,
@@ -501,6 +542,8 @@ async fn official_mcp_client_observes_status_and_calls_all_runtime_tools() {
     let structured = bash.structured_content.unwrap();
     assert_eq!(structured["exit_code"], 0);
     assert_eq!(structured["stdout"], "after");
+    assert_eq!(structured["effect_state"], "settled");
+    assert!(structured["effect_source"].is_null());
 
     client.cancel().await.expect("stop MCP client");
     shutdown.cancel();

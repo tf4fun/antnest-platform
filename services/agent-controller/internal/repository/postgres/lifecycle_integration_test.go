@@ -104,7 +104,7 @@ func TestLifecycleRepositoryPersistsCreateSagaAndPublishesAtomically(t *testing.
 	}
 	time.Sleep(10 * time.Millisecond)
 	claim, found, err := repository.ClaimLifecycleRecovery(ctx, ports.ClaimLifecycleRecovery{
-		WorkerID: "worker-create-integration", StaleAfter: 5 * time.Millisecond,
+		WorkerID:      "worker-create-integration",
 		LeaseDuration: time.Minute,
 	})
 	if err != nil || !found || claim.Operation.RequestID != begin.Operation.RequestID {
@@ -121,10 +121,7 @@ func TestLifecycleRepositoryPersistsCreateSagaAndPublishesAtomically(t *testing.
 		RequestID: begin.Operation.RequestID, WorkerID: claim.WorkerID, Attempt: claim.Attempt,
 	})
 
-	attachment := ports.NetworkAttachment{
-		AgentID: "agent-integration", TunnelIPv4: "100.64.0.2", ResolverIPv4: "100.64.0.1",
-		PacketContractRevision: 1, EgressIPv4: "10.20.0.8", EgressPort: 8092, State: "active",
-	}
+	attachment := *closedNetworkAttachment("agent-integration")
 	withNetwork, err := repository.RecordCreateNetwork(
 		recoveryCtx, begin.Operation.RequestID, fingerprint, attachment,
 		domain.ChildRequestID(begin.Operation.RequestID, domain.PhaseRuntimeInitialize), now.Add(time.Second),
@@ -145,8 +142,12 @@ func TestLifecycleRepositoryPersistsCreateSagaAndPublishesAtomically(t *testing.
 		t.Fatalf("record Runtime: state=%+v err=%v", withRuntime, err)
 	}
 
+	openedAttachment := attachment
+	openedAttachment.AttachmentState = ports.NetworkAttachmentOpen
+	openedAttachment.AttachmentResourceVersion++
 	published, err := repository.PublishAgentCreate(recoveryCtx, ports.PublishAgentCreate{
 		RequestID: begin.Operation.RequestID, Fingerprint: fingerprint,
+		NetworkAttachment: openedAttachment,
 		Execution: ports.ExecutionRecord{
 			ID: "execution-integration", AgentID: begin.Agent.AgentID, Revision: 1,
 			AgentSpecRevisionID: begin.Spec.ID, RuntimeRevision: runtime.RuntimeRevision,
@@ -233,4 +234,31 @@ WHERE event_id = $1`, eventID).Scan(
 			eventSequence,
 		)
 	}
+}
+
+func claimLifecycleForTest(
+	t *testing.T,
+	ctx context.Context,
+	repository *Repository,
+	requestID string,
+) context.Context {
+	t.Helper()
+	workerID := "test-worker-" + requestID
+	claim, found, err := repository.ClaimLifecycleRecovery(ctx, ports.ClaimLifecycleRecovery{
+		WorkerID: workerID, LeaseDuration: time.Minute,
+	})
+	if err != nil || !found || claim.Operation.RequestID != requestID {
+		t.Fatalf(
+			"claim lifecycle operation %q: claim=%+v found=%t err=%v",
+			requestID, claim, found, err,
+		)
+	}
+	if err := repository.StartLifecycleRecoveryAttempt(ctx, ports.StartLifecycleRecoveryAttempt{
+		RequestID: requestID, WorkerID: workerID, Attempt: claim.Attempt,
+	}); err != nil {
+		t.Fatalf("start lifecycle operation %q: %v", requestID, err)
+	}
+	return ports.WithLifecycleRecoveryToken(ctx, ports.LifecycleRecoveryToken{
+		RequestID: requestID, WorkerID: workerID, Attempt: claim.Attempt,
+	})
 }

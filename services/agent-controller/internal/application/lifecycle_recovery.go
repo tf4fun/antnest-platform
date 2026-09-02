@@ -35,7 +35,6 @@ type LifecycleRecoveryInstrumentation func(
 type LifecycleRecoveryWorkerConfig struct {
 	WorkerID       string
 	PollInterval   time.Duration
-	StaleAfter     time.Duration
 	AttemptTimeout time.Duration
 	LeaseDuration  time.Duration
 	RetryMax       time.Duration
@@ -55,8 +54,8 @@ func NewLifecycleRecoveryWorker(
 	config LifecycleRecoveryWorkerConfig,
 ) (*LifecycleRecoveryWorker, error) {
 	if store == nil || resumer == nil || strings.TrimSpace(config.WorkerID) == "" ||
-		config.PollInterval <= 0 || config.StaleAfter <= 0 || config.AttemptTimeout <= 0 ||
-		config.LeaseDuration <= config.AttemptTimeout || config.StaleAfter < config.LeaseDuration ||
+		config.PollInterval <= 0 || config.AttemptTimeout <= 0 ||
+		config.LeaseDuration <= config.AttemptTimeout ||
 		config.RetryMax < config.PollInterval {
 		return nil, fmt.Errorf("invalid lifecycle recovery worker configuration")
 	}
@@ -102,16 +101,17 @@ func (worker *LifecycleRecoveryWorker) RunOnce(ctx context.Context) (bool, error
 		return false, err
 	}
 	claim, found, err := worker.store.ClaimLifecycleRecovery(ctx, ports.ClaimLifecycleRecovery{
-		WorkerID: worker.config.WorkerID, StaleAfter: worker.config.StaleAfter,
-		LeaseDuration: worker.config.LeaseDuration,
+		WorkerID: worker.config.WorkerID, LeaseDuration: worker.config.LeaseDuration,
 	})
 	if err != nil || !found {
 		return false, err
 	}
 	attemptCtx, cancel := context.WithTimeout(ctx, worker.config.AttemptTimeout)
+	attemptTraceID := ""
 	result, attemptErr := worker.instrumentation(
 		attemptCtx, claim,
 		func(callCtx context.Context, traceParent string) (LifecycleRecoveryResult, error) {
+			attemptTraceID = currentTraceID(callCtx)
 			if err := worker.store.StartLifecycleRecoveryAttempt(
 				callCtx, ports.StartLifecycleRecoveryAttempt{
 					RequestID: claim.Operation.RequestID, WorkerID: claim.WorkerID,
@@ -154,12 +154,32 @@ func (worker *LifecycleRecoveryWorker) RunOnce(ctx context.Context) (bool, error
 		return true, ctx.Err()
 	}
 	if attemptErr != nil && !retryableLifecycleRecoveryError(attemptErr) {
-		return true, fmt.Errorf("resume lifecycle operation %s: %w", claim.Operation.RequestID, attemptErr)
+		detail := lifecycleRecoveryFailureDetail(attemptErr)
+		quarantineErr := worker.store.QuarantineLifecycleRecoveryClaim(
+			ctx, ports.QuarantineLifecycleRecoveryClaim{
+				RequestID: claim.Operation.RequestID, WorkerID: claim.WorkerID,
+				Attempt: claim.Attempt, ErrorCode: "lifecycle_invariant_failed",
+				ErrorDetail: detail,
+				EventID:     derivedID("event-lifecycle-quarantined", claim.Operation.RequestID),
+				TraceID:     attemptTraceID,
+			},
+		)
+		if errors.Is(quarantineErr, ports.ErrLifecycleRecoveryClaimLost) {
+			return true, nil
+		}
+		if quarantineErr != nil {
+			return true, fmt.Errorf(
+				"quarantine lifecycle operation %s: %w", claim.Operation.RequestID, quarantineErr,
+			)
+		}
+		return true, nil
 	}
 	failed := attemptErr != nil && !errors.Is(attemptErr, ports.ErrConcurrentChange) &&
 		!result.Progressed
 	delay := worker.config.PollInterval
-	if failed {
+	if result.Progressed {
+		delay = 0
+	} else if failed {
 		delay = lifecycleRecoveryBackoff(
 			worker.config.PollInterval, worker.config.RetryMax,
 			claim.ConsecutiveFailures,
@@ -177,6 +197,15 @@ func (worker *LifecycleRecoveryWorker) RunOnce(ctx context.Context) (bool, error
 		return true, err
 	}
 	return true, nil
+}
+
+func lifecycleRecoveryFailureDetail(err error) string {
+	const maxDetailBytes = 2000
+	detail := strings.TrimSpace(err.Error())
+	if len(detail) <= maxDetailBytes {
+		return detail
+	}
+	return detail[:maxDetailBytes]
 }
 
 func retryableLifecycleRecoveryError(err error) bool {
@@ -322,10 +351,6 @@ func (service *LifecycleService) validateLifecycleRecoveryClaim(
 		return ports.ErrLifecycleRecoveryClaimLost
 	}
 	return nil
-}
-
-func lifecycleOperationReservedForRecovery(operation ports.LifecycleOperationRecord) bool {
-	return operation.RecoveryOwner != "" || operation.Attempt > 1
 }
 
 var _ LifecycleOperationResumer = (*LifecycleService)(nil)

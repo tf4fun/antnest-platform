@@ -95,7 +95,9 @@ The deployment's Edge Gateway eventually authenticates external users and
 forwards an opaque Agent-scoped access subject during WebSocket upgrade. During
 internal development, a trusted client supplies the same value directly.
 Agent ACP Service resolves it through Agent Controller before accepting the
-connection and before every ACP business operation. A changed access revision,
+connection and before Session-management operations. Prompt admission goes
+directly through authoritative `acquire_run`, which validates the same frozen
+principal, Agent, and access revision without a duplicate Identity lookup. A changed access revision,
 principal, Agent, or prompt capability invalidates the binding and requires a
 new connection. It advertises no ACP `authMethods` because authentication has
 already completed at the transport boundary.

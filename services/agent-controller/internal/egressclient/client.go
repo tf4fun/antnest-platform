@@ -59,19 +59,29 @@ func (client *Client) GetAgentNetwork(
 	return client.readAgentNetwork(ctx, http.MethodGet, agentID, "get_agent_network", false)
 }
 
-func (client *Client) FenceAgentNetwork(
-	ctx context.Context, agentID string, expectedResourceVersion uint64,
-) error {
-	return client.postAgentNetworkAction(
-		ctx, agentID, "fence", "fence_agent_network", expectedResourceVersion,
-	)
-}
-
-func (client *Client) ResetAgentFlows(
-	ctx context.Context, agentID string, expectedResourceVersion uint64,
-) error {
-	return client.postAgentNetworkAction(
-		ctx, agentID, "reset-flows", "reset_agent_flows", expectedResourceVersion,
+func (client *Client) SetAgentNetworkAttachment(
+	ctx context.Context,
+	agentID string,
+	state string,
+	expectedResourceVersion uint64,
+) (ports.NetworkAttachment, error) {
+	if state != ports.NetworkAttachmentClosed && state != ports.NetworkAttachmentOpen {
+		return ports.NetworkAttachment{}, dependencyFailure("invalid_request", false)
+	}
+	payload, err := json.Marshal(struct {
+		State                   string `json:"state"`
+		ExpectedResourceVersion uint64 `json:"expected_resource_version"`
+	}{State: state, ExpectedResourceVersion: expectedResourceVersion})
+	if err != nil || expectedResourceVersion == 0 {
+		return ports.NetworkAttachment{}, dependencyFailure("invalid_request", false)
+	}
+	return client.writeAgentNetwork(
+		ctx,
+		agentID,
+		"set_agent_network_attachment",
+		"/internal/agent-network-attachments/"+url.PathEscape(agentID),
+		bytes.NewReader(payload),
+		state,
 	)
 }
 
@@ -81,96 +91,6 @@ func (client *Client) ReleaseAgentNetwork(
 	return client.readAgentNetworkAction(
 		ctx, agentID, "release", "release_agent_network", "quarantined", expectedResourceVersion,
 	)
-}
-
-func (client *Client) GetAgentPolicyAssignment(
-	ctx context.Context, agentID string,
-) (ports.NetworkPolicyAssignment, error) {
-	return client.callPolicyAssignment(
-		ctx, http.MethodGet, ports.NetworkPolicyAssignment{AgentID: agentID}, 0,
-		"get_agent_policy_assignment",
-	)
-}
-
-func (client *Client) AssignAgentPolicy(
-	ctx context.Context,
-	assignment ports.NetworkPolicyAssignment,
-	expectedResourceVersion uint64,
-) (ports.NetworkPolicyAssignment, error) {
-	return client.callPolicyAssignment(
-		ctx, http.MethodPut, assignment, expectedResourceVersion, "assign_agent_policy",
-	)
-}
-
-func (client *Client) callPolicyAssignment(
-	ctx context.Context,
-	method string,
-	assignment ports.NetworkPolicyAssignment,
-	expectedResourceVersion uint64,
-	operation string,
-) (result ports.NetworkPolicyAssignment, resultErr error) {
-	ctx, cancel := context.WithTimeout(ctx, client.timeout)
-	defer cancel()
-	ctx, span := tracer.Start(
-		ctx, "agent_controller.egress."+operation,
-		trace.WithSpanKind(trace.SpanKindClient),
-		trace.WithAttributes(
-			attribute.String("server.address", client.baseURL.Hostname()),
-			attribute.String("antnest.agent.id", assignment.AgentID),
-			attribute.String("rpc.system", "http_json"),
-		),
-	)
-	defer func() {
-		if resultErr != nil {
-			span.SetStatus(codes.Error, dependencyCode(resultErr))
-		}
-		span.End()
-	}()
-
-	var body io.Reader = http.NoBody
-	if method == http.MethodPut {
-		payload, err := json.Marshal(struct {
-			PolicyID                string `json:"policy_id"`
-			Revision                uint64 `json:"revision"`
-			ExpectedResourceVersion uint64 `json:"expected_resource_version"`
-		}{
-			PolicyID: assignment.PolicyID, Revision: assignment.Revision,
-			ExpectedResourceVersion: expectedResourceVersion,
-		})
-		if err != nil {
-			return ports.NetworkPolicyAssignment{}, dependencyFailure("invalid_request", false)
-		}
-		body = bytes.NewReader(payload)
-	}
-	endpoint := *client.baseURL
-	endpoint.Path = "/internal/agent-policy-assignments/" + url.PathEscape(assignment.AgentID)
-	request, err := http.NewRequestWithContext(ctx, method, endpoint.String(), body)
-	if err != nil {
-		return ports.NetworkPolicyAssignment{}, dependencyFailure("invalid_request", false)
-	}
-	if method == http.MethodPut {
-		request.Header.Set("Content-Type", "application/json")
-	}
-	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(request.Header))
-	response, err := client.httpClient.Do(request)
-	if err != nil {
-		return ports.NetworkPolicyAssignment{}, dependencyFailure("control_plane_unavailable", true)
-	}
-	span.SetAttributes(attribute.Int("http.response.status_code", response.StatusCode))
-	payload, err := io.ReadAll(io.LimitReader(response.Body, maximumResponseBytes+1))
-	closeErr := response.Body.Close()
-	if err != nil || closeErr != nil || len(payload) > maximumResponseBytes {
-		return ports.NetworkPolicyAssignment{}, dependencyFailure("invalid_response", true)
-	}
-	if response.StatusCode != http.StatusOK {
-		return ports.NetworkPolicyAssignment{}, decodeFailure(payload, response.StatusCode)
-	}
-	if err := json.Unmarshal(payload, &result); err != nil ||
-		result.AgentID != assignment.AgentID || strings.TrimSpace(result.PolicyID) == "" ||
-		result.Revision == 0 || result.ResourceVersion == 0 {
-		return ports.NetworkPolicyAssignment{}, dependencyFailure("invalid_response", true)
-	}
-	return result, nil
 }
 
 func (client *Client) readAgentNetwork(
@@ -287,10 +207,14 @@ func (client *Client) readAgentNetworkAction(
 	return result, nil
 }
 
-func (client *Client) postAgentNetworkAction(
-	ctx context.Context, agentID string, action string, operation string,
-	expectedResourceVersion uint64,
-) (resultErr error) {
+func (client *Client) writeAgentNetwork(
+	ctx context.Context,
+	agentID string,
+	operation string,
+	path string,
+	body io.Reader,
+	requiredAttachmentState string,
+) (result ports.NetworkAttachment, resultErr error) {
 	ctx, cancel := context.WithTimeout(ctx, client.timeout)
 	defer cancel()
 	ctx, span := tracer.Start(
@@ -310,34 +234,33 @@ func (client *Client) postAgentNetworkAction(
 	}()
 
 	endpoint := *client.baseURL
-	endpoint.Path = "/internal/agent-networks/" + url.PathEscape(agentID) + "/" + action
-	requestBody, err := resourceVersionBody(expectedResourceVersion)
+	endpoint.Path = path
+	request, err := http.NewRequestWithContext(ctx, http.MethodPut, endpoint.String(), body)
 	if err != nil {
-		return dependencyFailure("invalid_request", false)
-	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), requestBody)
-	if err != nil {
-		return dependencyFailure("invalid_request", false)
+		return ports.NetworkAttachment{}, dependencyFailure("invalid_request", false)
 	}
 	request.Header.Set("Content-Type", "application/json")
 	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(request.Header))
 	response, err := client.httpClient.Do(request)
 	if err != nil {
-		return dependencyFailure("control_plane_unavailable", true)
+		return ports.NetworkAttachment{}, dependencyFailure("control_plane_unavailable", true)
 	}
 	span.SetAttributes(attribute.Int("http.response.status_code", response.StatusCode))
 	responseBody, err := io.ReadAll(io.LimitReader(response.Body, maximumResponseBytes+1))
 	closeErr := response.Body.Close()
 	if err != nil || closeErr != nil || len(responseBody) > maximumResponseBytes {
-		return dependencyFailure("invalid_response", true)
+		return ports.NetworkAttachment{}, dependencyFailure("invalid_response", true)
 	}
-	if response.StatusCode != http.StatusNoContent {
-		return decodeFailure(responseBody, response.StatusCode)
+	if response.StatusCode != http.StatusOK {
+		return ports.NetworkAttachment{}, decodeFailure(responseBody, response.StatusCode)
 	}
-	if len(responseBody) != 0 {
-		return dependencyFailure("invalid_response", true)
+	result, err = decodeNetworkAttachment(
+		responseBody, agentID, ports.NetworkStateActive, requiredAttachmentState,
+	)
+	if err != nil {
+		return ports.NetworkAttachment{}, dependencyFailure("invalid_response", true)
 	}
-	return nil
+	return result, nil
 }
 
 func resourceVersionBody(expectedResourceVersion uint64) (io.Reader, error) {
@@ -381,11 +304,15 @@ func validIPv4(value string) bool {
 }
 
 func validNetworkState(value string) bool {
-	return value == "active" || value == "quarantined"
+	return value == ports.NetworkStateActive || value == ports.NetworkStateQuarantined
+}
+
+func validAttachmentState(value string) bool {
+	return value == ports.NetworkAttachmentClosed || value == ports.NetworkAttachmentOpen
 }
 
 func decodeNetworkAttachment(
-	body []byte, agentID string, requiredState string,
+	body []byte, agentID string, requiredState string, requiredAttachmentState ...string,
 ) (ports.NetworkAttachment, error) {
 	var payload struct {
 		AgentID                string `json:"agent_id"`
@@ -396,13 +323,23 @@ func decodeNetworkAttachment(
 			IPv4 string `json:"ipv4"`
 			Port uint16 `json:"port"`
 		} `json:"egress_endpoint"`
-		State string `json:"state"`
+		State                     string `json:"state"`
+		NetworkResourceVersion    uint64 `json:"network_resource_version"`
+		AttachmentState           string `json:"attachment_state"`
+		AttachmentResourceVersion uint64 `json:"attachment_resource_version"`
+	}
+	expectedAttachmentState := ""
+	if len(requiredAttachmentState) > 0 {
+		expectedAttachmentState = requiredAttachmentState[0]
 	}
 	if err := json.Unmarshal(body, &payload); err != nil || payload.AgentID != agentID ||
 		!validIPv4(payload.TunnelIPv4) || !validIPv4(payload.ResolverIPv4) ||
 		!validIPv4(payload.EgressEndpoint.IPv4) || payload.EgressEndpoint.Port == 0 ||
 		payload.PacketContractRevision == 0 || !validNetworkState(payload.State) ||
-		(requiredState != "" && payload.State != requiredState) {
+		payload.NetworkResourceVersion == 0 || !validAttachmentState(payload.AttachmentState) ||
+		payload.AttachmentResourceVersion == 0 ||
+		(requiredState != "" && payload.State != requiredState) ||
+		(expectedAttachmentState != "" && payload.AttachmentState != expectedAttachmentState) {
 		return ports.NetworkAttachment{}, fmt.Errorf("invalid Agent network attachment")
 	}
 	return ports.NetworkAttachment{
@@ -410,7 +347,9 @@ func decodeNetworkAttachment(
 		ResolverIPv4:           payload.ResolverIPv4,
 		PacketContractRevision: payload.PacketContractRevision,
 		EgressIPv4:             payload.EgressEndpoint.IPv4, EgressPort: payload.EgressEndpoint.Port,
-		State: payload.State,
+		State: payload.State, NetworkResourceVersion: payload.NetworkResourceVersion,
+		AttachmentState:           payload.AttachmentState,
+		AttachmentResourceVersion: payload.AttachmentResourceVersion,
 	}, nil
 }
 

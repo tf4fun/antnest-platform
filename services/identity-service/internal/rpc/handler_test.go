@@ -49,6 +49,24 @@ func TestRPCMapsDomainErrorsAndOIDCCallbackDisablesCaching(t *testing.T) {
 	}
 }
 
+func TestRPCRevokesByOpaqueAccessTokenAndReturnsIdempotentStatus(t *testing.T) {
+	services := &rpcServicesStub{revokeStatus: localauth.RevokeStatusAlreadyInvalid}
+	handler := newRPCHandler(t, services)
+	request := httptest.NewRequest(
+		http.MethodPost,
+		ContractRoutes["revoke_access_token"],
+		strings.NewReader(`{"access_token":"ant_api_secret"}`),
+	)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK || services.revokedAccessToken != "ant_api_secret" ||
+		!strings.Contains(response.Body.String(), `"status":"already_invalid"`) {
+		t.Fatalf("status=%d token=%q body=%s",
+			response.Code, services.revokedAccessToken, response.Body.String())
+	}
+}
+
 func TestOIDCCallbackForwardsStandardAuthorizationError(t *testing.T) {
 	services := &rpcServicesStub{completeLoginErr: domain.NewError(
 		"oidc_authorization_failed",
@@ -361,8 +379,8 @@ func TestRPCBindingsConformToCentralIdentityContract(t *testing.T) {
 	if err := json.Unmarshal(encoded, &contract); err != nil {
 		t.Fatalf("decode contract: %v", err)
 	}
-	if contract.Revision != 6 {
-		t.Fatalf("identity contract revision=%d want=6", contract.Revision)
+	if contract.Revision != 7 {
+		t.Fatalf("identity contract revision=%d want=7", contract.Revision)
 	}
 	if len(contract.Methods) != len(ContractRoutes) {
 		t.Fatalf("contract methods=%d route bindings=%d", len(contract.Methods), len(ContractRoutes))
@@ -444,8 +462,8 @@ func TestRPCBindingsConformToCentralIdentityContract(t *testing.T) {
 			t.Errorf("identity error %q has no HTTP status mapping", code)
 		}
 	}
-	if !contains(contract.Methods["local_login"].Response.Required, "token_id") {
-		t.Fatal("local_login contract does not expose the token ID required by revoke_access_token")
+	if !contains(contract.Methods["revoke_access_token"].Request.Required, "access_token") {
+		t.Fatal("revoke_access_token does not use the opaque bearer credential")
 	}
 	if !contains(contract.Protocols.OIDCCallback.ReplayResponse.Required, "token_id") ||
 		!contains(contract.Protocols.OIDCCallback.ReplayResponse.Forbidden, "access_token") {
@@ -483,6 +501,8 @@ type rpcServicesStub struct {
 	resolvePrincipalCalls          int
 	resolvePrincipalUserID         string
 	resolvePrincipalOrganizationID string
+	revokedAccessToken             string
+	revokeStatus                   localauth.RevokeStatus
 }
 
 func (s *rpcServicesStub) CreateOrganization(_ context.Context, input directory.CreateOrganizationInput) (domain.Organization, error) {
@@ -543,7 +563,12 @@ func (s *rpcServicesStub) Resolve(context.Context, string) (domain.Principal, er
 	return domain.Principal{}, s.resolveErr
 }
 
-func (*rpcServicesStub) Revoke(context.Context, string, string) error { return nil }
+func (s *rpcServicesStub) RevokeByAccessToken(
+	_ context.Context, accessToken string,
+) (localauth.RevokeStatus, error) {
+	s.revokedAccessToken = accessToken
+	return s.revokeStatus, nil
+}
 
 func (s *rpcServicesStub) UpsertProvider(
 	_ context.Context,

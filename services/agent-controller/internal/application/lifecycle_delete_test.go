@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"slices"
 	"testing"
 	"time"
 
@@ -22,15 +23,15 @@ func TestDeleteAgentFencesDeletesReleasesThenPublishes(t *testing.T) {
 		fixedClock{now: time.Unix(700, 0).UTC()},
 	)
 
-	result, err := service.DeleteAgent(context.Background(), DeleteAgentInput{
+	result, err := executeDeleteForTest(service, context.Background(), DeleteAgentInput{
 		RequestID: "request-delete-agent", AgentID: base.Agent.AgentID,
 	})
 	if err != nil {
 		t.Fatalf("delete Agent: %v", err)
 	}
 	wantCalls := []string{
-		"egress.policy.get", "egress.fence", "egress.policy.get", "egress.reset",
-		"runtime.delete", "egress.policy.get", "egress.release",
+		"egress.network.get", "egress.attachment.closed", "runtime.delete",
+		"egress.network.get", "egress.release",
 	}
 	if !reflect.DeepEqual(dependencies.calls, wantCalls) {
 		t.Fatalf("dependency order = %v, want %v", dependencies.calls, wantCalls)
@@ -56,6 +57,38 @@ func TestDeleteAgentFencesDeletesReleasesThenPublishes(t *testing.T) {
 	}
 }
 
+func TestDeleteNetworkReleaseTreatsQuarantineAsLostResponseReplay(t *testing.T) {
+	t.Parallel()
+
+	base := deleteAgentBase(domain.AgentDeleting)
+	operation := ports.LifecycleOperationRecord{
+		RequestID: "request-delete-release-replay", RequestFingerprint: "fingerprint",
+		AgentID: base.Agent.AgentID, Kind: domain.OperationDelete,
+		Phase: domain.PhaseNetworkRelease, State: domain.OperationRunning,
+	}
+	state := ports.AgentDeleteState{Agent: base.Agent, Operation: operation}
+	store := &deleteLifecycleStoreStub{base: base, state: state, replayed: true}
+	dependencies := newDeleteDependencies(base.Agent)
+	dependencies.attachment.State = ports.NetworkStateQuarantined
+	dependencies.attachment.AttachmentState = ports.NetworkAttachmentClosed
+	service := NewLifecycleService(
+		lifecycleSpecSourceStub{}, store, dependencies, dependencies,
+		fixedClock{now: time.Unix(705, 0).UTC()},
+	)
+
+	advanced, err := service.releaseDeleteNetwork(context.Background(), state)
+	if err != nil {
+		t.Fatalf("reconcile quarantined release: %v", err)
+	}
+	if !reflect.DeepEqual(dependencies.calls, []string{"egress.network.get"}) {
+		t.Fatalf("release replay repeated side effects: %v", dependencies.calls)
+	}
+	if advanced.Operation.Phase != domain.PhasePublish ||
+		advanced.Operation.NetworkReleaseOutcome != ports.NetworkReleaseQuarantined {
+		t.Fatalf("release replay state = %+v", advanced.Operation)
+	}
+}
+
 func TestDeleteAgentWithAuthoritativelyAbsentRuntimeSkipsRuntimeDelete(t *testing.T) {
 	t.Parallel()
 
@@ -73,22 +106,20 @@ func TestDeleteAgentWithAuthoritativelyAbsentRuntimeSkipsRuntimeDelete(t *testin
 	}
 	dependencies.inspectionErr = missingRuntime
 	dependencies.fenceErr = missingNetwork
-	dependencies.resetErr = missingNetwork
 	dependencies.releaseErr = missingNetwork
 	service := NewLifecycleService(
 		lifecycleSpecSourceStub{}, store, dependencies, dependencies,
 		fixedClock{now: time.Unix(710, 0).UTC()},
 	)
 
-	result, err := service.DeleteAgent(context.Background(), DeleteAgentInput{
+	result, err := executeDeleteForTest(service, context.Background(), DeleteAgentInput{
 		RequestID: "request-delete-absent", AgentID: base.Agent.AgentID,
 	})
 	if err != nil {
 		t.Fatalf("delete absent Agent Runtime: %v", err)
 	}
 	wantCalls := []string{
-		"runtime.inspect", "egress.policy.get", "egress.fence",
-		"egress.policy.get", "egress.reset", "egress.policy.get", "egress.release",
+		"egress.network.get", "egress.network.get",
 	}
 	if !reflect.DeepEqual(dependencies.calls, wantCalls) {
 		t.Fatalf("dependency order = %v, want %v", dependencies.calls, wantCalls)
@@ -96,7 +127,7 @@ func TestDeleteAgentWithAuthoritativelyAbsentRuntimeSkipsRuntimeDelete(t *testin
 	if !store.begin.Operation.SourceRuntimeAbsent ||
 		store.begin.Operation.SourceRuntimeRevision != "" ||
 		store.begin.Operation.SourceRuntimeAbsenceProof == nil ||
-		store.begin.Operation.SourceRuntimeAbsenceProof.Reason != "runtime_not_found" ||
+		store.begin.Operation.SourceRuntimeAbsenceProof.Reason != "agent_runtime_unassigned" ||
 		result.Operation.State != domain.OperationCompleted {
 		t.Fatalf("absent Runtime delete = %+v begin=%+v", result, store.begin)
 	}
@@ -107,7 +138,7 @@ func TestDeleteAgentWithAuthoritativelyAbsentRuntimeSkipsRuntimeDelete(t *testin
 	}
 }
 
-func TestDeleteAgentRejectsDeletedRuntimeInspectionForAnotherAgent(t *testing.T) {
+func TestDeleteAgentDoesNotConsultRuntimeWhenProjectionHasNoRevision(t *testing.T) {
 	t.Parallel()
 
 	base := deleteAgentBase(domain.AgentUnavailable)
@@ -125,14 +156,19 @@ func TestDeleteAgentRejectsDeletedRuntimeInspectionForAnotherAgent(t *testing.T)
 		fixedClock{now: time.Unix(715, 0).UTC()},
 	)
 
-	_, err := service.DeleteAgent(context.Background(), DeleteAgentInput{
+	result, err := executeDeleteForTest(service, context.Background(), DeleteAgentInput{
 		RequestID: "request-delete-wrong-agent", AgentID: base.Agent.AgentID,
 	})
-	if !errors.Is(err, ErrDependencyUnavailable) {
-		t.Fatalf("delete with another Agent Runtime proof error = %v", err)
+	if err != nil {
+		t.Fatalf("delete without projected Runtime: %v", err)
 	}
-	if store.begin.Operation.RequestID != "" {
-		t.Fatal("delete began from another Agent Runtime proof")
+	if slices.Contains(dependencies.calls, "runtime.inspect") {
+		t.Fatalf("delete consulted Runtime outside the durable projection: %v", dependencies.calls)
+	}
+	if result.Operation.State != domain.OperationCompleted ||
+		store.begin.Operation.SourceRuntimeAbsenceProof == nil ||
+		store.begin.Operation.SourceRuntimeAbsenceProof.Reason != "agent_runtime_unassigned" {
+		t.Fatalf("delete without projected Runtime = %+v begin=%+v", result, store.begin)
 	}
 }
 
@@ -147,7 +183,7 @@ func TestDeleteAgentWaitsForActiveRun(t *testing.T) {
 		fixedClock{now: time.Unix(720, 0).UTC()},
 	)
 
-	result, err := service.DeleteAgent(context.Background(), DeleteAgentInput{
+	result, err := executeDeleteForTest(service, context.Background(), DeleteAgentInput{
 		RequestID: "request-delete-draining", AgentID: base.Agent.AgentID,
 	})
 	if err != nil {
@@ -203,7 +239,7 @@ func TestDeleteAgentKeepsUnknownRuntimeEffectNonterminal(t *testing.T) {
 		fixedClock{now: time.Unix(730, 0).UTC()},
 	)
 
-	result, err := service.DeleteAgent(context.Background(), DeleteAgentInput{
+	result, err := executeDeleteForTest(service, context.Background(), DeleteAgentInput{
 		RequestID: "request-delete-unknown", AgentID: base.Agent.AgentID,
 	})
 	if err != nil {
@@ -214,7 +250,7 @@ func TestDeleteAgentKeepsUnknownRuntimeEffectNonterminal(t *testing.T) {
 		t.Fatalf("unknown Runtime effect became terminal: result=%+v publish=%+v", result, store.published)
 	}
 	if reflect.DeepEqual(dependencies.calls, []string{
-		"egress.fence", "egress.reset", "runtime.delete", "egress.release",
+		"egress.attachment.closed", "runtime.delete", "egress.release",
 	}) {
 		t.Fatal("network was released after unknown Runtime deletion")
 	}
@@ -240,7 +276,7 @@ func TestDeleteAgentCompletedRetryDoesNotRepeatEffects(t *testing.T) {
 		fixedClock{now: time.Unix(740, 0).UTC()},
 	)
 
-	result, err := service.DeleteAgent(context.Background(), DeleteAgentInput{
+	result, err := executeDeleteForTest(service, context.Background(), DeleteAgentInput{
 		RequestID: "request-delete-replay", AgentID: base.Agent.AgentID,
 	})
 	if err != nil {
@@ -255,7 +291,6 @@ type deleteDependenciesStub struct {
 	calls                   []string
 	attachment              ports.NetworkAttachment
 	fenceErr                error
-	resetErr                error
 	releaseErr              error
 	runtime                 ports.RuntimeOperation
 	runtimeErr              error
@@ -264,13 +299,14 @@ type deleteDependenciesStub struct {
 	expectedRuntimeRevision string
 	runtimeRequestID        string
 	runtimeAgentID          string
-	policyGets              int
+	attachmentClosed        bool
 }
 
 func newDeleteDependencies(agent ports.AgentRecord) *deleteDependenciesStub {
 	attachment := validLifecycleNetwork()
 	attachment.AgentID = agent.AgentID
-	attachment.State = "quarantined"
+	attachment.State = ports.NetworkStateActive
+	attachment.AttachmentState = ports.NetworkAttachmentOpen
 	return &deleteDependenciesStub{
 		attachment: attachment,
 		runtime: ports.RuntimeOperation{
@@ -286,21 +322,20 @@ func newDeleteDependencies(agent ports.AgentRecord) *deleteDependenciesStub {
 	}
 }
 
-func (dependency *deleteDependenciesStub) FenceAgentNetwork(context.Context, string, uint64) error {
-	dependency.calls = append(dependency.calls, "egress.fence")
-	return dependency.fenceErr
-}
-
-func (dependency *deleteDependenciesStub) ResetAgentFlows(context.Context, string, uint64) error {
-	dependency.calls = append(dependency.calls, "egress.reset")
-	return dependency.resetErr
-}
-
 func (dependency *deleteDependenciesStub) ReleaseAgentNetwork(
-	context.Context, string, uint64,
+	_ context.Context, agentID string, expectedResourceVersion uint64,
 ) (ports.NetworkAttachment, error) {
 	dependency.calls = append(dependency.calls, "egress.release")
-	return dependency.attachment, dependency.releaseErr
+	if dependency.releaseErr != nil {
+		return ports.NetworkAttachment{}, dependency.releaseErr
+	}
+	result := dependency.attachment
+	result.AgentID = agentID
+	result.State = ports.NetworkStateQuarantined
+	result.NetworkResourceVersion = expectedResourceVersion + 1
+	result.AttachmentState = ports.NetworkAttachmentClosed
+	dependency.attachment = result
+	return result, nil
 }
 
 func (dependency *deleteDependenciesStub) DeleteRuntime(
@@ -321,37 +356,38 @@ func (dependency *deleteDependenciesStub) InspectRuntime(
 }
 
 func (dependency *deleteDependenciesStub) GetAgentNetwork(
-	context.Context, string,
+	_ context.Context, agentID string,
 ) (ports.NetworkAttachment, error) {
-	return ports.NetworkAttachment{}, errors.New("unexpected Egress network read")
+	dependency.calls = append(dependency.calls, "egress.network.get")
+	if dependency.fenceErr != nil {
+		return ports.NetworkAttachment{}, dependency.fenceErr
+	}
+	result := dependency.attachment
+	result.AgentID = agentID
+	return result, nil
+}
+
+func (dependency *deleteDependenciesStub) SetAgentNetworkAttachment(
+	_ context.Context, agentID string, state string, expectedResourceVersion uint64,
+) (ports.NetworkAttachment, error) {
+	dependency.calls = append(dependency.calls, "egress.attachment."+state)
+	if dependency.fenceErr != nil {
+		return ports.NetworkAttachment{}, dependency.fenceErr
+	}
+	result := dependency.attachment
+	result.AgentID = agentID
+	result.State = ports.NetworkStateActive
+	result.AttachmentState = state
+	result.AttachmentResourceVersion = expectedResourceVersion + 1
+	dependency.attachment = result
+	dependency.attachmentClosed = state == ports.NetworkAttachmentClosed
+	return result, nil
 }
 
 func (dependency *deleteDependenciesStub) EnsureAgentNetwork(
 	context.Context, string,
 ) (ports.NetworkAttachment, error) {
 	return ports.NetworkAttachment{}, errors.New("unexpected Egress network ensure")
-}
-
-func (dependency *deleteDependenciesStub) GetAgentPolicyAssignment(
-	_ context.Context, agentID string,
-) (ports.NetworkPolicyAssignment, error) {
-	dependency.calls = append(dependency.calls, "egress.policy.get")
-	dependency.policyGets++
-	policyID := "internet-enabled"
-	resourceVersion := uint64(7)
-	if dependency.policyGets > 1 {
-		policyID = ports.BuiltinDenyAllPolicyID
-		resourceVersion = 8
-	}
-	return ports.NetworkPolicyAssignment{
-		AgentID: agentID, PolicyID: policyID, Revision: 1, ResourceVersion: resourceVersion,
-	}, nil
-}
-
-func (dependency *deleteDependenciesStub) AssignAgentPolicy(
-	context.Context, ports.NetworkPolicyAssignment, uint64,
-) (ports.NetworkPolicyAssignment, error) {
-	return ports.NetworkPolicyAssignment{}, errors.New("unexpected Egress policy assignment")
 }
 
 func (dependency *deleteDependenciesStub) InitializeRuntime(
@@ -414,6 +450,7 @@ func (store *deleteLifecycleStoreStub) BeginAgentDelete(
 	agent.ActiveOperationRequestID = input.Operation.RequestID
 	agent.AggregateSequence = input.RequestedEvent.AggregateSequence
 	store.state = ports.AgentDeleteState{Agent: agent, Operation: input.Operation}
+	store.replayed = true
 	return store.state, false, nil
 }
 

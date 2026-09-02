@@ -24,6 +24,8 @@ generated application models, persistence records, or reusable business code.
 | [`agent-controller/control-api.md`](agent-controller/control-api.md) | Agent Controller | Identity Service and administrative clients | Internal Agent management clients and maintainers | Agent lifecycle, projection-query, ownership, and event semantics |
 | [`agent-controller/run-contract.json`](agent-controller/run-contract.json) | Agent Controller | Agent ACP Service | Agent Controller and Agent ACP Service | Agent access resolution, serialized Run admission, immutable execution snapshot, credential resolution, and terminal completion |
 | [`identity/identity-contract.json`](identity/identity-contract.json) | Identity Service | Agent Controller, Edge Gateway, and administrative clients | Agent Controller and internal identity clients | Organizations, principals, local authentication, OIDC configuration, and SCIM credential administration |
+| [`edge-gateway/session-contract.json`](edge-gateway/session-contract.json) | Edge Gateway | Identity Service and Admin Console | Browser clients and Admin Console | Browser session, administrator admission, and trusted principal projection |
+| [`admin-console/admin-contract.json`](admin-console/admin-contract.json) | Admin Console | Edge Gateway, Identity Service, and Agent Controller | Administrator web application | Stage 3A thin-BFF route and authority-field inventory |
 
 Obsolete prototype contracts are deleted when their service is rewritten; they
 do not remain as an implied compatibility layer.

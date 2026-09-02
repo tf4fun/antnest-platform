@@ -32,7 +32,6 @@ const (
 	PhaseDrain             OperationPhase = "drain"
 	PhaseNetworkEnsure     OperationPhase = "network_ensure"
 	PhaseNetworkFence      OperationPhase = "network_fence"
-	PhaseFlowReset         OperationPhase = "flow_reset"
 	PhaseRuntimeInitialize OperationPhase = "runtime_initialize"
 	PhaseRuntimeUpdate     OperationPhase = "runtime_update"
 	PhaseRuntimeDisable    OperationPhase = "runtime_disable"
@@ -53,7 +52,6 @@ var operationPlans = map[OperationKind][]OperationPhase{
 	OperationRebuild: {
 		PhaseDrain,
 		PhaseNetworkFence,
-		PhaseFlowReset,
 		PhaseRuntimeUpdate,
 		PhaseNetworkEnsure,
 		PhasePublish,
@@ -73,7 +71,6 @@ var operationPlans = map[OperationKind][]OperationPhase{
 	OperationDelete: {
 		PhaseDrain,
 		PhaseNetworkFence,
-		PhaseFlowReset,
 		PhaseRuntimeDelete,
 		PhaseNetworkRelease,
 		PhasePublish,

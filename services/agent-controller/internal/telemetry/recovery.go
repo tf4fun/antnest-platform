@@ -103,6 +103,20 @@ func (store *ObservedLifecycleRecoveryStore) ReleaseLifecycleRecoveryClaim(
 	return store.next.ReleaseLifecycleRecoveryClaim(ctx, input)
 }
 
+func (store *ObservedLifecycleRecoveryStore) QuarantineLifecycleRecoveryClaim(
+	ctx context.Context, input ports.QuarantineLifecycleRecoveryClaim,
+) (resultErr error) {
+	ctx, span, started := startRepositorySpan(ctx, "quarantine_lifecycle_recovery_claim")
+	span.SetAttributes(
+		attribute.Int64("antnest.lifecycle.recovery.attempt", input.Attempt),
+		attribute.String("antnest.lifecycle.recovery.error_code", input.ErrorCode),
+	)
+	defer func() {
+		store.finishLeaseOperation(ctx, span, started, "quarantine_lifecycle_recovery_claim", resultErr)
+	}()
+	return store.next.QuarantineLifecycleRecoveryClaim(ctx, input)
+}
+
 func (store *ObservedLifecycleRecoveryStore) finishLeaseOperation(
 	ctx context.Context, span trace.Span, started time.Time, operation string, err error,
 ) {

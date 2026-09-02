@@ -20,7 +20,7 @@ use crate::{
     application::{
         ControlError, ControlService, FailureContext, KernelCleanup, RuntimeNetworkAttachment,
     },
-    domain::{AgentId, NetworkState, PolicyAssignment, PolicyId, PolicyRevision},
+    domain::{AgentId, AttachmentState, NetworkState, PolicyAssignment, PolicyId, PolicyRevision},
     policy::PolicySpec,
     repository::Repository,
     telemetry::EgressMetrics,
@@ -30,8 +30,7 @@ pub use crate::application::ServiceStatus;
 
 const STATUS_ROUTE: &str = "/status";
 const AGENT_NETWORK_ROUTE: &str = "/internal/agent-networks/{agent_id}";
-const FENCE_ROUTE: &str = "/internal/agent-networks/{agent_id}/fence";
-const RESET_FLOWS_ROUTE: &str = "/internal/agent-networks/{agent_id}/reset-flows";
+const ATTACHMENT_ROUTE: &str = "/internal/agent-network-attachments/{agent_id}";
 const RELEASE_ROUTE: &str = "/internal/agent-networks/{agent_id}/release";
 const POLICY_REVISION_ROUTE: &str = "/internal/policies/{policy_id}/revisions/{revision}";
 const POLICY_ASSIGNMENT_ROUTE: &str = "/internal/agent-policy-assignments/{agent_id}";
@@ -40,8 +39,7 @@ pub const CONTROL_ROUTES: &[(&str, &str)] = &[
     ("GET", STATUS_ROUTE),
     ("GET", AGENT_NETWORK_ROUTE),
     ("PUT", AGENT_NETWORK_ROUTE),
-    ("POST", FENCE_ROUTE),
-    ("POST", RESET_FLOWS_ROUTE),
+    ("PUT", ATTACHMENT_ROUTE),
     ("POST", RELEASE_ROUTE),
     ("PUT", POLICY_REVISION_ROUTE),
     ("GET", POLICY_ASSIGNMENT_ROUTE),
@@ -68,16 +66,12 @@ trait ControlApi: Send + Sync {
     fn status(&self) -> ServiceStatus;
     async fn ensure(&self, agent_id: AgentId) -> Result<RuntimeNetworkAttachment, ControlError>;
     async fn network(&self, agent_id: &AgentId) -> Result<RuntimeNetworkAttachment, ControlError>;
-    async fn fence(
+    async fn set_attachment(
         &self,
         agent_id: AgentId,
+        state: AttachmentState,
         expected_resource_version: u64,
-    ) -> Result<(), ControlError>;
-    async fn reset(
-        &self,
-        agent_id: &AgentId,
-        expected_resource_version: u64,
-    ) -> Result<(), ControlError>;
+    ) -> Result<RuntimeNetworkAttachment, ControlError>;
     async fn release(
         &self,
         agent_id: AgentId,
@@ -121,23 +115,14 @@ where
         result
     }
 
-    async fn fence(
+    async fn set_attachment(
         &self,
         agent_id: AgentId,
+        state: AttachmentState,
         expected_resource_version: u64,
-    ) -> Result<(), ControlError> {
-        let result = self.fence_agent(agent_id, expected_resource_version).await;
-        self.observe_control_result(&result);
-        result
-    }
-
-    async fn reset(
-        &self,
-        agent_id: &AgentId,
-        expected_resource_version: u64,
-    ) -> Result<(), ControlError> {
+    ) -> Result<RuntimeNetworkAttachment, ControlError> {
         let result = self
-            .reset_agent_flows(agent_id, expected_resource_version)
+            .set_runtime_attachment(agent_id, state, expected_resource_version)
             .await;
         self.observe_control_result(&result);
         result
@@ -205,8 +190,7 @@ where
     Router::new()
         .route(STATUS_ROUTE, get(status_handler))
         .route(AGENT_NETWORK_ROUTE, get(get_network).put(ensure_network))
-        .route(FENCE_ROUTE, post(fence_network))
-        .route(RESET_FLOWS_ROUTE, post(reset_flows))
+        .route(ATTACHMENT_ROUTE, put(set_attachment))
         .route(RELEASE_ROUTE, post(release_network))
         .route(POLICY_REVISION_ROUTE, put(put_policy_revision))
         .route(
@@ -379,38 +363,29 @@ async fn get_network(
         .map_err(ApiError::from)
 }
 
-async fn fence_network(
+async fn set_attachment(
     State(state): State<AppState>,
     Path(agent_id): Path<String>,
-    request: Result<Json<ExpectedResourceVersionRequest>, JsonRejection>,
-) -> Result<StatusCode, ApiError> {
+    request: Result<Json<SetAttachmentRequest>, JsonRejection>,
+) -> Result<Json<NetworkResponse>, ApiError> {
     let Json(request) = request.map_err(|_| ApiError::invalid_request())?;
     validate_resource_version(request.expected_resource_version)?;
     let agent_id = parse_agent_id(agent_id)?;
     record_agent_id(&agent_id);
     state
         .api
-        .fence(agent_id, request.expected_resource_version)
+        .set_attachment(agent_id, request.state, request.expected_resource_version)
         .await
-        .map(|()| StatusCode::NO_CONTENT)
+        .map(NetworkResponse::from)
+        .map(Json)
         .map_err(ApiError::from)
 }
 
-async fn reset_flows(
-    State(state): State<AppState>,
-    Path(agent_id): Path<String>,
-    request: Result<Json<ExpectedResourceVersionRequest>, JsonRejection>,
-) -> Result<StatusCode, ApiError> {
-    let Json(request) = request.map_err(|_| ApiError::invalid_request())?;
-    validate_resource_version(request.expected_resource_version)?;
-    let agent_id = parse_agent_id(agent_id)?;
-    record_agent_id(&agent_id);
-    state
-        .api
-        .reset(&agent_id, request.expected_resource_version)
-        .await
-        .map(|()| StatusCode::NO_CONTENT)
-        .map_err(ApiError::from)
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SetAttachmentRequest {
+    state: AttachmentState,
+    expected_resource_version: u64,
 }
 
 async fn release_network(
@@ -523,6 +498,9 @@ struct NetworkResponse {
     packet_contract_revision: u32,
     egress_endpoint: Ipv4EndpointResponse,
     state: NetworkState,
+    network_resource_version: u64,
+    attachment_state: AttachmentState,
+    attachment_resource_version: u64,
 }
 
 #[derive(Serialize)]
@@ -543,6 +521,9 @@ impl From<RuntimeNetworkAttachment> for NetworkResponse {
                 port: value.egress_endpoint.port(),
             },
             state: value.state,
+            network_resource_version: value.network_resource_version,
+            attachment_state: value.attachment_state,
+            attachment_resource_version: value.attachment_resource_version,
         }
     }
 }
@@ -647,7 +628,7 @@ impl From<ControlError> for ApiError {
             ControlError::ResourceVersionConflict => Self::new(
                 StatusCode::CONFLICT,
                 "resource_version_conflict",
-                "policy assignment changed",
+                "resource version changed",
                 false,
             ),
             ControlError::AddressPoolExhausted => Self::new(

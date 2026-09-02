@@ -31,7 +31,7 @@ export interface McpConnection {
   callTool(
     input: { name: string; arguments: { [key: string]: unknown } },
     signal: AbortSignal,
-  ): Promise<{ content: ContentBlock[]; isError: boolean }>;
+  ): Promise<{ content: ContentBlock[]; isError: boolean; structuredContent?: unknown }>;
   close(): Promise<void>;
 }
 
@@ -141,22 +141,17 @@ export class McpToolCatalog implements ToolCatalogPort {
   }
 
   private async callRuntime(input: ToolCallInput): Promise<ToolCallResult> {
-    try {
-      const result = await this.withConnection(
-        this.dependencies.runtimeDialer,
-        {
-          endpoint: new URL(input.snapshot.runtime.mcpEndpoint),
-          headers: runtimeHeaders(input.snapshot.runtime.executionId),
-          signal: input.signal,
-        },
-        (error) => this.dependencies.reportConnectionCloseFailure?.("runtime", "runtime", error),
-        async (connection) =>
-          connection.callTool({ name: input.tool.name, arguments: input.arguments }, input.signal),
-      );
-      return { ...result, toolEffectState: "settled" };
-    } catch (error) {
-      throw new McpToolCallError("Runtime Tool outcome is unknown", "unknown", { cause: error });
-    }
+    return this.invokeTool(
+      this.dependencies.runtimeDialer,
+      () => ({
+        endpoint: new URL(input.snapshot.runtime.mcpEndpoint),
+        headers: runtimeHeaders(input.snapshot.runtime.executionId),
+        signal: input.signal,
+      }),
+      input,
+      "runtime",
+      (error) => this.dependencies.reportConnectionCloseFailure?.("runtime", "runtime", error),
+    );
   }
 
   private async callClient(input: ToolCallInput): Promise<ToolCallResult> {
@@ -167,26 +162,56 @@ export class McpToolCatalog implements ToolCatalogPort {
     if (source === undefined) {
       throw new McpToolCallError("Client MCP source is not part of this Run", "none");
     }
+    return this.invokeTool(
+      this.dependencies.clientDialer,
+      () => ({
+        endpoint: new URL(source.url),
+        headers: tracedHeaders(
+          Object.fromEntries(source.headers.map((header) => [header.name, header.value])),
+        ),
+        signal: input.signal,
+      }),
+      input,
+      "client",
+      (error) => this.dependencies.reportConnectionCloseFailure?.("client", source.sourceId, error),
+    );
+  }
+
+  private async invokeTool(
+    dialer: McpDialer,
+    connectInput: () => McpConnectInput,
+    input: ToolCallInput,
+    source: "runtime" | "client",
+    reportCloseFailure: (error: unknown) => void,
+  ): Promise<ToolCallResult> {
+    let connection: McpConnection;
     try {
-      const result = await this.withConnection(
-        this.dependencies.clientDialer,
-        {
-          endpoint: new URL(source.url),
-          headers: tracedHeaders(
-            Object.fromEntries(source.headers.map((header) => [header.name, header.value])),
-          ),
-          signal: input.signal,
-        },
-        (error) =>
-          this.dependencies.reportConnectionCloseFailure?.("client", source.sourceId, error),
-        async (connection) =>
-          connection.callTool({ name: input.tool.name, arguments: input.arguments }, input.signal),
-      );
-      return { ...result, toolEffectState: "settled" };
+      connection = await dialer.connect(connectInput());
     } catch (error) {
-      throw new McpToolCallError("Client MCP Tool outcome is unknown", "unknown", {
-        cause: error,
-      });
+      throw new McpToolCallError("MCP Tool failed before dispatch", "none", { cause: error });
+    }
+
+    try {
+      let result: Awaited<ReturnType<McpConnection["callTool"]>>;
+      try {
+        result = await connection.callTool(
+          { name: input.tool.name, arguments: input.arguments },
+          input.signal,
+        );
+      } catch (error) {
+        throw new McpToolCallError("MCP Tool outcome is unknown", "unknown", { cause: error });
+      }
+      return {
+        content: result.content,
+        isError: result.isError,
+        toolEffectState: receivedEffectState(result, source),
+      };
+    } finally {
+      try {
+        await connection.close();
+      } catch (error) {
+        reportCloseFailure(error);
+      }
     }
   }
 
@@ -207,6 +232,42 @@ export class McpToolCatalog implements ToolCatalogPort {
       }
     }
   }
+}
+
+function receivedEffectState(
+  result: Awaited<ReturnType<McpConnection["callTool"]>>,
+  source: "runtime" | "client",
+): ToolEffectState {
+  if (!result.isError) {
+    return declaredEffectState(result.structuredContent, source) === "unknown"
+      ? "unknown"
+      : "settled";
+  }
+  return declaredEffectState(result.structuredContent, source) ?? "unknown";
+}
+
+function declaredEffectState(
+  structuredContent: unknown,
+  source: "runtime" | "client",
+): ToolEffectState | undefined {
+  if (!isJsonObject(structuredContent)) {
+    return undefined;
+  }
+  const state = structuredContent.effect_state;
+  if (state !== "none" && state !== "settled" && state !== "unknown") {
+    return undefined;
+  }
+  if (state === "unknown") {
+    const expectedSource = source === "runtime" ? "runtime_mcp" : "client_mcp";
+    return structuredContent.effect_source === expectedSource ? state : undefined;
+  }
+  return structuredContent.effect_source === null || structuredContent.effect_source === undefined
+    ? state
+    : undefined;
+}
+
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function runtimeHeaders(executionId: string): Record<string, string> {

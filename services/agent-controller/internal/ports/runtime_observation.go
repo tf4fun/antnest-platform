@@ -1,0 +1,56 @@
+package ports
+
+import (
+	"context"
+	"fmt"
+	"time"
+)
+
+const RuntimeObservationRestarted = "restarted"
+
+type RuntimeObservation struct {
+	Sequence           uint64
+	AgentID            string
+	RuntimeRevision    string
+	RuntimeExecutionID string
+	Kind               string
+	ObservedAt         time.Time
+}
+
+type RuntimeObservationPage struct {
+	Observations []RuntimeObservation
+	NextSequence uint64
+}
+
+type RuntimeEnvironmentSnapshot struct {
+	AgentID            string
+	RuntimeRevision    string
+	RuntimeExecutionID string
+	LifecycleState     string
+	Health             string
+}
+
+type RuntimeObservationCursor struct {
+	Sequence    uint64
+	Initialized bool
+}
+
+type RuntimeObservationSource interface {
+	ListRuntimeObservations(context.Context, uint64, int) (RuntimeObservationPage, error)
+	ListRuntimes(context.Context) ([]RuntimeEnvironmentSnapshot, error)
+}
+
+type RuntimeObservationStore interface {
+	GetRuntimeObservationCursor(context.Context) (RuntimeObservationCursor, error)
+	InitializeRuntimeObservationCursor(context.Context, []RuntimeEnvironmentSnapshot) error
+	ResetRuntimeObservationCursor(context.Context, []RuntimeEnvironmentSnapshot, uint64) error
+	ApplyRuntimeObservation(context.Context, RuntimeObservation) error
+}
+
+type RuntimeObservationCursorExpiredError struct {
+	ResetSequence uint64
+}
+
+func (failure *RuntimeObservationCursorExpiredError) Error() string {
+	return fmt.Sprintf("Runtime observation cursor expired; reset to %d", failure.ResetSequence)
+}
