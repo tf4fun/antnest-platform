@@ -3,7 +3,6 @@ package server
 import (
 	"bufio"
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -33,6 +32,11 @@ const (
 	defaultTmpfsBytes          = int64(256 << 20)
 	minimumIdempotencyKeyBytes = 16
 	maximumIdempotencyKeyBytes = 200
+	defaultBrowserPageSize     = 100
+	maximumBrowserPageSize     = 100
+	maximumListCursorBytes     = 2048
+	minimumPasswordBytes       = 12
+	maximumPasswordBytes       = 1024
 )
 
 type Backend interface {
@@ -43,7 +47,6 @@ type Backend interface {
 type Config struct {
 	DefaultRuntimeImageRef string
 	RequestTimeout         time.Duration
-	NewRequestID           func() string
 }
 
 type Dependencies struct {
@@ -59,7 +62,6 @@ type handler struct {
 	logger                 *slog.Logger
 	defaultRuntimeImageRef string
 	requestTimeout         time.Duration
-	newRequestID           func() string
 	mux                    *http.ServeMux
 }
 
@@ -73,15 +75,12 @@ func NewHandler(config Config, dependencies Dependencies) (http.Handler, error) 
 	if config.RequestTimeout <= 0 {
 		config.RequestTimeout = 15 * time.Second
 	}
-	if config.NewRequestID == nil {
-		config.NewRequestID = randomRequestID
-	}
 	h := &handler{
 		backend: dependencies.Backend, assets: dependencies.Assets,
 		fileServer: http.FileServer(http.FS(dependencies.Assets)), logger: dependencies.Logger,
 		defaultRuntimeImageRef: strings.TrimSpace(config.DefaultRuntimeImageRef),
-		requestTimeout:         config.RequestTimeout, newRequestID: config.NewRequestID,
-		mux: http.NewServeMux(),
+		requestTimeout:         config.RequestTimeout,
+		mux:                    http.NewServeMux(),
 	}
 	h.routes()
 	return h, nil
@@ -90,11 +89,30 @@ func NewHandler(config Config, dependencies Dependencies) (http.Handler, error) 
 func (h *handler) routes() {
 	h.mux.HandleFunc("GET /status", h.status)
 	h.mux.HandleFunc("GET /api/admin/overview", h.withPrincipal(h.overview))
+	h.mux.HandleFunc("GET /api/admin/template-defaults", h.withPrincipal(h.templateDefaults))
+	h.mux.HandleFunc("GET /api/admin/account", h.withPrincipal(h.currentAccount))
+	h.mux.HandleFunc("POST /api/admin/account/password", h.withPrincipal(h.changeOwnPassword))
 	h.mux.HandleFunc("GET /api/admin/directory", h.withPrincipal(h.directory))
+	h.mux.HandleFunc("POST /api/admin/directory/users", h.withPrincipal(h.createLocalUser))
+	h.mux.HandleFunc("POST /api/admin/directory/memberships/{membership_id}", h.withPrincipal(h.updateMembership))
+	h.mux.HandleFunc("POST /api/admin/directory/users/{user_id}/active", h.withPrincipal(h.setUserActive))
+	h.mux.HandleFunc("GET /api/admin/provisioning/oidc-providers", h.withPrincipal(h.listOIDCProviders))
+	h.mux.HandleFunc("POST /api/admin/provisioning/oidc-providers", h.withPrincipal(h.upsertOIDCProvider))
+	h.mux.HandleFunc("POST /api/admin/provisioning/oidc-providers/{name}/enabled", h.withPrincipal(h.setOIDCProviderEnabled))
+	h.mux.HandleFunc("GET /api/admin/provisioning/scim-tokens", h.withPrincipal(h.listSCIMTokens))
+	h.mux.HandleFunc("POST /api/admin/provisioning/scim-tokens", h.withPrincipal(h.issueSCIMToken))
+	h.mux.HandleFunc("POST /api/admin/provisioning/scim-tokens/{token_id}/revoke", h.withPrincipal(h.revokeSCIMToken))
+	h.mux.HandleFunc("GET /api/admin/model-catalog", h.withPrincipal(h.modelCatalog))
 	h.mux.HandleFunc("GET /api/admin/model-profiles", h.withPrincipal(h.listModelProfiles))
 	h.mux.HandleFunc("POST /api/admin/model-profiles", h.withPrincipal(h.createModelProfile))
+	h.mux.HandleFunc("GET /api/admin/model-profiles/{model_profile_id}", h.withPrincipal(h.getModelProfile))
+	h.mux.HandleFunc("GET /api/admin/model-profile-revisions/{revision_id}", h.withPrincipal(h.getModelProfileRevision))
+	h.mux.HandleFunc("POST /api/admin/model-profiles/{model_profile_id}/revisions", h.withPrincipal(h.reviseModelProfile))
 	h.mux.HandleFunc("GET /api/admin/templates", h.withPrincipal(h.listTemplates))
 	h.mux.HandleFunc("POST /api/admin/templates", h.withPrincipal(h.createTemplate))
+	h.mux.HandleFunc("GET /api/admin/templates/{template_id}", h.withPrincipal(h.getTemplate))
+	h.mux.HandleFunc("GET /api/admin/templates/{template_id}/revisions/{revision}", h.withPrincipal(h.getTemplateRevision))
+	h.mux.HandleFunc("POST /api/admin/templates/{template_id}/revisions", h.withPrincipal(h.reviseTemplate))
 	h.mux.HandleFunc("GET /api/admin/agents", h.withPrincipal(h.listAgents))
 	h.mux.HandleFunc("POST /api/admin/agents", h.withPrincipal(h.createAgent))
 	h.mux.HandleFunc("GET /api/admin/agents/{agent_id}", h.withPrincipal(h.getAgent))
@@ -142,6 +160,16 @@ func (h *handler) status(response http.ResponseWriter, request *http.Request) {
 	writeJSON(response, http.StatusOK, map[string]string{"status": "ready"})
 }
 
+func (h *handler) templateDefaults(
+	response http.ResponseWriter,
+	_ *http.Request,
+	_ principal.Principal,
+) {
+	writeJSON(response, http.StatusOK, map[string]string{
+		"runtime_image_ref": h.defaultRuntimeImageRef,
+	})
+}
+
 func (h *handler) directory(response http.ResponseWriter, request *http.Request, actor principal.Principal) {
 	payload := map[string]string{
 		"actor_principal_id": actor.UserID, "organization_id": actor.OrganizationID,
@@ -150,9 +178,287 @@ func (h *handler) directory(response http.ResponseWriter, request *http.Request,
 		"/rpc/identity/list-directory", "", payload, projectDirectory)
 }
 
+func (h *handler) currentAccount(
+	response http.ResponseWriter,
+	request *http.Request,
+	actor principal.Principal,
+) {
+	payload := map[string]string{
+		"actor_principal_id": actor.UserID, "organization_id": actor.OrganizationID,
+	}
+	h.forwardProjectedJSON(response, request, upstream.Identity, http.MethodPost,
+		"/rpc/identity/get-current-account", "", payload, projectCurrentAccount)
+}
+
+type changeOwnPasswordInput struct {
+	CurrentPassword string `json:"current_password"`
+	NewPassword     string `json:"new_password"`
+}
+
+func (h *handler) changeOwnPassword(
+	response http.ResponseWriter,
+	request *http.Request,
+	actor principal.Principal,
+) {
+	var input changeOwnPasswordInput
+	if !decodeJSON(response, request, &input) {
+		return
+	}
+	if input.CurrentPassword == "" ||
+		len(input.NewPassword) < minimumPasswordBytes || len(input.NewPassword) > maximumPasswordBytes {
+		writeError(response, http.StatusBadRequest, "invalid_request", "Password fields are invalid")
+		return
+	}
+	requestID, ok := commandRequestID(response, request, actor.OrganizationID, "account")
+	if !ok {
+		return
+	}
+	payload := map[string]string{
+		"request_id": requestID, "actor_principal_id": actor.UserID, "user_id": actor.UserID,
+		"current_password": input.CurrentPassword, "new_password": input.NewPassword,
+	}
+	h.forwardProjectedJSON(response, request, upstream.Identity, http.MethodPost,
+		"/rpc/identity/change-local-password", "", payload, projectStatus)
+}
+
+type createLocalUserInput struct {
+	Email       string `json:"email"`
+	DisplayName string `json:"display_name"`
+	Password    string `json:"password"`
+	Role        string `json:"role"`
+}
+
+func (h *handler) createLocalUser(response http.ResponseWriter, request *http.Request, actor principal.Principal) {
+	var input createLocalUserInput
+	if !decodeJSON(response, request, &input) {
+		return
+	}
+	if !required(input.Email, input.DisplayName, input.Password) || !organizationRole(input.Role) {
+		writeError(response, http.StatusBadRequest, "invalid_request", "Required local user field is invalid")
+		return
+	}
+	requestID, ok := commandRequestID(response, request, actor.OrganizationID, "directory")
+	if !ok {
+		return
+	}
+	payload := map[string]any{
+		"request_id": requestID, "actor_principal_id": actor.UserID,
+		"organization_id": actor.OrganizationID, "email": input.Email,
+		"display_name": input.DisplayName, "password": input.Password, "role": input.Role,
+	}
+	h.forwardProjectedJSON(response, request, upstream.Identity, http.MethodPost,
+		"/rpc/identity/create-local-user", "", payload, projectDirectoryMember)
+}
+
+type updateMembershipInput struct {
+	Email       string `json:"email"`
+	DisplayName string `json:"display_name"`
+	Role        string `json:"role"`
+	Active      bool   `json:"active"`
+}
+
+func (h *handler) updateMembership(response http.ResponseWriter, request *http.Request, actor principal.Principal) {
+	var input updateMembershipInput
+	if !decodeJSON(response, request, &input) {
+		return
+	}
+	if !required(input.Email, input.DisplayName) || !organizationRole(input.Role) {
+		writeError(response, http.StatusBadRequest, "invalid_request", "Required membership field is invalid")
+		return
+	}
+	requestID, ok := commandRequestID(response, request, actor.OrganizationID, "directory")
+	if !ok {
+		return
+	}
+	payload := map[string]any{
+		"request_id": requestID, "actor_principal_id": actor.UserID,
+		"organization_id": actor.OrganizationID,
+		"membership_id":   request.PathValue("membership_id"),
+		"email":           input.Email, "display_name": input.DisplayName,
+		"role": input.Role, "active": input.Active,
+	}
+	h.forwardProjectedJSON(response, request, upstream.Identity, http.MethodPost,
+		"/rpc/identity/update-membership", "", payload, projectMembershipResult)
+}
+
+type setUserActiveInput struct {
+	Active bool `json:"active"`
+}
+
+func (h *handler) setUserActive(response http.ResponseWriter, request *http.Request, actor principal.Principal) {
+	if !actor.SystemAdministrator() {
+		writeError(response, http.StatusForbidden, "forbidden", "System administrator access is required")
+		return
+	}
+	var input setUserActiveInput
+	if !decodeJSON(response, request, &input) {
+		return
+	}
+	requestID, ok := commandRequestID(response, request, actor.OrganizationID, "directory")
+	if !ok {
+		return
+	}
+	payload := map[string]any{
+		"request_id": requestID, "actor_principal_id": actor.UserID,
+		"user_id": request.PathValue("user_id"), "active": input.Active,
+	}
+	h.forwardProjectedJSON(response, request, upstream.Identity, http.MethodPost,
+		"/rpc/identity/set-user-active", "", payload, projectStatus)
+}
+
+func (h *handler) listOIDCProviders(response http.ResponseWriter, request *http.Request, actor principal.Principal) {
+	if !requireSystemAdministrator(response, actor) {
+		return
+	}
+	payload := map[string]string{
+		"actor_principal_id": actor.UserID, "organization_id": actor.OrganizationID,
+	}
+	h.forwardProjectedJSON(response, request, upstream.Identity, http.MethodPost,
+		"/rpc/identity/list-oidc-providers", "", payload, projectOIDCProviderList)
+}
+
+type upsertOIDCProviderInput struct {
+	Name         string   `json:"name"`
+	Issuer       string   `json:"issuer"`
+	ClientID     string   `json:"client_id"`
+	ClientSecret string   `json:"client_secret"`
+	Scopes       []string `json:"scopes"`
+	Enabled      *bool    `json:"enabled"`
+}
+
+func (h *handler) upsertOIDCProvider(response http.ResponseWriter, request *http.Request, actor principal.Principal) {
+	if !requireSystemAdministrator(response, actor) {
+		return
+	}
+	var input upsertOIDCProviderInput
+	if !decodeJSON(response, request, &input) {
+		return
+	}
+	if !required(input.Name, input.Issuer, input.ClientID) || input.Enabled == nil {
+		writeError(response, http.StatusBadRequest, "invalid_request", "Required OIDC Provider field is invalid")
+		return
+	}
+	requestID, ok := commandRequestID(response, request, actor.OrganizationID, "provisioning")
+	if !ok {
+		return
+	}
+	payload := map[string]any{
+		"request_id": requestID, "actor_principal_id": actor.UserID,
+		"organization_id": actor.OrganizationID, "name": input.Name,
+		"issuer": input.Issuer, "client_id": input.ClientID,
+		"client_secret": input.ClientSecret, "scopes": input.Scopes, "enabled": *input.Enabled,
+	}
+	h.forwardProjectedJSON(response, request, upstream.Identity, http.MethodPost,
+		"/rpc/identity/upsert-oidc-provider", "", payload, projectOIDCProviderResult)
+}
+
+type setOIDCProviderEnabledInput struct {
+	Enabled *bool `json:"enabled"`
+}
+
+func (h *handler) setOIDCProviderEnabled(
+	response http.ResponseWriter,
+	request *http.Request,
+	actor principal.Principal,
+) {
+	if !requireSystemAdministrator(response, actor) {
+		return
+	}
+	var input setOIDCProviderEnabledInput
+	if !decodeJSON(response, request, &input) {
+		return
+	}
+	if input.Enabled == nil {
+		writeError(response, http.StatusBadRequest, "invalid_request", "enabled is required")
+		return
+	}
+	requestID, ok := commandRequestID(response, request, actor.OrganizationID, "provisioning")
+	if !ok {
+		return
+	}
+	payload := map[string]any{
+		"request_id": requestID, "actor_principal_id": actor.UserID,
+		"organization_id": actor.OrganizationID,
+		"name":            request.PathValue("name"), "enabled": *input.Enabled,
+	}
+	h.forwardProjectedJSON(response, request, upstream.Identity, http.MethodPost,
+		"/rpc/identity/set-oidc-provider-enabled", "", payload, projectOIDCProviderResult)
+}
+
+func (h *handler) listSCIMTokens(response http.ResponseWriter, request *http.Request, actor principal.Principal) {
+	payload := map[string]string{
+		"actor_principal_id": actor.UserID, "organization_id": actor.OrganizationID,
+	}
+	h.forwardProjectedJSON(response, request, upstream.Identity, http.MethodPost,
+		"/rpc/identity/list-scim-tokens", "", payload, projectSCIMTokenList)
+}
+
+type issueSCIMTokenInput struct {
+	Name   string   `json:"name"`
+	Scopes []string `json:"scopes"`
+}
+
+func (h *handler) issueSCIMToken(response http.ResponseWriter, request *http.Request, actor principal.Principal) {
+	var input issueSCIMTokenInput
+	if !decodeJSON(response, request, &input) {
+		return
+	}
+	if !required(input.Name) || !validSCIMScopes(input.Scopes) {
+		writeError(response, http.StatusBadRequest, "invalid_request", "Required SCIM token field is invalid")
+		return
+	}
+	requestID, ok := commandRequestID(response, request, actor.OrganizationID, "provisioning")
+	if !ok {
+		return
+	}
+	payload := map[string]any{
+		"request_id": requestID, "actor_principal_id": actor.UserID,
+		"organization_id": actor.OrganizationID, "name": input.Name, "scopes": input.Scopes,
+	}
+	h.forwardProjectedJSONNoStore(response, request, upstream.Identity, http.MethodPost,
+		"/rpc/identity/issue-scim-token", "", payload, projectSCIMTokenIssue)
+}
+
+func (h *handler) revokeSCIMToken(response http.ResponseWriter, request *http.Request, actor principal.Principal) {
+	payload := map[string]string{
+		"actor_principal_id": actor.UserID, "token_id": request.PathValue("token_id"),
+	}
+	h.forwardProjectedJSON(response, request, upstream.Identity, http.MethodPost,
+		"/rpc/identity/revoke-scim-token", "", payload, projectStatus)
+}
+
+func requireSystemAdministrator(response http.ResponseWriter, actor principal.Principal) bool {
+	if actor.SystemAdministrator() {
+		return true
+	}
+	writeError(response, http.StatusForbidden, "forbidden", "System administrator access is required")
+	return false
+}
+
+func validSCIMScopes(scopes []string) bool {
+	if len(scopes) == 0 {
+		return false
+	}
+	for _, scope := range scopes {
+		if scope != "scim:read" && scope != "scim:write" {
+			return false
+		}
+	}
+	return true
+}
+
 func (h *handler) listModelProfiles(response http.ResponseWriter, request *http.Request, actor principal.Principal) {
+	query, ok := catalogListQuery(response, request, actor.OrganizationID)
+	if !ok {
+		return
+	}
 	h.forwardProjected(response, request, upstream.AgentController, http.MethodGet,
-		"/internal/model-profiles", organizationQuery(actor.OrganizationID), nil, projectModelProfileList)
+		"/internal/model-profiles", query, nil, projectModelProfileList)
+}
+
+func (h *handler) modelCatalog(response http.ResponseWriter, request *http.Request, _ principal.Principal) {
+	h.forwardProjected(response, request, upstream.AgentController, http.MethodGet,
+		"/internal/model-catalog", "", nil, projectModelCatalog)
 }
 
 type createModelProfileInput struct {
@@ -171,8 +477,12 @@ func (h *handler) createModelProfile(response http.ResponseWriter, request *http
 		writeError(response, http.StatusBadRequest, "invalid_request", "Required Model Profile field is empty")
 		return
 	}
+	requestID, ok := commandRequestID(response, request, actor.OrganizationID, "catalog")
+	if !ok {
+		return
+	}
 	payload := map[string]any{
-		"request_id": h.newRequestID(), "organization_id": actor.OrganizationID,
+		"request_id": requestID, "organization_id": actor.OrganizationID,
 		"profile_key": input.ProfileKey, "display_name": input.DisplayName,
 		"model":      input.Model,
 		"credential": map[string]string{"secret_type": "bearer", "secret": input.APIKey},
@@ -181,9 +491,56 @@ func (h *handler) createModelProfile(response http.ResponseWriter, request *http
 		"/internal/model-profiles", "", payload, projectModelProfile)
 }
 
-func (h *handler) listTemplates(response http.ResponseWriter, request *http.Request, actor principal.Principal) {
+func (h *handler) getModelProfile(response http.ResponseWriter, request *http.Request, actor principal.Principal) {
 	h.forwardProjected(response, request, upstream.AgentController, http.MethodGet,
-		"/internal/agent-templates", organizationQuery(actor.OrganizationID), nil, projectTemplateList)
+		"/internal/model-profiles/"+url.PathEscape(request.PathValue("model_profile_id")),
+		organizationScopeQuery(actor.OrganizationID), nil, projectModelProfile)
+}
+
+func (h *handler) getModelProfileRevision(
+	response http.ResponseWriter, request *http.Request, actor principal.Principal,
+) {
+	h.forwardProjected(response, request, upstream.AgentController, http.MethodGet,
+		"/internal/model-profile-revisions/"+url.PathEscape(request.PathValue("revision_id")),
+		organizationScopeQuery(actor.OrganizationID), nil, projectModelProfile)
+}
+
+type reviseModelProfileInput struct {
+	DisplayName string          `json:"display_name"`
+	APIKey      string          `json:"api_key"`
+	Model       json.RawMessage `json:"model"`
+}
+
+func (h *handler) reviseModelProfile(response http.ResponseWriter, request *http.Request, actor principal.Principal) {
+	var input reviseModelProfileInput
+	if !decodeJSON(response, request, &input) {
+		return
+	}
+	if !required(input.DisplayName, input.APIKey) || len(input.Model) == 0 {
+		writeError(response, http.StatusBadRequest, "invalid_request", "Required Model Profile field is empty")
+		return
+	}
+	requestID, ok := commandRequestID(response, request, actor.OrganizationID, "catalog")
+	if !ok {
+		return
+	}
+	payload := map[string]any{
+		"request_id": requestID, "organization_id": actor.OrganizationID,
+		"display_name": input.DisplayName, "model": input.Model,
+		"credential": map[string]string{"secret_type": "bearer", "secret": input.APIKey},
+	}
+	h.forwardProjectedJSON(response, request, upstream.AgentController, http.MethodPost,
+		"/internal/model-profiles/"+url.PathEscape(request.PathValue("model_profile_id"))+"/revisions",
+		"", payload, projectModelProfile)
+}
+
+func (h *handler) listTemplates(response http.ResponseWriter, request *http.Request, actor principal.Principal) {
+	query, ok := catalogListQuery(response, request, actor.OrganizationID)
+	if !ok {
+		return
+	}
+	h.forwardProjected(response, request, upstream.AgentController, http.MethodGet,
+		"/internal/agent-templates", query, nil, projectTemplateList)
 }
 
 type createTemplateInput struct {
@@ -226,8 +583,12 @@ func (h *handler) createTemplate(response http.ResponseWriter, request *http.Req
 		return
 	}
 	applyResourceDefaults(&input.Runtime.Resources)
+	requestID, ok := commandRequestID(response, request, actor.OrganizationID, "catalog")
+	if !ok {
+		return
+	}
 	payload := map[string]any{
-		"request_id": h.newRequestID(), "organization_id": actor.OrganizationID,
+		"request_id": requestID, "organization_id": actor.OrganizationID,
 		"template_key": input.TemplateKey, "name": input.Name,
 		"model_profile_revision_id": input.ModelProfileRevisionID,
 		"system_prompt":             input.SystemPrompt, "max_model_requests": input.MaxModelRequests,
@@ -237,13 +598,68 @@ func (h *handler) createTemplate(response http.ResponseWriter, request *http.Req
 		"/internal/agent-templates", "", payload, projectTemplate)
 }
 
+func (h *handler) getTemplate(response http.ResponseWriter, request *http.Request, actor principal.Principal) {
+	h.forwardProjected(response, request, upstream.AgentController, http.MethodGet,
+		"/internal/agent-templates/"+url.PathEscape(request.PathValue("template_id")),
+		organizationScopeQuery(actor.OrganizationID), nil, projectTemplate)
+}
+
+func (h *handler) getTemplateRevision(
+	response http.ResponseWriter, request *http.Request, actor principal.Principal,
+) {
+	h.forwardProjected(response, request, upstream.AgentController, http.MethodGet,
+		"/internal/agent-templates/"+url.PathEscape(request.PathValue("template_id"))+
+			"/revisions/"+url.PathEscape(request.PathValue("revision")),
+		organizationScopeQuery(actor.OrganizationID), nil, projectTemplate)
+}
+
+type reviseTemplateInput struct {
+	Name                   string       `json:"name"`
+	ModelProfileRevisionID string       `json:"model_profile_revision_id"`
+	SystemPrompt           string       `json:"system_prompt"`
+	MaxModelRequests       int          `json:"max_model_requests"`
+	Runtime                runtimeInput `json:"runtime"`
+}
+
+func (h *handler) reviseTemplate(response http.ResponseWriter, request *http.Request, actor principal.Principal) {
+	var input reviseTemplateInput
+	if !decodeJSON(response, request, &input) {
+		return
+	}
+	if !required(input.Name, input.ModelProfileRevisionID) || input.MaxModelRequests < 1 {
+		writeError(response, http.StatusBadRequest, "invalid_request", "Required Template field is invalid")
+		return
+	}
+	if input.Runtime.ImageRef == "" {
+		input.Runtime.ImageRef = h.defaultRuntimeImageRef
+	}
+	if input.Runtime.ImageRef == "" {
+		writeError(response, http.StatusBadRequest, "runtime_image_required", "Runtime image digest is required")
+		return
+	}
+	applyResourceDefaults(&input.Runtime.Resources)
+	requestID, ok := commandRequestID(response, request, actor.OrganizationID, "catalog")
+	if !ok {
+		return
+	}
+	payload := map[string]any{
+		"request_id": requestID, "organization_id": actor.OrganizationID,
+		"name": input.Name, "model_profile_revision_id": input.ModelProfileRevisionID,
+		"system_prompt": input.SystemPrompt, "max_model_requests": input.MaxModelRequests,
+		"context_policy_version": "context-v1", "runtime": input.Runtime,
+	}
+	h.forwardProjectedJSON(response, request, upstream.AgentController, http.MethodPost,
+		"/internal/agent-templates/"+url.PathEscape(request.PathValue("template_id"))+"/revisions",
+		"", payload, projectTemplate)
+}
+
 func (h *handler) listAgents(response http.ResponseWriter, request *http.Request, actor principal.Principal) {
-	query := url.Values{"organization_id": []string{actor.OrganizationID}, "limit": []string{"200"}}
-	if request.URL.Query().Get("include_deleted") == "true" {
-		query.Set("include_deleted", "true")
+	query, ok := agentListQuery(response, request, actor.OrganizationID)
+	if !ok {
+		return
 	}
 	h.forwardProjected(response, request, upstream.AgentController, http.MethodGet,
-		"/internal/agents", query.Encode(), nil, projectAgentList)
+		"/internal/agents", query, nil, projectAgentList)
 }
 
 type createAgentInput struct {
@@ -363,10 +779,10 @@ func (h *handler) overview(response http.ResponseWriter, request *http.Request, 
 		return
 	}
 	payload := overviewResponse{
-		Directory:     overviewSectionFromResult(results["directory"]),
-		ModelProfiles: overviewSectionFromResult(results["model_profiles"]),
-		Templates:     overviewSectionFromResult(results["templates"]),
-		Agents:        overviewSectionFromResult(agents),
+		Directory:     overviewSectionFromResult("Directory", results["directory"]),
+		ModelProfiles: overviewSectionFromResult("Model providers", results["model_profiles"]),
+		Templates:     overviewSectionFromResult("Agent templates", results["templates"]),
+		Agents:        overviewSectionFromResult("Agent inventory", agents),
 		Defaults:      map[string]string{"runtime_image_ref": h.defaultRuntimeImageRef},
 	}
 	writeJSON(response, http.StatusOK, payload)
@@ -436,17 +852,17 @@ func (h *handler) fetchOverview(ctx context.Context, calls []overviewCall) map[s
 	return results
 }
 
-func overviewSectionFromResult(result overviewCallResult) overviewSection {
+func overviewSectionFromResult(label string, result overviewCallResult) overviewSection {
 	if result.err != nil {
 		return overviewSection{
 			Status: "unavailable",
-			Error:  &overviewError{Code: "dependency_unavailable", Message: "Section could not be refreshed"},
+			Error:  &overviewError{Code: "dependency_unavailable", Message: label + " could not be refreshed"},
 		}
 	}
 	if !successful(result.response.status) {
 		return overviewSection{
 			Status: "unavailable",
-			Error:  &overviewError{Code: "upstream_rejected", Message: "Section could not be refreshed"},
+			Error:  &overviewError{Code: "upstream_rejected", Message: label + " could not be refreshed"},
 		}
 	}
 	return overviewSection{Status: "available", Data: json.RawMessage(result.response.body)}
@@ -478,6 +894,20 @@ func (h *handler) forwardProjectedJSON(
 		return
 	}
 	h.forwardProjected(response, request, target, method, path, query, body, projector)
+}
+
+func (h *handler) forwardProjectedJSONNoStore(
+	response http.ResponseWriter,
+	request *http.Request,
+	target upstream.Target,
+	method string,
+	path string,
+	query string,
+	payload any,
+	projector payloadProjector,
+) {
+	response.Header().Set("Cache-Control", "no-store")
+	h.forwardProjectedJSON(response, request, target, method, path, query, payload, projector)
 }
 
 func (h *handler) forwardProjected(
@@ -715,6 +1145,98 @@ func organizationQuery(organizationID string) string {
 	return url.Values{"organization_id": []string{organizationID}, "limit": []string{"200"}}.Encode()
 }
 
+func organizationScopeQuery(organizationID string) string {
+	return url.Values{"organization_id": []string{organizationID}}.Encode()
+}
+
+func catalogListQuery(response http.ResponseWriter, request *http.Request, organizationID string) (string, bool) {
+	input, ok := parseListQuery(response, request, "after_id", "limit")
+	if !ok {
+		return "", false
+	}
+	query, ok := browserPageQuery(response, input, organizationID)
+	if !ok {
+		return "", false
+	}
+	if !copyBoundedListValue(response, query, input, "after_id") {
+		return "", false
+	}
+	return query.Encode(), true
+}
+
+func agentListQuery(response http.ResponseWriter, request *http.Request, organizationID string) (string, bool) {
+	input, ok := parseListQuery(response, request, "view", "cursor", "limit")
+	if !ok {
+		return "", false
+	}
+	query, ok := browserPageQuery(response, input, organizationID)
+	if !ok || !copyBoundedListValue(response, query, input, "cursor") {
+		return "", false
+	}
+	view := input.Get("view")
+	if view != "" && view != "current" && view != "deleted" {
+		writeInvalidListQuery(response)
+		return "", false
+	}
+	if view == "deleted" {
+		query.Set("include_deleted", "true")
+		query.Set("lifecycle_state", "deleted")
+	}
+	return query.Encode(), true
+}
+
+func parseListQuery(response http.ResponseWriter, request *http.Request, allowed ...string) (url.Values, bool) {
+	values, err := url.ParseQuery(request.URL.RawQuery)
+	if err != nil {
+		writeInvalidListQuery(response)
+		return nil, false
+	}
+	allowedNames := make(map[string]struct{}, len(allowed))
+	for _, name := range allowed {
+		allowedNames[name] = struct{}{}
+	}
+	for name, entries := range values {
+		if _, ok := allowedNames[name]; !ok || len(entries) != 1 {
+			writeInvalidListQuery(response)
+			return nil, false
+		}
+	}
+	return values, true
+}
+
+func browserPageQuery(response http.ResponseWriter, input url.Values, organizationID string) (url.Values, bool) {
+	limit := defaultBrowserPageSize
+	if rawLimit, present := input["limit"]; present {
+		parsed, err := strconv.Atoi(rawLimit[0])
+		if err != nil || parsed < 1 || parsed > maximumBrowserPageSize {
+			writeInvalidListQuery(response)
+			return nil, false
+		}
+		limit = parsed
+	}
+	return url.Values{
+		"organization_id": []string{organizationID},
+		"limit":           []string{strconv.Itoa(limit)},
+	}, true
+}
+
+func copyBoundedListValue(response http.ResponseWriter, output, input url.Values, name string) bool {
+	values, present := input[name]
+	if !present {
+		return true
+	}
+	if values[0] == "" || len(values[0]) > maximumListCursorBytes {
+		writeInvalidListQuery(response)
+		return false
+	}
+	output.Set(name, values[0])
+	return true
+}
+
+func writeInvalidListQuery(response http.ResponseWriter) {
+	writeError(response, http.StatusBadRequest, "invalid_request", "List query is invalid")
+}
+
 func eventQueryValues(input url.Values) url.Values {
 	result := url.Values{}
 	if value := input.Get("after_sequence"); value != "" {
@@ -745,6 +1267,10 @@ func required(values ...string) bool {
 	return true
 }
 
+func organizationRole(value string) bool {
+	return value == "member" || value == "admin"
+}
+
 func writeRaw(response http.ResponseWriter, status int, header http.Header, payload []byte) {
 	copyResponseHeaders(response.Header(), header)
 	response.WriteHeader(status)
@@ -770,16 +1296,8 @@ func writeError(response http.ResponseWriter, status int, code, message string) 
 	writeJSON(response, status, map[string]string{"code": code, "message": message})
 }
 
-func randomRequestID() string {
-	payload := make([]byte, 16)
-	if _, err := rand.Read(payload); err != nil {
-		return fmt.Sprintf("console-%d", time.Now().UnixNano())
-	}
-	return "console-" + hex.EncodeToString(payload)
-}
-
-func lifecycleRequestID(
-	response http.ResponseWriter, request *http.Request, organizationID string,
+func commandRequestID(
+	response http.ResponseWriter, request *http.Request, organizationID, namespace string,
 ) (string, bool) {
 	key := strings.TrimSpace(request.Header.Get("Idempotency-Key"))
 	if len(key) < minimumIdempotencyKeyBytes || len(key) > maximumIdempotencyKeyBytes ||
@@ -788,5 +1306,11 @@ func lifecycleRequestID(
 		return "", false
 	}
 	digest := sha256.Sum256([]byte(organizationID + "\x00" + key))
-	return "lifecycle-" + hex.EncodeToString(digest[:]), true
+	return namespace + "-" + hex.EncodeToString(digest[:]), true
+}
+
+func lifecycleRequestID(
+	response http.ResponseWriter, request *http.Request, organizationID string,
+) (string, bool) {
+	return commandRequestID(response, request, organizationID, "lifecycle")
 }

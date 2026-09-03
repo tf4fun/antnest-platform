@@ -15,6 +15,31 @@ type DirectoryAdapter struct{ store *Store }
 
 const systemAdminLifecycleLock int64 = 0x414E544E455354
 
+func (a *DirectoryAdapter) GetOrganization(
+	ctx context.Context,
+	organizationID string,
+) (domain.Organization, error) {
+	return observeRepositoryValue(ctx, "get_organization", func(ctx context.Context) (domain.Organization, error) {
+		var organization domain.Organization
+		err := a.store.pool.QueryRow(ctx, `
+			SELECT id, slug, name, active, created_at, updated_at
+			FROM organizations
+			WHERE id = $1`, organizationID,
+		).Scan(
+			&organization.ID,
+			&organization.Slug,
+			&organization.Name,
+			&organization.Active,
+			&organization.CreatedAt,
+			&organization.UpdatedAt,
+		)
+		if err != nil {
+			return domain.Organization{}, normalizeError(err)
+		}
+		return organization, nil
+	})
+}
+
 func (a *DirectoryAdapter) GetPrincipal(
 	ctx context.Context,
 	userID string,
@@ -284,14 +309,24 @@ func (a *DirectoryAdapter) UpdateMembership(
 		); err != nil {
 			return err
 		}
+		var lockedOrganizationID string
+		if err := tx.QueryRow(ctx, `
+			SELECT id
+			FROM organizations
+			WHERE id = $1
+			FOR UPDATE`, membership.OrganizationID).Scan(&lockedOrganizationID); err != nil {
+			return fmt.Errorf("lock organization membership lifecycle: %w", err)
+		}
 		var source domain.Source
+		var currentRole domain.OrganizationRole
+		var currentActive bool
 		var updatedAt time.Time
 		if err := tx.QueryRow(ctx, `
-			SELECT source, updated_at
+			SELECT source, role, active, updated_at
 			FROM organization_memberships
 			WHERE organization_id = $1 AND id = $2 AND scim_deleted_at IS NULL
 			FOR UPDATE`, membership.OrganizationID, membership.ID,
-		).Scan(&source, &updatedAt); err != nil {
+		).Scan(&source, &currentRole, &currentActive, &updatedAt); err != nil {
 			return err
 		}
 		if source != domain.SourceLocal {
@@ -299,6 +334,29 @@ func (a *DirectoryAdapter) UpdateMembership(
 		}
 		if !updatedAt.Equal(command.ExpectedUpdatedAt) {
 			return domain.ErrVersionConflict
+		}
+		removesAdministrator := currentRole == domain.OrganizationRoleAdmin && currentActive &&
+			(membership.Role != domain.OrganizationRoleAdmin || !membership.Active)
+		if removesAdministrator {
+			var anotherActiveAdministrator bool
+			if err := tx.QueryRow(ctx, `
+				SELECT EXISTS (
+					SELECT 1
+					FROM organization_memberships m
+					JOIN users u ON u.id = m.user_id
+					WHERE m.organization_id = $1
+					  AND m.id <> $2
+					  AND m.role = 'admin'
+					  AND m.active = TRUE
+					  AND m.scim_deleted_at IS NULL
+					  AND u.active = TRUE
+				)`, membership.OrganizationID, membership.ID,
+			).Scan(&anotherActiveAdministrator); err != nil {
+				return fmt.Errorf("check remaining organization administrators: %w", err)
+			}
+			if !anotherActiveAdministrator {
+				return domain.ErrLastOrganizationAdmin
+			}
 		}
 		if _, err := tx.Exec(ctx, `
 			UPDATE organization_memberships
@@ -349,6 +407,11 @@ func (a *DirectoryAdapter) SetUserActive(
 		if active == command.Active {
 			return nil
 		}
+		if !command.Active {
+			if err := retainActiveOrganizationAdministrators(ctx, tx, command.UserID); err != nil {
+				return err
+			}
+		}
 		if _, err := tx.Exec(ctx, `
 			UPDATE users
 			SET active = $2, updated_at = $3
@@ -378,6 +441,59 @@ func (a *DirectoryAdapter) SetUserActive(
 			CreatedAt:        command.UpdatedAt,
 		})
 	})
+}
+
+func retainActiveOrganizationAdministrators(ctx context.Context, tx pgx.Tx, userID string) error {
+	rows, err := tx.Query(ctx, `
+		SELECT o.id
+		FROM organizations o
+		JOIN organization_memberships m ON m.organization_id = o.id
+		WHERE m.user_id = $1
+		  AND m.role = 'admin'
+		  AND m.active = TRUE
+		  AND m.scim_deleted_at IS NULL
+		  AND o.active = TRUE
+		ORDER BY o.id
+		FOR UPDATE OF o`, userID)
+	if err != nil {
+		return fmt.Errorf("lock user administrator organizations: %w", err)
+	}
+	organizationIDs := make([]string, 0)
+	for rows.Next() {
+		var organizationID string
+		if err := rows.Scan(&organizationID); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan user administrator organization: %w", err)
+		}
+		organizationIDs = append(organizationIDs, organizationID)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("iterate user administrator organizations: %w", err)
+	}
+	rows.Close()
+	for _, organizationID := range organizationIDs {
+		var anotherActiveAdministrator bool
+		if err := tx.QueryRow(ctx, `
+			SELECT EXISTS (
+				SELECT 1
+				FROM organization_memberships m
+				JOIN users u ON u.id = m.user_id
+				WHERE m.organization_id = $1
+				  AND m.user_id <> $2
+				  AND m.role = 'admin'
+				  AND m.active = TRUE
+				  AND m.scim_deleted_at IS NULL
+				  AND u.active = TRUE
+			)`, organizationID, userID,
+		).Scan(&anotherActiveAdministrator); err != nil {
+			return fmt.Errorf("check remaining organization administrators: %w", err)
+		}
+		if !anotherActiveAdministrator {
+			return domain.ErrLastOrganizationAdmin
+		}
+	}
+	return nil
 }
 
 func (a *DirectoryAdapter) ListDirectory(ctx context.Context, organizationID string) (directory.Directory, error) {

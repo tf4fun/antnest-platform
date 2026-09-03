@@ -66,6 +66,72 @@ func TestCatalogHandlerCreatesModelProfileWithoutEchoingSecret(t *testing.T) {
 	}
 }
 
+func TestCatalogHandlerPublishesAuthoritativeModelCatalog(t *testing.T) {
+	service := &catalogServiceStub{modelCatalog: application.ModelCatalogView{
+		Revision: "2026-09-03",
+		Providers: []application.ModelProviderPresetView{{
+			ProviderKey: "deepseek", DisplayName: "DeepSeek",
+			BaseURL: "https://api.deepseek.com",
+			Models: []application.ModelCatalogEntryView{{
+				ModelID: "deepseek-v4-pro", DisplayName: "DeepSeek V4 Pro",
+				ContextWindow: 1_000_000, MaxOutputTokens: 384_000,
+			}},
+		}},
+	}}
+	handler, err := NewHandler(service, &lifecycleServiceStub{}, &runServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, func(context.Context) error { return nil })
+	if err != nil {
+		t.Fatalf("new handler: %v", err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/internal/model-catalog", nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", response.Code, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), `"model_id":"deepseek-v4-pro"`) ||
+		!strings.Contains(response.Body.String(), `"context_window":1000000`) {
+		t.Fatalf("catalog response = %s", response.Body.String())
+	}
+}
+
+func TestCatalogHandlerReadsHistoricalCatalogRevisions(t *testing.T) {
+	t.Parallel()
+
+	templateView := sampleTemplateView()
+	templateView.Revision = 3
+	templateView.SystemPrompt = "historical"
+	service := &catalogServiceStub{modelView: sampleModelProfileView(), templateView: templateView}
+	handler, err := NewHandler(service, &lifecycleServiceStub{}, &runServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, func(context.Context) error { return nil })
+	if err != nil {
+		t.Fatalf("new handler: %v", err)
+	}
+
+	modelResponse := httptest.NewRecorder()
+	modelRequest := httptest.NewRequest(
+		http.MethodGet,
+		"/internal/model-profile-revisions/model-revision-1?organization_id=org-1",
+		nil,
+	)
+	handler.ServeHTTP(modelResponse, modelRequest)
+	if modelResponse.Code != http.StatusOK || service.modelRevisionOrganizationID != "org-1" ||
+		service.modelRevisionID != "model-revision-1" {
+		t.Fatalf("historical model response=%d call=%+v body=%s", modelResponse.Code, service, modelResponse.Body.String())
+	}
+
+	templateResponse := httptest.NewRecorder()
+	templateRequest := httptest.NewRequest(
+		http.MethodGet,
+		"/internal/agent-templates/template-1/revisions/3?organization_id=org-1",
+		nil,
+	)
+	handler.ServeHTTP(templateResponse, templateRequest)
+	if templateResponse.Code != http.StatusOK || service.templateRevisionOrganizationID != "org-1" ||
+		service.templateRevisionTemplateID != "template-1" || service.templateRevision != 3 ||
+		!strings.Contains(templateResponse.Body.String(), `"system_prompt":"historical"`) {
+		t.Fatalf("historical template response=%d call=%+v body=%s", templateResponse.Code, service, templateResponse.Body.String())
+	}
+}
+
 func TestLifecycleMetricErrorClassHasBoundedVocabulary(t *testing.T) {
 	t.Parallel()
 
@@ -174,7 +240,7 @@ func TestCatalogHandlerMapsStableErrors(t *testing.T) {
 				t.Fatalf("new handler: %v", err)
 			}
 			response := httptest.NewRecorder()
-			request := httptest.NewRequest(http.MethodGet, "/internal/model-profiles/model-1", nil)
+			request := httptest.NewRequest(http.MethodGet, "/internal/model-profiles/model-1?organization_id=org-1", nil)
 			handler.ServeHTTP(response, request)
 			if response.Code != test.status {
 				t.Fatalf("status = %d body=%s", response.Code, response.Body.String())
@@ -621,9 +687,21 @@ type catalogServiceStub struct {
 	createModelInput application.CreateModelProfileInput
 	createModelCalls int
 	modelView        application.ModelProfileView
+	templateView     application.TemplateView
+	modelCatalog     application.ModelCatalogView
 	getModelErr      error
 	templatePage     application.TemplatePage
 	listInput        application.ListCatalogInput
+
+	modelRevisionOrganizationID    string
+	modelRevisionID                string
+	templateRevisionOrganizationID string
+	templateRevisionTemplateID     string
+	templateRevision               int64
+}
+
+func (service *catalogServiceStub) ModelCatalog(context.Context) application.ModelCatalogView {
+	return service.modelCatalog
 }
 
 type lifecycleServiceStub struct {
@@ -701,8 +779,16 @@ func (service *catalogServiceStub) ReviseModelProfile(
 }
 
 func (service *catalogServiceStub) GetModelProfile(
-	context.Context, string,
+	context.Context, string, string,
 ) (application.ModelProfileView, error) {
+	return service.modelView, service.getModelErr
+}
+
+func (service *catalogServiceStub) GetModelProfileRevision(
+	_ context.Context, organizationID, revisionID string,
+) (application.ModelProfileView, error) {
+	service.modelRevisionOrganizationID = organizationID
+	service.modelRevisionID = revisionID
 	return service.modelView, service.getModelErr
 }
 
@@ -725,8 +811,23 @@ func (service *catalogServiceStub) ReviseTemplate(
 }
 
 func (service *catalogServiceStub) GetTemplate(
-	context.Context, string,
+	context.Context, string, string,
 ) (application.TemplateView, error) {
+	if service.templateView.TemplateID != "" {
+		return service.templateView, nil
+	}
+	return sampleTemplateView(), nil
+}
+
+func (service *catalogServiceStub) GetTemplateRevision(
+	_ context.Context, organizationID, templateID string, revision int64,
+) (application.TemplateView, error) {
+	service.templateRevisionOrganizationID = organizationID
+	service.templateRevisionTemplateID = templateID
+	service.templateRevision = revision
+	if service.templateView.TemplateID != "" {
+		return service.templateView, nil
+	}
 	return sampleTemplateView(), nil
 }
 

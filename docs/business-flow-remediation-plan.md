@@ -85,7 +85,7 @@ authorization still belongs to the service owning the resource.
 | R01 | P2 | Admin overview performs four upstream requests sequentially and fails the aggregate on any one error | Dashboard latency is additive and partial data is discarded |
 | R02 | P2 | Browser EventSource reconnect keeps the original query cursor and does not explicitly restore from the latest delivered sequence | Reconnect can duplicate a large backlog or miss an expired-cursor recovery path |
 | R03 | P2 | Admin raw-proxies private control-plane fields that the browser does not use | Runtime endpoints, credential references, and access internals cross an unnecessary boundary |
-| R04 | P2 | Reserved OIDC/SCIM public paths are not handled and can fall through to the SPA | A missing protocol endpoint can return misleading HTML `200` |
+| R04 | P2 | Resolved: Edge owns explicit OIDC start/callback and SCIM pass-through routes | Protocol requests cannot fall through to the SPA, and browser credentials stay at Edge |
 | R05 | P3 | Edge probes Identity directly and indirectly through Admin readiness | Duplicate health traffic exists, but no material failure has been demonstrated |
 | R06 | P1 | Stage 3 acceptance treats the terminal lifecycle event trace as the complete asynchronous Saga trace | Correct phase-local traces fail acceptance, while earlier phase dependencies cannot be proven |
 | R07 | P2 | Fatal lifecycle quarantine records the worker-loop context trace ID after the attempt trace has ended | The durable quarantine event can lose correlation with the attempt that exposed the invariant failure |
@@ -321,8 +321,8 @@ Changes:
 - return stable section envelopes and named errors, with Agent inventory
   required while directory and Template sections may degrade;
 - define browser-specific DTOs in Admin;
-- reserve OIDC/SCIM prefixes at Edge with explicit unavailable/not-found
-  responses until connected;
+- connect typed OIDC discovery/start/callback and protocol-preserving SCIM
+  routes at Edge, with unknown OIDC paths failing closed;
 - retain duplicate readiness probing unless measured load justifies removal;
 - consume same-generation Runtime restart observations and make the Agent
   unavailable pending explicit rebuild.
@@ -333,7 +333,7 @@ Acceptance:
 - one optional overview failure does not erase unrelated data;
 - browser payloads contain no credential, access-subject, or Runtime endpoint
   fields;
-- missing OIDC/SCIM routes never return SPA HTML;
+- OIDC/SCIM routes never return SPA HTML and preserve their distinct credential boundaries;
 - stale Runtime execution cannot remain executable after a restart observation.
 
 ## 6. Implementation Order
@@ -385,7 +385,7 @@ evidence for the phase that emitted that event.
 | P2 | implemented | Runtime and ACP preserve `none`, `settled`, and `unknown` effects; post-dispatch ambiguity terminates the Run |
 | P3 | implemented | Raw-token idempotent revoke, bounded login admission, SSE leases, sampled token use, and direct prompt admission are in place |
 | P4 | implemented | Runtime Egress owns atomic route gates, readiness-only closed attachments, cleanup-before-close barriers, active-allocation CAS, bounded replay, and quarantine-first release |
-| P5 | implemented | Concurrent degraded overview, browser DTO allowlists, reserved protocol routes, and Runtime restart invalidation are in place |
+| P5 | implemented | Concurrent degraded overview, browser DTO allowlists, connected OIDC/SCIM protocol routes, and Runtime restart invalidation are in place |
 
 Five independent read-only adversarial reviews examined lifecycle execution,
 Tool-effect semantics, the Stage 3 Edge/Admin boundary, Egress readiness, and

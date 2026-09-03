@@ -102,9 +102,24 @@ type AgentView struct {
 	ActiveOperationRequestID          string
 	FailureStage                      string
 	FailureCode                       string
+	Configuration                     *AgentConfigurationView
 	AggregateSequence                 int64
 	CreatedAt                         time.Time
 	UpdatedAt                         time.Time
+}
+
+type AgentConfigurationView struct {
+	TemplateID             string
+	TemplateRevision       int64
+	TemplateName           string
+	ModelProfileID         string
+	ModelProfileRevisionID string
+	ModelProfileRevision   int64
+	ModelProfileName       string
+	Model                  domain.ModelSpec
+	MaxModelRequests       int
+	ContextPolicyVersion   string
+	Runtime                domain.RuntimeSpecInput
 }
 
 type OperationView struct {

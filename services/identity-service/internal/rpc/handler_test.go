@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"soft/antnest-platform/services/identity-service/internal/directory"
 	"soft/antnest-platform/services/identity-service/internal/domain"
@@ -224,6 +225,34 @@ func TestRPCResolvesOpaquePrincipalForInternalServices(t *testing.T) {
 	}
 }
 
+func TestRPCReturnsOnlyTheCurrentAccountSummary(t *testing.T) {
+	services := &rpcServicesStub{currentAccount: directory.CurrentAccount{
+		UserID: "user-1", OrganizationID: "org-1", MembershipID: "membership-1",
+		OrganizationSlug: "engineering", OrganizationName: "Engineering",
+		Email: "alice@example.com", DisplayName: "Alice", Source: domain.SourceLocal,
+		LocalPasswordAvailable: true,
+	}}
+	handler := newRPCHandler(t, services)
+	request := httptest.NewRequest(
+		http.MethodPost,
+		ContractRoutes["get_current_account"],
+		strings.NewReader(`{"actor_principal_id":"user-1","organization_id":"org-1"}`),
+	)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK || services.currentAccountActorID != "user-1" ||
+		services.currentAccountOrganizationID != "org-1" ||
+		!strings.Contains(response.Body.String(), `"display_name":"Alice"`) ||
+		!strings.Contains(response.Body.String(), `"organization_name":"Engineering"`) ||
+		!strings.Contains(response.Body.String(), `"local_password_available":true`) ||
+		strings.Contains(response.Body.String(), "password_hash") {
+		t.Fatalf("status=%d actor=%q organization=%q body=%s",
+			response.Code, services.currentAccountActorID,
+			services.currentAccountOrganizationID, response.Body.String())
+	}
+}
+
 func TestRPCRequiresExplicitIdentityLifecycleState(t *testing.T) {
 	services := &rpcServicesStub{}
 	handler := newRPCHandler(t, services)
@@ -294,6 +323,50 @@ func TestRPCRequiresExplicitOIDCProviderEnabledState(t *testing.T) {
 	if response.Code != http.StatusOK || services.setProviderEnabledCalls != 1 || services.setProviderEnabledInput.Enabled {
 		t.Fatalf("explicit false set status=%d calls=%d input=%#v body=%s",
 			response.Code, services.setProviderEnabledCalls, services.setProviderEnabledInput, response.Body.String())
+	}
+}
+
+func TestRPCListsSafeProvisioningMetadata(t *testing.T) {
+	revokedAt := time.Date(2026, 9, 3, 8, 0, 0, 0, time.UTC)
+	services := &rpcServicesStub{
+		providers: []oidcflow.Provider{{
+			ID: "provider-1", OrganizationID: "org-1", Name: "workforce",
+			DisplayName: "Workforce", Issuer: "https://id.example.com", ClientID: "client-1",
+		}},
+		scimTokens: []scim.Token{{
+			ID: "token-1", OrganizationID: "org-1", Name: "Workday",
+			Scopes: []string{domain.SCIMScopeRead}, RevokedAt: &revokedAt,
+		}},
+	}
+	handler := newRPCHandler(t, services)
+
+	for _, test := range []struct {
+		name      string
+		path      string
+		body      string
+		want      string
+		forbidden string
+	}{
+		{
+			name: "OIDC Providers", path: ContractRoutes["list_oidc_providers"],
+			body: `{"actor_principal_id":"admin","organization_id":"org-1"}`,
+			want: `"providers"`, forbidden: "client_secret",
+		},
+		{
+			name: "SCIM tokens", path: ContractRoutes["list_scim_tokens"],
+			body: `{"actor_principal_id":"admin","organization_id":"org-1"}`,
+			want: `"tokens"`, forbidden: "credential",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, test.path, strings.NewReader(test.body))
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), test.want) ||
+				strings.Contains(response.Body.String(), test.forbidden) {
+				t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+			}
+		})
 	}
 }
 
@@ -379,8 +452,8 @@ func TestRPCBindingsConformToCentralIdentityContract(t *testing.T) {
 	if err := json.Unmarshal(encoded, &contract); err != nil {
 		t.Fatalf("decode contract: %v", err)
 	}
-	if contract.Revision != 7 {
-		t.Fatalf("identity contract revision=%d want=7", contract.Revision)
+	if contract.Revision != 11 {
+		t.Fatalf("identity contract revision=%d want=11", contract.Revision)
 	}
 	if len(contract.Methods) != len(ContractRoutes) {
 		t.Fatalf("contract methods=%d route bindings=%d", len(contract.Methods), len(ContractRoutes))
@@ -440,6 +513,7 @@ func TestRPCBindingsConformToCentralIdentityContract(t *testing.T) {
 	}
 	for _, code := range []string{
 		"invalid_argument", "invalid_reference", "unauthenticated", "forbidden", "not_found", "conflict",
+		"last_organization_admin",
 		"version_conflict",
 		"oidc_provider_changed", "oidc_membership_required", "oidc_exchange_in_progress",
 		"oidc_session_expired", "oidc_completed_token_unavailable",
@@ -450,7 +524,8 @@ func TestRPCBindingsConformToCentralIdentityContract(t *testing.T) {
 	}
 	for code, status := range map[string]int{
 		"invalid_argument": 400, "invalid_reference": 400, "unauthenticated": 401,
-		"forbidden": 403, "not_found": 404, "conflict": 409, "version_conflict": 409,
+		"forbidden": 403, "not_found": 404, "conflict": 409, "last_organization_admin": 409,
+		"version_conflict":     409,
 		"oidc_session_expired": 410,
 	} {
 		if contract.Error.HTTPStatusByCode[code] != status {
@@ -489,6 +564,9 @@ type rpcServicesStub struct {
 	createLocalUserInput           directory.CreateLocalUserInput
 	addMembershipInput             directory.AddOrganizationMembershipInput
 	changePasswordInput            directory.ChangeLocalPasswordInput
+	currentAccount                 directory.CurrentAccount
+	currentAccountActorID          string
+	currentAccountOrganizationID   string
 	updateMembershipInput          directory.UpdateMembershipInput
 	setUserActiveInput             directory.SetUserActiveInput
 	upsertProviderCalls            int
@@ -503,6 +581,8 @@ type rpcServicesStub struct {
 	resolvePrincipalOrganizationID string
 	revokedAccessToken             string
 	revokeStatus                   localauth.RevokeStatus
+	providers                      []oidcflow.Provider
+	scimTokens                     []scim.Token
 }
 
 func (s *rpcServicesStub) CreateOrganization(_ context.Context, input directory.CreateOrganizationInput) (domain.Organization, error) {
@@ -526,6 +606,14 @@ func (s *rpcServicesStub) AddOrganizationMembership(
 func (s *rpcServicesStub) ChangeLocalPassword(_ context.Context, input directory.ChangeLocalPasswordInput) error {
 	s.changePasswordInput = input
 	return nil
+}
+
+func (s *rpcServicesStub) GetCurrentAccount(
+	_ context.Context, actorPrincipalID, organizationID string,
+) (directory.CurrentAccount, error) {
+	s.currentAccountActorID = actorPrincipalID
+	s.currentAccountOrganizationID = organizationID
+	return s.currentAccount, nil
 }
 
 func (s *rpcServicesStub) UpdateMembership(
@@ -588,6 +676,10 @@ func (s *rpcServicesStub) SetProviderEnabled(
 	return oidcflow.Provider{Enabled: input.Enabled}, nil
 }
 
+func (s *rpcServicesStub) ListProviders(context.Context, string, string) ([]oidcflow.Provider, error) {
+	return s.providers, nil
+}
+
 func (*rpcServicesStub) ListLoginMethods(context.Context, string) ([]oidcflow.LoginMethod, error) {
 	return nil, nil
 }
@@ -606,6 +698,10 @@ func (*rpcServicesStub) IssueToken(context.Context, scim.IssueTokenInput) (scim.
 }
 
 func (*rpcServicesStub) RevokeToken(context.Context, string, string) error { return nil }
+
+func (s *rpcServicesStub) ListTokens(context.Context, string, string) ([]scim.Token, error) {
+	return s.scimTokens, nil
+}
 
 func contains(values []string, target string) bool {
 	for _, value := range values {

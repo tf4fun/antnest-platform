@@ -2,8 +2,10 @@ package identity
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -90,6 +92,74 @@ func TestClientRevokesByAccessTokenAndValidatesStatus(t *testing.T) {
 	if !strings.Contains(requestBody, `"access_token":"ant_api_secret"`) ||
 		strings.Contains(requestBody, "token_id") {
 		t.Fatalf("revoke request=%s", requestBody)
+	}
+}
+
+func TestClientSupportsBrowserOIDCFlow(t *testing.T) {
+	type observedRequest struct {
+		query   string
+		payload []byte
+	}
+	requests := make([]observedRequest, 0, 3)
+	httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		var payload []byte
+		if request.Body != nil {
+			payload, _ = io.ReadAll(request.Body)
+		}
+		requests = append(requests, observedRequest{
+			query: request.URL.RawQuery, payload: payload,
+		})
+		switch request.URL.Path {
+		case "/rpc/identity/list-login-methods":
+			return jsonResponse(http.StatusOK, `{"methods":[{"name":"workforce","display_name":"Workforce"}]}`), nil
+		case "/rpc/identity/start-oidc-login":
+			return jsonResponse(http.StatusOK, `{"authorization_url":"https://id.example.test/authorize?state=secret-state","expires_at":"2026-09-02T13:00:00Z"}`), nil
+		case "/protocol/oidc/callback":
+			return jsonResponse(http.StatusOK, `{
+				"token_id":"token-1","access_token":"ant_api_secret","expires_at":"2026-09-02T13:00:00Z",
+				"principal":{"user_id":"user-1","organization_id":"org-1","membership_id":"member-1","system_role":"user","organization_role":"member","active":true}
+			}`), nil
+		default:
+			t.Fatalf("unexpected path=%s", request.URL.Path)
+			return nil, nil
+		}
+	})}
+	client, err := NewClient("http://identity.internal", httpClient)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	methods, err := client.ListLoginMethods(context.Background(), "engineering")
+	if err != nil || len(methods) != 1 || methods[0].Name != "workforce" {
+		t.Fatalf("methods=%#v err=%v", methods, err)
+	}
+	start, err := client.StartOIDCLogin(context.Background(), StartOIDCLoginInput{
+		RequestID: "request-oidc", OrganizationSlug: "engineering", ProviderName: "workforce",
+	})
+	if err != nil || !strings.Contains(start.AuthorizationURL, "state=secret-state") {
+		t.Fatalf("start=%#v err=%v", start, err)
+	}
+	completed, err := client.CompleteOIDCLogin(context.Background(), OIDCCallbackInput{
+		State: "secret-state", Code: "secret-code",
+	})
+	if err != nil || completed.AccessToken != "ant_api_secret" || completed.Principal.UserID != "user-1" {
+		t.Fatalf("completed=%#v err=%v", completed, err)
+	}
+
+	var listBody, startBody map[string]any
+	_ = json.Unmarshal(requests[0].payload, &listBody)
+	_ = json.Unmarshal(requests[1].payload, &startBody)
+	if listBody["organization_slug"] != "engineering" ||
+		startBody["provider_name"] != "workforce" || startBody["request_id"] != "request-oidc" {
+		t.Fatalf("list=%v start=%v", listBody, startBody)
+	}
+	callbackQuery, err := url.ParseQuery(requests[2].query)
+	if err != nil {
+		t.Fatalf("parse callback query: %v", err)
+	}
+	if callbackQuery.Get("state") != "secret-state" ||
+		callbackQuery.Get("code") != "secret-code" || requests[2].query == "" {
+		t.Fatalf("callback query was not forwarded")
 	}
 }
 

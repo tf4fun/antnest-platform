@@ -11,11 +11,15 @@ Cross-service behavior must also remain understandable from its entrypoint.
 The implemented call chains and persistence boundaries are indexed in
 [`business-sequences.md`](business-sequences.md); a service-boundary change is
 incomplete until the affected sequence is updated.
+Browser workflow ownership and feature-convergence status are maintained in
+[`product-surfaces.md`](product-surfaces.md); an intentionally split or pending
+surface must not be reported as an implemented Console feature.
 
 Antnest Runtime, Runtime Egress, Runtime Controller, Agent ACP Service,
 Identity Service, Agent Controller, Edge Gateway, and Admin Console are
-implemented. Agent UI, Channel Gateway, and Skill Registry remain pending until
-their delivery stage says otherwise.
+implemented. Agent UI and its production Gateway-to-ACP v1 path are implemented.
+Channel Gateway and Skill Registry remain pending until their delivery stage
+says otherwise.
 
 ## Repository Layers
 

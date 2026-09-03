@@ -170,6 +170,30 @@ func (a *OIDCAdapter) SetProviderEnabled(
 	return provider, err
 }
 
+func (a *OIDCAdapter) ListProviders(ctx context.Context, organizationID string) ([]oidcflow.Provider, error) {
+	return observeRepositoryValue(ctx, "list_oidc_providers", func(ctx context.Context) ([]oidcflow.Provider, error) {
+		rows, err := a.store.pool.Query(ctx, providerMetadataSelect+`
+			WHERE p.organization_id = $1
+			ORDER BY p.display_name, p.name`, organizationID)
+		if err != nil {
+			return nil, fmt.Errorf("list OIDC Providers: %w", err)
+		}
+		defer rows.Close()
+		providers := make([]oidcflow.Provider, 0)
+		for rows.Next() {
+			provider, err := scanProviderMetadata(rows)
+			if err != nil {
+				return nil, err
+			}
+			providers = append(providers, provider)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("iterate OIDC Providers: %w", err)
+		}
+		return providers, nil
+	})
+}
+
 func (a *OIDCAdapter) ListLoginMethods(ctx context.Context, organizationSlug string) ([]oidcflow.LoginMethod, error) {
 	return observeRepositoryValue(ctx, "list_oidc_login_methods", func(ctx context.Context) ([]oidcflow.LoginMethod, error) {
 		rows, err := a.store.pool.Query(ctx, `
@@ -585,6 +609,13 @@ const providerSelect = `
 	       p.jwks_uri, p.created_at, p.updated_at
 	FROM oidc_providers p`
 
+const providerMetadataSelect = `
+	SELECT p.id, p.organization_id, p.name, p.display_name, p.issuer, p.client_id,
+	       p.scopes, p.enabled, p.revision, p.authorization_endpoint, p.token_endpoint,
+	       p.token_endpoint_auth_method, p.id_token_signing_algs, p.userinfo_endpoint,
+	       p.jwks_uri, p.created_at, p.updated_at
+	FROM oidc_providers p`
+
 func scanProviderRow(row rowScanner) (oidcflow.ProviderWithSecret, error) {
 	var provider oidcflow.ProviderWithSecret
 	err := row.Scan(
@@ -597,6 +628,21 @@ func scanProviderRow(row rowScanner) (oidcflow.ProviderWithSecret, error) {
 	)
 	if err != nil {
 		return oidcflow.ProviderWithSecret{}, normalizeError(err)
+	}
+	return provider, nil
+}
+
+func scanProviderMetadata(row rowScanner) (oidcflow.Provider, error) {
+	var provider oidcflow.Provider
+	err := row.Scan(
+		&provider.ID, &provider.OrganizationID, &provider.Name, &provider.DisplayName,
+		&provider.Issuer, &provider.ClientID, &provider.Scopes, &provider.Enabled,
+		&provider.Revision, &provider.AuthorizationEndpoint, &provider.TokenEndpoint,
+		&provider.TokenEndpointAuthMethod, &provider.IDTokenSigningAlgs,
+		&provider.UserInfoEndpoint, &provider.JWKSURI, &provider.CreatedAt, &provider.UpdatedAt,
+	)
+	if err != nil {
+		return oidcflow.Provider{}, normalizeError(err)
 	}
 	return provider, nil
 }

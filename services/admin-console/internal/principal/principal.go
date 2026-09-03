@@ -48,6 +48,10 @@ func (principal Principal) Administrator() bool {
 	return principal.SystemRole == "admin" || principal.OrganizationRole == "admin"
 }
 
+func (principal Principal) SystemAdministrator() bool {
+	return principal.SystemRole == "admin"
+}
+
 func valid(value string) bool {
 	if value == "" || len(value) > 200 || strings.TrimSpace(value) != value {
 		return false

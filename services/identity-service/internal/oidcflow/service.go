@@ -23,6 +23,7 @@ type Repository interface {
 	GetProvider(context.Context, string) (ProviderWithSecret, error)
 	UpsertProvider(context.Context, UpsertProviderCommand) (Provider, error)
 	SetProviderEnabled(context.Context, SetProviderEnabledCommand) (Provider, error)
+	ListProviders(context.Context, string) ([]Provider, error)
 	ListLoginMethods(context.Context, string) ([]LoginMethod, error)
 	CreateSession(context.Context, CreateSessionCommand) error
 	ClaimSession(context.Context, string, string, time.Time) (SessionClaim, error)
@@ -384,6 +385,21 @@ func (s *Service) SetProviderEnabled(
 		OrganizationID: input.OrganizationID, Name: name, Enabled: input.Enabled,
 		UpdatedAt: s.now().UTC(),
 	})
+}
+
+func (s *Service) ListProviders(
+	ctx context.Context,
+	actorPrincipalID string,
+	organizationID string,
+) ([]Provider, error) {
+	principal, err := s.repository.GetPrincipal(ctx, actorPrincipalID, organizationID)
+	if err != nil {
+		return nil, fmt.Errorf("resolve OIDC Provider actor: %w", err)
+	}
+	if !principal.Active || principal.SystemRole != domain.SystemRoleAdmin {
+		return nil, domain.ErrForbidden
+	}
+	return s.repository.ListProviders(ctx, organizationID)
 }
 
 func (s *Service) ListLoginMethods(ctx context.Context, organizationSlug string) ([]LoginMethod, error) {

@@ -5,8 +5,9 @@
 > Owner: Agent Controller
 
 This contract is the complete Agent Controller surface consumed by Agent ACP
-Service: one readiness endpoint plus the Run admission methods. The business
-methods resolve an authenticated connection to one Agent, admit exactly one
+Service and Edge Gateway: one readiness endpoint, a browser-workspace access
+projection, and the Run admission methods. The business methods resolve an
+authenticated connection to one Agent, admit exactly one
 serialized Run, resolve one admission-scoped Provider secret, and close the
 admission. Agent ACP Service must not read Agent Controller tables or
 reconstruct current Agent configuration from separate calls.
@@ -38,6 +39,22 @@ silently move a Session to another Agent.
 Reports whether Agent Controller can accept its internal RPC traffic. Agent ACP
 Service uses it only for startup and readiness; it is not a business method and
 does not replace per-request failure handling.
+
+### `list_workspace_agents`
+
+Returns the active Agent access bindings for one already authenticated
+organization principal. Edge Gateway is the only browser-facing consumer. It
+projects `agent_id`, display name, and the authoritative `ready|busy|offline`
+availability to JavaScript, while retaining `agent_access_subject` exclusively
+on the server for the later ACP WebSocket upgrade. Pagination uses the same
+opaque `(created_at, agent_id)` cursor as the management projection.
+
+`busy` means an active Run owns Agent admission. A blocked unknown Tool effect
+and every non-available lifecycle state are `offline`, because they require
+recovery or administrator action rather than another user submission. The
+method never returns Runtime endpoints, model credentials, immutable execution
+snapshots, or organization-wide Agents without an active binding for the
+principal.
 
 ### `resolve_agent_access`
 
@@ -143,7 +160,7 @@ Every non-success response uses the error envelope from the JSON contract.
 
 ## Compatibility Rules
 
-1. This document and machine catalog describe contract revision 8.
+1. This document and machine catalog describe contract revision 9.
 2. Contract fields are `snake_case`; ACP wire fields remain the ACP-defined
    `camelCase` shapes.
 3. New optional response fields may be added. Existing required fields cannot

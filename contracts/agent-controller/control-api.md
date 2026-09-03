@@ -1,7 +1,7 @@
 # Agent Controller Lifecycle And Management Contract
 
 > Status: Stage 2B implementation contract<br>
-> Revision: 4<br>
+> Revision: 9<br>
 > Transport: trusted internal JSON over HTTP<br>
 > Owner: Agent Controller
 
@@ -20,6 +20,19 @@ revision command compares the head revision it read with the head locked by the
 repository; a concurrent successful revision returns `lifecycle_conflict` and
 the caller submits a new intent instead of silently rebasing it.
 
+## Model Catalog
+
+`GET /internal/model-catalog` returns the provider and model presets supported
+by the current model adapter. The result is global product metadata: it carries
+no organization state, credentials, or discovered Provider data and is not
+persisted in the Agent Controller database.
+
+For a catalog model, Agent Controller is authoritative for the endpoint,
+context window, output limit, and image-input capability. Create and revision
+commands canonicalize those fields even when an internal caller supplies stale
+values. The custom OpenAI-compatible preset has no fixed endpoint or models;
+administrators must provide its model identity and capability limits.
+
 ## Model Profiles
 
 `POST /internal/model-profiles` creates a profile and first immutable revision.
@@ -32,7 +45,14 @@ Profile revision contains endpoint/model metadata and a credential reference.
 Stage 2 creates profiles as enabled. Profile disable/delete management is
 deferred; historical Agent revisions are never rewritten.
 
-`GET /internal/model-profiles/{model_profile_id}` returns the current head.
+`GET /internal/model-profiles/{model_profile_id}` returns the current head and
+requires its owning `organization_id`. Revision commands carry the same
+organization authority and fail closed when the opaque ID belongs elsewhere.
+`GET /internal/model-profile-revisions/{revision_id}` returns one immutable
+historical revision after verifying its organization. The globally unique
+revision identifies its parent profile. Display name and profile key are current catalog
+labels; the revision ID, number, model limits, endpoint, and model identity are
+the immutable configuration authority.
 `GET /internal/model-profiles` requires `organization_id` and uses stable
 `after_id` plus bounded `limit` pagination. It never returns encrypted
 credential bytes or plaintext secrets.
@@ -45,7 +65,11 @@ revision. The request references one enabled ModelProfile revision and contains
 Runtime image/resource inputs. Skill references are absent until Skill Registry
 exists; the effective list is empty.
 
-Template get/list return current heads only. List requires `organization_id`
+Template get/revise/list are organization scoped. The ordinary get and list
+return current heads. `GET
+/internal/agent-templates/{template_id}/revisions/{revision}` returns one
+immutable historical configuration while retaining the current Template name
+as a display label. Get requires `organization_id`; revise carries it in the request. List requires `organization_id`
 and uses the same `after_id`/`limit` pagination. Agent creation resolves the
 explicit `(template_id, template_revision)` pair rather than silently using a
 newer head.
@@ -78,7 +102,14 @@ Run admissions remain available for retention and audit.
 
 `GET /internal/agents` is the global current-state projection. Deleted Agents
 are excluded unless `include_deleted=true`. `GET /internal/agents/{agent_id}`
-returns the current projection and active immutable revision identifiers.
+returns the current projection, active immutable revision identifiers, and an
+optional safe `configuration` lineage for the executable AgentSpec. That
+detail-only lineage identifies the exact Template and Model Profile revisions,
+their current display labels, frozen model limits/execution policy, and Runtime
+input. It never returns credential references, credential versions, Runtime
+execution identity, or the internal MCP endpoint. A provisioning Agent has no
+`configuration` until its first ExecutionRevision is published; list items stay
+lightweight and omit it.
 
 The list route accepts optional `organization_id`, `owner_user_id`, and
 `lifecycle_state` filters. `owner_user_id` is the immutable Identity Service

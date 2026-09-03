@@ -1,18 +1,36 @@
 import { csrfFromCookie } from "./forms";
+import { invalidatesBrowserSession } from "./session-errors";
+import {
+  agentPagePath,
+  catalogPagePath,
+  type AgentPageOptions,
+  type CatalogPageOptions,
+} from "./pagination";
 import type {
   Agent,
   AgentEventList,
   AgentList,
   AgentTemplate,
   CreateAgentResult,
+  CurrentAccountResult,
   Directory,
+  DirectoryMember,
+  DirectoryMembership,
   LifecycleOperation,
+  LoginMethodList,
+  ModelCatalog,
   ModelProfile,
   ModelProfileList,
   Overview,
+  OIDCLoginStart,
+  OIDCProviderList,
+  OIDCProviderResult,
   RemoteErrorBody,
   Session,
+  SCIMTokenIssue,
+  SCIMTokenList,
   TemplateList,
+  TemplateDefaults,
 } from "./types";
 
 export class APIError extends Error {
@@ -48,7 +66,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
   if (!response.ok) {
     const remote = body as RemoteErrorBody;
-    if (response.status === 401 && path.startsWith("/api/admin/")) {
+    if (invalidatesBrowserSession(path, response.status)) {
       window.dispatchEvent(new Event("antnest:session-expired"));
     }
     throw new APIError(response.status, remote.code ?? "request_failed", remote.message ?? "Request failed.");
@@ -68,7 +86,7 @@ function intentStorageKey(scope: string, input: unknown): string {
   return `antnest:lifecycle:${scope}:${(hash >>> 0).toString(16)}`;
 }
 
-async function lifecycleRequest<T>(scope: string, path: string, input: unknown): Promise<T> {
+async function idempotentRequest<T>(scope: string, path: string, input: unknown): Promise<T> {
   const storageKey = intentStorageKey(scope, input);
   let idempotencyKey = sessionStorage.getItem(storageKey);
   if (!idempotencyKey) {
@@ -91,17 +109,97 @@ async function lifecycleRequest<T>(scope: string, path: string, input: unknown):
   }
 }
 
+function oneShotCommand<T>(path: string, input: unknown): Promise<T> {
+  return request<T>(path, {
+    method: "POST",
+    headers: { "Idempotency-Key": crypto.randomUUID() },
+    body: json(input),
+  });
+}
+
 export const api = {
   session: () => request<Session>("/api/session"),
+  loginMethods: (organization_slug: string) => request<LoginMethodList>("/api/session/login-methods", {
+    method: "POST",
+    body: json({ organization_slug }),
+  }),
+  startOIDCLogin: (organization_slug: string, provider_name: string) =>
+    request<OIDCLoginStart>("/api/session/oidc/start", {
+      method: "POST",
+      body: json({ organization_slug, provider_name }),
+    }),
   login: (organization_slug: string, email: string, password: string) =>
     request<Session>("/api/session/login", {
       method: "POST",
       body: json({ organization_slug, email, password }),
     }),
   logout: () => request<void>("/api/session", { method: "DELETE" }),
+  currentAccount: () => request<CurrentAccountResult>("/api/admin/account"),
+  changeOwnPassword: (current_password: string, new_password: string) =>
+    oneShotCommand<{ status: "changed" }>("/api/admin/account/password", {
+      current_password,
+      new_password,
+    }),
   overview: () => request<Overview>("/api/admin/overview"),
   directory: () => request<Directory>("/api/admin/directory"),
-  models: () => request<ModelProfileList>("/api/admin/model-profiles"),
+  createLocalUser: (input: {
+    email: string;
+    display_name: string;
+    password: string;
+    role: "member" | "admin";
+  }) => idempotentRequest<DirectoryMember>("create-local-user", "/api/admin/directory/users", input),
+  updateMembership: (membershipID: string, input: {
+    email: string;
+    display_name: string;
+    role: "member" | "admin";
+    active: boolean;
+  }) => idempotentRequest<{ membership: DirectoryMembership }>(
+    `update-membership:${membershipID}`,
+    `/api/admin/directory/memberships/${encodeURIComponent(membershipID)}`,
+    input,
+  ),
+  setUserActive: (userID: string, active: boolean) =>
+    idempotentRequest<{ status: string }>(
+      `set-user-active:${userID}`,
+      `/api/admin/directory/users/${encodeURIComponent(userID)}/active`,
+      { active },
+    ),
+  oidcProviders: () => request<OIDCProviderList>("/api/admin/provisioning/oidc-providers"),
+  upsertOIDCProvider: (input: {
+    name: string;
+    issuer: string;
+    client_id: string;
+    client_secret: string;
+    scopes: string[];
+    enabled: boolean;
+  }) => idempotentRequest<OIDCProviderResult>(
+    `upsert-oidc-provider:${input.name}`,
+    "/api/admin/provisioning/oidc-providers",
+    input,
+  ),
+  setOIDCProviderEnabled: (name: string, enabled: boolean) =>
+    idempotentRequest<OIDCProviderResult>(
+      `set-oidc-provider-enabled:${name}`,
+      `/api/admin/provisioning/oidc-providers/${encodeURIComponent(name)}/enabled`,
+      { enabled },
+    ),
+  scimTokens: () => request<SCIMTokenList>("/api/admin/provisioning/scim-tokens"),
+  issueSCIMToken: (input: {
+    name: string;
+    scopes: Array<"scim:read" | "scim:write">;
+  }) => idempotentRequest<SCIMTokenIssue>("issue-scim-token", "/api/admin/provisioning/scim-tokens", input),
+  revokeSCIMToken: (tokenID: string) => idempotentRequest<{ status: string }>(
+    `revoke-scim-token:${tokenID}`,
+    `/api/admin/provisioning/scim-tokens/${encodeURIComponent(tokenID)}/revoke`,
+    {},
+  ),
+  modelCatalog: () => request<ModelCatalog>("/api/admin/model-catalog"),
+  models: (options: CatalogPageOptions = {}) =>
+    request<ModelProfileList>(catalogPagePath("/api/admin/model-profiles", options)),
+  model: (modelProfileID: string) =>
+    request<ModelProfile>(`/api/admin/model-profiles/${encodeURIComponent(modelProfileID)}`),
+  modelRevision: (revisionID: string) =>
+    request<ModelProfile>(`/api/admin/model-profile-revisions/${encodeURIComponent(revisionID)}`),
   createModel: (input: {
     profile_key: string;
     display_name: string;
@@ -113,8 +211,31 @@ export const api = {
       max_output_tokens: number;
       supports_images: boolean;
     };
-  }) => request<ModelProfile>("/api/admin/model-profiles", { method: "POST", body: json(input) }),
-  templates: () => request<TemplateList>("/api/admin/templates"),
+  }) => idempotentRequest<ModelProfile>("create-model", "/api/admin/model-profiles", input),
+  reviseModel: (modelProfileID: string, input: {
+    display_name: string;
+    api_key: string;
+    model: {
+      base_url: string;
+      model: string;
+      context_window: number;
+      max_output_tokens: number;
+      supports_images: boolean;
+    };
+  }) => idempotentRequest<ModelProfile>(
+    `revise-model:${modelProfileID}`,
+    `/api/admin/model-profiles/${encodeURIComponent(modelProfileID)}/revisions`,
+    input,
+  ),
+  templates: (options: CatalogPageOptions = {}) =>
+    request<TemplateList>(catalogPagePath("/api/admin/templates", options)),
+  templateDefaults: () => request<TemplateDefaults>("/api/admin/template-defaults"),
+  template: (templateID: string) =>
+    request<AgentTemplate>(`/api/admin/templates/${encodeURIComponent(templateID)}`),
+  templateRevision: (templateID: string, revision: number) =>
+    request<AgentTemplate>(
+      `/api/admin/templates/${encodeURIComponent(templateID)}/revisions/${encodeURIComponent(String(revision))}`,
+    ),
   createTemplate: (input: {
     template_key: string;
     name: string;
@@ -122,22 +243,35 @@ export const api = {
     system_prompt: string;
     max_model_requests: number;
     runtime?: { image_ref?: string };
-  }) => request<AgentTemplate>("/api/admin/templates", { method: "POST", body: json(input) }),
-  agents: (includeDeleted = false) =>
-    request<AgentList>(`/api/admin/agents${includeDeleted ? "?include_deleted=true" : ""}`),
+  }) => idempotentRequest<AgentTemplate>("create-template", "/api/admin/templates", input),
+  reviseTemplate: (templateID: string, input: {
+    name: string;
+    model_profile_revision_id: string;
+    system_prompt: string;
+    max_model_requests: number;
+    runtime: {
+      image_ref: string;
+      resources: { memory_bytes: number; pids_limit: number; tmpfs_bytes: number };
+    };
+  }) => idempotentRequest<AgentTemplate>(
+    `revise-template:${templateID}`,
+    `/api/admin/templates/${encodeURIComponent(templateID)}/revisions`,
+    input,
+  ),
+  agents: (options: AgentPageOptions = {}) => request<AgentList>(agentPagePath(options)),
   agent: (agentID: string) => request<Agent>(`/api/admin/agents/${encodeURIComponent(agentID)}`),
   createAgent: (input: {
     owner_user_id: string;
     name: string;
     template_id: string;
     template_revision: number;
-  }) => lifecycleRequest<CreateAgentResult>("create", "/api/admin/agents", input),
+  }) => idempotentRequest<CreateAgentResult>("create-agent", "/api/admin/agents", input),
   lifecycle: (
     agentID: string,
     action: "rebuild" | "disable" | "enable" | "delete",
     input: Record<string, unknown> = {},
   ) =>
-    lifecycleRequest<LifecycleOperation>(
+    idempotentRequest<LifecycleOperation>(
       `${action}:${agentID}`,
       `/api/admin/agents/${encodeURIComponent(agentID)}/${action}`,
       input,

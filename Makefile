@@ -1,4 +1,4 @@
-.PHONY: fmt fmt-check lint go-lint rust-clippy node-lint test test-go test-rust test-node test-postgres test-egress-postgres test-runtime-controller-postgres test-agent-acp-postgres test-identity-postgres test-agent-controller-postgres docker-build docker-build-runtime-controller docker-build-stage3 compose-up compose-down e2e-stage1 e2e-stage2 e2e-stage3 e2e-runtime-controller
+.PHONY: fmt fmt-check lint go-lint rust-clippy node-lint test test-go test-rust test-node test-postgres test-egress-postgres test-runtime-controller-postgres test-agent-acp-postgres test-identity-postgres test-agent-controller-postgres docker-build docker-build-runtime-controller docker-build-agent-ui docker-build-stage3 compose-up compose-down e2e-stage1 e2e-stage2 e2e-stage3 e2e-runtime-controller
 
 GOCACHE := $(CURDIR)/.cache/go-build
 GOMODCACHE := $(CURDIR)/.cache/go-mod
@@ -38,6 +38,7 @@ node-lint:
 	npm --prefix services/agent-acp-service run lint
 	npm --prefix services/agent-acp-service run typecheck
 	npm --prefix services/admin-console/web run typecheck
+	npm --prefix services/agent-ui/web run typecheck
 
 test:
 	$(MAKE) test-go
@@ -58,6 +59,7 @@ test-rust:
 test-node:
 	npm --prefix services/agent-acp-service test
 	npm --prefix services/admin-console/web test
+	npm --prefix services/agent-ui/web test
 
 test-postgres:
 	sh scripts/test-postgres.sh
@@ -94,8 +96,11 @@ docker-build: docker-build-runtime-controller
 	docker compose --profile stage2 build identity-service
 	docker compose --profile stage2 build agent-controller
 
+docker-build-agent-ui:
+	docker build -f services/agent-ui/Dockerfile -t antnest/agent-ui:local .
+
 docker-build-stage3: docker-build-runtime-controller
-	docker compose --profile stage3 build identity-service agent-controller admin-console edge-gateway
+	docker compose --profile stage3 build agent-acp-service identity-service agent-controller admin-console agent-ui edge-gateway
 
 compose-up: docker-build-runtime-controller
 	docker compose up -d --wait postgres runtime-egress runtime-controller

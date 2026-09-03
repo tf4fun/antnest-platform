@@ -189,6 +189,23 @@ func TestPostgresIdentityHappyPathAndOwnershipBoundaries(t *testing.T) {
 	directoryService := directory.NewService(store.Directory(), func() string {
 		return fmt.Sprintf("id-%d", sequence.Add(1))
 	}, func() time.Time { return now })
+	for _, change := range []struct {
+		name   string
+		role   domain.OrganizationRole
+		active bool
+	}{
+		{name: "demote", role: domain.OrganizationRoleMember, active: true},
+		{name: "deactivate", role: domain.OrganizationRoleAdmin, active: false},
+	} {
+		if _, err := directoryService.UpdateMembership(ctx, directory.UpdateMembershipInput{
+			RequestID: "last-admin-" + change.name, ActorPrincipalID: bootstrap.User.ID,
+			OrganizationID: bootstrap.Organization.ID, MembershipID: bootstrap.Membership.ID,
+			Email: bootstrap.Membership.Email, DisplayName: bootstrap.Membership.DisplayName,
+			Role: change.role, Active: change.active,
+		}); !errors.Is(err, domain.ErrLastOrganizationAdmin) {
+			t.Fatalf("%s last organization administrator error = %v, want last administrator", change.name, err)
+		}
+	}
 	secondaryOrganization, err := directoryService.CreateOrganization(ctx, directory.CreateOrganizationInput{
 		RequestID: "organization-2", ActorPrincipalID: bootstrap.User.ID,
 		Slug: "research", Name: "Research",
@@ -205,6 +222,44 @@ func TestPostgresIdentityHappyPathAndOwnershipBoundaries(t *testing.T) {
 	})
 	if err != nil || secondaryUser.Membership.OrganizationID != secondaryOrganization.ID {
 		t.Fatalf("initialize second organization directory = %#v, %v", secondaryUser, err)
+	}
+	secondaryDirectory, err := directoryService.List(ctx, bootstrap.User.ID, secondaryOrganization.ID)
+	if err != nil {
+		t.Fatalf("list secondary organization directory: %v", err)
+	}
+	var creatorMembership domain.OrganizationMembership
+	for _, member := range secondaryDirectory.Users {
+		if member.User.ID == bootstrap.User.ID {
+			creatorMembership = member.Membership
+			break
+		}
+	}
+	if creatorMembership.ID == "" {
+		t.Fatal("secondary organization creator membership is missing")
+	}
+	creatorMembership, err = directoryService.UpdateMembership(ctx, directory.UpdateMembershipInput{
+		RequestID: "deactivate-secondary-creator", ActorPrincipalID: bootstrap.User.ID,
+		OrganizationID: secondaryOrganization.ID, MembershipID: creatorMembership.ID,
+		Email: creatorMembership.Email, DisplayName: creatorMembership.DisplayName,
+		Role: creatorMembership.Role, Active: false,
+	})
+	if err != nil {
+		t.Fatalf("deactivate secondary organization creator: %v", err)
+	}
+	if err := directoryService.SetUserActive(ctx, directory.SetUserActiveInput{
+		RequestID: "disable-last-secondary-admin", ActorPrincipalID: bootstrap.User.ID,
+		UserID: secondaryUser.User.ID, Active: false,
+	}); !errors.Is(err, domain.ErrLastOrganizationAdmin) {
+		t.Fatalf("disable last effective organization administrator error = %v, want last administrator", err)
+	}
+	creatorMembership, err = directoryService.UpdateMembership(ctx, directory.UpdateMembershipInput{
+		RequestID: "reactivate-secondary-creator", ActorPrincipalID: secondaryUser.User.ID,
+		OrganizationID: secondaryOrganization.ID, MembershipID: creatorMembership.ID,
+		Email: creatorMembership.Email, DisplayName: creatorMembership.DisplayName,
+		Role: creatorMembership.Role, Active: true,
+	})
+	if err != nil {
+		t.Fatalf("reactivate secondary organization creator: %v", err)
 	}
 	sharedMembership, err := directoryService.AddOrganizationMembership(ctx, directory.AddOrganizationMembershipInput{
 		RequestID: "share-secondary-user", ActorPrincipalID: bootstrap.User.ID,
@@ -376,6 +431,29 @@ func TestPostgresIdentityHappyPathAndOwnershipBoundaries(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("issue SCIM token: %v", err)
+	}
+	retiredToken, err := scimService.IssueToken(ctx, scim.IssueTokenInput{
+		RequestID: "scim-token-retired", ActorPrincipalID: bootstrap.User.ID,
+		OrganizationID: bootstrap.Organization.ID, Name: "Retired directory",
+		Scopes: []string{domain.SCIMScopeRead},
+	})
+	if err != nil {
+		t.Fatalf("issue retired SCIM token: %v", err)
+	}
+	if err := scimService.RevokeToken(ctx, bootstrap.User.ID, retiredToken.Token.ID); err != nil {
+		t.Fatalf("revoke retired SCIM token: %v", err)
+	}
+	tokens, err := scimService.ListTokens(ctx, bootstrap.User.ID, bootstrap.Organization.ID)
+	if err != nil {
+		t.Fatalf("list SCIM token metadata: %v", err)
+	}
+	tokensByID := make(map[string]scim.Token, len(tokens))
+	for _, token := range tokens {
+		tokensByID[token.ID] = token
+	}
+	if len(tokens) != 2 || tokensByID[retiredToken.Token.ID].RevokedAt == nil ||
+		tokensByID[scimToken.Token.ID].RevokedAt != nil {
+		t.Fatalf("SCIM token metadata = %#v", tokens)
 	}
 	authorization, err := scimService.Authorize(ctx, scimToken.Credential, domain.SCIMScopeRead)
 	if err != nil {
@@ -573,6 +651,14 @@ func TestPostgresIdentityHappyPathAndOwnershipBoundaries(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("upsert OIDC provider: %v", err)
+	}
+	providers, err := store.OIDC().ListProviders(ctx, bootstrap.Organization.ID)
+	if err != nil {
+		t.Fatalf("list OIDC Provider metadata: %v", err)
+	}
+	if len(providers) != 1 || providers[0].ID != storedProvider.ID ||
+		len(providers[0].ClientSecret.Ciphertext) != 0 || len(providers[0].ClientSecret.Nonce) != 0 {
+		t.Fatalf("OIDC Provider metadata = %#v", providers)
 	}
 	provider.Provider = storedProvider
 	competingProvider := provider
@@ -1145,6 +1231,14 @@ func TestPostgresIdentityHappyPathAndOwnershipBoundaries(t *testing.T) {
 		VALUES ($1, 'admin', TRUE, $2, $2)`, secondAdminID, now,
 	); err != nil {
 		t.Fatalf("create second system administrator: %v", err)
+	}
+	if _, err := directoryService.AddOrganizationMembership(ctx, directory.AddOrganizationMembershipInput{
+		RequestID: "add-second-system-administrator", ActorPrincipalID: bootstrap.User.ID,
+		OrganizationID: bootstrap.Organization.ID, UserID: secondAdminID,
+		Email: "system-admin-2@example.com", DisplayName: "Second System Administrator",
+		Role: domain.OrganizationRoleAdmin,
+	}); err != nil {
+		t.Fatalf("add second system administrator Membership: %v", err)
 	}
 	startAdminRace := make(chan struct{})
 	adminRaceResults := make(chan error, 2)

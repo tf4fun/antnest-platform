@@ -20,32 +20,37 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 
+	"soft/antnest-platform/services/edge-gateway/internal/agentcontroller"
 	"soft/antnest-platform/services/edge-gateway/internal/identity"
 	"soft/antnest-platform/services/edge-gateway/internal/session"
 )
 
 const (
-	HeaderUserID           = "X-Antnest-User-ID"
-	HeaderOrganizationID   = "X-Antnest-Organization-ID"
-	HeaderMembershipID     = "X-Antnest-Membership-ID"
-	HeaderSystemRole       = "X-Antnest-System-Role"
-	HeaderOrganizationRole = "X-Antnest-Organization-Role"
-	HeaderTraceID          = "X-Antnest-Trace-ID"
-	maximumLoginBytes      = 64 << 10
-	defaultStreamLease     = 5 * time.Minute
-	defaultLoginWindow     = 5 * time.Minute
-	defaultLoginSourceMax  = 30
-	defaultLoginAccountMax = 10
-	defaultLoginMaxKeys    = 4096
+	HeaderUserID             = "X-Antnest-User-ID"
+	HeaderOrganizationID     = "X-Antnest-Organization-ID"
+	HeaderMembershipID       = "X-Antnest-Membership-ID"
+	HeaderSystemRole         = "X-Antnest-System-Role"
+	HeaderOrganizationRole   = "X-Antnest-Organization-Role"
+	HeaderTraceID            = "X-Antnest-Trace-ID"
+	HeaderAgentAccessSubject = "X-Antnest-Agent-Access-Subject"
+	maximumLoginBytes        = 64 << 10
+	defaultStreamLease       = 5 * time.Minute
+	defaultLoginWindow       = 5 * time.Minute
+	defaultLoginSourceMax    = 30
+	defaultLoginAccountMax   = 10
+	defaultLoginMaxKeys      = 4096
 )
 
 var trustedHeaders = []string{
 	HeaderUserID, HeaderOrganizationID, HeaderMembershipID,
-	HeaderSystemRole, HeaderOrganizationRole,
+	HeaderSystemRole, HeaderOrganizationRole, HeaderAgentAccessSubject,
 }
 
 type IdentityService interface {
 	Login(context.Context, identity.LoginInput) (identity.LoginResult, error)
+	ListLoginMethods(context.Context, string) ([]identity.LoginMethod, error)
+	StartOIDCLogin(context.Context, identity.StartOIDCLoginInput) (identity.StartOIDCLoginResult, error)
+	CompleteOIDCLogin(context.Context, identity.OIDCCallbackInput) (identity.OIDCCallbackResult, error)
 	Resolve(context.Context, string) (identity.Principal, error)
 	RevokeByAccessToken(context.Context, string) (identity.RevokeStatus, error)
 	Ready(context.Context) error
@@ -53,6 +58,9 @@ type IdentityService interface {
 
 type Config struct {
 	AdminConsoleURL string
+	AgentUIURL      string
+	AgentACPURL     string
+	IdentityURL     string
 	RequestTimeout  time.Duration
 	StreamLease     time.Duration
 	LoginWindow     time.Duration
@@ -64,6 +72,7 @@ type Config struct {
 
 type Dependencies struct {
 	Identity   IdentityService
+	Agents     agentcontroller.Service
 	Sessions   *session.Manager
 	HTTPClient *http.Client
 	Logger     *slog.Logger
@@ -71,6 +80,7 @@ type Dependencies struct {
 
 type handler struct {
 	identity       IdentityService
+	agents         agentcontroller.Service
 	sessions       *session.Manager
 	requestTimeout time.Duration
 	streamLease    time.Duration
@@ -80,17 +90,35 @@ type handler struct {
 	httpClient     *http.Client
 	logger         *slog.Logger
 	consoleURL     *url.URL
+	agentUIURL     *url.URL
+	agentACPURL    *url.URL
 	adminProxy     *httputil.ReverseProxy
 	appProxy       *httputil.ReverseProxy
+	workspaceProxy *httputil.ReverseProxy
+	acpProxy       *httputil.ReverseProxy
+	scimProxy      *httputil.ReverseProxy
 	mux            *http.ServeMux
 }
 
 func NewHandler(config Config, dependencies Dependencies) (http.Handler, error) {
-	consoleURL, err := url.Parse(strings.TrimSpace(config.AdminConsoleURL))
-	if err != nil || consoleURL.Scheme == "" || consoleURL.Host == "" {
+	consoleURL, err := parseServiceURL(config.AdminConsoleURL)
+	if err != nil {
 		return nil, fmt.Errorf("admin console URL is invalid")
 	}
-	if dependencies.Identity == nil || dependencies.Sessions == nil || dependencies.HTTPClient == nil {
+	agentUIURL, err := parseServiceURL(config.AgentUIURL)
+	if err != nil {
+		return nil, fmt.Errorf("agent UI URL is invalid")
+	}
+	agentACPURL, err := parseServiceURL(config.AgentACPURL)
+	if err != nil {
+		return nil, fmt.Errorf("agent ACP URL is invalid")
+	}
+	identityURL, err := parseServiceURL(config.IdentityURL)
+	if err != nil {
+		return nil, fmt.Errorf("identity service URL is invalid")
+	}
+	if dependencies.Identity == nil || dependencies.Agents == nil ||
+		dependencies.Sessions == nil || dependencies.HTTPClient == nil {
 		return nil, fmt.Errorf("gateway dependencies are incomplete")
 	}
 	if dependencies.Logger == nil {
@@ -118,7 +146,7 @@ func NewHandler(config Config, dependencies Dependencies) (http.Handler, error) 
 		config.NewRequestID = randomRequestID
 	}
 	h := &handler{
-		identity: dependencies.Identity, sessions: dependencies.Sessions,
+		identity: dependencies.Identity, agents: dependencies.Agents, sessions: dependencies.Sessions,
 		requestTimeout: config.RequestTimeout, streamLease: config.StreamLease,
 		loginWindow: config.LoginWindow,
 		loginAdmission: newLoginAdmission(loginAdmissionConfig{
@@ -126,11 +154,20 @@ func NewHandler(config Config, dependencies Dependencies) (http.Handler, error) 
 			AccountLimit: config.LoginAccountMax, MaxKeys: defaultLoginMaxKeys, Now: config.Now,
 		}),
 		newRequestID: config.NewRequestID,
-		httpClient:   dependencies.HTTPClient, logger: dependencies.Logger, consoleURL: consoleURL,
+		httpClient:   dependencies.HTTPClient, logger: dependencies.Logger,
+		consoleURL: consoleURL, agentUIURL: agentUIURL, agentACPURL: agentACPURL,
 		mux: http.NewServeMux(),
 	}
-	h.adminProxy = h.newProxy("console_unavailable")
-	h.appProxy = h.newProxy("console_unavailable")
+	h.adminProxy = h.newProxy(consoleURL, "console_unavailable", "Admin Console is unavailable", nil)
+	h.appProxy = h.newProxy(consoleURL, "console_unavailable", "Admin Console is unavailable", nil)
+	h.workspaceProxy = h.newProxy(
+		agentUIURL, "workspace_unavailable", "Agent workspace is unavailable", stripWorkspacePath,
+	)
+	h.acpProxy = h.newProxy(
+		agentACPURL, "agent_unavailable", "Agent connection is unavailable",
+		func(*http.Request) string { return "/v1/acp" },
+	)
+	h.scimProxy = h.newSCIMProxy(identityURL)
 	h.routes()
 	return h, nil
 }
@@ -138,12 +175,20 @@ func NewHandler(config Config, dependencies Dependencies) (http.Handler, error) 
 func (h *handler) routes() {
 	h.mux.HandleFunc("GET /status", h.status)
 	h.mux.HandleFunc("POST /api/session/login", h.login)
+	h.mux.HandleFunc("POST /api/session/login-methods", h.loginMethods)
+	h.mux.HandleFunc("POST /api/session/oidc/start", h.startOIDCLogin)
 	h.mux.HandleFunc("GET /api/session", h.getSession)
 	h.mux.HandleFunc("DELETE /api/session", h.logout)
-	for _, prefix := range []string{"/protocol/oidc", "/scim/v2"} {
-		h.mux.HandleFunc(prefix, h.protocolUnavailable)
-		h.mux.HandleFunc(prefix+"/{path...}", h.protocolUnavailable)
-	}
+	h.mux.HandleFunc("GET /api/app/bootstrap", h.workspaceBootstrap)
+	h.mux.HandleFunc("GET /api/app/agents/{agent_id}/acp", h.workspaceACP)
+	h.mux.HandleFunc("/api/app/{path...}", func(response http.ResponseWriter, _ *http.Request) {
+		writeError(response, http.StatusNotFound, "not_found", "Resource was not found")
+	})
+	h.mux.HandleFunc("GET /protocol/oidc/callback", h.oidcCallback)
+	h.mux.HandleFunc("/protocol/oidc", h.unknownIdentityProtocol)
+	h.mux.HandleFunc("/protocol/oidc/{path...}", h.unknownIdentityProtocol)
+	h.mux.Handle("/scim/v2", h.scimProxy)
+	h.mux.Handle("/scim/v2/{path...}", h.scimProxy)
 	h.mux.HandleFunc("/api/admin", func(response http.ResponseWriter, _ *http.Request) {
 		writeError(response, http.StatusNotFound, "not_found", "Resource was not found")
 	})
@@ -151,12 +196,13 @@ func (h *handler) routes() {
 	h.mux.HandleFunc("/api/{path...}", func(response http.ResponseWriter, _ *http.Request) {
 		writeError(response, http.StatusNotFound, "not_found", "Resource was not found")
 	})
+	h.mux.HandleFunc("/workspace", h.workspaceApplication)
+	h.mux.HandleFunc("/workspace/{path...}", h.workspaceApplication)
 	h.mux.HandleFunc("/{path...}", h.application)
 }
 
-func (*handler) protocolUnavailable(response http.ResponseWriter, _ *http.Request) {
-	writeError(response, http.StatusServiceUnavailable,
-		"protocol_unavailable", "Identity protocol endpoint is not available")
+func (*handler) unknownIdentityProtocol(response http.ResponseWriter, _ *http.Request) {
+	writeError(response, http.StatusNotFound, "not_found", "Resource was not found")
 }
 
 func (h *handler) ServeHTTP(response http.ResponseWriter, request *http.Request) {
@@ -173,7 +219,9 @@ func (h *handler) ServeHTTP(response http.ResponseWriter, request *http.Request)
 func (h *handler) status(response http.ResponseWriter, request *http.Request) {
 	ctx, cancel := context.WithTimeout(request.Context(), h.requestTimeout)
 	defer cancel()
-	if err := h.identity.Ready(ctx); err != nil || h.consoleReady(ctx) != nil {
+	if err := h.identity.Ready(ctx); err != nil || h.agents.Ready(ctx) != nil ||
+		h.serviceReady(ctx, h.consoleURL) != nil || h.serviceReady(ctx, h.agentUIURL) != nil ||
+		h.serviceReady(ctx, h.agentACPURL) != nil {
 		writeJSON(response, http.StatusServiceUnavailable, map[string]string{"status": "not_ready"})
 		return
 	}
@@ -194,11 +242,7 @@ func (h *handler) login(response http.ResponseWriter, request *http.Request) {
 		writeError(response, http.StatusBadRequest, "invalid_request", "Required login field is empty")
 		return
 	}
-	if !h.loginAdmission.Allow(
-		requestSource(request), payload.OrganizationSlug, payload.Email,
-	) {
-		response.Header().Set("Retry-After", fmt.Sprintf("%.0f", h.loginWindow.Seconds()))
-		writeError(response, http.StatusTooManyRequests, "login_rate_limited", "Too many login attempts")
+	if !h.admitLogin(response, request, payload.OrganizationSlug, payload.Email) {
 		return
 	}
 	ctx, cancel := context.WithTimeout(request.Context(), h.requestTimeout)
@@ -224,6 +268,93 @@ func (h *handler) login(response http.ResponseWriter, request *http.Request) {
 	writeJSON(response, http.StatusOK, map[string]any{
 		"principal": result.Principal, "expires_at": result.ExpiresAt,
 	})
+}
+
+func (h *handler) loginMethods(response http.ResponseWriter, request *http.Request) {
+	var payload struct {
+		OrganizationSlug string `json:"organization_slug"`
+	}
+	if !decodeJSON(response, request, maximumLoginBytes, &payload) {
+		return
+	}
+	organizationSlug := strings.TrimSpace(payload.OrganizationSlug)
+	if organizationSlug == "" {
+		writeError(response, http.StatusBadRequest, "invalid_request", "Organization is required")
+		return
+	}
+	ctx, cancel := context.WithTimeout(request.Context(), h.requestTimeout)
+	defer cancel()
+	methods, err := h.identity.ListLoginMethods(ctx, organizationSlug)
+	if err != nil {
+		h.writePublicOIDCError(response, err)
+		return
+	}
+	if methods == nil {
+		methods = []identity.LoginMethod{}
+	}
+	response.Header().Set("Cache-Control", "no-store")
+	writeJSON(response, http.StatusOK, map[string]any{"methods": methods})
+}
+
+func (h *handler) startOIDCLogin(response http.ResponseWriter, request *http.Request) {
+	var payload struct {
+		OrganizationSlug string `json:"organization_slug"`
+		ProviderName     string `json:"provider_name"`
+	}
+	if !decodeJSON(response, request, maximumLoginBytes, &payload) {
+		return
+	}
+	organizationSlug := strings.TrimSpace(payload.OrganizationSlug)
+	providerName := strings.TrimSpace(payload.ProviderName)
+	if organizationSlug == "" || providerName == "" {
+		writeError(response, http.StatusBadRequest, "invalid_request", "Organization and login method are required")
+		return
+	}
+	if !h.admitLogin(response, request, organizationSlug, "oidc:"+providerName) {
+		return
+	}
+	ctx, cancel := context.WithTimeout(request.Context(), h.requestTimeout)
+	defer cancel()
+	result, err := h.identity.StartOIDCLogin(ctx, identity.StartOIDCLoginInput{
+		RequestID: h.newRequestID(), OrganizationSlug: organizationSlug, ProviderName: providerName,
+	})
+	if err != nil {
+		h.writePublicOIDCError(response, err)
+		return
+	}
+	response.Header().Set("Cache-Control", "no-store")
+	writeJSON(response, http.StatusOK, result)
+}
+
+func (h *handler) oidcCallback(response http.ResponseWriter, request *http.Request) {
+	response.Header().Set("Cache-Control", "no-store")
+	query := request.URL.Query()
+	input := identity.OIDCCallbackInput{
+		State: strings.TrimSpace(query.Get("state")), Code: strings.TrimSpace(query.Get("code")),
+		AuthorizationError: strings.TrimSpace(query.Get("error")),
+	}
+	if input.State == "" || (input.Code == "") == (input.AuthorizationError == "") {
+		h.redirectOIDCFailure(response, request)
+		return
+	}
+	ctx, cancel := context.WithTimeout(request.Context(), h.requestTimeout)
+	defer cancel()
+	result, err := h.identity.CompleteOIDCLogin(ctx, input)
+	if err != nil || result.AccessToken == "" || !result.Principal.Active {
+		h.redirectOIDCFailure(response, request)
+		return
+	}
+	if _, err := h.sessions.Establish(response, result.AccessToken, result.ExpiresAt); err != nil {
+		h.logger.ErrorContext(request.Context(), "Failed to establish OIDC browser session", "error_class", "session_error")
+		h.redirectOIDCFailure(response, request)
+		return
+	}
+	http.Redirect(response, request, "/", http.StatusSeeOther)
+}
+
+func (*handler) redirectOIDCFailure(response http.ResponseWriter, request *http.Request) {
+	response.Header().Set("Cache-Control", "no-store")
+	http.Redirect(response, request, "/?auth_error=oidc_login_failed", http.StatusSeeOther)
 }
 
 func (h *handler) getSession(response http.ResponseWriter, request *http.Request) {
@@ -254,6 +385,130 @@ func (h *handler) logout(response http.ResponseWriter, request *http.Request) {
 	}
 	h.sessions.Clear(response)
 	response.WriteHeader(http.StatusNoContent)
+}
+
+type workspacePrincipalResponse struct {
+	UserID         string `json:"user_id"`
+	OrganizationID string `json:"organization_id"`
+	Administrator  bool   `json:"administrator"`
+}
+
+type workspaceAgentResponse struct {
+	AgentID      string `json:"agent_id"`
+	Name         string `json:"name"`
+	Availability string `json:"availability"`
+}
+
+type workspaceBootstrapResponse struct {
+	Principal workspacePrincipalResponse `json:"principal"`
+	Agents    []workspaceAgentResponse   `json:"agents"`
+}
+
+func (h *handler) workspaceBootstrap(response http.ResponseWriter, request *http.Request) {
+	response.Header().Set("Cache-Control", "no-store")
+	_, principal, ok := h.authenticate(response, request)
+	if !ok {
+		return
+	}
+	agents, err := h.workspaceAgents(request.Context(), principal)
+	if err != nil {
+		h.logger.ErrorContext(request.Context(), "Workspace bootstrap failed", "error_class", "upstream_unavailable")
+		writeError(response, http.StatusServiceUnavailable, "workspace_unavailable", "Agent workspace is unavailable")
+		return
+	}
+	items := make([]workspaceAgentResponse, 0, len(agents))
+	for _, agent := range agents {
+		items = append(items, workspaceAgentResponse{
+			AgentID: agent.AgentID, Name: agent.Name, Availability: agent.Availability,
+		})
+	}
+	writeJSON(response, http.StatusOK, workspaceBootstrapResponse{
+		Principal: workspacePrincipalResponse{
+			UserID: principal.UserID, OrganizationID: principal.OrganizationID,
+			Administrator: principal.Administrator(),
+		},
+		Agents: items,
+	})
+}
+
+func (h *handler) workspaceACP(response http.ResponseWriter, request *http.Request) {
+	if !webSocketUpgrade(request) {
+		writeError(response, http.StatusBadRequest, "invalid_request", "WebSocket upgrade is required")
+		return
+	}
+	if !sameOrigin(request) {
+		writeError(response, http.StatusForbidden, "forbidden", "WebSocket origin is not allowed")
+		return
+	}
+	_, principal, ok := h.authenticate(response, request)
+	if !ok {
+		return
+	}
+	agents, err := h.workspaceAgents(request.Context(), principal)
+	if err != nil {
+		h.logger.ErrorContext(request.Context(), "Agent connection admission failed", "error_class", "upstream_unavailable")
+		writeError(response, http.StatusServiceUnavailable, "agent_unavailable", "Agent connection is unavailable")
+		return
+	}
+	requestedID := request.PathValue("agent_id")
+	for _, agent := range agents {
+		if agent.AgentID != requestedID {
+			continue
+		}
+		request.Header.Set(HeaderAgentAccessSubject, agent.AgentAccessSubject)
+		request.Header.Del("Cookie")
+		request.Header.Del("Authorization")
+		h.acpProxy.ServeHTTP(response, request)
+		return
+	}
+	writeError(response, http.StatusNotFound, "agent_not_found", "Agent was not found")
+}
+
+func (h *handler) workspaceAgents(
+	ctx context.Context, principal identity.Principal,
+) ([]agentcontroller.WorkspaceAgent, error) {
+	ctx, cancel := context.WithTimeout(ctx, h.requestTimeout)
+	defer cancel()
+	return h.agents.ListWorkspaceAgents(ctx, agentcontroller.ListWorkspaceAgentsInput{
+		RequestID: h.newRequestID(), OrganizationID: principal.OrganizationID,
+		PrincipalID: principal.UserID,
+	})
+}
+
+func (h *handler) workspaceApplication(response http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodGet && request.Method != http.MethodHead {
+		writeError(response, http.StatusMethodNotAllowed, "method_not_allowed", "Method is not allowed")
+		return
+	}
+	if request.URL.Path == "/workspace" {
+		http.Redirect(response, request, "/workspace/", http.StatusTemporaryRedirect)
+		return
+	}
+	request.Header.Del("Cookie")
+	request.Header.Del("Authorization")
+	h.workspaceProxy.ServeHTTP(response, request)
+}
+
+func webSocketUpgrade(request *http.Request) bool {
+	return strings.EqualFold(strings.TrimSpace(request.Header.Get("Upgrade")), "websocket") &&
+		headerContainsToken(request.Header.Values("Connection"), "upgrade")
+}
+
+func headerContainsToken(values []string, wanted string) bool {
+	for _, value := range values {
+		for _, token := range strings.Split(value, ",") {
+			if strings.EqualFold(strings.TrimSpace(token), wanted) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func sameOrigin(request *http.Request) bool {
+	origin, err := url.Parse(strings.TrimSpace(request.Header.Get("Origin")))
+	return err == nil && (origin.Scheme == "http" || origin.Scheme == "https") &&
+		strings.EqualFold(origin.Host, request.Host)
 }
 
 func (h *handler) admin(response http.ResponseWriter, request *http.Request) {
@@ -310,12 +565,19 @@ func (h *handler) authenticate(
 	return values, principal, true
 }
 
-func (h *handler) newProxy(errorCode string) *httputil.ReverseProxy {
+func (h *handler) newProxy(
+	target *url.URL, errorCode string, errorMessage string,
+	rewritePath func(*http.Request) string,
+) *httputil.ReverseProxy {
 	proxy := &httputil.ReverseProxy{}
 	proxy.Rewrite = func(request *httputil.ProxyRequest) {
-		request.SetURL(h.consoleURL)
+		request.SetURL(target)
+		if rewritePath != nil {
+			request.Out.URL.Path = rewritePath(request.In)
+			request.Out.URL.RawPath = ""
+		}
 		request.SetXForwarded()
-		request.Out.Host = h.consoleURL.Host
+		request.Out.Host = target.Host
 		request.Out.Header.Del("Cookie")
 		request.Out.Header.Del("Authorization")
 		otel.GetTextMapPropagator().Inject(
@@ -327,14 +589,43 @@ func (h *handler) newProxy(errorCode string) *httputil.ReverseProxy {
 		proxy.Transport = http.DefaultTransport
 	}
 	proxy.ErrorHandler = func(response http.ResponseWriter, request *http.Request, err error) {
-		h.logger.ErrorContext(request.Context(), "Admin Console proxy failed", "error_class", "upstream_unavailable")
-		writeError(response, http.StatusServiceUnavailable, errorCode, "Admin Console is unavailable")
+		h.logger.ErrorContext(request.Context(), "Gateway proxy failed", "error_class", "upstream_unavailable")
+		writeError(response, http.StatusServiceUnavailable, errorCode, errorMessage)
 	}
 	return proxy
 }
 
-func (h *handler) consoleReady(ctx context.Context) error {
-	target := h.consoleURL.ResolveReference(&url.URL{Path: "/status"})
+func (h *handler) newSCIMProxy(target *url.URL) *httputil.ReverseProxy {
+	proxy := &httputil.ReverseProxy{}
+	proxy.Rewrite = func(request *httputil.ProxyRequest) {
+		request.SetURL(target)
+		request.SetXForwarded()
+		request.Out.Host = target.Host
+		request.Out.Header.Del("Cookie")
+		otel.GetTextMapPropagator().Inject(
+			request.Out.Context(), propagation.HeaderCarrier(request.Out.Header),
+		)
+	}
+	proxy.Transport = h.httpClient.Transport
+	if proxy.Transport == nil {
+		proxy.Transport = http.DefaultTransport
+	}
+	proxy.ErrorHandler = func(response http.ResponseWriter, request *http.Request, _ error) {
+		h.logger.ErrorContext(request.Context(), "SCIM proxy failed", "error_class", "upstream_unavailable")
+		response.Header().Set("Content-Type", "application/scim+json")
+		response.Header().Set("Cache-Control", "no-store")
+		response.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(response).Encode(map[string]any{
+			"schemas": []string{"urn:ietf:params:scim:api:messages:2.0:Error"},
+			"status":  "503",
+			"detail":  "Identity Service is unavailable",
+		})
+	}
+	return proxy
+}
+
+func (h *handler) serviceReady(ctx context.Context, service *url.URL) error {
+	target := service.ResolveReference(&url.URL{Path: "/status"})
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
 	if err != nil {
 		return err
@@ -347,9 +638,26 @@ func (h *handler) consoleReady(ctx context.Context) error {
 	defer func() { _ = response.Body.Close() }()
 	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
 	if response.StatusCode != http.StatusOK {
-		return fmt.Errorf("admin console status %d", response.StatusCode)
+		return fmt.Errorf("service status %d", response.StatusCode)
 	}
 	return nil
+}
+
+func parseServiceURL(raw string) (*url.URL, error) {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" ||
+		parsed.RawQuery != "" || parsed.Fragment != "" {
+		return nil, fmt.Errorf("invalid service URL")
+	}
+	return parsed, nil
+}
+
+func stripWorkspacePath(request *http.Request) string {
+	path := strings.TrimPrefix(request.URL.Path, "/workspace")
+	if path == "" {
+		return "/"
+	}
+	return path
 }
 
 func (h *handler) writeIdentityError(response http.ResponseWriter, err error) {
@@ -358,6 +666,28 @@ func (h *handler) writeIdentityError(response http.ResponseWriter, err error) {
 		writeError(response, http.StatusUnauthorized, "unauthenticated", "Email or password is incorrect")
 	case identity.IsCode(err, "forbidden"):
 		writeError(response, http.StatusForbidden, "forbidden", "Login is not allowed")
+	default:
+		writeError(response, http.StatusServiceUnavailable, "identity_unavailable", "Identity Service is unavailable")
+	}
+}
+
+func (h *handler) admitLogin(
+	response http.ResponseWriter, request *http.Request, organization, account string,
+) bool {
+	if h.loginAdmission.Allow(requestSource(request), organization, account) {
+		return true
+	}
+	response.Header().Set("Retry-After", fmt.Sprintf("%.0f", h.loginWindow.Seconds()))
+	writeError(response, http.StatusTooManyRequests, "login_rate_limited", "Too many login attempts")
+	return false
+}
+
+func (h *handler) writePublicOIDCError(response http.ResponseWriter, err error) {
+	switch {
+	case identity.IsCode(err, "bad_request"), identity.IsCode(err, "invalid_argument"):
+		writeError(response, http.StatusBadRequest, "invalid_request", "Login request is invalid")
+	case identity.IsCode(err, "forbidden"), identity.IsCode(err, "not_found"):
+		writeError(response, http.StatusBadRequest, "login_method_unavailable", "Login method is unavailable")
 	default:
 		writeError(response, http.StatusServiceUnavailable, "identity_unavailable", "Identity Service is unavailable")
 	}

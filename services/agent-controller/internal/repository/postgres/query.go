@@ -2,9 +2,14 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
+
+	"soft/antnest-platform/services/agent-controller/internal/domain"
 	"soft/antnest-platform/services/agent-controller/internal/ports"
 )
 
@@ -12,6 +17,41 @@ func (repository *Repository) GetAgent(
 	ctx context.Context, agentID string,
 ) (ports.AgentRecord, error) {
 	return loadAgentRecord(ctx, repository.pool, agentID)
+}
+
+func (repository *Repository) GetAgentConfiguration(
+	ctx context.Context, agentID string, agentSpecRevisionID string,
+) (ports.AgentConfigurationRecord, error) {
+	var record ports.AgentConfigurationRecord
+	var snapshotPayload []byte
+	err := repository.pool.QueryRow(ctx, `
+SELECT spec.agent_id, spec.id, template.name,
+       model_profile.id, model_profile.display_name, model_revision.revision,
+       spec.snapshot
+FROM agent_controller.agent_spec_revisions AS spec
+JOIN agent_controller.agent_templates AS template
+  ON template.id = spec.template_id
+JOIN agent_controller.model_profile_revisions AS model_revision
+  ON model_revision.id = spec.model_profile_revision_id
+JOIN agent_controller.model_profiles AS model_profile
+  ON model_profile.id = model_revision.model_profile_id
+WHERE spec.agent_id = $1 AND spec.id = $2`, agentID, agentSpecRevisionID).Scan(
+		&record.AgentID, &record.AgentSpecRevisionID, &record.TemplateName,
+		&record.ModelProfileID, &record.ModelProfileName, &record.ModelProfileRevision,
+		&snapshotPayload,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ports.AgentConfigurationRecord{}, ports.ErrNotFound
+	}
+	if err != nil {
+		return ports.AgentConfigurationRecord{}, fmt.Errorf("query Agent configuration projection: %w", err)
+	}
+	var snapshot domain.AgentSpecSnapshot
+	if err := json.Unmarshal(snapshotPayload, &snapshot); err != nil {
+		return ports.AgentConfigurationRecord{}, fmt.Errorf("decode Agent configuration snapshot: %w", err)
+	}
+	record.Snapshot = snapshot
+	return record, nil
 }
 
 func (repository *Repository) ListAgents(
@@ -38,6 +78,71 @@ func (repository *Repository) ListAgents(
 		return nil, fmt.Errorf("iterate Agent projections: %w", err)
 	}
 	return records, nil
+}
+
+func (repository *Repository) ListWorkspaceAgents(
+	ctx context.Context, query ports.WorkspaceAgentQuery,
+) ([]ports.WorkspaceAgentRecord, error) {
+	statement, arguments, err := buildWorkspaceAgentQueryStatement(query)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := repository.pool.Query(ctx, statement, arguments...)
+	if err != nil {
+		return nil, fmt.Errorf("query workspace Agent projections: %w", err)
+	}
+	defer rows.Close()
+	records := make([]ports.WorkspaceAgentRecord, 0, query.Limit)
+	for rows.Next() {
+		var record ports.WorkspaceAgentRecord
+		if err := rows.Scan(
+			&record.AgentID, &record.Name, &record.LifecycleState, &record.AccessSubject,
+			&record.AdmissionState, &record.CreatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan workspace Agent projection: %w", err)
+		}
+		records = append(records, record)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate workspace Agent projections: %w", err)
+	}
+	return records, nil
+}
+
+func buildWorkspaceAgentQueryStatement(query ports.WorkspaceAgentQuery) (string, []any, error) {
+	if query.OrganizationID == "" || query.PrincipalID == "" || query.Limit < 1 {
+		return "", nil, fmt.Errorf("query workspace Agent projections: scope and positive limit are required")
+	}
+	if query.AfterCreatedAt.IsZero() != (query.AfterAgentID == "") {
+		return "", nil, fmt.Errorf("query workspace Agent projections: incomplete keyset cursor")
+	}
+	arguments := []any{query.OrganizationID, query.PrincipalID}
+	cursor := ""
+	if !query.AfterCreatedAt.IsZero() {
+		arguments = append(arguments, query.AfterCreatedAt, query.AfterAgentID)
+		cursor = "\n  AND (agent.created_at, agent.id) > ($3, $4)"
+	}
+	arguments = append(arguments, query.Limit)
+	statement := fmt.Sprintf(`
+SELECT agent.id, agent.name, agent.lifecycle_state, access.access_subject,
+       COALESCE(admission.state, ''), agent.created_at
+FROM agent_controller.agents AS agent
+JOIN agent_controller.agent_access_bindings AS access
+  ON access.agent_id = agent.id
+ AND access.principal_id = $2
+ AND access.active
+LEFT JOIN LATERAL (
+  SELECT candidate.state
+  FROM agent_controller.run_admissions AS candidate
+  WHERE candidate.agent_id = agent.id
+    AND candidate.state IN ('active', 'blocked_unknown_effect')
+  LIMIT 1
+) AS admission ON TRUE
+WHERE agent.organization_id = $1
+  AND agent.desired_state <> 'deleted'%s
+ORDER BY agent.created_at, agent.id
+LIMIT $%d`, cursor, len(arguments))
+	return statement, arguments, nil
 }
 
 func buildAgentQueryStatement(query ports.AgentQuery) (string, []any, error) {

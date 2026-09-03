@@ -38,6 +38,33 @@ func TestIssueTokenRequiresOrganizationAdministrationAndStoresHashOnly(t *testin
 	}
 }
 
+func TestListTokensRequiresOrganizationAdministration(t *testing.T) {
+	revokedAt := time.Date(2026, 9, 3, 8, 0, 0, 0, time.UTC)
+	repository := &scimRepositoryStub{tokens: []Token{{
+		ID: "token-1", OrganizationID: "org-1", Name: "Workday",
+		Scopes: []string{domain.SCIMScopeRead}, RevokedAt: &revokedAt,
+	}}}
+	service := newSCIMTestService(t, repository)
+
+	repository.principal = domain.Principal{UserID: "member", OrganizationID: "org-1", Active: true}
+	_, err := service.ListTokens(context.Background(), "member", "org-1")
+	if !errors.Is(err, domain.ErrForbidden) {
+		t.Fatalf("member list error = %v, want forbidden", err)
+	}
+	if repository.listTokensCalls != 0 {
+		t.Fatalf("unauthorized list reached repository %d times", repository.listTokensCalls)
+	}
+
+	repository.principal = scimAdmin()
+	tokens, err := service.ListTokens(context.Background(), "admin", "org-1")
+	if err != nil {
+		t.Fatalf("list SCIM tokens: %v", err)
+	}
+	if len(tokens) != 1 || tokens[0].RevokedAt == nil || repository.listTokensCalls != 1 {
+		t.Fatalf("tokens=%#v calls=%d", tokens, repository.listTokensCalls)
+	}
+}
+
 func TestAuthorizeRequiresRequestedScopeAndHashesBearer(t *testing.T) {
 	repository := &scimRepositoryStub{authorization: Authorization{
 		TokenID: "token-1", OrganizationID: "org-1", Scopes: []string{domain.SCIMScopeRead},
@@ -174,18 +201,20 @@ func TestCreateGroupRejectsAnEmptyMemberReference(t *testing.T) {
 }
 
 type scimRepositoryStub struct {
-	principal     domain.Principal
-	issued        IssueTokenCommand
-	authorization Authorization
-	resolvedHash  string
-	user          UserResource
-	group         GroupResource
-	replacedUser  ReplaceUserCommand
-	createdUser   CreateUserCommand
-	replacedGroup ReplaceGroupCommand
-	listedUsers   ListQuery
-	deletedUser   DeleteUserCommand
-	deletedGroup  DeleteGroupCommand
+	principal       domain.Principal
+	issued          IssueTokenCommand
+	authorization   Authorization
+	resolvedHash    string
+	user            UserResource
+	group           GroupResource
+	replacedUser    ReplaceUserCommand
+	createdUser     CreateUserCommand
+	replacedGroup   ReplaceGroupCommand
+	listedUsers     ListQuery
+	deletedUser     DeleteUserCommand
+	deletedGroup    DeleteGroupCommand
+	tokens          []Token
+	listTokensCalls int
 }
 
 func (r *scimRepositoryStub) GetPrincipal(context.Context, string, string) (domain.Principal, error) {
@@ -199,6 +228,11 @@ func (r *scimRepositoryStub) IssueToken(_ context.Context, command IssueTokenCom
 
 func (r *scimRepositoryStub) RevokeToken(context.Context, string, string, time.Time) error {
 	return nil
+}
+
+func (r *scimRepositoryStub) ListTokens(context.Context, string) ([]Token, error) {
+	r.listTokensCalls++
+	return r.tokens, nil
 }
 
 func (r *scimRepositoryStub) ResolveToken(_ context.Context, digest string, _ time.Time) (Authorization, error) {

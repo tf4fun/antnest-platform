@@ -56,7 +56,7 @@ func TestMachineRunContractMatchesRegisteredBoundary(t *testing.T) {
 	t.Parallel()
 
 	contract := readMachineRunContract(t)
-	if contract.Revision != 8 || contract.SchemaDialect != draft202012Schema ||
+	if contract.Revision != 9 || contract.SchemaDialect != draft202012Schema ||
 		contract.BasePath != "/rpc/agent-controller" {
 		t.Fatalf("Run contract identity = %+v", contract)
 	}
@@ -139,10 +139,11 @@ func TestMachineRunContractValidatesActualHTTPBoundary(t *testing.T) {
 		t.Fatalf("new Run boundary: %v", err)
 	}
 	requestBodies := map[string]string{
-		"resolve_agent_access": `{"request_id":"request-access","agent_access_subject":"subject-1"}`,
-		"acquire_run":          `{"request_id":"request-acquire","agent_id":"agent-1","principal_id":"user-1","expected_access_revision":"access-1","session_id":"session-1"}`,
-		"resolve_credential":   `{"request_id":"request-credential","admission_id":"admission-1","credential_ref":"credential-1"}`,
-		"finish_run":           `{"request_id":"request-finish","admission_id":"admission-1","terminal_class":"completed","tool_effect_state":"settled","unknown_effect_source":null,"stop_reason":"end_turn","error_class":null}`,
+		"list_workspace_agents": `{"request_id":"request-workspace","organization_id":"org-1","principal_id":"user-1","limit":100}`,
+		"resolve_agent_access":  `{"request_id":"request-access","agent_access_subject":"subject-1"}`,
+		"acquire_run":           `{"request_id":"request-acquire","agent_id":"agent-1","principal_id":"user-1","expected_access_revision":"access-1","session_id":"session-1"}`,
+		"resolve_credential":    `{"request_id":"request-credential","admission_id":"admission-1","credential_ref":"credential-1"}`,
+		"finish_run":            `{"request_id":"request-finish","admission_id":"admission-1","terminal_class":"completed","tool_effect_state":"settled","unknown_effect_source":null,"stop_reason":"end_turn","error_class":null}`,
 	}
 
 	status := httptest.NewRecorder()

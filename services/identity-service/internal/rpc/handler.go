@@ -26,14 +26,17 @@ var ContractRoutes = map[string]string{
 	"update_membership":           "/rpc/identity/update-membership",
 	"set_user_active":             "/rpc/identity/set-user-active",
 	"list_directory":              "/rpc/identity/list-directory",
+	"get_current_account":         "/rpc/identity/get-current-account",
 	"resolve_principal":           "/rpc/identity/resolve-principal",
 	"local_login":                 "/rpc/identity/local-login",
 	"resolve_access_token":        "/rpc/identity/resolve-access-token",
 	"revoke_access_token":         "/rpc/identity/revoke-access-token",
 	"issue_scim_token":            "/rpc/identity/issue-scim-token",
 	"revoke_scim_token":           "/rpc/identity/revoke-scim-token",
+	"list_scim_tokens":            "/rpc/identity/list-scim-tokens",
 	"upsert_oidc_provider":        "/rpc/identity/upsert-oidc-provider",
 	"set_oidc_provider_enabled":   "/rpc/identity/set-oidc-provider-enabled",
+	"list_oidc_providers":         "/rpc/identity/list-oidc-providers",
 	"list_login_methods":          "/rpc/identity/list-login-methods",
 	"start_oidc_login":            "/rpc/identity/start-oidc-login",
 }
@@ -46,6 +49,7 @@ type DirectoryService interface {
 	UpdateMembership(context.Context, directory.UpdateMembershipInput) (domain.OrganizationMembership, error)
 	SetUserActive(context.Context, directory.SetUserActiveInput) error
 	List(context.Context, string, string) (directory.Directory, error)
+	GetCurrentAccount(context.Context, string, string) (directory.CurrentAccount, error)
 	ResolvePrincipal(context.Context, string, string) (domain.Principal, error)
 }
 
@@ -58,6 +62,7 @@ type LocalAuthService interface {
 type OIDCService interface {
 	UpsertProvider(context.Context, oidcflow.UpsertProviderInput) (oidcflow.Provider, error)
 	SetProviderEnabled(context.Context, oidcflow.SetProviderEnabledInput) (oidcflow.Provider, error)
+	ListProviders(context.Context, string, string) ([]oidcflow.Provider, error)
 	ListLoginMethods(context.Context, string) ([]oidcflow.LoginMethod, error)
 	StartLogin(context.Context, oidcflow.StartLoginInput) (oidcflow.StartLoginResult, error)
 	CompleteLogin(context.Context, oidcflow.CompleteLoginInput) (oidcflow.CompleteLoginResult, error)
@@ -66,6 +71,7 @@ type OIDCService interface {
 type SCIMService interface {
 	IssueToken(context.Context, scim.IssueTokenInput) (scim.IssueTokenResult, error)
 	RevokeToken(context.Context, string, string) error
+	ListTokens(context.Context, string, string) ([]scim.Token, error)
 }
 
 type Dependencies struct {
@@ -93,14 +99,17 @@ func NewHandler(dependencies Dependencies) (*Handler, error) {
 	handler.mux.HandleFunc("POST /rpc/identity/update-membership", handler.updateMembership)
 	handler.mux.HandleFunc("POST /rpc/identity/set-user-active", handler.setUserActive)
 	handler.mux.HandleFunc("POST /rpc/identity/list-directory", handler.listDirectory)
+	handler.mux.HandleFunc("POST /rpc/identity/get-current-account", handler.getCurrentAccount)
 	handler.mux.HandleFunc("POST /rpc/identity/resolve-principal", handler.resolvePrincipal)
 	handler.mux.HandleFunc("POST /rpc/identity/local-login", handler.localLogin)
 	handler.mux.HandleFunc("POST /rpc/identity/resolve-access-token", handler.resolveAccessToken)
 	handler.mux.HandleFunc("POST /rpc/identity/revoke-access-token", handler.revokeAccessToken)
 	handler.mux.HandleFunc("POST /rpc/identity/issue-scim-token", handler.issueSCIMToken)
 	handler.mux.HandleFunc("POST /rpc/identity/revoke-scim-token", handler.revokeSCIMToken)
+	handler.mux.HandleFunc("POST /rpc/identity/list-scim-tokens", handler.listSCIMTokens)
 	handler.mux.HandleFunc("POST /rpc/identity/upsert-oidc-provider", handler.upsertOIDCProvider)
 	handler.mux.HandleFunc("POST /rpc/identity/set-oidc-provider-enabled", handler.setOIDCProviderEnabled)
+	handler.mux.HandleFunc("POST /rpc/identity/list-oidc-providers", handler.listOIDCProviders)
 	handler.mux.HandleFunc("POST /rpc/identity/list-login-methods", handler.listLoginMethods)
 	handler.mux.HandleFunc("POST /rpc/identity/start-oidc-login", handler.startOIDCLogin)
 	handler.mux.HandleFunc("GET /protocol/oidc/callback", handler.oidcCallback)
@@ -282,6 +291,18 @@ func (h *Handler) listDirectory(response http.ResponseWriter, request *http.Requ
 	writeResult(response, result, err)
 }
 
+func (h *Handler) getCurrentAccount(response http.ResponseWriter, request *http.Request) {
+	var body directoryRequest
+	if !decodeRequest(response, request, &body) ||
+		!requireIDs(response, body.ActorPrincipalID, body.OrganizationID) {
+		return
+	}
+	account, err := h.dependencies.Directory.GetCurrentAccount(
+		request.Context(), body.ActorPrincipalID, body.OrganizationID,
+	)
+	writeResult(response, map[string]any{"account": account}, err)
+}
+
 type resolvePrincipalRequest struct {
 	UserID         string `json:"user_id"`
 	OrganizationID string `json:"organization_id"`
@@ -395,6 +416,26 @@ func (h *Handler) revokeSCIMToken(response http.ResponseWriter, request *http.Re
 	writeResult(response, map[string]string{"status": "revoked"}, err)
 }
 
+type provisioningListRequest struct {
+	ActorPrincipalID string `json:"actor_principal_id"`
+	OrganizationID   string `json:"organization_id"`
+}
+
+func (h *Handler) listSCIMTokens(response http.ResponseWriter, request *http.Request) {
+	var body provisioningListRequest
+	if !decodeRequest(response, request, &body) ||
+		!requireIDs(response, body.ActorPrincipalID, body.OrganizationID) {
+		return
+	}
+	tokens, err := h.dependencies.SCIM.ListTokens(
+		request.Context(), body.ActorPrincipalID, body.OrganizationID,
+	)
+	if tokens == nil {
+		tokens = []scim.Token{}
+	}
+	writeResult(response, map[string]any{"tokens": tokens}, err)
+}
+
 type upsertOIDCProviderRequest struct {
 	RequestID        string   `json:"request_id"`
 	ActorPrincipalID string   `json:"actor_principal_id"`
@@ -451,6 +492,21 @@ func (h *Handler) setOIDCProviderEnabled(response http.ResponseWriter, request *
 		OrganizationID: body.OrganizationID, Name: body.Name, Enabled: *body.Enabled,
 	})
 	writeResult(response, map[string]any{"provider": provider}, err)
+}
+
+func (h *Handler) listOIDCProviders(response http.ResponseWriter, request *http.Request) {
+	var body provisioningListRequest
+	if !decodeRequest(response, request, &body) ||
+		!requireIDs(response, body.ActorPrincipalID, body.OrganizationID) {
+		return
+	}
+	providers, err := h.dependencies.OIDC.ListProviders(
+		request.Context(), body.ActorPrincipalID, body.OrganizationID,
+	)
+	if providers == nil {
+		providers = []oidcflow.Provider{}
+	}
+	writeResult(response, map[string]any{"providers": providers}, err)
 }
 
 type organizationSlugRequest struct {
@@ -563,6 +619,8 @@ func writeError(response http.ResponseWriter, err error) {
 	case errors.Is(err, domain.ErrNotFound):
 		status = http.StatusNotFound
 	case errors.Is(err, domain.ErrConflict):
+		status = http.StatusConflict
+	case errors.Is(err, domain.ErrLastOrganizationAdmin):
 		status = http.StatusConflict
 	case errors.Is(err, domain.ErrVersionConflict):
 		status = http.StatusConflict

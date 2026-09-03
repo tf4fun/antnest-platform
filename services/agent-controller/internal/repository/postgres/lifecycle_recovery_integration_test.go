@@ -288,12 +288,12 @@ INSERT INTO agent_controller.agents (
 		t.Fatalf("insert recovery Agent: %v", err)
 	}
 	_, err = repository.pool.Exec(ctx, `
-INSERT INTO agent_controller.agent_lifecycle_operations (
+	INSERT INTO agent_controller.agent_lifecycle_operations (
     request_id, request_fingerprint, agent_id, kind, phase, state,
     target_spec_revision_id, child_request_id, attempt,
     recovery_after, created_at, updated_at
-) VALUES ($1, $2, $3, 'create', 'network_ensure', 'running',
-		  $4, $5, 0, $6, $6, $6)`,
+	) VALUES ($1, $2, $3, 'create', 'network_ensure', 'running',
+			  $4, $5, 0, LEAST($6, clock_timestamp()), $6, $6)`,
 		requestID, strings.Repeat("a", 64), agentID, "spec-"+agentID,
 		domain.ChildRequestID(requestID, domain.PhaseNetworkEnsure), updatedAt,
 	)

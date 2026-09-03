@@ -7,38 +7,110 @@ import (
 
 // Browser projections are allowlists. Adding a field to an internal RPC
 // response never makes it public until the BFF deliberately projects it.
+type userSource struct {
+	ID         string `json:"id"`
+	SystemRole string `json:"system_role"`
+	Active     bool   `json:"active"`
+	CreatedAt  string `json:"created_at"`
+	UpdatedAt  string `json:"updated_at"`
+}
+
+type membershipSource struct {
+	ID          string `json:"id"`
+	UserID      string `json:"user_id"`
+	Email       string `json:"email"`
+	DisplayName string `json:"display_name"`
+	Role        string `json:"role"`
+	Source      string `json:"source"`
+	Active      bool   `json:"active"`
+	CreatedAt   string `json:"created_at"`
+	UpdatedAt   string `json:"updated_at"`
+}
+
+type directoryMemberSource struct {
+	User       userSource       `json:"user"`
+	Membership membershipSource `json:"membership"`
+}
+
+type groupSource struct {
+	DisplayName string `json:"display_name"`
+	Source      string `json:"source"`
+	Active      bool   `json:"active"`
+	CreatedAt   string `json:"created_at"`
+	UpdatedAt   string `json:"updated_at"`
+}
+
 type directorySource struct {
-	Users []struct {
-		User struct {
-			ID         string `json:"id"`
-			SystemRole string `json:"system_role"`
-			Active     bool   `json:"active"`
-			CreatedAt  string `json:"created_at"`
-			UpdatedAt  string `json:"updated_at"`
-		} `json:"user"`
-		Membership struct {
-			ID             string `json:"id"`
-			OrganizationID string `json:"organization_id"`
-			UserID         string `json:"user_id"`
-			Email          string `json:"email"`
-			DisplayName    string `json:"display_name"`
-			Role           string `json:"role"`
-			Source         string `json:"source"`
-			Active         bool   `json:"active"`
-			CreatedAt      string `json:"created_at"`
-			UpdatedAt      string `json:"updated_at"`
-		} `json:"membership"`
-	} `json:"users"`
-	Groups []struct {
-		ID          string `json:"id"`
-		DisplayName string `json:"display_name"`
-		Active      bool   `json:"active"`
-	} `json:"groups"`
+	Users  []directoryMemberSource `json:"users"`
+	Groups []groupSource           `json:"groups"`
+}
+
+type currentAccountSource struct {
+	Email                  string `json:"email"`
+	DisplayName            string `json:"display_name"`
+	Source                 string `json:"source"`
+	OrganizationSlug       string `json:"organization_slug"`
+	OrganizationName       string `json:"organization_name"`
+	LocalPasswordAvailable bool   `json:"local_password_available"`
+}
+
+type currentAccountResultSource struct {
+	Account currentAccountSource `json:"account"`
+}
+
+type membershipResultSource struct {
+	Membership membershipSource `json:"membership"`
+}
+
+type statusSource struct {
+	Status string `json:"status"`
+}
+
+type oidcProviderSource struct {
+	Name                    string   `json:"name"`
+	DisplayName             string   `json:"display_name"`
+	Issuer                  string   `json:"issuer"`
+	ClientID                string   `json:"client_id"`
+	Scopes                  []string `json:"scopes"`
+	Enabled                 bool     `json:"enabled"`
+	Revision                int64    `json:"revision"`
+	AuthorizationEndpoint   string   `json:"authorization_endpoint"`
+	TokenEndpoint           string   `json:"token_endpoint"`
+	TokenEndpointAuthMethod string   `json:"token_endpoint_auth_method"`
+	IDTokenSigningAlgs      []string `json:"id_token_signing_algs"`
+	UserInfoEndpoint        string   `json:"userinfo_endpoint,omitempty"`
+	JWKSURI                 string   `json:"jwks_uri"`
+	CreatedAt               string   `json:"created_at"`
+	UpdatedAt               string   `json:"updated_at"`
+}
+
+type oidcProviderListSource struct {
+	Providers []oidcProviderSource `json:"providers"`
+}
+
+type oidcProviderResultSource struct {
+	Provider oidcProviderSource `json:"provider"`
+}
+
+type scimTokenSource struct {
+	ID        string   `json:"id"`
+	Name      string   `json:"name"`
+	Scopes    []string `json:"scopes"`
+	CreatedAt string   `json:"created_at"`
+	RevokedAt string   `json:"revoked_at,omitempty"`
+}
+
+type scimTokenListSource struct {
+	Tokens []scimTokenSource `json:"tokens"`
+}
+
+type scimTokenIssueSource struct {
+	Token      scimTokenSource `json:"token"`
+	Credential string          `json:"credential"`
 }
 
 type modelProfileSource struct {
 	ModelProfileID string          `json:"model_profile_id"`
-	OrganizationID string          `json:"organization_id"`
 	ProfileKey     string          `json:"profile_key"`
 	DisplayName    string          `json:"display_name"`
 	RevisionID     string          `json:"revision_id"`
@@ -49,6 +121,28 @@ type modelProfileSource struct {
 	UpdatedAt      string          `json:"updated_at"`
 }
 
+type modelCatalogEntrySource struct {
+	ModelID         string `json:"model_id"`
+	DisplayName     string `json:"display_name"`
+	ContextWindow   int    `json:"context_window"`
+	MaxOutputTokens int    `json:"max_output_tokens"`
+	SupportsImages  bool   `json:"supports_images"`
+}
+
+type modelProviderPresetSource struct {
+	ProviderKey string                    `json:"provider_key"`
+	DisplayName string                    `json:"display_name"`
+	Description string                    `json:"description"`
+	BaseURL     string                    `json:"base_url"`
+	Custom      bool                      `json:"custom"`
+	Models      []modelCatalogEntrySource `json:"models"`
+}
+
+type modelCatalogSource struct {
+	Revision  string                      `json:"revision"`
+	Providers []modelProviderPresetSource `json:"providers"`
+}
+
 type modelProfileListSource struct {
 	Items       []modelProfileSource `json:"items"`
 	NextAfterID *string              `json:"next_after_id"`
@@ -56,7 +150,6 @@ type modelProfileListSource struct {
 
 type templateSource struct {
 	TemplateID             string          `json:"template_id"`
-	OrganizationID         string          `json:"organization_id"`
 	TemplateKey            string          `json:"template_key"`
 	Name                   string          `json:"name"`
 	Revision               int64           `json:"revision"`
@@ -80,21 +173,63 @@ type runtimeProjectionSource struct {
 	RuntimeRevision string `json:"runtime_revision"`
 }
 
+type agentModelSpecSource struct {
+	BaseURL         string   `json:"base_url"`
+	Model           string   `json:"model"`
+	ContextWindow   int      `json:"context_window"`
+	MaxOutputTokens int      `json:"max_output_tokens"`
+	Temperature     *float64 `json:"temperature,omitempty"`
+	SupportsImages  bool     `json:"supports_images"`
+}
+
+type agentRuntimeResourcesSource struct {
+	MemoryBytes int64 `json:"memory_bytes"`
+	PIDsLimit   int   `json:"pids_limit"`
+	TmpfsBytes  int64 `json:"tmpfs_bytes"`
+}
+
+type agentRuntimeConfigurationSource struct {
+	ImageRef  string                      `json:"image_ref"`
+	Resources agentRuntimeResourcesSource `json:"resources"`
+}
+
+type agentTemplateLineageSource struct {
+	TemplateID string `json:"template_id"`
+	Revision   int64  `json:"revision"`
+	Name       string `json:"name"`
+}
+
+type agentModelProfileLineageSource struct {
+	ModelProfileID string               `json:"model_profile_id"`
+	RevisionID     string               `json:"revision_id"`
+	Revision       int64                `json:"revision"`
+	Name           string               `json:"name"`
+	Model          agentModelSpecSource `json:"model"`
+}
+
+type agentConfigurationSource struct {
+	Template             agentTemplateLineageSource      `json:"template"`
+	ModelProfile         agentModelProfileLineageSource  `json:"model_profile"`
+	MaxModelRequests     int                             `json:"max_model_requests"`
+	ContextPolicyVersion string                          `json:"context_policy_version"`
+	Runtime              agentRuntimeConfigurationSource `json:"runtime"`
+}
+
 type agentProjectionSource struct {
-	AgentID                     string                   `json:"agent_id"`
-	OrganizationID              string                   `json:"organization_id"`
-	OwnerUserID                 string                   `json:"owner_user_id"`
-	Name                        string                   `json:"name"`
-	DesiredState                string                   `json:"desired_state"`
-	LifecycleState              string                   `json:"lifecycle_state"`
-	ExecutableExecutionRevision string                   `json:"executable_execution_revision,omitempty"`
-	Runtime                     *runtimeProjectionSource `json:"runtime,omitempty"`
-	ActiveOperationRequestID    string                   `json:"active_operation_request_id,omitempty"`
-	FailureStage                string                   `json:"failure_stage,omitempty"`
-	FailureCode                 string                   `json:"failure_code,omitempty"`
-	AggregateSequence           int64                    `json:"aggregate_sequence"`
-	CreatedAt                   string                   `json:"created_at"`
-	UpdatedAt                   string                   `json:"updated_at"`
+	AgentID                     string                    `json:"agent_id"`
+	OwnerUserID                 string                    `json:"owner_user_id"`
+	Name                        string                    `json:"name"`
+	DesiredState                string                    `json:"desired_state"`
+	LifecycleState              string                    `json:"lifecycle_state"`
+	ExecutableExecutionRevision string                    `json:"executable_execution_revision,omitempty"`
+	Runtime                     *runtimeProjectionSource  `json:"runtime,omitempty"`
+	ActiveOperationRequestID    string                    `json:"active_operation_request_id,omitempty"`
+	FailureStage                string                    `json:"failure_stage,omitempty"`
+	FailureCode                 string                    `json:"failure_code,omitempty"`
+	Configuration               *agentConfigurationSource `json:"configuration,omitempty"`
+	AggregateSequence           int64                     `json:"aggregate_sequence"`
+	CreatedAt                   string                    `json:"created_at"`
+	UpdatedAt                   string                    `json:"updated_at"`
 }
 
 type agentListSource struct {
@@ -143,8 +278,44 @@ func projectDirectory(payload []byte) ([]byte, error) {
 	return projectPayload[directorySource](payload)
 }
 
+func projectCurrentAccount(payload []byte) ([]byte, error) {
+	return projectPayload[currentAccountResultSource](payload)
+}
+
+func projectDirectoryMember(payload []byte) ([]byte, error) {
+	return projectPayload[directoryMemberSource](payload)
+}
+
+func projectMembershipResult(payload []byte) ([]byte, error) {
+	return projectPayload[membershipResultSource](payload)
+}
+
+func projectStatus(payload []byte) ([]byte, error) {
+	return projectPayload[statusSource](payload)
+}
+
+func projectOIDCProviderList(payload []byte) ([]byte, error) {
+	return projectPayload[oidcProviderListSource](payload)
+}
+
+func projectOIDCProviderResult(payload []byte) ([]byte, error) {
+	return projectPayload[oidcProviderResultSource](payload)
+}
+
+func projectSCIMTokenList(payload []byte) ([]byte, error) {
+	return projectPayload[scimTokenListSource](payload)
+}
+
+func projectSCIMTokenIssue(payload []byte) ([]byte, error) {
+	return projectPayload[scimTokenIssueSource](payload)
+}
+
 func projectModelProfile(payload []byte) ([]byte, error) {
 	return projectPayload[modelProfileSource](payload)
+}
+
+func projectModelCatalog(payload []byte) ([]byte, error) {
+	return projectPayload[modelCatalogSource](payload)
 }
 
 func projectModelProfileList(payload []byte) ([]byte, error) {

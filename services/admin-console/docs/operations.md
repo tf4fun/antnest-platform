@@ -18,6 +18,16 @@ Admin Console must not be published directly. Edge Gateway is its only
 supported external path. The service has no database, migrations, backup, or
 persistent volume.
 
+The browser derives OIDC and SCIM setup addresses from the public Edge origin,
+so there is deliberately no Admin Console environment variable for either
+external URL. A reverse proxy must preserve the public origin seen by the
+browser and route `/protocol/oidc/callback` and `/scim/v2` to Edge Gateway.
+
+Local password rotation has no service-side configuration. Credential fields
+are request-only and must not be added to access logs, traces, environment
+variables, or retry storage. Existing browser sessions remain governed by
+Identity access-token lifetime and explicit logout.
+
 An overview with unavailable Agent inventory is never emitted: that failure
 fails the request. Optional section envelopes should be surfaced as partial-data
 notices by the UI. Repeated degradation indicates an owning service or network

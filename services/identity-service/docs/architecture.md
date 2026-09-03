@@ -29,6 +29,21 @@ Organization atomically grants its creator an active local administrator
 Membership, so the Organization is usable immediately. OIDC and SCIM can never
 create or promote a system administrator.
 
+The current-account application query resolves the active principal, exact
+Organization and Membership, then checks only whether its User has a
+`LocalCredential`. It projects Organization name/slug and profile fields plus
+that boolean, and never returns the credential record or hash. Credential and
+Organization presentation facts therefore remain owned by Identity;
+presentation services do not guess from Membership source or display internal
+IDs as labels.
+
+Local Membership updates are serialized by Organization. Demoting or
+deactivating an effective administrator succeeds only when another active
+administrator User and Membership remain, so concurrent commands cannot leave
+an Organization ownerless. Global User deactivation locks all affected
+Organizations in stable order and applies the same invariant before revoking
+tokens. SCIM-owned Membership profiles remain writable only through SCIM.
+
 ### Group And GroupMembership
 
 A Group belongs to one Organization. Display names are labels, not keys.
@@ -70,6 +85,9 @@ authorization performed under one configuration with token exchange under
 another. Discovery also pins the selected client-secret authentication method
 and supported asymmetric ID-token signing algorithms. Provider writes use the
 revision as a compare-and-swap token rather than accepting a stale replacement.
+Administrative Provider lists use a dedicated metadata query that does not
+select client-secret ciphertext or nonce. This is a persistence boundary, not
+response-time redaction.
 
 ### AuthSession And Token
 
@@ -97,6 +115,10 @@ and must be handled as a secret. The callback response never echoes it.
 
 API and SCIM token rows contain hashes and metadata only. Plaintext exists
 only in the issuance response.
+Administrative SCIM lists retain active and revoked metadata for audit and
+rotation, but never select the token hash. Listing and revocation require
+organization administration; Provider administration requires a system
+administrator.
 
 ## Application Modules
 

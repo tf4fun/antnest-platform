@@ -208,6 +208,33 @@ func TestSetProviderEnabledDoesNotDependOnExternalDiscovery(t *testing.T) {
 	}
 }
 
+func TestListProvidersRequiresSystemAdministrator(t *testing.T) {
+	repository := newOIDCRepositoryStub(t)
+	repository.providers = []Provider{{
+		ID: "provider-1", OrganizationID: "org-1", Name: "workforce",
+		DisplayName: "Workforce", Issuer: "https://id.example.com", ClientID: "client-1",
+	}}
+	service := newTestService(t, repository, &federationStub{})
+
+	repository.principal = organizationAdmin()
+	_, err := service.ListProviders(context.Background(), "organization-admin", "org-1")
+	if !errors.Is(err, domain.ErrForbidden) {
+		t.Fatalf("organization administrator list error = %v, want forbidden", err)
+	}
+	if repository.listProvidersCalls != 0 {
+		t.Fatalf("unauthorized list reached repository %d times", repository.listProvidersCalls)
+	}
+
+	repository.principal = systemAdministrator()
+	providers, err := service.ListProviders(context.Background(), "admin", "org-1")
+	if err != nil {
+		t.Fatalf("list Providers: %v", err)
+	}
+	if len(providers) != 1 || providers[0].Name != "workforce" || repository.listProvidersCalls != 1 {
+		t.Fatalf("Providers=%#v calls=%d", providers, repository.listProvidersCalls)
+	}
+}
+
 func TestStartLoginStoresHashedStateAndSealedPKCESecrets(t *testing.T) {
 	repository := newOIDCRepositoryStub(t)
 	repository.provider = testProvider(t)
@@ -462,6 +489,8 @@ type oidcRepositoryStub struct {
 	failureContextDeadline    time.Time
 	claimedBeforeExchange     bool
 	claimCalls                int
+	providers                 []Provider
+	listProvidersCalls        int
 }
 
 func newOIDCRepositoryStub(t *testing.T) *oidcRepositoryStub { return &oidcRepositoryStub{t: t} }
@@ -505,6 +534,11 @@ func (r *oidcRepositoryStub) SetProviderEnabled(
 	provider.Enabled = command.Enabled
 	provider.UpdatedAt = command.UpdatedAt
 	return provider, nil
+}
+
+func (r *oidcRepositoryStub) ListProviders(context.Context, string) ([]Provider, error) {
+	r.listProvidersCalls++
+	return r.providers, nil
 }
 
 func (r *oidcRepositoryStub) ListLoginMethods(context.Context, string) ([]LoginMethod, error) {

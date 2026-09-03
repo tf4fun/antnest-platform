@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"soft/antnest-platform/services/edge-gateway/internal/agentcontroller"
 	"soft/antnest-platform/services/edge-gateway/internal/config"
 	"soft/antnest-platform/services/edge-gateway/internal/identity"
 	"soft/antnest-platform/services/edge-gateway/internal/server"
@@ -61,16 +62,22 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 	if err != nil {
 		return fmt.Errorf("create Identity client: %w", err)
 	}
+	agentClient, err := agentcontroller.NewClient(cfg.AgentControllerURL, httpClient)
+	if err != nil {
+		return fmt.Errorf("create Agent Controller client: %w", err)
+	}
 	sessions, err := session.NewManager(session.Config{Secure: cfg.CookieSecure})
 	if err != nil {
 		return fmt.Errorf("create session manager: %w", err)
 	}
 	handler, err := server.NewHandler(server.Config{
-		AdminConsoleURL: cfg.AdminConsoleURL, RequestTimeout: cfg.RequestTimeout,
+		AdminConsoleURL: cfg.AdminConsoleURL, AgentUIURL: cfg.AgentUIURL,
+		AgentACPURL: cfg.AgentACPURL, IdentityURL: cfg.IdentityURL, RequestTimeout: cfg.RequestTimeout,
 		StreamLease: cfg.StreamLease, LoginWindow: cfg.LoginWindow,
 		LoginSourceMax: cfg.LoginSourceMax, LoginAccountMax: cfg.LoginAccountMax,
 	}, server.Dependencies{
-		Identity: identityClient, Sessions: sessions, HTTPClient: httpClient, Logger: logger,
+		Identity: identityClient, Agents: agentClient, Sessions: sessions,
+		HTTPClient: httpClient, Logger: logger,
 	})
 	if err != nil {
 		return fmt.Errorf("compose Gateway: %w", err)

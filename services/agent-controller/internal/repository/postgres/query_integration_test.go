@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"testing"
@@ -10,6 +11,81 @@ import (
 	"soft/antnest-platform/services/agent-controller/internal/domain"
 	"soft/antnest-platform/services/agent-controller/internal/ports"
 )
+
+func TestAgentQueryRepositoryLoadsExecutableConfigurationLineage(t *testing.T) {
+	databaseURL := os.Getenv("ANTNEST_AGENT_CONTROLLER_TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("ANTNEST_AGENT_CONTROLLER_TEST_DATABASE_URL is not set")
+	}
+	ctx := context.Background()
+	repository, err := Open(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("open repository: %v", err)
+	}
+	t.Cleanup(repository.Close)
+	resetCatalogSchema(t, ctx, repository)
+	if err := repository.Migrate(ctx); err != nil {
+		t.Fatalf("migrate repository: %v", err)
+	}
+
+	model := integrationModelRecord(t)
+	if _, err := repository.PutModelProfile(ctx, model); err != nil {
+		t.Fatalf("put ModelProfile: %v", err)
+	}
+	template := integrationTemplateRecord(t, model.Revision)
+	if _, err := repository.PutTemplate(ctx, template); err != nil {
+		t.Fatalf("put Template: %v", err)
+	}
+	createdAt := time.Date(2026, time.September, 3, 10, 0, 0, 0, time.UTC)
+	insertQueryAgent(
+		t, ctx, repository, "agent-lineage", "org-integration", "user-1",
+		domain.DesiredEnabled, domain.AgentAvailable, createdAt,
+	)
+	spec, err := domain.MaterializeAgentSpec(template.Revision, model.Revision)
+	if err != nil {
+		t.Fatalf("materialize Agent spec: %v", err)
+	}
+	snapshot := spec.Snapshot()
+	snapshotPayload, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatalf("encode Agent spec: %v", err)
+	}
+	digest, err := spec.Digest()
+	if err != nil {
+		t.Fatalf("digest Agent spec: %v", err)
+	}
+	if _, err := repository.pool.Exec(ctx, `
+INSERT INTO agent_controller.agent_spec_revisions (
+  id, agent_id, revision, template_id, template_revision,
+  model_profile_revision_id, canonical_digest, snapshot, created_at
+) VALUES ($1, $2, 1, $3, 1, $4, $5, $6, $7)`,
+		"spec-lineage", "agent-lineage", template.TemplateID,
+		model.Revision.ID(), digest, snapshotPayload, createdAt,
+	); err != nil {
+		t.Fatalf("insert Agent spec: %v", err)
+	}
+	if _, err := repository.pool.Exec(ctx, `
+UPDATE agent_controller.agents SET executable_spec_revision_id = $1 WHERE id = $2`,
+		"spec-lineage", "agent-lineage",
+	); err != nil {
+		t.Fatalf("publish Agent spec: %v", err)
+	}
+
+	configuration, err := repository.GetAgentConfiguration(ctx, "agent-lineage", "spec-lineage")
+	if err != nil {
+		t.Fatalf("get Agent configuration: %v", err)
+	}
+	if configuration.TemplateName != "Template" || configuration.ModelProfileName != "Model" ||
+		configuration.ModelProfileID != "model_integration" ||
+		configuration.ModelProfileRevision != 1 || configuration.Snapshot.Model.Model != "model" ||
+		configuration.Snapshot.TemplateRevision != 1 {
+		t.Fatalf("configuration = %+v", configuration)
+	}
+	_, err = repository.GetAgentConfiguration(ctx, "agent-lineage", "spec-missing")
+	if !errors.Is(err, ports.ErrNotFound) {
+		t.Fatalf("missing configuration error = %v", err)
+	}
+}
 
 func TestAgentQueryRepositoryFiltersDeletionAndKeysetOrder(t *testing.T) {
 	databaseURL := os.Getenv("ANTNEST_AGENT_CONTROLLER_TEST_DATABASE_URL")

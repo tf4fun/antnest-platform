@@ -2,6 +2,7 @@ package directory
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -11,6 +12,7 @@ import (
 )
 
 type Repository interface {
+	GetOrganization(context.Context, string) (domain.Organization, error)
 	GetPrincipal(context.Context, string, string) (domain.Principal, error)
 	ResolveOrganizationPrincipal(context.Context, string, string) (domain.Principal, error)
 	CreateOrganization(context.Context, CreateOrganizationCommand) (domain.Organization, error)
@@ -137,6 +139,18 @@ type Member struct {
 type Directory struct {
 	Users  []Member       `json:"users"`
 	Groups []domain.Group `json:"groups"`
+}
+
+type CurrentAccount struct {
+	UserID                 string        `json:"user_id"`
+	OrganizationID         string        `json:"organization_id"`
+	OrganizationSlug       string        `json:"organization_slug"`
+	OrganizationName       string        `json:"organization_name"`
+	MembershipID           string        `json:"membership_id"`
+	Email                  string        `json:"email"`
+	DisplayName            string        `json:"display_name"`
+	Source                 domain.Source `json:"source"`
+	LocalPasswordAvailable bool          `json:"local_password_available"`
 }
 
 type Service struct {
@@ -391,6 +405,60 @@ func (s *Service) List(ctx context.Context, actorPrincipalID, organizationID str
 		return Directory{}, domain.ErrForbidden
 	}
 	return s.repository.ListDirectory(ctx, organizationID)
+}
+
+func (s *Service) GetCurrentAccount(
+	ctx context.Context,
+	actorPrincipalID string,
+	organizationID string,
+) (CurrentAccount, error) {
+	if !domain.ValidID(actorPrincipalID) || !domain.ValidID(organizationID) {
+		return CurrentAccount{}, domain.InvalidArgument(
+			"actor principal ID and organization ID are invalid",
+		)
+	}
+	principal, err := s.repository.GetPrincipal(ctx, actorPrincipalID, organizationID)
+	if err != nil {
+		return CurrentAccount{}, fmt.Errorf("resolve current account actor: %w", err)
+	}
+	if !principal.Active {
+		return CurrentAccount{}, domain.ErrForbidden
+	}
+	if principal.UserID != actorPrincipalID || principal.OrganizationID != organizationID ||
+		!domain.ValidID(principal.MembershipID) {
+		return CurrentAccount{}, fmt.Errorf("current account principal binding is inconsistent")
+	}
+	organization, err := s.repository.GetOrganization(ctx, organizationID)
+	if err != nil {
+		return CurrentAccount{}, fmt.Errorf("load current account organization: %w", err)
+	}
+	if organization.ID != organizationID || strings.TrimSpace(organization.Slug) == "" ||
+		strings.TrimSpace(organization.Name) == "" {
+		return CurrentAccount{}, fmt.Errorf("current account organization binding is inconsistent")
+	}
+	if !organization.Active {
+		return CurrentAccount{}, domain.ErrForbidden
+	}
+	membership, err := s.repository.GetMembership(ctx, organizationID, principal.MembershipID)
+	if err != nil {
+		return CurrentAccount{}, fmt.Errorf("load current account membership: %w", err)
+	}
+	if membership.UserID != principal.UserID || membership.OrganizationID != organizationID {
+		return CurrentAccount{}, fmt.Errorf("current account membership binding is inconsistent")
+	}
+
+	_, err = s.repository.GetLocalCredential(ctx, principal.UserID)
+	localPasswordAvailable := err == nil
+	if err != nil && !errors.Is(err, domain.ErrNotFound) {
+		return CurrentAccount{}, fmt.Errorf("resolve current account password capability: %w", err)
+	}
+	return CurrentAccount{
+		UserID: principal.UserID, OrganizationID: organizationID,
+		OrganizationSlug: organization.Slug, OrganizationName: organization.Name,
+		MembershipID: membership.ID, Email: membership.Email,
+		DisplayName: membership.DisplayName, Source: membership.Source,
+		LocalPasswordAvailable: localPasswordAvailable,
+	}, nil
 }
 
 func (s *Service) ResolvePrincipal(

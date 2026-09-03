@@ -65,6 +65,7 @@ type ModelProfileView struct {
 }
 
 func (service *CatalogService) CreateModelProfile(ctx context.Context, input CreateModelProfileInput) (ModelProfileView, error) {
+	input.Model = canonicalModelSpec(input.Model)
 	if err := validateModelProfileInput(input); err != nil {
 		return ModelProfileView{}, err
 	}
@@ -117,6 +118,7 @@ func (service *CatalogService) CreateModelProfile(ctx context.Context, input Cre
 
 type ReviseModelProfileInput struct {
 	RequestID        string
+	OrganizationID   string
 	ModelProfileID   string
 	DisplayName      string
 	Model            domain.ModelSpec
@@ -126,7 +128,9 @@ type ReviseModelProfileInput struct {
 func (service *CatalogService) ReviseModelProfile(
 	ctx context.Context, input ReviseModelProfileInput,
 ) (ModelProfileView, error) {
-	if !validIdentifier(input.RequestID) || !validIdentifier(input.ModelProfileID) ||
+	input.Model = canonicalModelSpec(input.Model)
+	if !validIdentifier(input.RequestID) || !validIdentifier(input.OrganizationID) ||
+		!validIdentifier(input.ModelProfileID) ||
 		strings.TrimSpace(input.DisplayName) == "" || strings.TrimSpace(input.CredentialSecret) == "" {
 		return ModelProfileView{}, fmt.Errorf("%w: ModelProfile revision input", ErrInvalidInput)
 	}
@@ -146,6 +150,9 @@ func (service *CatalogService) ReviseModelProfile(
 	current, err := service.store.GetModelProfile(ctx, input.ModelProfileID)
 	if err != nil {
 		return ModelProfileView{}, fmt.Errorf("load ModelProfile: %w", err)
+	}
+	if current.OrganizationID != input.OrganizationID {
+		return ModelProfileView{}, fmt.Errorf("%w: ModelProfile belongs to another organization", ErrInvalidReference)
 	}
 	revisionID := derivedID("modelrev", input.RequestID)
 	credentialRef := derivedID("credential", input.RequestID)
@@ -259,6 +266,7 @@ func (service *CatalogService) CreateTemplate(ctx context.Context, input CreateT
 
 type ReviseTemplateInput struct {
 	RequestID              string
+	OrganizationID         string
 	TemplateID             string
 	Name                   string
 	ModelProfileRevisionID string
@@ -271,7 +279,8 @@ type ReviseTemplateInput struct {
 func (service *CatalogService) ReviseTemplate(
 	ctx context.Context, input ReviseTemplateInput,
 ) (TemplateView, error) {
-	if !validIdentifier(input.RequestID) || !validIdentifier(input.TemplateID) ||
+	if !validIdentifier(input.RequestID) || !validIdentifier(input.OrganizationID) ||
+		!validIdentifier(input.TemplateID) ||
 		!validIdentifier(input.ModelProfileRevisionID) || strings.TrimSpace(input.Name) == "" {
 		return TemplateView{}, fmt.Errorf("%w: Template revision input", ErrInvalidInput)
 	}
@@ -291,6 +300,9 @@ func (service *CatalogService) ReviseTemplate(
 	current, err := service.store.GetTemplate(ctx, input.TemplateID)
 	if err != nil {
 		return TemplateView{}, fmt.Errorf("load Template: %w", err)
+	}
+	if current.OrganizationID != input.OrganizationID {
+		return TemplateView{}, fmt.Errorf("%w: Template belongs to another organization", ErrInvalidReference)
 	}
 	modelRevision, err := service.store.GetModelProfileRevision(ctx, input.ModelProfileRevisionID)
 	if err != nil {
@@ -336,14 +348,46 @@ type TemplatePage struct {
 	NextAfterID string
 }
 
-func (service *CatalogService) GetModelProfile(ctx context.Context, id string) (ModelProfileView, error) {
-	if !validIdentifier(id) {
+func (service *CatalogService) GetModelProfile(
+	ctx context.Context, organizationID, id string,
+) (ModelProfileView, error) {
+	if !validIdentifier(organizationID) || !validIdentifier(id) {
 		return ModelProfileView{}, fmt.Errorf("%w: ModelProfile identity", ErrInvalidInput)
 	}
 	record, err := service.store.GetModelProfile(ctx, id)
 	if err != nil {
 		return ModelProfileView{}, fmt.Errorf("load ModelProfile: %w", err)
 	}
+	if record.OrganizationID != organizationID {
+		return ModelProfileView{}, fmt.Errorf("%w: ModelProfile belongs to another organization", ErrInvalidReference)
+	}
+	return modelProfileView(record), nil
+}
+
+func (service *CatalogService) GetModelProfileRevision(
+	ctx context.Context, organizationID, revisionID string,
+) (ModelProfileView, error) {
+	if !validIdentifier(organizationID) || !validIdentifier(revisionID) {
+		return ModelProfileView{}, fmt.Errorf("%w: ModelProfile revision identity", ErrInvalidInput)
+	}
+	revision, err := service.store.GetModelProfileRevision(ctx, revisionID)
+	if err != nil {
+		return ModelProfileView{}, fmt.Errorf("load ModelProfile revision: %w", err)
+	}
+	snapshot := revision.Snapshot()
+	if snapshot.OrganizationID != organizationID {
+		return ModelProfileView{}, fmt.Errorf("%w: ModelProfile revision belongs to another organization", ErrInvalidReference)
+	}
+	record, err := service.store.GetModelProfile(ctx, snapshot.ModelProfileID)
+	if err != nil {
+		return ModelProfileView{}, fmt.Errorf("load ModelProfile: %w", err)
+	}
+	if record.OrganizationID != organizationID {
+		return ModelProfileView{}, fmt.Errorf("%w: ModelProfile belongs to another organization", ErrInvalidReference)
+	}
+	record.Revision = revision
+	record.CredentialRef = snapshot.CredentialRef
+	record.CredentialVersion = snapshot.CredentialVersion
 	return modelProfileView(record), nil
 }
 
@@ -365,14 +409,44 @@ func (service *CatalogService) ListModelProfiles(
 	return ModelProfilePage{Items: views, NextAfterID: next}, nil
 }
 
-func (service *CatalogService) GetTemplate(ctx context.Context, id string) (TemplateView, error) {
-	if !validIdentifier(id) {
+func (service *CatalogService) GetTemplate(
+	ctx context.Context, organizationID, id string,
+) (TemplateView, error) {
+	if !validIdentifier(organizationID) || !validIdentifier(id) {
 		return TemplateView{}, fmt.Errorf("%w: Template identity", ErrInvalidInput)
 	}
 	record, err := service.store.GetTemplate(ctx, id)
 	if err != nil {
 		return TemplateView{}, fmt.Errorf("load Template: %w", err)
 	}
+	if record.OrganizationID != organizationID {
+		return TemplateView{}, fmt.Errorf("%w: Template belongs to another organization", ErrInvalidReference)
+	}
+	return templateView(record), nil
+}
+
+func (service *CatalogService) GetTemplateRevision(
+	ctx context.Context, organizationID, id string, revisionNumber int64,
+) (TemplateView, error) {
+	if !validIdentifier(organizationID) || !validIdentifier(id) || revisionNumber < 1 {
+		return TemplateView{}, fmt.Errorf("%w: Template revision identity", ErrInvalidInput)
+	}
+	record, err := service.store.GetTemplate(ctx, id)
+	if err != nil {
+		return TemplateView{}, fmt.Errorf("load Template: %w", err)
+	}
+	if record.OrganizationID != organizationID {
+		return TemplateView{}, fmt.Errorf("%w: Template belongs to another organization", ErrInvalidReference)
+	}
+	revision, err := service.store.GetTemplateRevision(ctx, id, revisionNumber)
+	if err != nil {
+		return TemplateView{}, fmt.Errorf("load Template revision: %w", err)
+	}
+	snapshot := revision.Snapshot()
+	if snapshot.OrganizationID != organizationID || snapshot.TemplateID != id {
+		return TemplateView{}, fmt.Errorf("%w: Template revision belongs to another organization", ErrInvalidReference)
+	}
+	record.Revision = revision
 	return templateView(record), nil
 }
 

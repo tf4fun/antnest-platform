@@ -1,6 +1,6 @@
 {
   "contract": "antnest.identity",
-  "revision": 7,
+  "revision": 11,
   "transport": "json-over-http",
   "trust": "internal-network",
   "base_path": "/rpc/identity",
@@ -103,6 +103,8 @@
       "required": [
         "user_id",
         "organization_id",
+        "organization_slug",
+        "organization_name",
         "membership_id",
         "system_role",
         "organization_role",
@@ -111,10 +113,33 @@
       "properties": {
         "user_id": { "$ref": "#/definitions/id" },
         "organization_id": { "$ref": "#/definitions/id" },
+        "organization_slug": { "type": "string", "minLength": 1 },
+        "organization_name": { "type": "string", "minLength": 1 },
         "membership_id": { "$ref": "#/definitions/id" },
         "system_role": { "$ref": "#/definitions/system_role" },
         "organization_role": { "$ref": "#/definitions/organization_role" },
         "active": { "type": "boolean" }
+      }
+    },
+    "current_account": {
+      "type": "object",
+      "required": [
+        "user_id",
+        "organization_id",
+        "membership_id",
+        "email",
+        "display_name",
+        "source",
+        "local_password_available"
+      ],
+      "properties": {
+        "user_id": { "$ref": "#/definitions/id" },
+        "organization_id": { "$ref": "#/definitions/id" },
+        "membership_id": { "$ref": "#/definitions/id" },
+        "email": { "type": "string", "format": "email" },
+        "display_name": { "type": "string", "minLength": 1 },
+        "source": { "$ref": "#/definitions/source" },
+        "local_password_available": { "type": "boolean" }
       }
     },
     "organization_principal_binding": {
@@ -215,6 +240,7 @@
           "inactive_principal",
           "not_found",
           "conflict",
+          "last_organization_admin",
           "version_conflict",
           "invalid_reference",
           "oidc_provider_issuer_immutable",
@@ -246,6 +272,7 @@
       "inactive_principal": 403,
       "not_found": 404,
       "conflict": 409,
+      "last_organization_admin": 409,
       "version_conflict": 409,
       "invalid_reference": 400,
       "oidc_provider_issuer_immutable": 409,
@@ -314,7 +341,12 @@
           "organization_id": { "$ref": "#/definitions/id" },
           "email": { "type": "string", "format": "email" },
           "display_name": { "type": "string", "minLength": 1 },
-          "password": { "type": "string", "minLength": 1, "secret": true },
+          "password": {
+            "type": "string",
+            "minLength": 12,
+            "maxLength": 1024,
+            "secret": true
+          },
           "role": { "$ref": "#/definitions/organization_role" }
         }
       },
@@ -352,6 +384,24 @@
       "response": {
         "required": ["membership"],
         "properties": { "membership": { "$ref": "#/definitions/membership" } }
+      }
+    },
+    "get_current_account": {
+      "method": "POST",
+      "path": "/get-current-account",
+      "audience": "internal-service",
+      "request": {
+        "required": ["actor_principal_id", "organization_id"],
+        "properties": {
+          "actor_principal_id": { "$ref": "#/definitions/id" },
+          "organization_id": { "$ref": "#/definitions/id" }
+        }
+      },
+      "response": {
+        "required": ["account"],
+        "properties": {
+          "account": { "$ref": "#/definitions/current_account" }
+        }
       }
     },
     "change_local_password": {
@@ -572,6 +622,26 @@
         "properties": { "status": { "type": "string", "const": "revoked" } }
       }
     },
+    "list_scim_tokens": {
+      "method": "POST",
+      "path": "/list-scim-tokens",
+      "request": {
+        "required": ["actor_principal_id", "organization_id"],
+        "properties": {
+          "actor_principal_id": { "$ref": "#/definitions/id" },
+          "organization_id": { "$ref": "#/definitions/id" }
+        }
+      },
+      "response": {
+        "required": ["tokens"],
+        "properties": {
+          "tokens": {
+            "type": "array",
+            "items": { "$ref": "#/definitions/scim_token" }
+          }
+        }
+      }
+    },
     "upsert_oidc_provider": {
       "method": "POST",
       "path": "/upsert-oidc-provider",
@@ -630,6 +700,26 @@
       "response": {
         "required": ["provider"],
         "properties": { "provider": { "$ref": "#/definitions/oidc_provider" } }
+      }
+    },
+    "list_oidc_providers": {
+      "method": "POST",
+      "path": "/list-oidc-providers",
+      "request": {
+        "required": ["actor_principal_id", "organization_id"],
+        "properties": {
+          "actor_principal_id": { "$ref": "#/definitions/id" },
+          "organization_id": { "$ref": "#/definitions/id" }
+        }
+      },
+      "response": {
+        "required": ["providers"],
+        "properties": {
+          "providers": {
+            "type": "array",
+            "items": { "$ref": "#/definitions/oidc_provider" }
+          }
+        }
       }
     },
     "list_login_methods": {

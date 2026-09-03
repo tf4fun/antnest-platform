@@ -31,7 +31,7 @@ const methodSchema = z.object({
 });
 
 const contractSchema = z.object({
-  revision: z.literal(8),
+  revision: z.literal(9),
   base_path: z.string().startsWith("/"),
   status: z.object({
     method: z.literal("GET"),

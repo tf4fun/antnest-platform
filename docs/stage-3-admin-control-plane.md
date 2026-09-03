@@ -1,13 +1,13 @@
 # Stage 3A Administrator Control Plane
 
-> Status: implemented and accepted
-> Updated: 2026-09-02
+> Status: implemented and accepted with the Agent workspace extension
+> Updated: 2026-09-03
 
 Stage 3A adds the first supported browser entry to Antnest Platform. It connects
 one administrator from login through Agent lifecycle management without moving
 Identity or Agent business rules into the presentation tier.
 
-This stage delivers two services:
+Stage 3A delivered two services:
 
 - **Edge Gateway** is the sole externally reachable application service. It
   terminates browser trust, resolves Identity credentials, enforces coarse
@@ -18,9 +18,10 @@ This stage delivers two services:
   The BFF translates page commands into existing Identity Service and Agent
   Controller RPCs. It owns no durable business records.
 
-Agent UI, Channel Gateway, and Skill Registry are outside Stage 3A. Completing
-this stage proves the administrator control plane; it does not yet prove an
-end-user ACP conversation.
+The accepted Stage 3 surface now also includes **Agent UI** behind Edge Gateway.
+It proves end-user ACP v1 Session, Tool activity, attachment, cancellation,
+replay, and application-switch paths without moving Agent execution into the
+browser. Channel Gateway and Skill Registry remain outside this stage.
 
 ## Service Boundaries
 
@@ -83,27 +84,60 @@ Console is reachable only from the trusted deployment network.
 | --- | --- | --- |
 | `GET /status` | none | Edge Gateway readiness |
 | `POST /api/session/login` | none | Edge Gateway + Identity RPC |
+| `POST /api/session/login-methods` | none | Edge Gateway + Identity RPC |
+| `POST /api/session/oidc/start` | none | Edge Gateway + Identity RPC |
+| `GET /protocol/oidc/callback` | OIDC state and authorization result | Edge Gateway + Identity protocol |
+| `/scim/v2/*` | SCIM Bearer credential | Identity protocol through Edge Gateway |
 | `GET /api/session` | browser session | Edge Gateway |
 | `DELETE /api/session` | browser session when resolvable | Edge Gateway + Identity RPC |
 | `/api/admin/*` | administrator session | Admin Console BFF through Edge Gateway |
 | all other `GET`/`HEAD` paths | none | Admin Console application/assets |
 
 The public surface is a product API for the Console, not the future stable
-third-party OpenAPI. OIDC callback and SCIM ingress remain Identity protocol
-surfaces and can be added to the Gateway route table without changing the
-Console BFF contract.
+third-party OpenAPI. OIDC callback and SCIM ingress remain Identity-owned
+protocol surfaces routed by Edge; they do not become Console BFF resources.
+
+`GET /api/admin/overview` is a bounded operational snapshot. Its Model Profile,
+Template, and Agent sections retain owner-service continuation cursors. Counts
+are exact only when the corresponding cursor is absent; otherwise Console
+renders a lower bound and scopes lifecycle distributions to the loaded page.
+Overview does not perform unbounded fan-out merely to manufacture fleet totals.
+
+Template create/revise and Agent create/rebuild selectors load their Model
+Profile or Template dependencies incrementally through the same opaque Catalog
+cursor. They retain already loaded eligible choices after a later-page failure,
+offer an in-form retry, and never infer global absence from a partial page.
 
 ## Admin Console BFF Surface
 
-The initial BFF supports only the Stage 3A management path:
+The BFF retains the Stage 3A management path and includes the first catalog
+convergence extension:
 
 ```text
 GET    /api/admin/overview
+GET    /api/admin/template-defaults
+POST   /api/admin/account/password
 GET    /api/admin/directory
+POST   /api/admin/directory/users
+POST   /api/admin/directory/memberships/{membership_id}
+POST   /api/admin/directory/users/{user_id}/active
+GET    /api/admin/provisioning/oidc-providers
+POST   /api/admin/provisioning/oidc-providers
+POST   /api/admin/provisioning/oidc-providers/{name}/enabled
+GET    /api/admin/provisioning/scim-tokens
+POST   /api/admin/provisioning/scim-tokens
+POST   /api/admin/provisioning/scim-tokens/{token_id}/revoke
+GET    /api/admin/model-catalog
 GET    /api/admin/model-profiles
 POST   /api/admin/model-profiles
+GET    /api/admin/model-profiles/{model_profile_id}
+GET    /api/admin/model-profile-revisions/{revision_id}
+POST   /api/admin/model-profiles/{model_profile_id}/revisions
 GET    /api/admin/templates
 POST   /api/admin/templates
+GET    /api/admin/templates/{template_id}
+GET    /api/admin/templates/{template_id}/revisions/{revision}
+POST   /api/admin/templates/{template_id}/revisions
 GET    /api/admin/agents
 POST   /api/admin/agents
 GET    /api/admin/agents/{agent_id}
@@ -112,6 +146,60 @@ GET    /api/admin/operations/{request_id}
 GET    /api/admin/agents/{agent_id}/events
 GET    /api/admin/agents/{agent_id}/events/watch
 ```
+
+The Model Profile and Template list routes accept only `after_id` and `limit`.
+The Agent list accepts only `view=current|deleted`, `cursor`, and `limit`.
+List limits default to 100 and cannot exceed 100. Unknown or repeated query
+parameters fail closed. Every route injects organization scope from the trusted
+principal; `view=deleted` becomes an authority-side deleted lifecycle filter,
+not a browser-side scan of mixed current and retained records.
+
+`GET /api/admin/overview` is consumed only by the Overview page. Template and
+Agent resource pages load their primary inventory and direct creation
+dependencies independently. `GET /api/admin/template-defaults` returns the
+configured Runtime image reference without contacting an owner service; it
+does not turn Admin Console into the owner of Runtime or Template state.
+Model Profile inventory/detail and the built-in Model Catalog also use separate
+browser states. Catalog failure leaves persisted Profile and revision facts
+readable, disables only configuration changes, and exposes a local retry.
+
+The Directory, OIDC/SCIM provisioning, model catalog, and Model
+Profile/Template detail/revision routes are covered by service contracts and
+browser-route tests. The model catalog contains only release-managed metadata;
+organization Model Profiles and encrypted credentials remain in Agent
+Controller.
+
+Resource responses do not repeat the organization ID that the BFF already
+derives from the trusted principal. Read-only Group IDs and OIDC database IDs
+are omitted as well. SCIM token ID remains only as the opaque handle for its
+revoke command and is not presented as credential identity in the browser.
+
+The single-Agent read includes a detail-only executable configuration lineage
+from Agent Controller. Admin Console allowlists the exact Template and Model
+Profile revisions, frozen model limits and execution policy, and Runtime input.
+It omits Provider credential references, Runtime execution identity, and MCP
+routing. Agent lists remain lightweight and do not load lineage.
+Its browser links include the immutable revision identity and resolve through
+organization-scoped, read-only Catalog revision routes. Advancing a Template or
+Model Profile head therefore cannot silently change what an older Agent detail
+claims to reference.
+
+Primary Model, Template, and Agent detail reads preserve terminal error
+semantics. `404`/`410` render a missing-resource state, `403` renders a
+permission state, and neither offers a futile retry. Other failures remain
+retryable. Every terminal state keeps an explicit route back to the owning
+inventory.
+
+Primary Model, Template, Agent, and Directory inventory reads use the same
+classification. A failed refresh keeps any previously loaded projection, and
+the current/deleted Agent inventories remain separate failure domains. Only a
+transient owner-service failure exposes a retry action.
+
+Fleet presentation does not promote opaque control-plane identities into
+ordinary administrator language. List rows show one lifecycle status and add a
+desired target only while the two have not converged. Exact Agent, Runtime, and
+Execution revision identifiers and event trace correlation remain available in
+default-collapsed technical details on the owning Agent page.
 
 For organization administrators, the BFF always uses the organization from the
 trusted principal. A system administrator initially operates in the
@@ -126,14 +214,73 @@ from browser JSON.
 ## Frontend Workflow
 
 The first usable screen is the application, not a marketing page. An
-unauthenticated browser sees the login form. An authenticated administrator can:
+unauthenticated browser enters its organization and sees local login plus the
+enabled OIDC methods returned by Identity. An authenticated administrator can:
 
-1. inspect the current organization directory;
-2. create and list Model Profiles;
-3. create and list Agent Templates;
-4. create an Agent for one active directory user;
-5. inspect Agent status, the active lifecycle operation, and ordered events;
-6. rebuild, disable, enable, and delete the Agent.
+1. follow a derived Model → Template → Directory → Agent setup path without
+   creating Console-owned wizard state;
+2. distinguish an empty resource catalog from an unavailable owner service and
+   retry failed reads where they occur;
+3. inspect current-organization People and externally synchronized Groups;
+4. create local users and edit local Membership profiles, roles, and access;
+5. globally activate or deactivate a User when operating as a system administrator;
+6. configure and enable or disable OIDC login Providers as a system administrator;
+7. issue, inspect, and revoke organization SCIM credentials, with one-time secret display;
+8. create and list Model Profiles;
+9. create and list Agent Templates;
+10. create an Agent for one active directory user;
+11. inspect Agent status, exact executable Template/Model lineage, the active
+    lifecycle operation, and ordered events;
+12. rebuild, disable, enable, and delete the Agent;
+13. keep deleted Agents out of the current Fleet while resolving their retained
+    projection and lifecycle history through an explicit read-only view;
+14. traverse Model Profile, Template, current Agent, and deleted Agent
+    inventories incrementally, retaining already loaded records across a
+    retryable page failure;
+15. see their Identity-owned display name, email, and human-readable
+    Organization context in the global shell without exposing internal
+    identity IDs, while a failed profile read remains locally retryable and
+    does not block the authenticated Console;
+16. rotate their own local password only when Identity confirms that a local
+    credential exists, without exposing a target-User selector or persisting
+    either credential field.
+
+OIDC Provider and SCIM credential inventories are independent failure domains
+inside Provisioning. Either section can load and remain usable while the other
+fails, and each transient read failure has its own retry. Directory and Provisioning
+command errors are rendered beside the active form or confirmation while its
+input remains intact. Clipboard failure does not dismiss or persist a newly
+issued SCIM credential; the user can retry while the one-time dialog remains
+open.
+
+Optional browser resources preserve their structured failure kind. Model
+Catalog, Runtime defaults, referenced Model revisions, account profile,
+OIDC/SCIM inventories, and paged dependency selectors expose local retry only
+for transient failures. A terminal permission or missing-resource response is
+still named in place but does not offer an action that cannot succeed; already
+loaded primary records and selector options remain available.
+
+Provisioning shows the public Edge OIDC callback and SCIM base URL in the
+matching view and setup dialog. The values come from the browser origin with
+fixed protocol paths, not from Identity's private service address or a
+user-editable deployment setting. Clipboard failure is visible without hiding
+the source value; the SCIM issuance dialog keeps both endpoint and one-time
+credential available until explicitly closed.
+
+OIDC login start and callback are no-store flows. Identity returns the
+authorization URL to Edge and later returns its one-time Antnest access token
+only to Edge; Edge establishes the standard browser cookies and redirects to
+the application. Callback failures return a stable login-page error without
+echoing Provider details, state, code, or credentials. SCIM requests retain
+their protocol Bearer header through Edge, while browser cookies and incoming
+trusted-principal headers are stripped.
+
+SCIM Memberships and Groups remain read-only in the Console. Identity rejects
+local replacement of externally owned profiles and serializes local
+administrator changes so an Organization always retains one effective active
+administrator. Organization administrators can change only Membership state;
+the system-wide User activation command is available only to a system
+administrator.
 
 Lifecycle commands show their accepted operation immediately and converge from
 authoritative operation/Agent/event reads. UI state is never the source of
@@ -198,18 +345,27 @@ volumes. It must prove, in order:
 2. bootstrap the configured organization and local system administrator;
 3. load the Console in a browser and log in through Edge Gateway;
 4. view the organization directory and bootstrap administrator;
-5. create one Model Profile with a disposable model credential;
-6. create one Template referencing the returned Model Profile revision;
-7. create one Agent owned by the bootstrap administrator;
-8. wait for the lifecycle operation and Agent to become ready and inspect its
+5. rotate the bootstrap administrator's local password, prove the replacement
+   credential can log in, and restore the disposable fixture credential;
+6. issue, list, and revoke one SCIM credential while proving that ordinary
+   reads never redisclose it;
+7. create one Model Profile with a disposable model credential;
+8. create one Template referencing the returned Model Profile revision;
+9. create one ordinary organization member and one Agent owned by that member;
+10. wait for the lifecycle operation and Agent to become ready and inspect its
    ordered events;
-9. disable, enable, rebuild, and delete the Agent, waiting for each operation to
-   reach its terminal state;
-10. query Jaeger for the admission trace and for lifecycle attempt traces
+11. disable, enable, and rebuild the Agent, waiting for each operation to reach
+    its terminal state;
+12. query Jaeger for the admission trace and for lifecycle attempt traces
     correlated by the create operation request ID; prove the required service
     names, independent roots, causal links, and secret exclusions;
-11. prove that only Edge Gateway has an externally reachable application port;
-12. tear down all containers, networks, and disposable volumes on success or
+13. prove that only Edge Gateway has an externally reachable application port;
+14. log in as the ordinary member, obtain a browser-safe Agent projection, and
+    execute and replay one ACP v1 Session containing a Runtime Tool call;
+15. delete the Agent, prove its Runtime container and workspace volume are
+    reclaimed, prove the default list hides it, and prove the explicit deleted
+    query retains its audit projection;
+16. tear down all containers, networks, and disposable volumes on success or
     failure.
 
 Unit and contract tests cover authentication, privilege checks, header
@@ -219,5 +375,9 @@ is the cross-service proof, not a replacement for those tests.
 
 Run the disposable acceptance with `make e2e-stage3`. It creates an isolated
 Compose project with empty volumes, performs the complete lifecycle over Edge
-Gateway, verifies the admission trace, lifecycle trace set, and host-port
-boundary, and tears the project down on both success and failure.
+Gateway, verifies the Agent workspace ACP path, admission trace, lifecycle trace
+set, and host-port boundary, and tears the project down on both success and
+failure. For local browser inspection only,
+`ANTNEST_E2E_KEEP_STACK=true sh scripts/e2e-stage3a.sh` retains a successful
+seeded stack and prints its URL and Compose project name; the operator must
+remove that project after inspection.

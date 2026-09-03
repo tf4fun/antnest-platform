@@ -1,15 +1,50 @@
 {
   "contract": "antnest.admin-console.bff",
-  "version": 2,
+  "version": 29,
   "base_path": "/api/admin",
   "routes": {
     "overview": {"method": "GET", "path": "/overview"},
+    "get_template_defaults": {"method": "GET", "path": "/template-defaults"},
+    "get_current_account": {"method": "GET", "path": "/account"},
+    "change_own_password": {"method": "POST", "path": "/account/password"},
     "directory": {"method": "GET", "path": "/directory"},
-    "list_model_profiles": {"method": "GET", "path": "/model-profiles"},
+    "create_local_user": {"method": "POST", "path": "/directory/users"},
+    "update_membership": {"method": "POST", "path": "/directory/memberships/{membership_id}"},
+    "set_user_active": {"method": "POST", "path": "/directory/users/{user_id}/active"},
+    "list_oidc_providers": {"method": "GET", "path": "/provisioning/oidc-providers"},
+    "upsert_oidc_provider": {"method": "POST", "path": "/provisioning/oidc-providers"},
+    "set_oidc_provider_enabled": {"method": "POST", "path": "/provisioning/oidc-providers/{name}/enabled"},
+    "list_scim_tokens": {"method": "GET", "path": "/provisioning/scim-tokens"},
+    "issue_scim_token": {"method": "POST", "path": "/provisioning/scim-tokens"},
+    "revoke_scim_token": {"method": "POST", "path": "/provisioning/scim-tokens/{token_id}/revoke"},
+    "model_catalog": {"method": "GET", "path": "/model-catalog"},
+    "list_model_profiles": {
+      "method": "GET",
+      "path": "/model-profiles",
+      "query": {"optional": ["after_id", "limit"], "cursor_response": "next_after_id"}
+    },
     "create_model_profile": {"method": "POST", "path": "/model-profiles"},
-    "list_templates": {"method": "GET", "path": "/templates"},
+    "get_model_profile": {"method": "GET", "path": "/model-profiles/{model_profile_id}"},
+    "get_model_profile_revision": {"method": "GET", "path": "/model-profile-revisions/{revision_id}"},
+    "revise_model_profile": {"method": "POST", "path": "/model-profiles/{model_profile_id}/revisions"},
+    "list_templates": {
+      "method": "GET",
+      "path": "/templates",
+      "query": {"optional": ["after_id", "limit"], "cursor_response": "next_after_id"}
+    },
     "create_template": {"method": "POST", "path": "/templates"},
-    "list_agents": {"method": "GET", "path": "/agents"},
+    "get_template": {"method": "GET", "path": "/templates/{template_id}"},
+    "get_template_revision": {"method": "GET", "path": "/templates/{template_id}/revisions/{revision}"},
+    "revise_template": {"method": "POST", "path": "/templates/{template_id}/revisions"},
+    "list_agents": {
+      "method": "GET",
+      "path": "/agents",
+      "query": {
+        "optional": ["view", "cursor", "limit"],
+        "view": ["current", "deleted"],
+        "cursor_response": "next_cursor"
+      }
+    },
     "create_agent": {"method": "POST", "path": "/agents"},
     "get_agent": {"method": "GET", "path": "/agents/{agent_id}"},
     "rebuild_agent": {"method": "POST", "path": "/agents/{agent_id}/rebuild"},
@@ -26,8 +61,22 @@
     "organization_id"
   ],
   "dependencies": {
-    "identity": ["list_directory"],
+    "identity": [
+      "list_directory",
+      "get_current_account",
+      "change_local_password",
+      "create_local_user",
+      "update_membership",
+      "set_user_active",
+      "list_oidc_providers",
+      "upsert_oidc_provider",
+      "set_oidc_provider_enabled",
+      "list_scim_tokens",
+      "issue_scim_token",
+      "revoke_scim_token"
+    ],
     "agent_controller": [
+      "model_catalog",
       "model_profiles",
       "agent_templates",
       "agents",
@@ -44,15 +93,138 @@
       "access_revision",
       "runtime_execution_id",
       "mcp_endpoint",
+      "organization_id",
+      "client_secret",
+      "token_hash",
       "scim_external_id",
       "scim_user_name"
     ],
+    "one_time_credentials": {
+      "routes": ["issue_scim_token"],
+      "cache_control": "no-store",
+      "persistence": "forbidden",
+      "redisclosure": "forbidden"
+    },
+    "resource_identity": {
+      "organization_id": "trusted_scope_only_not_projected",
+      "directory_group_id": "read_only_internal_identity_not_projected",
+      "oidc_record_id": "internal_identity_not_projected_provider_name_is_command_key",
+      "scim_token_id": "revoke_action_handle_not_presentation_label"
+    },
+    "account_security": {
+      "profile_fields": [
+        "email",
+        "display_name",
+        "source",
+        "organization_slug",
+        "organization_name"
+      ],
+      "internal_identity_fields": "stripped_by_bff",
+      "local_password_capability": "identity_authoritative",
+      "target_user": "trusted_principal_only",
+      "password_fields": "write_only",
+      "browser_persistence": "forbidden",
+      "retry_intent_persistence": "forbidden",
+      "invalid_current_password": "operation_error_without_session_invalidation",
+      "success_response": ["status"]
+    },
+    "lists": {
+      "default_limit": 100,
+      "maximum_limit": 100,
+      "unknown_or_repeated_query": "reject",
+      "organization_scope": "trusted_principal_only",
+      "deleted_agents": "authority_filtered_explicit_view",
+      "dependent_selectors": "incremental_owner_cursor"
+    },
     "overview": {
       "deadline": "single_bounded_deadline",
       "fanout": "concurrent_buffered",
       "required_sections": ["agents"],
       "optional_sections": ["directory", "model_profiles", "templates"],
-      "section_status": ["available", "unavailable"]
+      "section_status": ["available", "unavailable"],
+      "section_error_message": "safe_resource_named_without_upstream_detail",
+      "catalog_and_agent_page_limit": 200,
+      "continuation_metadata": "preserved",
+      "count_with_continuation": "lower_bound_not_total",
+      "active_member_metric": "user_active_and_membership_active"
+    },
+    "resource_page_reads": {
+      "overview_usage": "dashboard_only",
+      "model_page": ["model_profiles", "model_catalog"],
+      "template_page": ["templates", "model_profiles", "template_defaults"],
+      "agent_page": ["agents", "agent_templates", "directory"],
+      "agent_detail": ["agent", "lifecycle_events", "active_operation", "agent_templates", "directory"],
+      "primary_detail_failure": {
+        "not_found_status": [404, 410],
+        "forbidden_status": [403],
+        "transient_status": "all_other_failures",
+        "not_found_and_forbidden_action": "return_to_inventory_without_retry",
+        "transient_action": "retry_primary_read",
+        "server_message": "preserved"
+      },
+      "primary_inventory_failure": {
+        "not_found_status": [404, 410],
+        "forbidden_status": [403],
+        "transient_status": "all_other_failures",
+        "terminal_action": "return_to_overview_without_retry",
+        "transient_action": "retry_primary_read",
+        "loaded_snapshot": "preserved_during_later_refresh_failure"
+      },
+      "deleted_agent_inventory_failure": "independent_from_current_inventory_retry_only_when_transient",
+      "dependency_failure": "page_local_preserve_primary_inventory",
+      "dependency_failure_semantics": {
+        "capture": "preserve_structured_resource_failure",
+        "terminal_status": [403, 404, 410],
+        "terminal_action": "show_failure_without_retry",
+        "transient_action": "section_local_retry",
+        "catalog_selector_snapshot": "preserve_loaded_eligible_options",
+        "catalog_selector_pagination": "preserve_cursor_and_failure_semantics"
+      },
+      "model_catalog_failure": "existing_profiles_readable_changes_disabled_until_retry",
+      "agent_detail_failure_semantics": {
+        "resources": ["agent_refresh", "owner_directory", "lifecycle_events", "active_operation"],
+        "capture": "preserve_structured_resource_failure",
+        "terminal_status": [403, 404, 410],
+        "terminal_action": "preserve_loaded_evidence_without_retry",
+        "transient_action": "resource_local_retry",
+        "event_replay_terminal": "stop_automatic_retry",
+        "operation_request_identity": "preserved",
+        "operation_terminal": "do_not_refetch_same_request_automatically",
+        "agent_refresh_command_policy": "preserve_projection_close_commands_until_fresh_authority"
+      },
+      "agent_event_failure": "agent_readable_loaded_history_preserved_retry_only_when_transient",
+      "agent_operation_failure": "agent_readable_active_request_gates_actions_retry_only_when_transient_stale_operation_hidden",
+      "agent_stream_recovery": {
+        "event_replay": "owns_cursor_and_stream_reconnect",
+        "agent_refresh": "independent_primary_state",
+        "failure_partition": "each_resource_commits_and_retries_independently",
+        "event_retry": "does_not_repeat_agent_refresh",
+        "agent_snapshot_ordering": "aggregate_sequence_monotonic_not_request_completion_order",
+        "operation_reconciliation": "active_agent_request_then_latest_replayed_event"
+      },
+      "catalog_detail": {
+        "primary_read": "requested_immutable_revision_or_current_head",
+        "historical_current_head_read": "omitted",
+        "referenced_revision_failure": "primary_detail_readable_section_local_retry"
+      }
+    },
+    "agent_owner_presentation": {
+      "creation_choices": "user_active_and_membership_active",
+      "existing_agent_lookup": "all_directory_records_including_inactive",
+      "inactive_owner": "retained_human_identity_not_selectable"
+    },
+    "provisioning": {
+      "independent_reads": ["oidc_providers", "scim_tokens"],
+      "read_failure": "section_local_retry_only_when_transient",
+      "command_failure": "operation_local_preserve_input",
+      "credential_copy_failure": "visible_and_retryable",
+      "protocol_endpoints": {
+        "authority": "same_origin_edge",
+        "oidc_callback_path": "/protocol/oidc/callback",
+        "scim_base_path": "/scim/v2",
+        "discard_browser_query_and_fragment": true,
+        "copy_failure": "visible_and_retryable"
+      }
     }
   }
 }

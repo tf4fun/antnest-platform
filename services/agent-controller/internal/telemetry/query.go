@@ -38,6 +38,17 @@ func (store *ObservedAgentQueryStore) GetAgent(
 	return record, resultErr
 }
 
+func (store *ObservedAgentQueryStore) GetAgentConfiguration(
+	ctx context.Context, agentID string, agentSpecRevisionID string,
+) (record ports.AgentConfigurationRecord, resultErr error) {
+	ctx, span, started := startRepositorySpan(ctx, "get_agent_configuration")
+	defer func() {
+		finishRepositorySpan(ctx, store.logger, span, started, "get_agent_configuration", resultErr)
+	}()
+	record, resultErr = store.next.GetAgentConfiguration(ctx, agentID, agentSpecRevisionID)
+	return record, resultErr
+}
+
 func (store *ObservedAgentQueryStore) ListAgents(
 	ctx context.Context, query ports.AgentQuery,
 ) (records []ports.AgentRecord, resultErr error) {
@@ -46,6 +57,20 @@ func (store *ObservedAgentQueryStore) ListAgents(
 		finishRepositorySpan(ctx, store.logger, span, started, "list_agents", resultErr)
 	}()
 	records, resultErr = store.next.ListAgents(ctx, query)
+	if resultErr == nil {
+		span.SetAttributes(attribute.Int("antnest.query.item_count", len(records)))
+	}
+	return records, resultErr
+}
+
+func (store *ObservedAgentQueryStore) ListWorkspaceAgents(
+	ctx context.Context, query ports.WorkspaceAgentQuery,
+) (records []ports.WorkspaceAgentRecord, resultErr error) {
+	ctx, span, started := startRepositorySpan(ctx, "list_workspace_agents")
+	defer func() {
+		finishRepositorySpan(ctx, store.logger, span, started, "list_workspace_agents", resultErr)
+	}()
+	records, resultErr = store.next.ListWorkspaceAgents(ctx, query)
 	if resultErr == nil {
 		span.SetAttributes(attribute.Int("antnest.query.item_count", len(records)))
 	}

@@ -6,12 +6,57 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"soft/antnest-platform/services/agent-controller/internal/application"
 	"soft/antnest-platform/services/agent-controller/internal/domain"
 )
+
+func TestAgentQueryHandlerListsWorkspaceAgentsWithoutBroadProjection(t *testing.T) {
+	t.Parallel()
+
+	queries := &agentQueryServiceStub{workspacePage: application.WorkspaceAgentPage{
+		Items: []application.WorkspaceAgentView{{
+			AgentID: "agent-1", Name: "Research Agent",
+			Availability: application.WorkspaceAgentBusy, AccessSubject: "subject-private",
+		}},
+		NextCursor: "next-workspace",
+	}}
+	handler, err := NewHandler(
+		&catalogServiceStub{}, &lifecycleServiceStub{}, &runServiceStub{}, queries,
+		&agentEventServiceStub{}, func(context.Context) error { return nil },
+	)
+	if err != nil {
+		t.Fatalf("new handler: %v", err)
+	}
+	request := httptest.NewRequest(
+		http.MethodPost, "/rpc/agent-controller/list-workspace-agents",
+		strings.NewReader(`{"request_id":"request-1","organization_id":"org-1","principal_id":"user-1","limit":25}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK || response.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("status=%d cache=%q body=%s", response.Code, response.Header().Get("Cache-Control"), response.Body.String())
+	}
+	if queries.workspaceInput != (application.ListWorkspaceAgentsInput{
+		RequestID: "request-1", OrganizationID: "org-1", PrincipalID: "user-1", Limit: 25,
+	}) {
+		t.Fatalf("workspace input = %+v", queries.workspaceInput)
+	}
+	var payload workspaceAgentListResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode workspace Agents: %v", err)
+	}
+	if len(payload.Agents) != 1 || payload.Agents[0].AgentID != "agent-1" ||
+		payload.Agents[0].AgentAccessSubject != "subject-private" ||
+		payload.NextCursor == nil || *payload.NextCursor != "next-workspace" {
+		t.Fatalf("workspace payload = %+v", payload)
+	}
+}
 
 func TestAgentQueryHandlerGetsKnownDeletedProjection(t *testing.T) {
 	t.Parallel()
@@ -51,6 +96,60 @@ func TestAgentQueryHandlerGetsKnownDeletedProjection(t *testing.T) {
 	}
 	if payload.AgentID != "agent-1" || payload.OwnerUserID != "user-1" || payload.AggregateSequence != 12 {
 		t.Fatalf("Agent response = %+v", payload)
+	}
+}
+
+func TestAgentQueryHandlerReturnsSafeExecutableConfigurationLineage(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.September, 3, 12, 0, 0, 0, time.UTC)
+	queries := &agentQueryServiceStub{agent: application.AgentView{
+		AgentID: "agent-1", OrganizationID: "org-1", OwnerUserID: "user-1",
+		Name: "Research Agent", DesiredState: domain.DesiredEnabled,
+		LifecycleState: domain.AgentAvailable, AccessRevision: "access-1",
+		AgentSpecRevisionID: "spec-3", ExecutionRevisionID: "execution-4",
+		Configuration: &application.AgentConfigurationView{
+			TemplateID: "template-1", TemplateRevision: 2, TemplateName: "Research",
+			ModelProfileID: "model-1", ModelProfileRevisionID: "model-revision-4",
+			ModelProfileRevision: 4, ModelProfileName: "DeepSeek",
+			Model: domain.ModelSpec{
+				BaseURL: "https://api.deepseek.com/v1", Model: "deepseek-chat",
+				ContextWindow: 128000, MaxOutputTokens: 8192,
+			},
+			MaxModelRequests: 24, ContextPolicyVersion: domain.ContextPolicyV1,
+			Runtime: domain.RuntimeSpecInput{
+				ImageRef: "antnest/runtime@sha256:" + strings.Repeat("a", 64),
+				Resources: domain.RuntimeResources{
+					MemoryBytes: 536870912, PIDsLimit: 256, TmpfsBytes: 67108864,
+				},
+			},
+		},
+		AggregateSequence: 9, CreatedAt: now.Add(-time.Hour), UpdatedAt: now,
+	}}
+	handler, err := NewHandler(
+		&catalogServiceStub{}, &lifecycleServiceStub{}, &runServiceStub{}, queries,
+		&agentEventServiceStub{}, func(context.Context) error { return nil },
+	)
+	if err != nil {
+		t.Fatalf("new handler: %v", err)
+	}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(
+		http.MethodGet, "/internal/agents/agent-1?organization_id=org-1", nil,
+	))
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	var payload agentResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode Agent: %v", err)
+	}
+	if payload.Configuration == nil || payload.Configuration.Template.Name != "Research" ||
+		payload.Configuration.ModelProfile.Name != "DeepSeek" ||
+		payload.Configuration.ModelProfile.Model.Model != "deepseek-chat" ||
+		payload.Configuration.Runtime.ImageRef == "" {
+		t.Fatalf("configuration lineage = %+v", payload.Configuration)
 	}
 }
 
@@ -234,6 +333,8 @@ type agentQueryServiceStub struct {
 	organizationID string
 	listInput      application.ListAgentsInput
 	listCalls      int
+	workspacePage  application.WorkspaceAgentPage
+	workspaceInput application.ListWorkspaceAgentsInput
 }
 
 func (service *agentQueryServiceStub) GetAgent(
@@ -257,4 +358,11 @@ func (service *agentQueryServiceStub) ListAgents(
 	service.listCalls++
 	service.listInput = input
 	return service.page, service.err
+}
+
+func (service *agentQueryServiceStub) ListWorkspaceAgents(
+	_ context.Context, input application.ListWorkspaceAgentsInput,
+) (application.WorkspaceAgentPage, error) {
+	service.workspaceInput = input
+	return service.workspacePage, service.err
 }

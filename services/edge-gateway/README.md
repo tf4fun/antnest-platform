@@ -14,8 +14,10 @@ Implemented for Stage 3A. The canonical cross-service behavior is
 - public HTTP listener and route policy;
 - browser cookie and CSRF policy;
 - access-token resolution and administrator admission;
+- browser-safe Agent workspace bootstrap and per-Agent access admission;
+- same-origin Agent UI and ACP v1 WebSocket routing;
 - trusted principal headers, security headers, request limits, and tracing;
-- explicit reservation of OIDC and SCIM public path prefixes;
+- browser OIDC discovery/start/callback and transparent SCIM protocol ingress;
 - proxy availability and external error projection.
 
 ## Does Not Own
@@ -23,12 +25,16 @@ Implemented for Stage 3A. The canonical cross-service behavior is
 - users, organizations, credentials, or authorization facts;
 - Models, Templates, Agents, lifecycle operations, or Runtime state;
 - Admin Console page state or view aggregation;
+- ACP Session state, messages, model execution, or Tool dispatch;
 - any PostgreSQL schema.
 
 ## Dependencies
 
 - Identity Service for login, token resolution, token revocation, and readiness;
 - Admin Console for the application and `/api/admin/*` BFF;
+- Agent Controller for the principal-scoped workspace Agent projection;
+- Agent UI for `/workspace/*` static application routes;
+- Agent ACP Service for admitted `/api/app/agents/{agent_id}/acp` WebSockets;
 - OTLP collector when observability is enabled.
 
 ## Interfaces

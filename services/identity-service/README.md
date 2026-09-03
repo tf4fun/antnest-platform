@@ -12,6 +12,11 @@ deployable. A narrow `resolve_principal` RPC lets Agent Controller validate an
 opaque organization/user binding without reading Identity storage or receiving
 profile data. It requires an active organization membership even for a system
 administrator; it is intentionally stricter than administrative authorization.
+The `get_current_account` RPC separately returns the signed-in actor's safe
+organization profile, Organization name/slug, and an authoritative boolean
+indicating whether a local password credential exists. Internal consumers use
+its identity IDs for binding but must explicitly project browser-safe fields;
+the RPC never returns credential material.
 Cross-service Identity event delivery remains deliberately separate from this
 synchronous authorization query. The service contract is
 [`../../docs/stage-2-identity.md`](../../docs/stage-2-identity.md); this
@@ -39,7 +44,7 @@ directory is the only implementation authority for this service.
 | Interface                          | Direction | Purpose                                         |
 | ---------------------------------- | --------- | ----------------------------------------------- |
 | `GET /status`                      | inbound   | Liveness/readiness                              |
-| `/rpc/identity/*` JSON RPC         | inbound   | Trusted internal identity commands and queries  |
+| `/rpc/identity/*` JSON RPC         | inbound   | Trusted internal identity commands and queries, including current-account capability projection |
 | `GET /protocol/oidc/callback`      | inbound   | Standard Authorization Code callback            |
 | `/scim/v2/*`                       | inbound   | SCIM 2.0 discovery and directory provisioning   |
 | OIDC discovery/token/UserInfo/JWKS | outbound  | Federated login                                 |

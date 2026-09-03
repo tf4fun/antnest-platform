@@ -51,6 +51,36 @@ type LoginResult struct {
 	ExpiresAt   time.Time `json:"expires_at"`
 }
 
+type LoginMethod struct {
+	Name        string `json:"name"`
+	DisplayName string `json:"display_name"`
+}
+
+type StartOIDCLoginInput struct {
+	RequestID        string `json:"request_id"`
+	OrganizationSlug string `json:"organization_slug"`
+	ProviderName     string `json:"provider_name"`
+}
+
+type StartOIDCLoginResult struct {
+	AuthorizationURL string    `json:"authorization_url"`
+	ExpiresAt        time.Time `json:"expires_at"`
+}
+
+type OIDCCallbackInput struct {
+	State              string
+	Code               string
+	AuthorizationError string
+}
+
+type OIDCCallbackResult struct {
+	Principal        Principal `json:"principal"`
+	TokenID          string    `json:"token_id"`
+	AccessToken      string    `json:"access_token,omitempty"`
+	AlreadyCompleted bool      `json:"already_completed,omitempty"`
+	ExpiresAt        time.Time `json:"expires_at"`
+}
+
 type RevokeStatus string
 
 const (
@@ -80,6 +110,44 @@ func NewClient(rawBaseURL string, httpClient *http.Client) (*Client, error) {
 func (client *Client) Login(ctx context.Context, input LoginInput) (LoginResult, error) {
 	var result LoginResult
 	err := client.doJSON(ctx, "login", http.MethodPost, "/rpc/identity/local-login", input, &result)
+	return result, err
+}
+
+func (client *Client) ListLoginMethods(ctx context.Context, organizationSlug string) ([]LoginMethod, error) {
+	var result struct {
+		Methods []LoginMethod `json:"methods"`
+	}
+	err := client.doJSON(ctx, "list_login_methods", http.MethodPost,
+		"/rpc/identity/list-login-methods", map[string]string{
+			"organization_slug": organizationSlug,
+		}, &result)
+	return result.Methods, err
+}
+
+func (client *Client) StartOIDCLogin(
+	ctx context.Context, input StartOIDCLoginInput,
+) (StartOIDCLoginResult, error) {
+	var result StartOIDCLoginResult
+	err := client.doJSON(ctx, "start_oidc_login", http.MethodPost,
+		"/rpc/identity/start-oidc-login", input, &result)
+	return result, err
+}
+
+func (client *Client) CompleteOIDCLogin(
+	ctx context.Context, input OIDCCallbackInput,
+) (OIDCCallbackResult, error) {
+	query := url.Values{"state": []string{input.State}}
+	if input.Code != "" {
+		query.Set("code", input.Code)
+	}
+	if input.AuthorizationError != "" {
+		query.Set("error", input.AuthorizationError)
+	}
+	target := client.base.ResolveReference(&url.URL{
+		Path: "/protocol/oidc/callback", RawQuery: query.Encode(),
+	})
+	var result OIDCCallbackResult
+	err := client.doRequest(ctx, "complete_oidc_login", http.MethodGet, target, nil, &result)
 	return result, err
 }
 
@@ -121,6 +189,18 @@ func (client *Client) doJSON(
 	input any,
 	output any,
 ) error {
+	target := client.base.ResolveReference(&url.URL{Path: path})
+	return client.doRequest(ctx, operation, method, target, input, output)
+}
+
+func (client *Client) doRequest(
+	ctx context.Context,
+	operation string,
+	method string,
+	target *url.URL,
+	input any,
+	output any,
+) error {
 	ctx, span := tracer.Start(ctx, "identity."+operation, trace.WithSpanKind(trace.SpanKindClient))
 	defer span.End()
 	span.SetAttributes(attribute.String("rpc.system", "http"), attribute.String("rpc.method", operation))
@@ -135,7 +215,6 @@ func (client *Client) doJSON(
 		}
 		body = bytes.NewReader(payload)
 	}
-	target := client.base.ResolveReference(&url.URL{Path: path})
 	request, err := http.NewRequestWithContext(ctx, method, target.String(), body)
 	if err != nil {
 		return fmt.Errorf("create identity request: %w", err)

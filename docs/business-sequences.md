@@ -1,8 +1,8 @@
 # Implemented Business Sequences
 
 > Status: implemented-flow baseline and architecture review aid
-> Updated: 2026-09-02
-> Scope: Stage 1, Stage 2, and Stage 3A services currently implemented in this repository
+> Updated: 2026-09-03
+> Scope: Stage 1, Stage 2, and Stage 3 services currently implemented in this repository
 
 This document follows Antnest operations from their real entrypoints through
 service calls, durable commits, deployment side effects, and user-visible
@@ -26,9 +26,6 @@ Each sequence starts at a deployed entrypoint and names its current exposure:
 
 - **Edge public**: supported browser entry through Edge Gateway.
 - **Internal RPC**: trusted deployment-network API, not public OpenAPI.
-- **Protocol implemented, ingress pending**: protocol behavior exists in the
-  owner service, but Edge Gateway does not yet expose it in the production-shaped
-  Stage 3A topology.
 
 Database participants are always private service databases. A line to `Identity
 DB`, for example, never means another service can issue Identity SQL.
@@ -64,10 +61,11 @@ occurs on every protected request.
 | B08 | Disable and enable an Agent                        | Edge public                           | Agent Controller                                  | Compute removed/restored and state published            |
 | B09 | Rebuild an Agent                                   | Edge public                           | Agent Controller                                  | New execution revision published after full replacement |
 | B10 | Delete an Agent                                    | Edge public                           | Agent Controller                                  | Runtime/workspace removed and Agent marked deleted      |
-| B11 | Create/resume an ACP Session and execute a Run     | Internal ACP                          | Agent ACP Service plus Agent Controller admission | ACP response/state update reaches terminal state        |
+| B10a | Open Agent workspace and admit an ACP connection  | Edge public                           | Identity and Agent Controller access projection    | Browser receives safe bootstrap and ACP v1 connection   |
+| B11 | Create/resume an ACP Session and execute a Run     | Edge public ACP v1                    | Agent ACP Service plus Agent Controller admission | ACP response/state update reaches terminal state        |
 | B12 | Execute Runtime tools and outbound network traffic | Internal MCP                          | Runtime execution; Egress policy                  | Tool result or explicit failure                         |
-| B13 | OIDC login                                         | Protocol implemented, ingress pending | Identity Service                                  | Existing Membership receives a browser/API token        |
-| B14 | SCIM directory provisioning                        | Protocol implemented, ingress pending | Identity Service                                  | SCIM resource and Identity event commit together        |
+| B13 | OIDC login                                         | Edge public browser flow              | Edge Gateway and Identity Service                 | Existing Membership receives a browser session          |
+| B14 | SCIM directory provisioning                        | Edge public protocol path             | Edge Gateway and Identity Service                 | SCIM resource and Identity event commit together        |
 
 ### 1.2 Cross-service data objects
 
@@ -179,6 +177,15 @@ sequenceDiagram
     Admin-->>Edge: response
     Edge-->>Browser: response
 
+    Browser->>Edge: GET /api/admin/account
+    Edge->>Admin: account request + trusted principal projection
+    Admin->>Identity: get_current_account(actor, organization)
+    Identity->>IDDB: read active Membership and local-credential existence
+    Identity-->>Admin: safe profile + Organization presentation + local-password capability
+    Admin->>Admin: strip User, Membership, and Organization IDs
+    Admin-->>Edge: allowlisted current-account DTO
+    Edge-->>Browser: account + Organization labels + capability
+
     Browser->>Edge: DELETE /api/session + CSRF
     Edge->>Identity: revoke_access_token(token)
     alt Revoked or already invalid
@@ -196,6 +203,10 @@ sequenceDiagram
 - The raw token is returned once by Identity, held only in an HttpOnly cookie,
   and never returned in Edge JSON.
 - Identity owns token hashes and effective User/Membership/Organization state.
+- Identity also owns the current-account profile, Organization name and slug,
+  and whether the User has a local credential. The BFF does not infer password
+  capability from Membership source and never returns identity IDs, a
+  credential row, or a password hash in this browser DTO.
 - Edge owns cookie shape and CSRF policy but stores no server-side session row.
 - Incoming identity headers are discarded before verified headers are added.
 
@@ -217,6 +228,10 @@ sequenceDiagram
 - Logout is remote-first and idempotent. Cookies are cleared only after Identity
   confirms `revoked` or `already_invalid`, so a retryable outage cannot discard
   the credential required to retry revocation.
+- Current-account loading is optional presentation work after authentication.
+  Its failure leaves the Console session and primary pages usable, exposes a
+  local retry, uses neutral labels rather than opaque identity IDs, and fails
+  closed by hiding local-password rotation.
 - Edge performs coarse administrator admission. Owner services enforce their
   state and reference invariants, but Agent Controller's administrator actor and
   tenant scope are currently supplied only by the BFF pre-read; closing that gap
@@ -256,6 +271,7 @@ sequenceDiagram
     end
     Admin-->>Edge: browser DTO section envelopes
     Edge-->>Browser: overview response
+    Browser->>Browser: derive Model → Template → Directory → Agent readiness
 ```
 
 **Complexity review**
@@ -267,9 +283,106 @@ sequenceDiagram
   projections instead of inventing a cross-service aggregate record.
 - Agent inventory is required. Directory and catalog sections use stable
   availability envelopes, so optional dependency failure does not erase fleet
-  state. Successful responses are explicit browser allowlists and contain no
+  state. A degraded envelope names only the affected business resource and
+  omits upstream addresses and error details. Successful responses are explicit browser allowlists and contain no
   Provider credential reference, access subject/revision, Runtime execution
   identity, or MCP endpoint.
+- The browser derives the first-run path only from these section envelopes. It
+  persists no setup workflow. `unavailable` remains a retry state, an available
+  empty list remains a prerequisite action, and later resources stay blocked
+  until their real owner-service dependencies exist.
+- Active Directory readiness requires both User and Organization Membership
+  state to be active; disabled records remain administrable but do not count as
+  available Agent owners.
+- The aggregate is an Overview-only read model. The Template page independently
+  reads Templates, Model choices, and the Console's Runtime image default; the
+  Agent page independently reads Agents, Template choices, and Directory owners.
+  Those resource pages therefore neither duplicate their primary query through
+  `/overview` nor inherit failure from an unrelated overview section.
+- Model Profile inventory/detail and release-managed Catalog metadata are also
+  independent browser reads. Catalog failure preserves stored Profile facts and
+  human labels, closes only connect/revise actions, and remains locally
+  retryable without replacing the primary page.
+- Revision-qualified Catalog detail reads only the requested immutable Model or
+  Template revision; it does not fan out to the mutable current head. Template
+  detail resolves its referenced Model revision independently, so that lookup
+  can fail and retry without hiding the Template configuration.
+
+### B03a. Directory administration
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Browser as Administrator
+    participant Edge as Edge Gateway
+    participant Admin as Admin Console BFF
+    participant Identity as Identity Service
+    participant IDDB as Identity DB
+
+    Browser->>Edge: create local user or update local Membership
+    Edge->>Admin: command + trusted principal
+    Admin->>Admin: inject actor, organization, request ID
+    Admin->>Identity: scoped directory command
+    Identity->>IDDB: authorize and commit fact + Identity event
+    IDDB-->>Identity: committed projection
+    Identity-->>Admin: secret-free result
+    Admin-->>Browser: explicit browser DTO
+```
+
+- SCIM Memberships and Groups are visible but not locally editable. Identity,
+  not the browser, enforces this ownership boundary.
+- Membership deactivation affects one Organization. Global User activation is
+  a separate command restricted to system administrators and can affect every
+  Organization; deactivation locks and validates every affected Organization.
+- Identity locks the Organization while removing administrator access and
+  rejects the command when no other effective administrator remains.
+
+### B03b. Enterprise provisioning administration
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Browser as Administrator
+    participant Edge as Edge Gateway
+    participant Admin as Admin Console BFF
+    participant Identity as Identity Service
+    participant IDDB as Identity DB
+    participant IdP as External IdP
+
+    Browser->>Edge: list or change OIDC/SCIM provisioning
+    Edge->>Admin: request + trusted principal
+    Admin->>Admin: enforce role and inject actor/organization
+    alt list OIDC Providers
+        Admin->>Identity: list_oidc_providers
+        Identity->>IDDB: select Provider metadata without secret columns
+        Identity-->>Admin: safe Provider projections
+    else configure OIDC Provider
+        Admin->>Identity: upsert Provider + client secret
+        Identity->>IdP: discover and validate issuer/endpoints
+        Identity->>IDDB: encrypt secret and commit Provider revision + event
+        Identity-->>Admin: safe Provider projection
+    else list or revoke SCIM credentials
+        Admin->>Identity: list_scim_tokens or revoke_scim_token
+        Identity->>IDDB: read metadata or commit revocation + event
+        Identity-->>Admin: token metadata without hash or credential
+    else issue SCIM credential
+        Admin->>Identity: issue_scim_token
+        Identity->>IDDB: store token hash + metadata + event
+        Identity-->>Admin: metadata + one-time plaintext credential
+        Admin-->>Browser: no-store one-time credential response
+    end
+```
+
+- OIDC Provider reads and writes require a system administrator. The list query
+  never selects encrypted secret columns, so a later projection bug cannot
+  redisclose the secret.
+- SCIM credential management accepts an organization administrator. Multiple
+  active credentials support rotation; revoked credentials remain visible as
+  audit metadata.
+- The BFF uses explicit browser DTOs. Client secrets, token hashes, and SCIM
+  credentials are absent from ordinary reads, logs, and traces. A newly issued
+  SCIM credential exists only in the no-store response and in transient page
+  memory until the administrator closes the dialog.
 
 ## 3. Catalog Management
 
@@ -285,13 +398,18 @@ sequenceDiagram
     participant AC as Agent Controller
     participant ACDB as Agent Controller DB
 
+    AdminUser->>Edge: GET /api/admin/model-catalog
+    Edge->>Admin: trusted administrator principal
+    Admin->>AC: GET /internal/model-catalog
+    AC-->>Admin: supported providers, models, and authoritative limits
+    Admin-->>AdminUser: provider and model choices
     AdminUser->>Edge: POST /api/admin/model-profiles + CSRF
     Edge->>Identity: resolve_access_token
     Identity-->>Edge: administrator principal
     Edge->>Admin: trusted organization and actor IDs
     Admin->>Admin: validate UI input and generate request_id
     Admin->>AC: POST /internal/model-profiles with credential
-    AC->>AC: validate protocol/model configuration and seal credential
+    AC->>AC: canonicalize known model metadata and seal credential
     AC->>ACDB: transaction: catalog request + credential + head + revision
     AC-->>Admin: profile head + immutable revision, no secret
     Admin-->>Edge: created Model Profile
@@ -304,6 +422,7 @@ sequenceDiagram
   `request_id` replay.
 - `provider_credentials` stores only encrypted secret material and version.
 - `model_profiles` is the mutable head; `model_profile_revisions` is immutable.
+- The built-in model catalog is release metadata and creates no durable record.
 
 **Complexity review**
 
@@ -317,6 +436,10 @@ sequenceDiagram
   itself is not part of the owner command or audit fact.
 - Returning only the revision and credential reference keeps later Template and
   Run paths independent from secret storage shape.
+- Provider/model presets are constrained to protocols implemented by Agent ACP
+  Service. For known models the administrator cannot override endpoint or
+  token limits; custom OpenAI-compatible APIs remain explicit and fully
+  configurable.
 
 ### B05. Create an Agent Template
 
@@ -411,6 +534,12 @@ sequenceDiagram
     ACDB-->>AdminUser: SSE wake-up; browser re-reads Agent and Operation
 ```
 
+The Console derives two Owner views from its scoped Directory read. Only Users
+with an active account and active Organization Membership appear in the create
+selector. The full retained Directory projection remains available for current
+and deleted Fleet presentation, so a later deactivation prevents new
+assignment without erasing the historical Owner name or email.
+
 **Commit points and owned data**
 
 - Agent Controller first commits intent and immutable Agent configuration. It
@@ -454,10 +583,10 @@ sequenceDiagram
         Edge->>Identity: resolve_access_token
         Edge->>Admin: trusted Agent request
         Admin->>AC: GET Agent (organization scope check)
-        AC->>ACDB: read current projection
-        AC-->>Admin: Agent projection
-        Admin-->>Edge: Agent projection
-        Edge-->>Browser: Agent projection
+        AC->>ACDB: read current projection + executable AgentSpec lineage
+        AC-->>Admin: Agent projection + safe configuration lineage
+        Admin-->>Edge: allowlisted Agent projection
+        Edge-->>Browser: Agent state + exact Template/Model revisions
     and
         Browser->>Edge: GET Agent events after sequence N
         Edge->>Identity: resolve_access_token
@@ -489,17 +618,63 @@ sequenceDiagram
     Admin-->>Edge: scoped event stream
     Edge-->>Browser: agent_event SSE
     Note over Edge,Browser: Edge closes the stream at its authentication lease; reconnect re-authenticates
-    Note over Browser,AC: Current reconnect reuses the original query cursor; Last-Event-ID and authoritative re-list are not wired through
+    Edge--xBrowser: stream interrupted
+    par Recover event authority
+        Browser->>Edge: GET events after latest applied sequence
+        Edge-->>Browser: event replay or event-local failure
+        Browser->>Browser: merge replay and advance cursor on success
+        Browser->>Edge: reconnect watch after replay cursor
+    and Recover Agent authority
+        Browser->>Edge: GET current Agent projection
+        Edge-->>Browser: Agent projection or Agent-local failure
+        Browser->>Browser: apply lifecycle state on success
+    end
+    opt Agent active request or replayed operation hint
+        Browser->>Edge: GET referenced durable operation
+        Edge-->>Browser: operation progress or operation-local failure
+    end
 ```
+
+The initial Agent projection and lifecycle-event baseline are independent
+browser reads. Event-list or SSE recovery failure degrades only the evidence
+section: the Agent, executable configuration, and valid lifecycle commands
+remain usable. Previously loaded events stay visible, replayed event IDs are
+de-duplicated, and a section-local retry re-establishes the authoritative
+cursor before opening a new stream only after a transient failure. A terminal
+`403`, `404`, or `410` response preserves evidence but stops automatic replay
+and exposes no futile retry action.
+If the Agent identifies an active operation, operation progress is fetched as a
+third independent resource. Failure is shown beside that operation and retried
+only when transient without replacing Agent detail. The active request on the Agent projection
+continues to close conflicting lifecycle commands, while responses for an older
+request or another Agent are discarded.
+The browser does not automatically fetch the same terminally failed Operation
+again. If Agent refresh fails, the last projection stays readable but lifecycle
+commands close until a fresh authoritative projection is accepted.
+Recovery preserves the same independence. Event replay and Agent refresh begin
+together but commit separately: a successful replay reconnects SSE despite an
+Agent failure, and a successful Agent read updates lifecycle state despite a
+replay failure. Only the failed resource is retried. Operation selection
+prefers the Agent's active request and otherwise uses the newest
+operation-bearing replayed event, independent of response arrival order.
+Concurrent Agent responses are applied by aggregate sequence, not by request
+completion order, so recovery cannot discard the only valid initial snapshot
+or regress a newer one.
 
 **Complexity review**
 
-- SSE is a latency channel, not authority. The initial ordered list and current
-  Agent projection establish a correct starting point, but the current browser
-  does not re-list after disconnect and Admin does not propagate
-  `Last-Event-ID`. Native reconnect therefore replays from the original cursor;
-  deduplication hides duplicate rows but still causes repeated projection reads,
-  and an expired cursor cannot self-heal.
+- The detail query resolves lineage from the Agent's executable AgentSpec, not
+  from current Template or Model heads. Current catalog names are labels only;
+  immutable revision IDs and numbers remain the authority. Agent lists omit the
+  additional join, and the BFF removes credential and Runtime routing fields.
+- SSE is a latency channel, not authority. The browser owns its last applied
+  sequence and, after any stream error, closes the native connection, re-lists
+  events after that sequence and independently re-reads the Agent projection.
+  Replay alone owns cursor advancement and reopening the watch; it never waits
+  for the Agent read. Event IDs still deduplicate an ambiguous replay. A
+  cross-reconnect operation hint lets either response order resolve the active
+  or newest replayed operation, so terminal progress observed during
+  disconnection cannot leave the Console permanently busy.
 - Admin performs one Agent read before event list/watch to enforce organization
   scope because Agent Controller's trusted internal event endpoint is not
   principal-aware. Immutable Agent organization prevents a mutation TOCTOU, but
@@ -657,6 +832,10 @@ sequenceDiagram
     AC-->>Admin: completed delete operation
     Admin-->>Edge: completed delete operation
     Edge-->>AdminUser: Agent deleted
+    AdminUser->>Edge: GET current Agent inventory
+    Edge-->>AdminUser: deleted Agent omitted
+    AdminUser->>Edge: GET inventory with view=deleted
+    Edge-->>AdminUser: retained deleted projection and event-history link
 ```
 
 **Complexity review**
@@ -667,15 +846,61 @@ sequenceDiagram
 - Agent configuration revisions, execution revisions, operations, admissions,
   and events remain as audit facts. Physical retention purge is intentionally a
   separate future concern, not part of interactive deletion.
+- Console does not mix retained records into the normal Fleet. The explicit
+  deleted view asks the BFF for `view=deleted`; the BFF maps that product view
+  to Agent Controller's retained lifecycle filter and exposes the resource as
+  read-only lifecycle evidence.
 - Address quarantine is analogous to delayed PID/address reuse and protects late
   packets. It belongs in Egress, not Agent Controller.
 
 ## 5. ACP Session And Run Execution
 
-The ACP service is implemented at `/v1/acp` and `/v2/acp`, but Stage 3A does not
-yet route it through Edge Gateway or provide Agent UI. The current production-
-shaped public business chain therefore stops at administrator control. The
-following flows are implemented internal/development protocol flows.
+The ACP service implements stable ACP v1 at `/v1/acp` and draft ACP v2 at
+`/v2/acp`. Agent UI uses stable v1 through an authenticated same-origin Edge
+Gateway bridge; draft v2 is not silently selected by the browser.
+
+### B10a. Agent Workspace entry and ACP bridge admission
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User
+    participant Edge as Edge Gateway
+    participant Identity as Identity Service
+    participant AC as Agent Controller
+    participant UI as Agent UI
+    participant ACP as Agent ACP Service
+
+    User->>Edge: GET /workspace/
+    Edge->>UI: proxy static application, strip /workspace prefix
+    UI-->>User: Agent workspace application
+    User->>Edge: GET /api/app/bootstrap with browser cookie
+    Edge->>Identity: resolve access token
+    Identity-->>Edge: active principal
+    Edge->>AC: list_workspace_agents(organization, principal)
+    AC-->>Edge: browser facts + server-only access subjects
+    Edge-->>User: principal and Agent ID/name/availability only
+    User->>Edge: same-origin WebSocket /api/app/agents/{id}/acp
+    Edge->>Identity: resolve access token again
+    Edge->>AC: list_workspace_agents(organization, principal)
+    Edge->>ACP: upgrade /v1/acp with authoritative access subject
+    ACP-->>User: stable ACP v1 connection
+```
+
+**Boundary and data review**
+
+- The bootstrap is an authoritative bounded read. It never returns an Agent
+  access subject, Runtime endpoint, Provider credential, or internal service
+  address.
+- WebSocket admission resolves the selected Agent again rather than trusting a
+  stale bootstrap or browser-supplied subject. Cookies and authorization are
+  not forwarded to ACP Service.
+- Agent UI owns no Session persistence. It lists and loads Sessions through ACP,
+  renders replayed message/Tool updates, and disables submission when bootstrap
+  or local prompt state reports the Agent busy.
+- Transport loss leaves existing content readable and disables mutation. The
+  current MVP requires an explicit page retry; it does not add a polling state
+  machine or pretend that a disconnected browser remains synchronized.
 
 ### B11. Connection binding, Session creation, and prompt admission
 
@@ -902,24 +1127,32 @@ sequenceDiagram
 
 ### B13. OIDC login
 
-OIDC is implemented by Identity Service. Edge Gateway does not yet expose the
-start/callback routes, and Admin Console does not yet configure Providers.
+Identity Service owns OIDC semantics and Admin Console configures Providers.
+Edge Gateway exposes organization-aware method discovery, login start, and the
+callback-to-browser-session boundary.
 
 ```mermaid
 sequenceDiagram
     autonumber
     actor Browser
-    participant Caller as Future Edge/Admin caller
+    participant Edge as Edge Gateway
     participant Identity as Identity Service
     participant IDDB as Identity DB
     participant IdP as External OIDC Provider
 
-    Caller->>Identity: start_oidc_login(provider)
+	Browser->>Edge: POST login-methods(organization)
+	Edge->>Identity: list_login_methods(organization)
+	Identity-->>Edge: enabled methods
+	Edge-->>Browser: organization sign-in choices
+	Browser->>Edge: POST oidc/start(provider)
+	Edge->>Identity: start_oidc_login(provider)
     Identity->>IDDB: read enabled Provider and pinned discovery metadata
     Identity->>IDDB: persist expiring hashed state, nonce, PKCE, Provider revision
-    Identity-->>Browser: authorization URL containing one-time state
+	Identity-->>Edge: authorization URL containing one-time state
+	Edge-->>Browser: authorization URL
     Browser->>IdP: authenticate and authorize
-    IdP-->>Identity: GET /protocol/oidc/callback?code&state
+	IdP-->>Edge: GET /protocol/oidc/callback?code&state
+	Edge->>Identity: complete callback(code, state)
     Identity->>IDDB: atomically claim state
     Identity->>IdP: token exchange with pinned client method and PKCE
     IdP-->>Identity: ID token and optional access token
@@ -929,7 +1162,9 @@ sequenceDiagram
         IdP-->>Identity: matching subject and email
     end
     Identity->>IDDB: bind existing Membership only; persist ExternalIdentity, token, event
-    Identity-->>Browser: principal and one-time Antnest token
+	Identity-->>Edge: principal and one-time Antnest token
+	Edge->>Edge: establish HttpOnly session cookies
+	Edge-->>Browser: 303 /
 ```
 
 **Complexity review**
@@ -942,10 +1177,9 @@ sequenceDiagram
   revision; it does not rediscover the IdP on every login.
 - OIDC never provisions a User. It binds only an existing active Membership;
   SCIM/local directory ownership remains authoritative.
-- OIDC/SCIM pass-through and Console Provider UI remain integration gaps,
-  separate from the completed Identity protocol core. Edge now reserves both
-  prefixes and returns JSON `503 protocol_unavailable`; protocol traffic cannot
-  fall through to the Console SPA.
+- Edge keeps OIDC state, authorization code, and the one-time Antnest token out
+  of response bodies, redirect locations, logs, and traces. Unknown OIDC paths
+  fail closed instead of falling through to the Console SPA.
 
 ### B14. SCIM provisioning
 
@@ -953,10 +1187,12 @@ sequenceDiagram
 sequenceDiagram
     autonumber
     participant IdP as Enterprise IdP
+	participant Edge as Edge Gateway /scim/v2
     participant Identity as Identity Service /scim/v2
     participant IDDB as Identity DB
 
-    IdP->>Identity: SCIM request + scoped Bearer token
+	IdP->>Edge: SCIM request + scoped Bearer token
+	Edge->>Identity: preserve method/path/body/Bearer; strip browser identity
     Identity->>IDDB: resolve hashed SCIM token and Organization
     Identity->>Identity: validate schema, ownership, filter, version, and body limit
     alt User mutation
@@ -964,7 +1200,8 @@ sequenceDiagram
     else Group mutation
         Identity->>IDDB: row-locked transaction: Group + SCIM-owned edges + event
     end
-    Identity-->>IdP: canonical SCIM resource or error envelope
+	Identity-->>Edge: canonical SCIM resource or error envelope
+	Edge-->>IdP: preserve protocol response
 ```
 
 **Complexity review**
@@ -1017,7 +1254,6 @@ record rather than a live defect list.
 | P2       | SSE reconnect does not propagate `Last-Event-ID` or re-list after cursor expiry                                                             | Resume from the latest delivered sequence and fall back to authoritative list plus projection before reopening the stream                                   |
 | P2       | Every token resolution executes a PostgreSQL `UPDATE`, even within the five-minute sampling window                                          | Keep authorization read-only; sample last-use telemetry through a conditional/best-effort path that does not lock every request                             |
 | P2       | Admin raw-proxies unused credential references, access revisions, Runtime endpoints/execution IDs, and Agent access subjects to the browser | Define browser-specific response DTOs and retain private control-plane fields inside the BFF                                                                |
-| P2       | Unimplemented OIDC/SCIM public paths fall through to the Console SPA and return HTML `200`                                                  | Reserve protocol prefixes at Edge and return an explicit unavailable/not-found response until real routes are connected                                     |
 | P3       | Edge probes Identity directly and through Admin readiness                                                                                   | Accept as cheap direct-dependency evidence unless measured probe load justifies shallow Admin readiness                                                     |
 
 Agent Controller storing an admission terminal projection is not itself a second
@@ -1071,13 +1307,9 @@ dependencies, while owner services still enforce business scope.
 
 ### 8.5 Implemented cores not yet connected to a public business entry
 
-1. Agent ACP Service has complete internal/development ACP v1/v2 entrypoints,
-   but Edge Gateway and Agent UI do not yet provide the end-user path.
-2. Identity implements OIDC and SCIM, but Stage 3A Edge routing and Console
-   management for those protocols remain pending.
-3. Identity events are durable local audit facts; downstream delivery and Agent
+1. Identity events are durable local audit facts; downstream delivery and Agent
    Controller reactions are not implemented.
-4. Skill Registry and Channel Gateway are absent, so no sequence should imply
+2. Skill Registry and Channel Gateway are absent, so no sequence should imply
    Skill distribution or IM delivery is currently available.
 
 ## 9. Sequence Maintenance Rules

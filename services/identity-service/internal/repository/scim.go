@@ -84,6 +84,35 @@ func (a *SCIMAdapter) RevokeToken(ctx context.Context, actorUserID, tokenID stri
 	})
 }
 
+func (a *SCIMAdapter) ListTokens(ctx context.Context, organizationID string) ([]scim.Token, error) {
+	return observeRepositoryValue(ctx, "list_scim_tokens", func(ctx context.Context) ([]scim.Token, error) {
+		rows, err := a.store.pool.Query(ctx, `
+			SELECT id, organization_id, name, scopes, created_at, revoked_at
+			FROM scim_tokens
+			WHERE organization_id = $1
+			ORDER BY created_at DESC, id`, organizationID)
+		if err != nil {
+			return nil, fmt.Errorf("list SCIM tokens: %w", err)
+		}
+		defer rows.Close()
+		tokens := make([]scim.Token, 0)
+		for rows.Next() {
+			var token scim.Token
+			if err := rows.Scan(
+				&token.ID, &token.OrganizationID, &token.Name, &token.Scopes,
+				&token.CreatedAt, &token.RevokedAt,
+			); err != nil {
+				return nil, fmt.Errorf("scan SCIM token: %w", err)
+			}
+			tokens = append(tokens, token)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("iterate SCIM tokens: %w", err)
+		}
+		return tokens, nil
+	})
+}
+
 func (a *SCIMAdapter) ResolveToken(
 	ctx context.Context,
 	digest string,

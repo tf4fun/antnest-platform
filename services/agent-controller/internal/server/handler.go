@@ -49,13 +49,16 @@ var (
 )
 
 type CatalogService interface {
+	ModelCatalog(context.Context) application.ModelCatalogView
 	CreateModelProfile(context.Context, application.CreateModelProfileInput) (application.ModelProfileView, error)
 	ReviseModelProfile(context.Context, application.ReviseModelProfileInput) (application.ModelProfileView, error)
-	GetModelProfile(context.Context, string) (application.ModelProfileView, error)
+	GetModelProfile(context.Context, string, string) (application.ModelProfileView, error)
+	GetModelProfileRevision(context.Context, string, string) (application.ModelProfileView, error)
 	ListModelProfiles(context.Context, application.ListCatalogInput) (application.ModelProfilePage, error)
 	CreateTemplate(context.Context, application.CreateTemplateInput) (application.TemplateView, error)
 	ReviseTemplate(context.Context, application.ReviseTemplateInput) (application.TemplateView, error)
-	GetTemplate(context.Context, string) (application.TemplateView, error)
+	GetTemplate(context.Context, string, string) (application.TemplateView, error)
+	GetTemplateRevision(context.Context, string, string, int64) (application.TemplateView, error)
 	ListTemplates(context.Context, application.ListCatalogInput) (application.TemplatePage, error)
 }
 
@@ -79,6 +82,7 @@ type AgentQueryService interface {
 	GetAgent(context.Context, string) (application.AgentView, error)
 	GetAgentForOrganization(context.Context, string, string) (application.AgentView, error)
 	ListAgents(context.Context, application.ListAgentsInput) (application.AgentPage, error)
+	ListWorkspaceAgents(context.Context, application.ListWorkspaceAgentsInput) (application.WorkspaceAgentPage, error)
 }
 
 type AgentEventService interface {
@@ -144,17 +148,21 @@ func (h *handler) routes() []routeDefinition {
 	return []routeDefinition{
 		{pattern: "GET /status", handler: h.status},
 		{pattern: "GET /rpc/agent-controller/status", handler: h.status},
+		{pattern: "POST /rpc/agent-controller/list-workspace-agents", handler: h.listWorkspaceAgents},
 		{pattern: "POST /rpc/agent-controller/resolve-agent-access", handler: h.resolveAgentAccess},
 		{pattern: "POST /rpc/agent-controller/acquire-run", handler: h.acquireRun},
 		{pattern: "POST /rpc/agent-controller/resolve-credential", handler: h.resolveCredential},
 		{pattern: "POST /rpc/agent-controller/finish-run", handler: h.finishRun},
+		{pattern: "GET /internal/model-catalog", handler: h.modelCatalog},
 		{pattern: "POST /internal/model-profiles", handler: h.createModelProfile},
 		{pattern: "GET /internal/model-profiles", handler: h.listModelProfiles},
 		{pattern: "GET /internal/model-profiles/{model_profile_id}", handler: h.getModelProfile},
+		{pattern: "GET /internal/model-profile-revisions/{revision_id}", handler: h.getModelProfileRevision},
 		{pattern: "POST /internal/model-profiles/{model_profile_id}/revisions", handler: h.reviseModelProfile},
 		{pattern: "POST /internal/agent-templates", handler: h.createTemplate},
 		{pattern: "GET /internal/agent-templates", handler: h.listTemplates},
 		{pattern: "GET /internal/agent-templates/{template_id}", handler: h.getTemplate},
+		{pattern: "GET /internal/agent-templates/{template_id}/revisions/{revision}", handler: h.getTemplateRevision},
 		{pattern: "POST /internal/agent-templates/{template_id}/revisions", handler: h.reviseTemplate},
 		{pattern: "POST /internal/agents", handler: h.createAgent},
 		{pattern: "GET /internal/agents", handler: h.listAgents},
@@ -186,10 +194,11 @@ type createModelProfileRequest struct {
 }
 
 type reviseModelProfileRequest struct {
-	RequestID   string           `json:"request_id"`
-	DisplayName string           `json:"display_name"`
-	Model       domain.ModelSpec `json:"model"`
-	Credential  credentialInput  `json:"credential"`
+	RequestID      string           `json:"request_id"`
+	OrganizationID string           `json:"organization_id"`
+	DisplayName    string           `json:"display_name"`
+	Model          domain.ModelSpec `json:"model"`
+	Credential     credentialInput  `json:"credential"`
 }
 
 type createTemplateRequest struct {
@@ -206,6 +215,7 @@ type createTemplateRequest struct {
 
 type reviseTemplateRequest struct {
 	RequestID              string                  `json:"request_id"`
+	OrganizationID         string                  `json:"organization_id"`
 	Name                   string                  `json:"name"`
 	ModelProfileRevisionID string                  `json:"model_profile_revision_id"`
 	SystemPrompt           string                  `json:"system_prompt"`
@@ -241,6 +251,14 @@ type lifecycleRequest struct {
 type resolveAgentAccessRequest struct {
 	RequestID          string `json:"request_id"`
 	AgentAccessSubject string `json:"agent_access_subject"`
+}
+
+type listWorkspaceAgentsRequest struct {
+	RequestID      string `json:"request_id"`
+	OrganizationID string `json:"organization_id"`
+	PrincipalID    string `json:"principal_id"`
+	Limit          int    `json:"limit,omitempty"`
+	Cursor         string `json:"cursor,omitempty"`
 }
 
 type acquireRunRequest struct {
@@ -332,24 +350,47 @@ type runtimeBindingResponse struct {
 	MCPEndpoint        string `json:"mcp_endpoint"`
 }
 
+type agentTemplateLineageResponse struct {
+	TemplateID string `json:"template_id"`
+	Revision   int64  `json:"revision"`
+	Name       string `json:"name"`
+}
+
+type agentModelProfileLineageResponse struct {
+	ModelProfileID string           `json:"model_profile_id"`
+	RevisionID     string           `json:"revision_id"`
+	Revision       int64            `json:"revision"`
+	Name           string           `json:"name"`
+	Model          domain.ModelSpec `json:"model"`
+}
+
+type agentConfigurationResponse struct {
+	Template             agentTemplateLineageResponse     `json:"template"`
+	ModelProfile         agentModelProfileLineageResponse `json:"model_profile"`
+	MaxModelRequests     int                              `json:"max_model_requests"`
+	ContextPolicyVersion string                           `json:"context_policy_version"`
+	Runtime              domain.RuntimeSpecInput          `json:"runtime"`
+}
+
 type agentResponse struct {
-	AgentID                         string                  `json:"agent_id"`
-	OrganizationID                  string                  `json:"organization_id"`
-	OwnerUserID                     string                  `json:"owner_user_id"`
-	Name                            string                  `json:"name"`
-	DesiredState                    domain.DesiredState     `json:"desired_state"`
-	LifecycleState                  domain.AgentState       `json:"lifecycle_state"`
-	AccessRevision                  string                  `json:"access_revision"`
-	AgentSpecRevision               string                  `json:"agent_spec_revision,omitempty"`
-	ExecutableExecutionRevision     string                  `json:"executable_execution_revision,omitempty"`
-	LastSuccessfulExecutionRevision string                  `json:"last_successful_execution_revision,omitempty"`
-	Runtime                         *runtimeBindingResponse `json:"runtime,omitempty"`
-	ActiveOperationRequestID        string                  `json:"active_operation_request_id,omitempty"`
-	FailureStage                    string                  `json:"failure_stage,omitempty"`
-	FailureCode                     string                  `json:"failure_code,omitempty"`
-	AggregateSequence               int64                   `json:"aggregate_sequence"`
-	CreatedAt                       time.Time               `json:"created_at"`
-	UpdatedAt                       time.Time               `json:"updated_at"`
+	AgentID                         string                      `json:"agent_id"`
+	OrganizationID                  string                      `json:"organization_id"`
+	OwnerUserID                     string                      `json:"owner_user_id"`
+	Name                            string                      `json:"name"`
+	DesiredState                    domain.DesiredState         `json:"desired_state"`
+	LifecycleState                  domain.AgentState           `json:"lifecycle_state"`
+	AccessRevision                  string                      `json:"access_revision"`
+	AgentSpecRevision               string                      `json:"agent_spec_revision,omitempty"`
+	ExecutableExecutionRevision     string                      `json:"executable_execution_revision,omitempty"`
+	LastSuccessfulExecutionRevision string                      `json:"last_successful_execution_revision,omitempty"`
+	Runtime                         *runtimeBindingResponse     `json:"runtime,omitempty"`
+	ActiveOperationRequestID        string                      `json:"active_operation_request_id,omitempty"`
+	FailureStage                    string                      `json:"failure_stage,omitempty"`
+	FailureCode                     string                      `json:"failure_code,omitempty"`
+	Configuration                   *agentConfigurationResponse `json:"configuration,omitempty"`
+	AggregateSequence               int64                       `json:"aggregate_sequence"`
+	CreatedAt                       time.Time                   `json:"created_at"`
+	UpdatedAt                       time.Time                   `json:"updated_at"`
 }
 
 type agentListResponse struct {
@@ -401,6 +442,18 @@ type resolveAgentAccessResponse struct {
 	PromptCapabilities ports.PromptCapabilities `json:"prompt_capabilities"`
 }
 
+type workspaceAgentResponse struct {
+	AgentID            string                            `json:"agent_id"`
+	Name               string                            `json:"name"`
+	Availability       application.WorkspaceAvailability `json:"availability"`
+	AgentAccessSubject string                            `json:"agent_access_subject"`
+}
+
+type workspaceAgentListResponse struct {
+	Agents     []workspaceAgentResponse `json:"agents"`
+	NextCursor *string                  `json:"next_cursor"`
+}
+
 type acquireRunResponse struct {
 	AdmissionID              string                      `json:"admission_id"`
 	AdmissionDeadline        time.Time                   `json:"admission_deadline"`
@@ -438,6 +491,10 @@ func (h *handler) status(response http.ResponseWriter, request *http.Request) {
 	writeJSON(response, http.StatusOK, map[string]string{"status": "ready"})
 }
 
+func (h *handler) modelCatalog(response http.ResponseWriter, request *http.Request) {
+	writeJSON(response, http.StatusOK, h.catalog.ModelCatalog(request.Context()))
+}
+
 func (h *handler) resolveAgentAccess(response http.ResponseWriter, request *http.Request) {
 	var payload resolveAgentAccessRequest
 	if !decodeJSON(response, request, &payload) {
@@ -453,6 +510,34 @@ func (h *handler) resolveAgentAccess(response http.ResponseWriter, request *http
 	writeJSON(response, http.StatusOK, resolveAgentAccessResponse{
 		PrincipalID: result.PrincipalID, AgentID: result.AgentID,
 		AccessRevision: result.AccessRevision, PromptCapabilities: result.PromptCapabilities,
+	})
+}
+
+func (h *handler) listWorkspaceAgents(response http.ResponseWriter, request *http.Request) {
+	response.Header().Set("Cache-Control", "no-store")
+	var payload listWorkspaceAgentsRequest
+	if !decodeJSON(response, request, &payload) {
+		return
+	}
+	page, err := h.queries.ListWorkspaceAgents(
+		request.Context(), application.ListWorkspaceAgentsInput{
+			RequestID: payload.RequestID, OrganizationID: payload.OrganizationID,
+			PrincipalID: payload.PrincipalID, Limit: payload.Limit, Cursor: payload.Cursor,
+		},
+	)
+	if err != nil {
+		writeRunError(request.Context(), response, err)
+		return
+	}
+	agents := make([]workspaceAgentResponse, 0, len(page.Items))
+	for _, item := range page.Items {
+		agents = append(agents, workspaceAgentResponse{
+			AgentID: item.AgentID, Name: item.Name, Availability: item.Availability,
+			AgentAccessSubject: item.AccessSubject,
+		})
+	}
+	writeJSON(response, http.StatusOK, workspaceAgentListResponse{
+		Agents: agents, NextCursor: optionalString(page.NextCursor),
 	})
 }
 
@@ -562,7 +647,8 @@ func (h *handler) reviseModelProfile(response http.ResponseWriter, request *http
 	}
 	view, err := h.catalog.ReviseModelProfile(request.Context(), application.ReviseModelProfileInput{
 		RequestID: payload.RequestID, ModelProfileID: request.PathValue("model_profile_id"),
-		DisplayName: payload.DisplayName, Model: payload.Model,
+		OrganizationID: payload.OrganizationID,
+		DisplayName:    payload.DisplayName, Model: payload.Model,
 		CredentialSecret: payload.Credential.Secret,
 	})
 	if err != nil {
@@ -573,7 +659,28 @@ func (h *handler) reviseModelProfile(response http.ResponseWriter, request *http
 }
 
 func (h *handler) getModelProfile(response http.ResponseWriter, request *http.Request) {
-	view, err := h.catalog.GetModelProfile(request.Context(), request.PathValue("model_profile_id"))
+	organizationID, ok := requiredOrganizationQuery(response, request)
+	if !ok {
+		return
+	}
+	view, err := h.catalog.GetModelProfile(
+		request.Context(), organizationID, request.PathValue("model_profile_id"),
+	)
+	if err != nil {
+		writeServiceError(request.Context(), response, err)
+		return
+	}
+	writeJSON(response, http.StatusOK, modelProfilePayload(view))
+}
+
+func (h *handler) getModelProfileRevision(response http.ResponseWriter, request *http.Request) {
+	organizationID, ok := requiredOrganizationQuery(response, request)
+	if !ok {
+		return
+	}
+	view, err := h.catalog.GetModelProfileRevision(
+		request.Context(), organizationID, request.PathValue("revision_id"),
+	)
 	if err != nil {
 		writeServiceError(request.Context(), response, err)
 		return
@@ -626,6 +733,7 @@ func (h *handler) reviseTemplate(response http.ResponseWriter, request *http.Req
 	}
 	view, err := h.catalog.ReviseTemplate(request.Context(), application.ReviseTemplateInput{
 		RequestID: payload.RequestID, TemplateID: request.PathValue("template_id"), Name: payload.Name,
+		OrganizationID:         payload.OrganizationID,
 		ModelProfileRevisionID: payload.ModelProfileRevisionID,
 		SystemPrompt:           payload.SystemPrompt, MaxModelRequests: payload.MaxModelRequests,
 		ContextPolicyVersion: payload.ContextPolicyVersion, Runtime: payload.Runtime,
@@ -638,7 +746,31 @@ func (h *handler) reviseTemplate(response http.ResponseWriter, request *http.Req
 }
 
 func (h *handler) getTemplate(response http.ResponseWriter, request *http.Request) {
-	view, err := h.catalog.GetTemplate(request.Context(), request.PathValue("template_id"))
+	organizationID, ok := requiredOrganizationQuery(response, request)
+	if !ok {
+		return
+	}
+	view, err := h.catalog.GetTemplate(request.Context(), organizationID, request.PathValue("template_id"))
+	if err != nil {
+		writeServiceError(request.Context(), response, err)
+		return
+	}
+	writeJSON(response, http.StatusOK, templatePayload(view))
+}
+
+func (h *handler) getTemplateRevision(response http.ResponseWriter, request *http.Request) {
+	organizationID, ok := requiredOrganizationQuery(response, request)
+	if !ok {
+		return
+	}
+	revision, err := strconv.ParseInt(request.PathValue("revision"), 10, 64)
+	if err != nil || revision < 1 {
+		writeError(response, http.StatusBadRequest, "invalid_request", "Template revision is invalid", false)
+		return
+	}
+	view, err := h.catalog.GetTemplateRevision(
+		request.Context(), organizationID, request.PathValue("template_id"), revision,
+	)
 	if err != nil {
 		writeServiceError(request.Context(), response, err)
 		return
@@ -1218,6 +1350,24 @@ func agentPayload(agent application.AgentView) agentResponse {
 		response.Runtime = &runtimeBindingResponse{
 			RuntimeRevision: agent.RuntimeRevision, RuntimeExecutionID: agent.RuntimeExecutionID,
 			MCPEndpoint: agent.RuntimeMCPEndpoint,
+		}
+	}
+	if agent.Configuration != nil {
+		configuration := agent.Configuration
+		response.Configuration = &agentConfigurationResponse{
+			Template: agentTemplateLineageResponse{
+				TemplateID: configuration.TemplateID,
+				Revision:   configuration.TemplateRevision, Name: configuration.TemplateName,
+			},
+			ModelProfile: agentModelProfileLineageResponse{
+				ModelProfileID: configuration.ModelProfileID,
+				RevisionID:     configuration.ModelProfileRevisionID,
+				Revision:       configuration.ModelProfileRevision, Name: configuration.ModelProfileName,
+				Model: configuration.Model,
+			},
+			MaxModelRequests:     configuration.MaxModelRequests,
+			ContextPolicyVersion: configuration.ContextPolicyVersion,
+			Runtime:              configuration.Runtime,
 		}
 	}
 	return response

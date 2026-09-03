@@ -9,32 +9,98 @@ export type Principal = {
 
 export type Session = { principal: Principal; expires_at?: string };
 
+export type CurrentAccount = {
+  email: string;
+  display_name: string;
+  source: "local" | "scim";
+  organization_slug: string;
+  organization_name: string;
+  local_password_available: boolean;
+};
+
+export type CurrentAccountResult = { account: CurrentAccount };
+
+export type LoginMethod = {
+  name: string;
+  display_name: string;
+};
+
+export type LoginMethodList = { methods: LoginMethod[] };
+
+export type OIDCLoginStart = {
+  authorization_url: string;
+  expires_at: string;
+};
+
+export type DirectoryUser = {
+  id: string;
+  system_role: string;
+  active: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type DirectoryMembership = {
+  id: string;
+  user_id: string;
+  email: string;
+  display_name: string;
+  role: "member" | "admin";
+  source: "local" | "scim";
+  active: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
 export type DirectoryMember = {
-  user: {
-    id: string;
-    system_role: string;
-    active: boolean;
-    created_at: string;
-    updated_at: string;
-  };
-  membership: {
-    id: string;
-    organization_id: string;
-    user_id: string;
-    email: string;
-    display_name: string;
-    role: string;
-    source: string;
-    active: boolean;
-    created_at: string;
-    updated_at: string;
-  };
+  user: DirectoryUser;
+  membership: DirectoryMembership;
+};
+
+export type DirectoryGroup = {
+  display_name: string;
+  source: "local" | "scim";
+  active: boolean;
+  created_at: string;
+  updated_at: string;
 };
 
 export type Directory = {
   users: DirectoryMember[];
-  groups: Array<{ id: string; display_name: string; active: boolean }>;
+  groups: DirectoryGroup[];
 };
+
+export type OIDCProvider = {
+  name: string;
+  display_name: string;
+  issuer: string;
+  client_id: string;
+  scopes: string[];
+  enabled: boolean;
+  revision: number;
+  authorization_endpoint: string;
+  token_endpoint: string;
+  token_endpoint_auth_method: string;
+  id_token_signing_algs: string[];
+  userinfo_endpoint?: string;
+  jwks_uri: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type OIDCProviderList = { providers: OIDCProvider[] };
+export type OIDCProviderResult = { provider: OIDCProvider };
+
+export type SCIMToken = {
+  id: string;
+  name: string;
+  scopes: Array<"scim:read" | "scim:write">;
+  created_at: string;
+  revoked_at?: string;
+};
+
+export type SCIMTokenList = { tokens: SCIMToken[] };
+export type SCIMTokenIssue = { token: SCIMToken; credential: string };
 
 export type ModelSpec = {
   base_url: string;
@@ -45,9 +111,30 @@ export type ModelSpec = {
   supports_images: boolean;
 };
 
+export type ModelCatalogEntry = {
+  model_id: string;
+  display_name: string;
+  context_window: number;
+  max_output_tokens: number;
+  supports_images: boolean;
+};
+
+export type ModelProviderPreset = {
+  provider_key: string;
+  display_name: string;
+  description: string;
+  base_url: string;
+  custom: boolean;
+  models: ModelCatalogEntry[];
+};
+
+export type ModelCatalog = {
+  revision: string;
+  providers: ModelProviderPreset[];
+};
+
 export type ModelProfile = {
   model_profile_id: string;
-  organization_id: string;
   profile_key: string;
   display_name: string;
   revision_id: string;
@@ -70,7 +157,6 @@ export type RuntimeSpec = {
 
 export type AgentTemplate = {
   template_id: string;
-  organization_id: string;
   template_key: string;
   name: string;
   revision: number;
@@ -90,14 +176,34 @@ export type TemplateList = {
   next_after_id?: string | null;
 };
 
+export type TemplateDefaults = {
+  runtime_image_ref: string;
+};
+
 export type Agent = {
   agent_id: string;
-  organization_id: string;
   owner_user_id: string;
   name: string;
   desired_state: string;
   lifecycle_state: string;
   executable_execution_revision?: string;
+  configuration?: {
+    template: {
+      template_id: string;
+      revision: number;
+      name: string;
+    };
+    model_profile: {
+      model_profile_id: string;
+      revision_id: string;
+      revision: number;
+      name: string;
+      model: ModelSpec;
+    };
+    max_model_requests: number;
+    context_policy_version: string;
+    runtime: RuntimeSpec;
+  };
   runtime?: {
     runtime_revision: string;
   };

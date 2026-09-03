@@ -9,6 +9,9 @@ func TestLoadAppliesSecureDefaults(t *testing.T) {
 	values := map[string]string{
 		"ANTNEST_IDENTITY_SERVICE_URL": "http://identity-service:8080",
 		"ANTNEST_ADMIN_CONSOLE_URL":    "http://admin-console:8080",
+		"ANTNEST_AGENT_UI_URL":         "http://agent-ui:8080",
+		"ANTNEST_AGENT_CONTROLLER_URL": "http://agent-controller:8080",
+		"ANTNEST_AGENT_ACP_URL":        "http://agent-acp-service:8080",
 	}
 	config, err := Load(func(key string) string { return values[key] })
 	if err != nil {
@@ -26,6 +29,9 @@ func TestLoadRejectsMissingOrInvalidDependencies(t *testing.T) {
 	base := map[string]string{
 		"ANTNEST_IDENTITY_SERVICE_URL": "http://identity-service:8080",
 		"ANTNEST_ADMIN_CONSOLE_URL":    "http://admin-console:8080",
+		"ANTNEST_AGENT_UI_URL":         "http://agent-ui:8080",
+		"ANTNEST_AGENT_CONTROLLER_URL": "http://agent-controller:8080",
+		"ANTNEST_AGENT_ACP_URL":        "http://agent-acp-service:8080",
 	}
 	for _, test := range []struct {
 		name   string
@@ -35,6 +41,9 @@ func TestLoadRejectsMissingOrInvalidDependencies(t *testing.T) {
 	}{
 		{name: "missing identity", key: "ANTNEST_IDENTITY_SERVICE_URL", remove: true},
 		{name: "invalid console", key: "ANTNEST_ADMIN_CONSOLE_URL", value: "console-only"},
+		{name: "missing Agent UI", key: "ANTNEST_AGENT_UI_URL", remove: true},
+		{name: "invalid Agent Controller", key: "ANTNEST_AGENT_CONTROLLER_URL", value: "controller-only"},
+		{name: "invalid Agent ACP", key: "ANTNEST_AGENT_ACP_URL", value: "ws://agent-acp-service"},
 		{name: "invalid secure flag", key: "ANTNEST_EDGE_COOKIE_SECURE", value: "perhaps"},
 		{name: "invalid timeout", key: "ANTNEST_EDGE_REQUEST_TIMEOUT", value: "0s"},
 		{name: "invalid stream lease", key: "ANTNEST_EDGE_STREAM_LEASE", value: "0s"},

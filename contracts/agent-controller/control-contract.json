@@ -1,6 +1,6 @@
 {
   "contract": "antnest.agent-controller.lifecycle",
-  "revision": 5,
+  "revision": 9,
   "transport": "json-over-http",
   "trust": "internal-network",
   "media_types": {
@@ -10,6 +10,14 @@
   "schemas": { "messages": "control-api.schema.json" },
   "status": { "method": "GET", "path": "/status", "success_status": 200 },
   "resources": {
+    "model_catalog": {
+      "get": {
+        "method": "GET",
+        "path": "/internal/model-catalog",
+        "success_status": 200,
+        "response": "control-api.schema.json#/$defs/model_catalog"
+      }
+    },
     "model_profiles": {
       "create": {
         "method": "POST",
@@ -28,6 +36,7 @@
       "get": {
         "method": "GET",
         "path": "/internal/model-profiles/{model_profile_id}",
+        "query": ["organization_id"],
         "success_status": 200,
         "response": "control-api.schema.json#/$defs/model_profile"
       },
@@ -37,6 +46,15 @@
         "query": ["organization_id", "after_id", "limit"],
         "success_status": 200,
         "response": "control-api.schema.json#/$defs/model_profile_list"
+      }
+    },
+    "model_profile_revisions": {
+      "get": {
+        "method": "GET",
+        "path": "/internal/model-profile-revisions/{revision_id}",
+        "query": ["organization_id"],
+        "success_status": 200,
+        "response": "control-api.schema.json#/$defs/model_profile"
       }
     },
     "agent_templates": {
@@ -57,6 +75,14 @@
       "get": {
         "method": "GET",
         "path": "/internal/agent-templates/{template_id}",
+        "query": ["organization_id"],
+        "success_status": 200,
+        "response": "control-api.schema.json#/$defs/agent_template"
+      },
+      "get_revision": {
+        "method": "GET",
+        "path": "/internal/agent-templates/{template_id}/revisions/{revision}",
+        "query": ["organization_id"],
         "success_status": 200,
         "response": "control-api.schema.json#/$defs/agent_template"
       },

@@ -14,8 +14,9 @@ than around one shared application package.
 | Agent Controller   | Owns Agent lifecycle, immutable configuration/execution revisions, explicit Runtime rebuild, Run admission, and Agent events      | Implemented and accepted in Stage 3A   |
 | Agent ACP Service  | Owns ACP v1/v2 Sessions, Runs, context, model/Tool loop, and per-Run Runtime MCP calls                                            | Implemented for Stage 2                |
 | Identity Service   | Owns Organizations, Users, local login, OIDC, SCIM, credentials, and the directory journal                                        | Implemented for Stage 2                |
-| Edge Gateway       | Sole browser ingress, Identity-backed sessions, administrator admission, trusted routing, and trace propagation                    | Implemented for Stage 3A               |
+| Edge Gateway       | Sole browser ingress, Identity-backed sessions, administrator/Agent admission, trusted routing, and trace propagation              | Implemented for Stage 3                |
 | Admin Console      | React administrator application and thin BFF for Identity and Agent lifecycle management                                           | Implemented for Stage 3A               |
+| Agent UI           | React end-user conversation workspace for Agents, ACP Sessions, tool activity, and attachments                                    | Implemented through Edge and ACP v1    |
 | Contracts          | Language-neutral Runtime, Egress, Agent Controller, ACP, and Identity contracts                                                   | Evolving with each rewritten component |
 
 The repository layout and ownership rules are defined in
@@ -31,6 +32,10 @@ for the future Agent Controller and Agent ACP Service.
 The Stage 3A administrator control-plane contract and its browser-to-Jaeger
 acceptance path are defined in
 [`docs/stage-3-admin-control-plane.md`](docs/stage-3-admin-control-plane.md).
+The shared browser product language is defined in
+[`docs/design-language.md`](docs/design-language.md).
+The target ownership and restoration status of browser workflows are tracked
+in [`docs/product-surfaces.md`](docs/product-surfaces.md).
 
 The implemented entry-to-storage call chains, data exchanges, commit points,
 and architecture simplification findings are maintained in
@@ -41,13 +46,14 @@ and architecture simplification findings are maintained in
 The Rust Runtime, Runtime Egress, and thin Go Runtime Controller are implemented
 and accepted together. Stage 2 adds independently deployable Agent ACP,
 Identity, and Agent Controller services. Stage 3A now connects an administrator
-browser session through Edge Gateway, Identity, Admin Console, Agent Controller,
-and Runtime Controller. The disposable acceptance covers Model Profile,
+browser session through Edge Gateway, Identity, Admin Console, Agent UI, Agent
+ACP Service, Agent Controller, and Runtime Controller. The disposable
+acceptance covers Model Profile,
 Template, and Agent creation plus disable, enable, rebuild, delete, lifecycle
-events, port isolation, and Jaeger trace continuity. End-user ACP conversation
-remains a later Agent UI delivery.
+events, end-user ACP Session/Tool execution, port isolation, and Jaeger trace
+continuity.
 
-## Stage 3A Local Console
+## Stage 3 Local Applications
 
 Build and start the production-shaped administrator stack:
 
@@ -58,7 +64,8 @@ ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF=antnest/antnest-runtime:local \
   --profile stage3 --profile observability up -d --wait
 ```
 
-Open `http://127.0.0.1:8090`. Development defaults are organization
+Open `http://127.0.0.1:8090` for Admin Console or
+`http://127.0.0.1:8090/workspace/` for Agent UI. Development defaults are organization
 `engineering`, email `admin@example.com`, and password `antnest-admin-dev`.
 Override the corresponding `ANTNEST_BOOTSTRAP_*` variables outside disposable
 local environments. Jaeger is available at `http://127.0.0.1:16686` when the
@@ -75,7 +82,7 @@ make docker-build
 make compose-up
 make e2e-stage1  # Isolated disposable Stage 1 Runtime/Egress acceptance
 make e2e-runtime-controller  # Isolated Runtime Controller lifecycle acceptance
-make e2e-stage3  # Empty administrator stack, lifecycle, port, and Jaeger acceptance
+make e2e-stage3  # Empty Stage 3 stack, lifecycle, Agent workspace ACP, port, and Jaeger acceptance
 make test-postgres  # All persistence suites against one disposable PostgreSQL instance
 ```
 
@@ -85,7 +92,10 @@ component owns, what it must not own, and which narrower command validates it.
 ## Test Resource Hygiene
 
 Container-backed verification must run serially and clean up resources created
-only for that verification when it finishes or is interrupted. After each run,
+only for that verification when it finishes or is interrupted. The only
+exception is the explicit `ANTNEST_E2E_KEEP_STACK=true` local browser-acceptance
+mode; it prints the retained project identity and transfers cleanup to the
+operator. After each run,
 check for residual test containers and stop or remove the ones that are no
 longer needed; remove volumes only when they belong to a disposable test
 project. Repository E2E scripts must keep cleanup traps for both success and

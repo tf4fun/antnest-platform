@@ -81,7 +81,7 @@ func TestMachineControlContractMatchesRegisteredBoundary(t *testing.T) {
 	readStrictContractJSON(t, filepath.Join(root, "contracts/agent-controller/control-contract.json"), &contract)
 	var schema machineControlSchema
 	readContractJSON(t, filepath.Join(root, "contracts/agent-controller/control-api.schema.json"), &schema)
-	if contract.Revision != 5 {
+	if contract.Revision != 9 {
 		t.Fatalf("control contract revision = %d", contract.Revision)
 	}
 	if contract.MediaTypes.Request != "application/json" ||
@@ -201,6 +201,13 @@ func TestMachineControlSchemaMatchesGoWireTypes(t *testing.T) {
 		RuntimeRevision:    "rtv_11111111111111111111111111111111",
 		RuntimeExecutionID: "runtime-execution-1", RuntimeMCPEndpoint: "http://runtime:8091/mcp",
 		ActiveOperationRequestID: "request-1", FailureStage: "publish", FailureCode: "example",
+		Configuration: &application.AgentConfigurationView{
+			TemplateID: "template-1", TemplateRevision: 1, TemplateName: "Personal",
+			ModelProfileID: "model-1", ModelProfileRevisionID: "model-revision-1",
+			ModelProfileRevision: 1, ModelProfileName: "Example", Model: model,
+			MaxModelRequests: 12, ContextPolicyVersion: domain.ContextPolicyV1,
+			Runtime: runtimeInput,
+		},
 		AggregateSequence: 2, CreatedAt: now, UpdatedAt: now,
 	}
 	operation := application.OperationView{
@@ -224,7 +231,7 @@ func TestMachineControlSchemaMatchesGoWireTypes(t *testing.T) {
 			Credential: credentialInput{SecretType: "bearer", Secret: "secret"},
 		},
 		"revise_model_profile_request": reviseModelProfileRequest{
-			RequestID: "request-1", DisplayName: "Example", Model: model,
+			RequestID: "request-1", OrganizationID: "org-1", DisplayName: "Example", Model: model,
 			Credential: credentialInput{SecretType: "bearer", Secret: "secret"},
 		},
 		"create_template_request": createTemplateRequest{
@@ -234,7 +241,8 @@ func TestMachineControlSchemaMatchesGoWireTypes(t *testing.T) {
 			ContextPolicyVersion: domain.ContextPolicyV1, Runtime: runtimeInput,
 		},
 		"revise_template_request": reviseTemplateRequest{
-			RequestID: "request-1", Name: "Personal", ModelProfileRevisionID: "model-revision-1",
+			RequestID: "request-1", OrganizationID: "org-1",
+			Name: "Personal", ModelProfileRevisionID: "model-revision-1",
 			SystemPrompt: "Be useful.", MaxModelRequests: 12,
 			ContextPolicyVersion: domain.ContextPolicyV1, Runtime: runtimeInput,
 		},
@@ -294,6 +302,17 @@ func TestMachineControlContractValidatesSuccessfulHTTPBoundary(t *testing.T) {
 	event := sampleControlEvent(now, agent.AgentID, operation.RequestID)
 	catalog := &catalogServiceStub{
 		modelView: sampleModelProfileView(),
+		modelCatalog: application.ModelCatalogView{
+			Revision: "2026-09-03",
+			Providers: []application.ModelProviderPresetView{{
+				ProviderKey: "deepseek", DisplayName: "DeepSeek",
+				Description: "DeepSeek API", BaseURL: "https://api.deepseek.com",
+				Models: []application.ModelCatalogEntryView{{
+					ModelID: "deepseek-v4-pro", DisplayName: "DeepSeek V4 Pro",
+					ContextWindow: 1_000_000, MaxOutputTokens: 384_000,
+				}},
+			}},
+		},
 		templatePage: application.TemplatePage{
 			Items: []application.TemplateView{sampleTemplateView()},
 		},
@@ -329,7 +348,7 @@ func TestMachineControlContractValidatesSuccessfulHTTPBoundary(t *testing.T) {
 			Credential: credentialInput{SecretType: "bearer", Secret: "secret"},
 		},
 		"POST /internal/model-profiles/{model_profile_id}/revisions": reviseModelProfileRequest{
-			RequestID: "request-model-revision", DisplayName: "DeepSeek",
+			RequestID: "request-model-revision", OrganizationID: "org-1", DisplayName: "DeepSeek",
 			Model:      sampleModelProfileView().Model,
 			Credential: credentialInput{SecretType: "bearer", Secret: "secret"},
 		},
@@ -340,7 +359,7 @@ func TestMachineControlContractValidatesSuccessfulHTTPBoundary(t *testing.T) {
 			ContextPolicyVersion: domain.ContextPolicyV1, Runtime: runtimeInput,
 		},
 		"POST /internal/agent-templates/{template_id}/revisions": reviseTemplateRequest{
-			RequestID: "request-template-revision", Name: "Personal",
+			RequestID: "request-template-revision", OrganizationID: "org-1", Name: "Personal",
 			ModelProfileRevisionID: "model-revision-1", SystemPrompt: "Be useful.",
 			MaxModelRequests: 12, ContextPolicyVersion: domain.ContextPolicyV1, Runtime: runtimeInput,
 		},
@@ -666,7 +685,11 @@ func concreteControlPath(pattern string) string {
 	segments := strings.Split(pattern, "/")
 	for index, segment := range segments {
 		if strings.HasPrefix(segment, "{") && strings.HasSuffix(segment, "}") {
-			segments[index] = "contract-fixture"
+			if segment == "{revision}" {
+				segments[index] = "1"
+			} else {
+				segments[index] = "contract-fixture"
+			}
 		}
 	}
 	return strings.Join(segments, "/")

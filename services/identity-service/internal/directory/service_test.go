@@ -99,6 +99,93 @@ func TestListDirectoryIsOrganizationScoped(t *testing.T) {
 	}
 }
 
+func TestGetCurrentAccountProjectsTheActorAndLocalPasswordCapability(t *testing.T) {
+	repository := &directoryRepositoryStub{
+		organization: domain.Organization{
+			ID: "org-1", Slug: "engineering", Name: "Engineering", Active: true,
+		},
+		principal: domain.Principal{
+			UserID: "user-1", OrganizationID: "org-1", MembershipID: "membership-1",
+			SystemRole: domain.SystemRoleUser, OrganizationRole: domain.OrganizationRoleAdmin,
+			Active: true,
+		},
+		membership: domain.OrganizationMembership{
+			ID: "membership-1", OrganizationID: "org-1", UserID: "user-1",
+			Email: "alice@example.com", DisplayName: "Alice",
+			Role: domain.OrganizationRoleAdmin, Source: domain.SourceLocal, Active: true,
+		},
+		credential: domain.LocalCredential{UserID: "user-1", PasswordHash: "opaque"},
+	}
+	service := NewService(repository, sequentialIDs(), fixedNow)
+
+	account, err := service.GetCurrentAccount(context.Background(), "user-1", "org-1")
+	if err != nil {
+		t.Fatalf("get current account: %v", err)
+	}
+	if account.UserID != "user-1" || account.OrganizationID != "org-1" ||
+		account.OrganizationSlug != "engineering" || account.OrganizationName != "Engineering" ||
+		account.MembershipID != "membership-1" || account.Email != "alice@example.com" ||
+		account.DisplayName != "Alice" || account.Source != domain.SourceLocal ||
+		!account.LocalPasswordAvailable {
+		t.Fatalf("account = %#v", account)
+	}
+
+	repository.credentialErr = domain.ErrNotFound
+	account, err = service.GetCurrentAccount(context.Background(), "user-1", "org-1")
+	if err != nil {
+		t.Fatalf("get external account: %v", err)
+	}
+	if account.LocalPasswordAvailable {
+		t.Fatalf("external account unexpectedly exposes local password capability: %#v", account)
+	}
+}
+
+func TestGetCurrentAccountRejectsInactiveOrMismatchedIdentity(t *testing.T) {
+	repository := &directoryRepositoryStub{
+		organization: domain.Organization{
+			ID: "org-1", Slug: "engineering", Name: "Engineering", Active: true,
+		},
+		principal: domain.Principal{
+			UserID: "user-1", OrganizationID: "org-1", MembershipID: "membership-1",
+			Active: false,
+		},
+		membership: domain.OrganizationMembership{
+			ID: "membership-1", OrganizationID: "org-1", UserID: "user-1",
+		},
+	}
+	service := NewService(repository, sequentialIDs(), fixedNow)
+	if _, err := service.GetCurrentAccount(context.Background(), "user-1", "org-1"); !errors.Is(err, domain.ErrForbidden) {
+		t.Fatalf("inactive account error = %v, want forbidden", err)
+	}
+
+	repository.principal.Active = true
+	repository.membership.UserID = "user-2"
+	if _, err := service.GetCurrentAccount(context.Background(), "user-1", "org-1"); err == nil {
+		t.Fatal("mismatched membership was accepted")
+	}
+}
+
+func TestGetCurrentAccountRejectsMismatchedOrganizationProjection(t *testing.T) {
+	repository := &directoryRepositoryStub{
+		organization: domain.Organization{
+			ID: "org-2", Slug: "other", Name: "Other", Active: true,
+		},
+		principal: domain.Principal{
+			UserID: "user-1", OrganizationID: "org-1", MembershipID: "membership-1",
+			Active: true,
+		},
+		membership: domain.OrganizationMembership{
+			ID: "membership-1", OrganizationID: "org-1", UserID: "user-1",
+		},
+		credential: domain.LocalCredential{UserID: "user-1"},
+	}
+	service := NewService(repository, sequentialIDs(), fixedNow)
+
+	if _, err := service.GetCurrentAccount(context.Background(), "user-1", "org-1"); err == nil {
+		t.Fatal("mismatched organization projection was accepted")
+	}
+}
+
 func TestResolvePrincipalReturnsOnlyTheRequestedOrganizationBinding(t *testing.T) {
 	t.Parallel()
 
@@ -230,6 +317,7 @@ func TestUpdateLocalMembershipAndGlobalUserActivationRespectOwnership(t *testing
 }
 
 type directoryRepositoryStub struct {
+	organization            domain.Organization
 	principal               domain.Principal
 	principalUserID         string
 	principalOrganizationID string
@@ -237,11 +325,16 @@ type directoryRepositoryStub struct {
 	created                 CreateLocalUserCommand
 	addedMembership         AddOrganizationMembershipCommand
 	credential              domain.LocalCredential
+	credentialErr           error
 	membership              domain.OrganizationMembership
 	changedPassword         ChangeLocalPasswordCommand
 	updatedMembership       UpdateMembershipCommand
 	userActivation          SetUserActiveCommand
 	directory               Directory
+}
+
+func (r *directoryRepositoryStub) GetOrganization(context.Context, string) (domain.Organization, error) {
+	return r.organization, nil
 }
 
 func (r *directoryRepositoryStub) GetPrincipal(_ context.Context, userID, organizationID string) (domain.Principal, error) {
@@ -283,7 +376,7 @@ func (r *directoryRepositoryStub) ListDirectory(context.Context, string) (Direct
 }
 
 func (r *directoryRepositoryStub) GetLocalCredential(context.Context, string) (domain.LocalCredential, error) {
-	return r.credential, nil
+	return r.credential, r.credentialErr
 }
 
 func (r *directoryRepositoryStub) ChangeLocalPassword(_ context.Context, command ChangeLocalPasswordCommand) error {

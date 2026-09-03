@@ -132,7 +132,7 @@ services:
     stop_grace_period: 10s
 
   agent-acp-service:
-    profiles: [stage2]
+    profiles: [stage2, stage3]
     image: antnest/agent-acp-service:local
     build:
       context: .
@@ -180,6 +180,30 @@ services:
     environment:
       ANTNEST_STAGE2_MODEL_PORT: "8080"
       ANTNEST_STAGE2_MODEL_CREDENTIAL: stage2-model-secret
+    volumes:
+      - ./services/agent-acp-service/scripts/stage2-model-server.mjs:/fixtures/stage2-model-server.mjs:ro
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:8080/status').then(r=>{if(!r.ok)process.exit(1)})",
+        ]
+      interval: 30s
+      timeout: 2s
+      retries: 3
+      start_period: 20s
+      start_interval: 1s
+    networks: [development]
+
+  stage3-model:
+    profiles: [stage3-e2e]
+    image: node:24-bookworm-slim
+    command: ["node", "/fixtures/stage2-model-server.mjs"]
+    environment:
+      ANTNEST_STAGE2_MODEL_PORT: "8080"
+      ANTNEST_STAGE2_MODEL_CREDENTIAL: stage3-model-secret
     volumes:
       - ./services/agent-acp-service/scripts/stage2-model-server.mjs:/fixtures/stage2-model-server.mjs:ro
     healthcheck:
@@ -322,6 +346,22 @@ services:
     networks: [development, observability]
     stop_grace_period: 20s
 
+  agent-ui:
+    profiles: [stage3]
+    image: antnest/agent-ui:local
+    build:
+      context: .
+      dockerfile: services/agent-ui/Dockerfile
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8080/status"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 20s
+      start_interval: 1s
+    networks: [development]
+    stop_grace_period: 10s
+
   edge-gateway:
     profiles: [stage3]
     image: antnest/edge-gateway:local
@@ -333,10 +373,19 @@ services:
         condition: service_healthy
       admin-console:
         condition: service_healthy
+      agent-ui:
+        condition: service_healthy
+      agent-acp-service:
+        condition: service_healthy
+      agent-controller:
+        condition: service_healthy
     environment:
       ANTNEST_EDGE_LISTEN: :8080
       ANTNEST_IDENTITY_SERVICE_URL: http://identity-service:8080
       ANTNEST_ADMIN_CONSOLE_URL: http://admin-console:8080
+      ANTNEST_AGENT_UI_URL: http://agent-ui:8080
+      ANTNEST_AGENT_ACP_URL: http://agent-acp-service:8080
+      ANTNEST_AGENT_CONTROLLER_URL: http://agent-controller:8080
       ANTNEST_EDGE_COOKIE_SECURE: ${ANTNEST_EDGE_COOKIE_SECURE:-false}
       ANTNEST_EDGE_REQUEST_TIMEOUT: ${ANTNEST_EDGE_REQUEST_TIMEOUT:-150s}
       ANTNEST_EDGE_SHUTDOWN_TIMEOUT: ${ANTNEST_EDGE_SHUTDOWN_TIMEOUT:-15s}

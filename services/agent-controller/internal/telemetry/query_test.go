@@ -70,13 +70,24 @@ func TestObservedAgentQueryStoreDoesNotRecordFiltersOrCursor(t *testing.T) {
 		OrganizationID: "private-org", OwnerUserID: "private-owner",
 		AfterCreatedAt: time.Unix(1, 0).UTC(), AfterAgentID: "private-cursor-agent", Limit: 10,
 	})
+	_, _ = observed.ListWorkspaceAgents(context.Background(), ports.WorkspaceAgentQuery{
+		OrganizationID: "private-org", PrincipalID: "private-owner",
+		AfterCreatedAt: time.Unix(1, 0).UTC(), AfterAgentID: "private-cursor-agent", Limit: 10,
+	})
+	_, _ = observed.GetAgentConfiguration(
+		context.Background(), "private-agent", "private-spec-revision",
+	)
 
 	ended := recorder.Ended()
-	if len(ended) != 1 || ended[0].Name() != "agent_controller.repository.list_agents" {
+	if len(ended) != 3 || ended[0].Name() != "agent_controller.repository.list_agents" ||
+		ended[1].Name() != "agent_controller.repository.list_workspace_agents" ||
+		ended[2].Name() != "agent_controller.repository.get_agent_configuration" {
 		t.Fatalf("query span = %+v", ended)
 	}
-	attributes := fmt.Sprint(ended[0].Attributes())
-	for _, forbidden := range []string{"private-org", "private-owner", "private-cursor-agent"} {
+	attributes := fmt.Sprint(ended[0].Attributes(), ended[1].Attributes(), ended[2].Attributes())
+	for _, forbidden := range []string{
+		"private-org", "private-owner", "private-cursor-agent", "private-agent", "private-spec-revision",
+	} {
 		if strings.Contains(attributes, forbidden) {
 			t.Fatalf("query span leaked %q: %s", forbidden, attributes)
 		}
@@ -128,8 +139,20 @@ func (store *agentQueryStoreTelemetryStub) GetAgent(
 	return store.record, store.err
 }
 
+func (store *agentQueryStoreTelemetryStub) GetAgentConfiguration(
+	context.Context, string, string,
+) (ports.AgentConfigurationRecord, error) {
+	return ports.AgentConfigurationRecord{}, store.err
+}
+
 func (store *agentQueryStoreTelemetryStub) ListAgents(
 	context.Context, ports.AgentQuery,
 ) ([]ports.AgentRecord, error) {
+	return nil, store.err
+}
+
+func (store *agentQueryStoreTelemetryStub) ListWorkspaceAgents(
+	context.Context, ports.WorkspaceAgentQuery,
+) ([]ports.WorkspaceAgentRecord, error) {
 	return nil, store.err
 }

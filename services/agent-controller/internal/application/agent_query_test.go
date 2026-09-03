@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,6 +23,25 @@ func TestGetAgentReturnsCurrentProjection(t *testing.T) {
 		LastSuccessfulExecutionRevisionID: "execution-4", RuntimeRevision: "runtime-2",
 		RuntimeExecutionID: "runtime-execution-2", RuntimeMCPEndpoint: "http://runtime/mcp",
 		AggregateSequence: 9, CreatedAt: now.Add(-time.Hour), UpdatedAt: now,
+	}, configuration: ports.AgentConfigurationRecord{
+		AgentID: "agent-1", AgentSpecRevisionID: "spec-3",
+		TemplateName: "Research", ModelProfileID: "model-1",
+		ModelProfileRevision: 4, ModelProfileName: "DeepSeek",
+		Snapshot: domain.AgentSpecSnapshot{
+			TemplateID: "template-1", TemplateRevision: 2,
+			ModelProfileRevisionID: "model-revision-4",
+			Model: domain.ModelSpec{
+				BaseURL: "https://api.deepseek.com/v1", Model: "deepseek-chat",
+				ContextWindow: 128000, MaxOutputTokens: 8192,
+			},
+			MaxModelRequests: 24, ContextPolicyVersion: domain.ContextPolicyV1,
+			Runtime: domain.RuntimeSpecInput{
+				ImageRef: "antnest/runtime@sha256:" + strings.Repeat("a", 64),
+				Resources: domain.RuntimeResources{
+					MemoryBytes: 536870912, PIDsLimit: 256, TmpfsBytes: 67108864,
+				},
+			},
+		},
 	}}
 	service := NewAgentQueryService(store)
 
@@ -35,6 +55,12 @@ func TestGetAgentReturnsCurrentProjection(t *testing.T) {
 	if view.OwnerUserID != "user-1" || view.AggregateSequence != 9 ||
 		view.ExecutionRevisionID != "execution-4" || view.RuntimeRevision != "runtime-2" {
 		t.Fatalf("current projection was not preserved: %+v", view)
+	}
+	if store.configurationAgentID != "agent-1" || store.configurationSpecID != "spec-3" ||
+		view.Configuration == nil || view.Configuration.TemplateName != "Research" ||
+		view.Configuration.ModelProfileName != "DeepSeek" ||
+		view.Configuration.Model.Model != "deepseek-chat" {
+		t.Fatalf("configuration lineage was not preserved: store=%+v view=%+v", store, view)
 	}
 }
 
@@ -187,6 +213,71 @@ func TestListAgentsRejectsStoreContractOverrun(t *testing.T) {
 	}
 }
 
+func TestListWorkspaceAgentsDerivesAvailabilityAndOpaqueCursor(t *testing.T) {
+	t.Parallel()
+
+	first := time.Date(2026, time.September, 3, 8, 0, 0, 0, time.UTC)
+	second := first.Add(time.Second)
+	store := &agentQueryStoreStub{workspaceRecords: []ports.WorkspaceAgentRecord{
+		{AgentID: "agent-ready", Name: "Ready", LifecycleState: domain.AgentAvailable,
+			AccessSubject: "subject-ready", CreatedAt: first},
+		{AgentID: "agent-busy", Name: "Busy", LifecycleState: domain.AgentAvailable,
+			AccessSubject: "subject-busy", AdmissionState: domain.AdmissionActive, CreatedAt: second},
+		{AgentID: "agent-offline", Name: "Offline", LifecycleState: domain.AgentUnavailable,
+			AccessSubject: "subject-offline", CreatedAt: second.Add(time.Second)},
+	}}
+	service := NewAgentQueryService(store)
+
+	page, err := service.ListWorkspaceAgents(context.Background(), ListWorkspaceAgentsInput{
+		RequestID: "request-workspace", OrganizationID: "org-1", PrincipalID: "user-1", Limit: 2,
+	})
+	if err != nil {
+		t.Fatalf("list workspace Agents: %v", err)
+	}
+	if len(page.Items) != 2 || page.NextCursor == "" ||
+		page.Items[0].Availability != WorkspaceAgentReady ||
+		page.Items[1].Availability != WorkspaceAgentBusy ||
+		page.Items[0].AccessSubject != "subject-ready" {
+		t.Fatalf("workspace page = %+v", page)
+	}
+	if store.workspaceQuery.OrganizationID != "org-1" ||
+		store.workspaceQuery.PrincipalID != "user-1" || store.workspaceQuery.Limit != 3 {
+		t.Fatalf("workspace query = %+v", store.workspaceQuery)
+	}
+
+	store.workspaceRecords = nil
+	_, err = service.ListWorkspaceAgents(context.Background(), ListWorkspaceAgentsInput{
+		RequestID: "request-next", OrganizationID: "org-1", PrincipalID: "user-1",
+		Limit: 2, Cursor: page.NextCursor,
+	})
+	if err != nil {
+		t.Fatalf("continue workspace Agents: %v", err)
+	}
+	if !store.workspaceQuery.AfterCreatedAt.Equal(second) ||
+		store.workspaceQuery.AfterAgentID != "agent-busy" {
+		t.Fatalf("workspace cursor = %+v", store.workspaceQuery)
+	}
+}
+
+func TestListWorkspaceAgentsRejectsInvalidScopeBeforeStorage(t *testing.T) {
+	t.Parallel()
+
+	tests := []ListWorkspaceAgentsInput{
+		{OrganizationID: "org-1", PrincipalID: "user-1"},
+		{RequestID: "request-1", OrganizationID: "not valid", PrincipalID: "user-1"},
+		{RequestID: "request-1", OrganizationID: "org-1", PrincipalID: "not valid"},
+		{RequestID: "request-1", OrganizationID: "org-1", PrincipalID: "user-1", Limit: maximumAgentListLimit + 1},
+		{RequestID: "request-1", OrganizationID: "org-1", PrincipalID: "user-1", Cursor: "invalid"},
+	}
+	for _, input := range tests {
+		store := &agentQueryStoreStub{}
+		_, err := NewAgentQueryService(store).ListWorkspaceAgents(context.Background(), input)
+		if !errors.Is(err, ErrInvalidInput) || store.calls != 0 {
+			t.Fatalf("input=%+v error=%v calls=%d", input, err, store.calls)
+		}
+	}
+}
+
 func queryAgentRecord(
 	agentID string, ownerUserID string, state domain.AgentState, createdAt time.Time,
 ) ports.AgentRecord {
@@ -199,12 +290,18 @@ func queryAgentRecord(
 }
 
 type agentQueryStoreStub struct {
-	record     ports.AgentRecord
-	records    []ports.AgentRecord
-	err        error
-	getAgentID string
-	query      ports.AgentQuery
-	calls      int
+	record               ports.AgentRecord
+	records              []ports.AgentRecord
+	err                  error
+	getAgentID           string
+	query                ports.AgentQuery
+	workspaceRecords     []ports.WorkspaceAgentRecord
+	workspaceQuery       ports.WorkspaceAgentQuery
+	configuration        ports.AgentConfigurationRecord
+	configurationErr     error
+	configurationAgentID string
+	configurationSpecID  string
+	calls                int
 }
 
 func (store *agentQueryStoreStub) GetAgent(
@@ -221,6 +318,22 @@ func (store *agentQueryStoreStub) ListAgents(
 	store.calls++
 	store.query = query
 	return store.records, store.err
+}
+
+func (store *agentQueryStoreStub) ListWorkspaceAgents(
+	_ context.Context, query ports.WorkspaceAgentQuery,
+) ([]ports.WorkspaceAgentRecord, error) {
+	store.calls++
+	store.workspaceQuery = query
+	return store.workspaceRecords, store.err
+}
+
+func (store *agentQueryStoreStub) GetAgentConfiguration(
+	_ context.Context, agentID string, agentSpecRevisionID string,
+) (ports.AgentConfigurationRecord, error) {
+	store.configurationAgentID = agentID
+	store.configurationSpecID = agentSpecRevisionID
+	return store.configuration, store.configurationErr
 }
 
 var _ ports.AgentQueryStore = (*agentQueryStoreStub)(nil)

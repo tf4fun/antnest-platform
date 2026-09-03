@@ -9,16 +9,19 @@ import (
 )
 
 type Config struct {
-	ListenAddress   string
-	IdentityURL     string
-	AdminConsoleURL string
-	CookieSecure    bool
-	RequestTimeout  time.Duration
-	StreamLease     time.Duration
-	LoginWindow     time.Duration
-	LoginSourceMax  int
-	LoginAccountMax int
-	ShutdownTimeout time.Duration
+	ListenAddress      string
+	IdentityURL        string
+	AdminConsoleURL    string
+	AgentUIURL         string
+	AgentControllerURL string
+	AgentACPURL        string
+	CookieSecure       bool
+	RequestTimeout     time.Duration
+	StreamLease        time.Duration
+	LoginWindow        time.Duration
+	LoginSourceMax     int
+	LoginAccountMax    int
+	ShutdownTimeout    time.Duration
 }
 
 func Load(lookup func(string) string) (Config, error) {
@@ -54,21 +57,33 @@ func Load(lookup func(string) string) (Config, error) {
 		return Config{}, err
 	}
 	config := Config{
-		ListenAddress:   valueOr(lookup, "ANTNEST_EDGE_LISTEN", ":8080"),
-		IdentityURL:     strings.TrimSpace(lookup("ANTNEST_IDENTITY_SERVICE_URL")),
-		AdminConsoleURL: strings.TrimSpace(lookup("ANTNEST_ADMIN_CONSOLE_URL")),
-		CookieSecure:    cookieSecure,
-		RequestTimeout:  requestTimeout,
-		StreamLease:     streamLease,
-		LoginWindow:     loginWindow,
-		LoginSourceMax:  loginSourceMax,
-		LoginAccountMax: loginAccountMax,
-		ShutdownTimeout: shutdownTimeout,
+		ListenAddress:      valueOr(lookup, "ANTNEST_EDGE_LISTEN", ":8080"),
+		IdentityURL:        strings.TrimSpace(lookup("ANTNEST_IDENTITY_SERVICE_URL")),
+		AdminConsoleURL:    strings.TrimSpace(lookup("ANTNEST_ADMIN_CONSOLE_URL")),
+		AgentUIURL:         strings.TrimSpace(lookup("ANTNEST_AGENT_UI_URL")),
+		AgentControllerURL: strings.TrimSpace(lookup("ANTNEST_AGENT_CONTROLLER_URL")),
+		AgentACPURL:        strings.TrimSpace(lookup("ANTNEST_AGENT_ACP_URL")),
+		CookieSecure:       cookieSecure,
+		RequestTimeout:     requestTimeout,
+		StreamLease:        streamLease,
+		LoginWindow:        loginWindow,
+		LoginSourceMax:     loginSourceMax,
+		LoginAccountMax:    loginAccountMax,
+		ShutdownTimeout:    shutdownTimeout,
 	}
 	if err := serviceURL("ANTNEST_IDENTITY_SERVICE_URL", config.IdentityURL); err != nil {
 		return Config{}, err
 	}
 	if err := serviceURL("ANTNEST_ADMIN_CONSOLE_URL", config.AdminConsoleURL); err != nil {
+		return Config{}, err
+	}
+	if err := serviceURL("ANTNEST_AGENT_UI_URL", config.AgentUIURL); err != nil {
+		return Config{}, err
+	}
+	if err := serviceURL("ANTNEST_AGENT_CONTROLLER_URL", config.AgentControllerURL); err != nil {
+		return Config{}, err
+	}
+	if err := serviceURL("ANTNEST_AGENT_ACP_URL", config.AgentACPURL); err != nil {
 		return Config{}, err
 	}
 	return config, nil

@@ -1,6 +1,6 @@
 {
   "contract": "antnest.agent-controller.run-admission",
-  "revision": 8,
+  "revision": 9,
   "transport": "json-over-http",
   "trust": "internal-network",
   "schema_dialect": "https://json-schema.org/draft/2020-12/schema",
@@ -71,6 +71,51 @@
     "additionalProperties": false
   },
   "methods": {
+    "list_workspace_agents": {
+      "method": "POST",
+      "path": "/list-workspace-agents",
+      "success_status": 200,
+      "request_content_type": "application/json",
+      "response_content_type": "application/json",
+      "request": {
+        "type": "object",
+        "required": ["request_id", "organization_id", "principal_id"],
+        "properties": {
+          "request_id": { "type": "string", "minLength": 1 },
+          "organization_id": { "type": "string", "minLength": 1 },
+          "principal_id": { "type": "string", "minLength": 1 },
+          "limit": { "type": "integer", "minimum": 1, "maximum": 200 },
+          "cursor": { "type": "string", "minLength": 1, "maxLength": 2048 }
+        },
+        "additionalProperties": false
+      },
+      "response": {
+        "type": "object",
+        "required": ["agents", "next_cursor"],
+        "properties": {
+          "agents": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["agent_id", "name", "availability", "agent_access_subject"],
+              "properties": {
+                "agent_id": { "type": "string", "minLength": 1 },
+                "name": { "type": "string", "minLength": 1 },
+                "availability": { "enum": ["ready", "busy", "offline"] },
+                "agent_access_subject": { "type": "string", "minLength": 1 }
+              },
+              "additionalProperties": false
+            }
+          },
+          "next_cursor": {
+            "type": ["string", "null"],
+            "minLength": 1,
+            "maxLength": 2048
+          }
+        },
+        "additionalProperties": false
+      }
+    },
     "resolve_agent_access": {
       "method": "POST",
       "path": "/resolve-agent-access",

@@ -11,13 +11,140 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
+	"soft/antnest-platform/services/edge-gateway/internal/agentcontroller"
 	"soft/antnest-platform/services/edge-gateway/internal/identity"
 	"soft/antnest-platform/services/edge-gateway/internal/session"
 )
+
+func TestWorkspaceBootstrapReturnsOnlyBrowserSafeAgentFacts(t *testing.T) {
+	t.Parallel()
+
+	agents := &agentServiceStub{agents: []agentcontroller.WorkspaceAgent{{
+		AgentID: "agent-1", Name: "Research Agent", Availability: "busy",
+		AgentAccessSubject: "subject-must-stay-server-side",
+	}}}
+	handler := newTestHandlerWithAgents(
+		t, &identityServiceStub{resolvePrincipal: ordinaryPrincipal()}, agents,
+		http.NotFoundHandler(), time.Now(), Config{},
+	)
+	request := httptest.NewRequest(http.MethodGet, "/api/app/bootstrap", nil)
+	addSessionCookies(request, "token-1", "csrf-1")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK || response.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("status=%d cache=%q body=%s", response.Code, response.Header().Get("Cache-Control"), response.Body.String())
+	}
+	if strings.Contains(response.Body.String(), "subject-must-stay-server-side") {
+		t.Fatalf("Agent access subject leaked to browser: %s", response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), `"agent_id":"agent-1"`) ||
+		!strings.Contains(response.Body.String(), `"availability":"busy"`) {
+		t.Fatalf("bootstrap body=%s", response.Body.String())
+	}
+	if agents.input.OrganizationID != "org-1" || agents.input.PrincipalID != "user-admin" {
+		t.Fatalf("Agent scope = %+v", agents.input)
+	}
+}
+
+func TestWorkspaceACPRequiresSameOriginAndInjectsServerCredential(t *testing.T) {
+	t.Parallel()
+
+	received := make(chan http.Header, 1)
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	acp := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		received <- request.Header.Clone()
+		connection, err := upgrader.Upgrade(response, request, nil)
+		if err != nil {
+			return
+		}
+		defer func() { _ = connection.Close() }()
+		_ = connection.WriteMessage(websocket.TextMessage, []byte("connected"))
+	}))
+	defer acp.Close()
+	static := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path == "/status" {
+			response.WriteHeader(http.StatusOK)
+			return
+		}
+		response.WriteHeader(http.StatusOK)
+	}))
+	defer static.Close()
+	sessions, err := session.NewManager(session.Config{})
+	if err != nil {
+		t.Fatalf("session manager: %v", err)
+	}
+	agents := &agentServiceStub{agents: []agentcontroller.WorkspaceAgent{{
+		AgentID: "agent-1", Name: "Research Agent", Availability: "ready",
+		AgentAccessSubject: "subject-authoritative",
+	}}}
+	handler, err := NewHandler(Config{
+		AdminConsoleURL: static.URL, AgentUIURL: static.URL, AgentACPURL: acp.URL,
+		IdentityURL:    static.URL,
+		RequestTimeout: time.Second, NewRequestID: func() string { return "edge-request" },
+	}, Dependencies{
+		Identity: &identityServiceStub{resolvePrincipal: ordinaryPrincipal()}, Agents: agents,
+		Sessions: sessions, HTTPClient: acp.Client(), Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if err != nil {
+		t.Fatalf("NewHandler: %v", err)
+	}
+	edge := httptest.NewServer(handler)
+	defer edge.Close()
+	websocketURL := strings.Replace(edge.URL, "http://", "ws://", 1) + "/api/app/agents/agent-1/acp"
+	headers := http.Header{}
+	headers.Set("Origin", edge.URL)
+	headers.Set("Cookie", session.AccessTokenCookieName+"=token-1; "+session.CSRFCookieName+"=csrf-1")
+	headers.Set(HeaderAgentAccessSubject, "forged-subject")
+	connection, _, err := websocket.DefaultDialer.Dial(websocketURL, headers)
+	if err != nil {
+		t.Fatalf("dial workspace ACP: %v", err)
+	}
+	defer func() { _ = connection.Close() }()
+	messageType, message, err := connection.ReadMessage()
+	if err != nil || messageType != websocket.TextMessage || string(message) != "connected" {
+		t.Fatalf("ACP message=%q type=%d err=%v", message, messageType, err)
+	}
+	upstreamHeaders := <-received
+	if upstreamHeaders.Get(HeaderAgentAccessSubject) != "subject-authoritative" ||
+		upstreamHeaders.Get("Cookie") != "" || upstreamHeaders.Get("Authorization") != "" {
+		t.Fatalf("ACP upstream headers = %v", upstreamHeaders)
+	}
+
+	wrongOrigin := httptest.NewRequest(http.MethodGet, "/api/app/agents/agent-1/acp", nil)
+	wrongOrigin.Host = "edge.example.test"
+	wrongOrigin.Header.Set("Connection", "Upgrade")
+	wrongOrigin.Header.Set("Upgrade", "websocket")
+	wrongOrigin.Header.Set("Origin", "https://evil.example.test")
+	addSessionCookies(wrongOrigin, "token-1", "csrf-1")
+	rejected := httptest.NewRecorder()
+	handler.ServeHTTP(rejected, wrongOrigin)
+	if rejected.Code != http.StatusForbidden {
+		t.Fatalf("cross-origin status=%d body=%s", rejected.Code, rejected.Body.String())
+	}
+}
+
+func TestWorkspaceApplicationStripsPublicPrefix(t *testing.T) {
+	t.Parallel()
+
+	received := ""
+	handler := newTestHandler(
+		t, &identityServiceStub{}, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+			received = request.URL.Path
+			response.WriteHeader(http.StatusOK)
+		}), time.Now(),
+	)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/workspace/assets/app.js", nil))
+	if response.Code != http.StatusOK || received != "/assets/app.js" {
+		t.Fatalf("status=%d upstream path=%q", response.Code, received)
+	}
+}
 
 func TestLoginCreatesCookieSessionWithoutLeakingIdentityToken(t *testing.T) {
 	now := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
@@ -79,6 +206,35 @@ func TestLoginAdmissionRejectsBeforeAnotherIdentityPasswordCheck(t *testing.T) {
 	}
 	if identityStub.loginCalls != 2 {
 		t.Fatalf("Identity password checks=%d want=2", identityStub.loginCalls)
+	}
+}
+
+func TestOIDCStartUsesThePublicLoginAdmissionWindow(t *testing.T) {
+	identityStub := &identityServiceStub{startOIDCResult: identity.StartOIDCLoginResult{
+		AuthorizationURL: "https://id.example.test/authorize", ExpiresAt: time.Now().Add(time.Minute),
+	}}
+	handler := newTestHandlerWithConfig(
+		t, identityStub, http.NotFoundHandler(), time.Now(),
+		Config{LoginWindow: time.Minute, LoginSourceMax: 1, LoginAccountMax: 1},
+	)
+	for attempt := 1; attempt <= 2; attempt++ {
+		request := httptest.NewRequest(http.MethodPost, "/api/session/oidc/start",
+			strings.NewReader(`{"organization_slug":"engineering","provider_name":"workforce"}`))
+		request.Header.Set("Content-Type", "application/json")
+		request.RemoteAddr = "192.0.2.20:1234"
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if attempt == 1 && response.Code != http.StatusOK {
+			t.Fatalf("initial OIDC start status=%d body=%s", response.Code, response.Body.String())
+		}
+		if attempt == 2 && (response.Code != http.StatusTooManyRequests ||
+			response.Header().Get("Retry-After") == "") {
+			t.Fatalf("limited OIDC start status=%d headers=%v body=%s",
+				response.Code, response.Header(), response.Body.String())
+		}
+	}
+	if identityStub.startOIDCCalls != 1 {
+		t.Fatalf("Identity OIDC start calls=%d want=1", identityStub.startOIDCCalls)
 	}
 }
 
@@ -191,26 +347,150 @@ func TestAgentEventWatchHasABoundedAuthenticationLease(t *testing.T) {
 	}
 }
 
-func TestReservedIdentityProtocolPathsNeverFallThroughToSPA(t *testing.T) {
-	identityStub := &identityServiceStub{}
+func TestPublicOIDCLoginDiscoveryAndStartUseIdentityService(t *testing.T) {
+	now := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
+	identityStub := &identityServiceStub{
+		loginMethods: []identity.LoginMethod{{Name: "workforce", DisplayName: "Workforce SSO"}},
+		startOIDCResult: identity.StartOIDCLoginResult{
+			AuthorizationURL: "https://id.example.test/authorize?state=opaque-state",
+			ExpiresAt:        now.Add(10 * time.Minute),
+		},
+	}
+	handler := newTestHandler(t, identityStub, http.NotFoundHandler(), now)
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/session/login-methods",
+		strings.NewReader(`{"organization_slug":"engineering"}`))
+	request.Header.Set("Content-Type", "application/json")
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || response.Header().Get("Cache-Control") != "no-store" ||
+		!strings.Contains(response.Body.String(), `"name":"workforce"`) {
+		t.Fatalf("discovery status=%d cache=%q body=%s",
+			response.Code, response.Header().Get("Cache-Control"), response.Body.String())
+	}
+	if identityStub.loginMethodsOrganization != "engineering" {
+		t.Fatalf("login methods organization=%q", identityStub.loginMethodsOrganization)
+	}
+
+	response = httptest.NewRecorder()
+	request = httptest.NewRequest(http.MethodPost, "/api/session/oidc/start",
+		strings.NewReader(`{"organization_slug":"engineering","provider_name":"workforce"}`))
+	request.Header.Set("Content-Type", "application/json")
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || response.Header().Get("Cache-Control") != "no-store" ||
+		!strings.Contains(response.Body.String(), "opaque-state") {
+		t.Fatalf("start status=%d cache=%q body=%s",
+			response.Code, response.Header().Get("Cache-Control"), response.Body.String())
+	}
+	if identityStub.startOIDCInput.OrganizationSlug != "engineering" ||
+		identityStub.startOIDCInput.ProviderName != "workforce" ||
+		identityStub.startOIDCInput.RequestID != "edge-request-1" {
+		t.Fatalf("start input=%+v", identityStub.startOIDCInput)
+	}
+}
+
+func TestOIDCCallbackEstablishesBrowserSessionWithoutDisclosingToken(t *testing.T) {
+	now := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
+	identityStub := &identityServiceStub{completeOIDCResult: identity.OIDCCallbackResult{
+		Principal: ordinaryPrincipal(), TokenID: "token-1", AccessToken: "ant_api_secret",
+		ExpiresAt: now.Add(time.Hour),
+	}}
+	handler := newTestHandler(t, identityStub, http.NotFoundHandler(), now)
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet,
+		"/protocol/oidc/callback?state=opaque-state&code=authorization-code", nil)
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusSeeOther || response.Header().Get("Location") != "/" ||
+		response.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("status=%d location=%q cache=%q body=%s", response.Code,
+			response.Header().Get("Location"), response.Header().Get("Cache-Control"), response.Body.String())
+	}
+	if strings.Contains(response.Header().Get("Location"), "ant_api_secret") ||
+		strings.Contains(response.Body.String(), "ant_api_secret") {
+		t.Fatalf("access token leaked through callback response")
+	}
+	assertCookie(t, response.Result().Cookies(), session.AccessTokenCookieName, true)
+	assertCookie(t, response.Result().Cookies(), session.CSRFCookieName, false)
+	if identityStub.completeOIDCInput.State != "opaque-state" ||
+		identityStub.completeOIDCInput.Code != "authorization-code" {
+		t.Fatalf("callback input=%+v", identityStub.completeOIDCInput)
+	}
+}
+
+func TestOIDCCallbackFailureRedirectsWithOnlyAStableErrorCode(t *testing.T) {
+	handler := newTestHandler(t, &identityServiceStub{completeOIDCErr: context.DeadlineExceeded},
+		http.NotFoundHandler(), time.Now())
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet,
+		"/protocol/oidc/callback?state=secret-state&code=secret-code", nil)
+	handler.ServeHTTP(response, request)
+
+	location := response.Header().Get("Location")
+	if response.Code != http.StatusSeeOther || location != "/?auth_error=oidc_login_failed" ||
+		strings.Contains(location, "secret-state") || strings.Contains(location, "secret-code") {
+		t.Fatalf("status=%d location=%q body=%s", response.Code, location, response.Body.String())
+	}
+	if len(response.Result().Cookies()) != 0 {
+		t.Fatalf("failed callback established cookies: %#v", response.Result().Cookies())
+	}
+}
+
+func TestSCIMProtocolProxyPreservesBearerAndStripsBrowserIdentity(t *testing.T) {
+	var received struct {
+		method, path, query, authorization, cookie, userID, body string
+	}
+	upstream := http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		received.method = request.Method
+		received.path = request.URL.Path
+		received.query = request.URL.RawQuery
+		received.authorization = request.Header.Get("Authorization")
+		received.cookie = request.Header.Get("Cookie")
+		received.userID = request.Header.Get(HeaderUserID)
+		payload, _ := io.ReadAll(request.Body)
+		received.body = string(payload)
+		response.Header().Set("Content-Type", "application/scim+json")
+		response.WriteHeader(http.StatusCreated)
+		_, _ = response.Write([]byte(`{"id":"user-1"}`))
+	})
+	handler := newTestHandler(t, &identityServiceStub{}, upstream, time.Now())
+	request := httptest.NewRequest(http.MethodPost, "/scim/v2/Users?attributes=id",
+		strings.NewReader(`{"userName":"person@example.com"}`))
+	request.Header.Set("Authorization", "Bearer scim-secret")
+	request.Header.Set("Cookie", "antnest_session=browser-secret")
+	request.Header.Set(HeaderUserID, "forged-user")
+	request.Header.Set("Content-Type", "application/scim+json")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusCreated || response.Header().Get("Content-Type") != "application/scim+json" ||
+		response.Body.String() != `{"id":"user-1"}` {
+		t.Fatalf("status=%d content-type=%q body=%s",
+			response.Code, response.Header().Get("Content-Type"), response.Body.String())
+	}
+	if received.method != http.MethodPost || received.path != "/scim/v2/Users" ||
+		received.query != "attributes=id" || received.authorization != "Bearer scim-secret" ||
+		received.cookie != "" || received.userID != "" ||
+		received.body != `{"userName":"person@example.com"}` {
+		t.Fatalf("upstream request=%+v", received)
+	}
+}
+
+func TestUnknownOIDCProtocolPathNeverFallsThroughToSPA(t *testing.T) {
 	consoleCalls := 0
-	handler := newTestHandler(t, identityStub, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+	handler := newTestHandler(t, &identityServiceStub{}, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		consoleCalls++
 	}), time.Now())
-	for _, path := range []string{
-		"/protocol/oidc", "/protocol/oidc/callback", "/scim/v2", "/scim/v2/Users",
-	} {
-		response := httptest.NewRecorder()
-		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
-		if response.Code != http.StatusServiceUnavailable ||
-			!strings.Contains(response.Header().Get("Content-Type"), "application/json") ||
-			!strings.Contains(response.Body.String(), "protocol_unavailable") {
-			t.Fatalf("path=%s status=%d content-type=%s body=%s",
-				path, response.Code, response.Header().Get("Content-Type"), response.Body.String())
-		}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/protocol/oidc/unknown", nil))
+	if response.Code != http.StatusNotFound ||
+		!strings.Contains(response.Header().Get("Content-Type"), "application/json") ||
+		!strings.Contains(response.Body.String(), "not_found") {
+		t.Fatalf("status=%d content-type=%s body=%s",
+			response.Code, response.Header().Get("Content-Type"), response.Body.String())
 	}
 	if consoleCalls != 0 {
-		t.Fatalf("reserved protocol paths reached SPA %d times", consoleCalls)
+		t.Fatalf("unknown protocol path reached SPA %d times", consoleCalls)
 	}
 }
 
@@ -297,6 +577,19 @@ func newTestHandlerWithConfig(
 	now time.Time,
 	config Config,
 ) http.Handler {
+	return newTestHandlerWithAgents(
+		t, identityService, &agentServiceStub{}, console, now, config,
+	)
+}
+
+func newTestHandlerWithAgents(
+	t *testing.T,
+	identityService IdentityService,
+	agents agentcontroller.Service,
+	console http.Handler,
+	now time.Time,
+	config Config,
+) http.Handler {
 	t.Helper()
 	httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		recorder := httptest.NewRecorder()
@@ -311,11 +604,14 @@ func newTestHandlerWithConfig(
 		t.Fatalf("session.NewManager: %v", err)
 	}
 	config.AdminConsoleURL = "http://admin-console.internal"
+	config.AgentUIURL = "http://agent-ui.internal"
+	config.AgentACPURL = "http://agent-acp.internal"
+	config.IdentityURL = "http://identity.internal"
 	config.RequestTimeout = time.Second
 	config.NewRequestID = func() string { return "edge-request-1" }
 	config.Now = func() time.Time { return now }
 	handler, err := NewHandler(config, Dependencies{
-		Identity: identityService, Sessions: sessions,
+		Identity: identityService, Agents: agents, Sessions: sessions,
 		HTTPClient: httpClient, Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
 	if err != nil {
@@ -323,6 +619,22 @@ func newTestHandlerWithConfig(
 	}
 	return handler
 }
+
+type agentServiceStub struct {
+	agents   []agentcontroller.WorkspaceAgent
+	input    agentcontroller.ListWorkspaceAgentsInput
+	listErr  error
+	readyErr error
+}
+
+func (stub *agentServiceStub) ListWorkspaceAgents(
+	_ context.Context, input agentcontroller.ListWorkspaceAgentsInput,
+) ([]agentcontroller.WorkspaceAgent, error) {
+	stub.input = input
+	return stub.agents, stub.listErr
+}
+
+func (stub *agentServiceStub) Ready(context.Context) error { return stub.readyErr }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
@@ -363,16 +675,26 @@ func ordinaryPrincipal() identity.Principal {
 }
 
 type identityServiceStub struct {
-	mu                 sync.Mutex
-	loginInput         identity.LoginInput
-	loginResult        identity.LoginResult
-	loginCalls         int
-	resolvePrincipal   identity.Principal
-	resolveErr         error
-	readyErr           error
-	revokedAccessToken string
-	revokeStatus       identity.RevokeStatus
-	revokeErr          error
+	mu                       sync.Mutex
+	loginInput               identity.LoginInput
+	loginResult              identity.LoginResult
+	loginCalls               int
+	resolvePrincipal         identity.Principal
+	resolveErr               error
+	readyErr                 error
+	revokedAccessToken       string
+	revokeStatus             identity.RevokeStatus
+	revokeErr                error
+	loginMethodsOrganization string
+	loginMethods             []identity.LoginMethod
+	loginMethodsErr          error
+	startOIDCInput           identity.StartOIDCLoginInput
+	startOIDCResult          identity.StartOIDCLoginResult
+	startOIDCErr             error
+	startOIDCCalls           int
+	completeOIDCInput        identity.OIDCCallbackInput
+	completeOIDCResult       identity.OIDCCallbackResult
+	completeOIDCErr          error
 }
 
 func (stub *identityServiceStub) Login(_ context.Context, input identity.LoginInput) (identity.LoginResult, error) {
@@ -392,6 +714,28 @@ func (stub *identityServiceStub) RevokeByAccessToken(
 ) (identity.RevokeStatus, error) {
 	stub.revokedAccessToken = accessToken
 	return stub.revokeStatus, stub.revokeErr
+}
+
+func (stub *identityServiceStub) ListLoginMethods(
+	_ context.Context, organizationSlug string,
+) ([]identity.LoginMethod, error) {
+	stub.loginMethodsOrganization = organizationSlug
+	return stub.loginMethods, stub.loginMethodsErr
+}
+
+func (stub *identityServiceStub) StartOIDCLogin(
+	_ context.Context, input identity.StartOIDCLoginInput,
+) (identity.StartOIDCLoginResult, error) {
+	stub.startOIDCCalls++
+	stub.startOIDCInput = input
+	return stub.startOIDCResult, stub.startOIDCErr
+}
+
+func (stub *identityServiceStub) CompleteOIDCLogin(
+	_ context.Context, input identity.OIDCCallbackInput,
+) (identity.OIDCCallbackResult, error) {
+	stub.completeOIDCInput = input
+	return stub.completeOIDCResult, stub.completeOIDCErr
 }
 
 func (stub *identityServiceStub) Ready(context.Context) error { return stub.readyErr }

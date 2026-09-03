@@ -16,6 +16,7 @@ type Repository interface {
 	GetPrincipal(context.Context, string, string) (domain.Principal, error)
 	IssueToken(context.Context, IssueTokenCommand) (Token, error)
 	RevokeToken(context.Context, string, string, time.Time) error
+	ListTokens(context.Context, string) ([]Token, error)
 	ResolveToken(context.Context, string, time.Time) (Authorization, error)
 	CreateUser(context.Context, CreateUserCommand) (UserResource, error)
 	GetUser(context.Context, string, string) (UserResource, error)
@@ -30,12 +31,12 @@ type Repository interface {
 }
 
 type Token struct {
-	ID             string    `json:"id"`
-	OrganizationID string    `json:"organization_id"`
-	Name           string    `json:"name"`
-	Scopes         []string  `json:"scopes"`
-	CreatedAt      time.Time `json:"created_at"`
-	RevokedAt      time.Time `json:"revoked_at,omitempty"`
+	ID             string     `json:"id"`
+	OrganizationID string     `json:"organization_id"`
+	Name           string     `json:"name"`
+	Scopes         []string   `json:"scopes"`
+	CreatedAt      time.Time  `json:"created_at"`
+	RevokedAt      *time.Time `json:"revoked_at,omitempty"`
 }
 
 type Authorization struct {
@@ -230,6 +231,21 @@ func (s *Service) RevokeToken(ctx context.Context, actorPrincipalID, tokenID str
 		return fmt.Errorf("revoke SCIM token: %w", err)
 	}
 	return nil
+}
+
+func (s *Service) ListTokens(
+	ctx context.Context,
+	actorPrincipalID string,
+	organizationID string,
+) ([]Token, error) {
+	principal, err := s.repository.GetPrincipal(ctx, actorPrincipalID, organizationID)
+	if err != nil {
+		return nil, fmt.Errorf("resolve SCIM token actor: %w", err)
+	}
+	if !principal.CanAdminister(organizationID) {
+		return nil, domain.ErrForbidden
+	}
+	return s.repository.ListTokens(ctx, organizationID)
 }
 
 func (s *Service) Authorize(ctx context.Context, rawToken, requiredScope string) (Authorization, error) {

@@ -45,6 +45,34 @@ type AgentPage struct {
 	NextCursor string
 }
 
+type WorkspaceAvailability string
+
+const (
+	WorkspaceAgentReady   WorkspaceAvailability = "ready"
+	WorkspaceAgentBusy    WorkspaceAvailability = "busy"
+	WorkspaceAgentOffline WorkspaceAvailability = "offline"
+)
+
+type ListWorkspaceAgentsInput struct {
+	RequestID      string
+	OrganizationID string
+	PrincipalID    string
+	Limit          int
+	Cursor         string
+}
+
+type WorkspaceAgentView struct {
+	AgentID       string
+	Name          string
+	Availability  WorkspaceAvailability
+	AccessSubject string
+}
+
+type WorkspaceAgentPage struct {
+	Items      []WorkspaceAgentView
+	NextCursor string
+}
+
 func (service *AgentQueryService) GetAgent(
 	ctx context.Context, agentID string,
 ) (AgentView, error) {
@@ -58,7 +86,7 @@ func (service *AgentQueryService) GetAgent(
 	if err != nil {
 		return AgentView{}, fmt.Errorf("get Agent projection: %w", err)
 	}
-	return agentView(record), nil
+	return service.agentProjection(ctx, record)
 }
 
 func (service *AgentQueryService) GetAgentForOrganization(
@@ -74,7 +102,45 @@ func (service *AgentQueryService) GetAgentForOrganization(
 	if err != nil {
 		return AgentView{}, fmt.Errorf("get Agent projection: %w", err)
 	}
-	return agentView(record), nil
+	return service.agentProjection(ctx, record)
+}
+
+func (service *AgentQueryService) agentProjection(
+	ctx context.Context, record ports.AgentRecord,
+) (AgentView, error) {
+	view := agentView(record)
+	if record.AgentSpecRevisionID == "" {
+		return view, nil
+	}
+	configuration, err := service.store.GetAgentConfiguration(
+		ctx, record.AgentID, record.AgentSpecRevisionID,
+	)
+	if errors.Is(err, ports.ErrNotFound) {
+		return AgentView{}, fmt.Errorf(
+			"%w: executable configuration for Agent %s", ErrQueryContract, record.AgentID,
+		)
+	}
+	if err != nil {
+		return AgentView{}, fmt.Errorf("get Agent configuration projection: %w", err)
+	}
+	if configuration.AgentID != record.AgentID ||
+		configuration.AgentSpecRevisionID != record.AgentSpecRevisionID {
+		return AgentView{}, fmt.Errorf(
+			"%w: mismatched executable configuration for Agent %s", ErrQueryContract, record.AgentID,
+		)
+	}
+	snapshot := configuration.Snapshot
+	view.Configuration = &AgentConfigurationView{
+		TemplateID: snapshot.TemplateID, TemplateRevision: snapshot.TemplateRevision,
+		TemplateName:           configuration.TemplateName,
+		ModelProfileID:         configuration.ModelProfileID,
+		ModelProfileRevisionID: snapshot.ModelProfileRevisionID,
+		ModelProfileRevision:   configuration.ModelProfileRevision,
+		ModelProfileName:       configuration.ModelProfileName, Model: snapshot.Model,
+		MaxModelRequests:     snapshot.MaxModelRequests,
+		ContextPolicyVersion: snapshot.ContextPolicyVersion, Runtime: snapshot.Runtime,
+	}
+	return view, nil
 }
 
 func (service *AgentQueryService) ListAgents(
@@ -111,6 +177,78 @@ func (service *AgentQueryService) ListAgents(
 		}
 	}
 	return page, nil
+}
+
+func (service *AgentQueryService) ListWorkspaceAgents(
+	ctx context.Context, input ListWorkspaceAgentsInput,
+) (WorkspaceAgentPage, error) {
+	if !validIdentifier(input.RequestID) || !validIdentifier(input.OrganizationID) ||
+		!validIdentifier(input.PrincipalID) {
+		return WorkspaceAgentPage{}, fmt.Errorf("%w: workspace Agent scope", ErrInvalidInput)
+	}
+	pageLimit := input.Limit
+	if pageLimit == 0 {
+		pageLimit = defaultAgentListLimit
+	}
+	if pageLimit < 1 || pageLimit > maximumAgentListLimit {
+		return WorkspaceAgentPage{}, fmt.Errorf("%w: workspace Agent list limit", ErrInvalidInput)
+	}
+	query := ports.WorkspaceAgentQuery{
+		OrganizationID: input.OrganizationID, PrincipalID: input.PrincipalID,
+		Limit: pageLimit + 1,
+	}
+	if input.Cursor != "" {
+		var err error
+		query.AfterCreatedAt, query.AfterAgentID, err = decodeAgentCursor(input.Cursor)
+		if err != nil {
+			return WorkspaceAgentPage{}, fmt.Errorf("%w: workspace Agent cursor", ErrInvalidInput)
+		}
+	}
+	records, err := service.store.ListWorkspaceAgents(ctx, query)
+	if err != nil {
+		return WorkspaceAgentPage{}, fmt.Errorf("list workspace Agent projections: %w", err)
+	}
+	if len(records) > query.Limit {
+		return WorkspaceAgentPage{}, fmt.Errorf(
+			"%w: workspace Agent store returned %d rows for limit %d",
+			ErrQueryContract, len(records), query.Limit,
+		)
+	}
+	hasNext := len(records) > pageLimit
+	if hasNext {
+		records = records[:pageLimit]
+	}
+	page := WorkspaceAgentPage{Items: make([]WorkspaceAgentView, 0, len(records))}
+	for _, record := range records {
+		page.Items = append(page.Items, WorkspaceAgentView{
+			AgentID: record.AgentID, Name: record.Name,
+			Availability: workspaceAvailability(record), AccessSubject: record.AccessSubject,
+		})
+	}
+	if hasNext {
+		last := records[len(records)-1]
+		page.NextCursor, err = encodeAgentCursor(ports.AgentRecord{
+			AgentID: last.AgentID, CreatedAt: last.CreatedAt,
+		})
+		if err != nil {
+			return WorkspaceAgentPage{}, err
+		}
+	}
+	return page, nil
+}
+
+func workspaceAvailability(record ports.WorkspaceAgentRecord) WorkspaceAvailability {
+	if record.LifecycleState != domain.AgentAvailable {
+		return WorkspaceAgentOffline
+	}
+	switch record.AdmissionState {
+	case "":
+		return WorkspaceAgentReady
+	case domain.AdmissionActive:
+		return WorkspaceAgentBusy
+	default:
+		return WorkspaceAgentOffline
+	}
 }
 
 func buildAgentQuery(input ListAgentsInput) (ports.AgentQuery, int, error) {

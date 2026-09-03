@@ -62,6 +62,12 @@ User
 - A system administrator creating an Organization atomically receives its
   active local administrator Membership; no unusable ownerless Organization
   is committed.
+- A local Membership update cannot demote or deactivate the final effective
+  administrator of an Organization. Identity serializes those changes at the
+  Organization boundary, so concurrent updates cannot create an ownerless
+  directory.
+- Global User deactivation locks every active Organization where that User is
+  an administrator and applies the same invariant before revoking access.
 
 This removes the special case where deprovisioning one tenant accidentally
 disables a person's membership in every tenant.
@@ -107,12 +113,18 @@ Stage 2 exposes trusted-network JSON RPC for:
 - resolving and revoking opaque access tokens;
 - listing the organization directory;
 - resolving one non-secret organization principal for another internal service;
-- issuing and revoking SCIM bearer tokens;
-- configuring OIDC Providers and starting login.
+- issuing, safely listing, and revoking SCIM bearer tokens;
+- configuring, safely listing, enabling/disabling OIDC Providers, and starting
+  login.
 
 Internal transport is trusted but domain authorization is not skipped. Admin
 mutations carry an `actor_principal_id`; Identity Service verifies system or
 organization administration itself.
+
+Administrative OIDC reads select only Provider metadata and never load the
+encrypted client secret. Administrative SCIM reads include active and revoked
+token metadata but never token hashes or plaintext credentials. Plaintext SCIM
+credentials are returned only by the initial issue operation.
 
 `resolve_principal` is the narrow service-to-service exception to the actor
 rule. It accepts an opaque `user_id` and `organization_id` and returns only the
