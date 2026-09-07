@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
+import { assertSecretFree } from "./evidence.mjs";
 
 export function assertNoStore(headers) {
   // A proxy may append the same cache directive as its upstream.
@@ -35,9 +36,11 @@ export class GatewayClient {
     const {
       body,
       status = 200,
+      responseType = "json",
       headers = {},
       method = body === undefined ? "GET" : "POST",
     } = options;
+    const label = `${method} ${new URL(path, this.base).pathname}`;
     this.requests++;
     const response = await fetch(this.base + path, {
       method,
@@ -58,7 +61,7 @@ export class GatewayClient {
     assert.equal(
       response.status,
       status,
-      `${method} ${path}: HTTP ${response.status}, expected ${status}`,
+      `${label}: HTTP ${response.status}, expected ${status}`,
     );
     for (const raw of response.headers.getSetCookie()) {
       const pair = raw.split(";", 1)[0];
@@ -70,9 +73,9 @@ export class GatewayClient {
     }
     let parsed = null;
     try {
-      parsed = text ? JSON.parse(text) : null;
+      parsed = responseType === "text" ? text : text ? JSON.parse(text) : null;
     } catch {
-      throw new Error(`${method} ${path}: invalid JSON response`);
+      throw new Error(`${label}: invalid JSON response`);
     }
     return {
       body: parsed,
@@ -127,8 +130,7 @@ export function inspectIdentityTrace(trace, expectation, secrets) {
     );
   }
   const encoded = JSON.stringify(trace);
-  for (const secret of secrets)
-    assert(!secret || !encoded.includes(secret), "secret exported in trace");
+  assertSecretFree(encoded, secrets);
   return {
     trace_id: trace.traceID,
     spans: trace.spans.length,

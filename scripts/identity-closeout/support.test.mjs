@@ -72,6 +72,31 @@ test("HTTP status failures never echo sensitive response bodies", async (t) => {
   );
 });
 
+test("redirect responses preserve cookies without printing callback query secrets", async (t) => {
+  const base = await fixture(t, (_, response) => {
+    response.setHeader("Location", "/");
+    response.setHeader(
+      "Set-Cookie",
+      "antnest_session=secret; HttpOnly; Path=/",
+    );
+    response.writeHead(303).end("<html>Redirect</html>");
+  });
+  const client = new GatewayClient(base);
+  const response = await client.request(
+    "/protocol/oidc/callback?code=private-code",
+    { status: 303, responseType: "text" },
+  );
+  assert.equal(response.body, "<html>Redirect</html>");
+  assert(client.cookies.has("antnest_session"));
+  await assert.rejects(
+    client.request("/protocol/oidc/callback?code=private-code"),
+    (error) => {
+      assert(!inspect(error).includes("private-code"));
+      return true;
+    },
+  );
+});
+
 function traceFixture() {
   return {
     traceID: "a".repeat(32),

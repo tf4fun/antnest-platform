@@ -11,6 +11,7 @@ export ANTNEST_E2E_RUN_ID=$(node -e 'process.stdout.write(crypto.randomUUID())')
 export ANTNEST_POSTGRES_HOST_PORT=$port_base
 export ANTNEST_EDGE_HOST_PORT=$((port_base + 1))
 export ANTNEST_JAEGER_UI_HOST_PORT=$((port_base + 2))
+export ANTNEST_OIDC_TEST_PORT=$((port_base + 3))
 export ANTNEST_EDGE_PUBLIC_BASE_URL="http://127.0.0.1:${ANTNEST_EDGE_HOST_PORT}"
 export ANTNEST_RUNTIME_CONTROLLER_SCOPE="$COMPOSE_PROJECT_NAME"
 export ANTNEST_RUNTIME_MANAGEMENT_NETWORK="${COMPOSE_PROJECT_NAME}-runtime-management"
@@ -53,11 +54,11 @@ agent_id=""
 
 compose() {
   if [ "${ANTNEST_E2E_ACP_CLOSEOUT:-false}" = true ]; then
-    docker compose -f compose.yaml -f compose.stage3.yaml -f scripts/acp-closeout/compose.yaml \
+    docker compose -f compose.yaml -f compose.stage3.yaml -f scripts/identity-closeout/oidc-compose.yaml -f scripts/acp-closeout/compose.yaml \
       --profile stage3 --profile stage3-e2e --profile observability "$@"
     return
   fi
-  docker compose -f compose.yaml -f compose.stage3.yaml --profile stage3 --profile stage3-e2e --profile observability "$@"
+  docker compose -f compose.yaml -f compose.stage3.yaml -f scripts/identity-closeout/oidc-compose.yaml --profile stage3 --profile stage3-e2e --profile observability "$@"
 }
 
 cleanup() {
@@ -66,10 +67,10 @@ cleanup() {
   if [ "$status" -ne 0 ]; then
     compose ps >&2 || true
     compose logs --no-color --tail=200 edge-gateway admin-console agent-ui agent-acp-service \
-      identity-service agent-controller runtime-controller runtime-egress stage3-model jaeger >&2 || true
-    if [ -n "$agent_id" ]; then
-      docker logs --tail=200 "antnest-runtime-${agent_id}" >&2 || true
-    fi
+      identity-service agent-controller runtime-controller runtime-egress stage3-model jaeger \
+      > "$temporary_root/failure-logs.txt" 2>/dev/null || true
+    node scripts/identity-closeout/check-oidc-logs.mjs --summary "$temporary_root/failure-logs.txt" >&2 || true
+    printf 'Raw service and runtime logs omitted: they may contain credentials.\n' >&2
   fi
   if [ "$status" -eq 0 ] && [ "$keep_stack" = true ]; then
     rm -rf -- "${temporary_root:?}"
@@ -204,6 +205,15 @@ wait_operation() {
   return 1
 }
 
+mkdir "$temporary_root/certs"
+openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=oidc-fixture \
+  -addext 'subjectAltName=DNS:oidc-fixture' \
+  -keyout "$temporary_root/certs/tls.key" -out "$temporary_root/certs/tls.crt" >/dev/null 2>&1
+compose create oidc-fixture
+docker run --rm --network none --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
+  --mount "type=bind,source=$temporary_root/certs,target=/input,readonly" \
+  --mount "type=volume,source=${COMPOSE_PROJECT_NAME}-oidc-certs,target=/certs" \
+  debian:bookworm-slim cp /input/tls.key /input/tls.crt /certs/
 compose up -d --wait
 
 printf '{"organization_slug":"stage3"}' >"$temporary_root/login-methods-request.json"
@@ -384,6 +394,11 @@ node -e '
 ' "$temporary_root/scim-tokens-after-revoke.json" "$scim_token_id"
 
 node scripts/identity-closeout/client.mjs "$gateway_url" "$jaeger_url"
+node scripts/identity-closeout/oidc-client.mjs "$gateway_url" "$jaeger_url" \
+  "$ANTNEST_OIDC_TEST_PORT" "$temporary_root/certs/tls.crt" "$temporary_root/oidc-canaries.json"
+compose logs --no-color edge-gateway admin-console identity-service >"$temporary_root/identity-service-logs.txt"
+node scripts/identity-closeout/check-oidc-logs.mjs \
+  "$temporary_root/oidc-canaries.json" "$temporary_root/identity-service-logs.txt"
 
 gateway_request GET /api/admin/model-catalog - "$temporary_root/model-catalog.json" 200
 node -e '

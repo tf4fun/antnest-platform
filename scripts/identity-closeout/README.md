@@ -24,8 +24,8 @@ Docker access and uses only synthetic credentials.
    of service names alone is not evidence. Passwords, session cookies and SCIM
    credentials must not appear in these traces.
 
-OIDC IdP login/callback, cross-organization protocol isolation, token expiry,
-already-open ACP connections and log-sink inspection remain separate acceptance
+Cross-organization protocol isolation, token expiry,
+already-open ACP connections and browser UI acceptance remain separate acceptance
 work. This batch does not accept the whole C2 or C6 milestone.
 
 ## Run
@@ -49,3 +49,37 @@ compact final counts and trace summaries, not a dump of credentials or payloads.
 `node --test --test-concurrency=1 scripts/identity-closeout/*.test.mjs` tests the
 HTTP/assertion helpers. These helper tests are not substitutes for the real
 integration run. Formatting and fixture tests are part of the root Make gates.
+
+## OIDC Gateway Batch
+
+Stage 3 also starts a disposable HTTPS IdP fixture. It implements discovery,
+authorization-code redirects, one-use code redemption with exact client and
+redirect binding, PKCE S256, and RSA-signed ID tokens verified via JWKS by the
+real Identity service. This fixture auto-authenticates selected synthetic
+accounts; it is not acceptance of a particular vendor's IdP login UI.
+
+The test-only Compose override trusts a fresh, one-day certificate through
+`SSL_CERT_FILE`. TLS verification is never disabled. The host test client maps
+the fixture DNS name to its loopback-published port while preserving certificate
+hostname verification. Neither this CA nor the fixture is enabled in deployment
+Compose. A shared named test certificate volume allows keep-stack restarts;
+normal teardown removes it together with the fixture.
+
+The OIDC suite exercises SCIM/local account convergence, stable subject binding,
+inactive and unknown-account rejection, refusal to federate system admins,
+wrong nonce rejection, browser-transaction transfer denial before token
+exchange, callback replay and concurrent-start replacement. Provider disable
+and secret rotation are verified against real discovery/exchange. Gateway-rooted
+start/callback traces and service logs are checked for synthetic secrets.
+All provisioning and login requests enter Gateway, with no direct SQL writes.
+The fixture's counters are only a protocol-execution oracle.
+
+The denial cases use a second issuer path, respecting Identity's one-issuer-per-
+organization registration rule. Re-login with the same subject but a changed
+email must retain the original User/Membership, rather than re-link by email.
+Test-only evidence endpoints expose synthetic PKCE verifiers, signed ID tokens
+and Basic credentials to the coordinator's scanner, never to product clients.
+Trace and log scans include these canaries and URL-encoded forms. Logs must
+contain correlated request records from Gateway, Console and Identity; empty
+or startup-only output cannot pass. Failure diagnostics print only bounded
+service/level counts, never raw logs, callback URLs or credential values.

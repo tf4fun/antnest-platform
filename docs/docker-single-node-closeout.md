@@ -161,10 +161,14 @@ uses. Adapter stubs must not be described as full-platform acceptance.
 - [ ] **C2-01** Test local bootstrap/login/logout/password rotation, expired or
   revoked sessions, member versus administrator surfaces, and organization
   isolation through Edge rather than only through Identity RPC.
-- [ ] **C2-02** Exercise OIDC discovery/start/callback/login using a controlled
+- [x] **C2-02** Exercise OIDC discovery/start/callback/login using a controlled
   IdP fixture with real redirect and token exchange. Confirm SCIM/local
-  provisioned identities converge on the same User/Membership and credentials
-  never reach browser storage, logs, or traces.
+  provisioned identities converge on the same User/Membership. Provider secrets,
+  PKCE verifiers and Provider tokens must not reach browser responses, logs or
+  traces; the application session belongs only in an HttpOnly cookie, not
+  JavaScript-accessible storage. Accepted for the controlled HTTP workflow by
+  the [Gateway OIDC suite](../scripts/identity-closeout/README.md), not as vendor
+  IdP UI/browser acceptance or a claim that all of C2 is closed.
 - [x] **C2-03** Exercise Gateway SCIM discovery, User/Group create/update,
   membership changes, deactivate/reactivate, deletion, and token rotation/revoke
   within the supported SCIM profile. Do not advertise unsupported SCIM features.
@@ -469,8 +473,49 @@ stronger pagination, User-state and successful-read assertions. These are
 reusable HTTP tests, not browser UI acceptance or full log-sink inspection.
 
 C2-03 is closed; C2-01/04 have additional HTTP evidence but remain open for their
-other requirements. C2-02 controlled IdP-through-Gateway integration and C2-05's
-journal business-effect decision remain the next Identity work. No event bus,
+other requirements. At that batch boundary, C2-02 controlled IdP-through-Gateway
+integration and C2-05's journal business-effect decision remained open. No event bus,
 external Provider, cross-organization acceptance or whole-C2/C6 acceptance is
 claimed. Final metrics belong here; transient logs and disposable traces are
 not checked into Git.
+
+C2 Gateway OIDC batch (2026-09-08): a controlled HTTPS IdP now exercises actual
+discovery, authorization redirects, PKCE S256, client-secret authentication,
+one-use code exchange, signed ID tokens and JWKS. The suite has **6 scenario
+groups, 11 token exchanges/grants, 11 JWKS requests and 3 discovery requests**.
+Local and SCIM login converge on their existing User/Membership; after SCIM
+reactivation the same subject with a changed IdP email retains its original
+identity. Inactive, unknown, unverified, administrator and wrong-nonce logins
+are rejected. Provider revision/secret rotation and disable are also exercised.
+
+The integration work reproduced and fixed Gateway login CSRF: a valid callback
+was previously transferable to a different browser. Gateway now binds state to
+an HttpOnly, SameSite=Lax transaction cookie (`__Host-` prefixed under HTTPS).
+Missing, mismatched or duplicate bindings and ambiguous callback parameters are
+rejected before Identity. Only the latest pending browser attempt is admitted;
+failed foreign callbacks leave the existing application session untouched.
+Identity remains authoritative for expiry and atomic transaction consumption.
+
+Five additional Jaeger traces (**46 spans**) prove Gateway ancestry through
+Identity's actual repository operations: three Provider registrations/updates
+(11 spans each, through Console), login start (5), and callback completion (8).
+Correlated request logs from Edge, Console and Identity are required, not merely
+nonempty logs. Raw/URL-encoded synthetic secrets, PKCE verifiers, Basic credential
+values and complete signed ID tokens are scanned in traces and service logs.
+The fixture exposes test-only canaries; it is never enabled in deployment Compose.
+
+Read-only adversarial review found evidence weaknesses in diagnostics, encoded
+credential coverage and stable-subject assertions; all were addressed. The
+**15 fixture/helper tests** include negative tests proving leakage and missing
+log/trace ancestry fail without redisclosing credentials. The default Stage 3
+suite passed, including the existing administrator lifecycle and workspace ACP
+checks. Disposable containers, volumes and networks were cleaned by the parent.
+C2-02 is accepted for this controlled HTTP profile. Cross-organization access,
+session expiry, remaining ACP revocation semantics and C2-05 still need their
+own batches; no whole-C2, vendor IdP UI or browser UI acceptance is claimed.
+
+Final admission for this batch: `make fmt-check` and `make lint` passed
+(Go lint: 0 issues; both Rust Clippy targets: no warnings; Node lint/typechecks
+passed), all six Edge Gateway test packages passed with `-race -p=1`, and the
+15 identity fixture/helper tests passed serially. Gateway's session contract
+and the changed documentation were synchronized; no threshold was relaxed.
