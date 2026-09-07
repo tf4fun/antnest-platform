@@ -83,7 +83,7 @@ boundaries verified by source inspection, not new test-run results:
 | --- | --- | --- |
 | Stdio MCP | Template-owned configuration starts children inside Runtime; ACP discovers/calls their aggregated HTTP tools; Console and Docker evidence exists | Client-supplied ACP stdio remains unsupported. Keep the stable-v1 baseline incompatibility visible; do not launch commands on the ACP host or silently turn Session input into Template configuration |
 | Session recovery | v1 real WebSocket/PostgreSQL reconnect and application-recreation cases; application recovery unit tests | Actual ACP process interruption with completed and in-flight work, both protocol versions, admission settlement and replay without repeated effects through Edge |
-| Access isolation | Session ownership and access-revision layer tests; authoritative Identity checks at admission | Two real users/Agents and an already-open connection across revocation/revision change, through Edge, for v1 and v2 |
+| Access isolation | v1/v2 wire/PostgreSQL Session ownership and access-revision tests with deterministic Controller ports; authoritative Identity checks at admission | Two real users/Agents and an already-open connection across revocation/revision change, through Edge, for v1 and v2 |
 | Identity events | Transactional `identity_events` journal; synchronous `resolve_principal` dependency | No journal delivery contract or Agent Controller consumer. C2-05 must decide the required business effect, then implement its narrow delivery/consumer batches if needed; local audit alone is not event-driven integration |
 | Documentation and operations | Current Stage 3 entry and MCP feature evidence | Remove stale current-status wording, exercise restore/cleanup, measure the reported idle CPU spikes, and produce the final three-flow Jaeger report |
 
@@ -128,13 +128,16 @@ silently waived nor introduced just to make the topology look complete.
 - [ ] **C1-01** Reconcile stable v1 and draft v2 separately against the pinned
   official SDK schemas. Enumerate baseline requirements, advertised options,
   unsupported options, exact external routes, and their executable tests.
-- [ ] **C1-02** Close the Streamable-HTTP-only MCP product boundary with explicit
+- [x] **C1-02** Close the Streamable-HTTP-only MCP product boundary with explicit
   wire rejection tests for stdio and legacy SSE input. Platform Runtime MCP
   remains configuration-owned; client MCP remains Session-owned. Runtime-owned
   stdio hosting is delivered through the separate service batches in
   [Runtime Context And Managed MCP](runtime-context-and-managed-mcp.md), not by
   launching client-selected commands in ACP Service. Preserve the
   documented v1 baseline incompatibility instead of claiming full conformance.
+  Accepted at the service wire/persistence boundary by
+  `test/e2e/acp-mcp-input.postgres.test.ts` (six cases, both versions, all setup
+  methods, mixed valid/invalid inputs, closed Sessions and encrypted revisions).
 - [ ] **C1-03** Exercise both versions over real WebSockets and PostgreSQL:
   new, prompt, user/assistant/Tool history, version-specific completion,
   reconnect, load/resume, list, and the advertised lifecycle operations.
@@ -376,3 +379,12 @@ recreation cases. Repeated load retains identical history without more model,
 Tool, or admission calls. The external ports are deterministic stubs, not a
 real Runtime/Provider. The temporary database was removed; full process-crash,
 Gateway integration, and Jaeger report acceptance remain open.
+
+C1-04 partial evidence (2026-09-07): 16 v1/v2 wire/PostgreSQL cases now cover
+cross-principal/Agent ownership, access-revision changes, principal deactivation,
+and unauthorized cancellation of active Runs. They exposed and fixed disclosure
+of a foreign Session's busy state before ownership checks. Controller/model/Tool
+ports are deterministic; actual Identity/Gateway revocation remains unaccepted.
+The complete ACP PostgreSQL profile passes 37 cases. Its worker-lock fault test
+was also fixed to terminate only its own connection, not a same-key lock owner
+in another database. C5-03 idle CPU diagnosis remains open.
