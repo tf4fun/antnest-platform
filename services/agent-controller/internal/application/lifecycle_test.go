@@ -112,6 +112,9 @@ func TestCreateAgentMaterializesSpecAndPublishesOnlyAfterRuntimeReady(t *testing
 		dependencies.runtimeConfiguration.ImageRef != template.Snapshot().Runtime.ImageRef {
 		t.Fatalf("Runtime configuration was not assembled from frozen spec and Egress: %+v", dependencies.runtimeConfiguration)
 	}
+	if !reflect.DeepEqual(dependencies.runtimeConfiguration.MCPServers, template.Snapshot().Runtime.MCPServers) {
+		t.Fatal("create did not forward frozen MCP configuration")
+	}
 	if store.published.Execution.RuntimeRevision != "runtime-revision-1" ||
 		store.published.ReadyEvent.EventType != ports.EventAgentReady {
 		t.Fatalf("publish transaction is incomplete: %+v", store.published)
@@ -860,11 +863,13 @@ func (store *lifecycleStoreStub) FailAgentCreate(
 
 func mustLifecycleTemplate(t *testing.T) domain.TemplateRevision {
 	t.Helper()
+	runtime := validRuntimeInput()
+	runtime.MCPServers = []domain.MCPServer{{ID: "documents", Command: "node", Args: []string{"/workspace/documents.js"}, Env: map[string]string{"TOKEN": "synthetic-token"}}}
 	revision, err := domain.NewTemplateRevision(domain.TemplateRevisionInput{
 		TemplateID: "template-1", OrganizationID: "org-1", Revision: 1,
 		ModelProfileRevisionID: "model-revision-1", SystemPrompt: "Be useful.",
 		MaxModelRequests: 12, ContextPolicyVersion: domain.ContextPolicyV1,
-		Runtime: validRuntimeInput(),
+		Runtime: runtime,
 	})
 	if err != nil {
 		t.Fatalf("Template revision: %v", err)

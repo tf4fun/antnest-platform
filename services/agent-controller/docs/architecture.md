@@ -45,7 +45,9 @@ TemplateRevision. A revision contains:
 
 - one ModelProfile revision;
 - system prompt and maximum model requests;
-- immutable Runtime image reference and resource limits.
+- immutable Runtime image reference, resource limits, and optional managed stdio
+  MCP startup configuration. See [Managed MCP](managed-mcp.md) for bounds and
+  configuration privacy.
 
 A draft may select an installed `repository:tag` instead of an immutable image.
 Catalog checks request replay and organization-scoped references before invoking
@@ -138,7 +140,9 @@ binding.
 An AgentSpecRevision is a complete immutable non-secret snapshot derived
 from a specific Template revision and ModelProfile revision. It freezes the
 system prompt, model request policy, context-policy version, model metadata,
-Runtime image/resources, credential reference/version, and canonical digest.
+Runtime image/resources/managed MCP configuration, credential reference/version,
+and canonical digest. Managed MCP arguments and environment are not copied into
+Run admission or operational events.
 `skill_instructions` is always empty in Stage 2.
 
 ### ExecutionRevision

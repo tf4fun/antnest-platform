@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -84,6 +85,10 @@ func TestCatalogRepositoryPersistsAndReplaysRequests(t *testing.T) {
 	template := integrationTemplateRecord(t, revisedModel.Revision)
 	if _, err := repository.PutTemplate(ctx, template); err != nil {
 		t.Fatalf("put Template: %v", err)
+	}
+	loadedTemplate, err := repository.GetTemplate(ctx, template.TemplateID)
+	if err != nil || !reflect.DeepEqual(loadedTemplate.Revision.Snapshot().Runtime.MCPServers, template.Revision.Snapshot().Runtime.MCPServers) {
+		t.Fatalf("MCP configuration did not survive template persistence: %v", err)
 	}
 	if replayed, found, err := repository.ReplayTemplateRequest(
 		ctx, ports.CreateTemplateRequest, template.RequestID, template.RequestFingerprint,
@@ -227,7 +232,8 @@ func integrationTemplateRecord(t *testing.T, model domain.ModelProfileRevision) 
 		ModelProfileRevisionID: model.ID(), SystemPrompt: "prompt", MaxModelRequests: 8,
 		ContextPolicyVersion: "context-v1",
 		Runtime: domain.RuntimeSpecInput{
-			ImageRef: "antnest/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			ImageRef:   "antnest/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			MCPServers: []domain.MCPServer{{ID: "documents", Command: "node", Args: []string{"server.js"}, Env: map[string]string{"TOKEN": "synthetic-mcp-token"}}},
 			Resources: domain.RuntimeResources{
 				MemoryBytes: 536870912, PIDsLimit: 256, TmpfsBytes: 67108864,
 			},

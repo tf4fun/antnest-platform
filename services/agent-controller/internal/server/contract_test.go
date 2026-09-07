@@ -81,7 +81,7 @@ func TestMachineControlContractMatchesRegisteredBoundary(t *testing.T) {
 	readStrictContractJSON(t, filepath.Join(root, "contracts/agent-controller/control-contract.json"), &contract)
 	var schema machineControlSchema
 	readContractJSON(t, filepath.Join(root, "contracts/agent-controller/control-api.schema.json"), &schema)
-	if contract.Revision != 10 {
+	if contract.Revision != 11 {
 		t.Fatalf("control contract revision = %d", contract.Revision)
 	}
 	if contract.MediaTypes.Request != "application/json" ||
@@ -188,7 +188,8 @@ func TestMachineControlSchemaMatchesGoWireTypes(t *testing.T) {
 		ContextWindow: 128000, MaxOutputTokens: 8192, SupportsImages: true,
 	}
 	runtimeInput := domain.RuntimeSpecInput{
-		ImageRef: "antnest/runtime@sha256:" + strings.Repeat("a", 64),
+		ImageRef:   "antnest/runtime@sha256:" + strings.Repeat("a", 64),
+		MCPServers: []domain.MCPServer{{ID: "documents", Command: "node", Args: []string{"server.js"}, Env: map[string]string{"TOKEN": "synthetic-token"}}},
 		Resources: domain.RuntimeResources{
 			MemoryBytes: 536870912, PIDsLimit: 256, TmpfsBytes: 67108864,
 		},
@@ -741,6 +742,11 @@ func compileControlSchema(t *testing.T, path string) *jsonschema.Compiler {
 	}
 	compiler := jsonschema.NewCompiler()
 	compiler.AssertFormat()
+	var runtimeContract any
+	readContractJSON(t, filepath.Join(repositoryRoot(t), "contracts/runtime/runtime-spec.schema.json"), &runtimeContract)
+	if err := compiler.AddResource("https://antnest.local/runtime/runtime-spec.schema.json", runtimeContract); err != nil {
+		t.Fatalf("load Runtime MCP contract: %v", err)
+	}
 	if err := compiler.AddResource(controlSchemaID, document); err != nil {
 		t.Fatalf("load control schema: %v", err)
 	}

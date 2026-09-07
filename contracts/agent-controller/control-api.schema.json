@@ -41,7 +41,8 @@
           "type": "string", "minLength": 1, "maxLength": 512,
           "description": "Immutable image reference or an installed repository:tag, resolved by Runtime Controller before publication."
         },
-        "resources": { "$ref": "#/$defs/runtime_resources" }
+        "resources": { "$ref": "#/$defs/runtime_resources" },
+        "mcp_servers": { "$ref": "../runtime/runtime-spec.schema.json#/properties/mcp_servers" }
       }
     },
     "runtime_input": {
@@ -54,7 +55,8 @@
           "pattern": "^(sha256:[0-9a-fA-F]{64}|[^@\\s]+@sha256:[0-9a-fA-F]{64})$"
         },
         "image_source": { "type": "string", "minLength": 1, "maxLength": 512, "readOnly": true },
-        "resources": { "$ref": "#/$defs/runtime_resources" }
+        "resources": { "$ref": "#/$defs/runtime_resources" },
+        "mcp_servers": { "$ref": "../runtime/runtime-spec.schema.json#/properties/mcp_servers" }
       }
     },
     "model_input": {

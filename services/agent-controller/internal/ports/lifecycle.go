@@ -61,9 +61,10 @@ type NetworkAttachment struct {
 }
 
 type RuntimeConfiguration struct {
-	ImageRef  string
-	Network   NetworkAttachment
-	Resources domain.RuntimeResources
+	ImageRef   string
+	Network    NetworkAttachment
+	Resources  domain.RuntimeResources
+	MCPServers []domain.MCPServer
 }
 
 type RuntimeOperation struct {

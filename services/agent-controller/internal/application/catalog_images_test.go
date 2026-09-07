@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -46,7 +47,7 @@ func TestTemplateImageReplayDoesNotResolveMovedTag(t *testing.T) {
 	images.result.ImageRef = "sha256:" + strings.Repeat("b", 64)
 	images.err = errors.New("resolver unavailable")
 	replayed, err := service.CreateTemplate(context.Background(), input)
-	if err != nil || replayed.Runtime != first.Runtime || images.calls != 1 {
+	if err != nil || !reflect.DeepEqual(replayed.Runtime, first.Runtime) || images.calls != 1 {
 		t.Fatalf("replay = %+v, err = %v, calls = %d", replayed.Runtime, err, images.calls)
 	}
 }
@@ -65,7 +66,7 @@ func TestTemplateImageRevisionPreservesPinUnlessTagExplicitlySelected(t *testing
 	input.Runtime.ImageSource = ""
 	images.err = errors.New("resolver offline")
 	preserved, err := service.ReviseTemplate(context.Background(), input)
-	if err != nil || preserved.Runtime != created.Runtime || images.calls != 1 {
+	if err != nil || !reflect.DeepEqual(preserved.Runtime, created.Runtime) || images.calls != 1 {
 		t.Fatalf("preserved = %+v, error = %v, calls = %d", preserved.Runtime, err, images.calls)
 	}
 	images.err = nil
@@ -78,7 +79,7 @@ func TestTemplateImageRevisionPreservesPinUnlessTagExplicitlySelected(t *testing
 	store.templateReplay, store.replayFound = store.templateRecord, true
 	images.err = errors.New("resolver offline again")
 	replayed, err := service.ReviseTemplate(context.Background(), input)
-	if err != nil || replayed.Runtime != refreshed.Runtime || images.calls != 2 {
+	if err != nil || !reflect.DeepEqual(replayed.Runtime, refreshed.Runtime) || images.calls != 2 {
 		t.Fatalf("revision replay changed its pin: %+v, %v", replayed, err)
 	}
 }

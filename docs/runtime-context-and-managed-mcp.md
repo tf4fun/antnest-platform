@@ -116,7 +116,7 @@ and that service's fixtures belong to the same batch.
 | --- | --- | --- | --- |
 | 1 | `antnest-runtime` | Information Resource, stdio process hosting, aggregated tool discovery/dispatch, lifecycle and telemetry tests | Complete; service-local accepted |
 | 2 | `runtime-controller` | Configuration transport, mounts/permissions and readiness integration | Complete; service-local accepted |
-| 3 | `agent-controller` | Configuration validation/snapshot and create/rebuild execution publication | Pending |
+| 3 | `agent-controller` | Configuration validation/snapshot and create/rebuild execution publication | Complete (service-local) |
 | 4 | `agent-acp-service` | Information consumption, managed tool discovery and budgeted context injection | Pending |
 | 5 | Integration | Docker create/chat/rebuild workflow and Gateway-rooted trace verification | Pending |
 
@@ -135,6 +135,16 @@ configuration copying, physical digest sensitivity, mount preservation and
 non-disclosure in operation responses; `make fmt-check` and `make lint` passed.
 No persistence schema was added. Real cross-service create/rebuild acceptance
 remains in batch 5.
+
+Batch 3 final evidence: complete Agent Controller module tests and real PostgreSQL
+repository/E2E tests passed, including immutable MCP revisions, create/rebuild/
+enable forwarding, wire contract validation and exclusion from Run admission.
+`make fmt-check` and `make lint` passed. Read-only review findings were fixed:
+the control schema now references the shared Runtime MCP definition, and malformed
+Unicode is rejected before process configuration decoding. No tables were added.
+The existing Identity consumer revision assertion was aligned with revision 11
+after verifying its consumed route/fields/errors were unchanged. Test PostgreSQL
+resources are cleaned after verification. ACP consumption remains batch 4 work.
 
 Runtime tests must cover empty configuration, real stdio MCP initialization and
 calls, process reuse, startup failure/timeout, cancellation, child exit, shutdown

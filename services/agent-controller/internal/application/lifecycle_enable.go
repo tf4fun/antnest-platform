@@ -180,7 +180,8 @@ func (service *LifecycleService) enableRuntime(
 		state.Operation.SourceRuntimeRevision,
 		ports.RuntimeConfiguration{
 			ImageRef: runtimeInput.ImageRef, Network: *state.Operation.NetworkAttachment,
-			Resources: runtimeInput.Resources,
+			Resources:  runtimeInput.Resources,
+			MCPServers: domain.CloneMCPServers(runtimeInput.MCPServers),
 		},
 	)
 	if err != nil {

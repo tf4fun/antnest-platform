@@ -18,6 +18,7 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 
+	"soft/antnest-platform/services/agent-controller/internal/domain"
 	"soft/antnest-platform/services/agent-controller/internal/ports"
 )
 
@@ -361,8 +362,9 @@ func oneOf(value string, allowed ...string) bool {
 }
 
 type runtimeConfigurationDTO struct {
-	ImageRef string `json:"image_ref"`
-	Network  struct {
+	ImageRef   string             `json:"image_ref"`
+	MCPServers []domain.MCPServer `json:"mcp_servers,omitempty"`
+	Network    struct {
 		PacketContractRevision uint32 `json:"packet_contract_revision"`
 		EgressEndpoint         struct {
 			IPv4 string `json:"ipv4"`
@@ -381,6 +383,7 @@ type runtimeConfigurationDTO struct {
 func runtimeConfigurationPayload(configuration ports.RuntimeConfiguration) runtimeConfigurationDTO {
 	var payload runtimeConfigurationDTO
 	payload.ImageRef = configuration.ImageRef
+	payload.MCPServers = domain.CloneMCPServers(configuration.MCPServers)
 	payload.Network.PacketContractRevision = configuration.Network.PacketContractRevision
 	payload.Network.EgressEndpoint.IPv4 = configuration.Network.EgressIPv4
 	payload.Network.EgressEndpoint.Port = configuration.Network.EgressPort

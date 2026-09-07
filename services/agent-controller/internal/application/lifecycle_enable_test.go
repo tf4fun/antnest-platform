@@ -44,6 +44,9 @@ func TestEnableAgentPublishesNewExecutionAfterAttachmentOpen(t *testing.T) {
 	if !reflect.DeepEqual(dependencies.calls, wantCalls) {
 		t.Fatalf("enable calls = %v, want %v", dependencies.calls, wantCalls)
 	}
+	if len(base.Spec.Snapshot.Runtime.MCPServers) == 0 || !reflect.DeepEqual(dependencies.runtimeConfiguration.MCPServers, base.Spec.Snapshot.Runtime.MCPServers) {
+		t.Fatal("enable did not restore saved MCP configuration")
+	}
 }
 
 func TestEnableAgentCompletedReplayHasNoDependencyEffects(t *testing.T) {

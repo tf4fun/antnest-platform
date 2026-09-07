@@ -224,7 +224,8 @@ func (service *LifecycleService) updateRebuildRuntime(
 	runtimeInput := state.TargetSpec.Snapshot.Runtime
 	configuration := ports.RuntimeConfiguration{
 		ImageRef: runtimeInput.ImageRef, Network: *state.Operation.NetworkAttachment,
-		Resources: runtimeInput.Resources,
+		Resources:  runtimeInput.Resources,
+		MCPServers: domain.CloneMCPServers(runtimeInput.MCPServers),
 	}
 	result, err := service.runtime.UpdateRuntime(
 		ctx, state.Operation.ChildRequestID, state.Agent.AgentID,

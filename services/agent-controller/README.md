@@ -1,5 +1,9 @@
 # Agent Controller
 
+Runtime-managed stdio MCP configuration is documented in
+[Managed MCP](docs/managed-mcp.md), including immutable revision ownership,
+create/rebuild/enable forwarding, privacy, and verification boundaries.
+
 Agent Controller is the Agent aggregate and lifecycle authority for Antnest
 Platform. It turns an immutable Agent specification into one published
 executable Agent by coordinating Runtime Controller and Runtime Egress.

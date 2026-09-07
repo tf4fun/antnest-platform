@@ -58,6 +58,9 @@ func TestRebuildAgentReplacesRuntimeAndPublishesTargetSpecAtomically(t *testing.
 		dependencies.runtimeConfiguration.Network.State != "active" {
 		t.Fatalf("Runtime update configuration = %+v", dependencies.runtimeConfiguration)
 	}
+	if !reflect.DeepEqual(dependencies.runtimeConfiguration.MCPServers, template.Snapshot().Runtime.MCPServers) {
+		t.Fatal("rebuild did not forward target MCP configuration")
+	}
 	if store.begin.TargetSpec.Revision != base.NextSpecRevision ||
 		store.begin.TargetSpec.Snapshot.TemplateRevision != 1 {
 		t.Fatalf("target Agent spec = %+v", store.begin.TargetSpec)

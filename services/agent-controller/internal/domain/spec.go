@@ -41,6 +41,7 @@ type RuntimeSpecInput struct {
 	ImageRef    string           `json:"image_ref"`
 	ImageSource string           `json:"image_source,omitempty"`
 	Resources   RuntimeResources `json:"resources"`
+	MCPServers  []MCPServer      `json:"mcp_servers,omitempty"`
 }
 
 type ModelProfileRevisionInput struct {
@@ -160,7 +161,7 @@ func NewTemplateRevision(input TemplateRevisionInput) (TemplateRevision, error) 
 		templateID: input.TemplateID, organizationID: input.OrganizationID,
 		revision: input.Revision, modelProfileRevisionID: input.ModelProfileRevisionID,
 		systemPrompt: input.SystemPrompt, maxModelRequests: input.MaxModelRequests,
-		runtime: input.Runtime, contextPolicyVersion: input.ContextPolicyVersion,
+		runtime: cloneRuntime(input.Runtime), contextPolicyVersion: input.ContextPolicyVersion,
 	}, nil
 }
 
@@ -179,7 +180,7 @@ func (revision TemplateRevision) Snapshot() TemplateRevisionSnapshot {
 		TemplateID: revision.templateID, OrganizationID: revision.organizationID,
 		Revision: revision.revision, ModelProfileRevisionID: revision.modelProfileRevisionID,
 		SystemPrompt: revision.systemPrompt, MaxModelRequests: revision.maxModelRequests,
-		Runtime: revision.runtime, ContextPolicyVersion: revision.contextPolicyVersion,
+		Runtime: cloneRuntime(revision.runtime), ContextPolicyVersion: revision.contextPolicyVersion,
 	}
 }
 
@@ -210,13 +211,14 @@ func MaterializeAgentSpec(template TemplateRevision, model ModelProfileRevision)
 		ModelProfileRevisionID: model.id, SystemPrompt: template.systemPrompt,
 		MaxModelRequests: template.maxModelRequests, ContextPolicyVersion: template.contextPolicyVersion,
 		CredentialRef: model.credentialRef, CredentialVersion: model.credentialVersion,
-		Model: cloneModel(model.model), Runtime: template.runtime,
+		Model: cloneModel(model.model), Runtime: cloneRuntime(template.runtime),
 	}}, nil
 }
 
 func (spec AgentSpec) Snapshot() AgentSpecSnapshot {
 	snapshot := spec.snapshot
 	snapshot.Model = cloneModel(snapshot.Model)
+	snapshot.Runtime = cloneRuntime(snapshot.Runtime)
 	return snapshot
 }
 
@@ -259,7 +261,7 @@ func validateRuntime(runtime RuntimeSpecInput) error {
 	if resources.PIDsLimit < minimumPIDs || resources.PIDsLimit > maximumPIDs {
 		return fmt.Errorf("runtime PID limit must be between %d and %d", minimumPIDs, maximumPIDs)
 	}
-	return nil
+	return validateMCPServers(runtime.MCPServers)
 }
 
 func IsImmutableImageReference(value string) bool {

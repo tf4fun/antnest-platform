@@ -370,7 +370,8 @@ func (service *LifecycleService) initializeCreateRuntime(
 	runtimeInput := state.Spec.Snapshot.Runtime
 	configuration := ports.RuntimeConfiguration{
 		ImageRef: runtimeInput.ImageRef, Network: *state.Operation.NetworkAttachment,
-		Resources: runtimeInput.Resources,
+		Resources:  runtimeInput.Resources,
+		MCPServers: domain.CloneMCPServers(runtimeInput.MCPServers),
 	}
 	result, err := service.runtime.InitializeRuntime(
 		ctx, state.Operation.ChildRequestID, state.Agent.AgentID, configuration,

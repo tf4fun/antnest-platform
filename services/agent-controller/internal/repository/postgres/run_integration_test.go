@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"strings"
@@ -25,6 +26,7 @@ func TestRunRepositoryAcquiresFinishesAndScopesCredential(t *testing.T) {
 	}
 	t.Cleanup(repository.Close)
 	base, seed := seedAvailableAgentForRebuild(t, ctx, repository)
+	assertManagedMCPRunPrivacy(t, ctx, repository, base)
 
 	access, err := repository.ResolveAgentAccess(ctx, "access-rebuild-integration")
 	if err != nil {
@@ -131,6 +133,27 @@ SELECT count(*) FROM agent_controller.agent_events WHERE admission_id = $1`,
 	replayedAdmission, replayed, err = repository.AcquireRun(ctx, command)
 	if err != nil || !replayed || replayedAdmission.State != domain.AdmissionReleased {
 		t.Fatalf("replay released Run: admission=%+v replayed=%t err=%v", replayedAdmission, replayed, err)
+	}
+}
+
+func assertManagedMCPRunPrivacy(t *testing.T, ctx context.Context, repository *Repository, base ports.AgentLifecycleBase) {
+	t.Helper()
+	servers := base.ExecutableSpec.Snapshot.Runtime.MCPServers
+	if len(servers) != 1 || servers[0].Env["TOKEN"] != "synthetic-mcp-token" {
+		t.Fatal("MCP configuration did not survive Agent spec persistence")
+	}
+	snapshot, err := loadRunExecutionSnapshot(ctx, repository.pool, base.Agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"mcp_servers", "synthetic-mcp-token", "server.js"} {
+		if strings.Contains(string(payload), forbidden) {
+			t.Fatalf("Run admission exposes deployment configuration: %s", forbidden)
+		}
 	}
 }
 
