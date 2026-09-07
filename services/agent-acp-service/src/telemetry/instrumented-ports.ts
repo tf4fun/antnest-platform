@@ -1,4 +1,5 @@
 import type { AcpApplicationPort, ExecuteRunResult } from "../ports/acp-application.js";
+import type { RuntimeInformationPort } from "../ports/runtime-information.js";
 import { DomainError } from "../domain/errors.js";
 import { AgentControllerError, isAgentControllerErrorCode } from "../ports/agent-controller.js";
 import type {
@@ -253,6 +254,27 @@ export class InstrumentedModel implements ModelPort {
       "antnest.acp.model.requests",
       { protocol: "openai_chat_completions" },
       () => this.delegate.complete(request),
+    );
+  }
+}
+
+export class InstrumentedRuntimeInformation implements RuntimeInformationPort {
+  public constructor(
+    private readonly delegate: RuntimeInformationPort,
+    private readonly telemetry: TelemetryPort,
+  ) {}
+  public read(
+    snapshot: Parameters<RuntimeInformationPort["read"]>[0],
+    signal: AbortSignal,
+  ): ReturnType<RuntimeInformationPort["read"]> {
+    return observe(
+      this.telemetry,
+      "mcp.runtime.info",
+      { "admission.id": snapshot.admissionId, "execution.revision": snapshot.executionRevision },
+      "antnest.acp.mcp.duration",
+      "antnest.acp.mcp.requests",
+      { operation: "info", source: "runtime" },
+      () => this.delegate.read(snapshot, signal),
     );
   }
 }

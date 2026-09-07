@@ -42,6 +42,19 @@ describe("OfficialMcpDialer", () => {
         },
       });
       expect(fixture.executionIds).toEqual(["execution-1", "execution-1", "execution-1"]);
+      const first = await connection.readResource(
+        "antnest://runtime/info",
+        AbortSignal.timeout(5000),
+      );
+      const second = await connection.readResource(
+        "antnest://runtime/info",
+        AbortSignal.timeout(5000),
+      );
+      expect(first).toMatchObject({
+        contents: [{ uri: "antnest://runtime/info", mimeType: "application/json" }],
+      });
+      expect(second).not.toEqual(first);
+      expect(fixture.executionIds).toHaveLength(5);
     } finally {
       await connection.close();
     }
@@ -54,12 +67,30 @@ async function startMcpFixture(): Promise<{
   close(): Promise<void>;
 }> {
   const executionIds: string[] = [];
+  let resourceReads = 0;
   const handler = createMcpHandler(
     (context) => {
       executionIds.push(
         context.requestInfo?.headers.get("x-antnest-expected-execution-id") ?? "missing",
       );
       const server = new McpServer({ name: "official-client-test", version: "1.0.0" });
+      server.registerResource(
+        "runtime-info",
+        "antnest://runtime/info",
+        { mimeType: "application/json" },
+        (uri) => {
+          resourceReads++;
+          return {
+            contents: [
+              {
+                uri: uri.toString(),
+                mimeType: "application/json",
+                text: JSON.stringify({ read: resourceReads }),
+              },
+            ],
+          };
+        },
+      );
       server.registerTool(
         "echo",
         {

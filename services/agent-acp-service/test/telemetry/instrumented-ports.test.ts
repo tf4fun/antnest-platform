@@ -4,6 +4,7 @@ import {
   InstrumentedAcpApplication,
   InstrumentedAgentController,
   InstrumentedModel,
+  InstrumentedRuntimeInformation,
 } from "../../src/telemetry/instrumented-ports.js";
 import type { AcpApplicationPort } from "../../src/ports/acp-application.js";
 import type { ModelPort } from "../../src/ports/model.js";
@@ -11,8 +12,28 @@ import type { TelemetryAttributes, TelemetryPort } from "../../src/ports/telemet
 import type { AgentControllerPort } from "../../src/ports/agent-controller.js";
 import { AgentControllerError } from "../../src/ports/agent-controller.js";
 import { binding, snapshot } from "../support/fixtures.js";
+import { runtimeInformation } from "../fixtures/runtime-information.js";
 
 describe("instrumented ports", () => {
+  it("traces Runtime information reads without exporting guidance or Skill content", async () => {
+    const telemetry = recordingTelemetry();
+    const reader = new InstrumentedRuntimeInformation(
+      { read: vi.fn().mockResolvedValue(runtimeInformation()) },
+      telemetry.port,
+    );
+    await reader.read(snapshot(), new AbortController().signal);
+    expect(telemetry.spans).toContainEqual({
+      name: "mcp.runtime.info",
+      attributes: { "admission.id": "admission-1", "execution.revision": "execution-1" },
+    });
+    expect(telemetry.counts).toContainEqual({
+      name: "antnest.acp.mcp.requests",
+      attributes: { operation: "info", source: "runtime", result: "ok" },
+      value: 1,
+    });
+    expect(JSON.stringify(telemetry)).not.toContain("company style guide");
+    expect(JSON.stringify(telemetry)).not.toContain("documents/SKILL.md");
+  });
   it("records ACP admission and terminal Run outcomes with bounded metric labels", async () => {
     const telemetry = recordingTelemetry();
     const delegate = acpApplication();

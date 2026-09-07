@@ -1,11 +1,14 @@
 import type {
   ModelMessage,
+  ModelToolDefinition,
   RunExecutionSnapshot,
   RunOutcome,
   ToolEffectState,
   UnknownEffectSource,
 } from "../domain/types.js";
 import { boundToolResult } from "../domain/tool-result.js";
+import { DomainError } from "../domain/errors.js";
+import { assertModelInputBudget } from "./context-budget.js";
 import type { ModelPort } from "../ports/model.js";
 import type { RunEventPort } from "../ports/run-events.js";
 import type { ToolCatalogPort } from "../ports/tools.js";
@@ -14,7 +17,8 @@ import { ToolPreflight, ToolPreflightError, type PreparedToolCall } from "./tool
 
 export type TurnRunnerDependencies = {
   model: ModelPort;
-  tools: ToolCatalogPort;
+  tools: Pick<ToolCatalogPort, "call">;
+  catalog: ModelToolDefinition[];
   events: RunEventPort;
 };
 
@@ -39,10 +43,11 @@ export class TurnRunner {
     const preflight = new ToolPreflight();
 
     try {
-      const tools = await this.dependencies.tools.list(input.snapshot, input.signal);
+      const tools = this.dependencies.catalog;
       assertAuthority(input.authoritySignal);
       for (let request = 0; request < input.snapshot.executionSpec.maxModelRequests; request += 1) {
         input.signal.throwIfAborted();
+        assertModelInputBudget(input.snapshot, tools, messages);
         const response = await this.dependencies.model.complete({
           snapshot: input.snapshot,
           credential: input.credential,
@@ -207,7 +212,7 @@ export class TurnRunner {
       };
     }
     assertAuthority(input.authoritySignal);
-    const content = boundToolResult(result.content);
+    const content = boundToolResult(toolResultContent(result));
     const effectState = combineEffects(currentEffect, result.toolEffectState);
     try {
       await this.dependencies.events.toolFinished(
@@ -243,6 +248,14 @@ export class TurnRunner {
       terminal: null,
     };
   }
+}
+
+function toolResultContent(result: Awaited<ReturnType<ToolCatalogPort["call"]>>) {
+  if (result.structuredContent === undefined) return result.content;
+  const structured = JSON.stringify(result.structuredContent);
+  if (result.content.some((block) => block.type === "text" && block.text === structured))
+    return result.content;
+  return [...result.content, { type: "text" as const, text: structured }];
 }
 
 function assertAuthority(signal: AbortSignal): void {
@@ -342,7 +355,9 @@ function completed(
 }
 
 function errorClass(error: unknown): string {
-  return error instanceof ToolPreflightError ? error.code : "run_failed";
+  return error instanceof ToolPreflightError || error instanceof DomainError
+    ? error.code
+    : "run_failed";
 }
 
 function effectAwareError(

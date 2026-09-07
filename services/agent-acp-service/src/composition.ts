@@ -33,6 +33,7 @@ import {
   InstrumentedAgentController,
   InstrumentedModel,
   InstrumentedToolCatalog,
+  InstrumentedRuntimeInformation,
 } from "./telemetry/instrumented-ports.js";
 import { AgentAcpHttpServer } from "./transport/http-server.js";
 
@@ -167,38 +168,38 @@ function buildComponents(
   });
   const agentController = new InstrumentedAgentController(rawAgentController, telemetry);
   const model = new InstrumentedModel(new OpenAICompatibleModel(), telemetry);
-  const tools = new InstrumentedToolCatalog(
-    new McpToolCatalog({
-      runtimeDialer: new OfficialMcpDialer({ trust: "runtime" }),
-      clientDialer: new OfficialMcpDialer({
-        trust: "client",
-        blockedCidrs: config.clientMcpBlockedCidrs,
-      }),
-      revisions: sessions,
-      reportClientSourceFailure: (sourceId, error) => {
-        telemetry.count("antnest.acp.mcp.client_source_failures", { operation: "list" });
-        telemetry.log(
-          "warn",
-          "client_mcp_source_unavailable",
-          { "mcp.source_id": sourceId },
-          error,
-        );
-      },
-      reportConnectionCloseFailure: (source, sourceId, error) => {
-        telemetry.count("antnest.acp.mcp.close_failures", { source });
-        telemetry.log(
-          "warn",
-          "mcp_connection_close_failed",
-          { "mcp.source": source, "mcp.source_id": sourceId },
-          error,
-        );
-      },
+  const rawTools = new McpToolCatalog({
+    runtimeDialer: new OfficialMcpDialer({ trust: "runtime" }),
+    clientDialer: new OfficialMcpDialer({
+      trust: "client",
+      blockedCidrs: config.clientMcpBlockedCidrs,
     }),
-    telemetry,
-  );
+    revisions: sessions,
+    reportClientSourceFailure: (sourceId, error) => {
+      telemetry.count("antnest.acp.mcp.client_source_failures", { operation: "list" });
+      telemetry.log("warn", "client_mcp_source_unavailable", { "mcp.source_id": sourceId }, error);
+    },
+    reportConnectionCloseFailure: (source, sourceId, error) => {
+      telemetry.count("antnest.acp.mcp.close_failures", { source });
+      telemetry.log(
+        "warn",
+        "mcp_connection_close_failed",
+        { "mcp.source": source, "mcp.source_id": sourceId },
+        error,
+      );
+    },
+  });
+  const tools = new InstrumentedToolCatalog(rawTools, telemetry);
+  const information = new InstrumentedRuntimeInformation(rawTools, telemetry);
   const executor = new RunExecutor({
     executions,
-    contextBuilder: new ContextBuilder({ repository: contexts, id: randomUUID, now }),
+    contextBuilder: new ContextBuilder({
+      repository: contexts,
+      runtimeInformation: information,
+      tools,
+      id: randomUUID,
+      now,
+    }),
     agentController,
     model,
     tools,

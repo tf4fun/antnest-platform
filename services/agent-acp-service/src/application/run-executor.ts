@@ -115,7 +115,7 @@ export class RunExecutor implements RunExecutionPort {
     const context = await this.dependencies.contextBuilder.build(
       input.accepted.sessionId,
       input.accepted.snapshot,
-      this.dependencies.ownershipSignal,
+      input.signal,
     );
     const credential = await withWorkerOwnership(this.dependencies.ownershipSignal, () =>
       this.dependencies.agentController.resolveCredential(
@@ -143,6 +143,7 @@ export class RunExecutor implements RunExecutionPort {
     const runner = new TurnRunner({
       model: this.dependencies.model,
       tools: this.dependencies.tools,
+      catalog: context.tools,
       events,
     });
     return withWorkerOwnership(this.dependencies.ownershipSignal, () =>
@@ -151,7 +152,7 @@ export class RunExecutor implements RunExecutionPort {
         sessionId: input.accepted.sessionId,
         snapshot: input.accepted.snapshot,
         credential: credential.secret,
-        context,
+        context: context.messages,
         signal: input.signal,
         authoritySignal: this.dependencies.ownershipSignal,
       }),

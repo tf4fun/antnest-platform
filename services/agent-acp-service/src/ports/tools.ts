@@ -16,6 +16,7 @@ export type ToolCallInput = {
 
 export type ToolCallResult = {
   content: ContentBlock[];
+  structuredContent?: unknown;
   isError: boolean;
   toolEffectState: ToolEffectState;
 };

@@ -1,5 +1,14 @@
 import { DomainError } from "../domain/errors.js";
-import type { ContentBlock, ModelMessage, RunExecutionSnapshot } from "../domain/types.js";
+import type {
+  ContentBlock,
+  ModelMessage,
+  ModelToolDefinition,
+  RunExecutionSnapshot,
+} from "../domain/types.js";
+import type { RuntimeInformationPort } from "../ports/runtime-information.js";
+import type { ToolCatalogPort } from "../ports/tools.js";
+import { estimateMessages, estimateText, inputBudget } from "./context-budget.js";
+import { runtimeContext } from "./runtime-context.js";
 import type {
   ContextCheckpoint,
   ContextRepository,
@@ -7,13 +16,15 @@ import type {
 } from "../ports/context-repository.js";
 import { assertWorkerOwnership, withWorkerOwnership } from "./worker-ownership.js";
 
-const INPUT_RESERVE_TOKENS = 256;
-
 export type ContextBuilderDependencies = {
   repository: ContextRepository;
+  runtimeInformation: RuntimeInformationPort;
+  tools: Pick<ToolCatalogPort, "list">;
   id: () => string;
   now: () => Date;
 };
+
+export type PreparedRunContext = { messages: ModelMessage[]; tools: ModelToolDefinition[] };
 
 export class ContextBuilder {
   public constructor(private readonly dependencies: ContextBuilderDependencies) {}
@@ -22,18 +33,25 @@ export class ContextBuilder {
     sessionId: string,
     snapshot: RunExecutionSnapshot,
     ownershipSignal: AbortSignal,
-  ): Promise<ModelMessage[]> {
+  ): Promise<PreparedRunContext> {
+    const information = await this.dependencies.runtimeInformation.read(snapshot, ownershipSignal);
+    const tools = await this.dependencies.tools.list(snapshot, ownershipSignal);
+    assertWorkerOwnership(ownershipSignal);
+    const budget = inputBudget(snapshot, tools);
     const source = await withWorkerOwnership(ownershipSignal, () =>
       this.dependencies.repository.load(sessionId),
     );
     const system = systemMessage(snapshot);
+    system.content.push({
+      type: "text",
+      text: runtimeContext(information, Math.min(16384, Math.floor(budget / 4) * 4)),
+    });
     const checkpoint = checkpointMessage(source.checkpoint);
     const history = source.messages.flatMap(toModelMessages);
     const complete = [system, ...(checkpoint === null ? [] : [checkpoint]), ...history];
-    const budget = inputBudget(snapshot);
     if (estimateMessages(complete) <= budget) {
       assertWorkerOwnership(ownershipSignal);
-      return complete;
+      return { messages: complete, tools };
     }
 
     const systemCost = estimateMessages([system]);
@@ -82,20 +100,8 @@ export class ContextBuilder {
       );
     }
     assertWorkerOwnership(ownershipSignal);
-    return compacted;
+    return { messages: compacted, tools };
   }
-}
-
-function inputBudget(snapshot: RunExecutionSnapshot): number {
-  const model = snapshot.executionSpec.model;
-  const budget = model.contextWindow - model.maxOutputTokens - INPUT_RESERVE_TOKENS;
-  if (budget <= 0) {
-    throw new DomainError(
-      "invalid_context_budget",
-      "Model output reservation leaves no input context capacity",
-    );
-  }
-  return budget;
 }
 
 function systemMessage(snapshot: RunExecutionSnapshot): ModelMessage {
@@ -214,12 +220,4 @@ function contentText(content: ContentBlock[]): string {
       block.type === "text" && typeof block.text === "string" ? block.text : `[${block.type}]`,
     )
     .join(" ");
-}
-
-function estimateMessages(messages: ModelMessage[]): number {
-  return messages.reduce((total, message) => total + estimateText(JSON.stringify(message)) + 4, 0);
-}
-
-function estimateText(text: string): number {
-  return Math.max(1, Math.ceil(text.length / 4));
 }

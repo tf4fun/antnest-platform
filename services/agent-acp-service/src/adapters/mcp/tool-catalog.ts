@@ -1,4 +1,6 @@
 import { mergeToolCatalogs } from "../../domain/mcp.js";
+import type { RuntimeInformationPort } from "../../ports/runtime-information.js";
+import { parseRuntimeInformation, RUNTIME_INFORMATION_URI } from "./runtime-information.js";
 import { context, propagation } from "@opentelemetry/api";
 import type {
   ContentBlock,
@@ -27,6 +29,7 @@ export type McpRemoteTool = {
 };
 
 export interface McpConnection {
+  readResource(uri: string, signal: AbortSignal): Promise<unknown>;
   listTools(signal: AbortSignal): Promise<McpRemoteTool[]>;
   callTool(
     input: { name: string; arguments: { [key: string]: unknown } },
@@ -62,8 +65,25 @@ export class McpToolCallError extends Error {
   }
 }
 
-export class McpToolCatalog implements ToolCatalogPort {
+export class McpToolCatalog implements ToolCatalogPort, RuntimeInformationPort {
   public constructor(private readonly dependencies: McpToolCatalogDependencies) {}
+
+  public async read(snapshot: ToolCallInput["snapshot"], signal: AbortSignal) {
+    return this.withConnection(
+      this.dependencies.runtimeDialer,
+      {
+        endpoint: new URL(snapshot.runtime.mcpEndpoint),
+        headers: runtimeHeaders(snapshot.runtime.executionId),
+        signal,
+      },
+      (error) => this.dependencies.reportConnectionCloseFailure?.("runtime", "runtime", error),
+      async (connection) =>
+        parseRuntimeInformation(
+          await connection.readResource(RUNTIME_INFORMATION_URI, signal),
+          snapshot.runtime.executionId,
+        ),
+    );
+  }
 
   public async list(
     snapshot: ToolCallInput["snapshot"],
@@ -204,6 +224,9 @@ export class McpToolCatalog implements ToolCatalogPort {
       return {
         content: result.content,
         isError: result.isError,
+        ...(result.structuredContent === undefined
+          ? {}
+          : { structuredContent: result.structuredContent }),
         toolEffectState: receivedEffectState(result, source),
       };
     } finally {
@@ -238,12 +261,14 @@ function receivedEffectState(
   result: Awaited<ReturnType<McpConnection["callTool"]>>,
   source: "runtime" | "client",
 ): ToolEffectState {
+  if (isJsonObject(result.structuredContent) && result.structuredContent.effect_state === "unknown")
+    return "unknown";
   if (!result.isError) {
     return declaredEffectState(result.structuredContent, source) === "unknown"
       ? "unknown"
       : "settled";
   }
-  return declaredEffectState(result.structuredContent, source) ?? "unknown";
+  return declaredEffectState(result.structuredContent, source) ?? "settled";
 }
 
 function declaredEffectState(

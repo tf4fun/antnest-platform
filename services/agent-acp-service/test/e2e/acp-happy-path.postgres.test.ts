@@ -1,9 +1,11 @@
 import { randomBytes, randomUUID } from "node:crypto";
+import { runtimeInformation } from "../fixtures/runtime-information.js";
 
+import * as acpV1 from "@agentclientprotocol/sdk";
 import * as acp from "@agentclientprotocol/sdk/experimental/v2";
 import { createWebSocketStream } from "@agentclientprotocol/sdk/experimental/ws-client";
 import { Pool } from "pg";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import WebSocket from "ws";
 
 import { PostgresContextRepository } from "../../src/adapters/postgres/context-repository.js";
@@ -30,24 +32,30 @@ const databaseUrl = process.env.ANTNEST_ACP_TEST_DATABASE_URL;
 
 describe.skipIf(databaseUrl === undefined)("Agent ACP happy path", () => {
   const pool = new Pool({ connectionString: databaseUrl, max: 4 });
+  const encryptionKey = randomBytes(32);
   let server: AgentAcpHttpServer | undefined;
   let supervisor: RunSupervisor | undefined;
 
-  beforeAll(async () => {
+  beforeEach(async () => {
     await pool.query("DROP SCHEMA public CASCADE");
     await pool.query("CREATE SCHEMA public");
     await migrate(pool);
   });
 
-  afterAll(async () => {
+  afterEach(async () => {
     await server?.close();
     await supervisor?.shutdown();
+    server = undefined;
+    supervisor = undefined;
+  });
+
+  afterAll(async () => {
     await pool.end();
   });
 
-  it("persists one ACP prompt, Runtime Tool call, response, and terminal Run", async () => {
+  async function startApplication() {
     const kernel = new PostgresKernel(pool);
-    const sessions = new PostgresSessionRepository(kernel, new SecretBox(randomBytes(32)));
+    const sessions = new PostgresSessionRepository(kernel, new SecretBox(encryptionKey));
     const runs = new PostgresRunRepository(kernel);
     const executions = new PostgresExecutionRepository(kernel);
     const controller = controllerPort();
@@ -56,6 +64,8 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP happy path", () => {
     const executor = new RunExecutor({
       executions,
       contextBuilder: new ContextBuilder({
+        runtimeInformation: { read: () => Promise.resolve(runtimeInformation()) },
+        tools: tools.port,
         repository: new PostgresContextRepository(kernel),
         id: randomUUID,
         now: () => new Date(),
@@ -94,6 +104,11 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP happy path", () => {
     if (address === null || typeof address === "string") {
       throw new Error("server has no TCP address");
     }
+    return { url: `ws://127.0.0.1:${address.port}`, controller, model, tools };
+  }
+
+  it("persists one ACP prompt, Runtime Tool call, response, and terminal Run", async () => {
+    const { url, controller, model, tools } = await startApplication();
 
     const updates: acp.SessionUpdate[] = [];
     const idle = Promise.withResolvers<void>();
@@ -104,7 +119,7 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP happy path", () => {
       }
     });
     const connection = client.connect(
-      createWebSocketStream<acp.AnyWireMessage>(`ws://127.0.0.1:${address.port}/v2/acp`, {
+      createWebSocketStream<acp.AnyWireMessage>(`${url}/v2/acp`, {
         WebSocket,
         headers: { "x-antnest-agent-access-subject": "subject-1" },
       }),
@@ -140,6 +155,17 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP happy path", () => {
       "state_update",
     ]);
     expect(model.complete).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(model.complete.mock.calls[0]?.[0].messages)).toContain(
+      "Use the company style guide",
+    );
+    expect(JSON.stringify(model.complete.mock.calls[0]?.[0].messages)).toContain(
+      "documents/SKILL.md",
+    );
+    const contextSource = await new PostgresContextRepository(new PostgresKernel(pool)).load(
+      created.sessionId,
+    );
+    expect(JSON.stringify(contextSource)).not.toContain("Use the company style guide");
+    expect(JSON.stringify(contextSource)).not.toContain("documents/SKILL.md");
     expect(tools.call).toHaveBeenCalledOnce();
     expect(controller.resolveAgentAccess).toHaveBeenCalledTimes(accessChecksBeforePrompt);
     expect(controller.acquireRun).toHaveBeenCalledOnce();
@@ -177,6 +203,122 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP happy path", () => {
     );
     expect(attempts.rows).toEqual([{ state: "completed", tool_effect_state: "settled" }]);
   });
+
+  it.each(["reconnect", "application restart"])(
+    "replays stable v1 history after %s without repeating model or Tool effects",
+    async (recovery) => {
+      const original = await startApplication();
+      let current = original;
+      const updates: acpV1.SessionUpdate[] = [];
+      const client = acpV1
+        .client({ name: "v1-persistence-client" })
+        .onNotification(acpV1.methods.client.session.update, ({ params }) => {
+          updates.push(structuredClone(params.update));
+        });
+      const connect = (url: string) =>
+        client.connect(
+          createWebSocketStream(`${url}/v1/acp`, {
+            WebSocket,
+            headers: { "x-antnest-agent-access-subject": "subject-1" },
+          }),
+        );
+      const initialize = {
+        protocolVersion: acpV1.PROTOCOL_VERSION,
+        clientCapabilities: {},
+        clientInfo: { name: "v1-persistence-client", version: "1.0.0" },
+      };
+      const options = { cancellationSignal: AbortSignal.timeout(10_000) };
+      let connection = connect(current.url);
+      try {
+        await connection.agent.request(acpV1.methods.agent.initialize, initialize, options);
+        const created = await connection.agent.request(
+          acpV1.methods.agent.session.new,
+          { cwd: "/workspace", mcpServers: [] },
+          options,
+        );
+        const prompt = "Read README and summarize it";
+        await expect(
+          connection.agent.request(
+            acpV1.methods.agent.session.prompt,
+            { sessionId: created.sessionId, prompt: [{ type: "text", text: prompt }] },
+            options,
+          ),
+        ).resolves.toEqual({ stopReason: "end_turn" });
+        expect(updates).toContainEqual(
+          expect.objectContaining({ sessionUpdate: "tool_call_update", status: "completed" }),
+        );
+        expect(original.model.complete).toHaveBeenCalledTimes(2);
+        expect(original.tools.call).toHaveBeenCalledOnce();
+        connection.close();
+        await connection.closed;
+
+        if (recovery === "application restart") {
+          await server?.close();
+          await supervisor?.shutdown();
+          current = await startApplication();
+        }
+        connection = connect(current.url);
+        await connection.agent.request(acpV1.methods.agent.initialize, initialize, options);
+        const listed = await connection.agent.request(
+          acpV1.methods.agent.session.list,
+          {},
+          options,
+        );
+        expect(listed.sessions).toContainEqual(
+          expect.objectContaining({ sessionId: created.sessionId, title: prompt }),
+        );
+
+        updates.length = 0;
+        const load = { sessionId: created.sessionId, cwd: "/workspace", mcpServers: [] };
+        await connection.agent.request(acpV1.methods.agent.session.load, load, options);
+        const userMessages = updates.filter(
+          (update) => update.sessionUpdate === "user_message_chunk",
+        );
+        expect(userMessages.map((update) => update.content)).toEqual([
+          { type: "text", text: prompt },
+        ]);
+        expect(userMessages[0]?.messageId).toEqual(expect.any(String));
+        const agentMessages = updates.filter(
+          (update) => update.sessionUpdate === "agent_message_chunk",
+        );
+        expect(agentMessages.map((update) => update.content)).toEqual([
+          { type: "text", text: "The workspace contains the Antnest project." },
+        ]);
+        expect(agentMessages[0]?.messageId).toEqual(expect.any(String));
+        const completedTools = updates.filter(
+          (update) => update.sessionUpdate === "tool_call_update" && update.status === "completed",
+        );
+        expect(completedTools).toHaveLength(1);
+        expect(completedTools[0]).toMatchObject({ toolCallId: "call-1" });
+        expect(JSON.stringify(completedTools)).toContain("# Antnest");
+
+        const replay = structuredClone(updates);
+        updates.length = 0;
+        await connection.agent.request(acpV1.methods.agent.session.load, load, options);
+        expect(updates).toEqual(replay);
+        expect(original.model.complete).toHaveBeenCalledTimes(2);
+        expect(original.tools.call).toHaveBeenCalledOnce();
+        expect(original.controller.acquireRun).toHaveBeenCalledOnce();
+        expect(original.controller.finishRun).toHaveBeenCalledOnce();
+        if (recovery === "application restart") {
+          expect(current.model.complete).not.toHaveBeenCalled();
+          expect(current.tools.call).not.toHaveBeenCalled();
+          expect(current.controller.acquireRun).not.toHaveBeenCalled();
+          expect(current.controller.finishRun).not.toHaveBeenCalled();
+        }
+        const persisted = await pool.query<{ state: string }>(
+          "SELECT state FROM runs WHERE session_id = $1",
+          [created.sessionId],
+        );
+        expect(persisted.rows).toEqual([{ state: "completed" }]);
+        const attempts = await pool.query<{ state: string }>("SELECT state FROM tool_attempts");
+        expect(attempts.rows).toEqual([{ state: "completed" }]);
+      } finally {
+        connection.close();
+        await connection.closed;
+      }
+    },
+  );
 });
 
 function controllerPort() {

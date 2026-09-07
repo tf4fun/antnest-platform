@@ -3,7 +3,9 @@ import { describe, expect, it, vi } from "vitest";
 import { RunExecutor } from "../../src/application/run-executor.js";
 import { RunRecoveryRequiredError } from "../../src/ports/acp-application.js";
 import { WorkerOwnershipLostError } from "../../src/adapters/postgres/worker-lock.js";
-import type { ContextBuilder } from "../../src/application/context-builder.js";
+import { ContextBuilder } from "../../src/application/context-builder.js";
+import { runtimeInformation } from "../fixtures/runtime-information.js";
+import type { RuntimeInformationPort } from "../../src/ports/runtime-information.js";
 import type { AgentControllerPort } from "../../src/ports/agent-controller.js";
 import type { ExecutionRepository } from "../../src/ports/execution-repository.js";
 import type { ModelPort } from "../../src/ports/model.js";
@@ -12,6 +14,95 @@ import type { ToolCatalogPort } from "../../src/ports/tools.js";
 import type { AcceptedAcpRun } from "../../src/ports/acp-application.js";
 
 describe("RunExecutor", () => {
+  it("passes Runtime context into the actual model request without publishing it", async () => {
+    const controller = agentController([]);
+    const tools = emptyTools();
+    const model = terminalModel();
+    const events = eventRepository();
+    const read = vi.fn<RuntimeInformationPort["read"]>().mockResolvedValue(runtimeInformation());
+    const saveCheckpoint = vi.fn();
+    const executor = new RunExecutor({
+      executions: executionRepository([]).port,
+      agentController: controller.port,
+      model,
+      tools,
+      events,
+      contextBuilder: new ContextBuilder({
+        runtimeInformation: { read },
+        tools,
+        repository: {
+          load: vi.fn().mockResolvedValue({
+            checkpoint: null,
+            messages: [
+              { sequence: 1, kind: "user_message", content: [{ type: "text", text: "hello" }] },
+            ],
+          }),
+          saveCheckpoint,
+        },
+        id: sequentialIds(),
+        now: () => new Date(),
+      }),
+      ownershipSignal: new AbortController().signal,
+      recoveryRequired: vi.fn(),
+      id: sequentialIds(),
+      now: () => new Date("2026-08-30T00:00:00Z"),
+    });
+    const publish = vi.fn().mockResolvedValue(undefined);
+    await expect(
+      executor.execute({ accepted: accepted(), publish, signal: new AbortController().signal }),
+    ).resolves.toMatchObject({ terminalClass: "completed" });
+    const request = vi.mocked(model.complete).mock.calls[0]?.[0];
+    expect(JSON.stringify(request?.messages)).toContain("Use the company style guide");
+    expect(JSON.stringify(request?.messages)).toContain("documents/SKILL.md");
+    expect(JSON.stringify(publish.mock.calls)).not.toContain("Use the company style guide");
+    expect(saveCheckpoint).not.toHaveBeenCalled();
+    expect(tools.list).toHaveBeenCalledOnce();
+  });
+
+  it("cancels Runtime information setup before any model or tool call", async () => {
+    const cancellation = new AbortController();
+    const started = Promise.withResolvers<void>();
+    const read: RuntimeInformationPort["read"] = (_snapshot, signal) =>
+      new Promise((_, reject) => {
+        started.resolve();
+        signal.addEventListener("abort", () => reject(new Error("read cancelled")), { once: true });
+      });
+    const controller = agentController([]);
+    const tools = emptyTools();
+    const model = terminalModel();
+    const executor = new RunExecutor({
+      executions: executionRepository([]).port,
+      agentController: controller.port,
+      model,
+      tools,
+      events: eventRepository(),
+      contextBuilder: new ContextBuilder({
+        runtimeInformation: { read },
+        tools,
+        repository: { load: vi.fn(), saveCheckpoint: vi.fn() },
+        id: sequentialIds(),
+        now: () => new Date(),
+      }),
+      ownershipSignal: new AbortController().signal,
+      recoveryRequired: vi.fn(),
+      id: sequentialIds(),
+      now: () => new Date("2026-08-30T00:00:00Z"),
+    });
+    const result = executor.execute({
+      accepted: accepted(),
+      publish: vi.fn(),
+      signal: cancellation.signal,
+    });
+    await started.promise;
+    cancellation.abort();
+    await expect(result).resolves.toMatchObject({
+      terminalClass: "cancelled",
+      toolEffectState: "none",
+    });
+    expect(model.complete).not.toHaveBeenCalled();
+    expect(tools.list).not.toHaveBeenCalled();
+    expect(controller.resolveCredential).not.toHaveBeenCalled();
+  });
   it("persists the terminal state before closing admission and never persists the credential", async () => {
     const order: string[] = [];
     const executions = executionRepository(order);
@@ -318,14 +409,17 @@ function agentController(order: string[]) {
 function contextBuilder(): ContextBuilder {
   return {
     build: vi.fn(() =>
-      Promise.resolve([{ role: "user", content: [{ type: "text", text: "hello" }] }]),
+      Promise.resolve({
+        messages: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
+        tools: [],
+      }),
     ),
   } as unknown as ContextBuilder;
 }
 
-function terminalModel(): ModelPort {
+function terminalModel() {
   return {
-    complete: vi.fn(() =>
+    complete: vi.fn<ModelPort["complete"]>(() =>
       Promise.resolve({
         kind: "message" as const,
         content: [{ type: "text", text: "done" }],
@@ -336,8 +430,11 @@ function terminalModel(): ModelPort {
   };
 }
 
-function emptyTools(): ToolCatalogPort {
-  return { list: vi.fn(() => Promise.resolve([])), call: vi.fn() };
+function emptyTools() {
+  return {
+    list: vi.fn<ToolCatalogPort["list"]>(() => Promise.resolve([])),
+    call: vi.fn<ToolCatalogPort["call"]>(),
+  };
 }
 
 function eventRepository(): RunEventRepository {

@@ -142,12 +142,14 @@ starting model or Tool work.
 
 ## Tool Loop
 
-1. Build bounded context from system prompt, Skill instructions, compression
-   checkpoint, durable messages, and hidden environment facts.
-2. Resolve the Provider credential for the active admission and hold it only in
+1. Read fresh Runtime information and list mandatory Runtime/optional client MCP
+   Tools once for the admitted Run. Managed stdio tools are Runtime-owned.
+2. Qualify client Tool names; retain Runtime names. Budget Tool schemas together
+   with transient Runtime guidance/Skill summaries, the system prompt,
+   compression checkpoint and durable messages. See [Runtime context](runtime-context.md).
+3. Resolve the Provider credential for the active admission and hold it only in
    process memory.
-3. List the mandatory platform Runtime Tools and optional client MCP Tools.
-4. Qualify every client Tool name; platform names remain canonical.
+4. Check the complete model-input budget before each model request.
 5. Call the model and persist/emit text or thought output. Mixed text and Tool
    calls are retained as one assistant response.
 6. Validate the complete Tool-call batch, including unique call IDs, known
@@ -177,8 +179,10 @@ The MCP invocation boundary is the call to the official SDK's `callTool`
 method. URL validation, connection, and initialization failures before that
 boundary have `tool_effect_state=none`. A received successful Tool response is
 `settled`. A received error may declare `none`, `settled`, or `unknown` through
-its structured content; a missing or malformed declaration is conservatively
-`unknown`. A rejected `callTool` promise is also `unknown`, because the adapter
+its structured content. An ordinary MCP error with no declaration is a returned
+outcome (`settled`), not a transport uncertainty; pass it back to the model.
+An explicit `unknown` declaration always remains unknown, even with a malformed
+source declaration. A rejected `callTool` promise is also `unknown`, because the adapter
 cannot prove whether the server executed the request. Once a Tool is unknown,
 the Run becomes `unresolved` before another model request can be issued.
 
@@ -190,6 +194,8 @@ the Run becomes `unresolved` before another model request can be issued.
 - Uses a trusted internal dialer.
 - Every call carries `X-Antnest-Expected-Execution-ID`.
 - A mismatched execution ID fails before Tool dispatch.
+- Reads `antnest://runtime/info` through the same official SDK/fenced endpoint.
+- Exposes Runtime-aggregated stdio child tools; never launches children locally.
 
 ### Client MCP
 

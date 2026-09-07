@@ -117,7 +117,7 @@ and that service's fixtures belong to the same batch.
 | 1 | `antnest-runtime` | Information Resource, stdio process hosting, aggregated tool discovery/dispatch, lifecycle and telemetry tests | Complete; service-local accepted |
 | 2 | `runtime-controller` | Configuration transport, mounts/permissions and readiness integration | Complete; service-local accepted |
 | 3 | `agent-controller` | Configuration validation/snapshot and create/rebuild execution publication | Complete (service-local) |
-| 4 | `agent-acp-service` | Information consumption, managed tool discovery and budgeted context injection | Pending |
+| 4 | `agent-acp-service` | Information consumption, managed tool discovery and budgeted context injection | Complete; service-local accepted |
 | 5 | Integration | Docker create/chat/rebuild workflow and Gateway-rooted trace verification | Pending |
 
 ## Acceptance
@@ -145,6 +145,14 @@ Unicode is rejected before process configuration decoding. No tables were added.
 The existing Identity consumer revision assertion was aligned with revision 11
 after verifying its consumed route/fields/errors were unchanged. Test PostgreSQL
 resources are cleaned after verification. ACP consumption remains batch 4 work.
+
+Batch 4 final evidence: 199 unit/component tests and 15 real PostgreSQL tests
+passed, including ACP v1 reconnect/restart history recovery, actual model input,
+per-Run freshness, complete Skill metadata truncation, structured tool results,
+setup cancellation, execution fencing, and telemetry without content leakage.
+`make fmt-check` and `make lint` passed. Runtime observations are not persisted
+as chat or compaction history. Read-only review identified and fixed guidance
+being displaced by large Skill catalogs. Batch 5 remains the cross-service gate.
 
 Runtime tests must cover empty configuration, real stdio MCP initialization and
 calls, process reuse, startup failure/timeout, cancellation, child exit, shutdown

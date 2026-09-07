@@ -72,6 +72,10 @@ class OfficialMcpConnection implements McpConnection {
     private readonly managedFetch: ManagedFetch | undefined,
   ) {}
 
+  public readResource(uri: string, signal: AbortSignal): Promise<unknown> {
+    return this.client.readResource({ uri }, { signal, cacheMode: "refresh" });
+  }
+
   public async listTools(signal: AbortSignal): Promise<McpRemoteTool[]> {
     const result = await this.client.listTools(undefined, { signal, cacheMode: "refresh" });
     return result.tools.map(toRemoteTool);

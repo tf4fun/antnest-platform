@@ -70,8 +70,14 @@ protocol selection is never implicit.
 
 The executable coverage contract is maintained in
 [`docs/protocol-conformance.md`](docs/protocol-conformance.md). Stable ACP v1
-requires stdio MCP support; the remote service currently supports only HTTP
-client MCP, so v1 must not yet be described as fully conformant.
+requires stdio MCP support. This remote service deliberately supports only
+Streamable HTTP MCP for both platform Runtime and client-provided sources;
+platform-configured stdio children are hosted inside Runtime and reached through
+its aggregated HTTP MCP surface. ACP-client-provided stdio and legacy SSE are
+not supported. See [Runtime context](docs/runtime-context.md).
+This is a documented compatibility restriction, so v1 must not be described
+as fully conformant. Unsupported transports fail explicitly rather than being
+silently discarded or launched inside the shared ACP service.
 
 This matrix distinguishes protocol completeness from optional product scope.
 Methods are advertised only when their semantics are implemented. Platform

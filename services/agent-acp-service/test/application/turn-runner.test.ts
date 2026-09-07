@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { TurnRunner } from "../../src/application/turn-runner.js";
+import { TurnRunner, type TurnRunnerDependencies } from "../../src/application/turn-runner.js";
 import { RunEventPersistenceError } from "../../src/application/durable-run-events.js";
 import { MAX_TOOL_RESULT_BYTES } from "../../src/domain/tool-result.js";
 import type { ModelPort } from "../../src/ports/model.js";
@@ -39,6 +39,96 @@ const snapshot: RunExecutionSnapshot = {
 };
 
 describe("TurnRunner", () => {
+  it.each([false, true])(
+    "feeds a managed structured-only result to the model (isError=%s)",
+    async (isError) => {
+      const complete = vi
+        .fn<ModelPort["complete"]>()
+        .mockResolvedValueOnce({
+          kind: "tool_calls",
+          content: [],
+          calls: [{ id: "call-structured", name: "mcp__documents__search", arguments: {} }],
+          usage: { inputTokens: 1, outputTokens: 1 },
+        })
+        .mockResolvedValueOnce({
+          kind: "message",
+          content: [{ type: "text", text: "done" }],
+          stopReason: "end_turn",
+          usage: { inputTokens: 1, outputTokens: 1 },
+        });
+      const runner = new TurnRunner({
+        model: { complete },
+        events: createEvents().port,
+        catalog: [
+          {
+            source: "runtime",
+            sourceId: "runtime",
+            name: "mcp__documents__search",
+            modelName: "mcp__documents__search",
+            description: "Search",
+          },
+        ],
+        tools: {
+          call: vi.fn().mockResolvedValue({
+            content: [],
+            structuredContent: { answer: "structured answer" },
+            isError,
+            toolEffectState: "settled",
+          }),
+        },
+      });
+      await expect(run(runner)).resolves.toMatchObject({ terminalClass: "completed" });
+      expect(JSON.stringify(complete.mock.calls[1]?.[0].messages)).toContain("structured answer");
+    },
+  );
+
+  it("stops before a subsequent model call when tool results exhaust the budget", async () => {
+    const complete = vi.fn<ModelPort["complete"]>().mockResolvedValueOnce({
+      kind: "tool_calls",
+      content: [],
+      calls: [{ id: "call-1", name: "read", arguments: {} }],
+      usage: { inputTokens: 1, outputTokens: 1 },
+    });
+    const runner = new TurnRunner({
+      model: { complete },
+      events: createEvents().port,
+      catalog: [
+        {
+          source: "runtime",
+          sourceId: "runtime",
+          name: "read",
+          modelName: "read",
+          description: "Read",
+        },
+      ],
+      tools: {
+        call: vi.fn().mockResolvedValue({
+          content: [{ type: "text", text: "x".repeat(8000) }],
+          isError: false,
+          toolEffectState: "settled",
+        }),
+      },
+    });
+    const small = structuredClone(snapshot);
+    small.executionSpec.model.contextWindow = 2048;
+    small.executionSpec.model.maxOutputTokens = 256;
+    await expect(
+      runner.run({
+        runId: "run-budget",
+        sessionId: "session",
+        snapshot: small,
+        credential: "secret",
+        context: [{ role: "user", content: [{ type: "text", text: "read" }] }],
+        signal: new AbortController().signal,
+        authoritySignal: new AbortController().signal,
+      }),
+    ).resolves.toMatchObject({
+      terminalClass: "failed",
+      errorClass: "context_budget_exhausted",
+      toolEffectState: "settled",
+    });
+    expect(complete).toHaveBeenCalledOnce();
+  });
   it("feeds one Tool result back to the model and completes without replay", async () => {
     const complete = vi.fn<ModelPort["complete"]>();
     complete
@@ -80,7 +170,7 @@ describe("TurnRunner", () => {
       call,
     };
     const events = createEvents();
-    const runner = new TurnRunner({ model, tools, events: events.port });
+    const runner = await createRunner({ model, tools, events: events.port });
 
     const result = await runner.run({
       runId: "run-1",
@@ -160,7 +250,7 @@ describe("TurnRunner", () => {
       call,
     };
     const events = createEvents();
-    const runner = new TurnRunner({ model, tools, events: events.port });
+    const runner = await createRunner({ model, tools, events: events.port });
 
     await expect(
       runner.run({
@@ -199,7 +289,7 @@ describe("TurnRunner", () => {
     const call = vi.fn<ToolCatalogPort["call"]>(() =>
       Promise.reject(Object.assign(new Error("timeout"), { effectState: "unknown" })),
     );
-    const runner = new TurnRunner({
+    const runner = await createRunner({
       model: { complete },
       tools: {
         list: vi.fn(() =>
@@ -254,7 +344,7 @@ describe("TurnRunner", () => {
     events.toolFinished.mockRejectedValueOnce(
       new RunEventPersistenceError("Tool finish", new Error("audit unavailable")),
     );
-    const runner = new TurnRunner({
+    const runner = await createRunner({
       model: { complete },
       tools: {
         list: vi.fn<ToolCatalogPort["list"]>(() =>
@@ -305,7 +395,7 @@ describe("TurnRunner", () => {
       cancellation.abort(new Error("cancel after Tool completion"));
       return Promise.resolve({ content: [], isError: false, toolEffectState: "settled" });
     });
-    const runner = new TurnRunner({
+    const runner = await createRunner({
       model: { complete },
       tools: {
         list: vi.fn<ToolCatalogPort["list"]>(() =>
@@ -355,7 +445,7 @@ describe("TurnRunner", () => {
   });
 
   it("propagates the model stop reason instead of flattening every completion", async () => {
-    const runner = new TurnRunner({
+    const runner = await createRunner({
       model: {
         complete: vi.fn<ModelPort["complete"]>(() =>
           Promise.resolve({
@@ -396,7 +486,7 @@ describe("TurnRunner", () => {
       });
     const call = vi.fn<ToolCatalogPort["call"]>();
     const events = createEvents();
-    const runner = new TurnRunner({
+    const runner = await createRunner({
       model: { complete },
       tools: {
         list: vi.fn(() =>
@@ -437,7 +527,7 @@ describe("TurnRunner", () => {
   it("does not retain an assistant Tool batch when preflight cannot classify it", async () => {
     const events = createEvents();
     const call = vi.fn<ToolCatalogPort["call"]>();
-    const runner = new TurnRunner({
+    const runner = await createRunner({
       model: {
         complete: vi.fn(() =>
           Promise.resolve({
@@ -494,7 +584,7 @@ describe("TurnRunner", () => {
         stopReason: "end_turn",
       });
     const events = createEvents();
-    const runner = new TurnRunner({
+    const runner = await createRunner({
       model: { complete },
       tools: {
         list: vi.fn(() =>
@@ -528,6 +618,15 @@ describe("TurnRunner", () => {
     expect(JSON.stringify(complete.mock.calls[1]?.[0].messages)).toContain("Tool result truncated");
   });
 });
+
+async function createRunner(
+  dependencies: Omit<TurnRunnerDependencies, "catalog" | "tools"> & { tools: ToolCatalogPort },
+): Promise<TurnRunner> {
+  return new TurnRunner({
+    ...dependencies,
+    catalog: await dependencies.tools.list(snapshot, new AbortController().signal),
+  });
+}
 
 function run(runner: TurnRunner) {
   return runner.run({

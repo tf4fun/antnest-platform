@@ -183,8 +183,8 @@ describe("McpToolCatalog", () => {
     ).resolves.toMatchObject({ isError: true, toolEffectState: "none" });
   });
 
-  it("treats a received error without a valid effect declaration as unknown", async () => {
-    const runtime = fakeDialer([{ name: "write", description: "Write" }], {
+  it("returns an ordinary managed MCP error to the model as a completed response", async () => {
+    const runtime = fakeDialer([{ name: "mcp__documents__search", description: "Search" }], {
       content: [{ type: "text", text: "write failed" }],
       isError: true,
       structuredContent: { error_code: "write_failed", message: "write failed" },
@@ -199,11 +199,15 @@ describe("McpToolCatalog", () => {
       catalog.call({
         runId: "run-1",
         snapshot: snapshot(),
-        tool: runtimeTool("write"),
+        tool: runtimeTool("mcp__documents__search"),
         arguments: { path: "notes.txt" },
         signal: new AbortController().signal,
       }),
-    ).resolves.toMatchObject({ isError: true, toolEffectState: "unknown" });
+    ).resolves.toMatchObject({
+      isError: true,
+      toolEffectState: "settled",
+      structuredContent: { error_code: "write_failed" },
+    });
   });
 
   it("treats an unconfirmed client Tool outcome as unknown side effects", async () => {
@@ -268,6 +272,7 @@ function fakeDialer(
   const callTool = vi.fn(() => Promise.resolve(result));
   const close = vi.fn(() => Promise.resolve());
   const connection: McpConnection = {
+    readResource: vi.fn(),
     listTools: vi.fn(() => Promise.resolve(tools)),
     callTool,
     close,

@@ -1,3 +1,4 @@
+import { emptyRuntimePreparation } from "../fixtures/runtime-information.js";
 import { describe, expect, it, vi } from "vitest";
 
 import { ContextBuilder } from "../../src/application/context-builder.js";
@@ -25,12 +26,13 @@ describe("ContextBuilder", () => {
       saveCheckpoint,
     };
     const builder = new ContextBuilder({
+      ...emptyRuntimePreparation(),
       repository,
       id: () => "checkpoint-1",
       now: () => new Date("2026-08-30T00:00:00Z"),
     });
 
-    const messages = await builder.build("session-1", snapshot(), new AbortController().signal);
+    const { messages } = await builder.build("session-1", snapshot(), new AbortController().signal);
 
     expect(messages.map((message) => message.role)).toEqual([
       "system",
@@ -72,6 +74,7 @@ describe("ContextBuilder", () => {
       saveCheckpoint,
     };
     const builder = new ContextBuilder({
+      ...emptyRuntimePreparation(),
       repository,
       id: () => "checkpoint-2",
       now: () => new Date("2026-08-30T00:00:00Z"),
@@ -80,7 +83,11 @@ describe("ContextBuilder", () => {
     constrained.executionSpec.model.contextWindow = 1_024;
     constrained.executionSpec.model.maxOutputTokens = 128;
 
-    const messages = await builder.build("session-1", constrained, new AbortController().signal);
+    const { messages } = await builder.build(
+      "session-1",
+      constrained,
+      new AbortController().signal,
+    );
 
     expect(JSON.stringify(messages.at(-1))).toContain("latest request");
     expect(saveCheckpoint).toHaveBeenCalledWith(
@@ -129,12 +136,13 @@ describe("ContextBuilder", () => {
       saveCheckpoint: vi.fn(),
     };
     const builder = new ContextBuilder({
+      ...emptyRuntimePreparation(),
       repository,
       id: () => "checkpoint-1",
       now: () => new Date("2026-08-30T00:00:00Z"),
     });
 
-    const messages = await builder.build("session-1", snapshot(), new AbortController().signal);
+    const { messages } = await builder.build("session-1", snapshot(), new AbortController().signal);
 
     expect(messages.slice(1)).toEqual([
       { role: "user", content: [{ type: "text", text: "read" }] },
@@ -173,6 +181,7 @@ describe("ContextBuilder", () => {
       saveCheckpoint,
     };
     const builder = new ContextBuilder({
+      ...emptyRuntimePreparation(),
       repository,
       id: () => "checkpoint-lost",
       now: () => new Date("2026-08-30T00:00:00Z"),
@@ -213,6 +222,7 @@ describe("ContextBuilder", () => {
       }),
     };
     const builder = new ContextBuilder({
+      ...emptyRuntimePreparation(),
       repository,
       id: () => "checkpoint-lost",
       now: () => new Date("2026-08-30T00:00:00Z"),

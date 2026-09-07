@@ -50,10 +50,13 @@ durability, and recovery.
 | V1-MCP-HTTP-01  | Advertised HTTP MCP configuration crosses the protocol boundary intact.             | lifecycle mapping test                     | Covered         |
 | V1-MCP-STDIO-01 | Every v1 Agent supports stdio MCP as required by the stable schema.                 | `domain/mcp.ts` rejects non-HTTP sources   | **Product gap** |
 
-The service therefore remains a stable-v1-compatible Session adapter, not a
-fully conformant ACP v1 Agent, until stdio MCP has a deliberate remote-service
-design. Executing an arbitrary client command inside Agent ACP Service is not an
-acceptable placeholder for that design.
+The service therefore remains a stable-v1 Session adapter with a known MCP
+baseline incompatibility, not a fully conformant ACP v1 Agent. Single-node
+closeout deliberately supports only Streamable HTTP MCP. Stdio hosting and
+legacy SSE transport are outside the product boundary, not unfinished mandatory
+implementation tasks. The Product gap state above records the protocol
+difference, not permission to erase it from conformance reporting. Executing an
+arbitrary client command inside Agent ACP Service is not an acceptable shortcut.
 
 ## Draft ACP v2 Matrix
 
@@ -113,12 +116,22 @@ required before a production conformance claim:
 
 | ID              | Scenario                                                                        | State         |
 | --------------- | ------------------------------------------------------------------------------- | ------------- |
-| E2E-V1-01       | v1 WebSocket + PostgreSQL Prompt, Tool updates, stop reason, reconnect/load.    | Missing test  |
+| E2E-V1-01       | v1 WebSocket + PostgreSQL Prompt, Tool updates, stop reason, reconnect/load.    | Covered       |
 | E2E-V2-01       | v2 WebSocket + PostgreSQL happy path.                                           | Covered       |
 | E2E-AUTH-01     | Cross-principal and cross-Agent Session access never leaks or mutates.          | Layer-covered |
 | E2E-STALE-01    | Access revision changes invalidate an existing connection before work.          | Layer-covered |
 | E2E-RECOVERY-01 | Disconnect/restart/resume replays once without repeating model or Tool effects. | Missing test  |
 | E2E-RUNTIME-01  | Run A retains its captured Runtime; Run B obtains the next revision.            | Layer-covered |
+
+`test/e2e/acp-happy-path.postgres.test.ts` covers E2E-V1-01 using real
+WebSockets, the official v1 client, and PostgreSQL. It verifies stable message
+identities and Tool history across reconnection and repeated load without
+another model call, Tool call, or Run admission. A separate case reconstructs
+the application, repositories, and HTTP server against the same database and
+encryption key before load. Controller, model, and Tool ports are deterministic
+stubs. This is not Gateway/Runtime integration or an OS-process crash test;
+E2E-RECOVERY-01 still requires actual process interruption, including in-flight
+work, and remains open.
 
 ## Current Verdict
 
@@ -130,8 +143,8 @@ required before a production conformance claim:
   baseline incompatibility.
 - Wire protocol: core framing, payload limits, authentication, unknown methods,
   v2 batch including initialize exclusivity, and Prompt ordering are covered.
-- Durable business semantics: strong lower-layer coverage, but stable v1 E2E
-  and restart/replay E2E remain incomplete.
+- Durable business semantics: stable v1 WebSocket/PostgreSQL reconnect/load
+  coverage exists; full-platform and interrupted-process recovery remain open.
 
 Consequently, neither endpoint should be described as fully protocol-complete.
 The accurate claim is: complete tested Session surface for the capabilities
