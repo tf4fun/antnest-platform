@@ -7,6 +7,7 @@ cd "$repository_root"
 port_base=$((42000 + ($$ % 8000)))
 network_octet=$((1 + ($$ % 200)))
 export COMPOSE_PROJECT_NAME="antnest-stage3-e2e-$$"
+export ANTNEST_E2E_RUN_ID=$(node -e 'process.stdout.write(crypto.randomUUID())')
 export ANTNEST_POSTGRES_HOST_PORT=$port_base
 export ANTNEST_EDGE_HOST_PORT=$((port_base + 1))
 export ANTNEST_JAEGER_UI_HOST_PORT=$((port_base + 2))
@@ -51,6 +52,11 @@ workspace_cookie_jar="$temporary_root/workspace-cookies.txt"
 agent_id=""
 
 compose() {
+  if [ "${ANTNEST_E2E_ACP_CLOSEOUT:-false}" = true ]; then
+    docker compose -f compose.yaml -f compose.stage3.yaml -f scripts/acp-closeout/compose.yaml \
+      --profile stage3 --profile stage3-e2e --profile observability "$@"
+    return
+  fi
   docker compose -f compose.yaml -f compose.stage3.yaml --profile stage3 --profile stage3-e2e --profile observability "$@"
 }
 
@@ -93,7 +99,9 @@ cleanup() {
   rm -rf -- "${temporary_root:?}"
   exit "$status"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 json_field() {
   node -e '
@@ -717,6 +725,14 @@ docker run --rm --network "${COMPOSE_PROJECT_NAME}_development" \
   antnest/agent-acp-service:local node /app/stage3-workspace-client.mjs \
   >"$temporary_root/workspace-acp-evidence.json"
 assert_field "$temporary_root/workspace-acp-evidence.json" status passed
+
+if [ "${ANTNEST_E2E_ACP_CLOSEOUT:-false}" = true ]; then
+  [ "$keep_stack" = false ] || { echo 'ACP fault injection requires disposable stack' >&2; exit 1; }
+  ANTNEST_E2E_DISPOSABLE=true ANTNEST_E2E_ACP_CONTAINER=$(compose ps -q agent-acp-service) \
+    sh scripts/e2e-acp-closeout.sh >"$temporary_root/acp-closeout.json"
+  assert_field "$temporary_root/acp-closeout.json" status passed
+  cat "$temporary_root/acp-closeout.json"
+fi
 
 if [ "${ANTNEST_E2E_MANAGED_MCP:-false}" = true ]; then
   TEST_ORGANIZATION_ID="$organization_id" TEST_OWNER_ID="$owner_user_id" \

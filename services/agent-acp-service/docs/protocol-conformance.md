@@ -152,9 +152,10 @@ required before a production conformance claim:
 | --------------- | ------------------------------------------------------------------------------- | --------------- |
 | E2E-V1-01       | v1 WebSocket + PostgreSQL Prompt, Tool updates, stop reason, reconnect/load.    | Covered         |
 | E2E-V2-01       | v2 WebSocket + PostgreSQL happy path.                                           | Covered         |
-| E2E-AUTH-01     | Cross-principal and cross-Agent Session access never leaks or mutates.          | Service-covered |
+| E2E-AUTH-01     | Cross-principal and cross-Agent Session access never leaks or mutates.          | Covered         |
+| E2E-IDENTITY-01 | Owner deactivation rejects work on an existing Gateway connection.              | Covered         |
 | E2E-STALE-01    | Access revision changes invalidate an existing connection before work.          | Service-covered |
-| E2E-RECOVERY-01 | Disconnect/restart/resume replays once without repeating model or Tool effects. | Missing test    |
+| E2E-RECOVERY-01 | Disconnect/restart/resume replays once without repeating model or Tool effects. | Layer-covered   |
 | E2E-RUNTIME-01  | Run A retains its captured Runtime; Run B obtains the next revision.            | Layer-covered   |
 
 `test/e2e/acp-happy-path.postgres.test.ts` covers E2E-V1-01 using real
@@ -163,9 +164,8 @@ identities and Tool history across reconnection and repeated load without
 another model call, Tool call, or Run admission. A separate case reconstructs
 the application, repositories, and HTTP server against the same database and
 encryption key before load. Controller, model, and Tool ports are deterministic
-stubs. This is not Gateway/Runtime integration or an OS-process crash test;
-E2E-RECOVERY-01 still requires actual process interruption, including in-flight
-work, and remains open.
+stubs. This service suite is not Gateway/Runtime integration or an OS-process
+crash test; the separate Docker profile below adds those dependencies.
 
 `test/e2e/acp-access.postgres.test.ts` adds 16 cases across v1/v2 for Session
 ownership, access-revision changes, principal deactivation and active-Run
@@ -185,6 +185,44 @@ The shared Controller fixture separates transport-subject mapping from current
 principal/Agent authorization. These cases do not test browser-token revocation
 or a real Identity Service, and do not settle individual subject revocation
 without an access-revision change. Gateway closeout retains those distinctions.
+
+### Gateway And Process Recovery Acceptance
+
+`ANTNEST_E2E_ACP_CLOSEOUT=true make e2e-stage3` runs the
+[closeout integration](../../../scripts/acp-closeout/README.md). Edge exposes
+`/api/app/agents/{agent_id}/v1/acp` and `/api/app/agents/{agent_id}/v2/acp`;
+the existing unversioned Workspace route remains a v1 alias. Both use identical
+authenticated upgrade admission, same-origin checks and authoritative subject
+injection. Neither version accepts client-selected private routing fields.
+
+Acceptance on 2026-09-07 passed both official SDK clients through real Gateway,
+Identity, Controller, ACP, PostgreSQL and Runtime services. Two independent
+users and three Agents exercise foreign upgrades, foreign Session operations
+and deactivation on an already-open connection. Every rejected operation
+preserves Session/history/Tool/MCP records; a rejected prompt may retain exactly
+one failed admission intent with no accepted prompt or execution snapshot.
+
+Six SIGKILL/restart cycles cover completed history, an outstanding first model
+response, and a completed Bash effect before the next model response. Recovery
+preserves durable messages and confirmed Tool results, closes interrupted
+admissions and permits a new prompt. Replay checks message identities, types,
+content, unified message/Tool order and v2 `idle/end_turn` or `idle/_failed`.
+Repeated replay performs no model/Tool calls; its legitimate new MCP revision
+is checked separately from unchanged execution records. An append log read
+through Runtime confirms effects were not repeated.
+
+Final metrics: 20 deterministic model requests, six real Runtime Tool calls,
+six verified process restarts and ten fixture/oracle tests. Two completed
+baseline Jaeger traces (204 spans total) verify Gateway ancestry through
+Identity, Controller, ACP context/catalog/model and Runtime MCP. Crash-time
+unexported spans are not claimed. The disposable project and checkpoints were
+removed, not retained as a collection of intermediate evidence files.
+
+E2E-RECOVERY-01 remains layer-covered: uncertain in-flight Tool effects,
+AcquireRun/FinishRun response-loss windows and active-Run rebuild still need
+full-platform acceptance. E2E-STALE-01 still has service-only revision-change
+evidence. User deactivation is not proof of browser logout/expiry revocation
+on an already-upgraded connection. Full ACP conformance is not claimed.
 
 Service acceptance (2026-09-07): 200 unit/component tests, all 37 PostgreSQL
 cases, the production TypeScript build, `make fmt-check` and `make lint` passed.

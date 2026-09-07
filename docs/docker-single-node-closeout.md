@@ -83,7 +83,7 @@ boundaries verified by source inspection, not new test-run results:
 | --- | --- | --- |
 | Stdio MCP | Template-owned configuration starts children inside Runtime; ACP discovers/calls their aggregated HTTP tools; Console and Docker evidence exists | Client-supplied ACP stdio remains unsupported. Keep the stable-v1 baseline incompatibility visible; do not launch commands on the ACP host or silently turn Session input into Template configuration |
 | Session recovery | v1 real WebSocket/PostgreSQL reconnect and application-recreation cases; application recovery unit tests | Actual ACP process interruption with completed and in-flight work, both protocol versions, admission settlement and replay without repeated effects through Edge |
-| Access isolation | v1/v2 wire/PostgreSQL Session ownership and access-revision tests with deterministic Controller ports; authoritative Identity checks at admission | Two real users/Agents and an already-open connection across revocation/revision change, through Edge, for v1 and v2 |
+| Access isolation | v1/v2 Gateway integration with two real users, three Agents and owner deactivation on an existing connection; service tests for revision changes | Real-platform access-revision change and browser-session revocation semantics; OIDC/SCIM flows remain separate |
 | Identity events | Transactional `identity_events` journal; synchronous `resolve_principal` dependency | No journal delivery contract or Agent Controller consumer. C2-05 must decide the required business effect, then implement its narrow delivery/consumer batches if needed; local audit alone is not event-driven integration |
 | Documentation and operations | Current Stage 3 entry and MCP feature evidence | Remove stale current-status wording, exercise restore/cleanup, measure the reported idle CPU spikes, and produce the final three-flow Jaeger report |
 
@@ -388,3 +388,28 @@ ports are deterministic; actual Identity/Gateway revocation remains unaccepted.
 The complete ACP PostgreSQL profile passes 37 cases. Its worker-lock fault test
 was also fixed to terminate only its own connection, not a same-key lock owner
 in another database. C5-03 idle CPU diagnosis remains open.
+
+Gateway/integration batch accepted (2026-09-07): the explicit stable/draft Edge
+routes now preserve protocol versions, with the existing Workspace route kept
+as a v1 alias. `ANTNEST_E2E_ACP_CLOSEOUT=true make e2e-stage3` adds real
+Identity/Controller/Runtime/PostgreSQL evidence for both versions: two users,
+three Agents, cross-owner/Agent denials and owner deactivation on an existing
+connection. It supersedes the service-only limitation above for these cases,
+but not for access-revision changes or browser-token logout/expiry.
+
+The same profile performs six actual ACP SIGKILL/restart cycles, covering
+completed history, model-wait interruption and already-settled Tool effects.
+Twenty deterministic model requests and six Runtime Tool calls verify history
+replay without execution, no repeated Bash appends, truthful failed outcomes,
+finished admissions and subsequent prompt usability. Ten fixture/oracle tests
+cover malformed/replayed effects and missing, duplicated, mistyped or reordered
+history. Two baseline Jaeger traces totaling 204 spans verify Gateway ancestry
+through Identity, Controller, ACP and Runtime. All temporary containers,
+volumes, networks and checkpoints are cleaned after the run.
+
+This is a C1-03/04/05/06 evidence increment, not acceptance of all C1-C6.
+Unknown in-flight Tool effects, admission RPC response-loss windows, active-Run
+rebuild, remaining Identity workflows and C5-03 CPU diagnosis remain open.
+The [integration README](../scripts/acp-closeout/README.md) and
+[protocol matrix](../services/agent-acp-service/docs/protocol-conformance.md)
+define the reproducible scope. No external Provider was used.
