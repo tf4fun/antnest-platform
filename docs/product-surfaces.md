@@ -1,7 +1,7 @@
 # Product Surfaces And Feature Convergence
 
 > Status: accepted direction; implementation tracked by category  
-> Updated: 2026-09-03
+> Updated: 2026-09-07
 
 This document separates four situations that otherwise look identical in the
 browser: a feature intentionally moved to another application, a feature whose
@@ -259,6 +259,15 @@ retry instead of seeing repeated generic section errors. Active member totals
 require both the User and its Organization Membership to be active; retained
 disabled Directory records are not reported as launch-ready owners.
 
+Overview failures preserve the same terminal/transient distinction as resource
+pages. A required Agent inventory failure preserves its safe HTTP status;
+optional section errors include a safe `status`, `code`, and resource-named
+`message`. The page lists these failures without treating every degraded section
+as retryable. Refresh is offered only when at least one failure is transient;
+a terminal aggregate failure suppresses refresh of any older degraded snapshot.
+Refresh keeps previously loaded data visible and disables duplicate requests.
+Unmounting cancels the pending aggregate read and ignores late completion.
+
 The core setup path is now an explicit derived view rather than tribal
 knowledge: connect one Model Provider, create one Agent Template, ensure an
 active Directory owner exists, then create an Agent. The Console derives each
@@ -280,6 +289,19 @@ Agents, Template choices, and Directory owners independently. A failed
 dependency disables only the creation or revision path that needs it, preserves
 the primary inventory, and provides its own retry. Resource pages do not issue
 an Overview request or duplicate their primary owner query.
+
+Catalog creation retries are one logical administrator action. Model and
+Template forms submit only editable values; the BFF derives their resource key
+from the organization-scoped idempotency request ID. It rejects client-supplied
+`profile_key`/`template_key`. A lost response or transient HTTP failure therefore
+retains the same body, command ID, and resource key on retry. After confirmed
+success, another creation receives a fresh identity even for identical values.
+Generated Catalog keys stay inside the BFF/owner boundary and are not returned
+or displayed in the Console; names, resource IDs, and revisions already support
+the administrator's navigation and configuration workflow.
+The Agent Controller request ledger remains the durable replay authority. Form
+fields and credentials are never persisted for recovery; the existing browser
+retry store contains only opaque request identifiers and input fingerprints.
 
 ### D. Ownership not decided
 
@@ -373,3 +395,16 @@ A migrated surface is complete only when:
 5. contract, service, browser-component, and applicable disposable-stack tests
    prove the workflow;
 6. this matrix and the affected business sequence are updated.
+
+## Current Acceptance Follow-up
+
+Overview failure recovery (BFF contract 30) is implemented with service HTTP
+tests and Dashboard component tests. Container and browser acceptance remain
+open: the 2026-09-07 attempt could not fetch the Go base image from Docker Hub,
+and browser control returned `Debugger unattached`. Passing local tests and a
+production frontend build do not close those two checks.
+
+After that verification, continue the cross-surface acceptance audit of mutation
+acknowledgements and forbidden/compact-viewport interactions. Channel and Skill
+pages still wait for their owner services; Scheduled Tasks and cross-service
+Audit remain outside the decided scope.

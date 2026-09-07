@@ -27,8 +27,13 @@ share one bounded context and execute concurrently; goroutines never write the
 `ResponseWriter`. Agent inventory is required. Directory, Model Profile, and
 Template sections return stable `available`/`unavailable` envelopes so one
 optional dependency does not erase authoritative fleet state.
-Unavailable envelopes carry a fixed business-resource label, never an upstream
-URL or error body. Browser metrics derive Active members from the conjunction
+Unavailable envelopes carry a safe HTTP status and fixed business-resource
+label, never an upstream URL or error body. The browser retains structured
+failure semantics and offers one aggregate refresh only for transient failures.
+A terminal required-read failure suppresses retry even if the retained snapshot
+contains an older transient section failure. A pending refresh keeps that
+snapshot visible and disables the refresh control; leaving the page cancels the
+read and ignores its completion. Browser metrics derive Active members from the conjunction
 of User and Organization Membership state, matching Agent-owner admission.
 Agent pages derive two views from that single Directory response: an active
 selection set for create commands and a complete User index for existing fleet
@@ -114,8 +119,9 @@ Admin API 401 responses still trigger session-expiry handling.
 - missing or malformed trusted identity context fails closed;
 - upstream `4xx` domain errors are preserved for the UI;
 - dependency transport failure returns `503` and never fabricates success;
-- required overview failure returns `503`; optional section failure remains a
-  named degraded section in a successful aggregate;
+- required overview failure preserves safe HTTP status; transport failure is
+  `503`, invalid projection/response is `502`; optional failure retains status
+  in a named degraded section in a successful aggregate;
 - a resource outside the principal organization is exposed as `404`;
 - secret input is forwarded once and never logged or returned by the BFF.
 - current-account failure degrades only the account card; password capability

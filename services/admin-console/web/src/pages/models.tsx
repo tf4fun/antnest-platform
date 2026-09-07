@@ -29,7 +29,7 @@ import { Empty, ErrorNotice, Loading, SuccessNotice } from "../components/ui/fee
 import { CheckboxField, Field, Input, Select } from "../components/ui/input";
 import { APIError, api, errorMessage } from "../lib/api";
 import { loadImmutableCatalogDetail } from "../lib/catalog-detail";
-import { positiveInteger, slugify } from "../lib/forms";
+import { positiveInteger } from "../lib/forms";
 import { dateTime } from "../lib/format";
 import {
   initialModelSelection,
@@ -108,7 +108,6 @@ function ModelList() {
     setSuccessMessage("");
     try {
       await api.createModel({
-        profile_key: `${slugify(`${value.displayName}-${value.model.model}`, "model")}-${Date.now().toString(36)}`,
         display_name: value.displayName,
         api_key: value.apiKey,
         model: value.model,

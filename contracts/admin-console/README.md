@@ -20,6 +20,11 @@ field. The overview fans out buffered reads under one deadline: Agent inventory
 is required, while directory and catalog sections carry an explicit
 `available` or `unavailable` envelope. Admin Console owns no durable records and
 therefore has no persistence contract.
+Unavailable section errors contain `status`, `code`, and `message`. Required
+Agent-read failures use the same safe status as the HTTP response. The browser
+offers refresh for transient errors only, keeps loaded snapshots during refresh,
+and prevents duplicate requests. A terminal aggregate failure overrides any
+retry affordance implied by an older partial snapshot.
 Degraded envelopes name the unavailable business resource without forwarding
 the upstream address, response body, or transport error. The Overview's active
 member count requires both the global User and Organization Membership to be

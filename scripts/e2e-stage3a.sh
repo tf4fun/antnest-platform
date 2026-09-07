@@ -370,7 +370,6 @@ node -e '
 
 cat >"$temporary_root/model.json" <<'EOF'
 {
-  "profile_key":"stage3-model",
   "display_name":"Stage 3 model",
   "api_key":"stage3-model-secret",
   "model":{
@@ -392,7 +391,6 @@ fi
 
 cat >"$temporary_root/template.json" <<EOF
 {
-  "template_key":"stage3-template",
   "name":"Stage 3 Template",
   "model_profile_revision_id":"$model_revision_id",
   "system_prompt":"Operate as a reliable enterprise assistant.",
@@ -404,7 +402,6 @@ template_id=$(json_field "$temporary_root/template-response.json" template_id)
 
 cat >"$temporary_root/model-secondary.json" <<'EOF'
 {
-  "profile_key":"stage3-model-secondary",
   "display_name":"Stage 3 secondary model",
   "api_key":"stage3-secondary-model-secret",
   "model":{
@@ -423,7 +420,6 @@ secondary_model_revision_id=$(json_field "$temporary_root/model-secondary-respon
 
 cat >"$temporary_root/template-secondary.json" <<EOF
 {
-  "template_key":"stage3-template-secondary",
   "name":"Stage 3 Secondary Template",
   "model_profile_revision_id":"$secondary_model_revision_id",
   "system_prompt":"Operate as a secondary enterprise assistant.",

@@ -41,7 +41,6 @@ const catalog: ModelCatalog = {
 
 const profile: ModelProfile = {
   model_profile_id: "model-profile-1",
-  profile_key: "deepseek-v4-pro",
   display_name: "DeepSeek production",
   revision_id: "model-revision-1",
   revision: 1,

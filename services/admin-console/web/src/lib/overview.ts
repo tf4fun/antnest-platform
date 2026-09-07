@@ -1,4 +1,5 @@
 import type { Directory, Overview } from "./types";
+import { responseResourceFailure, type ResourceFailure } from "./resource-failure.ts";
 
 export type BoundedSnapshot = {
   count: number;
@@ -24,7 +25,7 @@ export type OverviewResourceSummary = {
   directory: OverviewMetricSummary;
   models: OverviewMetricSummary;
   templates: OverviewMetricSummary;
-  degraded: string[];
+  degraded: ResourceFailure[];
 };
 
 export function overviewResourceSummary(overview: Overview): OverviewResourceSummary {
@@ -33,7 +34,9 @@ export function overviewResourceSummary(overview: Overview): OverviewResourceSum
     overview.directory,
     overview.model_profiles,
     overview.templates,
-  ].flatMap((section) => section.status === "unavailable" ? [section.error.message] : []);
+  ].flatMap((section) => section.status === "unavailable"
+    ? [responseResourceFailure(section.error.status, section.error.message)]
+    : []);
 
   const directory = overview.directory.status === "available"
     ? activeDirectorySummary(overview.directory.data.users)
@@ -56,6 +59,13 @@ export function overviewResourceSummary(overview: Overview): OverviewResourceSum
     : { value: "—", detail: "Template inventory unavailable" };
 
   return { directory, models, templates, degraded };
+}
+
+export function overviewRefreshAllowed(
+  failure: ResourceFailure | undefined,
+  sectionFailures: ResourceFailure[],
+): boolean {
+  return failure ? failure.retryable : sectionFailures.some((section) => section.retryable);
 }
 
 function activeDirectorySummary(users: Directory["users"]): OverviewMetricSummary {

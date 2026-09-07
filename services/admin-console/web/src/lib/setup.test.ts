@@ -52,7 +52,6 @@ function overview(input: {
   }));
   const models = Array.from({ length: input.models ?? 0 }, (_, index) => ({
     model_profile_id: `model-${index}`,
-    profile_key: `model-${index}`,
     display_name: `Model ${index}`,
     revision_id: `model-revision-${index}`,
     revision: 1,
@@ -69,7 +68,6 @@ function overview(input: {
   })) satisfies ModelProfile[];
   const templates = Array.from({ length: input.templates ?? 0 }, (_, index) => ({
     template_id: `template-${index}`,
-    template_key: `template-${index}`,
     name: `Template ${index}`,
     revision: 1,
     model_profile_revision_id: "model-revision-0",
@@ -97,7 +95,7 @@ function overview(input: {
   })) satisfies Agent[];
   const unavailable = <T>(name: string): OverviewSection<T> => ({
     status: "unavailable",
-    error: { code: `${name}_unavailable`, message: `${name} unavailable` },
+    error: { status: 503, code: `${name}_unavailable`, message: `${name} unavailable` },
   });
 
   return {

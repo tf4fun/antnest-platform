@@ -23,7 +23,6 @@ import { useModelOptions } from "../lib/catalog-options";
 import {
   immutableImageReference,
   positiveInteger,
-  slugify,
 } from "../lib/forms";
 import { bytes, dateTime } from "../lib/format";
 import { mergePage } from "../lib/pagination";
@@ -114,7 +113,6 @@ function TemplateList() {
     setSuccessMessage("");
     try {
       await api.createTemplate({
-        template_key: `${slugify(name, "template")}-${Date.now().toString(36)}`,
         name,
         model_profile_revision_id: String(
           data.get("model_profile_revision_id") ?? "",
@@ -164,7 +162,7 @@ function TemplateList() {
   const normalized = query.trim().toLowerCase();
   const filtered = (items ?? []).filter((template) => {
     const model = modelsByRevisionID.get(template.model_profile_revision_id);
-    return [template.name, template.template_key, model?.display_name ?? ""]
+    return [template.name, model?.display_name ?? ""]
       .some((value) => value.toLowerCase().includes(normalized));
   });
   return (
@@ -228,7 +226,6 @@ function TemplateList() {
                       <a className="block truncate font-medium hover:text-primary" href={`#templates/${template.template_id}`}>
                         {template.name}
                       </a>
-                      <p className="mt-0.5 truncate font-mono text-xs text-muted-foreground">{template.template_key}</p>
                     </div>
                     <Badge value={template.enabled ? "enabled" : "disabled"} />
                   </div>
@@ -281,7 +278,7 @@ function TemplateList() {
                   <td className="px-3 py-3.5">
                     <div className="flex items-center gap-3">
                       <span className="grid h-8 w-8 shrink-0 place-items-center rounded-md bg-amber-50 text-amber-700"><Boxes className="h-4 w-4" /></span>
-                      <span><a className="block font-medium hover:underline" href={`#templates/${template.template_id}`}>{template.name}</a><span className="mt-0.5 block font-mono text-xs text-muted-foreground">{template.template_key}</span></span>
+                      <a className="block font-medium hover:underline" href={`#templates/${template.template_id}`}>{template.name}</a>
                     </div>
                   </td>
                   <td className="px-3 py-3 font-mono text-xs text-muted-foreground">
@@ -536,7 +533,7 @@ function TemplateDetail({ templateID, revisionID }: { templateID: string; revisi
       {successMessage ? <SuccessNotice message={successMessage} onDismiss={() => setSuccessMessage("")} /> : null}
       {referencedModelState.status === "error" ? <ResourceFailureNotice failure={referencedModelState.failure} message={`Referenced model revision could not be loaded: ${referencedModelState.failure.message}`} retryLabel="Retry model revision" onRetry={() => void loadReferencedModel(template.model_profile_revision_id)} /> : null}
       {modelFailure ? <ResourceFailureNotice failure={modelFailure} message={`Model revision choices could not be loaded: ${modelFailure.message}`} retryLabel="Retry model choices" onRetry={retryModels} /> : null}
-      <Section title="Configuration" detail={`Stable key: ${template.template_key}`}>
+      <Section title="Configuration">
         <div className="grid gap-px overflow-hidden rounded-md border border-border bg-border shadow-sm sm:grid-cols-2 lg:grid-cols-3">
           {facts.map(([label, value]) => <div className="bg-white p-4" key={label}><p className="text-xs text-muted-foreground">{label}</p><p className="mt-1 break-words text-sm font-medium">{value}</p></div>)}
         </div>

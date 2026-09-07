@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { boundedSnapshot, overviewResourceSummary } from "./overview.ts";
+import { boundedSnapshot, overviewResourceSummary, overviewRefreshAllowed } from "./overview.ts";
 import type { Overview } from "./types.ts";
 
 test("bounded snapshot reports an exact count when the owner page is complete", () => {
@@ -56,7 +56,7 @@ test("overview resource summary counts only active directory members", () => {
 test("overview resource summary labels unavailable sections locally", () => {
   const unavailable = (message: string) => ({
     status: "unavailable" as const,
-    error: { code: "dependency_unavailable", message },
+    error: { status: 503, code: "dependency_unavailable", message },
   });
   const overview: Overview = {
     directory: unavailable("Directory could not be refreshed"),
@@ -77,8 +77,37 @@ test("overview resource summary labels unavailable sections locally", () => {
       "Directory could not be refreshed",
       "Model providers could not be refreshed",
       "Agent templates could not be refreshed",
-    ],
+    ].map((message) => ({ kind: "unavailable", message, retryable: true })),
   });
+});
+
+test("overview distinguishes terminal sections from transient failures", () => {
+  for (const status of [403, 404, 410, 429, 503]) {
+    const overview: Overview = {
+      directory: { status: "available", data: { users: [], groups: [] } },
+      model_profiles: {
+        status: "unavailable",
+        error: { status, code: "upstream_rejected", message: "Model providers unavailable" },
+      },
+      templates: { status: "available", data: { items: [] } },
+      agents: { status: "available", data: { items: [], next_cursor: "next" } },
+      defaults: { runtime_image_ref: "" },
+    };
+    const failures = overviewResourceSummary(overview).degraded;
+    const transient = ![403, 404, 410].includes(status);
+    assert.equal(failures[0]?.retryable, transient);
+    assert.equal(overviewRefreshAllowed(undefined, failures), transient);
+    assert.equal(overviewResourceSummary(overview).templates.value, 0);
+  }
+});
+
+test("a terminal aggregate failure blocks retry from an older degraded snapshot", () => {
+  const transient = { kind: "unavailable" as const, message: "Unavailable", retryable: true };
+  const terminal = { kind: "forbidden" as const, message: "Access denied", retryable: false };
+  assert.equal(overviewRefreshAllowed(terminal, [transient]), false);
+  assert.equal(overviewRefreshAllowed(transient, [terminal]), true);
+  assert.equal(overviewRefreshAllowed(undefined, [terminal, transient]), true);
+  assert.equal(overviewRefreshAllowed(undefined, []), false);
 });
 
 function member(id: string, userActive: boolean, membershipActive: boolean) {

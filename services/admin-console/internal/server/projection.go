@@ -111,7 +111,6 @@ type scimTokenIssueSource struct {
 
 type modelProfileSource struct {
 	ModelProfileID string          `json:"model_profile_id"`
-	ProfileKey     string          `json:"profile_key"`
 	DisplayName    string          `json:"display_name"`
 	RevisionID     string          `json:"revision_id"`
 	Revision       int64           `json:"revision"`
@@ -150,7 +149,6 @@ type modelProfileListSource struct {
 
 type templateSource struct {
 	TemplateID             string          `json:"template_id"`
-	TemplateKey            string          `json:"template_key"`
 	Name                   string          `json:"name"`
 	Revision               int64           `json:"revision"`
 	ModelProfileRevisionID string          `json:"model_profile_revision_id"`

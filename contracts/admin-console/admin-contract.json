@@ -1,6 +1,6 @@
 {
   "contract": "antnest.admin-console.bff",
-  "version": 29,
+  "version": 31,
   "base_path": "/api/admin",
   "routes": {
     "overview": {"method": "GET", "path": "/overview"},
@@ -58,7 +58,9 @@
   "server_fields": [
     "request_id",
     "actor_principal_id",
-    "organization_id"
+    "organization_id",
+    "profile_key",
+    "template_key"
   ],
   "dependencies": {
     "identity": [
@@ -85,6 +87,15 @@
     ]
   },
   "response_policy": {
+    "catalog_creation": {
+      "browser_input": "editable_form_values_only",
+      "generated_resource_keys": ["profile_key", "template_key"],
+      "key_authority": "bff_derives_from_organization_scoped_idempotency_request_id",
+      "browser_generated_keys": "rejected",
+      "ambiguous_retry": "same_body_same_idempotency_key_same_resource_key",
+      "successful_new_action": "fresh_idempotency_key_and_resource_key",
+      "owner": "agent_controller_catalog_request_ledger"
+    },
     "projection": "explicit_browser_allowlist",
     "forbidden_fields": [
       "credential_ref",
@@ -94,6 +105,8 @@
       "runtime_execution_id",
       "mcp_endpoint",
       "organization_id",
+      "profile_key",
+      "template_key",
       "client_secret",
       "token_hash",
       "scim_external_id",
@@ -143,6 +156,15 @@
       "optional_sections": ["directory", "model_profiles", "templates"],
       "section_status": ["available", "unavailable"],
       "section_error_message": "safe_resource_named_without_upstream_detail",
+      "section_error_fields": ["status", "code", "message"],
+      "required_failure": "safe_http_status_preserved_transport_503_invalid_response_502",
+      "browser_recovery": {
+        "terminal_status": [403, 404, 410],
+        "refresh_action": "only_for_transient_aggregate_or_section_failure",
+        "terminal_aggregate": "no_refresh_from_older_degraded_snapshot",
+        "pending": "preserve_loaded_snapshot_disable_duplicate_refresh",
+        "unmount": "cancel_read_ignore_late_completion"
+      },
       "catalog_and_agent_page_limit": 200,
       "continuation_metadata": "preserved",
       "count_with_continuation": "lower_bound_not_total",

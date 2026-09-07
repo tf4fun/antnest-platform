@@ -272,6 +272,13 @@ sequenceDiagram
     Admin-->>Edge: browser DTO section envelopes
     Edge-->>Browser: overview response
     Browser->>Browser: derive Model → Template → Directory → Agent readiness
+    opt transient section failure
+        Browser->>Edge: explicit GET /api/admin/overview (refresh disabled while pending)
+        Edge->>Admin: trusted aggregate refresh
+        Admin-->>Edge: refreshed envelopes or safe required-read failure
+        Edge-->>Browser: HTTP status + safe errors
+        Browser->>Browser: preserve loaded data on failure; terminal errors have no retry
+    end
 ```
 
 **Complexity review**
@@ -284,11 +291,14 @@ sequenceDiagram
 - Agent inventory is required. Directory and catalog sections use stable
   availability envelopes, so optional dependency failure does not erase fleet
   state. A degraded envelope names only the affected business resource and
-  omits upstream addresses and error details. Successful responses are explicit browser allowlists and contain no
+  carries a safe HTTP status and omits upstream addresses and error details.
+  A failed required read preserves its safe status rather than turning a
+  `403`/`404`/`410` into `503`. Successful responses are explicit browser allowlists and contain no
   Provider credential reference, access subject/revision, Runtime execution
   identity, or MCP endpoint.
 - The browser derives the first-run path only from these section envelopes. It
-  persists no setup workflow. `unavailable` remains a retry state, an available
+  persists no setup workflow. `unavailable` is retryable only for transient
+  failures; terminal failures remain visible without retry. An available
   empty list remains a prerequisite action, and later resources stay blocked
   until their real owner-service dependencies exist.
 - Active Directory readiness requires both User and Organization Membership
@@ -403,17 +413,25 @@ sequenceDiagram
     Admin->>AC: GET /internal/model-catalog
     AC-->>Admin: supported providers, models, and authoritative limits
     Admin-->>AdminUser: provider and model choices
-    AdminUser->>Edge: POST /api/admin/model-profiles + CSRF
+    AdminUser->>Edge: POST /api/admin/model-profiles + CSRF + stable Idempotency-Key
     Edge->>Identity: resolve_access_token
     Identity-->>Edge: administrator principal
     Edge->>Admin: trusted organization and actor IDs
-    Admin->>Admin: validate UI input and generate request_id
+    Admin->>Admin: validate input; derive request_id and profile_key from organization + key
     Admin->>AC: POST /internal/model-profiles with credential
     AC->>AC: canonicalize known model metadata and seal credential
     AC->>ACDB: transaction: catalog request + credential + head + revision
     AC-->>Admin: profile head + immutable revision, no secret
     Admin-->>Edge: created Model Profile
     Edge-->>AdminUser: created Model Profile
+    opt response lost after commit
+        AdminUser->>Edge: retry unchanged form values + same Idempotency-Key
+        Edge->>Admin: trusted principal + same creation request
+        Admin->>AC: identical request_id, profile_key, and payload
+        AC->>ACDB: replay catalog_requests
+        AC-->>Admin: existing Model Profile
+        Admin-->>AdminUser: creation confirmed; no duplicate Profile or credential
+    end
 ```
 
 **Durable records**
@@ -426,11 +444,11 @@ sequenceDiagram
 
 **Complexity review**
 
-- Idempotency is justified because a transport timeout after credential commit
-  must not create another secret/profile pair on retry. The guarantee is not yet
-  connected end to end: Admin generates a fresh request ID for every HTTP
-  request, and the browser generates a new timestamp-based profile key on
-  resubmission.
+- A transport timeout after credential commit must not create another
+  secret/profile pair on retry. Browser request identity survives ambiguous
+  failures. The BFF derives the resource key from that identity and trusted
+  organization; no timestamp or browser-generated key changes the replay
+  fingerprint. A later confirmed new action gets a new key.
 - Admin Console generates authority fields and the request ID. Agent Controller
   validates the organization-owned model and is the sole writer, but the actor
   itself is not part of the owner command or audit fact.
@@ -453,11 +471,11 @@ sequenceDiagram
     participant AC as Agent Controller
     participant ACDB as Agent Controller DB
 
-    AdminUser->>Edge: POST /api/admin/templates + CSRF
+    AdminUser->>Edge: POST /api/admin/templates + CSRF + stable Idempotency-Key
     Edge->>Identity: resolve_access_token
     Identity-->>Edge: administrator principal
     Edge->>Admin: trusted organization and actor IDs
-    Admin->>Admin: apply explicit UI defaults and generate request_id
+    Admin->>Admin: apply defaults; derive request_id and template_key from organization + key
     Admin->>AC: POST /internal/agent-templates
     AC->>ACDB: read exact Model Profile revision
     AC->>AC: validate same organization and complete Runtime input

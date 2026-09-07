@@ -14,6 +14,10 @@ export function resourceFailure(cause: unknown): ResourceFailure {
     ? (cause as ResponseFailure).status
     : undefined;
 
+  return responseResourceFailure(status, message);
+}
+
+export function responseResourceFailure(status: unknown, message: string): ResourceFailure {
   if (status === 404 || status === 410) {
     return { kind: "not_found", message, retryable: false };
   }

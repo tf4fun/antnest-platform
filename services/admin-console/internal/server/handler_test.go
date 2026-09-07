@@ -352,7 +352,7 @@ func TestCreateModelProfileShapesAuthorityAndSecretOnce(t *testing.T) {
 	backend.enqueue(http.StatusCreated, `{"model_profile_id":"model-1","revision_id":"model-revision-1"}`)
 	handler := newTestHandler(t, backend)
 	response := requestAdmin(t, handler, http.MethodPost, "/api/admin/model-profiles", `{
-		"profile_key":"deepseek","display_name":"DeepSeek","api_key":"secret-key",
+		"display_name":"DeepSeek","api_key":"secret-key",
 		"model":{"base_url":"https://api.deepseek.com","model":"deepseek-chat","context_window":64000,"max_output_tokens":8192,"supports_images":false}
 	}`)
 	if response.Code != http.StatusCreated {
@@ -440,7 +440,7 @@ func TestCreateTemplateUsesConfiguredRuntimeDigestAndDefaults(t *testing.T) {
 	backend.enqueue(http.StatusCreated, `{"template_id":"template-1","revision":1}`)
 	handler := newTestHandler(t, backend)
 	response := requestAdmin(t, handler, http.MethodPost, "/api/admin/templates", `{
-		"template_key":"personal","name":"Personal Agent","model_profile_revision_id":"model-revision-1",
+		"name":"Personal Agent","model_profile_revision_id":"model-revision-1",
 		"system_prompt":"You are helpful."
 	}`)
 	if response.Code != http.StatusCreated {
@@ -801,18 +801,38 @@ func TestOverviewSectionFailureNamesResourceWithoutLeakingUpstreamDetails(t *tes
 	tests := []struct {
 		name        string
 		result      overviewCallResult
+		wantStatus  int
 		wantCode    string
 		wantMessage string
 	}{
 		{
 			name:        "transport",
 			result:      overviewCallResult{err: errors.New("dial identity.internal: private failure")},
+			wantStatus:  http.StatusServiceUnavailable,
 			wantCode:    "dependency_unavailable",
 			wantMessage: "Directory could not be refreshed",
 		},
 		{
 			name:        "rejected",
 			result:      overviewCallResult{response: bufferedResponse{status: http.StatusBadGateway}},
+			wantStatus:  http.StatusBadGateway,
+			wantCode:    "upstream_rejected",
+			wantMessage: "Directory could not be refreshed",
+		},
+		{
+			name: "invalid response",
+			result: overviewCallResult{err: &bufferedFetchError{
+				status: http.StatusBadGateway, code: "invalid_upstream_response",
+				message: "private failure", cause: errors.New("identity.internal"),
+			}},
+			wantStatus:  http.StatusBadGateway,
+			wantCode:    "invalid_upstream_response",
+			wantMessage: "Directory could not be refreshed",
+		},
+		{
+			name:        "unexpected redirect",
+			result:      overviewCallResult{response: bufferedResponse{status: http.StatusFound}},
+			wantStatus:  http.StatusBadGateway,
 			wantCode:    "upstream_rejected",
 			wantMessage: "Directory could not be refreshed",
 		},
@@ -820,7 +840,8 @@ func TestOverviewSectionFailureNamesResourceWithoutLeakingUpstreamDetails(t *tes
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			section := overviewSectionFromResult("Directory", test.result)
-			if section.Error == nil || section.Error.Code != test.wantCode || section.Error.Message != test.wantMessage {
+			if section.Error == nil || section.Error.Status != test.wantStatus ||
+				section.Error.Code != test.wantCode || section.Error.Message != test.wantMessage {
 				t.Fatalf("section=%#v", section)
 			}
 			encoded, err := json.Marshal(section)
@@ -909,6 +930,7 @@ func TestBrowserProjectionsDoNotExposeControlPlaneFields(t *testing.T) {
 				"runtime_execution_id", "mcp_endpoint", "secret-version", "subject-secret", "runtime.internal",
 				"scim_external_id", "scim_user_name", "external-secret", "external-name",
 				"organization_id", "group-secret", "provider-secret",
+				"profile_key", "template_key",
 			} {
 				if strings.Contains(string(projected), forbidden) {
 					t.Fatalf("projection leaked %q: %s", forbidden, projected)

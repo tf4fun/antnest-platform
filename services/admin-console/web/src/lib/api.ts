@@ -140,7 +140,7 @@ export const api = {
       current_password,
       new_password,
     }),
-  overview: () => request<Overview>("/api/admin/overview"),
+  overview: (signal?: AbortSignal) => request<Overview>("/api/admin/overview", { signal }),
   directory: () => request<Directory>("/api/admin/directory"),
   createLocalUser: (input: {
     email: string;
@@ -201,7 +201,6 @@ export const api = {
   modelRevision: (revisionID: string) =>
     request<ModelProfile>(`/api/admin/model-profile-revisions/${encodeURIComponent(revisionID)}`),
   createModel: (input: {
-    profile_key: string;
     display_name: string;
     api_key: string;
     model: {
@@ -237,7 +236,6 @@ export const api = {
       `/api/admin/templates/${encodeURIComponent(templateID)}/revisions/${encodeURIComponent(String(revision))}`,
     ),
   createTemplate: (input: {
-    template_key: string;
     name: string;
     model_profile_revision_id: string;
     system_prompt: string;

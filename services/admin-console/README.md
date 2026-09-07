@@ -120,6 +120,17 @@ status envelopes instead of erasing unrelated data. Its Catalog and Agent
 sections remain bounded owner-service pages and preserve continuation cursors;
 the application labels counts as lower bounds and scopes lifecycle breakdowns
 to loaded records whenever another page exists.
+Failures preserve safe HTTP status, including terminal `403`/`404`/`410`, in
+both the required-read response and optional section errors. The page offers
+refresh only for transient failures, preserves its loaded snapshot while
+refreshing, and disables duplicate refresh requests. Leaving the page cancels
+the pending read.
+
+`npm --prefix services/admin-console/web test` runs pure-function tests followed
+by Vitest/Testing Library component tests with one worker. Dashboard component
+tests exercise the real API parser and rendered controls using HTTP-shaped
+fetch responses, including snapshot retention, transient recovery, terminal
+failure, and unmount cancellation. They require no external provider or Docker.
 
 ## Does Not Own
 

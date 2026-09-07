@@ -135,7 +135,6 @@ export type ModelCatalog = {
 
 export type ModelProfile = {
   model_profile_id: string;
-  profile_key: string;
   display_name: string;
   revision_id: string;
   revision: number;
@@ -157,7 +156,6 @@ export type RuntimeSpec = {
 
 export type AgentTemplate = {
   template_id: string;
-  template_key: string;
   name: string;
   revision: number;
   model_profile_revision_id: string;
@@ -251,7 +249,7 @@ export type AgentEventList = { events: AgentEvent[]; next_sequence: number };
 
 export type OverviewSection<T> =
   | { status: "available"; data: T }
-  | { status: "unavailable"; error: { code: string; message: string } };
+  | { status: "unavailable"; error: { status: number; code: string; message: string } };
 
 export type Overview = {
   directory: OverviewSection<Directory>;

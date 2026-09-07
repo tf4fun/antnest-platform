@@ -11,14 +11,15 @@ import {
   Users,
   type LucideIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { PageHeader, Section } from "../components/page";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Empty, ErrorNotice, Loading } from "../components/ui/feedback";
-import { api, errorMessage } from "../lib/api";
+import { api } from "../lib/api";
 import { dateTime } from "../lib/format";
-import { boundedSnapshot, overviewResourceSummary } from "../lib/overview";
+import { boundedSnapshot, overviewResourceSummary, overviewRefreshAllowed } from "../lib/overview";
+import { resourceFailure, type ResourceFailure } from "../lib/resource-failure";
 import { platformSetup, type SetupStep } from "../lib/setup";
 import type { Overview } from "../lib/types";
 import { cn } from "../lib/utils";
@@ -34,19 +35,44 @@ type Metric = {
 
 export function DashboardPage() {
   const [data, setData] = useState<Overview>();
-  const [error, setError] = useState("");
+  const [failure, setFailure] = useState<ResourceFailure>();
+  const [loading, setLoading] = useState(true);
+  const [refresh, setRefresh] = useState(0);
 
-  const load = useCallback(async () => {
-    setError("");
-    try {
-      setData(await api.overview());
-    } catch (cause) {
-      setError(errorMessage(cause));
-    }
-  }, []);
-  useEffect(() => void load(), [load]);
+  useEffect(() => {
+    const controller = new AbortController();
+    void api.overview(controller.signal).then((overview) => {
+      if (controller.signal.aborted) return;
+      setData(overview);
+      setFailure(undefined);
+    }).catch((cause: unknown) => {
+      if (!controller.signal.aborted) setFailure(resourceFailure(cause));
+    }).finally(() => {
+      if (!controller.signal.aborted) setLoading(false);
+    });
+    return () => controller.abort();
+  }, [refresh]);
 
-  if (!data && error) {
+  const sectionFailures = data ? overviewResourceSummary(data).degraded : [];
+  const canRefresh = overviewRefreshAllowed(failure, sectionFailures);
+  const refreshAction = canRefresh ? (
+    <Button
+      aria-busy={loading}
+      disabled={loading}
+      size="sm"
+      variant="secondary"
+      onClick={() => {
+        if (loading) return;
+        setLoading(true);
+        setRefresh((value) => value + 1);
+      }}
+    >
+      <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />
+      {loading ? "Refreshing overview" : "Retry overview"}
+    </Button>
+  ) : undefined;
+
+  if (!data && failure) {
     return (
       <div className="grid gap-5">
         <PageHeader
@@ -55,8 +81,8 @@ export function DashboardPage() {
           detail="Organization inventory, configuration readiness, and current Agent fleet state."
         />
         <ErrorNotice
-          message={error}
-          action={<Button size="sm" variant="secondary" onClick={() => void load()}><RefreshCw className="h-4 w-4" />Retry overview</Button>}
+          message={failure.message}
+          action={refreshAction}
         />
       </div>
     );
@@ -127,8 +153,14 @@ export function DashboardPage() {
           </Button>
         }
       />
-      {error ? <ErrorNotice message={error} action={<Button size="sm" variant="secondary" onClick={() => void load()}><RefreshCw className="h-4 w-4" />Retry overview</Button>} /> : null}
-      {resources.degraded.length > 0 ? <ErrorNotice message={`Some overview data is unavailable: ${resources.degraded.join("; ")}`} action={<Button size="sm" variant="secondary" onClick={() => void load()}><RefreshCw className="h-4 w-4" />Refresh data</Button>} /> : null}
+      {failure || resources.degraded.length > 0 ? (
+        <ErrorNotice
+          message={failure
+            ? `${failure.message}. Showing the previously loaded overview.`
+            : resources.degraded.map((section) => section.message).join("; ")}
+          action={refreshAction}
+        />
+      ) : null}
 
       <section aria-label="Organization summary" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {metrics.map(({ label, value, detail, icon: Icon, tone, href }) => (

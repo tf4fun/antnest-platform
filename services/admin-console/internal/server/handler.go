@@ -462,7 +462,6 @@ func (h *handler) modelCatalog(response http.ResponseWriter, request *http.Reque
 }
 
 type createModelProfileInput struct {
-	ProfileKey  string          `json:"profile_key"`
 	DisplayName string          `json:"display_name"`
 	APIKey      string          `json:"api_key"`
 	Model       json.RawMessage `json:"model"`
@@ -473,7 +472,7 @@ func (h *handler) createModelProfile(response http.ResponseWriter, request *http
 	if !decodeJSON(response, request, &input) {
 		return
 	}
-	if !required(input.ProfileKey, input.DisplayName, input.APIKey) || len(input.Model) == 0 {
+	if !required(input.DisplayName, input.APIKey) || len(input.Model) == 0 {
 		writeError(response, http.StatusBadRequest, "invalid_request", "Required Model Profile field is empty")
 		return
 	}
@@ -483,7 +482,7 @@ func (h *handler) createModelProfile(response http.ResponseWriter, request *http
 	}
 	payload := map[string]any{
 		"request_id": requestID, "organization_id": actor.OrganizationID,
-		"profile_key": input.ProfileKey, "display_name": input.DisplayName,
+		"profile_key": requestID, "display_name": input.DisplayName,
 		"model":      input.Model,
 		"credential": map[string]string{"secret_type": "bearer", "secret": input.APIKey},
 	}
@@ -544,7 +543,6 @@ func (h *handler) listTemplates(response http.ResponseWriter, request *http.Requ
 }
 
 type createTemplateInput struct {
-	TemplateKey            string       `json:"template_key"`
 	Name                   string       `json:"name"`
 	ModelProfileRevisionID string       `json:"model_profile_revision_id"`
 	SystemPrompt           string       `json:"system_prompt"`
@@ -568,7 +566,7 @@ func (h *handler) createTemplate(response http.ResponseWriter, request *http.Req
 	if !decodeJSON(response, request, &input) {
 		return
 	}
-	if !required(input.TemplateKey, input.Name, input.ModelProfileRevisionID) {
+	if !required(input.Name, input.ModelProfileRevisionID) {
 		writeError(response, http.StatusBadRequest, "invalid_request", "Required Template field is empty")
 		return
 	}
@@ -589,7 +587,7 @@ func (h *handler) createTemplate(response http.ResponseWriter, request *http.Req
 	}
 	payload := map[string]any{
 		"request_id": requestID, "organization_id": actor.OrganizationID,
-		"template_key": input.TemplateKey, "name": input.Name,
+		"template_key": requestID, "name": input.Name,
 		"model_profile_revision_id": input.ModelProfileRevisionID,
 		"system_prompt":             input.SystemPrompt, "max_model_requests": input.MaxModelRequests,
 		"context_policy_version": "context-v1", "runtime": input.Runtime,
@@ -770,19 +768,18 @@ func (h *handler) overview(response http.ResponseWriter, request *http.Request, 
 	ctx, cancel := context.WithTimeout(request.Context(), h.requestTimeout)
 	defer cancel()
 	results := h.fetchOverview(ctx, calls)
-	agents := results["agents"]
-	if agents.err != nil || !successful(agents.response.status) {
+	agents := overviewSectionFromResult("Agent inventory", results["agents"])
+	if agents.Error != nil {
 		h.logger.ErrorContext(request.Context(), "Agent inventory overview read failed",
 			"dependency", upstream.AgentController, "error_class", "agent_inventory_unavailable")
-		writeError(response, http.StatusServiceUnavailable,
-			"agent_inventory_unavailable", "Agent inventory is unavailable")
+		writeError(response, agents.Error.Status, agents.Error.Code, agents.Error.Message)
 		return
 	}
 	payload := overviewResponse{
 		Directory:     overviewSectionFromResult("Directory", results["directory"]),
 		ModelProfiles: overviewSectionFromResult("Model providers", results["model_profiles"]),
 		Templates:     overviewSectionFromResult("Agent templates", results["templates"]),
-		Agents:        overviewSectionFromResult("Agent inventory", agents),
+		Agents:        agents,
 		Defaults:      map[string]string{"runtime_image_ref": h.defaultRuntimeImageRef},
 	}
 	writeJSON(response, http.StatusOK, payload)
@@ -804,6 +801,7 @@ type overviewCallResult struct {
 }
 
 type overviewError struct {
+	Status  int    `json:"status"`
 	Code    string `json:"code"`
 	Message string `json:"message"`
 }
@@ -842,6 +840,12 @@ func (h *handler) fetchOverview(ctx context.Context, calls []overviewCall) map[s
 			}
 			if err == nil && successful(result.status) && call.projector != nil {
 				result.body, err = call.projector(result.body)
+				if err != nil {
+					err = &bufferedFetchError{
+						status: http.StatusBadGateway, code: "invalid_upstream_response",
+						message: "Platform response is invalid", cause: err,
+					}
+				}
 			}
 			mutex.Lock()
 			results[call.name] = overviewCallResult{response: result, err: err}
@@ -853,19 +857,31 @@ func (h *handler) fetchOverview(ctx context.Context, calls []overviewCall) map[s
 }
 
 func overviewSectionFromResult(label string, result overviewCallResult) overviewSection {
+	if result.err == nil && successful(result.response.status) {
+		return overviewSection{Status: "available", Data: json.RawMessage(result.response.body)}
+	}
+	failure := overviewError{
+		Status: result.response.status, Code: "upstream_rejected", Message: label + " could not be refreshed",
+	}
 	if result.err != nil {
-		return overviewSection{
-			Status: "unavailable",
-			Error:  &overviewError{Code: "dependency_unavailable", Message: label + " could not be refreshed"},
+		failure.Status, failure.Code = http.StatusServiceUnavailable, "dependency_unavailable"
+		var fetchError *bufferedFetchError
+		if errors.As(result.err, &fetchError) {
+			failure.Status, failure.Code = fetchError.status, fetchError.code
 		}
 	}
-	if !successful(result.response.status) {
-		return overviewSection{
-			Status: "unavailable",
-			Error:  &overviewError{Code: "upstream_rejected", Message: label + " could not be refreshed"},
-		}
+	switch failure.Status {
+	case http.StatusForbidden:
+		failure.Message = label + ": access is not allowed"
+	case http.StatusNotFound:
+		failure.Message = label + ": resource not found"
+	case http.StatusGone:
+		failure.Message = label + ": resource is no longer available"
 	}
-	return overviewSection{Status: "available", Data: json.RawMessage(result.response.body)}
+	if failure.Status < http.StatusBadRequest || failure.Status > 599 {
+		failure.Status = http.StatusBadGateway
+	}
+	return overviewSection{Status: "unavailable", Error: &failure}
 }
 
 func successful(status int) bool {
