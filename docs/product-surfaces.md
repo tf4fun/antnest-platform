@@ -14,6 +14,13 @@ The pre-split monolith is a feature inventory, not the target navigation model.
 The new platform restores useful workflows without recreating its service
 coupling or presenting unavailable controls.
 
+The current delivery boundary is [Docker single-node closeout](docker-single-node-closeout.md).
+ACP and identity workflow closure take priority over adding new product areas.
+Skill Registry and Channel Gateway remain unstarted. Scheduled-Agent usage has
+a planned Scheduler owner, but no implementation or navigation in this stage.
+Cross-service audit-service ownership remains undecided; the required Jaeger
+verification report does not introduce an audit service.
+
 ## Product Boundary
 
 Antnest has two browser applications:
@@ -394,22 +401,19 @@ The Agent Controller request ledger remains the durable replay authority. Form
 fields and credentials are never persisted for recovery; the existing browser
 retry store contains only opaque request identifiers and input fingerprints.
 
-### D. Ownership not decided
+### D. Planned Or Undecided Work
 
 These concepts remain outside implementation until their authority and
 failure semantics are explicit.
 
 #### Scheduled Tasks
 
-No page or API is added yet. Three materially different owners remain under
-consideration:
-
-1. Agent ACP Service initiates work from Session/Run semantics.
-2. Agent Controller initiates work as part of Agent lifecycle and admission.
-3. A separate Scheduler Service owns schedules and invokes the execution path.
-
-Choosing a navigation item before choosing the durable schedule owner would
-only preserve the monolith's ambiguity.
+No page or API is added yet. A separate Scheduler is now the planned initiator
+of scheduled Agent usage. It will own schedules and trigger records, while
+Agent Controller retains admission/lifecycle and ACP Service retains execution.
+Execution identity, Session reuse, overlap, and missed-fire policy remain future
+design decisions. See the planning-only boundary in
+[single-node closeout](docker-single-node-closeout.md#6-scheduler-planning-only).
 
 #### Cross-service Audit And Events
 
@@ -595,5 +599,5 @@ currently decided Console scope. Reusable evidence remains 77 unit tests and
 116 component tests, owner/BFF HTTP and contract tests, and the isolated Stage 3
 Docker E2E described above; format, lint, and type checks passed. Browser
 acceptance complements these tests rather than replacing them.
-Channel and Skill pages wait for their owner services; Scheduled Tasks and
-cross-service Audit remain outside the decided scope.
+Channel and Skill pages wait for their owner services; Scheduler is planning-only
+and cross-service Audit remains undecided. None is in the current closeout scope.

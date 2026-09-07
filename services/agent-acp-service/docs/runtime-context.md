@@ -22,7 +22,7 @@ Every admitted Run prepares one model input from its frozen Runtime binding:
    the full model input before each subsequent model request as results grow.
    Retain the workspace guidance locator before budgeting Skill entries, and
    omit metadata only at complete-entry boundaries. Token cost remains the
-   existing conservative character estimate, not an exact model tokenizer.
+   existing approximate character estimate, not an exact model tokenizer.
 6. Call the selected tool through the same bound endpoint and original MCP name.
    Structured results remain available to the model. An ordinary MCP error
    result is a returned outcome; a transport timeout/cancellation does not prove

@@ -1,6 +1,6 @@
 # Runtime Context And Managed MCP
 
-Status: implementation in service-owned batches; not end-to-end accepted.
+Status: all five batches complete; Docker end-to-end accepted on 2026-09-07.
 
 ## Scope
 
@@ -118,7 +118,7 @@ and that service's fixtures belong to the same batch.
 | 2 | `runtime-controller` | Configuration transport, mounts/permissions and readiness integration | Complete; service-local accepted |
 | 3 | `agent-controller` | Configuration validation/snapshot and create/rebuild execution publication | Complete (service-local) |
 | 4 | `agent-acp-service` | Information consumption, managed tool discovery and budgeted context injection | Complete; service-local accepted |
-| 5 | Integration | Docker create/chat/rebuild workflow and Gateway-rooted trace verification | Pending |
+| 5 | Integration | Docker create/chat/rebuild workflow and Gateway-rooted trace verification | Complete; Docker accepted |
 
 ## Acceptance
 
@@ -152,7 +152,40 @@ per-Run freshness, complete Skill metadata truncation, structured tool results,
 setup cancellation, execution fencing, and telemetry without content leakage.
 `make fmt-check` and `make lint` passed. Runtime observations are not persisted
 as chat or compaction history. Read-only review identified and fixed guidance
-being displaced by large Skill catalogs. Batch 5 remains the cross-service gate.
+being displaced by large Skill catalogs.
+
+Batch 5 final evidence: the complete Stage 3 Docker profile and its managed MCP
+extension passed. Five Runs in one durable Session issued 12 deterministic model
+requests and seven real Tool calls. Required outcomes were checked at actual model
+input/output boundaries: guidance and Personal Skill discovery, ordinary child
+error recovery, child reuse across Runs, same-Runtime guidance refresh, explicit
+rebuild from `alpha` to `beta`, retained workspace and changed tool catalog.
+The model fixture and trace oracle have six independent tests, including negative cases.
+No external Provider credential was used. Configuration enters through internal
+catalog RPC; this acceptance does not claim a Console MCP configuration editor.
+
+Jaeger final evidence (temporary backend; trace URLs expire after cleanup):
+
+| Trace ID | Spans | Information reads | Catalog reads | Tool calls | Verified causal path |
+| --- | ---: | ---: | ---: | ---: | --- |
+| `538b080ab922c03168702f4e26b5137f` | 244 | 4 | 4 | 6 | Gateway -> ACP -> Runtime; Controller and Identity dependencies |
+| `d57bc50a1ce4a55638071b777a449941` | 75 | 1 | 1 | 1 | Gateway -> ACP -> replacement Runtime, same Session |
+
+The assertions follow parent IDs, require strict Runtime descendants below each
+ACP information/catalog/call span, and reject secret/context contents. Every model
+request is joined to its actual span and admission, proving one information read
+and catalog discovery completed before model execution in each Run. The read-only
+review's three oracle weaknesses were fixed and their negative cases passed;
+the entire Docker profile was rerun with these stricter assertions. Existing Stage 3
+lifecycle admission and linked worker trace assertions also passed. All containers
+and volumes under test project `antnest-stage3-e2e-52182`, including dynamically
+created Runtime resources, were removed and verified absent. Existing development
+instances were not reset. See the [reproduction instructions](../scripts/managed-mcp/README.md).
+
+Scope limits remain intentional: client-injected stdio is not hosted on ACP,
+managed child configuration is applied on rebuild, there are no per-child HTTP
+endpoints, and Egress forwarding has no per-packet traces. This acceptance closes
+this feature, not every item in the wider Docker single-node closeout plan.
 
 Runtime tests must cover empty configuration, real stdio MCP initialization and
 calls, process reuse, startup failure/timeout, cancellation, child exit, shutdown
@@ -180,3 +213,14 @@ Final Docker acceptance starts from Agent configuration, exercises creation,
 conversation and explicit rebuild, and invokes a real Runtime-hosted stdio MCP
 tool. A reusable trace assertion verifies the Gateway-to-Runtime request path.
 Producer-only tests do not establish this full workflow.
+
+Batch 5 uses the existing isolated Stage 3 Compose acceptance environment, one
+PostgreSQL instance with service-owned databases, and an official-SDK stdio fixture
+in a test-only Runtime image. Internal catalog RPC seeds managed process settings
+(a Console process-configuration editor is not in scope); Agent lifecycle and ACP
+chat enter through Gateway with normal login cookies. A deterministic model fixture
+asserts fresh AGENTS.md/Skill summaries and actual tool schemas, returns managed
+tool calls, and validates the real subprocess results. The same conversation is
+loaded after explicit rebuild with a changed child ID. Jaeger assertions require
+Gateway ancestry for Runtime information and tool calls, not just matching trace
+IDs. Test-owned containers/volumes are removed on both success and failure.

@@ -1,7 +1,7 @@
 # Stage 2 Agent And ACP Architecture
 
-> Status: implementation complete, integrated acceptance pending<br>
-> Updated: 2026-08-31<br>
+> Status: implemented; Stage 3 integration evidence exists, full ACP closeout remains open<br>
+> Updated: 2026-09-07<br>
 > Compatibility: greenfield service rewrite; no prototype wire or database
 > compatibility is retained<br>
 > Protocol baseline: stable ACP v1, side-by-side ACP v2 Draft, and MCP
@@ -18,6 +18,12 @@ execution fencing, and stable Runtime MCP proxy designs in older documents. It
 retains one process identity check solely to reject a stale MCP request after a
 Runtime process restart. It does not change the implemented Runtime/Egress
 packet and policy contracts.
+
+Remaining work and acceptance are tracked in
+[`docker-single-node-closeout.md`](docker-single-node-closeout.md). Earlier
+Stage 2 and Stage 3 checks do not close every protocol/persistence/recovery
+case in the ACP service's conformance matrix. Kubernetes and horizontal scaling
+are not part of the active closeout.
 
 ## 1. Decision Summary
 
@@ -57,8 +63,8 @@ packet and policy contracts.
 - Serialize Runs for one Agent so filesystem, process, Memory, and Personal
   Skill changes cannot race.
 - Make a configuration update either fully published or visibly failed.
-- Let service instances restart or scale without storing authoritative state in
-  process memory.
+- Let service instances restart without storing authoritative state in process
+  memory. Horizontal scaling remains outside single-node closeout.
 - Record enough immutable facts to explain which configuration and Runtime
   executed every Run.
 - Keep the first implementation small enough to test end to end in Docker.
@@ -1118,7 +1124,7 @@ This gives repeatable evidence without depending on an external model Provider.
 - Generic event streaming infrastructure.
 - Automatic rebuild after unexpected Runtime restart.
 - Active-active Agent ACP Run workers and worker takeover fencing.
-- Public OpenAPI and Edge Gateway behavior.
+- New third-party OpenAPI beyond the existing Stage 3 Edge product entrypoints.
 - Kubernetes implementation and zero-downtime deployment policy.
 
 These require observed product need. They must not leak placeholder fields or

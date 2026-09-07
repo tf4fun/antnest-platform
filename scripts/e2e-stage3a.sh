@@ -718,6 +718,14 @@ docker run --rm --network "${COMPOSE_PROJECT_NAME}_development" \
   >"$temporary_root/workspace-acp-evidence.json"
 assert_field "$temporary_root/workspace-acp-evidence.json" status passed
 
+if [ "${ANTNEST_E2E_MANAGED_MCP:-false}" = true ]; then
+  TEST_ORGANIZATION_ID="$organization_id" TEST_OWNER_ID="$owner_user_id" \
+    TEST_USER_COOKIE="$workspace_cookie" sh scripts/e2e-managed-mcp.sh \
+    >"$temporary_root/managed-mcp-evidence.json"
+  assert_field "$temporary_root/managed-mcp-evidence.json" status passed
+  cat "$temporary_root/managed-mcp-evidence.json"
+fi
+
 node scripts/stage3-trace-assert.mjs "$jaeger_url" "$trace_id" \
   edge-gateway admin-console identity-service agent-controller \
   >"$temporary_root/admission-trace-evidence.json"

@@ -1,7 +1,7 @@
 # Service Layout And Ownership
 
 > Status: target service boundaries<br>
-> Updated: 2026-08-30
+> Updated: 2026-09-07
 
 This document defines how Antnest Platform services are separated. Its goal is
 not to create more directories. Its goal is to let a maintainer understand and
@@ -20,6 +20,10 @@ Identity Service, Agent Controller, Edge Gateway, and Admin Console are
 implemented. Agent UI and its production Gateway-to-ACP v1 path are implemented.
 Channel Gateway and Skill Registry remain pending until their delivery stage
 says otherwise.
+The current [single-node closeout](docker-single-node-closeout.md) defers both
+services, Kubernetes implementation, and horizontal expansion. Scheduler is
+planning-only; no additional service is needed to finish the three current
+business flows.
 
 ## Repository Layers
 
@@ -62,9 +66,10 @@ under `contracts/`.
 | Agent Controller   | Agent aggregate and lifecycle authority                  | AgentSpec, immutable configuration/execution revisions, Provider/Model profiles, current Runtime binding, Run admission, rebuild workflow, Agent event journal | Runs, MCP execution, platform SDKs, packets, Skill package bytes                   |
 | Runtime Controller | Realize and observe one logical Runtime Environment per Agent | Environment lifecycle head, opaque Runtime revisions, private compute generations, deployment operations, platform associations, bounded Runtime observation journal, platform credentials | Agent desired state, Agent rebuild policy, Agent admission, Tool dispatch, Egress policy |
 | Runtime Egress     | Own Agent network identity and outbound packet decisions | Tunnel IPv4 allocation, address quarantine, policy revisions and assignments, packet flows and conntrack                                                       | Runtime lifecycle, Agent generations, Runs, Tools                                  |
-| Antnest Runtime    | Expose one isolated Agent workspace through MCP          | Process-local execution state, TUN, four MCP tools                                                                                                             | Durable control state, containers, policy decisions, Agent loop                    |
+| Antnest Runtime    | Expose one isolated Agent workspace through MCP          | Process-local execution state, TUN, four built-in tools, managed stdio MCP children and bounded Runtime information                                                                                                             | Durable control state, containers, policy decisions, Agent loop                    |
 | Agent ACP Service  | Execute ACP v1/v2 Sessions and Agent Runs                | Sessions, Runs, Turns, context, compression checkpoints, client MCP, Tool attempts                                                                             | Agent construction, Runtime rebuild, platform APIs, Channel objects                |
 | Skill Registry     | Govern reusable organization Skill packages              | Skill identity, immutable versions, package, review, distribution manifest                                                                                     | Skill execution, Runtime construction, Agent lifecycle                             |
+| Scheduler (planned only) | Initiate scheduled Agent usage | Schedules and trigger records; details deferred until its stage | Agent lifecycle, ACP Sessions/Runs, Tool execution, another service's database |
 | Edge Gateway       | Be the sole external application entry                    | Browser sessions, trusted principal projection, external routing, admission, request limits, security headers, and trace propagation                           | Business databases and domain state machines                                       |
 
 The Edge Gateway can be absent during internal development stages. Trusted
@@ -139,9 +144,10 @@ domain contract instead of another network hop.
    policy.
 3. Sharing one PostgreSQL server in development does not permit cross-service
    SQL, foreign keys, transactions, or migrations.
-   The Compose topology places each PostgreSQL container only on its owner's
-   private network; loopback port publishing exists solely for local tests and
-   administration.
+   Development and test Compose use one physical PostgreSQL instance with
+   separate owner databases and login roles. Loopback publishing is for local
+   tests and administration; this topology does not require a shared production
+   database server or permit cross-service table access.
 4. No service reads another service's volume or bootstrap secret.
 5. Cross-service deletion is a recoverable workflow of idempotent steps, not a
    distributed transaction.

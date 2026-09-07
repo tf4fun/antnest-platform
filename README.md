@@ -41,6 +41,18 @@ The implemented entry-to-storage call chains, data exchanges, commit points,
 and architecture simplification findings are maintained in
 [`docs/business-sequences.md`](docs/business-sequences.md).
 
+The active closeout scope and ordered acceptance checklist are maintained in
+[`docs/docker-single-node-closeout.md`](docs/docker-single-node-closeout.md).
+ACP and identity come first; Docker identity, Agent management, and Agent UI
+must close with Gateway-rooted Jaeger evidence before broader expansion.
+Skill Registry and Channel Gateway are not started. Scheduler and Kubernetes
+remain planning-only; horizontal scaling and HA are deferred.
+
+Runtime-owned stdio MCP and per-Run context construction are described in
+[`docs/runtime-context-and-managed-mcp.md`](docs/runtime-context-and-managed-mcp.md).
+The reproducible Docker acceptance profile is documented in
+[`scripts/managed-mcp/README.md`](scripts/managed-mcp/README.md).
+
 ## Current Integration Status
 
 The Rust Runtime, Runtime Egress, and thin Go Runtime Controller are implemented

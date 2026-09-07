@@ -1,4 +1,4 @@
-.PHONY: fmt fmt-check lint go-lint rust-clippy node-lint test test-go test-rust test-node test-postgres test-egress-postgres test-runtime-controller-postgres test-agent-acp-postgres test-identity-postgres test-agent-controller-postgres docker-build docker-build-runtime-controller docker-build-agent-ui docker-build-stage3 compose-up compose-down e2e-stage1 e2e-stage2 e2e-stage3 e2e-runtime-controller
+.PHONY: fmt fmt-check lint go-lint rust-clippy node-lint test test-go test-rust test-node test-managed-mcp-fixtures test-postgres test-egress-postgres test-runtime-controller-postgres test-agent-acp-postgres test-identity-postgres test-agent-controller-postgres docker-build docker-build-runtime-controller docker-build-agent-ui docker-build-stage3 compose-up compose-down e2e-stage1 e2e-stage2 e2e-stage3 e2e-runtime-controller
 
 GOCACHE := $(CURDIR)/.cache/go-build
 GOMODCACHE := $(CURDIR)/.cache/go-mod
@@ -17,6 +17,7 @@ fmt:
 	cargo fmt --manifest-path runtimes/antnest-runtime/Cargo.toml --all
 	cargo fmt --manifest-path services/runtime-egress/Cargo.toml --all
 	npm --prefix services/agent-acp-service run format
+	services/agent-acp-service/node_modules/.bin/prettier --write scripts/managed-mcp/*.mjs
 
 fmt-check:
 	@unformatted="$$(gofmt -l $$(find services -name '*.go' -type f))" || exit $$?; \
@@ -24,6 +25,7 @@ fmt-check:
 	cargo fmt --manifest-path runtimes/antnest-runtime/Cargo.toml --all --check
 	cargo fmt --manifest-path services/runtime-egress/Cargo.toml --all --check
 	npm --prefix services/agent-acp-service run format:check
+	services/agent-acp-service/node_modules/.bin/prettier --check scripts/managed-mcp/*.mjs
 
 lint: go-lint rust-clippy node-lint
 
@@ -60,6 +62,10 @@ test-node:
 	npm --prefix services/agent-acp-service test
 	npm --prefix services/admin-console/web test
 	npm --prefix services/agent-ui/web test
+	$(MAKE) test-managed-mcp-fixtures
+
+test-managed-mcp-fixtures:
+	node --test scripts/managed-mcp/fixtures.test.mjs
 
 test-postgres:
 	sh scripts/test-postgres.sh

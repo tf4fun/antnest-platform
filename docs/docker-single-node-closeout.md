@@ -1,0 +1,332 @@
+# Docker Single-Node Closeout
+
+> Status: execution plan; acceptance remains open
+>
+> Updated: 2026-09-07
+>
+> Inspection baseline: `acb0c14`
+
+## 1. Stage Boundary
+
+The next delivery is a complete single-node product, not another service split.
+Close three business flows through the real Edge Gateway:
+
+1. Identity: provision a person, authenticate, use the authorized application,
+   and revoke access correctly.
+2. Agent management: configure a model and Template, create and operate an
+   isolated Agent, and observe a definitive lifecycle outcome.
+3. Agent usage: enter Agent UI, converse through ACP, use Runtime Tools, cancel,
+   and recover conversation state after reconnecting.
+
+ACP protocol support is the first implementation priority. Identity integration
+is the second. Documentation, operations, and Gateway-rooted Jaeger evidence
+are delivery requirements, not work left for a later production stage.
+
+This plan controls the remaining work. Earlier accepted stages remain evidence
+for their specific cases, not proof that every flow below has been accepted.
+Service documents and `contracts/` remain the authorities for service behavior.
+
+### Deferred explicitly
+
+| Work | Decision in this stage |
+| --- | --- |
+| Skill Registry | do not start the service, storage, RPC, or pages |
+| Channel Gateway | do not start the service, connectors, or pages |
+| Scheduler | record ownership and intended trigger flow only; no implementation |
+| Kubernetes | retain the Runtime Controller adapter boundary; no adapter or manifests |
+| Horizontal scaling, HA, multi-node failover | do not implement or make them acceptance dependencies |
+| Generic event bus or separate cross-service audit service | do not introduce for closeout |
+| New public third-party OpenAPI surface | do not expand beyond the existing product/ACP entry requirements |
+
+One PostgreSQL instance is sufficient for development and acceptance. Each
+owner retains its own database, role, migrations, and DSN; no cross-service SQL,
+foreign keys, transactions, or shared persistence adapter is permitted.
+
+## 2. Inspected Starting Point
+
+| Area | Existing implementation/evidence | Remaining closeout work |
+| --- | --- | --- |
+| ACP | official SDK `1.4.0`, stable `/v1/acp`, draft `/v2/acp`, shared application core, capability and wire tests | explicit Streamable-HTTP-only MCP profile; wire plus persistence evidence for reconnect, isolation, cancellation, and revision changes |
+| Identity | local login, OIDC, SCIM, membership checks, transactional local journal, Console administration | prove the complete Gateway flows and effective deactivation across existing connections; identify any necessary downstream lifecycle synchronization |
+| Agent management | async lifecycle operations, immutable revisions, Docker Runtime, Egress, durable events | close remaining UI/owner-service error and recovery paths against the three-flow acceptance matrix |
+| Agent UI | production Edge-to-ACP v1 path, messages, attachments, Tool activity, cancel and replay | prove restored input availability, no duplicate execution on reconnect, and consistent visibility of authoritative outcomes |
+| Observability | service OTLP, Stage 3 admission and linked lifecycle-worker traces, Stage 2 direct execution trace | one reproducible report covering Gateway-origin identity, lifecycle, and ACP/Runtime execution; verify causality, not just service-name presence |
+| Operations | Compose builds, private logical databases, disposable test cleanup | clean bootstrap runbook, restore exercise, failure diagnostics, idle CPU investigation, final resource accounting |
+
+Important distinctions from inspection:
+
+- The ACP protocol matrix explicitly identifies stdio MCP as a stable-v1
+  baseline incompatibility. This stage deliberately supports only Streamable
+  HTTP MCP and does not claim complete v1 conformance. Optional unadvertised
+  protocol capabilities are not gaps.
+- `scripts/stage3-workspace-client.mjs` tests v1 prompt and load on the same
+  connection. That is not reconnect or process-restart evidence.
+- Agent Controller already checks Identity at Run admission. The absence of
+  cross-service Identity event delivery does not by itself prove an access
+  control defect. Do not add an event bus to solve a check that already exists.
+- Stage 3 Jaeger assertions currently focus on lifecycle admission and worker
+  phases. They do not yet produce the required three-flow verification report.
+- Idle container CPU spikes remain an unconfirmed diagnosis, not a solved issue.
+
+The ACP service's [protocol matrix](../services/agent-acp-service/docs/protocol-conformance.md)
+continues to distinguish implemented behavior, layer coverage, missing tests,
+and product gaps. Keep that distinction when closing tasks here.
+
+## 3. Ordered Delivery Checklist
+
+Use `doc -> test -> code -> acceptance` for each bounded change. Work on one
+functional gap at a time. Implement tracing propagation with its owning flow;
+the last milestone aggregates evidence rather than retrofitting instrumentation.
+Only mark a milestone accepted when its stated executable evidence passes.
+
+### 1. ACP Protocol And Durable Session Closure (C1)
+
+- [ ] **C1-01** Reconcile stable v1 and draft v2 separately against the pinned
+  official SDK schemas. Enumerate baseline requirements, advertised options,
+  unsupported options, exact external routes, and their executable tests.
+- [ ] **C1-02** Close the Streamable-HTTP-only MCP product boundary with explicit
+  wire rejection tests for stdio and legacy SSE input. Platform Runtime MCP
+  remains configuration-owned; client MCP remains Session-owned. Runtime-owned
+  stdio hosting is delivered through the separate service batches in
+  [Runtime Context And Managed MCP](runtime-context-and-managed-mcp.md), not by
+  launching client-selected commands in ACP Service. Preserve the
+  documented v1 baseline incompatibility instead of claiming full conformance.
+- [ ] **C1-03** Exercise both versions over real WebSockets and PostgreSQL:
+  new, prompt, user/assistant/Tool history, version-specific completion,
+  reconnect, load/resume, list, and the advertised lifecycle operations.
+- [ ] **C1-04** Prove cross-user/Agent isolation, access revision invalidation,
+  semantic cancel, and honest error/capability behavior at the wire boundary.
+- [ ] **C1-05** Verify service restart recovery and explicit Agent rebuild:
+  durable history survives, replay never invokes model/Tools, Run A keeps its
+  captured Runtime, and Run B receives the published replacement. Interrupted
+  in-flight Tool effects remain distinct from replaying completed history.
+- [ ] **C1-06** Propagate Gateway-origin request context through ACP admission,
+  model requests, and Runtime MCP. Preserve standard ACP payloads; do not add
+  private Agent-routing fields to the protocol.
+
+**Milestone C1:** the declared HTTP-only ACP profile has no unacknowledged
+baseline or advertised-capability gaps. Reusable wire/persistence tests pass separately for
+v1 and v2; the protocol matrix names exactly which real dependencies each test
+uses. Adapter stubs must not be described as full-platform acceptance.
+
+### 2. Identity And Effective Access Closure (C2)
+
+- [ ] **C2-01** Test local bootstrap/login/logout/password rotation, expired or
+  revoked sessions, member versus administrator surfaces, and organization
+  isolation through Edge rather than only through Identity RPC.
+- [ ] **C2-02** Exercise OIDC discovery/start/callback/login using a controlled
+  IdP fixture with real redirect and token exchange. Confirm SCIM/local
+  provisioned identities converge on the same User/Membership and credentials
+  never reach browser storage, logs, or traces.
+- [ ] **C2-03** Exercise Gateway SCIM discovery, User/Group create/update,
+  membership changes, deactivate/reactivate, deletion, and token rotation/revoke
+  within the supported SCIM profile. Do not advertise unsupported SCIM features.
+- [ ] **C2-04** Verify deactivation after a user has connected: existing HTTP
+  credentials and ACP connections cannot authorize a new Run or bypass owner
+  checks. Define and test the treatment of an already-admitted Run separately;
+  do not claim admission revocation retroactively cancels it.
+- [ ] **C2-05** Determine whether any required Agent projection or lifecycle
+  change needs Identity journal consumption. If needed, add only the narrow
+  owner RPC/cursor and idempotent consumer; authorization continues to use
+  authoritative Identity checks. Do not automatically delete an Agent or its
+  workspace merely because its owner is disabled.
+
+**Milestone C2:** an actual local or OIDC user can reach the correct application,
+SCIM changes have tested effective access semantics, and administrator versus
+member boundaries hold across both new and already-open connections. Record
+the journal-consumption decision with its business reason, not just a checkbox
+for having event delivery.
+
+### 3. Agent Control Workflow Closure (C3)
+
+- [ ] **C3-01** Verify empty instance -> model -> Template -> active owner ->
+  Agent -> ready Runtime, using only the administrator's Gateway entrypoints.
+- [ ] **C3-02** Cover create, rebuild, disable, enable, and delete with durable
+  operation status, actionable failure cause, event recovery, and UI feedback.
+  Accepted `202` is never presented as a completed build.
+- [ ] **C3-03** Verify immutable configuration and workspace behavior: revision
+  publication does not silently rebuild existing Agents; explicit rebuild
+  blocks new Runs; disable retains the workspace; delete follows the documented
+  removal/retention contract.
+- [ ] **C3-04** Exercise Egress policy changes and Runtime-start failures without
+  introducing a new deployment platform, MCP proxy, or rollout mechanism.
+- [ ] **C3-05** Check restart recovery of the single lifecycle worker and event
+  replay from its authoritative cursor. Duplicate requests must not create a
+  second Agent, Runtime, or lifecycle effect.
+
+**Milestone C3:** each lifecycle command ends in a visible, authoritative
+success or failure; the administrator can locate and correct ordinary Docker
+configuration errors without reading a database or guessing hidden state.
+
+### 4. Agent WebUI Usage Closure (C4)
+
+- [ ] **C4-01** Verify member login -> accessible Agent -> new/load Session ->
+  prompt -> assistant/Tool updates -> completion through Edge and ACP.
+- [ ] **C4-02** Cover supported file/image inputs and Tool result presentation,
+  with capability-dependent rejection instead of silent acceptance or loss.
+- [ ] **C4-03** Verify cancel, two Sessions contending for one Agent, page
+  close/reopen, disconnection, and completion while offline. Input availability
+  follows authoritative state and reconnect never resubmits a prompt implicitly.
+- [ ] **C4-04** Verify explicit rebuild and identity revocation feedback in an
+  already-open page; no private Runtime address or access subject reaches UI.
+- [ ] **C4-05** Maintain component/browser-route regression tests for each fixed
+  behavior, then perform desktop/mobile browser acceptance against the real
+  stack. Browser screenshots supplement, not replace, executable regression tests.
+
+**Milestone C4:** a user completes a multi-message conversation, observes Tool
+activity, cancels work, and returns later without becoming permanently blocked
+or seeing duplicate messages/effects. Admin Console and Agent UI retain their
+separate roles and shared visual language.
+
+### 5. Docker Operations And Maintainer Documentation (C5)
+
+- [ ] **C5-01** Document and exercise clean image build, runtime image/tag
+  availability, one-node startup, bootstrap accounts, secrets, ports, and
+  readiness. Never commit test credentials or integration secrets.
+- [ ] **C5-02** Exercise backup and restore of each service-owned database plus
+  workspace data and required encryption keys. State the single-node quiescence
+  procedure; do not imply cross-service atomic online backup exists.
+- [ ] **C5-03** Diagnose the reported idle CPU spikes with bounded sampling,
+  per-service attribution, and a regression check if code is at fault. Record
+  sample duration, host/container environment, idle/busy baselines, and outcome.
+- [ ] **C5-04** Verify shutdown, restart, incomplete-operation diagnosis, log
+  access, Jaeger navigation, and cleanup for success/failure/interruption. Each
+  test deletes only resources it created; retained acceptance stacks are named.
+- [ ] **C5-05** Align root quickstart, service READMEs, contracts, business
+  sequences, feature surfaces, and known limits with executable behavior.
+
+**Milestone C5:** another maintainer can build, operate, diagnose, back up,
+restore, and clean up the single-node instance using repository documentation.
+The idle CPU concern has a measured disposition, not an assumed fix.
+
+### 6. Integrated Acceptance And Jaeger Report (C6)
+
+- [ ] **C6-01** Run repository admission and complete single-node regression
+  serially on the final candidate, using one shared test PostgreSQL instance
+  with private service databases. Record skipped cases separately.
+- [ ] **C6-02** Execute every scenario in section 4, including the actual browser
+  flows. Use controlled protocol peers for deterministic regression; report
+  separately any real IdP/Provider checks and their limitations.
+- [ ] **C6-03** Query Jaeger and validate the causal paths in section 5. A trace
+  containing the expected service names is not sufficient evidence.
+- [ ] **C6-04** Produce `docs/docker-single-node-verification-report.md` from
+  actual final results. Include source revision, commands, final quantitative
+  results, scenario IDs, trace links, known limits, and cleanup outcome.
+
+**Milestone C6:** all in-scope scenarios pass, no unresolved correctness defect
+breaks the three flows, and the Jaeger report independently demonstrates their
+entry-to-owner/dependency causality. Deferred services remain deferred.
+
+## 4. Business Acceptance Matrix
+
+| ID | Entry and scenario | Required observable outcome |
+| --- | --- | --- |
+| ID-01 | Edge local login -> Console/Workspace -> logout | correct role/application, revoked session rejected |
+| ID-02 | Edge OIDC start -> IdP -> Edge callback -> Identity | same provisioned subject, server-owned credential exchange |
+| ID-03 | Edge SCIM User/Group changes -> Identity -> Agent admission | intended membership changes and disabled-user denial, no cross-organization mutation |
+| MG-01 | Edge Console model/Template/Agent create | durable operation, ready Runtime, immutable executable lineage |
+| MG-02 | Edge Console rebuild/disable/enable/delete | correct admission boundary, retained or removed workspace per command, visible outcome |
+| USE-01 | Edge Agent UI ACP Session prompt -> model -> Runtime Tool -> reply | ordered visible activity and durable conversation, usable composer after completion |
+| USE-02 | ACP v1/v2 cancel/reconnect/load or resume | version-correct terminal state, no duplicate model/Tool effects from replay |
+| USE-03 | open Session across identity change or explicit rebuild | authorization rechecked, old Runtime not reused for a new Run |
+| OPS-01 | fresh Docker deployment, restart, backup/restore, cleanup | documented recovery and no orphan test resources |
+
+These IDs identify acceptance scenarios, not new persisted business entities.
+
+## 5. Gateway-Rooted Observability Contract
+
+Instrument the actual services in each path, not every service in every trace:
+
+| Flow | Expected causal path |
+| --- | --- |
+| Local identity | Edge Gateway -> Identity RPC -> Identity PostgreSQL spans |
+| OIDC | Edge start -> Identity -> IdP request spans; later Edge callback -> Identity -> IdP token/UserInfo and owned persistence |
+| SCIM | Edge protocol forwarding -> Identity SCIM -> owned persistence; link any later domain consumer only if implemented |
+| Lifecycle admission | Edge -> Admin Console -> Identity/Agent Controller -> durable lifecycle intent |
+| Lifecycle execution | admission linked to Agent Controller worker attempts -> Runtime Controller/Docker and Egress control RPC -> final Agent event |
+| Conversation | Edge ACP entry -> ACP method/Run -> Agent Controller admission/credential resolution -> model request and Runtime MCP -> executor request/response -> completion |
+
+Long-lived WebSockets, browser redirects, and durable asynchronous operations
+are not one HTTP request. Preserve W3C parent context where the work is a direct
+call; use standard span links and bounded correlation at asynchronous/request
+boundaries. A later prompt needs its own attributable operation rather than
+being hidden inside a never-ending WebSocket-upgrade span. No new private ACP
+success fields or payload-required trace metadata are allowed.
+
+For async lifecycle operations, retain the existing admission trace and linked
+per-attempt/phase traces. Validate the link back to admission and predecessor
+where applicable, operation identity, terminal outcome, and missing/orphan
+spans. Do not keep one giant span open until the lifecycle finishes.
+
+Egress traces **control RPC only**. Raw IP/UDP packet forwarding does not emit
+per-packet, per-flow, or payload traces. Model request spans do not require
+instrumentation inside the external Provider. Browser-only rendering is
+covered by browser tests, not fabricated server spans.
+
+The report must contain:
+
+1. Candidate revision, tool versions, Compose topology, test profiles and
+   sampling/export configuration used for the measurement.
+2. For every scenario: business outcome, expected/observed services and causal
+   edges, trace IDs/Jaeger links, and verdict. State related trace boundaries.
+3. Automatic assertions for Gateway origin, parent/link integrity, identity
+   and operation correlation, terminal status, and absent secret material.
+4. Tests passed/failed/skipped, changed-module coverage, lint/complexity gate
+   results, E2E/browser cases, duration and idle CPU measurements.
+5. Remaining limitations and cleanup result. Do not equate service count,
+   trace count, or screenshots with business correctness.
+
+Keep one compact final report and reusable assertions. Do not commit complete
+trace exports, credential-bearing HTTP dumps, repetitive reviewer transcripts,
+or intermediate metric files. Jaeger links are diagnostic references and may
+expire; record the compact asserted result so the verdict remains intelligible.
+
+## 6. Scheduler Planning Only
+
+Scheduler will be the initiator of scheduled-Agent usage, separate from an IM
+or browser client. Its intended ownership is schedules, timezone/next-due
+calculation, and durable trigger/deduplication records. It will request normal
+authorized Agent execution through the platform ACP entry/contract, not bypass
+Run admission or call Runtime Tools directly.
+
+Agent Controller remains the owner of Agent availability and authorization;
+Agent ACP Service remains the owner of Sessions, Runs, context, and Tool loops.
+Scheduler must not copy either service's tables or become a second Agent Core.
+
+Before that future stage, decide execution principal, Session reuse, overlap,
+missed-fire policy, cancellation, result delivery, and retention. Those are
+future design decisions, not implicit requirements to implement now. Add no
+scheduler directory, dependency, RPC placeholder, database table, or Console
+control during this closeout.
+
+## 7. Verification Discipline
+
+- Fix a demonstrated business gap before widening adjacent abstractions.
+- Unit and contract tests establish rules; owned-database integration tests
+  establish persistence; Docker/ACP/browser tests establish complete workflows.
+- Run resource-intensive verification serially. Reviewers are read-only and
+  do not spawn tests, browsers, Docker workloads, or further reviewers.
+- Run the existing formatting, lint, affected tests, and applicable contract/
+  documentation gates before committing. Do not lower thresholds, suppress
+  findings, or increase baselines to claim acceptance.
+- Coverage reports name modules and denominators; skipped/external profiles
+  are never counted as passing coverage. Prior test counts are not new runs.
+- Stop and close test processes and disposable resources after each profile.
+
+Current progress: scope and source baseline inspected; C1-C6 are not yet
+accepted. Update individual items with final evidence as work completes.
+
+Runtime-context feature accepted (2026-09-07): the four service-owned batches and
+real Docker Gateway create/chat/rebuild flow are complete. Five Runs verified
+fresh runtime guidance, Skill summaries, managed stdio tools and Session reuse;
+Jaeger parent relationships cover five information reads and seven Tool calls.
+See [the feature report](runtime-context-and-managed-mcp.md) for reproducible
+evidence and limits. This supplies a subset of C1-05/C1-06 evidence; it does not
+close unrelated protocol, identity or operational checklist items.
+
+C1-03 partial evidence (2026-09-07): the ACP-owned WebSocket/PostgreSQL happy
+path suite passes 3/3 cases, including new stable-v1 reconnect and application
+recreation cases. Repeated load retains identical history without more model,
+Tool, or admission calls. The external ports are deterministic stubs, not a
+real Runtime/Provider. The temporary database was removed; full process-crash,
+Gateway integration, and Jaeger report acceptance remain open.
