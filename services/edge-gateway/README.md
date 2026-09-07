@@ -15,7 +15,8 @@ Implemented for Stage 3A. The canonical cross-service behavior is
 - browser cookie and CSRF policy;
 - access-token resolution and administrator admission;
 - browser-safe Agent workspace bootstrap and per-Agent access admission;
-- same-origin Agent UI and ACP v1 WebSocket routing;
+- same-origin Agent UI and ACP v1/v2 WebSocket routing with per-message browser
+  session revalidation;
 - trusted principal headers, security headers, request limits, and tracing;
 - browser OIDC discovery/start/callback and transparent SCIM protocol ingress;
 - proxy availability and external error projection.
@@ -53,8 +54,10 @@ golangci-lint run ./...
 
 Gateway-owned unit tests are complemented by the real-stack
 [Identity closeout client](../../scripts/identity-closeout/README.md), run by
-`make e2e-stage3`. It checks browser session revocation, SCIM provisioning and
-Console projections through the public entry, plus causal Jaeger spans. OIDC
-IdP integration and cross-organization acceptance remain separate closeout work.
+`make e2e-stage3`. It checks browser HTTP and existing ACP v1/v2 logout
+revocation, SCIM provisioning, controlled OIDC and Console projections through
+the public entry, plus causal Jaeger spans. The separate HTTP access profile
+tests organization isolation and natural expiry; post-upgrade ACP expiry and
+dependency-outage recovery still need their own integration acceptance.
 
 See [architecture](docs/architecture.md) and [operations](docs/operations.md).

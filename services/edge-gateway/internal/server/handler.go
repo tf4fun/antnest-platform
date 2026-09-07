@@ -92,10 +92,11 @@ type handler struct {
 	consoleURL     *url.URL
 	agentUIURL     *url.URL
 	agentACPURL    *url.URL
+	acpConnections chan struct{}
+	acpMessages    chan struct{}
 	adminProxy     *httputil.ReverseProxy
 	appProxy       *httputil.ReverseProxy
 	workspaceProxy *httputil.ReverseProxy
-	acpProxy       *httputil.ReverseProxy
 	scimProxy      *httputil.ReverseProxy
 	mux            *http.ServeMux
 }
@@ -156,16 +157,13 @@ func NewHandler(config Config, dependencies Dependencies) (http.Handler, error) 
 		newRequestID: config.NewRequestID,
 		httpClient:   dependencies.HTTPClient, logger: dependencies.Logger,
 		consoleURL: consoleURL, agentUIURL: agentUIURL, agentACPURL: agentACPURL,
+		acpConnections: make(chan struct{}, 64), acpMessages: make(chan struct{}, 4),
 		mux: http.NewServeMux(),
 	}
 	h.adminProxy = h.newProxy(consoleURL, "console_unavailable", "Admin Console is unavailable", nil)
 	h.appProxy = h.newProxy(consoleURL, "console_unavailable", "Admin Console is unavailable", nil)
 	h.workspaceProxy = h.newProxy(
 		agentUIURL, "workspace_unavailable", "Agent workspace is unavailable", stripWorkspacePath,
-	)
-	h.acpProxy = h.newProxy(
-		agentACPURL, "agent_unavailable", "Agent connection is unavailable",
-		func(request *http.Request) string { return "/" + request.PathValue("acp_version") + "/acp" },
 	)
 	h.scimProxy = h.newSCIMProxy(identityURL)
 	h.routes()
@@ -467,7 +465,14 @@ func (h *handler) workspaceACP(response http.ResponseWriter, request *http.Reque
 		writeError(response, http.StatusForbidden, "forbidden", "WebSocket origin is not allowed")
 		return
 	}
-	_, principal, ok := h.authenticate(response, request)
+	select {
+	case h.acpConnections <- struct{}{}:
+		defer func() { <-h.acpConnections }()
+	default:
+		writeError(response, http.StatusServiceUnavailable, "agent_unavailable", "Agent connection capacity is unavailable")
+		return
+	}
+	values, principal, ok := h.authenticate(response, request)
 	if !ok {
 		return
 	}
@@ -482,10 +487,7 @@ func (h *handler) workspaceACP(response http.ResponseWriter, request *http.Reque
 		if agent.AgentID != requestedID {
 			continue
 		}
-		request.Header.Set(HeaderAgentAccessSubject, agent.AgentAccessSubject)
-		request.Header.Del("Cookie")
-		request.Header.Del("Authorization")
-		h.acpProxy.ServeHTTP(response, request)
+		h.relayWorkspaceACP(response, request, values.AccessToken, principal, agent.AgentAccessSubject)
 		return
 	}
 	writeError(response, http.StatusNotFound, "agent_not_found", "Agent was not found")

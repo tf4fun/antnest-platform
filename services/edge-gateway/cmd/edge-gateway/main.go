@@ -82,8 +82,10 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 	if err != nil {
 		return fmt.Errorf("compose Gateway: %w", err)
 	}
+	lifecycle := newWebSocketLifecycle(telemetry.HTTPHandler(handler, logger))
+	defer lifecycle.stop()
 	httpServer := &http.Server{
-		Addr: cfg.ListenAddress, Handler: telemetry.HTTPHandler(handler, logger),
+		Addr: cfg.ListenAddress, Handler: lifecycle,
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second,
 		IdleTimeout: 90 * time.Second, MaxHeaderBytes: 1 << 20,
 	}
@@ -92,21 +94,29 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 		return fmt.Errorf("listen: %w", err)
 	}
 	logger.Info("Edge Gateway is ready", "listen_address", cfg.ListenAddress)
+	return serveHTTP(ctx, httpServer, listener, lifecycle, cfg.ShutdownTimeout)
+}
+
+func serveHTTP(
+	ctx context.Context, httpServer *http.Server, listener net.Listener,
+	lifecycle *webSocketLifecycle, timeout time.Duration,
+) (resultErr error) {
 	serveErrors := make(chan error, 1)
 	go func() { serveErrors <- httpServer.Serve(listener) }()
 	select {
 	case <-ctx.Done():
-	case err = <-serveErrors:
+	case err := <-serveErrors:
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			resultErr = fmt.Errorf("serve HTTP: %w", err)
 		}
 	}
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
+	lifecycle.stop()
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
 		resultErr = errors.Join(resultErr, fmt.Errorf("shutdown HTTP: %w", err), httpServer.Close())
 	}
-	return resultErr
+	return errors.Join(resultErr, lifecycle.wait(shutdownCtx))
 }
 
 func checkHealth(lookup func(string) string) error {

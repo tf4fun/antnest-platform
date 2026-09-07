@@ -1,7 +1,9 @@
 package telemetry
 
 import (
+	"bufio"
 	"log/slog"
+	"net"
 	"net/http"
 	"strconv"
 	"time"
@@ -60,6 +62,15 @@ type statusWriter struct {
 }
 
 func (writer *statusWriter) Unwrap() http.ResponseWriter { return writer.ResponseWriter }
+
+func (writer *statusWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	connection, buffer, err := http.NewResponseController(writer.ResponseWriter).Hijack()
+	if err == nil {
+		writer.status = http.StatusSwitchingProtocols
+		writer.wroteHeader = true
+	}
+	return connection, buffer, err
+}
 
 func (writer *statusWriter) WriteHeader(status int) {
 	if writer.wroteHeader {

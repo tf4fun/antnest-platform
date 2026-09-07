@@ -26,6 +26,9 @@ preserve the original scheme.
 Console, Agent UI, and Agent ACP Service answer their status probes. Shutdown
 stops admission, drains HTTP requests, and flushes OTLP within a bounded
 timeout.
+Signal and listener-error exits cancel and drain WebSocket handlers separately
+before telemetry shutdown; ordinary HTTP requests keep their normal drain
+window. Deadline exhaustion is reported as a shutdown failure, not a clean drain.
 
 The service has no database, migration, backup, or persistent volume.
 Login admission is deliberately replica-local and bounded to 4096 source and
@@ -44,3 +47,21 @@ SCIM clients use the Identity-issued Bearer credential at the Edge
 Workspace WebSockets require a same-origin `Origin` and a valid browser session.
 Agent access subjects are injected server-side and must never appear in browser
 bootstrap JSON, logs, or traces.
+Each client data message performs a bounded Identity resolution before relay;
+server output and ping/pong do not create Identity requests. There is no idle
+polling or new configuration. A 1008 close requires fresh session/Agent access;
+1013 signals temporary admission unavailability. Neither close changes HTTP
+cookies or promises Run cancellation. A reconnect must repeat admission.
+The relay supports complete messages up to 64 MiB in either direction and uses
+the request timeout for socket writes, not as a maximum Run duration.
+The process permits 64 admitting/open ACP connections and four buffered
+messages across both directions; this also bounds concurrent message-level
+Identity calls. Capacity waits use the dependency timeout. Message assembly
+has a one-minute absolute deadline after acquiring a buffer slot, with compression
+disabled. Capacity errors return HTTP 503 or WebSocket 1013. Allow memory
+headroom beyond the 256 MiB live-payload ceiling for Go allocation/GC and other
+service work; these limits are not per-user quotas or a claim of load acceptance.
+Ping/pong are hop-local; Edge does not generate a new heartbeat. The current
+direct Docker entry has no idle-proxy lease. An additional load balancer must
+configure its WebSocket idle timeout explicitly; arbitrary third-party proxy
+keepalive behavior has not been accepted by this batch.

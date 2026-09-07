@@ -1,6 +1,6 @@
 {
   "contract": "antnest.edge-gateway.session",
-  "version": 7,
+  "version": 8,
   "session_validation": {
     "invalid_or_expired": "401 unauthenticated; clear browser cookies",
     "identity_unavailable": "503 identity_unavailable; preserve cookies; never admit upstream requests",
@@ -74,7 +74,15 @@
       "transport": "websocket",
       "authentication": "browser_session_and_agent_access",
       "upstream_protocol": "ACP v1",
-      "same_origin_required": true
+      "versioned_paths": ["/api/app/agents/{agent_id}/v1/acp", "/api/app/agents/{agent_id}/v2/acp"],
+      "same_origin_required": true,
+      "message_admission": "resolve original cookie token before forwarding each complete client message; require active original User/Organization/Membership",
+      "message_payload": "opaque; no ACP translation or login credential forwarding",
+      "invalid_session_close": 1008,
+      "identity_unavailable_close": 1013,
+      "maximum_message_bytes": 67108864,
+      "already_forwarded_work": "not retroactively revoked; ACP owns Run and disconnect semantics",
+      "idle_connection": "no background polling; server output for admitted work may continue until another client message or disconnect"
     },
 	"oidc_callback": {
 		"method": "GET",

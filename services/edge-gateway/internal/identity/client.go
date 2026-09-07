@@ -153,11 +153,24 @@ func (client *Client) CompleteOIDCLogin(
 
 func (client *Client) Resolve(ctx context.Context, accessToken string) (Principal, error) {
 	var result struct {
-		Principal Principal `json:"principal"`
+		Principal *struct {
+			Principal
+			Active *bool `json:"active"`
+		} `json:"principal"`
 	}
 	err := client.doJSON(ctx, "resolve", http.MethodPost, "/rpc/identity/resolve-access-token",
 		map[string]string{"access_token": accessToken}, &result)
-	return result.Principal, err
+	if err != nil {
+		return Principal{}, err
+	}
+	if result.Principal == nil || result.Principal.Active == nil ||
+		strings.TrimSpace(result.Principal.UserID) == "" || strings.TrimSpace(result.Principal.OrganizationID) == "" ||
+		strings.TrimSpace(result.Principal.MembershipID) == "" {
+		return Principal{}, fmt.Errorf("identity service returned an incomplete principal")
+	}
+	principal := result.Principal.Principal
+	principal.Active = *result.Principal.Active
+	return principal, nil
 }
 
 func (client *Client) RevokeByAccessToken(

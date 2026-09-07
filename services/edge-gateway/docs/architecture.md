@@ -76,6 +76,35 @@ unknown versions return `404`. Both versions use identical upgrade admission,
 Origin checks and subject injection. Edge does not translate ACP messages or
 infer the version from their content.
 
+After upgrade, a message relay replaces blind byte copying. Each complete
+client message is buffered within 64 MiB, then checked against Identity using
+the original browser token before being forwarded unchanged. The current
+principal must be active and retain the same User/Organization/Membership;
+authentication cannot switch identity inside an existing connection. One
+message per direction is processed at a time, so a message waiting for Identity
+cannot bypass the check through fragmentation or pipelining. Independent
+directions permit client messages while ACP emits output; cancellation and
+client replies are subject to the same session check as every other message.
+
+Revocation/expiry closes both hops with 1008; dependency failure uses 1013.
+These are transport outcomes, not invented ACP errors. No cookies or Bearer
+tokens reach ACP. All checks are children of the Gateway request context and
+log only stable result classes. Writes and dependency calls are bounded by the
+request timeout; connection cancellation closes both sockets and joins relay
+workers. Signal or listener failure stops new upgrades, cancels WebSocket
+contexts and waits for handlers (including their telemetry) within the shutdown
+deadline. Ordinary HTTP requests retain their graceful drain window; their
+contexts are not tied directly to the process signal.
+
+This is new-message admission, not cancellation of previously admitted work.
+An idle connection is not periodically checked, and output for an admitted Run
+can still arrive until another client message or disconnect. A check overlapping
+revocation can authorize a message even if ACP creates its Run after logout
+returns. A check started after authoritative revocation completes must reject;
+there is no distributed transaction between that check and ACP Run creation.
+ACP retains responsibility for Agent access revision, Session ownership and
+durable Run behavior; it does not receive browser credentials.
+
 Login admission consumes bounded per-source and normalized-account windows
 before Identity performs Argon2 verification. Logout asks Identity to revoke
 the presented opaque access token directly and clears browser cookies only

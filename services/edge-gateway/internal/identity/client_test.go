@@ -74,6 +74,40 @@ func TestClientReturnsStableRemoteErrorWithoutCredentialLeak(t *testing.T) {
 	}
 }
 
+func TestResolveRejectsIncompleteAuthorityResponse(t *testing.T) {
+	for _, payload := range []string{
+		`{}`, `{"principal":null}`, `{"principal":{}}`,
+		`{"principal":{"user_id":"u","organization_id":"o","membership_id":"m"}}`,
+		`{"principal":{"user_id":"u","organization_id":"o","membership_id":"m","active":null}}`,
+		`{"principal":{"user_id":"u","organization_id":"","membership_id":"m","active":true}}`,
+	} {
+		t.Run(payload, func(t *testing.T) {
+			client, err := NewClient("http://identity.internal", &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				return jsonResponse(http.StatusOK, payload), nil
+			})})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := client.Resolve(context.Background(), "secret"); err == nil || IsCode(err, "unauthenticated") {
+				t.Fatalf("malformed authority must be unavailable, got %v", err)
+			}
+		})
+	}
+}
+
+func TestResolvePreservesExplicitInactivePrincipal(t *testing.T) {
+	client, err := NewClient("http://identity.internal", &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusOK, `{"principal":{"user_id":"u","organization_id":"o","membership_id":"m","active":false}}`), nil
+	})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal, err := client.Resolve(context.Background(), "secret")
+	if err != nil || principal.Active || principal.UserID != "u" {
+		t.Fatalf("explicit inactive principal lost: %v %v", principal, err)
+	}
+}
+
 func TestClientRevokesByAccessTokenAndValidatesStatus(t *testing.T) {
 	var requestBody string
 	httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {

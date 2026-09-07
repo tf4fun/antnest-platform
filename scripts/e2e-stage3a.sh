@@ -778,6 +778,14 @@ docker run --rm --network "${COMPOSE_PROJECT_NAME}_development" \
   >"$temporary_root/workspace-acp-evidence.json"
 assert_field "$temporary_root/workspace-acp-evidence.json" status passed
 
+docker run --rm --network "${COMPOSE_PROJECT_NAME}_development" \
+  -e "ANTNEST_STAGE3_AGENT_ID=$agent_id" \
+  -v "$repository_root/scripts/identity-closeout:/app/identity-closeout:ro" \
+  antnest/agent-acp-service:local node /app/identity-closeout/acp-session-client.mjs \
+  >"$temporary_root/acp-session-evidence.json"
+assert_field "$temporary_root/acp-session-evidence.json" status passed
+cat "$temporary_root/acp-session-evidence.json"
+
 if [ "${ANTNEST_E2E_ACP_CLOSEOUT:-false}" = true ]; then
   [ "$keep_stack" = false ] || { echo 'ACP fault injection requires disposable stack' >&2; exit 1; }
   ANTNEST_E2E_DISPOSABLE=true ANTNEST_E2E_ACP_CONTAINER=$(compose ps -q agent-acp-service) \

@@ -185,11 +185,13 @@ uses. Adapter stubs must not be described as full-platform acceptance.
   credentials and ACP connections cannot authorize a new Run or bypass owner
   checks. Define and test the treatment of an already-admitted Run separately;
   do not claim admission revocation retroactively cancels it.
-  Known gap: Edge authenticates the browser token only at WebSocket upgrade;
-  ACP retains Agent identity/revision, not that browser session's revocation or
-  deadline. Owner deactivation evidence is not browser logout/expiry evidence.
-  Address through service-owned contract/implementation batches before accepting
-  existing-connection revocation; a generic event bus is not a prerequisite.
+  Edge now revalidates the originating browser token after assembling each
+  client WebSocket message and before forwarding it; ACP still owns Agent
+  identity/revision and Session authorization. This is message admission, not
+  atomic revocation of ACP Run creation: overlapping checks can admit work.
+  Real logout, natural token expiry, Identity outage and already-admitted Run
+  behavior require their own evidence; do not substitute owner deactivation
+  evidence or a Gateway echo fixture for those scenarios. No event bus is needed.
 - [ ] **C2-05** Determine whether any required Agent projection or lifecycle
   change needs Identity journal consumption. If needed, add only the narrow
   owner RPC/cursor and idempotent consumer; authorization continues to use
@@ -627,3 +629,34 @@ Console production image. Both disposable Compose profiles clean their own
 containers, volumes and networks. Existing retained development instances are
 not replaced. C2-01/04 remain open for the separately scoped Agent/ACP access
 and already-upgraded connection boundaries above.
+
+### Gateway ACP Browser Session Batch
+
+Gateway contract revision 8 and implementation now retain the original browser
+token only at Edge and revalidate each complete client message. Both ACP
+versions remain opaque; no ACP/Identity service implementation changed. Invalid
+sessions close with 1008, dependency failures with 1013. Bounded buffering and
+connection admission accompany the relay. Two read-only reviews identified and
+then confirmed fixes for shutdown isolation and waiting for hijacked handlers.
+
+| Final Evidence (2026-09-08) | Result |
+| --- | --- |
+| Gateway tests, `-race -p=1` | 7 packages passed, including shutdown orchestration |
+| Identity integration fixture/helper tests | 18 passed |
+| `make fmt-check` / `make lint` | Passed; Go 0 issues, both Rust Clippy targets and Node checks passed |
+| Rebuilt Gateway / default Stage 3 Docker regression | Passed; local/OIDC/SCIM, lifecycle, Workspace ACP and Jaeger |
+| Real v1/v2 existing-connection logout | Both prompts rejected with 1008; new login recovers the same empty Session |
+| Additional Identity Jaeger evidence | 2 Gateway-rooted repository parent chains; 52 spans observed at acceptance |
+
+Reusable relay tests cover mismatched identity, explicit inactivity, authority
+failure/timeout, fragmented and pipelined messages, opaque binary/empty payloads,
+resource limits and socket cleanup. Lifecycle tests cover signal/listener-error
+paths, HTTP context preservation and waiting for handler completion; they are
+not a claim of SIGTERM-under-load exporter delivery testing. The disposable
+Docker suite cleans its containers, volumes and networks; retained development
+instances are untouched.
+
+C2-04 remains open for real post-upgrade natural expiry, Identity outage/recovery
+and already-admitted Run treatment. There is no idle revocation poll, automatic
+Run cancellation, or atomic transaction between Identity validation and ACP
+Run creation. Browser UX for transport rejection is a separate Agent UI batch.

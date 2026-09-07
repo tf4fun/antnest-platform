@@ -26,7 +26,8 @@ Docker access and uses only synthetic credentials.
 
 These initial local/SCIM cases do not by themselves cover cross-organization
 isolation or expiry; see the separate HTTP access profile below. Already-open
-ACP connections and browser UI acceptance remain separate work. The suites do
+ACP connections are covered separately below; browser UI acceptance remains
+separate work. The suites do
 not accept the whole C2 or C6 milestone.
 
 ## HTTP Access Isolation Batch
@@ -60,9 +61,24 @@ work afterward. This is not browser cookie eviction or a forged expired record.
 The short TTL override never enters deployment Compose. The profile always
 cleans its containers/volumes/networks; keep-stack is not supported.
 
-Already-upgraded ACP WebSockets remain a separate gap: identity/Agent admission
-is revalidated, but the originating browser token is not carried across upgrade.
 HTTP logout/expiry evidence must not be claimed as WebSocket token revocation.
+
+## ACP Browser Session Batch
+
+The default Stage 3 suite also runs `acp-session-client.mjs` in the official SDK
+client image, against real Gateway, Identity and ACP services. For each explicit
+v1/v2 route it creates a Session, completes browser logout through Gateway, then
+submits a prompt on the original WebSocket. The request must fail with close
+1008. A new login must load/resume the same Session with no rejected prompt or
+Run events in its history. These are synthetic credentials and a local model
+fixture, not an external Provider test. Gateway-rooted Identity repository
+traces are checked for parent chains and credential disclosure.
+
+The service relay tests separately cover identity changes, dependency failure,
+timeout, fragmented/pipelined messages, bounded capacity and shutdown cleanup.
+Real post-upgrade natural expiry and dependency-outage recovery remain separate
+integration cases. No test claims immediate idle-socket revocation or automatic
+cancellation of already-admitted Runs.
 
 ## Run
 
