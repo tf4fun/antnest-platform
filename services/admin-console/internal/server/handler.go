@@ -217,8 +217,25 @@ func (h *handler) changeOwnPassword(
 		"request_id": requestID, "actor_principal_id": actor.UserID, "user_id": actor.UserID,
 		"current_password": input.CurrentPassword, "new_password": input.NewPassword,
 	}
-	h.forwardProjectedJSON(response, request, upstream.Identity, http.MethodPost,
-		"/rpc/identity/change-local-password", "", payload, projectStatus)
+	body, err := json.Marshal(payload)
+	if err != nil {
+		writeError(response, http.StatusInternalServerError, "encoding_failed", "Request could not be encoded")
+		return
+	}
+	result, ok := h.read(response, request, upstream.Identity, http.MethodPost,
+		"/rpc/identity/change-local-password", "", body)
+	if !ok {
+		return
+	}
+	var failure struct {
+		Code string `json:"code"`
+	}
+	if result.status == http.StatusUnauthorized && json.Unmarshal(result.body, &failure) == nil &&
+		failure.Code == "unauthenticated" {
+		writeError(response, http.StatusUnauthorized, "invalid_current_password", "The current password is incorrect.")
+		return
+	}
+	h.writeProjected(response, request, upstream.Identity, result, projectStatus)
 }
 
 type createLocalUserInput struct {
@@ -941,6 +958,16 @@ func (h *handler) forwardProjected(
 	if !ok {
 		return
 	}
+	h.writeProjected(response, request, target, result, projector)
+}
+
+func (h *handler) writeProjected(
+	response http.ResponseWriter,
+	request *http.Request,
+	target upstream.Target,
+	result bufferedResponse,
+	projector payloadProjector,
+) {
 	if successful(result.status) {
 		projected, err := projector(result.body)
 		if err != nil {

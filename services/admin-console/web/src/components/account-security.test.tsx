@@ -97,7 +97,7 @@ it.each([401, 503, "network"] as const)("retains rejected input after %s without
   try {
     const write = vi.fn(async () => {
       if (failure === "network") throw new TypeError("Network unavailable");
-      return Response.json({ message: "Password change rejected" }, { status: failure });
+      return Response.json({ code: failure === 401 ? "invalid_current_password" : "dependency_unavailable", message: "Password change rejected" }, { status: failure });
     });
     const request = mount(write);
     fill();
@@ -121,7 +121,7 @@ it.each([401, 503, "network"] as const)("retains rejected input after %s without
 });
 
 it("clears rejected credentials and errors when the dialog is dismissed", async () => {
-  mount(async () => Response.json({ message: "Password rejected" }, { status: 401 }));
+  mount(async () => Response.json({ code: "invalid_current_password", message: "Password rejected" }, { status: 401 }));
   fill();
   fireEvent.click(screen.getByRole("button", { name: "Update password" }));
   await screen.findByRole("alert");
@@ -131,4 +131,33 @@ it("clears rejected credentials and errors when the dialog is dismissed", async 
   for (const name of fieldNames) expect((screen.getByLabelText(name) as HTMLInputElement).value).toBe("");
   expect(screen.queryByRole("alert")).toBeNull();
   expectCredentialsNotStored();
+});
+
+it.each([
+  { code: "unauthenticated", message: "Sign in again." },
+  { code: "unknown", message: "Rejected" },
+  {},
+  null,
+  "not JSON",
+  "unreadable body",
+])("notifies the session owner for a non-credential 401: %j", async (body) => {
+  const expired = vi.fn();
+  window.addEventListener("antnest:session-expired", expired);
+  try {
+    const request = mount(async () => {
+      const response = typeof body === "string"
+        ? new Response(body, { status: 401 })
+        : Response.json(body, { status: 401 });
+      if (body === "unreadable body") vi.spyOn(response, "text").mockRejectedValue(new TypeError("Body interrupted"));
+      return response;
+    });
+    fill();
+    fireEvent.click(screen.getByRole("button", { name: "Update password" }));
+    await screen.findByRole("alert");
+    expect(expired).toHaveBeenCalledTimes(1);
+    expect(request).toHaveBeenCalledTimes(1);
+    expectCredentialsNotStored();
+  } finally {
+    window.removeEventListener("antnest:session-expired", expired);
+  }
 });

@@ -1,5 +1,4 @@
-const authenticatedCommandFailures = new Set(["/api/admin/account/password"]);
-
-export function invalidatesBrowserSession(path: string, status: number): boolean {
-  return status === 401 && path.startsWith("/api/admin/") && !authenticatedCommandFailures.has(path);
+export function invalidatesBrowserSession(path: string, status: number, code?: string): boolean {
+  const credentialRejected = path === "/api/admin/account/password" && code === "invalid_current_password";
+  return status === 401 && path.startsWith("/api/admin/") && !credentialRejected;
 }

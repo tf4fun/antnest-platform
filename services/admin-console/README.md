@@ -132,6 +132,11 @@ neutral shell labels, and fails closed without blocking the rest of the
 Console. The BFF derives the target User from the trusted principal, and the
 browser neither stores the credential fields nor exposes this command as
 another-user administration.
+An incorrect current password is a `401 invalid_current_password` form error;
+an expired/revoked session is still a login failure on that same endpoint.
+Unknown or unreadable protected-API 401 responses also end the current page
+session. Pending requests cannot emit expiry notifications into a later
+in-page session. This does not replace Edge's cookie/revocation authority.
 Sign-out waits for Edge to confirm revocation and cookie removal before showing
 the login page. While pending, the action is disabled; a rejection stays visible
 beside the account controls instead of falsely presenting a completed sign-out.

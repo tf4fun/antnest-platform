@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import App from "./App";
+import { api, APIError } from "./lib/api";
 import type { Session } from "./lib/types";
 
 afterEach(() => {
@@ -26,6 +27,7 @@ function application(
   logout: () => Promise<Response>,
   compact = false,
   readSession = async () => Response.json(session),
+  changePassword = async () => Response.json({ status: "changed" }),
 ) {
   vi.stubGlobal("matchMedia", vi.fn(() => ({
     matches: compact, addEventListener: vi.fn(), removeEventListener: vi.fn(),
@@ -36,6 +38,7 @@ function application(
       return init.method === "DELETE" ? logout() : readSession();
     }
     switch (input) {
+      case "/api/admin/account/password": return changePassword();
       case "/api/admin/account": return Response.json({ account: {
         email: "admin@example.com", display_name: "Test administrator", source: "local",
         organization_slug: "test", organization_name: "Test organization", local_password_available: true,
@@ -59,6 +62,80 @@ async function signInAgain() {
   fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
   await screen.findByRole("heading", { name: "Directory" });
 }
+
+it.each(["invalid_current_password", "unauthenticated"])("handles password command %s through the real API and session owner", async (code) => {
+  const logout = vi.fn(async () => new Response(null, { status: 204 }));
+  const change = vi.fn(async () => Response.json({ code, message: "Password command rejected" }, { status: 401 }));
+  application(logout, false, async () => Response.json(session), change);
+  fireEvent.click(await screen.findByRole("button", { name: "Change local password" }));
+  fireEvent.change(screen.getByLabelText("Current password"), { target: { value: "synthetic old password" } });
+  for (const name of ["New password", "Confirm new password"]) {
+    fireEvent.change(screen.getByLabelText(name), { target: { value: "synthetic new password" } });
+  }
+  fireEvent.click(screen.getByRole("button", { name: "Update password" }));
+  if (code === "invalid_current_password") {
+    expect((await screen.findByRole("alert")).textContent).toContain("Password command rejected");
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Welcome back" })).toBeNull();
+  } else {
+    await signInAgain();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    fireEvent.click(await screen.findByRole("button", { name: "Change local password" }));
+    for (const name of ["Current password", "New password", "Confirm new password"]) {
+      expect((screen.getByLabelText(name) as HTMLInputElement).value).toBe("");
+    }
+  }
+  expect(change).toHaveBeenCalledTimes(1);
+  expect(logout).not.toHaveBeenCalled();
+});
+
+it.each(["json", "malformed", "unreadable"])("ignores an old password request's late %s 401 after login", async (format) => {
+  const command = deferred<Response>();
+  const change = vi.fn(() => command.promise);
+  application(async () => new Response(null, { status: 204 }), false, async () => Response.json(session), change);
+  fireEvent.click(await screen.findByRole("button", { name: "Change local password" }));
+  for (const name of ["Current password", "New password", "Confirm new password"]) {
+    fireEvent.change(screen.getByLabelText(name), { target: { value: "synthetic password" } });
+  }
+  fireEvent.click(screen.getByRole("button", { name: "Update password" }));
+  act(() => window.dispatchEvent(new Event("antnest:session-expired")));
+  await signInAgain();
+  const response = format === "json"
+    ? Response.json({ code: "unauthenticated" }, { status: 401 })
+    : new Response("not JSON", { status: 401 });
+  if (format === "unreadable") vi.spyOn(response, "text").mockRejectedValue(new TypeError("Body interrupted"));
+  await act(async () => command.resolve(response));
+  expect(screen.getByRole("heading", { name: "Directory" })).toBeTruthy();
+  expect(screen.queryByRole("heading", { name: "Welcome back" })).toBeNull();
+  expect(change).toHaveBeenCalledTimes(1);
+});
+
+it.each(["start", "end"])("invalidates pending request notifications on session %s independently", async (boundary) => {
+  const command = deferred<Response>();
+  function pendingRead() {
+    vi.stubGlobal("fetch", vi.fn(() => command.promise));
+    return api.currentAccount().catch((error: unknown) => error);
+  }
+  const beforeStart = boundary === "start" ? pendingRead() : undefined;
+  application(async () => new Response(null, { status: 204 }));
+  await screen.findByRole("heading", { name: "Directory" });
+  const pending = beforeStart ?? pendingRead();
+  if (boundary === "end") {
+    act(() => window.dispatchEvent(new Event("antnest:session-expired")));
+    await screen.findByRole("heading", { name: "Welcome back" });
+  }
+  const expired = vi.fn();
+  window.addEventListener("antnest:session-expired", expired);
+  try {
+    await act(async () => {
+      command.resolve(Response.json({ code: "unauthenticated" }, { status: 401 }));
+      expect(await pending).toBeInstanceOf(APIError);
+    });
+    expect(expired).not.toHaveBeenCalled();
+  } finally {
+    window.removeEventListener("antnest:session-expired", expired);
+  }
+});
 
 it("waits for remote logout and prevents duplicate sign-out", async () => {
   const command = deferred<Response>();

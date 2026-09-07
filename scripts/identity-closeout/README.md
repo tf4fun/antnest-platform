@@ -44,6 +44,12 @@ rotation and logout independently. Password change currently preserves issued
 sessions; logout revokes only the presented session. Tests must describe these
 semantics explicitly rather than infer revocation from a successful password
 change response.
+The password-command assertions distinguish BFF `401 invalid_current_password`
+(no session cookie mutation, subsequent access succeeds) from Gateway
+`401 unauthenticated` after real token expiry (both session cookies cleared,
+the password is not changed). Console's API/App tests consume these same error
+codes and verify dialog retention versus returning to login, including late
+responses from an older in-page session.
 
 Finally the coordinator stops only Identity, proving protected requests return
 503 without deleting cookies. It restores Identity with the existing token TTL

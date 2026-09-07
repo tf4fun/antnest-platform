@@ -117,10 +117,20 @@ both actor and target User from the same trusted principal, forwards the two
 password fields once to Identity Service, and allowlists only the resulting
 status. Password values never enter browser storage or a durable Console retry
 record.
-Because Edge has already authenticated the protected request, an Identity 401
-from this command represents an invalid current password rather than an
-expired browser session. The dialog keeps that failure local; other protected
-Admin API 401 responses still trigger session-expiry handling.
+Identity's password RPC currently returns `401 unauthenticated` only when the
+credential comparison fails. This specific response becomes
+`401 invalid_current_password` with a fixed message at the BFF; it stays in the
+dialog. Other protected Admin API 401 responses, including malformed responses
+and Gateway rejections on the password route, trigger session-expiry handling.
+Request notifications belong to the browser session in which they started;
+late responses cannot invalidate a newly established session.
+This guard covers in-page notifications, not browser-applied `Set-Cookie`
+headers from concurrent HTTP responses or sign-ins in another tab.
+
+The mapping is not a guarantee that the session is still valid when the
+response arrives. Revocation after Gateway admission is checked on the next
+protected request. Inactive actors, missing credentials, concurrent password
+replacement and dependency failure retain their distinct upstream errors.
 
 ## Failure Semantics
 

@@ -292,7 +292,7 @@ cat >"$temporary_root/password-rejected.json" <<'EOF'
 EOF
 gateway_request POST /api/admin/account/password "$temporary_root/password-rejected.json" \
   "$temporary_root/password-rejected-response.json" 401
-assert_field "$temporary_root/password-rejected-response.json" code unauthenticated
+assert_field "$temporary_root/password-rejected-response.json" code invalid_current_password
 gateway_request GET /api/admin/directory - "$temporary_root/directory-after-password-rejection.json" 200
 
 cat >"$temporary_root/password-change.json" <<'EOF'

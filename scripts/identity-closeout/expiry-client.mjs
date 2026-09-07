@@ -73,14 +73,20 @@ if (phase === "prepare") {
     assertNoStore(denied.headers);
     assertClearedSessionCookies(denied.headers);
   }
-  await browser.request("/api/admin/account/password", {
-    headers: { Cookie: cookie, "X-Antnest-CSRF-Token": csrf },
-    status: 401,
-    body: {
-      current_password: password,
-      new_password: "must-not-become-password",
+  const rejectedPassword = await browser.request(
+    "/api/admin/account/password",
+    {
+      headers: { Cookie: cookie, "X-Antnest-CSRF-Token": csrf },
+      status: 401,
+      body: {
+        current_password: password,
+        new_password: "must-not-become-password",
+      },
     },
-  });
+  );
+  assert.equal(rejectedPassword.body.code, "unauthenticated");
+  assertNoStore(rejectedPassword.headers);
+  assertClearedSessionCookies(rejectedPassword.headers);
   const fresh = await login();
   assert.equal(fresh.body.principal.user_id, issued.body.principal.user_id);
   const secrets = [

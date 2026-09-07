@@ -163,8 +163,9 @@ uses. Adapter stubs must not be described as full-platform acceptance.
   isolation through Edge rather than only through Identity RPC.
   The dedicated HTTP access profile covers scoped directory/SCIM access,
   same-email users, shared-User organization roles and token/Membership/User
-  invalidation. Remaining consumer work includes the Console password-command
-  401 distinction and cross-organization Agent/ACP entry checks.
+  invalidation. Console password-command 401 classification is now covered by
+  BFF, API/App and real-token-expiry tests. Cross-organization Agent/ACP entry
+  checks remain separate consumer work.
 - [x] **C2-02** Exercise OIDC discovery/start/callback/login using a controlled
   IdP fixture with real redirect and token exchange. Confirm SCIM/local
   provisioned identities converge on the same User/Membership. Provider secrets,
@@ -581,14 +582,48 @@ does not claim a fresh default Stage 3 lifecycle or ACP fault-profile execution.
 The HTTP access review also identified two boundaries that must not be silently
 declared accepted by its passing tests:
 
-1. **Admin Console:** `web/src/lib/session-errors.ts` exempts every 401 on the
-   password command path. This also swallows a real Edge session expiry/revoke
-   response. Distinguish the operation-local wrong-current-password failure
-   from failed session authentication, then add frontend/API regression tests
-   in a Console-owned batch. Changing one's password deliberately preserves
-   issued tokens under the existing Identity contract; that is not a new bug.
+1. **Admin Console (closed for in-page handling):** the blanket password-path
+   401 exemption is removed. Contract revision 33 distinguishes
+   `invalid_current_password` from Gateway session rejection; malformed/unknown
+   401s also notify the session owner. Notifications belong to the requesting
+   page session and cannot invalidate a later in-page login. This does not
+   prevent the browser from applying an older response's `Set-Cookie` headers,
+   synchronize separate tabs, or prove revocation after Gateway admission.
+   Changing one's password deliberately preserves issued Identity tokens.
 2. **SCIM revoke scope:** Identity authorizes against the token's owning
    organization. The new tests prove an administrator without authority there
    cannot revoke its token. They do not impose a stronger current-browser-
    organization boundary on a User who administers both organizations. Any
    stricter rule needs an explicit Identity/Console contract decision first.
+
+### Console Password And Session Consumer Batch
+
+Only Admin Console implementation changed; Identity and Edge authority rules
+remain unchanged. Documentation and error contract preceded failing BFF/API
+tests, then implementation. Two read-only reviews checked error provenance and
+notification races; their executable regression cases are retained in the
+owning service, not separate review artifacts.
+
+| Evidence | Result |
+| --- | --- |
+| Console Go tests, including race detection | 5 test packages passed |
+| Console pure unit tests | 81 passed |
+| Console component/API/App tests, one worker | 139 passed |
+| Identity fixture/helper tests | 18 passed |
+| Real Identity HTTP access/expiry profile | Passed; 3 Gateway-rooted causal traces, 23 spans |
+| Default Stage 3 Docker regression | Identity/SCIM/OIDC, administrator lifecycle, Agent workspace ACP and Jaeger passed |
+
+The HTTP profile asserts the password endpoint's exact rejection codes and
+cookie behavior before and after natural token expiry, then proves rejected
+expiry did not change the password. App tests verify retained form input on
+credential rejection, actual return to login on session rejection, and late
+JSON/malformed/unreadable responses after a new login. Session start and end
+notification invalidation are independently tested. These are reusable
+component tests, not a claim of fresh live-browser acceptance.
+
+Admission passed: `make fmt-check`, `make lint` (Go: 0 issues; both Rust Clippy
+targets and Node checks), contract JSON/shell syntax checks, and the rebuilt
+Console production image. Both disposable Compose profiles clean their own
+containers, volumes and networks. Existing retained development instances are
+not replaced. C2-01/04 remain open for the separately scoped Agent/ACP access
+and already-upgraded connection boundaries above.

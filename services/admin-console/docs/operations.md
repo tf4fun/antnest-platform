@@ -27,6 +27,11 @@ Local password rotation has no service-side configuration. Credential fields
 are request-only and must not be added to access logs, traces, environment
 variables, or retry storage. Existing browser sessions remain governed by
 Identity access-token lifetime and explicit logout.
+An incorrect current password returns `401 invalid_current_password` from the
+BFF and stays in the password dialog. A Gateway `401 unauthenticated` means the
+browser must sign in again, including when changing its password. Unknown or
+malformed `401` responses are not exempted. Dependency `503` failures keep the
+session and allow an explicit retry; no password command is retried automatically.
 
 An overview with unavailable Agent inventory is never emitted: that failure
 fails the request. Optional section envelopes should be surfaced as partial-data

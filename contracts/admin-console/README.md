@@ -9,9 +9,17 @@ The account-password command always targets the trusted principal. Browser JSON
 cannot select another User. Current and replacement passwords are write-only,
 are never projected from Identity responses, and are not retained in the
 Console's retry-intent storage.
-An Identity `401` from this already-authenticated command means that the
-current password was rejected; it remains an operation-local error and does
-not invalidate the Edge-authenticated browser session.
+For this command only, the BFF maps Identity's `401 unauthenticated` credential
+rejection to `401 invalid_current_password` with a fixed, non-secret message.
+Only this explicit error remains operation-local. An Edge `401 unauthenticated`
+(expired or revoked session), an unknown error, or a malformed `401` response
+invalidates the browser session even on the password endpoint. Other upstream
+errors retain their status and meaning; dependency failure does not sign out
+the browser. Password rotation itself does not revoke existing sessions.
+Session-expiry notifications are bound to the request's browser session: a late
+response from a previous session must not sign out a newly logged-in session.
+The credential error does not certify session validity after Gateway admission;
+concurrent revocation is enforced on the next protected request.
 
 Responses use explicit browser allowlists. Internal credential references,
 Agent access subjects/revisions, Runtime execution identities, and MCP

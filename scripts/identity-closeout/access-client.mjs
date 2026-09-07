@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { GatewayClient, verifyIdentityTraces } from "./support.mjs";
+import {
+  assertNoStore,
+  GatewayClient,
+  verifyIdentityTraces,
+} from "./support.mjs";
 
 const [gateway, jaeger, seedPath] = process.argv.slice(2);
 const seed = JSON.parse(await readFile(seedPath, "utf8"));
@@ -208,10 +212,13 @@ async function unrelatedIdentityStillWorks() {
   await fresh.request("/api/session", { method: "DELETE", status: 204 });
 }
 
-await a.request("/api/admin/account/password", {
+const rejectedPassword = await a.request("/api/admin/account/password", {
   body: { current_password: "wrong-password", new_password: secrets[3] },
   status: 401,
 });
+assert.equal(rejectedPassword.body.code, "invalid_current_password");
+assertNoStore(rejectedPassword.headers);
+assert.equal(rejectedPassword.headers.getSetCookie().length, 0);
 await state(a);
 await a.request("/api/admin/account/password", {
   body: {

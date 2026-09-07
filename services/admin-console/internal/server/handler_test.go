@@ -151,6 +151,71 @@ func TestChangeOwnPasswordRejectsInvalidLengthBeforeCallingIdentity(t *testing.T
 	}
 }
 
+func TestChangeOwnPasswordDistinguishesCredentialRejection(t *testing.T) {
+	tests := []struct {
+		name   string
+		status int
+		body   string
+		code   string
+	}{
+		{"credential", 401, `{"code":"unauthenticated","message":"must-not-reach-browser","password":"secret"}`, "invalid_current_password"},
+		{"unknown", 401, `{"code":"unknown"}`, "unknown"},
+		{"missing code", 401, `{}`, ""},
+		{"inactive actor", 403, `{"code":"forbidden"}`, "forbidden"},
+		{"missing credential", 404, `{"code":"not_found"}`, "not_found"},
+		{"changed credential", 409, `{"code":"conflict"}`, "conflict"},
+		{"unavailable", 503, `{"code":"unavailable"}`, "unavailable"},
+		{"wrong status", 500, `{"code":"unauthenticated"}`, "unauthenticated"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			backend := newBackendStub()
+			backend.enqueue(tt.status, tt.body)
+			response := requestAdmin(t, newTestHandler(t, backend), http.MethodPost, "/api/admin/account/password",
+				`{"current_password":"old password","new_password":"replacement password"}`)
+			var result struct {
+				Code string `json:"code"`
+			}
+			decodeBytes(t, response.Body.Bytes(), &result)
+			if response.Code != tt.status || result.Code != tt.code {
+				t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+			}
+			if response.Header().Get("Cache-Control") != "no-store" || len(response.Header().Values("Set-Cookie")) != 0 {
+				t.Fatalf("unexpected cache or session mutation: %v", response.Header())
+			}
+			if tt.name == "credential" && response.Body.String() != "{\"code\":\"invalid_current_password\",\"message\":\"The current password is incorrect.\"}\n" {
+				t.Fatalf("credential failure was not safely projected: %s", response.Body.String())
+			}
+			backend.singleCall(t)
+		})
+	}
+}
+
+func TestChangeOwnPasswordDoesNotMapMalformedRejections(t *testing.T) {
+	for _, body := range []string{"", "not JSON", "null", `{"code":401}`, `{"code":"unauthenticated"} trailing`} {
+		t.Run(body, func(t *testing.T) {
+			backend := newBackendStub()
+			backend.enqueue(http.StatusUnauthorized, body)
+			response := requestAdmin(t, newTestHandler(t, backend), http.MethodPost, "/api/admin/account/password",
+				`{"current_password":"old password","new_password":"replacement password"}`)
+			if response.Code != http.StatusUnauthorized || response.Body.String() != body {
+				t.Fatalf("unexpectedly mapped status=%d body=%s", response.Code, response.Body.String())
+			}
+		})
+	}
+}
+
+func TestChangeOwnPasswordRequiresTrustedPrincipal(t *testing.T) {
+	backend := newBackendStub()
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/admin/account/password", strings.NewReader(`{}`))
+	newTestHandler(t, backend).ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized || len(backend.calls) != 0 ||
+		strings.Contains(response.Body.String(), "invalid_current_password") {
+		t.Fatalf("unexpected admission: status=%d calls=%d body=%s", response.Code, len(backend.calls), response.Body.String())
+	}
+}
+
 func TestUpdateMembershipIsScopedToTrustedOrganization(t *testing.T) {
 	backend := newBackendStub()
 	backend.enqueue(http.StatusOK, `{

@@ -45,7 +45,14 @@ export class APIError extends Error {
   }
 }
 
+let browserSession = Symbol();
+
+export function resetSessionRequests(): void {
+  browserSession = Symbol();
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const requestSession = browserSession;
   const method = (init.method ?? "GET").toUpperCase();
   const headers = new Headers(init.headers);
   headers.set("Accept", "application/json");
@@ -58,21 +65,28 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
   const response = await fetch(path, { ...init, method, headers, credentials: "same-origin" });
   if (response.status === 204) return undefined as T;
-  const text = await response.text();
   let body: unknown;
   try {
+    const text = await response.text();
     body = text ? JSON.parse(text) : {};
   } catch {
+    notifySessionFailure(requestSession, path, response.status);
     throw new APIError(response.status, "invalid_response", "The server returned an invalid response.");
   }
   if (!response.ok) {
-    const remote = body as RemoteErrorBody;
-    if (invalidatesBrowserSession(path, response.status)) {
-      window.dispatchEvent(new Event("antnest:session-expired"));
-    }
-    throw new APIError(response.status, remote.code ?? "request_failed", remote.message ?? "Request failed.");
+    const remote = (body !== null && typeof body === "object" ? body : {}) as RemoteErrorBody;
+    const code = typeof remote.code === "string" ? remote.code : "request_failed";
+    const message = typeof remote.message === "string" ? remote.message : "Request failed.";
+    notifySessionFailure(requestSession, path, response.status, code);
+    throw new APIError(response.status, code, message);
   }
   return body as T;
+}
+
+function notifySessionFailure(requestSession: symbol, path: string, status: number, code?: string): void {
+  if (requestSession === browserSession && invalidatesBrowserSession(path, status, code)) {
+    window.dispatchEvent(new Event("antnest:session-expired"));
+  }
 }
 
 const json = (value: unknown) => JSON.stringify(value);

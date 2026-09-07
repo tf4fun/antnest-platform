@@ -22,7 +22,7 @@ import { AccountSecurity } from "./components/account-security";
 import { ResourceFailurePage } from "./components/page";
 import { Button } from "./components/ui/button";
 import { ErrorNotice, Loading } from "./components/ui/feedback";
-import { APIError, api, errorMessage } from "./lib/api";
+import { APIError, api, errorMessage, resetSessionRequests } from "./lib/api";
 import { accountPresentation } from "./lib/account";
 import { captureResource, type ResourceState } from "./lib/resource-state";
 import { resourceFailure, type ResourceFailure } from "./lib/resource-failure";
@@ -148,6 +148,7 @@ export default function App() {
   const routeReadyRef = useRef(false);
 
   const endSession = useCallback(() => {
+    resetSessionRequests();
     logoutRequest.current = undefined;
     setLogoutPending(false);
     setLogoutError("");
@@ -156,12 +157,17 @@ export default function App() {
     setSession(null);
   }, []);
 
+  const startSession = useCallback((result: Session) => {
+    resetSessionRequests();
+    setSession(result);
+  }, []);
+
   useEffect(() => {
     let active = true;
     void api.session().then((result) => {
       if (!active) return;
       setStartupFailure(undefined);
-      setSession(result);
+      startSession(result);
     }).catch((cause: unknown) => {
       if (!active) return;
       if (cause instanceof APIError && cause.status === 401) {
@@ -174,7 +180,7 @@ export default function App() {
       if (active) setStartupPending(false);
     });
     return () => { active = false; };
-  }, [endSession, startupAttempt]);
+  }, [endSession, startSession, startupAttempt]);
 
   useEffect(() => {
     const query = window.matchMedia("(max-width: 1023px)");
@@ -290,7 +296,7 @@ export default function App() {
     );
   }
   if (session === undefined) return <main className="grid min-h-screen place-items-center"><Loading label="Connecting to Antnest" /></main>;
-  if (session === null) return <LoginPage onLogin={setSession} />;
+  if (session === null) return <LoginPage onLogin={startSession} />;
   if (destination) return <main className="grid min-h-screen place-items-center"><Loading label="Opening Agent workspace" /></main>;
 
   async function logout() {

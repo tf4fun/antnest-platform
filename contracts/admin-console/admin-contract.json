@@ -1,6 +1,6 @@
 {
   "contract": "antnest.admin-console.bff",
-  "version": 32,
+  "version": 33,
   "base_path": "/api/admin",
   "routes": {
     "overview": {"method": "GET", "path": "/overview"},
@@ -151,7 +151,8 @@
       "password_fields": "write_only",
       "browser_persistence": "forbidden",
       "retry_intent_persistence": "forbidden",
-      "invalid_current_password": "operation_error_without_session_invalidation",
+      "invalid_current_password": {"status": 401, "code": "invalid_current_password", "session_invalidation": false},
+      "other_password_401": "invalidate_session_including_unknown_or_malformed_response",
       "success_response": ["status"]
     },
     "lists": {
