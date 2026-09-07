@@ -15,7 +15,7 @@ func TestCreateModelProfileSealsCredentialAndPersistsImmutableRevision(t *testin
 
 	store := &catalogStoreStub{}
 	sealer := &sealerStub{sealed: ports.SealedSecret{Ciphertext: []byte("ciphertext"), Nonce: []byte("nonce")}}
-	service := NewCatalogService(store, sealer, fixedClock{now: time.Unix(1, 0).UTC()})
+	service := NewCatalogService(store, sealer, nil, fixedClock{now: time.Unix(1, 0).UTC()})
 
 	created, err := service.CreateModelProfile(context.Background(), CreateModelProfileInput{
 		RequestID: "request-1", OrganizationID: "org-1", ProfileKey: "deepseek",
@@ -48,7 +48,7 @@ func TestCreateModelProfileCanonicalizesKnownModelMetadata(t *testing.T) {
 	t.Parallel()
 
 	store := &catalogStoreStub{}
-	service := NewCatalogService(store, &sealerStub{}, fixedClock{now: time.Unix(1, 0).UTC()})
+	service := NewCatalogService(store, &sealerStub{}, nil, fixedClock{now: time.Unix(1, 0).UTC()})
 	created, err := service.CreateModelProfile(context.Background(), CreateModelProfileInput{
 		RequestID: "request-known-model", OrganizationID: "org-1", ProfileKey: "deepseek-v4-pro",
 		DisplayName: "DeepSeek V4 Pro", CredentialSecret: "secret-value",
@@ -70,7 +70,7 @@ func TestCreateModelProfileRetryUsesDeterministicResourceIdentities(t *testing.T
 	t.Parallel()
 
 	store := &catalogStoreStub{}
-	service := NewCatalogService(store, &sealerStub{}, fixedClock{now: time.Unix(1, 0).UTC()})
+	service := NewCatalogService(store, &sealerStub{}, nil, fixedClock{now: time.Unix(1, 0).UTC()})
 	input := CreateModelProfileInput{
 		RequestID: "request-1", OrganizationID: "org-1", ProfileKey: "deepseek",
 		DisplayName: "DeepSeek", Model: validModelInput(), CredentialSecret: "secret-value",
@@ -103,7 +103,7 @@ func TestCreateModelProfileReplaysCompletedRequestBeforeSealing(t *testing.T) {
 	}
 	store := &catalogStoreStub{modelReplay: replayed, replayFound: true}
 	sealer := &sealerStub{err: errors.New("sealer unavailable")}
-	service := NewCatalogService(store, sealer, fixedClock{now: time.Unix(2, 0).UTC()})
+	service := NewCatalogService(store, sealer, nil, fixedClock{now: time.Unix(2, 0).UTC()})
 
 	view, err := service.CreateModelProfile(context.Background(), CreateModelProfileInput{
 		RequestID: "request-1", OrganizationID: "org-1", ProfileKey: "deepseek",
@@ -129,7 +129,7 @@ func TestCreateTemplateMaterializesOnlyMatchingOrganizationModel(t *testing.T) {
 		t.Fatalf("create model revision: %v", err)
 	}
 	store := &catalogStoreStub{modelRevision: model}
-	service := NewCatalogService(store, &sealerStub{}, fixedClock{now: time.Unix(1, 0).UTC()})
+	service := NewCatalogService(store, &sealerStub{}, nil, fixedClock{now: time.Unix(1, 0).UTC()})
 
 	created, err := service.CreateTemplate(context.Background(), CreateTemplateInput{
 		RequestID: "request-2", OrganizationID: "org-1", TemplateKey: "personal",
@@ -168,7 +168,7 @@ func TestReviseModelProfileBuildsNextRevisionAgainstLockedHead(t *testing.T) {
 		Enabled: true, CreatedAt: time.Unix(1, 0).UTC(), UpdatedAt: time.Unix(1, 0).UTC(),
 	}
 	store := &catalogStoreStub{modelRecord: current}
-	service := NewCatalogService(store, &sealerStub{}, fixedClock{now: time.Unix(2, 0).UTC()})
+	service := NewCatalogService(store, &sealerStub{}, nil, fixedClock{now: time.Unix(2, 0).UTC()})
 	if _, err := service.ReviseModelProfile(context.Background(), ReviseModelProfileInput{
 		RequestID: "request-denied", OrganizationID: "org-2",
 		ModelProfileID: "model-1", DisplayName: "Denied",
@@ -212,7 +212,7 @@ func TestReviseTemplateRejectsCrossOrganizationModelAndBuildsNextRevision(t *tes
 		},
 		modelRevision: mustModelRevision(t, "model-revision-2", "org-2"),
 	}
-	service := NewCatalogService(store, &sealerStub{}, fixedClock{now: time.Unix(2, 0).UTC()})
+	service := NewCatalogService(store, &sealerStub{}, nil, fixedClock{now: time.Unix(2, 0).UTC()})
 	input := ReviseTemplateInput{
 		RequestID: "request-template-revise", OrganizationID: "org-1",
 		TemplateID: "template-1", Name: "Personal V2",
@@ -248,7 +248,7 @@ func TestCatalogReadsCurrentHeadsWithBoundedPagination(t *testing.T) {
 		Enabled: true, CreatedAt: time.Unix(1, 0).UTC(), UpdatedAt: time.Unix(2, 0).UTC(),
 	}
 	store := &catalogStoreStub{modelRecord: model, modelPage: []ports.ModelProfileRecord{model}}
-	service := NewCatalogService(store, &sealerStub{}, fixedClock{now: time.Unix(2, 0).UTC()})
+	service := NewCatalogService(store, &sealerStub{}, nil, fixedClock{now: time.Unix(2, 0).UTC()})
 
 	loaded, err := service.GetModelProfile(context.Background(), "org-1", "model-1")
 	if err != nil {
@@ -297,7 +297,7 @@ func TestCatalogReadsImmutableHistoricalRevisionsWithOrganizationFence(t *testin
 			CreatedAt: time.Unix(1, 0).UTC(), UpdatedAt: time.Unix(2, 0).UTC(),
 		},
 	}
-	service := NewCatalogService(store, &sealerStub{}, fixedClock{now: time.Unix(2, 0).UTC()})
+	service := NewCatalogService(store, &sealerStub{}, nil, fixedClock{now: time.Unix(2, 0).UTC()})
 
 	model, err := service.GetModelProfileRevision(
 		context.Background(), "org-1", "model-revision-1",

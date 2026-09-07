@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"soft/antnest-platform/services/runtime-controller/internal/deployment"
+	"soft/antnest-platform/services/runtime-controller/internal/platform"
 	repositoryport "soft/antnest-platform/services/runtime-controller/internal/repository"
 )
 
@@ -623,6 +624,9 @@ func newLifecyclePlatform() *lifecyclePlatform {
 }
 
 func (*lifecyclePlatform) Ready(context.Context) error { return nil }
+func (*lifecyclePlatform) ResolveImage(context.Context, string) (platform.ImageResolution, error) {
+	return platform.ImageResolution{}, platform.ErrImageNotFound
+}
 func (*lifecyclePlatform) DeploymentDigest(value deployment.Deployment) (string, error) {
 	return deployment.DigestValue(struct {
 		MappingRevision uint32

@@ -16,6 +16,15 @@ Agent Fleet presents current records by default, retains deleted projections
 behind an explicit audit view, gates lifecycle commands from authoritative
 state, and re-synchronizes Agent, event, and durable operation state after an
 event-stream interruption.
+Deleted Agent details stay open for audit, including after a live deletion
+completes. Replaying a completed operation never redirects the page. The active
+request distinguishes `Current operation` from `Last operation`; a terminal
+phase that duplicates the state is omitted without hiding failure diagnostics.
+Lifecycle admission is acknowledged independently of the following Agent read.
+A refresh failure preserves that receipt, closes stale-state actions, and retries
+only the read. Rebuild and delete rejections stay inside their originating dialog;
+pending dialogs cannot be dismissed. Agent identity scopes this local form state,
+so a different Agent cannot inherit an earlier command's pending form or error.
 Agent detail identifies the immutable Template and Model Profile revisions used
 by the current executable configuration while keeping Provider credentials,
 Runtime execution identity, and MCP routing outside the browser projection.
@@ -78,6 +87,18 @@ and Agent inventories issue independent primary and dependency reads, preserving
 their loaded rows when Model, Runtime-default, or Directory creation options are
 unavailable. `GET /api/admin/template-defaults` exposes only the configured
 Runtime image reference and performs no owner-service read.
+The Template form offers the platform default or an explicit repository/tag,
+without a digest input. If no default is configured, the tag input is required.
+Revision forms default to keeping the current pinned image and do not read a
+potentially changed deployment default. An explicit tag choice is sent to Agent
+Controller, which resolves and freezes it through Runtime Controller. This BFF
+does not inspect Docker, pull images, or assert an image-to-tag mapping.
+Template and Agent details show the server-derived `image_source` when present,
+otherwise a repository/tag or `Platform runtime` for an unnamed image ID.
+Reusable tests cover digest-free labels, explicit tag selection, missing-default
+creation, source projection, rejection feedback, and preserving pinned images
+when deployment defaults change or vanish. Rejected tag choices remain editable
+inside the dialog; no unpublished revision is shown as successful.
 Model Profile inventory and detail also load independently from the built-in
 Model Catalog. A Catalog failure keeps stored Profile facts readable under
 their persisted display name while disabling only connect/revise actions until
@@ -105,6 +126,17 @@ neutral shell labels, and fails closed without blocking the rest of the
 Console. The BFF derives the target User from the trusted principal, and the
 browser neither stores the credential fields nor exposes this command as
 another-user administration.
+Sign-out waits for Edge to confirm revocation and cookie removal before showing
+the login page. While pending, the action is disabled; a rejection stays visible
+beside the account controls instead of falsely presenting a completed sign-out.
+Confirmed logout and authoritative session expiration close the drawer and
+account dialog. A late response to an earlier logout cannot affect a subsequent
+login. `web/src/App.test.tsx` covers this through the real application and API
+wrapper; Edge owns and separately tests cookie and revocation semantics.
+Startup also preserves HTTP failure semantics: only a missing/expired session
+opens login. Terminal access or missing-endpoint errors have no retry action;
+transient failures retry the session query in place, without document reload or
+early protected-resource reads. The pending retry cannot be submitted twice.
 
 ## Owns
 
@@ -141,6 +173,21 @@ Directory and Provisioning component tests cover mutation rejection without
 input loss, successful writes followed by unavailable/forbidden reads, stale
 row-action prevention, system-only OIDC entry, and SCIM credential disposal and
 clipboard recovery. They distinguish the command result from refresh status.
+Catalog revision component tests verify rejected-input retention, pending
+publication and server-returned revision feedback, read-only historical routes,
+terminal detail failures, and referenced Model recovery without resubmitting a
+Template publication.
+Agent mutation component tests cover creation retries, lifecycle admission
+acknowledgements, rejected dialogs, follow-up Agent read failures, and read-only
+recovery that keeps stale actions closed. They also verify that another Agent
+cannot inherit the previous detail's pending dialog or late rejection. Retained
+deletion and live-event completion have separate component coverage; opening
+completed history is not a navigation command.
+`web/src/components/account-security.test.tsx` covers password form validation,
+pending submission and dismissal, HTTP/network rejection, explicit retry,
+successful completion, and credential clearing without persistent browser
+storage. These tests exercise the real API wrapper with synthetic responses;
+they do not rotate an account's actual password.
 The Stage 3 Docker E2E also repeats Model and Template creation with the same
 idempotency key and verifies that their inventories contain no duplicate. Agent
 organization isolation is checked through the owner's scoped interface while

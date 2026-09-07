@@ -35,7 +35,7 @@ import {
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Dialog } from "../components/ui/dialog";
-import { Empty, ErrorNotice, GuidanceNotice, Loading } from "../components/ui/feedback";
+import { Empty, ErrorNotice, GuidanceNotice, Loading, SuccessNotice } from "../components/ui/feedback";
 import { Field, Input, Select } from "../components/ui/input";
 import {
   agentActionAvailability,
@@ -69,7 +69,7 @@ import type {
 } from "../lib/types";
 
 export function AgentsPage({ agentID }: { agentID?: string }) {
-  return agentID ? <AgentDetail agentID={agentID} /> : <AgentInventory />;
+  return agentID ? <AgentDetail agentID={agentID} key={agentID} /> : <AgentInventory />;
 }
 
 function AgentInventory() {
@@ -513,12 +513,15 @@ function AgentDetail({ agentID }: { agentID: string }) {
   const [streamState, setStreamState] = useState("connecting");
   const [loadFailure, setLoadFailure] = useState<ResourceFailure>();
   const [error, setError] = useState("");
+  const [acknowledgement, setAcknowledgement] = useState("");
   const [agentStateFailure, setAgentStateFailure] = useState<ResourceFailure>();
+  const [agentStateRetryPending, setAgentStateRetryPending] = useState(false);
   const agentReadRequest = useRef(0);
   const [eventFailure, setEventFailure] = useState<ResourceFailure>();
   const [eventReloadGeneration, setEventReloadGeneration] = useState(0);
   const [pending, setPending] = useState("");
   const [rebuildOpen, setRebuildOpen] = useState(false);
+  const [rebuildError, setRebuildError] = useState("");
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteError, setDeleteError] = useState("");
 
@@ -630,6 +633,7 @@ function AgentDetail({ agentID }: { agentID: string }) {
     setOperationFailure(undefined);
     setLoadFailure(undefined);
     setError("");
+    setAcknowledgement("");
     setAgentStateFailure(undefined);
     api.agent(agentID)
       .then((nextAgent) => {
@@ -771,41 +775,31 @@ function AgentDetail({ agentID }: { agentID: string }) {
     };
   }, [agentID, refreshAgent, rememberEventOperation, streamCursor, streamGeneration]);
 
-  useEffect(() => {
-    if (operation?.kind === "delete" && operation.state === "completed") {
-      window.location.hash = "agents";
-    }
-  }, [operation]);
-
-  async function act(action: "disable" | "enable") {
+  async function changeLifecycle(
+    action: "disable" | "enable" | "delete" | "rebuild",
+    input: Record<string, unknown> = {},
+  ) {
+    if (pending) return;
     setPending(action);
     setError("");
-    try {
-      acceptOperation(await api.lifecycle(agentID, action, {}));
-      await refreshAgent();
-    } catch (cause) {
-      setError(errorMessage(cause));
-    } finally {
-      setPending("");
-    }
-  }
-
-  async function deleteAgent() {
-    setPending("delete");
     setDeleteError("");
-    setError("");
+    setRebuildError("");
+    setAcknowledgement("");
     try {
-      acceptOperation(await api.lifecycle(agentID, "delete", {}));
-      setDeleteOpen(false);
+      acceptOperation(await api.lifecycle(agentID, action, input));
     } catch (cause) {
-      setDeleteError(errorMessage(cause));
+      const reportFailure = action === "delete" ? setDeleteError : action === "rebuild" ? setRebuildError : setError;
+      reportFailure(errorMessage(cause));
       setPending("");
       return;
     }
+    setAcknowledgement(`${action.charAt(0).toUpperCase()}${action.slice(1)} request accepted.`);
+    setDeleteOpen(false);
+    setRebuildOpen(false);
     try {
-      await refreshAgent();
-    } catch (cause) {
-      setError(errorMessage(cause));
+      await refreshAgent(true);
+    } catch {
+      // Admission succeeded; refreshAgent owns the independent read failure.
     } finally {
       setPending("");
     }
@@ -818,21 +812,21 @@ function AgentDetail({ agentID }: { agentID: string }) {
       (item) => item.template_id === data.get("template_id"),
     );
     if (!template) return;
-    setPending("rebuild");
-    setError("");
+    await changeLifecycle("rebuild", {
+      template_id: template.template_id,
+      template_revision: template.revision,
+    });
+  }
+
+  async function retryAgentState() {
+    if (agentStateRetryPending) return;
+    setAgentStateRetryPending(true);
     try {
-      acceptOperation(
-        await api.lifecycle(agentID, "rebuild", {
-          template_id: template.template_id,
-          template_revision: template.revision,
-        }),
-      );
-      setRebuildOpen(false);
-      await refreshAgent();
-    } catch (cause) {
-      setError(errorMessage(cause));
+      await refreshAgent(true);
+    } catch {
+      // Keep stale-state actions closed until an authoritative read succeeds.
     } finally {
-      setPending("");
+      setAgentStateRetryPending(false);
     }
   }
 
@@ -862,7 +856,7 @@ function AgentDetail({ agentID }: { agentID: string }) {
     Boolean(agent.active_operation_request_id);
   const actions = agentActionAvailability(
     agent,
-    operationRunning || Boolean(agentStateFailure),
+    operationRunning || Boolean(agentStateFailure) || agentStateRetryPending,
   );
   const status = agentStatusPresentation(agent);
   const owner = members?.find(({ user }) => user.id === agent.owner_user_id)?.membership;
@@ -909,20 +903,20 @@ function AgentDetail({ agentID }: { agentID: string }) {
                         : "Rebuild Agent"
                   }
                   variant="secondary"
-                  onClick={() => setRebuildOpen(true)}
+                  onClick={() => { setRebuildError(""); setRebuildOpen(true); }}
                 >
                   <RotateCcw className="h-4 w-4" />
                   Rebuild
                 </Button>
               ) : null}
               {actions.canEnable ? (
-                <Button onClick={() => void act("enable")}>
+                <Button onClick={() => void changeLifecycle("enable")}>
                   <Play className="h-4 w-4" />
                   Enable
                 </Button>
               ) : null}
               {actions.canDisable ? (
-                <Button variant="secondary" onClick={() => void act("disable")}>
+                <Button variant="secondary" onClick={() => void changeLifecycle("disable")}>
                   <Pause className="h-4 w-4" />
                   Disable
                 </Button>
@@ -945,11 +939,9 @@ function AgentDetail({ agentID }: { agentID: string }) {
           )
         }
       />
+      {acknowledgement ? <SuccessNotice message={acknowledgement} onDismiss={() => setAcknowledgement("")} /> : null}
       {error ? <ErrorNotice message={error} /> : null}
-      {agentStateFailure ? <ResourceFailureNotice failure={agentStateFailure} retryLabel="Retry Agent state" onRetry={() => {
-        setAgentStateFailure(undefined);
-        void refreshAgent(true).catch(() => undefined);
-      }} /> : null}
+      {agentStateFailure ? <ResourceFailureNotice failure={agentStateFailure} pending={agentStateRetryPending} retryLabel="Retry Agent state" onRetry={() => void retryAgentState()} /> : null}
       {templateOptionFailure ? <ResourceFailureNotice failure={templateOptionFailure} message={`Rebuild options could not be loaded: ${templateOptionFailure.message}`} retryLabel="Retry template choices" onRetry={retryTemplates} /> : null}
       {directoryFailure ? <ResourceFailureNotice failure={directoryFailure} retryLabel="Retry owner profile" onRetry={() => {
         setDirectoryReloadGeneration((value) => value + 1);
@@ -1070,7 +1062,7 @@ function AgentDetail({ agentID }: { agentID: string }) {
         ]}
       />
       {visibleOperation || operationLoadingRequestID || operationFailure ? (
-        <Section title="Current operation">
+        <Section title={agent.active_operation_request_id ? "Current operation" : "Last operation"}>
           <div className="grid gap-3">
             {operationFailure ? (
               <ResourceFailureNotice
@@ -1095,7 +1087,9 @@ function AgentDetail({ agentID }: { agentID: string }) {
                     <span className="text-sm font-medium capitalize">{visibleOperation.kind}</span>
                     <Badge value={visibleOperation.state} />
                   </div>
-                  <p className="mt-1 text-xs capitalize text-muted-foreground">{visibleOperation.phase.replaceAll("_", " ")}</p>
+                  {visibleOperation.phase && visibleOperation.phase !== visibleOperation.state ? (
+                    <p className="mt-1 text-xs capitalize text-muted-foreground">{visibleOperation.phase.replaceAll("_", " ")}</p>
+                  ) : null}
                 </div>
                 {visibleOperation.error_detail ? (
                   <span className="text-sm text-red-700">{visibleOperation.error_detail}</span>
@@ -1164,6 +1158,7 @@ function AgentDetail({ agentID }: { agentID: string }) {
         description="Publish a new execution revision from the selected template."
       >
         <form className="grid gap-4" onSubmit={rebuild}>
+          {rebuildError ? <ErrorNotice message={rebuildError} /> : null}
           <Field label="Template">
             <Select name="template_id" defaultValue="" required>
               <option value="" disabled>
@@ -1238,7 +1233,7 @@ function AgentDetail({ agentID }: { agentID: string }) {
               disabled={pending === "delete"}
               type="button"
               variant="destructive"
-              onClick={() => void deleteAgent()}
+              onClick={() => void changeLifecycle("delete")}
             >
               {pending === "delete" ? (
                 <LoaderCircle className="h-4 w-4 animate-spin" />

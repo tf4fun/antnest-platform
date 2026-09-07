@@ -82,6 +82,36 @@ workspace and system-Skill paths, platform networking, mounts, healthcheck,
 restart policy, and Runtime telemetry. Callers do not duplicate those adapter
 or Runtime-image invariants.
 
+## Image Resolution
+
+`GET /internal/runtime-images/resolve?reference=antnest/antnest-runtime:local`
+
+This read-only query resolves an explicitly tagged repository reference that is
+already installed on the deployment platform. It returns `reference` (normalized
+human-readable repository/tag) and `image_ref` (the immutable execution identity).
+It creates no Runtime, operation, lock, database record, or image pull. Missing
+images return `404 image_not_found`; the operator must build or load them first.
+Invalid or untagged references return `400 invalid_request`, platform failure
+returns `503 platform_unavailable`, and a deadline returns `504 deadline_exceeded`.
+The query takes no `Idempotency-Key`: pinning and replay of a published Template
+remain the responsibility of Agent Controller's Catalog transaction.
+
+The Docker adapter uses image inspection, not registry metadata. Its image ID
+is a Docker content identity, not a repository manifest digest, and must never
+be appended to a repository name to fabricate `repository@digest`. Local builds
+without `RepoDigests` are valid. The response contains no image environment,
+build history, labels, platform paths, or registry credentials. Resolution
+proves the current local image identity, not Runtime MCP compatibility or future
+availability after an operator removes the image. Lifecycle configuration still
+requires the immutable `image_ref` and retains the existing Runtime readiness
+checks. HTTP and platform-operation spans use the normal request trace; image
+references are not metric labels or recorded request bodies.
+
+Docker reference parsing uses the standard
+[`distribution/reference`](https://github.com/distribution/reference) library.
+Inspection follows the
+[Docker Engine image API](https://docs.docker.com/reference/api/engine/version/v1.47/).
+
 ## Initialize
 
 `POST /internal/runtimes/{agent_id}/initialize`

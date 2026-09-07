@@ -124,6 +124,10 @@ func TestObservationWatchDoesNotCreateConnectionLifetimeSpan(t *testing.T) {
 
 type sessionPlatform struct{}
 
+func (*sessionPlatform) ResolveImage(context.Context, string) (platform.ImageResolution, error) {
+	return platform.ImageResolution{}, platform.ErrImageNotFound
+}
+
 func (*sessionPlatform) Ready(context.Context) error                            { return nil }
 func (*sessionPlatform) DeploymentDigest(deployment.Deployment) (string, error) { return "", nil }
 func (*sessionPlatform) Create(context.Context, deployment.Deployment, string) deployment.EffectOutcome {

@@ -3,6 +3,18 @@
   "$id": "https://antnest.local/runtime-controller/api/control-api.schema.json",
   "title": "Antnest Runtime Controller HTTP Messages",
   "$defs": {
+    "tagged_image_reference": {
+      "type": "string", "minLength": 1, "maxLength": 512,
+      "description": "Explicit repository:tag accepted by the platform image-reference parser; URLs, untagged names and digest references are rejected."
+    },
+    "image_resolution": {
+      "type": "object", "additionalProperties": false,
+      "required": ["reference", "image_ref"],
+      "properties": {
+        "reference": {"$ref": "#/$defs/tagged_image_reference"},
+        "image_ref": {"$ref": "runtime-deployment.schema.json#/properties/image_ref"}
+      }
+    },
     "agent_id": {"type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"},
     "request_id": {"type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"},
     "runtime_revision": {"type": "string", "pattern": "^rtv_[0-9a-f]{32}$"},

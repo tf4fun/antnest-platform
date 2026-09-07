@@ -200,7 +200,7 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 	if err != nil {
 		return classifyFailure("service_composition", err)
 	}
-	catalog := application.NewCatalogService(observedStore, secretBox, systemClock{})
+	catalog := application.NewCatalogService(observedStore, secretBox, runtime, systemClock{})
 	lifecycle := application.NewLifecycleServiceWithDrainTimeout(
 		observedStore, observedLifecycleStore, egress, runtime, systemClock{}, cfg.DrainTimeout,
 		application.WithIdentityDirectory(identity),

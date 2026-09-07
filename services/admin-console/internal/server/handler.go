@@ -577,7 +577,7 @@ func (h *handler) createTemplate(response http.ResponseWriter, request *http.Req
 		input.Runtime.ImageRef = h.defaultRuntimeImageRef
 	}
 	if input.Runtime.ImageRef == "" {
-		writeError(response, http.StatusBadRequest, "runtime_image_required", "Runtime image digest is required")
+		writeError(response, http.StatusBadRequest, "runtime_image_required", "Select a Runtime image tag")
 		return
 	}
 	applyResourceDefaults(&input.Runtime.Resources)
@@ -632,7 +632,7 @@ func (h *handler) reviseTemplate(response http.ResponseWriter, request *http.Req
 		input.Runtime.ImageRef = h.defaultRuntimeImageRef
 	}
 	if input.Runtime.ImageRef == "" {
-		writeError(response, http.StatusBadRequest, "runtime_image_required", "Runtime image digest is required")
+		writeError(response, http.StatusBadRequest, "runtime_image_required", "Select a Runtime image tag")
 		return
 	}
 	applyResourceDefaults(&input.Runtime.Resources)

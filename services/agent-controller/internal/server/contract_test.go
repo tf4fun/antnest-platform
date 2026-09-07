@@ -81,7 +81,7 @@ func TestMachineControlContractMatchesRegisteredBoundary(t *testing.T) {
 	readStrictContractJSON(t, filepath.Join(root, "contracts/agent-controller/control-contract.json"), &contract)
 	var schema machineControlSchema
 	readContractJSON(t, filepath.Join(root, "contracts/agent-controller/control-api.schema.json"), &schema)
-	if contract.Revision != 9 {
+	if contract.Revision != 10 {
 		t.Fatalf("control contract revision = %d", contract.Revision)
 	}
 	if contract.MediaTypes.Request != "application/json" ||
@@ -457,6 +457,7 @@ func TestMachineControlContractValidatesActualHTTPErrorBoundary(t *testing.T) {
 			path:   "/internal/agent-operations/missing-operation?organization_id=org-1",
 		},
 		{code: "dependency_unavailable", err: application.ErrDependencyUnavailable},
+		{code: "runtime_image_invalid", err: application.ErrRuntimeImageSelection},
 		{code: "lifecycle_timeout", err: context.DeadlineExceeded},
 		{code: "internal_error", err: errors.New("unexpected failure")},
 	}
@@ -806,6 +807,7 @@ func assertControlErrorContract(t *testing.T, contract machineControlContract) {
 	t.Helper()
 	behaviors := []error{
 		application.ErrInvalidInput,
+		application.ErrRuntimeImageSelection,
 		ports.ErrRequestConflict,
 		application.ErrInvalidReference,
 		ports.ErrDisabledReference,

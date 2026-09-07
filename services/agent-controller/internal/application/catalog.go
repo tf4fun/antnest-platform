@@ -33,11 +33,12 @@ var identifierPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,199}$`)
 type CatalogService struct {
 	store  ports.CatalogStore
 	sealer ports.CredentialSealer
+	images ports.ImageResolver
 	clock  ports.Clock
 }
 
-func NewCatalogService(store ports.CatalogStore, sealer ports.CredentialSealer, clock ports.Clock) *CatalogService {
-	return &CatalogService{store: store, sealer: sealer, clock: clock}
+func NewCatalogService(store ports.CatalogStore, sealer ports.CredentialSealer, images ports.ImageResolver, clock ports.Clock) *CatalogService {
+	return &CatalogService{store: store, sealer: sealer, images: images, clock: clock}
 }
 
 type CreateModelProfileInput struct {
@@ -241,12 +242,16 @@ func (service *CatalogService) CreateTemplate(ctx context.Context, input CreateT
 	if modelRevision.OrganizationID() != input.OrganizationID {
 		return TemplateView{}, fmt.Errorf("%w: cross-organization ModelProfile", ErrInvalidReference)
 	}
+	runtime, err := service.resolveTemplateImage(ctx, input.Runtime, domain.RuntimeSpecInput{})
+	if err != nil {
+		return TemplateView{}, err
+	}
 	templateID := derivedID("template", input.RequestID)
 	revision, err := domain.NewTemplateRevision(domain.TemplateRevisionInput{
 		TemplateID: templateID, OrganizationID: input.OrganizationID, Revision: 1,
 		ModelProfileRevisionID: input.ModelProfileRevisionID,
 		SystemPrompt:           input.SystemPrompt, MaxModelRequests: input.MaxModelRequests,
-		Runtime: input.Runtime, ContextPolicyVersion: input.ContextPolicyVersion,
+		Runtime: runtime, ContextPolicyVersion: input.ContextPolicyVersion,
 	})
 	if err != nil {
 		return TemplateView{}, fmt.Errorf("%w: %v", ErrInvalidInput, err)
@@ -311,11 +316,15 @@ func (service *CatalogService) ReviseTemplate(
 	if modelRevision.OrganizationID() != current.OrganizationID {
 		return TemplateView{}, fmt.Errorf("%w: cross-organization ModelProfile", ErrInvalidReference)
 	}
+	runtime, err := service.resolveTemplateImage(ctx, input.Runtime, current.Revision.Snapshot().Runtime)
+	if err != nil {
+		return TemplateView{}, err
+	}
 	revision, err := domain.NewTemplateRevision(domain.TemplateRevisionInput{
 		TemplateID: current.TemplateID, OrganizationID: current.OrganizationID,
 		Revision: current.Revision.Revision() + 1, ModelProfileRevisionID: input.ModelProfileRevisionID,
 		SystemPrompt: input.SystemPrompt, MaxModelRequests: input.MaxModelRequests,
-		ContextPolicyVersion: input.ContextPolicyVersion, Runtime: input.Runtime,
+		ContextPolicyVersion: input.ContextPolicyVersion, Runtime: runtime,
 	})
 	if err != nil {
 		return TemplateView{}, fmt.Errorf("%w: %v", ErrInvalidInput, err)

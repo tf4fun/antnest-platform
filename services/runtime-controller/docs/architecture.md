@@ -1,7 +1,7 @@
 # Runtime Controller Architecture
 
 > Status: implemented for Docker; Kubernetes adapter pending<br>
-> Updated: 2026-08-31
+> Updated: 2026-09-07
 
 ## Mission
 
@@ -202,6 +202,23 @@ phase.
 Runtime Controller does not resolve Egress configuration or choose an image.
 Agent Controller and Runtime Egress provide that policy input. Runtime
 Controller alone injects physical RuntimeSpec and platform invariants.
+
+### Resolve Image
+
+The separate read-only image query translates a caller-selected `repository:tag`
+into an installed Docker image ID. It does not choose the image, pull from a
+registry, or change an Environment. The Docker adapter owns reference parsing
+and inspection; the control layer delegates without repository access, an Agent
+lock, or an operation journal entry. A mutable tag lookup is not cached.
+
+The response includes only the normalized named reference and immutable image
+ID. Docker configuration, environment variables, labels, and history never
+leave the adapter. A locally built image need not have a registry manifest
+digest; its image ID must not be presented as a `repository@manifest-digest`.
+The caller is responsible for freezing the resolved ID when publishing its
+configuration. Subsequent lifecycle commands still require an immutable image.
+Resolution has the ordinary RPC deadline and a short platform child span, with
+bounded operation labels rather than image names or IDs in metric dimensions.
 
 ## Observation Pipeline
 

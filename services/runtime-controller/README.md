@@ -17,6 +17,8 @@ resources and reports a platform-neutral result.
 - Map one language-neutral Runtime configuration to deterministic Docker or
   Kubernetes compute and workspace resources.
 - Keep deployment-platform credentials and adapters inside this service.
+- Resolve an installed repository/tag to an immutable image identity through
+  a read-only platform query; do not build or implicitly pull images.
 - Consume platform health plus List/Watch events.
 - Verify Runtime `/status` after lifecycle creation, Healthy events, and
   explicit reads of a ready Environment.
@@ -46,7 +48,7 @@ separate Runtime Provider service in the target architecture.
 
 | Direction         | Interface                                                                                                      |
 | ----------------- | -------------------------------------------------------------------------------------------------------------- |
-| Inbound           | Internal RPC for Runtime Initialize, Update, Disable, Enable, Delete, Inspect, and observation List/Watch      |
+| Inbound           | Internal RPC for image resolution, Runtime Initialize, Update, Disable, Enable, Delete, Inspect, and observation List/Watch |
 | Platform outbound | Docker Engine API initially; Kubernetes API in a later adapter                                                 |
 | Runtime outbound  | Bounded `GET /status` verification for lifecycle, observation, and ready-state reads                           |
 | Persistence       | Private Runtime Environment head, operation, internal generation-claim, and bounded observation-journal schema |
@@ -144,6 +146,20 @@ empty environment, Controller-process restart recovery, status identity,
 same-generation Runtime process restart observation, update replacement,
 Disable workspace retention, Enable recreation, and Delete cleanup. It also
 proves immutable image input and execution fencing.
+
+To verify image resolution against an installed local image without creating
+containers, volumes, or database records, run from this service directory:
+
+```bash
+ANTNEST_RUNTIME_CONTROLLER_TEST_DOCKER_SOCKET=/var/run/docker.sock \
+ANTNEST_RUNTIME_CONTROLLER_TEST_IMAGE_TAG=antnest/antnest-runtime:local \
+go test ./internal/platform/docker -run '^TestInstalledImageResolution$' -count=1
+```
+
+Use the socket path of your Docker context. This opt-in check only inspects the
+named image and its resolved immutable ID; it never pulls or builds an image.
+Unit and RPC contract tests separately cover invalid tags, missing images,
+platform outages, deadlines, response minimization, and trace propagation.
 
 ## Maintainer Guide
 

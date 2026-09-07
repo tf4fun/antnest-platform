@@ -78,6 +78,7 @@ func TestMachineContractCoversRegisteredHTTPBoundary(t *testing.T) {
 	readJSONFile(t, filepath.Join(root, "api/control-api.schema.json"), &schema)
 
 	expectedRoutes := map[string][]string{
+		"GET /internal/runtime-images/resolve":          {"200"},
 		"GET /status":                                   {"200", "503"},
 		"GET /internal/runtimes":                        {"200"},
 		"GET /internal/runtimes/{agent_id}":             {"200"},
@@ -220,6 +221,9 @@ func TestMachineSchemaMatchesGoWireTypes(t *testing.T) {
 		Health:         deployment.HealthHealthy, RestartCount: 0, ObservedAt: now,
 	}
 	assertRequiredFields(t, schema, "initialize_request", initializeRequest{Configuration: configurationDTO{}})
+	assertRequiredFields(t, schema, "image_resolution", imageResolutionResponse{
+		Reference: "antnest/runtime:local", ImageRef: "sha256:" + strings.Repeat("a", 64),
+	})
 	assertRequiredFields(t, schema, "revision_request", revisionRequest{ExpectedRevision: testRuntimeRevision})
 	assertRequiredFields(t, schema, "revision_configuration_request", revisionConfigurationRequest{
 		ExpectedRevision: testRuntimeRevision, Configuration: configurationDTO{},

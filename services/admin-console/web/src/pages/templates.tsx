@@ -20,14 +20,13 @@ import { Field, Input, Select, Textarea } from "../components/ui/input";
 import { APIError, api, errorMessage } from "../lib/api";
 import { loadImmutableCatalogDetail } from "../lib/catalog-detail";
 import { useModelOptions } from "../lib/catalog-options";
-import {
-  immutableImageReference,
-  positiveInteger,
-} from "../lib/forms";
+import { positiveInteger } from "../lib/forms";
 import { bytes, dateTime } from "../lib/format";
 import { mergePage } from "../lib/pagination";
 import { resourceFailure, type ResourceFailure } from "../lib/resource-failure";
 import { captureResource, type ResourceState } from "../lib/resource-state";
+import { runtimeImageLabel } from "../lib/runtime-image";
+import { RuntimeImageChoice } from "../components/runtime-image-choice";
 import { templateCreationGate } from "../lib/setup";
 import type { AgentTemplate, ModelProfile, TemplateDefaults } from "../lib/types";
 
@@ -98,14 +97,14 @@ function TemplateList() {
     const form = event.currentTarget;
     const data = new FormData(form);
     const name = String(data.get("name") ?? "").trim();
-    const imageRef = String(data.get("image_ref") ?? "").trim();
     if (defaults.status !== "ready") {
       setFormError("Runtime defaults are unavailable. Retry before creating a template.");
       return;
     }
-    const defaultImage = defaults.data.runtime_image_ref;
-    if (!defaultImage && !immutableImageReference(imageRef)) {
-      setFormError("Runtime image must use an immutable SHA-256 digest.");
+    const customImage = data.get("image_mode") === "custom";
+    const imageRef = customImage ? String(data.get("image_ref") ?? "").trim() : defaults.data.runtime_image_ref;
+    if (!imageRef) {
+      setFormError("Enter a repository:tag image.");
       return;
     }
     setPending(true);
@@ -119,7 +118,7 @@ function TemplateList() {
         ),
         system_prompt: String(data.get("system_prompt") ?? ""),
         max_model_requests: positiveInteger(data.get("max_model_requests"), 32),
-        runtime: imageRef ? { image_ref: imageRef } : undefined,
+        runtime: customImage ? { image_ref: imageRef } : undefined,
       });
       form.reset();
       setOpen(false);
@@ -357,14 +356,8 @@ function TemplateList() {
               required
             />
           </Field>
-          {defaults.status === "ready" && !defaults.data.runtime_image_ref ? (
-            <Field label="Runtime image digest">
-              <Input
-                name="image_ref"
-                placeholder="antnest/runtime@sha256:…"
-                required
-              />
-            </Field>
+          {defaults.status === "ready" ? (
+            <RuntimeImageChoice image={defaults.data.runtime_image_ref} inheritedLabel="Platform default" />
           ) : null}
           <div className="mt-1 flex justify-end gap-2">
             <Button
@@ -452,9 +445,10 @@ function TemplateDetail({ templateID, revisionID }: { templateID: string; revisi
     event.preventDefault();
     if (!template || revisionID !== undefined) return;
     const data = new FormData(event.currentTarget);
-    const imageRef = String(data.get("image_ref") ?? "").trim();
-    if (!immutableImageReference(imageRef)) {
-      setFormError("Runtime image must use an immutable SHA-256 digest.");
+    const imageRef = data.get("image_mode") === "custom"
+      ? String(data.get("image_ref") ?? "").trim() : template.runtime.image_ref;
+    if (!imageRef) {
+      setFormError("Enter a repository:tag image.");
       return;
     }
     setPending(true);
@@ -541,7 +535,7 @@ function TemplateDetail({ templateID, revisionID }: { templateID: string; revisi
         <pre className="whitespace-pre-wrap rounded-md border border-border bg-white p-4 font-sans text-sm leading-6 shadow-sm">{template.system_prompt || "No system prompt."}</pre>
       </Section>
       <Section title="Runtime image">
-        <div className="break-all rounded-md border border-border bg-white p-4 font-mono text-sm shadow-sm">{template.runtime.image_ref}</div>
+        <p className="break-all text-sm font-medium">{runtimeImageLabel(template.runtime.image_ref, template.runtime.image_source)}</p>
       </Section>
       {!historical ? <Dialog dismissible={!pending} open={open} onOpenChange={setOpen} title="Create template revision" description="Publish a new immutable configuration. Existing Agent revisions continue using their frozen settings.">
         <form className="grid gap-5" key={template.revision} onSubmit={revise}>
@@ -562,7 +556,7 @@ function TemplateDetail({ templateID, revisionID }: { templateID: string; revisi
           />
           <Field label="System prompt" hint="Defines the Agent's default role and operating boundaries."><Textarea name="system_prompt" defaultValue={template.system_prompt} /></Field>
           <Field label="Maximum model requests"><Input name="max_model_requests" type="number" min="1" max="128" defaultValue={template.max_model_requests} required /></Field>
-          <Field label="Runtime image digest"><Input name="image_ref" defaultValue={template.runtime.image_ref} required /></Field>
+          <RuntimeImageChoice image={template.runtime.image_ref} source={template.runtime.image_source} inheritedLabel="Keep current image" />
           <div className="flex justify-end gap-2"><Button disabled={pending} type="button" variant="secondary" onClick={() => setOpen(false)}>Cancel</Button><Button aria-busy={pending} disabled={pending} type="submit">{pending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}Publish revision</Button></div>
         </form>
       </Dialog> : null}

@@ -1471,6 +1471,10 @@ func publicRunError(err error) (int, errorResponse) {
 
 func publicError(err error) (int, errorResponse) {
 	switch {
+	case errors.Is(err, application.ErrRuntimeImageSelection):
+		return http.StatusBadRequest, errorResponse{
+			Code: "runtime_image_invalid", Message: "Select an installed repository:tag image. Ask the platform operator to build or load it first.",
+		}
 	case errors.Is(err, application.ErrInvalidInput):
 		return http.StatusBadRequest, errorResponse{Code: "invalid_request", Message: "request is invalid"}
 	case errors.Is(err, application.ErrInvalidReference), errors.Is(err, ports.ErrNotFound):

@@ -13,10 +13,6 @@ export function positiveInteger(value: FormDataEntryValue | null, fallback: numb
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-export function immutableImageReference(value: string): boolean {
-  return /^(?:sha256:[0-9a-fA-F]{64}|[^@\s]+@sha256:[0-9a-fA-F]{64})$/.test(value.trim());
-}
-
 export function csrfFromCookie(cookie: string): string {
   for (const part of cookie.split(";")) {
     const [rawName, ...rawValue] = part.trim().split("=");

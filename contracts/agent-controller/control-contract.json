@@ -1,6 +1,6 @@
 {
   "contract": "antnest.agent-controller.lifecycle",
-  "revision": 9,
+  "revision": 10,
   "transport": "json-over-http",
   "trust": "internal-network",
   "media_types": {
@@ -236,6 +236,7 @@
     "response": "control-api.schema.json#/$defs/error",
     "status_by_code": {
       "invalid_request": 400,
+      "runtime_image_invalid": 400,
       "request_id_conflict": 409,
       "reference_not_found": 404,
       "reference_disabled": 409,
@@ -249,6 +250,7 @@
     },
     "retryable_by_code": {
       "invalid_request": false,
+      "runtime_image_invalid": false,
       "request_id_conflict": false,
       "reference_not_found": false,
       "reference_disabled": false,

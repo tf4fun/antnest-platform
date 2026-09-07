@@ -227,6 +227,15 @@ test("template creation distinguishes loading and unavailable dependencies", () 
   });
 });
 
+test("template creation permits a tag choice without a platform default", () => {
+  const gate = templateCreationGate({
+    modelsAvailable: true, modelCount: 1,
+    defaultsAvailable: true,
+  });
+  assert.equal(gate.allowed, true);
+  assert.equal(gate.action, undefined);
+});
+
 test("Agent creation explains unavailable and missing dependencies in order", () => {
   assert.deepEqual(
     agentCreationGate({ templatesAvailable: false, templateCount: 0, directoryAvailable: true, memberCount: 1 }),

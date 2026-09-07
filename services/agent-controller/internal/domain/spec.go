@@ -38,8 +38,9 @@ type RuntimeResources struct {
 }
 
 type RuntimeSpecInput struct {
-	ImageRef  string           `json:"image_ref"`
-	Resources RuntimeResources `json:"resources"`
+	ImageRef    string           `json:"image_ref"`
+	ImageSource string           `json:"image_source,omitempty"`
+	Resources   RuntimeResources `json:"resources"`
 }
 
 type ModelProfileRevisionInput struct {
@@ -248,7 +249,7 @@ func ValidateModelSpec(model ModelSpec) error {
 }
 
 func validateRuntime(runtime RuntimeSpecInput) error {
-	if !immutableImagePattern.MatchString(runtime.ImageRef) {
+	if !IsImmutableImageReference(runtime.ImageRef) {
 		return fmt.Errorf("runtime image must be immutable")
 	}
 	resources := runtime.Resources
@@ -259,6 +260,10 @@ func validateRuntime(runtime RuntimeSpecInput) error {
 		return fmt.Errorf("runtime PID limit must be between %d and %d", minimumPIDs, maximumPIDs)
 	}
 	return nil
+}
+
+func IsImmutableImageReference(value string) bool {
+	return immutableImagePattern.MatchString(value)
 }
 
 func cloneModel(model ModelSpec) ModelSpec {

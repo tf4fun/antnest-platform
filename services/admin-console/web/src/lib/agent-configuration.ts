@@ -1,4 +1,5 @@
 import type { Agent } from "./types";
+import { runtimeImageLabel } from "./runtime-image.ts";
 
 export type AgentConfigurationSummary = {
   template: string;
@@ -21,7 +22,7 @@ export function agentConfigurationSummary(
     modelRevision: `revision ${configuration.model_profile.revision}`,
     limits: `${configuration.model_profile.model.context_window.toLocaleString("en-US")} context · ${configuration.model_profile.model.max_output_tokens.toLocaleString("en-US")} max output`,
     executionPolicy: `${configuration.max_model_requests.toLocaleString("en-US")} model requests · ${configuration.context_policy_version}`,
-    runtimeImage: configuration.runtime.image_ref,
+    runtimeImage: runtimeImageLabel(configuration.runtime.image_ref, configuration.runtime.image_source),
   };
 }
 

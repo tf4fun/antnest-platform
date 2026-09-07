@@ -47,6 +47,22 @@ TemplateRevision. A revision contains:
 - system prompt and maximum model requests;
 - immutable Runtime image reference and resource limits.
 
+A draft may select an installed `repository:tag` instead of an immutable image.
+Catalog checks request replay and organization-scoped references before invoking
+Runtime Controller's read-only image resolver. It freezes the returned image ID
+and a server-derived `runtime.image_source` for human-readable presentation.
+The published domain model still rejects mutable execution references. Image
+source is output metadata, not a caller assertion or a second execution input.
+
+Request fingerprints describe the original draft, not the mutable lookup
+result. Replaying a completed command returns its original revision without
+calling the resolver. Revising other fields with the current immutable image
+preserves its source. Explicitly selecting a tag resolves it again, even when
+its spelling is unchanged. A missing image or unavailable resolver prevents
+publication; neither Catalog nor Console pulls or builds an image. All stored
+facts remain in the existing private revision snapshots; no cross-service table
+or additional image database is introduced.
+
 Templates do not contain users, active Runtime endpoints, Egress policy, or
 Skill package bytes. Stage 2 has no Skill Registry dependency, so every derived
 Agent configuration has an empty Skill set.

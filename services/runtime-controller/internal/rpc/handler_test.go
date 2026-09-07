@@ -18,6 +18,7 @@ import (
 	"soft/antnest-platform/services/runtime-controller/internal/control"
 	"soft/antnest-platform/services/runtime-controller/internal/deployment"
 	"soft/antnest-platform/services/runtime-controller/internal/observation"
+	"soft/antnest-platform/services/runtime-controller/internal/platform"
 )
 
 const testRuntimeRevision = deployment.RuntimeRevision("rtv_0123456789abcdef0123456789abcdef")
@@ -367,6 +368,10 @@ type fakeService struct {
 	initializeCalls        int
 	command                deployment.OperationKind
 	expectedRevision       deployment.RuntimeRevision
+}
+
+func (*fakeService) ResolveImage(context.Context, string) (platform.ImageResolution, error) {
+	return platform.ImageResolution{}, platform.ErrImageNotFound
 }
 
 func (s *fakeService) Status(context.Context) (control.Readiness, error) {

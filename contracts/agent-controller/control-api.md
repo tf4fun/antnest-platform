@@ -65,6 +65,21 @@ revision. The request references one enabled ModelProfile revision and contains
 Runtime image/resource inputs. Skill references are absent until Skill Registry
 exists; the effective list is empty.
 
+The draft `runtime.image_ref` accepts either an immutable image identity or an
+installed `repository:tag`. Catalog resolves tagged choices through Runtime
+Controller after request replay and organization/reference validation, then
+publishes only an immutable image. The response's optional
+`runtime.image_source` retains the resolved human-readable source; callers must
+not submit this field. Selecting an immutable current image when revising
+preserves its original source. Selecting a tag explicitly resolves it again.
+
+Completed request replay retains its original pin without a resolver call,
+even if the tag moves. An invalid/missing image returns
+`400 runtime_image_invalid`; an unavailable resolver returns
+`503 dependency_unavailable`. Neither failure publishes a revision. Catalog
+never builds or pulls an image, and image lookup does not prove Tool protocol
+compatibility: Agent creation still performs the normal Runtime readiness check.
+
 Template get/revise/list are organization scoped. The ordinary get and list
 return current heads. `GET
 /internal/agent-templates/{template_id}/revisions/{revision}` returns one

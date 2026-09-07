@@ -23,6 +23,7 @@ import (
 	"soft/antnest-platform/services/runtime-controller/internal/deployment"
 	"soft/antnest-platform/services/runtime-controller/internal/diagnostics"
 	"soft/antnest-platform/services/runtime-controller/internal/observation"
+	"soft/antnest-platform/services/runtime-controller/internal/platform"
 )
 
 const maxRequestBytes = 1 << 20
@@ -43,6 +44,7 @@ var (
 
 type Service interface {
 	Status(context.Context) (control.Readiness, error)
+	ResolveImage(context.Context, string) (platform.ImageResolution, error)
 	InitializeRuntime(context.Context, string, string, deployment.Configuration) (deployment.Operation, error)
 	UpdateRuntime(context.Context, string, string, deployment.RuntimeRevision, deployment.Configuration) (deployment.Operation, error)
 	DisableRuntime(context.Context, string, string, deployment.RuntimeRevision) (deployment.Operation, error)
@@ -79,6 +81,7 @@ func NewHandler(
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /status", handler.status)
+	mux.HandleFunc("GET /internal/runtime-images/resolve", handler.resolveImage)
 	mux.HandleFunc("GET /internal/runtimes", handler.listRuntimes)
 	mux.HandleFunc("GET /internal/runtimes/{agent_id}", handler.inspectRuntime)
 	mux.HandleFunc("POST /internal/runtimes/{agent_id}/initialize", handler.initializeRuntime)
@@ -90,6 +93,7 @@ func NewHandler(
 	mux.HandleFunc("GET /internal/runtime-observations", handler.listObservations)
 	mux.HandleFunc("GET /internal/runtime-observations/watch", handler.watchObservations)
 	for _, pattern := range []string{
+		"/internal/runtime-images/resolve",
 		"/status", "/internal/runtimes", "/internal/runtimes/{agent_id}",
 		"/internal/runtimes/{agent_id}/initialize", "/internal/runtimes/{agent_id}/update",
 		"/internal/runtimes/{agent_id}/disable", "/internal/runtimes/{agent_id}/enable",

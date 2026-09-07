@@ -5,6 +5,7 @@ import {
   ChevronRight,
   LayoutDashboard,
   KeyRound,
+  LoaderCircle,
   LogOut,
   Menu,
   MessageSquareText,
@@ -15,14 +16,16 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Brand } from "./components/brand";
 import { AccountSecurity } from "./components/account-security";
+import { ResourceFailurePage } from "./components/page";
 import { Button } from "./components/ui/button";
 import { ErrorNotice, Loading } from "./components/ui/feedback";
 import { APIError, api, errorMessage } from "./lib/api";
 import { accountPresentation } from "./lib/account";
 import { captureResource, type ResourceState } from "./lib/resource-state";
+import { resourceFailure, type ResourceFailure } from "./lib/resource-failure";
 import { parseConsoleRoute } from "./lib/routes";
 import type { ConsolePage as Page, ConsoleRoute as Route } from "./lib/routes";
 import { sessionDestination } from "./lib/session-destination";
@@ -127,10 +130,15 @@ function Navigation({ route, onNavigate }: { route: Route; onNavigate: () => voi
 
 export default function App() {
   const [session, setSession] = useState<Session | null | undefined>();
-  const [startupError, setStartupError] = useState("");
+  const [startupFailure, setStartupFailure] = useState<ResourceFailure>();
+  const [startupPending, setStartupPending] = useState(true);
+  const [startupAttempt, setStartupAttempt] = useState(0);
   const [route, setRoute] = useState<Route>(() => parseConsoleRoute(window.location.hash));
   const [menuOpen, setMenuOpen] = useState(false);
   const [accountSecurityOpen, setAccountSecurityOpen] = useState(false);
+  const [logoutPending, setLogoutPending] = useState(false);
+  const [logoutError, setLogoutError] = useState("");
+  const logoutRequest = useRef<symbol | undefined>(undefined);
   const [accountState, setAccountState] = useState<ResourceState<CurrentAccount>>({ status: "loading" });
   const [accountReload, setAccountReload] = useState(0);
   const [compactNavigation, setCompactNavigation] = useState(
@@ -139,12 +147,34 @@ export default function App() {
   const mainContentRef = useRef<HTMLElement>(null);
   const routeReadyRef = useRef(false);
 
-  useEffect(() => {
-    api.session().then(setSession).catch((cause: unknown) => {
-      if (cause instanceof APIError && cause.status === 401) setSession(null);
-      else setStartupError(errorMessage(cause));
-    });
+  const endSession = useCallback(() => {
+    logoutRequest.current = undefined;
+    setLogoutPending(false);
+    setLogoutError("");
+    setMenuOpen(false);
+    setAccountSecurityOpen(false);
+    setSession(null);
   }, []);
+
+  useEffect(() => {
+    let active = true;
+    void api.session().then((result) => {
+      if (!active) return;
+      setStartupFailure(undefined);
+      setSession(result);
+    }).catch((cause: unknown) => {
+      if (!active) return;
+      if (cause instanceof APIError && cause.status === 401) {
+        setStartupFailure(undefined);
+        endSession();
+      } else {
+        setStartupFailure(resourceFailure(cause));
+      }
+    }).finally(() => {
+      if (active) setStartupPending(false);
+    });
+    return () => { active = false; };
+  }, [endSession, startupAttempt]);
 
   useEffect(() => {
     const query = window.matchMedia("(max-width: 1023px)");
@@ -178,10 +208,9 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const expired = () => setSession(null);
-    window.addEventListener("antnest:session-expired", expired);
-    return () => window.removeEventListener("antnest:session-expired", expired);
-  }, []);
+    window.addEventListener("antnest:session-expired", endSession);
+    return () => window.removeEventListener("antnest:session-expired", endSession);
+  }, [endSession]);
 
   useEffect(() => {
     if (!session || !(
@@ -241,13 +270,22 @@ export default function App() {
     if (destination) window.location.replace(destination);
   }, [destination]);
 
-  if (startupError) {
+  if (startupFailure) {
     return (
       <main className="mx-auto grid min-h-screen max-w-lg place-items-center p-6">
-        <div className="grid w-full gap-4">
-          <ErrorNotice message={startupError} />
-          <Button variant="secondary" onClick={() => window.location.reload()}>Retry</Button>
-        </div>
+        <ResourceFailurePage
+          eyebrow="Administration"
+          resource="Console"
+          returnHref="/workspace/"
+          returnLabel="Open Agent workspace"
+          failure={startupFailure}
+          pending={startupPending}
+          onRetry={() => {
+            if (startupPending) return;
+            setStartupPending(true);
+            setStartupAttempt((attempt) => attempt + 1);
+          }}
+        />
       </main>
     );
   }
@@ -256,10 +294,23 @@ export default function App() {
   if (destination) return <main className="grid min-h-screen place-items-center"><Loading label="Opening Agent workspace" /></main>;
 
   async function logout() {
+    if (logoutRequest.current) return;
+    const request = Symbol();
+    logoutRequest.current = request;
+    setLogoutPending(true);
+    setLogoutError("");
     try {
       await api.logout();
+      if (logoutRequest.current === request) endSession();
+    } catch (cause) {
+      if (logoutRequest.current === request) {
+        setLogoutError(`Sign out could not be confirmed. ${errorMessage(cause)}`);
+      }
     } finally {
-      setSession(null);
+      if (logoutRequest.current === request) {
+        logoutRequest.current = undefined;
+        setLogoutPending(false);
+      }
     }
   }
 
@@ -334,17 +385,20 @@ export default function App() {
                 </Button>
               ) : null}
               <Button
+                aria-busy={logoutPending}
                 aria-label="Sign out"
                 className="h-8 w-8"
+                disabled={logoutPending}
                 size="icon"
                 title="Sign out"
                 variant="ghost"
                 onClick={() => void logout()}
               >
-                <LogOut className="h-4 w-4" />
+                {logoutPending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <LogOut className="h-4 w-4" />}
               </Button>
             </div>
           </div>
+          {logoutError ? <div className="mt-2"><ErrorNotice message={logoutError} /></div> : null}
         </div>
       </aside>
 

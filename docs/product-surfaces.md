@@ -1,6 +1,7 @@
 # Product Surfaces And Feature Convergence
 
-> Status: accepted direction; implementation tracked by category  
+> Status: current Console scope implemented and verified; deferred services tracked separately
+>
 > Updated: 2026-09-07
 
 This document separates four situations that otherwise look identical in the
@@ -85,6 +86,7 @@ exist, but the Stage 3A BFF or browser workflow exposes only part of them.
 | SCIM credentials | Identity supports safe listing, issue, and revoke | implemented: organization-admin token list, one-time no-store credential issuance, and revocation UI |
 | Enterprise login ingress | Identity supports login-method discovery, OIDC start/callback, and SCIM protocol resources | implemented: organization-aware SSO choices on login, server-side callback-to-cookie exchange, and Edge SCIM pass-through |
 | Agent executable lineage | Agent Controller retains immutable AgentSpec and Execution revisions | implemented: detail-only safe projection, immutable Catalog revision reads, and revision-qualified Console links that remain exact after catalog heads advance |
+| Runtime image presentation | Runtime Controller resolves installed images; Agent Controller freezes executable configuration | implemented: default/current image or explicit repository/tag selection, server-derived readable labels, immutable publication, and refreshed container acceptance |
 
 OIDC and SCIM are not implemented as write-only forms. Identity Service exposes
 explicit administrative reads that select no OIDC secret or SCIM token hash.
@@ -150,12 +152,36 @@ storage, or become a general credential administration page. External identity
 credentials remain owned by the configured identity provider. Rejecting the
 submitted current password is an account-operation error and does not discard
 the otherwise valid Edge browser session.
+Component acceptance covers validation before transport, pending-action gating,
+rejected input retention, explicit retry, confirmed success, and credential
+clearing on dismissal. Synthetic HTTP fixtures provide reusable regression
+coverage; the real browser rotation and restoration check is recorded below.
+
+Sign-out is also an authoritative remote operation. Console keeps the current
+page while Edge revokes the session and clears its cookies; the pending action
+cannot be submitted twice. Only confirmed success or an authoritative session
+expiration opens the login page. A rejected or unreachable sign-out remains
+visible beside the account controls without claiming that the session ended.
+Ending a session also closes its navigation drawer and account dialog, so a
+subsequent login does not inherit those interactions.
+The initial session read follows the same structured failure policy as resource
+pages. An absent or expired session (`401`) opens login; `403`, `404`, and `410`
+show terminal access/missing-service feedback without a retry loop. A transient
+failure offers an explicit, single-flight session-read retry while preserving
+the failure message. This retry does not reload the document or load protected
+resources before authentication succeeds.
 
 Agent lifecycle management, durable operation tracking, and per-Agent event
 history are already part of Stage 3A. The Fleet defaults to current Agents;
 deleted records are available only through the explicit `Deleted` audit view,
-where their detail and event history are read-only. Lifecycle actions are
-offered only when the authoritative desired/lifecycle state satisfies the
+where their detail and event history are read-only. Reading a completed
+deletion, including its arrival through live events, leaves the retained detail
+open; navigation back to the Fleet is an explicit user action. The operation
+section is `Current operation` only while the Agent names an active request;
+otherwise it is `Last operation`. A phase identical to the operation state is
+not rendered as a duplicate status, while a distinct failed phase remains
+visible for diagnosis.
+Lifecycle actions are offered only when the authoritative desired/lifecycle state satisfies the
 Agent Controller command precondition. Missing presentation polish in those
 flows is handled as an ordinary page defect, not as a new domain service.
 Deleting an Agent requires an in-product confirmation that distinguishes
@@ -163,6 +189,16 @@ Runtime/workspace removal from retained Agent and lifecycle evidence. While a
 focused mutation is awaiting admission, its dialog cannot be dismissed; after
 an asynchronous lifecycle command is accepted, progress moves to the Agent's
 authoritative operation and event surfaces.
+Lifecycle command admission and the subsequent Agent read are separate results.
+An accepted request receives an explicit acknowledgement, not a claim that the
+operation has completed. A failed follow-up read cannot turn that receipt into
+a command failure or invite resubmission. It preserves the last readable Agent
+and closes lifecycle actions until an authoritative read succeeds, including
+while a retry is pending. A rejected rebuild keeps its selected Template and
+error inside the originating dialog; canceling and reopening clears that error.
+Agent detail component state is scoped to the Agent identity: changing that
+identity discards the previous Agent's dialogs and command feedback rather
+than carrying a pending form or late response into another Agent.
 Agent projection and lifecycle-event history fail independently. A history
 outage cannot replace an otherwise readable Agent, immutable executable
 configuration, or valid lifecycle action with a page-level error. The event
@@ -200,6 +236,45 @@ revision directly and do not make current-head availability a prerequisite.
 The Model revision referenced by a Template is an independent presentation
 dependency: lookup failure cannot erase the Template's prompt, Runtime policy,
 or revision facts, and is recovered through a section-local retry.
+Runtime image selection is a product-level choice, not a digest editing task.
+Normal Template creation uses the platform default; revision keeps that
+Template's pinned image instead of adopting a changed deployment default.
+An explicit image choice uses a repository and tag. The published executable
+configuration still needs a resolved immutable image identity, so updating a
+tag later cannot silently change the environment represented by a Template
+revision. Digest resolution belongs to the image/platform owner, not a browser
+request or a Docker client inside the Console BFF. Exact digests remain internal
+configuration and audit data, not Console form inputs or image labels.
+Without a configured default, Console requires an explicit tag rather than
+blocking creation. Existing Templates remain readable and revisable. Resolved
+images carry a server-derived human source; a bare immutable ID without that
+metadata is called `Platform runtime` without inventing a tag.
+The owner-side resolution query, Agent Controller publication, and Console tag
+choice are wired together. This increment does not introduce a registry, image
+builder, or implicit pull. Agent Controller resolves a chosen repository/tag
+only after replay and reference scope checks, then freezes both the immutable
+image and its human source in the
+Template revision. A command replay returns the original pin even when the tag
+moves or the resolver is unavailable. Editing other Template fields preserves
+the previous pin; selecting a different image is an explicit action. Console
+continues to own only form presentation and safe DTOs, not Docker access.
+On 2026-09-07 the Runtime Controller query passed its service tests, route/DTO
+contract checks, short-span propagation test, and an opt-in read-only check
+against the installed Docker Runtime image. `make fmt-check` and `make lint`
+also passed. The subsequent Catalog HTTP/PostgreSQL integration proves source
+persistence, replay without resolver access, pin-preserving revision, and no
+publication on resolver failure. This integration uses an HTTP resolver fixture;
+the actual Docker image lookup is verified separately. The rebuilt Runtime
+Controller, Agent Controller, and Console also passed the full isolated Stage 3
+Docker E2E with the mock model: unavailable-tag rejection without publication,
+tag resolution and replay, source retention on Agent creation and Template
+revision, lifecycle operations, ACP interaction, and Jaeger assertions. Test
+containers, volumes, and networks were removed afterward. Read-only browser
+checks on the updated retained
+preview verified default/custom creation choices, current-image preservation in
+the revision form, and usable 1440x900 and 390x844 layouts with no console errors.
+That read-only check did not publish a Template revision; the later authorized
+mutation acceptance is recorded below.
 Primary detail failures retain their HTTP meaning instead of collapsing into a
 generic retry state. Model, Template, and Agent reads offer retry only for a
 transient failure. A missing or no-longer-retained resource and an explicit
@@ -422,6 +497,42 @@ prevention, and Deleted-read failures that must not trigger automatic traffic.
 Directory and Provisioning mutation coverage now includes successful commands
 followed by failed reads, input retention on rejection, row-action freshness,
 system-only OIDC access, and SCIM one-time credential and clipboard handling.
+Catalog revision component tests cover rejected form retention, pending
+publication, authoritative revision feedback, terminal detail failures,
+historical reads without a current-head dependency, and independent recovery
+of the Model revision referenced by a published Template.
+Runtime image tests cover digest-free presentation, creation with the platform
+default or an explicit installed tag, creation without a platform default,
+resolver rejection, and revision pin preservation when the deployment default
+changes or disappears. The rebuilt services passed the full isolated Stage 3
+suite, including deletion and test-resource cleanup. Read-only browser checks
+confirmed digest-free create/revise forms and detail presentation. The later
+authorized browser check also verified Template publication and pin-preserving
+Agent lineage.
+Agent operation component tests now exercise completed-deletion history,
+SSE-driven transition to retained detail, explicit return navigation, active
+versus last-operation labeling, and preservation of distinct failure phases.
+They caught and removed an unconditional deletion-completion redirect that had
+made retained detail unreadable. Agent mutation component tests additionally
+cover creation retry identity, input retention, duplicate/dismissal prevention,
+the four lifecycle commands' admission acknowledgements, independent transient
+and terminal follow-up reads, and read-only retry without reopening stale
+actions. Switching Agent identity also discards an old pending dialog and its
+late rejection. The latest frontend passes 77 unit tests and 116 component
+tests. The fourteen application-session cases cover confirmed logout, blocked
+duplicate submission, HTTP/network rejection, fresh login after expiration,
+drawer/account-dialog cleanup, stale logout responses after a new login, startup
+401 versus terminal 403/404/410, and single-flight HTTP/network failure recovery
+without document reload or early protected-resource reads.
+These use the real application and API wrapper with a deterministic HTTP
+fixture. Seven account-security component cases additionally cover validation,
+pending submission/dismissal gates, HTTP/network rejection, explicit retry,
+credential clearing, and absence of credential persistence. Edge's HTTP tests
+separately verify cookie expiration on revocation and cookie preservation on
+retryable Identity failure.
+Both Edge logout tests, `make fmt-check`, and `make lint` passed. The standard
+Console image includes the session fix and passed its production build; the
+retained preview was updated without replacing other services or Runtime data.
 
 Container acceptance passed on 2026-09-07 after rebuilding the standard images.
 The isolated Stage 3 E2E covers model/template creation replay, organization
@@ -432,11 +543,57 @@ ownership through Agent Controller's scoped interface. Cleanup stops lifecycle
 creators before deleting test resources and fails if containers or volumes
 remain; this run left no test resources behind.
 
-Browser visual acceptance remains open: attaching browser control to the
-existing Console tab timed out after earlier `Debugger unattached` errors.
-Component and HTTP E2E tests do not close that check.
+Read-only browser acceptance on 2026-09-07 covered Overview at 1440x900 and
+390x844; compact navigation; Model/Template inventory and revision detail;
+Directory; current/deleted Fleet; Agent detail and its rebuild dialog; OIDC and
+SCIM public endpoint presentation; the local-password form; and Runtime tag
+selection. Drawer background was inert, long forms remained scrollable, live
+SSE recovered, and idle Agents displayed one completion status under `Last
+operation`. No browser warnings or errors were observed. The retained preview
+uses only synthetic accounts and model data; disposable test stacks were
+cleaned up.
 
-Continue the cross-surface acceptance audit of mutation acknowledgements and
-forbidden/compact-viewport interactions. Channel and Skill pages still wait for
-their owner services; Scheduled Tasks and cross-service Audit remain outside
-the decided scope.
+A further read-only check opened a nonexistent Template revision through the
+real Edge/BFF/Agent Controller path. It displayed `Agent template not found`
+with no Retry button. At 390x844 the document and viewport widths were both
+390px, and the visible return link restored the normal Template inventory.
+This proves the missing-revision browser path, not an unauthorized-user flow.
+The subsequent startup-recovery change passed component tests and the standard
+production build. A fresh read-only browser tab confirmed the rebuilt asset,
+authenticated Template inventory, platform-default/tag selection, and
+digest-free Template detail. The browser log contained an unrelated translation
+extension fetch error; no application-origin error was observed in this check.
+This verifies normal startup, not the failure-recovery branches covered by the
+component tests.
+
+After explicit user approval, real browser acceptance published Template
+revision 3, verified it survived reload, and confirmed that the existing Agent
+still referenced revision 1 with unchanged lifecycle history. Sign-out opened
+login, reload did not restore the revoked session, and password login restored
+the original administrator route. An ordinary member was directed to Workspace
+both after login and after direct Console navigation. A separate synthetic
+Organization administrator could use Directory and SCIM administration but
+could not see system-only OIDC or global user-activation controls. No existing
+administrator permissions or Agent runtimes were changed.
+Direct navigation to the restricted OIDC JSON endpoint was blocked by Chrome,
+so it is not evidence of a server-side 403. HTTP authorization and terminal
+failure rendering retain their service/component evidence; the browser checks
+above prove actual role-dependent navigation and available controls.
+
+Authorized real browser password acceptance also passed using only the
+separate synthetic Organization administrator. An incorrect current password
+left the authenticated session and input form intact. A valid change displayed
+success and removed the password fields; the old password was rejected at
+login and the replacement password succeeded. The original test password was
+then restored and verified by another login. Finally, the preview returned to
+the original system administrator and the temporary acceptance account was
+disabled through Directory, retaining its audit record. No existing
+administrator password or Agent configuration was changed.
+
+The bounded cross-surface audit and browser acceptance are complete for the
+currently decided Console scope. Reusable evidence remains 77 unit tests and
+116 component tests, owner/BFF HTTP and contract tests, and the isolated Stage 3
+Docker E2E described above; format, lint, and type checks passed. Browser
+acceptance complements these tests rather than replacing them.
+Channel and Skill pages wait for their owner services; Scheduled Tasks and
+cross-service Audit remain outside the decided scope.

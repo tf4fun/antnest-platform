@@ -37,6 +37,7 @@ type Config struct {
 
 type Engine interface {
 	Ping(context.Context) error
+	InspectImage(context.Context, string) (string, error)
 	InspectContainer(context.Context, string) (Container, error)
 	ListManagedContainerIDs(context.Context) ([]string, error)
 	ListManagedContainers(context.Context) ([]Container, error)

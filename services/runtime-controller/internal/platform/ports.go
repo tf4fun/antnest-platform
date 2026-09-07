@@ -13,6 +13,7 @@ var ErrObservationStreamDisconnected = errors.New("platform observation stream d
 // Lifecycle is the deployment-platform capability used by control use cases.
 type Lifecycle interface {
 	Ready(context.Context) error
+	ResolveImage(context.Context, string) (ImageResolution, error)
 	DeploymentDigest(deployment.Deployment) (string, error)
 	Create(context.Context, deployment.Deployment, string) deployment.EffectOutcome
 	Inspect(context.Context, deployment.Key) (deployment.Inspection, error)

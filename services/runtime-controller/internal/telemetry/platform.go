@@ -52,6 +52,14 @@ func (p *ObservedPlatform) DeploymentDigest(value deployment.Deployment) (string
 	return p.next.DeploymentDigest(value)
 }
 
+func (p *ObservedPlatform) ResolveImage(ctx context.Context, reference string) (platform.ImageResolution, error) {
+	started := time.Now()
+	ctx, span := platformTracer.Start(ctx, "runtime.platform.resolve_image")
+	image, err := p.next.ResolveImage(ctx, reference)
+	p.finish(ctx, span, started, "resolve_image", effectResult(err), err)
+	return image, err
+}
+
 func (p *ObservedPlatform) Create(
 	ctx context.Context, value deployment.Deployment, digest string,
 ) deployment.EffectOutcome {

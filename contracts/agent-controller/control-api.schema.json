@@ -32,6 +32,18 @@
         "tmpfs_bytes": { "type": "integer", "minimum": 16777216 }
       }
     },
+    "runtime_draft": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["image_ref", "resources"],
+      "properties": {
+        "image_ref": {
+          "type": "string", "minLength": 1, "maxLength": 512,
+          "description": "Immutable image reference or an installed repository:tag, resolved by Runtime Controller before publication."
+        },
+        "resources": { "$ref": "#/$defs/runtime_resources" }
+      }
+    },
     "runtime_input": {
       "type": "object",
       "additionalProperties": false,
@@ -41,6 +53,7 @@
           "type": "string",
           "pattern": "^(sha256:[0-9a-fA-F]{64}|[^@\\s]+@sha256:[0-9a-fA-F]{64})$"
         },
+        "image_source": { "type": "string", "minLength": 1, "maxLength": 512, "readOnly": true },
         "resources": { "$ref": "#/$defs/runtime_resources" }
       }
     },
@@ -206,7 +219,7 @@
           "maximum": 128
         },
         "context_policy_version": { "const": "context-v1" },
-        "runtime": { "$ref": "#/$defs/runtime_input" }
+        "runtime": { "$ref": "#/$defs/runtime_draft" }
       }
     },
     "revise_template_request": {
@@ -234,7 +247,7 @@
           "maximum": 128
         },
         "context_policy_version": { "const": "context-v1" },
-        "runtime": { "$ref": "#/$defs/runtime_input" }
+        "runtime": { "$ref": "#/$defs/runtime_draft" }
       }
     },
     "agent_template": {
@@ -545,6 +558,7 @@
         "code": {
           "enum": [
             "invalid_request",
+            "runtime_image_invalid",
             "request_id_conflict",
             "reference_not_found",
             "reference_disabled",

@@ -7,12 +7,14 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"soft/antnest-platform/services/agent-controller/internal/application"
 	"soft/antnest-platform/services/agent-controller/internal/credentials"
 	"soft/antnest-platform/services/agent-controller/internal/repository/postgres"
+	"soft/antnest-platform/services/agent-controller/internal/runtimeclient"
 	"soft/antnest-platform/services/agent-controller/internal/server"
 )
 
@@ -39,8 +41,32 @@ func TestCatalogHappyPathThroughHTTPAndPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create SecretBox: %v", err)
 	}
+	var lookups atomic.Int64
+	var resolverUnavailable atomic.Bool
+	imageID := "sha256:" + strings.Repeat("a", 64)
+	imageServer := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		lookups.Add(1)
+		if request.URL.Path != "/internal/runtime-images/resolve" || request.URL.Query().Get("reference") != "antnest/runtime:local" {
+			t.Errorf("unexpected image query: %s", request.URL)
+		}
+		if resolverUnavailable.Load() {
+			response.WriteHeader(http.StatusServiceUnavailable)
+			if err := json.NewEncoder(response).Encode(map[string]any{"code": "platform_unavailable", "retryable": true}); err != nil {
+				t.Error(err)
+			}
+			return
+		}
+		if err := json.NewEncoder(response).Encode(map[string]string{"reference": "antnest/runtime:local", "image_ref": imageID}); err != nil {
+			t.Error(err)
+		}
+	}))
+	t.Cleanup(imageServer.Close)
+	images, err := runtimeclient.New(imageServer.URL, time.Second, imageServer.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
 	handler, err := server.NewHandler(
-		application.NewCatalogService(repository, secretBox, fixedClock{now: time.Unix(1, 0).UTC()}),
+		application.NewCatalogService(repository, secretBox, images, fixedClock{now: time.Unix(1, 0).UTC()}),
 		catalogOnlyLifecycle{},
 		application.NewRunService(
 			repository, secretBox, fixedClock{now: time.Unix(1, 0).UTC()}, 30*time.Minute,
@@ -102,6 +128,54 @@ func TestCatalogHappyPathThroughHTTPAndPostgres(t *testing.T) {
 	items, ok := listResponse["items"].([]any)
 	if !ok || len(items) != 1 {
 		t.Fatalf("Template list response = %+v", listResponse)
+	}
+	if lookups.Load() != 0 {
+		t.Fatal("immutable default unexpectedly used the tag resolver")
+	}
+	assertImageChoicePublication(t, handler, templateRequest, imageID, &resolverUnavailable, &lookups)
+}
+
+func assertImageChoicePublication(t *testing.T, handler http.Handler, original, imageID string, unavailable *atomic.Bool, lookups *atomic.Int64) {
+	t.Helper()
+	var draft map[string]any
+	if err := json.Unmarshal([]byte(original), &draft); err != nil {
+		t.Fatal(err)
+	}
+	draft["request_id"], draft["template_key"] = "catalog-image-choice", "image-choice"
+	runtime := draft["runtime"].(map[string]any)
+	runtime["image_ref"] = "antnest/runtime:local"
+	body := mustJSON(t, draft)
+	created := serveJSON(t, handler, http.MethodPost, "/internal/agent-templates", body, http.StatusCreated)
+	path := "/internal/agent-templates/" + created["template_id"].(string)
+	persisted := serveJSON(t, handler, http.MethodGet, path+"?organization_id=catalog-e2e-org", "", http.StatusOK)
+	image := persisted["runtime"].(map[string]any)
+	if image["image_ref"] != imageID || image["image_source"] != "antnest/runtime:local" || lookups.Load() != 1 {
+		t.Fatalf("persisted Runtime image = %+v, lookups = %d", image, lookups.Load())
+	}
+	unavailable.Store(true)
+	replayed := serveJSON(t, handler, http.MethodPost, "/internal/agent-templates", body, http.StatusCreated)
+	for _, field := range []string{"created_at", "updated_at"} {
+		instant, err := time.Parse(time.RFC3339Nano, replayed[field].(string))
+		if err != nil {
+			t.Fatal(err)
+		}
+		replayed[field] = instant.UTC().Format(time.RFC3339Nano)
+	}
+	if mustJSON(t, replayed) != mustJSON(t, created) || lookups.Load() != 1 {
+		t.Fatalf("replay changed: created=%s replayed=%s lookups=%d", mustJSON(t, created), mustJSON(t, replayed), lookups.Load())
+	}
+	delete(draft, "template_key")
+	draft["request_id"], draft["system_prompt"] = "catalog-image-preserve", "Updated prompt"
+	runtime["image_ref"] = imageID
+	revised := serveJSON(t, handler, http.MethodPost, path+"/revisions", mustJSON(t, draft), http.StatusCreated)
+	if revised["runtime"].(map[string]any)["image_source"] != "antnest/runtime:local" || lookups.Load() != 1 {
+		t.Fatal("prompt-only revision lost image source or used the resolver")
+	}
+	draft["request_id"], runtime["image_ref"] = "catalog-image-unavailable", "antnest/runtime:local"
+	failed := serveJSON(t, handler, http.MethodPost, path+"/revisions", mustJSON(t, draft), http.StatusServiceUnavailable)
+	current := serveJSON(t, handler, http.MethodGet, path+"?organization_id=catalog-e2e-org", "", http.StatusOK)
+	if failed["code"] != "dependency_unavailable" || current["revision"] != revised["revision"] || lookups.Load() != 2 {
+		t.Fatal("failed image resolution published a revision or lost its dependency error")
 	}
 }
 

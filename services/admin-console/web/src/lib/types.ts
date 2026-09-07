@@ -151,6 +151,7 @@ export type ModelProfileList = {
 
 export type RuntimeSpec = {
   image_ref: string;
+  image_source?: string;
   resources: { memory_bytes: number; pids_limit: number; tmpfs_bytes: number };
 };
 

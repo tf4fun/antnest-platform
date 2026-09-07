@@ -130,6 +130,10 @@ func (s *Service) InitializeRuntime(
 	})
 }
 
+func (s *Service) ResolveImage(ctx context.Context, reference string) (platform.ImageResolution, error) {
+	return s.platform.ResolveImage(ctx, reference)
+}
+
 func (s *Service) UpdateRuntime(
 	ctx context.Context,
 	requestID, agentID string,

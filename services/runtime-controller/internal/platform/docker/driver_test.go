@@ -496,6 +496,8 @@ func newFakeEngine() *fakeEngine {
 
 func (*fakeEngine) Ping(context.Context) error { return nil }
 
+func (*fakeEngine) InspectImage(context.Context, string) (string, error) { return "", ErrNotFound }
+
 func (e *fakeEngine) ListManagedContainerIDs(context.Context) ([]string, error) {
 	e.probeCalls++
 	if e.container == nil {

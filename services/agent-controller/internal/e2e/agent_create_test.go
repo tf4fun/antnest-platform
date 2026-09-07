@@ -379,7 +379,7 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 		application.WithIdentityDirectory(e2eIdentityDirectory{}),
 	)
 	handler, err := server.NewHandler(
-		application.NewCatalogService(repository, secretBox, clock),
+		application.NewCatalogService(repository, secretBox, runtime, clock),
 		lifecycle,
 		application.NewRunService(repository, secretBox, clock, 30*time.Minute),
 		application.NewAgentQueryService(repository),

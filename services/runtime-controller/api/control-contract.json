@@ -1,5 +1,5 @@
 {
-  "revision": 5,
+  "revision": 6,
   "transport": "json-over-http",
   "trust_boundary": "internal-network",
   "schemas": {
@@ -14,6 +14,14 @@
     }
   },
   "routes": [
+    {
+      "operation_id": "resolveRuntimeImage",
+      "method": "GET",
+      "path": "/internal/runtime-images/resolve",
+      "query_parameters": {"reference": "control-api.schema.json#/$defs/tagged_image_reference"},
+      "responses": {"200": {"content_type": "application/json", "body": "control-api.schema.json#/$defs/image_resolution"}},
+      "errors": ["invalid_request", "image_not_found", "platform_unavailable", "deadline_exceeded", "internal_error"]
+    },
     {
       "operation_id": "getStatus",
       "method": "GET",
@@ -147,6 +155,7 @@
     }
   ],
   "errors": {
+    "image_not_found": {"status": 404, "retryable": false, "body": "control-api.schema.json#/$defs/error"},
     "invalid_request": {"status": 400, "retryable": false, "body": "control-api.schema.json#/$defs/error"},
     "idempotency_key_required": {"status": 400, "retryable": false, "body": "control-api.schema.json#/$defs/error"},
     "request_id_conflict": {"status": 409, "retryable": false, "body": "control-api.schema.json#/$defs/error"},

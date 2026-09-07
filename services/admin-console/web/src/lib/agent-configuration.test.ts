@@ -48,7 +48,7 @@ test("agentConfigurationSummary renders exact executable revisions", () => {
     modelRevision: "revision 4",
     limits: "128,000 context · 8,192 max output",
     executionPolicy: "24 model requests · context-v1",
-    runtimeImage: agent.configuration.runtime.image_ref,
+    runtimeImage: "antnest/runtime",
   });
 });
 

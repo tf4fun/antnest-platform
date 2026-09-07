@@ -159,14 +159,31 @@ sequenceDiagram
     participant IDDB as Identity DB
     participant Admin as Admin Console
 
-    Browser->>Edge: POST /api/session/login {organization_slug,email,password}
-    Edge->>Edge: consume source + normalized-account admission budget
-    Edge->>Identity: local_login
-    Identity->>IDDB: read Organization, Membership, User, LocalCredential
-    Identity->>Identity: verify Argon2id password
-    Identity->>IDDB: commit hashed API token and login event
-    Identity-->>Edge: principal + one-time plaintext access token
-    Edge-->>Browser: HttpOnly token cookie + readable CSRF cookie
+    Browser->>Edge: GET /api/session
+    alt Existing valid session
+        Edge-->>Browser: principal
+        Browser->>Browser: enter administrator surface or Agent workspace
+    else No valid session
+        Edge-->>Browser: 401
+        Browser->>Browser: show login
+    else Session service unavailable
+        Edge-->>Browser: transient error
+        Browser->>Browser: offer session-read retry without document reload
+    else Terminal access or missing endpoint
+        Edge-->>Browser: 403 / 404 / 410
+        Browser->>Browser: show terminal failure without retry
+    end
+
+    opt Login is required
+        Browser->>Edge: POST /api/session/login {organization_slug,email,password}
+        Edge->>Edge: consume source + normalized-account admission budget
+        Edge->>Identity: local_login
+        Identity->>IDDB: read Organization, Membership, User, LocalCredential
+        Identity->>Identity: verify Argon2id password
+        Identity->>IDDB: commit hashed API token and login event
+        Identity-->>Edge: principal + one-time plaintext access token
+        Edge-->>Browser: HttpOnly token cookie + readable CSRF cookie
+    end
 
     Browser->>Edge: protected /api/admin request + CSRF header when mutating
     Edge->>Identity: resolve_access_token(token)
@@ -187,14 +204,17 @@ sequenceDiagram
     Edge-->>Browser: account + Organization labels + capability
 
     Browser->>Edge: DELETE /api/session + CSRF
+    Browser->>Browser: keep current page; disable duplicate sign-out
     Edge->>Identity: revoke_access_token(token)
     alt Revoked or already invalid
         Identity->>IDDB: commit revocation and event when active
         Identity-->>Edge: revoked | already_invalid
         Edge-->>Browser: expire access and CSRF cookies; 204
+        Browser->>Browser: close account interactions; show login
     else Retryable Identity failure
         Identity--xEdge: unavailable
         Edge-->>Browser: preserve cookies for retry; 503
+        Browser->>Browser: keep current page and show sign-out failure
     end
 ```
 
@@ -228,6 +248,10 @@ sequenceDiagram
 - Logout is remote-first and idempotent. Cookies are cleared only after Identity
   confirms `revoked` or `already_invalid`, so a retryable outage cannot discard
   the credential required to retry revocation.
+- Console mirrors that outcome, not a `finally` block: pending sign-out disables
+  repeat submission, a failure remains actionable in the account area, and
+  confirmed logout or session expiration clears the previous session's open
+  navigation and account dialogs.
 - Current-account loading is optional presentation work after authentication.
   Its failure leaves the Console session and primary pages usable, exposes a
   local retry, uses neutral labels rather than opaque identity IDs, and fails
@@ -503,6 +527,8 @@ sequenceDiagram
     participant Admin as Admin Console BFF
     participant AC as Agent Controller
     participant ACDB as Agent Controller DB
+    participant RC as Runtime Controller
+    participant Docker as Docker Engine
 
     AdminUser->>Edge: POST /api/admin/templates + CSRF + stable Idempotency-Key
     Edge->>Identity: resolve_access_token
@@ -510,10 +536,22 @@ sequenceDiagram
     Edge->>Admin: trusted organization and actor IDs
     Admin->>Admin: apply defaults; derive request_id and template_key from organization + key
     Admin->>AC: POST /internal/agent-templates
-    AC->>ACDB: read exact Model Profile revision
-    AC->>AC: validate same organization and complete Runtime input
-    AC->>ACDB: transaction: catalog request + Template head + immutable revision
-    AC-->>Admin: Template head + revision
+    AC->>ACDB: replay original request before resolving mutable inputs
+    alt completed request exists
+        AC-->>Admin: original immutable revision
+    else new command
+        AC->>ACDB: read exact Model Profile revision
+        AC->>AC: validate same organization
+        opt explicit repository:tag selected
+            AC->>RC: GET /internal/runtime-images/resolve?reference=repository:tag
+            RC->>Docker: inspect installed image (no pull)
+            Docker-->>RC: immutable image ID
+            RC-->>AC: named source + immutable image ID
+        end
+        AC->>AC: validate complete immutable Runtime input
+        AC->>ACDB: transaction: catalog request + Template head + immutable revision
+        AC-->>Admin: Template head + revision
+    end
     Admin-->>Edge: created Template
     Edge-->>AdminUser: created Template
 ```
@@ -522,9 +560,10 @@ sequenceDiagram
 
 - Template creation has no Runtime, Egress, or Identity side effect. It should
   remain one Agent Controller transaction.
-- As with Model Profile creation, the owner ledger only deduplicates an exact
-  internal request ID. Browser resubmission receives a new request ID and a new
-  timestamp-derived Template key, so the public mutation is not retry-stable.
+- As with Model Profile creation, unchanged browser retries retain the command
+  identity. The BFF derives a stable Template key from the organization-scoped
+  request ID, and the owner ledger replays the committed result. A confirmed
+  subsequent creation starts a new command identity.
 - The Console currently supplies product defaults such as context policy and
   default Runtime image. This is acceptable for the Stage 3A product surface,
   but behavior-critical defaults must ultimately have one versioned owner. If
@@ -532,6 +571,31 @@ sequenceDiagram
   duplicating them across clients.
 - A zero-Skill Template remains valid. Skill Registry is not involved in the
   current flow.
+- The browser defaults to the platform image without a digest input. An explicit
+  tag may be selected, and is required when no default is configured.
+  Revision requests preserve the Template's pinned image even after deployment
+  defaults change. Ordinary details show an available repository/tag, not its
+  digest; an unnamed image ID is displayed as `Platform runtime`.
+- Repository/tag resolution occurs at Runtime Controller before publishing an immutable
+  configuration; neither the browser nor the Console BFF should gain Docker
+  responsibilities.
+
+### B05a. Publish a Catalog revision
+
+- Model and Template forms call their BFF revision endpoint through Edge, using
+  the existing trusted organization and request-identity boundary. Agent
+  Controller commits the revision and returns its authoritative number.
+- A rejected command leaves the dialog and input intact. While publication is
+  pending, the dialog cannot close or submit a duplicate command. Success closes
+  it, updates the displayed record from the returned projection, and leaves a
+  dismissible acknowledgement; the browser does not increment a revision number
+  optimistically.
+- A Template's referenced Model is a separate immutable read after publication.
+  Failure cannot erase the published Template or turn success into a request to
+  publish again. A transient retry repeats only that Model query.
+- Historical Model/Template routes read the requested revision directly and
+  expose no publish action. Terminal detail failures keep a return path but no
+  automatic or manual retry of the failed read.
 
 ## 4. Agent Lifecycle
 
@@ -711,6 +775,16 @@ operation-bearing replayed event, independent of response arrival order.
 Concurrent Agent responses are applied by aggregate sequence, not by request
 completion order, so recovery cannot discard the only valid initial snapshot
 or regress a newer one.
+
+Lifecycle writes have an explicit admission boundary in the browser. A rejected
+command stays in its originating form; a successful admission closes that form
+and acknowledges the accepted request without claiming completion. The following
+Agent read is independent: its failure preserves the receipt and last projection,
+and offers a read-only retry only for a transient response. Lifecycle actions
+remain closed during this retry and reopen only from fresh authoritative state.
+No refresh path re-sends the accepted command. Agent detail state belongs to its
+resource identity, so navigating to another Agent cannot carry over a pending
+dialog or a late rejection from the previous one.
 
 **Complexity review**
 
@@ -901,6 +975,11 @@ sequenceDiagram
   deleted view asks the BFF for `view=deleted`; the BFF maps that product view
   to Agent Controller's retained lifecycle filter and exposes the resource as
   read-only lifecycle evidence.
+- Loading a completed deletion from history is a read, not a navigation command.
+  Its arrival through SSE also leaves the now-read-only detail open; returning
+  to the Fleet remains an explicit user action. An idle Agent labels its retained
+  operation `Last operation`, and a phase identical to its state is not repeated.
+  Distinct failure phases and error details remain available.
 - Address quarantine is analogous to delayed PID/address reuse and protects late
   packets. It belongs in Egress, not Agent Controller.
 

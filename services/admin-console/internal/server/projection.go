@@ -148,18 +148,18 @@ type modelProfileListSource struct {
 }
 
 type templateSource struct {
-	TemplateID             string          `json:"template_id"`
-	Name                   string          `json:"name"`
-	Revision               int64           `json:"revision"`
-	ModelProfileRevisionID string          `json:"model_profile_revision_id"`
-	SystemPrompt           string          `json:"system_prompt"`
-	MaxModelRequests       int             `json:"max_model_requests"`
-	ContextPolicyVersion   string          `json:"context_policy_version"`
-	Runtime                json.RawMessage `json:"runtime"`
-	SkillRefs              []string        `json:"skill_refs"`
-	Enabled                bool            `json:"enabled"`
-	CreatedAt              string          `json:"created_at"`
-	UpdatedAt              string          `json:"updated_at"`
+	TemplateID             string                          `json:"template_id"`
+	Name                   string                          `json:"name"`
+	Revision               int64                           `json:"revision"`
+	ModelProfileRevisionID string                          `json:"model_profile_revision_id"`
+	SystemPrompt           string                          `json:"system_prompt"`
+	MaxModelRequests       int                             `json:"max_model_requests"`
+	ContextPolicyVersion   string                          `json:"context_policy_version"`
+	Runtime                agentRuntimeConfigurationSource `json:"runtime"`
+	SkillRefs              []string                        `json:"skill_refs"`
+	Enabled                bool                            `json:"enabled"`
+	CreatedAt              string                          `json:"created_at"`
+	UpdatedAt              string                          `json:"updated_at"`
 }
 
 type templateListSource struct {
@@ -187,8 +187,9 @@ type agentRuntimeResourcesSource struct {
 }
 
 type agentRuntimeConfigurationSource struct {
-	ImageRef  string                      `json:"image_ref"`
-	Resources agentRuntimeResourcesSource `json:"resources"`
+	ImageRef    string                      `json:"image_ref"`
+	ImageSource string                      `json:"image_source,omitempty"`
+	Resources   agentRuntimeResourcesSource `json:"resources"`
 }
 
 type agentTemplateLineageSource struct {

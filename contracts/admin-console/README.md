@@ -51,6 +51,13 @@ and direct dependencies independently, so an unrelated overview section cannot
 erase an otherwise usable Template or Agent inventory. Template creation reads
 the BFF's non-persistent Runtime image default through `GET /template-defaults`
 instead of triggering the four-owner overview aggregate.
+Template commands may explicitly select `runtime.image_ref` as a repository/tag;
+the BFF forwards the choice to Agent Controller, never directly to Docker or a
+registry. Omitted creation input uses the configured default. Revision forms
+explicitly send the current immutable image when keeping it. The optional
+response `runtime.image_source` is server-derived display metadata and is not
+accepted in browser commands. Runtime projections allow only image identity,
+human source, and resource limits, not arbitrary platform metadata.
 Model Profile reads are likewise independent from the release-managed Model
 Catalog. If Catalog metadata is unavailable, existing Profiles and immutable
 revision details retain their stored human label and remain readable; only

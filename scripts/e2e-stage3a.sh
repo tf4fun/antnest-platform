@@ -409,19 +409,36 @@ if grep -q 'stage3-model-secret' "$temporary_root/model-response.json"; then
   exit 1
 fi
 
+cat >"$temporary_root/template-missing-image.json" <<EOF
+{
+  "name":"Missing image must not publish",
+  "model_profile_revision_id":"$model_revision_id",
+  "runtime":{"image_ref":"antnest/not-installed:${COMPOSE_PROJECT_NAME}"}
+}
+EOF
+gateway_request POST /api/admin/templates "$temporary_root/template-missing-image.json" \
+  "$temporary_root/template-missing-image-response.json" 400
+assert_field "$temporary_root/template-missing-image-response.json" code runtime_image_invalid
+gateway_request GET /api/admin/templates - "$temporary_root/templates-after-missing-image.json" 200
+assert_field "$temporary_root/templates-after-missing-image.json" items.length 0
+
 cat >"$temporary_root/template.json" <<EOF
 {
   "name":"Stage 3 Template",
   "model_profile_revision_id":"$model_revision_id",
   "system_prompt":"Operate as a reliable enterprise assistant.",
-  "max_model_requests":8
+  "max_model_requests":8,
+  "runtime":{"image_ref":"antnest/antnest-runtime:local"}
 }
 EOF
 gateway_request POST /api/admin/templates "$temporary_root/template.json" "$temporary_root/template-response.json" 201
 template_id=$(json_field "$temporary_root/template-response.json" template_id)
+assert_field "$temporary_root/template-response.json" runtime.image_ref "$runtime_image"
+assert_field "$temporary_root/template-response.json" runtime.image_source antnest/antnest-runtime:local
 gateway_request POST /api/admin/templates "$temporary_root/template.json" "$temporary_root/template-replay.json" 201
 assert_field "$temporary_root/template-replay.json" template_id "$template_id"
 assert_field "$temporary_root/template-replay.json" revision 1
+assert_field "$temporary_root/template-replay.json" runtime.image_ref "$runtime_image"
 gateway_request GET /api/admin/templates - "$temporary_root/templates-after-replay.json" 200
 assert_field "$temporary_root/templates-after-replay.json" items.length 1
 
@@ -454,6 +471,7 @@ EOF
 gateway_request POST /api/admin/templates "$temporary_root/template-secondary.json" \
   "$temporary_root/template-secondary-response.json" 201
 secondary_template_id=$(json_field "$temporary_root/template-secondary-response.json" template_id)
+assert_field "$temporary_root/template-secondary-response.json" runtime.image_ref "$runtime_image"
 
 gateway_request GET "/api/admin/model-profiles?limit=1" - "$temporary_root/models-page-1.json" 200
 model_after_id=$(json_field "$temporary_root/models-page-1.json" next_after_id)
@@ -508,6 +526,7 @@ compose exec -T stage3-model node --input-type=module -e '
 ' "$agent_id" "$organization_id" "$owner_user_id"
 gateway_request GET "/api/admin/agents/${agent_id}" - "$temporary_root/created-agent.json" 200
 assert_field "$temporary_root/created-agent.json" lifecycle_state available
+assert_field "$temporary_root/created-agent.json" configuration.runtime.image_source antnest/antnest-runtime:local
 node -e '
   const payload = require(process.argv[1]);
   const configuration = payload.configuration;
@@ -562,6 +581,8 @@ EOF
 gateway_request POST "/api/admin/templates/${template_id}/revisions" \
   "$temporary_root/template-revision.json" "$temporary_root/template-revision-response.json" 201
 assert_field "$temporary_root/template-revision-response.json" revision 2
+assert_field "$temporary_root/template-revision-response.json" runtime.image_ref "$runtime_image"
+assert_field "$temporary_root/template-revision-response.json" runtime.image_source antnest/antnest-runtime:local
 
 gateway_request GET "/api/admin/model-profiles/${model_profile_id}" - \
   "$temporary_root/current-model.json" 200
