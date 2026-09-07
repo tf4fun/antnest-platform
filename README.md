@@ -12,8 +12,8 @@ than around one shared application package.
 | Runtime Egress     | Rust service owning Agent addresses, network policy, UDP/TUN forwarding, rejection, and address reuse                             | Implemented and accepted with Runtime  |
 | Runtime Controller | Logical Runtime Environment lifecycle, private deployment realization, and platform observation with an in-process Docker adapter | Implemented and accepted for Docker    |
 | Agent Controller   | Owns Agent lifecycle, immutable configuration/execution revisions, explicit Runtime rebuild, Run admission, and Agent events      | Implemented and accepted in Stage 3A   |
-| Agent ACP Service  | Owns ACP v1/v2 Sessions, Runs, context, model/Tool loop, and per-Run Runtime MCP calls                                            | Implemented for Stage 2                |
-| Identity Service   | Owns Organizations, Users, local login, OIDC, SCIM, credentials, and the directory journal                                        | Implemented for Stage 2                |
+| Agent ACP Service  | Owns ACP v1/v2 Sessions, Runs, context, model/Tool loop, and per-Run Runtime MCP calls                                            | Stage 3 integrated; protocol closeout open |
+| Identity Service   | Owns Organizations, Users, local login, OIDC, SCIM, credentials, and the directory journal                                        | Stage 3 integrated; event delivery not implemented |
 | Edge Gateway       | Sole browser ingress, Identity-backed sessions, administrator/Agent admission, trusted routing, and trace propagation              | Implemented for Stage 3                |
 | Admin Console      | React administrator application and thin BFF for Identity and Agent lifecycle management                                           | Implemented for Stage 3A               |
 | Agent UI           | React end-user conversation workspace for Agents, ACP Sessions, tool activity, and attachments                                    | Implemented through Edge and ACP v1    |
@@ -27,7 +27,7 @@ Runtime/Egress design is canonical in
 The reviewed Stage 2 Agent lifecycle and ACP target design is defined in
 [`docs/stage-2-agent-and-acp.md`](docs/stage-2-agent-and-acp.md). It replaces
 older candidate/active Runtime rollout and transparent MCP-switching concepts
-for the future Agent Controller and Agent ACP Service.
+in Agent Controller and Agent ACP Service.
 
 The Stage 3A administrator control-plane contract and its browser-to-Jaeger
 acceptance path are defined in
@@ -64,6 +64,12 @@ acceptance covers Model Profile,
 Template, and Agent creation plus disable, enable, rebuild, delete, lifecycle
 events, end-user ACP Session/Tool execution, port isolation, and Jaeger trace
 continuity.
+
+This is scenario-specific acceptance, not a fully conformant ACP claim or a
+complete Identity event-driven workflow. Runtime-managed stdio MCP does not
+implement client-injected ACP stdio. Full-platform interruption recovery,
+cross-identity isolation, Identity linkage, and operational acceptance remain
+tracked in the single-node closeout above.
 
 ## Stage 3 Local Applications
 

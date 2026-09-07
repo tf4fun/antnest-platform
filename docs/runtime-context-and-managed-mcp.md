@@ -149,14 +149,15 @@ seven real-container managed MCP E2E cases; `make fmt-check` and `make lint`
 passed. Read-only review findings were fixed, including network availability
 during child initialization and SDK parameter-header validation for aggregated
 tools. The E2E suite cleans its own containers and network. Cross-service
-configuration, context consumption and Gateway-rooted traces remain pending.
+configuration, context consumption and Gateway-rooted traces were outside this
+batch; their later acceptance is recorded in batches 2-5 below.
 
 Batch 2 final evidence: Runtime Controller module tests, including strict RPC
 transport for Initialize/Update/Enable, shared bootstrap bounds, immutable
 configuration copying, physical digest sensitivity, mount preservation and
 non-disclosure in operation responses; `make fmt-check` and `make lint` passed.
 No persistence schema was added. Real cross-service create/rebuild acceptance
-remains in batch 5.
+is recorded in batch 5.
 
 Batch 3 final evidence: complete Agent Controller module tests and real PostgreSQL
 repository/E2E tests passed, including immutable MCP revisions, create/rebuild/
@@ -166,10 +167,11 @@ the control schema now references the shared Runtime MCP definition, and malform
 Unicode is rejected before process configuration decoding. No tables were added.
 The existing Identity consumer revision assertion was aligned with revision 11
 after verifying its consumed route/fields/errors were unchanged. Test PostgreSQL
-resources are cleaned after verification. ACP consumption remains batch 4 work.
+resources are cleaned after verification. ACP consumption is covered by batch 4.
 
 Batch 4 final evidence: 199 unit/component tests and 15 real PostgreSQL tests
-passed, including ACP v1 reconnect/restart history recovery, actual model input,
+passed, including ACP v1 reconnect/application-recreation history recovery (not
+an OS-process crash test), actual model input,
 per-Run freshness, complete Skill metadata truncation, structured tool results,
 setup cancellation, execution fencing, and telemetry without content leakage.
 `make fmt-check` and `make lint` passed. Runtime observations are not persisted

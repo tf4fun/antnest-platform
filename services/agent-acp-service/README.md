@@ -10,10 +10,13 @@ Tools. It does not construct Agents or Runtimes.
 The Stage 2 ACP core surface is implemented and independently testable. ACP v1
 is the compatibility baseline; ACP v2 is an explicitly draft, side-by-side
 adapter. Optional editor, authentication, and Provider administration methods
-are not claimed as implemented. The Stage 2 cross-service path remains pending
-full disposable-stack and Jaeger acceptance; Agent Controller integration is
-implemented. The
-authoritative cross-service design is
+are not claimed as implemented. Stage 3 Docker and Gateway-rooted Jaeger
+evidence exists for Session/Tool execution and managed MCP create/chat/rebuild.
+It is not full protocol or recovery acceptance: client-injected stdio remains
+unsupported, and full-platform isolation and process-interruption evidence
+remain open in the [protocol matrix](docs/protocol-conformance.md) and
+[single-node closeout](../../docs/docker-single-node-closeout.md).
+The authoritative cross-service design is
 [`../../docs/stage-2-agent-and-acp.md`](../../docs/stage-2-agent-and-acp.md);
 this directory is the only implementation authority for Agent ACP Service.
 
@@ -97,7 +100,7 @@ rebuild automatically uses the replacement Runtime.
 
 ## Connection Identity
 
-The deployment's Edge Gateway eventually authenticates external users and
+The deployment's Edge Gateway authenticates external users and
 forwards an opaque Agent-scoped access subject during WebSocket upgrade. During
 internal development, a trusted client supplies the same value directly.
 Agent ACP Service resolves it through Agent Controller before accepting the

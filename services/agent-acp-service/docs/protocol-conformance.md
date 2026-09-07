@@ -52,11 +52,14 @@ durability, and recovery.
 
 The service therefore remains a stable-v1 Session adapter with a known MCP
 baseline incompatibility, not a fully conformant ACP v1 Agent. Single-node
-closeout deliberately supports only Streamable HTTP MCP. Stdio hosting and
-legacy SSE transport are outside the product boundary, not unfinished mandatory
-implementation tasks. The Product gap state above records the protocol
-difference, not permission to erase it from conformance reporting. Executing an
-arbitrary client command inside Agent ACP Service is not an acceptable shortcut.
+closeout deliberately supports only Streamable HTTP MCP at the ACP client-input
+boundary. Platform-configured stdio children are supported inside Runtime and
+reached through its aggregated HTTP MCP surface; that is not support for the
+client-supplied stdio field in `session/new` or `session/load`. Client-injected
+stdio and legacy SSE remain outside this delivery. The Product gap state above
+records the protocol difference, not permission to erase it from conformance
+reporting. Executing an arbitrary client command inside Agent ACP Service is
+not an acceptable shortcut. See [Runtime context](runtime-context.md).
 
 ## Draft ACP v2 Matrix
 
@@ -132,6 +135,14 @@ encryption key before load. Controller, model, and Tool ports are deterministic
 stubs. This is not Gateway/Runtime integration or an OS-process crash test;
 E2E-RECOVERY-01 still requires actual process interruption, including in-flight
 work, and remains open.
+
+The [managed MCP integration](../../../docs/runtime-context-and-managed-mcp.md)
+adds real Gateway/Controller/Runtime create/chat/rebuild and causal Jaeger
+evidence, using a deterministic model. It proves that the same Session uses
+the newly published Runtime after explicit rebuild. It does not exercise a
+process crash, concurrent identities, or rebuild requested while a Run is in flight;
+the full scenarios E2E-RECOVERY-01, E2E-AUTH-01, E2E-STALE-01 and E2E-RUNTIME-01
+therefore retain their open or layer-covered status above.
 
 ## Current Verdict
 

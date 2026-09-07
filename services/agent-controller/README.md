@@ -30,9 +30,11 @@ isolates malformed operations, and emits a new trace linked to the original
 request and previous worker attempt. A separate bounded observation consumer
 reads Runtime Controller's ordered journal. A same-revision process restart
 invalidates the executable binding, marks the Agent unavailable, and requires
-an explicit rebuild instead of silently using a stale execution identity. Full
-Stage 2 integrated Docker and Jaeger acceptance is tracked separately from this
-service-local implementation status.
+an explicit rebuild instead of silently using a stale execution identity.
+Stage 3 Docker and Jaeger evidence covers the administrator lifecycle and
+managed MCP create/chat/rebuild path. Broader restart, Identity integration,
+and operational acceptance remains tracked in the
+[single-node closeout](../../docs/docker-single-node-closeout.md).
 
 ## Owns
 
@@ -72,9 +74,10 @@ state.
 - network lifecycle dependency: Runtime Egress control API.
 - owner-binding dependency: Identity Service `resolve_principal` internal RPC.
 
-All interfaces are trusted internal JSON-over-HTTP RPC. Authentication belongs
-to the future Edge Gateway. Organization ownership, owner-user binding, and
-Agent access are still enforced as domain rules.
+All interfaces are trusted internal JSON-over-HTTP RPC. Edge Gateway
+authenticates external requests through Identity Service. Organization
+ownership, owner-user binding, and Agent access are still enforced here as
+domain rules; Gateway authentication does not replace Run admission checks.
 
 ## Persistence
 

@@ -4,7 +4,7 @@
 >
 > Updated: 2026-09-07
 >
-> Inspection baseline: `acb0c14`
+> Inspection baseline: `c989f20`
 
 ## 1. Stage Boundary
 
@@ -50,7 +50,7 @@ foreign keys, transactions, or shared persistence adapter is permitted.
 | Identity | local login, OIDC, SCIM, membership checks, transactional local journal, Console administration | prove the complete Gateway flows and effective deactivation across existing connections; identify any necessary downstream lifecycle synchronization |
 | Agent management | async lifecycle operations, immutable revisions, Docker Runtime, Egress, durable events | close remaining UI/owner-service error and recovery paths against the three-flow acceptance matrix |
 | Agent UI | production Edge-to-ACP v1 path, messages, attachments, Tool activity, cancel and replay | prove restored input availability, no duplicate execution on reconnect, and consistent visibility of authoritative outcomes |
-| Observability | service OTLP, Stage 3 admission and linked lifecycle-worker traces, Stage 2 direct execution trace | one reproducible report covering Gateway-origin identity, lifecycle, and ACP/Runtime execution; verify causality, not just service-name presence |
+| Observability | service OTLP, Stage 3 admission/linked lifecycle-worker traces, Gateway-rooted managed MCP create/chat/rebuild evidence | one reproducible report covering Gateway-origin identity, lifecycle, and ACP/Runtime execution; verify causality, not just service-name presence |
 | Operations | Compose builds, private logical databases, disposable test cleanup | clean bootstrap runbook, restore exercise, failure diagnostics, idle CPU investigation, final resource accounting |
 
 Important distinctions from inspection:
@@ -64,13 +64,28 @@ Important distinctions from inspection:
 - Agent Controller already checks Identity at Run admission. The absence of
   cross-service Identity event delivery does not by itself prove an access
   control defect. Do not add an event bus to solve a check that already exists.
-- Stage 3 Jaeger assertions currently focus on lifecycle admission and worker
-  phases. They do not yet produce the required three-flow verification report.
+- Stage 3 Jaeger assertions cover lifecycle admission/worker phases and managed
+  MCP execution. They do not yet produce the required identity, management,
+  and usage three-flow verification report.
 - Idle container CPU spikes remain an unconfirmed diagnosis, not a solved issue.
 
 The ACP service's [protocol matrix](../services/agent-acp-service/docs/protocol-conformance.md)
 continues to distinguish implemented behavior, layer coverage, missing tests,
 and product gaps. Keep that distinction when closing tasks here.
+
+### Closeout Reconciliation After Managed MCP
+
+The managed MCP feature, including its Console editor, is complete at the
+inspection baseline. It does not replace C1-C6. The following are evidence
+boundaries verified by source inspection, not new test-run results:
+
+| Item | What exists | What is still open |
+| --- | --- | --- |
+| Stdio MCP | Template-owned configuration starts children inside Runtime; ACP discovers/calls their aggregated HTTP tools; Console and Docker evidence exists | Client-supplied ACP stdio remains unsupported. Keep the stable-v1 baseline incompatibility visible; do not launch commands on the ACP host or silently turn Session input into Template configuration |
+| Session recovery | v1 real WebSocket/PostgreSQL reconnect and application-recreation cases; application recovery unit tests | Actual ACP process interruption with completed and in-flight work, both protocol versions, admission settlement and replay without repeated effects through Edge |
+| Access isolation | Session ownership and access-revision layer tests; authoritative Identity checks at admission | Two real users/Agents and an already-open connection across revocation/revision change, through Edge, for v1 and v2 |
+| Identity events | Transactional `identity_events` journal; synchronous `resolve_principal` dependency | No journal delivery contract or Agent Controller consumer. C2-05 must decide the required business effect, then implement its narrow delivery/consumer batches if needed; local audit alone is not event-driven integration |
+| Documentation and operations | Current Stage 3 entry and MCP feature evidence | Remove stale current-status wording, exercise restore/cleanup, measure the reported idle CPU spikes, and produce the final three-flow Jaeger report |
 
 ## 3. Ordered Delivery Checklist
 
@@ -78,6 +93,35 @@ Use `doc -> test -> code -> acceptance` for each bounded change. Work on one
 functional gap at a time. Implement tracing propagation with its owning flow;
 the last milestone aggregates evidence rather than retrofitting instrumentation.
 Only mark a milestone accepted when its stated executable evidence passes.
+
+### Service-Owned Execution Order
+
+Keep the milestones below as the acceptance authority; this is their delivery
+order, not a second checklist:
+
+1. **Agent ACP Service:** reconcile the pinned v1/v2 matrix and fill wire and
+   owned-PostgreSQL gaps, including unsupported MCP rejection and recovery.
+   Record real-platform dependencies still needed instead of marking them done.
+2. **Edge Gateway:** close any demonstrated forwarding or identity-boundary
+   defects with its own tests. Then an integration-only batch proves ACP
+   isolation, reconnect, actual process interruption, and trace causality on
+   disposable Docker resources.
+3. **Identity Service:** complete the local/OIDC/SCIM access cases and decide
+   the business requirement for journal delivery. If downstream lifecycle work
+   is required, define the owner contract and implement the producer here first.
+4. **Agent Controller:** separately implement any required Identity consumer
+   and its idempotent business effect. Preserve authoritative admission checks;
+   event delay must not grant access. Then integrate the two services through
+   Edge, including existing connections. A generic event bus remains deferred.
+5. **Agent UI or Admin Console:** fix demonstrated feedback gaps in separate
+   service batches; retain reusable component tests before browser acceptance.
+6. **Operations and final integration:** update current runbooks, measure CPU,
+   exercise restart/backup/restore/cleanup, and aggregate C1-C5 into C6. Run
+   resource-intensive checks serially; do not start deferred services.
+
+An accepted implementation batch does not accept a milestone whose required
+integration evidence is still missing. Identity event delivery is neither
+silently waived nor introduced just to make the topology look complete.
 
 ### 1. ACP Protocol And Durable Session Closure (C1)
 
@@ -313,11 +357,13 @@ control during this closeout.
   are never counted as passing coverage. Prior test counts are not new runs.
 - Stop and close test processes and disposable resources after each profile.
 
-Current progress: scope and source baseline inspected; C1-C6 are not yet
-accepted. Update individual items with final evidence as work completes.
+Current progress: closeout reconciled against `c989f20`; C1-C6 are not yet
+accepted. The reconciliation itself adds no execution evidence. Update
+individual items with final evidence as work completes.
 
-Runtime-context feature accepted (2026-09-07): the four service-owned batches and
-real Docker Gateway create/chat/rebuild flow are complete. Five Runs verified
+Runtime-context feature accepted (2026-09-07): the four backend service-owned
+batches, Console follow-up, and real Docker Gateway create/chat/rebuild flow are
+complete. Five Runs verified
 fresh runtime guidance, Skill summaries, managed stdio tools and Session reuse;
 Jaeger parent relationships cover five information reads and seven Tool calls.
 See [the feature report](runtime-context-and-managed-mcp.md) for reproducible
