@@ -24,9 +24,39 @@ Docker access and uses only synthetic credentials.
    of service names alone is not evidence. Passwords, session cookies and SCIM
    credentials must not appear in these traces.
 
-Cross-organization protocol isolation, token expiry,
-already-open ACP connections and browser UI acceptance remain separate acceptance
-work. This batch does not accept the whole C2 or C6 milestone.
+These initial local/SCIM cases do not by themselves cover cross-organization
+isolation or expiry; see the separate HTTP access profile below. Already-open
+ACP connections and browser UI acceptance remain separate work. The suites do
+not accept the whole C2 or C6 milestone.
+
+## HTTP Access Isolation Batch
+
+`make e2e-identity-access` runs a separate disposable Stage 3 profile. It does
+not combine its login attempts with the OIDC/ACP fault profiles or change login
+limits. Identity's private RPC is used only to prepare two organizations and
+ordinary organization administrators (not system administrators). All access
+assertions go through Gateway; no database rows or clocks are modified.
+
+The same email is provisioned with separate identities/passwords in each
+organization. Tests compare directory and SCIM projections, reject foreign
+resource mutation and forged scope headers/body fields, and exercise password
+rotation and logout independently. Password change currently preserves issued
+sessions; logout revokes only the presented session. Tests must describe these
+semantics explicitly rather than infer revocation from a successful password
+change response.
+
+Finally the coordinator stops only Identity, proving protected requests return
+503 without deleting cookies. It restores Identity with the existing token TTL
+configuration set to five seconds for new tokens only: the prior long-lived
+cookie must recover, while a new short-lived cookie must pass before its stated
+deadline and fail after it, even when manually replayed. A fresh login must
+work afterward. This is not browser cookie eviction or a forged expired record.
+The short TTL override never enters deployment Compose. The profile always
+cleans its containers/volumes/networks; keep-stack is not supported.
+
+Already-upgraded ACP WebSockets remain a separate gap: identity/Agent admission
+is revalidated, but the originating browser token is not carried across upgrade.
+HTTP logout/expiry evidence must not be claimed as WebSocket token revocation.
 
 ## Run
 

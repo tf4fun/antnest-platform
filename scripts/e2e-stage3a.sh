@@ -33,6 +33,16 @@ export ANTNEST_BOOTSTRAP_ORGANIZATION_NAME="Stage 3"
 export ANTNEST_BOOTSTRAP_ADMIN_EMAIL=stage3-admin@example.com
 export ANTNEST_BOOTSTRAP_ADMIN_PASSWORD=stage3-admin-password
 keep_stack=${ANTNEST_E2E_KEEP_STACK:-false}
+identity_access=${ANTNEST_E2E_IDENTITY_ACCESS:-false}
+case "$identity_access" in
+  true|false) ;;
+  *) echo "ANTNEST_E2E_IDENTITY_ACCESS must be true or false" >&2; exit 1 ;;
+esac
+if [ "$identity_access" = true ] && { [ "$keep_stack" = true ] || [ "${ANTNEST_E2E_ACP_CLOSEOUT:-false}" = true ]; }; then
+  echo "Identity access requires a disposable project and a separate profile" >&2
+  exit 1
+fi
+export ANTNEST_IDENTITY_ACCESS_TOKEN_TTL=12h
 case "$keep_stack" in
   true|false) ;;
   *) echo "ANTNEST_E2E_KEEP_STACK must be true or false" >&2; exit 1 ;;
@@ -53,6 +63,11 @@ workspace_cookie_jar="$temporary_root/workspace-cookies.txt"
 agent_id=""
 
 compose() {
+  if [ "$identity_access" = true ]; then
+    docker compose -f compose.yaml -f compose.stage3.yaml -f scripts/identity-closeout/oidc-compose.yaml \
+      -f scripts/identity-closeout/access-compose.yaml --profile stage3 --profile stage3-e2e --profile observability "$@"
+    return
+  fi
   if [ "${ANTNEST_E2E_ACP_CLOSEOUT:-false}" = true ]; then
     docker compose -f compose.yaml -f compose.stage3.yaml -f scripts/identity-closeout/oidc-compose.yaml -f scripts/acp-closeout/compose.yaml \
       --profile stage3 --profile stage3-e2e --profile observability "$@"
@@ -215,6 +230,25 @@ docker run --rm --network none --label "com.docker.compose.project=$COMPOSE_PROJ
   --mount "type=volume,source=${COMPOSE_PROJECT_NAME}-oidc-certs,target=/certs" \
   debian:bookworm-slim cp /input/tls.key /input/tls.crt /certs/
 compose up -d --wait
+
+if [ "$identity_access" = true ]; then
+  development_network=$(docker network ls -q --filter "label=com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
+    --filter label=com.docker.compose.network=development)
+  [ -n "$development_network" ] || { echo "Test development network missing" >&2; exit 1; }
+  docker run --rm --network "$development_network" \
+    --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
+    --mount "type=bind,source=$repository_root/scripts/identity-closeout,target=/fixture,readonly" \
+    node:24-bookworm-slim node /fixture/access-seed.mjs > "$temporary_root/access-seed.json"
+  node scripts/identity-closeout/access-client.mjs "$gateway_url" "$jaeger_url" "$temporary_root/access-seed.json"
+  node scripts/identity-closeout/expiry-client.mjs "$gateway_url" "$jaeger_url" prepare "$temporary_root/expiry.json"
+  compose stop identity-service
+  node scripts/identity-closeout/expiry-client.mjs "$gateway_url" "$jaeger_url" unavailable "$temporary_root/expiry.json"
+  export ANTNEST_IDENTITY_ACCESS_TOKEN_TTL=5s
+  compose up -d --wait --no-deps identity-service
+  node scripts/identity-closeout/expiry-client.mjs "$gateway_url" "$jaeger_url" expiry "$temporary_root/expiry.json"
+  echo "Gateway identity access, isolation, outage and expiry E2E passed"
+  exit 0
+fi
 
 printf '{"organization_slug":"stage3"}' >"$temporary_root/login-methods-request.json"
 login_methods_status=$(curl -sS -D "$temporary_root/login-methods-headers.txt" \

@@ -1,0 +1,5 @@
+# Only used by the disposable HTTP access profile, never deployment Compose.
+services:
+  identity-service:
+    environment:
+      ANTNEST_IDENTITY_TOKEN_TTL: ${ANTNEST_IDENTITY_ACCESS_TOKEN_TTL:-12h}

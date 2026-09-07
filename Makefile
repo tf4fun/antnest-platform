@@ -125,5 +125,9 @@ e2e-stage2: docker-build
 e2e-stage3: docker-build-stage3
 	sh scripts/e2e-stage3a.sh
 
+.PHONY: e2e-identity-access
+e2e-identity-access: docker-build-stage3
+	ANTNEST_E2E_IDENTITY_ACCESS=true sh scripts/e2e-stage3a.sh
+
 e2e-runtime-controller: docker-build-runtime-controller
 	sh services/runtime-controller/scripts/e2e.sh

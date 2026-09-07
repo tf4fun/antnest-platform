@@ -161,6 +161,10 @@ uses. Adapter stubs must not be described as full-platform acceptance.
 - [ ] **C2-01** Test local bootstrap/login/logout/password rotation, expired or
   revoked sessions, member versus administrator surfaces, and organization
   isolation through Edge rather than only through Identity RPC.
+  The dedicated HTTP access profile covers scoped directory/SCIM access,
+  same-email users, shared-User organization roles and token/Membership/User
+  invalidation. Remaining consumer work includes the Console password-command
+  401 distinction and cross-organization Agent/ACP entry checks.
 - [x] **C2-02** Exercise OIDC discovery/start/callback/login using a controlled
   IdP fixture with real redirect and token exchange. Confirm SCIM/local
   provisioned identities converge on the same User/Membership. Provider secrets,
@@ -180,6 +184,11 @@ uses. Adapter stubs must not be described as full-platform acceptance.
   credentials and ACP connections cannot authorize a new Run or bypass owner
   checks. Define and test the treatment of an already-admitted Run separately;
   do not claim admission revocation retroactively cancels it.
+  Known gap: Edge authenticates the browser token only at WebSocket upgrade;
+  ACP retains Agent identity/revision, not that browser session's revocation or
+  deadline. Owner deactivation evidence is not browser logout/expiry evidence.
+  Address through service-owned contract/implementation batches before accepting
+  existing-connection revocation; a generic event bus is not a prerequisite.
 - [ ] **C2-05** Determine whether any required Agent projection or lifecycle
   change needs Identity journal consumption. If needed, add only the narrow
   owner RPC/cursor and idempotent consumer; authorization continues to use
@@ -519,3 +528,67 @@ Final admission for this batch: `make fmt-check` and `make lint` passed
 passed), all six Edge Gateway test packages passed with `-race -p=1`, and the
 15 identity fixture/helper tests passed serially. Gateway's session contract
 and the changed documentation were synchronized; no threshold was relaxed.
+
+C2 HTTP access batch (2026-09-08): `make e2e-identity-access` adds a separate,
+disposable profile instead of accumulating attempts against the existing login
+limit. Private Identity RPC prepares two organizations; all access assertions
+use Edge with real service databases. No direct SQL changes are used. Its four
+scenario groups prove:
+
+1. Same email can belong to distinct Users in separate organizations; one User
+   can be admin in A and member in B without reusing A's role or forged scope.
+2. SCIM foreign User/Group reads and deletes are denied; owner-side full
+   snapshots, versions and members remain unchanged. Cross-organization Group
+   membership references and unauthorized token revocation are rejected.
+3. A User's password change affects new login in both organizations, not a
+   different User with the same email. Existing sessions remain valid under
+   the current contract. Logout revokes only its presented token.
+4. Membership disable blocks only that organization's access; restoring it
+   permits still-valid old tokens. Global User disable denies new login in both
+   organizations and permanently revokes their old tokens, without affecting
+   the distinct same-email User.
+
+This batch reproduced and fixed an Edge error classification defect: Identity
+timeouts/transport/server failures were reported as invalid sessions, clearing
+cookies. They now fail closed with 503 and no cookie mutation. Real Docker
+outage/restart checks prove the original cookie recovers. After restart, the
+existing TTL setting issues new sessions with five-second lifetimes, while old
+tokens keep their original stored deadlines. The client waits past the issued
+`expires_at`, replays the cookie against three protected paths, verifies both
+session and CSRF cookies are cleared, and proves an expired password command
+cannot mutate credentials. A fresh login still succeeds. This is actual token
+expiration, not browser eviction, a changed clock or a fabricated database row.
+
+Three Gateway-rooted Jaeger chains contain **23 spans**: password change via
+Console (10), User disable via Console (9), and expired-token resolution (4).
+They include the owning Identity repository operation and exclude synthetic
+credential canaries. The Identity outage naturally has no successful downstream
+repository span and is not presented as such.
+
+Read-only review strengthened disabled-new-login, unaffected-User, complete
+resource-snapshot and both-cookie assertions. **18 reusable helper tests** pass,
+including negative evidence cases. Temporary resources are removed after the
+profile; no intermediate logs or database artifacts are committed.
+
+Final admission: `make fmt-check`, `make lint` (Go: 0 issues; both Clippy targets
+and Node lint/typechecks passed), all six Gateway test packages with
+`go test -race -p=1`, all 18 fixture/helper tests, contract JSON and shell syntax
+checks passed. The dedicated identity-access Compose profile passed; this run
+does not claim a fresh default Stage 3 lifecycle or ACP fault-profile execution.
+
+### Next Identity Consumer Boundaries
+
+The HTTP access review also identified two boundaries that must not be silently
+declared accepted by its passing tests:
+
+1. **Admin Console:** `web/src/lib/session-errors.ts` exempts every 401 on the
+   password command path. This also swallows a real Edge session expiry/revoke
+   response. Distinguish the operation-local wrong-current-password failure
+   from failed session authentication, then add frontend/API regression tests
+   in a Console-owned batch. Changing one's password deliberately preserves
+   issued tokens under the existing Identity contract; that is not a new bug.
+2. **SCIM revoke scope:** Identity authorizes against the token's owning
+   organization. The new tests prove an administrator without authority there
+   cannot revoke its token. They do not impose a stronger current-browser-
+   organization boundary on a User who administers both organizations. Any
+   stricter rule needs an explicit Identity/Console contract decision first.
