@@ -27,6 +27,8 @@ import { resourceFailure, type ResourceFailure } from "../lib/resource-failure";
 import { captureResource, type ResourceState } from "../lib/resource-state";
 import { runtimeImageLabel } from "../lib/runtime-image";
 import { RuntimeImageChoice } from "../components/runtime-image-choice";
+import { ManagedMCPDetails, ManagedMCPEditor } from "../components/managed-mcp";
+import { managedMCPInput } from "../lib/managed-mcp";
 import { templateCreationGate } from "../lib/setup";
 import type { AgentTemplate, ModelProfile, TemplateDefaults } from "../lib/types";
 
@@ -111,6 +113,7 @@ function TemplateList() {
     setFormError("");
     setSuccessMessage("");
     try {
+      const servers = managedMCPInput(data);
       await api.createTemplate({
         name,
         model_profile_revision_id: String(
@@ -118,7 +121,10 @@ function TemplateList() {
         ),
         system_prompt: String(data.get("system_prompt") ?? ""),
         max_model_requests: positiveInteger(data.get("max_model_requests"), 32),
-        runtime: customImage ? { image_ref: imageRef } : undefined,
+        runtime: customImage || servers.length ? {
+          ...(customImage ? { image_ref: imageRef } : {}),
+          ...(servers.length ? { mcp_servers: servers } : {}),
+        } : undefined,
       });
       form.reset();
       setOpen(false);
@@ -359,6 +365,7 @@ function TemplateList() {
           {defaults.status === "ready" ? (
             <RuntimeImageChoice image={defaults.data.runtime_image_ref} inheritedLabel="Platform default" />
           ) : null}
+          <ManagedMCPEditor disabled={pending} />
           <div className="mt-1 flex justify-end gap-2">
             <Button
               type="button"
@@ -463,6 +470,7 @@ function TemplateDetail({ templateID, revisionID }: { templateID: string; revisi
         runtime: {
           image_ref: imageRef,
           resources: template.runtime.resources,
+          mcp_servers: managedMCPInput(data),
         },
       });
       const selectedModel = models.find(
@@ -537,7 +545,8 @@ function TemplateDetail({ templateID, revisionID }: { templateID: string; revisi
       <Section title="Runtime image">
         <p className="break-all text-sm font-medium">{runtimeImageLabel(template.runtime.image_ref, template.runtime.image_source)}</p>
       </Section>
-      {!historical ? <Dialog dismissible={!pending} open={open} onOpenChange={setOpen} title="Create template revision" description="Publish a new immutable configuration. Existing Agent revisions continue using their frozen settings.">
+      <Section title="MCP servers"><ManagedMCPDetails servers={template.runtime.mcp_servers} /></Section>
+      {!historical ? <Dialog dismissible={!pending} open={open} onOpenChange={setOpen} title="Create template revision" description="Publish a new configuration. Rebuild existing Agents to apply this revision.">
         <form className="grid gap-5" key={template.revision} onSubmit={revise}>
           {formError ? <ErrorNotice message={formError} /> : null}
           <Field label="Template name"><Input name="name" defaultValue={template.name} required /></Field>
@@ -557,6 +566,7 @@ function TemplateDetail({ templateID, revisionID }: { templateID: string; revisi
           <Field label="System prompt" hint="Defines the Agent's default role and operating boundaries."><Textarea name="system_prompt" defaultValue={template.system_prompt} /></Field>
           <Field label="Maximum model requests"><Input name="max_model_requests" type="number" min="1" max="128" defaultValue={template.max_model_requests} required /></Field>
           <RuntimeImageChoice image={template.runtime.image_ref} source={template.runtime.image_source} inheritedLabel="Keep current image" />
+          <ManagedMCPEditor initial={template.runtime.mcp_servers} disabled={pending} />
           <div className="flex justify-end gap-2"><Button disabled={pending} type="button" variant="secondary" onClick={() => setOpen(false)}>Cancel</Button><Button aria-busy={pending} disabled={pending} type="submit">{pending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}Publish revision</Button></div>
         </form>
       </Dialog> : null}

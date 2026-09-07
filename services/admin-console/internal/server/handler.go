@@ -551,8 +551,9 @@ type createTemplateInput struct {
 }
 
 type runtimeInput struct {
-	ImageRef  string        `json:"image_ref,omitempty"`
-	Resources resourceInput `json:"resources,omitempty"`
+	ImageRef   string          `json:"image_ref,omitempty"`
+	Resources  resourceInput   `json:"resources,omitempty"`
+	MCPServers json.RawMessage `json:"mcp_servers,omitempty"`
 }
 
 type resourceInput struct {
@@ -951,6 +952,7 @@ func (h *handler) forwardProjected(
 		result.body = projected
 		result.header.Set("Content-Type", "application/json")
 	}
+	result.header.Set("Cache-Control", "no-store")
 	writeRaw(response, result.status, result.header, result.body)
 }
 

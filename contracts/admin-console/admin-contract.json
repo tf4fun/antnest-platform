@@ -1,6 +1,6 @@
 {
   "contract": "antnest.admin-console.bff",
-  "version": 31,
+  "version": 32,
   "base_path": "/api/admin",
   "routes": {
     "overview": {"method": "GET", "path": "/overview"},
@@ -87,6 +87,19 @@
     ]
   },
   "response_policy": {
+    "managed_mcp": {
+      "configuration_owner": "agent_controller_immutable_template_runtime",
+      "input": "runtime.mcp_servers_raw_json_on_create_and_revise",
+      "schema": "../runtime/runtime-spec.schema.json#/properties/mcp_servers",
+      "clear": "explicit_empty_array_in_new_revision",
+      "full_configuration": ["get_template", "get_template_revision", "create_template", "revise_template"],
+      "inventory_and_overview": "omit_process_configuration",
+      "agent_configuration": ["id", "command"],
+      "environment_values": "administrator_detail_only_visually_masked_not_encrypted",
+      "cache_control": "no-store",
+      "browser_value_persistence": "forbidden",
+      "apply": "explicit_agent_rebuild"
+    },
     "catalog_creation": {
       "browser_input": "editable_form_values_only",
       "generated_resource_keys": ["profile_key", "template_key"],

@@ -148,7 +148,6 @@ try {
     model_profile_revision_id: profile.revision_id,
     system_prompt:
       "Follow the current workspace guidance and use available tools.",
-    context_policy_version: "context-v1",
     max_model_requests: 12,
     runtime: {
       image_ref: image,
@@ -167,10 +166,14 @@ try {
       ],
     },
   });
-  const template = await rpc(
-    "/internal/agent-templates",
-    { template_key: "managed-fixture", ...templateBody("alpha") },
+  const template = await api(
+    "/api/admin/templates",
+    templateBody("alpha"),
     201,
+  );
+  assert.deepEqual(
+    template.runtime.mcp_servers,
+    templateBody("alpha").runtime.mcp_servers,
   );
   const created = await api(
     "/api/admin/agents",
@@ -185,6 +188,9 @@ try {
   agentID = created.agent.agent_id;
   await waitOperation(created.operation.request_id);
   const before = await api(`/api/admin/agents/${agentID}`);
+  assert.deepEqual(before.configuration.runtime.mcp_servers, [
+    { id: "alpha", command: "/usr/local/bin/managed-mcp-fixture" },
+  ]);
   await connect();
   const session = await call(acp.methods.agent.session.new, {
     cwd: "/workspace",
@@ -199,10 +205,17 @@ try {
     await prompt(session.sessionId, phase);
   connection.close();
   connection = undefined;
-  await rpc(
-    `/internal/agent-templates/${template.template_id}/revisions`,
+  await api(
+    `/api/admin/templates/${template.template_id}/revisions`,
     templateBody("beta"),
     201,
+  );
+  const historical = await api(
+    `/api/admin/templates/${template.template_id}/revisions/1`,
+  );
+  assert.deepEqual(
+    historical.runtime.mcp_servers,
+    templateBody("alpha").runtime.mcp_servers,
   );
   const rebuild = await api(
     `/api/admin/agents/${agentID}/rebuild`,
@@ -211,6 +224,9 @@ try {
   );
   await waitOperation(rebuild.request_id);
   const after = await api(`/api/admin/agents/${agentID}`);
+  assert.deepEqual(after.configuration.runtime.mcp_servers, [
+    { id: "beta", command: "/usr/local/bin/managed-mcp-fixture" },
+  ]);
   assert.notEqual(
     before.runtime.runtime_revision,
     after.runtime.runtime_revision,

@@ -33,6 +33,7 @@ import {
   Section,
 } from "../components/page";
 import { Badge } from "../components/ui/badge";
+import { ManagedMCPSummary } from "../components/managed-mcp";
 import { Button } from "../components/ui/button";
 import { Dialog } from "../components/ui/dialog";
 import { Empty, ErrorNotice, GuidanceNotice, Loading, SuccessNotice } from "../components/ui/feedback";
@@ -1021,6 +1022,7 @@ function AgentDetail({ agentID }: { agentID: string }) {
           />
         )}
       </Section>
+      {agent.configuration ? <Section title="Deployed MCP servers"><ManagedMCPSummary servers={agent.configuration.runtime.mcp_servers} /></Section> : null}
       <div className="grid gap-px overflow-hidden rounded-md border border-border bg-border shadow-sm sm:grid-cols-2 lg:grid-cols-3">
         <Fact
           label="Owner"

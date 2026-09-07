@@ -93,6 +93,20 @@ function postCalls(fetch: ReturnType<typeof vi.fn>) {
 }
 
 describe("Agent lifecycle command boundaries", () => {
+  it("shows managed MCP servers from the frozen configuration and links its template revision", async () => {
+    const { state } = mockWorkflow("rebuild", async () => Response.json({}));
+    state.read = async () => Response.json({ ...agent, configuration: {
+      template: { template_id: "template-1", revision: 1, name: "Frozen template" },
+      model_profile: { model_profile_id: "model-1", revision_id: "model-rev-1", revision: 1, name: "Model", model: { model: "support", context_window: 8192, max_output_tokens: 1024 } },
+      runtime: { ...template.runtime, mcp_servers: [{ id: "documents", command: "node" }] },
+      max_model_requests: 32, context_policy_version: "context-v1",
+    } });
+    render(<AgentsPage agentID="agent-1" />);
+    expect(await screen.findByRole("heading", { name: "Deployed MCP servers" })).toBeTruthy();
+    expect(screen.getByText("documents")).toBeTruthy();
+    expect(screen.getByRole("link", { name: /Frozen template/ }).getAttribute("href")).toBe("#templates/template-1/revisions/1");
+    expect(screen.queryByRole("button", { name: "Add MCP server" })).toBeNull();
+  });
   it("does not carry a pending dialog or its late rejection into another Agent", async () => {
     const command = deferred<Response>();
     mockWorkflow("rebuild", () => command.promise);

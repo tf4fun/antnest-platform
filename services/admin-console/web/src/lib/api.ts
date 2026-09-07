@@ -21,6 +21,7 @@ import type {
   ModelCatalog,
   ModelProfile,
   ModelProfileList,
+  ManagedMCPServer,
   Overview,
   OIDCLoginStart,
   OIDCProviderList,
@@ -240,7 +241,7 @@ export const api = {
     model_profile_revision_id: string;
     system_prompt: string;
     max_model_requests: number;
-    runtime?: { image_ref?: string };
+    runtime?: { image_ref?: string; mcp_servers?: ManagedMCPServer[] };
   }) => idempotentRequest<AgentTemplate>("create-template", "/api/admin/templates", input),
   reviseTemplate: (templateID: string, input: {
     name: string;
@@ -250,6 +251,7 @@ export const api = {
     runtime: {
       image_ref: string;
       resources: { memory_bytes: number; pids_limit: number; tmpfs_bytes: number };
+      mcp_servers?: ManagedMCPServer[];
     };
   }) => idempotentRequest<AgentTemplate>(
     `revise-template:${templateID}`,

@@ -1,5 +1,11 @@
 # Admin Console
 
+Template creation and revision include optional **MCP servers**: stdio command,
+ordered arguments and environment variables. Template details retain the complete
+configuration; Agent details show the deployed server IDs and commands. Publish a
+revision, then explicitly rebuild Agents to apply it. See
+[Managed MCP configuration](docs/managed-mcp.md) for ownership, privacy and tests.
+
 Admin Console is the administrator React application and thin BFF for Antnest
 Platform. It presents Identity and Agent lifecycle facts without becoming a
 second source of truth.

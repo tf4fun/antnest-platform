@@ -89,7 +89,7 @@ describe("Runtime image presentation", () => {
     expect(screen.queryByText(/sha256:/)).toBeNull();
     fireEvent.click(dialog.getByRole("button", { name: "Publish revision" }));
     await waitFor(() => expect(writes).toHaveLength(1));
-    expect(writes[0]).toHaveProperty("runtime", { image_ref: template.runtime.image_ref, resources: template.runtime.resources });
+    expect(writes[0]).toHaveProperty("runtime", { image_ref: template.runtime.image_ref, resources: template.runtime.resources, mcp_servers: [] });
     expect(fetch.mock.calls.some(([url]) => url.includes("template-defaults"))).toBe(false);
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
@@ -103,7 +103,7 @@ describe("Runtime image presentation", () => {
     expect((dialog.getByLabelText("Image tag") as HTMLInputElement).value).toBe("antnest/runtime:local");
     fireEvent.click(dialog.getByRole("button", { name: "Publish revision" }));
     await waitFor(() => expect(writes).toHaveLength(1));
-    expect(writes[0]).toHaveProperty("runtime", { image_ref: "antnest/runtime:local", resources: template.runtime.resources });
+    expect(writes[0]).toHaveProperty("runtime", { image_ref: "antnest/runtime:local", resources: template.runtime.resources, mcp_servers: [] });
   });
 
   it("keeps a rejected tag selection open for correction", async () => {

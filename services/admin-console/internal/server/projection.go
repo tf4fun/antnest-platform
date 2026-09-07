@@ -148,18 +148,18 @@ type modelProfileListSource struct {
 }
 
 type templateSource struct {
-	TemplateID             string                          `json:"template_id"`
-	Name                   string                          `json:"name"`
-	Revision               int64                           `json:"revision"`
-	ModelProfileRevisionID string                          `json:"model_profile_revision_id"`
-	SystemPrompt           string                          `json:"system_prompt"`
-	MaxModelRequests       int                             `json:"max_model_requests"`
-	ContextPolicyVersion   string                          `json:"context_policy_version"`
-	Runtime                agentRuntimeConfigurationSource `json:"runtime"`
-	SkillRefs              []string                        `json:"skill_refs"`
-	Enabled                bool                            `json:"enabled"`
-	CreatedAt              string                          `json:"created_at"`
-	UpdatedAt              string                          `json:"updated_at"`
+	TemplateID             string                             `json:"template_id"`
+	Name                   string                             `json:"name"`
+	Revision               int64                              `json:"revision"`
+	ModelProfileRevisionID string                             `json:"model_profile_revision_id"`
+	SystemPrompt           string                             `json:"system_prompt"`
+	MaxModelRequests       int                                `json:"max_model_requests"`
+	ContextPolicyVersion   string                             `json:"context_policy_version"`
+	Runtime                templateRuntimeConfigurationSource `json:"runtime"`
+	SkillRefs              []string                           `json:"skill_refs"`
+	Enabled                bool                               `json:"enabled"`
+	CreatedAt              string                             `json:"created_at"`
+	UpdatedAt              string                             `json:"updated_at"`
 }
 
 type templateListSource struct {
@@ -186,10 +186,32 @@ type agentRuntimeResourcesSource struct {
 	TmpfsBytes  int64 `json:"tmpfs_bytes"`
 }
 
-type agentRuntimeConfigurationSource struct {
+type runtimeConfigurationSource struct {
 	ImageRef    string                      `json:"image_ref"`
 	ImageSource string                      `json:"image_source,omitempty"`
 	Resources   agentRuntimeResourcesSource `json:"resources"`
+}
+
+type managedMCPSummary struct {
+	ID      string `json:"id"`
+	Command string `json:"command"`
+}
+
+type managedMCPServer struct {
+	ID      string            `json:"id"`
+	Command string            `json:"command"`
+	Args    []string          `json:"args"`
+	Env     map[string]string `json:"env"`
+}
+
+type templateRuntimeConfigurationSource struct {
+	runtimeConfigurationSource
+	MCPServers []managedMCPServer `json:"mcp_servers,omitempty"`
+}
+
+type agentRuntimeConfigurationSource struct {
+	runtimeConfigurationSource
+	MCPServers []managedMCPSummary `json:"mcp_servers,omitempty"`
 }
 
 type agentTemplateLineageSource struct {
@@ -322,11 +344,31 @@ func projectModelProfileList(payload []byte) ([]byte, error) {
 }
 
 func projectTemplate(payload []byte) ([]byte, error) {
-	return projectPayload[templateSource](payload)
+	var result templateSource
+	if err := json.Unmarshal(payload, &result); err != nil {
+		return nil, fmt.Errorf("decode template response: %w", err)
+	}
+	for index := range result.Runtime.MCPServers {
+		server := &result.Runtime.MCPServers[index]
+		if server.Args == nil {
+			server.Args = []string{}
+		}
+		if server.Env == nil {
+			server.Env = map[string]string{}
+		}
+	}
+	return encodeBrowserResponse(result)
 }
 
 func projectTemplateList(payload []byte) ([]byte, error) {
-	return projectPayload[templateListSource](payload)
+	var result templateListSource
+	if err := json.Unmarshal(payload, &result); err != nil {
+		return nil, fmt.Errorf("decode template inventory: %w", err)
+	}
+	for index := range result.Items {
+		result.Items[index].Runtime.MCPServers = nil
+	}
+	return encodeBrowserResponse(result)
 }
 
 func projectAgent(payload []byte) ([]byte, error) {
@@ -358,6 +400,10 @@ func projectPayload[T any](payload []byte) ([]byte, error) {
 	if err := json.Unmarshal(payload, &source); err != nil {
 		return nil, fmt.Errorf("decode internal response: %w", err)
 	}
+	return encodeBrowserResponse(source)
+}
+
+func encodeBrowserResponse(source any) ([]byte, error) {
 	projected, err := json.Marshal(source)
 	if err != nil {
 		return nil, fmt.Errorf("encode browser response: %w", err)

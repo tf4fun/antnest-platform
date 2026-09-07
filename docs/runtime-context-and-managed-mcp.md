@@ -1,6 +1,7 @@
 # Runtime Context And Managed MCP
 
-Status: all five batches complete; Docker end-to-end accepted on 2026-09-07.
+Status: five backend batches and the Admin Console follow-up complete;
+Docker end-to-end and Console browser acceptance passed on 2026-09-07.
 
 ## Scope
 
@@ -119,8 +120,29 @@ and that service's fixtures belong to the same batch.
 | 3 | `agent-controller` | Configuration validation/snapshot and create/rebuild execution publication | Complete (service-local) |
 | 4 | `agent-acp-service` | Information consumption, managed tool discovery and budgeted context injection | Complete; service-local accepted |
 | 5 | Integration | Docker create/chat/rebuild workflow and Gateway-rooted trace verification | Complete; Docker accepted |
+| 6 | `admin-console` | Template MCP editor, immutable detail, deployed Agent summary and BFF integration | Complete; browser and Docker accepted |
 
 ## Acceptance
+
+Batch 6 final evidence: all Admin Console Go tests, 81 frontend unit tests and
+126 component tests passed, together with `make fmt-check`, `make lint` and the
+production Docker build. Read-only review exposed multiline input loss; LF/CRLF/CR
+edit regressions now pass. BFF tests enforce administrator scope, raw validation
+transport, empty-list removal, summary projections and `no-store` responses.
+
+The Stage 3 Docker profile now configures MCP through Gateway/Console BFF and
+passes five Runs, 12 model requests and seven real tool calls. It verifies frozen
+Template history and deployed Agent summaries before/after rebuild. Jaeger traces
+`b1c3b2276f2ef2e1210ad9ae59fdfa90` and `4d1a4d568698da15fb2f0c0efd23a4fe`
+passed the existing causal-parent assertions (five information/catalog reads).
+Chrome acceptance at 1440x900 and 390x844 verified create, edit/publication,
+multiline preservation, masked environment values, historical read-only inspection
+and no horizontal form overflow. The synthetic development stack
+`antnest-stage3-e2e-58844` was retained for human feedback at port 44845; the managed
+test Agent and temporary model container were removed. Existing instances were
+not reset. The only post-E2E adjustment was textarea row sizing, followed by a
+full Console test rerun, lint, rebuild and browser recheck. See the service-local
+[Console contract and workflow](../services/admin-console/docs/managed-mcp.md).
 
 Batch 1 final evidence: Linux 107 unit tests and one Executor integration test;
 seven real-container managed MCP E2E cases; `make fmt-check` and `make lint`
@@ -161,8 +183,9 @@ input/output boundaries: guidance and Personal Skill discovery, ordinary child
 error recovery, child reuse across Runs, same-Runtime guidance refresh, explicit
 rebuild from `alpha` to `beta`, retained workspace and changed tool catalog.
 The model fixture and trace oracle have six independent tests, including negative cases.
-No external Provider credential was used. Configuration enters through internal
-catalog RPC; this acceptance does not claim a Console MCP configuration editor.
+No external Provider credential was used. This original backend acceptance used
+internal catalog RPC. The Console follow-up below moves MCP configuration to the
+Gateway/BFF template workflow.
 
 Jaeger final evidence (temporary backend; trace URLs expire after cleanup):
 
@@ -216,9 +239,9 @@ Producer-only tests do not establish this full workflow.
 
 Batch 5 uses the existing isolated Stage 3 Compose acceptance environment, one
 PostgreSQL instance with service-owned databases, and an official-SDK stdio fixture
-in a test-only Runtime image. Internal catalog RPC seeds managed process settings
-(a Console process-configuration editor is not in scope); Agent lifecycle and ACP
-chat enter through Gateway with normal login cookies. A deterministic model fixture
+in a test-only Runtime image. Internal catalog RPC seeds the synthetic model;
+managed process settings now enter through Console Template create/revise routes.
+Agent lifecycle and ACP chat enter through Gateway with normal login cookies. A deterministic model fixture
 asserts fresh AGENTS.md/Skill summaries and actual tool schemas, returns managed
 tool calls, and validates the real subprocess results. The same conversation is
 loaded after explicit rebuild with a changed child ID. Jaeger assertions require

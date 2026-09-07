@@ -149,10 +149,14 @@ export type ModelProfileList = {
   next_after_id?: string | null;
 };
 
+export type ManagedMCPSummary = { id: string; command: string };
+export type ManagedMCPServer = ManagedMCPSummary & { args: string[]; env: Record<string, string> };
+
 export type RuntimeSpec = {
   image_ref: string;
   image_source?: string;
   resources: { memory_bytes: number; pids_limit: number; tmpfs_bytes: number };
+  mcp_servers?: ManagedMCPServer[];
 };
 
 export type AgentTemplate = {
@@ -201,7 +205,7 @@ export type Agent = {
     };
     max_model_requests: number;
     context_policy_version: string;
-    runtime: RuntimeSpec;
+    runtime: Omit<RuntimeSpec, "mcp_servers"> & { mcp_servers?: ManagedMCPSummary[] };
   };
   runtime?: {
     runtime_revision: string;

@@ -23,9 +23,9 @@ service databases/roles, synthetic login accounts and a disposable Runtime
 workspace. It removes its resources on both success and failure. It does not read
 `.secret`, use external LLMs, or reset an existing development instance.
 
-Internal catalog RPC seeds the test's MCP command/environment because the Console
-does not yet expose an MCP configuration editor. Agent creation, rebuild, deletion,
-login and chat use Gateway product entrypoints. No test writes another service's
+Internal catalog RPC seeds the synthetic model profile. Template creation/revision
+including MCP command/environment, Agent creation, rebuild, deletion, login and
+chat use Gateway product entrypoints and Console BFF. No test writes another service's
 database directly. The test-only image adds a fixture executable; the production
 Runtime image remains unchanged.
 
