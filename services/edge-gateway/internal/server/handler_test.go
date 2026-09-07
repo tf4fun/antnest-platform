@@ -250,7 +250,7 @@ func TestLoginAdmissionRejectsBeforeAnotherIdentityPasswordCheck(t *testing.T) {
 
 func TestOIDCStartUsesThePublicLoginAdmissionWindow(t *testing.T) {
 	identityStub := &identityServiceStub{startOIDCResult: identity.StartOIDCLoginResult{
-		AuthorizationURL: "https://id.example.test/authorize", ExpiresAt: time.Now().Add(time.Minute),
+		AuthorizationURL: "https://id.example.test/authorize?state=opaque-state", ExpiresAt: time.Now().Add(time.Minute),
 	}}
 	handler := newTestHandlerWithConfig(
 		t, identityStub, http.NotFoundHandler(), time.Now(),
@@ -430,7 +430,9 @@ func TestPublicOIDCLoginDiscoveryAndStartUseIdentityService(t *testing.T) {
 
 func TestOIDCCallbackEstablishesBrowserSessionWithoutDisclosingToken(t *testing.T) {
 	now := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
-	identityStub := &identityServiceStub{completeOIDCResult: identity.OIDCCallbackResult{
+	identityStub := &identityServiceStub{startOIDCResult: identity.StartOIDCLoginResult{
+		AuthorizationURL: "https://id.example.test/authorize?state=opaque-state", ExpiresAt: now.Add(time.Minute),
+	}, completeOIDCResult: identity.OIDCCallbackResult{
 		Principal: ordinaryPrincipal(), TokenID: "token-1", AccessToken: "ant_api_secret",
 		ExpiresAt: now.Add(time.Hour),
 	}}
@@ -438,6 +440,9 @@ func TestOIDCCallbackEstablishesBrowserSessionWithoutDisclosingToken(t *testing.
 	response := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet,
 		"/protocol/oidc/callback?state=opaque-state&code=authorization-code", nil)
+	for _, cookie := range beginTestOIDC(t, handler) {
+		request.AddCookie(cookie)
+	}
 	handler.ServeHTTP(response, request)
 
 	if response.Code != http.StatusSeeOther || response.Header().Get("Location") != "/" ||
@@ -458,11 +463,17 @@ func TestOIDCCallbackEstablishesBrowserSessionWithoutDisclosingToken(t *testing.
 }
 
 func TestOIDCCallbackFailureRedirectsWithOnlyAStableErrorCode(t *testing.T) {
-	handler := newTestHandler(t, &identityServiceStub{completeOIDCErr: context.DeadlineExceeded},
-		http.NotFoundHandler(), time.Now())
+	now := time.Now()
+	upstream := &identityServiceStub{completeOIDCErr: context.DeadlineExceeded, startOIDCResult: identity.StartOIDCLoginResult{
+		AuthorizationURL: "https://id.example.test/authorize?state=secret-state", ExpiresAt: now.Add(time.Minute),
+	}}
+	handler := newTestHandler(t, upstream, http.NotFoundHandler(), now)
 	response := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet,
 		"/protocol/oidc/callback?state=secret-state&code=secret-code", nil)
+	for _, cookie := range beginTestOIDC(t, handler) {
+		request.AddCookie(cookie)
+	}
 	handler.ServeHTTP(response, request)
 
 	location := response.Header().Get("Location")
@@ -470,8 +481,9 @@ func TestOIDCCallbackFailureRedirectsWithOnlyAStableErrorCode(t *testing.T) {
 		strings.Contains(location, "secret-state") || strings.Contains(location, "secret-code") {
 		t.Fatalf("status=%d location=%q body=%s", response.Code, location, response.Body.String())
 	}
-	if len(response.Result().Cookies()) != 0 {
-		t.Fatalf("failed callback established cookies: %#v", response.Result().Cookies())
+	cookies := response.Result().Cookies()
+	if len(cookies) != 1 || cookies[0].MaxAge >= 0 || upstream.completeOIDCInput.State != "secret-state" {
+		t.Fatal("failed bound callback did not consume only its pending transaction")
 	}
 }
 

@@ -1,5 +1,27 @@
 # Edge Gateway Architecture
 
+## OIDC Browser Transaction
+
+Identity owns the authorization transaction, PKCE, nonce, expiry and identity
+binding. Edge also binds that transaction to the initiating browser: successful
+start writes the SHA-256 digest of its state into a short-lived, HttpOnly,
+SameSite=Lax, host-only cookie, using the configured Secure policy (`__Host-`
+name under HTTPS; the unprefixed cookie is only for configured HTTP development). Callback
+must match that cookie before any Identity exchange. A foreign/missing state
+does not consume the legitimate browser's pending transaction or alter its
+existing application session. A matching completion clears only the pending
+OIDC cookie, including on rejection by Identity. One browser keeps its latest
+login attempt; starting another replaces the earlier binding. There is no new
+Gateway database or private Identity RPC field.
+
+Parallel tabs are not independent transactions: response arrival order decides
+the latest cookie, and a late matching callback response may clear a newer
+attempt. The user restarts login in that case. Identity's durable claim, not
+cookie deletion, serializes competing code exchanges.
+
+This is browser CSRF binding, not a substitute for Identity's token validation
+and server-side transaction deadline. See [RFC 9700 section 4.7.1](https://www.rfc-editor.org/rfc/rfc9700.html#section-4.7.1).
+
 ## Request Pipeline
 
 ```text

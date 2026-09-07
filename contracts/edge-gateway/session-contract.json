@@ -1,6 +1,6 @@
 {
   "contract": "antnest.edge-gateway.session",
-  "version": 5,
+  "version": 6,
   "routes": {
     "status": {
       "method": "GET",
@@ -32,7 +32,8 @@
       "success_status": 200,
       "cache": "no-store",
       "request_required": ["organization_slug", "provider_name"],
-      "response_required": ["authorization_url", "expires_at"]
+      "response_required": ["authorization_url", "expires_at"],
+      "browser_binding": "HttpOnly SameSite=Lax host-only SHA256(state) cookie; newest attempt replaces prior attempt"
     },
     "get_session": {
       "method": "GET",
@@ -73,7 +74,7 @@
 	"oidc_callback": {
 		"method": "GET",
 		"path": "/protocol/oidc/callback",
-		"authentication": "oidc_state_and_code",
+		"authentication": "oidc_state_and_code_and_originating_browser_cookie",
 		"success_status": 303,
 		"success_location": "/",
 		"cache": "no-store",

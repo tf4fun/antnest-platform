@@ -330,13 +330,21 @@ func (h *handler) startOIDCLogin(response http.ResponseWriter, request *http.Req
 		h.writePublicOIDCError(response, err)
 		return
 	}
+	if err := h.sessions.BindOIDC(response, result.AuthorizationURL, result.ExpiresAt); err != nil {
+		h.writePublicOIDCError(response, err)
+		return
+	}
 	response.Header().Set("Cache-Control", "no-store")
 	writeJSON(response, http.StatusOK, result)
 }
 
 func (h *handler) oidcCallback(response http.ResponseWriter, request *http.Request) {
 	response.Header().Set("Cache-Control", "no-store")
-	query := request.URL.Query()
+	query, err := url.ParseQuery(request.URL.RawQuery)
+	if err != nil {
+		h.redirectOIDCFailure(response, request)
+		return
+	}
 	input := identity.OIDCCallbackInput{
 		State: strings.TrimSpace(query.Get("state")), Code: strings.TrimSpace(query.Get("code")),
 		AuthorizationError: strings.TrimSpace(query.Get("error")),
@@ -345,6 +353,17 @@ func (h *handler) oidcCallback(response http.ResponseWriter, request *http.Reque
 		h.redirectOIDCFailure(response, request)
 		return
 	}
+	for _, name := range []string{"state", "code", "error"} {
+		if len(query[name]) > 1 {
+			h.redirectOIDCFailure(response, request)
+			return
+		}
+	}
+	if !h.sessions.MatchesOIDC(request, input.State) {
+		h.redirectOIDCFailure(response, request)
+		return
+	}
+	h.sessions.ClearOIDC(response)
 	ctx, cancel := context.WithTimeout(request.Context(), h.requestTimeout)
 	defer cancel()
 	result, err := h.identity.CompleteOIDCLogin(ctx, input)
