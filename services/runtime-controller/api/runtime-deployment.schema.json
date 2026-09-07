@@ -7,6 +7,9 @@
   "additionalProperties": false,
   "required": ["image_ref", "network", "resources"],
   "properties": {
+    "mcp_servers": {
+      "$ref": "../../../contracts/runtime/runtime-spec.schema.json#/properties/mcp_servers"
+    },
     "image_ref": {
       "type": "string",
       "pattern": "^(sha256:[0-9a-fA-F]{64}|[^@\\s]+@sha256:[0-9a-fA-F]{64})$",

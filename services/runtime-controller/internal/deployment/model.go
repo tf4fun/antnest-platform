@@ -46,16 +46,18 @@ type Deployment struct {
 // Configuration is the caller-owned policy input. Deployment identity and
 // Runtime image invariants are injected by Runtime Controller.
 type Configuration struct {
-	ImageRef  string         `json:"image_ref"`
-	Network   NetworkSpec    `json:"network"`
-	Resources ResourceLimits `json:"resources"`
+	MCPServers []MCPServer    `json:"mcp_servers,omitempty"`
+	ImageRef   string         `json:"image_ref"`
+	Network    NetworkSpec    `json:"network"`
+	Resources  ResourceLimits `json:"resources"`
 }
 
 func (c Configuration) Resolve(agentID string, generation uint64) (Deployment, error) {
 	value := Deployment{
 		ImageRef: c.ImageRef,
 		RuntimeSpec: RuntimeSpec{
-			AgentID: agentID, Generation: generation,
+			MCPServers: CloneMCPServers(c.MCPServers),
+			AgentID:    agentID, Generation: generation,
 			Listen:     SocketAddress{Host: "0.0.0.0", Port: 8093},
 			Network:    c.Network,
 			Filesystem: FilesystemSpec{Workspace: "/workspace", SystemSkills: "/skills"},
@@ -74,6 +76,7 @@ func (c Configuration) Validate() error {
 }
 
 type RuntimeSpec struct {
+	MCPServers []MCPServer    `json:"mcp_servers,omitempty"`
 	AgentID    string         `json:"agent_id"`
 	Generation uint64         `json:"generation"`
 	Listen     SocketAddress  `json:"listen"`
@@ -126,6 +129,9 @@ func (d Deployment) ValidateFor(key Key) error {
 		return err
 	}
 	if err := d.RuntimeSpec.Filesystem.validate(); err != nil {
+		return err
+	}
+	if err := validateMCPServers(d.RuntimeSpec.MCPServers); err != nil {
 		return err
 	}
 	if d.Resources.MemoryBytes < 128<<20 {

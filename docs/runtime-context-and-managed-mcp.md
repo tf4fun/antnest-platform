@@ -115,7 +115,7 @@ and that service's fixtures belong to the same batch.
 | Batch | Owner | Deliverable | Status |
 | --- | --- | --- | --- |
 | 1 | `antnest-runtime` | Information Resource, stdio process hosting, aggregated tool discovery/dispatch, lifecycle and telemetry tests | Complete; service-local accepted |
-| 2 | `runtime-controller` | Configuration transport, mounts/permissions and readiness integration | Pending |
+| 2 | `runtime-controller` | Configuration transport, mounts/permissions and readiness integration | Complete; service-local accepted |
 | 3 | `agent-controller` | Configuration validation/snapshot and create/rebuild execution publication | Pending |
 | 4 | `agent-acp-service` | Information consumption, managed tool discovery and budgeted context injection | Pending |
 | 5 | Integration | Docker create/chat/rebuild workflow and Gateway-rooted trace verification | Pending |
@@ -128,6 +128,13 @@ passed. Read-only review findings were fixed, including network availability
 during child initialization and SDK parameter-header validation for aggregated
 tools. The E2E suite cleans its own containers and network. Cross-service
 configuration, context consumption and Gateway-rooted traces remain pending.
+
+Batch 2 final evidence: Runtime Controller module tests, including strict RPC
+transport for Initialize/Update/Enable, shared bootstrap bounds, immutable
+configuration copying, physical digest sensitivity, mount preservation and
+non-disclosure in operation responses; `make fmt-check` and `make lint` passed.
+No persistence schema was added. Real cross-service create/rebuild acceptance
+remains in batch 5.
 
 Runtime tests must cover empty configuration, real stdio MCP initialization and
 calls, process reuse, startup failure/timeout, cancellation, child exit, shutdown

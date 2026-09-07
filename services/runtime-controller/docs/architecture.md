@@ -65,6 +65,22 @@ result to private platform resources. The platform remains physical
 current-state authority; the private Environment head records only lifecycle
 and concurrency facts that cannot be inferred from platform presence.
 
+Configuration optionally carries `mcp_servers`: required Runtime-hosted stdio
+servers (`id`, `command`, optional `args` and `env`). Initialize, Update and
+Enable preserve this input in RuntimeSpec; omission means no managed servers.
+The service validates the shared Runtime bounds before platform mutation. It
+does not launch these programs, discover tools, read AGENTS.md/Skills, or add
+child MCP endpoints. Those are Runtime responsibilities. Existing `/status`
+verification includes required MCP initialization because Runtime does not
+listen until discovery succeeds.
+
+The configuration participates in request and physical deployment digests, but
+is not copied into the Environment head, operation response or observation
+journal. Only the platform bootstrap receives the command/arguments/environment;
+MCP values must never be emitted in logs or spans. Changes require Update (or
+Enable when disabled), not live mutation of a running process. The authoritative
+desired configuration and retry input belong to Agent Controller.
+
 The immutable digest is computed from the canonical Docker create request and
 resource name, not from a parallel summary or only the caller's JSON. It
 therefore covers the selected management network, system-Skill volume,

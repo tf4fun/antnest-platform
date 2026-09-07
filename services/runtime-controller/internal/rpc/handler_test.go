@@ -368,6 +368,7 @@ type fakeService struct {
 	initializeCalls        int
 	command                deployment.OperationKind
 	expectedRevision       deployment.RuntimeRevision
+	configuration          deployment.Configuration
 }
 
 func (*fakeService) ResolveImage(context.Context, string) (platform.ImageResolution, error) {
@@ -381,16 +382,18 @@ func (s *fakeService) Status(context.Context) (control.Readiness, error) {
 	return control.Readiness{DatabaseReady: true, PlatformReady: true, ObservationReady: true}, nil
 }
 func (s *fakeService) InitializeRuntime(
-	_ context.Context, _ string, agentID string, _ deployment.Configuration,
+	_ context.Context, _ string, agentID string, configuration deployment.Configuration,
 ) (deployment.Operation, error) {
 	s.initializeCalls++
+	s.configuration = configuration
 	s.agentID = agentID
 	return s.operation, s.operationErr
 }
 func (s *fakeService) UpdateRuntime(
-	_ context.Context, _ string, agentID string, revision deployment.RuntimeRevision, _ deployment.Configuration,
+	_ context.Context, _ string, agentID string, revision deployment.RuntimeRevision, configuration deployment.Configuration,
 ) (deployment.Operation, error) {
 	s.command, s.agentID, s.expectedRevision = deployment.OperationUpdateRuntime, agentID, revision
+	s.configuration = configuration
 	return s.operation, nil
 }
 func (s *fakeService) DisableRuntime(
@@ -400,9 +403,10 @@ func (s *fakeService) DisableRuntime(
 	return s.operation, nil
 }
 func (s *fakeService) EnableRuntime(
-	_ context.Context, _ string, agentID string, revision deployment.RuntimeRevision, _ deployment.Configuration,
+	_ context.Context, _ string, agentID string, revision deployment.RuntimeRevision, configuration deployment.Configuration,
 ) (deployment.Operation, error) {
 	s.command, s.agentID, s.expectedRevision = deployment.OperationEnableRuntime, agentID, revision
+	s.configuration = configuration
 	return s.operation, nil
 }
 func (s *fakeService) InspectRuntime(_ context.Context, agentID string) (deployment.Environment, error) {

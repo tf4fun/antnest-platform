@@ -8,9 +8,10 @@ import (
 )
 
 type configurationDTO struct {
-	ImageRef  string            `json:"image_ref"`
-	Network   networkDTO        `json:"network"`
-	Resources resourceLimitsDTO `json:"resources"`
+	MCPServers []deployment.MCPServer `json:"mcp_servers,omitempty"`
+	ImageRef   string                 `json:"image_ref"`
+	Network    networkDTO             `json:"network"`
+	Resources  resourceLimitsDTO      `json:"resources"`
 }
 
 type networkDTO struct {
@@ -33,7 +34,8 @@ type resourceLimitsDTO struct {
 
 func (d configurationDTO) domain() deployment.Configuration {
 	return deployment.Configuration{
-		ImageRef: d.ImageRef,
+		MCPServers: deployment.CloneMCPServers(d.MCPServers),
+		ImageRef:   d.ImageRef,
 		Network: deployment.NetworkSpec{
 			PacketContractRevision: d.Network.PacketContractRevision,
 			EgressEndpoint: deployment.IPv4Endpoint{

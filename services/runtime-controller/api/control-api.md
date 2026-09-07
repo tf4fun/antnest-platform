@@ -56,6 +56,18 @@ invariant permits only one `running` or `unknown` operation per Agent.
 
 ## Runtime Configuration
 
+Optional `configuration.mcp_servers` configures required stdio MCP processes in
+Runtime, using the [shared RuntimeSpec](../../../contracts/runtime/runtime-spec.schema.json)
+shape: `[{"id":"docs","command":"node","args":["/workspace/mcp/docs.js"],"env":{}}]`.
+Executables must already be present in the selected image or workspace. Omit
+the array (or send `[]`) for no managed servers. Limits: eight unique server
+IDs, 32 KiB per server and 64 KiB for the encoded array, 64 arguments and 64 env
+entries per server. Runtime owns initialization, tool aggregation and process
+lifetime; Controller never launches stdio programs itself. New configuration
+requires Update or Enable, and participates in idempotency/deployment digests.
+Operation/inspection/observation responses never contain this bootstrap data.
+Readiness is not returned before the required servers initialize successfully.
+
 Initialize, Update, and Enable carry a Runtime configuration:
 
 ```json
