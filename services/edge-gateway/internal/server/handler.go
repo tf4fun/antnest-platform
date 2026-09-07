@@ -576,6 +576,7 @@ func (h *handler) authenticate(
 	response http.ResponseWriter,
 	request *http.Request,
 ) (session.Values, identity.Principal, bool) {
+	response.Header().Set("Cache-Control", "no-store")
 	values, ok := h.sessions.Read(request)
 	if !ok {
 		writeError(response, http.StatusUnauthorized, "unauthenticated", "Login is required")
@@ -584,6 +585,11 @@ func (h *handler) authenticate(
 	ctx, cancel := context.WithTimeout(request.Context(), h.requestTimeout)
 	defer cancel()
 	principal, err := h.identity.Resolve(ctx, values.AccessToken)
+	if err != nil && !identity.IsCode(err, "unauthenticated") && !identity.IsCode(err, "inactive_principal") {
+		h.logger.ErrorContext(request.Context(), "Session validation unavailable", "error_class", "identity_unavailable")
+		writeError(response, http.StatusServiceUnavailable, "identity_unavailable", "Session could not be verified")
+		return session.Values{}, identity.Principal{}, false
+	}
 	if err != nil || !principal.Active {
 		h.sessions.Clear(response)
 		writeError(response, http.StatusUnauthorized, "unauthenticated", "Session is invalid or expired")

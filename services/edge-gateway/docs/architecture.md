@@ -24,6 +24,12 @@ and server-side transaction deadline. See [RFC 9700 section 4.7.1](https://www.r
 
 ## Request Pipeline
 
+Session rejection and Identity unavailability are distinct. Authoritative
+`unauthenticated`/`inactive_principal` responses or an inactive resolved principal
+return 401 and clear browser cookies. Transport, timeout, malformed-response and
+other upstream errors deny access with 503 without destroying the browser's
+session. A retry must revalidate with Identity; unavailable never means admitted.
+
 ```text
 HTTP limits/security headers
   -> W3C trace extraction/root span

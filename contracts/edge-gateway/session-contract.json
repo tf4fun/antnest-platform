@@ -1,6 +1,11 @@
 {
   "contract": "antnest.edge-gateway.session",
-  "version": 6,
+  "version": 7,
+  "session_validation": {
+    "invalid_or_expired": "401 unauthenticated; clear browser cookies",
+    "identity_unavailable": "503 identity_unavailable; preserve cookies; never admit upstream requests",
+    "cache": "no-store"
+  },
   "routes": {
     "status": {
       "method": "GET",
