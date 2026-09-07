@@ -215,7 +215,10 @@ fn shared_contract_matches_runtime_http_surface() {
     assert_eq!(contract.execution.single_flight_enforced_by, "runtime");
     assert_eq!(contract.execution.max_active_calls_per_agent, 1);
     assert_eq!(contract.execution.busy_error, "runtime_busy");
-    assert_eq!(contract.execution.subcommands, contract.tools);
+    let mut commands = contract.tools.clone();
+    commands.push("info".into());
+    commands.sort();
+    assert_eq!(contract.execution.subcommands, commands);
 
     let status = RuntimeStatus::with_execution_id(
         RuntimeIdentity::new("agent-1", 2).unwrap(),
@@ -227,6 +230,7 @@ fn shared_contract_matches_runtime_http_surface() {
 
 fn assert_runtime_spec_shape(schema: &serde_json::Value) {
     let input = RuntimeSpecInput {
+        mcp_servers: Vec::new(),
         agent_id: "agent-1".into(),
         generation: 2,
         listen: SocketAddressInput {
@@ -326,6 +330,7 @@ fn assert_runtime_spec_shape(schema: &serde_json::Value) {
 
 fn valid_input() -> RuntimeSpecInput {
     RuntimeSpecInput {
+        mcp_servers: Vec::new(),
         agent_id: "agent-1".into(),
         generation: 2,
         listen: SocketAddressInput {
@@ -355,7 +360,7 @@ fn assert_object_shape(
 ) {
     let properties = properties.as_object().expect("schema properties");
     assert_eq!(object.len(), properties.len());
-    assert_eq!(object.len(), required.len());
+    assert!(object.len() >= required.len());
     assert!(object.keys().all(|name| properties.contains_key(name)));
     assert!(
         required
@@ -493,6 +498,64 @@ async fn official_mcp_client_observes_status_and_calls_all_runtime_tools() {
         .collect::<Vec<_>>();
     names.sort();
     assert_eq!(names, shared_contract().tools);
+
+    let resources = client
+        .list_resources(None)
+        .await
+        .expect("list Runtime resources");
+    assert_eq!(resources.resources.len(), 1);
+    assert_eq!(
+        resources.resources[0].uri,
+        crate::information::INFORMATION_URI
+    );
+    assert_eq!(
+        resources.resources[0].mime_type.as_deref(),
+        Some("application/json")
+    );
+    for content in ["First instructions", "Updated instructions"] {
+        call(
+            &client,
+            "write",
+            json!({
+                "path": {"root": "workspace", "path": "AGENTS.md"}, "content": content
+            }),
+        )
+        .await;
+        let information = client
+            .read_resource(rmcp::model::ReadResourceRequestParams::new(
+                crate::information::INFORMATION_URI,
+            ))
+            .await
+            .expect("read fresh Runtime information");
+        assert_eq!(information.ttl_ms, Some(0));
+        assert_eq!(
+            information.cache_scope,
+            Some(rmcp::model::CacheScope::Private)
+        );
+        assert_eq!(information.contents.len(), 1);
+        let rmcp::model::ResourceContents::TextResourceContents { text, .. } =
+            &information.contents[0]
+        else {
+            panic!("information must be JSON text");
+        };
+        let value: serde_json::Value = serde_json::from_str(text).unwrap();
+        assert_eq!(value["execution_id"], "execution-1");
+        assert_eq!(value["instructions"]["content"], content);
+        assert_eq!(
+            value["environment"]["workspace"],
+            workspace.path().to_str().unwrap()
+        );
+    }
+    let error = client
+        .read_resource(rmcp::model::ReadResourceRequestParams::new(
+            "file:///root/secret",
+        ))
+        .await
+        .expect_err("arbitrary resource paths must be rejected");
+    assert!(
+        matches!(&error, rmcp::ServiceError::McpError(data) if data.code.0 == -32602),
+        "unexpected resource error: {error:?}"
+    );
 
     call(
         &client,

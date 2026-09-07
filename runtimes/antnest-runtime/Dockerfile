@@ -5,6 +5,8 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends libnftables-dev pkg-config \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
+COPY runtimes/antnest-runtime/rust-toolchain.toml ./rust-toolchain.toml
+RUN rustup show active-toolchain
 COPY runtimes/antnest-runtime ./runtimes/antnest-runtime
 COPY contracts/runtime ./contracts/runtime
 WORKDIR /src/runtimes/antnest-runtime
@@ -13,6 +15,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cargo fmt --check \
     && cargo clippy --locked --all-targets -- -D warnings \
     && cargo test --locked \
+    && cargo build --locked --example managed-mcp-fixture \
+    && cp target/debug/examples/managed-mcp-fixture /tmp/managed-mcp-fixture \
     && cargo build --locked --release \
     && cp target/release/antnest-runtime /tmp/antnest-runtime
 

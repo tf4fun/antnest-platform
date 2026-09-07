@@ -71,6 +71,26 @@ fn explicit_tool_subcommands_execute_as_the_agent_user() {
     );
     assert_eq!(read["status"], "success");
     assert_eq!(read["result"]["content"], "hello from executor");
+
+    let instructions = workspace.join("AGENTS.md");
+    fs::write(&instructions, "ROOT-ONLY-INSTRUCTIONS").unwrap();
+    fs::set_permissions(&instructions, fs::Permissions::from_mode(0o600)).unwrap();
+    let private = invoke("info", &workspace, &system_skills, json!({}));
+    assert_eq!(private["status"], "success");
+    assert!(private["result"]["instructions"].is_null());
+    assert_eq!(private["result"]["warnings"][0]["code"], "unreadable");
+    assert!(!private.to_string().contains("ROOT-ONLY-INSTRUCTIONS"));
+
+    make_agent_owned(&instructions);
+    let readable = invoke("info", &workspace, &system_skills, json!({}));
+    assert_eq!(
+        readable["result"]["instructions"]["content"],
+        "ROOT-ONLY-INSTRUCTIONS"
+    );
+    assert_eq!(
+        readable["result"]["environment"]["home"],
+        workspace.to_str().unwrap()
+    );
 }
 
 fn invoke(command: &str, workspace: &Path, system_skills: &Path, input: Value) -> Value {

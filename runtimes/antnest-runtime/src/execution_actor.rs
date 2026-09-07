@@ -4,9 +4,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use nix::errno::Errno;
 use nix::sys::signal::{Signal, kill};
-use nix::sys::wait::{WaitPidFlag, WaitStatus, waitpid};
 use nix::unistd::Pid;
 use thiserror::Error;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
@@ -23,15 +21,18 @@ use crate::execution::{
 };
 use crate::executor_protocol::{
     ExecutorFailure, MAX_EXECUTOR_DIAGNOSTIC_BYTES, MAX_EXECUTOR_MESSAGE_BYTES, Outcome,
-    decode_bash_reply, decode_edit_reply, decode_read_reply, decode_write_reply,
+    decode_bash_reply, decode_edit_reply, decode_info_reply, decode_read_reply, decode_write_reply,
     encode_bash_request, encode_edit_request, encode_read_request, encode_write_request,
 };
+use crate::information::RuntimeContext;
 use crate::spec::RuntimeIdentity;
 use crate::telemetry::RuntimeMetrics;
 use crate::tool_error::{ToolError, ToolErrorCode};
 
 const FILE_TOOL_TIMEOUT: Duration = Duration::from_secs(30);
-const EXECUTOR_GRACE: Duration = Duration::from_secs(1);
+// Bash may finish while background jobs retain its output pipes. Allow the
+// bounded two-second output drain before the Supervisor's outer deadline.
+const EXECUTOR_GRACE: Duration = Duration::from_secs(3);
 const PROCESS_STOP_TIMEOUT: Duration = Duration::from_secs(2);
 const EXECUTOR_PROBE_COMMAND: &str = "test -w . && test -x . && \
     test -r \"$ANTNEST_PROBE_SYSTEM_SKILLS\" && \
@@ -48,6 +49,7 @@ pub(crate) struct ExecutionActor {
     metrics: RuntimeMetrics,
     shutdown: CancellationToken,
     fatal: mpsc::UnboundedSender<ExecutionFatal>,
+    children: crate::processes::ChildRegistry,
 }
 
 impl ExecutionActor {
@@ -68,6 +70,7 @@ impl ExecutionActor {
                 metrics,
                 shutdown,
                 fatal,
+                children: crate::processes::ChildRegistry::default(),
             },
             failures,
         )
@@ -155,6 +158,33 @@ impl ExecutionActor {
         .await
     }
 
+    pub(crate) async fn info(
+        &self,
+        cancel: CancellationToken,
+    ) -> Result<RuntimeContext, ToolError> {
+        self.execute(
+            ToolCommand::Info,
+            b"{}".to_vec(),
+            decode_info_reply,
+            cancel,
+            FILE_TOOL_TIMEOUT,
+        )
+        .await
+    }
+
+    pub(crate) fn children(&self) -> crate::processes::ChildRegistry {
+        self.children.clone()
+    }
+
+    pub(crate) fn admit(&self) -> Result<ExecutionLease, ToolError> {
+        if self.shutdown.is_cancelled() {
+            self.gate.close();
+        }
+        self.gate
+            .try_acquire()
+            .map_err(|error| ToolError::new(error.code(), error))
+    }
+
     pub(crate) fn close(&self) {
         self.gate.close();
     }
@@ -205,6 +235,7 @@ impl ExecutionActor {
             fatal: self.fatal.clone(),
             gate: self.gate.clone(),
             _lease: lease,
+            children: self.children.clone(),
         };
         let span = tracing::info_span!(
             "runtime.executor",
@@ -388,10 +419,17 @@ struct ExecutorCall {
     fatal: mpsc::UnboundedSender<ExecutionFatal>,
     gate: SingleFlight,
     _lease: ExecutionLease,
+    children: crate::processes::ChildRegistry,
 }
 
 impl ExecutorCall {
     async fn run<O>(mut self, decode_reply: ReplyDecoder<O>) -> Result<O, ToolError> {
+        if self.cancel.is_cancelled() || self.shutdown.is_cancelled() {
+            return Err(ToolError::new(
+                ToolErrorCode::Canceled,
+                "executor canceled before dispatch",
+            ));
+        }
         let mut command = Command::new("/proc/self/exe");
         command
             .arg(self.tool.as_str())
@@ -405,9 +443,11 @@ impl ExecutorCall {
             .stderr(Stdio::piped())
             .kill_on_drop(true)
             .process_group(0);
-        let mut child = command
-            .spawn()
+        let mut owned = self
+            .children
+            .spawn(&mut command)
             .map_err(|error| ToolError::new(ToolErrorCode::SpawnFailed, error))?;
+        let child = &mut owned.child;
         if let Some(pid) = child.id() {
             tracing::Span::current().record("executor.child.pid", u64::from(pid));
         }
@@ -441,6 +481,11 @@ impl ExecutorCall {
         });
         let output = tokio::spawn(read_bounded(stdout, MAX_EXECUTOR_MESSAGE_BYTES));
         let diagnostics = tokio::spawn(read_bounded(stderr, MAX_EXECUTOR_DIAGNOSTIC_BYTES));
+        let mut io = ExecutorIo {
+            input,
+            output,
+            diagnostics,
+        };
 
         enum Exit {
             Completed(std::io::Result<std::process::ExitStatus>),
@@ -460,8 +505,7 @@ impl ExecutorCall {
                 Ok(status) => status,
                 Err(error) => {
                     tracing::Span::current().record("executor.exit.classification", "wait_error");
-                    terminate_executor(&mut child, process_group).await;
-                    self.finish_cleanup().await?;
+                    self.stop_executor(child, process_group, &mut io).await?;
                     return Err(
                         self.unobserved_error(format!("wait for executor process: {error}"))
                     );
@@ -469,8 +513,7 @@ impl ExecutorCall {
             },
             Exit::Canceled => {
                 tracing::Span::current().record("executor.exit.classification", "canceled");
-                terminate_executor(&mut child, process_group).await;
-                self.finish_cleanup().await?;
+                self.stop_executor(child, process_group, &mut io).await?;
                 return Err(
                     self.interrupted_error(ToolErrorCode::Canceled, "executor request canceled")
                 );
@@ -478,16 +521,14 @@ impl ExecutorCall {
             Exit::Shutdown => {
                 tracing::Span::current().record("executor.exit.classification", "shutdown");
                 self.gate.close();
-                terminate_executor(&mut child, process_group).await;
-                self.finish_cleanup().await?;
+                self.stop_executor(child, process_group, &mut io).await?;
                 return Err(
                     self.interrupted_error(ToolErrorCode::Canceled, "Runtime is shutting down")
                 );
             }
             Exit::TimedOut => {
                 tracing::Span::current().record("executor.exit.classification", "timeout");
-                terminate_executor(&mut child, process_group).await;
-                self.finish_cleanup().await?;
+                self.stop_executor(child, process_group, &mut io).await?;
                 return Err(
                     self.interrupted_error(ToolErrorCode::Timeout, "executor request timed out")
                 );
@@ -502,20 +543,11 @@ impl ExecutorCall {
             },
         );
 
-        let input = input
-            .await
-            .map_err(|error| ToolError::new(ToolErrorCode::RuntimeFailed, error))?;
-        self.finish_cleanup().await?;
-        let (output, output_truncated) = output
-            .await
-            .map_err(|error| ToolError::new(ToolErrorCode::RuntimeFailed, error))?
-            .map_err(|error| ToolError::new(ToolErrorCode::OutputCaptureFailed, error))?;
-        let (diagnostics, diagnostics_truncated) = diagnostics
-            .await
-            .map_err(|error| ToolError::new(ToolErrorCode::RuntimeFailed, error))?
-            .map_err(|error| ToolError::new(ToolErrorCode::OutputCaptureFailed, error))?;
-
-        input.map_err(|error| ToolError::new(ToolErrorCode::RuntimeFailed, error))?;
+        let (output, output_truncated, diagnostics, diagnostics_truncated) =
+            tokio::time::timeout(PROCESS_STOP_TIMEOUT, io.finish())
+                .await
+                .map_err(|_| self.unobserved_error("executor response drain timed out"))?
+                .map_err(|error| self.unobserved_error(error))?;
         if output_truncated {
             return Err(self.unobserved_error("executor response exceeded the encoded limit"));
         }
@@ -527,21 +559,37 @@ impl ExecutorCall {
             .map_err(|error| self.unobserved_error(format!("decode executor response: {error}")))?
         {
             Ok(result) => Ok(result),
-            Err(error) => Err(error.into_tool_error()),
+            Err(error) => {
+                if matches!(
+                    error.code,
+                    ToolErrorCode::Timeout | ToolErrorCode::Canceled | ToolErrorCode::WaitFailed
+                ) {
+                    // The non-root shell already reported interruption. Retire
+                    // only this invocation's group, never prior background jobs.
+                    self.stop_executor(child, process_group, &mut io).await?;
+                }
+                Err(error.into_tool_error())
+            }
         }
     }
 
-    async fn finish_cleanup(&self) -> Result<(), ToolError> {
-        if contain_runtime_descendants().await {
-            Ok(())
-        } else {
+    async fn stop_executor(
+        &self,
+        child: &mut Child,
+        group: Option<Pid>,
+        io: &mut ExecutorIo,
+    ) -> Result<(), ToolError> {
+        let result = terminate_executor(child, group).await;
+        io.abort();
+        if let Err(error) = result {
             self.gate.poison();
             let _ = self.fatal.send(ExecutionFatal);
-            Err(ToolError::new(
+            return Err(ToolError::unknown(
                 ToolErrorCode::ChildProcessContainmentUnproven,
-                "Runtime PID 1 could not contain every Executor descendant",
-            ))
+                error,
+            ));
         }
+        Ok(())
     }
 
     fn interrupted_error(&self, code: ToolErrorCode, message: &'static str) -> ToolError {
@@ -620,55 +668,47 @@ fn record_executor_result(
     }
 }
 
-async fn terminate_executor(child: &mut Child, process_group: Option<Pid>) {
-    signal_process_group(process_group, Signal::SIGTERM);
-    if tokio::time::timeout(PROCESS_STOP_TIMEOUT, child.wait())
+async fn terminate_executor(child: &mut Child, process_group: Option<Pid>) -> std::io::Result<()> {
+    let group =
+        process_group.ok_or_else(|| std::io::Error::other("executor process group unavailable"))?;
+    match kill(Pid::from_raw(-group.as_raw()), Signal::SIGKILL) {
+        Ok(()) | Err(nix::errno::Errno::ESRCH) => {}
+        Err(error) => return Err(std::io::Error::from_raw_os_error(error as i32)),
+    }
+    tokio::time::timeout(PROCESS_STOP_TIMEOUT, child.wait())
         .await
-        .is_ok_and(|result| result.is_ok())
-    {
-        return;
-    }
-    signal_process_group(process_group, Signal::SIGKILL);
-    let _ = tokio::time::timeout(PROCESS_STOP_TIMEOUT, child.wait()).await;
+        .map_err(|_| std::io::Error::other("executor did not exit after cancellation"))??;
+    Ok(())
 }
 
-fn signal_process_group(process_group: Option<Pid>, signal: Signal) {
-    if let Some(process_group) = process_group {
-        let _ = kill(Pid::from_raw(-process_group.as_raw()), signal);
-    }
+type OutputReader = JoinHandle<std::io::Result<(Vec<u8>, bool)>>;
+
+struct ExecutorIo {
+    input: JoinHandle<std::io::Result<()>>,
+    output: OutputReader,
+    diagnostics: OutputReader,
 }
 
-async fn contain_runtime_descendants() -> bool {
-    if std::process::id() != 1 {
-        return true;
+impl ExecutorIo {
+    async fn finish(&mut self) -> std::io::Result<(Vec<u8>, bool, Vec<u8>, bool)> {
+        let (input, output, diagnostics) =
+            tokio::join!(&mut self.input, &mut self.output, &mut self.diagnostics);
+        input.map_err(std::io::Error::other)??;
+        let (output, truncated) = output.map_err(std::io::Error::other)??;
+        let (diagnostics, diagnostics_truncated) = diagnostics.map_err(std::io::Error::other)??;
+        Ok((output, truncated, diagnostics, diagnostics_truncated))
     }
-    signal_all_descendants(Signal::SIGTERM);
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    let deadline = tokio::time::Instant::now() + PROCESS_STOP_TIMEOUT;
-    loop {
-        if reap_all_descendants() {
-            return true;
-        }
-        signal_all_descendants(Signal::SIGKILL);
-        if tokio::time::Instant::now() >= deadline {
-            return false;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
+
+    fn abort(&self) {
+        self.input.abort();
+        self.output.abort();
+        self.diagnostics.abort();
     }
 }
 
-fn signal_all_descendants(signal: Signal) {
-    let _ = kill(Pid::from_raw(-1), signal);
-}
-
-fn reap_all_descendants() -> bool {
-    loop {
-        match waitpid(Pid::from_raw(-1), Some(WaitPidFlag::WNOHANG)) {
-            Ok(WaitStatus::StillAlive) => return false,
-            Ok(_) | Err(Errno::EINTR) => {}
-            Err(Errno::ECHILD) => return true,
-            Err(_) => return false,
-        }
+impl Drop for ExecutorIo {
+    fn drop(&mut self) {
+        self.abort();
     }
 }
 

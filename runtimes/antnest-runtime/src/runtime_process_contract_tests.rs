@@ -55,6 +55,8 @@ fn release_build_preserves_executor_panic_containment() {
 #[test]
 fn runtime_commands_are_explicit_and_closed() {
     assert_eq!(Command::parse(["serve"]), Ok(Command::Serve));
+    assert_eq!(Command::parse(["mcp-stdio"]), Ok(Command::McpStdio));
+    assert!(Command::parse(["mcp-stdio", "node"]).is_err());
     assert_eq!(
         Command::parse(["bash"]),
         Ok(Command::Tool(ToolCommand::Bash))
@@ -91,6 +93,19 @@ fn tool_commands_map_to_fixed_process_arguments() {
     assert_eq!(ToolCommand::Read.as_str(), "read");
     assert_eq!(ToolCommand::Write.as_str(), "write");
     assert_eq!(ToolCommand::Edit.as_str(), "edit");
+}
+
+#[test]
+fn information_command_is_read_only_and_accepts_no_selection_parameters() {
+    assert_eq!(
+        Command::parse(["info"]),
+        Ok(Command::Tool(ToolCommand::Info))
+    );
+    assert_eq!(ToolCommand::Info.as_str(), "info");
+    assert!(!ToolCommand::Info.may_have_side_effects());
+    assert!(crate::executor_protocol::decode_info_request(b"{}").is_ok());
+    assert!(crate::executor_protocol::decode_info_request(b"{\"path\":\"/root\"}").is_err());
+    assert!(crate::executor_protocol::decode_info_request(b"null").is_err());
 }
 
 #[test]

@@ -49,7 +49,11 @@
       "http_bind_failed",
       "http_service_failed",
       "local_network_failed",
+      "managed_mcp_start_failed",
+      "managed_mcp_service_failed",
+      "managed_mcp_stop_failed",
       "network_transport_failed",
+      "orphan_reaper_failed",
       "shutdown_timeout",
       "signal_listener_failed",
       "telemetry_initialization_failed",
@@ -100,9 +104,32 @@
     "single_flight_enforced_by": "runtime",
     "max_active_calls_per_agent": 1,
     "busy_error": "runtime_busy",
-    "subcommands": ["bash", "edit", "read", "write"]
+    "subcommands": ["bash", "edit", "info", "read", "write"]
   },
   "tools": ["bash", "edit", "read", "write"],
+  "managed_mcp": {
+    "config_field": "mcp_servers",
+    "executor_subcommand": "mcp-stdio",
+    "max_servers": 8,
+    "max_config_bytes": 65536,
+    "max_tools": 128,
+    "max_catalog_bytes": 1048576,
+    "tool_name_prefix": "mcp__",
+    "lifecycle": "runtime",
+    "tool_catalog": "tools/list"
+  },
+  "information": {
+    "uri": "antnest://runtime/info",
+    "schema": "runtime-information.schema.json",
+    "mime_type": "application/json",
+    "read_method": "resources/read",
+    "executor_subcommand": "info",
+    "max_instruction_bytes": 16384,
+    "max_manifest_bytes": 16384,
+    "max_scan_entries_per_root": 128,
+    "max_skills_per_root": 32,
+    "max_warnings": 67
+  },
   "egress_tunnel": {
     "kind": "udp",
     "payload": "one-complete-ipv4-packet",

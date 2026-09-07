@@ -2,10 +2,31 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use crate::execution;
+use crate::information::RuntimeContext;
 use crate::tool_error::{ToolError, ToolErrorCode};
 
 pub(crate) const MAX_EXECUTOR_MESSAGE_BYTES: usize = 64 * 1024 * 1024;
 pub(crate) const MAX_EXECUTOR_DIAGNOSTIC_BYTES: usize = 64 * 1024;
+
+pub(crate) fn decode_info_request(input: &[u8]) -> Result<(), ToolError> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct InformationRequest {}
+
+    decode_request::<InformationRequest>(input).map(|_| ())
+}
+
+pub(crate) fn encode_info_reply(
+    result: Result<RuntimeContext, ToolError>,
+) -> Result<Vec<u8>, serde_json::Error> {
+    encode_reply(result)
+}
+
+pub(crate) fn decode_info_reply(
+    input: &[u8],
+) -> Result<Result<RuntimeContext, ExecutorFailure>, serde_json::Error> {
+    decode_reply(input, std::convert::identity)
+}
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]

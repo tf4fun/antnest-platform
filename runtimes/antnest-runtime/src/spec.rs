@@ -44,6 +44,7 @@ pub(crate) struct RuntimeSpec {
     listen: SocketAddr,
     network: NetworkSpec,
     filesystem: FilesystemSpec,
+    mcp_servers: Vec<crate::managed_mcp::spec::ServerSpec>,
 }
 
 impl RuntimeSpec {
@@ -61,6 +62,7 @@ impl RuntimeSpec {
             listen,
             network,
             filesystem,
+            mcp_servers: Vec::new(),
         })
     }
 
@@ -78,6 +80,18 @@ impl RuntimeSpec {
 
     pub(crate) fn filesystem(&self) -> &FilesystemSpec {
         &self.filesystem
+    }
+
+    pub(crate) fn with_mcp_servers(
+        mut self,
+        servers: Vec<crate::managed_mcp::spec::ServerSpec>,
+    ) -> Self {
+        self.mcp_servers = servers;
+        self
+    }
+
+    pub(crate) fn mcp_servers(&self) -> &[crate::managed_mcp::spec::ServerSpec] {
+        &self.mcp_servers
     }
 }
 

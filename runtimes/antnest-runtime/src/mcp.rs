@@ -20,8 +20,9 @@ use rmcp::{
     handler::server::{tool::ToolCallContext, wrapper::Parameters},
     model::{
         CacheScope, CallToolRequestParams, CallToolResponse, CallToolResult, DiscoverResult,
-        InitializeRequestParams, InitializeResult, ListToolsResult, PaginatedRequestParams,
-        ProtocolVersion, ResultType,
+        InitializeRequestParams, InitializeResult, ListResourcesResult, ListToolsResult,
+        PaginatedRequestParams, ProtocolVersion, ReadResourceRequestParams, ReadResourceResponse,
+        ReadResourceResult, Resource, ResourceContents, ResultType,
     },
     service::RequestContext,
     tool, tool_router,
@@ -38,6 +39,8 @@ use tracing::Instrument as _;
 use crate::execution;
 use crate::execution_actor::ExecutionActor;
 use crate::executor_protocol::MAX_EXECUTOR_MESSAGE_BYTES;
+use crate::information::{INFORMATION_URI, RuntimeContext};
+use crate::managed_mcp::catalog::Catalog;
 use crate::protocol::types::{
     BashInput, BashResult, EditFileInput, EditFileResult, ReadFileInput, ReadFileResult,
     WriteFileInput, WriteFileResult,
@@ -105,6 +108,7 @@ pub(crate) struct RuntimeHttp {
     status: RuntimeStatus,
     tools: ToolBackend,
     metrics: RuntimeMetrics,
+    managed: Catalog,
 }
 
 impl RuntimeHttp {
@@ -112,11 +116,13 @@ impl RuntimeHttp {
         status: RuntimeStatus,
         actor: ExecutionActor,
         metrics: RuntimeMetrics,
+        managed: Catalog,
     ) -> Self {
         Self {
             status,
             tools: ToolBackend::Process(actor),
             metrics,
+            managed,
         }
     }
 
@@ -126,7 +132,14 @@ impl RuntimeHttp {
             status,
             tools: ToolBackend::InProcess(ToolEngine::new(roots)),
             metrics: RuntimeMetrics::default(),
+            managed: Catalog::default(),
         }
+    }
+
+    #[cfg(all(test, target_os = "linux"))]
+    pub(crate) fn with_managed(mut self, catalog: Catalog) -> Self {
+        self.managed = catalog;
+        self
     }
 
     #[cfg(test)]
@@ -139,8 +152,12 @@ impl RuntimeHttp {
         listener: tokio::net::TcpListener,
         shutdown: CancellationToken,
     ) -> Result<(), std::io::Error> {
-        let tools =
-            RuntimeToolServer::new(self.tools, self.status.identity(), self.metrics.clone());
+        let tools = RuntimeToolServer::new(
+            self.tools,
+            self.status.clone(),
+            self.metrics.clone(),
+            self.managed.clone(),
+        );
         let service: StreamableHttpService<RuntimeToolServer, LocalSessionManager> =
             StreamableHttpService::new(
                 move || Ok(tools.clone()),
@@ -156,9 +173,14 @@ impl RuntimeHttp {
         let state = HttpState {
             status: self.status,
             metrics: self.metrics,
+            managed: self.managed.clone(),
         };
+        let health = self.managed;
         let router = Router::new()
-            .route(STATUS_PATH, get(move || status_response(status.clone())))
+            .route(
+                STATUS_PATH,
+                get(move || status_response(status.clone(), health.clone())),
+            )
             .nest_service(MCP_PATH, service)
             .layer(DefaultBodyLimit::max(MAX_EXECUTOR_MESSAGE_BYTES))
             .layer(middleware::from_fn_with_state(state, trace_http_request));
@@ -172,10 +194,18 @@ impl RuntimeHttp {
 struct HttpState {
     status: RuntimeStatus,
     metrics: RuntimeMetrics,
+    managed: Catalog,
 }
 
-async fn status_response(status: RuntimeStatus) -> Json<RuntimeStatus> {
-    Json(status)
+async fn status_response(
+    mut status: RuntimeStatus,
+    managed: Catalog,
+) -> (StatusCode, Json<RuntimeStatus>) {
+    if managed.healthy() {
+        return (StatusCode::OK, Json(status));
+    }
+    status.status = "unavailable";
+    (StatusCode::SERVICE_UNAVAILABLE, Json(status))
 }
 
 async fn trace_http_request(
@@ -213,6 +243,7 @@ async fn trace_http_request(
     };
     let response = match fence_error {
         Some(reason) => execution_fence_response(reason),
+        None if path == MCP_PATH && !state.managed.healthy() => (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"code":"runtime_unavailable", "message":"A required managed MCP service is unavailable"}))).into_response(),
         None => next.run(request).instrument(span.clone()).await,
     };
     let completion = HttpCompletion::new(
@@ -465,15 +496,24 @@ pub(crate) fn route_label(path: &str) -> &'static str {
 struct RuntimeToolServer {
     tools: ToolBackend,
     identity: RuntimeIdentity,
+    execution_id: String,
     metrics: RuntimeMetrics,
+    managed: Catalog,
 }
 
 impl RuntimeToolServer {
-    fn new(tools: ToolBackend, identity: RuntimeIdentity, metrics: RuntimeMetrics) -> Self {
+    fn new(
+        tools: ToolBackend,
+        status: RuntimeStatus,
+        metrics: RuntimeMetrics,
+        managed: Catalog,
+    ) -> Self {
         Self {
             tools,
-            identity,
+            identity: status.identity(),
+            execution_id: status.execution_id,
             metrics,
+            managed,
         }
     }
 }
@@ -486,6 +526,21 @@ enum ToolBackend {
 }
 
 impl ToolBackend {
+    fn admit_managed(&self) -> Result<Option<crate::execution_actor::ExecutionLease>, ToolError> {
+        match self {
+            Self::Process(actor) => actor.admit().map(Some),
+            #[cfg(test)]
+            Self::InProcess(_) => Ok(None),
+        }
+    }
+    async fn information(&self, cancel: CancellationToken) -> Result<RuntimeContext, ToolError> {
+        match self {
+            Self::Process(actor) => actor.info(cancel).await,
+            #[cfg(test)]
+            Self::InProcess(engine) => engine.information(&cancel),
+        }
+    }
+
     async fn bash(
         &self,
         input: BashInput,
@@ -653,6 +708,13 @@ impl RuntimeToolServer {
 
 #[rmcp::tool_handler]
 impl ServerHandler for RuntimeToolServer {
+    fn get_tool(&self, name: &str) -> Option<rmcp::model::Tool> {
+        Self::tool_router()
+            .get(name)
+            .cloned()
+            .or_else(|| self.managed.get(name))
+    }
+
     async fn initialize(
         &self,
         request: InitializeRequestParams,
@@ -694,12 +756,83 @@ impl ServerHandler for RuntimeToolServer {
                 .is_some_and(|version| version >= ProtocolVersion::V_2026_07_28);
             Ok(ListToolsResult {
                 result_type: Some(ResultType::COMPLETE),
-                tools: Self::tool_router().list_all(),
+                tools: Self::tool_router()
+                    .list_all()
+                    .into_iter()
+                    .chain(self.managed.tools())
+                    .collect(),
                 meta: None,
                 next_cursor: None,
                 ttl_ms: supports_cache_hints.then_some(0),
-                cache_scope: supports_cache_hints.then_some(CacheScope::Public),
+                cache_scope: supports_cache_hints.then_some(CacheScope::Private),
             })
+        })
+        .await
+    }
+
+    async fn list_resources(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListResourcesResult, rmcp::ErrorData> {
+        observe_mcp_operation("resources/list", &self.identity, &self.metrics, async {
+            Ok(ListResourcesResult {
+                result_type: Some(ResultType::COMPLETE),
+                resources: vec![
+                    Resource::new(INFORMATION_URI, "runtime-information")
+                        .with_description(
+                            "Current environment, workspace guidance and Skill summaries",
+                        )
+                        .with_mime_type("application/json"),
+                ],
+                meta: None,
+                next_cursor: None,
+                ttl_ms: Some(0),
+                cache_scope: Some(CacheScope::Private),
+            })
+        })
+        .await
+    }
+
+    async fn read_resource(
+        &self,
+        request: ReadResourceRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ReadResourceResponse, rmcp::ErrorData> {
+        observe_mcp_operation("resources/read", &self.identity, &self.metrics, async {
+            if request.uri != INFORMATION_URI {
+                return Err(rmcp::ErrorData::resource_not_found(
+                    "Unknown Runtime resource",
+                    None,
+                ));
+            }
+            let information = self.tools.information(context.ct).await.map_err(|error| {
+                rmcp::ErrorData::internal_error(
+                    "Runtime information unavailable",
+                    Some(json!({
+                        "error_code": error.code.as_str()
+                    })),
+                )
+            })?;
+            #[derive(Serialize)]
+            struct Snapshot<'a> {
+                execution_id: &'a str,
+                #[serde(flatten)]
+                context: RuntimeContext,
+            }
+            let text = serde_json::to_string(&Snapshot {
+                execution_id: &self.execution_id,
+                context: information,
+            })
+            .map_err(|_| {
+                rmcp::ErrorData::internal_error("Runtime information encoding failed", None)
+            })?;
+            Ok(ReadResourceResult::new(vec![
+                ResourceContents::text(text, INFORMATION_URI).with_mime_type("application/json"),
+            ])
+            .with_ttl_ms(0)
+            .with_cache_scope(CacheScope::Private)
+            .into())
         })
         .await
     }
@@ -710,6 +843,33 @@ impl ServerHandler for RuntimeToolServer {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, rmcp::ErrorData> {
         observe_mcp_operation("tools/call", &self.identity, &self.metrics, async {
+            if self.managed.contains(&request.name) {
+                if request.input_responses.is_some() || request.request_state.is_some() {
+                    return Err(rmcp::ErrorData::invalid_params("Managed tool continuations are not supported", None));
+                }
+                let span = tool_span("managed", &self.identity);
+                return async {
+                    let started = Instant::now();
+                    let result = match self.tools.admit_managed() {
+                        Ok(_lease) => self.managed.call(&request.name, request.arguments, context.ct, std::time::Duration::from_secs(120)).await,
+                        Err(error) => Err(error),
+                    };
+                    let value = match result {
+                        Ok(value) => {
+                            let failed = value.is_error == Some(true);
+                            let (outcome, error) = if failed { ("error", "managed_tool_error") } else { ("success", "") };
+                            self.metrics.tool("managed", outcome, error, started.elapsed());
+                            tracing::Span::current().record("mcp.tool.outcome", outcome);
+                            tracing::Span::current().record("otel.status_code", if failed { "ERROR" } else { "OK" });
+                            tracing::Span::current().record("error.type", error);
+                            tracing::info!(mcp.server.tool = %request.name, outcome, error.type = error, "Managed MCP tool completed");
+                            value
+                        },
+                        Err(error) => tool_result::<serde_json::Value>("managed", &self.identity, &self.metrics, started, Err(error)),
+                    };
+                    Ok(value.into())
+                }.instrument(span).await;
+            }
             let call = ToolCallContext::new(self, request, context);
             Self::tool_router().call(call).await
         })
@@ -720,6 +880,7 @@ impl ServerHandler for RuntimeToolServer {
         rmcp::model::ServerInfo::new(
             rmcp::model::ServerCapabilities::builder()
                 .enable_tools()
+                .enable_resources()
                 .build(),
         )
         .with_server_info(rmcp::model::Implementation::from_build_env())

@@ -21,7 +21,22 @@ const OUTPUT_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 const PROCESS_STOP_TIMEOUT: Duration = Duration::from_secs(2);
 
 type CapturedOutput = (Vec<u8>, bool, Option<String>);
-type OutputTask = Option<tokio::task::JoinHandle<CapturedOutput>>;
+type OutputTask = Option<OutputCapture>;
+
+struct OutputCapture {
+    task: tokio::task::JoinHandle<CapturedOutput>,
+    stop: CancellationToken,
+}
+
+impl OutputCapture {
+    fn start(reader: impl AsyncRead + Unpin + Send + 'static) -> Self {
+        let stop = CancellationToken::new();
+        Self {
+            task: tokio::spawn(read_output(reader, stop.clone())),
+            stop,
+        }
+    }
+}
 
 #[derive(Clone)]
 pub(crate) struct ToolEngine {
@@ -33,6 +48,15 @@ impl ToolEngine {
     pub(crate) fn new(roots: Arc<NamedRoots>) -> Self {
         let home = roots.workspace_root().to_owned();
         Self { roots, home }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn information(
+        &self,
+        cancel: &CancellationToken,
+    ) -> Result<crate::information::RuntimeContext, ToolError> {
+        reject_canceled(cancel)?;
+        crate::information::RuntimeContext::collect(&self.roots)
     }
 
     pub(crate) async fn bash(
@@ -73,14 +97,8 @@ impl ToolEngine {
         let mut child = command
             .spawn()
             .map_err(|error| ToolError::new(ToolErrorCode::SpawnFailed, error))?;
-        let stdout = child
-            .stdout
-            .take()
-            .map(|pipe| tokio::spawn(read_output(pipe)));
-        let stderr = child
-            .stderr
-            .take()
-            .map(|pipe| tokio::spawn(read_output(pipe)));
+        let stdout = child.stdout.take().map(OutputCapture::start);
+        let stderr = child.stderr.take().map(OutputCapture::start);
 
         enum Exit {
             Wait(std::io::Result<std::process::ExitStatus>),
@@ -116,8 +134,8 @@ impl ToolEngine {
                 ));
             }
         };
-        let (stdout, stdout_truncated, stdout_error) = join_output(stdout).await;
-        let (stderr, stderr_truncated, stderr_error) = join_output(stderr).await;
+        let ((stdout, stdout_truncated, stdout_error), (stderr, stderr_truncated, stderr_error)) =
+            tokio::join!(join_output(stdout), join_output(stderr));
         if let Some(error) = output_error(stdout_error, stderr_error) {
             return Err(ToolError::unknown(
                 ToolErrorCode::OutputCaptureFailed,
@@ -292,12 +310,20 @@ async fn terminate_and_reap(child: &mut tokio::process::Child) {
     }
 }
 
-async fn read_output<R: AsyncRead + Unpin>(mut reader: R) -> CapturedOutput {
+async fn read_output<R: AsyncRead + Unpin>(
+    mut reader: R,
+    stop: CancellationToken,
+) -> CapturedOutput {
     let mut output = Vec::new();
     let mut chunk = [0_u8; 8192];
     let mut truncated = false;
     loop {
-        match reader.read(&mut chunk).await {
+        let read = tokio::select! {
+            biased;
+            _ = stop.cancelled() => return (output, true, None),
+            read = reader.read(&mut chunk) => read,
+        };
+        match read {
             Ok(0) => return (output, truncated, None),
             Err(error) => return (output, true, Some(error.to_string())),
             Ok(size) => {
@@ -311,21 +337,44 @@ async fn read_output<R: AsyncRead + Unpin>(mut reader: R) -> CapturedOutput {
 }
 
 async fn join_output(task: OutputTask) -> CapturedOutput {
-    let Some(mut task) = task else {
+    let Some(mut capture) = task else {
         return (Vec::new(), false, None);
     };
-    match tokio::time::timeout(OUTPUT_DRAIN_TIMEOUT, &mut task).await {
-        Ok(Ok(output)) => output,
-        Ok(Err(error)) => (Vec::new(), true, Some(error.to_string())),
+    let result = match tokio::time::timeout(OUTPUT_DRAIN_TIMEOUT, &mut capture.task).await {
+        Ok(result) => result,
         Err(_) => {
-            task.abort();
-            (Vec::new(), true, Some("output drain timed out".into()))
+            // A successful shell may have left a background writer. Stop reading
+            // without terminating that process or discarding the captured prefix.
+            capture.stop.cancel();
+            capture.task.await
         }
+    };
+    match result {
+        Ok(output) => output,
+        Err(error) => (Vec::new(), true, Some(error.to_string())),
     }
 }
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn inherited_output_pipe_returns_captured_prefix_without_failing_the_call() {
+        use tokio::io::AsyncWriteExt as _;
+
+        let (mut writer, reader) = tokio::io::duplex(64);
+        writer.write_all(b"server started").await.unwrap();
+        let task = Some(super::OutputCapture::start(reader));
+        let (bytes, truncated, error) = super::join_output(task).await;
+        drop(writer);
+
+        assert_eq!(bytes, b"server started");
+        assert!(truncated, "the background writer still held the pipe open");
+        assert!(
+            error.is_none(),
+            "an open background pipe is not a tool error"
+        );
+    }
+
     #[cfg(target_os = "linux")]
     #[test]
     fn post_commit_filesystem_failure_is_an_unknown_tool_outcome() {

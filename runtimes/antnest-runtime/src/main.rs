@@ -8,22 +8,31 @@ mod execution;
 mod execution_actor;
 mod executor;
 mod executor_protocol;
+mod information;
 mod lifecycle_error;
+mod managed_mcp;
 mod mcp;
 mod network;
 #[cfg(target_os = "linux")]
 mod network_session;
 mod packet;
 mod privilege;
+mod processes;
 mod protocol;
 mod roots;
 mod spec;
+#[cfg(target_os = "linux")]
+mod startup;
 mod telemetry;
 mod tool_error;
 mod tools;
 
 use lifecycle_error::{BootstrapErrorCode, BootstrapStage, RuntimeErrorCode};
 
+#[cfg(test)]
+mod information_tests;
+#[cfg(test)]
+mod managed_mcp_tests;
 #[cfg(test)]
 mod mcp_contract_tests;
 #[cfg(test)]
@@ -41,6 +50,12 @@ fn main() {
     };
     match command {
         command::Command::Serve => report_server_exit(run()),
+        command::Command::McpStdio => {
+            if let Err(error) = managed_mcp::entry::run() {
+                eprintln!("{error}");
+                std::process::exit(70);
+            }
+        }
         command::Command::Tool(tool) => {
             if let Err(error) = executor::run(tool) {
                 eprintln!("{error}");
@@ -138,6 +153,8 @@ struct ServiceFailure {
 enum RuntimeExit {
     Http(Result<(), std::io::Error>),
     Network(Result<(), network_session::NetworkSessionError>),
+    Reaper(Result<(), std::io::Error>),
+    Managed(managed_mcp::manager::ManagedError),
     Execution,
     Shutdown,
 }
@@ -146,7 +163,11 @@ enum RuntimeExit {
 impl RuntimeExit {
     fn normalize(self, shutdown_requested: bool) -> Self {
         match self {
-            Self::Http(Ok(())) | Self::Network(Ok(())) if shutdown_requested => Self::Shutdown,
+            Self::Http(Ok(())) | Self::Network(Ok(())) | Self::Reaper(Ok(()))
+                if shutdown_requested =>
+            {
+                Self::Shutdown
+            }
             exit => exit,
         }
     }
@@ -528,18 +549,35 @@ async fn serve_runtime(
             error.message,
         )
     })?;
-    let listener = tokio::net::TcpListener::bind(spec.listen())
-        .await
-        .map_err(|error| {
-            runtime_failure(
+    let mut network_task =
+        Box::pin(network_session.run(service_shutdown.clone(), identity.clone(), metrics.clone()));
+    let Some(mut managed) = startup::initialize_managed(
+        &spec,
+        &actor.children(),
+        &mut network_task,
+        &service_shutdown,
+    )
+    .await
+    .map_err(|failure| runtime_failure_from_service(identity.clone(), failure))?
+    else {
+        return Ok(());
+    };
+    let listener = match tokio::net::TcpListener::bind(spec.listen()).await {
+        Ok(listener) => listener,
+        Err(error) => {
+            if let Err(cleanup) = managed.shutdown().await {
+                tracing::error!(error.type = cleanup.code.as_str(), "Managed MCP cleanup after HTTP bind failure failed");
+            }
+            return Err(runtime_failure(
                 identity.clone(),
                 "http",
                 RuntimeErrorCode::HttpBindFailed,
                 error,
-            )
-        })?;
+            ));
+        }
+    };
     let status = mcp::RuntimeStatus::new(spec.identity().clone());
-    let http = mcp::RuntimeHttp::new(status, actor.clone(), metrics.clone());
+    let http = mcp::RuntimeHttp::new(status, actor.clone(), metrics.clone(), managed.catalog());
     tracing::info!(
         listen = %spec.listen(),
         "antnest.agent.id" = spec.identity().agent_id(),
@@ -548,11 +586,13 @@ async fn serve_runtime(
     );
 
     let mut http_task = Box::pin(http.serve(listener, service_shutdown.clone()));
-    let mut network_task =
-        Box::pin(network_session.run(service_shutdown.clone(), identity.clone(), metrics));
+    let children = actor.children();
+    let mut reaper = Box::pin(children.reap_orphans(service_shutdown.clone()));
     let exit = tokio::select! {
         result = &mut http_task => RuntimeExit::Http(result),
         result = &mut network_task => RuntimeExit::Network(result),
+        result = &mut reaper => RuntimeExit::Reaper(result),
+        error = managed.wait_failure() => RuntimeExit::Managed(error),
         _ = execution_failures.recv() => RuntimeExit::Execution,
         _ = shutdown.cancelled() => RuntimeExit::Shutdown,
     };
@@ -562,15 +602,24 @@ async fn serve_runtime(
     actor.close();
     service_shutdown.cancel();
     const STOP_TIMEOUT: Duration = Duration::from_secs(8);
-    let stop_failures = stop_runtime_services(
-        wait_http,
-        wait_network,
-        &mut http_task,
-        &mut network_task,
-        &actor,
-        STOP_TIMEOUT,
-    )
-    .await;
+    let (mut stop_failures, managed_stop) = tokio::join!(
+        stop_runtime_services(
+            wait_http,
+            wait_network,
+            &mut http_task,
+            &mut network_task,
+            &actor,
+            STOP_TIMEOUT,
+        ),
+        managed.shutdown()
+    );
+    if let Err(error) = managed_stop {
+        stop_failures.push(ServiceFailure {
+            component: "managed_mcp",
+            error_type: error.code,
+            message: error.to_string(),
+        });
+    }
     match exit {
         RuntimeExit::Http(result) => {
             let primary = http_exit_failure(result);
@@ -586,7 +635,28 @@ async fn serve_runtime(
             let primary = ServiceFailure {
                 component: "executor",
                 error_type: RuntimeErrorCode::ChildProcessContainmentUnproven,
-                message: "Execution Actor could not contain every child process".into(),
+                message: "Execution Actor could not complete its owned invocation".into(),
+            };
+            log_secondary_failures(&identity, &primary, stop_failures);
+            Err(runtime_failure_from_service(identity, primary))
+        }
+        RuntimeExit::Reaper(result) => {
+            let primary = ServiceFailure {
+                component: "process_reaper",
+                error_type: RuntimeErrorCode::OrphanReaperFailed,
+                message: result.err().map_or_else(
+                    || "orphan reaper stopped unexpectedly".into(),
+                    |error| error.to_string(),
+                ),
+            };
+            log_secondary_failures(&identity, &primary, stop_failures);
+            Err(runtime_failure_from_service(identity, primary))
+        }
+        RuntimeExit::Managed(error) => {
+            let primary = ServiceFailure {
+                component: "managed_mcp",
+                error_type: error.code,
+                message: error.to_string(),
             };
             log_secondary_failures(&identity, &primary, stop_failures);
             Err(runtime_failure_from_service(identity, primary))
@@ -673,7 +743,7 @@ where
         Ok(Err(_)) => Some(ServiceFailure {
             component: "executor",
             error_type: RuntimeErrorCode::ChildProcessContainmentUnproven,
-            message: "Execution Actor could not contain every child process".into(),
+            message: "Execution Actor could not complete its owned invocation".into(),
         }),
         Err(_) => Some(shutdown_timeout_failure("executor", timeout)),
     }

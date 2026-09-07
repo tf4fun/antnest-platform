@@ -42,7 +42,7 @@ infrastructure. Platform resource IDs remain Runtime Controller adapter details.
 
 ## Bootstrap Sequence
 
-The binary has five explicit process modes:
+The binary has explicit Supervisor, one-shot Executor and managed stdio modes:
 
 ```text
 antnest-runtime serve
@@ -50,10 +50,13 @@ antnest-runtime bash
 antnest-runtime read
 antnest-runtime write
 antnest-runtime edit
+antnest-runtime info
+antnest-runtime mcp-stdio
 ```
 
-`serve` is the only long-lived mode. It does not listen until its execution
-boundary is ready:
+`serve` is the long-lived Supervisor; `mcp-stdio` replaces itself with one
+configured non-root server. The Supervisor does not listen until its execution
+boundary and all required managed servers are ready:
 
 1. Require container PID 1 and root, then load the immutable RuntimeSpec.
 2. Set the Agent home and XDG locations beneath `/workspace`.
@@ -73,14 +76,16 @@ boundary is ready:
    Egress connection or probe failure reports `network_transport_failed`. Both
    are startup preparation failures rather than background task failures. Agent
    Controller must allocate the Agent network before creating the Runtime.
-7. Bind the internal HTTP server, start the prepared packet loop, and expose
-   `/status` and `/mcp`.
+7. Drive the packet loop while starting and discovering the configured stdio
+   MCP servers. Required initialization shares a bounded 30-second deadline.
+8. Bind the internal HTTP server and expose `/status` and `/mcp`. Continue
+   forwarding packets and monitoring managed processes for the Runtime lifetime.
 
 The PID 1 Supervisor remains root. It owns MCP, TUN, Egress, telemetry, signals,
 and child-process reaping, but never executes Agent-selected filesystem or shell
 operations in-process.
 
-Any failure before step 7 exits the process. Runtime-owned network artifacts use
+Any failure before step 8 exits the process. Runtime-owned network artifacts use
 stable names and priorities and are reconciled on every start, so Docker or
 Kubernetes may restart the container in an existing network namespace. Failure
 to prove convergence is fatal. Runtime Controller may instead replace the complete
@@ -134,8 +139,10 @@ The server advertises only the `tools` feature and exactly four tools:
 | `write` | Atomically create or replace a workspace text file |
 | `edit` | Replace exactly one matching string in a workspace text file |
 
-`tools/list` is the only tool-definition authority. Tool input and output
-schemas are generated from Rust types by the official SDK. There is no separate
+`tools/list` is the only tool-definition authority. Built-in input and output
+schemas are generated from Rust types by the official SDK; managed stdio MCP
+schemas are discovered from required children and namespaced without replacing
+their parameter/output definitions. There is no separate
 capabilities array or Antnest JSON-RPC schema.
 
 Runtime disables the SDK Host allowlist because the endpoint is deliberately
@@ -145,8 +152,9 @@ boundary.
 
 Runtime accepts at most one active tool execution. A second call receives the
 stable `runtime_busy` tool error instead of entering an internal queue. This
-single-flight boundary covers all four tools, permits complete UID 1000 process
-cleanup after each call, and prevents concurrent workspace mutation. Agent
+single-flight boundary covers foreground tool calls, not all processes in the
+workspace. Successful Bash calls may leave background jobs running across turns
+and Runs; these jobs can modify files while later tools execute. Agent
 Controller still serializes Agent Runs and replacement across generations, but Runtime
 does not rely on that caller behavior for local correctness.
 
@@ -160,6 +168,8 @@ MCP bash  -> /proc/self/exe bash
 MCP read  -> /proc/self/exe read
 MCP write -> /proc/self/exe write
 MCP edit  -> /proc/self/exe edit
+information Resource -> /proc/self/exe info
+managed Tool -> SDK connection -> /proc/self/exe mcp-stdio -> configured executable
 ```
 
 The root Supervisor's Execution Actor owns spawning, timeout, cancellation,
@@ -180,9 +190,9 @@ same binary through `/proc/self/exe`.
 The execution boundary preserves:
 
 - bounded command time and output;
-- cancellation that terminates and reaps the complete Executor process tree;
-- one owner for `wait`/`waitpid`, including descendants that change session or
-  process group before the request completes;
+- cancellation that targets only the current invocation's process group;
+- one owner for each direct child's exit status, with PID 1 separately reaping
+  exited orphans without signaling live background jobs;
 - named-root filesystem access;
 - atomic workspace writes;
 - `write` and `edit` constrained to the workspace named root;
@@ -210,13 +220,18 @@ did not take effect.
 
 Executor processes run as UID/GID 1000 with empty effective, permitted,
 inheritable, ambient, and bounding capability sets plus `no_new_privileges`.
-If the actor cannot prove that every UID 1000 descendant has been removed, the
-Supervisor exits and delegates recovery to the container platform.
+Normal completion never triggers container-wide process cleanup. Deliberately
+detached jobs are not claimed to be contained by per-call cancellation. If the
+actor cannot terminate/reap its direct Executor, it stops accepting calls and
+delegates recovery to the container platform. Unobserved side effects remain
+unknown, not rolled back.
 
 The Supervisor keeps `CAP_KILL` so it can signal Executors after their
 irreversible UID transition. Admission closure and execution activity are
 separate state: shutdown rejects new calls, cancels the active call, and waits
-for its lease and descendant cleanup before the process flushes telemetry.
+for its lease before the process flushes telemetry. Container stop/rebuild owns
+whole-environment reclamation. PID 1 reaps only exited orphans, excluding children
+whose exit status is still owned by a tool or managed MCP task.
 
 ## Explicit Runtime Replacement
 
@@ -273,6 +288,9 @@ carries packet data and Runtime Egress never carries tool calls.
 | `executor` | Shared subcommand entry, privilege drop, and bounded JSON exchange |
 | `tools` | Four execution operations without transport semantics |
 | `execution_actor` | Single-flight spawn, cancellation, timeout, and process cleanup |
+| `managed_mcp` | Validated stdio configuration, non-root launch, SDK discovery/call dispatch and child lifecycle |
+| `processes` | Direct-child wait ownership and PID 1 reaping of exited orphans |
+| `startup` | Drive network forwarding during managed MCP initialization before HTTP readiness |
 | `mcp` | Official SDK adapter, `/mcp`, and `/status` HTTP composition |
 | `telemetry` | Structured logs and optional OTLP traces |
 

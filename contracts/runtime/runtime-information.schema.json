@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Antnest Runtime Information",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["execution_id", "environment", "instructions", "skills", "warnings", "truncated"],
+  "properties": {
+    "execution_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["os", "arch", "home", "workspace"],
+      "properties": {
+        "os": {"type": "string", "minLength": 1, "maxLength": 64},
+        "arch": {"type": "string", "minLength": 1, "maxLength": 64},
+        "home": {"type": "string", "minLength": 1, "maxLength": 4096},
+        "workspace": {"type": "string", "minLength": 1, "maxLength": 4096}
+      }
+    },
+    "instructions": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "content", "truncated"],
+          "properties": {
+            "path": {"$ref": "#/$defs/path"},
+            "content": {"type": "string", "maxLength": 16384},
+            "truncated": {"type": "boolean"}
+          }
+        }
+      ]
+    },
+    "skills": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["source", "name", "description", "path"],
+        "properties": {
+          "source": {"enum": ["system", "personal"]},
+          "name": {"type": "string", "minLength": 1, "maxLength": 128},
+          "description": {"type": "string", "minLength": 1, "maxLength": 512},
+          "path": {"$ref": "#/$defs/path"}
+        }
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "maxItems": 67,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "code"],
+        "properties": {
+          "path": {"$ref": "#/$defs/path"},
+          "code": {"enum": ["unreadable", "invalid_utf8", "invalid_skill", "too_large", "scan_limit", "skill_limit"]}
+        }
+      }
+    },
+    "truncated": {"type": "boolean"}
+  },
+  "$defs": {
+    "path": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["root", "path"],
+      "properties": {
+        "root": {"enum": ["workspace", "system_skills"]},
+        "path": {"type": "string", "minLength": 1, "maxLength": 4096}
+      }
+    }
+  }
+}

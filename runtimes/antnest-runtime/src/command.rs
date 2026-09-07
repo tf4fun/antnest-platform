@@ -5,6 +5,7 @@ use thiserror::Error;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Command {
     Serve,
+    McpStdio,
     Tool(ToolCommand),
 }
 
@@ -24,10 +25,12 @@ impl Command {
             .map_err(|_| CommandError::InvalidEncoding)?;
         match argument.as_str() {
             "serve" => Ok(Self::Serve),
+            "mcp-stdio" => Ok(Self::McpStdio),
             "bash" => Ok(Self::Tool(ToolCommand::Bash)),
             "read" => Ok(Self::Tool(ToolCommand::Read)),
             "write" => Ok(Self::Tool(ToolCommand::Write)),
             "edit" => Ok(Self::Tool(ToolCommand::Edit)),
+            "info" => Ok(Self::Tool(ToolCommand::Info)),
             _ => Err(CommandError::Unknown(argument)),
         }
     }
@@ -39,6 +42,7 @@ pub(crate) enum ToolCommand {
     Read,
     Write,
     Edit,
+    Info,
 }
 
 impl ToolCommand {
@@ -48,17 +52,18 @@ impl ToolCommand {
             Self::Read => "read",
             Self::Write => "write",
             Self::Edit => "edit",
+            Self::Info => "info",
         }
     }
 
     pub(crate) const fn may_have_side_effects(self) -> bool {
-        !matches!(self, Self::Read)
+        !matches!(self, Self::Read | Self::Info)
     }
 }
 
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub(crate) enum CommandError {
-    #[error("one of serve, bash, read, write, or edit is required")]
+    #[error("one of serve, bash, read, write, edit, info, or mcp-stdio is required")]
     Missing,
     #[error("runtime command contains invalid UTF-8")]
     InvalidEncoding,

@@ -26,6 +26,8 @@ pub(crate) struct RuntimeSpecInput {
     pub(crate) listen: SocketAddressInput,
     pub(crate) network: NetworkSpecInput,
     pub(crate) filesystem: FilesystemSpecInput,
+    #[serde(default)]
+    pub(crate) mcp_servers: Vec<crate::managed_mcp::spec::ServerInput>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -116,6 +118,14 @@ impl RuntimeSpecInput {
                 .map_err(|error| invalid_spec("filesystem", error))?;
         RuntimeSpec::new(identity, listen, network, filesystem)
             .map_err(|error| invalid_spec("listen", error))
+            .and_then(|spec| {
+                crate::managed_mcp::spec::validate_servers(self.mcp_servers)
+                    .map(|servers| spec.with_mcp_servers(servers))
+                    .map_err(|error| ConfigError::Invalid {
+                        name: "mcp_servers",
+                        message: error.to_string(),
+                    })
+            })
     }
 }
 
@@ -199,6 +209,24 @@ mod tests {
     }
 
     #[test]
+    fn runtime_spec_preserves_validated_managed_servers() {
+        let mut value = serde_json::to_value(valid_input()).unwrap();
+        value["mcp_servers"] = serde_json::json!([{
+            "id": "notes", "command": "python", "args": ["/workspace/notes.py"],
+            "env": {"NOTES_KEY": "secret-canary"}
+        }]);
+        let spec = decode_runtime_spec(&value.to_string()).unwrap();
+        assert_eq!(spec.mcp_servers()[0].id(), "notes");
+        assert_eq!(
+            spec.mcp_servers()[0].input().env["NOTES_KEY"],
+            "secret-canary"
+        );
+        assert!(!format!("{spec:?}").contains("secret-canary"));
+        value["mcp_servers"][0]["env"]["HOME"] = serde_json::json!("/root");
+        assert!(decode_runtime_spec(&value.to_string()).is_err());
+    }
+
+    #[test]
     fn resolves_literal_ipv4_authority() {
         let endpoint = parse_endpoint("192.0.2.10:9443").unwrap();
         assert_eq!(endpoint.address(), "192.0.2.10:9443".parse().unwrap());
@@ -217,6 +245,7 @@ mod tests {
     fn valid_input() -> RuntimeSpecInput {
         RuntimeSpecInput {
             agent_id: "agent-config-test".into(),
+            mcp_servers: Vec::new(),
             generation: 7,
             listen: SocketAddressInput {
                 host: "0.0.0.0".into(),

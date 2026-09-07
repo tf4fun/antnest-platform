@@ -8,10 +8,11 @@ use tokio_util::sync::CancellationToken;
 
 use crate::command::ToolCommand;
 use crate::executor_protocol::{
-    MAX_EXECUTOR_MESSAGE_BYTES, decode_bash_request, decode_edit_request, decode_read_request,
-    decode_write_request, encode_bash_reply, encode_edit_reply, encode_read_reply,
-    encode_write_reply,
+    MAX_EXECUTOR_MESSAGE_BYTES, decode_bash_request, decode_edit_request, decode_info_request,
+    decode_read_request, decode_write_request, encode_bash_reply, encode_edit_reply,
+    encode_info_reply, encode_read_reply, encode_write_reply,
 };
+use crate::information::RuntimeContext;
 use crate::roots::NamedRoots;
 use crate::tools::ToolEngine;
 
@@ -34,7 +35,7 @@ pub(crate) fn run(command: ToolCommand) -> Result<(), ExecutorEntryError> {
     let workspace = env_path("ANTNEST_RUNTIME_WORKSPACE", "/workspace");
     let system_skills = env_path("ANTNEST_RUNTIME_SYSTEM_SKILLS", "/skills");
     let roots = Arc::new(NamedRoots::open(&workspace, &system_skills)?);
-    let engine = ToolEngine::new(roots);
+    let engine = ToolEngine::new(roots.clone());
     let input = read_message()?;
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -42,6 +43,10 @@ pub(crate) fn run(command: ToolCommand) -> Result<(), ExecutorEntryError> {
     let cancel = CancellationToken::new();
 
     match command {
+        ToolCommand::Info => {
+            let result = decode_info_request(&input).and_then(|()| RuntimeContext::collect(&roots));
+            write_reply(encode_info_reply(result).map_err(protocol_error)?)
+        }
         ToolCommand::Bash => {
             let result = decode_bash_request(&input)
                 .and_then(|request| runtime.block_on(engine.bash(request, cancel)));

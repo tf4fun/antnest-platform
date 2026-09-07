@@ -4,6 +4,16 @@ pub enum NamedRoot {
     SystemSkills,
 }
 
+pub struct FilePreview {
+    pub data: Vec<u8>,
+    pub truncated: bool,
+}
+
+pub struct DirectoryListing {
+    pub names: Vec<String>,
+    pub truncated: bool,
+}
+
 #[cfg(target_os = "linux")]
 mod platform {
     use std::ffi::CString;
@@ -18,7 +28,7 @@ mod platform {
     #[cfg(test)]
     use std::fs;
 
-    use super::NamedRoot;
+    use super::{DirectoryListing, FilePreview, NamedRoot};
 
     const MAX_FILE_BYTES: u64 = 8 * 1024 * 1024;
     const RESOLVE_NO_MAGICLINKS: u64 = 0x02;
@@ -54,6 +64,10 @@ mod platform {
     }
 
     impl RootError {
+        pub fn is_not_found(&self) -> bool {
+            matches!(self, Self::System { source, .. } if source.kind() == io::ErrorKind::NotFound)
+        }
+
         pub fn outcome_unknown(&self) -> bool {
             matches!(self, Self::OutcomeUnknown { .. })
         }
@@ -99,6 +113,75 @@ mod platform {
 
         pub fn workspace_root(&self) -> &Path {
             &self.workspace_path
+        }
+
+        pub fn read_preview(
+            &self,
+            root: NamedRoot,
+            path: &str,
+            limit: usize,
+        ) -> Result<FilePreview, RootError> {
+            let root = self.root(root)?;
+            let fd = open_relative(
+                root.as_raw_fd(),
+                path,
+                (libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK) as u64,
+                0,
+            )?;
+            let file = File::from(fd);
+            if !file
+                .metadata()
+                .map_err(|source| system("read preview metadata", source))?
+                .is_file()
+            {
+                return Err(RootError::InvalidPath(
+                    "preview requires a regular file".into(),
+                ));
+            }
+            let mut data = Vec::new();
+            file.take(limit as u64 + 1)
+                .read_to_end(&mut data)
+                .map_err(|source| system("read bounded preview", source))?;
+            let truncated = data.len() > limit;
+            data.truncate(limit);
+            Ok(FilePreview { data, truncated })
+        }
+
+        pub fn list_directories(
+            &self,
+            root: NamedRoot,
+            path: &str,
+            limit: usize,
+        ) -> Result<DirectoryListing, RootError> {
+            let root = self.root(root)?;
+            let fd = open_relative(
+                root.as_raw_fd(),
+                path,
+                (libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC) as u64,
+                0,
+            )?;
+            // The openat2-validated directory descriptor pins the directory during enumeration.
+            let entries = std::fs::read_dir(format!("/proc/self/fd/{}", fd.as_raw_fd()))
+                .map_err(|source| system("list named-root directory", source))?;
+            let mut names = Vec::new();
+            let mut truncated = false;
+            for (index, entry) in entries.take(limit + 1).enumerate() {
+                if index == limit {
+                    truncated = true;
+                    break;
+                }
+                let entry = entry.map_err(|source| system("read directory entry", source))?;
+                if entry
+                    .file_type()
+                    .map_err(|source| system("read entry type", source))?
+                    .is_dir()
+                    && let Some(name) = entry.file_name().to_str()
+                {
+                    names.push(name.to_owned());
+                }
+            }
+            names.sort();
+            Ok(DirectoryListing { names, truncated })
         }
 
         pub fn read(&self, root: NamedRoot, path: &str) -> Result<ReadResult, RootError> {
@@ -427,7 +510,7 @@ mod platform {
 
     use thiserror::Error;
 
-    use super::NamedRoot;
+    use super::{DirectoryListing, FilePreview, NamedRoot};
 
     #[derive(Debug, Error)]
     #[error("named-root file access requires Linux openat2")]
@@ -440,6 +523,9 @@ mod platform {
     pub struct NamedRoots;
 
     impl RootError {
+        pub fn is_not_found(&self) -> bool {
+            false
+        }
         pub fn outcome_unknown(&self) -> bool {
             false
         }
@@ -450,6 +536,22 @@ mod platform {
             Err(RootError)
         }
         pub fn read(&self, _root: NamedRoot, _path: &str) -> Result<ReadResult, RootError> {
+            Err(RootError)
+        }
+        pub fn read_preview(
+            &self,
+            _root: NamedRoot,
+            _path: &str,
+            _limit: usize,
+        ) -> Result<FilePreview, RootError> {
+            Err(RootError)
+        }
+        pub fn list_directories(
+            &self,
+            _root: NamedRoot,
+            _path: &str,
+            _limit: usize,
+        ) -> Result<DirectoryListing, RootError> {
             Err(RootError)
         }
         pub fn write(

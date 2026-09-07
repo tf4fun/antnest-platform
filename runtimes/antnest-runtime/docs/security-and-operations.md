@@ -219,11 +219,14 @@ on the governed TUN path without a split-resolver special case.
    path; Runtime does not evaluate policy locally.
 8. **DNS fails:** inspect the UDP Egress endpoint, virtual resolver, and
    DNS-over-TCP upstream.
-9. **A tool request times out or is canceled:** Runtime terminates and reaps the
-   Executor tree. `bash`, `write`, and `edit` may report an unknown side-effect
-   outcome; the Agent should inspect state before retrying.
+9. **A tool request times out or is canceled:** Runtime signals only this call's
+   process group and reaps its direct Executor. Earlier background jobs remain
+   alive. Deliberate detachment is not contained by this per-call mechanism.
+   `bash`, `write`, and `edit` may report an unknown side-effect outcome; the
+   Agent should inspect state before retrying.
 10. **A second tool call returns `runtime_busy`:** the existing Executor still
-    owns the workspace. Retry only after the Agent operation has settled.
+    owns foreground admission. Retry after that call settles; this admission
+    does not stop background processes from modifying the workspace.
 
 ## Recovery
 

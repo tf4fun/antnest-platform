@@ -43,11 +43,16 @@ standard resource attributes for local operations.
 HTTP path labels are normalized to `/status`, `/mcp`, or `unmatched`; arbitrary
 request paths are never exported. HTTP spans describe transport completion only.
 Official SDK handler hooks emit a separate normalized `runtime.mcp.operation`
-span for initialize, discovery, tool listing, and tool dispatch, including MCP
+span for initialize, discovery, tool listing, tool dispatch, resource listing,
+and resource reads, including MCP
 outcome and stable JSON-RPC error code. A tool execution span begins only after
 the SDK has decoded its typed parameters. MCP/JSON-RPC errors encoded in a
 successful HTTP response therefore remain errors at the MCP layer without being
 misreported as HTTP failures or tool executions.
+
+`antnest://runtime/info` adds an `info` Executor span beneath `resources/read`;
+it is not counted as a model Tool invocation. Instruction text, Skill metadata,
+and the serialized information Resource are excluded from logs and spans.
 
 Every HTTP request also emits one structured completion event after its body
 reaches end-of-stream, fails, or is dropped by a disconnected client. The event
@@ -141,13 +146,16 @@ Telemetry configuration warnings use stable `error.type` values:
 ## Shutdown
 
 SIGTERM and SIGINT close Actor admission, stop accepting new HTTP requests,
-cancel the active Executor, terminate and reap its complete process tree, stop
+cancel the active Executor, terminate its process group and reap that Executor, stop
 the network task, and then flush telemetry. HTTP, network, and Actor drain run
 concurrently and are observed independently against the same absolute
 eight-second deadline; telemetry flush has its own five-second bound. The worst
 graceful-shutdown path is therefore bounded to thirteen seconds. A completed
 component or containment failure is retained even when another component times
-out. Completed failures take precedence over timeout diagnostics when choosing
+out. Background jobs are reclaimed by container termination, not by each tool
+completion. During service operation, PID 1 only reaps exited orphans. Reaper
+failure is a fatal `orphan_reaper_failed` lifecycle event, not a tool result.
+Completed failures take precedence over timeout diagnostics when choosing
 the primary shutdown error.
 
 Runtime emits structured lifecycle records for shutdown requested, service
@@ -174,7 +182,14 @@ flush diagnostics are separate contracts and are not part of this catalogue.
 | Phase | Stable error types |
 | --- | --- |
 | Bootstrap | `bootstrap_evidence_failed`, `entry_failed`, `environment_verification_failed`, `executor_initialization_failed`, `invalid_config`, `named_roots_failed`, `network_bootstrap_failed`, `network_verification_failed`, `pre_executor_verification_failed`, `root_verification_failed`, `unsupported_platform`, `workspace_initialization_failed`, `workspace_ownership_failed` |
-| Runtime | `child_process_containment_unproven`, `executor_probe_failed`, `http_bind_failed`, `http_service_failed`, `local_network_failed`, `network_transport_failed`, `shutdown_timeout`, `signal_listener_failed`, `telemetry_initialization_failed`, `unexpected_exit` |
+| Runtime | `child_process_containment_unproven`, `executor_probe_failed`, `http_bind_failed`, `http_service_failed`, `local_network_failed`, `managed_mcp_start_failed`, `managed_mcp_service_failed`, `managed_mcp_stop_failed`, `network_transport_failed`, `orphan_reaper_failed`, `shutdown_timeout`, `signal_listener_failed`, `telemetry_initialization_failed`, `unexpected_exit` |
+
+Managed stdio calls emit `runtime.mcp.tool` spans beneath the HTTP and MCP
+operation spans, using the bounded metric label `managed`. Validated exposed
+tool names may be span/log attributes, not metric dimensions. Lifecycle events
+`managed_mcp_started` and `managed_mcp_stopped` identify the configured server,
+without serializing executable arguments, environment values, tool content or
+child stderr. Child MCP programs are not required to export OTLP themselves.
 
 The same lists are machine-readable in
 `contracts/runtime/contract.json`; contract tests reject drift.
