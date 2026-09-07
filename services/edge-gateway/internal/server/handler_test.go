@@ -54,10 +54,26 @@ func TestWorkspaceBootstrapReturnsOnlyBrowserSafeAgentFacts(t *testing.T) {
 
 func TestWorkspaceACPRequiresSameOriginAndInjectsServerCredential(t *testing.T) {
 	t.Parallel()
+	for _, route := range []struct{ public, upstream string }{
+		{"/api/app/agents/agent-1/acp", "/v1/acp"},
+		{"/api/app/agents/agent-1/v1/acp", "/v1/acp"},
+		{"/api/app/agents/agent-1/v2/acp", "/v2/acp"},
+	} {
+		t.Run(route.public, func(t *testing.T) {
+			testWorkspaceACPRoute(t, route.public, route.upstream)
+		})
+	}
+}
+
+func testWorkspaceACPRoute(t *testing.T, publicPath, upstreamPath string) {
+	t.Helper()
 
 	received := make(chan http.Header, 1)
 	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
 	acp := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != upstreamPath {
+			t.Errorf("upstream path = %q, want %q", request.URL.Path, upstreamPath)
+		}
 		received <- request.Header.Clone()
 		connection, err := upgrader.Upgrade(response, request, nil)
 		if err != nil {
@@ -96,11 +112,12 @@ func TestWorkspaceACPRequiresSameOriginAndInjectsServerCredential(t *testing.T) 
 	}
 	edge := httptest.NewServer(handler)
 	defer edge.Close()
-	websocketURL := strings.Replace(edge.URL, "http://", "ws://", 1) + "/api/app/agents/agent-1/acp"
+	websocketURL := strings.Replace(edge.URL, "http://", "ws://", 1) + publicPath
 	headers := http.Header{}
 	headers.Set("Origin", edge.URL)
 	headers.Set("Cookie", session.AccessTokenCookieName+"=token-1; "+session.CSRFCookieName+"=csrf-1")
 	headers.Set(HeaderAgentAccessSubject, "forged-subject")
+	headers.Set("Authorization", "Bearer forged-token")
 	connection, _, err := websocket.DefaultDialer.Dial(websocketURL, headers)
 	if err != nil {
 		t.Fatalf("dial workspace ACP: %v", err)
@@ -116,7 +133,7 @@ func TestWorkspaceACPRequiresSameOriginAndInjectsServerCredential(t *testing.T) 
 		t.Fatalf("ACP upstream headers = %v", upstreamHeaders)
 	}
 
-	wrongOrigin := httptest.NewRequest(http.MethodGet, "/api/app/agents/agent-1/acp", nil)
+	wrongOrigin := httptest.NewRequest(http.MethodGet, publicPath, nil)
 	wrongOrigin.Host = "edge.example.test"
 	wrongOrigin.Header.Set("Connection", "Upgrade")
 	wrongOrigin.Header.Set("Upgrade", "websocket")
@@ -126,6 +143,28 @@ func TestWorkspaceACPRequiresSameOriginAndInjectsServerCredential(t *testing.T) 
 	handler.ServeHTTP(rejected, wrongOrigin)
 	if rejected.Code != http.StatusForbidden {
 		t.Fatalf("cross-origin status=%d body=%s", rejected.Code, rejected.Body.String())
+	}
+	for _, denial := range []struct {
+		name, path, cookie string
+		status             int
+	}{
+		{"no session", publicPath, "", http.StatusUnauthorized},
+		{"other agent", strings.Replace(publicPath, "agent-1", "agent-2", 1), headers.Get("Cookie"), http.StatusNotFound},
+		{"unknown version", "/api/app/agents/agent-1/v3/acp", headers.Get("Cookie"), http.StatusNotFound},
+	} {
+		t.Run(denial.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, denial.path, nil)
+			request.Host = "edge.example.test"
+			request.Header.Set("Origin", "http://edge.example.test")
+			request.Header.Set("Connection", "Upgrade")
+			request.Header.Set("Upgrade", "websocket")
+			request.Header.Set("Cookie", denial.cookie)
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != denial.status {
+				t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+			}
+		})
 	}
 }
 

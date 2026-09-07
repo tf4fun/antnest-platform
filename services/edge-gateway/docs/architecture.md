@@ -35,11 +35,18 @@ token verification, scopes, SCIM semantics, and canonical error envelopes.
 
 `GET /api/app/bootstrap` returns principal display facts and accessible Agent
 IDs, names, and availability only. During a same-origin WebSocket upgrade at
-`/api/app/agents/{agent_id}/acp`, Edge resolves the selected Agent again and
+`/api/app/agents/{agent_id}/v1/acp` (stable) or
+`/api/app/agents/{agent_id}/v2/acp` (draft), Edge resolves the selected Agent again and
 injects its opaque access subject into the upstream request. Incoming cookies,
 authorization, and forged access-subject headers are not forwarded. The Agent
 UI application is served under `/workspace/` with that prefix stripped before
 the internal static-service request.
+
+The existing `/api/app/agents/{agent_id}/acp` Workspace route remains a v1
+alias. Versions are an explicit route allowlist, not arbitrary upstream paths;
+unknown versions return `404`. Both versions use identical upgrade admission,
+Origin checks and subject injection. Edge does not translate ACP messages or
+infer the version from their content.
 
 Login admission consumes bounded per-source and normalized-account windows
 before Identity performs Argon2 verification. Logout asks Identity to revoke

@@ -34,7 +34,9 @@ Implemented for Stage 3A. The canonical cross-service behavior is
 - Admin Console for the application and `/api/admin/*` BFF;
 - Agent Controller for the principal-scoped workspace Agent projection;
 - Agent UI for `/workspace/*` static application routes;
-- Agent ACP Service for admitted `/api/app/agents/{agent_id}/acp` WebSockets;
+- Agent ACP Service for admitted `/api/app/agents/{agent_id}/v1/acp` (stable)
+  and `/api/app/agents/{agent_id}/v2/acp` (draft) WebSockets; the Workspace
+  `/api/app/agents/{agent_id}/acp` alias retains v1 behavior;
 - OTLP collector when observability is enabled.
 
 ## Interfaces

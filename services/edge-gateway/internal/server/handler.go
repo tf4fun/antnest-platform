@@ -165,7 +165,7 @@ func NewHandler(config Config, dependencies Dependencies) (http.Handler, error) 
 	)
 	h.acpProxy = h.newProxy(
 		agentACPURL, "agent_unavailable", "Agent connection is unavailable",
-		func(*http.Request) string { return "/v1/acp" },
+		func(request *http.Request) string { return "/" + request.PathValue("acp_version") + "/acp" },
 	)
 	h.scimProxy = h.newSCIMProxy(identityURL)
 	h.routes()
@@ -180,7 +180,15 @@ func (h *handler) routes() {
 	h.mux.HandleFunc("GET /api/session", h.getSession)
 	h.mux.HandleFunc("DELETE /api/session", h.logout)
 	h.mux.HandleFunc("GET /api/app/bootstrap", h.workspaceBootstrap)
-	h.mux.HandleFunc("GET /api/app/agents/{agent_id}/acp", h.workspaceACP)
+	for _, route := range []struct{ suffix, version string }{
+		{"acp", "v1"}, {"v1/acp", "v1"}, {"v2/acp", "v2"},
+	} {
+		h.mux.HandleFunc("GET /api/app/agents/{agent_id}/"+route.suffix,
+			func(response http.ResponseWriter, request *http.Request) {
+				request.SetPathValue("acp_version", route.version)
+				h.workspaceACP(response, request)
+			})
+	}
 	h.mux.HandleFunc("/api/app/{path...}", func(response http.ResponseWriter, _ *http.Request) {
 		writeError(response, http.StatusNotFound, "not_found", "Resource was not found")
 	})
