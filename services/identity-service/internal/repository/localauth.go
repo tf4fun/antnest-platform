@@ -51,6 +51,9 @@ func (a *LocalAuthAdapter) IssueToken(
 	command localauth.IssueTokenCommand,
 ) (localauth.Token, error) {
 	err := a.store.inTransaction(ctx, "issue_access_token", func(tx pgx.Tx) error {
+		if err := lockVerifiedLocalCredential(ctx, tx, command); err != nil {
+			return err
+		}
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO api_tokens (
 				id, token_hash, user_id, organization_id, membership_id, issued_at, expires_at
@@ -69,6 +72,52 @@ func (a *LocalAuthAdapter) IssueToken(
 		})
 	})
 	return localauth.Token{ID: command.TokenID, ExpiresAt: command.ExpiresAt}, err
+}
+
+func lockVerifiedLocalCredential(ctx context.Context, tx pgx.Tx, command localauth.IssueTokenCommand) error {
+	// Match directory authorization/deactivation: User, then Organization,
+	// then Membership/credential. Hold verified facts through issuance.
+	var userID string
+	if err := tx.QueryRow(ctx, `
+		SELECT id FROM users WHERE id = $1 AND active FOR SHARE`,
+		command.Principal.UserID).Scan(&userID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.ErrUnauthenticated
+		}
+		return fmt.Errorf("lock login user: %w", err)
+	}
+	var organizationID string
+	if err := tx.QueryRow(ctx, `
+		SELECT id FROM organizations WHERE id = $1 AND active FOR SHARE`,
+		command.Principal.OrganizationID).Scan(&organizationID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.ErrUnauthenticated
+		}
+		return fmt.Errorf("lock login organization: %w", err)
+	}
+	var current domain.Principal
+	err := tx.QueryRow(ctx, `
+		SELECT u.id, m.organization_id, m.id, u.system_role, m.role, TRUE
+		FROM users u
+		JOIN local_credentials c ON c.user_id = u.id
+		JOIN organization_memberships m ON m.user_id = u.id
+		WHERE u.id = $1 AND m.organization_id = $2 AND m.id = $3
+		  AND u.active AND m.active AND m.scim_deleted_at IS NULL
+		  AND c.password_hash = $4
+		FOR SHARE OF m, c`, userID, organizationID,
+		command.Principal.MembershipID, command.ExpectedPasswordHash,
+	).Scan(&current.UserID, &current.OrganizationID, &current.MembershipID,
+		&current.SystemRole, &current.OrganizationRole, &current.Active)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.ErrUnauthenticated
+	}
+	if err != nil {
+		return fmt.Errorf("revalidate verified local credential: %w", err)
+	}
+	if current != command.Principal {
+		return domain.ErrUnauthenticated
+	}
+	return nil
 }
 
 func (a *LocalAuthAdapter) ResolveToken(

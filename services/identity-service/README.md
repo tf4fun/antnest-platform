@@ -69,6 +69,14 @@ make test-identity-postgres
 docker compose --profile stage2 build identity-service
 ```
 
+The PostgreSQL suite includes deterministic login-admission races plus a local
+HTTPS OIDC fixture (authorization redirect, PKCE, client authentication, signed
+ID token and JWKS). It checks completion deadlines, immutable client registration,
+and successful secret rotation. These are service-owned component tests, not
+Gateway/browser acceptance. To reuse a development PostgreSQL instance, supply
+`ANTNEST_IDENTITY_TEST_DATABASE_URL` for a dedicated disposable database and run
+`go test -p=1 ./services/identity-service/...`; never point tests at business data.
+
 See [`docs/architecture.md`](docs/architecture.md) for the module and domain
 model and [`docs/operations.md`](docs/operations.md) for configuration,
 secrets, readiness, telemetry, and recovery.

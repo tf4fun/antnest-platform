@@ -67,11 +67,15 @@ without making email a global User key.
 OIDC is authentication only: it never creates a User or Membership and never
 rewrites a local- or SCIM-owned profile.
 
-Provider identity is `(organization_id, name)`. The issuer cannot change in
-place because doing so would reuse the old subject namespace for a different
-authority. An administrator disables the old Provider and creates the new
-issuer under a new Provider name; old external identities remain durable for
-audit. Concurrent writes use Provider revision compare-and-swap; one commits
+Provider identity is `(organization_id, name)`. Neither issuer nor Client ID
+can change in place. A different client registration may receive different
+pairwise subjects, so reusing its existing external-identity namespace is not
+safe. This is a platform constraint, not an OIDC prohibition on registering new
+clients; see [OIDC subject identifiers](https://openid.net/specs/openid-connect-core-1_0.html#SubjectIDTypes).
+An administrator creates the replacement registration under a new Provider
+name; old external identities remain durable for audit. Client-secret rotation
+and other non-identity configuration updates remain supported.
+Concurrent writes use Provider revision compare-and-swap; one commits
 and a stale writer receives `version_conflict` instead of silently replacing
 newer discovery data. Secret encryption binds to the stable Organization/name
 key rather than a proposed row ID. Enable/disable is a separate idempotent local command:
@@ -103,6 +107,13 @@ exchange. The initial successful callback returns the access credential once.
 A completed callback replay returns only the committed principal, token ID,
 and expiry; state is never a credential-retrieval secret. Failed or expired
 sessions require a new login.
+The login deadline applies at completion too: an exchange that finishes at or
+after expiry cannot bind an external identity or issue an API token. Persistence
+resamples its injected clock after Provider/session and identity row locks,
+before token insertion; time spent waiting on those locks is not excluded. Its
+terminal failure is recorded as `expired`; a callback retry never re-exchanges
+the authorization code. A timely completed callback remains replayable as
+metadata until its issued access token becomes unavailable.
 
 Failure persistence is detached from a canceled callback only long enough to
 record the terminal fact, and is bounded by a five-second deadline. Durable
@@ -115,6 +126,19 @@ and must be handled as a secret. The callback response never echoes it.
 
 API and SCIM token rows contain hashes and metadata only. Plaintext exists
 only in the issuance response.
+Local password verification runs outside a database transaction. Token issuance
+must then revalidate the verified password hash and exact principal against
+active Organization, User, and Membership records inside the issuance
+transaction. Changed credentials, role bindings, or inactive/deleted membership
+reject that login with `unauthenticated`, without an issued-token row or event.
+The caller starts a fresh login rather than silently accepting a stale snapshot.
+The lock order is User, Organization, then Membership/credential, matching
+directory authorization and global deactivation. The relevant rows remain
+locked through token/event commit, so a concurrent
+disable or password change orders before or after issuance, not between its
+authorization check and write. This does not retroactively revoke sessions on
+password rotation or cancel already-admitted Agent work; those are separate
+contracts. Global User disable continues to revoke that User's existing tokens.
 Administrative SCIM lists retain active and revoked metadata for audit and
 rotation, but never select the token hash. Listing and revocation require
 organization administration; Provider administration requires a system

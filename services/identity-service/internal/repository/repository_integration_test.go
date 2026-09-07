@@ -81,11 +81,11 @@ func TestPostgresIdentityHappyPathAndOwnershipBoundaries(t *testing.T) {
 	}
 
 	var sequence atomic.Uint64
-	store, err := New(pool, func() string { return fmt.Sprintf("id-%d", sequence.Add(1)) })
+	now := time.Date(2026, 8, 31, 5, 0, 0, 0, time.UTC)
+	store, err := New(pool, func() string { return fmt.Sprintf("id-%d", sequence.Add(1)) }, func() time.Time { return now })
 	if err != nil {
 		t.Fatal(err)
 	}
-	now := time.Date(2026, 8, 31, 5, 0, 0, 0, time.UTC)
 	passwordHash, err := credentials.HashPassword("correct horse battery staple")
 	if err != nil {
 		t.Fatal(err)

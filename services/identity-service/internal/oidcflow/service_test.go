@@ -186,6 +186,31 @@ func TestUpsertProviderRejectsChangingExistingIssuer(t *testing.T) {
 	}
 }
 
+func TestProviderRegistrationIdentity(t *testing.T) {
+	provider := testProvider(t).Provider
+	for _, test := range []struct {
+		name, issuer, clientID, wantCode string
+	}{
+		{name: "same", issuer: provider.Issuer, clientID: provider.ClientID},
+		{name: "different_issuer", issuer: "https://other.example.com", clientID: provider.ClientID, wantCode: "oidc_provider_issuer_immutable"},
+		{name: "different_registration", issuer: provider.Issuer, clientID: "other-client", wantCode: "oidc_provider_client_id_immutable"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := provider.ValidateRegistration(test.issuer, test.clientID)
+			if test.wantCode == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			code, _, _ := domain.ErrorDetails(err)
+			if code != test.wantCode {
+				t.Fatalf("registration error=%v, want %s", err, test.wantCode)
+			}
+		})
+	}
+}
+
 func TestSetProviderEnabledDoesNotDependOnExternalDiscovery(t *testing.T) {
 	repository := newOIDCRepositoryStub(t)
 	repository.principal = systemAdministrator()

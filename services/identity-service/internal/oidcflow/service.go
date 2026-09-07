@@ -60,6 +60,18 @@ type Provider struct {
 
 type ProviderWithSecret struct{ Provider }
 
+func (p Provider) ValidateRegistration(issuer, clientID string) error {
+	if p.Issuer != issuer {
+		return domain.NewError("oidc_provider_issuer_immutable",
+			"Disable this OIDC Provider and create a new Provider name for the new issuer", false)
+	}
+	if p.ClientID != clientID {
+		return domain.NewError("oidc_provider_client_id_immutable",
+			"Create a new Provider name for the new client registration", false)
+	}
+	return nil
+}
+
 type Discovery struct {
 	Issuer                   string
 	AuthorizationEndpoint    string
@@ -324,12 +336,10 @@ func (s *Service) UpsertProvider(ctx context.Context, input UpsertProviderInput)
 	if findErr != nil && !errors.Is(findErr, domain.ErrNotFound) {
 		return Provider{}, fmt.Errorf("find OIDC provider: %w", findErr)
 	}
-	if findErr == nil && existing.Issuer != issuer {
-		return Provider{}, domain.NewError(
-			"oidc_provider_issuer_immutable",
-			"Disable this OIDC Provider and create a new Provider name for the new issuer",
-			false,
-		)
+	if findErr == nil {
+		if err := existing.ValidateRegistration(issuer, clientID); err != nil {
+			return Provider{}, err
+		}
 	}
 	now := s.now().UTC()
 	providerID, createdAt, revision := existing.ID, existing.CreatedAt, existing.Revision+1
@@ -546,19 +556,31 @@ func (s *Service) CompleteLogin(ctx context.Context, input CompleteLoginInput) (
 	if err != nil {
 		return CompleteLoginResult{}, s.failSession(ctx, claim.Session, claimID, "identity", err)
 	}
+	return s.issueLoginCredential(ctx, claim.Session, claimID, state, identity)
+}
 
+func (s *Service) issueLoginCredential(
+	ctx context.Context, session AuthSession, claimID, state string, identity VerifiedIdentity,
+) (CompleteLoginResult, error) {
+	now := s.now().UTC()
+	if !session.ExpiresAt.After(now) {
+		return CompleteLoginResult{}, s.failSession(ctx, session, claimID, "expired",
+			domain.NewError("oidc_session_expired", "OIDC login session expired", false))
+	}
 	rawToken, tokenHash, err := s.newOpaque("ant_api_")
 	if err != nil {
-		return CompleteLoginResult{}, s.failSession(ctx, claim.Session, claimID, "token", err)
+		return CompleteLoginResult{}, s.failSession(ctx, session, claimID, "token", err)
 	}
-	now := s.now().UTC()
 	tokenID := s.newID()
 	completed, err := s.repository.CompleteLogin(ctx, CompleteLoginCommand{
-		SessionID: claim.Session.ID, ProviderID: provider.ID, OrganizationID: claim.Session.OrganizationID,
+		SessionID: session.ID, ProviderID: session.ProviderID, OrganizationID: session.OrganizationID,
 		ClaimID: claimID, Identity: identity, AccessTokenID: tokenID, AccessTokenHash: tokenHash,
 		IssuedAt: now, ExpiresAt: now.Add(s.tokenTTL),
 	})
 	if err != nil {
+		if code, _, _ := domain.ErrorDetails(err); code == "oidc_session_expired" {
+			return CompleteLoginResult{}, s.failSession(ctx, session, claimID, "expired", err)
+		}
 		if reconciled, ok := s.reconcileCompletedLogin(ctx, state, tokenID, now); ok {
 			return CompleteLoginResult{
 				Principal: reconciled.Principal, TokenID: reconciled.TokenID,
@@ -569,7 +591,7 @@ func (s *Service) CompleteLogin(ctx context.Context, input CompleteLoginInput) (
 		if code, _, _ := domain.ErrorDetails(err); code == "oidc_provider_changed" {
 			stage = "provider"
 		}
-		return CompleteLoginResult{}, s.failSession(ctx, claim.Session, claimID, stage, err)
+		return CompleteLoginResult{}, s.failSession(ctx, session, claimID, stage, err)
 	}
 	return CompleteLoginResult{
 		Principal: completed.Principal, TokenID: completed.TokenID,

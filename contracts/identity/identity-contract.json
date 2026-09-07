@@ -244,6 +244,7 @@
           "version_conflict",
           "invalid_reference",
           "oidc_provider_issuer_immutable",
+          "oidc_provider_client_id_immutable",
           "oidc_provider_changed",
           "oidc_membership_required",
           "oidc_exchange_in_progress",
@@ -276,6 +277,7 @@
       "version_conflict": 409,
       "invalid_reference": 400,
       "oidc_provider_issuer_immutable": 409,
+      "oidc_provider_client_id_immutable": 409,
       "oidc_provider_changed": 409,
       "oidc_membership_required": 403,
       "oidc_exchange_in_progress": 409,
@@ -645,7 +647,7 @@
     "upsert_oidc_provider": {
       "method": "POST",
       "path": "/upsert-oidc-provider",
-      "lifecycle": "Provider identity is (organization_id, name). The issuer is immutable. Use set_oidc_provider_enabled to disable the old Provider, then create a new name when moving to another issuer; deletion is not supported.",
+      "lifecycle": "Provider identity is (organization_id, name). Issuer and Client ID are immutable; a replacement registration uses a new Provider name. Client-secret rotation is supported. Use set_oidc_provider_enabled to retire the old Provider; deletion is not supported.",
       "request": {
         "required": [
           "request_id",

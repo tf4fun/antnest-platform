@@ -44,6 +44,9 @@ func TestLocalLoginIssuesMembershipScopedToken(t *testing.T) {
 		repository.issued.TokenHash == result.AccessToken {
 		t.Fatal("repository did not receive only the access-token hash")
 	}
+	if repository.issued.ExpectedPasswordHash != passwordHash || repository.issued.Principal != result.Principal {
+		t.Fatal("issuance did not carry the verified credential and principal for revalidation")
+	}
 }
 
 func TestLocalLoginCollapsesUnknownWrongAndInactiveAccounts(t *testing.T) {

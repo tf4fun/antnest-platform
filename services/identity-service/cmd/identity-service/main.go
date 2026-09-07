@@ -135,7 +135,7 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 	if err := repository.ApplyMigrations(ctx, pool); err != nil {
 		return classifyFailure("database_migration", err)
 	}
-	store, err := repository.New(pool, identityid.MustNew)
+	store, err := repository.New(pool, identityid.MustNew, time.Now)
 	if err != nil {
 		return classifyFailure("service_composition", err)
 	}

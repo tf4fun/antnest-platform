@@ -632,7 +632,7 @@ func writeError(response http.ResponseWriter, err error) {
 		status = http.StatusBadRequest
 	case "inactive_principal", "oidc_membership_required":
 		status = http.StatusForbidden
-	case "oidc_provider_changed", "oidc_provider_issuer_immutable", "oidc_exchange_in_progress":
+	case "oidc_provider_changed", "oidc_provider_issuer_immutable", "oidc_provider_client_id_immutable", "oidc_exchange_in_progress":
 		status = http.StatusConflict
 	case "oidc_session_expired", "oidc_completed_token_unavailable":
 		status = http.StatusGone

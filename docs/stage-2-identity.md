@@ -51,9 +51,9 @@ User
   identity may bind an existing active non-system Membership with the same
   normalized email in that Provider's Organization. Email matching never
   crosses an Organization boundary.
-- Provider identity is `(organization_id, name)`. Its issuer is immutable;
-  moving to another issuer requires disabling the old Provider and creating a
-  new Provider under a new name. The old Provider and external identities stay
+- Provider identity is `(organization_id, name)`. Issuer and Client ID are
+  immutable; a replacement registration requires a new Provider name.
+  Client-secret rotation remains supported. The old Provider and external identities stay
   durable for audit, so an old subject namespace is never reinterpreted.
   Enable/disable is idempotent and local; it does not depend on OIDC discovery.
 - Every Provider change advances a monotonic revision. A login session pins
@@ -172,7 +172,10 @@ business request observes the new Identity state.
    disclosing the raw access token again.
 8. A callback fails deterministically if its pinned Provider revision no longer
    matches current configuration; the user starts a new login with the new
-   Provider settings.
+   Provider settings. A code exchange completing at or after the login-session
+   deadline also fails before identity binding/token issuance; the failed
+   state is terminal. Timely completed login metadata remains replayable while
+   its access token is available.
 9. Provider discovery selects and persists one supported client-secret token
    authentication method and the supported asymmetric ID-token signing
    algorithms. Token exchange uses that method exactly once and never retries

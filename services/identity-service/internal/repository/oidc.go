@@ -87,6 +87,7 @@ func (a *OIDCAdapter) UpsertProvider(
 				jwks_uri = EXCLUDED.jwks_uri,
 				updated_at = EXCLUDED.updated_at
 			WHERE oidc_providers.issuer = EXCLUDED.issuer
+			  AND oidc_providers.client_id = EXCLUDED.client_id
 			  AND oidc_providers.revision = EXCLUDED.revision - 1
 			RETURNING id, created_at, revision`,
 			provider.ID, provider.OrganizationID, provider.Name, provider.DisplayName,
@@ -97,24 +98,19 @@ func (a *OIDCAdapter) UpsertProvider(
 			provider.CreatedAt, provider.UpdatedAt,
 		).Scan(&provider.ID, &provider.CreatedAt, &provider.Revision); err != nil {
 			if err == pgx.ErrNoRows {
-				var currentIssuer string
-				var currentRevision int64
+				var current oidcflow.Provider
 				if lookupErr := tx.QueryRow(ctx, `
-					SELECT issuer, revision
+					SELECT issuer, client_id
 					FROM oidc_providers
 					WHERE organization_id = $1 AND name = $2
 					FOR UPDATE`, provider.OrganizationID, provider.Name,
-				).Scan(&currentIssuer, &currentRevision); lookupErr != nil {
+				).Scan(&current.Issuer, &current.ClientID); lookupErr != nil {
 					return lookupErr
 				}
-				if currentIssuer == provider.Issuer {
-					return domain.ErrVersionConflict
+				if err := current.ValidateRegistration(provider.Issuer, provider.ClientID); err != nil {
+					return err
 				}
-				return domain.NewError(
-					"oidc_provider_issuer_immutable",
-					"Disable this OIDC Provider and create a new Provider name for the new issuer",
-					false,
-				)
+				return domain.ErrVersionConflict
 			}
 			return fmt.Errorf("upsert OIDC provider: %w", err)
 		}
@@ -324,9 +320,10 @@ func (a *OIDCAdapter) CompleteLogin(
 		var status oidcflow.SessionStatus
 		var providerID, organizationID, claimID, requestID string
 		var sessionProviderRevision, currentProviderRevision int64
+		var sessionExpiresAt time.Time
 		if err := tx.QueryRow(ctx, `
 			SELECT s.status, s.provider_id, s.organization_id, COALESCE(s.claim_id, ''), s.request_id,
-			       s.provider_revision, p.revision
+			       s.provider_revision, p.revision, s.expires_at
 			FROM oidc_auth_sessions s
 			JOIN oidc_providers p
 			  ON p.id = s.provider_id AND p.organization_id = s.organization_id
@@ -334,7 +331,7 @@ func (a *OIDCAdapter) CompleteLogin(
 			FOR UPDATE OF s, p`, command.SessionID,
 		).Scan(
 			&status, &providerID, &organizationID, &claimID, &requestID,
-			&sessionProviderRevision, &currentProviderRevision,
+			&sessionProviderRevision, &currentProviderRevision, &sessionExpiresAt,
 		); err != nil {
 			return err
 		}
@@ -349,6 +346,11 @@ func (a *OIDCAdapter) CompleteLogin(
 		principal, externalIdentityID, err := a.resolveOIDCIdentity(ctx, tx, command)
 		if err != nil {
 			return err
+		}
+		// Both the Provider/session and identity rows can wait on other writers.
+		// Sample the clock after those waits, not the caller's admission timestamp.
+		if !sessionExpiresAt.After(a.store.now().UTC()) {
+			return domain.NewError("oidc_session_expired", "OIDC login session expired", false)
 		}
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO api_tokens (

@@ -108,6 +108,7 @@ func TestRPCMapsOIDCStateErrorsToDeterministicStatuses(t *testing.T) {
 		{code: "oidc_exchange_claim_invalid", status: http.StatusBadRequest},
 		{code: "oidc_session_failed", status: http.StatusBadRequest},
 		{code: "oidc_provider_issuer_immutable", status: http.StatusConflict},
+		{code: "oidc_provider_client_id_immutable", status: http.StatusConflict},
 		{code: "oidc_exchange_in_progress", status: http.StatusConflict},
 		{code: "oidc_session_expired", status: http.StatusGone},
 		{code: "oidc_completed_token_unavailable", status: http.StatusGone},
@@ -515,6 +516,7 @@ func TestRPCBindingsConformToCentralIdentityContract(t *testing.T) {
 		"invalid_argument", "invalid_reference", "unauthenticated", "forbidden", "not_found", "conflict",
 		"last_organization_admin",
 		"version_conflict",
+		"oidc_provider_client_id_immutable",
 		"oidc_provider_changed", "oidc_membership_required", "oidc_exchange_in_progress",
 		"oidc_session_expired", "oidc_completed_token_unavailable",
 	} {
@@ -525,8 +527,9 @@ func TestRPCBindingsConformToCentralIdentityContract(t *testing.T) {
 	for code, status := range map[string]int{
 		"invalid_argument": 400, "invalid_reference": 400, "unauthenticated": 401,
 		"forbidden": 403, "not_found": 404, "conflict": 409, "last_organization_admin": 409,
-		"version_conflict":     409,
-		"oidc_session_expired": 410,
+		"version_conflict":                  409,
+		"oidc_session_expired":              410,
+		"oidc_provider_client_id_immutable": 409,
 	} {
 		if contract.Error.HTTPStatusByCode[code] != status {
 			t.Errorf("identity error %q status=%d want=%d", code, contract.Error.HTTPStatusByCode[code], status)

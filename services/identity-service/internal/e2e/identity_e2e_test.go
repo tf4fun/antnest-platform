@@ -48,7 +48,7 @@ func TestIdentityProtocolHappyPath(t *testing.T) {
 
 	var sequence atomic.Uint64
 	newID := func() string { return fmt.Sprintf("e2e-%d", sequence.Add(1)) }
-	store, err := repository.New(pool, newID)
+	store, err := repository.New(pool, newID, time.Now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -295,11 +295,13 @@ func assertResolvedPrincipal(t *testing.T, client *http.Client, serviceURL, toke
 
 type oidcProvider struct {
 	*httptest.Server
-	key       *rsa.PrivateKey
-	mu        sync.Mutex
-	nonce     string
-	challenge string
-	exchanges int
+	key          *rsa.PrivateKey
+	mu           sync.Mutex
+	nonce        string
+	challenge    string
+	exchanges    int
+	email        string
+	clientSecret string
 }
 
 func newOIDCProvider(t *testing.T) *oidcProvider {
@@ -308,7 +310,7 @@ func newOIDCProvider(t *testing.T) *oidcProvider {
 	if err != nil {
 		t.Fatal(err)
 	}
-	provider := &oidcProvider{key: key}
+	provider := &oidcProvider{key: key, email: "alice@example.com", clientSecret: "client-secret"}
 	provider.Server = httptest.NewTLSServer(http.HandlerFunc(provider.handle))
 	return provider
 }
@@ -354,9 +356,11 @@ func (p *oidcProvider) handle(response http.ResponseWriter, request *http.Reques
 		verifier := request.Form.Get("code_verifier")
 		validChallenge := p.challenge == pkceChallenge(verifier)
 		nonce := p.nonce
+		clientID, clientSecret, basic := request.BasicAuth()
+		validClient := basic && clientID == "client-1" && clientSecret == p.clientSecret
 		p.exchanges++
 		p.mu.Unlock()
-		if request.Form.Get("code") != "authorization-code" || !validChallenge {
+		if request.Form.Get("code") != "authorization-code" || !validChallenge || !validClient {
 			http.Error(response, "invalid exchange", http.StatusBadRequest)
 			return
 		}
@@ -376,7 +380,7 @@ func (p *oidcProvider) handle(response http.ResponseWriter, request *http.Reques
 			return
 		}
 		writeJSON(response, map[string]any{
-			"sub": "subject-1", "email": "alice@example.com", "email_verified": true, "name": "Alice",
+			"sub": "subject-1", "email": p.email, "email_verified": true, "name": "Alice",
 		})
 	default:
 		http.NotFound(response, request)
@@ -389,7 +393,7 @@ func (p *oidcProvider) signIDToken(nonce string) string {
 	claims := encodeSegment(map[string]any{
 		"iss": p.URL, "sub": "subject-1", "aud": "client-1", "nonce": nonce,
 		"iat": now.Unix(), "exp": now.Add(5 * time.Minute).Unix(),
-		"email": "alice@example.com", "email_verified": true, "name": "Alice",
+		"email": p.email, "email_verified": true, "name": "Alice",
 	})
 	unsigned := header + "." + claims
 	digest := sha256.Sum256([]byte(unsigned))

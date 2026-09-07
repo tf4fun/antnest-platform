@@ -80,22 +80,35 @@ protocol bodies are never telemetry.
 ## Protocol Operations
 
 - SCIM Bearer scope is checked before request-body parsing.
-- OIDC callback returns a bounded JSON result during Stage 2. Edge Gateway may
-  later convert it to a browser redirect without changing Identity semantics.
+- Identity's OIDC callback returns a bounded JSON result to Edge Gateway.
+  Gateway establishes its browser session and redirects to the application;
+  the browser must use Gateway's callback URL, not the internal Identity host.
 - The first successful callback returns the raw access token once. Replaying a
   completed callback returns only principal, token ID, expiry, and
   `already_completed=true`; it never returns the raw token again.
 - Browser logout revokes by the presented opaque access token. Identity returns
   `revoked` when it commits revocation and `already_invalid` for an unknown,
   expired, or previously revoked credential; repeating the request is safe.
-- Provider issuer is immutable for an existing Organization/name. Disable the
-  old Provider, then create the new issuer under a new Provider name. Provider
+- Provider issuer and Client ID are immutable for an existing Organization/name.
+  Create a replacement registration under a new Provider name; in-place Client
+  ID replacement returns `oidc_provider_client_id_immutable` (`409`). Secret
+  rotation remains an ordinary Provider update. Provider
   deletion is intentionally absent so existing external identities remain
   auditable. Use `set_oidc_provider_enabled` for enable/disable; this local,
   idempotent operation remains available when the external IdP is unavailable.
 - The OIDC callback is fixed from `ANTNEST_IDENTITY_PUBLIC_BASE_URL`; Provider
   configuration cannot supply another redirect URI. An in-flight session is
   rejected after any Provider revision change and must be restarted.
+- An OIDC exchange that reaches the login deadline before issuing its token
+  fails with `oidc_session_expired` (`410`), records an `expired` failure stage,
+  and cannot be retried under the same login state. Start a new login instead.
+- Local login revalidates the password hash and active principal during token
+  issuance. If they changed during password verification, login returns the
+  same `unauthenticated` (`401`) as invalid credentials and commits no token.
+  Password rotation itself does not revoke previously issued access tokens;
+  logout revokes the presented token and global User disable revokes all of
+  that User's tokens. Organization Membership deactivation blocks resolution
+  while inactive without revoking another Organization's access.
 - OIDC issuer and discovered endpoints must use HTTPS. The client rejects
   redirects, bounds discovery/token/UserInfo/JWKS responses to 1 MiB, preserves
   opaque subjects exactly, and exchanges each authorization code once using the

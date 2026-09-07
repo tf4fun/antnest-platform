@@ -22,6 +22,7 @@ import (
 type Store struct {
 	pool  *pgxpool.Pool
 	newID func() string
+	now   func() time.Time
 }
 
 var (
@@ -33,11 +34,11 @@ var (
 	))
 )
 
-func New(pool *pgxpool.Pool, newID func() string) (*Store, error) {
-	if pool == nil || newID == nil {
-		return nil, fmt.Errorf("identity repository requires pool and ID generator")
+func New(pool *pgxpool.Pool, newID func() string, now func() time.Time) (*Store, error) {
+	if pool == nil || newID == nil || now == nil {
+		return nil, fmt.Errorf("identity repository requires pool, ID generator, and clock")
 	}
-	return &Store{pool: pool, newID: newID}, nil
+	return &Store{pool: pool, newID: newID, now: now}, nil
 }
 
 func (s *Store) Directory() *DirectoryAdapter { return &DirectoryAdapter{store: s} }

@@ -2,7 +2,7 @@
 
 > Status: execution plan; acceptance remains open
 >
-> Updated: 2026-09-07
+> Updated: 2026-09-08
 >
 > Inspection baseline: `c989f20`
 
@@ -413,3 +413,29 @@ rebuild, remaining Identity workflows and C5-03 CPU diagnosis remain open.
 The [integration README](../scripts/acp-closeout/README.md) and
 [protocol matrix](../services/agent-acp-service/docs/protocol-conformance.md)
 define the reproducible scope. No external Provider was used.
+
+C2 Identity-owned admission batch (2026-09-08): local token issuance now
+revalidates the verified password and exact active principal within its write
+transaction. OIDC registrations keep issuer/Client ID immutable while allowing
+secret rotation, and login completion checks expiry after database lock waits.
+Fourteen new PostgreSQL component cases cover stale local snapshots, actual
+administrator-deactivation concurrency, OIDC deadline boundaries and lock waits,
+registration replacement rejection, secret rotation, and credential-free replay.
+The local controlled HTTPS IdP performs real authorization redirects, PKCE,
+client-secret authentication, and signed-token/JWKS verification.
+
+The complete Identity service suite passes with race detection; aggregate Go
+statement coverage is **67.1%**, including cross-package component execution
+(`go test -race -coverpkg=./services/identity-service/... -p=1
+./services/identity-service/...` with a dedicated test database). This is not a
+coverage threshold or a claim that startup/telemetry and every error branch are
+covered. Read-only adversarial review found a lock-order inversion and stale
+completion clock during this batch; both were reproduced with actual PostgreSQL
+blocking, fixed, and independently rechecked. The new tests remain reusable;
+intermediate review/test logs are not retained as acceptance artifacts.
+
+Scope remains Identity plus its contract/documentation. C2-01/02/03 still need
+Gateway-driven local/OIDC/SCIM workflow evidence; C2-04 browser logout/expiry
+semantics and C2-05's journal business-effect decision remain open. No generic
+event bus, downstream consumer, browser acceptance, or new Jaeger report is
+claimed by this service-owned batch.

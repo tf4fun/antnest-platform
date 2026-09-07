@@ -30,12 +30,13 @@ type LoginInput struct {
 }
 
 type IssueTokenCommand struct {
-	TokenID   string
-	TokenHash string
-	Principal domain.Principal
-	RequestID string
-	IssuedAt  time.Time
-	ExpiresAt time.Time
+	TokenID              string
+	TokenHash            string
+	Principal            domain.Principal
+	ExpectedPasswordHash string
+	RequestID            string
+	IssuedAt             time.Time
+	ExpiresAt            time.Time
 }
 
 type Token struct {
@@ -116,7 +117,8 @@ func (s *Service) Login(ctx context.Context, input LoginInput) (LoginResult, err
 	expiresAt := now.Add(s.tokenTTL)
 	token, err := s.repository.IssueToken(ctx, IssueTokenCommand{
 		TokenID: s.newID(), TokenHash: tokenHash, Principal: credential.Principal,
-		RequestID: input.RequestID, IssuedAt: now, ExpiresAt: expiresAt,
+		ExpectedPasswordHash: credential.PasswordHash,
+		RequestID:            input.RequestID, IssuedAt: now, ExpiresAt: expiresAt,
 	})
 	if err != nil {
 		return LoginResult{}, fmt.Errorf("issue access token: %w", err)
