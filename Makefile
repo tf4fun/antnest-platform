@@ -17,7 +17,7 @@ fmt:
 	cargo fmt --manifest-path runtimes/antnest-runtime/Cargo.toml --all
 	cargo fmt --manifest-path services/runtime-egress/Cargo.toml --all
 	npm --prefix services/agent-acp-service run format
-	services/agent-acp-service/node_modules/.bin/prettier --write scripts/managed-mcp/*.mjs scripts/acp-closeout/*.mjs
+	services/agent-acp-service/node_modules/.bin/prettier --write scripts/managed-mcp/*.mjs scripts/acp-closeout/*.mjs scripts/identity-closeout/*.mjs
 
 fmt-check:
 	@unformatted="$$(gofmt -l $$(find services -name '*.go' -type f))" || exit $$?; \
@@ -25,7 +25,7 @@ fmt-check:
 	cargo fmt --manifest-path runtimes/antnest-runtime/Cargo.toml --all --check
 	cargo fmt --manifest-path services/runtime-egress/Cargo.toml --all --check
 	npm --prefix services/agent-acp-service run format:check
-	services/agent-acp-service/node_modules/.bin/prettier --check scripts/managed-mcp/*.mjs scripts/acp-closeout/*.mjs
+	services/agent-acp-service/node_modules/.bin/prettier --check scripts/managed-mcp/*.mjs scripts/acp-closeout/*.mjs scripts/identity-closeout/*.mjs
 
 lint: go-lint rust-clippy node-lint
 
@@ -64,6 +64,7 @@ test-node:
 	npm --prefix services/agent-ui/web test
 	$(MAKE) test-managed-mcp-fixtures
 	node --test --test-concurrency=1 scripts/acp-closeout/*.test.mjs
+	node --test --test-concurrency=1 scripts/identity-closeout/*.test.mjs
 
 test-managed-mcp-fixtures:
 	node --test scripts/managed-mcp/fixtures.test.mjs

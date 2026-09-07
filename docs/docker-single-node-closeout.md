@@ -165,9 +165,13 @@ uses. Adapter stubs must not be described as full-platform acceptance.
   IdP fixture with real redirect and token exchange. Confirm SCIM/local
   provisioned identities converge on the same User/Membership and credentials
   never reach browser storage, logs, or traces.
-- [ ] **C2-03** Exercise Gateway SCIM discovery, User/Group create/update,
+- [x] **C2-03** Exercise Gateway SCIM discovery, User/Group create/update,
   membership changes, deactivate/reactivate, deletion, and token rotation/revoke
   within the supported SCIM profile. Do not advertise unsupported SCIM features.
+  Accepted for this workflow scope by the
+  [Gateway identity suite](../scripts/identity-closeout/README.md): real HTTP,
+  Identity-owned PostgreSQL, Console projections and Jaeger parent chains.
+  This does not accept OIDC convergence or cross-organization isolation.
 - [ ] **C2-04** Verify deactivation after a user has connected: existing HTTP
   credentials and ACP connections cannot authorize a new Run or bypass owner
   checks. Define and test the treatment of an already-admitted Run separately;
@@ -434,8 +438,39 @@ completion clock during this batch; both were reproduced with actual PostgreSQL
 blocking, fixed, and independently rechecked. The new tests remain reusable;
 intermediate review/test logs are not retained as acceptance artifacts.
 
-Scope remains Identity plus its contract/documentation. C2-01/02/03 still need
-Gateway-driven local/OIDC/SCIM workflow evidence; C2-04 browser logout/expiry
+That service-owned batch covered Identity plus its contract/documentation.
+Gateway-driven local/OIDC/SCIM workflow evidence, C2-04 browser logout/expiry
 semantics and C2-05's journal business-effect decision remain open. No generic
 event bus, downstream consumer, browser acceptance, or new Jaeger report is
 claimed by this service-owned batch.
+
+C2 Gateway integration batch (2026-09-08): the default Stage 3 suite now runs
+`scripts/identity-closeout/client.mjs` through Edge, Console and real Identity.
+Its **78 HTTP requests / 9 scenario groups** cover local cookie/CSRF/login/logout,
+member restrictions, inactive Membership denial, global User token revocation,
+SCIM User/Group lifecycle, pagination, group PATCH and unlinking, stable User
+identity on reprovisioning, and replacement/revocation of SCIM credentials.
+SCIM deactivation explicitly leaves the global User active. Both successful
+single-resource reads and deleted-resource denial are asserted.
+
+Three Jaeger traces (**18 spans**) verify causality, not only service presence:
+
+| Entry | Required parent chain | Spans |
+| --- | --- | --- |
+| Local login | Edge -> Identity HTTP -> `identity.repository.issue_access_token` | 5 |
+| Administrator SCIM token issuance | Edge -> Console -> Identity HTTP -> `identity.repository.issue_scim_token` | 9 |
+| SCIM User creation | Edge -> Identity HTTP -> `identity.repository.create_scim_user` | 4 |
+
+The checked traces contain none of the suite's synthetic passwords, session
+cookies or SCIM credentials. Nine helper tests reject false trace ancestry,
+cross-trace parent references, missing operations/Console, credential leakage
+on failures and incorrect cache directives. Read-only adversarial review led to
+stronger pagination, User-state and successful-read assertions. These are
+reusable HTTP tests, not browser UI acceptance or full log-sink inspection.
+
+C2-03 is closed; C2-01/04 have additional HTTP evidence but remain open for their
+other requirements. C2-02 controlled IdP-through-Gateway integration and C2-05's
+journal business-effect decision remain the next Identity work. No event bus,
+external Provider, cross-organization acceptance or whole-C2/C6 acceptance is
+claimed. Final metrics belong here; transient logs and disposable traces are
+not checked into Git.

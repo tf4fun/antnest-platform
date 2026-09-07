@@ -91,8 +91,9 @@ cleanup() {
     "com.docker.compose.project=$COMPOSE_PROJECT_NAME"; do
     containers=$(docker ps -aq --filter "label=$scope_label") || status=1
     volumes=$(docker volume ls -q --filter "label=$scope_label") || status=1
-    if [ -n "$containers" ] || [ -n "$volumes" ]; then
-      printf 'Test cleanup left resources for %s: containers=%s volumes=%s\n' "$scope_label" "$containers" "$volumes" >&2
+    networks=$(docker network ls -q --filter "label=$scope_label") || status=1
+    if [ -n "$containers" ] || [ -n "$volumes" ] || [ -n "$networks" ]; then
+      printf 'Test cleanup left resources for %s: containers=%s volumes=%s networks=%s\n' "$scope_label" "$containers" "$volumes" "$networks" >&2
       status=1
     fi
   done
@@ -381,6 +382,8 @@ node -e '
   const token = payload.tokens?.find((item) => item.id === process.argv[2]);
   if (!token?.revoked_at) process.exit(1);
 ' "$temporary_root/scim-tokens-after-revoke.json" "$scim_token_id"
+
+node scripts/identity-closeout/client.mjs "$gateway_url" "$jaeger_url"
 
 gateway_request GET /api/admin/model-catalog - "$temporary_root/model-catalog.json" 200
 node -e '

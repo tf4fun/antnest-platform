@@ -51,4 +51,10 @@ go test ./...
 golangci-lint run ./...
 ```
 
+Gateway-owned unit tests are complemented by the real-stack
+[Identity closeout client](../../scripts/identity-closeout/README.md), run by
+`make e2e-stage3`. It checks browser session revocation, SCIM provisioning and
+Console projections through the public entry, plus causal Jaeger spans. OIDC
+IdP integration and cross-organization acceptance remain separate closeout work.
+
 See [architecture](docs/architecture.md) and [operations](docs/operations.md).
