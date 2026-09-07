@@ -7,7 +7,7 @@ import {
   Users,
   UsersRound,
 } from "lucide-react";
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import {
   DataTable,
   MobileResourceItem,
@@ -41,6 +41,8 @@ export function DirectoryPage({
 }) {
   const [data, setData] = useState<Directory>();
   const [loadFailure, setLoadFailure] = useState<ResourceFailure>();
+  const [loadPending, setLoadPending] = useState(true);
+  const readPending = useRef(false);
   const [query, setQuery] = useState("");
   const [view, setView] = useState<DirectoryView>("people");
   const [createOpen, setCreateOpen] = useState(false);
@@ -53,17 +55,24 @@ export function DirectoryPage({
   const [successMessage, setSuccessMessage] = useState("");
 
   const load = useCallback(async () => {
-    setLoadFailure(undefined);
+    if (readPending.current) return;
+    readPending.current = true;
+    setLoadPending(true);
     try {
       setData(await api.directory());
+      setLoadFailure(undefined);
     } catch (cause) {
       setLoadFailure(resourceFailure(cause));
+    } finally {
+      readPending.current = false;
+      setLoadPending(false);
     }
   }, []);
   useEffect(() => void load(), [load]);
 
   async function createUser(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (pending || loadPending) return;
     const form = event.currentTarget;
     const input = new FormData(form);
     const displayName = String(input.get("display_name") ?? "").trim();
@@ -90,7 +99,7 @@ export function DirectoryPage({
 
   async function updateMember(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!editing) return;
+    if (!editing || pending || loadPending || loadFailure) return;
     const input = new FormData(event.currentTarget);
     const displayName = String(input.get("display_name") ?? "").trim();
     setPending(true);
@@ -114,7 +123,7 @@ export function DirectoryPage({
   }
 
   async function setGlobalAccess() {
-    if (!activationTarget) return;
+    if (!activationTarget || pending || loadPending || loadFailure) return;
     const target = activationTarget;
     setPending(true);
     setActivationError("");
@@ -139,6 +148,7 @@ export function DirectoryPage({
       <ResourceFailurePage
         eyebrow="Organization"
         failure={loadFailure}
+        pending={loadPending}
         resource="Directory"
         returnHref="#overview"
         returnLabel="Back to Overview"
@@ -166,14 +176,14 @@ export function DirectoryPage({
         title="Directory"
         detail={`Local accounts and externally synchronized identities for ${organizationName}.`}
         actions={(
-          <Button onClick={() => { setCreateError(""); setSuccessMessage(""); setCreateOpen(true); }}>
+          <Button disabled={pending || loadPending} onClick={() => { setCreateError(""); setSuccessMessage(""); setCreateOpen(true); }}>
             <UserPlus className="h-4 w-4" />
             Add local user
           </Button>
         )}
       />
       {successMessage ? <SuccessNotice message={successMessage} onDismiss={() => setSuccessMessage("")} /> : null}
-      {loadFailure ? <ResourceFailureNotice failure={loadFailure} retryLabel="Refresh directory" onRetry={() => void load()} /> : null}
+      {loadFailure ? <ResourceFailureNotice failure={loadFailure} message={`${loadFailure.message} Displayed records may be out of date; member changes are unavailable.`} pending={loadPending} retryLabel="Refresh directory" onRetry={() => void load()} /> : null}
       <ResourceToolbar>
         <div
           className="flex items-center gap-1 rounded-md border border-border bg-white p-1"
@@ -218,6 +228,7 @@ export function DirectoryPage({
           <MemberTable
             currentUserID={currentUserID}
             members={members}
+            actionsDisabled={pending || loadPending || Boolean(loadFailure)}
             systemAdministrator={systemAdministrator}
             onEdit={(member) => { setEditError(""); setSuccessMessage(""); setEditing(member); }}
             onSetActive={(member) => { setActivationError(""); setSuccessMessage(""); setActivationTarget(member); }}
@@ -308,12 +319,14 @@ export function DirectoryPage({
 function MemberTable({
   currentUserID,
   members,
+  actionsDisabled,
   systemAdministrator,
   onEdit,
   onSetActive,
 }: {
   currentUserID: string;
   members: DirectoryMember[];
+  actionsDisabled: boolean;
   systemAdministrator: boolean;
   onEdit: (member: DirectoryMember) => void;
   onSetActive: (member: DirectoryMember) => void;
@@ -351,14 +364,14 @@ function MemberTable({
             {membership.source === "local" || systemAdministrator ? (
               <div className="mt-4 flex flex-wrap justify-end gap-2 border-t border-border pt-3">
                 {membership.source === "local" ? (
-                  <Button size="sm" variant="secondary" onClick={() => onEdit(member)}>
+                  <Button disabled={actionsDisabled} size="sm" variant="secondary" onClick={() => onEdit(member)}>
                     <Pencil className="h-4 w-4" />
                     Edit
                   </Button>
                 ) : null}
                 {systemAdministrator ? (
                   canToggleUser ? (
-                    <Button size="sm" variant="ghost" onClick={() => onSetActive(member)}>
+                    <Button disabled={actionsDisabled} size="sm" variant="ghost" onClick={() => onSetActive(member)}>
                       <Power className="h-4 w-4" />
                       {user.active ? "Disable user" : "Activate user"}
                     </Button>
@@ -412,6 +425,7 @@ function MemberTable({
                       <Button
                         aria-label={`Edit ${membership.display_name}`}
                         title="Edit local membership"
+                        disabled={actionsDisabled}
                         size="icon"
                         variant="ghost"
                         onClick={() => onEdit(member)}
@@ -425,7 +439,7 @@ function MemberTable({
                         title={user.id === currentUserID
                           ? "The current system administrator cannot be disabled"
                           : `${user.active ? "Disable" : "Activate"} user globally`}
-                        disabled={!canToggleUser}
+                        disabled={actionsDisabled || !canToggleUser}
                         size="icon"
                         variant="ghost"
                         onClick={() => onSetActive(member)}

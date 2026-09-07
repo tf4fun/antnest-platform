@@ -69,6 +69,8 @@ cleanup() {
     rm -rf -- "${temporary_root:?}"
     return
   fi
+  # Stop asynchronous creators before enumerating their Docker resources.
+  compose stop agent-controller runtime-controller >/dev/null 2>&1 || status=1
   docker ps -aq --filter "label=io.antnest.runtime-controller-scope=$COMPOSE_PROJECT_NAME" 2>/dev/null |
     while IFS= read -r runtime_container; do
       [ -z "$runtime_container" ] || docker rm -f "$runtime_container" >/dev/null 2>&1 || true
@@ -77,7 +79,17 @@ cleanup() {
     while IFS= read -r runtime_volume; do
       [ -z "$runtime_volume" ] || docker volume rm -f "$runtime_volume" >/dev/null 2>&1 || true
     done
-  compose down --volumes --remove-orphans >/dev/null 2>&1 || true
+  compose down --volumes --remove-orphans >/dev/null 2>&1 || status=1
+  for scope_label in \
+    "io.antnest.runtime-controller-scope=$COMPOSE_PROJECT_NAME" \
+    "com.docker.compose.project=$COMPOSE_PROJECT_NAME"; do
+    containers=$(docker ps -aq --filter "label=$scope_label") || status=1
+    volumes=$(docker volume ls -q --filter "label=$scope_label") || status=1
+    if [ -n "$containers" ] || [ -n "$volumes" ]; then
+      printf 'Test cleanup left resources for %s: containers=%s volumes=%s\n' "$scope_label" "$containers" "$volumes" >&2
+      status=1
+    fi
+  done
   rm -rf -- "${temporary_root:?}"
   exit "$status"
 }
@@ -88,7 +100,10 @@ json_field() {
     const fs = require("node:fs");
     let value = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
     for (const segment of process.argv[2].split(".")) value = value?.[segment];
-    if (value === undefined) process.exit(2);
+    if (value === undefined) {
+      console.error(`Missing response field: ${process.argv[2]}`);
+      process.exit(2);
+    }
     process.stdout.write(typeof value === "object" ? JSON.stringify(value) : String(value));
   ' "$1" "$2"
 }
@@ -384,6 +399,11 @@ EOF
 gateway_request POST /api/admin/model-profiles "$temporary_root/model.json" "$temporary_root/model-response.json" 201
 model_profile_id=$(json_field "$temporary_root/model-response.json" model_profile_id)
 model_revision_id=$(json_field "$temporary_root/model-response.json" revision_id)
+gateway_request POST /api/admin/model-profiles "$temporary_root/model.json" "$temporary_root/model-replay.json" 201
+assert_field "$temporary_root/model-replay.json" model_profile_id "$model_profile_id"
+assert_field "$temporary_root/model-replay.json" revision_id "$model_revision_id"
+gateway_request GET /api/admin/model-profiles - "$temporary_root/models-after-replay.json" 200
+assert_field "$temporary_root/models-after-replay.json" items.length 1
 if grep -q 'stage3-model-secret' "$temporary_root/model-response.json"; then
   echo "Model response leaked the Provider secret" >&2
   exit 1
@@ -399,6 +419,11 @@ cat >"$temporary_root/template.json" <<EOF
 EOF
 gateway_request POST /api/admin/templates "$temporary_root/template.json" "$temporary_root/template-response.json" 201
 template_id=$(json_field "$temporary_root/template-response.json" template_id)
+gateway_request POST /api/admin/templates "$temporary_root/template.json" "$temporary_root/template-replay.json" 201
+assert_field "$temporary_root/template-replay.json" template_id "$template_id"
+assert_field "$temporary_root/template-replay.json" revision 1
+gateway_request GET /api/admin/templates - "$temporary_root/templates-after-replay.json" 200
+assert_field "$temporary_root/templates-after-replay.json" items.length 1
 
 cat >"$temporary_root/model-secondary.json" <<'EOF'
 {
@@ -458,9 +483,29 @@ cat >"$temporary_root/agent.json" <<EOF
 EOF
 gateway_request POST /api/admin/agents "$temporary_root/agent.json" "$temporary_root/agent-response.json" 202 "$temporary_root/agent-headers.txt"
 agent_id=$(json_field "$temporary_root/agent-response.json" agent.agent_id)
-assert_field "$temporary_root/agent-response.json" agent.organization_id "$organization_id"
+assert_field "$temporary_root/agent-response.json" agent.owner_user_id "$owner_user_id"
+node -e '
+  const payload = require(process.argv[1]);
+  if (Object.hasOwn(payload.agent, "organization_id")) {
+    throw new Error("Browser Agent response exposed internal organization scope");
+  }
+' "$temporary_root/agent-response.json"
 create_request_id=$(json_field "$temporary_root/agent-response.json" operation.request_id)
 wait_operation "$create_request_id" "$temporary_root/create-operation.json"
+compose exec -T stage3-model node --input-type=module -e '
+  import assert from "node:assert/strict";
+  const [agentID, organizationID, ownerUserID] = process.argv.slice(1);
+  const url = new URL(`http://agent-controller:8080/internal/agents/${agentID}`);
+  url.searchParams.set("organization_id", organizationID);
+  const response = await fetch(url, { signal: AbortSignal.timeout(10000) });
+  assert.equal(response.status, 200, "Owner service must resolve the scoped Agent");
+  const agent = await response.json();
+  assert.equal(agent.organization_id, organizationID);
+  assert.equal(agent.owner_user_id, ownerUserID);
+  url.searchParams.set("organization_id", "stage3-unrelated-organization");
+  const foreign = await fetch(url, { signal: AbortSignal.timeout(10000) });
+  assert.equal(foreign.status, 404, "Another organization must not resolve the Agent");
+' "$agent_id" "$organization_id" "$owner_user_id"
 gateway_request GET "/api/admin/agents/${agent_id}" - "$temporary_root/created-agent.json" 200
 assert_field "$temporary_root/created-agent.json" lifecycle_state available
 node -e '

@@ -317,6 +317,16 @@ sequenceDiagram
   Template revision; it does not fan out to the mutable current head. Template
   detail resolves its referenced Model revision independently, so that lookup
   can fail and retry without hiding the Template configuration.
+- Inventory continuation follows Browser -> Edge -> Admin -> owner service
+  using the same organization scope and opaque cursor. A later-page
+  `403`/`404`/`410` preserves loaded records but stops traversal; a transient
+  failure offers one explicit retry of that cursor, with duplicate submission
+  disabled while pending. Successful pages merge by resource identity.
+- Current and Deleted Agent inventories keep separate cursors and failures.
+  Selecting Deleted starts its first query. Failure remains a completed read
+  attempt, not an instruction to fetch again from an effect. Switching tabs
+  does not retry it or transfer its error into the Current Fleet; a transient
+  failure is repeated only when the administrator requests retry.
 
 ### B03a. Directory administration
 
@@ -336,7 +346,20 @@ sequenceDiagram
     Identity->>IDDB: authorize and commit fact + Identity event
     IDDB-->>Identity: committed projection
     Identity-->>Admin: secret-free result
-    Admin-->>Browser: explicit browser DTO
+    Admin-->>Edge: explicit browser DTO
+    Edge-->>Browser: successful command result
+    Browser->>Browser: close dialog; retain dismissible success; keep row actions closed
+    Browser->>Edge: GET /api/admin/directory
+    Edge->>Admin: refreshed read + trusted principal
+    Admin->>Identity: list_directory
+    Identity-->>Admin: directory projection or safe error
+    Admin-->>Edge: browser projection or safe error
+    Edge-->>Browser: refresh result
+    alt refresh succeeds
+        Browser->>Browser: replace snapshot; reopen eligible member actions
+    else refresh fails
+        Browser->>Browser: retain old records + command success; keep member actions closed
+    end
 ```
 
 - SCIM Memberships and Groups are visible but not locally editable. Identity,
@@ -346,6 +369,10 @@ sequenceDiagram
   Organization; deactivation locks and validates every affected Organization.
 - Identity locks the Organization while removing administrator access and
   rejects the command when no other effective administrator remains.
+- Refresh failure does not undo command success or resubmit the command. A
+  transient read failure retries only the Directory query, with one read in
+  flight; a terminal failure offers no retry. Both compact and desktop row
+  controls require a fresh snapshot before capturing the next mutation target.
 
 ### B03b. Enterprise provisioning administration
 
@@ -393,6 +420,12 @@ sequenceDiagram
   credentials are absent from ordinary reads, logs, and traces. A newly issued
   SCIM credential exists only in the no-store response and in transient page
   memory until the administrator closes the dialog.
+- Provider save/toggle and SCIM revocation retain their success acknowledgement
+  if the following section read fails. While a Provider change is pending,
+  another edit cannot capture the pre-change Provider. SCIM issuance exposes
+  its one-time credential independently of token-list refresh; a clipboard
+  failure keeps that credential visible for explicit retry, and closing the
+  dialog clears it from page state.
 
 ## 3. Catalog Management
 

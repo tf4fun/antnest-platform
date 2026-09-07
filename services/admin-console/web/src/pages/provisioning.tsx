@@ -410,7 +410,7 @@ function ProviderTable({ providers, pending, onEdit, onToggle }: {
             </div>
           </dl>
           <div className="mt-4 flex justify-end gap-2 border-t border-border pt-3">
-            <Button size="sm" variant="secondary" onClick={() => onEdit(provider)}>
+            <Button disabled={pending} size="sm" variant="secondary" onClick={() => onEdit(provider)}>
               <Pencil className="h-4 w-4" />
               Edit
             </Button>
@@ -437,7 +437,7 @@ function ProviderTable({ providers, pending, onEdit, onToggle }: {
             <td className="px-3 py-3 text-muted-foreground">{provider.scopes.join(", ")}</td>
             <td className="px-3 py-3"><Badge value={provider.enabled ? "active" : "inactive"} /></td>
             <td className="px-3 py-3"><div className="flex justify-end gap-1">
-              <Button aria-label={`Edit ${provider.display_name}`} title="Edit provider" size="icon" variant="ghost" onClick={() => onEdit(provider)}><Pencil className="h-4 w-4" /></Button>
+              <Button aria-label={`Edit ${provider.display_name}`} title="Edit provider" disabled={pending} size="icon" variant="ghost" onClick={() => onEdit(provider)}><Pencil className="h-4 w-4" /></Button>
               <Button aria-label={`${provider.enabled ? "Disable" : "Enable"} ${provider.display_name}`} title={provider.enabled ? "Disable provider" : "Enable provider"} size="icon" variant="ghost" disabled={pending} onClick={() => void onToggle(provider)}><Power className="h-4 w-4" /></Button>
             </div></td>
           </tr>

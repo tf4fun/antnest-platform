@@ -123,6 +123,16 @@ Admin API 401 responses still trigger session-expiry handling.
   `503`, invalid projection/response is `502`; optional failure retains status
   in a named degraded section in a successful aggregate;
 - a resource outside the principal organization is exposed as `404`;
+- successful Directory commands keep their acknowledgement through the next
+  read; loaded records remain readable but row mutations require a fresh
+  snapshot, and an explicit refresh retry cannot create concurrent reads;
+- Provider row editing closes during pending mutations; SCIM issuance and its
+  one-time credential are independent of subsequent list-read availability;
+- initial and subsequent inventory pages retain structured terminal/transient
+  failures; pagination never defaults an unclassified error to retryable;
+- Deleted Agent reads start on first use, not on each failure or tab switch;
+  only explicit transient retry repeats a failed read, and each Fleet view
+  retains its own cursor, loaded records, and failure;
 - secret input is forwarded once and never logged or returned by the BFF.
 - current-account failure degrades only the account card; password capability
   fails closed until an Identity response is available;

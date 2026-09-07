@@ -35,6 +35,7 @@ export function ResourceFailurePage({
   returnHref,
   returnLabel,
   failure,
+  pending,
   onRetry,
 }: {
   eyebrow: string;
@@ -42,6 +43,7 @@ export function ResourceFailurePage({
   returnHref: string;
   returnLabel: string;
   failure: ResourceFailure;
+  pending?: boolean;
   onRetry: () => void;
 }) {
   const noun = resource.toLowerCase();
@@ -62,18 +64,20 @@ export function ResourceFailurePage({
         <a href={returnHref}><ArrowLeft className="h-4 w-4" />{returnLabel}</a>
       </Button>
       <PageHeader eyebrow={eyebrow} title={title} detail={detail} />
-      <ResourceFailureNotice failure={failure} retryLabel="Retry" onRetry={onRetry} />
+      <ResourceFailureNotice failure={failure} pending={pending} retryLabel="Retry" onRetry={onRetry} />
     </div>
   );
 }
 
 export function ResourceFailureNotice({
   failure,
+  pending = false,
   message,
   retryLabel,
   onRetry,
 }: {
   failure: ResourceFailure;
+  pending?: boolean;
   message?: string;
   retryLabel: string;
   onRetry: () => void;
@@ -82,8 +86,8 @@ export function ResourceFailureNotice({
     <ErrorNotice
       message={message ?? failure.message}
       action={failure.retryable ? (
-        <Button size="sm" variant="secondary" onClick={onRetry}>
-          <RefreshCw className="h-4 w-4" />{retryLabel}
+        <Button aria-busy={pending} disabled={pending} size="sm" variant="secondary" onClick={onRetry}>
+          <RefreshCw className={cn("h-4 w-4", pending && "animate-spin")} />{retryLabel}
         </Button>
       ) : undefined}
     />
@@ -171,31 +175,29 @@ export function ListPagination({
   loaded,
   hasMore,
   pending,
-  error,
-  retryable = true,
+  failure,
   onLoadMore,
 }: {
   loaded: number;
   hasMore: boolean;
   pending: boolean;
-  error?: string;
-  retryable?: boolean;
+  failure?: ResourceFailure;
   onLoadMore: () => void;
 }) {
-  if (!hasMore && !error) return null;
+  if (!hasMore && !failure) return null;
   return (
     <div className="flex flex-col gap-2 border-t border-border pt-4 sm:flex-row sm:items-center sm:justify-between">
-      <p className={cn("text-sm text-muted-foreground", error && "text-destructive")} role={error ? "alert" : undefined}>
-        {error ?? `${loaded} loaded. More records are available.`}
+      <p className={cn("text-sm text-muted-foreground", failure && "text-destructive")} role={failure ? "alert" : undefined}>
+        {failure?.message ?? `${loaded} loaded. More records are available.`}
       </p>
-      {!error || retryable ? (
+      {!failure || failure.retryable ? (
         <Button aria-busy={pending} className="w-fit" disabled={pending} size="sm" type="button" variant="secondary" onClick={onLoadMore}>
           {pending
             ? <LoaderCircle className="h-4 w-4 animate-spin" />
-            : error
+            : failure
               ? <RefreshCw className="h-4 w-4" />
               : <ChevronDown className="h-4 w-4" />}
-          {error ? "Retry" : "Load more"}
+          {failure ? "Retry" : "Load more"}
         </Button>
       ) : null}
     </div>

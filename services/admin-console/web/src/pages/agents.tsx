@@ -96,9 +96,9 @@ function AgentInventory() {
     current: undefined,
     deleted: undefined,
   });
-  const [pageErrors, setPageErrors] = useState<Record<AgentFleetView, string>>({
-    current: "",
-    deleted: "",
+  const [pageFailures, setPageFailures] = useState<Record<AgentFleetView, ResourceFailure | undefined>>({
+    current: undefined,
+    deleted: undefined,
   });
   const [pagePending, setPagePending] = useState<Record<AgentFleetView, boolean>>({
     current: false,
@@ -111,7 +111,7 @@ function AgentInventory() {
 
   const loadAgents = useCallback(async () => {
     setInventoryFailure(undefined);
-    setPageErrors((current) => ({ ...current, current: "" }));
+    setPageFailures((current) => ({ ...current, current: undefined }));
     try {
       const page = await api.agents({ view: "current" });
       setAgents(page.items);
@@ -140,7 +140,7 @@ function AgentInventory() {
   const loadDeleted = useCallback(async () => {
     setDeletedLoading(true);
     setDeletedFailure(undefined);
-    setPageErrors((current) => ({ ...current, deleted: "" }));
+    setPageFailures((current) => ({ ...current, deleted: undefined }));
     try {
       const page = await api.agents({ view: "deleted" });
       setAgentsIncludingDeleted(page.items);
@@ -153,16 +153,16 @@ function AgentInventory() {
   }, []);
 
   useEffect(() => {
-    if (view === "deleted" && agentsIncludingDeleted === undefined && !deletedLoading) {
+    if (view === "deleted" && agentsIncludingDeleted === undefined && !deletedLoading && !deletedFailure) {
       void loadDeleted();
     }
-  }, [agentsIncludingDeleted, deletedLoading, loadDeleted, view]);
+  }, [agentsIncludingDeleted, deletedFailure, deletedLoading, loadDeleted, view]);
 
   async function loadMore(target: AgentFleetView) {
     const cursor = nextCursors[target];
-    if (!cursor || pagePending[target]) return;
+    if (!cursor || pagePending[target] || pageFailures[target]?.retryable === false) return;
     setPagePending((current) => ({ ...current, [target]: true }));
-    setPageErrors((current) => ({ ...current, [target]: "" }));
+    setPageFailures((current) => ({ ...current, [target]: undefined }));
     try {
       const page = await api.agents({ view: target, cursor });
       if (target === "current") {
@@ -173,7 +173,7 @@ function AgentInventory() {
       }
       setNextCursors((current) => ({ ...current, [target]: page.next_cursor ?? undefined }));
     } catch (cause) {
-      setPageErrors((current) => ({ ...current, [target]: errorMessage(cause) }));
+      setPageFailures((current) => ({ ...current, [target]: resourceFailure(cause) }));
     } finally {
       setPagePending((current) => ({ ...current, [target]: false }));
     }
@@ -268,7 +268,7 @@ function AgentInventory() {
             : undefined}
         />
       ) : null}
-      {deletedFailure ? <ResourceFailureNotice failure={deletedFailure} retryLabel="Retry deleted records" onRetry={() => void loadDeleted()} /> : null}
+      {view === "deleted" && deletedFailure ? <ResourceFailureNotice failure={deletedFailure} retryLabel="Retry deleted records" onRetry={() => void loadDeleted()} /> : null}
       <ResourceToolbar>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           <div
@@ -408,7 +408,7 @@ function AgentInventory() {
         </>
       )}
       <ListPagination
-        error={pageErrors[view]}
+        failure={pageFailures[view]}
         hasMore={Boolean(nextCursors[view])}
         loaded={visibleAgents.length}
         pending={pagePending[view]}
@@ -451,11 +451,10 @@ function AgentInventory() {
             </Select>
           </Field>
           <ListPagination
-            error={templateOptionFailure?.message}
+            failure={templateOptionFailure}
             hasMore={templatesHaveMore}
             loaded={templates.length}
             pending={templatesPending}
-            retryable={templateOptionFailure?.retryable}
             onLoadMore={() => void (templateOptionFailure ? retryTemplates() : loadMoreTemplates())}
           />
           <div className="mt-1 flex justify-end gap-2">
@@ -1178,11 +1177,10 @@ function AgentDetail({ agentID }: { agentID: string }) {
             </Select>
           </Field>
           <ListPagination
-            error={templateOptionFailure?.message}
+            failure={templateOptionFailure}
             hasMore={templatesHaveMore}
             loaded={templates.length}
             pending={templatesPending}
-            retryable={templateOptionFailure?.retryable}
             onLoadMore={() => void (templateOptionFailure ? retryTemplates() : loadMoreTemplates())}
           />
           <div className="flex justify-end gap-2">

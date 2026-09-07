@@ -96,6 +96,15 @@ administration. Transient read failures have section-local retry actions. Mutati
 clipboard failures remain visible in the originating dialog without clearing
 administrator input or persisting the one-time credential.
 
+A successful administrative command and its subsequent inventory refresh are
+separate outcomes. The success acknowledgement survives a failed refresh; it
+must not invite the user to submit the successful command again. Directory
+records remain readable during refresh and after failure, but their edit and
+global-access actions require a successfully refreshed snapshot. Pending
+Directory writes also close new dialog entry points. OIDC row editing cannot
+start while another Provider change is pending. SCIM issuance keeps its
+one-time credential accessible even when refreshing the token inventory fails.
+
 Independent resource reads retain structured failure semantics through the
 browser state container. Model Catalog, Runtime defaults, referenced Model
 revisions, account profile, OIDC/SCIM inventories, and paged Model/Template
@@ -224,6 +233,13 @@ browser merges pages by resource identity, keeps loaded rows when a later page
 fails, and labels search results as a match within loaded data. The deleted
 Agent view is filtered by Agent Controller rather than fetched as a mixed list
 and filtered in the browser.
+Later-page failures retain structured status just like initial reads: terminal
+responses stop traversal without erasing loaded records; transient failures
+retry the same cursor only on an explicit action. Pending traversal disables
+duplicate requests. Current and Deleted Agent cursors and failures stay local
+to their view. A failed initial Deleted read is not an invitation for the mount
+effect to retry; returning to that tab preserves the failure until an explicit,
+permitted retry or a new page visit.
 
 Inventory presentation is viewport-aware without changing its authority or
 commands. Wide screens retain dense tables; narrow screens render complete
@@ -398,13 +414,29 @@ A migrated surface is complete only when:
 
 ## Current Acceptance Follow-up
 
-Overview failure recovery (BFF contract 30) is implemented with service HTTP
-tests and Dashboard component tests. Container and browser acceptance remain
-open: the 2026-09-07 attempt could not fetch the Go base image from Docker Hub,
-and browser control returned `Debugger unattached`. Passing local tests and a
-production frontend build do not close those two checks.
+Overview failure recovery and Catalog creation retries (BFF contract 31) have
+service HTTP and browser-component coverage. Inventory traversal now has
+page-level coverage across Model, Template, Current Agent, and Deleted Agent
+views, including terminal responses, explicit transient retry, duplicate-click
+prevention, and Deleted-read failures that must not trigger automatic traffic.
+Directory and Provisioning mutation coverage now includes successful commands
+followed by failed reads, input retention on rejection, row-action freshness,
+system-only OIDC access, and SCIM one-time credential and clipboard handling.
 
-After that verification, continue the cross-surface acceptance audit of mutation
-acknowledgements and forbidden/compact-viewport interactions. Channel and Skill
-pages still wait for their owner services; Scheduled Tasks and cross-service
-Audit remain outside the decided scope.
+Container acceptance passed on 2026-09-07 after rebuilding the standard images.
+The isolated Stage 3 E2E covers model/template creation replay, organization
+isolation, catalog revisions, Agent create/disable/enable/rebuild/delete, the
+Workspace ACP path, and Jaeger traces using the deterministic model fixture.
+The test verifies browser DTOs without internal organization fields and checks
+ownership through Agent Controller's scoped interface. Cleanup stops lifecycle
+creators before deleting test resources and fails if containers or volumes
+remain; this run left no test resources behind.
+
+Browser visual acceptance remains open: attaching browser control to the
+existing Console tab timed out after earlier `Debugger unattached` errors.
+Component and HTTP E2E tests do not close that check.
+
+Continue the cross-surface acceptance audit of mutation acknowledgements and
+forbidden/compact-viewport interactions. Channel and Skill pages still wait for
+their owner services; Scheduled Tasks and cross-service Audit remain outside
+the decided scope.

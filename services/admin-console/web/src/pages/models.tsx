@@ -62,7 +62,7 @@ function ModelList() {
   const [catalogState, setCatalogState] = useState<ResourceState<ModelCatalog>>({ status: "loading" });
   const [loadFailure, setLoadFailure] = useState<ResourceFailure>();
   const [nextAfterID, setNextAfterID] = useState<string>();
-  const [pageError, setPageError] = useState("");
+  const [pageFailure, setPageFailure] = useState<ResourceFailure>();
   const [pagePending, setPagePending] = useState(false);
   const [open, setOpen] = useState(false);
   const [pending, setPending] = useState(false);
@@ -70,7 +70,7 @@ function ModelList() {
   const [query, setQuery] = useState("");
   const loadProfiles = useCallback(async () => {
     setLoadFailure(undefined);
-    setPageError("");
+    setPageFailure(undefined);
     try {
       const profiles = await api.models();
       setItems(profiles.items);
@@ -89,15 +89,15 @@ function ModelList() {
   }, [loadCatalog, loadProfiles]);
 
   async function loadMore() {
-    if (!nextAfterID || pagePending) return;
+    if (!nextAfterID || pagePending || pageFailure?.retryable === false) return;
     setPagePending(true);
-    setPageError("");
+    setPageFailure(undefined);
     try {
       const page = await api.models({ afterID: nextAfterID });
       setItems((current) => mergePage(current ?? [], page.items, (item) => item.model_profile_id));
       setNextAfterID(page.next_after_id ?? undefined);
     } catch (cause) {
-      setPageError(errorMessage(cause));
+      setPageFailure(resourceFailure(cause));
     } finally {
       setPagePending(false);
     }
@@ -229,7 +229,7 @@ function ModelList() {
         </DataTable>
         </>}
           <ListPagination
-            error={pageError}
+            failure={pageFailure}
             hasMore={Boolean(nextAfterID)}
             loaded={items.length}
             pending={pagePending}

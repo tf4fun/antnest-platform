@@ -50,7 +50,7 @@ function TemplateList() {
   const [defaults, setDefaults] = useState<ResourceState<TemplateDefaults>>({ status: "loading" });
   const [loadFailure, setLoadFailure] = useState<ResourceFailure>();
   const [nextAfterID, setNextAfterID] = useState<string>();
-  const [pageError, setPageError] = useState("");
+  const [pageFailure, setPageFailure] = useState<ResourceFailure>();
   const [pagePending, setPagePending] = useState(false);
   const [formError, setFormError] = useState("");
   const [open, setOpen] = useState(false);
@@ -59,7 +59,7 @@ function TemplateList() {
   const [query, setQuery] = useState("");
   const loadTemplates = useCallback(async () => {
     setLoadFailure(undefined);
-    setPageError("");
+    setPageFailure(undefined);
     try {
       const page = await api.templates();
       setItems(page.items);
@@ -79,15 +79,15 @@ function TemplateList() {
   }, [loadDefaults, loadModels, loadTemplates]);
 
   async function loadMore() {
-    if (!nextAfterID || pagePending) return;
+    if (!nextAfterID || pagePending || pageFailure?.retryable === false) return;
     setPagePending(true);
-    setPageError("");
+    setPageFailure(undefined);
     try {
       const page = await api.templates({ afterID: nextAfterID });
       setItems((current) => mergePage(current ?? [], page.items, (item) => item.template_id));
       setNextAfterID(page.next_after_id ?? undefined);
     } catch (cause) {
-      setPageError(errorMessage(cause));
+      setPageFailure(resourceFailure(cause));
     } finally {
       setPagePending(false);
     }
@@ -302,7 +302,7 @@ function TemplateList() {
         </DataTable>
         </>}
           <ListPagination
-            error={pageError}
+            failure={pageFailure}
             hasMore={Boolean(nextAfterID)}
             loaded={items.length}
             pending={pagePending}
@@ -335,11 +335,10 @@ function TemplateList() {
             </Select>
           </Field>
           <ListPagination
-            error={modelFailure?.message}
+            failure={modelFailure}
             hasMore={modelsHaveMore}
             loaded={models.length}
             pending={modelsPending}
-            retryable={modelFailure?.retryable}
             onLoadMore={() => void (modelFailure ? retryModels() : loadMoreModels())}
           />
           <Field label="System prompt" hint="Defines the Agent's default role and operating boundaries.">
@@ -555,11 +554,10 @@ function TemplateDetail({ templateID, revisionID }: { templateID: string; revisi
             </Select>
           </Field>
           <ListPagination
-            error={modelFailure?.message}
+            failure={modelFailure}
             hasMore={modelsHaveMore}
             loaded={models.length}
             pending={modelsPending}
-            retryable={modelFailure?.retryable}
             onLoadMore={() => void (modelFailure ? retryModels() : loadMoreModels())}
           />
           <Field label="System prompt" hint="Defines the Agent's default role and operating boundaries."><Textarea name="system_prompt" defaultValue={template.system_prompt} /></Field>

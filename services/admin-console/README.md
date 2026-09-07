@@ -131,6 +131,22 @@ by Vitest/Testing Library component tests with one worker. Dashboard component
 tests exercise the real API parser and rendered controls using HTTP-shaped
 fetch responses, including snapshot retention, transient recovery, terminal
 failure, and unmount cancellation. They require no external provider or Docker.
+Inventory component tests cover Model, Template, Current Agent, and Deleted
+Agent traversal using the real API parser: terminal failures retain loaded
+rows without retry, transient retries keep their cursor, and pending requests
+cannot be duplicated. Deleted-read failures persist across tab switches rather
+than triggering an automatic fetch loop. Catalog creation tests also cover
+ambiguous responses, stable retry identities, and dismissible success feedback.
+Directory and Provisioning component tests cover mutation rejection without
+input loss, successful writes followed by unavailable/forbidden reads, stale
+row-action prevention, system-only OIDC entry, and SCIM credential disposal and
+clipboard recovery. They distinguish the command result from refresh status.
+The Stage 3 Docker E2E also repeats Model and Template creation with the same
+idempotency key and verifies that their inventories contain no duplicate. Agent
+organization isolation is checked through the owner's scoped interface while
+browser responses remain free of internal organization fields. Test cleanup
+stops asynchronous creators before removing their scoped resources and rejects
+leftover containers or volumes.
 
 ## Does Not Own
 
