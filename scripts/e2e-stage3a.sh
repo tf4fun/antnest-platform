@@ -34,6 +34,15 @@ export ANTNEST_BOOTSTRAP_ADMIN_EMAIL=stage3-admin@example.com
 export ANTNEST_BOOTSTRAP_ADMIN_PASSWORD=stage3-admin-password
 keep_stack=${ANTNEST_E2E_KEEP_STACK:-false}
 identity_access=${ANTNEST_E2E_IDENTITY_ACCESS:-false}
+acp_session=${ANTNEST_E2E_ACP_SESSION:-false}
+case "$acp_session" in
+  true|false) ;;
+  *) echo "ANTNEST_E2E_ACP_SESSION must be true or false" >&2; exit 1 ;;
+esac
+if [ "$acp_session" = true ] && { [ "$keep_stack" = true ] || [ "$identity_access" = true ] || [ "${ANTNEST_E2E_ACP_CLOSEOUT:-false}" = true ]; }; then
+  echo "ACP session faults require a separate disposable profile" >&2
+  exit 1
+fi
 case "$identity_access" in
   true|false) ;;
   *) echo "ANTNEST_E2E_IDENTITY_ACCESS must be true or false" >&2; exit 1 ;;
@@ -63,6 +72,11 @@ workspace_cookie_jar="$temporary_root/workspace-cookies.txt"
 agent_id=""
 
 compose() {
+  if [ "$acp_session" = true ]; then
+    docker compose -f compose.yaml -f compose.stage3.yaml -f scripts/identity-closeout/oidc-compose.yaml \
+      -f scripts/identity-closeout/acp-session-compose.yaml --profile stage3 --profile stage3-e2e --profile observability "$@"
+    return
+  fi
   if [ "$identity_access" = true ]; then
     docker compose -f compose.yaml -f compose.stage3.yaml -f scripts/identity-closeout/oidc-compose.yaml \
       -f scripts/identity-closeout/access-compose.yaml --profile stage3 --profile stage3-e2e --profile observability "$@"
@@ -230,6 +244,12 @@ docker run --rm --network none --label "com.docker.compose.project=$COMPOSE_PROJ
   --mount "type=volume,source=${COMPOSE_PROJECT_NAME}-oidc-certs,target=/certs" \
   debian:bookworm-slim cp /input/tls.key /input/tls.crt /certs/
 compose up -d --wait
+
+if [ "$acp_session" = true ]; then
+  ANTNEST_E2E_DISPOSABLE=true sh scripts/e2e-acp-session.sh
+  echo "ACP browser session expiry, outage recovery and admitted Run E2E passed"
+  exit 0
+fi
 
 if [ "$identity_access" = true ]; then
   development_network=$(docker network ls -q --filter "label=com.docker.compose.project=$COMPOSE_PROJECT_NAME" \

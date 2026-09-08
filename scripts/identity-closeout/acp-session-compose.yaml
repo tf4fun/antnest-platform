@@ -1,0 +1,7 @@
+# Disposable ACP-session profile only. Never use with production/retained data.
+services:
+  identity-service:
+    labels:
+      io.antnest.e2e-run-id: ${ANTNEST_E2E_RUN_ID:?fresh test run ID required}
+    environment:
+      ANTNEST_IDENTITY_TOKEN_TTL: ${ANTNEST_IDENTITY_ACCESS_TOKEN_TTL:-12h}

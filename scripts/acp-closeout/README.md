@@ -18,8 +18,9 @@ including on failure. This profile must not run against a retained dev stack.
    principal and foreign Agent access to a completed Session, without history
    leakage, model calls or persisted effects.
 2. Disable the owner through the administrator API while its connection remains
-   open. Reject management and new prompts; re-enable and reconnect, retaining
-   only previously authorized history. This is Identity deactivation evidence,
+   open. The first new prompt must close with Gateway 1008 before ACP admission:
+   no failed Run intent or other ACP mutation may be created. Re-enable and
+   reconnect, retaining only previously authorized history. This is Identity deactivation evidence,
    not a claim about logout/expiry of an already-upgraded browser connection.
 3. Complete a real Bash append Tool, reconnect twice and replay history. Kill
    the ACP process with SIGKILL, restart it, replay the same history and verify

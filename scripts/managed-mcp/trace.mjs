@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
+import { assertSecretFree } from "../identity-closeout/evidence.mjs";
 
-export async function verifyTraces(base, requests) {
+export async function verifyTraces(base, requests, secrets = []) {
   const evidence = [];
   const traceIDs = [...new Set(requests.map((request) => request.trace_id))];
   for (const id of traceIDs) {
@@ -15,6 +16,7 @@ export async function verifyTraces(base, requests) {
           inspectTrace(
             trace,
             requests.filter((request) => request.trace_id === id),
+            secrets,
           ),
         );
         lastError = undefined;
@@ -29,7 +31,7 @@ export async function verifyTraces(base, requests) {
   return evidence;
 }
 
-export function inspectTrace(trace, requests) {
+export function inspectTrace(trace, requests, secrets = []) {
   assert(trace?.spans?.length, "trace not exported");
   const spans = new Map(trace.spans.map((span) => [span.spanID, span]));
   const service = (span) => trace.processes[span.processID].serviceName;
@@ -80,6 +82,7 @@ export function inspectTrace(trace, requests) {
     );
   const phases = verifyPreparations(spans, service, infos, lists, requests);
   const encoded = JSON.stringify(trace);
+  assertSecretFree(encoded, secrets);
   for (const secret of [
     "managed-env-canary",
     "managed-model-test",

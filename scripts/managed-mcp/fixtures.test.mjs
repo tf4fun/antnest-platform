@@ -118,6 +118,19 @@ function trace() {
   };
 }
 const requestEvidence = [{ phase: "first", model_span_id: "6" }];
+test("execution trace evidence rejects caller-supplied cookies and encoded secrets", () => {
+  const secret = "acp-session-cookie/value+canary";
+  assert.equal(
+    inspectTrace(trace(), requestEvidence, [secret]).gateway_ancestry,
+    true,
+  );
+  for (const value of [secret, encodeURIComponent(secret)]) {
+    const leaked = trace();
+    leaked.spans[2].tags.push({ key: "cookie", value });
+    assert.throws(() => inspectTrace(leaked, requestEvidence, [secret]));
+  }
+});
+
 test("trace evidence requires actual Gateway ancestry and Runtime descendants", () => {
   assert.equal(inspectTrace(trace(), requestEvidence).gateway_ancestry, true);
   const disconnected = trace();

@@ -181,7 +181,7 @@ uses. Adapter stubs must not be described as full-platform acceptance.
   [Gateway identity suite](../scripts/identity-closeout/README.md): real HTTP,
   Identity-owned PostgreSQL, Console projections and Jaeger parent chains.
   This does not accept OIDC convergence or cross-organization isolation.
-- [ ] **C2-04** Verify deactivation after a user has connected: existing HTTP
+- [x] **C2-04** Verify deactivation after a user has connected: existing HTTP
   credentials and ACP connections cannot authorize a new Run or bypass owner
   checks. Define and test the treatment of an already-admitted Run separately;
   do not claim admission revocation retroactively cancels it.
@@ -189,9 +189,11 @@ uses. Adapter stubs must not be described as full-platform acceptance.
   client WebSocket message and before forwarding it; ACP still owns Agent
   identity/revision and Session authorization. This is message admission, not
   atomic revocation of ACP Run creation: overlapping checks can admit work.
-  Real logout, natural token expiry, Identity outage and already-admitted Run
-  behavior require their own evidence; do not substitute owner deactivation
-  evidence or a Gateway echo fixture for those scenarios. No event bus is needed.
+  Accepted by the HTTP access, ACP closeout and separate ACP session fault
+  profiles: real logout, owner deactivation, natural token expiry and Identity
+  outage/recovery reject new messages; browser logout/disconnect does not cancel
+  already-running work. The latter does not promise continuation after owner
+  deactivation or failures inside Run dependencies. No event bus is needed.
 - [ ] **C2-05** Determine whether any required Agent projection or lifecycle
   change needs Identity journal consumption. If needed, add only the narrow
   owner RPC/cursor and idempotent consumer; authorization continues to use
@@ -656,7 +658,38 @@ not a claim of SIGTERM-under-load exporter delivery testing. The disposable
 Docker suite cleans its containers, volumes and networks; retained development
 instances are untouched.
 
-C2-04 remains open for real post-upgrade natural expiry, Identity outage/recovery
-and already-admitted Run treatment. There is no idle revocation poll, automatic
+At the end of this Gateway implementation batch, C2-04 still required real
+post-upgrade expiry, Identity outage/recovery and already-admitted Run evidence;
+the integration batch below closes that gap. There is no idle revocation poll, automatic
 Run cancellation, or atomic transaction between Identity validation and ACP
 Run creation. Browser UX for transport rejection is a separate Agent UI batch.
+
+### ACP Session Fault Integration Batch
+
+C2-04 accepted on 2026-09-08. `make e2e-acp-session` adds a separate disposable
+profile using official v1/v2 SDKs, real Gateway/Identity/ACP/Runtime services,
+PostgreSQL and Jaeger. The coordinator alone injects Docker faults. A local
+model fixture controls execution barriers; no external Provider is required.
+
+| Final Evidence | Result |
+| --- | --- |
+| Post-upgrade Identity outage and natural expiry | 4 prompts rejected with 1013/1008; ACP session/Run/message/Tool snapshots unchanged |
+| Identity recovery | Original long-lived cookie reconnects; short tokens expire at their issued deadlines without DB/clock modification |
+| Already-running work after browser logout/disconnect | 2 original Runs complete, preserve admission identity and release admission; 2 subsequent authenticated Runs complete |
+| Real Runtime effects and replay | Successful structured Bash results contain exactly one ordered append per Run; load/resume changes neither execution history nor model-call count |
+| Gateway-rooted Jaeger evidence | 8 causal traces, 490 spans observed; rejection checks and execution/Runtime/model ancestry verified; current credentials absent |
+| Existing default Stage 3 + ACP closeout regression | Identity/SCIM/OIDC, lifecycle, workspace ACP, isolation and all 6 SIGKILL/restart scenarios passed |
+| Reusable fixture tests | 42 passed serially; include negative tests for false Tool success, duplicate effects, missing trace ancestry and encoded credential leakage |
+
+Independent read-only review tightened Tool evidence and dynamic secret scanning.
+The older closeout profile now correctly expects owner deactivation to reject at
+Gateway before ACP creates even a failed Run intent. Only reusable tests and
+compact final results are retained, not intermediate logs or database dumps.
+Both disposable profiles cleaned their own resources; retained development
+instances were untouched. Service implementation and deployment contracts did
+not change; the existing accepted images were reused with the updated fixtures.
+
+Admission: `make fmt-check`, `make lint`, all affected fixture tests, shell syntax
+and changed documentation checks passed. C2-01's cross-organization Agent/ACP
+entry and C2-05's Identity journal business-effect decision remain open. Browser
+rejection UX and outages inside an active Run are not accepted by this batch.

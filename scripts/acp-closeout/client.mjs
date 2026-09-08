@@ -158,42 +158,19 @@ async function isolation(version, agent, session, ownerClient) {
     `/api/admin/directory/users/${owner.principal.user_id}/active`,
     { active: false },
   );
-  await denied(() => ownerClient.request("list", {}), "access_denied");
-  assert.deepEqual(await snapshot(), before);
-  await denied(
-    () =>
-      ownerClient.request("prompt", {
-        sessionId: revoked.sessionId,
-        prompt: [{ type: "text", text: "deactivated-owner-prompt" }],
-      }),
-    "access_denied",
-  );
-  const after = await snapshot();
-  for (const table of [
-    "acp_sessions",
-    "tool_attempts",
-    "session_messages",
-    "client_mcp_revisions",
-  ])
-    assert.deepEqual(after[table], before[table]);
-  for (const run of before.runs)
-    assert.deepEqual(
-      after.runs.find((item) => item.id === run.id),
-      run,
-    );
-  const rejected = after.runs.filter(
-    (item) => !before.runs.some((run) => run.id === item.id),
+  await assert.rejects(() =>
+    ownerClient.request("prompt", {
+      sessionId: revoked.sessionId,
+      prompt: [{ type: "text", text: "deactivated-owner-prompt" }],
+    }),
   );
   assert.equal(
-    rejected.length,
-    1,
-    "rejected admission must retain one intent only",
+    ownerClient.closeCode,
+    1008,
+    "Gateway did not reject the inactive browser session",
   );
-  assert.equal(rejected[0].session_id, revoked.sessionId);
-  assert.equal(rejected[0].state, "failed");
-  assert.equal(rejected[0].error_class, "access_denied");
-  for (const field of ["pending_prompt", "execution_snapshot", "admission_id"])
-    assert.equal(rejected[0][field], null);
+  // Edge rejects before ACP admission; even a failed Run intent would be a regression.
+  assert.deepEqual(await snapshot(), before);
   assert.deepEqual(await modelStatus(), beforeCalls);
   await admin.request(
     `/api/admin/directory/users/${owner.principal.user_id}/active`,

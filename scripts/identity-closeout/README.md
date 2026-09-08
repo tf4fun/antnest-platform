@@ -1,9 +1,11 @@
 # Gateway Identity Closeout
 
 This integration batch exercises the real Edge Gateway, Admin Console BFF and
-Identity Service against their disposable Stage 3 PostgreSQL databases. Every
-business mutation goes through Gateway HTTP; the client has no database or
-Docker access and uses only synthetic credentials.
+Identity Service against their disposable Stage 3 PostgreSQL databases. The
+default HTTP/SCIM client has no database or Docker access and uses only synthetic
+credentials. Business mutations go through Gateway. The separate ACP fault
+profile below additionally uses a read-only ACP database connection to verify
+that rejected requests and history replay have no durable side effects.
 
 ## Scope
 
@@ -76,9 +78,39 @@ traces are checked for parent chains and credential disclosure.
 
 The service relay tests separately cover identity changes, dependency failure,
 timeout, fragmented/pipelined messages, bounded capacity and shutdown cleanup.
-Real post-upgrade natural expiry and dependency-outage recovery remain separate
-integration cases. No test claims immediate idle-socket revocation or automatic
+Real post-upgrade natural expiry and dependency-outage recovery use the
+separate fault profile below. No test claims immediate idle-socket revocation or automatic
 cancellation of already-admitted Runs.
+
+## Existing ACP Connection Fault Profile
+
+`ANTNEST_E2E_ACP_SESSION=true sh scripts/e2e-stage3a.sh` is a separate disposable
+profile (not compatible with keep-stack or the other fault profiles). It creates
+one synthetic owner/Agent through Gateway. Official v1/v2 SDK clients establish
+connections before the coordinator stops only Identity. A prompt on each old
+connection must close with 1013 without any durable Run/message/Tool mutation.
+The same long-lived cookies must reconnect after Identity recovery.
+
+The coordinator then starts Identity with its existing five-second token TTL
+setting. New connections must work before their issued deadlines and reject
+prompts with 1008 after natural expiry, without changing DB rows or clocks.
+Previously issued long-lived credentials remain usable. Deployment Compose is
+unchanged; the normal TTL is restored before the last scenario.
+
+For already-admitted work, a local model fixture holds a real request. Only after
+the Run is running does the client log out and force old-connection rejection.
+Releasing the fixture must let that same Run complete one real Runtime Tool,
+release its admission and resume without replay on reconnect. The structured
+Bash result must show exit code zero, complete output and an exact ordered file
+append per Run; a marker in an error or arbitrary result text cannot pass.
+Both rejected-message and execution traces scan the current synthetic cookies
+and model credential, including URL-encoded forms.
+This tests browser-session revocation/disconnect,
+not owner/Agent deactivation or indefinite execution during an Identity outage.
+The coordinator alone operates Docker; the SDK client only requests named
+checkpoints. Its ACP-owned database connection is read-only and serves as a
+negative-effect oracle, not a cross-service product dependency. Final output
+contains counts and trace assertions, never credentials or intermediate dumps.
 
 ## Run
 

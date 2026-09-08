@@ -129,5 +129,9 @@ e2e-stage3: docker-build-stage3
 e2e-identity-access: docker-build-stage3
 	ANTNEST_E2E_IDENTITY_ACCESS=true sh scripts/e2e-stage3a.sh
 
+.PHONY: e2e-acp-session
+e2e-acp-session: docker-build-stage3
+	ANTNEST_E2E_ACP_SESSION=true sh scripts/e2e-stage3a.sh
+
 e2e-runtime-controller: docker-build-runtime-controller
 	sh services/runtime-controller/scripts/e2e.sh

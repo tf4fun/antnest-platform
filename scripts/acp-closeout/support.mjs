@@ -72,6 +72,15 @@ export class BrowserSession {
 export async function connect(version, agent, browser) {
   const acp = version === 1 ? v1 : v2;
   const updates = [];
+  let closeCode;
+  class ObservedSocket extends WebSocket {
+    constructor(...args) {
+      super(...args);
+      this.once("close", (code) => {
+        closeCode = code;
+      });
+    }
+  }
   const connection = acp
     .client()
     .onNotification(acp.methods.client.session.update, ({ params }) =>
@@ -83,7 +92,10 @@ export async function connect(version, agent, browser) {
     .connect(
       createWebSocketStream(
         `ws://edge-gateway:8080/api/app/agents/${agent}/v${version}/acp`,
-        { WebSocket, headers: { Cookie: browser.cookie, Origin: gateway } },
+        {
+          WebSocket: ObservedSocket,
+          headers: { Cookie: browser.cookie, Origin: gateway },
+        },
       ),
     );
   // Only SDK descriptors cross the transport boundary; versions differ in init/replay/completion.
@@ -111,6 +123,9 @@ export async function connect(version, agent, browser) {
   return {
     updates,
     request,
+    get closeCode() {
+      return closeCode;
+    },
     close: () => connection.close(),
     async replay(sessionId, expectedStopReason) {
       const offset = updates.length;

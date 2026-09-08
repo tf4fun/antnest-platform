@@ -57,7 +57,8 @@ Gateway-owned unit tests are complemented by the real-stack
 `make e2e-stage3`. It checks browser HTTP and existing ACP v1/v2 logout
 revocation, SCIM provisioning, controlled OIDC and Console projections through
 the public entry, plus causal Jaeger spans. The separate HTTP access profile
-tests organization isolation and natural expiry; post-upgrade ACP expiry and
-dependency-outage recovery still need their own integration acceptance.
+tests organization isolation and natural expiry. `make e2e-acp-session` uses
+the separate disposable ACP fault profile for post-upgrade expiry, dependency
+outage/recovery and durable Run completion after browser logout/disconnect.
 
 See [architecture](docs/architecture.md) and [operations](docs/operations.md).
