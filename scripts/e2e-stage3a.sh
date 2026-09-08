@@ -35,6 +35,15 @@ export ANTNEST_BOOTSTRAP_ADMIN_PASSWORD=stage3-admin-password
 keep_stack=${ANTNEST_E2E_KEEP_STACK:-false}
 identity_access=${ANTNEST_E2E_IDENTITY_ACCESS:-false}
 acp_session=${ANTNEST_E2E_ACP_SESSION:-false}
+agent_access=${ANTNEST_E2E_AGENT_ACCESS:-false}
+case "$agent_access" in
+  true|false) ;;
+  *) echo "ANTNEST_E2E_AGENT_ACCESS must be true or false" >&2; exit 1 ;;
+esac
+if [ "$agent_access" = true ] && { [ "$keep_stack" = true ] || [ "$identity_access" = true ] || [ "$acp_session" = true ] || [ "${ANTNEST_E2E_ACP_CLOSEOUT:-false}" = true ]; }; then
+  echo "Agent access requires a separate disposable profile" >&2
+  exit 1
+fi
 case "$acp_session" in
   true|false) ;;
   *) echo "ANTNEST_E2E_ACP_SESSION must be true or false" >&2; exit 1 ;;
@@ -244,6 +253,12 @@ docker run --rm --network none --label "com.docker.compose.project=$COMPOSE_PROJ
   --mount "type=volume,source=${COMPOSE_PROJECT_NAME}-oidc-certs,target=/certs" \
   debian:bookworm-slim cp /input/tls.key /input/tls.crt /certs/
 compose up -d --wait
+
+if [ "$agent_access" = true ]; then
+  ANTNEST_E2E_DISPOSABLE=true sh scripts/e2e-agent-access.sh
+  echo "Cross-organization Agent and ACP access E2E passed"
+  exit 0
+fi
 
 if [ "$acp_session" = true ]; then
   ANTNEST_E2E_DISPOSABLE=true sh scripts/e2e-acp-session.sh

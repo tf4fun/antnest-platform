@@ -158,14 +158,18 @@ uses. Adapter stubs must not be described as full-platform acceptance.
 
 ### 2. Identity And Effective Access Closure (C2)
 
-- [ ] **C2-01** Test local bootstrap/login/logout/password rotation, expired or
+- [x] **C2-01** Test local bootstrap/login/logout/password rotation, expired or
   revoked sessions, member versus administrator surfaces, and organization
   isolation through Edge rather than only through Identity RPC.
   The dedicated HTTP access profile covers scoped directory/SCIM access,
   same-email users, shared-User organization roles and token/Membership/User
   invalidation. Console password-command 401 classification is now covered by
-  BFF, API/App and real-token-expiry tests. Cross-organization Agent/ACP entry
-  checks remain separate consumer work.
+  BFF, API/App and real-token-expiry tests. The separate Agent access profile
+  now verifies scoped catalogs, lifecycle commands, workspace and v1/v2 ACP
+  entry, history and Membership revocation with the same User in two
+  organizations. See the Agent Organization Access batch below for evidence
+  and the fixed lifecycle error-disclosure defect. Live-browser acceptance
+  remains part of C4/C6, not this protocol integration milestone.
 - [x] **C2-02** Exercise OIDC discovery/start/callback/login using a controlled
   IdP fixture with real redirect and token exchange. Confirm SCIM/local
   provisioned identities converge on the same User/Membership. Provider secrets,
@@ -693,3 +697,36 @@ Admission: `make fmt-check`, `make lint`, all affected fixture tests, shell synt
 and changed documentation checks passed. C2-01's cross-organization Agent/ACP
 entry and C2-05's Identity journal business-effect decision remain open. Browser
 rejection UX and outages inside an active Run are not accepted by this batch.
+
+### Agent Organization Access Batch
+
+C2-01 accepted on 2026-09-08. `make e2e-agent-access` exercises two organizations
+through the real Gateway with one shared Agent owner and distinct organization
+roles. A read-only review found that four lifecycle commands checked source
+state before organization scope, exposing foreign Agent state through 409 versus
+404 responses. Service-owned fix `a1f68d0` orders scope checks first; its
+state/command matrix passed after failing against the original implementation.
+
+| Final Evidence | Result |
+| --- | --- |
+| Agent Controller tests, `-race -p=1` | 13 packages passed |
+| Agent/catalog/admin boundaries | 36 denied requests; foreign lifecycle/reference access, forged scope and member/admin boundaries verified |
+| ACP v1/v2 organization and Session boundaries | 6 denied upgrades, 20 denied Session commands, no foreign history, durable mutations or model calls |
+| Shared User with separate Memberships | 2 revocations reject existing B connections; A remains usable; restoring B replays its own history |
+| Authorized execution and replay | 4 completed Runs; organization-specific credentials/model/context verified; version-correct private history replayed without another model call |
+| Gateway-rooted Jaeger evidence | 12 causal traces, 631 spans observed; Console/Controller and ACP/model ancestry verified, current credentials absent |
+| Reusable fixture tests | 50 passed serially; negative cases cover v1/v2 message shape/order/IDs, error payloads, revocation notifications and context checkpoint changes |
+| Default Stage 3 Docker regression | Identity/SCIM/OIDC, authorized lifecycle, Workspace ACP and Jaeger passed |
+| Admission | `make fmt-check`, `make lint` (Go 0 issues, both Rust Clippy targets and Node checks), shell syntax and changed documentation links passed |
+
+Replay assertions allow exactly the target Session's new client MCP revision
+and pointer/timestamp update; all prior revisions, foreign Sessions, Runs, Tools,
+messages and context checkpoints remain unchanged. Full ordered wire history
+must match persisted messages. This records the actual resume contract rather
+than exempting an entire table. The model is a deterministic local protocol
+fixture, not an external Provider; this is not fresh browser acceptance.
+Independent read-only review drove the retained replay, denial-payload,
+notification and checkpoint negative cases; only the coordinator ran tests.
+C2-05's journal business-effect decision remains open, and C2 as a whole is not
+yet accepted. Disposable test resources are cleaned; retained instances remain
+untouched.

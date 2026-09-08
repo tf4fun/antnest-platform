@@ -65,6 +65,42 @@ cleans its containers/volumes/networks; keep-stack is not supported.
 
 HTTP logout/expiry evidence must not be claimed as WebSocket token revocation.
 
+## Agent Organization Access Batch
+
+`make e2e-agent-access` is an independent disposable profile. Identity's owning
+RPC prepares two organizations, separate organization administrators and one
+User who is an administrator in A and a member in B. All subsequent Agent,
+catalog, membership and ACP actions enter through Gateway. Each organization
+has its own model configuration, Template and Agent; both Agents have the same
+User owner, so user-only filtering cannot accidentally pass the test.
+
+The acceptance matrix covers scoped administrator lists/details/operations and
+events (including watch rejection), rejected foreign lifecycle commands,
+forged organization/role headers and body/query scope, member versus admin
+surfaces, owner-only workspace lists and v1/v2 upgrades. Within an authorized
+connection to one's local Agent, foreign Session load/resume, fork, close,
+delete and prompt must fail without history or persisted effects. Deactivating
+only B's Membership must reject B's already-open connection without invalidating
+the same User in A. Restoring B allows reconnecting with the still-valid token.
+
+Official SDKs drive both protocol versions. A local model fixture verifies the
+organization-specific credential and context before answering; positive Runs
+must persist and replay their private history. Denials must leave owner-side
+Agent/catalog/event projections and ACP tables unchanged, with no model calls.
+Authorized load/resume replaces one client MCP revision for the requested
+Session: the oracle checks the new revision and pointer while preserving all
+older revisions, other Sessions, Runs and messages. This is not a blanket
+exemption for Session-table writes. Model input and replay both reject foreign
+history, even when the expected own answer is present too.
+The replay oracle also compares ordered message IDs and content with persisted
+history. Error replies and revocation notifications must not disclose history;
+context checkpoints are included in the no-mutation snapshot.
+The test client reads only ACP-owned tables for this negative-effect oracle;
+product services do not gain database access across ownership boundaries.
+Jaeger assertions check actual Gateway ancestry for Console/Controller access
+decisions and ACP model requests. No real Provider, browser UI acceptance or
+new cross-service event delivery is implied by this profile.
+
 ## ACP Browser Session Batch
 
 The default Stage 3 suite also runs `acp-session-client.mjs` in the official SDK
