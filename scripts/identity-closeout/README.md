@@ -81,7 +81,38 @@ surfaces, owner-only workspace lists and v1/v2 upgrades. Within an authorized
 connection to one's local Agent, foreign Session load/resume, fork, close,
 delete and prompt must fail without history or persisted effects. Deactivating
 only B's Membership must reject B's already-open connection without invalidating
-the same User in A. Restoring B allows reconnecting with the still-valid token.
+the same User in A. The Controller must finish automatic Disable before
+restoration is tested. Restoring B preserves the disabled Agent; only explicit
+Enable permits reconnecting with the still-valid token and replaying history.
+
+The same profile accepts C2-05 owner offboarding. It checks both protocol
+versions, global User deactivation across A/B, an unaffected second owner,
+and SCIM Membership deletion. Business mutations enter Gateway. Runtime's
+own inspection API independently confirms `disabled/absent`, and a sentinel
+seeded/read through the official MCP client proves workspace retention after
+Enable. The test client joins the Runtime management network only for this
+fixture oracle; product routing/permissions do not change. Existing ACP-owned
+read-only snapshots prove that Disable does not delete history or Runs.
+After explicit Enable, fresh Gateway ACP Runs prove that admission and the
+shared model credential still work. The SCIM owner logs in through the same
+real OIDC flow/HTTPS fixture used below, has a peer Membership/Agent in A, and
+owns nonempty chat history in B before deletion. A must remain usable while B
+is disabled; reprovisioning keeps the User, creates a new Membership, and
+permits old Session replay and a new Run only after explicit Enable. The
+owning Identity RPC prepares A's peer Membership; no SQL writes are used.
+The coordinating shell stops Controller before the global revocation and
+restarts it afterward. The committed event must be consumed after restart
+without duplicating earlier offboarding. The client only requests named
+checkpoints; it has no Docker socket or lifecycle process permissions.
+
+Jaeger evidence must connect each source Gateway request to Identity receipt,
+Controller scheduling and every Disable worker phase using exact parent/link
+IDs. Runtime Controller and Egress control RPC must descend from their matching
+worker phase, including the mutating method/route (Inspect is insufficient).
+Unrelated spans or service-name presence cannot pass. This does
+not test packet tracing, mid-Disable crash recovery, emergency cancellation or arbitrary
+unavailable Runtime convergence. Temporary containers/volumes are cleaned by
+the parent, and only compact final metrics are retained.
 
 Official SDKs drive both protocol versions. A local model fixture verifies the
 organization-specific credential and context before answering; positive Runs
@@ -97,9 +128,9 @@ history. Error replies and revocation notifications must not disclose history;
 context checkpoints are included in the no-mutation snapshot.
 The test client reads only ACP-owned tables for this negative-effect oracle;
 product services do not gain database access across ownership boundaries.
-Jaeger assertions check actual Gateway ancestry for Console/Controller access
-decisions and ACP model requests. No real Provider, browser UI acceptance or
-new cross-service event delivery is implied by this profile.
+Jaeger assertions also check actual Gateway ancestry for Console/Controller
+access decisions and ACP model requests. No real Provider or browser UI
+acceptance is implied by this profile.
 
 ## ACP Browser Session Batch
 

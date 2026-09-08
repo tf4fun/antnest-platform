@@ -84,7 +84,7 @@ boundaries verified by source inspection, not new test-run results:
 | Stdio MCP | Template-owned configuration starts children inside Runtime; ACP discovers/calls their aggregated HTTP tools; Console and Docker evidence exists | Client-supplied ACP stdio remains unsupported. Keep the stable-v1 baseline incompatibility visible; do not launch commands on the ACP host or silently turn Session input into Template configuration |
 | Session recovery | v1 real WebSocket/PostgreSQL reconnect and application-recreation cases; application recovery unit tests | Actual ACP process interruption with completed and in-flight work, both protocol versions, admission settlement and replay without repeated effects through Edge |
 | Access isolation | v1/v2 Gateway integration with two real users, three Agents and owner deactivation on an existing connection; service tests for revision changes | Real-platform access-revision change and browser-session revocation semantics; OIDC/SCIM flows remain separate |
-| Identity events | Transactional revocation feed, atomic owner authorization, Controller durable consumer and Disable convergence | Cross-service Docker/Jaeger offboarding acceptance remains pending; local component tests are not full-platform evidence |
+| Identity events | Transactional revocation feed, atomic owner authorization, durable consumer, and Docker/Jaeger offboarding acceptance | Uncertain Runtime stays fenced/pending; mid-Disable crash injection is outside this happy-path acceptance |
 | Documentation and operations | Current Stage 3 entry and MCP feature evidence | Remove stale current-status wording, exercise restore/cleanup, measure the reported idle CPU spikes, and produce the final three-flow Jaeger report |
 
 ## 3. Ordered Delivery Checklist
@@ -198,8 +198,7 @@ uses. Adapter stubs must not be described as full-platform acceptance.
   outage/recovery reject new messages; browser logout/disconnect does not cancel
   already-running work. The latter does not promise continuation after owner
   deactivation or failures inside Run dependencies. No event bus is needed.
-- [ ] **C2-05** Determine whether any required Agent projection or lifecycle
-  change needs Identity journal consumption. If needed, add only the narrow
+- [x] **C2-05** Consume transactional owner revocations with the narrow
   owner RPC/cursor and idempotent consumer; authorization continues to use
   authoritative Identity checks. Do not automatically delete an Agent or its
   workspace merely because its owner is disabled.
@@ -207,10 +206,10 @@ uses. Adapter stubs must not be described as full-platform acceptance.
   Runtime while retaining data; restoration does not automatically enable them.
   Delivery follows the [revocation contract](../contracts/identity/principal-revocations.md)
   in Identity producer, Controller consumer, then integration batches.
-  Identity's producer/RPC and Controller consumption are implemented. The
-  Controller batch adds local transaction, lifecycle, and event-stream tests;
-  cross-service automatic-disable acceptance remains pending. Do not mark
-  C2-05 complete yet.
+  Identity, Controller and the cross-service integration batches are complete.
+  Docker acceptance covers scoped/global/SCIM offboarding, offline consumer
+  catch-up, retained workspace/history, explicit reauthorization and new ACP
+  Runs. Source Gateway traces connect to every Disable phase and mutating RPC.
   See the C2-05 assessment below. Access revocation is not a substitute for
   the whitepaper's automatic Agent freeze and delegated-credential recovery.
 
@@ -860,3 +859,51 @@ tests; each now resets only the Controller schema in an explicitly named test
 database. The final full profile passed without rebuilding the database first.
 Reviewers are closed, and this batch's dedicated PostgreSQL container, networks,
 and volume have been removed. Existing development instances were not changed.
+
+#### C2-05 Delivery: Docker Integration
+
+Final acceptance (2026-09-08), reproducible with `make e2e-agent-access`:
+
+| Business assertion | Final result |
+| --- | --- |
+| Membership inactive, ACP v1/v2 | Only B's Agent/Runtime disabled; A stays usable; inactive Enable rejected |
+| Global User inactive | Both owned Agents disabled, another owner unaffected; event created while Controller stopped is consumed after restart |
+| Identity restoration | No automatic Enable; explicit Enable retains workspace sentinel and permits fresh ACP/model requests |
+| SCIM delete/reprovision | B disabled, same User's A Agent still usable; stable User/new Membership; prior nonempty Session replays after explicit Enable |
+| Durable data | Existing ACP Session/Run/message/checkpoint records preserved; prior Agent events retained; model credentials still usable |
+| Final counts | 9 completed Runs; 5 automatic Disables; 36 rejected admin actions, 8 rejected upgrades, 20 rejected foreign Session commands |
+| Jaeger | 4 source traces, 20 linked Disable phase checks; 19 access/model traces with 1,115 spans |
+
+Source trace IDs for the final disposable run:
+
+| Scenario | Gateway trace ID |
+| --- | --- |
+| Membership v1 | `9ff0185fd940f166a56006fdfe234cb9` |
+| Membership v2 | `ec48c8b301c2f2ac0124c21b53df205e` |
+| Global/offline consumer | `97bcfa10d74010316efbed604142999e` |
+| SCIM deletion | `a32c4ba9f81b9bc28140010110f37ff9` |
+
+The oracle follows exact parent and `FOLLOWS_FROM` IDs from Gateway/Identity
+receipt and matching Agent scheduling to all four worker phases. It requires
+Egress attachment PUT and Runtime Disable POST under the correct phase;
+an unrelated Inspect span cannot pass. This stronger check exposed lost
+`Request.Pattern` in Runtime Controller's deadline wrapper, fixed in `652c469`
+with five routing regression cases and full service race tests.
+
+The [reusable suite](../scripts/identity-closeout/README.md) uses real internal
+services, one isolated PostgreSQL instance with service-owned databases, official
+ACP/MCP SDKs, and a deterministic local model/HTTPS IdP. It does not claim a real
+external Provider or fresh browser UI acceptance. Mid-Disable crash injection,
+unavailable Runtime recovery and emergency cancellation are not accepted here;
+their fences and pending semantics remain explicit, not fabricated success.
+All temporary containers, volumes and networks were removed, including dynamic
+Runtimes/workspaces. Jaeger links are therefore ephemeral; only these compact
+final metrics are retained. C2-05 is accepted, not the entire C2/C6 milestone.
+
+All 42 fixture tests passed, including real child-process stderr/exit assertions
+for bootstrap, cleanup and asynchronous Pool errors. Read-only adversarial
+review led to the cross-organization SCIM control, nonempty history, fresh Run,
+exact mutation-route and failure-output checks; reviewers are closed.
+Final admission also passed `make fmt-check`, `make lint`, shell syntax and
+changed-document local-link checks. Runtime Controller's full service race
+profile passed; real PostgreSQL integration is covered by the Docker run above.

@@ -47,7 +47,7 @@ No administrator bypass, credential or profile is included. Restoration never
 reduces this watermark. This internal query is for explicit create/enable
 authorization, not an OAuth token or a subscription cursor.
 
-Agent Controller will own durable consumption and reuse the normal asynchronous
+Agent Controller owns durable consumption and reuses the normal asynchronous
 disable lifecycle. A notification is not proof of Runtime shutdown. Preserve
 pending work across busy/provisioning/rebuilding states and drain failures;
 record the source sequence and trace context in lifecycle/audit correlation.
@@ -78,3 +78,11 @@ retryable rather than being silently acknowledged as completed offboarding.
    scoped restoration, interruption recovery and Jaeger causal links.
 
 Producer completion alone does not complete the business workflow.
+
+All three batches have passed the scoped Docker acceptance recorded in
+[C2-05](../../docs/docker-single-node-closeout.md). The restart scenario creates
+a global revocation while Controller is stopped, then verifies catch-up after
+restart. It does not claim arbitrary mid-Disable crash recovery. Restoration
+and SCIM reprovisioning are followed by explicit Enable, real ACP replay/new
+Runs, and retained workspace reads; no product service accesses another
+service's tables.

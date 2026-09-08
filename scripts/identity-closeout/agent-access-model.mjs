@@ -5,7 +5,12 @@ export function authorizeCompletion(payload, credential) {
   const phase = payload.messages.findLast(
     (item) => item.role === "user",
   )?.content;
-  assert.match(phase, /^v[12]-[ab]$/);
+  assert(
+    /^(?:v[12]-[ab]|offboard-global-[ab]|offboard-scim-before-b|offboard-scim-peer-a|offboard-scim-restored-b)$/.test(
+      phase,
+    ),
+    "unexpected fixture prompt",
+  );
   const organization = phase.at(-1),
     other = organization === "a" ? "b" : "a";
   assert(

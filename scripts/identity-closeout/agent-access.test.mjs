@@ -20,6 +20,32 @@ const payload = {
     { role: "user", content: "v1-a" },
   ],
 };
+test("fresh offboarding Runs require the correct organization model credential", () => {
+  for (const phase of [
+    "offboard-global-a",
+    "offboard-global-b",
+    "offboard-scim-before-b",
+    "offboard-scim-peer-a",
+    "offboard-scim-restored-b",
+  ]) {
+    const organization = phase.at(-1);
+    const body = {
+      model: `scope-${organization}`,
+      messages: [
+        {
+          role: "system",
+          content: `Private organization ${organization} guidance`,
+        },
+        { role: "user", content: phase },
+      ],
+    };
+    assert.equal(
+      authorizeCompletion(body, `Bearer scope-credential-${organization}`).text,
+      `Private history ${phase}`,
+    );
+    assert.throws(() => authorizeCompletion(body, "Bearer revoked-credential"));
+  }
+});
 test("model evidence binds the actual credential, model, prompt and organization context", () => {
   assert.equal(
     authorizeCompletion(payload, "Bearer scope-credential-a").phase,

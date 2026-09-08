@@ -1,10 +1,25 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { setTimeout as delay } from "node:timers/promises";
 import { WebSocket } from "ws";
 import { Pool } from "pg";
 import { GatewayClient } from "./support.mjs";
 import { gateway, connectACP } from "./acp-connection.mjs";
+import {
+  globalAndSCIMOffboarding,
+  deniedEnable,
+} from "./offboarding-scenarios.mjs";
+import {
+  failureCategory,
+  installFailureBoundary,
+} from "./offboarding-evidence.mjs";
+import {
+  agentEvents,
+  sentinel,
+  explicitEnable,
+  waitOffboarding,
+  remainsDisabled,
+  until,
+} from "./offboarding-client.mjs";
 import {
   assertUnchanged,
   verifyAccessTraces,
@@ -14,12 +29,14 @@ import {
   assertNoNotifications,
 } from "./agent-access-evidence.mjs";
 
+installFailureBoundary();
 const seed = JSON.parse(await readFile("/fixture-seed.json", "utf8"));
 const adminA = new GatewayClient(gateway),
   adminB = new GatewayClient(gateway),
   memberB = new GatewayClient(gateway);
 const clients = new Set(),
   traces = [],
+  offboarding = [],
   resources = [],
   secrets = [
     "synthetic-access-password-a",
@@ -46,14 +63,6 @@ const foreignHeaders = (organization) => ({
   "X-Antnest-Organization-Role": "admin",
   "X-Antnest-Agent-Access-Subject": "forged-agent-subject",
 });
-async function until(probe, label) {
-  for (let i = 0; i < 240; i++) {
-    const result = await probe();
-    if (result) return result;
-    await delay(250);
-  }
-  throw new Error(`Timed out: ${label}`);
-}
 async function modelState() {
   const response = await fetch("http://agent-access-model:8080/status", {
     signal: AbortSignal.timeout(5000),
@@ -194,6 +203,7 @@ async function setup() {
       agent: created.agent.agent_id,
       operation: created.operation.request_id,
     });
+    await sentinel(resources.at(-1), "write");
   }
   assert.notEqual(
     resources[0].operation,
@@ -346,7 +356,7 @@ async function workspaceIsolation() {
     [],
   );
 }
-async function rejectedUpgrade(version, item, browser) {
+async function rejectedUpgrade(version, item, browser, status = 404) {
   const socket = new WebSocket(
     `${gateway.replace("http:", "ws:")}/api/app/agents/${item.agent}/v${version}/acp`,
     {
@@ -371,7 +381,7 @@ async function rejectedUpgrade(version, item, browser) {
         resolve(result);
       });
     });
-    assert.equal(response.statusCode, 404);
+    assert.equal(response.statusCode, status, "Agent upgrade rejection status");
     deniedUpgrades++;
     traces.push({
       traceID: response.headers["x-antnest-trace-id"],
@@ -402,13 +412,12 @@ async function replay(client, version, session) {
   });
   return client.updates.slice(offset);
 }
-async function baseline(version, item) {
-  step = `v${version}_${item.key}_baseline`;
+async function baseline(version, item, phase = `v${version}-${item.key}`) {
+  step = `${phase}_baseline`;
   const client = await open(version, item);
   const session = (
     await client.request("new", { cwd: "/workspace", mcpServers: [] })
   ).sessionId;
-  const phase = `v${version}-${item.key}`;
   await client.request(
     "prompt",
     { sessionId: session, prompt: [{ type: "text", text: phase }] },
@@ -491,9 +500,13 @@ async function membershipBoundary(version, a, b) {
     role: "member",
   };
   const before = await snapshot();
-  await adminB.request(`/api/admin/directory/memberships/${seed.shared.id}`, {
-    body: { ...update, active: false },
-  });
+  const priorEvents = await agentEvents(resources[1]);
+  const revoked = await adminB.request(
+    `/api/admin/directory/memberships/${seed.shared.id}`,
+    {
+      body: { ...update, active: false },
+    },
+  );
   const offset = b.client.updates.length;
   await assert.rejects(
     b.client.request("prompt", {
@@ -506,10 +519,34 @@ async function membershipBoundary(version, a, b) {
   close(b.client);
   await a.client.request("list", {});
   await workspaceAStillAvailable();
-  assertUnchanged(before, await snapshot());
+  offboarding.push(
+    await waitOffboarding(
+      resources[1],
+      priorEvents,
+      revoked,
+      "membership_deactivated",
+      secrets,
+    ),
+  );
+  const after = await snapshot();
+  assertUnchanged(before.acp, after.acp);
+  assertUnchanged(before.model, after.model);
+  assertUnchanged(before.projections[0], after.projections[0]);
+  assertUnchanged(
+    before.projections[1].slice(1, 3),
+    after.projections[1].slice(1, 3),
+  );
+  await deniedEnable(resources[1]);
   await adminB.request(`/api/admin/directory/memberships/${seed.shared.id}`, {
     body: { ...update, active: true },
   });
+  await remainsDisabled(resources[1]);
+  await rejectedUpgrade(version, resources[1], memberB, 403);
+  const workspace = (
+    await memberB.request("/api/app/bootstrap")
+  ).body.agents.find((agent) => agent.agent_id === resources[1].agent);
+  assert.equal(workspace?.availability, "offline");
+  await explicitEnable(resources[1]);
   const restored = await open(version, resources[1]);
   const beforeReplay = await acpSnapshot();
   const updates = await replay(restored, version, b.session);
@@ -550,9 +587,41 @@ try {
     await membershipBoundary(version, a, b);
     close(a.client);
   }
+  step = "global_and_scim_offboarding";
+  offboarding.push(
+    ...(await globalAndSCIMOffboarding({
+      gateway,
+      seed,
+      resources,
+      secrets,
+      snapshot: acpSnapshot,
+      modelState,
+      run: async (item, phase) => {
+        const result = await baseline(2, item, phase);
+        close(result.client);
+        return result.session;
+      },
+      replayHistory: async (item, session, phase) => {
+        const client = await open(2, item);
+        try {
+          const before = await acpSnapshot();
+          assertPrivateReplay(
+            await replay(client, 2, session),
+            session,
+            phase,
+            2,
+            before.session_messages,
+          );
+          assertReplayIsolation(before, await acpSnapshot(), session);
+        } finally {
+          close(client);
+        }
+      },
+    })),
+  );
   step = "trace_acceptance";
   const calls = await modelState();
-  assert.equal(calls.length, 4);
+  assert.equal(calls.length, 9);
   for (const call of calls)
     traces.push({
       traceID: call.trace_id,
@@ -576,6 +645,7 @@ try {
       denied_session_commands: deniedSessions,
       membership_revocations: 2,
       completed_runs: calls.length,
+      offboarding,
       traces: evidence,
     }) + "\n",
   );
@@ -584,7 +654,11 @@ try {
     JSON.stringify({
       event: "agent_access_failed",
       step,
-      reason: error.message,
+      reason: failureCategory(error),
+      location:
+        error.stack?.match(
+          /(?:agent-access-client|offboarding-[a-z-]+)\.mjs:\d+:\d+/,
+        )?.[0] ?? "unknown",
     }),
   );
   process.exitCode = 1;

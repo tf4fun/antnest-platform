@@ -35,12 +35,25 @@ docker run -d --name "$model" --label "com.docker.compose.project=$COMPOSE_PROJE
 docker create --name "$client" --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
   --network "${COMPOSE_PROJECT_NAME}_development" \
   -e "TEST_ACP_DATABASE_URL=postgres://antnest_agent_acp:${ANTNEST_AGENT_ACP_POSTGRES_PASSWORD:-antnest-agent-acp-dev}@postgres:5432/antnest_agent_acp" \
+  -e "TEST_GATEWAY_PUBLIC_URL=$ANTNEST_EDGE_PUBLIC_BASE_URL" \
+  -v "${COMPOSE_PROJECT_NAME}-oidc-certs:/test-ca:ro" \
+  -v "$directory:/coordination" \
   -v "$root/scripts:/app/closeout-scripts:ro" -v "$directory/seed.json:/fixture-seed.json:ro" \
   antnest/agent-acp-service:local node /app/closeout-scripts/identity-closeout/agent-access-client.mjs >/dev/null
 docker network connect "${COMPOSE_PROJECT_NAME}_agent-acp-database" "$client"
+docker network connect "$ANTNEST_RUNTIME_MANAGEMENT_NETWORK" "$client"
 docker start "$client" >/dev/null
 attempt=0
 while [ "$(docker inspect --format '{{.State.Running}}' "$client")" = true ]; do
+  for checkpoint in controller-offline controller-online; do
+    if [ -f "$directory/$checkpoint.request" ] && [ ! -f "$directory/$checkpoint.ack" ]; then
+      case "$checkpoint" in
+        controller-offline) docker compose -f "$root/compose.yaml" -f "$root/compose.stage3.yaml" --profile stage3 stop agent-controller >/dev/null ;;
+        controller-online) docker compose -f "$root/compose.yaml" -f "$root/compose.stage3.yaml" --profile stage3 start --wait agent-controller >/dev/null ;;
+      esac
+      touch "$directory/$checkpoint.ack"
+    fi
+  done
   attempt=$((attempt+1))
   [ "$attempt" -le 600 ] || { echo 'Agent access test deadline exceeded' >&2; exit 1; }
   sleep 1
