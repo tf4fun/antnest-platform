@@ -17,6 +17,7 @@ Implemented for Stage 3A. The canonical cross-service behavior is
 - browser-safe Agent workspace bootstrap and per-Agent access admission;
 - same-origin Agent UI and ACP v1/v2 WebSocket routing with per-message browser
   session revalidation;
+- ACP v1 Streamable HTTP routing with per-request session and Agent admission;
 - trusted principal headers, security headers, request limits, and tracing;
 - browser OIDC discovery/start/callback and transparent SCIM protocol ingress;
 - proxy availability and external error projection.
@@ -62,3 +63,28 @@ the separate disposable ACP fault profile for post-upgrade expiry, dependency
 outage/recovery and durable Run completion after browser logout/disconnect.
 
 See [architecture](docs/architecture.md) and [operations](docs/operations.md).
+
+## ACP HTTP
+
+`POST`, `GET` (SSE), and `DELETE` on `/api/app/agents/{agent_id}/v1/acp`
+and its `/acp` alias relay the official SDK transport to `/v1/acp`. The draft
+v2 endpoint remains WebSocket-only. No ACP method is interpreted by Gateway.
+
+HTTP clients use the existing login cookies. POST and DELETE also send
+`X-Antnest-CSRF-Token` from the CSRF cookie. A supplied Origin must match the
+Gateway origin; HTTP clients without Origin still require valid cookies and
+CSRF for writes. WebSocket continues to require Origin. No new login or bearer
+API is introduced by this transport change.
+
+Only Content-Type, Accept, Acp-Connection-Id and Acp-Session-Id are forwarded
+from the client. Gateway injects the authoritative Agent access subject and
+trace context; cookies, authorization and forged internal headers never reach
+ACP Service. Responses preserve ACP routing headers and SSE is flushed without
+buffering. POST/DELETE admission uses the message limit, separate from long-lived
+GET/WebSocket connections, so an open receive stream does not block cancel.
+
+Each new HTTP request revalidates the original identity and current Agent
+access. As with WebSocket, already admitted work can finish and deliver output
+on an existing receiver; there is no idle authorization polling or automatic
+Run cancellation. Closing the receiver cancels its upstream HTTP request, not
+the durable Run. ACP Service owns reconnect/load and connection expiry.

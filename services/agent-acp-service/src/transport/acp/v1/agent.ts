@@ -10,21 +10,52 @@ import type {
   SessionEvent,
 } from "../../../ports/acp-application.js";
 import { AgentControllerError } from "../../../ports/agent-controller.js";
+import { SessionOutputStreams, sessionOutputKey } from "../session-output.js";
 
 export type CreateAcpV1AgentInput = {
   binding: ConnectionBinding;
   promptCapabilities: { image: boolean; embeddedContext: boolean };
   application: AcpApplicationPort;
+  outputs?: SessionOutputStreams;
 };
 
 export function createAcpV1Agent({
   binding,
   promptCapabilities,
   application,
+  outputs = new SessionOutputStreams(),
 }: CreateAcpV1AgentInput): acp.AgentApp {
   let initialized = false;
+  let connection: acp.AgentConnection;
+  const attach = async (
+    sessionId: string,
+    afterSequence?: number,
+    beforeFirst?: () => Promise<void>,
+    waitForDelivery = true,
+  ) => {
+    await outputs.attach({
+      key: sessionOutputKey(binding, sessionId),
+      connectionId: binding.connectionId,
+      ...(afterSequence === undefined ? {} : { afterSequence }),
+      signal: connection.signal,
+      read: (cursor) =>
+        application.readSessionOutput({
+          binding,
+          sessionId,
+          ...(cursor === undefined ? {} : { afterSequence: cursor }),
+        }),
+      send: (event) => replay(connection.client, sessionId, [event]),
+      onFailure: (error) => connection.close(error),
+      ...(beforeFirst === undefined ? {} : { beforeFirst }),
+      waitForDelivery,
+    });
+  };
   return acp
     .agent({ name: "antnest-agent-acp-service-v1" })
+    .onConnect((opened) => {
+      connection = opened;
+      void opened.closed.then(() => outputs.disconnect(binding.connectionId));
+    })
     .onRequest(acp.methods.agent.initialize, ({ params }) => {
       if (initialized) {
         throw acp.RequestError.invalidRequest(
@@ -77,6 +108,7 @@ export function createAcpV1Agent({
       return withAcpTrace(params._meta, async () => {
         const result = await resume(application, binding, params, true);
         await replay(client, params.sessionId, result.replay);
+        await attach(params.sessionId, result.sequence);
         return {};
       });
     })
@@ -127,7 +159,8 @@ export function createAcpV1Agent({
     .onRequest(acp.methods.agent.session.resume, ({ params }) => {
       requireInitialized(initialized, "session/resume");
       return withAcpTrace(params._meta, async () => {
-        await resume(application, binding, params, false);
+        const result = await resume(application, binding, params, false);
+        await attach(params.sessionId, result.sequence);
         return {};
       });
     })
@@ -152,21 +185,33 @@ export function createAcpV1Agent({
             prompt: toDomainContent(params.prompt),
           }),
         );
-        if (accepted.sessionInfoUpdate !== undefined) {
-          await notifyBestEffort(client, {
-            sessionId: params.sessionId,
-            update: {
-              sessionUpdate: "session_info_update",
-              ...accepted.sessionInfoUpdate,
+        const key = sessionOutputKey(binding, params.sessionId);
+        await attach(
+          params.sessionId,
+          undefined,
+          async () => {
+            if (accepted.sessionInfoUpdate !== undefined)
+              await client.notify(acp.methods.client.session.update, {
+                sessionId: params.sessionId,
+                update: { sessionUpdate: "session_info_update", ...accepted.sessionInfoUpdate },
+              });
+          },
+          false,
+        );
+        try {
+          const result = await application.executeRun({
+            accepted,
+            publish: () => {
+              outputs.invalidate(key);
+              return Promise.resolve();
             },
+            signal: new AbortController().signal,
           });
+          return promptResponse(result);
+        } finally {
+          outputs.invalidate(key);
+          await outputs.flush(key, binding.connectionId);
         }
-        const result = await application.executeRun({
-          accepted,
-          publish: publisher(client, params.sessionId),
-          signal: new AbortController().signal,
-        });
-        return promptResponse(result);
       });
     })
     .onNotification(acp.methods.agent.session.cancel, ({ params }) => {
@@ -211,28 +256,6 @@ async function replay(
     for (const update of toAcpUpdates(event)) {
       await client.notify(acp.methods.client.session.update, { sessionId, update });
     }
-  }
-}
-
-function publisher(
-  client: acp.AgentContext,
-  sessionId: string,
-): (event: SessionEvent) => Promise<void> {
-  return async (event) => {
-    for (const update of toAcpUpdates(event)) {
-      await notifyBestEffort(client, { sessionId, update });
-    }
-  };
-}
-
-async function notifyBestEffort(
-  client: acp.AgentContext,
-  params: { sessionId: string; update: acp.SessionUpdate },
-): Promise<void> {
-  try {
-    await client.notify(acp.methods.client.session.update, params);
-  } catch {
-    // Durable replay, not the socket, is the source of truth.
   }
 }
 

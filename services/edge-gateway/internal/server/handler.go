@@ -186,6 +186,15 @@ func (h *handler) routes() {
 				request.SetPathValue("acp_version", route.version)
 				h.workspaceACP(response, request)
 			})
+		if route.version == "v1" {
+			for _, method := range []string{http.MethodPost, http.MethodDelete} {
+				h.mux.HandleFunc(method+" /api/app/agents/{agent_id}/"+route.suffix,
+					func(response http.ResponseWriter, request *http.Request) {
+						request.SetPathValue("acp_version", "v1")
+						h.workspaceACP(response, request)
+					})
+			}
+		}
 	}
 	h.mux.HandleFunc("/api/app/{path...}", func(response http.ResponseWriter, _ *http.Request) {
 		writeError(response, http.StatusNotFound, "not_found", "Resource was not found")
@@ -457,23 +466,32 @@ func (h *handler) workspaceBootstrap(response http.ResponseWriter, request *http
 }
 
 func (h *handler) workspaceACP(response http.ResponseWriter, request *http.Request) {
-	if !webSocketUpgrade(request) {
+	upgrade := webSocketUpgrade(request)
+	if !upgrade && request.PathValue("acp_version") != "v1" {
 		writeError(response, http.StatusBadRequest, "invalid_request", "WebSocket upgrade is required")
 		return
 	}
-	if !sameOrigin(request) {
-		writeError(response, http.StatusForbidden, "forbidden", "WebSocket origin is not allowed")
+	if (upgrade || request.Header.Get("Origin") != "") && !sameOrigin(request) {
+		writeError(response, http.StatusForbidden, "forbidden", "ACP origin is not allowed")
 		return
 	}
+	permits := h.acpConnections
+	if !upgrade && request.Method != http.MethodGet {
+		permits = h.acpMessages
+	}
 	select {
-	case h.acpConnections <- struct{}{}:
-		defer func() { <-h.acpConnections }()
+	case permits <- struct{}{}:
+		defer func() { <-permits }()
 	default:
 		writeError(response, http.StatusServiceUnavailable, "agent_unavailable", "Agent connection capacity is unavailable")
 		return
 	}
 	values, principal, ok := h.authenticate(response, request)
 	if !ok {
+		return
+	}
+	if !upgrade && stateChanging(request.Method) && !h.sessions.ValidCSRF(request, values) {
+		writeError(response, http.StatusForbidden, "csrf_failed", "Request could not be verified")
 		return
 	}
 	agents, err := h.workspaceAgents(request.Context(), principal)
@@ -487,7 +505,11 @@ func (h *handler) workspaceACP(response http.ResponseWriter, request *http.Reque
 		if agent.AgentID != requestedID {
 			continue
 		}
-		h.relayWorkspaceACP(response, request, values.AccessToken, principal, agent.AgentAccessSubject)
+		if upgrade {
+			h.relayWorkspaceACP(response, request, values.AccessToken, principal, agent.AgentAccessSubject)
+		} else {
+			h.relayWorkspaceHTTP(response, request, agent.AgentAccessSubject)
+		}
 		return
 	}
 	writeError(response, http.StatusNotFound, "agent_not_found", "Agent was not found")

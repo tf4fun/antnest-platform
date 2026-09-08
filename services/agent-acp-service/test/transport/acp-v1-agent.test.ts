@@ -1,5 +1,6 @@
 import * as acp from "@agentclientprotocol/sdk";
 import { describe, expect, it, vi } from "vitest";
+import { withOutputHistory } from "../support/output-application.js";
 
 import type { ConnectionBinding } from "../../src/domain/types.js";
 import type {
@@ -18,6 +19,102 @@ const binding: ConnectionBinding = {
 };
 
 describe("ACP v1 agent mapping", () => {
+  it.each(["completed", "cancelled"] as const)(
+    "delivers all content before the %s Prompt response under backpressure",
+    async (terminalClass) => {
+      const release = Promise.withResolvers<void>();
+      const entered = Promise.withResolvers<void>();
+      const executed = Promise.withResolvers<void>();
+      const received: string[] = [];
+      let delayed = false;
+      const toAgent = new TransformStream<acp.AnyMessage, acp.AnyMessage>();
+      const toClient = new TransformStream<acp.AnyMessage, acp.AnyMessage>({
+        async transform(frame, controller) {
+          if (
+            !delayed &&
+            "method" in frame &&
+            frame.method === "session/update" &&
+            JSON.stringify(frame).includes("first-block")
+          ) {
+            delayed = true;
+            entered.resolve();
+            await release.promise;
+          }
+          controller.enqueue(frame);
+        },
+      });
+      const application = createApplication({
+        executeRun: vi.fn<AcpApplicationPort["executeRun"]>(async ({ publish }) => {
+          await publish({
+            kind: "agent_message",
+            messageId: "answer",
+            content: [
+              { type: "text", text: "first-block" },
+              { type: "text", text: "second-block" },
+            ],
+          });
+          executed.resolve();
+          return terminalClass === "completed"
+            ? {
+                terminalClass,
+                executorState: "quiescent",
+                toolEffectState: "none",
+                stopReason: "end_turn",
+              }
+            : {
+                terminalClass,
+                executorState: "quiescent",
+                toolEffectState: "none",
+              };
+        }),
+      });
+      const agent = createAcpV1Agent({
+        binding,
+        application,
+        promptCapabilities: { image: false, embeddedContext: false },
+      });
+      const server = agent.connect({ readable: toAgent.readable, writable: toClient.writable });
+      const client = acp
+        .client()
+        .onNotification(acp.methods.client.session.update, ({ params }) => {
+          if (
+            params.update.sessionUpdate === "agent_message_chunk" &&
+            params.update.content.type === "text"
+          )
+            received.push(params.update.content.text);
+        })
+        .connect({ readable: toClient.readable, writable: toAgent.writable });
+      try {
+        await client.agent.request(acp.methods.agent.initialize, {
+          protocolVersion: acp.PROTOCOL_VERSION,
+          clientCapabilities: {},
+        });
+        const prompting = client.agent
+          .request(acp.methods.agent.session.prompt, {
+            sessionId: "session-1",
+            prompt: [{ type: "text", text: "hello" }],
+          })
+          .then((result) => {
+            received.push("terminal");
+            return result;
+          });
+        await entered.promise;
+        await executed.promise;
+        expect(received).toEqual([]);
+        release.resolve();
+        expect(await prompting).toEqual({
+          stopReason: terminalClass === "completed" ? "end_turn" : "cancelled",
+        });
+        expect(received).toEqual(["first-block", "second-block", "terminal"]);
+      } finally {
+        release.resolve();
+        client.close();
+        server.close();
+        await Promise.all([client.closed, server.closed]);
+      }
+    },
+  );
+
   it.each([0, 1, 2, 99])(
     "negotiates supported v1 for requested version %i",
     async (protocolVersion) => {
@@ -211,6 +308,7 @@ describe("ACP v1 agent mapping", () => {
   it("loads with full replay while resume restores without historical replay", async () => {
     const resumeSession = vi.fn<AcpApplicationPort["resumeSession"]>(() =>
       Promise.resolve({
+        sequence: 1,
         replay: [
           {
             kind: "user_message",
@@ -663,13 +761,13 @@ describe("ACP v1 agent mapping", () => {
 });
 
 function createApplication(overrides: Partial<AcpApplicationPort> = {}): AcpApplicationPort {
-  return {
+  return withOutputHistory({
     assertAccess: vi.fn(() => Promise.resolve()),
     createSession: vi.fn(() => Promise.resolve({ sessionId: "session-1" })),
     listSessions: vi.fn(() => Promise.resolve({ sessions: [] })),
     deleteSession: vi.fn(() => Promise.resolve()),
     forkSession: vi.fn(() => Promise.resolve({ sessionId: "session-fork" })),
-    resumeSession: vi.fn(() => Promise.resolve({ replay: [] })),
+    resumeSession: vi.fn(() => Promise.resolve({ replay: [], sequence: 0 })),
     closeSession: vi.fn(() => Promise.resolve()),
     cancelRun: vi.fn(() => Promise.resolve()),
     acceptPrompt: vi.fn((): Promise<AcceptedAcpRun> =>
@@ -694,7 +792,7 @@ function createApplication(overrides: Partial<AcpApplicationPort> = {}): AcpAppl
       }),
     ),
     ...overrides,
-  };
+  });
 }
 
 function snapshot(): AcceptedAcpRun["snapshot"] {

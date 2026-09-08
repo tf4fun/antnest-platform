@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import type {
   ModelMessage,
   ModelToolDefinition,
@@ -68,16 +70,25 @@ export class TurnRunner {
             await this.dependencies.events.agentMessage(input.runId, response.content);
             assertAuthority(input.authoritySignal);
           }
+          input.signal.throwIfAborted();
           return completed(effectState, response.stopReason);
         }
 
-        const inspected = preflight.inspect(response.calls, tools);
-        await this.dependencies.events.agentMessage(input.runId, response.content, response.calls);
+        // Provider IDs are scoped to a model response, not to an ACP Session.
+        // Normalize once so durable events and model history keep identical IDs.
+        const calls = response.calls.map((call) => ({
+          ...call,
+          id: createHash("sha256")
+            .update(JSON.stringify([input.runId, request, call.id]))
+            .digest("hex"),
+        }));
+        const inspected = preflight.inspect(calls, tools);
+        await this.dependencies.events.agentMessage(input.runId, response.content, calls);
         assertAuthority(input.authoritySignal);
         messages.push({
           role: "assistant",
           content: response.content,
-          toolCalls: response.calls,
+          toolCalls: calls,
         });
         if (inspected.kind === "rejected") {
           for (const rejected of inspected.calls) {
@@ -107,6 +118,7 @@ export class TurnRunner {
           messages.push(outcome.message);
         }
       }
+      input.signal.throwIfAborted();
       return completed(effectState, "max_turn_requests");
     } catch (error) {
       assertAuthority(input.authoritySignal);

@@ -1,6 +1,11 @@
 import { DomainError } from "../domain/errors.js";
 import { requireNoClientMcpServers } from "../domain/mcp.js";
-import { authorizeSession, authorizeSessionOwner, requireWorkspace } from "../domain/session.js";
+import {
+  authorizeSession,
+  authorizeSessionOwner,
+  requireDirectoryFilter,
+  requireWorkspace,
+} from "../domain/session.js";
 import type { AcpApplicationPort } from "../ports/acp-application.js";
 import type { SessionRepository } from "../ports/session-repository.js";
 
@@ -21,6 +26,11 @@ export class SessionService implements Pick<
 > {
   public constructor(private readonly dependencies: SessionServiceDependencies) {}
 
+  public async readOutput(input: Parameters<AcpApplicationPort["readSessionOutput"]>[0]) {
+    await this.requireAuthorized(input.sessionId, input.binding);
+    return this.dependencies.repository.readOutput(input.sessionId, input.afterSequence);
+  }
+
   public async createSession(
     input: Parameters<AcpApplicationPort["createSession"]>[0],
   ): Promise<{ sessionId: string }> {
@@ -40,7 +50,7 @@ export class SessionService implements Pick<
     input: Parameters<AcpApplicationPort["listSessions"]>[0],
   ): Promise<Awaited<ReturnType<AcpApplicationPort["listSessions"]>>> {
     if (input.cwd !== undefined) {
-      requireWorkspace(input.cwd, []);
+      requireDirectoryFilter(input.cwd);
     }
     const result = await this.dependencies.repository.list({
       principalId: input.binding.principalId,
@@ -92,11 +102,11 @@ export class SessionService implements Pick<
       mcpRevisionId: this.dependencies.id(),
       mcpSources: requireNoClientMcpServers(input.mcpServers),
     });
-    const replay = input.replayFromStart
-      ? await this.dependencies.repository.replay(session.id)
-      : [];
-    replay.push(await this.dependencies.repository.getCurrentRunState(session.id));
-    return { replay };
+    const snapshot = await this.dependencies.repository.readOutput(
+      session.id,
+      input.replayFromStart ? 0 : undefined,
+    );
+    return { replay: [...snapshot.events, snapshot.state], sequence: snapshot.sequence };
   }
 
   public async closeSession(

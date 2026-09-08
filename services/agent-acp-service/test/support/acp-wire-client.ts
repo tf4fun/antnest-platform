@@ -78,7 +78,10 @@ export class AcpWireClient {
         () => {
           const failure = this.failures[0];
           if (failure !== undefined) throw failure;
-          return this.frames.some((frame) => frame.id === id);
+          if (this.frames.some((frame) => frame.id === id)) return true;
+          if (this.socket.readyState === WebSocket.CLOSED)
+            throw new Error("ACP connection closed before the response");
+          return false;
         },
         { timeout: 10_000 },
       )

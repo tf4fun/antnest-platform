@@ -17,6 +17,10 @@ is deliberately prohibited. Gateway isolation and selected process-interruption
 cases have passed; remaining windows are distinguished in the
 [protocol matrix](docs/protocol-conformance.md) and
 [single-node closeout](../../docs/docker-single-node-closeout.md).
+The [interface and Goose gap review](docs/protocol-gap-review.md) records the
+seven baseline delivery/content/Session defects and their service-level fixes.
+Architecture differences and optional product choices remain separate; this
+method inventory is not a claim of unrestricted protocol completeness.
 The authoritative cross-service design is
 [`../../docs/stage-2-agent-and-acp.md`](../../docs/stage-2-agent-and-acp.md);
 this directory is the only implementation authority for Agent ACP Service.
@@ -40,15 +44,16 @@ this directory is the only implementation authority for Agent ACP Service.
 
 ## Interfaces
 
-| Interface                       | Direction | Purpose                                                |
-| ------------------------------- | --------- | ------------------------------------------------------ |
-| ACP v1 over WebSocket `/v1/acp` | inbound   | Stable ACP Session and prompt protocol                 |
-| ACP v2 over WebSocket `/v2/acp` | inbound   | Draft ACP Session and prompt protocol                  |
-| `GET /status`                   | inbound   | Liveness/readiness without business mutation           |
-| Agent Controller Run RPC        | outbound  | Resolve access, acquire/finish Run, resolve credential |
-| MCP `2026-07-28` HTTP           | outbound  | Platform Runtime Tool execution                        |
-| OpenAI-compatible model API     | outbound  | Stage 2 model adapter                                  |
-| Private PostgreSQL              | owned     | Sessions, messages, checkpoints, Runs, Tool attempts   |
+| Interface                        | Direction | Purpose                                                |
+| -------------------------------- | --------- | ------------------------------------------------------ |
+| ACP v1 over WebSocket `/v1/acp`  | inbound   | Stable ACP Session and prompt protocol                 |
+| ACP v1 Streamable HTTP `/v1/acp` | inbound   | Official experimental POST/GET/DELETE transport        |
+| ACP v2 over WebSocket `/v2/acp`  | inbound   | Draft ACP Session and prompt protocol                  |
+| `GET /status`                    | inbound   | Liveness/readiness without business mutation           |
+| Agent Controller Run RPC         | outbound  | Resolve access, acquire/finish Run, resolve credential |
+| MCP `2026-07-28` HTTP            | outbound  | Platform Runtime Tool execution                        |
+| OpenAI-compatible model API      | outbound  | Stage 2 model adapter                                  |
+| Private PostgreSQL               | owned     | Sessions, messages, checkpoints, Runs, Tool attempts   |
 
 The Agent Controller dependency surface is owned by Agent Controller and
 consumed here at contract revision 9. Its normative status, method, request,
@@ -59,7 +64,10 @@ with machine-readable shapes in
 New optional response fields are compatible; required fields and existing
 semantics cannot change without a coordinated contract revision.
 
-The remote transport is WebSocket for both versions. Each endpoint feeds the
+Both versions retain WebSocket; `/v1/acp` additionally supports the official
+experimental Streamable HTTP transport (POST/GET/DELETE). See the
+[HTTP transport contract](docs/http-transport.md) for connection ownership,
+recovery and Gateway integration. Each endpoint feeds the
 matching official SDK surface: the stable package root for v1 and the
 batch-capable experimental `WireStream` for v2. ACP success shapes are not
 extended with Antnest fields. The unversioned `/acp` is deliberately absent so
@@ -104,7 +112,8 @@ rebuild automatically uses the replacement Runtime.
 ## Connection Identity
 
 The deployment's Edge Gateway authenticates external users and
-forwards an opaque Agent-scoped access subject during WebSocket upgrade. During
+forwards an opaque Agent-scoped access subject during WebSocket upgrade and
+each HTTP transport request. During
 internal development, a trusted client supplies the same value directly.
 Agent ACP Service resolves it through Agent Controller before accepting the
 connection and before Session-management operations. Prompt admission goes

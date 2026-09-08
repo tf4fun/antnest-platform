@@ -6,7 +6,132 @@ import {
 } from "../../../src/adapters/model/openai-compatible.js";
 import type { ModelRequest } from "../../../src/ports/model.js";
 
+function bodyText(init: RequestInit | undefined): string {
+  if (typeof init?.body !== "string") throw new Error("Missing JSON request body");
+  return init.body;
+}
+
 describe("OpenAICompatibleModel", () => {
+  it("places Tool images after all replies in a multi-Tool batch", async () => {
+    const fetchFn = vi.fn<(url: string, init: RequestInit) => Promise<Response>>(() =>
+      Promise.resolve(
+        Response.json({
+          choices: [{ finish_reason: "stop", message: { role: "assistant", content: "done" } }],
+        }),
+      ),
+    );
+    const input = request();
+    input.snapshot.executionSpec.model.supportsImages = true;
+    input.messages = [
+      {
+        role: "assistant",
+        content: [],
+        toolCalls: [
+          { id: "a", name: "screenshot", arguments: {} },
+          { id: "b", name: "read", arguments: {} },
+        ],
+      },
+      {
+        role: "tool",
+        toolCallId: "a",
+        content: [{ type: "image", mimeType: "image/png", data: "aGVsbG8=" }],
+      },
+      { role: "tool", toolCallId: "b", content: [{ type: "text", text: "file" }] },
+    ];
+    await new OpenAICompatibleModel({ fetchFn }).complete(input);
+    const body = JSON.parse(bodyText(fetchFn.mock.calls[0]?.[1])) as {
+      messages: { role: string }[];
+    };
+    expect(body.messages.map((message) => message.role)).toEqual([
+      "assistant",
+      "tool",
+      "tool",
+      "user",
+    ]);
+  });
+
+  it.each([true, false])(
+    "handles Tool images with vision=%s without breaking the next model request",
+    async (vision) => {
+      const fetchFn = vi.fn<(url: string, init: RequestInit) => Promise<Response>>(() =>
+        Promise.resolve(
+          Response.json({
+            choices: [{ finish_reason: "stop", message: { role: "assistant", content: "done" } }],
+          }),
+        ),
+      );
+      const input = request();
+      input.snapshot.executionSpec.model.supportsImages = vision;
+      input.messages.push({
+        role: "tool",
+        toolCallId: "image-call",
+        content: [
+          { type: "text", text: "Screenshot" },
+          { type: "image", mimeType: "image/png", data: "aGVsbG8=" },
+        ],
+      });
+      await expect(new OpenAICompatibleModel({ fetchFn }).complete(input)).resolves.toMatchObject({
+        kind: "message",
+      });
+      const payload = JSON.parse(bodyText(fetchFn.mock.calls[0]?.[1])) as {
+        messages: Record<string, unknown>[];
+      };
+      expect(payload.messages[4]).toMatchObject({ role: "tool", tool_call_id: "image-call" });
+      expect(JSON.stringify(payload.messages)).toContain("Screenshot");
+      if (vision) {
+        expect(payload.messages[5]).toMatchObject({
+          role: "user",
+          content: [{ type: "text", text: "Image from Tool image-call:" }, { type: "image_url" }],
+        });
+      } else {
+        expect(payload.messages).toHaveLength(5);
+        expect(JSON.stringify(payload)).toContain("model does not support images");
+      }
+    },
+  );
+
+  it("decodes UTF-8 embedded text rather than sending base64 to the model", async () => {
+    const fetchFn = vi.fn<(url: string, init: RequestInit) => Promise<Response>>(() =>
+      Promise.resolve(
+        Response.json({
+          choices: [{ finish_reason: "stop", message: { role: "assistant", content: "done" } }],
+        }),
+      ),
+    );
+    const input = request();
+    input.messages = [
+      {
+        role: "user",
+        content: [
+          {
+            type: "resource",
+            resource: {
+              uri: "attachment:///notes.txt",
+              mimeType: "text/plain;charset=utf-8",
+              blob: Buffer.from("中文笔记").toString("base64"),
+            },
+          },
+        ],
+      },
+    ];
+    await new OpenAICompatibleModel({ fetchFn }).complete(input);
+    expect(bodyText(fetchFn.mock.calls[0]?.[1])).toContain("中文笔记");
+    expect(bodyText(fetchFn.mock.calls[0]?.[1])).not.toContain("Base64:");
+  });
+
+  it("keeps local content errors distinct from network availability", async () => {
+    const fetchFn = vi.fn();
+    const input = request();
+    input.messages = [
+      { role: "user", content: [{ type: "audio", data: "aGVsbG8=", mimeType: "audio/wav" }] },
+    ];
+    await expect(new OpenAICompatibleModel({ fetchFn }).complete(input)).rejects.toMatchObject({
+      code: "model_unsupported_content",
+      retryable: false,
+    });
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
   it("maps the complete Tool transcript and parses Tool calls", async () => {
     const fetchFn = vi.fn<(input: string, init: RequestInit) => Promise<Response>>();
     fetchFn.mockResolvedValue(

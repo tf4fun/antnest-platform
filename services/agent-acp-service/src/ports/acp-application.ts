@@ -65,6 +65,12 @@ export interface SessionEventPublisher {
   publish(event: SessionEvent): Promise<void>;
 }
 
+export type SessionOutputSnapshot = {
+  sequence: number;
+  events: SessionEvent[];
+  state: Extract<SessionEvent, { kind: "state" }>;
+};
+
 export type AcceptedAcpRun = {
   runId: string;
   requestId: string;
@@ -87,6 +93,11 @@ export class RunRecoveryRequiredError extends Error {
 }
 
 export interface AcpApplicationPort {
+  readSessionOutput(input: {
+    binding: ConnectionBinding;
+    sessionId: string;
+    afterSequence?: number;
+  }): Promise<SessionOutputSnapshot>;
   assertAccess(input: { binding: ConnectionBinding }): Promise<void>;
   createSession(input: {
     binding: ConnectionBinding;
@@ -114,7 +125,7 @@ export interface AcpApplicationPort {
     additionalDirectories: string[];
     mcpServers: ClientMcpInput[];
     replayFromStart: boolean;
-  }): Promise<{ replay: SessionEvent[] }>;
+  }): Promise<{ replay: SessionEvent[]; sequence: number }>;
   closeSession(input: { binding: ConnectionBinding; sessionId: string }): Promise<void>;
   cancelRun(input: { binding: ConnectionBinding; sessionId: string }): Promise<void>;
   acceptPrompt(input: {

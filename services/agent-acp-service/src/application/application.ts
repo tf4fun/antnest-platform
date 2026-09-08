@@ -18,6 +18,11 @@ export type AcpApplicationDependencies = {
 export class AcpApplication implements AcpApplicationPort {
   public constructor(private readonly dependencies: AcpApplicationDependencies) {}
 
+  public async readSessionOutput(input: Parameters<AcpApplicationPort["readSessionOutput"]>[0]) {
+    await this.assertAccess(input);
+    return this.dependencies.sessions.readOutput(input);
+  }
+
   public assertAccess(input: Parameters<AcpApplicationPort["assertAccess"]>[0]): Promise<void> {
     return this.dependencies.access.assert(input.binding);
   }

@@ -215,8 +215,13 @@ describe.skipIf(databaseUrl === undefined)("ACP wire and PostgreSQL access bound
         } finally {
           release.resolve();
           const settled = await prompt;
-          expect(settled).toHaveProperty("response");
-          if ("response" in settled) expect(settled.response.error).toBeUndefined();
+          if (version === 1 && (change === "revision" || change === "principal deactivation")) {
+            expect(settled).toHaveProperty("error");
+            expect(JSON.stringify(owner.frames)).not.toContain("completed by owner");
+          } else {
+            expect(settled).toHaveProperty("response");
+            if ("response" in settled) expect(settled.response.error).toBeUndefined();
+          }
         }
         await expect
           .poll(async () => (await pool.query<{ state: string }>("SELECT state FROM runs")).rows)

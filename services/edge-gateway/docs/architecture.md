@@ -105,6 +105,21 @@ there is no distributed transaction between that check and ACP Run creation.
 ACP retains responsibility for Agent access revision, Session ownership and
 durable Run behavior; it does not receive browser credentials.
 
+The v1 route and its alias also accept POST/GET/DELETE Streamable HTTP through
+an opaque reverse proxy. Each request repeats cookie and Agent admission;
+POST/DELETE also enforce the existing CSRF policy. A supplied Origin must match;
+HTTP clients without Origin are allowed only with the same authentication and
+CSRF requirements. Only the four documented ACP/content headers are forwarded,
+with authoritative subject and trace context injected by Edge.
+
+GET SSE responses are flushed immediately and live until disconnect or upstream
+closure, not an ordinary short request timeout. They consume receive-connection
+capacity separately from POST/DELETE message admission. Cancelling the client
+HTTP request cancels the upstream receive request; it does not become a
+session/cancel command. ACP Service owns connection IDs, expiry and recovery;
+Gateway owns no ACP connection registry. HTTP reuses the new-message admission
+policy above, including its explicit already-admitted-work boundary.
+
 Login admission consumes bounded per-source and normalized-account windows
 before Identity performs Argon2 verification. Logout asks Identity to revoke
 the presented opaque access token directly and clears browser cookies only

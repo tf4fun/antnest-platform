@@ -30,6 +30,36 @@ Passing SDK serialization is necessary but insufficient. The matrix separately
 tests capability honesty, handler semantics, wire framing, authorization,
 durability, and recovery.
 
+The [interface and Goose gap review](protocol-gap-review.md) found seven
+baseline semantic defects outside client MCP injection. The repair batch below
+adds targeted evidence rather than treating the older passing interface cases
+as proof that all content and lifecycle combinations work. Do not promote
+case-level coverage labels into a blanket protocol-completeness claim.
+
+## Semantic Defect Repair Batch (2026-09-08)
+
+| ID  | Repaired behavior                                                                                                                                              | Executable evidence                                                                           | Coverage        |
+| --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- | --------------- |
+| D1  | Full v1 content precedes completion/cancellation response under backpressure; durable execution does not await delivery                                        | `acp-v1-agent.test.ts`, `session-output.test.ts`, `acp-output.postgres.test.ts`               | Service-covered |
+| D2  | Tool images survive the next model request; all Tool replies precede image messages; non-vision omission and local errors are explicit                         | `openai-compatible.test.ts`                                                                   | Layer-covered   |
+| D3  | Active Run output follows a replacement v1 load/resume or v2 resume connection; catch-up cursor and state share one snapshot; idle waits for admission closure | `session-output.test.ts`, `acp-output.postgres.test.ts`, `acp-access.postgres.test.ts`        | Service-covered |
+| D4  | UTF-8 text blobs become readable text in retained/model context; unhandled binary input fails before Run admission                                             | `embedded-resource.test.ts`, `prompt-coordinator.test.ts`, `acp-output.postgres.test.ts`      | Service-covered |
+| D5  | Reused provider Tool IDs are unique across requests/Runs, paired in model history and stable in replay/fork                                                    | `turn-runner.test.ts`, `acp-output.postgres.test.ts`                                          | Service-covered |
+| D6  | Cancellation during usage/thought/final-message persistence cannot produce completed; final-message boundary matches wire, stored Run and Controller outcome   | `turn-runner.test.ts`, `acp-output.postgres.test.ts`                                          | Service-covered |
+| D7  | Unmatched absolute cwd returns an empty list; relative/invalid filters are rejected independently from workspace creation                                      | `session-service.test.ts`, `acp-output.postgres.test.ts`, existing lifecycle pagination tests | Service-covered |
+
+These tests use real SDK/transport and service-owned PostgreSQL where indicated,
+with deterministic model/Controller/Tool ports. They do not establish a new
+Gateway -> Runtime -> external model acceptance result. No new ACP fields,
+client MCP injection, streaming model API, PDF parser or authentication mode is
+introduced by this batch. Owned tables and schema are unchanged.
+
+Final service acceptance: 245 unit/component cases in 33 files, all 61
+PostgreSQL cases in eight files, production build, `make fmt-check` and
+`make lint` passed. The disposable PostgreSQL container, volume and networks
+were removed. Architecture/optional-scope decisions in the gap review remain
+pending; full-platform acceptance was not repeated for this batch.
+
 ## V1 Verification Batch (2026-09-08)
 
 ### Approved Platform-Only MCP Profile
@@ -92,7 +122,7 @@ This is an implementation reference, not a second protocol authority.
 | Goose implementation                                               | Relevant lesson / Antnest decision                                                                                                                         |
 | ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `crates/goose/src/acp/server.rs::serve` and `GooseAgentConnection` | stdio and remote connections share `GooseAcpHandler`; Antnest similarly keeps transport mapping separate from the application                              |
-| `crates/goose/src/acp/transport/mod.rs::create_acp_router_inner`   | `serve` uses the official HTTP server for `/acp`; Antnest currently exposes WebSocket only, not Goose's POST/GET/DELETE Streamable HTTP surface            |
+| `crates/goose/src/acp/transport/mod.rs::create_acp_router_inner`   | `serve` uses the official HTTP server; Antnest now uses the official TypeScript HTTP server on `/v1/acp`, retaining WebSocket for both versions            |
 | `crates/goose/src/acp/server_factory.rs::AcpServer`                | Connection state and shared active Runs have different lifetimes; Antnest persists Sessions/Runs and keeps connection identity separate                    |
 | `crates/goose/src/acp/server.rs::mcp_server_to_extension_config`   | Goose launches client stdio locally; Antnest must not copy that onto its shared ACP host. Runtime-managed stdio is a separate source                       |
 | `crates/goose/src/acp/server/dispatch.rs`                          | Baseline requests, negotiated client callbacks and `_goose/*` extensions are distinct; private Provider/recipe/steer/scheduler APIs are not v1 obligations |
@@ -165,18 +195,21 @@ cancellation is carried by `session/cancel` and is mandatory for this service.
 
 ## Transport And Boundary Matrix
 
-| ID      | Contract                                                              | Current evidence              | State         |
-| ------- | --------------------------------------------------------------------- | ----------------------------- | ------------- |
-| WIRE-01 | Only exact `/v1/acp` and `/v2/acp` WebSocket routes are exposed.      | HTTP server tests             | Covered       |
-| WIRE-02 | Readiness is checked before Agent access resolution.                  | HTTP server tests             | Covered       |
-| WIRE-03 | Missing subject is 401; rejected subject is 403 for both versions.    | HTTP server tests             | Covered       |
-| WIRE-04 | Malformed JSON returns JSON-RPC `-32700` and the connection survives. | raw-wire test                 | Covered       |
-| WIRE-05 | Binary messages close with WebSocket code 1003.                       | raw-wire test                 | Covered       |
-| WIRE-06 | Payloads beyond the configured maximum close with code 1009.          | raw-wire test                 | Covered       |
-| WIRE-07 | Shutdown terminates open transports deterministically.                | HTTP server test              | Covered       |
-| WIRE-08 | JSON-RPC IDs are preserved and unknown methods return `-32601`.       | both version raw-wire tests   | Covered       |
-| WIRE-09 | v2 initialize is the only item in its batch.                          | raw-wire batch rejection test | Covered       |
-| WIRE-10 | ACP `_meta` trace context reaches application/model/MCP spans.        | telemetry unit tests          | Layer-covered |
+| ID      | Contract                                                                                                            | Current evidence              | State         |
+| ------- | ------------------------------------------------------------------------------------------------------------------- | ----------------------------- | ------------- |
+| WIRE-01 | Exact `/v1/acp` HTTP/WebSocket and `/v2/acp` WebSocket routes.                                                      | HTTP server/stream tests      | Covered       |
+| WIRE-02 | Readiness is checked before Agent access resolution.                                                                | HTTP server tests             | Covered       |
+| WIRE-03 | Missing subject is 401; rejected subject is 403 for both versions.                                                  | HTTP server tests             | Covered       |
+| WIRE-04 | Malformed JSON returns JSON-RPC `-32700` and the connection survives.                                               | raw-wire test                 | Covered       |
+| WIRE-05 | Binary messages close with WebSocket code 1003.                                                                     | raw-wire test                 | Covered       |
+| WIRE-06 | Payloads beyond the configured maximum close with code 1009.                                                        | raw-wire test                 | Covered       |
+| WIRE-07 | Shutdown terminates open transports deterministically.                                                              | HTTP server test              | Covered       |
+| HTTP-01 | Official HTTP client initialize/new/list/load; bound POST/GET/DELETE, payload limits.                               | `http-stream.test.ts`         | Covered       |
+| HTTP-02 | Foreign/revised binding rejection, DELETE cleanup, capacity and idle expiry with active SSE preserved.              | `http-stream.test.ts`         | Covered       |
+| HTTP-03 | PostgreSQL Prompt/Tool/cancel/load, active Run reconnect, HTTP-to-WebSocket recovery and foreign Session isolation. | `acp-http.postgres.test.ts`   | Covered       |
+| WIRE-08 | JSON-RPC IDs are preserved and unknown methods return `-32601`.                                                     | both version raw-wire tests   | Covered       |
+| WIRE-09 | v2 initialize is the only item in its batch.                                                                        | raw-wire batch rejection test | Covered       |
+| WIRE-10 | ACP `_meta` trace context reaches application/model/MCP spans.                                                      | telemetry unit tests          | Layer-covered |
 
 ## Unadvertised Optional Surfaces
 

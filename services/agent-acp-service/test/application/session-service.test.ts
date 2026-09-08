@@ -50,20 +50,27 @@ describe("SessionService", () => {
         mcpServers: [],
         replayFromStart: false,
       }),
-    ).resolves.toEqual({ replay: [{ kind: "state", state: "idle", stopReason: "end_turn" }] });
+    ).resolves.toEqual({
+      replay: [{ kind: "state", state: "idle", stopReason: "end_turn" }],
+      sequence: 0,
+    });
     expect(repository.replaceMcpAndActivate).toHaveBeenCalledWith(
       expect.objectContaining({ mcpSources: [] }),
     );
     expect(repository.replay).not.toHaveBeenCalled();
-    expect(repository.getCurrentRunState).toHaveBeenCalledWith("session-1");
+    expect(repository.readOutput).toHaveBeenCalledWith("session-1", undefined);
 
-    repository.replay.mockResolvedValueOnce([
-      {
-        kind: "user_message",
-        messageId: "message-1",
-        content: [{ type: "text", text: "past" }],
-      },
-    ]);
+    repository.readOutput.mockResolvedValueOnce({
+      sequence: 1,
+      state: { kind: "state", state: "idle", stopReason: "end_turn" },
+      events: [
+        {
+          kind: "user_message",
+          messageId: "message-1",
+          content: [{ type: "text", text: "past" }],
+        },
+      ],
+    });
     await expect(
       service.resumeSession({
         binding,
@@ -82,8 +89,9 @@ describe("SessionService", () => {
         },
         { kind: "state", state: "idle", stopReason: "end_turn" },
       ],
+      sequence: 1,
     });
-    expect(repository.replay).toHaveBeenCalledOnce();
+    expect(repository.readOutput).toHaveBeenLastCalledWith("session-1", 0);
   });
 
   it("allows Prompt admission for an empty client MCP revision", async () => {
@@ -145,6 +153,28 @@ describe("SessionService", () => {
       limit: 50,
     });
   });
+
+  it("treats a different absolute cwd as a list filter, not a workspace creation", async () => {
+    const repository = createRepository();
+    repository.list.mockResolvedValue({ sessions: [], nextCursor: undefined });
+    await expect(
+      createService(repository.port).listSessions({ binding, cwd: "/other-project" }),
+    ).resolves.toEqual({ sessions: [] });
+    expect(repository.list).toHaveBeenCalledWith(
+      expect.objectContaining({ cwd: "/other-project" }),
+    );
+  });
+
+  it.each(["", "relative", "../workspace", "/workspace\u0000other"])(
+    "rejects invalid directory filter %j without querying persistence",
+    async (cwd) => {
+      const repository = createRepository();
+      await expect(
+        createService(repository.port).listSessions({ binding, cwd }),
+      ).rejects.toMatchObject({ code: "invalid_directory_filter" });
+      expect(repository.list).not.toHaveBeenCalled();
+    },
+  );
 
   it("forks an idle Session into a new durable context with a fresh MCP revision", async () => {
     const repository = createRepository();
@@ -233,6 +263,13 @@ function createRepository() {
   );
   const fork = vi.fn<SessionRepository["fork"]>(() => Promise.resolve());
   const replay = vi.fn<SessionRepository["replay"]>(() => Promise.resolve([]));
+  const readOutput = vi.fn<SessionRepository["readOutput"]>(() =>
+    Promise.resolve({
+      sequence: 0,
+      events: [],
+      state: { kind: "state", state: "idle", stopReason: "end_turn" },
+    }),
+  );
   const getCurrentRunState = vi.fn<SessionRepository["getCurrentRunState"]>(() =>
     Promise.resolve({ kind: "state", state: "idle", stopReason: "end_turn" }),
   );
@@ -251,6 +288,7 @@ function createRepository() {
     replaceMcpAndActivate,
     fork,
     replay,
+    readOutput,
     getCurrentRunState,
     requestCancellation,
     close,
@@ -266,6 +304,7 @@ function createRepository() {
     replaceMcpAndActivate,
     fork,
     replay,
+    readOutput,
     getCurrentRunState,
     requestCancellation,
     close,

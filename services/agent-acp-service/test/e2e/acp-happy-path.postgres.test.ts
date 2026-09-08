@@ -93,6 +93,7 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP happy path", () => {
       }),
       runs: supervisor,
     });
+    const readOutput = vi.spyOn(application, "readSessionOutput");
     server = new AgentAcpHttpServer({
       agentController: controller.port,
       application,
@@ -104,11 +105,11 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP happy path", () => {
     if (address === null || typeof address === "string") {
       throw new Error("server has no TCP address");
     }
-    return { url: `ws://127.0.0.1:${address.port}`, controller, model, tools };
+    return { url: `ws://127.0.0.1:${address.port}`, controller, model, tools, readOutput };
   }
 
   it("persists one ACP prompt, Runtime Tool call, response, and terminal Run", async () => {
-    const { url, controller, model, tools } = await startApplication();
+    const { url, controller, model, tools, readOutput } = await startApplication();
 
     const updates: acp.SessionUpdate[] = [];
     const idle = Promise.withResolvers<void>();
@@ -167,7 +168,10 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP happy path", () => {
     expect(JSON.stringify(contextSource)).not.toContain("Use the company style guide");
     expect(JSON.stringify(contextSource)).not.toContain("documents/SKILL.md");
     expect(tools.call).toHaveBeenCalledOnce();
-    expect(controller.resolveAgentAccess).toHaveBeenCalledTimes(accessChecksBeforePrompt);
+    expect(readOutput).toHaveBeenCalled();
+    expect(controller.resolveAgentAccess).toHaveBeenCalledTimes(
+      accessChecksBeforePrompt + readOutput.mock.calls.length,
+    );
     expect(controller.acquireRun).toHaveBeenCalledOnce();
     expect(controller.finishRun).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -289,7 +293,9 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP happy path", () => {
           (update) => update.sessionUpdate === "tool_call_update" && update.status === "completed",
         );
         expect(completedTools).toHaveLength(1);
-        expect(completedTools[0]).toMatchObject({ toolCallId: "call-1" });
+        expect(completedTools[0]).toMatchObject({
+          toolCallId: updates.find((update) => update.sessionUpdate === "tool_call")?.toolCallId,
+        });
         expect(JSON.stringify(completedTools)).toContain("# Antnest");
 
         const replay = structuredClone(updates);

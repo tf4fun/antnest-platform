@@ -6,7 +6,11 @@ import { MAX_TOOL_RESULT_BYTES } from "../../src/domain/tool-result.js";
 import type { ModelPort } from "../../src/ports/model.js";
 import type { ToolCatalogPort } from "../../src/ports/tools.js";
 import type { RunEventPort } from "../../src/ports/run-events.js";
-import type { ModelToolDefinition, RunExecutionSnapshot } from "../../src/domain/types.js";
+import type {
+  ModelMessage,
+  ModelToolDefinition,
+  RunExecutionSnapshot,
+} from "../../src/domain/types.js";
 
 const snapshot: RunExecutionSnapshot = {
   admissionId: "admission-1",
@@ -39,6 +43,105 @@ const snapshot: RunExecutionSnapshot = {
 };
 
 describe("TurnRunner", () => {
+  it("keeps Tool identities unique across model requests and Runs, with paired model history", async () => {
+    const events = createEvents();
+    const contexts: ModelMessage[][] = [];
+    const complete = vi.fn<ModelPort["complete"]>((input) => {
+      contexts.push(structuredClone(input.messages));
+      return Promise.resolve({
+        kind: "tool_calls",
+        content: [],
+        calls: [{ id: "reused", name: "read", arguments: {} }],
+        usage: { inputTokens: 1, outputTokens: 1 },
+      });
+    });
+    const runner = new TurnRunner({
+      model: { complete },
+      catalog: [
+        {
+          source: "runtime",
+          sourceId: "runtime",
+          name: "read",
+          modelName: "read",
+          description: "Read",
+        },
+      ],
+      tools: {
+        call: vi.fn().mockResolvedValue({
+          content: [{ type: "text", text: "result" }],
+          isError: false,
+          toolEffectState: "settled",
+        }),
+      },
+      events: events.port,
+    });
+    for (const runId of ["run-1", "run-2"]) {
+      await expect(
+        runner.run({
+          runId,
+          sessionId: "session-1",
+          snapshot,
+          credential: "synthetic",
+          context: [],
+          signal: new AbortController().signal,
+          authoritySignal: new AbortController().signal,
+        }),
+      ).resolves.toMatchObject({ terminalClass: "completed" });
+    }
+    const ids = events.toolStarted.mock.calls.map((args) => args[1]);
+    expect(ids).toHaveLength(8);
+    expect(new Set(ids).size).toBe(8);
+    expect(events.toolFinished.mock.calls.map((args) => args[1])).toEqual(ids);
+    for (const [index, messages] of contexts.entries()) {
+      const assistantIds = messages.flatMap((message) =>
+        message.role === "assistant" ? (message.toolCalls ?? []).map((call) => call.id) : [],
+      );
+      const resultIds = messages.flatMap((message) =>
+        message.role === "tool" ? [message.toolCallId] : [],
+      );
+      expect(assistantIds).toEqual(resultIds);
+      const first = index < 4 ? 0 : 4;
+      expect(assistantIds).toEqual(ids.slice(first, first + (index % 4)));
+    }
+  });
+
+  it.each(["usage", "agentThought", "agentMessage"] as const)(
+    "honors cancellation during %s persistence before choosing the terminal result",
+    async (operation) => {
+      const controller = new AbortController();
+      const events = createEvents();
+      events[operation].mockImplementation(() => {
+        controller.abort();
+        return Promise.resolve();
+      });
+      const runner = new TurnRunner({
+        model: {
+          complete: vi.fn().mockResolvedValue({
+            kind: "message",
+            content: [{ type: "text", text: "answer" }],
+            thought: [{ type: "text", text: "reasoning" }],
+            usage: { inputTokens: 1, outputTokens: 1 },
+            stopReason: "end_turn",
+          }),
+        },
+        tools: { call: vi.fn() },
+        catalog: [],
+        events: events.port,
+      });
+      await expect(
+        runner.run({
+          runId: "run-1",
+          sessionId: "session-1",
+          snapshot,
+          credential: "synthetic",
+          context: [],
+          signal: controller.signal,
+          authoritySignal: new AbortController().signal,
+        }),
+      ).resolves.toMatchObject({ terminalClass: "cancelled", toolEffectState: "none" });
+    },
+  );
+
   it.each([false, true])(
     "feeds a managed structured-only result to the model (isError=%s)",
     async (isError) => {
@@ -188,17 +291,19 @@ describe("TurnRunner", () => {
       toolEffectState: "settled",
     });
     expect(complete).toHaveBeenCalledTimes(2);
+    const toolId = events.toolStarted.mock.calls[0]?.[1];
+    expect(toolId).toEqual(expect.any(String));
     const secondRequest = complete.mock.calls[1]?.[0];
     expect(secondRequest?.messages).toEqual(
       expect.arrayContaining([
         {
           role: "assistant",
           content: [],
-          toolCalls: [{ id: "call-1", name: "read", arguments: { path: "README.md" } }],
+          toolCalls: [{ id: toolId, name: "read", arguments: { path: "README.md" } }],
         },
         {
           role: "tool",
-          toolCallId: "call-1",
+          toolCallId: toolId,
           content: [{ type: "text", text: "contents" }],
         },
       ]),
@@ -272,7 +377,11 @@ describe("TurnRunner", () => {
     expect(complete).toHaveBeenCalledTimes(1);
     expect(events.toolRejected).toHaveBeenCalledWith(
       "run-1",
-      { id: "call-2", name: "write", arguments: { path: "later.txt" } },
+      {
+        id: events.agentMessage.mock.calls[0]?.[2]?.[1]?.id,
+        name: "write",
+        arguments: { path: "later.txt" },
+      },
       "Tool was not executed because this Run ended before dispatch.",
     );
   });
@@ -439,7 +548,11 @@ describe("TurnRunner", () => {
     expect(call).toHaveBeenCalledTimes(1);
     expect(events.toolRejected).toHaveBeenCalledWith(
       "run-1",
-      { id: "call-2", name: "read", arguments: { path: "result.txt" } },
+      {
+        id: events.agentMessage.mock.calls[0]?.[2]?.[1]?.id,
+        name: "read",
+        arguments: { path: "result.txt" },
+      },
       "Tool was not executed because this Run ended before dispatch.",
     );
   });
@@ -516,12 +629,11 @@ describe("TurnRunner", () => {
     });
     expect(call).not.toHaveBeenCalled();
     expect(events.toolRejected).toHaveBeenCalledTimes(2);
-    expect(complete.mock.calls[1]?.[0].messages).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ role: "tool", toolCallId: "call-1" }),
-        expect.objectContaining({ role: "tool", toolCallId: "call-2" }),
-      ]),
-    );
+    for (const [, rejected] of events.toolRejected.mock.calls) {
+      expect(complete.mock.calls[1]?.[0].messages).toContainEqual(
+        expect.objectContaining({ role: "tool", toolCallId: rejected.id }),
+      );
+    }
   });
 
   it("does not retain an assistant Tool batch when preflight cannot classify it", async () => {
@@ -646,13 +758,14 @@ function createEvents() {
   const toolFinished = vi.fn<RunEventPort["toolFinished"]>(() => Promise.resolve());
   const agentMessage = vi.fn<RunEventPort["agentMessage"]>(() => Promise.resolve());
   const agentThought = vi.fn<RunEventPort["agentThought"]>(() => Promise.resolve());
+  const usage = vi.fn<RunEventPort["usage"]>(() => Promise.resolve());
   const port: RunEventPort = {
     toolStarted,
     toolRejected,
     toolFinished,
     agentMessage,
     agentThought,
-    usage: vi.fn(() => Promise.resolve()),
+    usage,
   };
-  return { port, toolStarted, toolRejected, toolFinished, agentMessage, agentThought };
+  return { port, toolStarted, toolRejected, toolFinished, agentMessage, agentThought, usage };
 }

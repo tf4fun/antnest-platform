@@ -1,6 +1,6 @@
 import type { NormalizedClientMcpSource } from "../domain/mcp.js";
 import type { ConnectionBinding, SessionRecord } from "../domain/types.js";
-import type { SessionEvent } from "./acp-application.js";
+import type { SessionEvent, SessionOutputSnapshot } from "./acp-application.js";
 
 export type CreateSessionInput = {
   sessionId: string;
@@ -33,6 +33,7 @@ export type ForkSessionInput = {
 };
 
 export interface SessionRepository {
+  readOutput(sessionId: string, afterSequence?: number): Promise<SessionOutputSnapshot>;
   create(input: CreateSessionInput): Promise<void>;
   get(sessionId: string): Promise<SessionRecord | null>;
   list(input: ListSessionsInput): Promise<{

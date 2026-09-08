@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import WebSocket, { type RawData } from "ws";
 
 import { AgentAcpHttpServer } from "../../src/transport/http-server.js";
+import { withOutputHistory } from "../support/output-application.js";
 import type { AcpApplicationPort, AcceptedAcpRun } from "../../src/ports/acp-application.js";
 import {
   AgentControllerError,
@@ -531,7 +532,7 @@ describe("AgentAcpHttpServer", () => {
     });
     server = new AgentAcpHttpServer({
       agentController: controllerPort().port,
-      application,
+      application: withOutputHistory(application),
       ready: vi.fn(() => Promise.resolve(true)),
       maxWebSocketPayloadBytes: 64 * 1024,
     });
@@ -624,7 +625,10 @@ function applicationPort(): AcpApplicationPort {
     listSessions: vi.fn(() => Promise.resolve({ sessions: [] })),
     deleteSession: vi.fn(),
     forkSession: vi.fn(),
-    resumeSession: vi.fn(() => Promise.resolve({ replay: [] })),
+    resumeSession: vi.fn(() => Promise.resolve({ replay: [], sequence: 0 })),
+    readSessionOutput: vi.fn<AcpApplicationPort["readSessionOutput"]>(() =>
+      Promise.resolve({ sequence: 0, events: [], state: { kind: "state", state: "idle" } }),
+    ),
     closeSession: vi.fn(),
     cancelRun: vi.fn(),
     acceptPrompt: vi.fn(),

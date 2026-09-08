@@ -407,6 +407,37 @@ describe("PromptCoordinator", () => {
     ).rejects.toMatchObject({ code: "run_cancelled" });
     expect(createRunIntent).not.toHaveBeenCalled();
   });
+
+  it("rejects unsupported attachments before creating an intent or acquiring a Run", async () => {
+    const { repository, createRunIntent } = createRepository();
+    const acquireRun = vi.fn<AgentControllerPort["acquireRun"]>();
+    const coordinator = new PromptCoordinator({
+      repository,
+      agentController: createController(acquireRun),
+      executions: { markAdmissionFinished: vi.fn() },
+      recoveryRequired: vi.fn(),
+      id: sequentialIds(),
+      now: () => new Date(),
+    });
+    await expect(
+      coordinator.accept({
+        binding,
+        sessionId: session.id,
+        prompt: [
+          {
+            type: "resource",
+            resource: {
+              uri: "attachment:///file.pdf",
+              mimeType: "application/pdf",
+              blob: "JVBERg==",
+            },
+          },
+        ],
+      }),
+    ).rejects.toMatchObject({ code: "unsupported_resource_content" });
+    expect(createRunIntent).not.toHaveBeenCalled();
+    expect(acquireRun).not.toHaveBeenCalled();
+  });
 });
 
 function sequentialIds(): () => string {

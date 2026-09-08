@@ -28,6 +28,12 @@ export class InstrumentedAcpApplication implements AcpApplicationPort {
     return this.delegate.assertAccess(input);
   }
 
+  public readSessionOutput(input: Parameters<AcpApplicationPort["readSessionOutput"]>[0]) {
+    return this.sessionOperation("output", input.binding.agentId, input.sessionId, () =>
+      this.delegate.readSessionOutput(input),
+    );
+  }
+
   public createSession(
     input: Parameters<AcpApplicationPort["createSession"]>[0],
   ): ReturnType<AcpApplicationPort["createSession"]> {

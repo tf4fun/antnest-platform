@@ -2,6 +2,7 @@ import { context, propagation } from "@opentelemetry/api";
 import { z } from "zod";
 
 import type { ContentBlock, JsonValue, ModelMessage } from "../../domain/types.js";
+import { normalizeEmbeddedResource } from "../../domain/embedded-resource.js";
 import type { ModelPort, ModelRequest, ModelResult } from "../../ports/model.js";
 
 type FetchFn = (input: string, init: RequestInit) => Promise<Response>;
@@ -68,13 +69,14 @@ export class OpenAICompatibleModel implements ModelPort {
       "content-type": "application/json",
     };
     propagation.inject(context.active(), headers);
+    const body = JSON.stringify(toRequestBody(request));
 
     let response: Response;
     try {
       response = await this.fetchFn(completionUrl(request), {
         method: "POST",
         headers,
-        body: JSON.stringify(toRequestBody(request)),
+        body,
         signal: request.signal,
       });
     } catch (error) {
@@ -113,7 +115,7 @@ function toRequestBody(request: ModelRequest): Record<string, unknown> {
   const model = request.snapshot.executionSpec.model;
   return {
     model: model.model,
-    messages: request.messages.map((message) => toOpenAIMessage(message, model.supportsImages)),
+    messages: toOpenAIMessages(request.messages, model.supportsImages),
     max_tokens: model.maxOutputTokens,
     ...(model.temperature === undefined ? {} : { temperature: model.temperature }),
     ...(request.tools.length === 0
@@ -129,6 +131,39 @@ function toRequestBody(request: ModelRequest): Record<string, unknown> {
           })),
         }),
   };
+}
+
+function toOpenAIMessages(
+  messages: ModelMessage[],
+  supportsImages: boolean,
+): Record<string, unknown>[] {
+  const result: Record<string, unknown>[] = [];
+  let images: ContentBlock[] = [];
+  const flushImages = () => {
+    if (images.length > 0) result.push(toOpenAIMessage({ role: "user", content: images }, true));
+    images = [];
+  };
+  for (const message of messages) {
+    if (message.role !== "tool") {
+      flushImages();
+      result.push(toOpenAIMessage(message, supportsImages));
+      continue;
+    }
+    const content = message.content.map((block) => {
+      if (block.type !== "image") return block;
+      if (supportsImages)
+        images.push({ type: "text", text: `Image from Tool ${message.toolCallId}:` }, block);
+      return {
+        type: "text",
+        text: supportsImages
+          ? "Tool image follows after this Tool batch."
+          : "Tool image omitted: model does not support images.",
+      };
+    });
+    result.push(toOpenAIMessage({ ...message, content }, supportsImages));
+  }
+  flushImages();
+  return result;
 }
 
 function toOpenAIMessage(message: ModelMessage, supportsImages: boolean): Record<string, unknown> {
@@ -287,27 +322,8 @@ function toModelResult(response: z.infer<typeof responseSchema>): ModelResult {
 }
 
 function embeddedResourceText(value: unknown): string {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw unsupportedContent("resource");
-  }
-  const uri = "uri" in value && typeof value.uri === "string" ? value.uri : "embedded-resource";
-  if ("text" in value && typeof value.text === "string") {
-    return `Embedded resource: ${uri}\n${value.text}`;
-  }
-  if ("blob" in value && typeof value.blob === "string") {
-    const mimeType =
-      "mimeType" in value && typeof value.mimeType === "string" ? value.mimeType : "unknown";
-    return `Embedded binary resource: ${uri}\nMIME: ${mimeType}\nBase64: ${value.blob}`;
-  }
-  throw unsupportedContent("resource");
-}
-
-function unsupportedContent(type: string): OpenAICompatibleModelError {
-  return new OpenAICompatibleModelError(
-    "model_unsupported_content",
-    `Unsupported textual content block ${type}`,
-    false,
-  );
+  const resource = normalizeEmbeddedResource(value);
+  return `Embedded resource: ${resource.uri}\n${resource.text}`;
 }
 
 function textBlock(value: string | null | undefined): ContentBlock[] | undefined {

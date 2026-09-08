@@ -116,6 +116,7 @@ export async function startBoundaryApplication(pool: Pool) {
     ),
   };
   const recoveryRequired = vi.fn();
+  const events = new PostgresRunEventRepository(kernel);
   const supervisor = new RunSupervisor(
     new RunExecutor({
       executions,
@@ -129,7 +130,7 @@ export async function startBoundaryApplication(pool: Pool) {
       agentController: controller,
       model,
       tools,
-      events: new PostgresRunEventRepository(kernel),
+      events,
       ownershipSignal: new AbortController().signal,
       recoveryRequired,
       id: randomUUID,
@@ -168,7 +169,9 @@ export async function startBoundaryApplication(pool: Pool) {
     if (address === null || typeof address === "string") throw new Error("Missing TCP address");
     const url = `ws://127.0.0.1:${address.port}`;
     return {
+      httpUrl: `http://127.0.0.1:${address.port}/v1/acp`,
       sessions,
+      events,
       controller,
       identities,
       authorizations,

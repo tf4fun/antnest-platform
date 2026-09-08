@@ -1,3 +1,5 @@
+import { posix } from "node:path";
+
 import { DomainError } from "./errors.js";
 import type {
   ConnectionBinding,
@@ -24,6 +26,12 @@ export function requireWorkspace(cwd: string, additionalDirectories: readonly st
       "unsupported_workspace",
       "ACP additional directories are not supported by this Agent",
     );
+  }
+}
+
+export function requireDirectoryFilter(cwd: string): void {
+  if (!posix.isAbsolute(cwd) || cwd.includes("\u0000")) {
+    throw new DomainError("invalid_directory_filter", "Directory filter must be an absolute path");
   }
 }
 

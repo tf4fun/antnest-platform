@@ -18,8 +18,10 @@ logic. Generating or hand-maintaining either wire model would make protocol
 drift an Antnest responsibility. TypeScript is confined to this service
 boundary and does not leak into internal RPC schemas.
 
-The remote transport is WebSocket. `/v1/acp` carries individual stable v1
-JSON-RPC messages; `/v2/acp` carries the v2 `WireStream`, including batches.
+Both endpoints accept WebSocket. `/v1/acp` also accepts the official SDK's
+Streamable HTTP transport; its [contract](http-transport.md) defines transport
+ownership and cleanup. `/v1/acp` carries individual stable v1 JSON-RPC messages;
+`/v2/acp` carries the v2 `WireStream` over WebSocket, including batches.
 The unversioned `/acp` is absent. Version-specific transport code maps wire
 requests and updates only; authorization, persistence, Run admission, model
 execution, and Tool execution remain shared application behavior.
@@ -154,7 +156,10 @@ starting model or Tool work.
    process memory.
 4. Check the complete model-input budget before each model request.
 5. Call the model and persist/emit text or thought output. Mixed text and Tool
-   calls are retained as one assistant response.
+   calls are retained as one assistant response. Before persistence, derive each
+   Tool ID from `(runId, model request index, provider call ID)`. This single ID
+   is used by assistant history, Tool results and ACP updates; provider IDs may
+   repeat in later requests without colliding in the Session.
 6. Validate the complete Tool-call batch, including unique call IDs, known
    names, and JSON Schema arguments, before the first Tool effect. If any call
    is invalid, execute none of them and return explicit Tool errors to the
@@ -167,7 +172,8 @@ starting model or Tool work.
    applies the same rule to calls retained in the assistant response but not
    yet dispatched when the process stopped.
 8. Stop on model completion, refusal, output limit, cancellation, context budget, or
-   `max_model_requests`.
+   `max_model_requests`. Recheck cancellation after final output persistence,
+   before choosing a completed outcome.
 9. Persist the exact stop reason and terminal Run facts before calling `finish_run`; retry
    `finish_run` idempotently after uncertain transport failure.
 
@@ -241,7 +247,7 @@ src/adapters/postgres/    private migrations and repository
 src/adapters/controller/  narrow Run admission RPC client
 src/adapters/model/       OpenAI-compatible model adapter
 src/adapters/mcp/         platform Runtime MCP client and network helpers
-src/transport/acp/        shared WebSocket stream plus versioned official SDK adapters
+src/transport/acp/        scoped official HTTP transport, WebSocket stream and versioned SDK adapters
 src/telemetry/            logs, traces, low-cardinality metrics
 src/main.ts               composition only
 ```
@@ -281,12 +287,13 @@ coordinated contract revision.
   the same durable request IDs. This is deliberately simpler than a second
   in-process workflow scheduler.
 - A failure handed to startup recovery does not emit a speculative ACP
-  `idle/_failed` projection. The current connection remains at its last durable
-  state and reconnect/replay exposes the recovered terminal result.
+  `idle/_failed` projection. The failing v2 connection is closed; reconnect/replay
+  exposes the recovered terminal result after service replacement.
 - Connection loss: does not delete Session state. In-flight work may continue;
-  updates are durable and can be replayed after resume. Every resume also
-  projects the latest durable Run as `running` or `idle`, even when historical
-  replay was not requested.
+  updates are durable and can be replayed after resume. Resume/load attaches the
+  new connection to subsequent durable output even if execution began on another
+  connection. V2 also projects the latest durable Run as `running` or `idle`,
+  even when historical replay was not requested; v1 adds no private state update.
 - Cancellation: the process-level Run supervisor indexes active work by durable
   Session identity from admission through terminal completion, not by WebSocket
   connection and not only after execution starts. A currently authorized
@@ -315,10 +322,28 @@ same fence. A completed effect may be recovered idempotently after replacement,
 but the stale worker cannot begin the next transition. Active-active execution requires a durable
 per-Run claim design and is not implied by stateless HTTP adapters.
 
-Live ACP notifications are best-effort projections of durable events. A slow
-or half-open WebSocket must never delay model execution, Tool completion, Run
-terminal persistence, cancellation, or shutdown; reconnect and replay repair
-delivery.
+Live ACP delivery uses a per-connection ordered output stream, not a second
+event journal. A single PostgreSQL statement reads visible messages after a
+sequence, the snapshot's maximum sequence, and current Run state. Local event
+invalidations trigger reads and are coalesced while delivery is active; there
+is no polling timer. Subscribe before catch-up, advance the cursor only after
+delivery, and re-read when invalidated during delivery. The existing single
+worker per database owns all live invalidations; this is not multi-worker fanout.
+
+Model/Tool execution and admission closure never wait for socket delivery.
+An online v1 Prompt response separately waits for its preceding notifications;
+v2 emits idle only after transcript and admission closure are durable. Each
+output operation has a 30-second bound. Disconnection, authorization failure,
+or stalled delivery closes/detaches the connection; it does not cancel durable
+execution. Reconnect/load repairs delivery from the retained transcript.
+
+Embedded text resources are normalized before Run admission: UTF-8 text blobs
+are decoded, while unhandled binary formats (including PDF) are rejected with
+`unsupported_resource_content` rather than injected as Base64 prose. Image
+Tool results remain in durable history. For vision models, the OpenAI adapter
+places them in an attributed user image message after the entire Tool batch;
+for non-vision models it sends an explicit omission note. Local conversion
+errors are not classified as network/provider availability failures.
 
 The same fail-stop rule applies when local Run persistence can no longer prove
 its terminal state. The service never removes an in-memory executor and keeps

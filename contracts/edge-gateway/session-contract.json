@@ -1,6 +1,6 @@
 {
   "contract": "antnest.edge-gateway.session",
-  "version": 8,
+  "version": 9,
   "session_validation": {
     "invalid_or_expired": "401 unauthenticated; clear browser cookies",
     "identity_unavailable": "503 identity_unavailable; preserve cookies; never admit upstream requests",
@@ -66,7 +66,30 @@
       "authentication": "browser_session",
       "success_status": 200,
       "response_required": ["principal", "agents"],
-      "forbidden_response_fields": ["agent_access_subject", "runtime_endpoint", "provider_credential"]
+      "forbidden_response_fields": [
+        "agent_access_subject",
+        "runtime_endpoint",
+        "provider_credential"
+      ]
+    },
+    "workspace_acp_http": {
+      "method": "POST|GET|DELETE",
+      "path": "/api/app/agents/{agent_id}/v1/acp",
+      "alias": "/api/app/agents/{agent_id}/acp",
+      "transport": "official experimental ACP Streamable HTTP",
+      "authentication": "browser_session_and_agent_access_on_every_request",
+      "csrf": "POST and DELETE require X-Antnest-CSRF-Token matching the cookie",
+      "origin": "when supplied must match Gateway; not required for non-browser HTTP clients",
+      "forwarded_headers": [
+        "Content-Type",
+        "Accept",
+        "Acp-Connection-Id",
+        "Acp-Session-Id"
+      ],
+      "message_payload": "opaque; no ACP translation or login credential forwarding",
+      "streaming": "unbuffered SSE; client disconnect cancels upstream receive request only",
+      "connection_authority": "ACP Service; connection ID is not an authentication credential",
+      "already_forwarded_work": "same policy as WebSocket; no idle authorization polling"
     },
     "workspace_acp": {
       "method": "GET",
@@ -74,7 +97,10 @@
       "transport": "websocket",
       "authentication": "browser_session_and_agent_access",
       "upstream_protocol": "ACP v1",
-      "versioned_paths": ["/api/app/agents/{agent_id}/v1/acp", "/api/app/agents/{agent_id}/v2/acp"],
+      "versioned_paths": [
+        "/api/app/agents/{agent_id}/v1/acp",
+        "/api/app/agents/{agent_id}/v2/acp"
+      ],
       "same_origin_required": true,
       "message_admission": "resolve original cookie token before forwarding each complete client message; require active original User/Organization/Membership",
       "message_payload": "opaque; no ACP translation or login credential forwarding",
@@ -84,23 +110,23 @@
       "already_forwarded_work": "not retroactively revoked; ACP owns Run and disconnect semantics",
       "idle_connection": "no background polling; server output for admitted work may continue until another client message or disconnect"
     },
-	"oidc_callback": {
-		"method": "GET",
-		"path": "/protocol/oidc/callback",
-		"authentication": "oidc_state_and_code_and_originating_browser_cookie",
-		"success_status": 303,
-		"success_location": "/",
-		"cache": "no-store",
-		"browser_session_established": true,
-		"forbidden_response_fields": ["access_token", "token_id", "state", "code"]
+    "oidc_callback": {
+      "method": "GET",
+      "path": "/protocol/oidc/callback",
+      "authentication": "oidc_state_and_code_and_originating_browser_cookie",
+      "success_status": 303,
+      "success_location": "/",
+      "cache": "no-store",
+      "browser_session_established": true,
+      "forbidden_response_fields": ["access_token", "token_id", "state", "code"]
     },
     "scim": {
       "method": "*",
       "path": "/scim/v2/{path...}",
-		"authentication": "scim_bearer",
-		"success_status": "upstream",
-		"authorization_forwarded": true,
-		"browser_cookies_forwarded": false
+      "authentication": "scim_bearer",
+      "success_status": "upstream",
+      "authorization_forwarded": true,
+      "browser_cookies_forwarded": false
     },
     "admin_application": {
       "method": "GET|HEAD",
@@ -133,7 +159,7 @@
       "forbidden",
       "csrf_failed",
       "identity_unavailable",
-		"login_method_unavailable",
+      "login_method_unavailable",
       "login_rate_limited",
       "console_unavailable",
       "workspace_unavailable",

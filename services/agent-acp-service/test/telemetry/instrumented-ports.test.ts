@@ -190,6 +190,7 @@ function acpApplication(): AcpApplicationPort {
     deleteSession: vi.fn(),
     forkSession: vi.fn(),
     resumeSession: vi.fn(),
+    readSessionOutput: vi.fn(),
     closeSession: vi.fn(),
     cancelRun: vi.fn(),
     acceptPrompt: vi.fn(() =>

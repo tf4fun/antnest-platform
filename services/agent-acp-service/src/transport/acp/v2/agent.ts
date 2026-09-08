@@ -4,28 +4,34 @@ import { context, propagation, type TextMapGetter } from "@opentelemetry/api";
 import { DomainError } from "../../../domain/errors.js";
 import type { ClientMcpInput } from "../../../domain/mcp.js";
 import type { ConnectionBinding, ContentBlock } from "../../../domain/types.js";
-import { RunRecoveryRequiredError } from "../../../ports/acp-application.js";
 import type {
   AcpApplicationPort,
   AcceptedAcpRun,
-  ExecuteRunResult,
   SessionEvent,
 } from "../../../ports/acp-application.js";
 import { AgentControllerError } from "../../../ports/agent-controller.js";
+import { SessionOutputStreams, sessionOutputKey } from "../session-output.js";
 
 export type CreateAcpAgentInput = {
   binding: ConnectionBinding;
   promptCapabilities: { image: boolean; embeddedContext: boolean };
   application: AcpApplicationPort;
+  outputs?: SessionOutputStreams;
 };
 
 export function createAcpV2Agent({
   binding,
   promptCapabilities,
   application,
+  outputs = new SessionOutputStreams(),
 }: CreateAcpAgentInput): acp.AgentApp {
+  let connection: acp.AgentConnection;
   return acp
     .agent({ name: "antnest-agent-acp-service" })
+    .onConnect((opened) => {
+      connection = opened;
+      void opened.closed.then(() => outputs.disconnect(binding.connectionId));
+    })
     .onRequest(acp.methods.agent.initialize, ({ params }) =>
       withAcpTrace(params._meta, () => ({
         protocolVersion: acp.PROTOCOL_VERSION,
@@ -127,6 +133,26 @@ export function createAcpV2Agent({
             update: toAcpUpdate(event),
           });
         }
+        const initialState = result.replay.find((event) => event.kind === "state");
+        await outputs.attach({
+          key: sessionOutputKey(binding, params.sessionId),
+          connectionId: binding.connectionId,
+          afterSequence: result.sequence,
+          ...(initialState === undefined ? {} : { initialState }),
+          signal: connection.signal,
+          onFailure: (error) => connection.close(error),
+          read: (cursor) =>
+            application.readSessionOutput({
+              binding,
+              sessionId: params.sessionId,
+              ...(cursor === undefined ? {} : { afterSequence: cursor }),
+            }),
+          send: (event) =>
+            client.notify(acp.methods.client.session.update, {
+              sessionId: params.sessionId,
+              update: toAcpUpdate(event),
+            }),
+        });
         return {};
       }),
     )
@@ -136,7 +162,7 @@ export function createAcpV2Agent({
         return {};
       }),
     )
-    .onRequest(acp.methods.agent.session.prompt, ({ params, client }) =>
+    .onRequest(acp.methods.agent.session.prompt, ({ params }) =>
       withAcpTrace(params._meta, async () => {
         if (!isPromptSupported(params.prompt, promptCapabilities)) {
           await mapError(() => application.assertAccess({ binding }));
@@ -150,7 +176,15 @@ export function createAcpV2Agent({
           }),
         );
         setImmediate(() => {
-          void startRun(application, accepted, params.sessionId, params.prompt, client);
+          void startRun({
+            application,
+            accepted,
+            sessionId: params.sessionId,
+            prompt: params.prompt,
+            connection,
+            outputs,
+            binding,
+          });
         });
         return {};
       }),
@@ -162,96 +196,69 @@ export function createAcpV2Agent({
     );
 }
 
-async function startRun(
-  application: AcpApplicationPort,
-  accepted: AcceptedAcpRun,
-  sessionId: string,
-  prompt: acp.ContentBlock[],
-  client: acp.AgentContext,
-): Promise<void> {
-  const publish = (event: SessionEvent): Promise<void> =>
-    notifyBestEffort(client, {
-      sessionId,
-      update: toAcpUpdate(event),
-    });
-
-  await notifyBestEffort(client, {
-    sessionId,
-    update: toAcpUpdate({
-      kind: "user_message",
-      messageId: accepted.userMessageId,
-      content: toDomainContent(prompt),
-    }),
-  });
-  if (accepted.sessionInfoUpdate !== undefined) {
-    await notifyBestEffort(client, {
-      sessionId,
-      update: {
-        sessionUpdate: "session_info_update",
-        ...accepted.sessionInfoUpdate,
+async function startRun({
+  application,
+  accepted,
+  sessionId,
+  prompt,
+  connection,
+  outputs,
+  binding,
+}: {
+  application: AcpApplicationPort;
+  accepted: AcceptedAcpRun;
+  sessionId: string;
+  prompt: acp.ContentBlock[];
+  connection: acp.AgentConnection;
+  outputs: SessionOutputStreams;
+  binding: ConnectionBinding;
+}): Promise<void> {
+  const key = sessionOutputKey(binding, sessionId);
+  const client = connection.client;
+  try {
+    await outputs.attach({
+      key,
+      connectionId: binding.connectionId,
+      signal: connection.signal,
+      onFailure: (error) => connection.close(error),
+      waitForDelivery: false,
+      read: (cursor) =>
+        application.readSessionOutput({
+          binding,
+          sessionId,
+          ...(cursor === undefined ? {} : { afterSequence: cursor }),
+        }),
+      send: (event) =>
+        client.notify(acp.methods.client.session.update, { sessionId, update: toAcpUpdate(event) }),
+      beforeFirst: async () => {
+        await client.notify(acp.methods.client.session.update, {
+          sessionId,
+          update: toAcpUpdate({
+            kind: "user_message",
+            messageId: accepted.userMessageId,
+            content: toDomainContent(prompt),
+          }),
+        });
+        if (accepted.sessionInfoUpdate !== undefined)
+          await client.notify(acp.methods.client.session.update, {
+            sessionId,
+            update: { sessionUpdate: "session_info_update", ...accepted.sessionInfoUpdate },
+          });
       },
     });
-  }
-  await notifyState(client, sessionId, "running");
-  try {
-    const result = await application.executeRun({
+    await application.executeRun({
       accepted,
-      publish,
+      publish: () => {
+        outputs.invalidate(key);
+        return Promise.resolve();
+      },
       signal: new AbortController().signal,
     });
-    await notifyIdle(client, sessionId, result);
   } catch (error) {
-    if (!(error instanceof RunRecoveryRequiredError)) {
-      await notifyState(client, sessionId, "idle", "_failed");
-    }
-  }
-}
-
-async function notifyBestEffort(
-  client: acp.AgentContext,
-  params: { sessionId: string; update: acp.SessionUpdate },
-): Promise<void> {
-  try {
-    await client.notify(acp.methods.client.session.update, params);
-  } catch {
-    // Durable replay, not the socket, is the source of truth.
-  }
-}
-
-function notifyState(
-  client: acp.AgentContext,
-  sessionId: string,
-  state: "running" | "idle",
-  stopReason?: string,
-): Promise<void> {
-  return notifyBestEffort(client, {
-    sessionId,
-    update: {
-      sessionUpdate: "state_update",
-      state,
-      ...(stopReason === undefined ? {} : { stopReason }),
-    },
-  });
-}
-
-function notifyIdle(
-  client: acp.AgentContext,
-  sessionId: string,
-  result: ExecuteRunResult,
-): Promise<void> {
-  return notifyState(client, sessionId, "idle", stopReason(result));
-}
-
-function stopReason(result: ExecuteRunResult): string {
-  switch (result.terminalClass) {
-    case "completed":
-      return result.stopReason;
-    case "cancelled":
-      return "cancelled";
-    case "failed":
-      return "_failed";
-    case "unresolved":
-      return "_unresolved";
+    connection.close(error);
+  } finally {
+    outputs.invalidate(key);
+    await outputs.flush(key, binding.connectionId);
   }
 }
 

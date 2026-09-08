@@ -14,6 +14,8 @@ import {
 } from "./acp/websocket-stream.js";
 import { createAcpV1Agent } from "./acp/v1/agent.js";
 import { createAcpV2Agent } from "./acp/v2/agent.js";
+import { SessionOutputStreams } from "./acp/session-output.js";
+import { AcpHttpTransport } from "./acp/http-transport.js";
 
 export type AgentAcpHttpServerOptions = {
   agentController: AgentControllerPort;
@@ -26,18 +28,22 @@ export type AgentAcpHttpServerOptions = {
 };
 
 export class AgentAcpHttpServer {
+  private readonly outputs = new SessionOutputStreams();
   private readonly server: Server;
   private readonly webSockets: WebSocketServer;
   private readonly connections = new Set<WebSocket>();
   private readonly id: () => string;
   private readonly telemetry: TelemetryPort;
+  private readonly httpTransport: AcpHttpTransport;
   private closePromise: Promise<void> | undefined;
 
   public constructor(private readonly options: AgentAcpHttpServerOptions) {
     this.id = options.id ?? randomUUID;
     this.telemetry = options.telemetry ?? NOOP_TELEMETRY;
+    this.httpTransport = new AcpHttpTransport({ ...options, outputs: this.outputs });
     this.server = createServer((request, response) => {
-      void this.handleHttp(request, response);
+      const requestContext = propagation.extract(context.active(), request.headers, HEADER_GETTER);
+      void context.with(requestContext, () => this.handleHttp(request, response));
     });
     this.webSockets = new WebSocketServer({
       noServer: true,
@@ -69,6 +75,7 @@ export class AgentAcpHttpServer {
   }
 
   private async closeOnce(): Promise<void> {
+    await this.httpTransport.close();
     for (const socket of this.connections) {
       socket.terminate();
     }
@@ -85,6 +92,10 @@ export class AgentAcpHttpServer {
   }
 
   private async handleHttp(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    if (request.url === "/v1/acp") {
+      await this.httpTransport.handle(request, response);
+      return;
+    }
     if (request.method !== "GET" || request.url !== "/status") {
       json(response, 404, { status: "not_found" });
       return;
@@ -157,6 +168,7 @@ export class AgentAcpHttpServer {
               binding,
               promptCapabilities: access.promptCapabilities,
               application: this.options.application,
+              outputs: this.outputs,
             }).connect(createAcpV1WebSocketStream(webSocket));
             this.observeConnection(connection, protocol);
           } else {
@@ -164,6 +176,7 @@ export class AgentAcpHttpServer {
               binding,
               promptCapabilities: access.promptCapabilities,
               application: this.options.application,
+              outputs: this.outputs,
             }).connect(createAcpV2WebSocketWireStream(webSocket));
             this.observeConnection(connection, protocol);
           }

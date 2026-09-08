@@ -35,6 +35,34 @@ export class PostgresSessionRepository implements SessionRepository {
     private readonly secretBox: SecretBox,
   ) {}
 
+  public async readOutput(sessionId: string, afterSequence?: number) {
+    const result = await this.kernel.query<{
+      sequence: string;
+      events: SessionEvent[];
+      state: "admitting" | "running" | "completed" | "cancelled" | "failed" | "unresolved" | null;
+      stop_reason: "end_turn" | "max_tokens" | "max_turn_requests" | "refusal" | null;
+    }>(
+      `SELECT s.last_message_sequence AS sequence,
+              COALESCE((SELECT jsonb_agg(m.payload ORDER BY m.sequence)
+                FROM session_messages m WHERE m.session_id = s.id AND m.visible
+                  AND m.sequence > COALESCE($2::bigint, s.last_message_sequence)), '[]'::jsonb) AS events,
+              CASE WHEN r.admission_id IS NOT NULL AND r.admission_finished_at IS NULL
+                   THEN 'running' ELSE r.state END AS state,
+              r.stop_reason
+         FROM acp_sessions s
+         LEFT JOIN LATERAL (SELECT state, stop_reason, admission_id, admission_finished_at FROM runs
+           WHERE session_id = s.id ORDER BY created_at DESC, id DESC LIMIT 1) r ON true
+        WHERE s.id = $1`,
+      [sessionId, afterSequence ?? null],
+    );
+    const row = requireRow(result.rows[0], "Session does not exist");
+    return {
+      sequence: Number(row.sequence),
+      events: row.events,
+      state: outputState(row.state, row.stop_reason),
+    };
+  }
+
   public async create(input: CreateSessionInput): Promise<void> {
     const now = new Date();
     await this.kernel.transaction(async (client) => {
@@ -388,6 +416,30 @@ function requireRow<T>(row: T | undefined, message: string): T {
 }
 
 type Cursor = { updatedAt: string; id: string };
+
+function outputState(
+  state: string | null,
+  stopReason: "end_turn" | "max_tokens" | "max_turn_requests" | "refusal" | null,
+): Extract<SessionEvent, { kind: "state" }> {
+  switch (state) {
+    case "admitting":
+    case "running":
+      return { kind: "state", state: "running" };
+    case "completed":
+      if (stopReason === null) throw new Error("Completed Run has no stop reason");
+      return { kind: "state", state: "idle", stopReason };
+    case "cancelled":
+      return { kind: "state", state: "idle", stopReason: "cancelled" };
+    case "failed":
+      return { kind: "state", state: "idle", stopReason: "_failed" };
+    case "unresolved":
+      return { kind: "state", state: "idle", stopReason: "_unresolved" };
+    case null:
+      return { kind: "state", state: "idle" };
+    default:
+      throw new Error(`Unexpected Run state: ${state}`);
+  }
+}
 
 function encodeCursor(cursor: Cursor): string {
   return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");

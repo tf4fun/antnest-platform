@@ -57,13 +57,13 @@ describe.skipIf(databaseUrl === undefined)("ACP v1 interface lifecycle", () => {
     ]);
     expect(history[0]).toMatchObject({ content: { type: "text", text: "inspect workspace" } });
     expect(history[1]).toMatchObject({ used: 6, size: 64000 });
+    expect(history[2]?.toolCallId).toEqual(expect.any(String));
     expect(history[2]).toMatchObject({
-      toolCallId: "owner-tool-call",
       status: "in_progress",
       rawInput: { path: "private.txt" },
     });
     expect(history[3]).toMatchObject({
-      toolCallId: "owner-tool-call",
+      toolCallId: history[2]?.toolCallId,
       status: "completed",
       content: [{ type: "content", content: { type: "text", text: "owner-only-tool-output" } }],
     });

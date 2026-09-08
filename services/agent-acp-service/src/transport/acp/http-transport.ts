@@ -1,0 +1,247 @@
+import { randomUUID } from "node:crypto";
+import type { IncomingMessage, ServerResponse } from "node:http";
+
+import { createNodeHttpHandler } from "@agentclientprotocol/sdk/experimental/node";
+import { AcpServer } from "@agentclientprotocol/sdk/experimental/server";
+
+import type { ConnectionBinding } from "../../domain/types.js";
+import type { AcpApplicationPort } from "../../ports/acp-application.js";
+import {
+  AgentControllerError,
+  type AgentControllerPort,
+  type ResolveAgentAccessResult,
+} from "../../ports/agent-controller.js";
+import { NOOP_TELEMETRY, type TelemetryPort } from "../../ports/telemetry.js";
+import type { SessionOutputStreams } from "./session-output.js";
+import { createAcpV1Agent } from "./v1/agent.js";
+
+type Options = {
+  agentController: AgentControllerPort;
+  application: AcpApplicationPort;
+  outputs: SessionOutputStreams;
+  ready: () => Promise<boolean>;
+  maxWebSocketPayloadBytes: number;
+  telemetry?: TelemetryPort;
+  maxConnections?: number;
+  idleTimeoutMs?: number;
+};
+
+// Each SDK server owns one authorized HTTP connection. The SDK remains the
+// authority for its transport ID and queues; this index only enforces ownership.
+export class AcpHttpTransport {
+  private readonly entries = new Set<HttpConnection>();
+  private readonly byId = new Map<string, HttpConnection>();
+  private readonly closing = new Set<Promise<void>>();
+  private readonly telemetry: TelemetryPort;
+  private stopped = false;
+
+  public constructor(private readonly options: Options) {
+    this.telemetry = options.telemetry ?? NOOP_TELEMETRY;
+  }
+
+  public async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    try {
+      await this.telemetry.span(
+        "acp.http",
+        { protocol: "v1", method: request.method },
+        async () => {
+          if (this.stopped || !(await this.options.ready())) return reply(response, 503);
+          if (!["POST", "GET", "DELETE"].includes(request.method ?? "")) {
+            response.setHeader("Allow", "POST, GET, DELETE");
+            return reply(response, 405);
+          }
+          const subject = header(request, "x-antnest-agent-access-subject");
+          if (!subject) return reply(response, 401);
+          const access = await this.options.agentController.resolveAgentAccess({
+            requestId: randomUUID(),
+            agentAccessSubject: subject,
+          });
+          if (this.isStopped() || response.destroyed) return reply(response, 503);
+          const entry = this.admit(request, response, subject, access);
+          if (entry) await entry.handle(request, response);
+        },
+      );
+    } catch (error) {
+      this.telemetry.log("error", "acp_http_failed", { protocol: "v1" }, error);
+      reply(response, rejectionStatus(error));
+    }
+  }
+
+  public async close(): Promise<void> {
+    this.stopped = true;
+    for (const entry of this.entries) this.release(entry);
+    await Promise.all(this.closing);
+  }
+
+  private isStopped(): boolean {
+    return this.stopped;
+  }
+
+  private admit(
+    request: IncomingMessage,
+    response: ServerResponse,
+    subject: string,
+    access: ResolveAgentAccessResult,
+  ): HttpConnection | undefined {
+    const id = header(request, "acp-connection-id");
+    if (id) {
+      const entry = this.byId.get(id);
+      if (!entry) {
+        reply(response, 404);
+        return;
+      }
+      const owner = entry.binding;
+      if (
+        owner.agentAccessSubject !== subject ||
+        owner.principalId !== access.principalId ||
+        owner.agentId !== access.agentId
+      ) {
+        reply(response, 403);
+        return;
+      }
+      if (owner.accessRevision !== access.accessRevision) {
+        this.release(entry);
+        reply(response, 403);
+        return;
+      }
+      return entry;
+    }
+    if (request.method !== "POST") {
+      reply(response, 400);
+      return;
+    }
+    if (this.entries.size >= (this.options.maxConnections ?? 1024)) {
+      reply(response, 503);
+      return;
+    }
+    const binding: ConnectionBinding = {
+      connectionId: randomUUID(),
+      agentAccessSubject: subject,
+      principalId: access.principalId,
+      agentId: access.agentId,
+      accessRevision: access.accessRevision,
+    };
+    const entry = new HttpConnection(binding, {
+      application: this.options.application,
+      outputs: this.options.outputs,
+      promptCapabilities: access.promptCapabilities,
+      maxPayloadBytes: this.options.maxWebSocketPayloadBytes,
+      idleTimeoutMs: this.options.idleTimeoutMs ?? 300_000,
+      register: (id) => this.byId.set(id, entry),
+      release: () => this.release(entry),
+    });
+    this.entries.add(entry);
+    this.telemetry.count("antnest.acp.connections", {
+      result: "accepted",
+      protocol: "v1",
+      transport: "http",
+    });
+    return entry;
+  }
+
+  private release(entry: HttpConnection): void {
+    if (!this.entries.delete(entry)) return;
+    if (entry.id) this.byId.delete(entry.id);
+    const closed = entry.close().catch((error: unknown) => {
+      this.telemetry.log("error", "acp_http_close_failed", {}, error);
+    });
+    this.closing.add(closed);
+    void closed.then(() => this.closing.delete(closed));
+    this.telemetry.count("antnest.acp.connections", {
+      result: "closed",
+      protocol: "v1",
+      transport: "http",
+    });
+  }
+}
+
+type ConnectionOptions = {
+  application: AcpApplicationPort;
+  outputs: SessionOutputStreams;
+  promptCapabilities: ResolveAgentAccessResult["promptCapabilities"];
+  maxPayloadBytes: number;
+  idleTimeoutMs: number;
+  register: (id: string) => void;
+  release: () => void;
+};
+
+class HttpConnection {
+  public id: string | undefined;
+  private readonly server: AcpServer;
+  private readonly requests = new Set<ServerResponse>();
+  private readonly handler: ReturnType<typeof createNodeHttpHandler>;
+  private timer: ReturnType<typeof setTimeout> | undefined;
+  private stopped = false;
+
+  public constructor(
+    public readonly binding: ConnectionBinding,
+    private readonly options: ConnectionOptions,
+  ) {
+    this.server = new AcpServer({
+      agent: createAcpV1Agent({ binding, ...options }).onConnect((connection) => {
+        void connection.closed.then(options.release);
+      }),
+    });
+    this.handler = createNodeHttpHandler(this.server, {
+      maxRequestBodyBytes: options.maxPayloadBytes,
+    });
+  }
+
+  public handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    clearTimeout(this.timer);
+    this.requests.add(response);
+    return new Promise((resolve) => {
+      response.once("finish", () => {
+        if (this.stopped) return;
+        if (this.id === undefined) {
+          const id = response.getHeader("acp-connection-id");
+          if (typeof id !== "string" || response.statusCode !== 200) {
+            this.options.release();
+            return;
+          }
+          this.id = id;
+          this.options.register(id);
+        }
+        if (request.method === "DELETE" && response.statusCode === 202) this.options.release();
+      });
+      response.once("close", () => {
+        this.requests.delete(response);
+        if (this.id === undefined) this.options.release();
+        if (!this.stopped && this.requests.size === 0) {
+          this.timer = setTimeout(this.options.release, this.options.idleTimeoutMs);
+          this.timer.unref();
+        }
+        resolve();
+      });
+      this.handler(request, response);
+    });
+  }
+
+  public async close(): Promise<void> {
+    this.stopped = true;
+    clearTimeout(this.timer);
+    for (const response of this.requests) {
+      if (!response.writableEnded) response.destroy();
+    }
+    await this.server.close();
+  }
+}
+
+function header(request: IncomingMessage, name: string): string | undefined {
+  const value = request.headers[name];
+  return typeof value === "string" && value.trim() !== "" ? value.trim() : undefined;
+}
+
+function reply(response: ServerResponse, status: number): void {
+  if (response.destroyed || response.writableEnded) return;
+  response.writeHead(status, { "content-type": "application/json" });
+  response.end(JSON.stringify({ status }));
+}
+
+function rejectionStatus(error: unknown): number {
+  if (error instanceof AgentControllerError && !error.retryable) {
+    if (error.code === "access_denied") return 403;
+    if (error.code === "invalid_request") return 400;
+  }
+  return 503;
+}

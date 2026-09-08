@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { withOutputHistory } from "../support/output-application.js";
 import * as acp from "@agentclientprotocol/sdk/experimental/v2";
 
 import { createAcpV2Agent } from "../../src/transport/acp/v2/agent.js";
@@ -184,6 +185,7 @@ describe("ACP v2 agent mapping", () => {
     const updates: acp.SessionUpdate[] = [];
     const resumeSession = vi.fn<AcpApplicationPort["resumeSession"]>(() =>
       Promise.resolve({
+        sequence: 1,
         replay: [
           {
             kind: "user_message",
@@ -283,14 +285,11 @@ describe("ACP v2 agent mapping", () => {
 
   it("does not invent an idle failure while durable recovery owns the Run outcome", async () => {
     const updates: acp.SessionUpdate[] = [];
-    const executeRun = vi.fn<AcpApplicationPort["executeRun"]>(() =>
-      Promise.reject(
-        new RunRecoveryRequiredError(
-          "Run event persistence requires recovery",
-          new Error("database unavailable"),
-        ),
-      ),
+    const failure = new RunRecoveryRequiredError(
+      "Run event persistence requires recovery",
+      new Error("database unavailable"),
     );
+    const executeRun = vi.fn<AcpApplicationPort["executeRun"]>(() => Promise.reject(failure));
     const agent = createAcpV2Agent({
       binding,
       promptCapabilities: { image: false, embeddedContext: false },
@@ -300,32 +299,33 @@ describe("ACP v2 agent mapping", () => {
       updates.push(params.update);
     });
 
-    await client.connectWith(agent, async (context) => {
-      await context.request(acp.methods.agent.initialize, {
-        protocolVersion: acp.PROTOCOL_VERSION,
-        info: { name: "test-client", version: "1.0.0" },
-      });
-      await context.request(acp.methods.agent.session.prompt, {
-        sessionId: "session-1",
-        prompt: [{ type: "text", text: "recover" }],
-      });
-      await vi.waitFor(() => expect(executeRun).toHaveBeenCalledOnce());
-      await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    });
+    await expect(
+      client.connectWith(agent, async (context) => {
+        await context.request(acp.methods.agent.initialize, {
+          protocolVersion: acp.PROTOCOL_VERSION,
+          info: { name: "test-client", version: "1.0.0" },
+        });
+        await context.request(acp.methods.agent.session.prompt, {
+          sessionId: "session-1",
+          prompt: [{ type: "text", text: "recover" }],
+        });
+        await vi.waitFor(() => expect(executeRun).toHaveBeenCalledOnce());
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      }),
+    ).rejects.toBe(failure);
 
-    expect(updates).toEqual([
-      {
-        sessionUpdate: "user_message",
-        messageId: "user-message-1",
-        content: [{ type: "text", text: "recover" }],
-      },
-      {
-        sessionUpdate: "session_info_update",
-        title: "hi",
-        updatedAt: "2026-08-30T00:00:01.000Z",
-      },
-      { sessionUpdate: "state_update", state: "running" },
-    ]);
+    expect(
+      updates.some((update) => update.sessionUpdate === "state_update" && update.state === "idle"),
+    ).toBe(false);
+    expect(updates).toEqual(
+      expect.arrayContaining([
+        {
+          sessionUpdate: "user_message",
+          messageId: "user-message-1",
+          content: [{ type: "text", text: "recover" }],
+        },
+      ]),
+    );
   });
 
   it("delegates cancellation even when this connection did not start the Run", async () => {
@@ -664,13 +664,13 @@ describe("ACP v2 agent mapping", () => {
 });
 
 function createApplication(overrides: Partial<AcpApplicationPort> = {}): AcpApplicationPort {
-  return {
+  return withOutputHistory({
     assertAccess: vi.fn(() => Promise.resolve()),
     createSession: vi.fn(() => Promise.resolve({ sessionId: "session-1" })),
     listSessions: vi.fn(() => Promise.resolve({ sessions: [] })),
     deleteSession: vi.fn(() => Promise.resolve()),
     forkSession: vi.fn(() => Promise.resolve({ sessionId: "session-fork" })),
-    resumeSession: vi.fn(() => Promise.resolve({ replay: [] })),
+    resumeSession: vi.fn(() => Promise.resolve({ replay: [], sequence: 0 })),
     closeSession: vi.fn(() => Promise.resolve()),
     cancelRun: vi.fn(() => Promise.resolve()),
     acceptPrompt: vi.fn((): Promise<AcceptedAcpRun> =>
@@ -695,7 +695,7 @@ function createApplication(overrides: Partial<AcpApplicationPort> = {}): AcpAppl
       }),
     ),
     ...overrides,
-  };
+  });
 }
 
 function createApplicationSnapshot(): AcceptedAcpRun["snapshot"] {

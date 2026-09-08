@@ -1,4 +1,5 @@
 import { DomainError } from "../domain/errors.js";
+import { normalizePromptResources } from "../domain/embedded-resource.js";
 import {
   authorizeSession,
   defaultSessionTitle,
@@ -52,6 +53,7 @@ export class PromptCoordinator {
     authorizeSession(session, input.binding);
     requireActiveSession(session);
     throwIfCancelled(signal);
+    const prompt = normalizePromptResources(input.prompt);
 
     const runId = this.dependencies.id();
     const requestId = this.dependencies.id();
@@ -63,7 +65,7 @@ export class PromptCoordinator {
       sessionId: session.id,
       expectedAccessRevision: input.binding.accessRevision,
       userMessageId,
-      prompt: input.prompt,
+      prompt,
       createdAt: now,
     });
     if (signal.aborted) {
