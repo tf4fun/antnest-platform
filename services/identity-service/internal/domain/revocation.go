@@ -2,6 +2,14 @@ package domain
 
 import "time"
 
+type OwnerAuthorization struct {
+	UserID                 string `json:"user_id"`
+	OrganizationID         string `json:"organization_id"`
+	MembershipID           string `json:"membership_id"`
+	Active                 bool   `json:"active"`
+	LastRevocationSequence int64  `json:"last_revocation_sequence"`
+}
+
 type PrincipalRevocation struct {
 	Sequence       int64     `json:"sequence"`
 	UserID         string    `json:"user_id"`

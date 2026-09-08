@@ -38,6 +38,15 @@ this phase has no pruning or cross-service database access.
 
 ## Controller Consumer Batch
 
+`POST /rpc/identity/resolve-owner-authorization` accepts `user_id` and
+`organization_id`. It returns `authorization` containing those IDs,
+`membership_id`, `active`, and `last_revocation_sequence` (zero if none).
+Activity and the latest applicable global/organization revocation are read in
+one PostgreSQL statement snapshot. Missing/tombstoned membership is `not_found`.
+No administrator bypass, credential or profile is included. Restoration never
+reduces this watermark. This internal query is for explicit create/enable
+authorization, not an OAuth token or a subscription cursor.
+
 Agent Controller will own durable consumption and reuse the normal asynchronous
 disable lifecycle. A notification is not proof of Runtime shutdown. Preserve
 pending work across busy/provisioning/rebuilding states and drain failures;

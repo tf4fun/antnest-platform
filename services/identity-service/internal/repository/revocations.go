@@ -11,6 +11,25 @@ import (
 	"soft/antnest-platform/services/identity-service/internal/domain"
 )
 
+func (a *DirectoryAdapter) ResolveOwnerAuthorization(ctx context.Context, userID, organizationID string) (domain.OwnerAuthorization, error) {
+	return observeRepositoryValue(ctx, "resolve_owner_authorization", func(ctx context.Context) (domain.OwnerAuthorization, error) {
+		var state domain.OwnerAuthorization
+		err := a.store.pool.QueryRow(ctx, `
+			SELECT u.id, o.id, m.id, u.active AND m.active AND o.active,
+			       COALESCE((SELECT max(sequence) FROM principal_revocations r
+			                 WHERE r.user_id = u.id AND (r.organization_id IS NULL OR r.organization_id = o.id)), 0)
+			FROM users u
+			JOIN organization_memberships m ON m.user_id = u.id AND m.organization_id = $2 AND m.scim_deleted_at IS NULL
+			JOIN organizations o ON o.id = m.organization_id
+			WHERE u.id = $1`, userID, organizationID).Scan(
+			&state.UserID, &state.OrganizationID, &state.MembershipID, &state.Active, &state.LastRevocationSequence)
+		if err != nil {
+			return domain.OwnerAuthorization{}, normalizeError(err)
+		}
+		return state, nil
+	})
+}
+
 func (s *Store) appendPrincipalRevocation(ctx context.Context, tx pgx.Tx, value domain.PrincipalRevocation) error {
 	// Allocate only after the writer lock; otherwise an uncommitted lower sequence can be skipped by consumers.
 	if _, err := tx.Exec(ctx, "LOCK TABLE principal_revocations IN SHARE ROW EXCLUSIVE MODE"); err != nil {

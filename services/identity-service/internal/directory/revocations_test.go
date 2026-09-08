@@ -55,3 +55,16 @@ func (r *revocationRepositoryStub) ListPrincipalRevocations(_ context.Context, q
 func (*directoryRepositoryStub) ListPrincipalRevocations(context.Context, RevocationQuery) (domain.PrincipalRevocationPage, error) {
 	return domain.PrincipalRevocationPage{}, nil
 }
+
+func (*directoryRepositoryStub) ResolveOwnerAuthorization(_ context.Context, userID, organizationID string) (domain.OwnerAuthorization, error) {
+	return domain.OwnerAuthorization{UserID: userID, OrganizationID: organizationID}, nil
+}
+
+func TestOwnerAuthorizationRejectsMissingIdentity(t *testing.T) {
+	service := NewService(&directoryRepositoryStub{}, func() string { return "id" }, time.Now)
+	for _, pair := range [][2]string{{"", "org"}, {"user", ""}} {
+		if _, err := service.ResolveOwnerAuthorization(t.Context(), pair[0], pair[1]); !errors.Is(err, domain.ErrInvalidArgument) {
+			t.Fatalf("missing identity error=%v", err)
+		}
+	}
+}

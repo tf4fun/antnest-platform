@@ -7,6 +7,15 @@ import (
 	"soft/antnest-platform/services/identity-service/internal/domain"
 )
 
+func (h *Handler) resolveOwnerAuthorization(response http.ResponseWriter, request *http.Request) {
+	var body resolvePrincipalRequest
+	if !decodeRequest(response, request, &body) || !requireIDs(response, body.UserID, body.OrganizationID) {
+		return
+	}
+	state, err := h.dependencies.Directory.ResolveOwnerAuthorization(request.Context(), body.UserID, body.OrganizationID)
+	writeResult(response, map[string]any{"authorization": state}, err)
+}
+
 func (h *Handler) listPrincipalRevocations(response http.ResponseWriter, request *http.Request) {
 	var body struct {
 		AfterSequence *int64 `json:"after_sequence"`

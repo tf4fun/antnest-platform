@@ -1,6 +1,6 @@
 {
   "contract": "antnest.identity",
-  "revision": 12,
+  "revision": 13,
   "transport": "json-over-http",
   "trust": "internal-network",
   "base_path": "/rpc/identity",
@@ -313,6 +313,28 @@
     }
   },
   "methods": {
+    "resolve_owner_authorization": {
+      "method": "POST",
+      "path": "/resolve-owner-authorization",
+      "request": {
+        "required": ["user_id", "organization_id"],
+        "properties": { "user_id": { "$ref": "#/definitions/id" }, "organization_id": { "$ref": "#/definitions/id" } }
+      },
+      "response": {
+        "required": ["authorization"],
+        "properties": {
+          "authorization": {
+            "type": "object", "additionalProperties": false,
+            "required": ["user_id", "organization_id", "membership_id", "active", "last_revocation_sequence"],
+            "properties": {
+              "user_id": { "$ref": "#/definitions/id" }, "organization_id": { "$ref": "#/definitions/id" },
+              "membership_id": { "$ref": "#/definitions/id" }, "active": { "type": "boolean" },
+              "last_revocation_sequence": { "type": "integer", "minimum": 0 }
+            }
+          }
+        }
+      }
+    },
     "list_principal_revocations": {
       "method": "POST",
       "path": "/list-principal-revocations",

@@ -284,6 +284,10 @@ replay and the remaining Controller/integration batches. Producer availability
 does not imply that Agents are already automatically disabled.
 
 Agent owner validation continues to use the narrow synchronous
+`resolve_owner_authorization` for explicit create/enable: activity and the latest
+applicable revocation sequence are returned from one SQL statement snapshot.
+This avoids ordering authorization by clocks across services. Ordinary access
+checks retain the existing
 `resolve_principal` RPC: it returns opaque principal facts only and neither
 enumerates the directory nor exposes profile data. Its dedicated repository
 projection requires a Membership row and computes active state from User,

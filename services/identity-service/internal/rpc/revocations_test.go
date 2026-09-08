@@ -43,3 +43,23 @@ func TestPrincipalRevocationsRPCEmptyPageRetainsCursor(t *testing.T) {
 func (*rpcServicesStub) ListPrincipalRevocations(_ context.Context, query directory.RevocationQuery) (domain.PrincipalRevocationPage, error) {
 	return domain.PrincipalRevocationPage{Events: []domain.PrincipalRevocation{}, NextSequence: query.AfterSequence}, nil
 }
+
+func TestOwnerAuthorizationRPC(t *testing.T) {
+	handler := newRPCHandler(t, &rpcServicesStub{})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/rpc/identity/resolve-owner-authorization",
+		strings.NewReader(`{"user_id":"owner","organization_id":"org"}`)))
+	var result struct {
+		Authorization domain.OwnerAuthorization `json:"authorization"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != 200 || result.Authorization.LastRevocationSequence != 9 || result.Authorization.UserID != "owner" || result.Authorization.OrganizationID != "org" {
+		t.Fatalf("response=%s", response.Body.String())
+	}
+}
+
+func (*rpcServicesStub) ResolveOwnerAuthorization(_ context.Context, userID, organizationID string) (domain.OwnerAuthorization, error) {
+	return domain.OwnerAuthorization{UserID: userID, OrganizationID: organizationID, MembershipID: "membership", Active: true, LastRevocationSequence: 9}, nil
+}
