@@ -50,6 +50,10 @@ are `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_PROTOCOL`, and their
 configured protocol other than `http/protobuf` is rejected at startup. Trace
 context propagation remains active when export is disabled.
 
+Finite RPC spans retain the matched method/route through the request-deadline
+wrapper. Inspect and Disable must remain distinguishable in Jaeger; matching
+only the service name or an `unmatched` route is not lifecycle trace evidence.
+
 The same supported keys prefixed with `ANTNEST_RUNTIME_` override values passed
 to managed Runtime containers. This is required when the Controller can reach a
 collector by service DNS but Runtime's direct platform-network policy requires

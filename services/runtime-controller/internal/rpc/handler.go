@@ -114,7 +114,10 @@ func (h *Handler) ServeHTTP(response http.ResponseWriter, request *http.Request)
 	}
 	ctx, cancel := context.WithTimeout(request.Context(), h.requestTimeout)
 	defer cancel()
-	h.mux.ServeHTTP(response, request.WithContext(ctx))
+	bounded := request.WithContext(ctx)
+	h.mux.ServeHTTP(response, bounded)
+	// Outer observability middleware reads routing metadata after this handler.
+	request.Pattern = bounded.Pattern
 }
 
 func (h *Handler) status(response http.ResponseWriter, request *http.Request) {
