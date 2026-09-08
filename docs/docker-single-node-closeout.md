@@ -203,6 +203,9 @@ uses. Adapter stubs must not be described as full-platform acceptance.
   owner RPC/cursor and idempotent consumer; authorization continues to use
   authoritative Identity checks. Do not automatically delete an Agent or its
   workspace merely because its owner is disabled.
+  Current-behavior review is complete; the offboarding business decision remains
+  open. See the C2-05 assessment below. Access revocation is not a substitute for
+  the whitepaper's automatic Agent freeze and delegated-credential recovery.
 
 **Milestone C2:** an actual local or OIDC user can reach the correct application,
 SCIM changes have tested effective access semantics, and administrator versus
@@ -730,3 +733,57 @@ notification and checkpoint negative cases; only the coordinator ran tests.
 C2-05's journal business-effect decision remains open, and C2 as a whole is not
 yet accepted. Disposable test resources are cleaned; retained instances remain
 untouched.
+
+### C2-05: Identity Effects Versus Agent Lifecycle
+
+Status: current behavior recorded; the product decision is still open. Do not
+mark C2 complete solely because access-isolation tests pass.
+
+| Change | Current effect | Not implied |
+| --- | --- | --- |
+| User inactive | Identity rejects affected principals and revokes that User's tokens; fresh Agent admissions fail | Runtime shutdown, background-process termination or delegated-credential revocation |
+| Membership inactive or SCIM DELETE | Current organization access is denied; another active organization of the same User is unaffected | Agent disable/delete, workspace removal, permanent loss of the stable User's old Agent/history |
+| Membership restored/reprovisioned | If User/organization and the Agent's own binding/lifecycle are usable, current owner resolution succeeds without rebuilding | Old SCIM-tombstoned Membership tokens becoming valid; implicit enable of an explicitly disabled Agent |
+| Role/profile/group change | Identity owns current profile and administrative permissions; an active member retains their own Agent usage | Owner reassignment, executable revision changes or group-driven Agent policy; no such policy is implemented |
+| Identity unavailable | New access and fresh Run admission fail closed | Lifecycle state changes or a distributed revocation transaction |
+| Previously committed admission | Exact retries retain the snapshot; credential resolution uses admission scope/state/deadline, while settlement does not recheck Identity | No execution after deactivation: ACP recovery of `admitting` work may start the first execution later |
+
+The original whitepaper, section 8.1, describes employee departure as Agent
+freeze, delegated-credential recovery and retained audit. The original IdP
+sequence, section 12, explicitly connects SCIM inactivity to those effects.
+Those product goals cannot be dismissed merely because current access checks
+do not need a journal consumer. The current platform has no independent
+delegated-credential lifecycle; a shared Model Profile credential must not be
+globally revoked to offboard one owner.
+
+The pending choice is **access-only in this stage** versus **automatic Agent
+disable while retaining data**. For access-only, explicitly defer the broader
+offboarding workflow rather than claim it is implemented. For automatic
+disable, define the Identity delivery contract first, then implement the
+Identity producer, Agent Controller consumer, and integration as separate
+service-owned batches. Agent Controller must retain authoritative Identity
+checks regardless of delivery delay. Re-enabling Identity must not silently
+enable a manually disabled Agent; idempotency and recovery belong to the
+selected workflow, not a generic event bus.
+
+Automatic disable is not emergency termination: the existing command drains
+Run occupancy and can fail at its drain deadline. If immediate interruption or
+strong credential revocation is required, define those effects explicitly
+instead of routing an Identity event to `disable` and calling it complete.
+SCIM reprovisioning also needs an explicit choice between stable-User continuity
+and a new manual reauthorization requirement. Current semantics use continuity
+with a fresh login after a tombstone; same email alone never transfers identity.
+
+Reusable [Controller regression cases](../services/agent-controller/internal/application/run_identity_test.go)
+cover active -> inactive/absent/unavailable -> restored resolution without
+replacing an otherwise valid Agent binding, retained independent Agent denial,
+and the distinction between committed admission retry, fresh admission and
+terminal settlement. They test current contract semantics, not delivery or
+automatic offboarding. C2-01/04 retain their previously recorded Gateway/E2E
+evidence; no new Docker or live-provider result is asserted by this assessment.
+
+Verification (2026-09-08): six focused cases passed with `-count=1`; Controller
+`go test -race -p=1 ./services/agent-controller/...`, `make fmt-check`, `make lint`
+(Go 0 issues, both Rust Clippy targets and Node checks), and changed-document
+link checks passed. Production behavior is unchanged; database-specific and
+Docker profiles were not rerun. The read-only reviewer is closed.

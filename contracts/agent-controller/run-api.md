@@ -15,6 +15,37 @@ reconstruct current Agent configuration from separate calls.
 The machine-readable request and response shapes are in
 [`run-contract.json`](run-contract.json).
 
+## Identity Changes And Lifecycle State
+
+Identity authorization and Agent lifecycle are separate authorities. A valid
+Agent access binding is necessary but does not override an inactive or missing
+organization Membership. Both `resolve_agent_access` and every new `acquire_run`
+read the current organization principal, fail closed on Identity dependency
+failure, and leave lifecycle state, executable revisions and access bindings
+unchanged on rejection. No Identity event delivery is needed for these checks.
+
+If Identity access is restored and Agent Controller's own binding and Runtime
+are still available, a new Run can use them without a rebuild or access-revision
+change. An explicitly disabled/deleted Agent or revoked binding remains
+unusable: Identity reactivation is not an Agent enable command. Ownership uses
+the stable User/Organization pair, not the replaceable Membership ID or profile.
+
+An exact retry of a committed admission returns the original snapshot, not a
+second authorization or a new Run. Admission-scoped credential resolution and
+`finish_run` continue to use the existing admission, without requiring current
+owner activity. This lets already-admitted work release its occupancy even when
+Identity changes or is unavailable; it does not promise completion despite
+other failures or bypass ACP's own request-time checks. Identity validation and
+the local admission commit are not one cross-service transaction: a concurrent
+Identity change can overlap an admission that was just validated.
+
+Replaying admission is not necessarily a history-only read. If Controller
+committed admission but ACP was interrupted before accepting it, ACP recovery
+can obtain that snapshot and start its first model/Tool execution after the
+Identity change. This is an already-committed admission, not a fresh admission
+for a new request ID. Do not describe Identity deactivation as an immediate
+execution, background-process, or credential-revocation barrier.
+
 ## Trust And Identity
 
 The caller is an internal service on a trusted deployment network. Transport
