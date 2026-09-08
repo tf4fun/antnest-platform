@@ -19,6 +19,7 @@ import (
 const maxRequestBytes = 1 << 20
 
 var ContractRoutes = map[string]string{
+	"list_principal_revocations":  "/rpc/identity/list-principal-revocations",
 	"create_organization":         "/rpc/identity/create-organization",
 	"create_local_user":           "/rpc/identity/create-local-user",
 	"add_organization_membership": "/rpc/identity/add-organization-membership",
@@ -42,6 +43,7 @@ var ContractRoutes = map[string]string{
 }
 
 type DirectoryService interface {
+	ListPrincipalRevocations(context.Context, directory.RevocationQuery) (domain.PrincipalRevocationPage, error)
 	CreateOrganization(context.Context, directory.CreateOrganizationInput) (domain.Organization, error)
 	CreateLocalUser(context.Context, directory.CreateLocalUserInput) (directory.CreateLocalUserResult, error)
 	AddOrganizationMembership(context.Context, directory.AddOrganizationMembershipInput) (domain.OrganizationMembership, error)
@@ -92,6 +94,7 @@ func NewHandler(dependencies Dependencies) (*Handler, error) {
 		return nil, fmt.Errorf("identity RPC handler requires all application services")
 	}
 	handler := &Handler{dependencies: dependencies, mux: http.NewServeMux()}
+	handler.mux.HandleFunc("POST /rpc/identity/list-principal-revocations", handler.listPrincipalRevocations)
 	handler.mux.HandleFunc("POST /rpc/identity/create-organization", handler.createOrganization)
 	handler.mux.HandleFunc("POST /rpc/identity/create-local-user", handler.createLocalUser)
 	handler.mux.HandleFunc("POST /rpc/identity/add-organization-membership", handler.addOrganizationMembership)

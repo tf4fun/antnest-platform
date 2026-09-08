@@ -203,8 +203,13 @@ uses. Adapter stubs must not be described as full-platform acceptance.
   owner RPC/cursor and idempotent consumer; authorization continues to use
   authoritative Identity checks. Do not automatically delete an Agent or its
   workspace merely because its owner is disabled.
-  Current-behavior review is complete; the offboarding business decision remains
-  open. See the C2-05 assessment below. Access revocation is not a substitute for
+  Decision confirmed: identity deactivation must disable associated Agents and
+  Runtime while retaining data; restoration does not automatically enable them.
+  Delivery follows the [revocation contract](../contracts/identity/principal-revocations.md)
+  in Identity producer, Controller consumer, then integration batches.
+  Identity's producer/RPC is implemented; Controller consumption and end-to-end
+  automatic disable are still pending. Do not mark C2-05 complete yet.
+  See the C2-05 assessment below. Access revocation is not a substitute for
   the whitepaper's automatic Agent freeze and delegated-credential recovery.
 
 **Milestone C2:** an actual local or OIDC user can reach the correct application,
@@ -730,13 +735,14 @@ than exempting an entire table. The model is a deterministic local protocol
 fixture, not an external Provider; this is not fresh browser acceptance.
 Independent read-only review drove the retained replay, denial-payload,
 notification and checkpoint negative cases; only the coordinator ran tests.
-C2-05's journal business-effect decision remains open, and C2 as a whole is not
+C2-05's implementation remains pending, and C2 as a whole is not
 yet accepted. Disposable test resources are cleaned; retained instances remain
 untouched.
 
 ### C2-05: Identity Effects Versus Agent Lifecycle
 
-Status: current behavior recorded; the product decision is still open. Do not
+Status: automatic Agent disable with retained data is required; implementation
+is split into service-owned batches. The table records the pre-consumer baseline. Do not
 mark C2 complete solely because access-isolation tests pass.
 
 | Change | Current effect | Not implied |
@@ -756,10 +762,8 @@ do not need a journal consumer. The current platform has no independent
 delegated-credential lifecycle; a shared Model Profile credential must not be
 globally revoked to offboard one owner.
 
-The pending choice is **access-only in this stage** versus **automatic Agent
-disable while retaining data**. For access-only, explicitly defer the broader
-offboarding workflow rather than claim it is implemented. For automatic
-disable, define the Identity delivery contract first, then implement the
+The confirmed choice is **automatic Agent disable while retaining data**.
+Define the Identity delivery contract first, then implement the
 Identity producer, Agent Controller consumer, and integration as separate
 service-owned batches. Agent Controller must retain authoritative Identity
 checks regardless of delivery delay. Re-enabling Identity must not silently
@@ -787,3 +791,35 @@ Verification (2026-09-08): six focused cases passed with `-count=1`; Controller
 (Go 0 issues, both Rust Clippy targets and Node checks), and changed-document
 link checks passed. Production behavior is unchanged; database-specific and
 Docker profiles were not rerun. The read-only reviewer is closed.
+
+#### C2-05 Delivery: Identity Producer
+
+Identity now commits `principal_revocations` atomically with local/global
+deactivation and SCIM inactive/delete. The private bounded RPC returns a
+commit-ordered replayable stream, scoped by stable User and optional
+Organization, with only source trace context and no credentials/profile data.
+The service documentation and machine contract describe retention and recovery.
+
+Final service verification (2026-09-08): all 15 Identity Go packages passed
+`go test -race -p=1 ./services/identity-service/... -count=1` with real isolated
+PostgreSQL. Regression cases cover local/SCIM/global scope, unchanged/restored
+identities, SCIM HTTP -> revocation RPC, pagination/replay, commit ordering,
+sequence allocation only after acquiring the writer lock, rollback gaps, and
+feed failure rolling back all four mutations including SCIM group edges and
+timestamps. A synthetic trigger failure is asserted explicitly, so unrelated
+validation failures cannot manufacture a passing rollback test.
+
+Admission: `make fmt-check`, `make lint` (Go 0 issues, both Rust Clippy
+all-target checks, Node lint/type checks), Identity route/contract tests and 18
+local document-link checks passed. The dedicated PostgreSQL test container,
+networks and volume were removed; retained development instances were untouched.
+
+Read-only review found no confirmed producer implementation defect; its two
+coverage findings (lock-before-allocation and non-global rollback) are now
+covered. Reviewers are closed. No cross-service Agent-disable or new Jaeger
+acceptance is claimed by these service-owned tests.
+
+Remaining: Controller durable consumption, creation/enable authorization
+boundary, disable-failure convergence, then scoped Gateway/Runtime/Jaeger
+integration. Identity restoration must not undo consumed offboarding. C2-05
+remains open until those batches complete.

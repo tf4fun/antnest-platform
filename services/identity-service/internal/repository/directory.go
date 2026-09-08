@@ -322,11 +322,11 @@ func (a *DirectoryAdapter) UpdateMembership(
 		var currentActive bool
 		var updatedAt time.Time
 		if err := tx.QueryRow(ctx, `
-			SELECT source, role, active, updated_at
+			SELECT source, role, active, updated_at, user_id
 			FROM organization_memberships
 			WHERE organization_id = $1 AND id = $2 AND scim_deleted_at IS NULL
 			FOR UPDATE`, membership.OrganizationID, membership.ID,
-		).Scan(&source, &currentRole, &currentActive, &updatedAt); err != nil {
+		).Scan(&source, &currentRole, &currentActive, &updatedAt, &membership.UserID); err != nil {
 			return err
 		}
 		if source != domain.SourceLocal {
@@ -372,7 +372,7 @@ func (a *DirectoryAdapter) UpdateMembership(
 		); err != nil {
 			return fmt.Errorf("update organization membership: %w", err)
 		}
-		return a.store.appendEvent(ctx, tx, event{
+		if err := a.store.appendEvent(ctx, tx, event{
 			OrganizationID:   membership.OrganizationID,
 			ActorPrincipalID: command.ActorPrincipalID,
 			Type:             "organization_membership.updated",
@@ -380,6 +380,15 @@ func (a *DirectoryAdapter) UpdateMembership(
 			SubjectID:        membership.ID,
 			RequestID:        command.RequestID,
 			CreatedAt:        membership.UpdatedAt,
+		}); err != nil {
+			return err
+		}
+		if !currentActive || membership.Active {
+			return nil
+		}
+		return a.store.appendPrincipalRevocation(ctx, tx, domain.PrincipalRevocation{
+			UserID: membership.UserID, OrganizationID: membership.OrganizationID,
+			Reason: "membership_deactivated", OccurredAt: membership.UpdatedAt,
 		})
 	})
 	return membership, err
@@ -432,13 +441,21 @@ func (a *DirectoryAdapter) SetUserActive(
 		if !command.Active {
 			eventType = "user.deactivated"
 		}
-		return a.store.appendEvent(ctx, tx, event{
+		if err := a.store.appendEvent(ctx, tx, event{
 			ActorPrincipalID: command.ActorPrincipalID,
 			Type:             eventType,
 			SubjectType:      "user",
 			SubjectID:        command.UserID,
 			RequestID:        command.RequestID,
 			CreatedAt:        command.UpdatedAt,
+		}); err != nil {
+			return err
+		}
+		if command.Active {
+			return nil
+		}
+		return a.store.appendPrincipalRevocation(ctx, tx, domain.PrincipalRevocation{
+			UserID: command.UserID, Reason: "user_deactivated", OccurredAt: command.UpdatedAt,
 		})
 	})
 }

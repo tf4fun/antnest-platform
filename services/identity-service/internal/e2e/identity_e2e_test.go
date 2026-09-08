@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -170,6 +171,9 @@ func TestIdentityProtocolHappyPath(t *testing.T) {
 	if replay.AccessToken != "" || replay.TokenID != completed.TokenID || !replay.AlreadyCompleted || idp.ExchangeCount() != 1 {
 		t.Fatalf("OIDC callback was not idempotent: first=%#v replay=%#v exchanges=%d", completed, replay, idp.ExchangeCount())
 	}
+	t.Run("SCIM revocation delivery", func(t *testing.T) {
+		assertSCIMRevocationDelivery(t, identity, issued.Credential, createdUser)
+	})
 }
 
 func newIsolatedPool(t *testing.T, databaseURL string) *pgxpool.Pool {
@@ -274,6 +278,12 @@ func decodeResponse(t *testing.T, response *http.Response, wantStatus int, targe
 		var failure any
 		_ = json.NewDecoder(response.Body).Decode(&failure)
 		t.Fatalf("response status = %d, want %d: %#v", response.StatusCode, wantStatus, failure)
+	}
+	if response.StatusCode == http.StatusNoContent {
+		if body, err := io.ReadAll(response.Body); err != nil || len(body) != 0 {
+			t.Fatalf("204 must have an empty body: length=%d error=%v", len(body), err)
+		}
+		return
 	}
 	if err := json.NewDecoder(response.Body).Decode(target); err != nil {
 		t.Fatalf("decode response: %v", err)

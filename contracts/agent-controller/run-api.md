@@ -30,6 +30,12 @@ change. An explicitly disabled/deleted Agent or revoked binding remains
 unusable: Identity reactivation is not an Agent enable command. Ownership uses
 the stable User/Organization pair, not the replaceable Membership ID or profile.
 
+The preceding describes current admission checks, not the required completed
+offboarding workflow. Identity deactivation must also cause automatic Agent and
+Runtime disable with retained data. The [revocation contract](../identity/principal-revocations.md)
+tracks the separate Identity producer, Controller consumer and integration
+batches. Once consumed, restoration must not automatically undo that disable.
+
 An exact retry of a committed admission returns the original snapshot, not a
 second authorization or a new Run. Admission-scoped credential resolution and
 `finish_run` continue to use the existing admission, without requiring current

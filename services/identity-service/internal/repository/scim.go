@@ -269,11 +269,20 @@ func (a *SCIMAdapter) ReplaceUser(ctx context.Context, command scim.ReplaceUserC
 		if err != nil {
 			return err
 		}
-		return a.store.appendEvent(ctx, tx, event{
+		if err := a.store.appendEvent(ctx, tx, event{
 			OrganizationID: command.OrganizationID, Type: "scim_user.replaced",
 			ActorSCIMTokenID: command.ActorTokenID,
 			SubjectType:      "organization_membership", SubjectID: command.Membership.ID,
 			CreatedAt: command.User.UpdatedAt,
+		}); err != nil {
+			return err
+		}
+		if !current.Membership.Active || result.Membership.Active {
+			return nil
+		}
+		return a.store.appendPrincipalRevocation(ctx, tx, domain.PrincipalRevocation{
+			UserID: current.User.ID, OrganizationID: command.OrganizationID,
+			Reason: "membership_deactivated", OccurredAt: result.Membership.UpdatedAt,
 		})
 	})
 	return result, err
@@ -322,11 +331,17 @@ func (a *SCIMAdapter) DeleteUser(ctx context.Context, command scim.DeleteUserCom
 		); err != nil {
 			return fmt.Errorf("tombstone SCIM user: %w", err)
 		}
-		return a.store.appendEvent(ctx, tx, event{
+		if err := a.store.appendEvent(ctx, tx, event{
 			OrganizationID: command.OrganizationID, Type: "scim_user.deleted",
 			ActorSCIMTokenID: command.ActorTokenID,
 			SubjectType:      "organization_membership", SubjectID: command.MembershipID,
 			Metadata: map[string]any{"user_id": userID}, CreatedAt: deletedAt,
+		}); err != nil {
+			return err
+		}
+		return a.store.appendPrincipalRevocation(ctx, tx, domain.PrincipalRevocation{
+			UserID: userID, OrganizationID: command.OrganizationID,
+			Reason: "membership_deleted", OccurredAt: deletedAt,
 		})
 	})
 }

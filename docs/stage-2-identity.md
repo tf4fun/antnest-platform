@@ -89,15 +89,18 @@ oidc_auth_sessions
 api_tokens
 scim_tokens
 identity_events
+principal_revocations
 schema_migrations
 ```
 
 There are no cross-service foreign keys, views, queries, triggers, or shared
 transactions. IDs referenced by other services are opaque strings.
 
-`identity_events` remains a transactional journal in this stage. Delivery,
-consumer cursors, replay, and Agent Controller reactions are completed together
-with Agent Controller rather than being guessed in advance here.
+`identity_events` remains a private audit journal. The dedicated
+`principal_revocations` feed is atomically emitted for deactivation/SCIM delete
+and exposed by bounded internal RPC, with commit-ordered replay. Agent
+Controller consumption and cross-service offboarding acceptance remain separate
+batches; see the [delivery contract](../contracts/identity/principal-revocations.md).
 
 ## Internal RPC
 

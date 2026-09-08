@@ -1,10 +1,27 @@
 {
   "contract": "antnest.identity",
-  "revision": 11,
+  "revision": 12,
   "transport": "json-over-http",
   "trust": "internal-network",
   "base_path": "/rpc/identity",
   "definitions": {
+    "principal_revocation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sequence", "user_id", "reason", "occurred_at"],
+      "properties": {
+        "sequence": { "type": "integer", "minimum": 1 },
+        "user_id": { "$ref": "#/definitions/id" },
+        "organization_id": { "$ref": "#/definitions/id" },
+        "reason": { "type": "string", "enum": ["user_deactivated", "membership_deactivated", "membership_deleted"] },
+        "occurred_at": { "$ref": "#/definitions/timestamp" },
+        "traceparent": { "type": "string", "pattern": "^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$" }
+      },
+      "oneOf": [
+        { "properties": { "reason": { "const": "user_deactivated" } }, "not": { "required": ["organization_id"] } },
+        { "properties": { "reason": { "enum": ["membership_deactivated", "membership_deleted"] } }, "required": ["organization_id"] }
+      ]
+    },
     "id": {
       "type": "string",
       "minLength": 1,
@@ -296,6 +313,25 @@
     }
   },
   "methods": {
+    "list_principal_revocations": {
+      "method": "POST",
+      "path": "/list-principal-revocations",
+      "request": {
+        "additionalProperties": false,
+        "required": ["after_sequence", "limit"],
+        "properties": {
+          "after_sequence": { "type": "integer", "minimum": 0 },
+          "limit": { "type": "integer", "minimum": 1, "maximum": 500 }
+        }
+      },
+      "response": {
+        "required": ["events", "next_sequence"],
+        "properties": {
+          "events": { "type": "array", "maxItems": 500, "items": { "$ref": "#/definitions/principal_revocation" } },
+          "next_sequence": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
     "create_organization": {
       "method": "POST",
       "path": "/create-organization",

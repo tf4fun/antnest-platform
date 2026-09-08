@@ -258,12 +258,32 @@ whose Organization, User, and Membership match the session result.
    they never rewrite another Organization's profile or a global User subject.
 8. Passwords and OIDC subjects are credentials of a User, not User attributes.
 
-## Deferred Event Delivery
+## Principal Revocation Delivery
 
 Identity mutations continue to append `identity_events` in the same database
-transaction. This is an audit/outbox foundation only. Listing, watching,
-consumer cursors, replay, and asynchronous Agent Controller reactions remain
-deferred. Agent owner validation instead uses the narrow synchronous
+transaction. This general audit journal is private and is not a safe
+commit-ordered cursor. `principal_revocations` separately records global User
+deactivation, organization Membership deactivation and SCIM deletion in the
+same mutation transaction. It contains only the stable User, optional scoped
+Organization, reason, occurrence time and originating trace parent.
+
+Writers lock the feed table at the end of the transaction before allocating a
+`CACHE 1`, non-cycling sequence. This serializes revocations, not login/audit
+traffic; allocation must not be moved before the lock. Rollbacks leave gaps but
+cannot leave an earlier uncommitted event behind a consumer's committed cursor.
+Scope is constrained by reason: global deactivation has no Organization;
+Membership events must have one. No cross-service foreign keys or cascades
+erase historical revocations.
+
+Trusted internal `list_principal_revocations` exposes ascending pages of 1..500
+records after an exclusive nonnegative cursor. Empty pages return `events: []`
+and the unchanged cursor. No feed pruning is implemented; consumers own their
+durable cursor and processing state. The
+[contract](../../../contracts/identity/principal-revocations.md) defines scope,
+replay and the remaining Controller/integration batches. Producer availability
+does not imply that Agents are already automatically disabled.
+
+Agent owner validation continues to use the narrow synchronous
 `resolve_principal` RPC: it returns opaque principal facts only and neither
 enumerates the directory nor exposes profile data. Its dedicated repository
 projection requires a Membership row and computes active state from User,

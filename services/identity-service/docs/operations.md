@@ -131,6 +131,25 @@ protocol bodies are never telemetry.
 - SCIM mutations accept exactly one JSON object up to 1 MiB and reject empty
   Group member references instead of silently discarding them.
 
+## Revocation Feed Recovery
+
+`list_principal_revocations` is private trusted-network RPC and must not be
+forwarded by Gateway. It uses the same bounded route/repository spans and
+metrics as other RPC queries; event payloads are not logged. The stored W3C
+trace parent lets a future consumer correlate asynchronous lifecycle work with
+the originating request, without persisting baggage or credentials.
+
+Back up `principal_revocations` with the rest of the Identity database. Do not
+truncate it, reset its sequence, change sequence caching, or manually insert
+rows outside the producer's transaction lock. A consumer begins at zero and
+persists only sequences of actually received records. There is no automatic
+feed retention or compaction in this stage. Consumers own retries and cursors;
+Identity never writes their databases. Database rollback/replacement requires
+coordinated consumer recovery, not silently reusing a cursor from another
+history. Existing inactive identities predating this feed have no synthetic
+revocation events; a nonempty upgrade needs explicit reconciliation before
+claiming offboarding coverage.
+
 ## Shutdown
 
 SIGINT/SIGTERM clears readiness, stops accepting new requests, drains HTTP,

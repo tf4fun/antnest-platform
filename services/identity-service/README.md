@@ -17,8 +17,10 @@ organization profile, Organization name/slug, and an authoritative boolean
 indicating whether a local password credential exists. Internal consumers use
 its identity IDs for binding but must explicitly project browser-safe fields;
 the RPC never returns credential material.
-Cross-service Identity event delivery remains deliberately separate from this
-synchronous authorization query. The service contract is
+The internal `list_principal_revocations` RPC supplies a durable, replayable
+deactivation feed, separate from synchronous authorization and the general audit
+journal. Agent Controller consumption is a separate delivery batch, not yet a
+completed automatic Agent-disable workflow. The service contract is
 [`../../docs/stage-2-identity.md`](../../docs/stage-2-identity.md); this
 directory is the only implementation authority for this service.
 
@@ -29,7 +31,8 @@ directory is the only implementation authority for this service.
 - Local password credentials, API tokens, and SCIM bearer tokens. Credentials
   are separate records and are not attributes of the global User subject.
 - SCIM Users/Groups projection and the transactional Identity event journal.
-  The journal is not yet a cross-service delivery interface.
+  The general journal is private; `principal_revocations` is the narrow ordered
+  cross-service feed. See the [delivery contract](../../contracts/identity/principal-revocations.md).
 - Its private PostgreSQL schema and migrations.
 
 ## Does Not Own

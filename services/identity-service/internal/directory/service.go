@@ -12,6 +12,7 @@ import (
 )
 
 type Repository interface {
+	ListPrincipalRevocations(context.Context, RevocationQuery) (domain.PrincipalRevocationPage, error)
 	GetOrganization(context.Context, string) (domain.Organization, error)
 	GetPrincipal(context.Context, string, string) (domain.Principal, error)
 	ResolveOrganizationPrincipal(context.Context, string, string) (domain.Principal, error)
