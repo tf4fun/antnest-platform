@@ -28,6 +28,12 @@ opaque Runtime revision atomically clears the executable binding, transitions
 an otherwise idle available Agent to `unavailable`, and appends
 `agent_runtime_restarted`. Recovery is an explicit Agent rebuild.
 
+The separate [Identity offboarding consumer](identity-offboarding.md) receives
+commit-ordered revocations through Identity RPC. It stores receipt progress and
+per-owner scope watermarks, fences fresh Run admission, and schedules the same
+Disable saga used by manual requests. It does not introduce another lifecycle
+executor. Identity restoration never automatically enables Agents.
+
 ## Aggregate Model
 
 ### ModelProfile
@@ -100,6 +106,8 @@ Agent
   active_operation_request_id?
   failure?
   aggregate_sequence
+  owner_authorization_sequence
+  identity_revocation_sequence
 ```
 
 The desired state is business intent. The lifecycle state contains only stable
@@ -112,7 +120,10 @@ audit.
 `owner_user_id` is immutable ownership, not a copied user profile. Before first
 creation, Agent Controller resolves the opaque `(organization_id,
 owner_user_id)` pair through Identity Service and requires an active
-organization membership. Persisting the create intent freezes that decision;
+organization membership. The atomic owner-authorization RPC includes the latest
+applicable revocation sequence. Create and explicit Enable freeze it under the
+local receipt/admission boundary; a newer consumed revocation rejects a stale
+decision with a conflict. Persisting the create intent freezes that decision;
 exact replay of a running, failed, or completed operation does not revalidate
 and change its historical meaning. Agent access resolution repeats the same
 non-secret check, so a disabled user or membership is rejected on the next ACP
@@ -121,6 +132,14 @@ before the local admission transaction. A request already admitted before a
 concurrent Identity change keeps its immutable authorization snapshot. Agent
 Controller never joins or writes Identity Service storage.
 Owner-filtered reads are served from the local Agent projection.
+
+Controller migration 4 adds two private tables: `identity_revocation_cursor`
+(single receipt checkpoint) and `owner_revocations` (latest global or scoped
+revocation). Agent watermarks and the Disable operation's revocation cause stay
+on their owning records. Only idle Agents immediately change desired state on
+receipt; an already-active lifecycle keeps its original transition contract,
+while the independent owner fence prevents new admission. Receipt is audited as
+`agent_owner_revoked`, not as proof that Runtime has stopped.
 
 Current-state queries order by immutable `(created_at, agent_id)` and use an
 opaque keyset cursor. They do not hold database snapshots across HTTP requests.

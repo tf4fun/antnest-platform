@@ -75,6 +75,9 @@ func (repository *Repository) BeginAgentDisable(
 	if !matchesDisableSource(agent, input) {
 		return ports.AgentDisableState{}, false, ports.ErrConcurrentChange
 	}
+	if input.Operation.OwnerRevocationSequence > 0 && (!agent.IdentityRevoked() || agent.IdentityRevocationSequence != input.Operation.OwnerRevocationSequence) {
+		return ports.AgentDisableState{}, false, ports.ErrConcurrentChange
+	}
 	sourceSpec, err := loadAgentSpec(ctx, transaction, input.ExpectedSpecRevisionID)
 	if err != nil {
 		return ports.AgentDisableState{}, false, err
@@ -95,7 +98,7 @@ func (repository *Repository) BeginAgentDisable(
 UPDATE agent_controller.agents
 SET desired_state = 'disabled', active_operation_request_id = $2,
     aggregate_sequence = $3, updated_at = $4
-WHERE id = $1 AND desired_state = 'enabled' AND lifecycle_state = 'available'
+WHERE id = $1 AND (desired_state = 'enabled' OR (desired_state = 'disabled' AND identity_revocation_sequence > owner_authorization_sequence)) AND lifecycle_state = 'available'
   AND active_operation_request_id = '' AND aggregate_sequence = $5
   AND executable_spec_revision_id = $6
   AND executable_execution_revision_id = $7 AND runtime_revision = $8`,
@@ -395,7 +398,8 @@ func (repository *Repository) FailAgentDisable(
 	if input.PreserveExecutable {
 		result, err = transaction.Exec(ctx, `
 UPDATE agent_controller.agents
-SET desired_state = 'enabled', lifecycle_state = 'available',
+SET desired_state = CASE WHEN identity_revocation_sequence > owner_authorization_sequence OR $12 > 0 THEN 'disabled' ELSE 'enabled' END,
+    lifecycle_state = 'available',
     active_operation_request_id = '', failure_stage = $2, failure_code = $3,
     failure_detail = $4, aggregate_sequence = $5, updated_at = $6
 WHERE id = $1 AND desired_state = 'disabled' AND lifecycle_state = 'available'
@@ -406,6 +410,7 @@ WHERE id = $1 AND desired_state = 'disabled' AND lifecycle_state = 'available'
 			failedEvent.AggregateSequence, input.Now, input.RequestID,
 			failedEvent.AggregateSequence-1, operation.SourceSpecRevisionID,
 			operation.SourceExecutionRevisionID, operation.SourceRuntimeRevision,
+			operation.OwnerRevocationSequence,
 		)
 	} else {
 		result, err = transaction.Exec(ctx, `
@@ -533,7 +538,7 @@ func disabledRuntimeResult(result ports.RuntimeOperation) bool {
 }
 
 func matchesDisableSource(agent ports.AgentRecord, input ports.BeginAgentDisable) bool {
-	return agent.DesiredState == domain.DesiredEnabled &&
+	return agent.AllowsDisableRequest() &&
 		agent.LifecycleState == domain.AgentAvailable && agent.ActiveOperationRequestID == "" &&
 		agent.AggregateSequence == input.ExpectedAggregateSequence &&
 		agent.AgentSpecRevisionID == input.ExpectedSpecRevisionID &&

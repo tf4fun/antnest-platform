@@ -84,7 +84,7 @@ boundaries verified by source inspection, not new test-run results:
 | Stdio MCP | Template-owned configuration starts children inside Runtime; ACP discovers/calls their aggregated HTTP tools; Console and Docker evidence exists | Client-supplied ACP stdio remains unsupported. Keep the stable-v1 baseline incompatibility visible; do not launch commands on the ACP host or silently turn Session input into Template configuration |
 | Session recovery | v1 real WebSocket/PostgreSQL reconnect and application-recreation cases; application recovery unit tests | Actual ACP process interruption with completed and in-flight work, both protocol versions, admission settlement and replay without repeated effects through Edge |
 | Access isolation | v1/v2 Gateway integration with two real users, three Agents and owner deactivation on an existing connection; service tests for revision changes | Real-platform access-revision change and browser-session revocation semantics; OIDC/SCIM flows remain separate |
-| Identity events | Transactional `identity_events` journal; synchronous `resolve_principal` dependency | No journal delivery contract or Agent Controller consumer. C2-05 must decide the required business effect, then implement its narrow delivery/consumer batches if needed; local audit alone is not event-driven integration |
+| Identity events | Transactional revocation feed, atomic owner authorization, Controller durable consumer and Disable convergence | Cross-service Docker/Jaeger offboarding acceptance remains pending; local component tests are not full-platform evidence |
 | Documentation and operations | Current Stage 3 entry and MCP feature evidence | Remove stale current-status wording, exercise restore/cleanup, measure the reported idle CPU spikes, and produce the final three-flow Jaeger report |
 
 ## 3. Ordered Delivery Checklist
@@ -207,8 +207,10 @@ uses. Adapter stubs must not be described as full-platform acceptance.
   Runtime while retaining data; restoration does not automatically enable them.
   Delivery follows the [revocation contract](../contracts/identity/principal-revocations.md)
   in Identity producer, Controller consumer, then integration batches.
-  Identity's producer/RPC is implemented; Controller consumption and end-to-end
-  automatic disable are still pending. Do not mark C2-05 complete yet.
+  Identity's producer/RPC and Controller consumption are implemented. The
+  Controller batch adds local transaction, lifecycle, and event-stream tests;
+  cross-service automatic-disable acceptance remains pending. Do not mark
+  C2-05 complete yet.
   See the C2-05 assessment below. Access revocation is not a substitute for
   the whitepaper's automatic Agent freeze and delegated-credential recovery.
 
@@ -819,7 +821,42 @@ coverage findings (lock-before-allocation and non-global rollback) are now
 covered. Reviewers are closed. No cross-service Agent-disable or new Jaeger
 acceptance is claimed by these service-owned tests.
 
-Remaining: Controller durable consumption, creation/enable authorization
-boundary, disable-failure convergence, then scoped Gateway/Runtime/Jaeger
-integration. Identity restoration must not undo consumed offboarding. C2-05
-remains open until those batches complete.
+The following Controller batch delivers durable consumption, creation/enable
+authorization boundaries, and disable-failure convergence. Scoped
+Gateway/Runtime/Jaeger integration remains a separate batch. Identity restoration
+must not undo consumed offboarding. C2-05 remains open until integration passes.
+
+#### C2-05 Delivery: Controller Consumer
+
+The [service design](../services/agent-controller/docs/identity-offboarding.md)
+defines a narrow Identity RPC consumer, per-owner revocation watermarks, and an
+atomic local receipt/admission boundary. Global User events match all owned
+Agents; Membership events match only that organization. New admissions are
+fenced while admitted work retains its snapshot and completion contract.
+
+The existing Disable recovery worker handles network fencing and Runtime stop.
+An unavailable/uncertain Runtime remains visibly pending, never falsely reported
+as disabled. Terminal known failures retain the fence and retry after cooldown.
+Identity restoration alone cannot Enable; explicit Enable requires fresh active
+owner authorization. No Agent/workspace/audit data or shared provider credential
+is deleted. Migration 4 touches only the Controller schema.
+
+Service regressions cover ordered/invalid feed pages, duplicate receipt, scoped
+and global fences, late/concurrent Create, fresh admission versus replay/finish,
+receipt rollback, consumer restart, source outage with local pending work,
+busy candidate fairness, failed Disable cooldown/retry, explicit Enable, source
+trace propagation, and global/per-Agent event replay/watch. Read-only review
+identified event-type whitelist and compensation recheck gaps; both now have
+regression coverage. No new full-platform Docker or Jaeger acceptance is claimed.
+
+Final service verification (2026-09-08): all 13 Controller Go packages passed
+`go test -race -coverprofile=.cache/agent-controller-offboarding.cover -p=1
+./services/agent-controller/... -count=1` with the real isolated PostgreSQL
+profile. Total statement coverage is 69.5%; application 75.7%, Identity client
+87.0%, and PostgreSQL repository 66.8%. `make fmt-check` and `make lint` passed
+(Go 0 issues, both Rust Clippy all-target checks, Node lint/type checks).
+Repeated acceptance exposed fixed-ID fixture leakage in the existing HTTP/DB
+tests; each now resets only the Controller schema in an explicitly named test
+database. The final full profile passed without rebuilding the database first.
+Reviewers are closed, and this batch's dedicated PostgreSQL container, networks,
+and volume have been removed. Existing development instances were not changed.

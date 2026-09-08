@@ -899,6 +899,10 @@ type identityDirectoryStub struct {
 	calls     int
 }
 
+func (stub *identityDirectoryStub) ResolveOwnerAuthorization(ctx context.Context, org, user string) (ports.IdentityPrincipal, error) {
+	return stub.ResolvePrincipal(ctx, org, user)
+}
+
 func (stub *identityDirectoryStub) ResolvePrincipal(
 	context.Context, string, string,
 ) (ports.IdentityPrincipal, error) {

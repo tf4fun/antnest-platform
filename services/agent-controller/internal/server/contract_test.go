@@ -81,7 +81,7 @@ func TestMachineControlContractMatchesRegisteredBoundary(t *testing.T) {
 	readStrictContractJSON(t, filepath.Join(root, "contracts/agent-controller/control-contract.json"), &contract)
 	var schema machineControlSchema
 	readContractJSON(t, filepath.Join(root, "contracts/agent-controller/control-api.schema.json"), &schema)
-	if contract.Revision != 11 {
+	if contract.Revision != 12 {
 		t.Fatalf("control contract revision = %d", contract.Revision)
 	}
 	if contract.MediaTypes.Request != "application/json" ||
@@ -625,6 +625,7 @@ func TestMachineEventTypesMatchProducerContract(t *testing.T) {
 		ports.EventAgentDeleted,
 		ports.EventAgentLifecycleQuarantined,
 		ports.EventAgentRuntimeRestarted,
+		ports.EventAgentOwnerRevoked,
 		ports.EventRunAdmissionReleased,
 		ports.EventRunAdmissionUnresolved,
 	}

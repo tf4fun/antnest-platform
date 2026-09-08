@@ -48,7 +48,7 @@ RETURNING operation.request_id, operation.request_fingerprint, operation.agent_i
           operation.attempt, operation.recovery_owner, operation.recovery_lease_until,
           operation.recovery_after, operation.recovery_failure_count,
           operation.error_code, operation.error_detail, operation.retryable,
-          operation.created_at, operation.updated_at`,
+          operation.created_at, operation.updated_at, operation.owner_revocation_sequence`,
 		input.LeaseDuration.String(), input.WorkerID,
 	)
 	operation, err := scanLifecycleOperation(row)

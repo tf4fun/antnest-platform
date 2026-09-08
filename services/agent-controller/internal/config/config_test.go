@@ -25,6 +25,7 @@ func TestLoadRequiresDatabaseAndCanonicalEncryptionKey(t *testing.T) {
 		loaded.RunAdmissionTTL != 30*time.Minute ||
 		loaded.RecoveryPollInterval != 2*time.Second ||
 		loaded.ObservationPollInterval != 2*time.Second ||
+		loaded.IdentityRevocationPollInterval != 2*time.Second ||
 		loaded.RecoveryAttemptTimeout != 10*time.Minute+5*time.Second ||
 		loaded.RecoveryLeaseDuration != 10*time.Minute+35*time.Second ||
 		loaded.RecoveryRetryMax != time.Minute {
@@ -84,6 +85,11 @@ func TestLoadRejectsInvalidEncryptionKeyAndDuration(t *testing.T) {
 		t.Fatal("non-positive Runtime observation poll interval was accepted")
 	}
 	delete(values, "ANTNEST_AGENT_CONTROLLER_RUNTIME_OBSERVATION_POLL_INTERVAL")
+	values["ANTNEST_AGENT_CONTROLLER_IDENTITY_REVOCATION_POLL_INTERVAL"] = "0s"
+	if _, err := Load(func(key string) string { return values[key] }); err == nil {
+		t.Fatal("non-positive identity revocation poll interval was accepted")
+	}
+	delete(values, "ANTNEST_AGENT_CONTROLLER_IDENTITY_REVOCATION_POLL_INTERVAL")
 	delete(values, "ANTNEST_RUNTIME_EGRESS_URL")
 	if _, err := Load(func(key string) string { return values[key] }); err == nil {
 		t.Fatal("missing Runtime Egress URL was accepted")

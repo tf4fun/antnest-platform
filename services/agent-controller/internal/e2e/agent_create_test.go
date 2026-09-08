@@ -36,6 +36,7 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 		t.Skip("ANTNEST_AGENT_CONTROLLER_TEST_DATABASE_URL is not set")
 	}
 	ctx := context.Background()
+	resetE2ESchema(t, ctx, databaseURL)
 	previousProvider := otel.GetTracerProvider()
 	previousPropagator := otel.GetTextMapPropagator()
 	spanRecorder := tracetest.NewSpanRecorder()
@@ -747,6 +748,10 @@ type wallClock struct{}
 func (wallClock) Now() time.Time { return time.Now().UTC() }
 
 type e2eIdentityDirectory struct{}
+
+func (directory e2eIdentityDirectory) ResolveOwnerAuthorization(ctx context.Context, org, user string) (ports.IdentityPrincipal, error) {
+	return directory.ResolvePrincipal(ctx, org, user)
+}
 
 func (e2eIdentityDirectory) ResolvePrincipal(
 	_ context.Context, organizationID, userID string,

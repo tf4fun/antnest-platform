@@ -1,6 +1,6 @@
 {
   "contract": "antnest.agent-controller.lifecycle",
-  "revision": 11,
+  "revision": 12,
   "transport": "json-over-http",
   "trust": "internal-network",
   "media_types": {
@@ -226,6 +226,8 @@
       "agent_delete_requested",
       "agent_deleted",
       "agent_lifecycle_quarantined",
+      "agent_runtime_restarted",
+      "agent_owner_revoked",
       "agent_build_failed",
       "run_admission_unresolved",
       "run_admission_released"

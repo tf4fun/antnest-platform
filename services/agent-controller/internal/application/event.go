@@ -234,6 +234,8 @@ func validAgentEventType(eventType string) bool {
 		ports.EventAgentDeleteRequested,
 		ports.EventAgentDeleted,
 		ports.EventAgentLifecycleQuarantined,
+		ports.EventAgentRuntimeRestarted,
+		ports.EventAgentOwnerRevoked,
 		ports.EventRunAdmissionReleased,
 		ports.EventRunAdmissionUnresolved:
 		return true

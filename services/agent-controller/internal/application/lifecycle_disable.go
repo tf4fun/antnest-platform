@@ -11,11 +11,12 @@ import (
 )
 
 type DisableAgentInput struct {
-	RequestID          string
-	OrganizationID     string
-	ActorPrincipalID   string
-	AgentID            string
-	InitialTraceParent string
+	OwnerRevocationSequence int64
+	RequestID               string
+	OrganizationID          string
+	ActorPrincipalID        string
+	AgentID                 string
+	InitialTraceParent      string
 }
 
 type DisableAgentResult struct {
@@ -57,6 +58,9 @@ func (service *LifecycleService) DisableAgent(
 	if err := validateDisableSource(base); err != nil {
 		return DisableAgentResult{}, err
 	}
+	if input.OwnerRevocationSequence > 0 && (!base.Agent.IdentityRevoked() || base.Agent.IdentityRevocationSequence != input.OwnerRevocationSequence) {
+		return DisableAgentResult{}, fmt.Errorf("%w: owner revocation changed", ErrLifecycleConflict)
+	}
 	now := service.clock.Now()
 	operation, err := domain.NewLifecycleOperation(domain.NewLifecycleOperationInput{
 		RequestID: input.RequestID, RequestFingerprint: fingerprint,
@@ -76,7 +80,8 @@ func (service *LifecycleService) DisableAgent(
 		ExpectedExecutionRevisionID: base.ExecutableExecution.ID,
 		ExpectedRuntimeRevision:     base.Agent.RuntimeRevision,
 		Operation: ports.LifecycleOperationRecord{
-			RequestID: input.RequestID, RequestFingerprint: fingerprint,
+			OwnerRevocationSequence: input.OwnerRevocationSequence,
+			RequestID:               input.RequestID, RequestFingerprint: fingerprint,
 			AgentID: input.AgentID, Kind: domain.OperationDisable,
 			Phase: operation.Phase(), State: operation.State(),
 			SourceSpecRevisionID:      base.ExecutableSpec.ID,
@@ -92,6 +97,7 @@ func (service *LifecycleService) DisableAgent(
 			SchemaVersion: 1, EventType: ports.EventAgentDisableRequested,
 			OperationRequestID: input.RequestID, TraceID: currentTraceID(ctx),
 			Data: map[string]any{
+				"owner_revocation_sequence":     input.OwnerRevocationSequence,
 				"actor_principal_id":            input.ActorPrincipalID,
 				"source_agent_spec_revision_id": base.ExecutableSpec.ID,
 				"source_execution_revision_id":  base.ExecutableExecution.ID,
@@ -272,9 +278,7 @@ func (service *LifecycleService) failAgentDisable(
 	absenceProof *ports.RuntimeAbsenceProof,
 ) (ports.AgentDisableState, error) {
 	if preserveExecutable && state.Operation.NetworkAttachment != nil {
-		if _, err := service.setCurrentNetworkAttachmentState(
-			ctx, state.Agent.AgentID, ports.NetworkAttachmentOpen,
-		); err != nil {
+		if err := service.restoreNetworkUnlessRevoked(ctx, state.Agent.AgentID, state.Operation.OwnerRevocationSequence); err != nil {
 			return state, fmt.Errorf("%w: runtime-egress attachment restoration", ErrDependencyUnavailable)
 		}
 	}
@@ -349,7 +353,7 @@ func completedDisabledRuntime(result ports.RuntimeOperation) bool {
 
 func validateDisableAgentInput(input DisableAgentInput) error {
 	if !validIdentifier(input.RequestID) || !validIdentifier(input.AgentID) ||
-		!validLifecycleCaller(input.OrganizationID, input.ActorPrincipalID) {
+		!validLifecycleCaller(input.OrganizationID, input.ActorPrincipalID) || input.OwnerRevocationSequence < 0 {
 		return fmt.Errorf("%w: Agent disable input", ErrInvalidInput)
 	}
 	return nil
@@ -360,7 +364,7 @@ func validateDisableSource(base ports.AgentLifecycleBase) error {
 	if agent.ActiveOperationRequestID != "" {
 		return fmt.Errorf("%w: Agent already has an active lifecycle operation", ErrLifecycleConflict)
 	}
-	if agent.DesiredState != domain.DesiredEnabled || agent.LifecycleState != domain.AgentAvailable ||
+	if !agent.AllowsDisableRequest() || agent.LifecycleState != domain.AgentAvailable ||
 		agent.AgentSpecRevisionID == "" || agent.ExecutionRevisionID == "" ||
 		agent.LastSuccessfulExecutionRevisionID != agent.ExecutionRevisionID ||
 		agent.RuntimeRevision == "" || agent.RuntimeExecutionID == "" ||
@@ -375,13 +379,15 @@ func validateDisableSource(base ports.AgentLifecycleBase) error {
 
 func disableAgentFingerprint(input DisableAgentInput) (string, error) {
 	return requestFingerprint(struct {
-		RequestID        string
-		OrganizationID   string
-		ActorPrincipalID string
-		AgentID          string
+		RequestID               string
+		OrganizationID          string
+		ActorPrincipalID        string
+		AgentID                 string
+		OwnerRevocationSequence int64 `json:",omitempty"`
 	}{
 		RequestID: input.RequestID, OrganizationID: input.OrganizationID,
 		ActorPrincipalID: input.ActorPrincipalID, AgentID: input.AgentID,
+		OwnerRevocationSequence: input.OwnerRevocationSequence,
 	})
 }
 

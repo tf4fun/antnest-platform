@@ -85,6 +85,12 @@ Agent Controller owns one PostgreSQL database/schema and its migrations. It
 never reads or writes another service's tables and has no cross-service foreign
 keys, views, triggers, or transactions.
 
+Identity deactivation is consumed through the private revocation RPC. A durable
+owner fence prevents new Run admission and schedules the existing Disable saga.
+Identity restoration never automatically enables an Agent. See
+[Identity offboarding](docs/identity-offboarding.md) for scope, races, recovery,
+and pending-runtime semantics.
+
 ## Local Verification
 
 ```sh
@@ -100,4 +106,5 @@ Docker and Jaeger acceptance commands are documented in
 
 - [Architecture](docs/architecture.md)
 - [Operations](docs/operations.md)
+- [Identity offboarding](docs/identity-offboarding.md)
 - [Stage 2 Agent and ACP design](../../docs/stage-2-agent-and-acp.md)

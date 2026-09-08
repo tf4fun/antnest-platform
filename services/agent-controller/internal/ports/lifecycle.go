@@ -38,6 +38,7 @@ const (
 	EventAgentDeleted              = "agent_deleted"
 	EventAgentLifecycleQuarantined = "agent_lifecycle_quarantined"
 	EventAgentRuntimeRestarted     = "agent_runtime_restarted"
+	EventAgentOwnerRevoked         = "agent_owner_revoked"
 )
 
 var ErrRunAdmissionRuntimeMismatch = errors.New("run admission Runtime does not match lifecycle barrier")
@@ -141,6 +142,17 @@ type AgentRecord struct {
 	AggregateSequence                 int64
 	CreatedAt                         time.Time
 	UpdatedAt                         time.Time
+	OwnerAuthorizationSequence        int64
+	IdentityRevocationSequence        int64
+}
+
+func (record AgentRecord) IdentityRevoked() bool {
+	return record.IdentityRevocationSequence > record.OwnerAuthorizationSequence
+}
+
+func (record AgentRecord) AllowsDisableRequest() bool {
+	return record.DesiredState == domain.DesiredEnabled ||
+		(record.DesiredState == domain.DesiredDisabled && record.IdentityRevoked())
 }
 
 type AgentAccessRecord struct {
@@ -164,6 +176,7 @@ type AgentSpecRecord struct {
 }
 
 type LifecycleOperationRecord struct {
+	OwnerRevocationSequence     int64
 	RequestID                   string
 	RequestFingerprint          string
 	AgentID                     string
@@ -401,6 +414,7 @@ type FailAgentDisable struct {
 }
 
 type BeginAgentEnable struct {
+	OwnerAuthorizationSequence  int64
 	AgentID                     string
 	ExpectedAggregateSequence   int64
 	ExpectedSpecRevisionID      string

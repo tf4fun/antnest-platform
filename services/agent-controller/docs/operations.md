@@ -2,8 +2,11 @@
 
 ## Process Model
 
-One binary serves internal HTTP RPC, a supervised lifecycle worker, and a
-bounded Runtime-observation consumer.
+One binary serves internal HTTP RPC, a supervised lifecycle worker, and bounded
+Runtime-observation and Identity-offboarding consumers. The Identity consumer
+only records fences and schedules lifecycle operations; it never executes
+Runtime mutations directly. See [offboarding](identity-offboarding.md) for
+pending-state inspection and recovery.
 PostgreSQL is authoritative. Lifecycle mutations commit durable intent and
 return `202 Accepted`; only the worker calls Runtime Controller or Runtime
 Egress. The current runnable slices serve ModelProfile/Template Catalog
@@ -71,6 +74,7 @@ Optional:
 - `ANTNEST_AGENT_CONTROLLER_RUN_ADMISSION_TTL` (default `30m`);
 - `ANTNEST_AGENT_CONTROLLER_RECOVERY_POLL_INTERVAL` (default `2s`);
 - `ANTNEST_AGENT_CONTROLLER_RUNTIME_OBSERVATION_POLL_INTERVAL` (default `2s`);
+- `ANTNEST_AGENT_CONTROLLER_IDENTITY_REVOCATION_POLL_INTERVAL` (default `2s`);
 - `ANTNEST_AGENT_CONTROLLER_SHUTDOWN_TIMEOUT` (default `15s`);
 - standard OTEL environment variables using OTLP HTTP/protobuf.
 

@@ -38,6 +38,7 @@ var (
 		{version: 1, name: "initial_agent_controller_schema", sql: initialSchemaSQL},
 		{version: 2, name: "enforce_owner_and_empty_skills", sql: ownerAndEmptySkillsSQL},
 		{version: 3, name: "backfill_unknown_effect_source", sql: unknownEffectSourceSQL},
+		{version: 4, name: "identity_revocations", sql: mustMigration("migrations/0004_identity_revocations.sql")},
 	}
 )
 

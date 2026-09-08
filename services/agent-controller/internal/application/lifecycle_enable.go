@@ -57,6 +57,10 @@ func (service *LifecycleService) EnableAgent(
 	if err := validateEnableSource(base); err != nil {
 		return EnableAgentResult{}, err
 	}
+	authorization, err := service.authorizeOwner(ctx, base.Agent.OrganizationID, base.Agent.OwnerUserID)
+	if err != nil {
+		return EnableAgentResult{}, err
+	}
 	now := service.clock.Now()
 	operation, err := domain.NewLifecycleOperation(domain.NewLifecycleOperationInput{
 		RequestID: input.RequestID, RequestFingerprint: fingerprint,
@@ -71,6 +75,7 @@ func (service *LifecycleService) EnableAgent(
 		return EnableAgentResult{}, fmt.Errorf("%w: %v", ErrInvalidInput, err)
 	}
 	state, _, err = service.store.BeginAgentEnable(ctx, ports.BeginAgentEnable{
+		OwnerAuthorizationSequence:  authorization.LastRevocationSequence,
 		AgentID:                     input.AgentID,
 		ExpectedAggregateSequence:   base.Agent.AggregateSequence,
 		ExpectedSpecRevisionID:      base.Spec.ID,

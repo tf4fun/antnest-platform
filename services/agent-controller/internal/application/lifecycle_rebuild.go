@@ -383,13 +383,43 @@ func (service *LifecycleService) failRebuildPreservingSource(
 	retryable bool,
 ) (ports.AgentRebuildState, error) {
 	if state.Operation.NetworkAttachment != nil {
-		if _, err := service.setCurrentNetworkAttachmentState(
-			ctx, state.Agent.AgentID, ports.NetworkAttachmentOpen,
-		); err != nil {
+		if err := service.restoreNetworkUnlessRevoked(ctx, state.Agent.AgentID, 0); err != nil {
 			return state, fmt.Errorf("%w: runtime-egress attachment restoration", ErrDependencyUnavailable)
 		}
 	}
 	return service.failAgentRebuild(ctx, state, code, detail, retryable, true, nil)
+}
+
+func (service *LifecycleService) restoreNetworkUnlessRevoked(ctx context.Context, agentID string, cause int64) error {
+	if cause > 0 {
+		return nil
+	}
+	attachment, err := service.egress.GetAgentNetwork(ctx, agentID)
+	if err != nil {
+		return err
+	}
+	base, err := service.store.GetAgentLifecycleBase(ctx, agentID)
+	if err != nil {
+		return fmt.Errorf("check owner revocation before network restoration: %w", err)
+	}
+	if base.Agent.IdentityRevoked() {
+		return nil
+	}
+	attachment, err = service.setKnownNetworkAttachmentState(ctx, agentID, ports.NetworkAttachmentOpen, attachment)
+	if err != nil {
+		return err
+	}
+	// Receipt can commit during the outbound RPC. Reclose a completed restoration
+	// in that case; an ambiguous RPC remains the recovery worker's responsibility.
+	base, err = service.store.GetAgentLifecycleBase(ctx, agentID)
+	if err != nil {
+		return err
+	}
+	if !base.Agent.IdentityRevoked() {
+		return nil
+	}
+	_, err = service.setKnownNetworkAttachmentState(ctx, agentID, ports.NetworkAttachmentClosed, attachment)
+	return err
 }
 
 func (service *LifecycleService) failRebuildAfterRuntimeAbsence(

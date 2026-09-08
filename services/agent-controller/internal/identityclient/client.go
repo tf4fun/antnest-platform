@@ -73,12 +73,29 @@ func (client *Client) ResolvePrincipal(
 	if !identityIDPattern.MatchString(organizationID) || !identityIDPattern.MatchString(userID) {
 		return ports.IdentityPrincipal{}, dependencyFailure("invalid_request", false)
 	}
+	err := client.invoke(ctx, "resolve_principal", "/rpc/identity/resolve-principal",
+		ownerRequest{UserID: userID, OrganizationID: organizationID}, func(body []byte) error {
+			var wire struct {
+				Principal principalWire `json:"principal"`
+			}
+			if err := decodeStrictJSON(body, &wire); err != nil || !wire.Principal.matches(organizationID, userID) {
+				return dependencyFailure("invalid_response", true)
+			}
+			result = wire.Principal.principal()
+			return nil
+		})
+	return result, err
+}
+
+func (client *Client) invoke(
+	ctx context.Context, method, path string, input any, decode func([]byte) error,
+) (resultErr error) {
 	started := time.Now()
 	ctx, cancel := context.WithTimeout(ctx, client.timeout)
 	defer cancel()
 	ctx, span := tracer.Start(
 		ctx,
-		"agent_controller.identity.resolve_principal",
+		"agent_controller.identity."+method,
 		trace.WithSpanKind(trace.SpanKindClient),
 		trace.WithAttributes(
 			attribute.String("server.address", client.baseURL.Hostname()),
@@ -89,7 +106,7 @@ func (client *Client) ResolvePrincipal(
 		result, errorClass := dependencyObservation(resultErr)
 		attributes := []attribute.KeyValue{
 			attribute.String("rpc.service", "identity-service"),
-			attribute.String("rpc.method", "resolve_principal"),
+			attribute.String("rpc.method", method),
 			attribute.String("antnest.result", result),
 			attribute.String("error.type", errorClass),
 		}
@@ -103,59 +120,38 @@ func (client *Client) ResolvePrincipal(
 		duration.Record(ctx, time.Since(started).Seconds(), metric.WithAttributes(attributes...))
 	}()
 
-	payload, err := json.Marshal(struct {
-		UserID         string `json:"user_id"`
-		OrganizationID string `json:"organization_id"`
-	}{UserID: userID, OrganizationID: organizationID})
+	payload, err := json.Marshal(input)
 	if err != nil {
-		return ports.IdentityPrincipal{}, dependencyFailure("invalid_request", false)
+		return dependencyFailure("invalid_request", false)
 	}
 	endpoint := *client.baseURL
-	endpoint.Path = "/rpc/identity/resolve-principal"
+	endpoint.Path = path
 	request, err := http.NewRequestWithContext(
 		ctx, http.MethodPost, endpoint.String(), bytes.NewReader(payload),
 	)
 	if err != nil {
-		return ports.IdentityPrincipal{}, dependencyFailure("invalid_request", false)
+		return dependencyFailure("invalid_request", false)
 	}
 	request.Header.Set("Content-Type", "application/json")
 	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(request.Header))
 	response, err := client.httpClient.Do(request)
 	if err != nil {
-		return ports.IdentityPrincipal{}, dependencyFailure("identity_unavailable", true)
+		return dependencyFailure("identity_unavailable", true)
 	}
 	span.SetAttributes(attribute.Int("http.response.status_code", response.StatusCode))
 	responseBody, err := io.ReadAll(io.LimitReader(response.Body, maximumResponseBytes+1))
 	closeErr := response.Body.Close()
 	if err != nil || closeErr != nil || len(responseBody) > maximumResponseBytes {
-		return ports.IdentityPrincipal{}, dependencyFailure("invalid_response", true)
+		return dependencyFailure("invalid_response", true)
 	}
 	mediaType, _, mediaTypeErr := mime.ParseMediaType(response.Header.Get("Content-Type"))
 	if mediaTypeErr != nil || mediaType != "application/json" {
-		return ports.IdentityPrincipal{}, dependencyFailure("invalid_response", true)
+		return dependencyFailure("invalid_response", true)
 	}
 	if response.StatusCode != http.StatusOK {
-		return ports.IdentityPrincipal{}, decodeFailure(responseBody, response.StatusCode)
+		return decodeFailure(responseBody, response.StatusCode)
 	}
-	var wire struct {
-		Principal struct {
-			UserID         string `json:"user_id"`
-			OrganizationID string `json:"organization_id"`
-			MembershipID   string `json:"membership_id"`
-			Active         *bool  `json:"active"`
-		} `json:"principal"`
-	}
-	if err := decodeStrictJSON(responseBody, &wire); err != nil ||
-		wire.Principal.UserID != userID || wire.Principal.OrganizationID != organizationID ||
-		!identityIDPattern.MatchString(wire.Principal.UserID) ||
-		!identityIDPattern.MatchString(wire.Principal.OrganizationID) ||
-		!identityIDPattern.MatchString(wire.Principal.MembershipID) || wire.Principal.Active == nil {
-		return ports.IdentityPrincipal{}, dependencyFailure("invalid_response", true)
-	}
-	return ports.IdentityPrincipal{
-		UserID: wire.Principal.UserID, OrganizationID: wire.Principal.OrganizationID,
-		MembershipID: wire.Principal.MembershipID, Active: *wire.Principal.Active,
-	}, nil
+	return decode(responseBody)
 }
 
 func decodeFailure(payload []byte, status int) error {

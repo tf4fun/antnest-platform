@@ -529,6 +529,7 @@
             "agent_deleted",
             "agent_lifecycle_quarantined",
 			"agent_runtime_restarted",
+            "agent_owner_revoked",
             "run_admission_released",
             "run_admission_unresolved"
           ]

@@ -205,6 +205,14 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 		observedStore, observedLifecycleStore, egress, runtime, systemClock{}, cfg.DrainTimeout,
 		application.WithIdentityDirectory(identity),
 	)
+	observedRevocations, err := telemetry.ObserveIdentityRevocationStore(repository, logger)
+	if err != nil {
+		return classifyFailure("service_composition", err)
+	}
+	identityWorker, err := application.NewIdentityRevocationWorker(identity, observedRevocations, lifecycle, cfg.IdentityRevocationPollInterval, logger)
+	if err != nil {
+		return classifyFailure("service_composition", err)
+	}
 	recoveryInstrumentation, err := telemetry.ObserveLifecycleRecoveryAttempt(logger)
 	if err != nil {
 		return classifyFailure("service_composition", err)
@@ -262,6 +270,11 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 		defer close(observationStopped)
 		runtimeObservationWorker.Run(observationCtx)
 	}()
+	identityStopped := make(chan struct{})
+	go func() {
+		defer close(identityStopped)
+		identityWorker.Run(observationCtx)
+	}()
 	recoveryStopped := false
 	select {
 	case <-ctx.Done():
@@ -287,8 +300,18 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 		resultErr,
 		shutdownHTTPAndRecovery(shutdownCtx, httpServer, recoveryErrors, recoveryStopped),
 		waitForRuntimeObservationWorker(shutdownCtx, observationStopped),
+		waitForIdentityWorker(shutdownCtx, identityStopped),
 	)
 	return resultErr
+}
+
+func waitForIdentityWorker(ctx context.Context, stopped <-chan struct{}) error {
+	select {
+	case <-stopped:
+		return nil
+	case <-ctx.Done():
+		return classifyFailure("identity_offboarding_shutdown", ctx.Err())
+	}
 }
 
 func waitForRuntimeObservationWorker(ctx context.Context, stopped <-chan struct{}) error {

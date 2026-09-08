@@ -22,14 +22,14 @@ type LifecycleService struct {
 	store        ports.LifecycleStore
 	egress       ports.EgressClient
 	runtime      ports.RuntimeClient
-	identities   ports.IdentityDirectory
+	identities   ports.OwnerAuthorizationSource
 	clock        ports.Clock
 	drainTimeout time.Duration
 }
 
 type LifecycleOption func(*LifecycleService)
 
-func WithIdentityDirectory(directory ports.IdentityDirectory) LifecycleOption {
+func WithIdentityDirectory(directory ports.OwnerAuthorizationSource) LifecycleOption {
 	return func(service *LifecycleService) {
 		service.identities = directory
 	}
@@ -160,7 +160,8 @@ func (service *LifecycleService) CreateAgent(
 		}
 		return createAgentResult(state), nil
 	}
-	if err := service.requireActiveOwner(ctx, input.OrganizationID, input.OwnerUserID); err != nil {
+	authorization, err := service.authorizeOwner(ctx, input.OrganizationID, input.OwnerUserID)
+	if err != nil {
 		return service.replayAgentCreateAfterFailure(ctx, input.RequestID, fingerprint, err)
 	}
 
@@ -196,6 +197,7 @@ func (service *LifecycleService) CreateAgent(
 			LifecycleState: domain.AgentProvisioning, AccessRevision: accessRevision,
 			ActiveOperationRequestID: input.RequestID, AggregateSequence: 1,
 			CreatedAt: now, UpdatedAt: now,
+			OwnerAuthorizationSequence: authorization.LastRevocationSequence,
 		},
 		Access: ports.AgentAccessRecord{
 			AccessSubject: accessSubject, AgentID: agentID, PrincipalID: input.OwnerUserID,
@@ -250,24 +252,24 @@ func (service *LifecycleService) replayAgentCreateAfterFailure(
 	return CreateAgentResult{}, cause
 }
 
-func (service *LifecycleService) requireActiveOwner(
-	ctx context.Context, organizationID string, ownerUserID string,
-) error {
+func (service *LifecycleService) authorizeOwner(
+	ctx context.Context, organizationID, ownerUserID string,
+) (ports.IdentityPrincipal, error) {
 	if service.identities == nil {
-		return fmt.Errorf("%w: agent owner identity directory is not configured", ErrDependencyUnavailable)
+		return ports.IdentityPrincipal{}, fmt.Errorf("%w: agent owner identity directory is not configured", ErrDependencyUnavailable)
 	}
-	principal, err := service.identities.ResolvePrincipal(ctx, organizationID, ownerUserID)
+	principal, err := service.identities.ResolveOwnerAuthorization(ctx, organizationID, ownerUserID)
 	if err != nil {
 		if identityReferenceMissing(err) {
-			return fmt.Errorf("%w: Agent owner does not belong to the organization", ErrInvalidReference)
+			return ports.IdentityPrincipal{}, fmt.Errorf("%w: Agent owner does not belong to the organization", ErrInvalidReference)
 		}
-		return fmt.Errorf("%w: resolve Agent owner", ErrDependencyUnavailable)
+		return ports.IdentityPrincipal{}, fmt.Errorf("%w: resolve Agent owner", ErrDependencyUnavailable)
 	}
 	if principal.UserID != ownerUserID || principal.OrganizationID != organizationID ||
-		strings.TrimSpace(principal.MembershipID) == "" || !principal.Active {
-		return fmt.Errorf("%w: Agent owner is not an active organization member", ErrInvalidReference)
+		strings.TrimSpace(principal.MembershipID) == "" || !principal.Active || principal.LastRevocationSequence < 0 {
+		return ports.IdentityPrincipal{}, fmt.Errorf("%w: Agent owner is not an active organization member", ErrInvalidReference)
 	}
-	return nil
+	return principal, nil
 }
 
 func identityReferenceMissing(err error) bool {
@@ -494,6 +496,12 @@ func (service *LifecycleService) setCurrentNetworkAttachmentState(
 	if err != nil {
 		return ports.NetworkAttachment{}, err
 	}
+	return service.setKnownNetworkAttachmentState(ctx, agentID, state, attachment)
+}
+
+func (service *LifecycleService) setKnownNetworkAttachmentState(
+	ctx context.Context, agentID, state string, attachment ports.NetworkAttachment,
+) (ports.NetworkAttachment, error) {
 	if attachment.AttachmentState == state &&
 		networkAttachmentInState(attachment, agentID, ports.NetworkStateActive, state) {
 		return attachment, nil

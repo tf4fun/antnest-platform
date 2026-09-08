@@ -29,7 +29,8 @@ SELECT access.principal_id, access.agent_id, agent.organization_id,
        access.access_revision, access.prompt_image, access.prompt_embedded_context
 FROM agent_controller.agent_access_bindings access
 JOIN agent_controller.agents agent ON agent.id = access.agent_id
-WHERE access.access_subject = $1 AND access.active`, accessSubject).Scan(
+WHERE access.access_subject = $1 AND access.active
+AND agent.identity_revocation_sequence <= agent.owner_authorization_sequence`, accessSubject).Scan(
 		&result.PrincipalID, &result.AgentID, &result.OrganizationID, &result.AccessRevision,
 		&result.PromptCapabilities.Image, &result.PromptCapabilities.EmbeddedContext,
 	)
@@ -76,7 +77,7 @@ func (repository *Repository) ResolveRunAuthorization(
 	var authorized bool
 	err := repository.pool.QueryRow(ctx, `
 SELECT agent.organization_id, agent.owner_user_id,
-       EXISTS (
+       agent.identity_revocation_sequence <= agent.owner_authorization_sequence AND EXISTS (
            SELECT 1 FROM agent_controller.agent_access_bindings access
            WHERE access.agent_id = agent.id
              AND access.principal_id = $2
@@ -124,6 +125,9 @@ func (repository *Repository) AcquireRun(
 		return ports.RunAdmissionRecord{}, false, err
 	}
 
+	if err := lockIdentityAdmission(ctx, transaction); err != nil {
+		return ports.RunAdmissionRecord{}, false, err
+	}
 	agent, err := loadAgentRecordForUpdate(ctx, transaction, input.AgentID)
 	if errors.Is(err, ports.ErrNotFound) {
 		return ports.RunAdmissionRecord{}, false, ports.ErrNotFound
@@ -322,6 +326,9 @@ func lockRunRequest(ctx context.Context, transaction pgx.Tx, requestID string) e
 }
 
 func validateAgentForRun(agent ports.AgentRecord) error {
+	if agent.IdentityRevoked() {
+		return ports.ErrRunAccessDenied
+	}
 	if agent.ActiveOperationRequestID != "" {
 		return ports.ErrAgentRebuilding
 	}

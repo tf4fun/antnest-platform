@@ -80,12 +80,21 @@ func (repository *Repository) BeginAgentEnable(
 		return ports.AgentEnableState{}, false, err
 	}
 
+	if err := lockIdentityAdmission(ctx, transaction); err != nil {
+		return ports.AgentEnableState{}, false, err
+	}
 	agent, err := loadAgentRecordForUpdate(ctx, transaction, input.AgentID)
 	if err != nil {
 		return ports.AgentEnableState{}, false, err
 	}
 	if !matchesEnableSource(agent, input) {
 		return ports.AgentEnableState{}, false, ports.ErrConcurrentChange
+	}
+	if input.OwnerAuthorizationSequence < agent.OwnerAuthorizationSequence {
+		return ports.AgentEnableState{}, false, ports.ErrConcurrentChange
+	}
+	if err := validateOwnerWatermark(ctx, transaction, agent.OwnerUserID, agent.OrganizationID, input.OwnerAuthorizationSequence); err != nil {
+		return ports.AgentEnableState{}, false, err
 	}
 	base, err := loadAgentEnableBase(ctx, transaction, agent)
 	if err != nil {
@@ -100,7 +109,7 @@ func (repository *Repository) BeginAgentEnable(
 	result, err := transaction.Exec(ctx, `
 UPDATE agent_controller.agents
 SET desired_state = 'enabled', active_operation_request_id = $2,
-    aggregate_sequence = $3, updated_at = $4
+    aggregate_sequence = $3, updated_at = $4, owner_authorization_sequence = $9
 WHERE id = $1 AND desired_state = 'disabled' AND lifecycle_state = 'disabled'
   AND active_operation_request_id = '' AND aggregate_sequence = $5
   AND executable_spec_revision_id = $6 AND executable_execution_revision_id = ''
@@ -109,6 +118,7 @@ WHERE id = $1 AND desired_state = 'disabled' AND lifecycle_state = 'disabled'
 		input.AgentID, input.Operation.RequestID, input.RequestedEvent.AggregateSequence,
 		input.Now, input.ExpectedAggregateSequence, input.ExpectedSpecRevisionID,
 		input.ExpectedExecutionRevisionID, input.ExpectedRuntimeRevision,
+		input.OwnerAuthorizationSequence,
 	)
 	if err != nil {
 		return ports.AgentEnableState{}, false, fmt.Errorf("attach Agent enable operation: %w", err)
@@ -120,6 +130,7 @@ WHERE id = $1 AND desired_state = 'disabled' AND lifecycle_state = 'disabled'
 		return ports.AgentEnableState{}, false, err
 	}
 	agent.DesiredState = domain.DesiredEnabled
+	agent.OwnerAuthorizationSequence = input.OwnerAuthorizationSequence
 	agent.ActiveOperationRequestID = input.Operation.RequestID
 	agent.AggregateSequence = input.RequestedEvent.AggregateSequence
 	agent.UpdatedAt = input.Now

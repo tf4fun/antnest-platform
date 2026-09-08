@@ -238,7 +238,7 @@ func (service *AgentQueryService) ListWorkspaceAgents(
 }
 
 func workspaceAvailability(record ports.WorkspaceAgentRecord) WorkspaceAvailability {
-	if record.LifecycleState != domain.AgentAvailable {
+	if record.IdentityRevoked || record.LifecycleState != domain.AgentAvailable {
 		return WorkspaceAgentOffline
 	}
 	switch record.AdmissionState {

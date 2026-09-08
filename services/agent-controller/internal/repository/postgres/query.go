@@ -98,6 +98,7 @@ func (repository *Repository) ListWorkspaceAgents(
 		if err := rows.Scan(
 			&record.AgentID, &record.Name, &record.LifecycleState, &record.AccessSubject,
 			&record.AdmissionState, &record.CreatedAt,
+			&record.IdentityRevoked,
 		); err != nil {
 			return nil, fmt.Errorf("scan workspace Agent projection: %w", err)
 		}
@@ -125,7 +126,8 @@ func buildWorkspaceAgentQueryStatement(query ports.WorkspaceAgentQuery) (string,
 	arguments = append(arguments, query.Limit)
 	statement := fmt.Sprintf(`
 SELECT agent.id, agent.name, agent.lifecycle_state, access.access_subject,
-       COALESCE(admission.state, ''), agent.created_at
+       COALESCE(admission.state, ''), agent.created_at,
+       agent.identity_revocation_sequence > agent.owner_authorization_sequence
 FROM agent_controller.agents AS agent
 JOIN agent_controller.agent_access_bindings AS access
   ON access.agent_id = agent.id
@@ -181,7 +183,8 @@ SELECT id, organization_id, owner_user_id, name, desired_state, lifecycle_state,
        access_revision, executable_spec_revision_id, executable_execution_revision_id,
        last_successful_execution_revision_id, runtime_revision, runtime_execution_id,
        runtime_mcp_endpoint, active_operation_request_id, failure_stage, failure_code,
-       failure_detail, aggregate_sequence, created_at, updated_at
+       failure_detail, aggregate_sequence, created_at, updated_at,
+       owner_authorization_sequence, identity_revocation_sequence
 FROM agent_controller.agents`
 	if len(conditions) != 0 {
 		statement += "\nWHERE " + strings.Join(conditions, "\n  AND ")

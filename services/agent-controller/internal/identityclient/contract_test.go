@@ -42,12 +42,18 @@ func TestIdentityContractMatchesResolvePrincipalConsumer(t *testing.T) {
 		t.Fatalf("decode Identity contract: %v", err)
 	}
 	route, ok := contract.Methods["resolve_principal"]
-	if contract.Revision != 11 || contract.BasePath != "/rpc/identity" || !ok ||
+	if contract.Revision != 13 || contract.BasePath != "/rpc/identity" || !ok ||
 		route.Method != http.MethodPost || route.Path != "/resolve-principal" ||
 		route.Response.Properties.Principal.Reference !=
 			"#/definitions/organization_principal_binding" {
 		t.Fatalf("Identity resolve-principal contract drifted: revision=%d base=%q route=%+v",
 			contract.Revision, contract.BasePath, route)
+	}
+	for method, path := range map[string]string{"resolve_owner_authorization": "/resolve-owner-authorization", "list_principal_revocations": "/list-principal-revocations"} {
+		consumerRoute, exists := contract.Methods[method]
+		if !exists || consumerRoute.Method != http.MethodPost || consumerRoute.Path != path {
+			t.Fatalf("Identity %s contract drifted: %+v", method, consumerRoute)
+		}
 	}
 	required := slices.Clone(contract.Definitions.OrganizationPrincipalBinding.Required)
 	slices.Sort(required)

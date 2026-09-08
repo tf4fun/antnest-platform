@@ -14,21 +14,22 @@ const (
 )
 
 type Config struct {
-	ListenAddress           string
-	DatabaseURL             string
-	EncryptionKey           []byte
-	RuntimeEgressURL        string
-	RuntimeControllerURL    string
-	IdentityServiceURL      string
-	DependencyTimeout       time.Duration
-	DrainTimeout            time.Duration
-	RunAdmissionTTL         time.Duration
-	RecoveryPollInterval    time.Duration
-	ObservationPollInterval time.Duration
-	RecoveryAttemptTimeout  time.Duration
-	RecoveryLeaseDuration   time.Duration
-	RecoveryRetryMax        time.Duration
-	ShutdownTimeout         time.Duration
+	ListenAddress                  string
+	DatabaseURL                    string
+	EncryptionKey                  []byte
+	RuntimeEgressURL               string
+	RuntimeControllerURL           string
+	IdentityServiceURL             string
+	DependencyTimeout              time.Duration
+	DrainTimeout                   time.Duration
+	RunAdmissionTTL                time.Duration
+	RecoveryPollInterval           time.Duration
+	ObservationPollInterval        time.Duration
+	IdentityRevocationPollInterval time.Duration
+	RecoveryAttemptTimeout         time.Duration
+	RecoveryLeaseDuration          time.Duration
+	RecoveryRetryMax               time.Duration
+	ShutdownTimeout                time.Duration
 }
 
 func Load(lookup func(string) string) (Config, error) {
@@ -83,6 +84,13 @@ func Load(lookup func(string) string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	identityRevocationPollInterval, err := positiveDuration(
+		lookup("ANTNEST_AGENT_CONTROLLER_IDENTITY_REVOCATION_POLL_INTERVAL"),
+		"ANTNEST_AGENT_CONTROLLER_IDENTITY_REVOCATION_POLL_INTERVAL", 2*time.Second,
+	)
+	if err != nil {
+		return Config{}, err
+	}
 	recoveryAttemptTimeout, err := durationBudget(
 		dependencyTimeout, maximumRecoveryPhaseCalls, 5*time.Second,
 		"lifecycle recovery attempt timeout",
@@ -92,20 +100,21 @@ func Load(lookup func(string) string) (Config, error) {
 	}
 	recoveryLeaseDuration := recoveryAttemptTimeout + recoveryFinalizationGrace
 	config := Config{
-		ListenAddress:           strings.TrimSpace(lookup("ANTNEST_AGENT_CONTROLLER_LISTEN")),
-		DatabaseURL:             strings.TrimSpace(lookup("ANTNEST_AGENT_CONTROLLER_DATABASE_URL")),
-		RuntimeEgressURL:        strings.TrimSpace(lookup("ANTNEST_RUNTIME_EGRESS_URL")),
-		RuntimeControllerURL:    strings.TrimSpace(lookup("ANTNEST_RUNTIME_CONTROLLER_URL")),
-		IdentityServiceURL:      strings.TrimSpace(lookup("ANTNEST_IDENTITY_SERVICE_URL")),
-		DependencyTimeout:       dependencyTimeout,
-		DrainTimeout:            drainTimeout,
-		RunAdmissionTTL:         runAdmissionTTL,
-		RecoveryPollInterval:    recoveryPollInterval,
-		ObservationPollInterval: observationPollInterval,
-		RecoveryAttemptTimeout:  recoveryAttemptTimeout,
-		RecoveryLeaseDuration:   recoveryLeaseDuration,
-		RecoveryRetryMax:        time.Minute,
-		ShutdownTimeout:         shutdownTimeout,
+		ListenAddress:                  strings.TrimSpace(lookup("ANTNEST_AGENT_CONTROLLER_LISTEN")),
+		DatabaseURL:                    strings.TrimSpace(lookup("ANTNEST_AGENT_CONTROLLER_DATABASE_URL")),
+		RuntimeEgressURL:               strings.TrimSpace(lookup("ANTNEST_RUNTIME_EGRESS_URL")),
+		RuntimeControllerURL:           strings.TrimSpace(lookup("ANTNEST_RUNTIME_CONTROLLER_URL")),
+		IdentityServiceURL:             strings.TrimSpace(lookup("ANTNEST_IDENTITY_SERVICE_URL")),
+		DependencyTimeout:              dependencyTimeout,
+		DrainTimeout:                   drainTimeout,
+		RunAdmissionTTL:                runAdmissionTTL,
+		RecoveryPollInterval:           recoveryPollInterval,
+		ObservationPollInterval:        observationPollInterval,
+		IdentityRevocationPollInterval: identityRevocationPollInterval,
+		RecoveryAttemptTimeout:         recoveryAttemptTimeout,
+		RecoveryLeaseDuration:          recoveryLeaseDuration,
+		RecoveryRetryMax:               time.Minute,
+		ShutdownTimeout:                shutdownTimeout,
 	}
 	if config.ListenAddress == "" {
 		config.ListenAddress = ":8080"
