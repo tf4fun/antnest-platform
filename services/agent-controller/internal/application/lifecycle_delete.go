@@ -50,11 +50,11 @@ func (service *LifecycleService) DeleteAgent(
 		}
 		return DeleteAgentResult{}, fmt.Errorf("load Agent delete source: %w", err)
 	}
-	if err := validateDeleteSource(base.Agent); err != nil {
-		return DeleteAgentResult{}, err
-	}
 	if !lifecycleScopeMatches(base.Agent.OrganizationID, input.OrganizationID) {
 		return DeleteAgentResult{}, fmt.Errorf("%w: %s", ErrAgentNotFound, input.AgentID)
+	}
+	if err := validateDeleteSource(base.Agent); err != nil {
+		return DeleteAgentResult{}, err
 	}
 	sourceRuntime := base.Agent.RuntimeRevision
 	runtimeAbsent := sourceRuntime == ""

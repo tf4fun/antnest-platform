@@ -53,11 +53,11 @@ func (service *LifecycleService) RebuildAgent(
 		}
 		return RebuildAgentResult{}, fmt.Errorf("load Agent rebuild source: %w", err)
 	}
-	if err := validateRebuildSource(base); err != nil {
-		return RebuildAgentResult{}, err
-	}
 	if !lifecycleScopeMatches(base.Agent.OrganizationID, input.OrganizationID) {
 		return RebuildAgentResult{}, fmt.Errorf("%w: %s", ErrAgentNotFound, input.AgentID)
+	}
+	if err := validateRebuildSource(base); err != nil {
+		return RebuildAgentResult{}, err
 	}
 	template, _, targetSpec, err := service.resolveAgentSpecRevision(
 		ctx, base.Agent.OrganizationID, input.TemplateID, input.TemplateRevision,

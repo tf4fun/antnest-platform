@@ -154,7 +154,10 @@ physical generation, container, Pod, volume, or workspace identifiers.
 
 ### LifecycleOperation
 
-Every lifecycle command first persists one idempotent operation. A request ID
+A lifecycle command checks organization ownership before source-state or busy
+validation. A foreign Agent returns `agent_not_found` regardless of its state;
+rejection creates no operation/event and invokes no deployment dependency.
+Authorized commands then persist one idempotent operation. A request ID
 may be retried only with the same canonical fingerprint. The operation stores
 its source preconditions, target revision, child request IDs, phase, result,
 and failure class before or after each external effect as applicable.

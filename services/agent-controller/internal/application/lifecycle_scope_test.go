@@ -7,15 +7,41 @@ import (
 	"time"
 
 	"soft/antnest-platform/services/agent-controller/internal/domain"
+	"soft/antnest-platform/services/agent-controller/internal/ports"
 )
 
 func TestLifecycleMutationsRejectCrossOrganizationAgentBeforeAdmission(t *testing.T) {
 	t.Parallel()
+	assertCrossOrganizationLifecycleDenied(t, func(*ports.AgentRecord) {})
+}
+
+func TestLifecycleScopeIsCheckedBeforeSourceState(t *testing.T) {
+	t.Parallel()
+	for _, state := range []domain.AgentState{
+		domain.AgentProvisioning, domain.AgentAvailable, domain.AgentUnavailable,
+		domain.AgentDisabled, domain.AgentDeleting, domain.AgentDeleted,
+	} {
+		t.Run(string(state), func(t *testing.T) {
+			assertCrossOrganizationLifecycleDenied(t, func(agent *ports.AgentRecord) {
+				agent.LifecycleState = state
+			})
+		})
+	}
+	t.Run("active_operation", func(t *testing.T) {
+		assertCrossOrganizationLifecycleDenied(t, func(agent *ports.AgentRecord) {
+			agent.ActiveOperationRequestID = "foreign-active-operation"
+		})
+	})
+}
+
+func assertCrossOrganizationLifecycleDenied(t *testing.T, mutate func(*ports.AgentRecord)) {
+	t.Helper()
 
 	t.Run("rebuild", func(t *testing.T) {
 		template := mustLifecycleTemplate(t)
 		model := mustLifecycleModel(t)
 		base := rebuildLifecycleBase(t, template, model)
+		mutate(&base.Agent)
 		store := &rebuildLifecycleStoreStub{base: base}
 		dependencies := &rebuildDependenciesStub{}
 		service := NewLifecycleService(
@@ -34,6 +60,7 @@ func TestLifecycleMutationsRejectCrossOrganizationAgentBeforeAdmission(t *testin
 
 	t.Run("disable", func(t *testing.T) {
 		base := disableLifecycleBase(t)
+		mutate(&base.Agent)
 		store := &disableLifecycleStoreStub{base: base}
 		dependencies := newDisableDependencies(base, readyEnableRuntime())
 		service := newLifecycleTestService(t, store, dependencies)
@@ -48,6 +75,7 @@ func TestLifecycleMutationsRejectCrossOrganizationAgentBeforeAdmission(t *testin
 
 	t.Run("enable", func(t *testing.T) {
 		base := enableLifecycleBase(t)
+		mutate(&base.Agent)
 		store := &enableLifecycleStoreStub{base: base}
 		dependencies := newEnableDependencies(base, readyEnableRuntime())
 		service := newLifecycleTestService(t, store, dependencies)
@@ -62,6 +90,7 @@ func TestLifecycleMutationsRejectCrossOrganizationAgentBeforeAdmission(t *testin
 
 	t.Run("delete", func(t *testing.T) {
 		base := deleteAgentBase(domain.AgentAvailable)
+		mutate(&base.Agent)
 		store := &deleteLifecycleStoreStub{base: base}
 		dependencies := newDeleteDependencies(base.Agent)
 		service := NewLifecycleService(

@@ -51,11 +51,11 @@ func (service *LifecycleService) DisableAgent(
 		}
 		return DisableAgentResult{}, fmt.Errorf("load Agent disable source: %w", err)
 	}
-	if err := validateDisableSource(base); err != nil {
-		return DisableAgentResult{}, err
-	}
 	if !lifecycleScopeMatches(base.Agent.OrganizationID, input.OrganizationID) {
 		return DisableAgentResult{}, fmt.Errorf("%w: %s", ErrAgentNotFound, input.AgentID)
+	}
+	if err := validateDisableSource(base); err != nil {
+		return DisableAgentResult{}, err
 	}
 	now := service.clock.Now()
 	operation, err := domain.NewLifecycleOperation(domain.NewLifecycleOperationInput{
