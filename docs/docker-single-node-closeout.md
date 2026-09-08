@@ -46,7 +46,7 @@ foreign keys, transactions, or shared persistence adapter is permitted.
 
 | Area | Existing implementation/evidence | Remaining closeout work |
 | --- | --- | --- |
-| ACP | official SDK `1.4.0`, stable `/v1/acp`, draft `/v2/acp`, shared application core, capability and wire tests | explicit Streamable-HTTP-only MCP profile; wire plus persistence evidence for reconnect, isolation, cancellation, and revision changes |
+| ACP | official SDK `1.4.0`, stable `/v1/acp`, draft `/v2/acp`, shared application core, capability and wire tests | explicit platform-only MCP profile; wire plus persistence evidence for reconnect, isolation, cancellation, and revision changes |
 | Identity | local login, OIDC, SCIM, membership checks, transactional local journal, Console administration | prove the complete Gateway flows and effective deactivation across existing connections; identify any necessary downstream lifecycle synchronization |
 | Agent management | async lifecycle operations, immutable revisions, Docker Runtime, Egress, durable events | close remaining UI/owner-service error and recovery paths against the three-flow acceptance matrix |
 | Agent UI | production Edge-to-ACP v1 path, messages, attachments, Tool activity, cancel and replay | prove restored input availability, no duplicate execution on reconnect, and consistent visibility of authoritative outcomes |
@@ -56,8 +56,8 @@ foreign keys, transactions, or shared persistence adapter is permitted.
 Important distinctions from inspection:
 
 - The ACP protocol matrix explicitly identifies stdio MCP as a stable-v1
-  baseline incompatibility. This stage deliberately supports only Streamable
-  HTTP MCP and does not claim complete v1 conformance. Optional unadvertised
+  baseline incompatibility. This stage accepts only empty client MCP lists,
+  uses platform Runtime MCP and does not claim complete v1 conformance. Optional unadvertised
   protocol capabilities are not gaps.
 - `scripts/stage3-workspace-client.mjs` tests v1 prompt and load on the same
   connection. That is not reconnect or process-restart evidence.
@@ -128,16 +128,18 @@ silently waived nor introduced just to make the topology look complete.
 - [ ] **C1-01** Reconcile stable v1 and draft v2 separately against the pinned
   official SDK schemas. Enumerate baseline requirements, advertised options,
   unsupported options, exact external routes, and their executable tests.
-- [x] **C1-02** Close the Streamable-HTTP-only MCP product boundary with explicit
-  wire rejection tests for stdio and legacy SSE input. Platform Runtime MCP
-  remains configuration-owned; client MCP remains Session-owned. Runtime-owned
-  stdio hosting is delivered through the separate service batches in
-  [Runtime Context And Managed MCP](runtime-context-and-managed-mcp.md), not by
-  launching client-selected commands in ACP Service. Preserve the
-  documented v1 baseline incompatibility instead of claiming full conformance.
-  Accepted at the service wire/persistence boundary by
-  `test/e2e/acp-mcp-input.postgres.test.ts` (six cases, both versions, all setup
-  methods, mixed valid/invalid inputs, closed Sessions and encrypted revisions).
+- [x] **C1-02** Restrict ACP input to `mcpServers: []` on both versions.
+  All client HTTP/stdio/SSE/MCP-over-ACP inputs are explicitly rejected with no
+  partial writes, activation, replay or execution. No client MCP capability is
+  advertised. Platform-owned Runtime MCP and managed stdio hosting remain.
+  The 2026-09-08 product decision supersedes the earlier HTTP-only input profile;
+  all client injection support and its future administrator authorization are
+  deferred, not only the client proxy. The mandatory v1 stdio incompatibility
+  remains documented. The [trust policy](../services/agent-acp-service/docs/client-mcp-policy.md)
+  distinguishes administrator-owned configuration from client-supplied tools.
+  Service evidence and exact
+  dependency boundaries are in the
+  [protocol matrix](../services/agent-acp-service/docs/protocol-conformance.md).
 - [ ] **C1-03** Exercise both versions over real WebSockets and PostgreSQL:
   new, prompt, user/assistant/Tool history, version-specific completion,
   reconnect, load/resume, list, and the advertised lifecycle operations.
@@ -151,7 +153,7 @@ silently waived nor introduced just to make the topology look complete.
   model requests, and Runtime MCP. Preserve standard ACP payloads; do not add
   private Agent-routing fields to the protocol.
 
-**Milestone C1:** the declared HTTP-only ACP profile has no unacknowledged
+**Milestone C1:** the declared platform-only ACP profile has no unacknowledged
 baseline or advertised-capability gaps. Reusable wire/persistence tests pass separately for
 v1 and v2; the protocol matrix names exactly which real dependencies each test
 uses. Adapter stubs must not be described as full-platform acceptance.

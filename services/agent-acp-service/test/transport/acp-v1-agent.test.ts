@@ -18,6 +18,71 @@ const binding: ConnectionBinding = {
 };
 
 describe("ACP v1 agent mapping", () => {
+  it.each([0, 1, 2, 99])(
+    "negotiates supported v1 for requested version %i",
+    async (protocolVersion) => {
+      const agent = createAcpV1Agent({
+        binding,
+        promptCapabilities: { image: false, embeddedContext: false },
+        application: createApplication({}),
+      });
+      await acp.client().connectWith(agent, async (context) => {
+        const result = await context.request(acp.methods.agent.initialize, {
+          protocolVersion,
+          clientCapabilities: {},
+        });
+        expect(result.protocolVersion).toBe(acp.PROTOCOL_VERSION);
+        expect(result.agentCapabilities?.mcpCapabilities).toEqual({});
+        expect(result.authMethods ?? []).toEqual([]);
+      });
+    },
+  );
+
+  it("rejects every supported Session request before initialization without invoking application", async () => {
+    const application = createApplication({});
+    const calls = [
+      "createSession",
+      "listSessions",
+      "resumeSession",
+      "forkSession",
+      "closeSession",
+      "deleteSession",
+      "acceptPrompt",
+      "cancelRun",
+    ] as const;
+    const spies = calls.map((method) => vi.spyOn(application, method));
+    const agent = createAcpV1Agent({
+      binding,
+      application,
+      promptCapabilities: { image: false, embeddedContext: false },
+    });
+    const setup = { sessionId: "session-1", cwd: "/workspace", mcpServers: [] };
+    await acp.client().connectWith(agent, async (context) => {
+      await context.notify(acp.methods.agent.session.cancel, { sessionId: setup.sessionId });
+      const requests = [
+        () => context.request(acp.methods.agent.session.new, setup),
+        () => context.request(acp.methods.agent.session.load, setup),
+        () => context.request(acp.methods.agent.session.resume, setup),
+        () => context.request(acp.methods.agent.session.fork, setup),
+        () => context.request(acp.methods.agent.session.list, {}),
+        () => context.request(acp.methods.agent.session.close, { sessionId: setup.sessionId }),
+        () => context.request(acp.methods.agent.session.delete, { sessionId: setup.sessionId }),
+        () =>
+          context.request(acp.methods.agent.session.prompt, {
+            sessionId: setup.sessionId,
+            prompt: [{ type: "text" as const, text: "hello" }],
+          }),
+      ];
+      for (const request of requests)
+        await expect(request()).rejects.toMatchObject({ code: -32600 });
+      await context.request(acp.methods.agent.initialize, {
+        protocolVersion: acp.PROTOCOL_VERSION,
+        clientCapabilities: {},
+      });
+      for (const spy of spies) expect(spy).not.toHaveBeenCalled();
+    });
+  });
+
   it("enforces one initialize request before the stable session surface", async () => {
     const createSession = vi.fn<AcpApplicationPort["createSession"]>(() =>
       Promise.resolve({ sessionId: "session-1" }),
@@ -92,7 +157,7 @@ describe("ACP v1 agent mapping", () => {
         agentCapabilities: {
           loadSession: true,
           promptCapabilities: {},
-          mcpCapabilities: { http: true },
+          mcpCapabilities: {},
           sessionCapabilities: {
             list: {},
             delete: {},

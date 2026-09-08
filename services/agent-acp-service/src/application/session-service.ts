@@ -1,6 +1,6 @@
 import { DomainError } from "../domain/errors.js";
-import { normalizeClientMcpServers } from "../domain/mcp.js";
-import { authorizeSession, requireWorkspace } from "../domain/session.js";
+import { requireNoClientMcpServers } from "../domain/mcp.js";
+import { authorizeSession, authorizeSessionOwner, requireWorkspace } from "../domain/session.js";
 import type { AcpApplicationPort } from "../ports/acp-application.js";
 import type { SessionRepository } from "../ports/session-repository.js";
 
@@ -31,7 +31,7 @@ export class SessionService implements Pick<
       binding: input.binding,
       cwd: "/workspace",
       mcpRevisionId: this.dependencies.id(),
-      mcpSources: normalizeClientMcpServers(input.mcpServers),
+      mcpSources: requireNoClientMcpServers(input.mcpServers),
     });
     return { sessionId };
   }
@@ -73,7 +73,7 @@ export class SessionService implements Pick<
       sourceSessionId: source.id,
       sessionId,
       mcpRevisionId: this.dependencies.id(),
-      mcpSources: normalizeClientMcpServers(input.mcpServers),
+      mcpSources: requireNoClientMcpServers(input.mcpServers),
       createdAt: this.dependencies.now(),
     });
     return { sessionId };
@@ -90,7 +90,7 @@ export class SessionService implements Pick<
     await this.dependencies.repository.replaceMcpAndActivate({
       sessionId: session.id,
       mcpRevisionId: this.dependencies.id(),
-      mcpSources: normalizeClientMcpServers(input.mcpServers),
+      mcpSources: requireNoClientMcpServers(input.mcpServers),
     });
     const replay = input.replayFromStart
       ? await this.dependencies.repository.replay(session.id)
@@ -109,7 +109,10 @@ export class SessionService implements Pick<
   public async deleteSession(
     input: Parameters<AcpApplicationPort["deleteSession"]>[0],
   ): Promise<void> {
-    const session = await this.requireAuthorized(input.sessionId, input.binding);
+    const session = await this.dependencies.repository.get(input.sessionId);
+    if (session === null) return;
+    authorizeSessionOwner(session, input.binding);
+    if (session.state === "deleted") return;
     await this.dependencies.repository.delete(session.id, this.dependencies.now());
   }
 
@@ -119,6 +122,17 @@ export class SessionService implements Pick<
   ): Promise<void> {
     const session = await this.requireAuthorized(sessionId, binding);
     await this.dependencies.repository.requestCancellation(session.id, this.dependencies.now());
+  }
+
+  public async requirePromptSession(
+    sessionId: string,
+    binding: Parameters<AcpApplicationPort["createSession"]>[0]["binding"],
+  ): Promise<void> {
+    const session = await this.requireAuthorized(sessionId, binding);
+    const sources = await this.dependencies.repository.getClientMcpRevision(
+      session.clientMcpRevisionId,
+    );
+    requireNoClientMcpServers(sources);
   }
 
   public async requireAuthorized(

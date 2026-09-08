@@ -13,7 +13,7 @@ const binding: ConnectionBinding = {
 };
 
 describe("SessionService", () => {
-  it("creates one durable Session with a complete normalized MCP revision", async () => {
+  it("creates one durable Session with an empty client MCP revision", async () => {
     const repository = createRepository();
     const service = createService(repository.port);
 
@@ -22,14 +22,7 @@ describe("SessionService", () => {
         binding,
         cwd: "/workspace",
         additionalDirectories: [],
-        mcpServers: [
-          {
-            type: "http",
-            name: "knowledge",
-            url: "https://mcp.example.test/service",
-            headers: [{ name: "Authorization", value: "secret" }],
-          },
-        ],
+        mcpServers: [],
       }),
     ).resolves.toEqual({ sessionId: "id-1" });
 
@@ -39,12 +32,7 @@ describe("SessionService", () => {
         binding,
         cwd: "/workspace",
         mcpRevisionId: "id-2",
-        mcpSources: [
-          expect.objectContaining({
-            name: "knowledge",
-            url: "https://mcp.example.test/service",
-          }),
-        ],
+        mcpSources: [],
       }),
     );
   });
@@ -96,6 +84,38 @@ describe("SessionService", () => {
       ],
     });
     expect(repository.replay).toHaveBeenCalledOnce();
+  });
+
+  it("allows Prompt admission for an empty client MCP revision", async () => {
+    const repository = createRepository();
+    await expect(
+      createService(repository.port).requirePromptSession("session-1", binding),
+    ).resolves.toBeUndefined();
+    expect(repository.getClientMcpRevision).toHaveBeenCalledWith("mcp-1");
+  });
+
+  it("rejects Prompt admission for a retained client MCP revision", async () => {
+    const repository = createRepository();
+    repository.getClientMcpRevision.mockResolvedValueOnce([
+      {
+        sourceId: "client-source",
+        name: "knowledge",
+        url: "https://mcp.example.test/mcp",
+        headers: [],
+      },
+    ]);
+    await expect(
+      createService(repository.port).requirePromptSession("session-1", binding),
+    ).rejects.toMatchObject({ code: "client_mcp_not_allowed" });
+  });
+
+  it("checks ownership before reading a Session's client MCP revision", async () => {
+    const repository = createRepository();
+    repository.session.principalId = "another-principal";
+    await expect(
+      createService(repository.port).requirePromptSession("session-1", binding),
+    ).rejects.toMatchObject({ code: "session_access_denied" });
+    expect(repository.getClientMcpRevision).not.toHaveBeenCalled();
   });
 
   it("never exposes Sessions owned by another principal through list", async () => {
@@ -162,6 +182,31 @@ describe("SessionService", () => {
     expect(repository.close).toHaveBeenCalledWith("session-1", at);
     expect(repository.delete).toHaveBeenCalledWith("session-1", at);
   });
+
+  it.each(["missing", "deleted"])("deleting a %s Session is an authorized no-op", async (state) => {
+    const repository = createRepository();
+    repository.session.state = "deleted";
+    if (state === "missing") repository.port.get = vi.fn(() => Promise.resolve(null));
+
+    await expect(
+      createService(repository.port).deleteSession({ binding, sessionId: "session-1" }),
+    ).resolves.toBeUndefined();
+    expect(repository.delete).not.toHaveBeenCalled();
+  });
+
+  it.each(["principalId", "agentId"] as const)(
+    "idempotent deletion still checks the deleted Session's %s",
+    async (field) => {
+      const repository = createRepository();
+      repository.session.state = "deleted";
+      repository.session[field] = "foreign";
+
+      await expect(
+        createService(repository.port).deleteSession({ binding, sessionId: "session-1" }),
+      ).rejects.toMatchObject({ code: "session_access_denied" });
+      expect(repository.delete).not.toHaveBeenCalled();
+    },
+  );
 });
 
 function createRepository() {
@@ -196,6 +241,9 @@ function createRepository() {
   );
   const close = vi.fn<SessionRepository["close"]>(() => Promise.resolve());
   const deleteSession = vi.fn<SessionRepository["delete"]>(() => Promise.resolve());
+  const getClientMcpRevision = vi.fn<SessionRepository["getClientMcpRevision"]>(() =>
+    Promise.resolve([]),
+  );
   const port: SessionRepository = {
     create,
     get: vi.fn(() => Promise.resolve(session)),
@@ -207,10 +255,11 @@ function createRepository() {
     requestCancellation,
     close,
     delete: deleteSession,
-    getClientMcpRevision: vi.fn(() => Promise.resolve([])),
+    getClientMcpRevision,
   };
   return {
     port,
+    getClientMcpRevision,
     session,
     create,
     list,

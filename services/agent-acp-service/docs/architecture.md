@@ -64,9 +64,12 @@ Session
 
 A Session survives connections and Agent rebuilds. Every operation checks the
 current ConnectionBinding against the stored principal and Agent. Resume may
-replace the complete client MCP list; omission means an empty list, not “keep
-the previous list.” The first accepted text prompt supplies a bounded default
-title. Fork creates a new Session with a point-in-time copy of durable context,
+install only an empty client MCP revision. Nonempty `mcpServers` is rejected
+before writing state or replaying messages. Prompt admission also checks the
+stored revision after Session ownership, before acquiring a Run slot. A retained
+client revision must be cleared by load/resume with `[]`, not silently reused.
+The first accepted text prompt supplies a bounded default title.
+Fork creates a new Session with a point-in-time copy of durable context,
 records the immutable immediate source Session, but never copies Runs or
 admissions and rejects a source Session with active work.
 
@@ -142,7 +145,7 @@ starting model or Tool work.
 
 ## Tool Loop
 
-1. Read fresh Runtime information and list mandatory Runtime/optional client MCP
+1. Read fresh Runtime information and list platform Runtime MCP
    Tools once for the admitted Run. Managed stdio tools are Runtime-owned.
 2. Qualify client Tool names; retain Runtime names. Budget Tool schemas together
    with transient Runtime guidance/Skill summaries, the system prompt,
@@ -169,11 +172,10 @@ starting model or Tool work.
    `finish_run` idempotently after uncertain transport failure.
 
 Tool calls are not replayed automatically after timeout or process crash.
-Effect certainty is source-neutral: both Runtime and client MCP calls may leave
-`tool_effect_state=unknown` after an unconfirmed transport outcome. The
-terminal report also preserves `unknown_effect_source` as `runtime_mcp`,
-`client_mcp`, or `unclassified`, so Runtime replacement cannot incorrectly
-settle an unrelated client Tool effect.
+Runtime MCP calls may leave `tool_effect_state=unknown` after an unconfirmed
+transport outcome. Historical Run records can still carry `client_mcp` source
+facts; retaining them is not permission to execute new client tools or to
+settle those effects through Runtime replacement.
 
 The MCP invocation boundary is the call to the official SDK's `callTool`
 method. URL validation, connection, and initialization failures before that
@@ -186,7 +188,7 @@ source declaration. A rejected `callTool` promise is also `unknown`, because the
 cannot prove whether the server executed the request. Once a Tool is unknown,
 the Run becomes `unresolved` before another model request can be issued.
 
-## Two MCP Sources
+## Platform-Owned MCP
 
 ### Platform Runtime MCP
 
@@ -197,19 +199,20 @@ the Run becomes `unresolved` before another model request can be issued.
 - Reads `antnest://runtime/info` through the same official SDK/fenced endpoint.
 - Exposes Runtime-aggregated stdio child tools; never launches children locally.
 
-### Client MCP
+### Client Input Boundary
 
-- Supplied as the complete HTTP MCP list on Session new/resume.
-- Uses the official MCP client pinned to protocol `2026-07-28`.
-- Only HTTPS is accepted outside tests.
-- DNS answers and every redirect are revalidated against blocked networks.
-- Headers are encrypted at rest; cross-origin redirects drop credentials.
-- Client Tools cannot shadow platform Tools.
-- Failure to list one optional client source omits only that source for the
-  current Run; Runtime Tools and other client sources remain available.
+ACP keeps the standard `mcpServers` field, but only `[]` is accepted.
+HTTP, stdio, SSE and MCP-over-ACP all fail with `client_mcp_not_allowed`.
+The application validates before Session writes or replay. The execution
+catalog rejects any retained nonempty client revision before tool discovery,
+and rejects client-source calls before dispatch. There is no client dialer in
+the production composition and no client MCP capability advertisement.
 
-The platform and untrusted dialers are separate types. A future enterprise MCP
-allowlist is an explicit feature, not an exception hidden in the client dialer.
+Historical encrypted MCP revisions remain referenced by Session and Run
+snapshots. Empty revisions continue to use the existing persistence contract;
+schema consolidation is outside this protocol-verification batch. The official
+MCP client still serves the mandatory Runtime endpoint. Low-level client-network
+adapter tests are retained, but that adapter is not wired as a client tool source.
 
 ## Persistence
 
@@ -237,7 +240,7 @@ src/ports/                Agent Controller, repository, model, MCP, telemetry
 src/adapters/postgres/    private migrations and repository
 src/adapters/controller/  narrow Run admission RPC client
 src/adapters/model/       OpenAI-compatible model adapter
-src/adapters/mcp/         trusted Runtime and untrusted client MCP clients
+src/adapters/mcp/         platform Runtime MCP client and network helpers
 src/transport/acp/        shared WebSocket stream plus versioned official SDK adapters
 src/telemetry/            logs, traces, low-cardinality metrics
 src/main.ts               composition only
@@ -332,7 +335,7 @@ exits non-zero for platform replacement.
 2. One accepted prompt has one durable Run and one accepted user message.
 3. A Run reads one immutable execution snapshot for its entire lifetime.
 4. A Provider secret is never durable in this service.
-5. A client MCP source cannot replace or shadow Runtime Tools.
+5. A nonempty client MCP list cannot be persisted, discovered or dispatched.
 6. No timeout is evidence that a Tool side effect did or did not occur.
 7. ACP success payloads contain no Antnest-private fields.
 8. No query addresses another service's schema.

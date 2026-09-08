@@ -15,12 +15,12 @@ describe("AcpApplication", () => {
     const admit = vi.fn<RunLifecyclePort["admit"]>((_, operation) =>
       operation(new AbortController().signal),
     );
-    const requireAuthorized = vi.fn<SessionService["requireAuthorized"]>(() =>
-      Promise.resolve({} as never),
+    const requirePromptSession = vi.fn<SessionService["requirePromptSession"]>(() =>
+      Promise.resolve(),
     );
     const application = new AcpApplication({
       access: { assert } as unknown as AccessService,
-      sessions: { requireAuthorized } as unknown as SessionService,
+      sessions: { requirePromptSession } as unknown as SessionService,
       prompts: { accept } as unknown as PromptCoordinator,
       runs: { admit } as unknown as RunLifecyclePort,
     });
@@ -33,35 +33,38 @@ describe("AcpApplication", () => {
     await application.acceptPrompt(input);
 
     expect(assert).not.toHaveBeenCalled();
-    expect(requireAuthorized).toHaveBeenCalledWith(input.sessionId, input.binding);
-    expect(requireAuthorized.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(requirePromptSession).toHaveBeenCalledWith(input.sessionId, input.binding);
+    expect(requirePromptSession.mock.invocationCallOrder[0]).toBeLessThan(
       admit.mock.invocationCallOrder[0]!,
     );
     expect(admit).toHaveBeenCalledOnce();
     expect(accept).toHaveBeenCalledWith(input, expect.any(AbortSignal));
   });
 
-  it("does not inspect a Run slot before Session ownership is established", async () => {
-    const denied = new DomainError("session_access_denied", "Session belongs to another principal");
-    const requireAuthorized = vi.fn(() => Promise.reject(denied));
-    const admit = vi.fn<RunLifecyclePort["admit"]>();
-    const accept = vi.fn<PromptCoordinator["accept"]>();
-    const application = new AcpApplication({
-      access: {} as AccessService,
-      sessions: { requireAuthorized } as unknown as SessionService,
-      prompts: { accept } as unknown as PromptCoordinator,
-      runs: { admit } as unknown as RunLifecyclePort,
-    });
-    await expect(
-      application.acceptPrompt({
-        binding: binding(),
-        sessionId: "foreign-session",
-        prompt: [{ type: "text", text: "hello" }],
-      }),
-    ).rejects.toBe(denied);
-    expect(admit).not.toHaveBeenCalled();
-    expect(accept).not.toHaveBeenCalled();
-  });
+  it.each(["session_access_denied", "client_mcp_not_allowed"])(
+    "does not admit a Run when Session validation rejects with %s",
+    async (code) => {
+      const denied = new DomainError(code, "Session validation rejected");
+      const requirePromptSession = vi.fn(() => Promise.reject(denied));
+      const admit = vi.fn<RunLifecyclePort["admit"]>();
+      const accept = vi.fn<PromptCoordinator["accept"]>();
+      const application = new AcpApplication({
+        access: {} as AccessService,
+        sessions: { requirePromptSession } as unknown as SessionService,
+        prompts: { accept } as unknown as PromptCoordinator,
+        runs: { admit } as unknown as RunLifecyclePort,
+      });
+      await expect(
+        application.acceptPrompt({
+          binding: binding(),
+          sessionId: "foreign-session",
+          prompt: [{ type: "text", text: "hello" }],
+        }),
+      ).rejects.toBe(denied);
+      expect(admit).not.toHaveBeenCalled();
+      expect(accept).not.toHaveBeenCalled();
+    },
+  );
 });
 
 function binding(): ConnectionBinding {

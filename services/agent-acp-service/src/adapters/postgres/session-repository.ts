@@ -309,6 +309,7 @@ export class PostgresSessionRepository implements SessionRepository {
     await this.kernel.transaction(async (client) => {
       const session = await selectSessionForUpdate(client, sessionId);
       if (session.state === "deleted") {
+        if (state === "deleted") return;
         throw new Error("Session does not exist");
       }
       await client.query("UPDATE acp_sessions SET state = $2, updated_at = $3 WHERE id = $1", [

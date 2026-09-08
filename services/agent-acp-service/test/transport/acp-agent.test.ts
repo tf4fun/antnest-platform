@@ -104,10 +104,11 @@ describe("ACP v2 agent mapping", () => {
       expect(initialized).toMatchObject({
         protocolVersion: acp.PROTOCOL_VERSION,
         capabilities: {
-          session: { delete: {}, fork: {}, mcp: { http: {} }, prompt: {} },
+          session: { delete: {}, fork: {}, prompt: {} },
         },
       });
       expect(initialized.authMethods).toBeUndefined();
+      expect(initialized.capabilities?.session?.mcp).toBeUndefined();
 
       const created = await context.request(acp.methods.agent.session.new, {
         cwd: "/workspace",

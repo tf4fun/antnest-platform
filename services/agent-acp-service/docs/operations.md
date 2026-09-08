@@ -21,19 +21,18 @@ journal matches that older release.
 
 ## Configuration
 
-| Variable                               | Required | Meaning                                                     |
-| -------------------------------------- | -------- | ----------------------------------------------------------- |
-| `ANTNEST_ACP_LISTEN`                   | no       | HTTP/WebSocket listen address, default `:8080`              |
-| `ANTNEST_ACP_DATABASE_URL`             | yes      | Private `postgres://` or `postgresql://` database URL       |
-| `ANTNEST_AGENT_CONTROLLER_URL`         | yes      | Trusted internal `http://` or `https://` Run RPC base URL   |
-| `ANTNEST_ACP_CLIENT_MCP_KEY`           | yes      | Base64-encoded 32-byte key for client MCP header encryption |
-| `ANTNEST_ACP_CLIENT_MCP_BLOCKED_CIDRS` | no       | Additional comma-separated networks blocked for client MCP  |
-| `ANTNEST_ACP_CONTROLLER_TIMEOUT`       | no       | Agent Controller request deadline, default `5s`             |
-| `ANTNEST_ACP_MAX_PROMPT_BYTES`         | no       | ACP WebSocket message bound, default `16777216` bytes       |
-| `ANTNEST_ACP_SHUTDOWN_TIMEOUT`         | no       | Graceful shutdown deadline, default `15s`                   |
-| `OTEL_SDK_DISABLED`                    | no       | `true` disables OTLP even when an endpoint is present       |
-| `OTEL_EXPORTER_OTLP_ENDPOINT`          | no       | OTLP base endpoint; empty disables export                   |
-| `OTEL_SERVICE_NAME`                    | no       | Defaults to `agent-acp-service`                             |
+| Variable                         | Required | Meaning                                                       |
+| -------------------------------- | -------- | ------------------------------------------------------------- |
+| `ANTNEST_ACP_LISTEN`             | no       | HTTP/WebSocket listen address, default `:8080`                |
+| `ANTNEST_ACP_DATABASE_URL`       | yes      | Private `postgres://` or `postgresql://` database URL         |
+| `ANTNEST_AGENT_CONTROLLER_URL`   | yes      | Trusted internal `http://` or `https://` Run RPC base URL     |
+| `ANTNEST_ACP_CLIENT_MCP_KEY`     | yes      | Base64-encoded 32-byte key for retained Session MCP revisions |
+| `ANTNEST_ACP_CONTROLLER_TIMEOUT` | no       | Agent Controller request deadline, default `5s`               |
+| `ANTNEST_ACP_MAX_PROMPT_BYTES`   | no       | ACP WebSocket message bound, default `16777216` bytes         |
+| `ANTNEST_ACP_SHUTDOWN_TIMEOUT`   | no       | Graceful shutdown deadline, default `15s`                     |
+| `OTEL_SDK_DISABLED`              | no       | `true` disables OTLP even when an endpoint is present         |
+| `OTEL_EXPORTER_OTLP_ENDPOINT`    | no       | OTLP base endpoint; empty disables export                     |
+| `OTEL_SERVICE_NAME`              | no       | Defaults to `agent-acp-service`                               |
 
 Durations accept a positive integer followed by `ms`, `s`, or `m`. Invalid,
 empty required, unsupported-scheme, and out-of-range values fail startup before
@@ -78,7 +77,7 @@ unversioned `/acp` returns not found and never negotiates a default version.
 
 W3C `traceparent`/`tracestate` is accepted at WebSocket upgrade and from ACP
 request `_meta` where present. Trace context propagates to Agent Controller,
-model, client MCP, and Runtime MCP requests.
+model and Runtime MCP requests.
 
 Spans include low-risk identifiers such as Agent ID, Session ID, Run ID,
 admission ID, configuration revision, execution revision, MCP source class,
@@ -125,15 +124,19 @@ metrics, and traces.
   is emitted before that recovery establishes the terminal facts.
 - Model timeout: cancel the request and terminate the Run as failed unless the
   client cancellation path applies.
-- Runtime or client MCP timeout after dispatch: report Tool effect unknown and
+- Runtime MCP timeout after dispatch: report Tool effect unknown and
   never replay the Tool automatically.
 - Agent ACP Service restart during a Run: never replay model or Tool work.
   Recovery marks dispatched-but-unconfirmed Tool calls unknown, marks retained
   but undispatched calls not executed, and reports the Run unresolved only when
   an unknown Tool effect actually exists; otherwise it reports a failed,
   quiescent Run.
-- A confirmed client MCP failure is returned to the model as a Tool error;
-  Runtime MCP and other client sources remain available.
+- Nonempty ACP client MCP input fails with `client_mcp_not_allowed`, without
+  persistence, replay or a client connection. Use platform-managed Runtime MCP.
+  The old `ANTNEST_ACP_CLIENT_MCP_BLOCKED_CIDRS` option has been removed; no
+  deployment allowlist can enable client injection.
+- A confirmed Runtime-managed MCP error is returned to the model as a Tool
+  result; an unknown transport effect still terminates the Run as unresolved.
 - PostgreSQL unavailable: readiness fails and no prompt is accepted.
 - Run worker lock unavailable: startup fails because another replica owns Run
   execution. A same-session heartbeat detects loss of the dedicated lock
@@ -173,4 +176,4 @@ Compose or Kubernetes network policy permits:
 - inbound only from Edge Gateway, Agent UI bridge, Channel Gateway, and trusted
   development clients;
 - outbound to its private PostgreSQL, Agent Controller, configured model APIs,
-  the Runtime MCP endpoint in a Run snapshot, and validated client MCP hosts.
+  and the Runtime MCP endpoint in a Run snapshot.

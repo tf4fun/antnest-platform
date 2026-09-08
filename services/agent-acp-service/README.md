@@ -12,9 +12,10 @@ is the compatibility baseline; ACP v2 is an explicitly draft, side-by-side
 adapter. Optional editor, authentication, and Provider administration methods
 are not claimed as implemented. Stage 3 Docker and Gateway-rooted Jaeger
 evidence exists for Session/Tool execution and managed MCP create/chat/rebuild.
-It is not full protocol or recovery acceptance: client-injected stdio remains
-unsupported, and full-platform isolation and process-interruption evidence
-remain open in the [protocol matrix](docs/protocol-conformance.md) and
+It is not unrestricted protocol or recovery acceptance: client MCP injection
+is deliberately prohibited. Gateway isolation and selected process-interruption
+cases have passed; remaining windows are distinguished in the
+[protocol matrix](docs/protocol-conformance.md) and
 [single-node closeout](../../docs/docker-single-node-closeout.md).
 The authoritative cross-service design is
 [`../../docs/stage-2-agent-and-acp.md`](../../docs/stage-2-agent-and-acp.md);
@@ -26,7 +27,7 @@ this directory is the only implementation authority for Agent ACP Service.
 - Run intents, immutable Run execution snapshots, and terminal facts.
 - Context construction and bounded Session compaction checkpoints.
 - Model invocation and the multi-request Tool loop.
-- Client-provided HTTP MCP revisions and Tool attempts.
+- Tool attempts and retained Session MCP revision records.
 - Per-Run calls to the mandatory platform Runtime MCP endpoint.
 
 ## Does Not Own
@@ -45,7 +46,7 @@ this directory is the only implementation authority for Agent ACP Service.
 | ACP v2 over WebSocket `/v2/acp` | inbound   | Draft ACP Session and prompt protocol                  |
 | `GET /status`                   | inbound   | Liveness/readiness without business mutation           |
 | Agent Controller Run RPC        | outbound  | Resolve access, acquire/finish Run, resolve credential |
-| MCP `2026-07-28` HTTP           | outbound  | Platform Runtime and client Tool execution             |
+| MCP `2026-07-28` HTTP           | outbound  | Platform Runtime Tool execution                        |
 | OpenAI-compatible model API     | outbound  | Stage 2 model adapter                                  |
 | Private PostgreSQL              | owned     | Sessions, messages, checkpoints, Runs, Tool attempts   |
 
@@ -73,14 +74,16 @@ protocol selection is never implicit.
 
 The executable coverage contract is maintained in
 [`docs/protocol-conformance.md`](docs/protocol-conformance.md). Stable ACP v1
-requires stdio MCP support. This remote service deliberately supports only
-Streamable HTTP MCP for both platform Runtime and client-provided sources;
-platform-configured stdio children are hosted inside Runtime and reached through
-its aggregated HTTP MCP surface. ACP-client-provided stdio and legacy SSE are
-not supported. See [Runtime context](docs/runtime-context.md).
-This is a documented compatibility restriction, so v1 must not be described
-as fully conformant. Unsupported transports fail explicitly rather than being
-silently discarded or launched inside the shared ACP service.
+requires client stdio MCP support. Antnest deliberately accepts only
+`mcpServers: []` on both ACP versions. Every nonempty list (HTTP, stdio, SSE,
+MCP-over-ACP) fails explicitly with `client_mcp_not_allowed`; no client MCP
+capability is advertised. Only platform Runtime MCP tools are available.
+Platform-configured stdio children are hosted inside Runtime, not on the
+shared ACP host. See [Runtime context](docs/runtime-context.md).
+This restricted profile must not be described as generic full v1 conformance.
+Client injection as a whole is deferred from the current closeout. Future
+administrator opt-in and the client transport are separate decisions; see
+[MCP trust and injection boundary](docs/client-mcp-policy.md).
 
 This matrix distinguishes protocol completeness from optional product scope.
 Methods are advertised only when their semantics are implemented. Platform

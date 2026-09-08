@@ -38,7 +38,6 @@ export function createAcpV2Agent({
           session: {
             delete: {},
             fork: {},
-            mcp: { http: {} },
             prompt: {
               ...(promptCapabilities.image ? { image: {} } : {}),
               ...(promptCapabilities.embeddedContext ? { embeddedContext: {} } : {}),

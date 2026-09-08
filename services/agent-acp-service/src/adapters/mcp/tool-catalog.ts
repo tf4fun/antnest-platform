@@ -1,4 +1,4 @@
-import { mergeToolCatalogs } from "../../domain/mcp.js";
+import { requireNoClientMcpServers, runtimeToolCatalog } from "../../domain/mcp.js";
 import type { RuntimeInformationPort } from "../../ports/runtime-information.js";
 import { parseRuntimeInformation, RUNTIME_INFORMATION_URI } from "./runtime-information.js";
 import { context, propagation } from "@opentelemetry/api";
@@ -44,14 +44,8 @@ export interface McpDialer {
 
 export type McpToolCatalogDependencies = {
   runtimeDialer: McpDialer;
-  clientDialer: McpDialer;
   revisions: ClientMcpRevisionPort;
-  reportClientSourceFailure?: (sourceId: string, error: unknown) => void;
-  reportConnectionCloseFailure?: (
-    source: "runtime" | "client",
-    sourceId: string,
-    error: unknown,
-  ) => void;
+  reportConnectionCloseFailure?: (source: "runtime", sourceId: string, error: unknown) => void;
 };
 
 export class McpToolCallError extends Error {
@@ -89,27 +83,18 @@ export class McpToolCatalog implements ToolCatalogPort, RuntimeInformationPort {
     snapshot: ToolCallInput["snapshot"],
     signal: AbortSignal,
   ): Promise<ModelToolDefinition[]> {
-    const runtime = await this.listRuntimeTools(snapshot, signal);
     const sources = await this.dependencies.revisions.getClientMcpRevision(
       snapshot.clientMcpRevisionId,
     );
-    const clients: ToolDefinition[] = [];
-    for (const source of sources) {
-      try {
-        clients.push(...(await this.listClientTools(source, signal)));
-      } catch (error) {
-        signal.throwIfAborted();
-        this.dependencies.reportClientSourceFailure?.(source.sourceId, error);
-      }
-    }
-    return mergeToolCatalogs(runtime, clients);
+    requireNoClientMcpServers(sources);
+    return runtimeToolCatalog(await this.listRuntimeTools(snapshot, signal));
   }
 
   public async call(input: ToolCallInput): Promise<ToolCallResult> {
-    if (input.tool.source === "runtime") {
-      return this.callRuntime(input);
+    if (input.tool.source !== "runtime") {
+      throw new McpToolCallError("Client MCP injection is not supported", "none");
     }
-    return this.callClient(input);
+    return this.callRuntime(input);
   }
 
   private async listRuntimeTools(
@@ -135,31 +120,6 @@ export class McpToolCatalog implements ToolCatalogPort, RuntimeInformationPort {
     );
   }
 
-  private async listClientTools(
-    source: Awaited<ReturnType<ClientMcpRevisionPort["getClientMcpRevision"]>>[number],
-    signal: AbortSignal,
-  ): Promise<ToolDefinition[]> {
-    return this.withConnection(
-      this.dependencies.clientDialer,
-      {
-        endpoint: new URL(source.url),
-        headers: tracedHeaders(
-          Object.fromEntries(source.headers.map((header) => [header.name, header.value])),
-        ),
-        signal,
-      },
-      (error) => this.dependencies.reportConnectionCloseFailure?.("client", source.sourceId, error),
-      async (connection) =>
-        (await connection.listTools(signal)).map((tool) => ({
-          source: "client",
-          sourceId: source.sourceId,
-          name: tool.name,
-          description: tool.description ?? "",
-          ...(tool.inputSchema === undefined ? {} : { inputSchema: tool.inputSchema }),
-        })),
-    );
-  }
-
   private async callRuntime(input: ToolCallInput): Promise<ToolCallResult> {
     return this.invokeTool(
       this.dependencies.runtimeDialer,
@@ -174,34 +134,11 @@ export class McpToolCatalog implements ToolCatalogPort, RuntimeInformationPort {
     );
   }
 
-  private async callClient(input: ToolCallInput): Promise<ToolCallResult> {
-    const sources = await this.dependencies.revisions.getClientMcpRevision(
-      input.snapshot.clientMcpRevisionId,
-    );
-    const source = sources.find((candidate) => candidate.sourceId === input.tool.sourceId);
-    if (source === undefined) {
-      throw new McpToolCallError("Client MCP source is not part of this Run", "none");
-    }
-    return this.invokeTool(
-      this.dependencies.clientDialer,
-      () => ({
-        endpoint: new URL(source.url),
-        headers: tracedHeaders(
-          Object.fromEntries(source.headers.map((header) => [header.name, header.value])),
-        ),
-        signal: input.signal,
-      }),
-      input,
-      "client",
-      (error) => this.dependencies.reportConnectionCloseFailure?.("client", source.sourceId, error),
-    );
-  }
-
   private async invokeTool(
     dialer: McpDialer,
     connectInput: () => McpConnectInput,
     input: ToolCallInput,
-    source: "runtime" | "client",
+    source: "runtime",
     reportCloseFailure: (error: unknown) => void,
   ): Promise<ToolCallResult> {
     let connection: McpConnection;
@@ -259,7 +196,7 @@ export class McpToolCatalog implements ToolCatalogPort, RuntimeInformationPort {
 
 function receivedEffectState(
   result: Awaited<ReturnType<McpConnection["callTool"]>>,
-  source: "runtime" | "client",
+  source: "runtime",
 ): ToolEffectState {
   if (isJsonObject(result.structuredContent) && result.structuredContent.effect_state === "unknown")
     return "unknown";
@@ -273,7 +210,7 @@ function receivedEffectState(
 
 function declaredEffectState(
   structuredContent: unknown,
-  source: "runtime" | "client",
+  source: "runtime",
 ): ToolEffectState | undefined {
   if (!isJsonObject(structuredContent)) {
     return undefined;
@@ -283,7 +220,7 @@ function declaredEffectState(
     return undefined;
   }
   if (state === "unknown") {
-    const expectedSource = source === "runtime" ? "runtime_mcp" : "client_mcp";
+    const expectedSource = `${source}_mcp`;
     return structuredContent.effect_source === expectedSource ? state : undefined;
   }
   return structuredContent.effect_source === null || structuredContent.effect_source === undefined

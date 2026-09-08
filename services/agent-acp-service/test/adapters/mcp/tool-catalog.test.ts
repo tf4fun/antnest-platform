@@ -10,21 +10,17 @@ import type { ClientMcpRevisionPort } from "../../../src/ports/tools.js";
 import type { RunExecutionSnapshot } from "../../../src/domain/types.js";
 
 describe("McpToolCatalog", () => {
-  it("merges Runtime and client Tools without allowing client shadowing", async () => {
+  it("lists only platform Runtime Tools", async () => {
     const runtime = fakeDialer([{ name: "read", description: "Read" }]);
-    const client = fakeDialer([{ name: "read", description: "Other read" }]);
     const catalog = new McpToolCatalog({
       runtimeDialer: runtime.dialer,
-      clientDialer: client.dialer,
       revisions: revisions(),
     });
 
     const tools = await catalog.list(snapshot(), new AbortController().signal);
 
-    expect(tools).toHaveLength(2);
+    expect(tools).toHaveLength(1);
     expect(tools[0]).toMatchObject({ source: "runtime", modelName: "read" });
-    expect(tools[1]).toMatchObject({ source: "client", name: "read" });
-    expect(tools[1]?.modelName).not.toBe("read");
     expect(runtime.connect).toHaveBeenCalledWith(
       expect.objectContaining({
         endpoint: new URL("http://runtime-1:8080/mcp"),
@@ -33,42 +29,20 @@ describe("McpToolCatalog", () => {
     );
   });
 
-  it("routes a qualified client Tool back to its original source and closes the connection", async () => {
+  it("rejects a client Tool without connecting or dispatching", async () => {
     const runtime = fakeDialer([]);
-    const client = fakeDialer([{ name: "search", description: "Search" }], {
-      content: [{ type: "text", text: "found" }],
-      isError: false,
-    });
-    const catalog = new McpToolCatalog({
-      runtimeDialer: runtime.dialer,
-      clientDialer: client.dialer,
-      revisions: revisions(),
-    });
-    const [tool] = (await catalog.list(snapshot(), new AbortController().signal)).filter(
-      (candidate) => candidate.source === "client",
-    );
-    if (tool === undefined) {
-      throw new Error("expected client Tool");
-    }
-
+    const catalog = new McpToolCatalog({ runtimeDialer: runtime.dialer, revisions: revisions() });
     await expect(
       catalog.call({
         runId: "run-1",
         snapshot: snapshot(),
-        tool,
-        arguments: { query: "antnest" },
+        tool: { ...runtimeTool("search"), source: "client", sourceId: "old-source" },
+        arguments: {},
         signal: new AbortController().signal,
       }),
-    ).resolves.toEqual({
-      content: [{ type: "text", text: "found" }],
-      isError: false,
-      toolEffectState: "settled",
-    });
-    expect(client.callTool).toHaveBeenCalledWith(
-      { name: "search", arguments: { query: "antnest" } },
-      expect.any(AbortSignal),
-    );
-    expect(client.close).toHaveBeenCalled();
+    ).rejects.toMatchObject({ effectState: "none" });
+    expect(runtime.connect).not.toHaveBeenCalled();
+    expect(runtime.callTool).not.toHaveBeenCalled();
   });
 
   it("keeps a confirmed Tool result settled when connection cleanup fails", async () => {
@@ -80,7 +54,6 @@ describe("McpToolCatalog", () => {
     const reportConnectionCloseFailure = vi.fn();
     const catalog = new McpToolCatalog({
       runtimeDialer: runtime.dialer,
-      clientDialer: fakeDialer([]).dialer,
       revisions: revisions(),
       reportConnectionCloseFailure,
     });
@@ -107,7 +80,6 @@ describe("McpToolCatalog", () => {
     runtime.callTool.mockRejectedValueOnce(new TypeError("connection reset"));
     const catalog = new McpToolCatalog({
       runtimeDialer: runtime.dialer,
-      clientDialer: fakeDialer([]).dialer,
       revisions: revisions(),
     });
     const [tool] = await catalog.list(snapshot(), new AbortController().signal);
@@ -135,7 +107,6 @@ describe("McpToolCatalog", () => {
     runtime.connect.mockRejectedValueOnce(new TypeError("connection refused"));
     const catalog = new McpToolCatalog({
       runtimeDialer: runtime.dialer,
-      clientDialer: fakeDialer([]).dialer,
       revisions: revisions(),
     });
     const tool = runtimeTool("write");
@@ -168,7 +139,6 @@ describe("McpToolCatalog", () => {
     });
     const catalog = new McpToolCatalog({
       runtimeDialer: runtime.dialer,
-      clientDialer: fakeDialer([]).dialer,
       revisions: revisions(),
     });
 
@@ -191,7 +161,6 @@ describe("McpToolCatalog", () => {
     });
     const catalog = new McpToolCatalog({
       runtimeDialer: runtime.dialer,
-      clientDialer: fakeDialer([]).dialer,
       revisions: revisions(),
     });
 
@@ -210,49 +179,27 @@ describe("McpToolCatalog", () => {
     });
   });
 
-  it("treats an unconfirmed client Tool outcome as unknown side effects", async () => {
-    const client = fakeDialer([{ name: "search", description: "Search" }]);
-    client.callTool.mockRejectedValueOnce(new TypeError("connection reset"));
-    const catalog = new McpToolCatalog({
-      runtimeDialer: fakeDialer([]).dialer,
-      clientDialer: client.dialer,
-      revisions: revisions(),
-    });
-    const tool = (await catalog.list(snapshot(), new AbortController().signal)).find(
-      (candidate) => candidate.source === "client",
-    );
-    if (tool === undefined) {
-      throw new Error("expected client Tool");
-    }
-
-    const error = await catalog
-      .call({
-        runId: "run-1",
-        snapshot: snapshot(),
-        tool,
-        arguments: { query: "antnest" },
-        signal: new AbortController().signal,
-      })
-      .catch((caught: unknown) => caught);
-
-    expect(error).toBeInstanceOf(McpToolCallError);
-    expect(error).toMatchObject({ effectState: "unknown" });
-    expect(client.callTool).toHaveBeenCalledTimes(1);
-  });
-
-  it("keeps Runtime Tools when an optional client MCP source is unavailable", async () => {
+  it("rejects persisted client sources before tool discovery", async () => {
     const runtime = fakeDialer([{ name: "read", description: "Read" }]);
-    const client = fakeDialer([]);
-    client.connect.mockRejectedValueOnce(new TypeError("client MCP unavailable"));
     const catalog = new McpToolCatalog({
       runtimeDialer: runtime.dialer,
-      clientDialer: client.dialer,
-      revisions: revisions(),
+      revisions: {
+        getClientMcpRevision: vi.fn(() =>
+          Promise.resolve([
+            {
+              sourceId: "old",
+              name: "old",
+              url: "https://private.example/mcp",
+              headers: [],
+            },
+          ]),
+        ),
+      },
     });
-
-    await expect(catalog.list(snapshot(), new AbortController().signal)).resolves.toEqual([
-      expect.objectContaining({ source: "runtime", modelName: "read" }),
-    ]);
+    await expect(catalog.list(snapshot(), new AbortController().signal)).rejects.toMatchObject({
+      code: "client_mcp_not_allowed",
+    });
+    expect(runtime.connect).not.toHaveBeenCalled();
   });
 });
 
@@ -294,16 +241,7 @@ function runtimeTool(name: string) {
 
 function revisions(): ClientMcpRevisionPort {
   return {
-    getClientMcpRevision: vi.fn(() =>
-      Promise.resolve([
-        {
-          sourceId: "client-source-1",
-          name: "docs",
-          url: "https://mcp.example.test/mcp",
-          headers: [{ name: "authorization", value: "Bearer secret" }],
-        },
-      ]),
-    ),
+    getClientMcpRevision: vi.fn(() => Promise.resolve([])),
   };
 }
 

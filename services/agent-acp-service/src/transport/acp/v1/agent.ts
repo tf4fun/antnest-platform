@@ -47,7 +47,7 @@ export function createAcpV1Agent({
               ...(promptCapabilities.image ? { image: true } : {}),
               ...(promptCapabilities.embeddedContext ? { embeddedContext: true } : {}),
             },
-            mcpCapabilities: { http: true },
+            mcpCapabilities: {},
             sessionCapabilities: {
               list: {},
               delete: {},

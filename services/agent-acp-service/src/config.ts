@@ -1,5 +1,3 @@
-import ipaddr from "ipaddr.js";
-
 const DEFAULT_MAX_PAYLOAD_BYTES = 16 * 1024 * 1024;
 const MAX_PAYLOAD_BYTES = 64 * 1024 * 1024;
 
@@ -8,7 +6,6 @@ export type AgentAcpConfig = {
   databaseUrl: string;
   agentControllerUrl: URL;
   clientMcpKey: Buffer;
-  clientMcpBlockedCidrs: string[];
   controllerTimeoutMs: number;
   maxWebSocketPayloadBytes: number;
   shutdownTimeoutMs: number;
@@ -40,7 +37,6 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AgentA
       "ANTNEST_AGENT_CONTROLLER_URL",
     ),
     clientMcpKey: parseEncryptionKey(required(environment, "ANTNEST_ACP_CLIENT_MCP_KEY")),
-    clientMcpBlockedCidrs: parseCidrs(environment.ANTNEST_ACP_CLIENT_MCP_BLOCKED_CIDRS),
     controllerTimeoutMs: parseDuration(
       environment.ANTNEST_ACP_CONTROLLER_TIMEOUT ?? "5s",
       "ANTNEST_ACP_CONTROLLER_TIMEOUT",
@@ -162,25 +158,6 @@ function parseEncryptionKey(value: string): Buffer {
     throw new ConfigError("ANTNEST_ACP_CLIENT_MCP_KEY must encode exactly 32 bytes");
   }
   return key;
-}
-
-function parseCidrs(value: string | undefined): string[] {
-  const normalized = optional(value);
-  if (normalized === undefined) {
-    return [];
-  }
-  return normalized.split(",").map((entry) => {
-    const cidr = entry.trim();
-    if (cidr.length === 0) {
-      throw new ConfigError("ANTNEST_ACP_CLIENT_MCP_BLOCKED_CIDRS contains an empty entry");
-    }
-    try {
-      ipaddr.parseCIDR(cidr);
-    } catch (error) {
-      throw new ConfigError(`Invalid blocked CIDR ${cidr}`, { cause: error });
-    }
-    return cidr;
-  });
 }
 
 function parseDuration(value: string, name: string): number {

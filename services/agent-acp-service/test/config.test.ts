@@ -12,7 +12,6 @@ describe("loadConfig", () => {
     expect(config.databaseUrl).toBe("postgres://agent:secret@postgres/agent_acp");
     expect(config.agentControllerUrl.href).toBe("http://agent-controller:8080/");
     expect(config.clientMcpKey).toEqual(Buffer.alloc(32, 7));
-    expect(config.clientMcpBlockedCidrs).toEqual([]);
     expect(config.controllerTimeoutMs).toBe(5_000);
     expect(config.maxWebSocketPayloadBytes).toBe(16 * 1024 * 1024);
     expect(config.shutdownTimeoutMs).toBe(15_000);
@@ -24,11 +23,10 @@ describe("loadConfig", () => {
     });
   });
 
-  it("parses explicit IPv6, duration, CIDR, and telemetry values", () => {
+  it("parses explicit IPv6, duration and telemetry values", () => {
     const config = loadConfig({
       ...requiredEnvironment(),
       ANTNEST_ACP_LISTEN: "[::1]:18080",
-      ANTNEST_ACP_CLIENT_MCP_BLOCKED_CIDRS: "203.0.113.0/24, 2001:db8::/32",
       ANTNEST_ACP_CONTROLLER_TIMEOUT: "750ms",
       ANTNEST_ACP_MAX_PROMPT_BYTES: "1048576",
       ANTNEST_ACP_SHUTDOWN_TIMEOUT: "2m",
@@ -40,7 +38,6 @@ describe("loadConfig", () => {
     });
 
     expect(config.listen).toEqual({ host: "::1", port: 18080 });
-    expect(config.clientMcpBlockedCidrs).toEqual(["203.0.113.0/24", "2001:db8::/32"]);
     expect(config.controllerTimeoutMs).toBe(750);
     expect(config.maxWebSocketPayloadBytes).toBe(1_048_576);
     expect(config.shutdownTimeoutMs).toBe(120_000);

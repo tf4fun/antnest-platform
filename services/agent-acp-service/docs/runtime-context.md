@@ -9,7 +9,7 @@ Every admitted Run prepares one model input from its frozen Runtime binding:
    Runtime startup configuration (commands, arguments, environment, credentials)
    is not an information field. A failed/mismatched read fails setup before any
    model call or tool effect; cancellation/deadline interrupts setup normally.
-3. Discover Runtime and client HTTP MCP tools once for this Run. Managed stdio
+3. Discover platform Runtime MCP tools once for this Run. Managed stdio
    children are already represented by Runtime's `mcp__<server>__<tool>` tools.
    ACP never launches a child or invents a per-child HTTP endpoint.
 4. Prepare a transient system message from the Agent prompt, Runtime environment,

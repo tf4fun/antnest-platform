@@ -170,15 +170,7 @@ function buildComponents(
   const model = new InstrumentedModel(new OpenAICompatibleModel(), telemetry);
   const rawTools = new McpToolCatalog({
     runtimeDialer: new OfficialMcpDialer({ trust: "runtime" }),
-    clientDialer: new OfficialMcpDialer({
-      trust: "client",
-      blockedCidrs: config.clientMcpBlockedCidrs,
-    }),
     revisions: sessions,
-    reportClientSourceFailure: (sourceId, error) => {
-      telemetry.count("antnest.acp.mcp.client_source_failures", { operation: "list" });
-      telemetry.log("warn", "client_mcp_source_unavailable", { "mcp.source_id": sourceId }, error);
-    },
     reportConnectionCloseFailure: (source, sourceId, error) => {
       telemetry.count("antnest.acp.mcp.close_failures", { source });
       telemetry.log(

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { Pool } from "pg";
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -37,13 +38,13 @@ describe.skipIf(databaseUrl === undefined)("ACP MCP input persistence boundaries
   });
 
   describe.each(versions)("v%i", (version) => {
-    it.each(["stdio", "sse"])(
+    it.each(["http", "stdio", "sse", "acp"])(
       "rejects %s at all setup methods without partial writes",
       async (transport) => {
         const client = await app.connect(version);
         const created = await client.request("session/new", {
           cwd: "/workspace",
-          mcpServers: [httpServer],
+          mcpServers: [],
         });
         expect(created.error).toBeUndefined();
         const sessionId = created.result?.sessionId;
@@ -70,10 +71,7 @@ describe.skipIf(databaseUrl === undefined)("ACP MCP input persistence boundaries
           const modelCalls = app.model.complete.mock.calls.length;
           const toolCalls = app.tools.call.mock.calls.length;
           const admissions = app.controller.acquireRun.mock.calls.length;
-          const mcpServers = [
-            { ...httpServer, name: "replacement-prefix", headers: [] },
-            unsupportedServer(version, transport),
-          ];
+          const mcpServers = [unsupportedServer(version, transport)];
           for (const method of setupMethods(version)) {
             const result = await client.request(method, {
               sessionId,
@@ -84,10 +82,11 @@ describe.skipIf(databaseUrl === undefined)("ACP MCP input persistence boundaries
             expect(result.result).toBeUndefined();
             expect(result.error).toMatchObject({
               code: -32020,
-              data: { code: "unsupported_mcp_transport", retryable: false },
+              data: { code: "client_mcp_not_allowed", retryable: false },
             });
             expect(await boundaryState(pool)).toEqual(before);
           }
+          expect(JSON.stringify(client.frames.slice(offset))).not.toContain("synthetic-mcp-secret");
           expect(app.controller.acquireRun).toHaveBeenCalledTimes(admissions);
           expect(app.model.complete).toHaveBeenCalledTimes(modelCalls);
           expect(app.tools.call).toHaveBeenCalledTimes(toolCalls);
@@ -98,11 +97,77 @@ describe.skipIf(databaseUrl === undefined)("ACP MCP input persistence boundaries
       },
     );
 
-    it("preserves HTTPS MCP configuration through setup, fork and encrypted storage", async () => {
+    it("blocks retained client MCP before admission and recovers via empty load/resume", async () => {
+      const client = await app.connect(version);
+      const created = await client.request("session/new", { cwd: "/workspace", mcpServers: [] });
+      expect(created.error).toBeUndefined();
+      const sessionId = created.result?.sessionId;
+      if (typeof sessionId !== "string") throw new Error("Missing Session ID");
+      const revisionId = randomUUID();
+      const retainedSources = [
+        {
+          sourceId: "client-source",
+          name: "knowledge",
+          url: httpServer.url,
+          headers: [{ name: "Authorization", value: "Bearer synthetic-mcp-secret" }],
+        },
+      ];
+      await app.sessions.replaceMcpAndActivate({
+        sessionId,
+        mcpRevisionId: revisionId,
+        mcpSources: retainedSources,
+      });
+      const before = await boundaryState(pool);
+      const denied = await client.request("session/prompt", {
+        sessionId,
+        prompt: [{ type: "text", text: "Do not use retained client tools" }],
+      });
+      expect(denied.error).toMatchObject({
+        code: -32020,
+        data: { code: "client_mcp_not_allowed", retryable: false },
+      });
+      expect(await boundaryState(pool)).toEqual(before);
+      expect(app.controller.acquireRun).not.toHaveBeenCalled();
+      expect(app.model.complete).not.toHaveBeenCalled();
+      expect(app.tools.call).not.toHaveBeenCalled();
+      expect(JSON.stringify(client.frames)).not.toContain("synthetic-mcp-secret");
+
+      const resumed = await client.request(version === 1 ? "session/load" : "session/resume", {
+        sessionId,
+        cwd: "/workspace",
+        mcpServers: [],
+      });
+      expect(resumed.error).toBeUndefined();
+      const session = await app.sessions.get(sessionId);
+      if (session === null) throw new Error("Missing Session");
+      expect(await app.sessions.getClientMcpRevision(session.clientMcpRevisionId)).toEqual([]);
+      expect(await app.sessions.getClientMcpRevision(revisionId)).toEqual(retainedSources);
+      expect(
+        (
+          await client.request("session/prompt", {
+            sessionId,
+            prompt: [{ type: "text", text: "Use platform Runtime" }],
+          })
+        ).error,
+      ).toBeUndefined();
+      await expect
+        .poll(async () => (await pool.query<{ state: string }>("SELECT state FROM runs")).rows)
+        .toEqual([{ state: "completed" }]);
+      expect(app.controller.acquireRun).toHaveBeenCalledOnce();
+      expect(app.model.complete).toHaveBeenCalledTimes(2);
+      expect(app.tools.call).toHaveBeenCalledOnce();
+      expect(app.tools.call.mock.calls[0]?.[0].tool).toMatchObject({
+        source: "runtime",
+        name: "read",
+      });
+      expect(JSON.stringify(client.frames)).toContain("owner-only-response");
+    });
+
+    it("accepts empty MCP configuration through setup and isolated fork", async () => {
       const client = await app.connect(version);
       const created = await client.request("session/new", {
         cwd: "/workspace",
-        mcpServers: [httpServer],
+        mcpServers: [],
       });
       expect(created.error).toBeUndefined();
       const sessionId = created.result?.sessionId;
@@ -110,28 +175,17 @@ describe.skipIf(databaseUrl === undefined)("ACP MCP input persistence boundaries
       const original = await app.sessions.get(sessionId);
       if (original === null) throw new Error("Missing persisted Session");
       const originalSources = await app.sessions.getClientMcpRevision(original.clientMcpRevisionId);
-      expect(originalSources).toEqual([
-        expect.objectContaining({
-          name: "knowledge",
-          url: httpServer.url,
-          headers: [{ name: "authorization", value: "Bearer synthetic-mcp-secret" }],
-        }),
-      ]);
+      expect(originalSources).toEqual([]);
 
       for (const method of setupMethods(version).filter((method) => method !== "session/new")) {
         const before = await app.sessions.get(sessionId);
         if (before === null) throw new Error("Missing source Session");
         const count = (await pool.query<{ count: string }>("SELECT count(*) FROM acp_sessions"))
           .rows[0]?.count;
-        const value = `Bearer synthetic-rotated-secret-${method}`;
-        const revised = {
-          ...httpServer,
-          headers: [{ name: "Authorization", value }],
-        };
         const result = await client.request(method, {
           sessionId,
           cwd: "/workspace",
-          mcpServers: [revised],
+          mcpServers: [],
         });
         expect(result.error).toBeUndefined();
         const target = method === "session/fork" ? result.result?.sessionId : sessionId;
@@ -151,23 +205,11 @@ describe.skipIf(databaseUrl === undefined)("ACP MCP input persistence boundaries
         } else {
           expect(nextCount).toBe(count);
         }
-        expect(await app.sessions.getClientMcpRevision(session.clientMcpRevisionId)).toEqual([
-          {
-            ...originalSources[0],
-            headers: [{ name: "authorization", value }],
-          },
-        ]);
+        expect(await app.sessions.getClientMcpRevision(session.clientMcpRevisionId)).toEqual([]);
       }
       expect(await app.sessions.getClientMcpRevision(original.clientMcpRevisionId)).toEqual(
         originalSources,
       );
-      const storage = await pool.query("SELECT encrypted_sources FROM client_mcp_revisions");
-      for (const row of storage.rows as Array<{ encrypted_sources: Buffer }>) {
-        expect(row.encrypted_sources.toString("utf8")).not.toMatch(
-          /synthetic-(?:mcp|rotated)-secret/u,
-        );
-      }
-      expect(JSON.stringify(client.frames)).not.toMatch(/synthetic-(?:mcp|rotated)-secret/u);
       expect(app.controller.acquireRun).not.toHaveBeenCalled();
       expect(app.model.complete).not.toHaveBeenCalled();
     });
@@ -184,6 +226,8 @@ function setupMethods(version: ProtocolVersion) {
 }
 
 function unsupportedServer(version: ProtocolVersion, transport: string) {
+  if (transport === "http") return httpServer;
+  if (transport === "acp") return { type: "acp", name: "client", serverId: "client-bridge" };
   return transport === "stdio"
     ? {
         ...(version === 2 ? { type: "stdio" } : {}),

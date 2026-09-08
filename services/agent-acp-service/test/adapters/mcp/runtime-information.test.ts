@@ -54,10 +54,8 @@ describe("Runtime information resource", () => {
     const readResource = vi.fn<McpConnection["readResource"]>().mockResolvedValue(resource());
     const close = vi.fn<McpConnection["close"]>().mockResolvedValue();
     const connect = vi.fn().mockResolvedValue({ readResource, close });
-    const clientConnect = vi.fn();
     const catalog = new McpToolCatalog({
       runtimeDialer: { connect },
-      clientDialer: { connect: clientConnect },
       revisions: { getClientMcpRevision: vi.fn() },
     });
     const signal = new AbortController().signal;
@@ -70,7 +68,6 @@ describe("Runtime information resource", () => {
     });
     expect(readResource).toHaveBeenCalledWith(RUNTIME_INFORMATION_URI, signal);
     expect(close).toHaveBeenCalledTimes(2);
-    expect(clientConnect).not.toHaveBeenCalled();
     readResource.mockRejectedValueOnce(new Error("cancelled"));
     await expect(catalog.read(runtimeSnapshot(), signal)).rejects.toThrow("cancelled");
     expect(close).toHaveBeenCalledTimes(3);

@@ -27,13 +27,17 @@ export function requireWorkspace(cwd: string, additionalDirectories: readonly st
   }
 }
 
-export function authorizeSession(session: SessionRecord, binding: ConnectionBinding): void {
+export function authorizeSessionOwner(session: SessionRecord, binding: ConnectionBinding): void {
   if (session.principalId !== binding.principalId) {
     throw new DomainError("session_access_denied", "Session belongs to another principal");
   }
   if (session.agentId !== binding.agentId) {
     throw new DomainError("session_access_denied", "Session belongs to another Agent");
   }
+}
+
+export function authorizeSession(session: SessionRecord, binding: ConnectionBinding): void {
+  authorizeSessionOwner(session, binding);
   if (session.state === "deleted") {
     throw new DomainError("session_not_found", "Session has been deleted");
   }
