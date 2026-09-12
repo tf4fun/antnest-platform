@@ -508,8 +508,8 @@ the terminal report. The ACP service owns all messages and detailed Tool facts.
 
 The initial schema owns:
 
-- `provider_connections`, `provider_credentials`;
-- `model_profiles`, `model_profile_revisions`;
+- `provider_connections` (connection metadata and current encrypted credential);
+- `model_profiles` (current model parameters, version and configuration stamp);
 - `agent_templates`, `agent_template_revisions`;
 - `agents`, `agent_spec_revisions`, `execution_revisions`;
 - `agent_access_bindings`;

@@ -35,6 +35,7 @@ import {
 } from "../components/page";
 import { Badge } from "../components/ui/badge";
 import { ManagedMCPSummary } from "../components/managed-mcp";
+import { ModelRates } from "../components/model-pricing";
 import { Button } from "../components/ui/button";
 import { Dialog } from "../components/ui/dialog";
 import { Empty, ErrorNotice, GuidanceNotice, Loading, SuccessNotice } from "../components/ui/feedback";
@@ -61,6 +62,7 @@ import { agentConfigurationLinks, agentConfigurationSummary } from "../lib/agent
 import { api, errorMessage } from "../lib/api";
 import { useTemplateOptions } from "../lib/catalog-options";
 import { dateTime } from "../lib/format";
+import { modelInputLabel } from "../lib/model-catalog";
 import { mergePage } from "../lib/pagination";
 import { resourceFailure, type ResourceFailure } from "../lib/resource-failure";
 import { agentCreationGate } from "../lib/setup";
@@ -1030,8 +1032,7 @@ function AgentDetail({ agentID, networkScope }: { agentID: string; networkScope?
         <Badge className="w-fit" value={agent.lifecycle_state} />
       </div>
       <Section
-        title="Executable configuration"
-        detail="The immutable Template and Model revisions used by the currently published execution."
+        title="Build configuration"
       >
         {configuration && agent.configuration ? (
           <div className="grid gap-px overflow-hidden rounded-md border border-border bg-border shadow-sm sm:grid-cols-2 lg:grid-cols-3">
@@ -1046,7 +1047,7 @@ function AgentDetail({ agentID, networkScope }: { agentID: string; networkScope?
             <Fact
               label="Model Profile"
               value={
-                <a className="group block" href={configurationLinks?.model}>
+                <a className="group block" href={configurationLinks?.model} title="View current model settings">
                   <span className="font-medium group-hover:text-primary">{configuration.model}</span>
                   <span className="mt-1 block text-xs text-muted-foreground">
                     {configuration.modelRevision}
@@ -1055,10 +1056,17 @@ function AgentDetail({ agentID, networkScope }: { agentID: string; networkScope?
               }
             />
             <Fact label="Model limits" value={configuration.limits} />
+            <Fact label="Input formats" value={modelInputLabel(agent.configuration.model_profile.model)} />
+            <Fact label="Model endpoint" value={agent.configuration.model_profile.model.base_url} />
+            <Fact label="Temperature" value={agent.configuration.model_profile.model.temperature ?? "Provider default"} />
             <Fact label="Execution policy" value={configuration.executionPolicy} />
             <div className="bg-white p-4 sm:col-span-2">
               <p className="text-xs font-medium text-muted-foreground">Runtime image</p>
               <code className="mt-2 block break-all text-xs leading-5">{configuration.runtimeImage}</code>
+            </div>
+            <div className="bg-white p-4 sm:col-span-2 lg:col-span-3">
+              <p className="mb-3 text-xs font-medium text-muted-foreground">Token rates at build (USD / 1M tokens)</p>
+              <ModelRates pricing={agent.configuration.model_profile.model.pricing} />
             </div>
           </div>
         ) : (

@@ -1,4 +1,4 @@
-import { LoaderCircle, Save } from "lucide-react";
+import { LoaderCircle, RefreshCw, Save } from "lucide-react";
 import { useId, useRef, useState, type FormEvent } from "react";
 import { ModelPricingEditor } from "../components/model-pricing";
 import { Button } from "../components/ui/button";
@@ -11,6 +11,7 @@ import {
   presetParameters,
   savedParameters,
   validateModelParameters,
+  validateModelDisplayName,
 } from "../lib/model-catalog";
 import type {
   ModelCatalog,
@@ -29,6 +30,7 @@ export function ModelEditor({
   submitLabel,
   onCancel,
   onSubmit,
+  onReload,
 }: {
   catalog: ModelCatalog;
   provider?: ModelProviderPreset;
@@ -38,6 +40,7 @@ export function ModelEditor({
   submitLabel: string;
   onCancel: () => void;
   onSubmit: (value: ProviderModelInput) => Promise<void>;
+  onReload?: () => Promise<void>;
 }) {
   const presets = provider?.models ?? [];
   const first = presets[0];
@@ -77,7 +80,7 @@ export function ModelEditor({
   }
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (pending || submitting.current) return;
+    if (pending || submitting.current || onReload) return;
     const form = event.currentTarget;
     submitting.current = true;
     try {
@@ -90,7 +93,7 @@ export function ModelEditor({
       setFormError("");
       setInvalidPriceField(undefined);
       await onSubmit({
-        display_name: initialDisplayName ?? label,
+        display_name: validateModelDisplayName(initialDisplayName ?? label),
         model: {
           ...parameters,
           model: model.model.trim(),
@@ -108,12 +111,29 @@ export function ModelEditor({
       submitting.current = false;
     }
   }
+  async function reload() {
+    if (!onReload || pending || submitting.current) return;
+    submitting.current = true;
+    try {
+      await onReload();
+      setFormError("");
+    } catch (cause) {
+      setFormError(errorMessage(cause));
+    } finally {
+      submitting.current = false;
+    }
+  }
   return (
     <form className="grid gap-5" onSubmit={submit}>
       {formError ? (
         <div id={errorID}>
           <ErrorNotice message={formError} />
         </div>
+      ) : null}
+      {onReload ? (
+        <Button type="button" variant="secondary" disabled={pending} onClick={() => void reload()}>
+          <RefreshCw className="h-4 w-4" />Reload latest model
+        </Button>
       ) : null}
       <fieldset disabled={pending} className="grid min-w-0 gap-5">
         {initialModel ? (
@@ -224,7 +244,7 @@ export function ModelEditor({
         >
           Cancel
         </Button>
-        <Button disabled={pending} aria-busy={pending} type="submit">
+        <Button disabled={pending || Boolean(onReload)} aria-busy={pending} type="submit">
           {pending ? (
             <LoaderCircle className="h-4 w-4 animate-spin" />
           ) : (

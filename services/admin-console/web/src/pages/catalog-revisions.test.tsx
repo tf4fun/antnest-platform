@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentTemplate, ModelCatalog, ModelProfile } from "../lib/types";
 import { ModelsPage } from "./models";
 import { TemplatesPage } from "./templates";
+import { api } from "../lib/api";
 
 afterEach(() => { cleanup(); sessionStorage.clear(); });
 
@@ -24,7 +25,7 @@ const template: AgentTemplate = {
   created_at: model.created_at, updated_at: model.updated_at,
 };
 const workflows = [
-  { name: "Model", component: <ModelsPage modelID={model.model_profile_id} />, historical: <ModelsPage modelID={model.model_profile_id} revisionID={model.revision_id} />,
+  { name: "Model", component: <ModelsPage modelID={model.model_profile_id} />, historical: <ModelsPage modelID={model.model_profile_id} />,
     path: "/api/admin/model-profiles/model-1", revisionPath: "/api/admin/model-profile-revisions/model-revision-1", title: "support",
     field: "Maximum output", value: "2048", result: { ...model, revision_id: "model-revision-7", revision: 7 }, back: "Back to model providers" },
   { name: "Template", component: <TemplatesPage templateID={template.template_id} />, historical: <TemplatesPage templateID={template.template_id} revisionID="1" />,
@@ -32,7 +33,110 @@ const workflows = [
     field: "System prompt", value: "Revised instructions", result: { ...template, system_prompt: "Revised instructions", revision: 7 }, back: "Back to Agent templates" },
 ];
 type Workflow = typeof workflows[number];
+const editLabel = (workflow: Workflow) => workflow.name === "Model" ? "Edit model" : "Create revision";
+const saveLabel = (workflow: Workflow) => workflow.name === "Model" ? "Save changes" : "Publish revision";
+const savedMessage = (workflow: Workflow) => workflow.name === "Model" ? "Model settings saved." : "Template revision 7 published.";
 type Request = { method: string; path: string; body: string; key: string | null };
+
+it("preserves a stale model draft until an explicit successful reload", async () => {
+  let reads = 0;
+  const latest: ModelProfile = { ...model, revision: 2, model: { ...model.model, max_output_tokens: 4096,
+    pricing: { currency: "USD", input_per_million: 8, output_per_million: 9 } } };
+  const requests = mockCatalog((request) => {
+    if (request.method === "POST") {
+      const input = JSON.parse(request.body);
+      if (input.expected_version !== 2) return Response.json({ code: "lifecycle_conflict", message: "resource changed concurrently" }, { status: 409 });
+      return Response.json({ ...latest, model: { ...latest.model, ...input.model }, revision: 3 }, { status: 201 });
+    }
+    if (request.path === "/api/admin/model-profiles/model-1") {
+      reads++;
+      if (reads === 1) return Response.json(model);
+      if (reads === 2) return Response.json({ message: "Temporary read failure" }, { status: 503 });
+      return Response.json(latest);
+    }
+    return undefined;
+  });
+  const dialog = await openRevision(workflows[0]!);
+  fireEvent.click(dialog.getByLabelText("Image input"));
+  fireEvent.click(dialog.getByLabelText("Set rates"));
+  fireEvent.change(dialog.getByLabelText("Input (USD / 1M tokens)"), { target: { value: "3" } });
+  fireEvent.change(dialog.getByLabelText("Output (USD / 1M tokens)"), { target: { value: "4" } });
+  fireEvent.click(dialog.getByRole("button", { name: "Save changes" }));
+  const reload = await dialog.findByRole("button", { name: "Reload latest model" });
+  expect(JSON.parse(requests.find((request) => request.method === "POST")!.body).expected_version).toBe(1);
+  expect((dialog.getByRole("button", { name: "Save changes" }) as HTMLButtonElement).disabled).toBe(true);
+  expect((dialog.getByLabelText("Maximum output") as HTMLInputElement).value).toBe("2048");
+  expect((dialog.getByLabelText("Image input") as HTMLInputElement).checked).toBe(true);
+  expect((dialog.getByLabelText("Input (USD / 1M tokens)") as HTMLInputElement).value).toBe("3");
+  expect(reads).toBe(1);
+  fireEvent.click(reload);
+  await dialog.findByText("Temporary read failure");
+  expect((dialog.getByLabelText("Maximum output") as HTMLInputElement).value).toBe("2048");
+  expect((dialog.getByLabelText("Image input") as HTMLInputElement).checked).toBe(true);
+  expect((dialog.getByLabelText("Input (USD / 1M tokens)") as HTMLInputElement).value).toBe("3");
+  fireEvent.click(dialog.getByRole("button", { name: "Reload latest model" }));
+  await waitFor(() => expect((dialog.getByLabelText("Maximum output") as HTMLInputElement).value).toBe("4096"));
+  expect((dialog.getByLabelText("Image input") as HTMLInputElement).checked).toBe(false);
+  expect((dialog.getByLabelText("Input (USD / 1M tokens)") as HTMLInputElement).value).toBe("8");
+  expect((dialog.getByLabelText("Output (USD / 1M tokens)") as HTMLInputElement).value).toBe("9");
+  fireEvent.change(dialog.getByLabelText("Maximum output"), { target: { value: "8192" } });
+  fireEvent.click(dialog.getByRole("button", { name: "Save changes" }));
+  await screen.findByText("Model settings saved.");
+  const writes = requests.filter((request) => request.method === "POST");
+  expect(writes).toHaveLength(2);
+  expect(JSON.parse(writes[1]!.body).expected_version).toBe(2);
+  expect(writes[1]!.key).not.toBe(writes[0]!.key);
+});
+
+it("treats refreshed A to B to A edits as new intents after an uncertain response", async () => {
+  let saved = model;
+  let first = true;
+  const receipts = new Map<string, ModelProfile>();
+  const writes: Request[] = [];
+  mockCatalog((request) => {
+    if (request.method === "GET" && request.path === "/api/admin/model-profiles/model-1") return Response.json(saved);
+    if (request.method !== "POST") return undefined;
+    writes.push(request);
+    const receipt = receipts.get(request.key!);
+    if (receipt) return Response.json(receipt, { status: 201 });
+    const input = JSON.parse(request.body);
+    if (input.expected_version !== saved.revision) return Response.json({ code: "lifecycle_conflict" }, { status: 409 });
+    saved = { ...saved, display_name: input.display_name, model: { ...saved.model, ...input.model }, revision: saved.revision + 1 };
+    receipts.set(request.key!, saved);
+    if (first) { first = false; throw new Error("response lost after commit"); }
+    return Response.json(saved, { status: 201 });
+  });
+  const { base_url: _endpoint, ...parameters } = model.model;
+  const a = { expected_version: 1, display_name: "A", model: parameters };
+  await expect(api.reviseModel(model.model_profile_id, a)).rejects.toThrow("response lost");
+  const refreshed = await api.model(model.model_profile_id);
+  const b = await api.reviseModel(model.model_profile_id, { ...a, expected_version: refreshed.revision, display_name: "B" });
+  const final = await api.reviseModel(model.model_profile_id, { ...a, expected_version: b.revision });
+  expect(saved.display_name).toBe("A");
+  expect(final).toEqual(saved);
+  expect(new Set(writes.map((write) => write.key)).size).toBe(3);
+});
+
+it("retries an uncertain model save with the original version and command key", async () => {
+  let committed: Response | undefined;
+  const requests = mockCatalog((request) => {
+    if (request.method !== "POST") return undefined;
+    if (committed) return committed;
+    committed = Response.json({ ...model, revision: 2 }, { status: 201 });
+    throw new Error("Response lost after commit");
+  });
+  const dialog = await openRevision(workflows[0]!);
+  fireEvent.click(dialog.getByRole("button", { name: "Save changes" }));
+  await dialog.findByText("Response lost after commit");
+  expect(dialog.queryByRole("button", { name: "Reload latest model" })).toBeNull();
+  fireEvent.click(dialog.getByRole("button", { name: "Save changes" }));
+  await screen.findByText("Model settings saved.");
+  const writes = requests.filter((request) => request.method === "POST");
+  expect(writes).toHaveLength(2);
+  expect(writes[1]!.key).toBe(writes[0]!.key);
+  expect(writes[1]!.body).toBe(writes[0]!.body);
+  expect(JSON.parse(writes[1]!.body).expected_version).toBe(1);
+});
 
 describe("Template stable model reference", () => {
   it("reads the current model for a historical template without rewriting template history", async () => {
@@ -123,8 +227,7 @@ function mockCatalog(overrides: (request: Request) => Response | Promise<Respons
     switch (request.path) {
       case "/api/admin/model-catalog": return Response.json(catalog);
       case "/api/admin/model-profiles": return Response.json({ items: [model] });
-      case "/api/admin/model-profiles/model-1":
-      case "/api/admin/model-profile-revisions/model-revision-1": return Response.json(model);
+      case "/api/admin/model-profiles/model-1": return Response.json(model);
       case "/api/admin/templates/template-1":
       case "/api/admin/templates/template-1/revisions/1": return Response.json(template);
       default: throw new Error(`Unexpected read: ${request.path}`);
@@ -135,8 +238,8 @@ function mockCatalog(overrides: (request: Request) => Response | Promise<Respons
 
 async function openRevision(workflow: Workflow) {
   render(workflow.component);
-  await waitFor(() => expect((screen.getByRole("button", { name: "Create revision" }) as HTMLButtonElement).disabled).toBe(false));
-  fireEvent.click(screen.getByRole("button", { name: "Create revision" }));
+  await waitFor(() => expect((screen.getByRole("button", { name: editLabel(workflow) }) as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.click(screen.getByRole("button", { name: editLabel(workflow) }));
   const dialog = within(await screen.findByRole("dialog"));
   fireEvent.change(dialog.getByLabelText(workflow.field), { target: { value: workflow.value } });
   return dialog;
@@ -147,7 +250,7 @@ describe.each(workflows)("$name revision workflow", (workflow) => {
     const requests = mockCatalog((request) => request.method === "POST"
       ? Response.json({ message: "Revision rejected" }, { status }) : undefined);
     const dialog = await openRevision(workflow);
-    fireEvent.click(dialog.getByRole("button", { name: "Publish revision" }));
+    fireEvent.click(dialog.getByRole("button", { name: saveLabel(workflow) }));
     expect((await dialog.findByRole("alert")).textContent).toContain("Revision rejected");
     expect((dialog.getByLabelText(workflow.field) as HTMLInputElement).value).toBe(workflow.value);
     expect(screen.queryByText(/revision .* published/)).toBeNull();
@@ -155,7 +258,7 @@ describe.each(workflows)("$name revision workflow", (workflow) => {
     expect(JSON.stringify({ ...sessionStorage })).not.toContain(workflow.value);
     fireEvent.click(dialog.getByRole("button", { name: "Cancel" }));
     expect(screen.queryByRole("dialog")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Create revision" }));
+    fireEvent.click(screen.getByRole("button", { name: editLabel(workflow) }));
     expect((screen.getByLabelText(workflow.field) as HTMLInputElement).value).toBe(workflow.name === "Model" ? "1024" : template.system_prompt);
   });
 
@@ -164,7 +267,7 @@ describe.each(workflows)("$name revision workflow", (workflow) => {
     const publication = new Promise<Response>((resolve) => { complete = resolve; });
     const requests = mockCatalog((request) => request.method === "POST" ? publication : undefined);
     const dialog = await openRevision(workflow);
-    const submit = dialog.getByRole("button", { name: "Publish revision" }) as HTMLButtonElement;
+    const submit = dialog.getByRole("button", { name: saveLabel(workflow) }) as HTMLButtonElement;
     fireEvent.click(submit);
     await waitFor(() => expect(requests.filter((request) => request.method === "POST")).toHaveLength(1));
     expect(submit.disabled).toBe(true);
@@ -175,21 +278,21 @@ describe.each(workflows)("$name revision workflow", (workflow) => {
     expect(screen.getByRole("dialog")).toBeTruthy();
     await act(async () => { complete(Response.json(workflow.result, { status: 201 })); });
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(screen.getByText(`${workflow.name} revision 7 published.`)).toBeTruthy();
-    expect(screen.getByText("7")).toBeTruthy();
+    expect(screen.getByText(savedMessage(workflow))).toBeTruthy();
+    if (workflow.name === "Template") expect(screen.getByText("7")).toBeTruthy();
     expect(requests.filter((request) => request.method === "POST")).toHaveLength(1);
     expect(JSON.stringify({ ...sessionStorage })).not.toContain(workflow.value);
     fireEvent.click(screen.getByRole("button", { name: "Dismiss success message" }));
-    expect(screen.queryByText(`${workflow.name} revision 7 published.`)).toBeNull();
+    expect(screen.queryByText(savedMessage(workflow))).toBeNull();
   });
 
-  it("reads an immutable revision without requiring the current head and never exposes an edit action", async () => {
+  if (workflow.name === "Template") it("reads an immutable revision without requiring the current head and never exposes an edit action", async () => {
     const requests = mockCatalog((request) => request.path === workflow.path
       ? Response.json({ message: "Current head unavailable" }, { status: 503 }) : undefined);
     render(workflow.historical);
     await screen.findByRole("heading", { name: workflow.title });
     expect(screen.getByText("Viewed revision")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Create revision" })).toBeNull();
+    expect(screen.queryByRole("button", { name: editLabel(workflow) })).toBeNull();
     expect(screen.getByRole("link", { name: "View current revision" }).getAttribute("href")).toBe(
       workflow.name === "Model" ? "#models/model-1" : "#templates/template-1",
     );
@@ -204,7 +307,7 @@ describe.each(workflows)("$name revision workflow", (workflow) => {
     expect((await screen.findByRole("alert")).textContent).toContain("This revision cannot be accessed");
     expect(screen.getByRole("link", { name: workflow.back })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Create revision" })).toBeNull();
+    expect(screen.queryByRole("button", { name: editLabel(workflow) })).toBeNull();
   });
 });
 
@@ -236,4 +339,13 @@ it("keeps a published Template and its acknowledgement when its referenced Model
   expect(requests.filter((request) => request.method === "POST")).toHaveLength(1);
   expect(requests.filter((request) => request.path === "/api/admin/templates/template-1")).toHaveLength(1);
   expect(screen.getByText("Template revision 2 published.")).toBeTruthy();
+});
+
+it("reads a current model without querying historical revisions", async () => {
+  const requests = mockCatalog();
+  render(<ModelsPage modelID={model.model_profile_id} />);
+  await screen.findByRole("heading", { name: "support" });
+  expect(requests.filter((request) => request.path === "/api/admin/model-profiles/model-1")).toHaveLength(1);
+  expect(requests.some((request) => request.path.includes("revisions"))).toBe(false);
+  expect(screen.queryByText("Current revision")).toBeNull();
 });

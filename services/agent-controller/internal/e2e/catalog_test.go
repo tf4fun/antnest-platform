@@ -57,6 +57,7 @@ func TestCatalogHappyPathThroughHTTPAndPostgres(t *testing.T) {
 	}
 
 	assertProviderManagement(t, handler)
+	assertModelEditConcurrency(t, handler)
 	provider := createTestProvider(t, handler, "catalog-e2e-provider", "catalog-e2e-org", "https://api.example.com/v1", "catalog-e2e-secret")
 	modelResponse := serveJSON(t, handler, http.MethodPost, "/internal/model-profiles", `{
       "request_id":"catalog-e2e-model",

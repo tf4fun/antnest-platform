@@ -9,9 +9,9 @@ export function parseConsoleRoute(hash: string): ConsoleRoute {
   if (page === "models" || page === "templates") {
     if (parts.length === 1) return { page };
     if (parts.length === 2) return { page, resourceID: parts[1] };
-    if (parts.length === 4 && parts[2] === "revisions") {
+    if (page === "templates" && parts.length === 4 && parts[2] === "revisions") {
       const revisionID = parts[3];
-      if (!revisionID || (page === "templates" && !/^\d+$/.test(revisionID))) return { page: "overview" };
+      if (!revisionID || !/^\d+$/.test(revisionID)) return { page: "overview" };
       return { page, resourceID: parts[1], revisionID };
     }
     return { page: "overview" };

@@ -449,6 +449,7 @@ func TestModelProfileDetailAndRevisionRemainOrganizationScoped(t *testing.T) {
 		t.Fatalf("get status=%d body=%s", response.Code, response.Body.String())
 	}
 	response = requestAdmin(t, handler, http.MethodPost, "/api/admin/model-profiles/model-1/revisions", `{
+		"expected_version":1,
 		"display_name":"DeepSeek V2",
 		"model":{"model":"deepseek-chat","context_window":128000,"max_output_tokens":8192,"supports_images":false}
 	}`)
@@ -465,7 +466,7 @@ func TestModelProfileDetailAndRevisionRemainOrganizationScoped(t *testing.T) {
 	var payload map[string]any
 	decodeBytes(t, backend.calls[1].Body, &payload)
 	if backend.calls[1].Path != "/internal/model-profiles/model-1/revisions" ||
-		payload["organization_id"] != "org-1" {
+		payload["organization_id"] != "org-1" || payload["expected_version"] != float64(1) {
 		t.Fatalf("revision call=%#v payload=%v", backend.calls[1], payload)
 	}
 	if strings.Contains(response.Body.String(), "replacement-secret") {
@@ -550,13 +551,6 @@ func TestHistoricalCatalogRevisionReadsRemainOrganizationScopedAndSecretFree(t *
 
 	backend := newBackendStub()
 	backend.enqueue(http.StatusOK, `{
-		"model_profile_id":"model-1","organization_id":"org-1","profile_key":"stage3",
-		"display_name":"Stage 3","revision_id":"model-revision-1","revision":1,
-		"enabled":true,"model":{"base_url":"https://example.test/v1","model":"stage3-v1","context_window":8192,"max_output_tokens":1024,"supports_images":false},
-		"credential_ref":"credential-secret-ref","credential_version":"credential-secret-version",
-		"created_at":"2026-09-03T00:00:00Z","updated_at":"2026-09-03T00:00:00Z"
-	}`)
-	backend.enqueue(http.StatusOK, `{
 		"template_id":"template-1","organization_id":"org-1","template_key":"personal",
 		"name":"Personal","revision":1,"model_profile_id":"model-1",
 		"system_prompt":"historical","max_model_requests":8,"context_policy_version":"context-v1",
@@ -569,7 +563,7 @@ func TestHistoricalCatalogRevisionReadsRemainOrganizationScopedAndSecretFree(t *
 		t, handler, http.MethodGet,
 		"/api/admin/model-profile-revisions/model-revision-1", "",
 	)
-	if modelResponse.Code != http.StatusOK || strings.Contains(modelResponse.Body.String(), "credential-secret") {
+	if modelResponse.Code != http.StatusNotFound || len(backend.calls) != 0 {
 		t.Fatalf("historical model status=%d body=%s", modelResponse.Code, modelResponse.Body.String())
 	}
 	templateResponse := requestAdmin(
@@ -580,11 +574,9 @@ func TestHistoricalCatalogRevisionReadsRemainOrganizationScopedAndSecretFree(t *
 		t.Fatalf("historical template status=%d body=%s", templateResponse.Code, templateResponse.Body.String())
 	}
 
-	if len(backend.calls) != 2 ||
-		backend.calls[0].Path != "/internal/model-profile-revisions/model-revision-1" ||
-		backend.calls[0].Query != "organization_id=org-1" ||
-		backend.calls[1].Path != "/internal/agent-templates/template-1/revisions/1" ||
-		backend.calls[1].Query != "organization_id=org-1" {
+	if len(backend.calls) != 1 ||
+		backend.calls[0].Path != "/internal/agent-templates/template-1/revisions/1" ||
+		backend.calls[0].Query != "organization_id=org-1" {
 		t.Fatalf("historical catalog calls=%#v", backend.calls)
 	}
 }

@@ -31,6 +31,6 @@ export function agentConfigurationLinks(agent: Agent): { template: string; model
   if (!configuration) return undefined;
   return {
     template: `#templates/${encodeURIComponent(configuration.template.template_id)}/revisions/${configuration.template.revision}`,
-    model: `#models/${encodeURIComponent(configuration.model_profile.model_profile_id)}/revisions/${encodeURIComponent(configuration.model_profile.revision_id)}`,
+    model: `#models/${encodeURIComponent(configuration.model_profile.model_profile_id)}`,
   };
 }

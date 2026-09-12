@@ -167,7 +167,8 @@ func TestReviseModelProfileBuildsNextRevisionAgainstLockedHead(t *testing.T) {
 	store := &catalogStoreStub{modelRecord: current}
 	service := NewCatalogService(store, &sealerStub{}, fixedClock{now: time.Unix(2, 0).UTC()})
 	if _, err := service.ReviseModelProfile(context.Background(), ReviseModelProfileInput{
-		RequestID: "request-denied", OrganizationID: "org-2",
+		ExpectedVersion: 1,
+		RequestID:       "request-denied", OrganizationID: "org-2",
 		ModelProfileID: "model-1", DisplayName: "Denied",
 		Model: validModelInput().Parameters(),
 	}); !errors.Is(err, ErrInvalidReference) {
@@ -175,7 +176,8 @@ func TestReviseModelProfileBuildsNextRevisionAgainstLockedHead(t *testing.T) {
 	}
 
 	view, err := service.ReviseModelProfile(context.Background(), ReviseModelProfileInput{
-		RequestID: "request-revise", OrganizationID: "org-1",
+		ExpectedVersion: 1,
+		RequestID:       "request-revise", OrganizationID: "org-1",
 		ModelProfileID: "model-1", DisplayName: "DeepSeek V2",
 		Model: validModelInput().Parameters(),
 	})
@@ -296,17 +298,17 @@ func TestCatalogReadsImmutableHistoricalRevisionsWithOrganizationFence(t *testin
 	}
 	service := NewCatalogService(store, &sealerStub{}, fixedClock{now: time.Unix(2, 0).UTC()})
 
-	model, err := service.GetModelProfileRevision(
-		context.Background(), "org-1", "model-revision-1",
+	model, err := service.GetModelProfile(
+		context.Background(), "org-1", "model-1",
 	)
 	if err != nil {
 		t.Fatalf("get historical ModelProfile revision: %v", err)
 	}
-	if model.Revision != 1 || model.RevisionID != "model-revision-1" || model.Model.Model != "stage3-v1" {
+	if model.Revision != 2 || model.RevisionID != currentModel.ID() || model.Model.Model != currentModel.Snapshot().Model.Model {
 		t.Fatalf("historical ModelProfile view = %+v", model)
 	}
-	if _, err := service.GetModelProfileRevision(
-		context.Background(), "org-2", "model-revision-1",
+	if _, err := service.GetModelProfile(
+		context.Background(), "org-2", "model-1",
 	); !errors.Is(err, ErrInvalidReference) {
 		t.Fatalf("cross-organization ModelProfile revision error = %v", err)
 	}
@@ -368,13 +370,6 @@ func (store *catalogStoreStub) GetCurrentModelProfileRevision(_ context.Context,
 	return store.modelRevision, nil
 }
 
-func (store *catalogStoreStub) GetModelProfileRevision(_ context.Context, id string) (domain.ModelProfileRevision, error) {
-	if store.modelRevision.ID() == "" || store.modelRevision.ID() != id {
-		return domain.ModelProfileRevision{}, ports.ErrNotFound
-	}
-	return store.modelRevision, nil
-}
-
 func (store *catalogStoreStub) GetModelProfile(_ context.Context, id string) (ports.ModelProfileRecord, error) {
 	if store.modelRecord.ModelProfileID != id {
 		return ports.ModelProfileRecord{}, ports.ErrNotFound
@@ -386,6 +381,9 @@ func (store *catalogStoreStub) ReviseModelProfile(
 	_ context.Context, expectedRevision int64, record ports.ModelProfileRecord,
 ) (ports.ModelProfileRecord, error) {
 	store.expectedModelRevision = expectedRevision
+	if store.modelRecord.Revision.Revision() != expectedRevision || record.Revision.Revision() != expectedRevision+1 {
+		return ports.ModelProfileRecord{}, ports.ErrConcurrentChange
+	}
 	store.modelRecord = record
 	return record, nil
 }

@@ -37,7 +37,7 @@ permission to bypass admission or model validation later.
 
 No new tables, migration, file storage, conversion endpoint, Runtime configuration
 or cross-service database access is required. Model flags live in existing
-`agent_controller.model_profile_revisions.model`, Agent spec snapshots and
+`agent_controller.model_profiles.model`, Agent spec snapshots and
 `run_admissions.snapshot`. Existing RPC and automatic PostgreSQL driver spans
 apply; SQL bind parameters and result bodies are not added to driver spans.
 SQL text and driver diagnostics retain the limits in the telemetry policy.

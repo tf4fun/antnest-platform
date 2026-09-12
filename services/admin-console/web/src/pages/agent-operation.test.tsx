@@ -66,6 +66,28 @@ function mockDetail(initialAgent: Agent, initialOperation: LifecycleOperation) {
 }
 
 describe("Agent operation presentation", () => {
+  it("shows build model parameters without loading current or historical model details", async () => {
+    const agent: Agent = { ...baseAgent, configuration: {
+      template: { template_id: "template-1", revision: 1, name: "Original template" },
+      model_profile: { model_profile_id: "model-1", revision_id: "build-model", revision: 1, name: "Built model",
+        model: { model: "original-api-model", base_url: "https://build-model.example/v1", context_window: 8192,
+          max_output_tokens: 1024, supports_images: true, supports_pdf: true, temperature: 0.4,
+          pricing: { currency: "USD", input_per_million: 3, output_per_million: 7 } } },
+      max_model_requests: 8, context_policy_version: "context-v1",
+      runtime: { image_ref: "runtime:local", resources: { memory_bytes: 1024, pids_limit: 128, tmpfs_bytes: 1024 } },
+    } };
+    const { fetch } = mockDetail(agent, baseOperation);
+    render(<AgentsPage agentID={agent.agent_id} />);
+    await screen.findByRole("heading", { name: "Build configuration" });
+    expect(screen.getByText("https://build-model.example/v1")).toBeTruthy();
+    expect(screen.getByText("Text, Images, PDF")).toBeTruthy();
+    expect(screen.getByText("$3")).toBeTruthy();
+    expect(screen.getByText("$7")).toBeTruthy();
+    expect(screen.getByText("0.4")).toBeTruthy();
+    expect(screen.getByTitle("View current model settings").getAttribute("href")).toBe("#models/model-1");
+    expect(fetch.mock.calls.some(([path]) => path.includes("model-profile"))).toBe(false);
+  });
+
   it("keeps a retained Agent detail open when replay reads its completed deletion", async () => {
     mockDetail(
       { ...baseAgent, desired_state: "deleted", lifecycle_state: "deleted" },

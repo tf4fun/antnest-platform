@@ -74,8 +74,6 @@ type CatalogStore interface {
 	PutModelProfile(ctx context.Context, record ModelProfileRecord) (ModelProfileRecord, error)
 	ReviseModelProfile(ctx context.Context, expectedRevision int64, record ModelProfileRecord) (ModelProfileRecord, error)
 	GetModelProfile(ctx context.Context, id string) (ModelProfileRecord, error)
-	GetModelProfileRevision(ctx context.Context, id string) (domain.ModelProfileRevision, error)
-	GetModelProfileRevisionRecord(ctx context.Context, id string) (ModelProfileRecord, error)
 	ListModelProfiles(ctx context.Context, organizationID string, afterID string, limit int) ([]ModelProfileRecord, string, error)
 	ReplayTemplateRequest(ctx context.Context, kind CatalogRequestKind, requestID string, fingerprint string) (TemplateRecord, bool, error)
 	PutTemplate(ctx context.Context, record TemplateRecord) (TemplateRecord, error)

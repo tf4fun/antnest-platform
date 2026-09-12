@@ -67,7 +67,7 @@ test("agentConfigurationSummary does not invent unpublished configuration", () =
   assert.equal(agentConfigurationSummary(agent), undefined);
 });
 
-test("agentConfigurationLinks preserve exact immutable revisions", () => {
+test("agentConfigurationLinks point to the template revision and current model", () => {
   const agent = {
     configuration: {
       template: { template_id: "template-1", revision: 2, name: "Research" },
@@ -95,6 +95,6 @@ test("agentConfigurationLinks preserve exact immutable revisions", () => {
 
   assert.deepEqual(agentConfigurationLinks(agent), {
     template: "#templates/template-1/revisions/2",
-    model: "#models/model-1/revisions/model-revision-4",
+    model: "#models/model-1",
   });
 });

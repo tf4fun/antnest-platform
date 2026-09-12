@@ -1,6 +1,6 @@
 # Provider Management
 
-Controller owns organization connections, encrypted credential versions, and model
+Controller owns organization connections, current encrypted credentials, and model
 parameters. The builtin model catalogue belongs to Admin Console. Controller only
 registers supported protocols and authentication methods; it never supplies model
 names, context limits, prices, or defaults.
@@ -15,6 +15,12 @@ names, context limits, prices, or defaults.
   using `expected_version` to reject stale concurrent edits.
 - `POST /internal/model-profiles`: add a model to an existing connection.
 - `POST /internal/model-profiles/{id}/revisions`: edit model parameters without a key.
+
+Model updates require the caller's `expected_version` (the read response's
+`revision`). Only the transaction's CAS decides whether it is stale. A conflicting
+edit returns the existing 409 `lifecycle_conflict` without a write; replay of a committed command
+still returns its original response. All model creation paths and updates validate
+nonblank display names of at most 200 Unicode code points.
 
 Connections currently support `provider_key=deepseek`, `credential.method=api_key`,
 and the OpenAI Chat Completions request protocol. Other providers and OAuth are
@@ -38,13 +44,19 @@ and automatic PostgreSQL driver spans follow the service's
 All tables are in this service's `agent_controller` schema:
 
 - `provider_connections`: stable identity, organization, provider, endpoint and
-  current credential version.
-- `provider_credentials`: independently encrypted versions, shared by every model
-  on the connection. No plaintext is stored.
-- `model_profiles`: stable model identity and connection reference.
-- `model_profile_revisions`: immutable model parameters, without credentials or
-  endpoint copies.
-- `catalog_requests`: replay receipts for committed management commands.
+  the current encrypted credential, replaced atomically with its version.
+- `model_profiles`: stable model identity, connection reference, current parameters
+  and update version. No credentials or endpoint copies.
+- `catalog_requests`: non-secret replay receipts for committed commands. Model
+  replies carry a response snapshot so replay never reads newer model parameters.
+
+There is no historical credential or model revision table. A model configuration
+ID is an opaque diagnostic stamp in existing snapshots, not a queryable historical
+resource. The update counter provides optimistic concurrency, not version storage.
+The retired model-history GET endpoint returns 404. Template history is unchanged.
+Agent configuration reads its own build-time snapshot; new Runs freeze current
+model parameters independently. Model edits that were never consumed do not have
+a history browsing or rollback API.
 
 Templates reference stable `model_profile_id`. Agent build snapshots retain that
 identity plus the build-time revision/parameters for audit, without credentials.
@@ -61,12 +73,23 @@ visible on the next resolution, including within an existing Run. The response
 reports the actual credential version and typed provider binding. No secret is
 copied into a model, build spec, or admitted snapshot.
 
-Only the Controller producer is updated in P2. ACP's strict DTO/authentication
-consumer and Console's template identity selector must be updated in separate
-batches before deployment. Do not compare the resolved credential version to an
+Console's management and template identity consumers are updated. ACP's strict
+DTO/authentication consumer remains a separate batch before deployment.
+Do not compare the resolved credential version to an
 obsolete version pinned by the old ACP consumer. Provider resolution is local
 database access, not an external token refresh.
 
 This MVP schema change is accepted against a fresh test database, not by resetting
 the running human acceptance instance. Builtin catalogue updates never rewrite
 already persisted organization configuration.
+
+Control contract revision 21 removes model-history reads. The existing model
+mutation route retains its `/revisions` name, but updates the current row and
+counter; it does not create a separately addressable historical resource.
+Model edits and credential rotations are ordered under the command receipt lock,
+with version CAS in the transaction. An outer read is not a conflict authority:
+the same command may have committed between the first receipt check and that read.
+
+Deleting historical secret rows is not a telemetry retention guarantee. With
+development RPC payload capture enabled, credential request/response DTOs can
+still appear in traces; see the telemetry policy above.

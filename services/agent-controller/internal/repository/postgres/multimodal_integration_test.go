@@ -87,9 +87,9 @@ func TestNativeModelCapabilitiesPersistInAdmissionAcrossRevisionAndReopen(t *tes
 
 func setNativeModelCapabilities(t *testing.T, repository *Repository, revision string, enabled bool) {
 	t.Helper()
-	if _, err := repository.pool.Exec(context.Background(), `UPDATE agent_controller.model_profile_revisions
+	if _, err := repository.pool.Exec(context.Background(), `UPDATE agent_controller.model_profiles
 SET model = model || jsonb_build_object('supports_images', $2::boolean, 'supports_audio', $2::boolean, 'supports_pdf', $2::boolean)
-WHERE id = $1`, revision, enabled); err != nil {
+WHERE configuration_id = $1`, revision, enabled); err != nil {
 		t.Fatal(err)
 	}
 }

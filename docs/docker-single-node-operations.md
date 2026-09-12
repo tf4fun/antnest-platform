@@ -31,11 +31,14 @@ docker version
 docker compose version
 ```
 
-One PostgreSQL container hosts five independently owned databases and roles:
+One PostgreSQL container hosts five independently owned service databases and roles:
 `antnest_egress`, `antnest_runtime_controller`, `antnest_agent_acp`,
 `antnest_identity`, and `antnest_agent_controller`. Their schemas are not shared.
 Each service runs its own migrations; the database initializer only creates
 roles/databases and removes public connection privileges.
+Stage 2/3 additionally uses `antnest_temporal` and `antnest_temporal_visibility`,
+both owned by the separate `antnest_temporal` role. Temporal does not access
+application tables.
 
 ## 2. Configuration Before First Start
 
@@ -118,11 +121,19 @@ internal application services. Expected host bindings with the example config:
 | --- | --- | --- |
 | Edge Gateway | `127.0.0.1:8090` | Console `/` and Agent UI `/workspace/`; all browser API/ACP traffic |
 | PostgreSQL | `127.0.0.1:55432` | Local development/backup access, not a product API |
+| Temporal | `127.0.0.1:7233` | Local SDK/workflow diagnostics, not a product API |
 | Jaeger | `127.0.0.1:16686` | Local trace inspection; not an authenticated public dashboard |
 
 No Runtime, ACP, Identity, Controller or BFF host port should be published.
 The loopback defaults and insecure-cookie setting are for local HTTP only.
 Do not merely bind them to `0.0.0.0` for public deployment.
+
+The Stage 3 observability deployment has eleven resident containers.
+`temporal-databases`, `temporal-schema`, and `temporal-namespace` are additional
+one-shot initialization jobs, not resident workers: they provision databases,
+apply engine schemas, and register the `antnest` namespace, respectively.
+Successful exited initialization containers can be removed after startup without
+deleting their databases. Compose may recreate/rerun them on a subsequent `up`.
 
 ## 4. Empty Instance To A Usable Agent
 

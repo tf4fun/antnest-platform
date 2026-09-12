@@ -1,6 +1,6 @@
 {
   "contract": "antnest.admin-console.bff",
-  "version": 40,
+  "version": 42,
   "base_path": "/api/admin",
   "routes": {
     "overview": {
@@ -78,10 +78,6 @@
     "get_model_profile": {
       "method": "GET",
       "path": "/model-profiles/{model_profile_id}"
-    },
-    "get_model_profile_revision": {
-      "method": "GET",
-      "path": "/model-profile-revisions/{revision_id}"
     },
     "revise_model_profile": {
       "method": "POST",
@@ -246,25 +242,25 @@
       "side_effects": "no_agent_revision_runtime_rebuild_or_attachment_open"
     },
     "model_pricing": {
-      "owner": "agent_controller_model_revision",
+      "owner": "agent_controller_current_model",
       "schema": "../agent-controller/control-api.schema.json#/$defs/model_pricing",
       "input": "optional_model_pricing_forwarded_unchanged_for_owner_validation",
       "projection": "explicit_price_field_allowlist_without_internal_metadata",
-      "history": "stored_immutable_revision_not_current_catalog_prices",
+      "history": "historical_usage_comes_from_agent_and_run_snapshots_not_model_history",
       "unknown": "omitted_not_zero",
       "units": "USD_per_million_tokens",
       "editing": "preserve_stored_rates_unless_explicitly_changed_or_reset",
-      "apply": "new_model_revision_not_runtime_rebuild"
+      "apply": "update_current_model_not_runtime_rebuild"
     },
     "model_input_capabilities": {
-      "owner": "agent_controller_model_revision",
+      "owner": "agent_controller_current_model",
       "fields": ["supports_images", "supports_audio", "supports_pdf"],
       "optional_false_by_default": ["supports_audio", "supports_pdf"],
       "known_models": "editable_console_defaults_stored_configuration_takes_precedence",
       "custom_models": "administrator_configured_independent_flags",
       "input": "model_raw_json_on_create_and_revise_for_owner_validation",
       "projection": "explicit_model_field_allowlist_including_native_flags",
-      "history": "stored_immutable_revision_not_current_catalog_metadata"
+      "history": "historical_usage_comes_from_agent_and_run_snapshots_not_model_history"
     },
     "managed_mcp": {
       "configuration_owner": "agent_controller_immutable_template_runtime",
@@ -439,12 +435,12 @@
         "operation_reconciliation": "active_agent_request_then_latest_replayed_event"
       },
       "catalog_detail": {
-        "primary_read": "requested_immutable_revision_or_current_head",
+        "primary_read": "current_model_or_requested_template_revision",
         "historical_current_head_read": "omitted",
         "referenced_resource_failure": "primary_detail_readable_section_local_retry",
         "template_model_reference": "model_profile_id_current_head_not_pinned_revision",
         "template_model_write": "stable_model_profile_id_only_no_bff_revision_resolution",
-        "model_and_agent_build_history": "immutable_model_revision_unchanged"
+        "model_and_agent_build_history": "current_model_page_separate_from_immutable_agent_build_snapshot"
       }
     },
     "agent_owner_presentation": {

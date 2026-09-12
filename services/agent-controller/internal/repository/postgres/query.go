@@ -26,18 +26,16 @@ func (repository *Repository) GetAgentConfiguration(
 	var snapshotPayload []byte
 	err := repository.pool.QueryRow(ctx, `
 SELECT spec.agent_id, spec.id, template.name,
-       model_profile.id, model_profile.display_name, model_revision.revision,
+       model_profile.id, model_profile.display_name,
        spec.snapshot
 FROM agent_controller.agent_spec_revisions AS spec
 JOIN agent_controller.agent_templates AS template
   ON template.id = spec.template_id
-JOIN agent_controller.model_profile_revisions AS model_revision
-  ON model_revision.id = spec.model_profile_revision_id
 JOIN agent_controller.model_profiles AS model_profile
-  ON model_profile.id = model_revision.model_profile_id
+  ON model_profile.id = spec.snapshot->>'model_profile_id'
 WHERE spec.agent_id = $1 AND spec.id = $2`, agentID, agentSpecRevisionID).Scan(
 		&record.AgentID, &record.AgentSpecRevisionID, &record.TemplateName,
-		&record.ModelProfileID, &record.ModelProfileName, &record.ModelProfileRevision,
+		&record.ModelProfileID, &record.ModelProfileName,
 		&snapshotPayload,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -51,6 +49,7 @@ WHERE spec.agent_id = $1 AND spec.id = $2`, agentID, agentSpecRevisionID).Scan(
 		return ports.AgentConfigurationRecord{}, fmt.Errorf("decode Agent configuration snapshot: %w", err)
 	}
 	record.Snapshot = snapshot
+	record.ModelProfileRevision = snapshot.ModelProfileVersion
 	return record, nil
 }
 

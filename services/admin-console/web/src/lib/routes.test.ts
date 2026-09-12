@@ -11,11 +11,7 @@ test("catalog detail routes retain opaque resource identity", () => {
 });
 
 test("catalog revision routes retain the immutable revision identity", () => {
-  assert.deepEqual(parseConsoleRoute("#models/model-1/revisions/model-revision-2"), {
-    page: "models",
-    resourceID: "model-1",
-    revisionID: "model-revision-2",
-  });
+  assert.deepEqual(parseConsoleRoute("#models/model-1/revisions/model-revision-2"), { page: "overview" });
   assert.deepEqual(parseConsoleRoute("#/templates/template-1/revisions/3"), {
     page: "templates",
     resourceID: "template-1",

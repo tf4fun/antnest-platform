@@ -37,18 +37,19 @@ func TestProviderModelAndCredentialLifecyclesAreIndependent(t *testing.T) {
 	if err != nil || len(models) != 2 {
 		t.Fatalf("initial models: count=%d error=%v", len(models), err)
 	}
-	assertProviderCounts(t, repository, 1, 1, 2, 2)
+	assertProviderCounts(t, repository, 1, 2)
 	selected := models[0]
 	parameters := selected.Revision.Snapshot().Model.Parameters()
 	parameters.ContextWindow, parameters.SupportsImages = 4096, false
 	updated, err := service.ReviseModelProfile(ctx, application.ReviseModelProfileInput{
-		RequestID: "model-edit", OrganizationID: "org", ModelProfileID: selected.ModelProfileID,
+		ExpectedVersion: selected.Revision.Revision(),
+		RequestID:       "model-edit", OrganizationID: "org", ModelProfileID: selected.ModelProfileID,
 		DisplayName: "Updated", Model: parameters,
 	})
 	if err != nil || updated.ProviderConnectionID != connection.ConnectionID {
 		t.Fatalf("model edit changed credential: %+v %v", updated, err)
 	}
-	assertProviderCounts(t, repository, 1, 1, 2, 3)
+	assertProviderCounts(t, repository, 1, 2)
 	rotate := application.RotateProviderCredentialInput{
 		RequestID: "rotate", OrganizationID: "org", ConnectionID: connection.ConnectionID,
 		ExpectedVersion: connection.CredentialVersion, Credential: application.ProviderCredentialInput{Method: "api_key", APIKey: "new-secret"},
@@ -57,19 +58,15 @@ func TestProviderModelAndCredentialLifecyclesAreIndependent(t *testing.T) {
 	if err != nil || rotated.CredentialVersion == connection.CredentialVersion {
 		t.Fatalf("rotation: %v", err)
 	}
-	assertProviderCounts(t, repository, 1, 2, 2, 3)
+	assertProviderCounts(t, repository, 1, 2)
 	assertEncryptedProviderCredential(t, repository, box, rotated)
 	replayedCreate, err := service.CreateProviderConnection(ctx, input)
 	if err != nil || !reflect.DeepEqual(replayedCreate, connection) {
 		t.Fatalf("create replay after rotation changed original credential version: %v", err)
 	}
-	history, err := service.GetModelProfileRevision(ctx, "org", selected.Revision.ID())
-	if err != nil || history.DisplayName != selected.DisplayName || history.Revision != 1 {
-		t.Fatalf("historical model metadata drifted: %+v %v", history, err)
-	}
-	old, err := repository.GetModelProfileRevision(ctx, selected.Revision.ID())
-	if err != nil || old.Snapshot().Model.ContextWindow != selected.Revision.Snapshot().Model.ContextWindow {
-		t.Fatalf("rotation changed historical model parameters: %v", err)
+	current, err := service.GetModelProfile(ctx, "org", selected.ModelProfileID)
+	if err != nil || !reflect.DeepEqual(current, updated) {
+		t.Fatalf("rotation changed current model parameters: %+v %v", current, err)
 	}
 	input.Credential.APIKey = "conflicting-create"
 	if _, err := service.CreateProviderConnection(ctx, input); !errors.Is(err, ports.ErrRequestConflict) {
@@ -102,7 +99,7 @@ func assertEncryptedProviderCredential(t *testing.T, repository *Repository, box
 	t.Helper()
 	var sealed ports.SealedSecret
 	err := repository.pool.QueryRow(context.Background(), `SELECT ciphertext, nonce, key_version
-FROM agent_controller.provider_credentials WHERE credential_ref=$1 AND credential_version=$2`, view.ConnectionID, view.CredentialVersion).
+FROM agent_controller.provider_connections WHERE id=$1 AND current_credential_version=$2`, view.ConnectionID, view.CredentialVersion).
 		Scan(&sealed.Ciphertext, &sealed.Nonce, &sealed.KeyVersion)
 	if err != nil || strings.Contains(string(sealed.Ciphertext), "new-secret") {
 		t.Fatalf("credential was not encrypted: %v", err)
@@ -130,7 +127,7 @@ func TestProviderTransactionRollsBackInitialModelsAndCredential(t *testing.T) {
 	if !errors.Is(err, ports.ErrRequestConflict) {
 		t.Fatalf("expected duplicate model rollback: %v", err)
 	}
-	assertProviderCounts(t, repository, 0, 0, 0, 0)
+	assertProviderCounts(t, repository, 0, 0)
 	var receipts int
 	if err := repository.pool.QueryRow(context.Background(), `SELECT count(*) FROM agent_controller.catalog_requests`).Scan(&receipts); err != nil || receipts != 0 {
 		t.Fatalf("failed transaction kept a replay receipt: count=%d error=%v", receipts, err)
@@ -162,7 +159,7 @@ func TestConcurrentProviderRequestsConverge(t *testing.T) {
 			t.Fatalf("concurrent create replay: %v", err)
 		}
 	}
-	assertProviderCounts(t, repository, 1, 1, 2, 2)
+	assertProviderCounts(t, repository, 1, 2)
 	connections, err := service.ListProviderConnections(ctx, application.ListCatalogInput{OrganizationID: "org"})
 	if err != nil || len(connections.Items) != 1 {
 		t.Fatalf("connections after replay: %v", err)
@@ -177,9 +174,9 @@ func TestConcurrentProviderRequestsConverge(t *testing.T) {
 	if _, err := service.RotateProviderCredential(ctx, rotate); !errors.Is(err, ports.ErrConcurrentChange) {
 		t.Fatalf("stale rotation accepted: %v", err)
 	}
-	assertProviderCounts(t, repository, 1, 2, 2, 2)
+	assertProviderCounts(t, repository, 1, 2)
 	assertConcurrentProviderRotation(t, service, connection.ConnectionID)
-	assertProviderCounts(t, repository, 1, 3, 2, 2)
+	assertProviderCounts(t, repository, 1, 2)
 }
 
 func assertConcurrentProviderRotation(t *testing.T, service *application.CatalogService, connectionID string) {
@@ -217,11 +214,11 @@ func assertConcurrentProviderRotation(t *testing.T, service *application.Catalog
 	}
 }
 
-func assertProviderCounts(t *testing.T, repository *Repository, connections, credentials, models, revisions int) {
+func assertProviderCounts(t *testing.T, repository *Repository, connections, models int) {
 	t.Helper()
 	for table, want := range map[string]int{
-		"provider_connections": connections, "provider_credentials": credentials, "model_profiles": models,
-		"model_profile_revisions": revisions, "agents": 0, "agent_templates": 0,
+		"provider_connections": connections, "model_profiles": models,
+		"agents": 0, "agent_templates": 0,
 	} {
 		var count int
 		if err := repository.pool.QueryRow(context.Background(), "SELECT count(*) FROM agent_controller."+table).Scan(&count); err != nil || count != want {
@@ -230,7 +227,7 @@ func assertProviderCounts(t *testing.T, repository *Repository, connections, cre
 	}
 	var mixed bool
 	if err := repository.pool.QueryRow(context.Background(), `SELECT EXISTS (
-SELECT 1 FROM agent_controller.model_profile_revisions WHERE model ? 'base_url' OR model ? 'credential'
+SELECT 1 FROM agent_controller.model_profiles WHERE model ? 'base_url' OR model ? 'credential'
 )`).Scan(&mixed); err != nil || mixed {
 		t.Fatalf("model parameters contain connection configuration: %v", err)
 	}

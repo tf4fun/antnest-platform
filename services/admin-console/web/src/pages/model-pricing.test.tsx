@@ -40,7 +40,7 @@ function backend(first?: "503" | "malformed", value = profile, catalogFailure = 
 async function editor(edit = false) {
   render(edit ? <ModelsPage modelID="priced" /> : <ModelEditorFixture catalog={catalog} />);
   if (edit) {
-    const button = await screen.findByRole("button", { name: "Create revision" });
+    const button = await screen.findByRole("button", { name: "Edit model" });
     await waitFor(() => expect(button.matches(":disabled")).toBe(false));
     fireEvent.click(button);
   }
@@ -48,7 +48,7 @@ async function editor(edit = false) {
 }
 
 function publish(form: ReturnType<typeof within>, edit = false) {
-  fireEvent.click(form.getByRole("button", { name: edit ? "Publish revision" : "Add model" }));
+  fireEvent.click(form.getByRole("button", { name: edit ? "Save changes" : "Add model" }));
 }
 
 it("prefills and submits catalogue prices explicitly", async () => {
@@ -90,7 +90,7 @@ it("keeps zero distinct from blank and rejects incomplete edits before publishin
   const writes = backend();
   const form = await editor(true);
   fireEvent.change(form.getByLabelText("Input (USD / 1M tokens)"), { target: { value: "" } });
-  fireEvent.submit(form.getByRole("button", { name: "Publish revision" }).closest("form")!);
+  fireEvent.submit(form.getByRole("button", { name: "Save changes" }).closest("form")!);
   expect(await form.findByRole("alert")).toBeTruthy();
   expect(writes).toHaveLength(0);
   expect(document.activeElement).toBe(form.getByLabelText("Input (USD / 1M tokens)"));
@@ -112,22 +112,22 @@ it("resets defaults when selecting another new model and discards cancelled revi
   const revision = await editor(true);
   fireEvent.change(revision.getByLabelText("Input (USD / 1M tokens)"), { target: { value: "999" } });
   fireEvent.click(revision.getByRole("button", { name: "Cancel" }));
-  fireEvent.click(screen.getByRole("button", { name: "Create revision" }));
+  fireEvent.click(screen.getByRole("button", { name: "Edit model" }));
   expect((screen.getByLabelText("Input (USD / 1M tokens)") as HTMLInputElement).value).toBe(String(saved.input_per_million));
 });
 
-it.each([true, false])("historical pricing never follows catalog data (unavailable=%s)", async (unavailable) => {
+it.each([true, false])("saved pricing never follows catalog data (unavailable=%s)", async (unavailable) => {
   backend(undefined, profile, unavailable);
-  render(<ModelsPage modelID="priced" revisionID="priced-1" />);
+  render(<ModelsPage modelID="priced" />);
   expect(await screen.findByText("$8")).toBeTruthy();
   expect(screen.queryByText("$10")).toBeNull();
-  expect(screen.queryByRole("button", { name: "Create revision" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Edit model" })).toBeTruthy();
 });
 
-it("does not fill an unpriced historical revision with current catalog rates", async () => {
+it("does not fill an unpriced current model with builtin catalog rates", async () => {
   const { pricing: _pricing, ...model } = profile.model;
   backend(undefined, { ...profile, model });
-  render(<ModelsPage modelID="priced" revisionID="priced-1" />);
+  render(<ModelsPage modelID="priced" />);
   expect(await screen.findByText("Not configured")).toBeTruthy();
   expect(screen.queryByText("$2")).toBeNull();
 });
@@ -143,7 +143,7 @@ it("locks publication controls and does not project a late revision into another
     return fetcher(input, init);
   }));
   const view = render(<ModelsPage modelID="priced" />);
-  const open = await screen.findByRole("button", { name: "Create revision" });
+  const open = await screen.findByRole("button", { name: "Edit model" });
   await waitFor(() => expect((open as HTMLButtonElement).disabled).toBe(false));
   fireEvent.click(open);
   const form = within(await screen.findByRole("dialog"));
@@ -153,14 +153,14 @@ it("locks publication controls and does not project a late revision into another
     expect(control.matches(":disabled")).toBe(true);
   }
   expect((form.getByRole("button", { name: "Cancel" }) as HTMLButtonElement).disabled).toBe(true);
-  fireEvent.submit(form.getByRole("button", { name: "Publish revision" }).closest("form")!);
+  fireEvent.submit(form.getByRole("button", { name: "Save changes" }).closest("form")!);
   expect(writes).toHaveLength(1);
   view.rerender(<ModelsPage modelID="another" />);
   await screen.findByRole("heading", { name: "another-model" });
   await act(async () => { complete(Response.json({ ...profile, revision: 2 })); });
   expect(screen.getByRole("heading", { name: "another-model" })).toBeTruthy();
-  expect(screen.queryByText("Model revision 2 published.")).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "Create revision" }));
+  expect(screen.queryByText("Model settings saved.")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Edit model" }));
   expect(screen.queryByLabelText("Replacement API key")).toBeNull();
 });
 

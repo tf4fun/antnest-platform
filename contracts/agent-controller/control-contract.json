@@ -1,6 +1,6 @@
 {
   "contract": "antnest.agent-controller.lifecycle",
-  "revision": 20,
+  "revision": 22,
   "transport": "json-over-http",
   "trust": "internal-network",
   "media_types": {
@@ -108,15 +108,6 @@
         "query": ["organization_id", "after_id", "limit"],
         "success_status": 200,
         "response": "control-api.schema.json#/$defs/model_profile_list"
-      }
-    },
-    "model_profile_revisions": {
-      "get": {
-        "method": "GET",
-        "path": "/internal/model-profile-revisions/{revision_id}",
-        "query": ["organization_id"],
-        "success_status": 200,
-        "response": "control-api.schema.json#/$defs/model_profile"
       }
     },
     "agent_templates": {

@@ -76,7 +76,6 @@ func TestNativeModelInputRequiresAdministrator(t *testing.T) {
 		{http.MethodPost, "/api/admin/provider-connections/connection-1/credentials"},
 		{http.MethodGet, "/api/admin/model-profiles"},
 		{http.MethodGet, "/api/admin/model-profiles/model-1"},
-		{http.MethodGet, "/api/admin/model-profile-revisions/revision-1"},
 		{http.MethodPost, "/api/admin/model-profiles"},
 		{http.MethodPost, "/api/admin/model-profiles/model-1/revisions"},
 	} {

@@ -50,7 +50,7 @@ func TestCatalogRepositoryPersistsAndReplaysRequests(t *testing.T) {
 		t.Fatalf("request conflict error = %v", err)
 	}
 
-	loaded, err := repository.GetModelProfileRevision(ctx, record.Revision.ID())
+	loaded, err := repository.GetCurrentModelProfileRevision(ctx, record.ModelProfileID)
 	if err != nil {
 		t.Fatalf("get ModelProfile revision: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestCatalogRepositoryPersistsAndReplaysRequests(t *testing.T) {
 	if _, err := repository.pool.Exec(ctx, `UPDATE agent_controller.model_profiles SET enabled = FALSE WHERE id = $1`, record.ModelProfileID); err != nil {
 		t.Fatalf("disable ModelProfile fixture: %v", err)
 	}
-	if _, err := repository.GetModelProfileRevision(ctx, revisedModel.Revision.ID()); !errors.Is(err, ports.ErrDisabledReference) {
+	if _, err := repository.GetCurrentModelProfileRevision(ctx, revisedModel.ModelProfileID); !errors.Is(err, ports.ErrDisabledReference) {
 		t.Fatalf("disabled ModelProfile revision error = %v", err)
 	}
 }

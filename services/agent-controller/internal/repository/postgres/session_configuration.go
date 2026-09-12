@@ -82,17 +82,16 @@ func loadAgentAuthorization(ctx context.Context, query catalogQueryer, agentID s
 	return value, revision, nil
 }
 
-const sessionModelColumns = `p.id, r.id, p.display_name, r.model->>'model',
-    (r.model->>'context_window')::bigint, (r.model->>'max_output_tokens')::bigint,
-    (r.model->>'supports_images')::boolean`
+const sessionModelColumns = `p.id, p.configuration_id, p.display_name, p.model->>'model',
+    (p.model->>'context_window')::bigint, (p.model->>'max_output_tokens')::bigint,
+    (p.model->>'supports_images')::boolean`
 
 func loadDefaultSessionModel(ctx context.Context, query catalogQueryer, organizationID, profileID string) (ports.DefaultSessionModel, error) {
 	var model ports.DefaultSessionModel
 	err := query.QueryRow(ctx, `SELECT `+sessionModelColumns+`, p.enabled AND c.enabled
-FROM agent_controller.model_profile_revisions r
-JOIN agent_controller.model_profiles p ON p.id = r.model_profile_id AND p.organization_id = r.organization_id
+FROM agent_controller.model_profiles p
 JOIN agent_controller.provider_connections c ON c.id=p.provider_connection_id AND c.organization_id=p.organization_id
-WHERE p.id = $1 AND r.id=p.current_revision_id AND r.organization_id = $2`, profileID, organizationID).Scan(
+WHERE p.id = $1 AND p.organization_id = $2`, profileID, organizationID).Scan(
 		&model.ModelProfileID, &model.RevisionID, &model.DisplayName, &model.Model,
 		&model.ContextWindow, &model.MaxOutputTokens, &model.SupportsImages, &model.Available)
 	if err != nil {
@@ -104,7 +103,6 @@ WHERE p.id = $1 AND r.id=p.current_revision_id AND r.organization_id = $2`, prof
 func listSessionModels(ctx context.Context, tx *databaseTransaction, organizationID string, input ports.SessionConfigurationQuery) ([]ports.SessionModelOption, string, error) {
 	rows, err := tx.Query(ctx, `SELECT `+sessionModelColumns+`
 FROM agent_controller.model_profiles p
-JOIN agent_controller.model_profile_revisions r ON r.id = p.current_revision_id AND r.organization_id = p.organization_id
 JOIN agent_controller.provider_connections c ON c.id=p.provider_connection_id AND c.organization_id=p.organization_id
 WHERE p.organization_id = $1 AND p.enabled AND c.enabled AND p.id > $2 ORDER BY p.id LIMIT $3`, organizationID, input.AfterID, input.Limit+1)
 	if err != nil {

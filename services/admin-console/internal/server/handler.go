@@ -113,7 +113,6 @@ func (h *handler) routes() {
 	h.mux.HandleFunc("GET /api/admin/model-profiles", h.withPrincipal(h.listModelProfiles))
 	h.mux.HandleFunc("POST /api/admin/model-profiles", h.withPrincipal(h.createModelProfile))
 	h.mux.HandleFunc("GET /api/admin/model-profiles/{model_profile_id}", h.withPrincipal(h.getModelProfile))
-	h.mux.HandleFunc("GET /api/admin/model-profile-revisions/{revision_id}", h.withPrincipal(h.getModelProfileRevision))
 	h.mux.HandleFunc("POST /api/admin/model-profiles/{model_profile_id}/revisions", h.withPrincipal(h.reviseModelProfile))
 	h.mux.HandleFunc("GET /api/admin/templates", h.withPrincipal(h.listTemplates))
 	h.mux.HandleFunc("POST /api/admin/templates", h.withPrincipal(h.createTemplate))
@@ -518,17 +517,10 @@ func (h *handler) getModelProfile(response http.ResponseWriter, request *http.Re
 		organizationScopeQuery(actor.OrganizationID), nil, projectModelProfile)
 }
 
-func (h *handler) getModelProfileRevision(
-	response http.ResponseWriter, request *http.Request, actor principal.Principal,
-) {
-	h.forwardProjected(response, request, upstream.AgentController, http.MethodGet,
-		"/internal/model-profile-revisions/"+url.PathEscape(request.PathValue("revision_id")),
-		organizationScopeQuery(actor.OrganizationID), nil, projectModelProfile)
-}
-
 type reviseModelProfileInput struct {
-	DisplayName string          `json:"display_name"`
-	Model       json.RawMessage `json:"model"`
+	ExpectedVersion int64           `json:"expected_version"`
+	DisplayName     string          `json:"display_name"`
+	Model           json.RawMessage `json:"model"`
 }
 
 func (h *handler) reviseModelProfile(response http.ResponseWriter, request *http.Request, actor principal.Principal) {
@@ -536,7 +528,7 @@ func (h *handler) reviseModelProfile(response http.ResponseWriter, request *http
 	if !decodeJSON(response, request, &input) {
 		return
 	}
-	if !required(input.DisplayName) || len(input.Model) == 0 {
+	if !required(input.DisplayName) || len(input.Model) == 0 || input.ExpectedVersion < 1 {
 		writeError(response, http.StatusBadRequest, "invalid_request", "Required Model Profile field is empty")
 		return
 	}
@@ -547,6 +539,7 @@ func (h *handler) reviseModelProfile(response http.ResponseWriter, request *http
 	payload := map[string]any{
 		"request_id": requestID, "organization_id": actor.OrganizationID,
 		"display_name": input.DisplayName, "model": input.Model,
+		"expected_version": input.ExpectedVersion,
 	}
 	h.forwardProjectedJSON(response, request, upstream.AgentController, http.MethodPost,
 		"/internal/model-profiles/"+url.PathEscape(request.PathValue("model_profile_id"))+"/revisions",

@@ -27,6 +27,8 @@ type catalogRequest struct {
 	revisionID  string
 	revision    int64
 	fingerprint string
+	createdAt   time.Time
+	response    []byte
 }
 
 func lockCatalogRequest(ctx context.Context, transaction *databaseTransaction, requestID string) error {
@@ -47,10 +49,11 @@ func loadCatalogRequest(
 ) (catalogRequest, bool, error) {
 	var request catalogRequest
 	err := queryer.QueryRow(ctx, `
-SELECT request_kind, request_fingerprint, resource_id, revision_id, revision
+SELECT request_kind, request_fingerprint, resource_id, revision_id, revision, created_at, response_snapshot
 FROM agent_controller.catalog_requests
 WHERE request_id = $1`, requestID).Scan(
 		&request.kind, &request.fingerprint, &request.resourceID, &request.revisionID, &request.revision,
+		&request.createdAt, &request.response,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return catalogRequest{}, false, nil
@@ -75,9 +78,7 @@ func loadModelProfileRequest(
 	if err != nil || !found {
 		return ports.ModelProfileRecord{}, found, err
 	}
-	record, err := loadModelProfileRecord(
-		ctx, queryer, request.resourceID, request.revisionID, request.revision,
-	)
+	record, err := decodeModelReceipt(request.response)
 	return record, true, err
 }
 
@@ -85,23 +86,17 @@ func loadModelProfileRecord(
 	ctx context.Context,
 	queryer catalogQueryer,
 	profileID string,
-	revisionID string,
-	revisionNumber int64,
 ) (ports.ModelProfileRecord, error) {
-	row := queryer.QueryRow(ctx, `
-SELECT p.id, p.organization_id, p.profile_key, r.display_name,
-       p.enabled, p.created_at, r.created_at,
-       r.id, r.revision, r.model || jsonb_build_object('base_url', c.base_url), p.provider_connection_id
-FROM agent_controller.model_profiles p
-JOIN agent_controller.model_profile_revisions r
-  ON r.model_profile_id = p.id
- AND r.organization_id = p.organization_id
- AND r.id = $2
- AND r.revision = $3
-JOIN agent_controller.provider_connections c ON c.id = p.provider_connection_id AND c.organization_id = p.organization_id
-WHERE p.id = $1`, profileID, revisionID, revisionNumber)
+	row := queryer.QueryRow(ctx, `SELECT `+modelProfileColumns+modelProfileFrom+` WHERE p.id=$1`, profileID)
 	return scanModelProfileRecord(row)
 }
+
+const modelProfileColumns = `p.id, p.organization_id, p.profile_key, p.display_name,
+ p.enabled, p.created_at, p.updated_at, p.configuration_id, p.version,
+ p.model || jsonb_build_object('base_url', c.base_url), p.provider_connection_id`
+
+const modelProfileFrom = ` FROM agent_controller.model_profiles p
+ JOIN agent_controller.provider_connections c ON c.id=p.provider_connection_id AND c.organization_id=p.organization_id`
 
 func scanModelProfileRecord(scanner catalogRowScanner) (ports.ModelProfileRecord, error) {
 	var record ports.ModelProfileRecord
@@ -132,41 +127,26 @@ func scanModelProfileRecord(scanner catalogRowScanner) (ports.ModelProfileRecord
 	return record, nil
 }
 
-func insertModelProfileRevision(
-	ctx context.Context, transaction *databaseTransaction, record ports.ModelProfileRecord,
-) error {
+func insertModelProfile(ctx context.Context, transaction *databaseTransaction, record ports.ModelProfileRecord) error {
+	if err := lockModelProvider(ctx, transaction, record); err != nil {
+		return err
+	}
 	modelPayload, err := json.Marshal(record.Revision.Snapshot().Model.Parameters())
 	if err != nil {
 		return fmt.Errorf("encode ModelProfile model: %w", err)
 	}
 	if _, err := transaction.Exec(ctx, `
-INSERT INTO agent_controller.model_profile_revisions (
-    id, model_profile_id, organization_id, revision, model, created_at, display_name
-) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-		record.Revision.ID(), record.ModelProfileID, record.OrganizationID,
-		record.Revision.Revision(), modelPayload, record.UpdatedAt, record.DisplayName,
-	); err != nil {
-		return fmt.Errorf("insert ModelProfile revision: %w", err)
-	}
-	return nil
-}
-
-func insertModelProfile(ctx context.Context, transaction *databaseTransaction, record ports.ModelProfileRecord) error {
-	if err := lockModelProvider(ctx, transaction, record); err != nil {
-		return err
-	}
-	if _, err := transaction.Exec(ctx, `
 INSERT INTO agent_controller.model_profiles (
-    id, organization_id, profile_key, display_name, current_revision_id,
-    current_revision, enabled, created_at, updated_at, provider_connection_id, api_model_id
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+    id, organization_id, profile_key, display_name, configuration_id,
+    version, enabled, created_at, updated_at, provider_connection_id, api_model_id, model
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
 		record.ModelProfileID, record.OrganizationID, record.ProfileKey,
 		record.DisplayName, record.Revision.ID(), record.Revision.Revision(),
-		record.Enabled, record.CreatedAt, record.UpdatedAt, record.ProviderConnectionID, record.Revision.Snapshot().Model.Model,
+		record.Enabled, record.CreatedAt, record.UpdatedAt, record.ProviderConnectionID, record.Revision.Snapshot().Model.Model, modelPayload,
 	); err != nil {
 		return fmt.Errorf("insert ModelProfile: %w", err)
 	}
-	return insertModelProfileRevision(ctx, transaction, record)
+	return nil
 }
 
 func lockModelProvider(ctx context.Context, tx *databaseTransaction, record ports.ModelProfileRecord) error {
@@ -197,20 +177,22 @@ func reviseModelProfile(
 	if err := lockModelProvider(ctx, transaction, record); err != nil {
 		return err
 	}
-	if err := insertModelProfileRevision(ctx, transaction, record); err != nil {
-		return err
+	modelPayload, err := json.Marshal(record.Revision.Snapshot().Model.Parameters())
+	if err != nil {
+		return fmt.Errorf("encode ModelProfile model: %w", err)
 	}
 	result, err := transaction.Exec(ctx, `
 UPDATE agent_controller.model_profiles
 SET display_name = $2,
-    current_revision_id = $3,
-    current_revision = $4,
-    updated_at = $5
+    configuration_id = $3,
+    version = $4,
+    updated_at = $5,
+    model = $8
 WHERE id = $1
   AND organization_id = $6
-  AND current_revision = $7`,
+  AND version = $7`,
 		record.ModelProfileID, record.DisplayName, record.Revision.ID(),
-		record.Revision.Revision(), record.UpdatedAt, record.OrganizationID, expectedRevision,
+		record.Revision.Revision(), record.UpdatedAt, record.OrganizationID, expectedRevision, modelPayload,
 	)
 	if err != nil {
 		return fmt.Errorf("advance ModelProfile head: %w", err)
@@ -229,7 +211,7 @@ func lockModelProfileHead(
 ) error {
 	var currentRevision int64
 	err := transaction.QueryRow(ctx, `
-SELECT current_revision
+SELECT version
 FROM agent_controller.model_profiles
 WHERE id = $1 AND organization_id = $2
 FOR UPDATE`, record.ModelProfileID, record.OrganizationID).Scan(&currentRevision)
@@ -407,13 +389,14 @@ func insertCatalogRequest(
 	revisionID string,
 	revision int64,
 	createdAt time.Time,
+	response []byte,
 ) error {
 	if _, err := transaction.Exec(ctx, `
 INSERT INTO agent_controller.catalog_requests (
     request_id, request_kind, request_fingerprint, resource_id,
-    revision_id, revision, created_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-		requestID, kind, fingerprint, resourceID, revisionID, revision, createdAt,
+    revision_id, revision, created_at, response_snapshot
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		requestID, kind, fingerprint, resourceID, revisionID, revision, createdAt, response,
 	); err != nil {
 		return fmt.Errorf("insert Catalog request ledger: %w", err)
 	}

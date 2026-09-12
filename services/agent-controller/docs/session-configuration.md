@@ -8,8 +8,7 @@ final evidence; this document describes Controller ownership.
 
 ## Ownership
 
-Controller owns organization model availability, independent immutable model and credential
-revisions and Agent default authorization. ACP owns Session overrides. No service
+Controller owns organization model availability, current model parameters and encrypted credentials and Agent default authorization. ACP owns Session overrides. No service
 reads the other's tables. Session settings never rebuild a Runtime or change an
 Agent/template model. Internal RPC callers are trusted services; these routes are
 not public management APIs.
@@ -72,7 +71,7 @@ new Provider contract.
 ## Admission Boundary
 
 Within the existing Agent admission transaction, validate identity/access and
-occupancy, lock the chosen model head, resolve its immutable revision, and freeze
+occupancy, lock the chosen current model, read its parameters and configuration stamp, and freeze
 the full model + Provider binding + authorization snapshot. Explicit selection and
 inheritance both resolve the current model head. Model and connection must be
 enabled and owned by the organization. Unknown,

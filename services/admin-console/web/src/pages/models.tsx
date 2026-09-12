@@ -7,7 +7,6 @@ import { Button } from "../components/ui/button";
 import { Dialog } from "../components/ui/dialog";
 import { Loading, SuccessNotice } from "../components/ui/feedback";
 import { APIError, api } from "../lib/api";
-import { loadImmutableCatalogDetail } from "../lib/catalog-detail";
 import { dateTime } from "../lib/format";
 import { modelCatalogGate, modelProfileLabel, modelInputLabel } from "../lib/model-catalog";
 import { resourceFailure, type ResourceFailure } from "../lib/resource-failure";
@@ -16,17 +15,18 @@ import type { ModelCatalog, ModelProfile, ProviderModelInput } from "../lib/type
 import { ProviderList } from "./providers";
 import { ModelEditor } from "./model-editor";
 
-export function ModelsPage({ modelID, revisionID }: { modelID?: string; revisionID?: string }) {
-  return modelID ? <ModelDetail key={`${modelID}:${revisionID ?? "current"}`} modelID={modelID} revisionID={revisionID} /> : <ProviderList />;
+export function ModelsPage({ modelID }: { modelID?: string }) {
+  return modelID ? <ModelDetail key={modelID} modelID={modelID} /> : <ProviderList />;
 }
 
-function ModelDetail({ modelID, revisionID }: { modelID: string; revisionID?: string }) {
+function ModelDetail({ modelID }: { modelID: string }) {
   const [profile, setProfile] = useState<ModelProfile>();
   const profileRequest = useRef(0);
   const [catalogState, setCatalogState] = useState<ResourceState<ModelCatalog>>({ status: "loading" });
   const [loadFailure, setLoadFailure] = useState<ResourceFailure>();
   const [open, setOpen] = useState(false);
   const [pending, setPending] = useState(false);
+  const [conflict, setConflict] = useState(false);
   const [successMessage, setSuccessMessage] = useState("");
 
   const loadProfile = useCallback(async () => {
@@ -35,21 +35,12 @@ function ModelDetail({ modelID, revisionID }: { modelID: string; revisionID?: st
     setLoadFailure(undefined);
     setProfile(undefined);
     try {
-      const detail = await loadImmutableCatalogDetail({
-        revision: revisionID,
-        readCurrent: () => api.model(modelID),
-        readRevision: api.modelRevision,
-        assertOwner: (candidate) => {
-          if (candidate.model_profile_id !== modelID) {
-            throw new APIError(404, "reference_not_found", "The model revision does not belong to this profile.");
-          }
-        },
-      });
-      if (profileRequest.current === request) setProfile(detail.resource);
+      const detail = await readModel(modelID);
+      if (profileRequest.current === request) setProfile(detail);
     } catch (cause) {
       if (profileRequest.current === request) setLoadFailure(resourceFailure(cause));
     }
-  }, [modelID, revisionID]);
+  }, [modelID]);
   const loadCatalog = useCallback(async () => {
     setCatalogState({ status: "loading" });
     setCatalogState(await captureResource(api.modelCatalog));
@@ -58,19 +49,34 @@ function ModelDetail({ modelID, revisionID }: { modelID: string; revisionID?: st
   useEffect(() => void loadCatalog(), [loadCatalog]);
 
   async function revise(value: ProviderModelInput) {
-    if (!profile || revisionID !== undefined) return;
+    if (!profile || conflict) return;
     setPending(true);
     setSuccessMessage("");
     try {
       const revised = await api.reviseModel(profile.model_profile_id, {
+        expected_version: profile.revision,
         display_name: value.display_name,
         model: value.model,
       });
       setProfile(revised);
       setOpen(false);
-      setSuccessMessage(`Model revision ${revised.revision} published.`);
+      setSuccessMessage("Model settings saved.");
     } catch (cause) {
+      if (cause instanceof APIError && cause.status === 409 && cause.code === "lifecycle_conflict") {
+        setConflict(true);
+        throw new Error("This model has changed. Reload the latest settings before saving again.");
+      }
       throw cause;
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function reloadForEdit() {
+    setPending(true);
+    try {
+      setProfile(await readModel(modelID));
+      setConflict(false);
     } finally {
       setPending(false);
     }
@@ -92,14 +98,12 @@ function ModelDetail({ modelID, revisionID }: { modelID: string; revisionID?: st
 
   const catalog = catalogState.status === "ready" ? catalogState.data : undefined;
   const catalogGate = modelCatalogGate(catalogState.status);
-  const historical = revisionID !== undefined;
   const facts = [
     ["Provider", modelProfileLabel(catalog, profile)],
     ["Model", profile.model.model],
     ["Context window", profile.model.context_window.toLocaleString()],
     ["Maximum output", profile.model.max_output_tokens.toLocaleString()],
     ["Input formats", modelInputLabel(profile.model)],
-    [historical ? "Viewed revision" : "Current revision", String(profile.revision)],
     ["Profile updated", dateTime(profile.updated_at)],
   ];
   return (
@@ -108,12 +112,8 @@ function ModelDetail({ modelID, revisionID }: { modelID: string; revisionID?: st
       <PageHeader
         eyebrow={modelProfileLabel(catalog, profile)}
         title={profile.model.model}
-        detail={historical
-          ? "Read-only immutable model configuration retained for executable lineage."
-          : "Current immutable model configuration used by Agent templates."}
-        actions={historical
-          ? <><Badge value="historical" /><Button asChild variant="secondary"><a href={`#models/${modelID}`}>View current revision</a></Button></>
-          : <><Badge value={profile.enabled ? "enabled" : "disabled"} /><Button disabled={!catalogGate.changeAllowed} title={catalogGate.message} onClick={() => { setSuccessMessage(""); setOpen(true); }}><Pencil className="h-4 w-4" />Create revision</Button></>}
+        detail={profile.model.base_url}
+        actions={<><Badge value={profile.enabled ? "enabled" : "disabled"} /><Button disabled={!catalogGate.changeAllowed} title={catalogGate.message} onClick={() => { setSuccessMessage(""); setOpen(true); }}><Pencil className="h-4 w-4" />Edit model</Button></>}
       />
       {successMessage ? <SuccessNotice message={successMessage} onDismiss={() => setSuccessMessage("")} /> : null}
       {catalogState.status === "error" ? <ResourceFailureNotice failure={catalogState.failure} message={`Model catalog could not be loaded: ${catalogState.failure.message}`} retryLabel="Retry model catalog" onRetry={() => void loadCatalog()} /> : null}
@@ -125,14 +125,22 @@ function ModelDetail({ modelID, revisionID }: { modelID: string; revisionID?: st
       <Section title="Endpoint">
         <div className="flex items-center gap-3 rounded-md border border-border bg-white p-4 font-mono text-sm shadow-sm break-all"><Server className="h-4 w-4 shrink-0 text-muted-foreground" />{profile.model.base_url}</div>
       </Section>
-      <Section title="Token rates" detail="USD per 1M tokens, saved with this revision. Estimated rates; actual charges may vary.">
+      <Section title="Token rates" detail="USD per 1M tokens. Estimated rates; actual charges may vary.">
         <ModelRates pricing={profile.model.pricing} />
       </Section>
-      {!historical && catalog ? (
-        <Dialog dismissible={!pending} open={open} onOpenChange={setOpen} title="Create model revision" description="Publish updated model settings.">
-          <ModelEditor key={profile.revision} catalog={catalog} initialModel={profile.model} initialDisplayName={profile.display_name} pending={pending} submitLabel="Publish revision" onCancel={() => setOpen(false)} onSubmit={revise} />
+      {catalog ? (
+        <Dialog dismissible={!pending} open={open} onOpenChange={setOpen} title="Edit model">
+          <ModelEditor key={profile.revision} catalog={catalog} initialModel={profile.model} initialDisplayName={profile.display_name} pending={pending} submitLabel="Save changes" onCancel={() => setOpen(false)} onSubmit={revise} onReload={conflict ? reloadForEdit : undefined} />
         </Dialog>
       ) : null}
     </div>
   );
+}
+
+async function readModel(modelID: string): Promise<ModelProfile> {
+  const detail = await api.model(modelID);
+  if (detail.model_profile_id !== modelID) {
+    throw new APIError(404, "reference_not_found", "The model could not be found.");
+  }
+  return detail;
 }

@@ -485,7 +485,7 @@ export default function App() {
           {route.page === "provisioning" ? (
             <ProvisioningPage systemAdministrator={session.principal.system_role === "admin"} />
           ) : null}
-          {route.page === "models" ? <ModelsPage modelID={route.resourceID} revisionID={route.revisionID} /> : null}
+          {route.page === "models" ? <ModelsPage modelID={route.resourceID} /> : null}
           {route.page === "templates" ? <TemplatesPage templateID={route.resourceID} revisionID={route.revisionID} /> : null}
           {route.page === "agents" ? <AgentsPage agentID={route.resourceID} networkScope={JSON.stringify([session.principal.organization_id, session.principal.user_id])} /> : null}
         </main>

@@ -17,10 +17,10 @@ is involved. Only DeepSeek is listed in the current release. Organization model
 configuration and encrypted credentials remain Controller-owned.
 
 BFF projects only these price fields on Model Profile list/current/
-historical/write responses, Overview and Agent configuration. Incomplete or
+write responses, Overview and Agent configuration. Incomplete or
 invalid upstream prices must not become a zero quote. Organization and
 administrator checks are unchanged; Provider credentials, private rate metadata
-and internal IDs remain excluded. Controller owns request validation, revision publication and the immutable
+and internal IDs remain excluded. Controller owns request validation, current-model updates and the immutable
 admission snapshot. Console defaults are not runtime authority.
 
 ## Editing And Reading
@@ -34,10 +34,10 @@ admission snapshot. Console defaults are not runtime authority.
    are omitted, never zero-filled. Tiny positive rates are never displayed as
    zero; nonzero underflow is rejected, and stored precision is not rounded when
    publishing. Representable subnormal rates remain valid.
-3. Editing the same model starts from the stored revision's prices, not today's
-   catalog. Disabling `Set rates` explicitly removes pricing on the new revision;
-   it never requests hidden catalogue fallback. It does not mutate
-   the old revision. Price-only edits publish model metadata without credentials;
+3. Editing the same model starts from its saved current prices, not today's
+   catalog. Disabling `Set rates` explicitly removes current pricing;
+   it never requests hidden catalogue fallback. Existing Agent build and Run
+   snapshots remain unchanged. Price-only edits update model metadata without credentials;
    keys are rotated through the independent Provider connection action.
 4. Selecting a different new model resets unrelated rate drafts. Existing API
    model identity and connection endpoint are not editable in model revisions. A failed publication
@@ -46,8 +46,8 @@ admission snapshot. Console defaults are not runtime authority.
    is a new intent. Pending publication disables controls. Closing an abandoned
    form discards its draft. Rate and credential values are not persisted in
    browser storage by this feature.
-5. Detail shows saved rates. Historical routes stay read-only and must not
-   depend on the current catalog's prices or availability. Absent cache rates
+5. Detail shows saved current rates. No model history route exists. Historical
+   execution prices remain in the Agent build and Run admission snapshots. Absent cache rates
    show the stored ordinary input-rate fallback; absent prices show unknown.
    Estimates are not invoices and do not include negotiated/time-based billing.
 
@@ -60,7 +60,7 @@ admission snapshot. Console defaults are not runtime authority.
   rates, model identity and catalog defaults, display without rounding to free.
 - Components with the real API wrapper: create with default/custom/no price;
   revision preservation/reset; errors/retry/pending; model and endpoint switching;
-  abandoned draft disposal; immutable history independent of catalog.
+  abandoned draft disposal; saved current parameters independent of catalog.
 - Full Go/race and Console frontend tests/build; repository fmt/lint gates.
 - Browser desktop/mobile acceptance of rendered form, zero and unknown labels,
   error recovery and saved revision, using synthetic responses. Actual

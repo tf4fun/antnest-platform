@@ -3,6 +3,7 @@ package e2e
 import (
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"testing"
 )
@@ -18,6 +19,7 @@ func assertModelPricingPublication(t *testing.T, handler http.Handler) {
 	model := map[string]any{"model": "deepseek-v4-flash-vision-exp", "pricing": baseline,
 		"context_window": 8192.0, "max_output_tokens": 1024.0, "supports_images": false}
 	draft["model"] = model
+	createPayload := mustJSON(t, draft)
 	created := serveJSON(t, handler, http.MethodPost, "/internal/model-profiles", mustJSON(t, draft), http.StatusCreated)
 	assertModelPrice(t, created, baseline)
 	expected := map[string]any{}
@@ -37,6 +39,7 @@ func assertModelPricingPublication(t *testing.T, handler http.Handler) {
 	delete(draft, "profile_key")
 	delete(draft, "provider_connection_id")
 	draft["request_id"] = "pricing-revise"
+	draft["expected_version"] = created["revision"]
 	free := map[string]any{"currency": "USD", "input_per_million": 0.0, "output_per_million": 0.0}
 	model["pricing"] = free
 	revised := serveJSON(t, handler, http.MethodPost, path+"/revisions", mustJSON(t, draft), http.StatusCreated)
@@ -44,8 +47,14 @@ func assertModelPricingPublication(t *testing.T, handler http.Handler) {
 	if revised["revision"] != 2.0 {
 		t.Fatal("pricing edit did not publish a model revision")
 	}
-	assertModelPrice(t, serveJSON(t, handler, http.MethodGet, oldPath, "", http.StatusOK), baseline)
-	stored := serveJSON(t, handler, http.MethodGet, oldPath, "", http.StatusOK)["model"].(map[string]any)
+	retired := httptest.NewRecorder()
+	handler.ServeHTTP(retired, httptest.NewRequest(http.MethodGet, oldPath, nil))
+	if retired.Code != http.StatusNotFound {
+		t.Fatal("model history endpoint is still exposed")
+	}
+	oldResponse := serveJSON(t, handler, http.MethodPost, "/internal/model-profiles", createPayload, http.StatusCreated)
+	assertModelPrice(t, oldResponse, baseline)
+	stored := oldResponse["model"].(map[string]any)
 	if stored["context_window"] != 8192.0 || stored["supports_images"] != false || stored["max_output_tokens"] != 1024.0 {
 		t.Fatalf("persisted parameters changed to defaults: %v", stored)
 	}
@@ -74,9 +83,13 @@ func assertInvalidModelPrices(t *testing.T, handler http.Handler, draft, model m
 		model["pricing"] = invalid
 		draft["request_id"] = fmt.Sprintf("invalid-pricing-%d", index)
 		serveJSON(t, handler, http.MethodPost, path+"/revisions", mustJSON(t, draft), http.StatusBadRequest)
+		delete(draft, "expected_version")
 		draft["profile_key"] = fmt.Sprintf("invalid-%d", index)
+		draft["provider_connection_id"] = "provider-1"
 		serveJSON(t, handler, http.MethodPost, "/internal/model-profiles", mustJSON(t, draft), http.StatusBadRequest)
 		delete(draft, "profile_key")
+		delete(draft, "provider_connection_id")
+		draft["expected_version"] = 2
 	}
 	current := serveJSON(t, handler, http.MethodGet, path+"?organization_id=pricing-org", "", http.StatusOK)
 	if current["revision"] != 2.0 {
@@ -86,6 +99,7 @@ func assertInvalidModelPrices(t *testing.T, handler http.Handler, draft, model m
 	model["Pricing"] = nil
 	draft["request_id"] = "noncanonical-price"
 	serveJSON(t, handler, http.MethodPost, path+"/revisions", mustJSON(t, draft), http.StatusBadRequest)
+	delete(draft, "expected_version")
 	draft["profile_key"] = "noncanonical-price"
 	serveJSON(t, handler, http.MethodPost, "/internal/model-profiles", mustJSON(t, draft), http.StatusBadRequest)
 	delete(model, "Pricing")

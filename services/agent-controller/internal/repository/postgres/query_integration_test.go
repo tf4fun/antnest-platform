@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"reflect"
 	"testing"
 	"time"
 
@@ -81,6 +82,11 @@ UPDATE agent_controller.agents SET executable_spec_revision_id = $1 WHERE id = $
 		configuration.ModelProfileRevision != 1 || configuration.Snapshot.Model.Model != "model" ||
 		configuration.Snapshot.TemplateRevision != 1 {
 		t.Fatalf("configuration = %+v", configuration)
+	}
+	reviseProfilePricing(t, repository, model, 3, 9)
+	afterEdit, err := repository.GetAgentConfiguration(ctx, "agent-lineage", "spec-lineage")
+	if err != nil || !reflect.DeepEqual(configuration, afterEdit) {
+		t.Fatalf("model edit rewrote Agent build snapshot: configuration=%+v error=%v", afterEdit, err)
 	}
 	_, err = repository.GetAgentConfiguration(ctx, "agent-lineage", "spec-missing")
 	if !errors.Is(err, ports.ErrNotFound) {

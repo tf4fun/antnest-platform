@@ -109,6 +109,11 @@ function intentStorageKey(scope: string, input: unknown): string {
 
 async function idempotentRequest<T>(scope: string, path: string, input: unknown): Promise<T> {
   const storageKey = intentStorageKey(scope, input);
+  // A changed command replaces the pending intent, even if an older body is used again later.
+  const prefix = `antnest:lifecycle:${scope}:`;
+  for (const key of Object.keys(sessionStorage)) {
+    if (key.startsWith(prefix) && key !== storageKey) sessionStorage.removeItem(key);
+  }
   let idempotencyKey = sessionStorage.getItem(storageKey);
   if (!idempotencyKey) {
     idempotencyKey = crypto.randomUUID();
@@ -230,14 +235,13 @@ export const api = {
     request<ModelProfileList>(catalogPagePath("/api/admin/model-profiles", options)),
   model: (modelProfileID: string) =>
     request<ModelProfile>(`/api/admin/model-profiles/${encodeURIComponent(modelProfileID)}`),
-  modelRevision: (revisionID: string) =>
-    request<ModelProfile>(`/api/admin/model-profile-revisions/${encodeURIComponent(revisionID)}`),
   createModel: (input: {
     display_name: string;
     provider_connection_id: string;
     model: ModelParameters;
   }) => idempotentRequest<ModelProfile>("create-model", "/api/admin/model-profiles", input),
   reviseModel: (modelProfileID: string, input: {
+    expected_version: number;
     display_name: string;
     model: ModelParameters;
   }) => idempotentRequest<ModelProfile>(

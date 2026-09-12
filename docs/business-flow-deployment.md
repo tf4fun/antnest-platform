@@ -1,4 +1,8 @@
-# 空白实例部署流程
+# 部署与入口就绪流程
+
+> 最新复验：2026-09-12，源码 `8082e34`，场景 BF-OPS-02。
+> 本轮复用现有数据库，只验证更新后的镜像、部署边界和入口请求；不重复宣称空白初始化完成。
+> §1–7 保留历次部署与设计演进记录，不能作为当前接口、计数或验收结论；最新结果在 §8，已获用户确认。
 
 > 入口：BF-OPS-01，包含 BF-OPS-02 部署后就绪检查。
 > 日期：2026-09-11。部署与自动核验完成，等待用户逐场景复核。
@@ -82,7 +86,7 @@ Gateway 开启 `ANTNEST_TELEMETRY_MODE=diagnostic`。
 真实 HTTP 代理父子层级和流式不预读。旧 Jaeger 验收脚本改为检查 Span 类型、RPC
 方法和精确父子关系，不再依赖已移除的手工 CLIENT 名称。
 
-### 服务级改造后的当前复核
+### 服务级改造后的复核（历史记录）
 
 六个已改造的常驻服务和 Runtime 镜像已重新构建，常驻服务已逐个替换。
 本轮没有删除卷或创建业务数据。当前状态及完整门禁见
@@ -173,3 +177,91 @@ tag 的设计冲突。首次启动因此退出。修复移除 Console 的重复�
 - [ACP 状态入口](../services/agent-acp-service/src/transport/http-server.ts)。
 - [数据库初始化](../scripts/postgres-init.sh)与[Identity bootstrap](../services/identity-service/internal/repository/bootstrap.go)。
 - [Model Profile 持久化](../services/agent-controller/internal/repository/postgres/catalog.go)。
+
+## 8. 2026-09-12 更新部署后的入口复验
+
+本轮仅接收两个无认证、只读入口，不登录、不写入 Provider/模板/Agent，不调用模型。
+Compose 启动不是 Gateway 请求，其构建、迁移和探针不能虚构为 `/status` 的子 Span。
+
+本场景的机器验收要求：
+
+1. `/status` 返回 `200 ready`，Trace 恰好一个无父节点的 Gateway SERVER，无下游和 SQL。
+2. `/` 返回 HTML；Trace 恰好三个节点：Gateway SERVER → Gateway CLIENT → Console SERVER；各节点 `GET/200`，两个父引用精确一致。
+3. 所有 Span 已结束；无重复 ID、缺失父节点、Jaeger warning 或错误标记。HTTP 200 不掩盖读取/写回失败。
+4. 普通 HTTP 不记录 Header 值或请求/响应正文；检查所有 tags 和日志字段，不依赖事件名称。
+5. 完成 HTTP 响应读取后等待 6 秒，再查询 Jaeger。只保存链接和结构化最终指标，不保存原始 Trace 正文。
+
+这两个入口证明请求边界，不证明静态资源渲染、身份认证、Provider 可用、ACP Run 或 Runtime 执行正确。
+镜像身份、端口、容器健康和数据库 CONNECT 隔离另行核验；不将它们画入这两条 Trace。
+
+### 8.1 新 Trace 与实际时序
+
+| 请求 | 新 Jaeger 链接 | Span 数 | 根 HTTP 耗时 | 结论 |
+| --- | --- | ---: | ---: | --- |
+| `GET /status` | [Gateway 自身就绪](http://127.0.0.1:16686/trace/a1a843bf002cffcc07dc359e1cc8aa25) | 1 | 0.039ms | 200 ready；仅 Gateway SERVER |
+| `GET /` | [Console 首页代理](http://127.0.0.1:16686/trace/8774cde179262f76418e2b662de7151b) | 3 | 18.099ms | 三节点均 GET/200；两条直接父引用匹配 |
+
+两个 Trace 分别对应独立请求，不把首页并入健康检查。两者均无缺失父节点、重复 ID、
+Jaeger warning、错误标记、HTTP Header 值或正文记录。耗时是单次开发样本，不是性能基准。
+`/status` 时序仍为 §3 的单次请求；新首页时序如下：
+
+```mermaid
+sequenceDiagram
+    actor O as 操作者
+    participant G as Edge Gateway
+    participant C as Admin Console
+    O->>G: GET /
+    activate G
+    Note over G: SERVER /{path...}<br/>e75afad9592fad1f
+    G->>C: GET /（CLIENT 1820f36c00cf8990）
+    activate C
+    Note over C: SERVER /{path...}<br/>02c4e88826231517<br/>parent = Gateway CLIENT
+    C-->>G: 200 HTML
+    deactivate C
+    G-->>O: 200 HTML + X-Antnest-Trace-ID
+    deactivate G
+    Note over O,C: CLIENT 直接属于 Gateway SERVER；无 Identity、Controller、ACP 或数据库调用
+```
+
+CLIENT 14.494ms 包含下游 Console SERVER 4.145ms，不能把它们与根耗时相加。
+HTTP 响应检查确认返回 HTML；Trace 确认三节点调用链及 GET/200，不能证明浏览器加载、渲染所有静态资源。
+
+### 8.2 独立部署事实
+
+| 核验项 | 本轮结果 |
+| --- | --- |
+| 实例与版本 | `antnest-dev-20260911`，服务代码 `8082e34`；沿用已有数据库 |
+| 镜像 | 上一轮串行构建九个项目镜像；本轮重新核对八个常驻应用的实际 image ID，全部等于对应构建结果 |
+| 容器 | 11 个常驻容器；10 个带探针的服务 healthy；Jaeger 查询 API 可用；观察时重启计数均为 0 |
+| 应用入口 | 仅 Gateway `127.0.0.1:8090`；Runtime Controller、Identity、ACP、Agent Controller、Console、Agent UI 均无主机映射 |
+| 基础设施端口 | PostgreSQL `127.0.0.1:55432`、Temporal `127.0.0.1:7233`、Jaeger `127.0.0.1:16686`；不是额外应用入口 |
+| Temporal 初始化 | 上一轮更新部署时三个初始化任务均成功退出，随后已清理容器；常驻 Temporal 与两个数据库保留。本轮未重跑初始化，也不据此声称已验证工作流 |
+| 数据隔离 | 7 个服务/引擎数据库，6 个业务/引擎角色；42 个 CONNECT 组合核对，7 个本角色允许组合、0 个偏差 |
+| 业务数据 | 保留；之前的三个验收 Agent 已停用，独占工作卷保留。本轮未增加登录、Provider、模板、Agent 或 Run |
+
+部署事实不属于这两条 Trace：数据库权限是协调者只读检查，不能作为服务跨库调用画进时序。
+CONNECT 隔离不等于所有表级权限均已测试；探针 healthy 不等于 Docker 创建、Temporal Workflow、ACP 对话已验收。
+此前 Agent Controller 暴露 `58083` 的更新配置漂移在本次有效容器配置中已消除。
+
+### 8.3 可复用验证与审查
+
+```sh
+node --test --test-concurrency=1 scripts/observability/*.test.mjs
+node scripts/observability/exercise-deployment-entry.mjs \
+  --gateway http://127.0.0.1:8090 --jaeger http://127.0.0.1:16686
+```
+
+新增 [入口检查器](../scripts/observability/deployment-entry.mjs) 只约束这两个成功场景，
+复用通用 Trace 图校验，不修改其他允许失败/重试的业务场景语义。
+44 项场景测试、观测脚本总计 188 项通过；现场脚本通过。根目录 `make fmt-check`、`make lint`
+通过；本轮涉及文档的 87 个本地文件链接均有效。反例包括有效主链之外的多余节点、
+200 响应下的错误、不同事件名/无事件名/tag 中的正文，以及直接父关系和方法/路由错误。
+
+两轮只读审查已完成：先确认场景边界与旧检查器遗漏，再审查新检查器及文档。
+复审暴露的未知 Body 字段漏检已补充反例并修复；正文命名空间仅允许非负整数的大小元数据。
+HTML 证据归属与 Temporal 初始化轮次的表述已修正。等待 6 秒后单次查询沿用已确认的验收方式，
+结论只针对当时返回的 Span 集合；Jaeger 没有本场景可用的“全部 Span 已到齐”信号，
+不能把固定等待或重复查询描述为分布式 Trace 完整性保证。
+修复检查器后只读复查同一批 Trace，节点数与父子关系未变化，仍无错误或 warning；审查者均已关闭。
+用户已确认本节两条新 Trace；随后进入[管理员登录](business-flow-local-admin-login.md)复验。
+ACP Provider 合同尚待适配的已知问题不在本场景范围内。

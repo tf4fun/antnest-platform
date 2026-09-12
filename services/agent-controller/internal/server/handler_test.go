@@ -77,7 +77,7 @@ func TestBuiltinCatalogIsNotAControllerEndpoint(t *testing.T) {
 	}
 }
 
-func TestCatalogHandlerReadsHistoricalCatalogRevisions(t *testing.T) {
+func TestCatalogHandlerKeepsOnlyTemplateHistory(t *testing.T) {
 	t.Parallel()
 
 	templateView := sampleTemplateView()
@@ -96,8 +96,7 @@ func TestCatalogHandlerReadsHistoricalCatalogRevisions(t *testing.T) {
 		nil,
 	)
 	handler.ServeHTTP(modelResponse, modelRequest)
-	if modelResponse.Code != http.StatusOK || service.modelRevisionOrganizationID != "org-1" ||
-		service.modelRevisionID != "model-revision-1" {
+	if modelResponse.Code != http.StatusNotFound {
 		t.Fatalf("historical model response=%d call=%+v body=%s", modelResponse.Code, service, modelResponse.Body.String())
 	}
 
@@ -670,8 +669,6 @@ type catalogServiceStub struct {
 	templatePage     application.TemplatePage
 	listInput        application.ListCatalogInput
 
-	modelRevisionOrganizationID    string
-	modelRevisionID                string
 	templateRevisionOrganizationID string
 	templateRevisionTemplateID     string
 	templateRevision               int64
@@ -754,14 +751,6 @@ func (service *catalogServiceStub) ReviseModelProfile(
 func (service *catalogServiceStub) GetModelProfile(
 	context.Context, string, string,
 ) (application.ModelProfileView, error) {
-	return service.modelView, service.getModelErr
-}
-
-func (service *catalogServiceStub) GetModelProfileRevision(
-	_ context.Context, organizationID, revisionID string,
-) (application.ModelProfileView, error) {
-	service.modelRevisionOrganizationID = organizationID
-	service.modelRevisionID = revisionID
 	return service.modelView, service.getModelErr
 }
 

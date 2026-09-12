@@ -64,6 +64,12 @@
         }
       }
     },
+    "model_display_name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "\\S"
+    },
     "provider_model_input": {
       "type": "object",
       "additionalProperties": false,
@@ -77,8 +83,7 @@
           "$ref": "#/$defs/id"
         },
         "display_name": {
-          "type": "string",
-          "minLength": 1
+          "$ref": "#/$defs/model_display_name"
         },
         "model": {
           "$ref": "#/$defs/model_parameters"
@@ -617,9 +622,7 @@
           "$ref": "#/$defs/id"
         },
         "display_name": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 200
+          "$ref": "#/$defs/model_display_name"
         },
         "model": {
           "$ref": "#/$defs/model_parameters"
@@ -635,6 +638,7 @@
       "required": [
         "request_id",
         "organization_id",
+        "expected_version",
         "display_name",
         "model"
       ],
@@ -646,9 +650,11 @@
           "$ref": "#/$defs/id"
         },
         "display_name": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 200
+          "$ref": "#/$defs/model_display_name"
+        },
+        "expected_version": {
+          "type": "integer",
+          "minimum": 1
         },
         "model": {
           "$ref": "#/$defs/model_parameters"

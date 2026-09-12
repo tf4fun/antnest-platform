@@ -10,9 +10,8 @@ func TestInitialMigrationOwnsCompleteAgentControllerBoundary(t *testing.T) {
 
 	required := []string{
 		"agent_controller.catalog_requests",
-		"agent_controller.provider_credentials",
+		"agent_controller.provider_connections",
 		"agent_controller.model_profiles",
-		"agent_controller.model_profile_revisions",
 		"agent_controller.agent_templates",
 		"agent_controller.agent_template_revisions",
 		"agent_controller.agents",
@@ -51,8 +50,6 @@ func TestSchemaMigrationsHaveFinalSerializationConstraints(t *testing.T) {
 		"UNIQUE (provider_connection_id, api_model_id)",
 		"UNIQUE (organization_id, template_key)",
 		"source_runtime_absent",
-		"model_profile_head_fk",
-		"provider_credential_head_fk",
 		"template_head_fk",
 		"template_model_fk",
 		"agents_projection_idx",
@@ -74,6 +71,18 @@ func TestSchemaMigrationsHaveFinalSerializationConstraints(t *testing.T) {
 		if !strings.Contains(allMigrations, constraint) {
 			t.Errorf("schema migrations lack %s", constraint)
 		}
+	}
+}
+
+func TestCatalogStoresOnlyCurrentProviderAndModelState(t *testing.T) {
+	t.Parallel()
+	for _, forbidden := range []string{"provider_credentials", "model_profile_revisions"} {
+		if strings.Contains(initialSchemaSQL, forbidden) {
+			t.Errorf("catalog still persists historical state: %s", forbidden)
+		}
+	}
+	if !strings.Contains(initialSchemaSQL, "response_snapshot JSONB") {
+		t.Fatal("idempotent catalog responses must survive updates without historical resource tables")
 	}
 }
 

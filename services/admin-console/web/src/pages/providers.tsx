@@ -36,6 +36,7 @@ import {
   modelCatalogGate,
   modelInputLabel,
   presetParameters,
+  validateModelDisplayName,
 } from "../lib/model-catalog";
 import { mergePage } from "../lib/pagination";
 import { resourceFailure, type ResourceFailure } from "../lib/resource-failure";
@@ -314,7 +315,7 @@ function ConnectProvider({
         models: provider.models
           .filter((item) => selected.includes(item.model_id))
           .map((item) => ({
-            display_name: item.display_name,
+            display_name: validateModelDisplayName(item.display_name),
             model: presetParameters(item),
           })),
       });

@@ -71,6 +71,13 @@ export function validateModelParameters(model: ModelParameters): ModelParameters
   return { ...model, model: model.model.trim() };
 }
 
+export function validateModelDisplayName(name: string): string {
+  if (!name.trim() || Array.from(name).length > 200) {
+    throw new Error("Model name must contain 1 to 200 characters.");
+  }
+  return name;
+}
+
 export function modelInputLabel(model: Pick<ModelSpec, "supports_images" | "supports_audio" | "supports_pdf">): string {
   const formats = ["Text"];
   if (model.supports_images) formats.push("Images");

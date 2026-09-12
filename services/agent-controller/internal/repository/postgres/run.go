@@ -30,13 +30,11 @@ SELECT access.principal_id, access.agent_id, agent.organization_id,
 FROM agent_controller.agent_access_bindings access
 JOIN agent_controller.agents agent ON agent.id = access.agent_id
 CROSS JOIN LATERAL (
-    SELECT COALESCE(bool_or((r.model->>'supports_images')::boolean), false) AS image,
-           COALESCE(bool_or((r.model->>'supports_audio')::boolean), false) AS audio
+    SELECT COALESCE(bool_or((p.model->>'supports_images')::boolean), false) AS image,
+           COALESCE(bool_or((p.model->>'supports_audio')::boolean), false) AS audio
     FROM agent_controller.model_profiles p
-    JOIN agent_controller.model_profile_revisions r ON r.model_profile_id = p.id AND r.organization_id = p.organization_id
     JOIN agent_controller.provider_connections c ON c.id=p.provider_connection_id AND c.organization_id=p.organization_id
     WHERE p.organization_id = agent.organization_id AND p.enabled AND c.enabled
-      AND r.id = p.current_revision_id
 ) capabilities
 WHERE access.access_subject = $1 AND access.active
 AND agent.identity_revocation_sequence <= agent.owner_authorization_sequence`, accessSubject).Scan(
@@ -307,12 +305,10 @@ func (repository *Repository) GetAdmissionCredential(
 	}
 	var record ports.AdmissionCredential
 	err = transaction.QueryRow(ctx, `
-SELECT c.organization_id, c.credential_ref, c.credential_version, c.secret_type,
-       c.ciphertext, c.nonce, c.key_version
+SELECT p.organization_id, p.id, p.current_credential_version, 'bearer',
+       p.ciphertext, p.nonce, p.key_version
 FROM agent_controller.agents a
 JOIN agent_controller.provider_connections p ON p.organization_id = a.organization_id AND p.id=$2 AND p.enabled
-JOIN agent_controller.provider_credentials c ON c.organization_id = p.organization_id
- AND c.credential_ref=p.id AND c.credential_version=p.current_credential_version
 WHERE a.id = $1 AND a.identity_revocation_sequence <= a.owner_authorization_sequence
  AND a.owner_user_id=$3 AND a.access_revision=$4
  AND EXISTS (SELECT 1 FROM agent_controller.agent_access_bindings b WHERE b.agent_id=a.id

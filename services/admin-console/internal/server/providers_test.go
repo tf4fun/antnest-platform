@@ -13,6 +13,8 @@ func modelCommandBody(path, name, model string) string {
 	connection := ""
 	if path == "/api/admin/model-profiles" {
 		connection = `,"provider_connection_id":"connection-1"`
+	} else {
+		connection = `,"expected_version":1`
 	}
 	return `{"display_name":"` + name + `","model":` + model + connection + `}`
 }

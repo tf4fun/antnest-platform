@@ -54,7 +54,6 @@ type CatalogService interface {
 	CreateModelProfile(context.Context, application.CreateModelProfileInput) (application.ModelProfileView, error)
 	ReviseModelProfile(context.Context, application.ReviseModelProfileInput) (application.ModelProfileView, error)
 	GetModelProfile(context.Context, string, string) (application.ModelProfileView, error)
-	GetModelProfileRevision(context.Context, string, string) (application.ModelProfileView, error)
 	ListModelProfiles(context.Context, application.ListCatalogInput) (application.ModelProfilePage, error)
 	CreateTemplate(context.Context, application.CreateTemplateInput) (application.TemplateView, error)
 	ReviseTemplate(context.Context, application.ReviseTemplateInput) (application.TemplateView, error)
@@ -179,7 +178,6 @@ func (h *handler) routes() []routeDefinition {
 		{pattern: "POST /internal/model-profiles", handler: h.createModelProfile},
 		{pattern: "GET /internal/model-profiles", handler: h.listModelProfiles},
 		{pattern: "GET /internal/model-profiles/{model_profile_id}", handler: h.getModelProfile},
-		{pattern: "GET /internal/model-profile-revisions/{revision_id}", handler: h.getModelProfileRevision},
 		{pattern: "POST /internal/model-profiles/{model_profile_id}/revisions", handler: h.reviseModelProfile},
 		{pattern: "POST /internal/agent-templates", handler: h.createTemplate},
 		{pattern: "GET /internal/agent-templates", handler: h.listTemplates},
@@ -213,10 +211,11 @@ type createModelProfileRequest struct {
 }
 
 type reviseModelProfileRequest struct {
-	RequestID      string                 `json:"request_id"`
-	OrganizationID string                 `json:"organization_id"`
-	DisplayName    string                 `json:"display_name"`
-	Model          domain.ModelParameters `json:"model"`
+	ExpectedVersion int64                  `json:"expected_version"`
+	RequestID       string                 `json:"request_id"`
+	OrganizationID  string                 `json:"organization_id"`
+	DisplayName     string                 `json:"display_name"`
+	Model           domain.ModelParameters `json:"model"`
 }
 
 type createTemplateRequest struct {
@@ -654,7 +653,8 @@ func (h *handler) reviseModelProfile(response http.ResponseWriter, request *http
 		return
 	}
 	view, err := h.catalog.ReviseModelProfile(request.Context(), application.ReviseModelProfileInput{
-		RequestID: payload.RequestID, ModelProfileID: request.PathValue("model_profile_id"),
+		ExpectedVersion: payload.ExpectedVersion,
+		RequestID:       payload.RequestID, ModelProfileID: request.PathValue("model_profile_id"),
 		OrganizationID: payload.OrganizationID,
 		DisplayName:    payload.DisplayName, Model: payload.Model,
 	})
@@ -672,21 +672,6 @@ func (h *handler) getModelProfile(response http.ResponseWriter, request *http.Re
 	}
 	view, err := h.catalog.GetModelProfile(
 		request.Context(), organizationID, request.PathValue("model_profile_id"),
-	)
-	if err != nil {
-		writeServiceError(request.Context(), response, err)
-		return
-	}
-	writeJSON(response, http.StatusOK, modelProfilePayload(view))
-}
-
-func (h *handler) getModelProfileRevision(response http.ResponseWriter, request *http.Request) {
-	organizationID, ok := requiredOrganizationQuery(response, request)
-	if !ok {
-		return
-	}
-	view, err := h.catalog.GetModelProfileRevision(
-		request.Context(), organizationID, request.PathValue("revision_id"),
 	)
 	if err != nil {
 		writeServiceError(request.Context(), response, err)

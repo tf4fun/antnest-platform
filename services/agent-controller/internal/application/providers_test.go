@@ -80,7 +80,8 @@ func TestModelEditRejectsChangingAPIIdentityAndDisabledProvider(t *testing.T) {
 	parameters := input.Models[0].Model
 	parameters.Model = "different-model"
 	if _, err := service.ReviseModelProfile(ctx, ReviseModelProfileInput{
-		RequestID: "edit", OrganizationID: "org", ModelProfileID: store.modelRecord.ModelProfileID,
+		ExpectedVersion: 1,
+		RequestID:       "edit", OrganizationID: "org", ModelProfileID: store.modelRecord.ModelProfileID,
 		DisplayName: "Model", Model: parameters,
 	}); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("API model identity changed in place: %v", err)
@@ -134,7 +135,14 @@ func TestProviderRotationRejectsCrossOrganizationAndStaleVersion(t *testing.T) {
 				RequestID: "rotate", OrganizationID: organization, ConnectionID: "connection", ExpectedVersion: "stale",
 				Credential: ProviderCredentialInput{Method: "api_key", APIKey: "key"},
 			})
-			if err == nil || sealer.calls != 0 || store.writes != 0 {
+			expectedSeals := 0
+			if organization == "org" {
+				expectedSeals = 1
+				if !errors.Is(err, ports.ErrConcurrentChange) {
+					t.Fatalf("stale version error = %v", err)
+				}
+			}
+			if err == nil || sealer.calls != expectedSeals || store.writes != 0 {
 				t.Fatalf("invalid rotation had side effects: %v", err)
 			}
 		})
@@ -157,16 +165,6 @@ type providerStoreStub struct {
 	replayFound     bool
 	expectedVersion string
 	writes          int
-}
-
-func (store *catalogStoreStub) GetModelProfileRevisionRecord(ctx context.Context, id string) (ports.ModelProfileRecord, error) {
-	revision, err := store.GetModelProfileRevision(ctx, id)
-	if err != nil {
-		return ports.ModelProfileRecord{}, err
-	}
-	record := store.modelRecord
-	record.Revision = revision
-	return record, nil
 }
 
 func (store *catalogStoreStub) GetProviderConnection(_ context.Context, organizationID, connectionID string) (ports.ProviderConnectionRecord, error) {
@@ -194,6 +192,9 @@ func (store *providerStoreStub) PutProviderConnection(_ context.Context, connect
 }
 
 func (store *providerStoreStub) RotateProviderCredential(_ context.Context, expected string, connection ports.ProviderConnectionRecord) (ports.ProviderConnectionRecord, error) {
+	if store.connection.CredentialVersion != expected {
+		return ports.ProviderConnectionRecord{}, ports.ErrConcurrentChange
+	}
 	store.expectedVersion, store.connection = expected, connection
 	store.writes++
 	return connection, nil

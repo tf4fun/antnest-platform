@@ -109,9 +109,6 @@ func (service *CatalogService) RotateProviderCredential(ctx context.Context, inp
 	if err != nil {
 		return ProviderConnectionView{}, err
 	}
-	if connection.CredentialVersion != input.ExpectedVersion {
-		return ProviderConnectionView{}, ports.ErrConcurrentChange
-	}
 	connection.RequestID, connection.RequestFingerprint = input.RequestID, fingerprint
 	connection.CredentialVersion = derivedID("credver", input.RequestID)
 	connection.CredentialRevision++
@@ -211,7 +208,7 @@ func initialProviderModels(connection ports.ProviderConnectionRecord, inputs []P
 }
 
 func newProviderModel(connection ports.ProviderConnectionRecord, requestID string, input ProviderModelInput, number int64, modelID string) (ports.ModelProfileRecord, error) {
-	if !validIdentifier(input.ProfileKey) || strings.TrimSpace(input.DisplayName) == "" {
+	if !validIdentifier(input.ProfileKey) || !validModelDisplayName(input.DisplayName) {
 		return ports.ModelProfileRecord{}, fmt.Errorf("%w: Model identity", ErrInvalidInput)
 	}
 	revision, err := domain.NewModelProfileRevision(domain.ModelProfileRevisionInput{

@@ -179,6 +179,7 @@ func (revision TemplateRevision) Snapshot() TemplateRevisionSnapshot {
 
 type AgentSpecSnapshot struct {
 	ModelProfileID         string           `json:"model_profile_id"`
+	ModelProfileVersion    int64            `json:"model_profile_version"`
 	TemplateID             string           `json:"template_id"`
 	TemplateRevision       int64            `json:"template_revision"`
 	ModelProfileRevisionID string           `json:"model_profile_revision_id"`
@@ -200,7 +201,7 @@ func MaterializeAgentSpec(template TemplateRevision, model ModelProfileRevision)
 	}
 	return AgentSpec{snapshot: AgentSpecSnapshot{
 		TemplateID: template.templateID, TemplateRevision: template.revision,
-		ModelProfileID: model.modelProfileID, ModelProfileRevisionID: model.id, SystemPrompt: template.systemPrompt,
+		ModelProfileID: model.modelProfileID, ModelProfileVersion: model.revision, ModelProfileRevisionID: model.id, SystemPrompt: template.systemPrompt,
 		MaxModelRequests: template.maxModelRequests, ContextPolicyVersion: template.contextPolicyVersion,
 		Model: model.model.Clone(), Runtime: cloneRuntime(template.runtime),
 	}}, nil

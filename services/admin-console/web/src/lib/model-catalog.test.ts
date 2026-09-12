@@ -4,12 +4,21 @@ import {
   presetParameters,
   savedParameters,
   validateModelParameters,
+  validateModelDisplayName,
   matchModelSelection,
   modelCatalogGate,
   modelProfileLabel,
   modelInputLabel,
 } from "./model-catalog.ts";
 import type { ModelCatalog, ModelProfile } from "./types.ts";
+
+test("model names use a 200-code-point limit without truncation", () => {
+  for (const symbol of ["a", "\u6a21", "\u{1f680}"]) {
+    assert.equal(validateModelDisplayName(symbol.repeat(200)), symbol.repeat(200));
+    assert.throws(() => validateModelDisplayName(symbol.repeat(201)), /200/);
+  }
+  assert.throws(() => validateModelDisplayName(" \t\u3000"), /name/);
+});
 
 const catalog: ModelCatalog = {
   revision: "2026-09-03",

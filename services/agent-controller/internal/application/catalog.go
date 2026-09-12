@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"soft/antnest-platform/services/agent-controller/internal/domain"
 	"soft/antnest-platform/services/agent-controller/internal/ports"
@@ -24,8 +25,9 @@ var (
 )
 
 const (
-	defaultCatalogPageSize = 100
-	maximumCatalogPageSize = 500
+	defaultCatalogPageSize        = 100
+	maximumCatalogPageSize        = 500
+	maximumModelDisplayNameLength = 200
 )
 
 var identifierPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,199}$`)
@@ -100,11 +102,12 @@ func (service *CatalogService) CreateModelProfile(ctx context.Context, input Cre
 }
 
 type ReviseModelProfileInput struct {
-	RequestID      string
-	OrganizationID string
-	ModelProfileID string
-	DisplayName    string
-	Model          domain.ModelParameters
+	RequestID       string
+	OrganizationID  string
+	ModelProfileID  string
+	ExpectedVersion int64
+	DisplayName     string
+	Model           domain.ModelParameters
 }
 
 func (service *CatalogService) ReviseModelProfile(
@@ -114,8 +117,8 @@ func (service *CatalogService) ReviseModelProfile(
 		return ModelProfileView{}, fmt.Errorf("%w: %w", ErrInvalidInput, err)
 	}
 	if !validIdentifier(input.RequestID) || !validIdentifier(input.OrganizationID) ||
-		!validIdentifier(input.ModelProfileID) ||
-		strings.TrimSpace(input.DisplayName) == "" {
+		!validIdentifier(input.ModelProfileID) || input.ExpectedVersion < 1 ||
+		!validModelDisplayName(input.DisplayName) {
 		return ModelProfileView{}, fmt.Errorf("%w: ModelProfile revision input", ErrInvalidInput)
 	}
 	fingerprint, err := requestFingerprint(input)
@@ -147,13 +150,13 @@ func (service *CatalogService) ReviseModelProfile(
 	}
 	record, err := newProviderModel(connection, input.RequestID, ProviderModelInput{
 		ProfileKey: current.ProfileKey, DisplayName: input.DisplayName, Model: input.Model,
-	}, current.Revision.Revision()+1, current.ModelProfileID)
+	}, input.ExpectedVersion+1, current.ModelProfileID)
 	if err != nil {
 		return ModelProfileView{}, err
 	}
 	record.RequestID, record.RequestFingerprint = input.RequestID, fingerprint
 	record.CreatedAt, record.UpdatedAt, record.Enabled = current.CreatedAt, service.clock.Now(), current.Enabled
-	record, err = service.store.ReviseModelProfile(ctx, current.Revision.Revision(), record)
+	record, err = service.store.ReviseModelProfile(ctx, input.ExpectedVersion, record)
 	if err != nil {
 		return ModelProfileView{}, fmt.Errorf("persist ModelProfile revision: %w", err)
 	}
@@ -338,22 +341,6 @@ func (service *CatalogService) GetModelProfile(
 	return modelProfileView(record), nil
 }
 
-func (service *CatalogService) GetModelProfileRevision(
-	ctx context.Context, organizationID, revisionID string,
-) (ModelProfileView, error) {
-	if !validIdentifier(organizationID) || !validIdentifier(revisionID) {
-		return ModelProfileView{}, fmt.Errorf("%w: ModelProfile revision identity", ErrInvalidInput)
-	}
-	record, err := service.store.GetModelProfileRevisionRecord(ctx, revisionID)
-	if err != nil {
-		return ModelProfileView{}, fmt.Errorf("load ModelProfile revision: %w", err)
-	}
-	if record.OrganizationID != organizationID || record.Revision.OrganizationID() != organizationID {
-		return ModelProfileView{}, fmt.Errorf("%w: ModelProfile belongs to another organization", ErrInvalidReference)
-	}
-	return modelProfileView(record), nil
-}
-
 func (service *CatalogService) ListModelProfiles(
 	ctx context.Context, input ListCatalogInput,
 ) (ModelProfilePage, error) {
@@ -435,7 +422,7 @@ func validateModelProfileInput(input CreateModelProfileInput) error {
 	if !validIdentifier(input.RequestID) || !validIdentifier(input.OrganizationID) || !validIdentifier(input.ProfileKey) {
 		return fmt.Errorf("%w: request, organization, or profile identity", ErrInvalidInput)
 	}
-	if strings.TrimSpace(input.DisplayName) == "" || !validIdentifier(input.ProviderConnectionID) {
+	if !validModelDisplayName(input.DisplayName) || !validIdentifier(input.ProviderConnectionID) {
 		return fmt.Errorf("%w: display name and Provider connection are required", ErrInvalidInput)
 	}
 	if err := input.Model.Pricing.Validate(); err != nil {
@@ -483,6 +470,10 @@ func derivedID(prefix string, requestID string) string {
 }
 
 func validIdentifier(value string) bool { return identifierPattern.MatchString(value) }
+
+func validModelDisplayName(value string) bool {
+	return strings.TrimSpace(value) != "" && utf8.RuneCountInString(value) <= maximumModelDisplayNameLength
+}
 
 func modelProfileView(record ports.ModelProfileRecord) ModelProfileView {
 	snapshot := record.Revision.Snapshot()

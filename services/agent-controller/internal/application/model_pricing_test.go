@@ -55,7 +55,8 @@ func TestModelProfilePricingInvalidInputIsNotAnInternalFailure(t *testing.T) {
 			t.Fatalf("create invalid price error=%v", err)
 		}
 		_, err = service.ReviseModelProfile(context.Background(), ReviseModelProfileInput{
-			RequestID: "invalid-price", OrganizationID: "org", ModelProfileID: "profile", DisplayName: "Model",
+			ExpectedVersion: 1,
+			RequestID:       "invalid-price", OrganizationID: "org", ModelProfileID: "profile", DisplayName: "Model",
 			Model: model.Parameters(),
 		})
 		if !errors.Is(err, ErrInvalidInput) {

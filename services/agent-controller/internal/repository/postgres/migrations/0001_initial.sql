@@ -18,7 +18,8 @@ CREATE TABLE IF NOT EXISTS agent_controller.catalog_requests (
     resource_id TEXT NOT NULL,
     revision_id TEXT NOT NULL DEFAULT '',
     revision BIGINT NOT NULL CHECK (revision > 0),
-    created_at TIMESTAMPTZ NOT NULL
+    created_at TIMESTAMPTZ NOT NULL,
+    response_snapshot JSONB
 );
 
 CREATE TABLE IF NOT EXISTS agent_controller.provider_connections (
@@ -30,33 +31,14 @@ CREATE TABLE IF NOT EXISTS agent_controller.provider_connections (
     credential_method TEXT NOT NULL CHECK (credential_method = 'api_key'),
     current_credential_version TEXT NOT NULL,
     credential_revision BIGINT NOT NULL CHECK (credential_revision > 0),
+    ciphertext BYTEA NOT NULL,
+    nonce BYTEA NOT NULL,
+    key_version TEXT NOT NULL,
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL,
     UNIQUE (id, organization_id)
 );
-
-CREATE TABLE IF NOT EXISTS agent_controller.provider_credentials (
-    credential_ref TEXT NOT NULL,
-    organization_id TEXT NOT NULL,
-    credential_version TEXT NOT NULL UNIQUE,
-    secret_type TEXT NOT NULL CHECK (secret_type = 'bearer'),
-    ciphertext BYTEA NOT NULL,
-    nonce BYTEA NOT NULL,
-    key_version TEXT NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL,
-    PRIMARY KEY (credential_ref, credential_version),
-    UNIQUE (credential_ref, organization_id, credential_version),
-    FOREIGN KEY (credential_ref, organization_id)
-        REFERENCES agent_controller.provider_connections (id, organization_id)
-        DEFERRABLE INITIALLY DEFERRED
-);
-
-ALTER TABLE agent_controller.provider_connections
-    ADD CONSTRAINT provider_credential_head_fk
-    FOREIGN KEY (id, organization_id, current_credential_version)
-    REFERENCES agent_controller.provider_credentials (credential_ref, organization_id, credential_version)
-    DEFERRABLE INITIALLY DEFERRED;
 
 CREATE TABLE IF NOT EXISTS agent_controller.model_profiles (
     id TEXT PRIMARY KEY,
@@ -65,8 +47,9 @@ CREATE TABLE IF NOT EXISTS agent_controller.model_profiles (
     provider_connection_id TEXT NOT NULL,
     api_model_id TEXT NOT NULL,
     display_name TEXT NOT NULL CHECK (display_name <> ''),
-    current_revision_id TEXT NOT NULL,
-    current_revision BIGINT NOT NULL CHECK (current_revision > 0),
+    configuration_id TEXT NOT NULL,
+    version BIGINT NOT NULL CHECK (version > 0),
+    model JSONB NOT NULL,
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL,
@@ -76,27 +59,6 @@ CREATE TABLE IF NOT EXISTS agent_controller.model_profiles (
     FOREIGN KEY (provider_connection_id, organization_id)
         REFERENCES agent_controller.provider_connections (id, organization_id)
 );
-
-CREATE TABLE IF NOT EXISTS agent_controller.model_profile_revisions (
-    id TEXT PRIMARY KEY,
-    model_profile_id TEXT NOT NULL REFERENCES agent_controller.model_profiles(id),
-    organization_id TEXT NOT NULL,
-    revision BIGINT NOT NULL CHECK (revision > 0),
-    model JSONB NOT NULL,
-    display_name TEXT NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL,
-    UNIQUE (model_profile_id, revision),
-    UNIQUE (id, organization_id),
-    UNIQUE (id, model_profile_id, organization_id, revision)
-);
-
-ALTER TABLE agent_controller.model_profiles
-    ADD CONSTRAINT model_profile_head_fk
-    FOREIGN KEY (current_revision_id, id, organization_id, current_revision)
-    REFERENCES agent_controller.model_profile_revisions (
-        id, model_profile_id, organization_id, revision
-    )
-    DEFERRABLE INITIALLY DEFERRED;
 
 CREATE TABLE IF NOT EXISTS agent_controller.agent_templates (
     id TEXT PRIMARY KEY,

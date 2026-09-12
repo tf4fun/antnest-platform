@@ -139,19 +139,26 @@ later rotations. Connection metadata/endpoint changes and disable/delete remain
 outside this batch.
 
 See [service-owned Provider management](../../services/agent-controller/docs/provider-management.md).
-The existing Run contract still uses admission-frozen bearer material; updating
-its resolution and template identity semantics is a separate batch.
+The Controller Run contract resolves the authorized connection's current bearer
+material; the pending ACP consumer update is a separate batch.
 
 ## Model Profiles
 
-`POST /internal/model-profiles` creates a profile and first immutable revision,
+`POST /internal/model-profiles` creates a current model configuration,
 referencing an existing enabled `provider_connection_id` in the request organization.
 `POST /internal/model-profiles/{model_profile_id}/revisions` edits the selected
 profile's model parameters and display name. Neither command accepts a credential
 or model endpoint. Revision input cannot move a model to another connection or
 change its API model ID. The same API model ID is allowed on distinct connections.
 
-Profile revisions persist model parameters and display name, not credentials or
+Model edits require `expected_version`, the integer `revision` read by the caller.
+The transaction compares this version with the current row and returns 409
+`lifecycle_conflict` for a stale edit, without changing model data. An identical
+committed request replays its original response before version comparison.
+Model display names, including initial models submitted with a connection, must
+be nonblank and at most 200 Unicode code points; values are not silently truncated.
+
+Profiles persist current model parameters and display name, not credentials or
 endpoint copies. Execution projections combine the connection with the model.
 Management responses expose the connection ID and resolved model configuration,
 but no credential reference or credential version.
@@ -161,10 +168,12 @@ deferred; historical Agent revisions are never rewritten.
 `GET /internal/model-profiles/{model_profile_id}` returns the current head and
 requires its owning `organization_id`. Revision commands carry the same
 organization authority and fail closed when the opaque ID belongs elsewhere.
-`GET /internal/model-profile-revisions/{revision_id}` returns one immutable
-historical revision after verifying its organization. The globally unique
-revision identifies its parent profile. Display name and parameters belong to
-the immutable revision; the profile key and connection ID identify the stable model.
+There is no model-history resource or `GET /internal/model-profile-revisions/{revision_id}`
+endpoint. `revision` is the current update counter; `revision_id` remains an opaque
+configuration stamp for existing execution diagnostics, not a historical address.
+Updates replace the current row. Model command receipts freeze the original
+non-secret response; replay does not return or overwrite a newer configuration.
+Agent build and Run snapshots retain consumed parameters without a model-history table.
 The endpoint comes from its connection (immutable in this batch).
 `GET /internal/model-profiles` requires `organization_id` and uses stable
 `after_id` plus bounded `limit` pagination. It never returns encrypted

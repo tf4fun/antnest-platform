@@ -45,9 +45,9 @@ func TestModelPricingAdmissionPinsSelectionAndSurvivesReopen(t *testing.T) {
 	if err != nil || !found || !reflect.DeepEqual(replayed.Snapshot, admitted.Snapshot) {
 		t.Fatal("price replay changed after revision/reopen")
 	}
-	history, err := reopened.GetModelProfileRevision(ctx, priced.Revision.ID())
-	if err != nil || !reflect.DeepEqual(history.Snapshot().Model.Pricing, priced.Revision.Snapshot().Model.Pricing) {
-		t.Fatal("old model revision price changed")
+	receipt, found, err := reopened.ReplayModelProfileRequest(ctx, ports.ReviseModelProfileRequest, priced.RequestID, priced.RequestFingerprint)
+	if err != nil || !found || !reflect.DeepEqual(receipt.Revision.Snapshot().Model.Pricing, priced.Revision.Snapshot().Model.Pricing) {
+		t.Fatal("old model command response price changed")
 	}
 	releaseConfigurationAdmission(t, reopened, replayed, now)
 	command.RequestID, command.AdmissionID = "pricing-free", "pricing-free"

@@ -15,7 +15,7 @@ the raw command model for owner validation; browser response projections explici
 allow known model fields only, including these two flags. No new endpoint, table,
 credential type, conversion service or permission is introduced.
 
-Preserve the flags across the model catalog, profile list/current/immutable
+Preserve the flags across the model catalog, profile list/current/write
 revision, create/revise responses, Overview and Agent configuration projection.
 Organization scope comes from the trusted Edge principal. Non-administrators
 cannot read or mutate these resources. Internal fields and Provider credentials
@@ -44,7 +44,7 @@ must not be projected or stored in browser retry state.
 2. Pure frontend tests: catalogue defaults, independent flags, false defaults
    and supported-format presentation.
 3. Component tests using the actual API wrapper: unlisted-model creation, revision
-   preservation/clearing/retry, immutable connection/model identity, editable builtin and read-only historical
+   preservation/clearing/retry, immutable connection/model identity, editable builtin and saved current
    metadata and no credential persistence.
 4. Serial Go tests/race, full Console frontend tests/build and root format/lint
    gates. Browser desktop/mobile inspection checks layout and controls with

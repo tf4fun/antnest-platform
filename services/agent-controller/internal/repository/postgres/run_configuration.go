@@ -58,12 +58,10 @@ func lockRunModel(ctx context.Context, tx *databaseTransaction, organizationID, 
 		profileID = *selected
 	}
 	// Lock before reading the revision: a joined read can retain a stale head while waiting.
-	var revisionID string
-	var revision int64
 	var connectionID string
-	err := tx.QueryRow(ctx, `SELECT p.id, p.current_revision_id, p.current_revision, p.provider_connection_id
+	err := tx.QueryRow(ctx, `SELECT p.provider_connection_id
 FROM agent_controller.model_profiles p WHERE p.organization_id = $1 AND p.enabled
-AND p.id = $2 FOR SHARE OF p`, organizationID, profileID).Scan(&profileID, &revisionID, &revision, &connectionID)
+AND p.id = $2 FOR SHARE OF p`, organizationID, profileID).Scan(&connectionID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ports.ModelProfileRecord{}, ports.ErrModelUnavailable
 	}
@@ -73,7 +71,7 @@ AND p.id = $2 FOR SHARE OF p`, organizationID, profileID).Scan(&profileID, &revi
 	if err := lockProviderForRun(ctx, tx, organizationID, connectionID); err != nil {
 		return ports.ModelProfileRecord{}, err
 	}
-	record, err := loadModelProfileRecord(ctx, tx, profileID, revisionID, revision)
+	record, err := loadModelProfileRecord(ctx, tx, profileID)
 	if errors.Is(err, ports.ErrNotFound) {
 		return ports.ModelProfileRecord{}, ports.ErrModelUnavailable
 	}

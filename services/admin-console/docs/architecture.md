@@ -68,15 +68,14 @@ Organization Model Profiles are authoritative stored resources; the built-in
 Model Catalog is release-managed editing metadata. Their browser requests and
 states are independent. Catalog loss falls back to each Profile's persisted
 display name and closes only mutation entry points, rather than replacing a
-valid inventory or immutable detail with a page-level error.
-Current-head and revision-qualified Catalog routes are alternative primary
-reads, not mandatory fan-out dependencies. Historical Model and Template pages
-therefore issue only the immutable revision request. Template-to-Model
+valid inventory or detail with a page-level error.
+Models have only a current detail read. Template current and historical detail
+routes are alternative primary reads, not mandatory fan-out dependencies. Template-to-Model
 resolution reads the stable `model_profile_id` current head as a separate
 presentation state: its failure produces a local retry while the authoritative
 Template revision remains on screen. Template history preserves the template's
-model identity, not a pinned model metadata revision. Agent build lineage and
-Model history still resolve immutable model revisions.
+model identity, not a pinned model metadata revision. Agent build detail reads its own immutable snapshot, not today's model
+parameters. A model link opens current settings, not a historical resource.
 
 Lifecycle reads are authoritative snapshots. SSE is a wake-up/experience
 channel; reconnecting clients independently replay events and refetch the Agent

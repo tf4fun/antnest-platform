@@ -1,5 +1,13 @@
 # Admin Console Contracts
 
+Revision 42 requires positive integer `expected_version` on model edits, copied
+from the model's `revision` when the form is opened. The BFF forwards it unchanged;
+it never reads or substitutes the latest version before saving. Controller 409
+`lifecycle_conflict` keeps the draft visible and blocks another save until the
+administrator explicitly reloads the current model. Failed reloads retain the
+draft. An uncertain mutation response may still be retried with the same request
+ID and expected version. Model names are limited to 200 Unicode code points.
+
 Revision 38 moves builtin model defaults to Console. Confirmed configuration
 remains Controller-owned; both builtin and custom parameters are editable.
 
@@ -110,9 +118,8 @@ commands forward the original optional pricing to Controller for validation.
 The browser preserves saved prices, explicit omission and uncertain-publication
 retry identity (including malformed successful responses). See
 [model pricing](../../services/admin-console/docs/model-pricing.md).
-Revision-qualified Model and Template detail routes read the requested
-immutable revision as their primary resource and do not also require the
-mutable current head. Template detail resolves its referenced Model revision as
+Model detail reads the current configuration; only Templates have revision-qualified
+historical detail. Template detail resolves its stable Model identity as
 an independent presentation dependency; failure leaves the Template prompt,
 Runtime policy, and revision facts readable and exposes a local retry.
 Agent detail likewise treats the Agent projection as primary and lifecycle
@@ -180,7 +187,14 @@ and [delivery plan](../../docs/provider-credentials-and-models.md).
 
 Revision 40 aligns template create, revise and read DTOs with Controller's
 `model_profile_id` contract. A template keeps the selected model identity while
-metadata revisions advance. Template detail resolves the current model head;
-model history and Agent build audit still use immutable revision IDs. The BFF
+metadata changes. Template detail resolves the current model;
+Agent build audit reads its own snapshot, and model links open current settings.
+There is no independent model history endpoint. The BFF
 does not translate a stable ID back to a pinned revision or accept the obsolete
 template `model_profile_revision_id` field.
+
+Revision 41 removes the model-history GET route and corresponding page. Models
+store current parameters; Agent detail presents build-time model parameters from
+its own snapshot, including rates and input capabilities. Model links open current
+settings, while Template revision links remain historical. Changing a command's
+payload replaces its pending retry intent rather than retaining older keys.

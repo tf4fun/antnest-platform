@@ -81,7 +81,7 @@ func TestMachineControlContractMatchesRegisteredBoundary(t *testing.T) {
 	readStrictContractJSON(t, filepath.Join(root, "contracts/agent-controller/control-contract.json"), &contract)
 	var schema machineControlSchema
 	readContractJSON(t, filepath.Join(root, "contracts/agent-controller/control-api.schema.json"), &schema)
-	if contract.Revision != 20 {
+	if contract.Revision != 22 {
 		t.Fatalf("control contract revision = %d", contract.Revision)
 	}
 	if contract.MediaTypes.Request != "application/json" ||
@@ -238,7 +238,8 @@ func TestMachineControlSchemaMatchesGoWireTypes(t *testing.T) {
 			DisplayName: "Example", Model: model.Parameters(),
 		},
 		"revise_model_profile_request": reviseModelProfileRequest{
-			RequestID: "request-1", OrganizationID: "org-1", DisplayName: "Example", Model: model.Parameters(),
+			ExpectedVersion: 1,
+			RequestID:       "request-1", OrganizationID: "org-1", DisplayName: "Example", Model: model.Parameters(),
 		},
 		"create_template_request": createTemplateRequest{
 			RequestID: "request-1", OrganizationID: "org-1", TemplateKey: "personal",
@@ -349,7 +350,8 @@ func TestMachineControlContractValidatesSuccessfulHTTPBoundary(t *testing.T) {
 			DisplayName: "DeepSeek", Model: sampleModelProfileView().Model.Parameters(),
 		},
 		"POST /internal/model-profiles/{model_profile_id}/revisions": reviseModelProfileRequest{
-			RequestID: "request-model-revision", OrganizationID: "org-1", DisplayName: "DeepSeek",
+			ExpectedVersion: 1,
+			RequestID:       "request-model-revision", OrganizationID: "org-1", DisplayName: "DeepSeek",
 			Model: sampleModelProfileView().Model.Parameters(),
 		},
 		"POST /internal/agent-templates": createTemplateRequest{

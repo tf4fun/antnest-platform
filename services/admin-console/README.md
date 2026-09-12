@@ -24,7 +24,7 @@ organization-scoped Model Profile and Template detail/revision management.
 Builtin model capabilities come from Console; Controller persists the selected
 configuration. Only DeepSeek connections are currently enabled. Unlisted models
 under an existing connection expose explicit limit and Image/Audio/PDF fields. Native
-capabilities are preserved across BFF projections, creation and immutable revision
+capabilities are preserved across BFF projections, creation and current-model
 editing; builtin presets prefill editable drafts, while saved values take precedence. See [Native model inputs](docs/multimodal-models.md)
 for the F09 service boundary. Agent UI and protocol deployment results are in
 [ACP conformance](../agent-acp-service/docs/protocol-conformance.md); full C4
@@ -60,8 +60,8 @@ A refresh failure preserves that receipt, closes stale-state actions, and retrie
 only the read. Rebuild and delete rejections stay inside their originating dialog;
 pending dialogs cannot be dismissed. Agent identity scopes this local form state,
 so a different Agent cannot inherit an earlier command's pending form or error.
-Agent detail identifies the immutable Template and Model Profile revisions used
-by the current executable configuration while keeping Provider credentials,
+Agent detail shows the immutable Template revision and model parameters saved
+in its build snapshot while keeping Provider credentials,
 Runtime execution identity, and MCP routing outside the browser projection.
 Its primary Agent read is independent from lifecycle-event history. An event
 read or SSE recovery failure degrades only that evidence section, retains
@@ -81,12 +81,11 @@ refresh before reopening the stream; a refresh failure is recorded locally and
 does not prevent reopening. This read-after-replay closes the missed terminal
 state window. Failed replay retries do not repeatedly call the Agent endpoint. Concurrent
 Agent responses converge by aggregate sequence instead of arrival order.
-Revision-qualified links open read-only historical Catalog detail, so later
-Template or Model updates do not rewrite an older Agent's explanation.
-Those routes read only the requested immutable revision rather than coupling
-history to the mutable current head. A Template's referenced Model revision is
-loaded separately; if that lookup fails, the Template remains readable and the
-Model label has its own retry.
+Template revision links open read-only historical detail. Model links open the
+current settings; the Agent's build snapshot remains visible on Agent detail and
+is not replaced by those settings. Templates resolve their stable model identity
+separately; if that lookup fails, the Template remains readable and the Model
+label has its own retry. There is no independent model history page.
 Fleet summaries present human names, ownership, lifecycle, and time rather than
 opaque Runtime revisions. A desired state appears only while lifecycle has not
 converged; exact Agent/revision identifiers and lifecycle trace correlation stay

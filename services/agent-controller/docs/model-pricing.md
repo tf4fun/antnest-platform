@@ -27,7 +27,7 @@ configuration accepts a model profile identity, never client-supplied prices.
 At publication, submitted administrator pricing is the complete configuration.
 Missing pricing remains unknown even for familiar provider/model names; Controller
 has no builtin directory or price fallback. Console prefills known defaults and
-submits them explicitly when selected. The submitted value is stored in `agent_controller.model_profile_revisions.model`
+submits them explicitly when selected. The submitted value is stored in `agent_controller.model_profiles.model`
 JSONB. Templates retain model identity. Agent build snapshots keep the build-time
 revision for audit only. Default and explicit Session model selections resolve the
 enabled organization's current model revision at Run admission. The resulting `run_admissions.snapshot` retains the complete
@@ -47,7 +47,7 @@ cannot change a completed request's identity.
 Builtin metadata, including optional estimated prices, lives in Admin Console.
 See [Console model pricing](../../admin-console/docs/model-pricing.md) for
 the release snapshot and sources. Controller validates values and maintains
-organization records, immutable revisions and admission snapshots. It neither
+current organization records and immutable admission snapshots. It neither
 imports Console code nor reads another service's database.
 
 ## Verification

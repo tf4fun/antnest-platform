@@ -33,7 +33,8 @@ func TestModelConfigurationPreservesSubmittedMetadata(t *testing.T) {
 				model.ContextWindow = 8192
 				model.SupportsImages = true
 				revised, err := service.ReviseModelProfile(context.Background(), ReviseModelProfileInput{
-					RequestID: "revise", OrganizationID: "org", ModelProfileID: created.ModelProfileID, DisplayName: "Model",
+					ExpectedVersion: created.Revision,
+					RequestID:       "revise", OrganizationID: "org", ModelProfileID: created.ModelProfileID, DisplayName: "Model",
 					Model: model.Parameters(),
 				})
 				if err != nil {
