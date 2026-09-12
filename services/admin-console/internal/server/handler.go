@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"soft/antnest-platform/services/admin-console/internal/principal"
+	"soft/antnest-platform/services/admin-console/internal/telemetry"
 	"soft/antnest-platform/services/admin-console/internal/upstream"
 )
 
@@ -41,7 +42,6 @@ const (
 
 type Backend interface {
 	Do(context.Context, upstream.Target, string, string, string, []byte) (*http.Response, error)
-	Ready(context.Context, upstream.Target) error
 }
 
 type Config struct {
@@ -50,9 +50,10 @@ type Config struct {
 }
 
 type Dependencies struct {
-	Backend Backend
-	Assets  fs.FS
-	Logger  *slog.Logger
+	Backend       Backend
+	Assets        fs.FS
+	Logger        *slog.Logger
+	StreamContext context.Context
 }
 
 type handler struct {
@@ -62,6 +63,7 @@ type handler struct {
 	logger                 *slog.Logger
 	defaultRuntimeImageRef string
 	requestTimeout         time.Duration
+	streamContext          context.Context
 	mux                    *http.ServeMux
 }
 
@@ -75,11 +77,15 @@ func NewHandler(config Config, dependencies Dependencies) (http.Handler, error) 
 	if config.RequestTimeout <= 0 {
 		config.RequestTimeout = 15 * time.Second
 	}
+	if dependencies.StreamContext == nil {
+		dependencies.StreamContext = context.Background()
+	}
 	h := &handler{
 		backend: dependencies.Backend, assets: dependencies.Assets,
 		fileServer: http.FileServer(http.FS(dependencies.Assets)), logger: dependencies.Logger,
 		defaultRuntimeImageRef: strings.TrimSpace(config.DefaultRuntimeImageRef),
 		requestTimeout:         config.RequestTimeout,
+		streamContext:          dependencies.StreamContext,
 		mux:                    http.NewServeMux(),
 	}
 	h.routes()
@@ -102,6 +108,7 @@ func (h *handler) routes() {
 	h.mux.HandleFunc("GET /api/admin/provisioning/scim-tokens", h.withPrincipal(h.listSCIMTokens))
 	h.mux.HandleFunc("POST /api/admin/provisioning/scim-tokens", h.withPrincipal(h.issueSCIMToken))
 	h.mux.HandleFunc("POST /api/admin/provisioning/scim-tokens/{token_id}/revoke", h.withPrincipal(h.revokeSCIMToken))
+	h.registerProviderRoutes()
 	h.mux.HandleFunc("GET /api/admin/model-catalog", h.withPrincipal(h.modelCatalog))
 	h.mux.HandleFunc("GET /api/admin/model-profiles", h.withPrincipal(h.listModelProfiles))
 	h.mux.HandleFunc("POST /api/admin/model-profiles", h.withPrincipal(h.createModelProfile))
@@ -116,6 +123,8 @@ func (h *handler) routes() {
 	h.mux.HandleFunc("GET /api/admin/agents", h.withPrincipal(h.listAgents))
 	h.mux.HandleFunc("POST /api/admin/agents", h.withPrincipal(h.createAgent))
 	h.mux.HandleFunc("GET /api/admin/agents/{agent_id}", h.withPrincipal(h.getAgent))
+	h.mux.HandleFunc("GET /api/admin/agents/{agent_id}/network-policy", h.withPrincipal(h.getNetworkPolicy))
+	h.mux.HandleFunc("PUT /api/admin/agents/{agent_id}/network-policy", h.withPrincipal(h.setNetworkPolicy))
 	for _, action := range []string{"rebuild", "disable", "enable", "delete"} {
 		h.mux.HandleFunc("POST /api/admin/agents/{agent_id}/"+action, h.withPrincipal(h.lifecycle(action)))
 	}
@@ -129,7 +138,11 @@ func (h *handler) routes() {
 }
 
 func (h *handler) ServeHTTP(response http.ResponseWriter, request *http.Request) {
-	h.mux.ServeHTTP(response, request)
+	telemetry.Handler(func(w http.ResponseWriter, r *http.Request) error {
+		adapter := &adapterResponse{ResponseWriter: w}
+		h.mux.ServeHTTP(adapter, r)
+		return adapter.err
+	}).ServeHTTP(response, request)
 }
 
 type adminHandler func(http.ResponseWriter, *http.Request, principal.Principal)
@@ -149,11 +162,8 @@ func (h *handler) withPrincipal(next adminHandler) http.HandlerFunc {
 	}
 }
 
-func (h *handler) status(response http.ResponseWriter, request *http.Request) {
-	ctx, cancel := context.WithTimeout(request.Context(), h.requestTimeout)
-	defer cancel()
-	if h.backend.Ready(ctx, upstream.Identity) != nil ||
-		h.backend.Ready(ctx, upstream.AgentController) != nil {
+func (h *handler) status(response http.ResponseWriter, _ *http.Request) {
+	if h.streamContext.Err() != nil {
 		writeJSON(response, http.StatusServiceUnavailable, map[string]string{"status": "not_ready"})
 		return
 	}
@@ -473,15 +483,10 @@ func (h *handler) listModelProfiles(response http.ResponseWriter, request *http.
 		"/internal/model-profiles", query, nil, projectModelProfileList)
 }
 
-func (h *handler) modelCatalog(response http.ResponseWriter, request *http.Request, _ principal.Principal) {
-	h.forwardProjected(response, request, upstream.AgentController, http.MethodGet,
-		"/internal/model-catalog", "", nil, projectModelCatalog)
-}
-
 type createModelProfileInput struct {
-	DisplayName string          `json:"display_name"`
-	APIKey      string          `json:"api_key"`
-	Model       json.RawMessage `json:"model"`
+	DisplayName          string          `json:"display_name"`
+	ProviderConnectionID string          `json:"provider_connection_id"`
+	Model                json.RawMessage `json:"model"`
 }
 
 func (h *handler) createModelProfile(response http.ResponseWriter, request *http.Request, actor principal.Principal) {
@@ -489,7 +494,7 @@ func (h *handler) createModelProfile(response http.ResponseWriter, request *http
 	if !decodeJSON(response, request, &input) {
 		return
 	}
-	if !required(input.DisplayName, input.APIKey) || len(input.Model) == 0 {
+	if !required(input.DisplayName, input.ProviderConnectionID) || len(input.Model) == 0 {
 		writeError(response, http.StatusBadRequest, "invalid_request", "Required Model Profile field is empty")
 		return
 	}
@@ -500,8 +505,8 @@ func (h *handler) createModelProfile(response http.ResponseWriter, request *http
 	payload := map[string]any{
 		"request_id": requestID, "organization_id": actor.OrganizationID,
 		"profile_key": requestID, "display_name": input.DisplayName,
-		"model":      input.Model,
-		"credential": map[string]string{"secret_type": "bearer", "secret": input.APIKey},
+		"model":                  input.Model,
+		"provider_connection_id": input.ProviderConnectionID,
 	}
 	h.forwardProjectedJSON(response, request, upstream.AgentController, http.MethodPost,
 		"/internal/model-profiles", "", payload, projectModelProfile)
@@ -523,7 +528,6 @@ func (h *handler) getModelProfileRevision(
 
 type reviseModelProfileInput struct {
 	DisplayName string          `json:"display_name"`
-	APIKey      string          `json:"api_key"`
 	Model       json.RawMessage `json:"model"`
 }
 
@@ -532,7 +536,7 @@ func (h *handler) reviseModelProfile(response http.ResponseWriter, request *http
 	if !decodeJSON(response, request, &input) {
 		return
 	}
-	if !required(input.DisplayName, input.APIKey) || len(input.Model) == 0 {
+	if !required(input.DisplayName) || len(input.Model) == 0 {
 		writeError(response, http.StatusBadRequest, "invalid_request", "Required Model Profile field is empty")
 		return
 	}
@@ -543,7 +547,6 @@ func (h *handler) reviseModelProfile(response http.ResponseWriter, request *http
 	payload := map[string]any{
 		"request_id": requestID, "organization_id": actor.OrganizationID,
 		"display_name": input.DisplayName, "model": input.Model,
-		"credential": map[string]string{"secret_type": "bearer", "secret": input.APIKey},
 	}
 	h.forwardProjectedJSON(response, request, upstream.AgentController, http.MethodPost,
 		"/internal/model-profiles/"+url.PathEscape(request.PathValue("model_profile_id"))+"/revisions",
@@ -560,11 +563,11 @@ func (h *handler) listTemplates(response http.ResponseWriter, request *http.Requ
 }
 
 type createTemplateInput struct {
-	Name                   string       `json:"name"`
-	ModelProfileRevisionID string       `json:"model_profile_revision_id"`
-	SystemPrompt           string       `json:"system_prompt"`
-	MaxModelRequests       int          `json:"max_model_requests,omitempty"`
-	Runtime                runtimeInput `json:"runtime,omitempty"`
+	Name             string       `json:"name"`
+	ModelProfileID   string       `json:"model_profile_id"`
+	SystemPrompt     string       `json:"system_prompt"`
+	MaxModelRequests int          `json:"max_model_requests,omitempty"`
+	Runtime          runtimeInput `json:"runtime,omitempty"`
 }
 
 type runtimeInput struct {
@@ -584,7 +587,7 @@ func (h *handler) createTemplate(response http.ResponseWriter, request *http.Req
 	if !decodeJSON(response, request, &input) {
 		return
 	}
-	if !required(input.Name, input.ModelProfileRevisionID) {
+	if !required(input.Name, input.ModelProfileID) {
 		writeError(response, http.StatusBadRequest, "invalid_request", "Required Template field is empty")
 		return
 	}
@@ -606,8 +609,8 @@ func (h *handler) createTemplate(response http.ResponseWriter, request *http.Req
 	payload := map[string]any{
 		"request_id": requestID, "organization_id": actor.OrganizationID,
 		"template_key": requestID, "name": input.Name,
-		"model_profile_revision_id": input.ModelProfileRevisionID,
-		"system_prompt":             input.SystemPrompt, "max_model_requests": input.MaxModelRequests,
+		"model_profile_id": input.ModelProfileID,
+		"system_prompt":    input.SystemPrompt, "max_model_requests": input.MaxModelRequests,
 		"context_policy_version": "context-v1", "runtime": input.Runtime,
 	}
 	h.forwardProjectedJSON(response, request, upstream.AgentController, http.MethodPost,
@@ -630,11 +633,11 @@ func (h *handler) getTemplateRevision(
 }
 
 type reviseTemplateInput struct {
-	Name                   string       `json:"name"`
-	ModelProfileRevisionID string       `json:"model_profile_revision_id"`
-	SystemPrompt           string       `json:"system_prompt"`
-	MaxModelRequests       int          `json:"max_model_requests"`
-	Runtime                runtimeInput `json:"runtime"`
+	Name             string       `json:"name"`
+	ModelProfileID   string       `json:"model_profile_id"`
+	SystemPrompt     string       `json:"system_prompt"`
+	MaxModelRequests int          `json:"max_model_requests"`
+	Runtime          runtimeInput `json:"runtime"`
 }
 
 func (h *handler) reviseTemplate(response http.ResponseWriter, request *http.Request, actor principal.Principal) {
@@ -642,7 +645,7 @@ func (h *handler) reviseTemplate(response http.ResponseWriter, request *http.Req
 	if !decodeJSON(response, request, &input) {
 		return
 	}
-	if !required(input.Name, input.ModelProfileRevisionID) || input.MaxModelRequests < 1 {
+	if !required(input.Name, input.ModelProfileID) || input.MaxModelRequests < 1 {
 		writeError(response, http.StatusBadRequest, "invalid_request", "Required Template field is invalid")
 		return
 	}
@@ -660,7 +663,7 @@ func (h *handler) reviseTemplate(response http.ResponseWriter, request *http.Req
 	}
 	payload := map[string]any{
 		"request_id": requestID, "organization_id": actor.OrganizationID,
-		"name": input.Name, "model_profile_revision_id": input.ModelProfileRevisionID,
+		"name": input.Name, "model_profile_id": input.ModelProfileID,
 		"system_prompt": input.SystemPrompt, "max_model_requests": input.MaxModelRequests,
 		"context_policy_version": "context-v1", "runtime": input.Runtime,
 	}
@@ -763,7 +766,11 @@ func (h *handler) listAgentEvents(response http.ResponseWriter, request *http.Re
 
 func (h *handler) watchAgentEvents(response http.ResponseWriter, request *http.Request, actor principal.Principal) {
 	agentID := request.PathValue("agent_id")
-	queryValues := eventWatchQueryValues(request.URL.Query())
+	queryValues, ok := eventWatchQueryValues(request.URL.Query(), request.Header.Values("Last-Event-ID"))
+	if !ok {
+		writeInvalidListQuery(response)
+		return
+	}
 	queryValues.Set("organization_id", actor.OrganizationID)
 	h.streamProjected(response, request, upstream.AgentController, http.MethodGet,
 		"/internal/agents/"+url.PathEscape(agentID)+"/events/watch",
@@ -788,9 +795,7 @@ func (h *handler) overview(response http.ResponseWriter, request *http.Request, 
 	results := h.fetchOverview(ctx, calls)
 	agents := overviewSectionFromResult("Agent inventory", results["agents"])
 	if agents.Error != nil {
-		h.logger.ErrorContext(request.Context(), "Agent inventory overview read failed",
-			"dependency", upstream.AgentController, "error_class", "agent_inventory_unavailable")
-		writeError(response, agents.Error.Status, agents.Error.Code, agents.Error.Message)
+		writeFailure(response, agents.Error.Status, agents.Error.Code, agents.Error.Message, results["agents"].err)
 		return
 	}
 	payload := overviewResponse{
@@ -963,17 +968,18 @@ func (h *handler) forwardProjected(
 
 func (h *handler) writeProjected(
 	response http.ResponseWriter,
-	request *http.Request,
-	target upstream.Target,
+	_ *http.Request,
+	_ upstream.Target,
 	result bufferedResponse,
 	projector payloadProjector,
 ) {
 	if successful(result.status) {
+		retainFailure(response, protocolFailure(result.body))
+	}
+	if successful(result.status) {
 		projected, err := projector(result.body)
 		if err != nil {
-			h.logger.ErrorContext(request.Context(), "Admin Console response projection failed",
-				"dependency", target, "error_class", "invalid_upstream_response")
-			writeError(response, http.StatusBadGateway, "invalid_upstream_response", "Platform response is invalid")
+			writeFailure(response, http.StatusBadGateway, "invalid_upstream_response", "Platform response is invalid", err)
 			return
 		}
 		result.body = projected
@@ -996,13 +1002,11 @@ func (h *handler) read(
 	defer cancel()
 	result, err := h.fetchBuffered(ctx, target, method, path, query, body)
 	if err != nil {
-		h.logger.ErrorContext(request.Context(), "Admin Console dependency failed",
-			"dependency", target, "error_class", "upstream_unavailable")
 		var failure *bufferedFetchError
 		if errors.As(err, &failure) {
-			writeError(response, failure.status, failure.code, failure.message)
+			writeFailure(response, failure.status, failure.code, failure.message, err)
 		} else {
-			writeError(response, http.StatusServiceUnavailable, "dependency_unavailable", "A platform service is unavailable")
+			writeFailure(response, http.StatusServiceUnavailable, "dependency_unavailable", "A platform service is unavailable", err)
 		}
 		return bufferedResponse{}, false
 	}
@@ -1069,9 +1073,20 @@ func (h *handler) streamProjected(
 		writeError(response, http.StatusInternalServerError, "streaming_unavailable", "Streaming is unavailable")
 		return
 	}
+	ctx, cancel := context.WithCancel(request.Context())
+	defer cancel()
+	stop := context.AfterFunc(h.streamContext, cancel)
+	defer stop()
+	if h.streamContext.Err() != nil {
+		writeError(response, http.StatusServiceUnavailable, "service_stopping", "Console is stopping")
+		return
+	}
+	request = request.WithContext(ctx)
+	stopWrites := h.cancelStreamWrites(ctx, response)
+	defer stopWrites()
 	upstreamResponse, err := h.backend.Do(request.Context(), target, method, path, query, body)
 	if err != nil {
-		writeError(response, http.StatusServiceUnavailable, "dependency_unavailable", "A platform service is unavailable")
+		writeFailure(response, http.StatusServiceUnavailable, "dependency_unavailable", "A platform service is unavailable", err)
 		return
 	}
 	if upstreamResponse == nil || upstreamResponse.Body == nil {
@@ -1098,8 +1113,7 @@ func (h *handler) streamProjected(
 		if payload, found := strings.CutPrefix(string(line), "data: "); found {
 			projected, projectErr := projector([]byte(payload))
 			if projectErr != nil {
-				h.logger.ErrorContext(request.Context(), "Admin Console event projection failed",
-					"dependency", target, "error_class", "invalid_upstream_response")
+				retainFailure(response, &adapterFailure{status: 502, code: "invalid_upstream_response", message: "Event projection is invalid", cause: projectErr})
 				return
 			}
 			line = append([]byte("data: "), projected...)
@@ -1112,8 +1126,7 @@ func (h *handler) streamProjected(
 		}
 	}
 	if err := scanner.Err(); err != nil && request.Context().Err() == nil {
-		h.logger.WarnContext(request.Context(), "Admin Console event stream ended unexpectedly",
-			"dependency", target, "error_class", "invalid_upstream_response")
+		retainFailure(response, &adapterFailure{status: 502, code: "invalid_upstream_response", message: "Event stream ended unexpectedly", cause: err})
 	}
 }
 
@@ -1151,7 +1164,7 @@ func decodeJSON(response http.ResponseWriter, request *http.Request, target any)
 	decoder := json.NewDecoder(io.LimitReader(request.Body, maximumRequestBytes))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
-		writeError(response, http.StatusBadRequest, "invalid_request", "Request body is invalid")
+		writeFailure(response, http.StatusBadRequest, "invalid_request", "Request body is invalid", err)
 		return false
 	}
 	var extra json.RawMessage
@@ -1293,14 +1306,26 @@ func eventQueryValues(input url.Values) url.Values {
 	return result
 }
 
-func eventWatchQueryValues(input url.Values) url.Values {
+func eventWatchQueryValues(input url.Values, lastEventIDs []string) (url.Values, bool) {
 	result := url.Values{}
+	if len(lastEventIDs) > 1 {
+		return nil, false
+	}
+	if len(lastEventIDs) == 1 {
+		sequence, err := strconv.ParseInt(strings.TrimSpace(lastEventIDs[0]), 10, 64)
+		if err != nil || sequence < 0 {
+			return nil, false
+		}
+		// Backend calls carry no browser headers; translate the reconnect cursor.
+		result.Set("after_sequence", strconv.FormatInt(sequence, 10))
+		return result, true
+	}
 	if value := input.Get("after_sequence"); value != "" {
 		if sequence, err := strconv.ParseInt(value, 10, 64); err == nil && sequence >= 0 {
 			result.Set("after_sequence", value)
 		}
 	}
-	return result
+	return result, true
 }
 
 func required(values ...string) bool {
@@ -1337,8 +1362,7 @@ func writeJSON(response http.ResponseWriter, status int, payload any) {
 }
 
 func writeError(response http.ResponseWriter, status int, code, message string) {
-	response.Header().Set("Cache-Control", "no-store")
-	writeJSON(response, status, map[string]string{"code": code, "message": message})
+	writeFailure(response, status, code, message, nil)
 }
 
 func commandRequestID(

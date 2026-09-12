@@ -111,6 +111,7 @@ func (service *RunService) ResolveAgentAccess(
 }
 
 type AcquireRunInput struct {
+	SessionConfiguration   *domain.SessionConfigurationOverrides `json:",omitempty"`
 	RequestID              string
 	AgentID                string
 	PrincipalID            string
@@ -125,7 +126,6 @@ type AcquireRunResult struct {
 	ExecutionRevision        string
 	RuntimeMCPSourceDigest   string
 	AgentExecutionSpecDigest string
-	CredentialVersion        string
 	Runtime                  ports.AdmittedRuntime
 	ExecutionSpec            ports.AdmittedExecutionSpec
 }
@@ -167,8 +167,13 @@ func (service *RunService) AcquireRun(
 		return service.replayRunAfterFailure(ctx, input.RequestID, fingerprint, err)
 	}
 	now := service.clock.Now()
+	configuration := domain.SessionConfigurationOverrides{}
+	if input.SessionConfiguration != nil {
+		configuration = *input.SessionConfiguration
+	}
 	record, replayed, err := service.store.AcquireRun(ctx, ports.AcquireRunRecord{
-		RequestID: input.RequestID, RequestFingerprint: fingerprint,
+		SessionConfiguration: configuration,
+		RequestID:            input.RequestID, RequestFingerprint: fingerprint,
 		AdmissionID: derivedID("admission", input.RequestID), AgentID: input.AgentID,
 		PrincipalID: input.PrincipalID, ExpectedAccessRevision: input.ExpectedAccessRevision,
 		SessionID: input.SessionID, Deadline: now.Add(service.admissionTTL), Now: now,
@@ -199,17 +204,18 @@ func acquireRunResult(record ports.RunAdmissionRecord, replayed bool) (AcquireRu
 		return AcquireRunResult{}, err
 	}
 	snapshot := record.Snapshot
+	snapshot.ExecutionSpec.Model = snapshot.ExecutionSpec.Model.Clone()
 	skills := make([]ports.SkillInstruction, len(snapshot.ExecutionSpec.SkillInstructions))
 	copy(skills, snapshot.ExecutionSpec.SkillInstructions)
 	snapshot.ExecutionSpec.SkillInstructions = skills
 	return AcquireRunResult{
-		AdmissionID: record.AdmissionID, AdmissionDeadline: record.Deadline,
+		AdmissionID: record.AdmissionID, AdmissionDeadline: record.Deadline.UTC(),
 		AgentSpecRevision:        snapshot.AgentSpecRevisionID,
 		ExecutionRevision:        snapshot.ExecutionRevisionID,
 		RuntimeMCPSourceDigest:   snapshot.RuntimeMCPSourceDigest,
 		AgentExecutionSpecDigest: snapshot.AgentExecutionSpecDigest,
-		CredentialVersion:        snapshot.CredentialVersion, Runtime: snapshot.Runtime,
-		ExecutionSpec: snapshot.ExecutionSpec,
+		Runtime:                  snapshot.Runtime,
+		ExecutionSpec:            snapshot.ExecutionSpec,
 	}, nil
 }
 
@@ -237,12 +243,13 @@ func (service *RunService) requireActiveRunOwner(
 }
 
 type ResolveCredentialInput struct {
-	RequestID     string
-	AdmissionID   string
-	CredentialRef string
+	RequestID            string
+	AdmissionID          string
+	ProviderConnectionID string
 }
 
 type CredentialView struct {
+	Provider          domain.ProviderExecution
 	CredentialVersion string
 	SecretType        string
 	Secret            string
@@ -252,16 +259,22 @@ func (service *RunService) ResolveCredential(
 	ctx context.Context, input ResolveCredentialInput,
 ) (CredentialView, error) {
 	if !validIdentifier(input.RequestID) || !validIdentifier(input.AdmissionID) ||
-		!validIdentifier(input.CredentialRef) {
+		!validIdentifier(input.ProviderConnectionID) {
 		return CredentialView{}, fmt.Errorf("%w: credential request", ErrInvalidInput)
 	}
 	record, err := service.store.GetAdmissionCredential(
-		ctx, input.AdmissionID, input.CredentialRef, service.clock.Now(),
+		ctx, input.AdmissionID, input.ProviderConnectionID, service.clock.Now(),
 	)
 	if err != nil {
 		return CredentialView{}, mapRunError("resolve admission credential", err)
 	}
-	if record.SecretType != "bearer" || record.Identity.CredentialRef != input.CredentialRef ||
+	if err := record.Provider.Validate(); err != nil {
+		return CredentialView{}, err
+	}
+	if record.Provider.ConnectionID != input.ProviderConnectionID {
+		return CredentialView{}, fmt.Errorf("invalid admission Provider")
+	}
+	if record.SecretType != "bearer" || record.Identity.CredentialRef != input.ProviderConnectionID ||
 		!validIdentifier(record.Identity.CredentialVersion) ||
 		!validIdentifier(record.Identity.OrganizationID) {
 		return CredentialView{}, fmt.Errorf("invalid admission credential record")
@@ -274,8 +287,8 @@ func (service *RunService) ResolveCredential(
 		return CredentialView{}, fmt.Errorf("admission credential is empty")
 	}
 	return CredentialView{
-		CredentialVersion: record.Identity.CredentialVersion,
-		SecretType:        record.SecretType, Secret: secret,
+		Provider: record.Provider, CredentialVersion: record.Identity.CredentialVersion,
+		SecretType: record.SecretType, Secret: secret,
 	}, nil
 }
 
@@ -346,6 +359,11 @@ func validateAcquireRunInput(input AcquireRunInput) error {
 		!validIdentifier(input.SessionID) {
 		return fmt.Errorf("%w: acquire Run request", ErrInvalidInput)
 	}
+	if input.SessionConfiguration != nil {
+		if err := input.SessionConfiguration.Validate(); err != nil {
+			return fmt.Errorf("%w: %v", ErrInvalidInput, err)
+		}
+	}
 	return nil
 }
 
@@ -367,6 +385,8 @@ func validateAdmissionRecord(record ports.RunAdmissionRecord, replayed bool) err
 
 func mapRunError(action string, err error) error {
 	switch {
+	case errors.Is(err, ports.ErrModelUnavailable):
+		return ports.ErrModelUnavailable
 	case errors.Is(err, ports.ErrRunAccessDenied):
 		return fmt.Errorf("%w: %s", ErrAccessDenied, action)
 	case errors.Is(err, ports.ErrNotFound):

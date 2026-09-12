@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"crypto/rand"
-	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -16,8 +15,6 @@ import (
 	"sync"
 	"syscall"
 	"time"
-
-	_ "github.com/jackc/pgx/v5/stdlib"
 
 	"soft/antnest-platform/services/runtime-controller/internal/config"
 	"soft/antnest-platform/services/runtime-controller/internal/control"
@@ -90,12 +87,12 @@ func run(ctx context.Context) (resultErr error) {
 	if err != nil {
 		return classified("configuration", "invalid_configuration", err)
 	}
-	database, err := openDatabase(ctx, configuration.DatabaseURL, 20, 5)
+	database, err := postgresrepository.OpenDatabase(ctx, configuration.DatabaseURL, 20, 5)
 	if err != nil {
 		return classified("repository", "database_connection_failed", err)
 	}
 	defer joinCloseError(&resultErr, "Runtime Controller database", database.Close)
-	lockDatabase, err := openDatabase(ctx, configuration.DatabaseURL, 8, 8)
+	lockDatabase, err := postgresrepository.OpenDatabase(ctx, configuration.DatabaseURL, 8, 8)
 	if err != nil {
 		return classified("repository", "lock_database_connection_failed", err)
 	}
@@ -107,13 +104,9 @@ func run(ctx context.Context) (resultErr error) {
 	if err != nil {
 		return classified("repository", "repository_initialization_failed", err)
 	}
-	observedRepository, err := telemetry.ObserveRepository(baseRepository, slog.Default(), "postgresql")
-	if err != nil {
-		return classified("telemetry", "repository_observer_initialization_failed", err)
-	}
 	hub := observation.NewHub()
 	observationHealth := &observation.Health{}
-	repository, err := observation.NewRepository(observedRepository, hub, observationHealth)
+	repository, err := observation.NewRepository(baseRepository, hub, observationHealth)
 	if err != nil {
 		return classified("observation", "observation_repository_initialization_failed", err)
 	}
@@ -139,7 +132,7 @@ func run(ctx context.Context) (resultErr error) {
 		return classified("runtime_status", "runtime_verifier_initialization_failed", err)
 	}
 	service, err := control.NewService(
-		repository, observedRepository, observationHealth, observedPlatform, verifier, time.Now,
+		repository, baseRepository, observationHealth, observedPlatform, verifier, time.Now,
 		configuration.MutationTimeout, configuration.RuntimeReadyTimeout, configuration.RuntimePollInterval,
 	)
 	if err != nil {
@@ -162,7 +155,7 @@ func run(ctx context.Context) (resultErr error) {
 	var notificationsReadyOnce sync.Once
 	var notificationProbeOnce sync.Once
 	go func() {
-		err := observedRepository.ListenObservationNotifications(ctx, func() {
+		err := baseRepository.ListenObservationNotifications(ctx, func() {
 			observationHealth.MarkNotifications(true)
 			notificationsReadyOnce.Do(func() { close(notificationsReady) })
 		}, func(payload string) {
@@ -210,7 +203,7 @@ func run(ctx context.Context) (resultErr error) {
 	monitorReady := make(chan struct{})
 	var monitorReadyOnce sync.Once
 	go func() {
-		err := monitor.RunCoordinated(ctx, observedRepository, func() {
+		err := monitor.RunCoordinated(ctx, baseRepository, func() {
 			monitorReadyOnce.Do(func() { close(monitorReady) })
 		})
 		observationHealth.MarkMonitor(false)
@@ -314,23 +307,6 @@ func failureClassification(err error) (string, string) {
 
 func safeDiagnostic(err error) string {
 	return diagnostics.Message(err)
-}
-
-func openDatabase(
-	ctx context.Context, databaseURL string, maxOpenConnections, maxIdleConnections int,
-) (*sql.DB, error) {
-	database, err := sql.Open("pgx", databaseURL)
-	if err != nil {
-		return nil, fmt.Errorf("open Runtime Controller database: %w", err)
-	}
-	database.SetMaxOpenConns(maxOpenConnections)
-	database.SetMaxIdleConns(maxIdleConnections)
-	database.SetConnMaxLifetime(30 * time.Minute)
-	if err := database.PingContext(ctx); err != nil {
-		_ = database.Close()
-		return nil, fmt.Errorf("connect Runtime Controller database: %w", err)
-	}
-	return database, nil
 }
 
 func runtimeStatusHTTPClient() *http.Client {

@@ -42,13 +42,14 @@ const eventLabels: Record<string, string> = {
   agent_deleted: "Agent deleted",
   agent_lifecycle_quarantined: "Lifecycle quarantined",
   agent_runtime_restarted: "Runtime restarted",
+  agent_runtime_missing: "Runtime missing",
 };
 
 export function agentsForView(agents: Agent[], view: AgentFleetView): Agent[] {
   return agents.filter((agent) =>
     view === "deleted"
-      ? agent.desired_state === "deleted"
-      : agent.desired_state !== "deleted",
+      ? agent.lifecycle_state === "deleted"
+      : agent.lifecycle_state !== "deleted",
   );
 }
 
@@ -74,13 +75,30 @@ export function agentEventLabel(eventType: string): string {
   return eventLabels[eventType] ?? humanize(eventType);
 }
 
+export function agentRecoveryAvailable(agent: Agent): boolean {
+  return agent.desired_state === "enabled" && agent.lifecycle_state === "unavailable" &&
+    Boolean(agent.agent_spec_revision && agent.last_successful_execution_revision) &&
+    !agent.executable_execution_revision && !agent.runtime &&
+    agent.failure_code !== "lifecycle_invariant_failed";
+}
+
+export function agentFailureMessage(agent: Agent): string {
+  const observedFailures: Record<string, string> = {
+    runtime_missing: "The runtime is missing; this Agent no longer has an active execution environment.",
+    runtime_deleted: "The runtime is missing; its container was removed outside the Agent lifecycle.",
+    runtime_restarted: "The runtime restarted; the previous execution environment is no longer active.",
+  };
+  const reason = observedFailures[agent.failure_code ?? ""];
+  if (reason) return `${reason} Code: ${agent.failure_code}.`;
+  return `The latest lifecycle change failed${agent.failure_stage ? ` during ${agent.failure_stage.replaceAll("_", " ")}` : ""}: ${agent.failure_code}. Review the retained lifecycle history below.`;
+}
+
 export function agentActionAvailability(
   agent: Agent,
   operationRunning: boolean,
 ): AgentActionAvailability {
   const retained = agent.lifecycle_state === "deleted";
-  const deletionStarted = agent.desired_state === "deleted";
-  if (retained || deletionStarted || operationRunning || agent.active_operation_request_id) {
+  if (retained || operationRunning || agent.active_operation_request_id) {
     return {
       retained,
       canRebuild: false,
@@ -94,10 +112,10 @@ export function agentActionAvailability(
   const disabled = agent.desired_state === "disabled" && agent.lifecycle_state === "disabled";
   return {
     retained: false,
-    canRebuild: available,
+    canRebuild: available || agentRecoveryAvailable(agent),
     canEnable: disabled,
     canDisable: available,
-    canDelete: available || disabled,
+    canDelete: available || disabled || agent.lifecycle_state === "unavailable",
   };
 }
 
@@ -145,7 +163,17 @@ export function reconcileAgentOperation(
   if (activeRequestID) {
     return operation?.request_id === activeRequestID ? operation : undefined;
   }
-  return operation?.state === "running" ? undefined : operation;
+  return operation;
+}
+
+export function selectOperationSnapshot(
+  current: LifecycleOperation | undefined,
+  incoming: LifecycleOperation,
+): LifecycleOperation {
+  if (current?.request_id === incoming.request_id && current.state !== "running") {
+    return current;
+  }
+  return incoming;
 }
 
 function humanize(value: string): string {

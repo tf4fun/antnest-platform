@@ -6,8 +6,6 @@ import (
 	"embed"
 	"encoding/hex"
 	"fmt"
-
-	"github.com/jackc/pgx/v5"
 )
 
 //go:embed migrations/*.sql
@@ -39,6 +37,11 @@ var (
 		{version: 2, name: "enforce_owner_and_empty_skills", sql: ownerAndEmptySkillsSQL},
 		{version: 3, name: "backfill_unknown_effect_source", sql: unknownEffectSourceSQL},
 		{version: 4, name: "identity_revocations", sql: mustMigration("migrations/0004_identity_revocations.sql")},
+		{version: 5, name: "agent_authorization", sql: mustMigration("migrations/0005_agent_authorization.sql")},
+		{version: 6, name: "resolve_delete_runtime_source", sql: mustMigration("migrations/0006_resolve_delete_runtime_source.sql")},
+		{version: 7, name: "run_availability_notifications", sql: mustMigration("migrations/0007_run_availability_notifications.sql")},
+		{version: 8, name: "runtime_missing_event", sql: mustMigration("migrations/0008_runtime_missing_event.sql")},
+		{version: 9, name: "temporal_lifecycles", sql: mustMigration("migrations/0009_temporal_lifecycles.sql")},
 	}
 )
 
@@ -80,7 +83,7 @@ type migrationRecord struct {
 	checksum string
 }
 
-func readMigrationRecords(ctx context.Context, transaction pgx.Tx) ([]migrationRecord, error) {
+func readMigrationRecords(ctx context.Context, transaction *databaseTransaction) ([]migrationRecord, error) {
 	rows, err := transaction.Query(ctx, `
 SELECT version, name, checksum
 FROM agent_controller.schema_migrations

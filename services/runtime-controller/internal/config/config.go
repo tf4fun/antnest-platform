@@ -85,6 +85,9 @@ func Load(lookup func(string) string) (Config, error) {
 		SSEHeartbeat:          heartbeat,
 		RuntimeOTEL:           runtimeTelemetryEnvironment(lookup),
 	}
+	if capture := config.RuntimeOTEL["ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT"]; capture != "true" && capture != "false" {
+		return Config{}, fmt.Errorf("ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT must be true or false")
+	}
 	if config.DatabaseURL == "" {
 		return Config{}, fmt.Errorf("ANTNEST_RUNTIME_CONTROLLER_DATABASE_URL is required")
 	}
@@ -117,6 +120,7 @@ func Load(lookup func(string) string) (Config, error) {
 
 func runtimeTelemetryEnvironment(lookup func(string) string) map[string]string {
 	result := make(map[string]string)
+	result["ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT"] = strings.ToLower(valueOr(lookup, "ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT", "false"))
 	for _, key := range []string{
 		"OTEL_SDK_DISABLED", "OTEL_TRACES_EXPORTER", "OTEL_METRICS_EXPORTER",
 		"OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_PROTOCOL",

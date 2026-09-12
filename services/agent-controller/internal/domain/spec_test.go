@@ -11,15 +11,14 @@ func TestMaterializeAgentSpecUsesOneConsistentRevisionGraph(t *testing.T) {
 
 	model, err := NewModelProfileRevision(ModelProfileRevisionInput{
 		ID: "model-revision-1", ModelProfileID: "model-1", OrganizationID: "org-1",
-		Revision: 1, Model: validModel(), CredentialRef: "credential-1",
-		CredentialVersion: "credential-version-1",
+		Revision: 1, Model: validModel(),
 	})
 	if err != nil {
 		t.Fatalf("create model revision: %v", err)
 	}
 	template, err := NewTemplateRevision(TemplateRevisionInput{
 		TemplateID: "template-1", OrganizationID: "org-1", Revision: 1,
-		ModelProfileRevisionID: model.ID(), SystemPrompt: "You are helpful.",
+		ModelProfileID: model.Snapshot().ModelProfileID, SystemPrompt: "You are helpful.",
 		MaxModelRequests: 32, Runtime: validRuntime(), ContextPolicyVersion: "context-v1",
 	})
 	if err != nil {
@@ -31,7 +30,7 @@ func TestMaterializeAgentSpecUsesOneConsistentRevisionGraph(t *testing.T) {
 		t.Fatalf("materialize spec: %v", err)
 	}
 	snapshot := spec.Snapshot()
-	if snapshot.Model.Model != "model-1" || snapshot.CredentialRef != "credential-1" {
+	if snapshot.Model.Model != "model-1" || snapshot.ModelProfileID != "model-1" {
 		t.Fatalf("materialized wrong model revision: %+v", snapshot)
 	}
 	if snapshot.ContextPolicyVersion != "context-v1" {
@@ -56,15 +55,14 @@ func TestMaterializeAgentSpecRejectsCrossOrganizationOrWrongModelRevision(t *tes
 
 	model, err := NewModelProfileRevision(ModelProfileRevisionInput{
 		ID: "model-revision-1", ModelProfileID: "model-1", OrganizationID: "org-2",
-		Revision: 1, Model: validModel(), CredentialRef: "credential-1",
-		CredentialVersion: "credential-version-1",
+		Revision: 1, Model: validModel(),
 	})
 	if err != nil {
 		t.Fatalf("create model revision: %v", err)
 	}
 	template, err := NewTemplateRevision(TemplateRevisionInput{
 		TemplateID: "template-1", OrganizationID: "org-1", Revision: 1,
-		ModelProfileRevisionID: "model-revision-2", SystemPrompt: "prompt",
+		ModelProfileID: "model-revision-2", SystemPrompt: "prompt",
 		MaxModelRequests: 8, Runtime: validRuntime(), ContextPolicyVersion: "context-v1",
 	})
 	if err != nil {
@@ -80,7 +78,7 @@ func TestTemplateRejectsUnknownContextPolicyVersion(t *testing.T) {
 
 	_, err := NewTemplateRevision(TemplateRevisionInput{
 		TemplateID: "template-1", OrganizationID: "org-1", Revision: 1,
-		ModelProfileRevisionID: "model-revision-1", SystemPrompt: "prompt",
+		ModelProfileID: "model-revision-1", SystemPrompt: "prompt",
 		MaxModelRequests: 8, Runtime: validRuntime(), ContextPolicyVersion: "future-policy",
 	})
 	if err == nil {
@@ -100,8 +98,7 @@ func TestModelProfileRejectsEndpointCredentialsQueryAndFragment(t *testing.T) {
 		model.BaseURL = baseURL
 		_, err := NewModelProfileRevision(ModelProfileRevisionInput{
 			ID: "model-revision-1", ModelProfileID: "model-1", OrganizationID: "org-1",
-			Revision: 1, Model: model, CredentialRef: "credential-1",
-			CredentialVersion: "credential-version-1",
+			Revision: 1, Model: model,
 		})
 		if err == nil {
 			t.Errorf("unsafe Model endpoint %q was accepted", baseURL)

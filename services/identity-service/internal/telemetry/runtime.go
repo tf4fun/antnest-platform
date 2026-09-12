@@ -47,13 +47,16 @@ func Setup(ctx context.Context, base slog.Handler, config Config) (*Runtime, err
 	}
 	local := correlatedHandler{next: base}
 	runtime := &Runtime{logger: slog.New(local)}
-	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
-		propagation.TraceContext{}, propagation.Baggage{},
-	))
+	capture := strings.ToLower(strings.TrimSpace(os.Getenv("ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT")))
+	if capture != "" && capture != "false" && capture != "true" {
+		return nil, fmt.Errorf("ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT must be true or false")
+	}
+	otel.SetTextMapPropagator(propagation.TraceContext{})
 	otel.SetErrorHandler(otel.ErrorHandlerFunc(func(error) {
 		runtime.Logger().Error("OpenTelemetry export failed", "error_class", "export_error")
 	}))
 	if strings.EqualFold(strings.TrimSpace(os.Getenv("OTEL_SDK_DISABLED")), "true") {
+		runtime.installPropagationOnlyProvider()
 		return runtime, nil
 	}
 	signals, err := configuredSignals()
@@ -61,6 +64,7 @@ func Setup(ctx context.Context, base slog.Handler, config Config) (*Runtime, err
 		return nil, err
 	}
 	if !signals.traces && !signals.metrics && !signals.logs {
+		runtime.installPropagationOnlyProvider()
 		return runtime, nil
 	}
 	res, err := newResource(ctx, config)
@@ -76,6 +80,8 @@ func Setup(ctx context.Context, base slog.Handler, config Config) (*Runtime, err
 			sdktrace.WithBatcher(exporter), sdktrace.WithResource(res),
 		)
 		otel.SetTracerProvider(runtime.tracerProvider)
+	} else {
+		runtime.installPropagationOnlyProvider()
 	}
 	if signals.metrics {
 		exporter, err := otlpmetrichttp.New(ctx)
@@ -101,6 +107,11 @@ func Setup(ctx context.Context, base slog.Handler, config Config) (*Runtime, err
 		runtime.logger = slog.New(fanoutHandler{handlers: []slog.Handler{local, otelHandler}})
 	}
 	return runtime, nil
+}
+
+func (r *Runtime) installPropagationOnlyProvider() {
+	r.tracerProvider = sdktrace.NewTracerProvider(sdktrace.WithSampler(sdktrace.ParentBased(sdktrace.NeverSample())))
+	otel.SetTracerProvider(r.tracerProvider)
 }
 
 func (r *Runtime) Logger() *slog.Logger {
@@ -191,6 +202,7 @@ func newResource(ctx context.Context, config Config) (*resource.Resource, error)
 	attributes := []attribute.KeyValue{
 		attribute.String("service.name", serviceName),
 		attribute.String("service.namespace", "antnest"),
+		attribute.String("service.instance.id", fmt.Sprintf("identity-%d-%d", os.Getpid(), time.Now().UnixNano())),
 	}
 	if config.ServiceVersion != "" {
 		attributes = append(attributes, attribute.String("service.version", config.ServiceVersion))
@@ -199,7 +211,7 @@ func newResource(ctx context.Context, config Config) (*resource.Resource, error)
 		attributes = append(attributes, attribute.String("deployment.environment.name", config.Environment))
 	}
 	return resource.New(ctx, resource.WithFromEnv(), resource.WithTelemetrySDK(), resource.WithHost(),
-		resource.WithOS(), resource.WithProcess(), resource.WithContainer(), resource.WithAttributes(attributes...))
+		resource.WithOS(), resource.WithProcessPID(), resource.WithProcessExecutableName(), resource.WithContainer(), resource.WithAttributes(attributes...))
 }
 
 type correlatedHandler struct{ next slog.Handler }

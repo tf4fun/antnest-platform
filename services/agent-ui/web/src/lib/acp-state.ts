@@ -1,5 +1,23 @@
-import type { SessionUpdate } from "@agentclientprotocol/sdk";
+import type { SessionUpdate, SessionConfigOption } from "@agentclientprotocol/sdk";
 import type { Attachment, Conversation, Message, ToolActivity } from "./types";
+import { contentView } from "./content-view.ts";
+import { projectUsage } from "./usage.ts";
+
+export function resetConversationReplay(conversation: Conversation): Conversation {
+  const { usage: _usage, usageStale: _stale, ...rest } = conversation;
+  return { ...rest, messages: [] };
+}
+
+export function restoreFailedReplayUsage(current: Conversation, previous: Conversation): Conversation {
+  const usage = current.usage ?? previous.usage;
+  if (!usage) return current;
+  const cost = usage.cost ?? previous.usage?.cost;
+  return { ...current, usageStale: true, usage: { ...usage, ...(cost ? { cost } : {}) } };
+}
+
+export function applyConfigurationResponse(conversation: Conversation, configOptions: SessionConfigOption[], startedAt: number): Conversation {
+  return (conversation.configurationSequence ?? 0) === startedAt ? {...conversation, configOptions} : conversation;
+}
 
 export function appendLocalUserPrompt(
   conversation: Conversation,
@@ -25,20 +43,30 @@ export function applySessionUpdate(
   conversation: Conversation,
   update: SessionUpdate,
   now = new Date().toISOString(),
+  source: "live" | "replay" = "live",
 ): Conversation {
+  const observedAt = source === "live" ? now : undefined;
   switch (update.sessionUpdate) {
+    case "usage_update": {
+      const usage = projectUsage(conversation.usage, update);
+      return usage === conversation.usage ? conversation : { ...conversation, usage, usageStale: false };
+    }
+    case "config_option_update":
+      return { ...conversation, configOptions: update.configOptions, configurationSequence: (conversation.configurationSequence ?? 0) + 1 };
+    case "current_mode_update":
+      return { ...conversation, currentModeId: update.currentModeId };
     case "user_message_chunk":
-      return appendMessageContent(conversation, update.messageId ?? "user-message", "user", update.content, now);
+      return appendMessageContent(conversation, update.messageId ?? "user-message", "user", update.content, observedAt);
     case "agent_message_chunk":
-      return appendMessageContent(conversation, update.messageId ?? "agent-message", "assistant", update.content, now);
+      return appendMessageContent(conversation, update.messageId ?? "agent-message", "assistant", update.content, observedAt);
     case "tool_call":
     case "tool_call_update":
-      return upsertToolActivity(conversation, update, now);
+      return upsertToolActivity(conversation, update, observedAt);
     case "session_info_update":
       return {
         ...conversation,
         ...(update.title === null || update.title === undefined ? {} : { title: update.title }),
-        updatedAt: update.updatedAt ?? now,
+        updatedAt: update.updatedAt ?? conversation.updatedAt,
       };
     default:
       return conversation;
@@ -50,23 +78,26 @@ function appendMessageContent(
   messageID: string,
   role: Message["role"],
   block: unknown,
-  now: string,
+  now: string | undefined,
 ): Conversation {
-  const text = contentText(block);
-  if (text === "") return conversation;
   const existing = conversation.messages.find((message) => message.id === messageID);
+  const { text, attachment } = contentView(block, `${messageID}-attachment-${existing?.attachments?.length ?? 0}`);
+  if (text === "" && !attachment) return conversation;
+  const message: Message = {
+    ...(existing ?? { id: messageID, role, content: "", createdAt: now }),
+    content: (existing?.content ?? "") + text,
+    ...(attachment ? { attachments: [...(existing?.attachments ?? []), attachment] } : {}),
+  };
   const messages = existing
-    ? conversation.messages.map((message) =>
-        message.id === messageID ? { ...message, content: message.content + text } : message,
-      )
-    : [...conversation.messages, { id: messageID, role, content: text, createdAt: now }];
-  return { ...conversation, messages, updatedAt: now };
+    ? conversation.messages.map(candidate => candidate.id === messageID ? message : candidate)
+    : [...conversation.messages, message];
+  return { ...conversation, messages, updatedAt: now ?? conversation.updatedAt };
 }
 
 function upsertToolActivity(
   conversation: Conversation,
   update: Extract<SessionUpdate, { sessionUpdate: "tool_call" | "tool_call_update" }>,
-  now: string,
+  now: string | undefined,
 ): Conversation {
   const messageID = `tool-${update.toolCallId}`;
   const existingMessage = conversation.messages.find((message) => message.id === messageID);
@@ -78,7 +109,7 @@ function upsertToolActivity(
   const messages = existingMessage
     ? conversation.messages.map((candidate) => (candidate.id === messageID ? message : candidate))
     : [...conversation.messages, message];
-  return { ...conversation, messages, updatedAt: now };
+  return { ...conversation, messages, updatedAt: now ?? conversation.updatedAt };
 }
 
 function mergeToolActivity(
@@ -101,7 +132,7 @@ function mergeToolActivity(
     label: title,
     tool,
     status,
-    summary: detail === undefined ? `${title} is ${status}.` : firstLine(detail),
+    summary: status[0].toUpperCase() + status.slice(1),
     ...(detail === undefined ? {} : { detail }),
   };
 }
@@ -123,28 +154,11 @@ function toolStatus(
   }
 }
 
-function contentText(block: unknown): string {
-  if (!isRecord(block) || typeof block.type !== "string") return "";
-  if (block.type === "text" && typeof block.text === "string") return block.text;
-  if (block.type === "resource_link" && typeof block.name === "string") return `\n[${block.name}]\n`;
-  if (block.type === "image") return "\n[Image]\n";
-  return "";
-}
-
 function printable(value: unknown): string {
-  if (typeof value === "string") return value.slice(0, 12_000);
+  if (typeof value === "string") return value;
   try {
-    return JSON.stringify(value, null, 2).slice(0, 12_000);
+    return JSON.stringify(value, null, 2) ?? String(value);
   } catch {
-    return String(value).slice(0, 12_000);
+    return String(value);
   }
-}
-
-function firstLine(value: string): string {
-  const line = value.split("\n", 1)[0]?.trim() ?? "";
-  return line.length <= 180 ? line : `${line.slice(0, 177)}...`;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
 }

@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
 	"soft/antnest-platform/services/identity-service/internal/config"
 	"soft/antnest-platform/services/identity-service/internal/credentials"
@@ -123,7 +122,7 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 	}()
 	logger := telemetryRuntime.Logger()
 
-	poolConfig, err := pgxpool.ParseConfig(cfg.DatabaseURL)
+	poolConfig, err := repository.ParsePoolConfig(cfg.DatabaseURL)
 	if err != nil {
 		return classifyFailure("database_configuration", err)
 	}
@@ -155,7 +154,7 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 		return classifyFailure("service_composition", err)
 	}
 	outboundHTTP := &http.Client{
-		Transport: otelhttp.NewTransport(http.DefaultTransport),
+		Transport: telemetry.NewHTTPTransport(http.DefaultTransport),
 		Timeout:   cfg.HTTPTimeout,
 	}
 	federation, err := oidcclient.New(outboundHTTP)

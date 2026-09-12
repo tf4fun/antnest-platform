@@ -11,6 +11,8 @@ import (
 	"path"
 	"strings"
 	"time"
+
+	"github.com/distribution/reference"
 )
 
 var (
@@ -38,9 +40,10 @@ func (k Key) Validate() error {
 }
 
 type Deployment struct {
-	ImageRef    string         `json:"image_ref"`
-	RuntimeSpec RuntimeSpec    `json:"runtime_spec"`
-	Resources   ResourceLimits `json:"resources"`
+	ImageReference string         `json:"image_reference,omitempty"`
+	ImageRef       string         `json:"image_ref"`
+	RuntimeSpec    RuntimeSpec    `json:"runtime_spec"`
+	Resources      ResourceLimits `json:"resources"`
 }
 
 // Configuration is the caller-owned policy input. Deployment identity and
@@ -116,8 +119,8 @@ func (d Deployment) ValidateFor(key Key) error {
 	if err := key.Validate(); err != nil {
 		return err
 	}
-	if !immutableImageRef(d.ImageRef) {
-		return invalid("image_ref must be a sha256 image ID or digest-pinned reference")
+	if !validImageRef(d.ImageRef) {
+		return invalid("image_ref must be a valid image name, tag, or digest reference")
 	}
 	if d.RuntimeSpec.AgentID != key.AgentID || d.RuntimeSpec.Generation != key.Generation {
 		return invalid("path identity and runtime_spec identity differ")
@@ -221,19 +224,12 @@ func validateSocketAddress(name string, value SocketAddress) error {
 	return nil
 }
 
-func immutableImageRef(value string) bool {
-	value = strings.TrimSpace(value)
-	if value == "" || strings.ContainsAny(value, " \t\r\n") {
+func validImageRef(value string) bool {
+	if value == "" || len(value) > 512 || value != strings.TrimSpace(value) {
 		return false
 	}
-	if ValidateDigest(value) == nil {
-		return true
-	}
-	if strings.Count(value, "@") != 1 {
-		return false
-	}
-	name, digest, found := strings.Cut(value, "@")
-	return found && name != "" && ValidateDigest(digest) == nil
+	_, err := reference.ParseAnyReference(value)
+	return err == nil
 }
 
 func ValidateDigest(value string) error {
@@ -372,6 +368,7 @@ const (
 	LifecycleEnabling      LifecycleState = "enabling"
 	LifecycleDeleting      LifecycleState = "deleting"
 	LifecycleDeleted       LifecycleState = "deleted"
+	LifecycleFailed        LifecycleState = "failed"
 	LifecycleUnknown       LifecycleState = "unknown"
 )
 
@@ -394,7 +391,7 @@ func LifecycleTransition(kind OperationKind, from LifecycleState) (LifecycleStat
 			return LifecycleEnabling, LifecycleReady, nil
 		}
 	case OperationDeleteRuntime:
-		if from == LifecycleReady || from == LifecycleDisabled {
+		if from == LifecycleReady || from == LifecycleDisabled || from == LifecycleFailed {
 			return LifecycleDeleting, LifecycleDeleted, nil
 		}
 	}
@@ -468,6 +465,8 @@ const (
 )
 
 type Operation struct {
+	ImageReference  string
+	ImageID         string
 	RequestID       string
 	RequestDigest   string
 	Kind            OperationKind

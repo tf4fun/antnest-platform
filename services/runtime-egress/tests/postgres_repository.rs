@@ -1,12 +1,30 @@
 use std::{env, sync::Arc, time::Duration};
 
 use antnest_runtime_egress::{
+    application::{ControlConfig, ControlService, KernelCleanup},
+    control::router,
     domain::{AgentId, AttachmentState, NetworkState, PolicyId},
     policy::PolicySpec,
     repository::{
         DatabaseTlsMode, PostgresRepository, Repository, RepositoryConfig, RepositoryError,
     },
+    telemetry::EgressMetrics,
 };
+use async_trait::async_trait;
+use axum::{
+    body::{Body, to_bytes},
+    http::{Request, StatusCode},
+};
+use tower::ServiceExt as _;
+
+struct ReadOnlyKernel;
+
+#[async_trait]
+impl KernelCleanup for ReadOnlyKernel {
+    async fn clear_agent(&self, _: std::net::Ipv4Addr) -> Result<(), String> {
+        panic!("policy inspection must not clean network state");
+    }
+}
 
 #[tokio::test]
 #[ignore = "requires ANTNEST_EGRESS_TEST_DATABASE_URL"]
@@ -140,15 +158,19 @@ async fn postgres_preserves_network_and_policy_semantics() {
         .unwrap();
     assert_eq!(first, second);
 
-    repository
+    let first_policy = repository
         .put_policy_revision(policy.clone(), 1, PolicySpec::allow_all())
         .await
         .unwrap();
     let assignment = repository
-        .compare_and_swap_assignment(&agent, policy, 1, 1)
+        .compare_and_swap_assignment(&agent, policy.clone(), 1, 1)
         .await
         .unwrap();
     assert_eq!(assignment.resource_version, 2);
+    let second_policy = repository
+        .put_policy_revision(policy.clone(), 2, PolicySpec::deny_all())
+        .await
+        .unwrap();
 
     drop(repository);
     let repository = PostgresRepository::connect(
@@ -168,6 +190,54 @@ async fn postgres_preserves_network_and_policy_semantics() {
         repository.policy_assignment(&agent).await.unwrap(),
         assignment
     );
+    let repository = Arc::new(repository);
+    let control = Arc::new(ControlService::new(
+        repository.clone(),
+        Arc::new(ReadOnlyKernel),
+        ControlConfig {
+            advertised_udp_endpoint: "10.20.0.8:8092".parse().unwrap(),
+            resolver_ipv4: "100.64.0.1".parse().unwrap(),
+            max_flows: 32,
+            max_agent_flows: 16,
+            flow_idle: Duration::from_secs(60),
+        },
+    ));
+    let snapshot = control.status().snapshot_revision;
+    let app = router(control.clone(), EgressMetrics::default());
+    for expected in [first_policy, second_policy] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get(format!(
+                    "/internal/policies/{}/revisions/{}",
+                    expected.policy_id.as_str(),
+                    expected.revision
+                ))
+                .body(Body::empty())
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), 4096).await.unwrap();
+        let document: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            document,
+            serde_json::json!({
+                "policy_id": expected.policy_id.as_str(), "revision": expected.revision,
+                "spec": expected.spec, "digest": expected.digest,
+            })
+        );
+    }
+    assert_eq!(
+        repository.policy_assignment(&agent).await.unwrap(),
+        assignment
+    );
+    assert_eq!(
+        repository.runtime_attachment(&agent).await.unwrap().state,
+        AttachmentState::Closed
+    );
+    assert_eq!(control.status().snapshot_revision, snapshot);
 
     let released = repository
         .quarantine_agent_network(&agent, 1, std::time::SystemTime::now())
@@ -437,7 +507,16 @@ async fn one_agents_lock_timeout_is_scoped_and_bounded() {
     let result = repository
         .quarantine_agent_network(&agent, 1, std::time::SystemTime::now())
         .await;
-    assert!(matches!(result, Err(RepositoryError::OperationFailed(_))));
+    let error = result.unwrap_err();
+    assert!(matches!(&error, RepositoryError::DatabaseOperation(_)));
+    let driver = std::error::Error::source(&error)
+        .and_then(std::error::Error::source)
+        .and_then(|source| source.downcast_ref::<tokio_postgres::Error>())
+        .expect("lock/statement timeout retains its PostgreSQL source");
+    assert!(matches!(
+        driver.code().map(|code| code.code()),
+        Some("55P03" | "57014")
+    ));
     assert!(started.elapsed() < Duration::from_secs(6));
     assert!(
         *health.borrow(),
@@ -453,4 +532,212 @@ fn monotonic_suffix() -> u128 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_nanos()
+}
+
+#[tokio::test]
+#[ignore = "requires ANTNEST_EGRESS_TEST_DATABASE_URL"]
+async fn production_repository_automatically_observes_each_database_primitive_once() {
+    use opentelemetry::trace::{SpanKind, TracerProvider as _};
+    use opentelemetry_sdk::trace::{InMemorySpanExporter, SdkTracerProvider};
+    use tracing::{Instrument as _, instrument::WithSubscriber as _};
+    use tracing_subscriber::layer::SubscriberExt as _;
+
+    let database_url =
+        env::var("ANTNEST_EGRESS_TEST_DATABASE_URL").expect("ANTNEST_EGRESS_TEST_DATABASE_URL");
+    let suffix = format!("{}-{}", std::process::id(), monotonic_suffix());
+    let repository = PostgresRepository::connect(
+        &database_url,
+        DatabaseTlsMode::Disable,
+        RepositoryConfig {
+            pool_id: format!("observation-{suffix}"),
+            tunnel_cidr: "100.64.0.0/29".parse().unwrap(),
+            resolver_ipv4: "100.64.0.1".parse().unwrap(),
+            quarantine: Duration::ZERO,
+        },
+    )
+    .await
+    .unwrap();
+    let agent = AgentId::parse(format!("DB_AGENT_CANARY-{suffix}")).unwrap();
+    let policy = PolicyId::parse(format!("DB_POLICY_CANARY-{suffix}")).unwrap();
+    let exporter = InMemorySpanExporter::default();
+    let provider = SdkTracerProvider::builder()
+        .with_simple_exporter(exporter.clone())
+        .build();
+    let subscriber = tracing_subscriber::Registry::default()
+        .with(tracing_opentelemetry::layer().with_tracer(provider.tracer("repository-test")));
+    async {
+        repository
+            .ensure_agent_network(agent.clone())
+            .instrument(tracing::info_span!("ensure", otel.kind = "server"))
+            .await
+            .unwrap();
+        repository
+            .ensure_agent_network(agent.clone())
+            .instrument(tracing::info_span!("ensure_existing", otel.kind = "server"))
+            .await
+            .unwrap();
+        repository
+            .agent_network(&agent)
+            .instrument(tracing::info_span!("network", otel.kind = "server"))
+            .await
+            .unwrap();
+        repository
+            .put_policy_revision(policy.clone(), 1, PolicySpec::allow_all())
+            .instrument(tracing::info_span!("put_policy", otel.kind = "server"))
+            .await
+            .unwrap();
+        repository
+            .policy_revision(&policy, 1)
+            .instrument(tracing::info_span!("policy", otel.kind = "server"))
+            .await
+            .unwrap();
+        repository
+            .policy_assignment(&agent)
+            .instrument(tracing::info_span!("assignment", otel.kind = "server"))
+            .await
+            .unwrap();
+        repository
+            .runtime_attachment(&agent)
+            .instrument(tracing::info_span!("attachment", otel.kind = "server"))
+            .await
+            .unwrap();
+        repository
+            .compare_and_swap_assignment(&agent, policy.clone(), 1, 1)
+            .instrument(tracing::info_span!("cas_assignment", otel.kind = "server"))
+            .await
+            .unwrap();
+        repository
+            .compare_and_swap_attachment(&agent, AttachmentState::Closed, 1)
+            .instrument(tracing::info_span!("cas_attachment", otel.kind = "server"))
+            .await
+            .unwrap();
+        assert_eq!(
+            repository
+                .compare_and_swap_attachment(&agent, AttachmentState::Open, 99)
+                .instrument(tracing::info_span!("rejected", otel.kind = "server"))
+                .await,
+            Err(RepositoryError::ResourceVersionConflict)
+        );
+        repository
+            .active_bindings()
+            .instrument(tracing::info_span!("bindings", otel.kind = "server"))
+            .await
+            .unwrap();
+        let now = std::time::SystemTime::now();
+        let quarantined = repository
+            .quarantine_agent_network(&agent, 1, now)
+            .instrument(tracing::info_span!("quarantine", otel.kind = "server"))
+            .await
+            .unwrap();
+        repository
+            .expired_quarantines(now + Duration::from_secs(1))
+            .instrument(tracing::info_span!("expired", otel.kind = "server"))
+            .await
+            .unwrap();
+        assert!(
+            repository
+                .delete_quarantined(&agent, quarantined.resource_version)
+                .instrument(tracing::info_span!("delete", otel.kind = "server"))
+                .await
+                .unwrap()
+        );
+    }
+    .with_subscriber(subscriber)
+    .await;
+    provider.force_flush().unwrap();
+    let spans = exporter.get_finished_spans().unwrap();
+    let expected: &[(&str, &[&str])] = &[
+        (
+            "ensure",
+            &[
+                "BEGIN", "SELECT", "SELECT", "SELECT", "SELECT", "UPDATE", "INSERT", "INSERT",
+                "INSERT", "COMMIT",
+            ],
+        ),
+        ("ensure_existing", &["BEGIN", "SELECT", "ROLLBACK"]),
+        ("network", &["SELECT"]),
+        ("put_policy", &["INSERT", "SELECT"]),
+        ("policy", &["SELECT"]),
+        ("assignment", &["SELECT"]),
+        ("attachment", &["SELECT"]),
+        (
+            "cas_assignment",
+            &["BEGIN", "SELECT", "SELECT", "SELECT", "UPDATE", "COMMIT"],
+        ),
+        ("cas_attachment", &["BEGIN", "SELECT", "SELECT", "COMMIT"]),
+        ("rejected", &["BEGIN", "SELECT", "SELECT", "ROLLBACK"]),
+        ("bindings", &["SELECT"]),
+        (
+            "quarantine",
+            &["BEGIN", "SELECT", "SELECT", "UPDATE", "COMMIT"],
+        ),
+        ("expired", &["SELECT"]),
+        ("delete", &["DELETE"]),
+    ];
+    assert_eq!(
+        spans
+            .iter()
+            .filter(|span| span.span_kind == SpanKind::Server)
+            .count(),
+        expected.len()
+    );
+    assert_eq!(
+        spans
+            .iter()
+            .filter(|span| span.span_kind == SpanKind::Client)
+            .count(),
+        expected
+            .iter()
+            .map(|(_, operations)| operations.len())
+            .sum::<usize>()
+    );
+    for (name, operations) in expected {
+        let parent = spans.iter().find(|span| span.name == *name).unwrap();
+        let owner = spans
+            .iter()
+            .find(|span| {
+                span.name == "postgresql transaction"
+                    && span.parent_span_id == parent.span_context.span_id()
+            })
+            .unwrap_or(parent);
+        if owner.name == "postgresql transaction" {
+            assert_eq!(owner.span_kind, SpanKind::Internal);
+        }
+        let children: Vec<_> = spans
+            .iter()
+            .filter(|span| span.parent_span_id == owner.span_context.span_id())
+            .collect();
+        assert_eq!(children.len(), operations.len(), "{name}");
+        for (span, operation) in children.iter().zip(*operations) {
+            assert_eq!(span.name, *operation, "{name}");
+            assert!(span.attributes.iter().any(
+                |a| a.key.as_str() == "db.operation.name" && a.value.to_string() == *operation
+            ));
+            assert_eq!(span.span_kind, SpanKind::Client);
+            assert_eq!(span.span_context.trace_id(), parent.span_context.trace_id());
+            assert!(
+                span.attributes
+                    .iter()
+                    .any(|item| item.key.as_str() == "db.system.name"
+                        && item.value.to_string() == "postgresql")
+            );
+            assert_eq!(
+                span.attributes
+                    .iter()
+                    .any(|item| item.key.as_str() == "db.query.text"),
+                !matches!(*operation, "BEGIN" | "COMMIT" | "ROLLBACK")
+            );
+            assert!(
+                !span.attributes.iter().any(|item| item
+                    .key
+                    .as_str()
+                    .starts_with("db.query.parameter")
+                    || item.key.as_str().contains("rows"))
+            );
+        }
+    }
+    let captured = format!("{spans:?}");
+    assert!(!captured.contains("DB_AGENT_CANARY"));
+    assert!(!captured.contains("DB_POLICY_CANARY"));
+    provider.shutdown().unwrap();
 }

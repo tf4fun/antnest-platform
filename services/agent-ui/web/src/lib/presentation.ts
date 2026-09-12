@@ -5,9 +5,11 @@ export function canSubmit(input: {
   attachments: Attachment[];
   agentStatus: AgentStatus;
   connected: boolean;
+  configuring?: boolean;
 }): boolean {
   return (
     input.connected &&
+    !input.configuring &&
     input.agentStatus === "ready" &&
     (input.text.trim().length > 0 || input.attachments.length > 0)
   );

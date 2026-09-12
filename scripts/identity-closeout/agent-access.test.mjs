@@ -131,6 +131,13 @@ for (const version of [1, 2])
         content: version === 1 ? payload.content[0] : payload.content,
       },
     }));
+    updates.push({
+      sessionId: "own",
+      update: {
+        sessionUpdate: "available_commands_update",
+        availableCommands: [{ name: "help", description: "Also /帮助" }],
+      },
+    });
     assertPrivateReplay(updates, "own", phase, version, history);
     assert.throws(() =>
       assertPrivateReplay(
@@ -142,6 +149,9 @@ for (const version of [1, 2])
       ),
     );
     for (const mutate of [
+      (items) => {
+        items.pop();
+      },
       (items) => {
         items[0].sessionId = "foreign";
       },
@@ -351,24 +361,53 @@ function traceFixture() {
     spans: [
       {
         spanID: "1",
+        traceID: "a".repeat(32),
         processID: "edge-gateway",
         operationName: "HTTP GET",
         references: [],
       },
       {
         spanID: "2",
+        traceID: "a".repeat(32),
         processID: "admin-console",
         operationName: "HTTP GET",
+        tags: [
+          { key: "span.kind", value: "client" },
+          { key: "http.request.method", value: "GET" },
+        ],
         references: [
           { refType: "CHILD_OF", traceID: "a".repeat(32), spanID: "1" },
         ],
       },
       {
         spanID: "3",
+        traceID: "a".repeat(32),
         processID: "agent-controller",
-        operationName: "agent_controller.repository.get_agent",
+        operationName: "HTTP GET /internal/agents/{agent_id}",
+        tags: [
+          { key: "span.kind", value: "server" },
+          { key: "http.request.method", value: "GET" },
+          { key: "http.route", value: "/internal/agents/{agent_id}" },
+          { key: "rpc.method", value: "GET /internal/agents/{agent_id}" },
+        ],
         references: [
           { refType: "CHILD_OF", traceID: "a".repeat(32), spanID: "2" },
+        ],
+      },
+      {
+        spanID: "db",
+        traceID: "a".repeat(32),
+        processID: "agent-controller",
+        operationName: "SELECT",
+        duration: 1,
+        references: [
+          { refType: "CHILD_OF", traceID: "a".repeat(32), spanID: "3" },
+        ],
+        tags: [
+          { key: "span.kind", value: "client" },
+          { key: "db.system.name", value: "postgresql" },
+          { key: "db.query.text", value: "SELECT $1" },
+          { key: "db.operation.name", value: "SELECT" },
         ],
       },
     ],
@@ -377,9 +416,33 @@ function traceFixture() {
 const expectation = {
   traceID: "a".repeat(32),
   service: "agent-controller",
-  operation: "agent_controller.repository.get_agent",
+  method: "GET",
+  route: "/internal/agents/{agent_id}",
+  rpcMethod: "GET /internal/agents/{agent_id}",
   via: ["admin-console"],
 };
+test("access expectations sharing a trace do not poll Jaeger repeatedly", async () => {
+  const events = [];
+  const results = await evidence.verifyAccessTraces(
+    "http://jaeger",
+    [expectation, expectation],
+    [],
+    {
+      wait: async (ms) => {
+        events.push(ms);
+      },
+      request: async (url) => {
+        events.push(url);
+        return Response.json({ data: [traceFixture()] });
+      },
+    },
+  );
+  assert.equal(results.length, 2);
+  assert.deepEqual(events, [
+    6000,
+    `http://jaeger/api/traces/${expectation.traceID}`,
+  ]);
+});
 test("access traces require same-trace causal ownership, not only service presence", () => {
   assert.equal(
     inspectAccessTrace(traceFixture(), expectation, []).gateway_ancestry,

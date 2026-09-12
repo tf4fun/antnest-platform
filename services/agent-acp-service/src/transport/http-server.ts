@@ -2,7 +2,9 @@ import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { Duplex } from "node:stream";
 
-import { context, propagation, type TextMapGetter } from "@opentelemetry/api";
+import { context } from "@opentelemetry/api";
+import { observeHttpRequest, startHttpBoundary, activeHttpSpan } from "../telemetry/http.js";
+import { recordBoundaryError } from "../telemetry/diagnostics.js";
 import { WebSocketServer, type WebSocket } from "ws";
 
 import type { AcpApplicationPort } from "../ports/acp-application.js";
@@ -16,8 +18,10 @@ import { createAcpV1Agent } from "./acp/v1/agent.js";
 import { createAcpV2Agent } from "./acp/v2/agent.js";
 import { SessionOutputStreams } from "./acp/session-output.js";
 import { AcpHttpTransport } from "./acp/http-transport.js";
+import type { PermissionConnectionsPort } from "../ports/tool-permissions.js";
 
 export type AgentAcpHttpServerOptions = {
+  permissions?: PermissionConnectionsPort;
   agentController: AgentControllerPort;
   application: AcpApplicationPort;
   ready: () => Promise<boolean>;
@@ -42,16 +46,31 @@ export class AgentAcpHttpServer {
     this.telemetry = options.telemetry ?? NOOP_TELEMETRY;
     this.httpTransport = new AcpHttpTransport({ ...options, outputs: this.outputs });
     this.server = createServer((request, response) => {
-      const requestContext = propagation.extract(context.active(), request.headers, HEADER_GETTER);
-      void context.with(requestContext, () => this.handleHttp(request, response));
+      void observeHttpRequest(request, response, () => this.handleHttp(request, response));
     });
     this.webSockets = new WebSocketServer({
       noServer: true,
       maxPayload: options.maxWebSocketPayloadBytes,
     });
     this.server.on("upgrade", (request, socket, head) => {
-      const requestContext = propagation.extract(context.active(), request.headers, HEADER_GETTER);
-      void context.with(requestContext, () => this.handleUpgrade(request, socket, head));
+      const boundary = startHttpBoundary(request);
+      const onClose = () => boundary.finish();
+      const onError = (error: Error) => boundary.finish(undefined, error);
+      socket.once("close", onClose);
+      socket.once("error", onError);
+      void context
+        .with(boundary.context, () => this.handleUpgrade(request, socket, head))
+        .then(
+          (status) => boundary.finish(status),
+          (error: unknown) => {
+            boundary.finish(undefined, error);
+            socket.destroy();
+          },
+        )
+        .finally(() => {
+          socket.off("close", onClose);
+          socket.off("error", onError);
+        });
     });
   }
 
@@ -103,7 +122,9 @@ export class AgentAcpHttpServer {
     try {
       const ready = await this.options.ready();
       json(response, ready ? 200 : 503, { status: ready ? "ready" : "not_ready" });
-    } catch {
+    } catch (error) {
+      const span = activeHttpSpan();
+      if (span !== undefined) recordBoundaryError(span, error, "readiness");
       json(response, 503, { status: "not_ready" });
     }
   }
@@ -112,12 +133,11 @@ export class AgentAcpHttpServer {
     request: IncomingMessage,
     socket: Duplex,
     head: Buffer,
-  ): Promise<void> {
+  ): Promise<number> {
     const protocol = acpProtocol(request.url);
     if (protocol === null) {
       this.telemetry.count("antnest.acp.connections", { result: "rejected", reason: "not_found" });
-      rejectUpgrade(socket, 404, "Not Found");
-      return;
+      return rejectUpgrade(socket, 404, "Not Found");
     }
     try {
       if (!(await this.options.ready())) {
@@ -125,12 +145,12 @@ export class AgentAcpHttpServer {
           result: "rejected",
           reason: "not_ready",
         });
-        rejectUpgrade(socket, 503, "Service Unavailable");
-        return;
+        return rejectUpgrade(socket, 503, "Service Unavailable");
       }
-    } catch {
-      rejectUpgrade(socket, 503, "Service Unavailable");
-      return;
+    } catch (error) {
+      const span = activeHttpSpan();
+      if (span !== undefined) recordBoundaryError(span, error, "readiness");
+      return rejectUpgrade(socket, 503, "Service Unavailable");
     }
     const subject = oneHeader(request, "x-antnest-agent-access-subject");
     if (subject === null) {
@@ -138,8 +158,7 @@ export class AgentAcpHttpServer {
         result: "rejected",
         reason: "unauthorized",
       });
-      rejectUpgrade(socket, 401, "Unauthorized");
-      return;
+      return rejectUpgrade(socket, 401, "Unauthorized");
     }
     socket.pause();
     try {
@@ -169,6 +188,9 @@ export class AgentAcpHttpServer {
               promptCapabilities: access.promptCapabilities,
               application: this.options.application,
               outputs: this.outputs,
+              ...(this.options.permissions === undefined
+                ? {}
+                : { permissions: this.options.permissions }),
             }).connect(createAcpV1WebSocketStream(webSocket));
             this.observeConnection(connection, protocol);
           } else {
@@ -177,6 +199,9 @@ export class AgentAcpHttpServer {
               promptCapabilities: access.promptCapabilities,
               application: this.options.application,
               outputs: this.outputs,
+              ...(this.options.permissions === undefined
+                ? {}
+                : { permissions: this.options.permissions }),
             }).connect(createAcpV2WebSocketWireStream(webSocket));
             this.observeConnection(connection, protocol);
           }
@@ -186,6 +211,7 @@ export class AgentAcpHttpServer {
         }
       });
       socket.resume();
+      return 101;
     } catch (error) {
       const rejection = accessRejection(error);
       this.telemetry.count("antnest.acp.connections", {
@@ -193,7 +219,9 @@ export class AgentAcpHttpServer {
         reason: rejection.metricReason,
       });
       this.report(error, "upgrade_authentication");
-      rejectUpgrade(socket, rejection.status, rejection.reason);
+      const span = activeHttpSpan();
+      if (span !== undefined) recordBoundaryError(span, error, "upgrade_authentication");
+      return rejectUpgrade(socket, rejection.status, rejection.reason);
     }
   }
 
@@ -233,11 +261,6 @@ function acpProtocol(url: string | undefined): "v1" | "v2" | null {
   }
 }
 
-const HEADER_GETTER: TextMapGetter<IncomingMessage["headers"]> = {
-  keys: (headers) => Object.keys(headers),
-  get: (headers, key) => headers[key.toLowerCase()],
-};
-
 function oneHeader(request: IncomingMessage, name: string): string | null {
   const value = request.headers[name];
   if (typeof value !== "string") {
@@ -270,8 +293,9 @@ function json(response: ServerResponse, status: number, body: unknown): void {
   response.end(JSON.stringify(body));
 }
 
-function rejectUpgrade(socket: Duplex, status: number, reason: string): void {
+function rejectUpgrade(socket: Duplex, status: number, reason: string): number {
   if (!socket.destroyed) {
     socket.end(`HTTP/1.1 ${status} ${reason}\r\nConnection: close\r\n\r\n`);
   }
+  return status;
 }

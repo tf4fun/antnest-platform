@@ -327,15 +327,7 @@ func encodeEnvironment(environment *deployment.Environment) (any, error) {
 func completeEnvironment(ctx context.Context, tx *sql.Tx, operation deployment.Operation) error {
 	switch operation.State {
 	case deployment.OperationCompleted:
-		if operation.Inspection == nil {
-			return fmt.Errorf("completed Runtime operation is missing its environment result")
-		}
-		result, err := tx.ExecContext(ctx, completeEnvironmentSQL,
-			operation.Inspection.RuntimeRevision, operation.Inspection.LifecycleState,
-			operation.Inspection.Generation, operation.Inspection.SpecDigest,
-			operation.UpdatedAt, operation.AgentID, operation.RequestID,
-		)
-		return requireSingleEnvironmentUpdate(result, err, "complete")
+		return completeEnvironmentResult(ctx, tx, operation)
 	case deployment.OperationUnknown:
 		result, err := tx.ExecContext(ctx, markEnvironmentUnknownSQL,
 			operation.RuntimeRevision, operation.Generation, operation.SpecDigest,
@@ -344,10 +336,10 @@ func completeEnvironment(ctx context.Context, tx *sql.Tx, operation deployment.O
 		return requireSingleEnvironmentUpdate(result, err, "mark unknown")
 	case deployment.OperationFailed:
 		if operation.SourceState == deployment.LifecycleUninitialized {
-			result, err := tx.ExecContext(ctx, deleteFailedInitializeEnvironmentSQL,
-				operation.AgentID, operation.RequestID,
-			)
-			return requireSingleEnvironmentUpdate(result, err, "roll back initialization")
+			if operation.Inspection == nil || operation.Inspection.LifecycleState != deployment.LifecycleFailed {
+				return fmt.Errorf("failed Initialize must retain its Runtime environment")
+			}
+			return completeEnvironmentResult(ctx, tx, operation)
 		}
 		result, err := tx.ExecContext(ctx, restoreEnvironmentSQL,
 			operation.SourceRevision, operation.SourceState, operation.SourceGeneration,
@@ -357,6 +349,18 @@ func completeEnvironment(ctx context.Context, tx *sql.Tx, operation deployment.O
 	default:
 		return fmt.Errorf("cannot complete Runtime environment with operation state %q", operation.State)
 	}
+}
+
+func completeEnvironmentResult(ctx context.Context, tx *sql.Tx, operation deployment.Operation) error {
+	if operation.Inspection == nil {
+		return fmt.Errorf("terminal Runtime operation is missing its environment result")
+	}
+	result, err := tx.ExecContext(ctx, completeEnvironmentSQL,
+		operation.Inspection.RuntimeRevision, operation.Inspection.LifecycleState,
+		operation.Inspection.Generation, operation.Inspection.SpecDigest,
+		operation.UpdatedAt, operation.AgentID, operation.RequestID,
+	)
+	return requireSingleEnvironmentUpdate(result, err, "complete")
 }
 
 func requireSingleEnvironmentUpdate(result sql.Result, err error, action string) error {
@@ -563,6 +567,7 @@ func scanOperation(row scanner) (deployment.Operation, error) {
 		&operation.SourceSpecDigest, &operation.Generation, &operation.SpecDigest,
 		&operation.Attempt, &operation.State, &operation.Effect, &inspection,
 		&operation.ErrorCode, &operation.ErrorDetail, &operation.CreatedAt, &operation.UpdatedAt,
+		&operation.ImageReference, &operation.ImageID,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -624,6 +629,7 @@ func operationArguments(operation deployment.Operation) []any {
 		operation.SourceSpecDigest, operation.Generation, operation.SpecDigest,
 		operation.Attempt, operation.State, operation.Effect,
 		operation.ErrorCode, operation.ErrorDetail, operation.CreatedAt, operation.UpdatedAt,
+		operation.ImageReference, operation.ImageID,
 	}
 }
 
@@ -632,8 +638,8 @@ INSERT INTO runtime_controller.operations (
     request_id, request_digest, kind, agent_id, runtime_revision, expected_revision,
     source_state, source_revision, source_generation, source_spec_digest,
     target_generation, target_spec_digest, attempt, state, effect,
-    error_code, error_detail, created_at, updated_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`
+    error_code, error_detail, created_at, updated_at, image_reference, image_id
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)`
 
 const claimOperationAttemptSQL = `
 UPDATE runtime_controller.operations
@@ -650,7 +656,7 @@ WHERE request_id = $7 AND attempt = $8 AND state IN ('running', 'unknown')`
 const operationColumns = `request_id, request_digest, kind, agent_id, runtime_revision,
 expected_revision, source_state, source_revision, source_generation, source_spec_digest,
 target_generation, target_spec_digest, attempt, state, effect, inspection,
-error_code, error_detail, created_at, updated_at`
+error_code, error_detail, created_at, updated_at, image_reference, image_id`
 
 const selectOperationSQL = `SELECT ` + operationColumns + `
 FROM runtime_controller.operations WHERE request_id = $1`
@@ -693,10 +699,6 @@ UPDATE runtime_controller.runtime_environments
 SET runtime_revision = $1, lifecycle_state = 'unknown', generation = $2,
     spec_digest = $3, updated_at = $4
 WHERE agent_id = $5 AND operation_id = $6`
-
-const deleteFailedInitializeEnvironmentSQL = `
-DELETE FROM runtime_controller.runtime_environments
-WHERE agent_id = $1 AND operation_id = $2`
 
 const restoreEnvironmentSQL = `
 UPDATE runtime_controller.runtime_environments

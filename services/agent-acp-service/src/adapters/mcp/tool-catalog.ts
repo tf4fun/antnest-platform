@@ -1,7 +1,7 @@
 import { requireNoClientMcpServers, runtimeToolCatalog } from "../../domain/mcp.js";
+import { parseFileObservation } from "./file-observation.js";
 import type { RuntimeInformationPort } from "../../ports/runtime-information.js";
 import { parseRuntimeInformation, RUNTIME_INFORMATION_URI } from "./runtime-information.js";
-import { context, propagation } from "@opentelemetry/api";
 import type {
   ContentBlock,
   JsonObject,
@@ -23,7 +23,9 @@ export type McpConnectInput = {
 };
 
 export type McpRemoteTool = {
+  annotations?: ToolDefinition["annotations"];
   name: string;
+  title?: string;
   description?: string;
   inputSchema?: JsonObject;
 };
@@ -34,7 +36,13 @@ export interface McpConnection {
   callTool(
     input: { name: string; arguments: { [key: string]: unknown } },
     signal: AbortSignal,
-  ): Promise<{ content: ContentBlock[]; isError: boolean; structuredContent?: unknown }>;
+    onProgress?: ToolCallInput["onProgress"],
+  ): Promise<{
+    content: ContentBlock[];
+    isError: boolean;
+    structuredContent?: unknown;
+    meta?: unknown;
+  }>;
   close(): Promise<void>;
 }
 
@@ -114,6 +122,8 @@ export class McpToolCatalog implements ToolCatalogPort, RuntimeInformationPort {
           source: "runtime",
           sourceId: "runtime",
           name: tool.name,
+          ...(tool.annotations === undefined ? {} : { annotations: tool.annotations }),
+          ...(tool.title === undefined ? {} : { title: tool.title }),
           description: tool.description ?? "",
           ...(tool.inputSchema === undefined ? {} : { inputSchema: tool.inputSchema }),
         })),
@@ -154,17 +164,21 @@ export class McpToolCatalog implements ToolCatalogPort, RuntimeInformationPort {
         result = await connection.callTool(
           { name: input.tool.name, arguments: input.arguments },
           input.signal,
+          input.onProgress,
         );
       } catch (error) {
         throw new McpToolCallError("MCP Tool outcome is unknown", "unknown", { cause: error });
       }
+      const toolEffectState = receivedEffectState(result, source);
+      const file = parseFileObservation(input.tool, { ...result, toolEffectState });
       return {
         content: result.content,
+        ...(file === undefined ? {} : { file }),
         isError: result.isError,
         ...(result.structuredContent === undefined
           ? {}
           : { structuredContent: result.structuredContent }),
-        toolEffectState: receivedEffectState(result, source),
+        toolEffectState,
       };
     } finally {
       try {
@@ -233,11 +247,5 @@ function isJsonObject(value: unknown): value is Record<string, unknown> {
 }
 
 function runtimeHeaders(executionId: string): Record<string, string> {
-  return tracedHeaders({ "x-antnest-expected-execution-id": executionId });
-}
-
-function tracedHeaders(headers: Record<string, string>): Record<string, string> {
-  const traced = { ...headers };
-  propagation.inject(context.active(), traced);
-  return traced;
+  return { "x-antnest-expected-execution-id": executionId };
 }

@@ -18,6 +18,7 @@ import (
 	"soft/antnest-platform/services/agent-controller/internal/credentials"
 	"soft/antnest-platform/services/agent-controller/internal/egressclient"
 	"soft/antnest-platform/services/agent-controller/internal/identityclient"
+	"soft/antnest-platform/services/agent-controller/internal/orchestration"
 	"soft/antnest-platform/services/agent-controller/internal/repository/postgres"
 	"soft/antnest-platform/services/agent-controller/internal/runtimeclient"
 	"soft/antnest-platform/services/agent-controller/internal/server"
@@ -158,30 +159,6 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 	if err != nil {
 		return classifyFailure("service_composition", err)
 	}
-	observedStore, err := telemetry.ObserveCatalogStore(repository, logger)
-	if err != nil {
-		return classifyFailure("service_composition", err)
-	}
-	observedLifecycleStore, err := telemetry.ObserveLifecycleStore(repository, logger)
-	if err != nil {
-		return classifyFailure("service_composition", err)
-	}
-	observedRecoveryStore, err := telemetry.ObserveLifecycleRecoveryStore(repository, logger)
-	if err != nil {
-		return classifyFailure("service_composition", err)
-	}
-	observedRunStore, err := telemetry.ObserveRunStore(repository, logger)
-	if err != nil {
-		return classifyFailure("service_composition", err)
-	}
-	observedAgentQueryStore, err := telemetry.ObserveAgentQueryStore(repository, logger)
-	if err != nil {
-		return classifyFailure("service_composition", err)
-	}
-	observedAgentEventStore, err := telemetry.ObserveAgentEventStore(repository, logger)
-	if err != nil {
-		return classifyFailure("service_composition", err)
-	}
 	egress, err := egressclient.New(cfg.RuntimeEgressURL, cfg.DependencyTimeout, nil)
 	if err != nil {
 		return classifyFailure("service_composition", err)
@@ -200,50 +177,35 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 	if err != nil {
 		return classifyFailure("service_composition", err)
 	}
-	catalog := application.NewCatalogService(observedStore, secretBox, runtime, systemClock{})
+	catalog := application.NewCatalogService(repository, secretBox, systemClock{})
 	lifecycle := application.NewLifecycleServiceWithDrainTimeout(
-		observedStore, observedLifecycleStore, egress, runtime, systemClock{}, cfg.DrainTimeout,
+		repository, repository, egress, runtime, systemClock{}, cfg.DrainTimeout,
 		application.WithIdentityDirectory(identity),
 	)
-	observedRevocations, err := telemetry.ObserveIdentityRevocationStore(repository, logger)
-	if err != nil {
-		return classifyFailure("service_composition", err)
-	}
-	identityWorker, err := application.NewIdentityRevocationWorker(identity, observedRevocations, lifecycle, cfg.IdentityRevocationPollInterval, logger)
-	if err != nil {
-		return classifyFailure("service_composition", err)
-	}
-	recoveryInstrumentation, err := telemetry.ObserveLifecycleRecoveryAttempt(logger)
-	if err != nil {
-		return classifyFailure("service_composition", err)
-	}
-	hostname, err := os.Hostname()
-	if err != nil {
-		return classifyFailure("service_composition", fmt.Errorf("resolve recovery worker hostname: %w", err))
-	}
-	recoveryWorkerID, err := lifecycleRecoveryWorkerID(hostname, os.Getpid())
-	if err != nil {
-		return classifyFailure("service_composition", err)
-	}
-	recoveryWorker, err := application.NewLifecycleRecoveryWorker(
-		observedRecoveryStore, lifecycle, recoveryInstrumentation,
-		application.LifecycleRecoveryWorkerConfig{
-			WorkerID: recoveryWorkerID, PollInterval: cfg.RecoveryPollInterval,
-			AttemptTimeout: cfg.RecoveryAttemptTimeout,
-			LeaseDuration:  cfg.RecoveryLeaseDuration, RetryMax: cfg.RecoveryRetryMax,
-		},
-	)
-	if err != nil {
-		return classifyFailure("service_composition", err)
-	}
 	runs := application.NewRunService(
-		observedRunStore, secretBox, systemClock{}, cfg.RunAdmissionTTL,
+		repository, secretBox, systemClock{}, cfg.RunAdmissionTTL,
 		application.WithRunIdentityDirectory(identity),
 	)
-	queries := application.NewAgentQueryService(observedAgentQueryStore)
-	events := application.NewEventService(observedAgentEventStore, eventNotifier, observedAgentQueryStore)
+	queries := application.NewAgentQueryService(repository, application.WithWorkspaceStateNotifier(eventNotifier))
+	events := application.NewEventService(repository, eventNotifier, repository)
+	workflowClient, err := orchestration.Open(ctx, cfg.TemporalAddress, logger)
+	if err != nil {
+		return classifyFailure("workflow_startup", err)
+	}
+	defer workflowClient.Close()
+	workflowWorker := orchestration.NewWorker(workflowClient, lifecycle, cfg.ShutdownTimeout)
+	if err := workflowWorker.Start(); err != nil {
+		return classifyFailure("workflow_worker_startup", err)
+	}
+	defer workflowWorker.Stop()
+	commands := orchestration.NewService(lifecycle, workflowClient)
+	identityWorker, err := application.NewIdentityRevocationWorker(identity, repository, commands, cfg.IdentityRevocationPollInterval, logger)
+	if err != nil {
+		return classifyFailure("service_composition", err)
+	}
 	handler, err := server.NewHandler(
-		catalog, lifecycle, runs, queries, events, repository.Ping,
+		catalog, commands, runs, queries, events,
+		application.NewNetworkPolicyService(repository, egress), repository.Ping,
 	)
 	if err != nil {
 		return classifyFailure("service_composition", err)
@@ -261,9 +223,6 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 	logger.Info("Agent Controller is ready", "listen_address", cfg.ListenAddress)
 	serverErrors := make(chan error, 1)
 	go func() { serverErrors <- httpServer.Serve(listener) }()
-	recoveryCtx, stopRecovery := context.WithCancel(ctx)
-	recoveryErrors := make(chan error, 1)
-	go func() { recoveryErrors <- recoveryWorker.Run(recoveryCtx) }()
 	observationCtx, stopObservation := context.WithCancel(ctx)
 	observationStopped := make(chan struct{})
 	go func() {
@@ -275,30 +234,19 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 		defer close(identityStopped)
 		identityWorker.Run(observationCtx)
 	}()
-	recoveryStopped := false
 	select {
 	case <-ctx.Done():
 	case serveErr := <-serverErrors:
 		if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
 			resultErr = classifyFailure("http_serve", serveErr)
 		}
-	case recoveryErr := <-recoveryErrors:
-		recoveryStopped = true
-		if recoveryErr != nil {
-			resultErr = classifyFailure("lifecycle_recovery", recoveryErr)
-		} else if ctx.Err() == nil {
-			resultErr = classifyFailure(
-				"lifecycle_recovery", errors.New("lifecycle recovery worker stopped unexpectedly"),
-			)
-		}
 	}
-	stopRecovery()
 	stopObservation()
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer cancel()
 	resultErr = errors.Join(
 		resultErr,
-		shutdownHTTPAndRecovery(shutdownCtx, httpServer, recoveryErrors, recoveryStopped),
+		shutdownHTTP(shutdownCtx, httpServer),
 		waitForRuntimeObservationWorker(shutdownCtx, observationStopped),
 		waitForIdentityWorker(shutdownCtx, identityStopped),
 	)
@@ -323,60 +271,13 @@ func waitForRuntimeObservationWorker(ctx context.Context, stopped <-chan struct{
 	}
 }
 
-func shutdownHTTPAndRecovery(
-	ctx context.Context,
-	httpServer *http.Server,
-	recoveryErrors <-chan error,
-	recoveryStopped bool,
-) error {
-	httpStopped := make(chan error, 1)
-	go func() { httpStopped <- httpServer.Shutdown(ctx) }()
-	waitingHTTP := true
-	waitingRecovery := !recoveryStopped
-	var result error
-	for waitingHTTP || waitingRecovery {
-		select {
-		case err := <-httpStopped:
-			waitingHTTP = false
-			if err != nil {
-				result = errors.Join(
-					result, classifyFailure("http_shutdown", err),
-					classifyFailure("http_close", httpServer.Close()),
-				)
-			}
-		case err := <-recoveryErrors:
-			waitingRecovery = false
-			if err != nil && !errors.Is(err, context.Canceled) {
-				result = errors.Join(
-					result, classifyFailure("lifecycle_recovery_shutdown", err),
-				)
-			}
-		case <-ctx.Done():
-			if waitingHTTP {
-				result = errors.Join(
-					result, classifyFailure("http_shutdown", ctx.Err()),
-					classifyFailure("http_close", httpServer.Close()),
-				)
-			}
-			if waitingRecovery {
-				result = errors.Join(
-					result, classifyFailure("lifecycle_recovery_shutdown", ctx.Err()),
-				)
-			}
-			return result
-		}
-	}
-	return result
-}
-
-func lifecycleRecoveryWorkerID(hostname string, pid int) (string, error) {
-	hostname = strings.TrimSpace(hostname)
-	if hostname == "" || pid <= 0 {
-		return "", fmt.Errorf("recovery worker identity requires hostname and positive pid")
-	}
-	return fmt.Sprintf("%s:%d", hostname, pid), nil
-}
-
 type systemClock struct{}
 
 func (systemClock) Now() time.Time { return time.Now().UTC() }
+
+func shutdownHTTP(ctx context.Context, server *http.Server) error {
+	if err := server.Shutdown(ctx); err != nil {
+		return errors.Join(classifyFailure("http_shutdown", err), classifyFailure("http_close", server.Close()))
+	}
+	return nil
+}

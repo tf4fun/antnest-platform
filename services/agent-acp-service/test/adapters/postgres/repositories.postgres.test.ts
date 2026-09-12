@@ -74,79 +74,91 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP private PostgreSQL reposit
     );
   });
 
-  it("atomically stores a Run snapshot, hidden environment fact, user message, and baseline", async () => {
-    const sessionId = randomUUID();
-    const revisionId = randomUUID();
-    const runId = randomUUID();
-    await sessions.create({
-      sessionId,
-      binding: {
-        connectionId: "connection-1",
-        agentAccessSubject: "subject-1",
-        principalId: "principal-1",
-        agentId: "agent-1",
-        accessRevision: "access-1",
-      },
-      cwd: "/workspace",
-      mcpRevisionId: revisionId,
-      mcpSources: [],
-    });
-    await pool.query(
-      "UPDATE acp_sessions SET last_execution_revision = 'execution-1' WHERE id = $1",
-      [sessionId],
-    );
-    await runs.createRunIntent({
-      runId,
-      requestId: randomUUID(),
-      sessionId,
-      expectedAccessRevision: "access-1",
-      userMessageId: randomUUID(),
-      prompt: [{ type: "text", text: "hello" }],
-      createdAt: new Date("2026-08-30T00:00:00Z"),
-    });
-
-    await expect(
-      runs.acceptRun({
-        runId,
-        snapshot: snapshot(revisionId),
-        sessionTitle: "hello",
-        environmentFact: {
-          kind: "environment_change",
-          visible: false,
-          content: "environment changed",
-          previousExecutionRevision: "execution-1",
-          currentExecutionRevision: "execution-2",
+  it.each([true, false, undefined])(
+    "atomically stores and recovers a Run snapshot with native input flags=%s",
+    async (enabled) => {
+      const sessionId = randomUUID();
+      const revisionId = randomUUID();
+      const runId = randomUUID();
+      await sessions.create({
+        sessionId,
+        binding: {
+          connectionId: "connection-1",
+          agentAccessSubject: "subject-1",
+          principalId: "principal-1",
+          agentId: "agent-1",
+          accessRevision: "access-1",
         },
-        acceptedAt: new Date("2026-08-30T00:00:01Z"),
-      }),
-    ).resolves.toBe("accepted");
+        cwd: "/workspace",
+        mcpRevisionId: revisionId,
+        mcpSources: [],
+      });
+      await pool.query(
+        "UPDATE acp_sessions SET last_execution_revision = 'execution-1' WHERE id = $1",
+        [sessionId],
+      );
+      await runs.createRunIntent({
+        runId,
+        requestId: randomUUID(),
+        sessionId,
+        expectedAccessRevision: "access-1",
+        userMessageId: randomUUID(),
+        prompt: [{ type: "text", text: "hello" }],
+        createdAt: new Date("2026-08-30T00:00:00Z"),
+      });
 
-    const persistedRun = await pool.query<{ state: string; execution_snapshot: unknown }>(
-      "SELECT state, execution_snapshot FROM runs WHERE id = $1",
-      [runId],
-    );
-    expect(persistedRun.rows[0]).toMatchObject({ state: "running" });
-    expect(persistedRun.rows[0]?.execution_snapshot).toMatchObject({
-      executionRevision: "execution-2",
-    });
-    const messages = await pool.query<{ kind: string; visible: boolean; sequence: string }>(
-      "SELECT kind, visible, sequence FROM session_messages WHERE session_id = $1 ORDER BY sequence",
-      [sessionId],
-    );
-    expect(messages.rows).toEqual([
-      { kind: "environment_change", visible: false, sequence: "1" },
-      { kind: "user_message", visible: true, sequence: "2" },
-    ]);
-    await expect(sessions.get(sessionId)).resolves.toMatchObject({
-      title: "hello",
-      lastExecutionRevision: "execution-2",
-      lastMessageSequence: 2,
-    });
-    await expect(sessions.getCurrentRunState(sessionId)).resolves.toEqual({
-      kind: "state",
-      state: "running",
-    });
-  });
+      const acceptedSnapshot = snapshot(revisionId);
+      if (enabled !== undefined) {
+        acceptedSnapshot.executionSpec.model.supportsAudio = enabled;
+        acceptedSnapshot.executionSpec.model.supportsPdf = enabled;
+      }
+      await expect(
+        runs.acceptRun({
+          runId,
+          snapshot: acceptedSnapshot,
+          sessionTitle: "hello",
+          environmentFact: {
+            kind: "environment_change",
+            visible: false,
+            content: "environment changed",
+            previousExecutionRevision: "execution-1",
+            currentExecutionRevision: "execution-2",
+          },
+          acceptedAt: new Date("2026-08-30T00:00:01Z"),
+        }),
+      ).resolves.toBe("accepted");
+
+      const persistedRun = await pool.query<{ state: string; execution_snapshot: unknown }>(
+        "SELECT state, execution_snapshot FROM runs WHERE id = $1",
+        [runId],
+      );
+      expect(persistedRun.rows[0]).toMatchObject({ state: "running" });
+      expect(persistedRun.rows[0]?.execution_snapshot).toMatchObject({
+        executionRevision: "execution-2",
+      });
+      const recovered = (await executions.listRecoveryWork()).find((work) => work.id === runId);
+      expect(recovered).toEqual(
+        expect.objectContaining({ kind: "running", snapshot: acceptedSnapshot }),
+      );
+      const messages = await pool.query<{ kind: string; visible: boolean; sequence: string }>(
+        "SELECT kind, visible, sequence FROM session_messages WHERE session_id = $1 ORDER BY sequence",
+        [sessionId],
+      );
+      expect(messages.rows).toEqual([
+        { kind: "environment_change", visible: false, sequence: "1" },
+        { kind: "user_message", visible: true, sequence: "2" },
+      ]);
+      await expect(sessions.get(sessionId)).resolves.toMatchObject({
+        title: "hello",
+        lastExecutionRevision: "execution-2",
+        lastMessageSequence: 2,
+      });
+      await expect(sessions.getCurrentRunState(sessionId)).resolves.toEqual({
+        kind: "state",
+        state: "running",
+      });
+    },
+  );
 
   it("forks a settled Session context without copying Run ownership", async () => {
     const sourceSessionId = randomUUID();
@@ -304,9 +316,13 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP private PostgreSQL reposit
       status: "completed",
       content: [{ type: "text", text: "data" }],
       resultSummary: [{ type: "text", text: "data" }],
+      rawOutput: { "nul\0key": "\0", lone: "\ud800" },
       toolEffectState: "unknown",
       createdAt: new Date("2026-08-30T01:00:03Z"),
     });
+    const completedReplay = (await sessions.replay(sessionId)).at(-1);
+    expect(completedReplay).toMatchObject({ rawOutput: { "nul\0key": "\0", lone: "\ud800" } });
+    expect(completedReplay).not.toHaveProperty("rawOutputJson");
     await events.startToolAttempt({
       id: randomUUID(),
       runId,
@@ -320,6 +336,11 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP private PostgreSQL reposit
       },
       arguments: { path: "result.txt", text: "data" },
       requestDigest: "b".repeat(64),
+      presentation: {
+        title: "Write generated report",
+        toolKind: "edit",
+        locations: [{ path: "/workspace/result.txt" }],
+      },
       createdAt: new Date("2026-08-30T01:00:03Z"),
     });
     await expect(
@@ -328,6 +349,13 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP private PostgreSQL reposit
       toolEffectState: "unknown",
       unknownEffectSource: "unclassified",
     });
+    const replayed = (await sessions.replay(sessionId)).filter(
+      (event) => event.kind === "tool_call" && event.toolCallId === "call-2",
+    );
+    expect(replayed[0]).toMatchObject({ title: "Write generated report", toolKind: "edit" });
+    expect(replayed.at(-1)).toMatchObject({ initial: false, status: "failed" });
+    expect(replayed.at(-1)).not.toHaveProperty("title");
+    expect(replayed.at(-1)).not.toHaveProperty("rawOutput");
     await events.appendAgentMessage({
       id: randomUUID(),
       runId,

@@ -14,6 +14,38 @@ function payload(phase, results = []) {
 }
 
 for (const version of [1, 2]) {
+  test(`v${version}: in-flight effect cannot complete or replay before ACP restart`, () => {
+    const phase = `v${version}-tool-inflight`;
+    const result = decide(payload(phase));
+    assert.equal(result.call.name, "bash");
+    assert(
+      result.call.arguments.command.includes(
+        `>> /workspace/acp-unknown-v${version}.log`,
+      ),
+    );
+    assert(
+      result.call.arguments.command.includes(`acp-unknown-v${version}.pid`),
+    );
+    assert(result.call.arguments.command.includes("while"));
+    assert.throws(
+      () => decide(payload(phase, [phase])),
+      /in-flight Tool completed before fault/,
+    );
+    const recovered = `v${version}-recovered-effect`;
+    assert.equal(
+      decide(payload(recovered)).call.arguments.path.path,
+      `acp-unknown-v${version}.log`,
+    );
+    assert.equal(
+      decide(payload(recovered, [JSON.stringify({ content: `${phase}\n` })]))
+        .text,
+      `${recovered} verified`,
+    );
+    for (const invalid of ["missing", `${phase}\n${phase}\n`, "tool error"])
+      assert.throws(() =>
+        decide(payload(recovered, [JSON.stringify({ content: invalid })])),
+      );
+  });
   test(`v${version}: baseline appends once; earlier Run results do not skip tools`, () => {
     const phase = `v${version}-baseline`;
     const first = decide(payload(phase));

@@ -70,7 +70,7 @@ function overview(input: {
     template_id: `template-${index}`,
     name: `Template ${index}`,
     revision: 1,
-    model_profile_revision_id: "model-revision-0",
+    model_profile_id: "model-0",
     system_prompt: "",
     max_model_requests: 32,
     context_policy_version: "v1",

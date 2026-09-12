@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::pin::Pin;
-#[cfg(test)]
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::task::{Context, Poll};
 use std::time::Instant;
 
@@ -35,7 +35,9 @@ use serde::Serialize;
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
 use tracing::Instrument as _;
+use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 
+use crate::diagnostics;
 use crate::execution;
 use crate::execution_actor::ExecutionActor;
 use crate::executor_protocol::MAX_EXECUTOR_MESSAGE_BYTES;
@@ -158,9 +160,9 @@ impl RuntimeHttp {
             self.metrics.clone(),
             self.managed.clone(),
         );
-        let service: StreamableHttpService<RuntimeToolServer, LocalSessionManager> =
+        let service: StreamableHttpService<ObservedRuntime, LocalSessionManager> =
             StreamableHttpService::new(
-                move || Ok(tools.clone()),
+                move || Ok(ObservedRuntime(tools.clone())),
                 Default::default(),
                 StreamableHttpServerConfig::default()
                     .disable_allowed_hosts()
@@ -210,7 +212,7 @@ async fn status_response(
 
 async fn trace_http_request(
     State(state): State<HttpState>,
-    request: Request,
+    mut request: Request,
     next: Next,
 ) -> Response {
     let status = &state.status;
@@ -219,11 +221,15 @@ async fn trace_http_request(
     let path = route_label(request.uri().path());
     let remote = crate::telemetry::TraceContext::from_headers(request.headers());
     let span = tracing::info_span!(
+        parent: None,
         "runtime.http",
+        otel.name = %format!("HTTP {} {path}", method_label(&method)),
         "service.name" = crate::telemetry::SERVICE_NAME,
         "antnest.agent.id" = status.agent_id,
         "antnest.runtime.generation" = %status.generation,
-        "http.request.method" = %method,
+        "antnest.runtime.execution.id" = status.execution_id,
+        "http.request.method" = method_label(&method),
+        "http.route" = tracing::field::Empty,
         "url.path" = path,
         "http.response.status_code" = tracing::field::Empty,
         "http.transport.outcome" = tracing::field::Empty,
@@ -235,6 +241,16 @@ async fn trace_http_request(
     );
     crate::telemetry::set_remote_parent(&span, remote.as_ref());
     crate::telemetry::record_span_identity(&span);
+    if path != "unmatched" {
+        span.record("http.route", path);
+    }
+    let observation = HttpObservation::new(span.clone());
+    request.extensions_mut().insert(observation.clone());
+    let body = std::mem::replace(request.body_mut(), Body::empty());
+    *request.body_mut() = Body::new(RequestBody {
+        inner: Box::pin(body),
+        observation: observation.clone(),
+    });
     let started = Instant::now();
     let fence_error = if path == MCP_PATH {
         execution_fence_error(request.headers(), status)
@@ -246,7 +262,15 @@ async fn trace_http_request(
         None if path == MCP_PATH && !state.managed.healthy() => (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"code":"runtime_unavailable", "message":"A required managed MCP service is unavailable"}))).into_response(),
         None => next.run(request).instrument(span.clone()).await,
     };
-    let completion = HttpCompletion::new(
+    if fence_error.is_some() {
+        diagnostics::error_summary(
+            &span,
+            "http.admission",
+            "runtime_execution_mismatch",
+            "Expected Runtime execution is missing or no longer current",
+        );
+    }
+    let mut completion = HttpCompletion::new(
         span,
         identity,
         method,
@@ -255,8 +279,72 @@ async fn trace_http_request(
         state.metrics,
         started,
     );
+    completion.observation = Some(observation);
     let (parts, body) = response.into_parts();
     Response::from_parts(parts, Body::new(ObservedBody::new(body, completion)))
+}
+
+fn method_label(method: &Method) -> &'static str {
+    match *method {
+        Method::GET => "GET",
+        Method::POST => "POST",
+        Method::PUT => "PUT",
+        Method::DELETE => "DELETE",
+        Method::PATCH => "PATCH",
+        Method::HEAD => "HEAD",
+        Method::OPTIONS => "OPTIONS",
+        Method::CONNECT => "CONNECT",
+        Method::TRACE => "TRACE",
+        _ => "_OTHER",
+    }
+}
+
+#[derive(Clone)]
+struct HttpObservation {
+    span: tracing::Span,
+    request_bytes: Arc<AtomicU64>,
+    protocol_failed: Arc<AtomicBool>,
+}
+impl HttpObservation {
+    fn new(span: tracing::Span) -> Self {
+        Self {
+            span,
+            request_bytes: Arc::new(AtomicU64::new(0)),
+            protocol_failed: Arc::new(AtomicBool::new(false)),
+        }
+    }
+}
+
+struct RequestBody {
+    inner: Pin<Box<Body>>,
+    observation: HttpObservation,
+}
+
+impl HttpBody for RequestBody {
+    type Data = Bytes;
+    type Error = axum::Error;
+
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Bytes>, axum::Error>>> {
+        let polled = self.inner.as_mut().poll_frame(cx);
+        if let Poll::Ready(Some(Ok(frame))) = &polled
+            && let Some(data) = frame.data_ref()
+        {
+            self.observation
+                .request_bytes
+                .fetch_add(data.len() as u64, Ordering::Relaxed);
+        }
+        polled
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.inner.is_end_stream()
+    }
+    fn size_hint(&self) -> SizeHint {
+        self.inner.size_hint()
+    }
 }
 
 pub(crate) fn execution_fence_error(
@@ -302,6 +390,8 @@ struct HttpCompletion {
     status: StatusCode,
     metrics: RuntimeMetrics,
     started: Instant,
+    observation: Option<HttpObservation>,
+    response_bytes: u64,
 }
 
 impl HttpCompletion {
@@ -322,6 +412,8 @@ impl HttpCompletion {
             status,
             metrics,
             started,
+            observation: None,
+            response_bytes: 0,
         }
     }
 
@@ -329,11 +421,11 @@ impl HttpCompletion {
         let code = self.status.as_u16();
         let (outcome, error_type) = match termination {
             BodyTermination::BodyError => ("error", "http_body_error"),
-            BodyTermination::ClientDisconnected => ("error", "client_disconnected"),
+            BodyTermination::ClientDisconnected => ("canceled", "client_disconnected"),
             BodyTermination::EndOfStream => status_outcome(self.status),
         };
         self.metrics.http(
-            self.method.as_str(),
+            method_label(&self.method),
             self.path,
             outcome,
             error_type,
@@ -341,12 +433,45 @@ impl HttpCompletion {
         );
         self.span.record("http.response.status_code", code);
         self.span.record("http.transport.outcome", outcome);
+        let protocol_failed = self
+            .observation
+            .as_ref()
+            .is_some_and(|observation| observation.protocol_failed.load(Ordering::Relaxed));
         self.span.record(
             "otel.status_code",
-            if outcome == "success" { "OK" } else { "ERROR" },
+            if outcome == "error" || protocol_failed {
+                "ERROR"
+            } else {
+                "UNSET"
+            },
         );
+        self.span.set_attribute(
+            "http.response.body.size",
+            i64::try_from(self.response_bytes).unwrap_or(i64::MAX),
+        );
+        if let Some(observation) = &self.observation {
+            self.span.set_attribute(
+                "http.request.body.size",
+                i64::try_from(observation.request_bytes.load(Ordering::Relaxed))
+                    .unwrap_or(i64::MAX),
+            );
+        }
         if !error_type.is_empty() {
             self.span.record("error.type", error_type);
+            if !protocol_failed {
+                diagnostics::error_summary(
+                    &self.span,
+                    "http",
+                    error_type,
+                    match termination {
+                        BodyTermination::BodyError => "HTTP response body failed while streaming",
+                        BodyTermination::ClientDisconnected => "HTTP response closed before EOF",
+                        BodyTermination::EndOfStream => {
+                            "HTTP request returned a non-success status"
+                        }
+                    },
+                );
+            }
         }
         let (trace_id, span_id) = crate::telemetry::span_identity(&self.span);
         self.span.in_scope(|| {
@@ -357,7 +482,7 @@ impl HttpCompletion {
                     "antnest.runtime.generation" = %self.identity.generation(),
                     trace_id = %trace_id,
                     span_id = %span_id,
-                    "http.request.method" = %self.method,
+                    "http.request.method" = method_label(&self.method),
                     "url.path" = self.path,
                     "http.response.status_code" = code,
                     "http.transport.outcome" = outcome,
@@ -371,7 +496,7 @@ impl HttpCompletion {
                     "antnest.runtime.generation" = %self.identity.generation(),
                     trace_id = %trace_id,
                     span_id = %span_id,
-                    "http.request.method" = %self.method,
+                    "http.request.method" = method_label(&self.method),
                     "url.path" = self.path,
                     "http.response.status_code" = code,
                     "http.transport.outcome" = outcome,
@@ -387,7 +512,7 @@ fn status_outcome(status: StatusCode) -> (&'static str, &'static str) {
     if status.is_success() {
         ("success", "")
     } else if status.is_client_error() {
-        ("error", "http_client_error")
+        ("rejected", "http_client_error")
     } else if status.is_server_error() {
         ("error", "http_server_error")
     } else {
@@ -454,6 +579,11 @@ impl HttpBody for ObservedBody {
         context: &mut Context<'_>,
     ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
         let polled = self.inner.as_mut().poll_frame(context);
+        if let (Some(completion), Poll::Ready(Some(Ok(frame)))) = (&mut self.completion, &polled)
+            && let Some(data) = frame.data_ref()
+        {
+            completion.response_bytes = completion.response_bytes.saturating_add(data.len() as u64);
+        }
         match &polled {
             Poll::Ready(None) => self.finish(BodyTermination::EndOfStream),
             Poll::Ready(Some(Err(_))) => self.finish(BodyTermination::BodyError),
@@ -545,12 +675,13 @@ impl ToolBackend {
         &self,
         input: BashInput,
         cancel: CancellationToken,
+        progress: crate::progress::ProgressSink,
     ) -> Result<BashResult, ToolError> {
         let request = execution::BashRequest::try_from(input).map_err(ToolError::invalid_params)?;
         let result = match self {
-            Self::Process(actor) => actor.bash(request, cancel).await,
+            Self::Process(actor) => actor.bash_with_progress(request, cancel, progress).await,
             #[cfg(test)]
-            Self::InProcess(engine) => engine.bash(request, cancel).await,
+            Self::InProcess(engine) => engine.bash_with_progress(request, cancel, progress).await,
         };
         result.map(BashResult::from)
     }
@@ -559,21 +690,36 @@ impl ToolBackend {
         &self,
         input: ReadFileInput,
         cancel: CancellationToken,
-    ) -> Result<ReadFileResult, ToolError> {
+    ) -> Result<
+        (
+            ReadFileResult,
+            Option<crate::file_observation::FileObservation>,
+        ),
+        ToolError,
+    > {
         let request = execution::ReadRequest::try_from(input).map_err(ToolError::invalid_params)?;
         let result = match self {
             Self::Process(actor) => actor.read(request, cancel).await,
             #[cfg(test)]
             Self::InProcess(engine) => engine.read(request, cancel).await,
         };
-        result.map(ReadFileResult::from)
+        result.map(|mut result| {
+            let file = result.file.take();
+            (ReadFileResult::from(result), file)
+        })
     }
 
     async fn write(
         &self,
         input: WriteFileInput,
         cancel: CancellationToken,
-    ) -> Result<WriteFileResult, ToolError> {
+    ) -> Result<
+        (
+            WriteFileResult,
+            Option<crate::file_observation::FileObservation>,
+        ),
+        ToolError,
+    > {
         let request =
             execution::WriteRequest::try_from(input).map_err(ToolError::invalid_params)?;
         let result = match self {
@@ -581,21 +727,33 @@ impl ToolBackend {
             #[cfg(test)]
             Self::InProcess(engine) => engine.write(request, cancel).await,
         };
-        result.map(WriteFileResult::from)
+        result.map(|mut result| {
+            let file = result.file.take();
+            (WriteFileResult::from(result), file)
+        })
     }
 
     async fn edit(
         &self,
         input: EditFileInput,
         cancel: CancellationToken,
-    ) -> Result<EditFileResult, ToolError> {
+    ) -> Result<
+        (
+            EditFileResult,
+            Option<crate::file_observation::FileObservation>,
+        ),
+        ToolError,
+    > {
         let request = execution::EditRequest::try_from(input).map_err(ToolError::invalid_params)?;
         let result = match self {
             Self::Process(actor) => actor.edit(request, cancel).await,
             #[cfg(test)]
             Self::InProcess(engine) => engine.edit(request, cancel).await,
         };
-        result.map(EditFileResult::from)
+        result.map(|mut result| {
+            let file = result.file.take();
+            (EditFileResult::from(result), file)
+        })
     }
 }
 
@@ -620,7 +778,10 @@ impl RuntimeToolServer {
         let span = tool_span("bash", &self.identity);
         async {
             let started = Instant::now();
-            let result = self.tools.bash(input, context.ct).await;
+            let result = crate::mcp_progress::with_progress(&context, |progress| {
+                self.tools.bash(input, context.ct.clone(), progress)
+            })
+            .await;
             tool_result("bash", &self.identity, &self.metrics, started, result)
         }
         .instrument(span)
@@ -647,7 +808,7 @@ impl RuntimeToolServer {
         async {
             let started = Instant::now();
             let result = self.tools.read(input, context.ct).await;
-            tool_result("read", &self.identity, &self.metrics, started, result)
+            file_tool_result("read", &self.identity, &self.metrics, started, result)
         }
         .instrument(span)
         .await
@@ -673,7 +834,7 @@ impl RuntimeToolServer {
         async {
             let started = Instant::now();
             let result = self.tools.write(input, context.ct).await;
-            tool_result("write", &self.identity, &self.metrics, started, result)
+            file_tool_result("write", &self.identity, &self.metrics, started, result)
         }
         .instrument(span)
         .await
@@ -699,7 +860,7 @@ impl RuntimeToolServer {
         async {
             let started = Instant::now();
             let result = self.tools.edit(input, context.ct).await;
-            tool_result("edit", &self.identity, &self.metrics, started, result)
+            file_tool_result("edit", &self.identity, &self.metrics, started, result)
         }
         .instrument(span)
         .await
@@ -720,29 +881,23 @@ impl ServerHandler for RuntimeToolServer {
         request: InitializeRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<InitializeResult, rmcp::ErrorData> {
-        observe_mcp_operation("initialize", &self.identity, &self.metrics, async {
-            context.peer.set_peer_info(request.clone());
-            let mut info = self.get_info();
-            let supported = self.supported_protocol_versions();
-            if supported.contains(&request.protocol_version) {
-                info.protocol_version = request.protocol_version;
-            }
-            Ok(info)
-        })
-        .await
+        context.peer.set_peer_info(request.clone());
+        let mut info = self.get_info();
+        let supported = self.supported_protocol_versions();
+        if supported.contains(&request.protocol_version) {
+            info.protocol_version = request.protocol_version;
+        }
+        Ok(info)
     }
 
     async fn discover(
         &self,
         _context: RequestContext<RoleServer>,
     ) -> Result<DiscoverResult, rmcp::ErrorData> {
-        observe_mcp_operation("discover", &self.identity, &self.metrics, async {
-            Ok(DiscoverResult::from_server_info(
-                self.supported_protocol_versions().into_owned(),
-                self.get_info(),
-            ))
-        })
-        .await
+        Ok(DiscoverResult::from_server_info(
+            self.supported_protocol_versions().into_owned(),
+            self.get_info(),
+        ))
     }
 
     async fn list_tools(
@@ -750,24 +905,21 @@ impl ServerHandler for RuntimeToolServer {
         _request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, rmcp::ErrorData> {
-        observe_mcp_operation("tools/list", &self.identity, &self.metrics, async {
-            let supports_cache_hints = context
-                .protocol_version()
-                .is_some_and(|version| version >= ProtocolVersion::V_2026_07_28);
-            Ok(ListToolsResult {
-                result_type: Some(ResultType::COMPLETE),
-                tools: Self::tool_router()
-                    .list_all()
-                    .into_iter()
-                    .chain(self.managed.tools())
-                    .collect(),
-                meta: None,
-                next_cursor: None,
-                ttl_ms: supports_cache_hints.then_some(0),
-                cache_scope: supports_cache_hints.then_some(CacheScope::Private),
-            })
+        let supports_cache_hints = context
+            .protocol_version()
+            .is_some_and(|version| version >= ProtocolVersion::V_2026_07_28);
+        Ok(ListToolsResult {
+            result_type: Some(ResultType::COMPLETE),
+            tools: Self::tool_router()
+                .list_all()
+                .into_iter()
+                .chain(self.managed.tools())
+                .collect(),
+            meta: None,
+            next_cursor: None,
+            ttl_ms: supports_cache_hints.then_some(0),
+            cache_scope: supports_cache_hints.then_some(CacheScope::Private),
         })
-        .await
     }
 
     async fn list_resources(
@@ -775,23 +927,18 @@ impl ServerHandler for RuntimeToolServer {
         _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> Result<ListResourcesResult, rmcp::ErrorData> {
-        observe_mcp_operation("resources/list", &self.identity, &self.metrics, async {
-            Ok(ListResourcesResult {
-                result_type: Some(ResultType::COMPLETE),
-                resources: vec![
-                    Resource::new(INFORMATION_URI, "runtime-information")
-                        .with_description(
-                            "Current environment, workspace guidance and Skill summaries",
-                        )
-                        .with_mime_type("application/json"),
-                ],
-                meta: None,
-                next_cursor: None,
-                ttl_ms: Some(0),
-                cache_scope: Some(CacheScope::Private),
-            })
+        Ok(ListResourcesResult {
+            result_type: Some(ResultType::COMPLETE),
+            resources: vec![
+                Resource::new(INFORMATION_URI, "runtime-information")
+                    .with_description("Current environment, workspace guidance and Skill summaries")
+                    .with_mime_type("application/json"),
+            ],
+            meta: None,
+            next_cursor: None,
+            ttl_ms: Some(0),
+            cache_scope: Some(CacheScope::Private),
         })
-        .await
     }
 
     async fn read_resource(
@@ -799,42 +946,39 @@ impl ServerHandler for RuntimeToolServer {
         request: ReadResourceRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<ReadResourceResponse, rmcp::ErrorData> {
-        observe_mcp_operation("resources/read", &self.identity, &self.metrics, async {
-            if request.uri != INFORMATION_URI {
-                return Err(rmcp::ErrorData::resource_not_found(
-                    "Unknown Runtime resource",
-                    None,
-                ));
-            }
-            let information = self.tools.information(context.ct).await.map_err(|error| {
-                rmcp::ErrorData::internal_error(
-                    "Runtime information unavailable",
-                    Some(json!({
-                        "error_code": error.code.as_str()
-                    })),
-                )
-            })?;
-            #[derive(Serialize)]
-            struct Snapshot<'a> {
-                execution_id: &'a str,
-                #[serde(flatten)]
-                context: RuntimeContext,
-            }
-            let text = serde_json::to_string(&Snapshot {
-                execution_id: &self.execution_id,
-                context: information,
-            })
-            .map_err(|_| {
-                rmcp::ErrorData::internal_error("Runtime information encoding failed", None)
-            })?;
-            Ok(ReadResourceResult::new(vec![
-                ResourceContents::text(text, INFORMATION_URI).with_mime_type("application/json"),
-            ])
-            .with_ttl_ms(0)
-            .with_cache_scope(CacheScope::Private)
-            .into())
+        if request.uri != INFORMATION_URI {
+            return Err(rmcp::ErrorData::resource_not_found(
+                "Unknown Runtime resource",
+                None,
+            ));
+        }
+        let information = self.tools.information(context.ct).await.map_err(|error| {
+            rmcp::ErrorData::internal_error(
+                "Runtime information unavailable",
+                Some(json!({
+                    "error_code": error.code.as_str()
+                })),
+            )
+        })?;
+        #[derive(Serialize)]
+        struct Snapshot<'a> {
+            execution_id: &'a str,
+            #[serde(flatten)]
+            context: RuntimeContext,
+        }
+        let text = serde_json::to_string(&Snapshot {
+            execution_id: &self.execution_id,
+            context: information,
         })
-        .await
+        .map_err(|_| {
+            rmcp::ErrorData::internal_error("Runtime information encoding failed", None)
+        })?;
+        Ok(ReadResourceResult::new(vec![
+            ResourceContents::text(text, INFORMATION_URI).with_mime_type("application/json"),
+        ])
+        .with_ttl_ms(0)
+        .with_cache_scope(CacheScope::Private)
+        .into())
     }
 
     async fn call_tool(
@@ -842,38 +986,12 @@ impl ServerHandler for RuntimeToolServer {
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, rmcp::ErrorData> {
-        observe_mcp_operation("tools/call", &self.identity, &self.metrics, async {
-            if self.managed.contains(&request.name) {
-                if request.input_responses.is_some() || request.request_state.is_some() {
-                    return Err(rmcp::ErrorData::invalid_params("Managed tool continuations are not supported", None));
-                }
-                let span = tool_span("managed", &self.identity);
-                return async {
-                    let started = Instant::now();
-                    let result = match self.tools.admit_managed() {
-                        Ok(_lease) => self.managed.call(&request.name, request.arguments, context.ct, std::time::Duration::from_secs(120)).await,
-                        Err(error) => Err(error),
-                    };
-                    let value = match result {
-                        Ok(value) => {
-                            let failed = value.is_error == Some(true);
-                            let (outcome, error) = if failed { ("error", "managed_tool_error") } else { ("success", "") };
-                            self.metrics.tool("managed", outcome, error, started.elapsed());
-                            tracing::Span::current().record("mcp.tool.outcome", outcome);
-                            tracing::Span::current().record("otel.status_code", if failed { "ERROR" } else { "OK" });
-                            tracing::Span::current().record("error.type", error);
-                            tracing::info!(mcp.server.tool = %request.name, outcome, error.type = error, "Managed MCP tool completed");
-                            value
-                        },
-                        Err(error) => tool_result::<serde_json::Value>("managed", &self.identity, &self.metrics, started, Err(error)),
-                    };
-                    Ok(value.into())
-                }.instrument(span).await;
-            }
-            let call = ToolCallContext::new(self, request, context);
-            Self::tool_router().call(call).await
-        })
-        .await
+        reject_tool_continuation(&request)?;
+        if self.managed.contains(&request.name) {
+            return self.call_managed_tool(request, context).await;
+        }
+        let call = ToolCallContext::new(self, request, context);
+        Self::tool_router().call(call).await
     }
 
     fn get_info(&self) -> rmcp::model::ServerInfo {
@@ -892,18 +1010,227 @@ impl ServerHandler for RuntimeToolServer {
     }
 }
 
-async fn observe_mcp_operation<T>(
-    operation: &'static str,
+impl RuntimeToolServer {
+    async fn call_managed_tool(
+        &self,
+        request: CallToolRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResponse, rmcp::ErrorData> {
+        let name = request.name.clone();
+        let span = tool_span("managed", &self.identity);
+        async {
+            let started = Instant::now();
+            let result = match self.tools.admit_managed() {
+                Ok(_lease) => {
+                    crate::mcp_progress::with_progress(&context, |progress| {
+                        self.managed.call_with_progress(
+                            &name,
+                            request.arguments,
+                            context.ct.clone(),
+                            std::time::Duration::from_secs(120),
+                            progress,
+                        )
+                    })
+                    .await
+                }
+                Err(error) => Err(error),
+            };
+            Ok(managed_result(
+                &name,
+                &self.identity,
+                &self.metrics,
+                started,
+                result,
+            ))
+        }
+        .instrument(span)
+        .await
+    }
+}
+
+fn reject_tool_continuation(request: &CallToolRequestParams) -> Result<(), rmcp::ErrorData> {
+    if request.input_responses.is_some() || request.request_state.is_some() {
+        return Err(rmcp::ErrorData::invalid_params(
+            "Tool continuations are not supported",
+            None,
+        ));
+    }
+    Ok(())
+}
+
+fn managed_result(
+    name: &str,
     identity: &RuntimeIdentity,
     metrics: &RuntimeMetrics,
-    future: impl std::future::Future<Output = Result<T, rmcp::ErrorData>>,
-) -> Result<T, rmcp::ErrorData> {
+    started: Instant,
+    result: Result<CallToolResult, ToolError>,
+) -> CallToolResponse {
+    let value = match result {
+        Ok(value) => value,
+        Err(error) => {
+            return tool_result::<serde_json::Value>(
+                "managed",
+                identity,
+                metrics,
+                started,
+                Err(error),
+            )
+            .into();
+        }
+    };
+    let (outcome, error) = if value.is_error == Some(true) {
+        ("error", "managed_tool_error")
+    } else {
+        ("success", "")
+    };
+    metrics.tool("managed", outcome, error, started.elapsed());
+    tracing::Span::current().record("mcp.tool.outcome", outcome);
+    tracing::Span::current().record(
+        "otel.status_code",
+        if error.is_empty() { "OK" } else { "ERROR" },
+    );
+    tracing::Span::current().record("error.type", error);
+    tracing::info!(mcp.server.tool = name, outcome, error.type = error, "Managed MCP tool finished");
+    value.into()
+}
+
+#[derive(Clone)]
+struct ObservedRuntime(RuntimeToolServer);
+
+impl ServerHandler for ObservedRuntime {
+    fn get_tool(&self, name: &str) -> Option<rmcp::model::Tool> {
+        self.0.get_tool(name)
+    }
+
+    async fn initialize(
+        &self,
+        request: InitializeRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<InitializeResult, rmcp::ErrorData> {
+        let input = rmcp::model::ClientRequest::InitializeRequest(
+            rmcp::model::InitializeRequest::new(request.clone()),
+        );
+        observe_mcp_operation(&self.0, input, context, |context| {
+            self.0.initialize(request, context)
+        })
+        .await
+    }
+
+    async fn discover(
+        &self,
+        context: RequestContext<RoleServer>,
+    ) -> Result<DiscoverResult, rmcp::ErrorData> {
+        let input = rmcp::model::ClientRequest::DiscoverRequest(Default::default());
+        observe_mcp_operation(&self.0, input, context, |context| self.0.discover(context)).await
+    }
+
+    async fn ping(&self, context: RequestContext<RoleServer>) -> Result<(), rmcp::ErrorData> {
+        let input = rmcp::model::ClientRequest::PingRequest(Default::default());
+        observe_mcp_operation(&self.0, input, context, |context| self.0.ping(context)).await
+    }
+
+    async fn list_tools(
+        &self,
+        request: Option<PaginatedRequestParams>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ListToolsResult, rmcp::ErrorData> {
+        let input = rmcp::model::ClientRequest::ListToolsRequest(rmcp::model::ListToolsRequest {
+            params: request.clone(),
+            ..Default::default()
+        });
+        observe_mcp_operation(&self.0, input, context, |context| {
+            self.0.list_tools(request, context)
+        })
+        .await
+    }
+
+    async fn list_resources(
+        &self,
+        request: Option<PaginatedRequestParams>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ListResourcesResult, rmcp::ErrorData> {
+        let input =
+            rmcp::model::ClientRequest::ListResourcesRequest(rmcp::model::ListResourcesRequest {
+                params: request.clone(),
+                ..Default::default()
+            });
+        observe_mcp_operation(&self.0, input, context, |context| {
+            self.0.list_resources(request, context)
+        })
+        .await
+    }
+
+    async fn read_resource(
+        &self,
+        request: ReadResourceRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ReadResourceResponse, rmcp::ErrorData> {
+        let input = rmcp::model::ClientRequest::ReadResourceRequest(
+            rmcp::model::ReadResourceRequest::new(request.clone()),
+        );
+        observe_mcp_operation(&self.0, input, context, |context| {
+            self.0.read_resource(request, context)
+        })
+        .await
+    }
+
+    async fn call_tool(
+        &self,
+        request: CallToolRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResponse, rmcp::ErrorData> {
+        let input = rmcp::model::ClientRequest::CallToolRequest(rmcp::model::CallToolRequest::new(
+            request.clone(),
+        ));
+        observe_mcp_operation(&self.0, input, context, |context| {
+            self.0.call_tool(request, context)
+        })
+        .await
+    }
+
+    fn get_info(&self) -> rmcp::model::ServerInfo {
+        ServerHandler::get_info(&self.0)
+    }
+
+    fn supported_protocol_versions(&self) -> Cow<'static, [ProtocolVersion]> {
+        ServerHandler::supported_protocol_versions(&self.0)
+    }
+}
+
+async fn observe_mcp_operation<R, F>(
+    server: &RuntimeToolServer,
+    request: rmcp::model::ClientRequest,
+    context: RequestContext<RoleServer>,
+    execute: impl FnOnce(RequestContext<RoleServer>) -> F,
+) -> Result<R, rmcp::ErrorData>
+where
+    R: diagnostics::ProtocolResult,
+    F: std::future::Future<Output = Result<R, rmcp::ErrorData>>,
+{
+    let operation = diagnostics::operation(&request);
+    let tool = diagnostics::primitive_tool(&request);
+    let identity = &server.identity;
+    let metrics = &server.metrics;
+    let http = context
+        .extensions
+        .get::<axum::http::request::Parts>()
+        .and_then(|parts| parts.extensions.get::<HttpObservation>())
+        .cloned();
+    let parent = http.as_ref().map_or_else(
+        || tracing::Span::current().context(),
+        |http| http.span.context(),
+    );
     let span = tracing::info_span!(
+        parent: None,
         "runtime.mcp.operation",
         "service.name" = crate::telemetry::SERVICE_NAME,
         "antnest.agent.id" = identity.agent_id(),
         "antnest.runtime.generation" = %identity.generation(),
         "mcp.operation.name" = operation,
+        "rpc.system" = "jsonrpc",
+        "rpc.service" = "antnest-runtime",
+        "rpc.method" = operation,
+        "antnest.runtime.execution.id" = server.execution_id,
         "mcp.operation.outcome" = tracing::field::Empty,
         "jsonrpc.error_code" = tracing::field::Empty,
         otel.status_code = tracing::field::Empty,
@@ -911,11 +1238,34 @@ async fn observe_mcp_operation<T>(
         trace_id = tracing::field::Empty,
         span_id = tracing::field::Empty,
     );
+    let _ = span.set_parent(parent);
     crate::telemetry::record_span_identity(&span);
+    if let rmcp::model::ClientRequest::CallToolRequest(request) = &request
+        && (tool.is_some() || server.managed.contains(&request.params.name))
+    {
+        span.set_attribute("mcp.tool.name", request.params.name.to_string());
+    }
+    let request_id = context.id.to_string();
+    if request_id.len() <= 128
+        && request_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    {
+        span.set_attribute("antnest.request.id", request_id);
+    }
+    diagnostics::rpc_content(
+        &span,
+        "antnest.request",
+        metrics.capture_rpc_content,
+        &request,
+    );
     let started = Instant::now();
-    let result = future.instrument(span.clone()).await;
+    let result = execute(context).instrument(span.clone()).await;
     let (outcome, error_type, error_code) = match &result {
-        Ok(_) => ("success", "", None),
+        Ok(value) => match diagnostics::protocol_error(tool, value) {
+            Some(code) => ("error", code, None),
+            None => ("success", "", None),
+        },
         Err(error) => (
             "error",
             jsonrpc_error_type(error.code.0),
@@ -923,13 +1273,57 @@ async fn observe_mcp_operation<T>(
         ),
     };
     span.record("mcp.operation.outcome", outcome);
+    span.set_attribute(
+        "antnest.operation.outcome",
+        match error_type {
+            "canceled" => "canceled",
+            "runtime_busy" | "runtime_unavailable" | "invalid_params" | "invalid_path" => {
+                "rejected"
+            }
+            _ => outcome,
+        },
+    );
     span.record(
         "otel.status_code",
-        if result.is_ok() { "OK" } else { "ERROR" },
+        if outcome == "success" { "OK" } else { "ERROR" },
     );
     span.record("error.type", error_type);
     if let Some(code) = error_code {
         span.record("jsonrpc.error_code", i64::from(code));
+        span.add_event(
+            "antnest.error",
+            vec![
+                opentelemetry::KeyValue::new("antnest.error.stage", "mcp.dispatch"),
+                opentelemetry::KeyValue::new("antnest.error.type", error_type),
+                opentelemetry::KeyValue::new("antnest.error.code", code.to_string()),
+                opentelemetry::KeyValue::new("antnest.error.message", jsonrpc_safe_message(code)),
+            ],
+        );
+    } else if outcome == "error" {
+        diagnostics::error_summary(
+            &span,
+            "mcp.dispatch",
+            error_type,
+            "Tool returned an unsuccessful protocol result",
+        );
+    }
+    if let Some(http) = &http {
+        http.span.set_attribute("rpc.system", "jsonrpc");
+        http.span.set_attribute("rpc.method", operation);
+        http.span.set_attribute("antnest.protocol.outcome", outcome);
+        if outcome == "error" {
+            http.protocol_failed.store(true, Ordering::Relaxed);
+            http.span.set_attribute("error.type", error_type);
+        }
+    }
+    match &result {
+        Ok(value) => value.capture(&span, metrics.capture_rpc_content),
+        Err(error) => diagnostics::rpc_content(
+            &span,
+            "antnest.response",
+            metrics.capture_rpc_content,
+            error,
+        ),
     }
     metrics.mcp(operation, outcome, error_type, started.elapsed());
     let (trace_id, span_id) = crate::telemetry::span_identity(&span);
@@ -948,6 +1342,21 @@ async fn observe_mcp_operation<T>(
         );
     });
     result
+}
+
+fn jsonrpc_safe_message(code: i32) -> &'static str {
+    match code {
+        -32_022 => "MCP protocol version is unsupported",
+        -32_021 => "Required client capability is missing",
+        -32_020 => "MCP header and request metadata disagree",
+        -32_002 => "Runtime resource was not found",
+        -32_600 => "MCP request is invalid",
+        -32_601 => "MCP method is not supported",
+        -32_602 => "MCP parameters failed validation",
+        -32_603 => "MCP operation failed internally",
+        -32_700 => "MCP request could not be parsed",
+        _ => "MCP operation returned a protocol error",
+    }
 }
 
 fn jsonrpc_error_type(code: i32) -> &'static str {
@@ -980,6 +1389,26 @@ fn tool_span(name: &'static str, identity: &RuntimeIdentity) -> tracing::Span {
     );
     crate::telemetry::record_span_identity(&span);
     span
+}
+
+fn file_tool_result<T: Serialize>(
+    name: &'static str,
+    identity: &RuntimeIdentity,
+    metrics: &RuntimeMetrics,
+    started: Instant,
+    result: Result<(T, Option<crate::file_observation::FileObservation>), ToolError>,
+) -> CallToolResult {
+    let (result, file) = match result {
+        Ok((value, file)) => (Ok(value), file),
+        Err(error) => (Err(error), None),
+    };
+    let mut reply = tool_result(name, identity, metrics, started, result);
+    if reply.is_error != Some(true) {
+        reply.meta = file
+            .and_then(crate::file_observation_wire::WireFileObservation::bounded)
+            .and_then(|wire| serde_json::from_value(wire.metadata()).ok());
+    }
+    reply
 }
 
 fn tool_result<T: Serialize>(
@@ -1032,7 +1461,7 @@ fn tool_result<T: Serialize>(
                     tool = name,
                     outcome = "error",
                     error.type = %ToolErrorCode::EncodeResultFailed,
-                    reason = %error,
+                    reason = diagnostics::safe_tool_message(ToolErrorCode::EncodeResultFailed),
                     "Runtime MCP tool failed"
                 );
                 CallToolResult::structured_error(json!({
@@ -1044,6 +1473,12 @@ fn tool_result<T: Serialize>(
             }
         },
         Err(error) => {
+            diagnostics::error_summary(
+                &tracing::Span::current(),
+                "mcp.tool",
+                error.code.as_str(),
+                diagnostics::safe_tool_message(error.code),
+            );
             let code = error.code;
             let message = error.message;
             let effect_state = error.effect_state;
@@ -1059,7 +1494,7 @@ fn tool_result<T: Serialize>(
                 span_id = %span_id,
                 tool = name,
                 error.type = %code,
-                reason = %message,
+                reason = diagnostics::safe_tool_message(code),
                 "Runtime MCP tool failed"
             );
             CallToolResult::structured_error(json!({
@@ -1071,6 +1506,10 @@ fn tool_result<T: Serialize>(
         }
     }
 }
+
+#[cfg(test)]
+#[path = "mcp_observability_tests.rs"]
+mod observability_tests;
 
 #[cfg(test)]
 mod response_body_tests {
@@ -1124,6 +1563,101 @@ mod tool_result_tests {
     use crate::tool_error::{ToolError, ToolErrorCode};
 
     #[test]
+    fn tool_continuations_are_rejected_before_dispatch() {
+        for name in ["bash", "mcp__fixture__check"] {
+            for continuation in [
+                json!({"requestState": "state"}),
+                json!({"inputResponses": {"answer": {"action": "accept"}}}),
+                json!({"inputResponses": {}}),
+            ] {
+                let mut request = continuation;
+                request["name"] = json!(name);
+                let request = serde_json::from_value(request).unwrap();
+                let error = super::reject_tool_continuation(&request).unwrap_err();
+                assert_eq!(error.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+            }
+            assert!(
+                super::reject_tool_continuation(&rmcp::model::CallToolRequestParams::new(name))
+                    .is_ok()
+            );
+        }
+    }
+
+    #[test]
+    fn managed_input_failure_retains_unknown_effects() {
+        let response = super::managed_result(
+            "mcp__test__ask",
+            &identity(),
+            &RuntimeMetrics::default(),
+            Instant::now(),
+            Err(ToolError::outcome_unknown(
+                "managed tool input is not supported; effects unobserved",
+            )),
+        );
+        let rmcp::model::CallToolResponse::Complete(result) = response else {
+            panic!("expected explicit tool failure")
+        };
+        assert_eq!(result.is_error, Some(true));
+        let value = result.structured_content.unwrap();
+        assert_eq!(value["error_code"], "outcome_unknown");
+        assert_eq!(value["effect_state"], "unknown");
+        assert_eq!(value["effect_source"], "runtime_mcp");
+    }
+
+    #[test]
+    fn managed_input_failure_is_traced_as_error_not_waiting_input() {
+        use opentelemetry::trace::TracerProvider as _;
+        use opentelemetry_sdk::trace::{InMemorySpanExporter, SdkTracerProvider};
+        use tracing_subscriber::prelude::*;
+
+        let exporter = InMemorySpanExporter::default();
+        let provider = SdkTracerProvider::builder()
+            .with_simple_exporter(exporter.clone())
+            .build();
+        let subscriber = tracing_subscriber::registry().with(
+            tracing_opentelemetry::layer().with_tracer(provider.tracer("managed-input-test")),
+        );
+        tracing::subscriber::with_default(subscriber, || {
+            let span = super::tool_span("managed", &identity());
+            span.in_scope(|| {
+                super::managed_result(
+                    "mcp__test__ask",
+                    &identity(),
+                    &RuntimeMetrics::default(),
+                    Instant::now(),
+                    Err(ToolError::outcome_unknown(
+                        "managed tool input is not supported; effects unobserved",
+                    )),
+                );
+            });
+        });
+        provider.force_flush().unwrap();
+        let spans = exporter.get_finished_spans().unwrap();
+        let span = spans
+            .iter()
+            .find(|span| span.name == "runtime.mcp.tool")
+            .unwrap();
+        assert!(matches!(
+            span.status,
+            opentelemetry::trace::Status::Error { .. }
+        ));
+        assert!(
+            span.attributes
+                .iter()
+                .any(|attr| attr.key.as_str() == "mcp.tool.outcome"
+                    && attr.value.as_str() == "error")
+        );
+        assert!(
+            span.attributes
+                .iter()
+                .any(|attr| attr.key.as_str() == "error.type"
+                    && attr.value.as_str() == "outcome_unknown")
+        );
+        assert!(!format!("{span:?}").contains("canary"));
+        provider.shutdown().unwrap();
+    }
+
+    #[test]
     fn successful_result_declares_settled_effect() {
         let result = tool_result(
             "write",
@@ -1142,29 +1676,64 @@ mod tool_result_tests {
 
     #[test]
     fn error_result_preserves_none_and_unknown_effects() {
-        let known = tool_result::<serde_json::Value>(
+        let known = super::file_tool_result::<serde_json::Value>(
             "write",
             &identity(),
             &RuntimeMetrics::default(),
             Instant::now(),
             Err(ToolError::new(ToolErrorCode::InvalidPath, "invalid path")),
         );
+        assert!(known.meta.is_none());
         let structured = known.structured_content.expect("known error");
         assert_eq!(structured["error_code"], "invalid_path");
         assert_eq!(structured["effect_state"], "none");
         assert!(structured["effect_source"].is_null());
 
-        let unknown = tool_result::<serde_json::Value>(
+        let unknown = super::file_tool_result::<serde_json::Value>(
             "write",
             &identity(),
             &RuntimeMetrics::default(),
             Instant::now(),
             Err(ToolError::outcome_unknown("write outcome is unknown")),
         );
+        assert!(unknown.meta.is_none());
         let structured = unknown.structured_content.expect("unknown error");
         assert_eq!(structured["error_code"], "outcome_unknown");
         assert_eq!(structured["effect_state"], "unknown");
         assert_eq!(structured["effect_source"], "runtime_mcp");
+    }
+
+    #[test]
+    fn file_observation_is_metadata_only_and_never_changes_model_output() {
+        use crate::file_observation::{FileChange, FileObservation};
+        let result = super::file_tool_result(
+            "write",
+            &identity(),
+            &RuntimeMetrics::default(),
+            Instant::now(),
+            Ok((
+                json!({"bytes_written": 3}),
+                Some(FileObservation {
+                    path: "/workspace/actual.txt".into(),
+                    change: Some(FileChange::text(Some(b"BEFORE-MARKER"), b"new")),
+                }),
+            )),
+        );
+        assert_eq!(result.is_error, Some(false));
+        assert!(
+            serde_json::to_string(&result.meta)
+                .unwrap()
+                .contains("BEFORE-MARKER")
+        );
+        assert!(
+            !serde_json::to_string(&result.content)
+                .unwrap()
+                .contains("BEFORE-MARKER")
+        );
+        assert_eq!(
+            result.structured_content.unwrap(),
+            json!({"bytes_written": 3, "effect_state": "settled", "effect_source": null})
+        );
     }
 
     fn identity() -> RuntimeIdentity {

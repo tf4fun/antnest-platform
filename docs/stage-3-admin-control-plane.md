@@ -1,7 +1,7 @@
 # Stage 3A Administrator Control Plane
 
-> Status: implemented and accepted with the Agent workspace extension
-> Updated: 2026-09-03
+> Status: administrator workflow accepted; full Workspace closeout remains in C4
+> Updated: 2026-09-10
 
 Stage 3A adds the first supported browser entry to Antnest Platform. It connects
 one administrator from login through Agent lifecycle management without moving
@@ -12,16 +12,17 @@ Stage 3A delivered two services:
 - **Edge Gateway** is the sole externally reachable application service. It
   terminates browser trust, resolves Identity credentials, enforces coarse
   administrator access, removes spoofable identity headers, and propagates
-  trace context. Coarse rate limiting is a post-MVP hardening item rather than
-  part of this stage's correctness model.
+  trace context. Replica-local source/account login limits protect password
+  verification; general-purpose and shared rate limiting remain deferred.
 - **Admin Console** serves the React administrator application and a thin BFF.
   The BFF translates page commands into existing Identity Service and Agent
   Controller RPCs. It owns no durable business records.
 
-The accepted Stage 3 surface now also includes **Agent UI** behind Edge Gateway.
-It proves end-user ACP v1 Session, Tool activity, attachment, cancellation,
-replay, and application-switch paths without moving Agent execution into the
-browser. Channel Gateway and Skill Registry remain outside this stage.
+The implemented Stage 3 surface also includes **Agent UI** behind Edge Gateway.
+Service and Docker tests cover ACP v1 Session, Tool activity, attachment,
+cancellation and replay paths without moving Agent execution into the browser.
+Complete interactive acceptance remains in [C4](docker-single-node-closeout.md).
+Channel Gateway and Skill Registry remain outside this stage.
 
 ## Service Boundaries
 
@@ -60,10 +61,12 @@ the BFF are idempotency keys for the owning service, not Console records.
    Inactive, expired, revoked, or unknown tokens fail closed.
 4. `/api/admin/*` requires either `system_role=admin` or
    `organization_role=admin`.
-5. Edge Gateway removes every incoming `X-Antnest-*` header before adding the
-   verified principal fields used by Admin Console.
-6. Logout revokes the Identity token when possible and always expires the
-   browser cookies.
+5. Edge Gateway removes the known trusted identity/access-subject headers before
+   injecting verified values. `X-Antnest-Expected-Principal` is a browser command
+   precondition, not an authentication claim, and remains available for checking.
+6. Logout expires cookies after confirmed revocation or an already-invalid
+   token; absent local session cookies are also cleared. Identity failure returns
+   `503` without clearing a valid local session. Failed CSRF rejects the request.
 
 The trusted headers are:
 
@@ -91,7 +94,12 @@ Console is reachable only from the trusted deployment network.
 | `GET /api/session` | browser session | Edge Gateway |
 | `DELETE /api/session` | browser session when resolvable | Edge Gateway + Identity RPC |
 | `/api/admin/*` | administrator session | Admin Console BFF through Edge Gateway |
-| all other `GET`/`HEAD` paths | none | Admin Console application/assets |
+| `GET /api/app/bootstrap` | browser session | Edge Gateway + Agent Controller |
+| `GET /api/app/agents/{agent_id}/state` and `/state/watch` | browser session and Agent access | Controller snapshot/SSE through Edge Gateway |
+| `/api/app/agents/{agent_id}/v1/acp` and `/acp` | browser session and Agent access | ACP v1 WebSocket or POST/GET SSE/DELETE HTTP |
+| `/api/app/agents/{agent_id}/v2/acp` | browser session and Agent access | ACP v2 WebSocket |
+| `/workspace/` and application assets | static entry; data requests require session | Agent UI through Edge Gateway |
+| unmatched non-API/non-protocol `GET`/`HEAD` paths | none | Admin Console application/assets |
 
 The public surface is a product API for the Console, not the future stable
 third-party OpenAPI. OIDC callback and SCIM ingress remain Identity-owned
@@ -116,6 +124,7 @@ convergence extension:
 ```text
 GET    /api/admin/overview
 GET    /api/admin/template-defaults
+GET    /api/admin/account
 POST   /api/admin/account/password
 GET    /api/admin/directory
 POST   /api/admin/directory/users
@@ -141,6 +150,8 @@ POST   /api/admin/templates/{template_id}/revisions
 GET    /api/admin/agents
 POST   /api/admin/agents
 GET    /api/admin/agents/{agent_id}
+GET    /api/admin/agents/{agent_id}/network-policy
+PUT    /api/admin/agents/{agent_id}/network-policy
 POST   /api/admin/agents/{agent_id}/{rebuild|disable|enable|delete}
 GET    /api/admin/operations/{request_id}
 GET    /api/admin/agents/{agent_id}/events
@@ -288,6 +299,12 @@ truth.
 
 ## Trace Contract
 
+The [cross-service observability contract](observability-contract.md) replaces
+ad hoc instrumentation and recursive readiness.
+It adds consistent client/server boundaries and bounded request/response/error
+diagnostics. Until its per-service rollout is verified, the following sections
+describe the existing implementation, not conformance with that target.
+
 Edge Gateway starts or continues one server span for each request and returns
 its trace ID in `X-Antnest-Trace-ID`. Every internal HTTP client injects W3C
 `traceparent`; every receiving service extracts it.
@@ -331,9 +348,12 @@ each trace, and all returned lifecycle traces are checked for secret material.
 - PostgreSQL and Jaeger UI may have loopback-only development ports.
 - Admin Console, Identity Service, Agent Controller, Agent ACP Service, Runtime
   Controller, and Runtime Egress use internal Compose networks only.
-- Edge Gateway readiness requires Identity Service and Admin Console readiness.
-- Admin Console readiness requires Identity Service and Agent Controller
-  readiness.
+- Edge Gateway readiness is local and does not probe downstream services.
+  Deployment acceptance checks every container and actual business requests.
+- Admin Console readiness is local. Services with an owned database may check
+  that database, but do not recursively probe another business service. See the
+  [service rollout](observability-rollout.md) for implementation and acceptance
+  status; deployment ordering does not change this readiness contract.
 - No service may read another service's database or bootstrap secret.
 
 ## Stage 3A Acceptance

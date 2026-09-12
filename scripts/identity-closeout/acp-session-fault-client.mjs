@@ -7,6 +7,7 @@ import { GatewayClient } from "./support.mjs";
 import { waitForExpiry } from "./expiry.mjs";
 import {
   assertCompletedRun,
+  assertEmptySession,
   verifySessionTraces,
 } from "./acp-session-evidence.mjs";
 import { verifyTraces } from "../managed-mcp/trace.mjs";
@@ -250,10 +251,7 @@ async function outageAndExpiry() {
   for (const { version, sessionId } of connected) {
     const recovered = await open(version, longCookie);
     const updates = await replay(recovered, version, sessionId);
-    assert(
-      updates.every((item) => item.update.sessionUpdate === "state_update"),
-      "denied prompt entered replay",
-    );
+    assertEmptySession(updates, sessionId, version, "replay");
     close(recovered);
     const short = new GatewayClient(gateway);
     const issued = await login(short);

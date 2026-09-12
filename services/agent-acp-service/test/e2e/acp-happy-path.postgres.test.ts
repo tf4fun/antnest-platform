@@ -1,3 +1,6 @@
+import { SessionConfigurationService } from "../../src/application/session-configuration.js";
+import { PostgresSessionConfiguration } from "../../src/adapters/postgres/session-configuration.js";
+import { configurationCatalog } from "../support/fixtures.js";
 import { randomBytes, randomUUID } from "node:crypto";
 import { runtimeInformation } from "../fixtures/runtime-information.js";
 
@@ -81,6 +84,17 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP happy path", () => {
     });
     supervisor = new RunSupervisor(executor);
     const application = new AcpApplication({
+      configuration: new SessionConfigurationService({
+        sessions: new SessionService({
+          repository: sessions,
+          id: randomUUID,
+          now: () => new Date(),
+        }),
+        repository: new PostgresSessionConfiguration(kernel),
+        controller: controller.port,
+        id: randomUUID,
+        now: () => new Date(),
+      }),
       access: new AccessService({ agentController: controller.port, id: randomUUID }),
       sessions: new SessionService({ repository: sessions, id: randomUUID, now: () => new Date() }),
       prompts: new PromptCoordinator({
@@ -136,6 +150,7 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP happy path", () => {
       mcpServers: [],
     });
     const accessChecksBeforePrompt = controller.resolveAgentAccess.mock.calls.length;
+    const outputReadsBeforePrompt = readOutput.mock.calls.length;
     await connection.agent.request(acp.methods.agent.session.prompt, {
       sessionId: created.sessionId,
       prompt: [{ type: "text", text: "Read README and summarize it" }],
@@ -145,6 +160,7 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP happy path", () => {
     await connection.closed;
 
     expect(updates.map((update) => update.sessionUpdate)).toEqual([
+      "available_commands_update",
       "user_message",
       "session_info_update",
       "state_update",
@@ -170,7 +186,7 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP happy path", () => {
     expect(tools.call).toHaveBeenCalledOnce();
     expect(readOutput).toHaveBeenCalled();
     expect(controller.resolveAgentAccess).toHaveBeenCalledTimes(
-      accessChecksBeforePrompt + readOutput.mock.calls.length,
+      accessChecksBeforePrompt + readOutput.mock.calls.length - outputReadsBeforePrompt,
     );
     expect(controller.acquireRun).toHaveBeenCalledOnce();
     expect(controller.finishRun).toHaveBeenCalledWith(
@@ -368,6 +384,7 @@ function controllerPort() {
     }),
   );
   const port: AgentControllerPort = {
+    getSessionConfiguration: vi.fn(() => Promise.resolve(configurationCatalog())),
     resolveAgentAccess,
     acquireRun,
     resolveCredential: vi.fn<AgentControllerPort["resolveCredential"]>(() =>

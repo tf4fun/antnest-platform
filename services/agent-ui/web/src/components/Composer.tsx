@@ -1,15 +1,19 @@
-import { ArrowUp, FilePlus2, FileText, Image as ImageIcon, LoaderCircle, Square, X } from "lucide-react";
+import { ArrowUp, FilePlus2, FileText, Image as ImageIcon, AudioLines, LoaderCircle, Square, X } from "lucide-react";
 import { useRef } from "react";
 import type { AgentStatus, Attachment } from "../lib/types";
 import { canSubmit } from "../lib/presentation";
 
 type Props = {
+  fileAccept: string;
+  configuring: boolean;
+  historyReady: boolean;
   value: string;
   attachments: Attachment[];
   agentStatus: AgentStatus;
   connected: boolean;
   sending: boolean;
   cancelling: boolean;
+  cancellable: boolean;
   onChange: (value: string) => void;
   onFiles: (files: FileList) => void;
   onRemoveAttachment: (id: string) => void;
@@ -19,6 +23,7 @@ type Props = {
 
 function statusCopy(agentStatus: AgentStatus, connected: boolean, sending: boolean): string {
   if (!connected) return "Connection unavailable";
+  if (agentStatus === "unknown") return "Synchronizing Agent status";
   if (agentStatus === "offline") return "Agent is offline";
   if (sending) return "Agent is working · stop when needed";
   if (agentStatus === "busy") return "Agent is finishing another operation";
@@ -31,7 +36,8 @@ export function Composer(props: Props) {
     text: props.value,
     attachments: props.attachments,
     agentStatus: props.agentStatus,
-    connected: props.connected,
+    connected: props.connected && props.historyReady,
+    configuring: props.configuring,
   }) && !props.sending;
 
   return (
@@ -40,10 +46,10 @@ export function Composer(props: Props) {
         {props.attachments.length ? (
           <div className="composer-attachments">
             {props.attachments.map((attachment) => {
-              const Icon = attachment.kind === "image" ? ImageIcon : FileText;
+              const Icon = attachment.kind === "image" ? ImageIcon : attachment.kind === "audio" ? AudioLines : FileText;
               return (
                 <div className="composer-attachment" key={attachment.id}>
-                  {attachment.previewURL ? <img src={attachment.previewURL} alt="" /> : <Icon size={15} aria-hidden="true" />}
+                  {attachment.kind === "image" && attachment.previewURL ? <img src={attachment.previewURL} alt="" /> : <Icon size={15} aria-hidden="true" />}
                   <span><strong>{attachment.name}</strong><small>{attachment.sizeLabel}</small></span>
                   <button type="button" onClick={() => props.onRemoveAttachment(attachment.id)} aria-label={`Remove ${attachment.name}`}>
                     <X size={13} aria-hidden="true" />
@@ -55,7 +61,7 @@ export function Composer(props: Props) {
         ) : null}
         <textarea
           aria-label="Message"
-          disabled={!props.connected || props.agentStatus !== "ready" || props.sending}
+          disabled={!props.connected || !props.historyReady || props.agentStatus !== "ready" || props.sending || props.configuring}
           onChange={(event) => props.onChange(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
@@ -73,7 +79,8 @@ export function Composer(props: Props) {
             className="sr-only"
             type="file"
             multiple
-            accept="image/*,.pdf,.txt,.md,.csv,.json"
+            accept={props.fileAccept}
+            disabled={!props.connected || !props.historyReady || props.agentStatus !== "ready" || props.sending || props.configuring}
             onChange={(event) => {
               if (event.target.files?.length) props.onFiles(event.target.files);
               event.target.value = "";
@@ -82,19 +89,19 @@ export function Composer(props: Props) {
           <button
             type="button"
             className="icon-button"
-            disabled={!props.connected || props.agentStatus !== "ready" || props.sending}
+            disabled={!props.connected || !props.historyReady || props.agentStatus !== "ready" || props.sending || props.configuring}
             onClick={() => fileInput.current?.click()}
             title="Attach files"
             aria-label="Attach files"
           >
             <FilePlus2 size={17} aria-hidden="true" />
           </button>
-          <span className="composer-hint">{statusCopy(props.agentStatus, props.connected, props.sending)}</span>
-          {props.sending ? (
+          <span className="composer-hint">{!props.historyReady && props.connected && !props.sending ? "Conversation not yet synchronized" : statusCopy(props.agentStatus, props.connected, props.sending)}</span>
+          {props.sending || props.cancellable ? (
             <button
               type="button"
               className="send-button stop-button"
-              disabled={props.cancelling}
+              disabled={props.cancelling || !props.cancellable}
               onClick={props.onCancel}
               title="Stop operation"
               aria-label="Stop operation"

@@ -2,6 +2,8 @@
 
 Status: five backend batches and the Admin Console follow-up complete;
 Docker end-to-end and Console browser acceptance passed on 2026-09-07.
+Stable-v1 and draft-v2 active-Run rebuild acceptance was added on 2026-09-10; see the
+[C1 rebuild evidence](docker-single-node-closeout.md#c1-active-run-rebuild-2026-09-10).
 
 ## Scope
 
@@ -10,10 +12,12 @@ stdio MCP processes inside the Agent's Runtime. Agent ACP Service must never
 launch these programs on its own host. This expands the earlier information-only
 scope; managed stdio MCP is part of this feature, not an unrelated follow-up.
 
-Client-supplied HTTP MCP remains Session-owned. Platform-managed stdio MCP is
-Agent configuration, applied through Runtime creation/rebuild. Accepting arbitrary
-ACP client stdio commands or implementing stdio process hosting in ACP Service is
-not part of this delivery. Skill Registry and Channel Gateway remain deferred.
+All client-supplied MCP injection is deferred by the 2026-09-08 trust-policy
+decision, including HTTP, stdio and SSE; ACP inputs require `mcpServers: []`.
+Platform-managed stdio MCP is administrator-owned Agent configuration, applied
+through Runtime creation/rebuild. ACP Service does not launch these programs on
+its own host. Skill Registry and Channel Gateway remain deferred. See the
+[client MCP policy](../services/agent-acp-service/docs/client-mcp-policy.md).
 
 ## Ownership And Flow
 

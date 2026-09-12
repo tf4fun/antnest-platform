@@ -19,10 +19,18 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace"
+	commonpb "go.temporal.io/api/common/v1"
+	temporalotel "go.temporal.io/sdk/contrib/opentelemetry"
+	"go.temporal.io/sdk/converter"
+	"go.temporal.io/sdk/interceptor"
+	"go.temporal.io/sdk/testsuite"
+	"go.temporal.io/sdk/worker"
 
 	"soft/antnest-platform/services/agent-controller/internal/application"
 	"soft/antnest-platform/services/agent-controller/internal/credentials"
 	"soft/antnest-platform/services/agent-controller/internal/egressclient"
+	"soft/antnest-platform/services/agent-controller/internal/orchestration"
 	"soft/antnest-platform/services/agent-controller/internal/ports"
 	"soft/antnest-platform/services/agent-controller/internal/repository/postgres"
 	"soft/antnest-platform/services/agent-controller/internal/runtimeclient"
@@ -31,16 +39,12 @@ import (
 )
 
 func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
-	databaseURL := os.Getenv("ANTNEST_AGENT_CONTROLLER_TEST_DATABASE_URL")
-	if databaseURL == "" {
+	if os.Getenv("ANTNEST_AGENT_CONTROLLER_TEST_DATABASE_URL") == "" {
 		t.Skip("ANTNEST_AGENT_CONTROLLER_TEST_DATABASE_URL is not set")
 	}
-	ctx := context.Background()
-	resetE2ESchema(t, ctx, databaseURL)
 	previousProvider := otel.GetTracerProvider()
 	previousPropagator := otel.GetTextMapPropagator()
-	spanRecorder := tracetest.NewSpanRecorder()
-	traceProvider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spanRecorder))
+	traceProvider := sdktrace.NewTracerProvider()
 	otel.SetTracerProvider(traceProvider)
 	otel.SetTextMapPropagator(propagation.TraceContext{})
 	t.Cleanup(func() {
@@ -48,6 +52,27 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 		otel.SetTracerProvider(previousProvider)
 		otel.SetTextMapPropagator(previousPropagator)
 	})
+	for _, scenario := range []struct {
+		name        string
+		runtimeLost bool
+	}{
+		{name: "available"},
+		{name: "runtime_loss", runtimeLost: true},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			spanRecorder := tracetest.NewSpanRecorder()
+			traceProvider.RegisterSpanProcessor(spanRecorder)
+			t.Cleanup(func() { traceProvider.UnregisterSpanProcessor(spanRecorder) })
+			testAgentLifecycleAcrossHTTP(t, scenario.runtimeLost, spanRecorder)
+		})
+	}
+}
+
+func testAgentLifecycleAcrossHTTP(t *testing.T, runtimeLost bool, spanRecorder *tracetest.SpanRecorder) {
+	t.Helper()
+	databaseURL := os.Getenv("ANTNEST_AGENT_CONTROLLER_TEST_DATABASE_URL")
+	ctx := context.Background()
+	resetE2ESchema(t, ctx, databaseURL)
 	repository, err := postgres.Open(ctx, databaseURL)
 	if err != nil {
 		t.Fatalf("open repository: %v", err)
@@ -66,18 +91,6 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 		t.Fatalf("create SecretBox: %v", err)
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	observedLifecycleStore, err := telemetry.ObserveLifecycleStore(repository, logger)
-	if err != nil {
-		t.Fatalf("observe lifecycle store: %v", err)
-	}
-	observedRecoveryStore, err := telemetry.ObserveLifecycleRecoveryStore(repository, logger)
-	if err != nil {
-		t.Fatalf("observe lifecycle recovery store: %v", err)
-	}
-	recoveryInstrumentation, err := telemetry.ObserveLifecycleRecoveryAttempt(logger)
-	if err != nil {
-		t.Fatalf("observe lifecycle recovery attempt: %v", err)
-	}
 
 	var egressCalls, runtimeCalls atomic.Int64
 	var initializeCalls, updateCalls, disableCalls, enableCalls, deleteCalls atomic.Int64
@@ -376,75 +389,61 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 	}
 	clock := wallClock{}
 	lifecycle := application.NewLifecycleService(
-		repository, observedLifecycleStore, egress, runtime, clock,
+		repository, repository, egress, runtime, clock,
 		application.WithIdentityDirectory(e2eIdentityDirectory{}),
 	)
 	handler, err := server.NewHandler(
-		application.NewCatalogService(repository, secretBox, runtime, clock),
+		application.NewCatalogService(repository, secretBox, clock),
 		lifecycle,
-		application.NewRunService(repository, secretBox, clock, 30*time.Minute),
-		application.NewAgentQueryService(repository),
+		application.NewRunService(repository, secretBox, clock, 30*time.Minute,
+			application.WithRunIdentityDirectory(e2eIdentityDirectory{})),
+		application.NewAgentQueryService(repository, application.WithWorkspaceStateNotifier(eventNotifier)),
 		application.NewEventService(repository, eventNotifier, repository),
+		application.NewNetworkPolicyService(repository, egress),
 		repository.Ping,
 	)
 	if err != nil {
 		t.Fatalf("create handler: %v", err)
 	}
+	handler = telemetry.HTTPHandler(handler, logger)
 	restartedLifecycle := application.NewLifecycleService(
-		repository, observedLifecycleStore, egress, runtime, clock,
+		repository, repository, egress, runtime, clock,
 	)
-	recoveryWorker, err := application.NewLifecycleRecoveryWorker(
-		observedRecoveryStore, restartedLifecycle, recoveryInstrumentation,
-		application.LifecycleRecoveryWorkerConfig{
-			WorkerID: "agent-e2e-recovery", PollInterval: 10 * time.Millisecond,
-			AttemptTimeout: 200 * time.Millisecond,
-			LeaseDuration:  500 * time.Millisecond, RetryMax: 500 * time.Millisecond,
-		},
-	)
-	if err != nil {
-		t.Fatalf("create lifecycle recovery worker: %v", err)
-	}
+
 	recoverOperation := func(requestID string) {
 		t.Helper()
-		deadline := time.Now().Add(5 * time.Second)
-		first := true
-		for time.Now().Before(deadline) {
-			processed, runErr := recoveryWorker.RunOnce(ctx)
-			if runErr != nil {
-				t.Fatalf("execute lifecycle operation %s: %v", requestID, runErr)
-			}
-			if first && !processed {
-				t.Fatalf("fresh lifecycle operation %s was not immediately claimable", requestID)
-			}
-			first = false
-			operation, loadErr := repository.GetLifecycleOperation(ctx, requestID)
-			if loadErr != nil {
-				t.Fatalf("load lifecycle operation %s: %v", requestID, loadErr)
-			}
-			if operation.State != "running" {
-				if operation.State != "completed" || operation.Phase != "completed" ||
-					operation.RecoveryOwner != "" || operation.RecoveryLeaseUntil != nil {
-					t.Fatalf("terminal lifecycle operation %s = %+v", requestID, operation)
-				}
-				return
-			}
-			time.Sleep(15 * time.Millisecond)
+		operation, err := repository.GetLifecycleOperation(ctx, requestID)
+		if err != nil {
+			t.Fatal(err)
 		}
-		t.Fatalf("lifecycle operation %s did not converge", requestID)
+		parent := ""
+		spans := spanRecorder.Ended()
+		for i := len(spans) - 1; i >= 0; i-- {
+			if spans[i].SpanKind() == trace.SpanKindServer {
+				sc := spans[i].SpanContext()
+				parent = "00-" + sc.TraceID().String() + "-" + sc.SpanID().String() + "-01"
+				break
+			}
+		}
+		if parent == "" {
+			t.Fatal("missing HTTP admission parent")
+		}
+		executeLifecycleWorkflow(t, repository, restartedLifecycle, operation, parent)
 	}
 
+	provider := createTestProvider(t, handler, "agent-e2e-provider", "agent-e2e-org", "https://api.example.com/v1", "agent-e2e-secret")
 	model := serveJSON(t, handler, http.MethodPost, "/internal/model-profiles", `{
 		"request_id":"agent-e2e-model","organization_id":"agent-e2e-org",
 		"profile_key":"deepseek","display_name":"DeepSeek",
-		"model":{"base_url":"https://api.example.com/v1","model":"deepseek-chat",
-			"context_window":128000,"max_output_tokens":8192,"supports_images":false},
-		"credential":{"secret_type":"bearer","secret":"agent-e2e-secret"}
+		"model":{"model":"deepseek-chat",
+			"context_window":128000,"max_output_tokens":8192,"supports_images":false,"supports_audio":true,"supports_pdf":true},
+		"provider_connection_id":"`+provider["connection_id"].(string)+`"
 	}`, http.StatusCreated)
-	revisionID := model["revision_id"].(string)
+	modelID := model["model_profile_id"].(string)
 	template := serveJSON(t, handler, http.MethodPost, "/internal/agent-templates", `{
 		"request_id":"agent-e2e-template","organization_id":"agent-e2e-org",
 		"template_key":"personal","name":"Personal Agent",
-		"model_profile_revision_id":"`+revisionID+`","system_prompt":"You are helpful.",
+		"model_profile_id":"`+modelID+`","system_prompt":"You are helpful.",
 		"max_model_requests":16,"context_policy_version":"context-v1",
 		"runtime":{"image_ref":"antnest/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 			"resources":{"memory_bytes":536870912,"pids_limit":256,"tmpfs_bytes":67108864}}
@@ -490,6 +489,10 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 		t.Fatalf("owner Agent projection = %+v", listed)
 	}
 	createEgressCalls, createRuntimeCalls := egressCalls.Load(), runtimeCalls.Load()
+	assertSessionConfigurationHTTP(t, handler, agent, created["agent_access_subject"].(string), spanRecorder)
+	if egressCalls.Load() != createEgressCalls || runtimeCalls.Load() != createRuntimeCalls {
+		t.Fatal("Session configuration changed Runtime or Egress")
+	}
 	replayed := serveJSON(t, handler, http.MethodPost, "/internal/agents", createBody, http.StatusAccepted)
 	if replayed["agent_access_subject"] != created["agent_access_subject"] ||
 		egressCalls.Load() != createEgressCalls || runtimeCalls.Load() != createRuntimeCalls {
@@ -497,6 +500,27 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 			egressCalls.Load(), runtimeCalls.Load(), replayed)
 	}
 
+	if runtimeLost {
+		beforeLoss, err := repository.GetAgent(ctx, agentID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		runtimeMu.Lock()
+		currentRuntimeHealth = "absent"
+		currentRuntimeExecutionID, currentRuntimeEndpoint = "", ""
+		runtimeMu.Unlock()
+		if err := repository.ApplyRuntimeObservation(ctx, ports.RuntimeObservation{
+			Sequence: 1, AgentID: agentID, RuntimeRevision: beforeLoss.RuntimeRevision,
+			Kind: "runtime_deleted", ObservedAt: time.Now().UTC(),
+		}); err != nil {
+			t.Fatal(err)
+		}
+		unavailable := serveJSON(t, handler, http.MethodGet,
+			"/internal/agents/"+agentID+"?organization_id=agent-e2e-org", "", http.StatusOK)
+		if unavailable["lifecycle_state"] != "unavailable" {
+			t.Fatalf("HTTP projection remained runnable: %+v", unavailable)
+		}
+	}
 	rebuildBody := `{
 		"request_id":"agent-e2e-rebuild",
 		"organization_id":"agent-e2e-org","actor_principal_id":"agent-e2e-admin",
@@ -722,7 +746,7 @@ func TestAgentLifecycleAcrossHTTPPostgresAndDependencyContracts(t *testing.T) {
 	if len(createdIDs) != 0 {
 		t.Fatalf("Agent cursor omitted identities: %+v", createdIDs)
 	}
-	assertLifecycleRecoveryTraceEvidence(t, spanRecorder.Ended())
+	assertLifecycleWorkflowTraceEvidence(t, spanRecorder.Ended())
 }
 
 func egressNetworkResponse(
@@ -762,58 +786,119 @@ func (e2eIdentityDirectory) ResolvePrincipal(
 	}, nil
 }
 
-func assertLifecycleRecoveryTraceEvidence(t *testing.T, spans []sdktrace.ReadOnlySpan) {
+func assertLifecycleWorkflowTraceEvidence(t *testing.T, spans []sdktrace.ReadOnlySpan) {
 	t.Helper()
 
-	recoveryRoots := make(map[string]string)
+	activitySpans := make(map[string]bool)
 	for _, span := range spans {
-		if span.Name() != "recover Agent lifecycle operation" {
+		if strings.HasPrefix(span.Name(), "agent_controller.repository.") {
+			t.Fatalf("obsolete repository wrapper span: %s", span.Name())
+		}
+		if strings.HasPrefix(span.Name(), "RunActivity:") {
+			if span.InstrumentationScope().Name != "temporal-sdk-go" || !span.Parent().IsValid() {
+				t.Fatalf("creation activity is not SDK instrumented: %s", span.Name())
+			}
+			activitySpans[span.SpanContext().SpanID().String()] = true
 			continue
 		}
-		if span.Parent().IsValid() {
-			t.Fatalf("recovery span inherited parent: %s", span.Parent().SpanID())
+		if span.Name() == "recover Agent lifecycle operation" {
+			t.Fatal("obsolete recovery instrumentation")
 		}
-		workerID := ""
-		for _, attr := range span.Attributes() {
-			if string(attr.Key) == "antnest.lifecycle.recovery.worker_id" {
-				workerID = attr.Value.AsString()
-			}
-		}
-		if workerID != "agent-e2e-recovery" {
-			t.Fatalf("recovery worker attribute = %q", workerID)
-		}
-		recoveryRoots[span.SpanContext().TraceID().String()] = span.SpanContext().SpanID().String()
 	}
-	if len(recoveryRoots) < 5 {
-		t.Fatalf("recovery root traces = %d, want at least one per Saga", len(recoveryRoots))
+	if len(activitySpans) < 5 {
+		t.Fatalf("recovery spans = %d, want at least one per Saga", len(activitySpans))
 	}
 	requiredDependencies := map[string]bool{
-		"agent_controller.runtime.initialize": false,
-		"agent_controller.runtime.update":     false,
-		"agent_controller.runtime.disable":    false,
-		"agent_controller.runtime.enable":     false,
-		"agent_controller.runtime.delete":     false,
+		"initialize": false,
+		"update":     false,
+		"disable":    false,
+		"enable":     false,
+		"delete":     false,
 	}
-	repositoryChild := false
+	byID := make(map[trace.SpanID]sdktrace.ReadOnlySpan)
 	for _, span := range spans {
-		rootSpanID, recovered := recoveryRoots[span.SpanContext().TraceID().String()]
-		if !recovered || span.Name() == "recover Agent lifecycle operation" ||
-			span.Parent().SpanID().String() != rootSpanID {
+		byID[span.SpanContext().SpanID()] = span
+	}
+	databaseChild := false
+	for _, span := range spans {
+		parent := span.Parent().SpanID()
+		for !activitySpans[parent.String()] && byID[parent] != nil {
+			parent = byID[parent].Parent().SpanID()
+		}
+		if !activitySpans[parent.String()] {
 			continue
 		}
-		if _, required := requiredDependencies[span.Name()]; required {
-			requiredDependencies[span.Name()] = true
+		if span.Name() == "HTTP POST runtime-controller" {
+			for _, attr := range span.Attributes() {
+				if string(attr.Key) == "rpc.method" {
+					if _, required := requiredDependencies[attr.Value.AsString()]; required {
+						requiredDependencies[attr.Value.AsString()] = true
+					}
+				}
+			}
 		}
-		if strings.HasPrefix(span.Name(), "agent_controller.repository.") {
-			repositoryChild = true
+		if span.InstrumentationScope().Name == "github.com/exaring/otelpgx" {
+			for _, attr := range span.Attributes() {
+				if attr.Key == "db.query.text" {
+					databaseChild = true
+				}
+				if attr.Key == "pgx.query.parameters" {
+					t.Fatal("database child recorded bind parameters")
+				}
+			}
 		}
 	}
 	for name, found := range requiredDependencies {
 		if !found {
-			t.Fatalf("recovery trace is missing dependency span %q", name)
+			t.Fatalf("workflow trace is missing dependency span %q", name)
 		}
 	}
-	if !repositoryChild {
-		t.Fatal("recovery trace is missing repository child spans")
+	if !databaseChild {
+		t.Fatal("workflow trace is missing driver SQL child spans")
+	}
+}
+
+func executeLifecycleWorkflow(t *testing.T, repository *postgres.Repository, service *application.LifecycleService, operation ports.LifecycleOperationRecord, traceParent string) {
+	t.Helper()
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestWorkflowEnvironment()
+	instrumentation, err := temporalotel.NewTracingInterceptor(temporalotel.TracerOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	env.SetWorkerOptions(worker.Options{Interceptors: []interceptor.WorkerInterceptor{instrumentation}})
+	parent, err := converter.GetDefaultDataConverter().ToPayload(map[string]string{"traceparent": traceParent})
+	if err != nil {
+		t.Fatal(err)
+	}
+	env.SetHeader(&commonpb.Header{Fields: map[string]*commonpb.Payload{"_tracer-data": parent}})
+	orchestration.Register(env, service)
+
+	if operation.Kind == "create" {
+		state, found, err := repository.ReplayAgentCreate(context.Background(), operation.RequestID, operation.RequestFingerprint)
+		if err != nil || !found {
+			t.Fatalf("creation source: %v %v", found, err)
+		}
+		env.ExecuteWorkflow(orchestration.CreateAgentWorkflow, application.CreateAgentInput{
+			RequestID: operation.RequestID, OrganizationID: state.Agent.OrganizationID, ActorPrincipalID: "agent-e2e-admin", OwnerUserID: state.Agent.OwnerUserID, Name: state.Agent.Name, TemplateID: state.Spec.Snapshot.TemplateID, TemplateRevision: state.Spec.Snapshot.TemplateRevision})
+	} else {
+		command := application.LifecycleCommand{Kind: operation.Kind, RequestID: operation.RequestID, AgentID: operation.AgentID, OrganizationID: "agent-e2e-org", ActorPrincipalID: "agent-e2e-admin"}
+		if operation.Kind == "rebuild" {
+			state, found, err := repository.ReplayAgentRebuild(context.Background(), operation.RequestID, operation.RequestFingerprint)
+			if err != nil || !found {
+				t.Fatalf("rebuild source: %v %v", found, err)
+			}
+			command.TemplateID = state.TargetSpec.Snapshot.TemplateID
+			command.TemplateRevision = state.TargetSpec.Snapshot.TemplateRevision
+		}
+		env.ExecuteWorkflow(orchestration.LifecycleWorkflow, command)
+	}
+
+	if err := env.GetWorkflowError(); err != nil {
+		t.Fatalf("creation workflow: %v", err)
+	}
+	completed, err := repository.GetLifecycleOperation(context.Background(), operation.RequestID)
+	if err != nil || completed.State != "completed" {
+		t.Fatalf("creation did not complete without legacy lease: %+v err=%v", completed, err)
 	}
 }

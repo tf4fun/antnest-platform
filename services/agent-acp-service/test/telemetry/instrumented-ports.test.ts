@@ -5,16 +5,122 @@ import {
   InstrumentedAgentController,
   InstrumentedModel,
   InstrumentedRuntimeInformation,
+  InstrumentedToolCatalog,
 } from "../../src/telemetry/instrumented-ports.js";
 import type { AcpApplicationPort } from "../../src/ports/acp-application.js";
 import type { ModelPort } from "../../src/ports/model.js";
+import type { ToolCallResult, ToolCatalogPort } from "../../src/ports/tools.js";
 import type { TelemetryAttributes, TelemetryPort } from "../../src/ports/telemetry.js";
 import type { AgentControllerPort } from "../../src/ports/agent-controller.js";
 import { AgentControllerError } from "../../src/ports/agent-controller.js";
-import { binding, snapshot } from "../support/fixtures.js";
+import {
+  binding,
+  snapshot,
+  configurationCatalog,
+  sessionConfigurationView,
+} from "../support/fixtures.js";
 import { runtimeInformation } from "../fixtures/runtime-information.js";
 
 describe("instrumented ports", () => {
+  it("traces Session configuration and its Controller catalog without exporting selections", async () => {
+    const telemetry = recordingTelemetry();
+    const catalog = configurationCatalog();
+    catalog.models[0]!.displayName = "private-model-name";
+    const signal = new AbortController().signal;
+    const getSessionConfiguration = vi
+      .fn<AgentControllerPort["getSessionConfiguration"]>()
+      .mockResolvedValue(catalog);
+    const controller = new InstrumentedAgentController(
+      {
+        resolveAgentAccess: vi.fn(),
+        getSessionConfiguration,
+        acquireRun: vi.fn(),
+        resolveCredential: vi.fn(),
+        finishRun: vi.fn(),
+      },
+      telemetry.port,
+    );
+    const delegate = acpApplication();
+    delegate.setSessionConfiguration = async () => {
+      await controller.getSessionConfiguration(
+        {
+          requestId: "request-1",
+          agentId: "agent-1",
+          principalId: "principal-1",
+          expectedAccessRevision: "access-1",
+          limit: 200,
+        },
+        signal,
+      );
+      return sessionConfigurationView();
+    };
+    const application = new InstrumentedAcpApplication(delegate, telemetry.port);
+    await application.getSessionConfiguration({ binding: binding(), sessionId: "session-1" });
+    await application.setSessionConfiguration({
+      binding: binding(),
+      sessionId: "session-1",
+      configId: "model",
+      value: "private-selection",
+    });
+    expect(telemetry.spans.map(({ name }) => name)).toEqual([
+      "acp.session.get_configuration",
+      "acp.session.set_configuration",
+      "agent_controller.get_session_configuration",
+    ]);
+    expect(getSessionConfiguration).toHaveBeenCalledWith(
+      expect.objectContaining({ agentId: "agent-1" }),
+      signal,
+    );
+    expect(telemetry.counts).toContainEqual({
+      name: "antnest.acp.session_methods",
+      attributes: { method: "set_configuration", result: "ok" },
+      value: 1,
+    });
+    expect(JSON.stringify(telemetry)).not.toContain("private-");
+  });
+  it("passes file observations to the caller without exporting them to telemetry", async () => {
+    const telemetry = recordingTelemetry();
+    const log = vi.spyOn(telemetry.port, "log");
+    const result: ToolCallResult = {
+      content: [{ type: "text", text: "written" }],
+      isError: false,
+      toolEffectState: "settled",
+      file: {
+        path: "/workspace/private-file",
+        change: { before: "private-before", after: "private-after" },
+      },
+    };
+    const call = vi.fn<ToolCatalogPort["call"]>().mockResolvedValue(result);
+    const catalog = new InstrumentedToolCatalog({ list: vi.fn(), call }, telemetry.port);
+    expect(
+      await catalog.call({
+        runId: "run-1",
+        snapshot: snapshot(),
+        tool: {
+          source: "runtime",
+          sourceId: "runtime",
+          name: "write",
+          modelName: "write",
+          description: "Write",
+          inputSchema: { type: "object" },
+        },
+        arguments: { path: "private-file", content: "private-after" },
+        signal: new AbortController().signal,
+      }),
+    ).toBe(result);
+    expect(call).toHaveBeenCalledOnce();
+    expect(telemetry.spans).toContainEqual({
+      name: "mcp.tools.call",
+      attributes: {
+        "run.id": "run-1",
+        "admission.id": "admission-1",
+        "tool.name": "write",
+        "mcp.source_id": "runtime",
+      },
+    });
+    expect(JSON.stringify({ telemetry, logs: log.mock.calls })).not.toContain("private-");
+  });
+
   it("traces Runtime information reads without exporting guidance or Skill content", async () => {
     const telemetry = recordingTelemetry();
     const reader = new InstrumentedRuntimeInformation(
@@ -152,6 +258,7 @@ describe("instrumented ports", () => {
     const controller = new InstrumentedAgentController(
       {
         resolveAgentAccess: vi.fn(),
+        getSessionConfiguration: vi.fn(),
         acquireRun: vi.fn(),
         resolveCredential: vi.fn(),
         finishRun,
@@ -185,6 +292,8 @@ describe("instrumented ports", () => {
 function acpApplication(): AcpApplicationPort {
   return {
     assertAccess: vi.fn(),
+    getSessionConfiguration: vi.fn(() => Promise.resolve(sessionConfigurationView())),
+    setSessionConfiguration: vi.fn(() => Promise.resolve(sessionConfigurationView())),
     createSession: vi.fn(),
     listSessions: vi.fn(),
     deleteSession: vi.fn(),

@@ -1,10 +1,12 @@
 import type {
   ContentBlock,
+  JsonValue,
   ModelToolDefinition,
   ToolEffectState,
   UnknownEffectSource,
 } from "../domain/types.js";
 import type { SessionEvent } from "./acp-application.js";
+import type { ToolPresentation, ToolFileObservation } from "../domain/tool-presentation.js";
 import type { ModelToolCall, ModelUsage } from "./model.js";
 
 export type AppendAgentMessageInput = {
@@ -12,6 +14,7 @@ export type AppendAgentMessageInput = {
   runId: string;
   content: ContentBlock[];
   toolCalls?: ModelToolCall[];
+  responseId?: string;
   createdAt: Date;
 };
 
@@ -20,8 +23,17 @@ export type StartToolAttemptInput = {
   runId: string;
   toolCallId: string;
   tool: ModelToolDefinition;
+  presentation?: ToolPresentation;
   arguments: { [key: string]: unknown };
   requestDigest: string;
+  createdAt: Date;
+};
+
+export type AppendToolProgressInput = {
+  id: string;
+  runId: string;
+  toolCallId: string;
+  content: ContentBlock[];
   createdAt: Date;
 };
 
@@ -34,6 +46,8 @@ export type AppendRejectedToolCallInput = {
 };
 
 export type FinishToolAttemptInput = {
+  file?: ToolFileObservation;
+  rawOutput?: JsonValue;
   id: string;
   runId: string;
   toolCallId: string;
@@ -49,6 +63,13 @@ export type InterruptedToolEffects =
   | { toolEffectState: "unknown"; unknownEffectSource: UnknownEffectSource };
 
 export interface RunEventRepository {
+  appendPlan(input: {
+    id: string;
+    runId: string;
+    events: [Extract<SessionEvent, { kind: "plan" }>, Extract<SessionEvent, { kind: "tool_call" }>];
+    createdAt: Date;
+  }): Promise<boolean>;
+  appendToolProgress(input: AppendToolProgressInput): Promise<SessionEvent>;
   appendAgentMessage(input: AppendAgentMessageInput): Promise<SessionEvent>;
   appendAgentThought(input: AppendAgentMessageInput): Promise<SessionEvent>;
   appendUsage(input: {

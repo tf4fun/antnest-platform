@@ -76,7 +76,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-request_json() {
+request_json() (
   method=$1
   url=$2
   body_file=$3
@@ -87,20 +87,18 @@ request_json() {
   if [ -n "$trace_id" ]; then
     trace_header="00-${trace_id}-0123456789abcdef-01"
   fi
-  status=$(curl -sS -o "$response_file" -w '%{http_code}' \
-    -X "$method" \
-    -H 'accept: application/json' \
-    -H 'content-type: application/json' \
-    ${trace_header:+-H "traceparent: $trace_header"} \
-    --data-binary "@$body_file" \
-    "$url")
+  set -- -sS --connect-timeout 5 --max-time 15 -o "$response_file" -w '%{http_code}' \
+    -X "$method" -H 'accept: application/json' -H 'content-type: application/json'
+  if [ -n "$trace_header" ]; then set -- "$@" -H "traceparent: $trace_header"; fi
+  if [ -n "$body_file" ]; then set -- "$@" --data-binary "@$body_file"; fi
+  status=$(curl "$@" "$url")
   if [ "$status" != "$expected_status" ]; then
     printf '%s %s returned HTTP %s, want %s: ' "$method" "$url" "$status" "$expected_status" >&2
     cat "$response_file" >&2
     printf '\n' >&2
     return 1
   fi
-}
+)
 
 json_field() {
   node -e '
@@ -119,6 +117,45 @@ assert_json_field() {
     return 1
   fi
 }
+
+wait_operation() (
+  operation_id=$1
+  deadline=$(($(date +%s) + 180))
+  while [ "$(date +%s)" -lt "$deadline" ]; do
+    request_json GET "$controller_url/internal/agent-operations/$operation_id?organization_id=$organization_id" \
+      "" "$temporary_root/operation.json" 200
+    assert_json_field "$temporary_root/operation.json" request_id "$operation_id"
+    case "$(json_field "$temporary_root/operation.json" state)" in
+      completed) return 0 ;;
+      running) sleep 1 ;;
+      *) printf 'Lifecycle operation %s did not complete successfully\n' "$operation_id" >&2; return 1 ;;
+    esac
+  done
+  printf 'Lifecycle operation %s timed out\n' "$operation_id" >&2
+  return 1
+)
+
+read_agent() {
+  request_json GET "$controller_url/internal/agents/$agent_id?organization_id=$organization_id" \
+    "" "$temporary_root/agent-current.json" 200
+}
+
+wait_disabled() (
+  deadline=$(($(date +%s) + 180))
+  while [ "$(date +%s)" -lt "$deadline" ]; do
+    read_agent
+    active=$(node -e 'const f=require("node:fs"); process.stdout.write(JSON.parse(f.readFileSync(process.argv[1])).active_operation_request_id ?? "")' "$temporary_root/agent-current.json")
+    if [ -n "$active" ]; then
+      wait_operation "$active"
+    elif [ "$(json_field "$temporary_root/agent-current.json" lifecycle_state)" = disabled ]; then
+      assert_json_field "$temporary_root/agent-current.json" desired_state disabled
+      return 0
+    fi
+    sleep 1
+  done
+  printf 'Owner revocation did not disable Agent\n' >&2
+  return 1
+)
 
 docker compose --profile stage2 --profile stage2-e2e --profile observability up -d --wait \
   postgres stage2-model jaeger
@@ -146,8 +183,23 @@ EOF
 request_json POST "$identity_url/rpc/identity/local-login" \
   "$temporary_root/login.json" "$temporary_root/login-response.json" 200
 organization_id=$(json_field "$temporary_root/login-response.json" principal.organization_id)
-owner_user_id=$(json_field "$temporary_root/login-response.json" principal.user_id)
-owner_membership_id=$(json_field "$temporary_root/login-response.json" principal.membership_id)
+actor_principal_id=$(json_field "$temporary_root/login-response.json" principal.user_id)
+
+cat >"$temporary_root/owner.json" <<EOF
+{
+  "request_id": "stage2-owner",
+  "actor_principal_id": "$actor_principal_id",
+  "organization_id": "$organization_id",
+  "email": "stage2-owner@example.com",
+  "display_name": "Stage 2 Owner",
+  "password": "stage2-owner-password",
+  "role": "member"
+}
+EOF
+request_json POST "$identity_url/rpc/identity/create-local-user" \
+  "$temporary_root/owner.json" "$temporary_root/owner-response.json" 200
+owner_user_id=$(json_field "$temporary_root/owner-response.json" user.id)
+owner_membership_id=$(json_field "$temporary_root/owner-response.json" membership.id)
 
 cat >"$temporary_root/model.json" <<EOF
 {
@@ -198,6 +250,7 @@ cat >"$temporary_root/agent.json" <<EOF
 {
   "request_id": "stage2-agent-create",
   "organization_id": "$organization_id",
+  "actor_principal_id": "$actor_principal_id",
   "owner_user_id": "$owner_user_id",
   "name": "Stage 2 Agent",
   "template_id": "$template_id",
@@ -208,14 +261,16 @@ request_json POST "$controller_url/internal/agents" \
   "$temporary_root/agent.json" "$temporary_root/agent-response.json" 202 "$lifecycle_trace_id"
 agent_id=$(json_field "$temporary_root/agent-response.json" agent.agent_id)
 agent_access_subject=$(json_field "$temporary_root/agent-response.json" agent_access_subject)
-assert_json_field "$temporary_root/agent-response.json" agent.lifecycle_state available
-assert_json_field "$temporary_root/agent-response.json" operation.state completed
+wait_operation stage2-agent-create
+read_agent
+assert_json_field "$temporary_root/agent-current.json" lifecycle_state available
 
 ANTNEST_STAGE2_ACP_URL="$acp_url" \
 ANTNEST_STAGE2_AGENT_ACCESS_SUBJECT="$agent_access_subject" \
 ANTNEST_STAGE2_TRACEPARENT="00-${execution_trace_id}-fedcba9876543210-01" \
 ANTNEST_STAGE2_IDENTITY_URL="http://identity-service:8080" \
 ANTNEST_STAGE2_ORGANIZATION_ID="$organization_id" \
+ANTNEST_STAGE2_ACTOR_PRINCIPAL_ID="$actor_principal_id" \
 ANTNEST_STAGE2_OWNER_USER_ID="$owner_user_id" \
 ANTNEST_STAGE2_OWNER_MEMBERSHIP_ID="$owner_membership_id" \
   docker compose --profile stage2-e2e run --rm --no-deps \
@@ -224,6 +279,7 @@ ANTNEST_STAGE2_OWNER_MEMBERSHIP_ID="$owner_membership_id" \
   -e ANTNEST_STAGE2_TRACEPARENT \
   -e ANTNEST_STAGE2_IDENTITY_URL \
   -e ANTNEST_STAGE2_ORGANIZATION_ID \
+  -e ANTNEST_STAGE2_ACTOR_PRINCIPAL_ID \
   -e ANTNEST_STAGE2_OWNER_USER_ID \
   -e ANTNEST_STAGE2_OWNER_MEMBERSHIP_ID \
   stage2-client node /app/scripts/stage2-acp-client.mjs \
@@ -232,15 +288,25 @@ assert_json_field "$temporary_root/acp-evidence.json" message \
   'Stage 2 Runtime Tool execution completed.'
 assert_json_field "$temporary_root/acp-evidence.json" access_revalidation_code access_denied
 
-workspace_evidence=$(docker exec "antnest-runtime-${agent_id}" \
-  cat /workspace/stage2-evidence.txt)
+wait_disabled
+workspace="antnest-workspace-${agent_id}"
+workspace_scope=$(docker volume inspect --format '{{index .Labels "io.antnest.runtime-controller-scope"}}' "$workspace")
+workspace_owner=$(docker volume inspect --format '{{index .Labels "io.antnest.agent-id"}}' "$workspace")
+test "$workspace_scope" = "$COMPOSE_PROJECT_NAME"
+test "$workspace_owner" = "$agent_id"
+workspace_evidence=$(docker run --rm --name "${COMPOSE_PROJECT_NAME}-workspace-reader" \
+  --label "io.antnest.runtime-controller-scope=$COMPOSE_PROJECT_NAME" \
+  --network none --read-only --user 1000:1000 --cap-drop ALL \
+  --security-opt no-new-privileges \
+  --mount "type=volume,src=$workspace,dst=/workspace,readonly" \
+  --entrypoint cat "$runtime_image" /workspace/stage2-evidence.txt)
 if [ "$workspace_evidence" != "stage2-runtime-tool-ok" ]; then
   printf 'Runtime workspace evidence = %s\n' "$workspace_evidence" >&2
   exit 1
 fi
 
 docker compose --profile stage2-e2e run --rm --no-deps stage2-client \
-  node /app/scripts/stage2-trace-assert.mjs "$jaeger_url" "$lifecycle_trace_id" lifecycle
+  node /app/scripts/stage2-trace-assert.mjs "$jaeger_url" "$lifecycle_trace_id" lifecycle stage2-agent-create "$agent_id"
 docker compose --profile stage2-e2e run --rm --no-deps stage2-client \
   node /app/scripts/stage2-trace-assert.mjs "$jaeger_url" "$execution_trace_id" execution
 
@@ -248,11 +314,13 @@ request_json POST "$controller_url/internal/agents" \
   "$temporary_root/agent.json" "$temporary_root/agent-replay-response.json" 202
 assert_json_field "$temporary_root/agent-replay-response.json" agent.agent_id "$agent_id"
 assert_json_field "$temporary_root/agent-replay-response.json" operation.state completed
+assert_json_field "$temporary_root/agent-replay-response.json" agent_access_subject "$agent_access_subject"
 
 cat >"$temporary_root/rejected-agent.json" <<EOF
 {
   "request_id": "stage2-agent-create-inactive-owner",
   "organization_id": "$organization_id",
+  "actor_principal_id": "$actor_principal_id",
   "owner_user_id": "$owner_user_id",
   "name": "Rejected Stage 2 Agent",
   "template_id": "$template_id",
@@ -275,11 +343,13 @@ ANTNEST_STAGE2_EXPECTED_UPGRADE_STATUS=403 \
 assert_json_field "$temporary_root/acp-rejection-evidence.json" upgrade_status 403
 
 cat >"$temporary_root/delete.json" <<EOF
-{"request_id":"stage2-agent-delete"}
+{"request_id":"stage2-agent-delete","organization_id":"$organization_id","actor_principal_id":"$actor_principal_id"}
 EOF
 request_json POST "$controller_url/internal/agents/${agent_id}/delete" \
   "$temporary_root/delete.json" "$temporary_root/delete-response.json" 202
-assert_json_field "$temporary_root/delete-response.json" state completed
+wait_operation stage2-agent-delete
+read_agent
+assert_json_field "$temporary_root/agent-current.json" lifecycle_state deleted
 if docker inspect "antnest-runtime-${agent_id}" >/dev/null 2>&1; then
   echo "deleted Agent retained its Runtime container" >&2
   exit 1

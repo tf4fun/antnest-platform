@@ -279,6 +279,9 @@ button:disabled { cursor: default; }
 .message-attachment strong, .message-attachment small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .message-attachment strong { color: var(--ink-soft); font-size: 10px; }
 .message-attachment small { color: var(--muted); font: 9px var(--mono); }
+.message-audio { flex-wrap: wrap; width: min(280px, 100%); max-width: 100%; min-width: 0; }
+.message-audio > span { flex: 1; }
+.message-audio audio { display: block; width: 100%; min-width: 0; height: 32px; }
 .tool-list { display: grid; gap: 5px; margin: 1px 0 15px; }
 .tool-activity { overflow: hidden; border: 1px solid #deded8; border-radius: 7px; background: #f8f8f5; }
 .tool-activity summary {
@@ -312,7 +315,8 @@ button:disabled { cursor: default; }
 .tool-activity[open] .tool-chevron { transform: rotate(180deg); }
 .tool-detail { padding: 10px 12px 12px 46px; border-top: 1px solid #e4e4df; color: var(--muted); font-size: 10px; line-height: 1.5; }
 .tool-detail p { margin: 0; }
-.tool-detail code { display: block; margin-top: 7px; overflow: hidden; color: #555550; font: 9px var(--mono); text-overflow: ellipsis; white-space: nowrap; }
+.tool-detail pre { max-height: 360px; margin: 7px 0 0; overflow-y: auto; color: #555550; font: 11px/1.6 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.tool-detail code { font: inherit; }
 
 .workspace-alert {
   width: min(850px, calc(100% - 56px));
@@ -451,3 +455,24 @@ button:disabled { cursor: default; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
 }
+/* Session policy and approval remain separate from conversation messages. */
+.session-settings { display: flex; flex-wrap: wrap; gap: 12px; padding: 8px 24px; border-bottom: 1px solid var(--border, #e4e4e7); }
+.session-settings:empty { display: none; }
+.session-usage { display: flex; flex: 0 0 auto; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 8px 24px; border-bottom: 1px solid #e4e4df; color: #62625d; font-size: 11px; }
+.usage-metric { display: inline-flex; flex-wrap: wrap; gap: 4px 8px; min-width: 0; max-width: 100%; }
+.usage-metric strong { color: #363632; font: 11px var(--mono); overflow-wrap: anywhere; }
+.usage-note { font-size: 10px; }
+.usage-stale { color: #935323; font-size: 10px; }
+@media (max-width: 820px) { .session-usage { padding-inline: 12px; } }
+.session-settings label { display: flex; align-items: center; gap: 8px; font-size: 12px; min-width: 0; max-width: 100%; }
+.session-settings select { min-width: 0; max-width: 260px; padding: 6px 8px; background: transparent; color: inherit; border: 1px solid var(--border, #e4e4e7); border-radius: 6px; }
+.permission-requests { width: min(100%, 800px); align-self: center; padding: 8px 20px; overflow-y: auto; max-height: 40vh; flex-shrink: 0; }
+.permission-request { border: 1px solid #ca8a04; border-radius: 8px; padding: 12px; background: var(--surface, #fff); color: var(--text, #242424); }
+.permission-request + .permission-request { margin-top: 8px; }
+.permission-request header { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.permission-request p { margin: 8px 0; overflow-wrap: anywhere; }
+.permission-request pre { font-size: 12px; line-height: 1.5; max-height: 120px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; background: #f4f4f5; padding: 8px; border-radius: 4px; }
+.permission-options { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.permission-options button { display: inline-flex; align-items: center; gap: 5px; padding: 7px 10px; border: 1px solid #d4d4d8; border-radius: 6px; font-size: 12px; background: transparent; color: inherit; }
+.permission-options button:hover { background: #f4f4f5; }
+.permission-conversation { display: block; text-align: left; max-width: 100%; overflow-wrap: anywhere; font: inherit; font-size: 12px; color: var(--ink-soft); margin-top: 8px; padding: 0; border: 0; background: transparent; text-decoration: underline; cursor: pointer; }

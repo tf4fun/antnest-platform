@@ -62,22 +62,22 @@ func (repository *Repository) reconcileRuntimeObservationCursor(
 	if (!reset && cursor.Initialized) || (reset && cursor.Sequence > sequence) {
 		return transaction.Commit(ctx)
 	}
-	eventCount := 0
+	eventCounts := make(map[string]int)
 	for _, runtime := range runtimes {
-		if runtime.LifecycleState != "ready" || runtime.Health != "healthy" ||
-			runtime.RuntimeExecutionID == "" {
+		invalidation, observedExecutionID, ok := runtimeSnapshotInvalidation(runtime)
+		if !ok {
 			continue
 		}
 		eventID := runtimeReconciliationEventID(runtime)
 		changed, invalidateErr := invalidateRuntimeExecution(
 			ctx, transaction, runtime.AgentID, runtime.RuntimeRevision,
-			runtime.RuntimeExecutionID, eventID, "runtime_execution_changed", sequence,
+			observedExecutionID, eventID, invalidation, sequence,
 		)
 		if invalidateErr != nil {
 			return invalidateErr
 		}
 		if changed {
-			eventCount++
+			eventCounts[invalidation.eventType]++
 		}
 	}
 	if _, err := transaction.Exec(ctx, `
@@ -89,8 +89,10 @@ WHERE singleton = TRUE`, int64(sequence)); err != nil {
 	if err := transaction.Commit(ctx); err != nil {
 		return fmt.Errorf("commit Runtime observation reconciliation: %w", err)
 	}
-	for range eventCount {
-		repository.recordEventAppend(ctx, ports.EventAgentRuntimeRestarted)
+	for eventType, count := range eventCounts {
+		for range count {
+			repository.recordEventAppend(ctx, eventType)
+		}
 	}
 	return nil
 }
@@ -117,12 +119,13 @@ func (repository *Repository) ApplyRuntimeObservation(
 		return transaction.Commit(ctx)
 	}
 	changed := false
-	if observation.Kind == ports.RuntimeObservationRestarted {
+	invalidation, shouldInvalidate := runtimeObservationInvalidation(observation.Kind)
+	if shouldInvalidate {
 		changed, err = invalidateRuntimeExecution(
 			ctx, transaction, observation.AgentID, observation.RuntimeRevision,
 			"",
 			"runtime-observation-"+strconv.FormatUint(observation.Sequence, 10),
-			"runtime_restarted", observation.Sequence,
+			invalidation, observation.Sequence,
 		)
 		if err != nil {
 			return err
@@ -138,13 +141,13 @@ WHERE singleton = TRUE`, int64(observation.Sequence)); err != nil {
 		return fmt.Errorf("commit Runtime observation transaction: %w", err)
 	}
 	if changed {
-		repository.recordEventAppend(ctx, ports.EventAgentRuntimeRestarted)
+		repository.recordEventAppend(ctx, invalidation.eventType)
 	}
 	return nil
 }
 
 func lockRuntimeObservationCursor(
-	ctx context.Context, transaction pgx.Tx,
+	ctx context.Context, transaction *databaseTransaction,
 ) (ports.RuntimeObservationCursor, error) {
 	var cursor ports.RuntimeObservationCursor
 	err := transaction.QueryRow(ctx, `
@@ -160,12 +163,12 @@ FOR UPDATE`).Scan(&cursor.Sequence, &cursor.Initialized)
 
 func invalidateRuntimeExecution(
 	ctx context.Context,
-	transaction pgx.Tx,
+	transaction *databaseTransaction,
 	agentID string,
 	runtimeRevision string,
 	observedExecutionID string,
 	eventID string,
-	failureCode string,
+	invalidation runtimeInvalidation,
 	observationSequence uint64,
 ) (bool, error) {
 	var aggregateSequence int64
@@ -177,7 +180,7 @@ SET lifecycle_state = 'unavailable',
     runtime_mcp_endpoint = '',
     failure_stage = 'runtime_observation',
     failure_code = $3,
-    failure_detail = 'Runtime process identity changed outside an Agent lifecycle operation; rebuild is required',
+    failure_detail = $5,
     aggregate_sequence = aggregate_sequence + 1,
     updated_at = clock_timestamp()
 WHERE id = $1
@@ -186,19 +189,19 @@ WHERE id = $1
   AND lifecycle_state = 'available'
   AND active_operation_request_id = ''
   AND ($4 = '' OR runtime_execution_id <> $4)
-RETURNING aggregate_sequence`, agentID, runtimeRevision, failureCode, observedExecutionID).Scan(&aggregateSequence)
+RETURNING aggregate_sequence`, agentID, runtimeRevision, invalidation.code, observedExecutionID, invalidation.detail).Scan(&aggregateSequence)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}
 	if err != nil {
-		return false, fmt.Errorf("invalidate restarted Runtime execution: %w", err)
+		return false, fmt.Errorf("invalidate Runtime execution: %w", err)
 	}
 	data, err := json.Marshal(map[string]any{
 		"runtime_revision": runtimeRevision, "observation_sequence": observationSequence,
-		"reason": failureCode,
+		"reason": invalidation.code,
 	})
 	if err != nil {
-		return false, fmt.Errorf("encode Runtime restart event: %w", err)
+		return false, fmt.Errorf("encode Runtime invalidation event: %w", err)
 	}
 	var globalSequence int64
 	if err := transaction.QueryRow(ctx, `
@@ -206,7 +209,7 @@ UPDATE agent_controller.event_journal_cursor
 SET last_sequence = last_sequence + 1
 WHERE singleton = TRUE
 RETURNING last_sequence`).Scan(&globalSequence); err != nil {
-		return false, fmt.Errorf("allocate Runtime restart event sequence: %w", err)
+		return false, fmt.Errorf("allocate Runtime invalidation event sequence: %w", err)
 	}
 	if _, err := transaction.Exec(ctx, `
 INSERT INTO agent_controller.agent_events (
@@ -214,9 +217,9 @@ INSERT INTO agent_controller.agent_events (
     data, occurred_at
 ) VALUES ($1, $2, $3, $4, 1, $5, $6, clock_timestamp())`,
 		globalSequence, eventID, agentID, aggregateSequence,
-		ports.EventAgentRuntimeRestarted, data,
+		invalidation.eventType, data,
 	); err != nil {
-		return false, fmt.Errorf("insert Runtime restart event: %w", err)
+		return false, fmt.Errorf("insert Runtime invalidation event: %w", err)
 	}
 	return true, nil
 }

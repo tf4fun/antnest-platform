@@ -412,13 +412,13 @@ func TestRevokeSCIMTokenUsesTrustedActor(t *testing.T) {
 	}
 }
 
-func TestCreateModelProfileShapesAuthorityAndSecretOnce(t *testing.T) {
+func TestCreateModelProfileShapesAuthorityWithoutCredentials(t *testing.T) {
 	backend := newBackendStub()
 	backend.enqueue(http.StatusCreated, `{"model_profile_id":"model-1","revision_id":"model-revision-1"}`)
 	handler := newTestHandler(t, backend)
 	response := requestAdmin(t, handler, http.MethodPost, "/api/admin/model-profiles", `{
-		"display_name":"DeepSeek","api_key":"secret-key",
-		"model":{"base_url":"https://api.deepseek.com","model":"deepseek-chat","context_window":64000,"max_output_tokens":8192,"supports_images":false}
+		"display_name":"DeepSeek","provider_connection_id":"connection-1",
+		"model":{"model":"deepseek-chat","context_window":64000,"max_output_tokens":8192,"supports_images":false}
 	}`)
 	if response.Code != http.StatusCreated {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
@@ -430,38 +430,11 @@ func TestCreateModelProfileShapesAuthorityAndSecretOnce(t *testing.T) {
 	if !strings.HasPrefix(requestID, "catalog-") || payload["organization_id"] != "org-1" {
 		t.Fatalf("authority fields=%v", payload)
 	}
-	credential := payload["credential"].(map[string]any)
-	if credential["secret_type"] != "bearer" || credential["secret"] != "secret-key" {
-		t.Fatalf("credential=%v", credential)
+	if payload["credential"] != nil || payload["provider_connection_id"] != "connection-1" {
+		t.Fatalf("model must reference connection, not carry credentials: %v", payload)
 	}
 	if strings.Contains(response.Body.String(), "secret-key") {
 		t.Fatalf("secret leaked: %s", response.Body.String())
-	}
-}
-
-func TestModelCatalogIsProjectedWithoutOrganizationOrInternalFields(t *testing.T) {
-	backend := newBackendStub()
-	backend.enqueue(http.StatusOK, `{
-		"revision":"2026-09-03",
-		"providers":[{
-			"provider_key":"deepseek","display_name":"DeepSeek","description":"DeepSeek API",
-			"base_url":"https://api.deepseek.com","custom":false,"internal_note":"strip-me",
-			"models":[{"model_id":"deepseek-v4-pro","display_name":"DeepSeek V4 Pro",
-			"context_window":1000000,"max_output_tokens":384000,"supports_images":false}]
-		}]
-	}`)
-	handler := newTestHandler(t, backend)
-	response := requestAdmin(t, handler, http.MethodGet, "/api/admin/model-catalog", "")
-	if response.Code != http.StatusOK {
-		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
-	}
-	call := backend.singleCall(t)
-	if call.Target != upstream.AgentController || call.Path != "/internal/model-catalog" || call.Query != "" {
-		t.Fatalf("call=%#v", call)
-	}
-	if strings.Contains(response.Body.String(), "internal_note") ||
-		!strings.Contains(response.Body.String(), `"model_id":"deepseek-v4-pro"`) {
-		t.Fatalf("projection=%s", response.Body.String())
 	}
 }
 
@@ -476,8 +449,8 @@ func TestModelProfileDetailAndRevisionRemainOrganizationScoped(t *testing.T) {
 		t.Fatalf("get status=%d body=%s", response.Code, response.Body.String())
 	}
 	response = requestAdmin(t, handler, http.MethodPost, "/api/admin/model-profiles/model-1/revisions", `{
-		"display_name":"DeepSeek V2","api_key":"replacement-secret",
-		"model":{"base_url":"https://api.deepseek.com","model":"deepseek-chat","context_window":128000,"max_output_tokens":8192,"supports_images":false}
+		"display_name":"DeepSeek V2",
+		"model":{"model":"deepseek-chat","context_window":128000,"max_output_tokens":8192,"supports_images":false}
 	}`)
 	if response.Code != http.StatusCreated {
 		t.Fatalf("revise status=%d body=%s", response.Code, response.Body.String())
@@ -505,7 +478,7 @@ func TestCreateTemplateUsesConfiguredRuntimeDigestAndDefaults(t *testing.T) {
 	backend.enqueue(http.StatusCreated, `{"template_id":"template-1","revision":1}`)
 	handler := newTestHandler(t, backend)
 	response := requestAdmin(t, handler, http.MethodPost, "/api/admin/templates", `{
-		"name":"Personal Agent","model_profile_revision_id":"model-revision-1",
+		"name":"Personal Agent","model_profile_id":"model-1",
 		"system_prompt":"You are helpful."
 	}`)
 	if response.Code != http.StatusCreated {
@@ -550,7 +523,7 @@ func TestTemplateDetailAndRevisionRemainOrganizationScoped(t *testing.T) {
 		t.Fatalf("get status=%d body=%s", response.Code, response.Body.String())
 	}
 	response = requestAdmin(t, handler, http.MethodPost, "/api/admin/templates/template-1/revisions", `{
-		"name":"Personal V2","model_profile_revision_id":"model-revision-2",
+		"name":"Personal V2","model_profile_id":"model-2",
 		"system_prompt":"Updated prompt","max_model_requests":24,
 		"runtime":{"image_ref":"`+testRuntimeDigest+`","resources":{"memory_bytes":1073741824,"pids_limit":256,"tmpfs_bytes":268435456}}
 	}`)
@@ -585,7 +558,7 @@ func TestHistoricalCatalogRevisionReadsRemainOrganizationScopedAndSecretFree(t *
 	}`)
 	backend.enqueue(http.StatusOK, `{
 		"template_id":"template-1","organization_id":"org-1","template_key":"personal",
-		"name":"Personal","revision":1,"model_profile_revision_id":"model-revision-1",
+		"name":"Personal","revision":1,"model_profile_id":"model-1",
 		"system_prompt":"historical","max_model_requests":8,"context_policy_version":"context-v1",
 		"runtime":{"image_ref":"`+testRuntimeDigest+`","resources":{"memory_bytes":1073741824,"pids_limit":256,"tmpfs_bytes":268435456}},
 		"skill_refs":[],"enabled":true,"created_at":"2026-09-03T00:00:00Z","updated_at":"2026-09-03T00:00:00Z"
@@ -956,7 +929,7 @@ func TestBrowserProjectionsDoNotExposeControlPlaneFields(t *testing.T) {
 			"updated_at":"2026-09-02T00:00:00Z"}`},
 		{name: "template", projector: projectTemplate, payload: `{
 			"template_id":"template-1","organization_id":"org-1","template_key":"research",
-			"name":"Research","revision":1,"model_profile_revision_id":"revision-1",
+			"name":"Research","revision":1,"model_profile_id":"model-1",
 			"system_prompt":"Work carefully.","max_model_requests":8,
 			"context_policy_version":"context-v1","runtime":{"image_ref":"runtime@sha256:abc"},
 			"skill_refs":[],"enabled":true,"created_at":"2026-09-02T00:00:00Z",

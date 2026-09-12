@@ -1,3 +1,6 @@
+import { createServer } from "node:http";
+import { sessionConfigurationView } from "../support/fixtures.js";
+import { v1Configuration } from "../../src/transport/acp/configuration.js";
 import * as acp from "@agentclientprotocol/sdk";
 import { createHttpStream } from "@agentclientprotocol/sdk/experimental/http-client";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -26,6 +29,8 @@ describe("ACP v1 Streamable HTTP", () => {
   let closeTransport = () => Promise.resolve();
   const application = {
     assertAccess: vi.fn(() => Promise.resolve()),
+    getSessionConfiguration: vi.fn(() => Promise.resolve(sessionConfigurationView())),
+    setSessionConfiguration: vi.fn(() => Promise.resolve(sessionConfigurationView())),
     createSession: vi.fn<AcpApplicationPort["createSession"]>(() =>
       Promise.resolve({ sessionId: "session-1" }),
     ),
@@ -68,6 +73,7 @@ describe("ACP v1 Streamable HTTP", () => {
       application,
       agentController: {
         resolveAgentAccess: resolve,
+        getSessionConfiguration: vi.fn(),
         acquireRun: vi.fn(),
         finishRun: vi.fn(),
         resolveCredential: vi.fn(),
@@ -111,6 +117,7 @@ describe("ACP v1 Streamable HTTP", () => {
       outputs: new SessionOutputStreams(),
       agentController: {
         resolveAgentAccess: resolve,
+        getSessionConfiguration: vi.fn(),
         acquireRun: vi.fn(),
         finishRun: vi.fn(),
         resolveCredential: vi.fn(),
@@ -179,7 +186,7 @@ describe("ACP v1 Streamable HTTP", () => {
         cwd: "/workspace",
         mcpServers: [],
       }),
-    ).toEqual({ sessionId: "session-1" });
+    ).toEqual({ sessionId: "session-1", ...v1Configuration(sessionConfigurationView()) });
     expect(await connection.agent.request(acp.methods.agent.session.list, {})).toEqual({
       sessions: [],
     });
@@ -189,7 +196,7 @@ describe("ACP v1 Streamable HTTP", () => {
         cwd: "/workspace",
         mcpServers: [],
       }),
-    ).toEqual({});
+    ).toEqual(v1Configuration(sessionConfigurationView()));
     expect(application.createSession.mock.calls[0]?.[0].binding).toMatchObject({
       principalId: "owner",
       agentId: "agent-1",
@@ -263,4 +270,3 @@ describe("ACP v1 Streamable HTTP", () => {
     await open();
   });
 });
-import { createServer } from "node:http";

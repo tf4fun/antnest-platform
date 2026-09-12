@@ -145,7 +145,11 @@ disposable test databases/projects. The E2E proves initialization from an
 empty environment, Controller-process restart recovery, status identity,
 same-generation Runtime process restart observation, update replacement,
 Disable workspace retention, Enable recreation, and Delete cleanup. It also
-proves immutable image input and execution fencing.
+proves image reference preservation and execution fencing. Each build resolves
+the configured tag and persists its image ID before creating a container; recovery
+uses that same ID. A new build resolves the tag again, without changing Template
+configuration. Containers receive both values as startup diagnostic metadata;
+operation records retain them after deletion. No automatic pull/update is added.
 
 To verify image resolution against an installed local image without creating
 containers, volumes, or database records, run from this service directory:
@@ -161,8 +165,24 @@ named image and its resolved immutable ID; it never pulls or builds an image.
 Unit and RPC contract tests separately cover invalid tags, missing images,
 platform outages, deadlines, response minimization, and trace propagation.
 
+For build metadata integration against an existing development instance with
+Jaeger enabled, run from the repository root:
+
+```bash
+node services/runtime-controller/scripts/build-image-smoke.mjs --project <compose-project>
+```
+
+This uses the instance's existing PostgreSQL and installed Runtime image. It
+creates a synthetic Runtime (not an Agent), verifies operation persistence,
+Docker image/metadata, startup logs, exact replay, and the Runtime trace resource,
+then deletes its container/workspace and releases its Egress allocation. The
+operation audit records deliberately remain to verify post-deletion retention.
+No Provider or external model is called. `--image` and `--jaeger` override defaults.
+
 ## Maintainer Guide
 
+- [`docs/observability.md`](docs/observability.md): safe boundary diagnostics,
+  deployment mode propagation, and verification limits.
 - [`docs/architecture.md`](docs/architecture.md): implemented model, workflows,
   persistence, observation semantics, and invariants.
 - [`docs/operations.md`](docs/operations.md): deployment, readiness,

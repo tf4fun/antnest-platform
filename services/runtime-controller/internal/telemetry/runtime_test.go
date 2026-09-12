@@ -49,16 +49,31 @@ func TestDisabledSDKStillPropagatesW3CTraceContext(t *testing.T) {
 	}
 	carrier := propagation.MapCarrier{
 		"traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+		"baggage":     "secret=BAGGAGE_CANARY",
 	}
 	ctx := otel.GetTextMapPropagator().Extract(context.Background(), carrier)
 	if !trace.SpanContextFromContext(ctx).IsValid() {
 		t.Fatal("trace context propagation was disabled with OTLP export")
+	}
+	outgoing := propagation.MapCarrier{}
+	otel.GetTextMapPropagator().Inject(ctx, outgoing)
+	if outgoing.Get("traceparent") != carrier.Get("traceparent") || outgoing.Get("baggage") != "" {
+		t.Fatal("disabled propagation or baggage isolation changed")
+	}
+}
+
+func TestSetupRejectsInvalidDiagnosticModeWithoutExporter(t *testing.T) {
+	clearEnvironment(t)
+	t.Setenv("ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT", "unsafe")
+	if _, err := Setup(context.Background(), slog.NewTextHandler(&bytes.Buffer{}, nil), Config{}); err == nil {
+		t.Fatal("invalid diagnostic mode accepted")
 	}
 }
 
 func clearEnvironment(t *testing.T) {
 	t.Helper()
 	for _, key := range []string{
+		"ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT",
 		"OTEL_SDK_DISABLED", "OTEL_SERVICE_NAME", "OTEL_RESOURCE_ATTRIBUTES",
 		"OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_PROTOCOL",
 		"OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "OTEL_EXPORTER_OTLP_TRACES_PROTOCOL", "OTEL_TRACES_EXPORTER",

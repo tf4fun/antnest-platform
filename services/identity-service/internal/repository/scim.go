@@ -19,9 +19,7 @@ func (a *SCIMAdapter) GetPrincipal(
 	userID string,
 	organizationID string,
 ) (domain.Principal, error) {
-	return observeRepositoryValue(ctx, "get_scim_principal", func(ctx context.Context) (domain.Principal, error) {
-		return a.store.getPrincipal(ctx, a.store.pool, userID, organizationID)
-	})
+	return a.store.getPrincipal(ctx, a.store.pool, userID, organizationID)
 }
 
 func (a *SCIMAdapter) IssueToken(ctx context.Context, command scim.IssueTokenCommand) (scim.Token, error) {
@@ -29,7 +27,7 @@ func (a *SCIMAdapter) IssueToken(ctx context.Context, command scim.IssueTokenCom
 		ID: command.TokenID, OrganizationID: command.OrganizationID, Name: command.Name,
 		Scopes: command.Scopes, CreatedAt: command.CreatedAt,
 	}
-	err := a.store.inTransaction(ctx, "issue_scim_token", func(tx pgx.Tx) error {
+	err := a.store.inTransaction(ctx, func(tx *databaseTransaction) error {
 		if err := a.store.requireOrganizationAdmin(
 			ctx,
 			tx,
@@ -56,7 +54,7 @@ func (a *SCIMAdapter) IssueToken(ctx context.Context, command scim.IssueTokenCom
 }
 
 func (a *SCIMAdapter) RevokeToken(ctx context.Context, actorUserID, tokenID string, now time.Time) error {
-	return a.store.inTransaction(ctx, "revoke_scim_token", func(tx pgx.Tx) error {
+	return a.store.inTransaction(ctx, func(tx *databaseTransaction) error {
 		var organizationID string
 		var revokedAt *time.Time
 		if err := tx.QueryRow(ctx, `
@@ -85,32 +83,30 @@ func (a *SCIMAdapter) RevokeToken(ctx context.Context, actorUserID, tokenID stri
 }
 
 func (a *SCIMAdapter) ListTokens(ctx context.Context, organizationID string) ([]scim.Token, error) {
-	return observeRepositoryValue(ctx, "list_scim_tokens", func(ctx context.Context) ([]scim.Token, error) {
-		rows, err := a.store.pool.Query(ctx, `
+	rows, err := a.store.pool.Query(ctx, `
 			SELECT id, organization_id, name, scopes, created_at, revoked_at
 			FROM scim_tokens
 			WHERE organization_id = $1
 			ORDER BY created_at DESC, id`, organizationID)
-		if err != nil {
-			return nil, fmt.Errorf("list SCIM tokens: %w", err)
+	if err != nil {
+		return nil, fmt.Errorf("list SCIM tokens: %w", err)
+	}
+	defer rows.Close()
+	tokens := make([]scim.Token, 0)
+	for rows.Next() {
+		var token scim.Token
+		if err := rows.Scan(
+			&token.ID, &token.OrganizationID, &token.Name, &token.Scopes,
+			&token.CreatedAt, &token.RevokedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan SCIM token: %w", err)
 		}
-		defer rows.Close()
-		tokens := make([]scim.Token, 0)
-		for rows.Next() {
-			var token scim.Token
-			if err := rows.Scan(
-				&token.ID, &token.OrganizationID, &token.Name, &token.Scopes,
-				&token.CreatedAt, &token.RevokedAt,
-			); err != nil {
-				return nil, fmt.Errorf("scan SCIM token: %w", err)
-			}
-			tokens = append(tokens, token)
-		}
-		if err := rows.Err(); err != nil {
-			return nil, fmt.Errorf("iterate SCIM tokens: %w", err)
-		}
-		return tokens, nil
-	})
+		tokens = append(tokens, token)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate SCIM tokens: %w", err)
+	}
+	return tokens, nil
 }
 
 func (a *SCIMAdapter) ResolveToken(
@@ -118,8 +114,6 @@ func (a *SCIMAdapter) ResolveToken(
 	digest string,
 	now time.Time,
 ) (authorization scim.Authorization, resultErr error) {
-	ctx, finish := startRepositoryOperation(ctx, "resolve_scim_token")
-	defer func() { finish(resultErr) }()
 	err := a.store.pool.QueryRow(ctx, `
 		UPDATE scim_tokens t
 		SET last_used_at = CASE
@@ -140,7 +134,7 @@ func (a *SCIMAdapter) ResolveToken(
 
 func (a *SCIMAdapter) CreateUser(ctx context.Context, command scim.CreateUserCommand) (scim.UserResource, error) {
 	var result scim.UserResource
-	err := a.store.inTransaction(ctx, "create_scim_user", func(tx pgx.Tx) error {
+	err := a.store.inTransaction(ctx, func(tx *databaseTransaction) error {
 		reprovisioned := false
 		if command.Membership.SCIMExternalID != "" {
 			user, found, err := a.findDeletedSCIMUserForReprovision(
@@ -200,20 +194,12 @@ func (a *SCIMAdapter) CreateUser(ctx context.Context, command scim.CreateUserCom
 }
 
 func (a *SCIMAdapter) GetUser(ctx context.Context, organizationID, resourceID string) (scim.UserResource, error) {
-	return observeRepositoryValue(ctx, "get_scim_user", func(ctx context.Context) (scim.UserResource, error) {
-		return scanSCIMUser(a.store.pool.QueryRow(ctx, scimUserSelect+`
+	return scanSCIMUser(a.store.pool.QueryRow(ctx, scimUserSelect+`
 			WHERE m.organization_id = $1 AND m.id = $2 AND m.source = 'scim'
 			  AND m.scim_deleted_at IS NULL`, organizationID, resourceID))
-	})
 }
 
 func (a *SCIMAdapter) ListUsers(ctx context.Context, query scim.ListQuery) (scim.UserPage, error) {
-	return observeRepositoryValue(ctx, "list_scim_users", func(ctx context.Context) (scim.UserPage, error) {
-		return a.listUsers(ctx, query)
-	})
-}
-
-func (a *SCIMAdapter) listUsers(ctx context.Context, query scim.ListQuery) (scim.UserPage, error) {
 	where, arguments, err := scimUserFilter(query)
 	if err != nil {
 		return scim.UserPage{}, err
@@ -250,7 +236,7 @@ func (a *SCIMAdapter) listUsers(ctx context.Context, query scim.ListQuery) (scim
 
 func (a *SCIMAdapter) ReplaceUser(ctx context.Context, command scim.ReplaceUserCommand) (scim.UserResource, error) {
 	var result scim.UserResource
-	err := a.store.inTransaction(ctx, "replace_scim_user", func(tx pgx.Tx) error {
+	err := a.store.inTransaction(ctx, func(tx *databaseTransaction) error {
 		current, err := scanSCIMUser(tx.QueryRow(ctx, scimUserSelect+`
 			WHERE m.organization_id = $1 AND m.id = $2 AND m.source = 'scim'
 			  AND m.scim_deleted_at IS NULL
@@ -289,7 +275,7 @@ func (a *SCIMAdapter) ReplaceUser(ctx context.Context, command scim.ReplaceUserC
 }
 
 func (a *SCIMAdapter) DeleteUser(ctx context.Context, command scim.DeleteUserCommand) error {
-	return a.store.inTransaction(ctx, "delete_scim_user", func(tx pgx.Tx) error {
+	return a.store.inTransaction(ctx, func(tx *databaseTransaction) error {
 		var userID string
 		var updatedAt time.Time
 		if err := tx.QueryRow(ctx, `
@@ -348,7 +334,7 @@ func (a *SCIMAdapter) DeleteUser(ctx context.Context, command scim.DeleteUserCom
 
 func (a *SCIMAdapter) CreateGroup(ctx context.Context, command scim.CreateGroupCommand) (scim.GroupResource, error) {
 	var result scim.GroupResource
-	err := a.store.inTransaction(ctx, "create_scim_group", func(tx pgx.Tx) error {
+	err := a.store.inTransaction(ctx, func(tx *databaseTransaction) error {
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO groups (
 				id, organization_id, display_name, source, active, scim_external_id, created_at, updated_at
@@ -373,18 +359,10 @@ func (a *SCIMAdapter) CreateGroup(ctx context.Context, command scim.CreateGroupC
 }
 
 func (a *SCIMAdapter) GetGroup(ctx context.Context, organizationID, resourceID string) (scim.GroupResource, error) {
-	return observeRepositoryValue(ctx, "get_scim_group", func(ctx context.Context) (scim.GroupResource, error) {
-		return a.getSCIMGroup(ctx, a.store.pool, organizationID, "id", resourceID)
-	})
+	return a.getSCIMGroup(ctx, a.store.pool, organizationID, "id", resourceID)
 }
 
 func (a *SCIMAdapter) ListGroups(ctx context.Context, query scim.ListQuery) (scim.GroupPage, error) {
-	return observeRepositoryValue(ctx, "list_scim_groups", func(ctx context.Context) (scim.GroupPage, error) {
-		return a.listGroups(ctx, query)
-	})
-}
-
-func (a *SCIMAdapter) listGroups(ctx context.Context, query scim.ListQuery) (scim.GroupPage, error) {
 	where, arguments, err := scimGroupFilter(query)
 	if err != nil {
 		return scim.GroupPage{}, err
@@ -424,7 +402,7 @@ func (a *SCIMAdapter) listGroups(ctx context.Context, query scim.ListQuery) (sci
 
 func (a *SCIMAdapter) ReplaceGroup(ctx context.Context, command scim.ReplaceGroupCommand) (scim.GroupResource, error) {
 	var result scim.GroupResource
-	err := a.store.inTransaction(ctx, "replace_scim_group", func(tx pgx.Tx) error {
+	err := a.store.inTransaction(ctx, func(tx *databaseTransaction) error {
 		current, err := a.getSCIMGroupForUpdate(ctx, tx, command.OrganizationID, "id", command.Group.ID)
 		if err != nil {
 			return err
@@ -447,7 +425,7 @@ func (a *SCIMAdapter) ReplaceGroup(ctx context.Context, command scim.ReplaceGrou
 }
 
 func (a *SCIMAdapter) DeleteGroup(ctx context.Context, command scim.DeleteGroupCommand) error {
-	return a.store.inTransaction(ctx, "delete_scim_group", func(tx pgx.Tx) error {
+	return a.store.inTransaction(ctx, func(tx *databaseTransaction) error {
 		result, err := tx.Exec(ctx, `
 			DELETE FROM groups
 			WHERE organization_id = $1 AND id = $2 AND source = 'scim'`,
@@ -469,7 +447,7 @@ func (a *SCIMAdapter) DeleteGroup(ctx context.Context, command scim.DeleteGroupC
 
 func (a *SCIMAdapter) findDeletedSCIMUserForReprovision(
 	ctx context.Context,
-	tx pgx.Tx,
+	tx *databaseTransaction,
 	organizationID string,
 	externalID string,
 ) (domain.User, bool, error) {
@@ -495,7 +473,7 @@ func (a *SCIMAdapter) findDeletedSCIMUserForReprovision(
 
 func replaceSCIMUser(
 	ctx context.Context,
-	tx pgx.Tx,
+	tx *databaseTransaction,
 	user domain.User,
 	membership domain.OrganizationMembership,
 ) (scim.UserResource, error) {
@@ -519,7 +497,7 @@ func replaceSCIMUser(
 
 func (a *SCIMAdapter) replaceSCIMGroup(
 	ctx context.Context,
-	tx pgx.Tx,
+	tx *databaseTransaction,
 	group domain.Group,
 	memberIDs []string,
 ) (scim.GroupResource, error) {
@@ -544,7 +522,7 @@ func (a *SCIMAdapter) replaceSCIMGroup(
 
 func (a *SCIMAdapter) replaceSCIMGroupMemberships(
 	ctx context.Context,
-	tx pgx.Tx,
+	tx *databaseTransaction,
 	group domain.Group,
 	memberIDs []string,
 ) error {
@@ -601,7 +579,7 @@ func (a *SCIMAdapter) getSCIMGroup(
 
 func (a *SCIMAdapter) getSCIMGroupForUpdate(
 	ctx context.Context,
-	tx pgx.Tx,
+	tx *databaseTransaction,
 	organizationID string,
 	lookup string,
 	value string,

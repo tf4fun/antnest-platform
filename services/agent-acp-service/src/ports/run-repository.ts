@@ -5,8 +5,10 @@ import type {
   RunState,
   SessionRecord,
 } from "../domain/types.js";
+import type { SessionConfiguration } from "../domain/session-configuration.js";
 
 export type RunIntent = {
+  sessionConfiguration?: SessionConfiguration;
   id: string;
   requestId: string;
   sessionId: string;

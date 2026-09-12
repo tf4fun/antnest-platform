@@ -27,12 +27,18 @@ func TestResolveImageInspectsTaggedReferenceWithoutPulling(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := driver.ResolveImage(context.Background(), " registry.example.com:5000/team/runtime:v1 ")
+	result, err := driver.ResolveImage(context.Background(), "registry.example.com:5000/team/runtime:v1")
 	if err != nil || result.Reference != "registry.example.com:5000/team/runtime:v1" || result.ImageRef != imageID {
 		t.Fatalf("resolution = %+v, error = %v", result, err)
 	}
 	if len(requests) != 1 || requests[0] != "GET /v1.47/images/registry.example.com:5000/team/runtime:v1/json" {
 		t.Fatalf("resolution must only inspect the selected image: %v", requests)
+	}
+	for _, reference := range []string{"runtime", imageID, "repo/runtime:v1@" + imageID} {
+		result, err := driver.ResolveImage(context.Background(), reference)
+		if err != nil || result.Reference != reference || result.ImageRef != imageID {
+			t.Fatalf("resolve %q: %+v %v", reference, result, err)
+		}
 	}
 }
 
@@ -49,8 +55,7 @@ func TestResolveImageRejectsInvalidChoicesBeforePlatformAccess(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, value := range []string{
-		"", "runtime", "https://registry.example.com/runtime:v1", "repo/UPPER:v1", "repo/runtime:v1?key=secret",
-		"sha256:" + strings.Repeat("a", 64), "repo/runtime:v1@sha256:" + strings.Repeat("a", 64),
+		"", " runtime ", "https://registry.example.com/runtime:v1", "repo/UPPER:v1", "repo/runtime:v1?key=secret",
 		"repo/runtime:" + strings.Repeat("a", 513),
 	} {
 		t.Run(value, func(t *testing.T) {

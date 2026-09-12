@@ -1,5 +1,15 @@
 # Admin Console Architecture
 
+Builtin model defaults are maintained by this service in
+`internal/server/builtin_catalog.go` and served by `/api/admin/model-catalog`.
+The catalogue is draft input only: organization configurations and credentials
+are read/written exclusively through Controller RPC, never through its database.
+Connections, independent credential rotation and models are separate BFF/UI
+workflows. Only the opaque credential version required for rotation CAS is
+projected, never key material. Model edits cannot change their connection or API
+model ID. See [Provider management](provider-management.md).
+See [provider ownership](../../../docs/provider-credentials-and-models.md).
+
 Managed stdio MCP is part of the immutable Template Runtime configuration, not a
 Console-owned service catalog. The BFF forwards bounded JSON to Agent Controller
 for validation and storage, never starts processes or accesses another service's
@@ -62,8 +72,11 @@ valid inventory or immutable detail with a page-level error.
 Current-head and revision-qualified Catalog routes are alternative primary
 reads, not mandatory fan-out dependencies. Historical Model and Template pages
 therefore issue only the immutable revision request. Template-to-Model
-resolution is a separate presentation state: its failure produces a local
-retry while the authoritative Template revision remains on screen.
+resolution reads the stable `model_profile_id` current head as a separate
+presentation state: its failure produces a local retry while the authoritative
+Template revision remains on screen. Template history preserves the template's
+model identity, not a pinned model metadata revision. Agent build lineage and
+Model history still resolve immutable model revisions.
 
 Lifecycle reads are authoritative snapshots. SSE is a wake-up/experience
 channel; reconnecting clients independently replay events and refetch the Agent
@@ -76,9 +89,11 @@ event identity, and advances the cursor only from an authoritative response.
 Terminal `403`, `404`, and `410` replay failures stop automatic recovery and do
 not render a retry action.
 Replay and Agent refresh are not a browser-side transaction. Replay success
-advances its cursor and reopens SSE even if Agent refresh fails; Agent refresh
-success updates lifecycle state even if replay fails. Only replay retries on a
-replay failure, avoiding repeated unrelated Agent reads. A cross-reconnect
+commits events/cursor, then awaits one Agent refresh before reopening SSE. That
+refresh has a local failure state and cannot prevent reopening; it closes the
+missed-terminal-state window after replay. Other successful Agent reads still
+commit independently. Only replay retries on a replay failure, avoiding
+repeated unrelated Agent reads. A cross-reconnect
 operation hint preserves either response order: an active request from the
 Agent projection has priority, otherwise the newest operation-bearing replayed
 event supplies terminal progress.

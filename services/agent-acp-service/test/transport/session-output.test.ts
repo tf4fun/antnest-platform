@@ -10,6 +10,187 @@ const message = (text: string): SessionEvent => ({
 });
 
 describe("Session output delivery", () => {
+  it("keeps one subscription when two replacements overlap an in-flight read", async () => {
+    const streams = new SessionOutputStreams();
+    const blocked = Promise.withResolvers<SessionOutputSnapshot>();
+    const rows = [message("first"), message("second")];
+    const send = vi.fn<(event: SessionEvent) => Promise<void>>(() => Promise.resolve());
+    const read = vi
+      .fn<(cursor: number | undefined) => Promise<SessionOutputSnapshot>>()
+      .mockResolvedValueOnce({ sequence: 0, events: [], state: idle })
+      .mockImplementationOnce(() => blocked.promise)
+      .mockImplementation((cursor = 0) =>
+        Promise.resolve({ sequence: rows.length, events: rows.slice(cursor), state: idle }),
+      );
+    const input = {
+      key: "s",
+      connectionId: "c",
+      read,
+      send,
+      signal: new AbortController().signal,
+      initialState: idle,
+      onFailure: vi.fn(),
+    };
+    try {
+      await streams.attach(input);
+      streams.invalidate("s");
+      const first = streams.attach(input);
+      const second = streams.attach(input);
+      blocked.resolve({ sequence: 1, events: [rows[0]!], state: idle });
+      await first;
+      await second;
+      streams.invalidate("s");
+      await streams.flush("s");
+      expect(send.mock.calls.map(([event]) => event)).toEqual(rows);
+    } finally {
+      streams.disconnect("c");
+    }
+  });
+  it("carries the delivered cursor across a Prompt subscription replacement", async () => {
+    const streams = new SessionOutputStreams();
+    const blocked = Promise.withResolvers<SessionOutputSnapshot>();
+    const rows = [message("before"), message("during")];
+    const sent: SessionEvent[] = [];
+    const read = vi
+      .fn<(cursor: number | undefined) => Promise<SessionOutputSnapshot>>()
+      .mockResolvedValueOnce({ sequence: 0, events: [], state: idle })
+      .mockImplementationOnce(() => blocked.promise)
+      .mockImplementation((cursor = rows.length) =>
+        Promise.resolve({ sequence: rows.length, events: rows.slice(cursor), state: idle }),
+      );
+    const input = {
+      key: "s",
+      connectionId: "c",
+      read,
+      send: (event: SessionEvent) => {
+        sent.push(event);
+        return Promise.resolve();
+      },
+      signal: new AbortController().signal,
+      initialState: idle,
+      onFailure: vi.fn(),
+    };
+    try {
+      await streams.attach(input);
+      streams.invalidate("s");
+      const replaced = streams.attach(input);
+      blocked.resolve({ sequence: 1, events: [rows[0]!], state: idle });
+      await replaced;
+      expect(sent).toEqual(rows);
+      expect(read).toHaveBeenLastCalledWith(1);
+    } finally {
+      streams.disconnect("c");
+    }
+  });
+
+  it("does not rewind a delivered cursor when resume supplies an older snapshot", async () => {
+    const streams = new SessionOutputStreams();
+    const rows = [message("first"), message("latest")];
+    const send = vi.fn<(event: SessionEvent) => Promise<void>>(() => Promise.resolve());
+    const read = vi.fn((cursor: number = 0) =>
+      Promise.resolve({ sequence: 2, events: rows.slice(cursor), state: idle }),
+    );
+    const input = {
+      key: "s",
+      connectionId: "c",
+      read,
+      send,
+      afterSequence: 0,
+      signal: new AbortController().signal,
+      initialState: idle,
+      onFailure: vi.fn(),
+    };
+    try {
+      await streams.attach(input);
+      await streams.attach({ ...input, afterSequence: 1 });
+      expect(read).toHaveBeenLastCalledWith(2);
+      expect(send.mock.calls.map(([event]) => event)).toEqual(rows);
+    } finally {
+      streams.disconnect("c");
+    }
+  });
+
+  it("uses the replacement sender for a pending snapshot, including own-message filtering", async () => {
+    const streams = new SessionOutputStreams();
+    const blocked = Promise.withResolvers<SessionOutputSnapshot>();
+    const own: SessionEvent = {
+      kind: "user_message",
+      messageId: "own",
+      content: [{ type: "text", text: "prompt" }],
+    };
+    const rows = [message("other"), own];
+    const send = vi.fn<(event: SessionEvent) => Promise<void>>(() => Promise.resolve());
+    const read = vi
+      .fn<(cursor: number | undefined) => Promise<SessionOutputSnapshot>>()
+      .mockResolvedValueOnce({ sequence: 0, events: [], state: idle })
+      .mockImplementationOnce(() => blocked.promise)
+      .mockResolvedValue({ sequence: 2, events: [], state: idle });
+    const input = {
+      key: "s",
+      connectionId: "c",
+      read,
+      send,
+      signal: new AbortController().signal,
+      initialState: idle,
+      onFailure: vi.fn(),
+    };
+    try {
+      await streams.attach(input);
+      streams.invalidate("s");
+      const replaced = streams.attach({
+        ...input,
+        send: (event) => (event === own ? Promise.resolve() : send(event)),
+        beforeFirst: () => send(own),
+      });
+      blocked.resolve({ sequence: 2, events: rows, state: idle });
+      await replaced;
+      expect(send.mock.calls.map(([event]) => event)).toEqual(rows);
+    } finally {
+      streams.disconnect("c");
+    }
+  });
+  it("cannot reopen a finished Tool when an old progress publication arrives late", async () => {
+    const streams = new SessionOutputStreams();
+    const rows: SessionEvent[] = [];
+    const send = vi.fn<(event: SessionEvent) => Promise<void>>(() => Promise.resolve());
+    await streams.attach({
+      key: "s",
+      connectionId: "c",
+      afterSequence: 0,
+      initialState: idle,
+      read: (after = 0) =>
+        Promise.resolve({ sequence: rows.length, events: rows.slice(after), state: idle }),
+      send,
+      signal: new AbortController().signal,
+      onFailure: vi.fn(),
+    });
+    try {
+      rows.push({
+        kind: "tool_call",
+        initial: false,
+        toolCallId: "tool",
+        status: "in_progress",
+        content: [{ type: "text", text: "preview" }],
+      });
+      const delayedProgressPublish = () => streams.invalidate("s");
+      rows.push({
+        kind: "tool_call",
+        initial: false,
+        toolCallId: "tool",
+        status: "failed",
+        content: [{ type: "text", text: "recovered after ownership loss" }],
+      });
+      streams.invalidate("s");
+      await streams.flush("s");
+      delayedProgressPublish();
+      await streams.flush("s");
+      expect(send.mock.calls.map(([event]) => event)).toEqual(rows);
+      expect(send.mock.lastCall?.[0]).toMatchObject({ status: "failed" });
+    } finally {
+      streams.disconnect("c");
+    }
+  });
+
   it("does not refresh another binding and disconnects when authorization fails", async () => {
     const streams = new SessionOutputStreams();
     const read = vi

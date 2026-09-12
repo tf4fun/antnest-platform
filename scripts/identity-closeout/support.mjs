@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { setTimeout as delay } from "node:timers/promises";
 import { assertSecretFree } from "./evidence.mjs";
+import { collectTrace } from "../observability/collect.mjs";
+import {
+  assertCaptureDisabled,
+  owningServer,
+  traceTree,
+  tag,
+} from "../observability/trace-tree.mjs";
 
 export function assertNoStore(headers) {
   // A proxy may append the same cache directive as its upstream.
@@ -42,21 +48,27 @@ export class GatewayClient {
     } = options;
     const label = `${method} ${new URL(path, this.base).pathname}`;
     this.requests++;
-    const response = await fetch(this.base + path, {
-      method,
-      redirect: "manual",
-      signal: AbortSignal.timeout(15000),
-      headers: {
-        "content-type": "application/json",
-        Cookie: this.cookie,
-        Origin: this.base,
-        "X-Antnest-CSRF-Token": this.cookies.get("antnest_csrf") ?? "",
-        "Idempotency-Key": randomUUID(),
-        ...headers,
-      },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
-    const text = await response.text();
+    let response;
+    let text;
+    try {
+      response = await fetch(this.base + path, {
+        method,
+        redirect: "manual",
+        signal: AbortSignal.timeout(15000),
+        headers: {
+          "content-type": "application/json",
+          Cookie: this.cookie,
+          Origin: this.base,
+          "X-Antnest-CSRF-Token": this.cookies.get("antnest_csrf") ?? "",
+          "Idempotency-Key": randomUUID(),
+          ...headers,
+        },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+      text = await response.text();
+    } catch {
+      throw new Error(`${label}: request failed`);
+    }
     // Deliberately exclude response bodies and request headers from failures.
     assert.equal(
       response.status,
@@ -86,41 +98,18 @@ export class GatewayClient {
 }
 
 export function inspectIdentityTrace(trace, expectation, secrets) {
-  assert(trace?.spans?.length, "trace not exported");
-  const spans = new Map(trace.spans.map((span) => [span.spanID, span]));
-  const service = (span) => trace.processes[span.processID]?.serviceName;
-  function ancestors(span) {
-    const chain = [];
-    const seen = new Set();
-    while (span && !seen.has(span.spanID)) {
-      seen.add(span.spanID);
-      chain.push(span);
-      const parent = span.references?.find(
-        (ref) => ref.refType === "CHILD_OF" && ref.traceID === trace.traceID,
-      );
-      span = spans.get(parent?.spanID);
-    }
-    return chain;
-  }
-  const repository = trace.spans.find(
-    (span) =>
-      service(span) === "identity-service" &&
-      span.operationName === expectation.repository,
-  );
-  assert(repository, "missing expected Identity repository operation");
-  const chain = ancestors(repository);
+  const { service, chain: ancestors } = traceTree(trace);
+  assertCaptureDisabled(trace);
+  assertSecretFree(JSON.stringify(trace), secrets);
+  const isIdentityServer = (span) =>
+    service(span) === "identity-service" && tag(span, "span.kind") === "server";
+  const { server: identityRequest, database } = owningServer(trace, {
+    ...expectation,
+    service: "identity-service",
+  });
+  const chain = ancestors(identityRequest);
   const edgeIndex = chain.findIndex((span) => service(span) === "edge-gateway");
   assert(edgeIndex > 0, "missing Gateway ancestry");
-  assert(
-    chain
-      .slice(1, edgeIndex)
-      .some(
-        (span) =>
-          service(span) === "identity-service" &&
-          span.operationName.startsWith("HTTP "),
-      ),
-    "missing Identity HTTP ancestry",
-  );
   if (expectation.console) {
     assert(
       chain
@@ -129,49 +118,69 @@ export function inspectIdentityTrace(trace, expectation, secrets) {
       "missing Console ancestry",
     );
   }
-  const encoded = JSON.stringify(trace);
-  assertSecretFree(encoded, secrets);
+  const outbound = (expectation.oidcRequests ?? []).map((expected) => {
+    const matching = trace.spans.filter(
+      (span) =>
+        service(span) === "identity-service" &&
+        tag(span, "span.kind") === "client" &&
+        tag(span, "http.request.method") === expected.method &&
+        tag(span, "url.full") === expected.url,
+    );
+    assert.equal(matching.length, 1, "one exact IdP client request required");
+    const span = matching[0];
+    assert(
+      span.duration > 0 && tag(span, "error") !== true,
+      "IdP request did not finish successfully",
+    );
+    assert.equal(
+      tag(span, "http.response.status_code"),
+      200,
+      "IdP request failed",
+    );
+    assert(
+      ancestors(span).slice(1).find(isIdentityServer)?.spanID ===
+        identityRequest.spanID,
+      "IdP request is detached from the owning Identity request",
+    );
+    return {
+      method: expected.method,
+      path: new URL(expected.url).pathname,
+      span_id: span.spanID,
+    };
+  });
   return {
     trace_id: trace.traceID,
     spans: trace.spans.length,
-    repository: expectation.repository,
+    route: expectation.route,
+    database_spans: database.length,
+    capture_rpc_content: false,
     gateway_ancestry: true,
     services: [...new Set(chain.map(service))].sort(),
+    ...(expectation.oidcRequests ? { oidc_requests: outbound } : {}),
   };
 }
 
-export async function verifyIdentityTraces(base, expectations, secrets) {
+export async function verifyIdentityTraces(
+  base,
+  expectations,
+  secrets,
+  options,
+) {
   const result = [];
-  for (const expectation of expectations) {
-    assert.match(
-      expectation.traceID ?? "",
-      /^[a-f0-9]{32}$/,
-      "Gateway trace ID missing",
+  for (const traceID of new Set(expectations.map((item) => item.traceID))) {
+    assert.match(traceID ?? "", /^[a-f0-9]{32}$/, "Gateway trace ID missing");
+    result.push(
+      ...(await collectTrace(
+        base,
+        traceID,
+        (trace) =>
+          expectations
+            .filter((item) => item.traceID === traceID)
+            .map((item) => inspectIdentityTrace(trace, item, secrets)),
+        undefined,
+        options,
+      )),
     );
-    const deadline = Date.now() + 45000;
-    let lastError;
-    while (Date.now() < deadline) {
-      try {
-        const response = await fetch(
-          `${base}/api/traces/${expectation.traceID}`,
-          { signal: AbortSignal.timeout(5000) },
-        );
-        assert.equal(response.status, 200, "Jaeger trace request failed");
-        const trace = (await response.json()).data?.[0];
-        assert.equal(
-          trace?.traceID,
-          expectation.traceID,
-          "Jaeger returned wrong trace",
-        );
-        result.push(inspectIdentityTrace(trace, expectation, secrets));
-        lastError = undefined;
-        break;
-      } catch (error) {
-        lastError = error;
-        await delay(500);
-      }
-    }
-    if (lastError) throw lastError;
   }
   return result;
 }

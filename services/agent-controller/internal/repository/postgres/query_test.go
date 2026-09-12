@@ -20,7 +20,7 @@ func TestBuildAgentQueryStatementUsesDirectParameterizedPredicates(t *testing.T)
 		t.Fatalf("build Agent query: %v", err)
 	}
 	for _, fragment := range []string{
-		"organization_id = $1", "lifecycle_state = $2", "desired_state <> 'deleted'",
+		"organization_id = $1", "lifecycle_state = $2", "lifecycle_state <> 'deleted'",
 		"(created_at, id) > ($3, $4)", "LIMIT $5",
 	} {
 		if !strings.Contains(statement, fragment) {
@@ -43,7 +43,7 @@ func TestBuildAgentQueryStatementIncludesDeletedOnlyWhenRequested(t *testing.T) 
 	if err != nil {
 		t.Fatalf("build Agent audit query: %v", err)
 	}
-	if strings.Contains(statement, "desired_state <>") || strings.Contains(statement, "\nWHERE ") {
+	if strings.Contains(statement, "lifecycle_state <>") || strings.Contains(statement, "\nWHERE ") {
 		t.Fatalf("audit query unexpectedly filters deleted Agents: %s", statement)
 	}
 }

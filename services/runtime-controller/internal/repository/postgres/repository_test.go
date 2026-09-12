@@ -59,6 +59,7 @@ func TestScanOperationRestoresLogicalAndPrivateIdentity(t *testing.T) {
 		uint64(7), "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		uint64(3), string(deployment.OperationCompleted), string(deployment.EffectCompleted),
 		encoded, "", "", now, now,
+		"antnest/runtime:latest", integrationSpecDigest,
 	}}
 
 	operation, err := scanOperation(row)
@@ -67,7 +68,8 @@ func TestScanOperationRestoresLogicalAndPrivateIdentity(t *testing.T) {
 	}
 	if operation.RuntimeKey() != (deployment.Key{AgentID: "agent-1", Generation: 7}) ||
 		operation.RuntimeRevision != testRevision || operation.Attempt != 3 ||
-		operation.Inspection == nil || operation.Inspection.RuntimeExecutionID != "execution-1" {
+		operation.Inspection == nil || operation.Inspection.RuntimeExecutionID != "execution-1" ||
+		operation.ImageReference != "antnest/runtime:latest" || operation.ImageID != integrationSpecDigest {
 		t.Fatalf("operation identity was not restored: %+v", operation)
 	}
 }

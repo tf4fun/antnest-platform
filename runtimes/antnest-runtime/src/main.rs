@@ -3,21 +3,30 @@
 
 mod command;
 mod config;
+mod diagnostics;
 mod evidence;
 mod execution;
 mod execution_actor;
 mod executor;
 mod executor_protocol;
+mod file_observation;
+#[cfg(test)]
+mod file_observation_tests;
+mod file_observation_wire;
 mod information;
 mod lifecycle_error;
 mod managed_mcp;
 mod mcp;
+mod mcp_progress;
 mod network;
 #[cfg(target_os = "linux")]
 mod network_session;
 mod packet;
 mod privilege;
 mod processes;
+mod progress;
+#[cfg(test)]
+mod progress_tests;
 mod protocol;
 mod roots;
 mod spec;

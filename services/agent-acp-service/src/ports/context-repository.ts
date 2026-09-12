@@ -1,4 +1,5 @@
 import type { ContentBlock } from "../domain/types.js";
+import type { PlanEntry } from "../domain/plan.js";
 import type { ModelToolCall } from "./model.js";
 
 export type StoredContextMessage =
@@ -25,6 +26,7 @@ export type ContextCheckpoint = {
 };
 
 export type ContextSource = {
+  plan?: PlanEntry[];
   checkpoint: ContextCheckpoint | null;
   messages: StoredContextMessage[];
 };

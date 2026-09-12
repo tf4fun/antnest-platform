@@ -24,7 +24,7 @@ macro_rules! define_tool_error_codes {
                 }
             }
 
-            fn parse(value: &str) -> Option<Self> {
+            pub(crate) fn parse(value: &str) -> Option<Self> {
                 match value {
                     $($value => Some(Self::$variant),)+
                     _ => None,
@@ -91,6 +91,7 @@ pub(crate) struct ToolError {
     pub(crate) code: ToolErrorCode,
     pub(crate) message: String,
     pub(crate) effect_state: ToolEffectState,
+    source: Option<Box<dyn std::error::Error + Send + Sync>>,
 }
 
 impl ToolError {
@@ -120,10 +121,33 @@ impl ToolError {
             code,
             message: message.to_string(),
             effect_state,
+            source: None,
         }
     }
 
     pub(crate) fn invalid_params(message: impl std::fmt::Display) -> Self {
         Self::new(ToolErrorCode::InvalidParams, message)
+    }
+
+    pub(crate) fn with_source(
+        mut self,
+        source: impl std::error::Error + Send + Sync + 'static,
+    ) -> Self {
+        self.source = Some(Box::new(source));
+        self
+    }
+}
+
+impl std::fmt::Display for ToolError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for ToolError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.source
+            .as_deref()
+            .map(|source| source as &(dyn std::error::Error + 'static))
     }
 }

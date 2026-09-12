@@ -189,6 +189,7 @@ impl ReadRequest {
 pub(crate) struct ReadResult {
     pub(crate) content: String,
     pub(crate) truncated: bool,
+    pub(crate) file: Option<crate::file_observation::FileObservation>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -216,6 +217,7 @@ impl WriteRequest {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct WriteResult {
     pub(crate) bytes_written: u64,
+    pub(crate) file: Option<crate::file_observation::FileObservation>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -255,6 +257,7 @@ impl EditRequest {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct EditResult {
     pub(crate) bytes_written: u64,
+    pub(crate) file: Option<crate::file_observation::FileObservation>,
 }
 
 #[cfg(test)]

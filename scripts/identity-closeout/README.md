@@ -158,6 +158,15 @@ connections before the coordinator stops only Identity. A prompt on each old
 connection must close with 1013 without any durable Run/message/Tool mutation.
 The same long-lived cookies must reconnect after Identity recovery.
 
+An empty recovered Session must contain its current command catalog and, for
+v2 replay only, exactly one idle control update. Reuse `assertEmptySession`
+from the ordinary logout profile: an all-`state_update` predicate incorrectly
+rejects valid catalogs while accepting an empty response. User messages, Tool
+activity, execution state and duplicate catalogs remain failures. Identity ACP
+clients use the shared bounded connection helper and the SDK's
+`cancellationSignal` option; socket errors are observed and no upgrade retry is
+silently introduced.
+
 The coordinator then starts Identity with its existing five-second token TTL
 setting. New connections must work before their issued deadlines and reject
 prompts with 1008 after natural expiry, without changing DB rows or clocks.
@@ -224,6 +233,22 @@ and secret rotation are verified against real discovery/exchange. Gateway-rooted
 start/callback traces and service logs are checked for synthetic secrets.
 All provisioning and login requests enter Gateway, with no direct SQL writes.
 The fixture's counters are only a protocol-execution oracle.
+
+Trace acceptance also requires exact successful IdP HTTP client spans under the
+same Identity request as its owned persistence. Provider registration covers
+Discovery; login callback covers Token and JWKS. A separate `/profile` issuer
+returns an ID token without email and exposes authenticated UserInfo, proving
+the fallback path without changing the existing denial issuer. The fallback
+must converge to the same provisioned User and Membership.
+
+Each expected method/endpoint must have one finished client span, successful
+status and a same-trace parent chain whose nearest Identity server span is the
+same one that owns persistence. An outbound client span cannot substitute for
+that server span. Missing,
+detached, foreign-request, duplicate or failed spans must fail the verifier.
+Compact summaries contain method, path and span identity, never credentials or
+response bodies. Transport errors (including nested causes) and JSON parser
+errors cannot redisclose raw Gateway, Jaeger or IdP fixture responses.
 
 The denial cases use a second issuer path, respecting Identity's one-issuer-per-
 organization registration rule. Re-login with the same subject but a changed

@@ -10,58 +10,54 @@ import (
 	"soft/antnest-platform/services/agent-controller/internal/ports"
 )
 
-func TestCreateModelProfileSealsCredentialAndPersistsImmutableRevision(t *testing.T) {
+func TestCreateModelProfileReusesProviderCredential(t *testing.T) {
 	t.Parallel()
 
 	store := &catalogStoreStub{}
 	sealer := &sealerStub{sealed: ports.SealedSecret{Ciphertext: []byte("ciphertext"), Nonce: []byte("nonce")}}
-	service := NewCatalogService(store, sealer, nil, fixedClock{now: time.Unix(1, 0).UTC()})
+	service := NewCatalogService(store, sealer, fixedClock{now: time.Unix(1, 0).UTC()})
 
 	created, err := service.CreateModelProfile(context.Background(), CreateModelProfileInput{
-		RequestID: "request-1", OrganizationID: "org-1", ProfileKey: "deepseek",
-		DisplayName: "DeepSeek", Model: validModelInput(), CredentialSecret: "secret-value",
+		ProviderConnectionID: "provider-1",
+		RequestID:            "request-1", OrganizationID: "org-1", ProfileKey: "deepseek",
+		DisplayName: "DeepSeek", Model: validModelInput().Parameters(),
 	})
 	if err != nil {
 		t.Fatalf("create model profile: %v", err)
 	}
-	if created.ModelProfileID == "" || created.RevisionID == "" || created.CredentialRef == "" {
+	if created.ModelProfileID == "" || created.RevisionID == "" || created.ProviderConnectionID == "" {
 		t.Fatalf("generated identities are incomplete: %+v", created)
 	}
 	if store.modelRecord.Revision.ID() != created.RevisionID {
 		t.Fatal("persisted revision differs from response")
 	}
-	if string(store.modelRecord.SealedCredential.Ciphertext) != "ciphertext" {
-		t.Fatal("sealed credential was not persisted")
-	}
-	if sealer.plaintext != "secret-value" {
-		t.Fatal("credential was not passed to sealer")
-	}
-	if sealer.identity.CredentialRef != created.CredentialRef || sealer.identity.OrganizationID != "org-1" {
-		t.Fatal("credential identity was not bound as authenticated encryption context")
+	if sealer.calls != 0 || created.ProviderConnectionID != "provider-1" {
+		t.Fatal("model creation must reuse the connection credential without sealing")
 	}
 	if store.modelRecord.RequestFingerprint == "" || store.modelRecord.RequestFingerprint == "secret-value" {
 		t.Fatal("request fingerprint is missing or leaks the secret")
 	}
 }
 
-func TestCreateModelProfileCanonicalizesKnownModelMetadata(t *testing.T) {
+func TestCreateModelProfilePreservesKnownModelMetadata(t *testing.T) {
 	t.Parallel()
 
 	store := &catalogStoreStub{}
-	service := NewCatalogService(store, &sealerStub{}, nil, fixedClock{now: time.Unix(1, 0).UTC()})
+	service := NewCatalogService(store, &sealerStub{}, fixedClock{now: time.Unix(1, 0).UTC()})
 	created, err := service.CreateModelProfile(context.Background(), CreateModelProfileInput{
-		RequestID: "request-known-model", OrganizationID: "org-1", ProfileKey: "deepseek-v4-pro",
-		DisplayName: "DeepSeek V4 Pro", CredentialSecret: "secret-value",
-		Model: domain.ModelSpec{
-			BaseURL: "https://api.deepseek.com/v1", Model: "deepseek-v4-pro",
+		ProviderConnectionID: "provider-1",
+		RequestID:            "request-known-model", OrganizationID: "org-1", ProfileKey: "deepseek-v4-pro",
+		DisplayName: "DeepSeek V4 Pro",
+		Model: domain.ModelParameters{
+			Model:         "deepseek-v4-pro",
 			ContextWindow: 2048, MaxOutputTokens: 32, SupportsImages: true,
 		},
 	})
 	if err != nil {
 		t.Fatalf("create known model profile: %v", err)
 	}
-	if created.Model.BaseURL != "https://api.deepseek.com" || created.Model.ContextWindow != 1_000_000 ||
-		created.Model.MaxOutputTokens != 384_000 || created.Model.SupportsImages {
+	if created.Model.BaseURL != validModelInput().BaseURL || created.Model.ContextWindow != 2048 ||
+		created.Model.MaxOutputTokens != 32 || !created.Model.SupportsImages {
 		t.Fatalf("created model metadata = %+v", created.Model)
 	}
 }
@@ -70,10 +66,11 @@ func TestCreateModelProfileRetryUsesDeterministicResourceIdentities(t *testing.T
 	t.Parallel()
 
 	store := &catalogStoreStub{}
-	service := NewCatalogService(store, &sealerStub{}, nil, fixedClock{now: time.Unix(1, 0).UTC()})
+	service := NewCatalogService(store, &sealerStub{}, fixedClock{now: time.Unix(1, 0).UTC()})
 	input := CreateModelProfileInput{
-		RequestID: "request-1", OrganizationID: "org-1", ProfileKey: "deepseek",
-		DisplayName: "DeepSeek", Model: validModelInput(), CredentialSecret: "secret-value",
+		ProviderConnectionID: "provider-1",
+		RequestID:            "request-1", OrganizationID: "org-1", ProfileKey: "deepseek",
+		DisplayName: "DeepSeek", Model: validModelInput().Parameters(),
 	}
 	first, err := service.CreateModelProfile(context.Background(), input)
 	if err != nil {
@@ -98,16 +95,17 @@ func TestCreateModelProfileReplaysCompletedRequestBeforeSealing(t *testing.T) {
 	replayed := ports.ModelProfileRecord{
 		ModelProfileID: "model-existing", OrganizationID: "org-1", ProfileKey: "deepseek",
 		DisplayName: "DeepSeek", Revision: mustModelRevision(t, "model-revision-existing", "org-1"),
-		CredentialRef: "credential-existing", CredentialVersion: "credential-version-existing",
+
 		Enabled: true, CreatedAt: time.Unix(1, 0).UTC(), UpdatedAt: time.Unix(1, 0).UTC(),
 	}
 	store := &catalogStoreStub{modelReplay: replayed, replayFound: true}
 	sealer := &sealerStub{err: errors.New("sealer unavailable")}
-	service := NewCatalogService(store, sealer, nil, fixedClock{now: time.Unix(2, 0).UTC()})
+	service := NewCatalogService(store, sealer, fixedClock{now: time.Unix(2, 0).UTC()})
 
 	view, err := service.CreateModelProfile(context.Background(), CreateModelProfileInput{
-		RequestID: "request-1", OrganizationID: "org-1", ProfileKey: "deepseek",
-		DisplayName: "DeepSeek", Model: validModelInput(), CredentialSecret: "secret-value",
+		ProviderConnectionID: "provider-1",
+		RequestID:            "request-1", OrganizationID: "org-1", ProfileKey: "deepseek",
+		DisplayName: "DeepSeek", Model: validModelInput().Parameters(),
 	})
 	if err != nil {
 		t.Fatalf("replay completed ModelProfile request: %v", err)
@@ -122,18 +120,17 @@ func TestCreateTemplateMaterializesOnlyMatchingOrganizationModel(t *testing.T) {
 
 	model, err := domain.NewModelProfileRevision(domain.ModelProfileRevisionInput{
 		ID: "model-revision-1", ModelProfileID: "model-1", OrganizationID: "org-1",
-		Revision: 1, Model: validModelInput(), CredentialRef: "credential-1",
-		CredentialVersion: "credential-version-1",
+		Revision: 1, Model: validModelInput(),
 	})
 	if err != nil {
 		t.Fatalf("create model revision: %v", err)
 	}
 	store := &catalogStoreStub{modelRevision: model}
-	service := NewCatalogService(store, &sealerStub{}, nil, fixedClock{now: time.Unix(1, 0).UTC()})
+	service := NewCatalogService(store, &sealerStub{}, fixedClock{now: time.Unix(1, 0).UTC()})
 
 	created, err := service.CreateTemplate(context.Background(), CreateTemplateInput{
 		RequestID: "request-2", OrganizationID: "org-1", TemplateKey: "personal",
-		Name: "Personal Agent", ModelProfileRevisionID: "model-revision-1",
+		Name: "Personal Agent", ModelProfileID: "model-1",
 		SystemPrompt: "You are helpful.", MaxModelRequests: 16,
 		ContextPolicyVersion: "context-v1", Runtime: validRuntimeInput(),
 	})
@@ -143,14 +140,14 @@ func TestCreateTemplateMaterializesOnlyMatchingOrganizationModel(t *testing.T) {
 	if created.TemplateID == "" || created.Revision != 1 {
 		t.Fatalf("unexpected Template response: %+v", created)
 	}
-	if store.templateRecord.Revision.ModelProfileRevisionID() != model.ID() {
+	if store.templateRecord.Revision.ModelProfileID() != model.Snapshot().ModelProfileID {
 		t.Fatal("Template did not retain the resolved model revision")
 	}
 
-	store.modelRevision = mustModelRevision(t, "model-revision-2", "org-2")
+	store.modelRevision = mustModelRevisionAt(t, "model-revision-2", "model-2", "org-2", 2, "deepseek-chat")
 	_, err = service.CreateTemplate(context.Background(), CreateTemplateInput{
 		RequestID: "request-3", OrganizationID: "org-1", TemplateKey: "invalid",
-		Name: "Invalid", ModelProfileRevisionID: "model-revision-2",
+		Name: "Invalid", ModelProfileID: "model-2",
 		SystemPrompt: "prompt", MaxModelRequests: 8,
 		ContextPolicyVersion: "context-v1", Runtime: validRuntimeInput(),
 	})
@@ -163,16 +160,16 @@ func TestReviseModelProfileBuildsNextRevisionAgainstLockedHead(t *testing.T) {
 	t.Parallel()
 
 	current := ports.ModelProfileRecord{
-		ModelProfileID: "model-1", OrganizationID: "org-1", ProfileKey: "deepseek",
+		ProviderConnectionID: "provider-1", ModelProfileID: "model-1", OrganizationID: "org-1", ProfileKey: "deepseek",
 		DisplayName: "DeepSeek", Revision: mustModelRevision(t, "model-revision-1", "org-1"),
 		Enabled: true, CreatedAt: time.Unix(1, 0).UTC(), UpdatedAt: time.Unix(1, 0).UTC(),
 	}
 	store := &catalogStoreStub{modelRecord: current}
-	service := NewCatalogService(store, &sealerStub{}, nil, fixedClock{now: time.Unix(2, 0).UTC()})
+	service := NewCatalogService(store, &sealerStub{}, fixedClock{now: time.Unix(2, 0).UTC()})
 	if _, err := service.ReviseModelProfile(context.Background(), ReviseModelProfileInput{
 		RequestID: "request-denied", OrganizationID: "org-2",
 		ModelProfileID: "model-1", DisplayName: "Denied",
-		Model: validModelInput(), CredentialSecret: "new-secret",
+		Model: validModelInput().Parameters(),
 	}); !errors.Is(err, ErrInvalidReference) {
 		t.Fatalf("cross-organization ModelProfile revision error = %v", err)
 	}
@@ -180,7 +177,7 @@ func TestReviseModelProfileBuildsNextRevisionAgainstLockedHead(t *testing.T) {
 	view, err := service.ReviseModelProfile(context.Background(), ReviseModelProfileInput{
 		RequestID: "request-revise", OrganizationID: "org-1",
 		ModelProfileID: "model-1", DisplayName: "DeepSeek V2",
-		Model: validModelInput(), CredentialSecret: "new-secret",
+		Model: validModelInput().Parameters(),
 	})
 	if err != nil {
 		t.Fatalf("revise ModelProfile: %v", err)
@@ -198,7 +195,7 @@ func TestReviseTemplateRejectsCrossOrganizationModelAndBuildsNextRevision(t *tes
 
 	currentRevision, err := domain.NewTemplateRevision(domain.TemplateRevisionInput{
 		TemplateID: "template-1", OrganizationID: "org-1", Revision: 1,
-		ModelProfileRevisionID: "model-revision-1", SystemPrompt: "old",
+		ModelProfileID: "model-1", SystemPrompt: "old",
 		MaxModelRequests: 8, ContextPolicyVersion: domain.ContextPolicyV1, Runtime: validRuntimeInput(),
 	})
 	if err != nil {
@@ -210,13 +207,13 @@ func TestReviseTemplateRejectsCrossOrganizationModelAndBuildsNextRevision(t *tes
 			Name: "Personal", Revision: currentRevision, Enabled: true,
 			CreatedAt: time.Unix(1, 0).UTC(), UpdatedAt: time.Unix(1, 0).UTC(),
 		},
-		modelRevision: mustModelRevision(t, "model-revision-2", "org-2"),
+		modelRevision: mustModelRevisionAt(t, "model-revision-2", "model-2", "org-2", 2, "deepseek-chat"),
 	}
-	service := NewCatalogService(store, &sealerStub{}, nil, fixedClock{now: time.Unix(2, 0).UTC()})
+	service := NewCatalogService(store, &sealerStub{}, fixedClock{now: time.Unix(2, 0).UTC()})
 	input := ReviseTemplateInput{
 		RequestID: "request-template-revise", OrganizationID: "org-1",
 		TemplateID: "template-1", Name: "Personal V2",
-		ModelProfileRevisionID: "model-revision-2", SystemPrompt: "new", MaxModelRequests: 16,
+		ModelProfileID: "model-2", SystemPrompt: "new", MaxModelRequests: 16,
 		ContextPolicyVersion: domain.ContextPolicyV1, Runtime: validRuntimeInput(),
 	}
 	denied := input
@@ -229,7 +226,7 @@ func TestReviseTemplateRejectsCrossOrganizationModelAndBuildsNextRevision(t *tes
 		t.Fatalf("cross-organization revision error = %v", err)
 	}
 
-	store.modelRevision = mustModelRevision(t, "model-revision-2", "org-1")
+	store.modelRevision = mustModelRevisionAt(t, "model-revision-2", "model-2", "org-1", 2, "deepseek-chat")
 	view, err := service.ReviseTemplate(context.Background(), input)
 	if err != nil {
 		t.Fatalf("revise Template: %v", err)
@@ -248,7 +245,7 @@ func TestCatalogReadsCurrentHeadsWithBoundedPagination(t *testing.T) {
 		Enabled: true, CreatedAt: time.Unix(1, 0).UTC(), UpdatedAt: time.Unix(2, 0).UTC(),
 	}
 	store := &catalogStoreStub{modelRecord: model, modelPage: []ports.ModelProfileRecord{model}}
-	service := NewCatalogService(store, &sealerStub{}, nil, fixedClock{now: time.Unix(2, 0).UTC()})
+	service := NewCatalogService(store, &sealerStub{}, fixedClock{now: time.Unix(2, 0).UTC()})
 
 	loaded, err := service.GetModelProfile(context.Background(), "org-1", "model-1")
 	if err != nil {
@@ -281,8 +278,8 @@ func TestCatalogReadsImmutableHistoricalRevisionsWithOrganizationFence(t *testin
 
 	historicalModel := mustModelRevisionAt(t, "model-revision-1", "model-1", "org-1", 1, "stage3-v1")
 	currentModel := mustModelRevisionAt(t, "model-revision-2", "model-1", "org-1", 2, "stage3-v2")
-	historicalTemplate := mustTemplateRevisionAt(t, "template-1", "org-1", 1, "model-revision-1", "historical")
-	currentTemplate := mustTemplateRevisionAt(t, "template-1", "org-1", 2, "model-revision-2", "current")
+	historicalTemplate := mustTemplateRevisionAt(t, "template-1", "org-1", 1, "model-1", "historical")
+	currentTemplate := mustTemplateRevisionAt(t, "template-1", "org-1", 2, "model-2", "current")
 	store := &catalogStoreStub{
 		modelRevision: historicalModel,
 		modelRecord: ports.ModelProfileRecord{
@@ -297,7 +294,7 @@ func TestCatalogReadsImmutableHistoricalRevisionsWithOrganizationFence(t *testin
 			CreatedAt: time.Unix(1, 0).UTC(), UpdatedAt: time.Unix(2, 0).UTC(),
 		},
 	}
-	service := NewCatalogService(store, &sealerStub{}, nil, fixedClock{now: time.Unix(2, 0).UTC()})
+	service := NewCatalogService(store, &sealerStub{}, fixedClock{now: time.Unix(2, 0).UTC()})
 
 	model, err := service.GetModelProfileRevision(
 		context.Background(), "org-1", "model-revision-1",
@@ -318,7 +315,7 @@ func TestCatalogReadsImmutableHistoricalRevisionsWithOrganizationFence(t *testin
 	if err != nil {
 		t.Fatalf("get historical Template revision: %v", err)
 	}
-	if template.Revision != 1 || template.ModelProfileRevisionID != "model-revision-1" ||
+	if template.Revision != 1 || template.ModelProfileID != "model-1" ||
 		template.SystemPrompt != "historical" {
 		t.Fatalf("historical Template view = %+v", template)
 	}
@@ -330,6 +327,8 @@ func TestCatalogReadsImmutableHistoricalRevisionsWithOrganizationFence(t *testin
 }
 
 type catalogStoreStub struct {
+	ports.ProviderStore
+	provider                 ports.ProviderConnectionRecord
 	modelRevision            domain.ModelProfileRevision
 	modelRecord              ports.ModelProfileRecord
 	modelPage                []ports.ModelProfileRecord
@@ -360,6 +359,13 @@ func (store *catalogStoreStub) ReplayTemplateRequest(
 func (store *catalogStoreStub) PutModelProfile(_ context.Context, record ports.ModelProfileRecord) (ports.ModelProfileRecord, error) {
 	store.modelRecord = record
 	return record, nil
+}
+
+func (store *catalogStoreStub) GetCurrentModelProfileRevision(_ context.Context, id string) (domain.ModelProfileRevision, error) {
+	if store.modelRevision.Snapshot().ModelProfileID != id {
+		return domain.ModelProfileRevision{}, ports.ErrNotFound
+	}
+	return store.modelRevision, nil
 }
 
 func (store *catalogStoreStub) GetModelProfileRevision(_ context.Context, id string) (domain.ModelProfileRevision, error) {
@@ -483,8 +489,7 @@ func mustModelRevisionAt(
 	model.Model = modelID
 	revision, err := domain.NewModelProfileRevision(domain.ModelProfileRevisionInput{
 		ID: id, ModelProfileID: modelProfileID, OrganizationID: organizationID,
-		Revision: revisionNumber, Model: model, CredentialRef: "credential-1",
-		CredentialVersion: "credential-version-1",
+		Revision: revisionNumber, Model: model,
 	})
 	if err != nil {
 		t.Fatalf("create model revision: %v", err)
@@ -493,12 +498,12 @@ func mustModelRevisionAt(
 }
 
 func mustTemplateRevisionAt(
-	t *testing.T, templateID, organizationID string, revisionNumber int64, modelRevisionID, prompt string,
+	t *testing.T, templateID, organizationID string, revisionNumber int64, modelProfileID, prompt string,
 ) domain.TemplateRevision {
 	t.Helper()
 	revision, err := domain.NewTemplateRevision(domain.TemplateRevisionInput{
 		TemplateID: templateID, OrganizationID: organizationID, Revision: revisionNumber,
-		ModelProfileRevisionID: modelRevisionID, SystemPrompt: prompt, MaxModelRequests: 8,
+		ModelProfileID: modelProfileID, SystemPrompt: prompt, MaxModelRequests: 8,
 		ContextPolicyVersion: domain.ContextPolicyV1, Runtime: validRuntimeInput(),
 	})
 	if err != nil {

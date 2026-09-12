@@ -9,10 +9,9 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/propagation"
 
 	"soft/antnest-platform/services/edge-gateway/internal/identity"
+	"soft/antnest-platform/services/edge-gateway/internal/telemetry"
 )
 
 const maximumACPMessageBytes = 64 << 20
@@ -44,10 +43,7 @@ func (h *handler) relayWorkspaceACP(
 }
 
 func (h *handler) dialWorkspaceACP(request *http.Request, subject string) (*websocket.Conn, int, error) {
-	transport := h.httpClient.Transport
-	if transport == nil {
-		transport = http.DefaultTransport
-	}
+	transport := telemetry.BaseHTTPTransport(h.httpClient.Transport)
 	configured, ok := transport.(*http.Transport)
 	if !ok {
 		return nil, http.StatusServiceUnavailable, fmt.Errorf("ACP requires an HTTP transport with socket configuration")
@@ -65,8 +61,7 @@ func (h *handler) dialWorkspaceACP(request *http.Request, subject string) (*webs
 	target.Path, target.RawPath, target.RawQuery = "/"+request.PathValue("acp_version")+"/acp", "", ""
 	headers := make(http.Header)
 	headers.Set(HeaderAgentAccessSubject, subject)
-	otel.GetTextMapPropagator().Inject(request.Context(), propagation.HeaderCarrier(headers))
-	connection, response, err := dialer.DialContext(request.Context(), target.String(), headers)
+	connection, response, err := telemetry.DialWebSocket(request.Context(), &dialer, target.String(), headers)
 	status := http.StatusServiceUnavailable
 	if response != nil && response.StatusCode >= 400 && response.StatusCode < 500 {
 		status = response.StatusCode
@@ -103,17 +98,22 @@ func relayMessages(
 ) relayEnd {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	stop := context.AfterFunc(ctx, func() {
-		_ = client.Close()
-		_ = upstream.Close()
-	})
-	defer stop()
 	client.SetReadLimit(limit)
 	upstream.SetReadLimit(limit)
 	completed := make(chan relayEnd, 2)
 	go func() { completed <- relayDirection(ctx, client, upstream, timeout, permits, admit) }()
 	go func() { completed <- relayDirection(ctx, upstream, client, timeout, permits, nil) }()
-	result := <-completed
+	pending := 2
+	var result relayEnd
+	select {
+	case result = <-completed:
+		pending--
+	case <-ctx.Done():
+	}
+	if ctx.Err() != nil {
+		result = relayEnd{websocket.CloseGoingAway, "connection_closed"}
+	}
+	// A cancelled request must notify peers before sockets unblock the readers.
 	deadline := time.Now().Add(min(timeout, time.Second))
 	message := websocket.FormatCloseMessage(result.code, result.reason)
 	_ = client.WriteControl(websocket.CloseMessage, message, deadline)
@@ -121,7 +121,9 @@ func relayMessages(
 	cancel()
 	_ = client.Close()
 	_ = upstream.Close()
-	<-completed
+	for range pending {
+		<-completed
+	}
 	return result
 }
 

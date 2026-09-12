@@ -4,6 +4,7 @@ go 1.25.0
 
 require (
 	github.com/distribution/reference v0.6.0
+	github.com/exaring/otelpgx v0.12.0
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/opencontainers/go-digest v1.0.0
 	go.opentelemetry.io/contrib/bridges/otelslog v0.20.0

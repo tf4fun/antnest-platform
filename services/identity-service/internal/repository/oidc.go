@@ -18,9 +18,7 @@ func (a *OIDCAdapter) GetPrincipal(
 	userID string,
 	organizationID string,
 ) (domain.Principal, error) {
-	return observeRepositoryValue(ctx, "get_oidc_principal", func(ctx context.Context) (domain.Principal, error) {
-		return a.store.getPrincipal(ctx, a.store.pool, userID, organizationID)
-	})
+	return a.store.getPrincipal(ctx, a.store.pool, userID, organizationID)
 }
 
 func (a *OIDCAdapter) FindProvider(
@@ -28,10 +26,8 @@ func (a *OIDCAdapter) FindProvider(
 	organizationID string,
 	name string,
 ) (oidcflow.ProviderWithSecret, error) {
-	return observeRepositoryValue(ctx, "find_oidc_provider", func(ctx context.Context) (oidcflow.ProviderWithSecret, error) {
-		return scanProviderRow(a.store.pool.QueryRow(ctx, providerSelect+`
+	return scanProviderRow(a.store.pool.QueryRow(ctx, providerSelect+`
 			WHERE p.organization_id = $1 AND p.name = $2`, organizationID, name))
-	})
 }
 
 func (a *OIDCAdapter) FindLoginProvider(
@@ -39,17 +35,13 @@ func (a *OIDCAdapter) FindLoginProvider(
 	organizationSlug string,
 	name string,
 ) (oidcflow.ProviderWithSecret, error) {
-	return observeRepositoryValue(ctx, "find_oidc_login_provider", func(ctx context.Context) (oidcflow.ProviderWithSecret, error) {
-		return scanProviderRow(a.store.pool.QueryRow(ctx, providerSelect+`
+	return scanProviderRow(a.store.pool.QueryRow(ctx, providerSelect+`
 			JOIN organizations o ON o.id = p.organization_id
 			WHERE o.slug = $1 AND o.active AND p.name = $2`, organizationSlug, name))
-	})
 }
 
 func (a *OIDCAdapter) GetProvider(ctx context.Context, providerID string) (oidcflow.ProviderWithSecret, error) {
-	return observeRepositoryValue(ctx, "get_oidc_provider", func(ctx context.Context) (oidcflow.ProviderWithSecret, error) {
-		return scanProviderRow(a.store.pool.QueryRow(ctx, providerSelect+` WHERE p.id = $1`, providerID))
-	})
+	return scanProviderRow(a.store.pool.QueryRow(ctx, providerSelect+` WHERE p.id = $1`, providerID))
 }
 
 func (a *OIDCAdapter) UpsertProvider(
@@ -57,7 +49,7 @@ func (a *OIDCAdapter) UpsertProvider(
 	command oidcflow.UpsertProviderCommand,
 ) (oidcflow.Provider, error) {
 	provider := command.Provider.Provider
-	err := a.store.inTransaction(ctx, "upsert_oidc_provider", func(tx pgx.Tx) error {
+	err := a.store.inTransaction(ctx, func(tx *databaseTransaction) error {
 		if err := a.store.requireSystemAdmin(ctx, tx, command.ActorPrincipalID); err != nil {
 			return err
 		}
@@ -128,7 +120,7 @@ func (a *OIDCAdapter) SetProviderEnabled(
 	command oidcflow.SetProviderEnabledCommand,
 ) (oidcflow.Provider, error) {
 	var provider oidcflow.Provider
-	err := a.store.inTransaction(ctx, "set_oidc_provider_enabled", func(tx pgx.Tx) error {
+	err := a.store.inTransaction(ctx, func(tx *databaseTransaction) error {
 		if err := a.store.requireSystemAdmin(ctx, tx, command.ActorPrincipalID); err != nil {
 			return err
 		}
@@ -167,58 +159,54 @@ func (a *OIDCAdapter) SetProviderEnabled(
 }
 
 func (a *OIDCAdapter) ListProviders(ctx context.Context, organizationID string) ([]oidcflow.Provider, error) {
-	return observeRepositoryValue(ctx, "list_oidc_providers", func(ctx context.Context) ([]oidcflow.Provider, error) {
-		rows, err := a.store.pool.Query(ctx, providerMetadataSelect+`
+	rows, err := a.store.pool.Query(ctx, providerMetadataSelect+`
 			WHERE p.organization_id = $1
 			ORDER BY p.display_name, p.name`, organizationID)
+	if err != nil {
+		return nil, fmt.Errorf("list OIDC Providers: %w", err)
+	}
+	defer rows.Close()
+	providers := make([]oidcflow.Provider, 0)
+	for rows.Next() {
+		provider, err := scanProviderMetadata(rows)
 		if err != nil {
-			return nil, fmt.Errorf("list OIDC Providers: %w", err)
+			return nil, err
 		}
-		defer rows.Close()
-		providers := make([]oidcflow.Provider, 0)
-		for rows.Next() {
-			provider, err := scanProviderMetadata(rows)
-			if err != nil {
-				return nil, err
-			}
-			providers = append(providers, provider)
-		}
-		if err := rows.Err(); err != nil {
-			return nil, fmt.Errorf("iterate OIDC Providers: %w", err)
-		}
-		return providers, nil
-	})
+		providers = append(providers, provider)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate OIDC Providers: %w", err)
+	}
+	return providers, nil
 }
 
 func (a *OIDCAdapter) ListLoginMethods(ctx context.Context, organizationSlug string) ([]oidcflow.LoginMethod, error) {
-	return observeRepositoryValue(ctx, "list_oidc_login_methods", func(ctx context.Context) ([]oidcflow.LoginMethod, error) {
-		rows, err := a.store.pool.Query(ctx, `
+	rows, err := a.store.pool.Query(ctx, `
 			SELECT p.name, p.display_name
 			FROM oidc_providers p
 			JOIN organizations o ON o.id = p.organization_id
 			WHERE o.slug = $1 AND o.active AND p.enabled
 			ORDER BY p.display_name, p.name`, organizationSlug)
-		if err != nil {
-			return nil, fmt.Errorf("list OIDC login methods: %w", err)
+	if err != nil {
+		return nil, fmt.Errorf("list OIDC login methods: %w", err)
+	}
+	defer rows.Close()
+	methods := make([]oidcflow.LoginMethod, 0)
+	for rows.Next() {
+		var method oidcflow.LoginMethod
+		if err := rows.Scan(&method.Name, &method.DisplayName); err != nil {
+			return nil, fmt.Errorf("scan OIDC login method: %w", err)
 		}
-		defer rows.Close()
-		methods := make([]oidcflow.LoginMethod, 0)
-		for rows.Next() {
-			var method oidcflow.LoginMethod
-			if err := rows.Scan(&method.Name, &method.DisplayName); err != nil {
-				return nil, fmt.Errorf("scan OIDC login method: %w", err)
-			}
-			methods = append(methods, method)
-		}
-		if err := rows.Err(); err != nil {
-			return nil, fmt.Errorf("iterate OIDC login methods: %w", err)
-		}
-		return methods, nil
-	})
+		methods = append(methods, method)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate OIDC login methods: %w", err)
+	}
+	return methods, nil
 }
 
 func (a *OIDCAdapter) CreateSession(ctx context.Context, command oidcflow.CreateSessionCommand) error {
-	return a.store.inTransaction(ctx, "create_oidc_session", func(tx pgx.Tx) error {
+	return a.store.inTransaction(ctx, func(tx *databaseTransaction) error {
 		session := command.Session
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO oidc_auth_sessions (
@@ -246,7 +234,7 @@ func (a *OIDCAdapter) ClaimSession(
 	now time.Time,
 ) (oidcflow.SessionClaim, error) {
 	var result oidcflow.SessionClaim
-	err := a.store.inTransaction(ctx, "claim_oidc_session", func(tx pgx.Tx) error {
+	err := a.store.inTransaction(ctx, func(tx *databaseTransaction) error {
 		session, completed, err := a.sessionByState(ctx, tx, stateHash, now)
 		if err != nil {
 			return err
@@ -288,7 +276,7 @@ func (a *OIDCAdapter) ClaimSession(
 
 func (a *OIDCAdapter) expireOIDCSession(
 	ctx context.Context,
-	tx pgx.Tx,
+	tx *databaseTransaction,
 	session oidcflow.AuthSession,
 	now time.Time,
 	result *oidcflow.SessionClaim,
@@ -316,7 +304,7 @@ func (a *OIDCAdapter) CompleteLogin(
 	command oidcflow.CompleteLoginCommand,
 ) (oidcflow.CompletedLogin, error) {
 	var result oidcflow.CompletedLogin
-	err := a.store.inTransaction(ctx, "complete_oidc_login", func(tx pgx.Tx) error {
+	err := a.store.inTransaction(ctx, func(tx *databaseTransaction) error {
 		var status oidcflow.SessionStatus
 		var providerID, organizationID, claimID, requestID string
 		var sessionProviderRevision, currentProviderRevision int64
@@ -388,7 +376,7 @@ func (a *OIDCAdapter) CompleteLogin(
 }
 
 func (a *OIDCAdapter) FailSession(ctx context.Context, command oidcflow.FailSessionCommand) error {
-	return a.store.inTransaction(ctx, "fail_oidc_session", func(tx pgx.Tx) error {
+	return a.store.inTransaction(ctx, func(tx *databaseTransaction) error {
 		var organizationID, requestID string
 		result, err := tx.Exec(ctx, `
 			UPDATE oidc_auth_sessions
@@ -419,7 +407,7 @@ func (a *OIDCAdapter) FailSession(ctx context.Context, command oidcflow.FailSess
 
 func (a *OIDCAdapter) resolveOIDCIdentity(
 	ctx context.Context,
-	tx pgx.Tx,
+	tx *databaseTransaction,
 	command oidcflow.CompleteLoginCommand,
 ) (domain.Principal, string, error) {
 	var externalID, userID, membershipID string
@@ -466,7 +454,7 @@ func (a *OIDCAdapter) resolveOIDCIdentity(
 
 func (a *OIDCAdapter) findOIDCUser(
 	ctx context.Context,
-	tx pgx.Tx,
+	tx *databaseTransaction,
 	command oidcflow.CompleteLoginCommand,
 ) (string, error) {
 	var userID string
@@ -497,7 +485,7 @@ func (a *OIDCAdapter) findOIDCUser(
 
 func (a *OIDCAdapter) ensureOIDCMembership(
 	ctx context.Context,
-	tx pgx.Tx,
+	tx *databaseTransaction,
 	userID string,
 	organizationID string,
 	expectedMembershipID string,
@@ -542,7 +530,7 @@ func (a *OIDCAdapter) ensureOIDCMembership(
 
 func (a *OIDCAdapter) sessionByState(
 	ctx context.Context,
-	tx pgx.Tx,
+	tx *databaseTransaction,
 	stateHash string,
 	now time.Time,
 ) (oidcflow.AuthSession, oidcflow.CompletedLogin, error) {

@@ -11,11 +11,10 @@ import (
 )
 
 type EnableAgentInput struct {
-	RequestID          string
-	OrganizationID     string
-	ActorPrincipalID   string
-	AgentID            string
-	InitialTraceParent string
+	RequestID        string
+	OrganizationID   string
+	ActorPrincipalID string
+	AgentID          string
 }
 
 type EnableAgentResult struct {
@@ -69,7 +68,7 @@ func (service *LifecycleService) EnableAgent(
 		SourceExecutionRevision: base.LastSuccessfulExecution.ID,
 		SourceRuntimeRevision:   base.Agent.RuntimeRevision,
 		TargetSpecRevision:      base.Spec.ID,
-		InitialTraceParent:      input.InitialTraceParent, Now: now,
+		Now:                     now,
 	})
 	if err != nil {
 		return EnableAgentResult{}, fmt.Errorf("%w: %v", ErrInvalidInput, err)
@@ -90,8 +89,7 @@ func (service *LifecycleService) EnableAgent(
 			SourceRuntimeRevision:     base.Agent.RuntimeRevision,
 			TargetSpecRevisionID:      base.Spec.ID,
 			ChildRequestID:            operation.ChildRequestID(),
-			InitialTraceParent:        input.InitialTraceParent, Attempt: 0,
-			CreatedAt: now, UpdatedAt: now,
+			CreatedAt:                 now, UpdatedAt: now,
 		},
 		RequestedEvent: ports.AgentEventRecord{
 			EventID: derivedID("event-enable-requested", input.RequestID),
@@ -147,9 +145,8 @@ func (service *LifecycleService) ensureEnableNetwork(
 		)
 	}
 	if attachment.AttachmentState != ports.NetworkAttachmentClosed {
-		attachment, err = service.egress.SetAgentNetworkAttachment(
-			ctx, state.Agent.AgentID, ports.NetworkAttachmentClosed,
-			attachment.AttachmentResourceVersion,
+		attachment, err = service.setOperationNetworkAttachment(
+			ctx, state.Operation, ports.NetworkAttachmentClosed, attachment,
 		)
 		if err != nil {
 			return service.handleEnableDependencyFailure(ctx, state, "runtime-egress", err)
@@ -237,16 +234,11 @@ func (service *LifecycleService) restoreEnableNetwork(
 		state.Operation.NetworkAttachment.AttachmentResourceVersion,
 	)
 	if err != nil {
-		return service.fenceIncompleteEnable(ctx, state, "attachment open", err)
+		return state, fmt.Errorf("%w: runtime-egress attachment open: %w", ErrDependencyUnavailable, err)
 	}
 	if !networkAttachmentReady(attachment, state.Agent.AgentID) ||
 		!sameNetworkCoordinates(*state.Operation.NetworkAttachment, attachment) {
-		return service.fenceIncompleteEnable(
-			ctx, state, "attachment changed during Runtime enable",
-			&ports.DependencyError{
-				Service: "runtime-egress", Code: "network_attachment_changed", Retryable: true,
-			},
-		)
+		return state, fmt.Errorf("%w: runtime-egress attachment changed during Runtime enable", ErrDependencyUnavailable)
 	}
 	return service.store.AdvanceAgentEnable(ctx, ports.AdvanceAgentEnable{
 		RequestID: state.Operation.RequestID, Fingerprint: state.Operation.RequestFingerprint,
@@ -263,7 +255,7 @@ func (service *LifecycleService) fenceIncompleteEnable(
 	cause error,
 ) (ports.AgentEnableState, error) {
 	if _, err := service.setCurrentNetworkAttachmentState(
-		ctx, state.Agent.AgentID, ports.NetworkAttachmentClosed,
+		ctx, state.Operation, ports.NetworkAttachmentClosed,
 	); err != nil {
 		return state, fmt.Errorf(
 			"%w: runtime-egress %s and attachment close failed: %v: %w",

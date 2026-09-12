@@ -27,7 +27,7 @@ func TestRunHandlerServesAgentACPContract(t *testing.T) {
 			AdmissionID: "admission-1", AdmissionDeadline: now.Add(time.Minute),
 			AgentSpecRevision: "spec-1", ExecutionRevision: "execution-1",
 			RuntimeMCPSourceDigest:   strings.Repeat("a", 64),
-			AgentExecutionSpecDigest: strings.Repeat("b", 64), CredentialVersion: "version-1",
+			AgentExecutionSpecDigest: strings.Repeat("b", 64),
 			Runtime: ports.AdmittedRuntime{
 				RuntimeRevision: "runtime-1", RuntimeExecutionID: "runtime-execution-1",
 				MCPEndpoint: "http://runtime-1:8091/mcp",
@@ -38,11 +38,11 @@ func TestRunHandlerServesAgentACPContract(t *testing.T) {
 					BaseURL: "https://model.example/v1", Model: "model-1",
 					ContextWindow: 32768, MaxOutputTokens: 4096,
 				},
-				MaxModelRequests: 16, CredentialRef: "credential-1",
+				MaxModelRequests: 16, Provider: domain.ProviderExecution{ConnectionID: "credential-1", ProviderKey: "deepseek", CredentialMethod: "api_key", RequestProtocol: "openai_chat_completions"},
 			},
 		},
 		credential: application.CredentialView{
-			CredentialVersion: "version-1", SecretType: "bearer", Secret: "secret-1",
+			Provider: domain.ProviderExecution{ConnectionID: "credential-1", ProviderKey: "deepseek", CredentialMethod: "api_key", RequestProtocol: "openai_chat_completions"}, CredentialVersion: "version-1", SecretType: "bearer", Secret: "secret-1",
 		},
 		finished: application.FinishRunResult{
 			Status: "finished", AdmissionState: domain.AdmissionReleased,
@@ -50,7 +50,7 @@ func TestRunHandlerServesAgentACPContract(t *testing.T) {
 	}
 	handler, err := NewHandler(
 		&catalogServiceStub{}, &lifecycleServiceStub{}, runs, &agentQueryServiceStub{},
-		&agentEventServiceStub{},
+		&agentEventServiceStub{}, &networkPolicyServiceStub{},
 		func(context.Context) error { return nil },
 	)
 	if err != nil {
@@ -79,7 +79,7 @@ func TestRunHandlerServesAgentACPContract(t *testing.T) {
 		},
 	)
 	credentialResponse := assertJSONRequest(t, handler, "/rpc/agent-controller/resolve-credential",
-		`{"request_id":"request-credential-1","admission_id":"admission-1","credential_ref":"credential-1"}`,
+		`{"request_id":"request-credential-1","admission_id":"admission-1","provider_connection_id":"credential-1"}`,
 		func(payload map[string]any) {
 			if payload["secret"] != "secret-1" || payload["credential_version"] != "version-1" {
 				t.Fatalf("credential response = %+v", payload)
@@ -109,7 +109,7 @@ func TestFinishRunRequiresExplicitNullableFields(t *testing.T) {
 	runs := &runServiceStub{}
 	handler, err := NewHandler(
 		&catalogServiceStub{}, &lifecycleServiceStub{}, runs, &agentQueryServiceStub{},
-		&agentEventServiceStub{},
+		&agentEventServiceStub{}, &networkPolicyServiceStub{},
 		func(context.Context) error { return nil },
 	)
 	if err != nil {
@@ -137,7 +137,7 @@ func TestFinishRunRejectsUnknownEffectSourceNullabilityMismatch(t *testing.T) {
 		runs := &runServiceStub{}
 		handler, err := NewHandler(
 			&catalogServiceStub{}, &lifecycleServiceStub{}, runs, &agentQueryServiceStub{},
-			&agentEventServiceStub{},
+			&agentEventServiceStub{}, &networkPolicyServiceStub{},
 			func(context.Context) error { return nil },
 		)
 		if err != nil {
@@ -160,7 +160,7 @@ func TestRunHandlerUsesConsumerSpecificErrorClasses(t *testing.T) {
 	runs := &runServiceStub{err: application.ErrAgentBusy}
 	handler, err := NewHandler(
 		&catalogServiceStub{}, &lifecycleServiceStub{}, runs, &agentQueryServiceStub{},
-		&agentEventServiceStub{},
+		&agentEventServiceStub{}, &networkPolicyServiceStub{},
 		func(context.Context) error { return nil },
 	)
 	if err != nil {
@@ -200,15 +200,28 @@ func assertJSONRequest(
 }
 
 type runServiceStub struct {
-	access       application.AgentAccessView
-	accessIn     application.ResolveAgentAccessInput
-	acquired     application.AcquireRunResult
-	acquireIn    application.AcquireRunInput
-	credential   application.CredentialView
-	credentialIn application.ResolveCredentialInput
-	finished     application.FinishRunResult
-	finish       application.FinishRunInput
-	err          error
+	configurationInput    application.SessionConfigurationInput
+	configuration         ports.SessionConfiguration
+	setAuthorizationInput application.SetAgentAuthorizationInput
+	access                application.AgentAccessView
+	accessIn              application.ResolveAgentAccessInput
+	acquired              application.AcquireRunResult
+	acquireIn             application.AcquireRunInput
+	credential            application.CredentialView
+	credentialIn          application.ResolveCredentialInput
+	finished              application.FinishRunResult
+	finish                application.FinishRunInput
+	err                   error
+}
+
+func (service *runServiceStub) GetSessionConfiguration(_ context.Context, input application.SessionConfigurationInput) (ports.SessionConfiguration, error) {
+	service.configurationInput = input
+	return service.configuration, service.err
+}
+
+func (service *runServiceStub) SetAgentAuthorization(_ context.Context, input application.SetAgentAuthorizationInput) (int64, error) {
+	service.setAuthorizationInput = input
+	return 2, service.err
 }
 
 func (service *runServiceStub) ResolveAgentAccess(

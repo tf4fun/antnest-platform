@@ -3,9 +3,11 @@ import { createServer } from "node:http";
 import { once } from "node:events";
 import test from "node:test";
 import { inspect } from "node:util";
+import { databaseRequest, fields } from "../observability/trace-fixtures.mjs";
 import {
   GatewayClient,
   inspectIdentityTrace,
+  verifyIdentityTraces,
   assertNoStore,
   assertCookiesCleared,
 } from "./support.mjs";
@@ -107,26 +109,21 @@ function traceFixture() {
     spans: [
       {
         spanID: "1",
+        traceID: "a".repeat(32),
         processID: "edge",
         operationName: "HTTP POST",
+        tags: fields({ "span.kind": "client", "http.request.method": "POST" }),
         references: [],
       },
-      {
-        spanID: "2",
-        processID: "identity",
-        operationName: "HTTP POST",
-        references: [
-          { refType: "CHILD_OF", traceID: "a".repeat(32), spanID: "1" },
-        ],
-      },
-      {
-        spanID: "3",
-        processID: "identity",
-        operationName: "repository.issue_local_token",
-        references: [
-          { refType: "CHILD_OF", traceID: "a".repeat(32), spanID: "2" },
-        ],
-      },
+      ...databaseRequest(
+        "a".repeat(32),
+        "2",
+        "1",
+        "identity",
+        "/rpc/identity/local-login",
+        "POST",
+        "local_login",
+      ),
     ],
   };
 }
@@ -165,30 +162,53 @@ test("malformed success bodies never leak through JSON parser errors", async (t)
 });
 
 const expectation = {
-  repository: "repository.issue_local_token",
+  method: "POST",
+  route: "/rpc/identity/local-login",
+  rpcMethod: "local_login",
   console: false,
 };
-test("trace evidence requires a repository child of the Gateway request", () => {
+test("trace evidence requires a DB child of the exact Identity SERVER", () => {
   const result = inspectIdentityTrace(traceFixture(), expectation, []);
   assert.equal(result.spans, 3);
   assert.equal(result.gateway_ancestry, true);
 });
 
+test("Identity expectations sharing a trace use one delayed query", async () => {
+  const events = [];
+  const item = { ...expectation, traceID: "a".repeat(32) };
+  const results = await verifyIdentityTraces(
+    "http://jaeger",
+    [item, item],
+    [],
+    {
+      wait: async (ms) => {
+        events.push(ms);
+      },
+      request: async (url) => {
+        events.push(url);
+        return Response.json({ data: [traceFixture()] });
+      },
+    },
+  );
+  assert.equal(results.length, 2);
+  assert.deepEqual(events, [6000, `http://jaeger/api/traces/${item.traceID}`]);
+});
+
 test("service names without causal parents do not pass", () => {
   const trace = traceFixture();
   trace.spans[1].references = [];
-  assert.throws(() => inspectIdentityTrace(trace, expectation, []), /ancestry/);
+  assert.throws(() => inspectIdentityTrace(trace, expectation, []));
 });
 
-test("wrong repository, missing Console and exported secrets do not pass", () => {
+test("wrong RPC route, missing Console and exported secrets do not pass", () => {
   assert.throws(
     () =>
       inspectIdentityTrace(
         traceFixture(),
-        { ...expectation, repository: "repository.wrong" },
+        { ...expectation, route: "/rpc/identity/wrong" },
         [],
       ),
-    /repository/,
+    /SERVER/,
   );
   assert.throws(
     () =>
@@ -210,5 +230,243 @@ test("wrong repository, missing Console and exported secrets do not pass", () =>
 test("cross-trace references cannot manufacture Gateway ancestry", () => {
   const trace = traceFixture();
   trace.spans[1].references[0].traceID = "b".repeat(32);
-  assert.throws(() => inspectIdentityTrace(trace, expectation, []), /ancestry/);
+  assert.throws(() => inspectIdentityTrace(trace, expectation, []));
 });
+
+for (const [body, secrets, expected] of [
+  ["secret7", ["secret7"], "Jaeger returned invalid JSON"],
+  ["private-invalid-response", [], "Jaeger returned invalid JSON"],
+])
+  test(`trace response errors are safe: ${expected}`, async (t) => {
+    let now = 0;
+    t.mock.method(Date, "now", () => now);
+    t.mock.method(globalThis, "fetch", async () => {
+      now = 46000;
+      return new Response(body);
+    });
+    await assert.rejects(
+      verifyIdentityTraces(
+        "http://fixture",
+        [{ ...expectation, traceID: "a".repeat(32) }],
+        secrets,
+        { wait: async () => {} },
+      ),
+      (error) => {
+        assert.equal(error.message, expected);
+        assert(!inspect(error).includes(body));
+        return true;
+      },
+    );
+  });
+
+for (const target of ["Gateway", "Jaeger"])
+  for (const phase of ["fetch", "body"])
+    test(`${target} ${phase} errors exclude nested transport causes`, async (t) => {
+      let now = 0;
+      t.mock.method(Date, "now", () => now);
+      const fail = () => {
+        now = 46000;
+        throw new Error("request failed", {
+          cause: new Error("private-transport-credential"),
+        });
+      };
+      t.mock.method(globalThis, "fetch", async () => {
+        if (phase === "fetch") fail();
+        return { status: 200, text: async () => fail() };
+      });
+      const request =
+        target === "Gateway"
+          ? new GatewayClient("http://fixture").request("/api/session")
+          : verifyIdentityTraces(
+              "http://fixture",
+              [{ ...expectation, traceID: "a".repeat(32) }],
+              [],
+              { wait: async () => {} },
+            );
+      await assert.rejects(request, (error) => {
+        assert.match(error.message, /request failed/);
+        assert(!inspect(error).includes("private-transport-credential"));
+        assert.equal(error.cause, undefined);
+        return true;
+      });
+    });
+
+const oidcRequests = [
+  { method: "POST", url: "https://idp.test/token" },
+  { method: "GET", url: "https://idp.test/jwks" },
+  { method: "GET", url: "https://idp.test/userinfo" },
+];
+function oidcTraceFixture() {
+  const trace = traceFixture();
+  for (const [index, request] of oidcRequests.entries())
+    trace.spans.push({
+      traceID: trace.traceID,
+      spanID: `client-${index}`,
+      processID: "identity",
+      operationName: `HTTP ${request.method}`,
+      duration: 10,
+      references: [
+        { refType: "CHILD_OF", traceID: trace.traceID, spanID: "2" },
+      ],
+      tags: [
+        { key: "span.kind", value: "client" },
+        { key: "http.request.method", value: request.method },
+        { key: "url.full", value: request.url },
+        { key: "http.response.status_code", value: 200 },
+      ],
+    });
+  return trace;
+}
+test("OIDC trace includes exact outbound request ancestry and compact identities", () => {
+  const result = inspectIdentityTrace(
+    oidcTraceFixture(),
+    { ...expectation, oidcRequests },
+    [],
+  );
+  assert.deepEqual(result.oidc_requests, [
+    { method: "POST", path: "/token", span_id: "client-0" },
+    { method: "GET", path: "/jwks", span_id: "client-1" },
+    { method: "GET", path: "/userinfo", span_id: "client-2" },
+  ]);
+});
+test("server ownership is independent of its instrumentation display name", () => {
+  const trace = oidcTraceFixture();
+  trace.spans[1].operationName = "POST /protocol/oidc/callback";
+  assert.equal(
+    inspectIdentityTrace(trace, { ...expectation, oidcRequests }, [])
+      .oidc_requests.length,
+    3,
+  );
+});
+for (const owner of ["outbound", "persistence"])
+  test(`a differently named nested server cannot own ${owner}`, () => {
+    const trace = oidcTraceFixture();
+    trace.spans.push({
+      ...trace.spans[1],
+      spanID: "nested-request",
+      operationName: "POST /protocol/oidc/callback",
+      references: [
+        { refType: "CHILD_OF", traceID: trace.traceID, spanID: "2" },
+      ],
+    });
+    trace.spans[owner === "outbound" ? 3 : 2].references[0].spanID =
+      "nested-request";
+    assert.throws(() =>
+      inspectIdentityTrace(trace, { ...expectation, oidcRequests }, []),
+    );
+  });
+for (const [name, mutate] of [
+  [
+    "missing Identity server span",
+    (trace) => {
+      trace.spans[1].tags = [];
+    },
+  ],
+  [
+    "Identity client span substituting for server",
+    (trace) => {
+      trace.spans[1].tags[0].value = "client";
+    },
+  ],
+  [
+    "nested foreign Identity request owning outbound call",
+    (trace) => {
+      trace.spans.push({
+        ...trace.spans[1],
+        spanID: "nested-request",
+        references: [
+          { refType: "CHILD_OF", traceID: trace.traceID, spanID: "2" },
+        ],
+      });
+      trace.spans[3].references[0].spanID = "nested-request";
+    },
+  ],
+  [
+    "nested foreign Identity request owning persistence",
+    (trace) => {
+      trace.spans.push({
+        ...trace.spans[1],
+        spanID: "nested-request",
+        references: [
+          { refType: "CHILD_OF", traceID: trace.traceID, spanID: "2" },
+        ],
+      });
+      trace.spans[2].references[0].spanID = "nested-request";
+    },
+  ],
+  ["missing UserInfo", (trace) => trace.spans.pop()],
+  [
+    "disconnected request",
+    (trace) => {
+      trace.spans[3].references = [];
+    },
+  ],
+  [
+    "foreign-trace parent",
+    (trace) => {
+      trace.spans[3].references[0].traceID = "b".repeat(32);
+    },
+  ],
+  [
+    "foreign-trace span",
+    (trace) => {
+      trace.spans[3].traceID = "b".repeat(32);
+    },
+  ],
+  [
+    "wrong request method",
+    (trace) => {
+      trace.spans[3].tags[1].value = "GET";
+    },
+  ],
+  [
+    "wrong endpoint",
+    (trace) => {
+      trace.spans[3].tags[2].value = "https://other.test/token";
+    },
+  ],
+  [
+    "server span masquerading as client",
+    (trace) => {
+      trace.spans[3].tags[0].value = "server";
+    },
+  ],
+  [
+    "failed token exchange",
+    (trace) => {
+      trace.spans[3].tags[3].value = 500;
+    },
+  ],
+  [
+    "errored request",
+    (trace) => {
+      trace.spans[3].tags.push({ key: "error", value: true });
+    },
+  ],
+  [
+    "unfinished request",
+    (trace) => {
+      trace.spans[3].duration = 0;
+    },
+  ],
+  [
+    "duplicate request",
+    (trace) => {
+      trace.spans.push({ ...trace.spans[3], spanID: "duplicate" });
+    },
+  ],
+  [
+    "another Identity request under the same Gateway",
+    (trace) => {
+      trace.spans.push({ ...trace.spans[1], spanID: "another-request" });
+      trace.spans[3].references[0].spanID = "another-request";
+    },
+  ],
+])
+  test(`OIDC trace rejects ${name}`, () => {
+    const trace = oidcTraceFixture();
+    mutate(trace);
+    assert.throws(() =>
+      inspectIdentityTrace(trace, { ...expectation, oidcRequests }, []),
+    );
+  });

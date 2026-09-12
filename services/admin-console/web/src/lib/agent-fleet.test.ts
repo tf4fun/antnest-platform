@@ -11,6 +11,7 @@ import {
   reconcileAgentOperation,
   recoveryOperationRequestID,
   selectAgentSnapshot,
+  selectOperationSnapshot,
 } from "./agent-fleet.ts";
 import type { Agent, AgentEvent, DirectoryMember, LifecycleOperation } from "./types.ts";
 
@@ -128,6 +129,59 @@ test("resynchronization follows the newest operation-bearing lifecycle event", (
   assert.equal(latestOperationRequestID([event({})]), undefined);
 });
 
+test("unavailable historical Agents can request Rebuild without enabling other recovery commands", () => {
+  for (const failure_code of ["runtime_missing", "runtime_deleted", "runtime_restarted", "runtime_update_failed"]) {
+    const source = agent({ lifecycle_state: "unavailable", agent_spec_revision: "spec-old", last_successful_execution_revision: "execution-old", failure_code });
+    assert.deepEqual(agentActionAvailability(source, false), {
+      retained: false, canRebuild: true, canEnable: false, canDisable: false, canDelete: true,
+    });
+    assert.equal(agentActionAvailability(source, true).canRebuild, false);
+    for (const invalid of [
+      { agent_spec_revision: undefined },
+      { last_successful_execution_revision: undefined },
+      { executable_execution_revision: "still-bound" },
+      { runtime: { runtime_revision: "still-bound" } },
+      { desired_state: "disabled" },
+      { desired_state: "deleted" },
+      { lifecycle_state: "rebuilding" },
+      { active_operation_request_id: "operation-running" },
+      { failure_code: "lifecycle_invariant_failed" },
+    ]) {
+      assert.equal(agentActionAvailability({ ...source, ...invalid }, false).canRebuild, false, JSON.stringify(invalid));
+    }
+  }
+});
+
+test("missing Runtime events have a distinct operator label", () => {
+  assert.equal(agentEventLabel("agent_runtime_missing"), "Runtime missing");
+});
+
+test("failed/unavailable construction permits owned-resource cleanup, never an unsupported rebuild", () => {
+  for (const desired_state of ["enabled", "disabled"]) {
+    const unavailable = agent({ desired_state, lifecycle_state: "unavailable", failure_code: "runtime_start_failed" });
+    assert.deepEqual(agentActionAvailability(unavailable, false), {
+      retained: false, canRebuild: false, canEnable: false, canDisable: false, canDelete: true,
+    });
+    assert.equal(agentActionAvailability(unavailable, true).canDelete, false);
+    assert.equal(agentActionAvailability({ ...unavailable, active_operation_request_id: "still-running" }, false).canDelete, false);
+    assert.equal(agentActionAvailability({ ...unavailable, desired_state: "deleted" }, false).canDelete, true);
+  }
+  assert.equal(agentActionAvailability(agent({ lifecycle_state: "future_unknown_state" }), false).canDelete, false);
+});
+
+test("failed deletions remain current and expose only explicit cleanup retry", () => {
+  for (const failure_code of ["drain_timeout", "docker_denied"]) {
+    const failed = agent({desired_state:"deleted", lifecycle_state:"unavailable", failure_code});
+    assert.deepEqual(agentsForView([failed], "current"), [failed]);
+    assert.deepEqual(agentsForView([failed], "deleted"), []);
+    assert.deepEqual(agentActionAvailability(failed, false), {
+      retained:false, canRebuild:false, canEnable:false, canDisable:false, canDelete:true,
+    });
+    assert.equal(agentActionAvailability(failed, true).canDelete, false);
+    assert.equal(agentActionAvailability({...failed, active_operation_request_id:"pending"}, false).canDelete, false);
+  }
+});
+
 test("event recovery preserves loaded history and de-duplicates replayed events", () => {
   const existing = event({ event_id: "event-1", global_sequence: 1 });
   const replayed = event({ event_id: "event-1", global_sequence: 1 });
@@ -164,13 +218,25 @@ test("active operation reconciliation never presents another request as current"
   assert.equal(reconcileAgentOperation("operation-old", stale), stale);
 });
 
-test("an idle Agent clears stale running state but retains terminal operation evidence", () => {
-  assert.equal(
-    reconcileAgentOperation(undefined, operation({ state: "running" })),
-    undefined,
-  );
+test("an idle Agent snapshot cannot erase acknowledged progress before an operation read settles it", () => {
+  const running = operation({ state: "running" });
+  assert.equal(reconcileAgentOperation(undefined, running), running);
   const completed = operation({ state: "completed", phase: "completed" });
   assert.equal(reconcileAgentOperation(undefined, completed), completed);
+});
+
+test("terminal operation snapshots cannot regress on delayed admission or progress reads", () => {
+  const running = operation({ state: "running", phase: "runtime_initialize" });
+  for (const state of ["completed", "failed"] as const) {
+    const terminal = operation({ state, error_code: "runtime_failed", error_detail: "Runtime initialization failed" });
+    assert.equal(selectOperationSnapshot(terminal, running), terminal);
+    assert.equal(selectOperationSnapshot(running, terminal), terminal);
+    const next = { ...running, request_id: "operation-next" };
+    assert.equal(selectOperationSnapshot(terminal, next), next);
+  }
+  assert.equal(selectOperationSnapshot(undefined, running), running);
+  const progress = { ...running, phase: "execution_publish" };
+  assert.equal(selectOperationSnapshot(running, progress), progress);
 });
 
 test("Agent status suppresses a desired state that already matches lifecycle", () => {

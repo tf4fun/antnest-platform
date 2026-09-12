@@ -1,4 +1,8 @@
 import type { AgentExecutionSpec, RunOutcome, RuntimeBinding } from "../domain/types.js";
+import type {
+  ConfigurationCatalog,
+  SessionConfiguration,
+} from "../domain/session-configuration.js";
 
 export type ResolveAgentAccessInput = {
   requestId: string;
@@ -17,6 +21,8 @@ export const AGENT_CONTROLLER_ERROR_CODES = [
   "invalid_request",
   "dependency_unavailable",
   "internal_error",
+  "model_unavailable",
+  "configuration_conflict",
 ] as const;
 
 export type AgentControllerErrorCode = (typeof AGENT_CONTROLLER_ERROR_CODES)[number];
@@ -46,10 +52,12 @@ export type ResolveAgentAccessResult = {
   promptCapabilities: {
     image: boolean;
     embeddedContext: boolean;
+    audio?: boolean;
   };
 };
 
 export type AcquireRunInput = {
+  sessionConfiguration?: SessionConfiguration;
   requestId: string;
   agentId: string;
   principalId: string;
@@ -101,6 +109,17 @@ export function finishRunInput(
 }
 
 export interface AgentControllerPort {
+  getSessionConfiguration(
+    input: {
+      requestId: string;
+      agentId: string;
+      principalId: string;
+      expectedAccessRevision: string;
+      afterId?: string;
+      limit?: number;
+    },
+    signal?: AbortSignal,
+  ): Promise<ConfigurationCatalog & { nextCursor: string }>;
   resolveAgentAccess(
     input: ResolveAgentAccessInput,
     signal?: AbortSignal,

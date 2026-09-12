@@ -75,14 +75,13 @@ func NewLifecycleServiceWithDrainTimeout(
 }
 
 type CreateAgentInput struct {
-	RequestID          string
-	OrganizationID     string
-	ActorPrincipalID   string
-	OwnerUserID        string
-	Name               string
-	TemplateID         string
-	TemplateRevision   int64
-	InitialTraceParent string
+	RequestID        string
+	OrganizationID   string
+	ActorPrincipalID string
+	OwnerUserID      string
+	Name             string
+	TemplateID       string
+	TemplateRevision int64
 }
 
 type AgentView struct {
@@ -183,7 +182,7 @@ func (service *LifecycleService) CreateAgent(
 	operation, err := domain.NewLifecycleOperation(domain.NewLifecycleOperationInput{
 		RequestID: input.RequestID, RequestFingerprint: fingerprint,
 		AgentID: agentID, Kind: domain.OperationCreate, TargetSpecRevision: specID,
-		InitialTraceParent: input.InitialTraceParent, Now: now,
+		Now: now,
 	})
 	if err != nil {
 		return service.replayAgentCreateAfterFailure(
@@ -202,7 +201,7 @@ func (service *LifecycleService) CreateAgent(
 		Access: ports.AgentAccessRecord{
 			AccessSubject: accessSubject, AgentID: agentID, PrincipalID: input.OwnerUserID,
 			AccessRevision:     accessRevision,
-			PromptCapabilities: ports.PromptCapabilities{Image: spec.Snapshot().Model.SupportsImages},
+			PromptCapabilities: ports.PromptCapabilities{Image: spec.Snapshot().Model.SupportsImages, EmbeddedContext: true},
 			Active:             true, CreatedAt: now, UpdatedAt: now,
 		},
 		Spec: ports.AgentSpecRecord{
@@ -213,7 +212,6 @@ func (service *LifecycleService) CreateAgent(
 			RequestID: input.RequestID, RequestFingerprint: fingerprint, AgentID: agentID,
 			Kind: domain.OperationCreate, Phase: operation.Phase(), State: operation.State(),
 			TargetSpecRevisionID: specID, ChildRequestID: operation.ChildRequestID(),
-			InitialTraceParent: input.InitialTraceParent, Attempt: 0,
 			CreatedAt: now, UpdatedAt: now,
 		},
 		RequestedEvent: ports.AgentEventRecord{
@@ -312,7 +310,7 @@ func (service *LifecycleService) resolveAgentSpecRevision(
 		return domain.TemplateRevision{}, domain.ModelProfileRevision{}, domain.AgentSpec{},
 			fmt.Errorf("%w: Template belongs to another organization", ErrInvalidReference)
 	}
-	model, err := service.specs.GetModelProfileRevision(ctx, template.ModelProfileRevisionID())
+	model, err := service.specs.GetCurrentModelProfileRevision(ctx, template.ModelProfileID())
 	if err != nil {
 		return domain.TemplateRevision{}, domain.ModelProfileRevision{}, domain.AgentSpec{},
 			fmt.Errorf("resolve ModelProfile revision: %w", err)
@@ -489,14 +487,29 @@ func networkAttachmentInState(
 
 func (service *LifecycleService) setCurrentNetworkAttachmentState(
 	ctx context.Context,
-	agentID string,
+	operation ports.LifecycleOperationRecord,
 	state string,
 ) (ports.NetworkAttachment, error) {
-	attachment, err := service.egress.GetAgentNetwork(ctx, agentID)
+	attachment, err := service.egress.GetAgentNetwork(ctx, operation.AgentID)
 	if err != nil {
 		return ports.NetworkAttachment{}, err
 	}
-	return service.setKnownNetworkAttachmentState(ctx, agentID, state, attachment)
+	return service.setOperationNetworkAttachment(ctx, operation, state, attachment)
+}
+
+// Validate after reading the resource version. A later phase changes that version,
+// so an expired Activity cannot borrow a newer attachment and mutate it.
+func (service *LifecycleService) setOperationNetworkAttachment(
+	ctx context.Context, operation ports.LifecycleOperationRecord, desired string, attachment ports.NetworkAttachment,
+) (ports.NetworkAttachment, error) {
+	current, err := service.store.GetLifecycleOperation(ctx, operation.RequestID)
+	if err != nil {
+		return ports.NetworkAttachment{}, err
+	}
+	if current.State != domain.OperationRunning || current.Phase != operation.Phase || current.AgentID != operation.AgentID || current.RequestFingerprint != operation.RequestFingerprint {
+		return ports.NetworkAttachment{}, ports.ErrConcurrentChange
+	}
+	return service.setKnownNetworkAttachmentState(ctx, operation.AgentID, desired, attachment)
 }
 
 func (service *LifecycleService) setKnownNetworkAttachmentState(

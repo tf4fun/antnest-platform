@@ -42,6 +42,7 @@ ready         --Disable----> disabled
 disabled      --Enable-----> ready
 ready         --Delete-----> deleted
 disabled      --Delete-----> deleted
+failed        --Delete-----> deleted
 ```
 
 Transitions may report `initializing`, `updating`, `disabling`, `enabling`, or
@@ -49,6 +50,24 @@ Transitions may report `initializing`, `updating`, `disabling`, `enabling`, or
 Agent mutation slot. Until a mutation is terminal, the caller retains its
 method, path, exact body, and `Idempotency-Key`; only that exact request may
 reconcile it.
+
+Initialize failure does not erase resource ownership. A definitive platform
+failure retains a `failed` Environment with its target revision and private
+deployment identity, even if only workspace creation completed. A bounded
+readiness failure after confirmed compute creation also ends Initialize as
+`failed` (unless execution was cancelled or identity/effect remains uncertain).
+The operation is terminal and releases its mutation slot. Exact retries return
+that failed result; a new Initialize cannot overwrite the retained Environment.
+The caller may Delete using its current revision. Delete checks and removes
+owned compute if present, then removes owned workspace. A failed Environment
+is not executable, `disabled`, or an absence proof. Actual unknown platform
+effects keep their slot and continue to require exact-request reconciliation.
+
+Consumers must not equate an unpublished executable Runtime revision with
+absence of deployment resources. Agent Controller must resolve the owner
+service's retained revision before deleting a failed Agent. That consumer and
+Gateway integration are implemented in the C3 failed-build cleanup batch of
+[single-node closeout](../../../docs/docker-single-node-closeout.md).
 
 All mutations for one Agent are serialized across Controller replicas. The
 PostgreSQL lock session is monitored while a mutation runs. A database
@@ -98,15 +117,14 @@ or Runtime-image invariants.
 
 `GET /internal/runtime-images/resolve?reference=antnest/antnest-runtime:local`
 
-This read-only query resolves an explicitly tagged repository reference that is
-already installed on the deployment platform. It returns `reference` (normalized
-human-readable repository/tag) and `image_ref` (the immutable execution identity).
+This read-only query resolves an image name, tag, image ID or repository digest
+already installed on the deployment platform. It returns `reference` (the
+submitted reference) and `image_ref` (the immutable Docker image ID).
 It creates no Runtime, operation, lock, database record, or image pull. Missing
 images return `404 image_not_found`; the operator must build or load them first.
-Invalid or untagged references return `400 invalid_request`, platform failure
+Invalid references return `400 invalid_request`, platform failure
 returns `503 platform_unavailable`, and a deadline returns `504 deadline_exceeded`.
-The query takes no `Idempotency-Key`: pinning and replay of a published Template
-remain the responsibility of Agent Controller's Catalog transaction.
+The query takes no `Idempotency-Key` and is not required when saving a Template.
 
 The Docker adapter uses image inspection, not registry metadata. Its image ID
 is a Docker content identity, not a repository manifest digest, and must never
@@ -114,8 +132,17 @@ be appended to a repository name to fabricate `repository@digest`. Local builds
 without `RepoDigests` are valid. The response contains no image environment,
 build history, labels, platform paths, or registry credentials. Resolution
 proves the current local image identity, not Runtime MCP compatibility or future
-availability after an operator removes the image. Lifecycle configuration still
-requires the immutable `image_ref` and retains the existing Runtime readiness
+availability after an operator removes the image. Lifecycle configuration accepts
+names/tags and immutable references, preserving the submitted `image_ref` through
+Initialize, Update and Enable. Each new build persists the original reference and
+resolved image ID before platform mutations. Docker creation and same-operation
+recovery use that ID. Operation queries return optional `image_reference` and
+`image_id` for audit, including after container deletion. Missing legacy metadata
+means unknown, not an inferred image. The resolved ID never replaces the configured
+input to a later rebuild. The same Template
+using a moved tag can therefore build different images. Local image installation
+and remote pull policy are separate concerns; no automatic pull or running
+container update is introduced. Lifecycle operations retain the Runtime readiness
 checks. HTTP and platform-operation spans use the normal request trace; image
 references are not metric labels or recorded request bodies.
 
@@ -137,7 +164,9 @@ Initialize requires no existing Runtime Environment. It:
 5. returns `ready`, an opaque revision, MCP endpoint, and execution ID.
 
 A workspace created before compute failure is retained. Retrying the same
-request converges it; Runtime Controller never rolls back durable Agent data.
+nonterminal request reconciles it; a terminal failed request replays its result
+without further effects. Delete the failed Environment's retained revision
+before recreating the Agent. Runtime Controller never rolls back durable data.
 Initializing an existing or deleted Agent identity returns
 `runtime_lifecycle_conflict`.
 
@@ -155,6 +184,14 @@ If replacement readiness cannot be confirmed after the old compute resource
 was removed, the operation is `unknown`; the Agent remains unavailable and the
 same request must be reconciled. Runtime Controller does not perform implicit
 rollback.
+
+Retrying an interrupted Update reconciles its original target, including when
+the replacement already exists but readiness or the completion response was
+lost. It does not delete a new target using the old source identity, allocate
+another generation, or restore the destroyed source. Foreign identity and
+unavailable platform observations remain nonterminal; only an exact existing
+target can be adopted and it must pass the ordinary readiness checks. These
+are corrections to the existing retry contract, not additional caller fields.
 
 ## Disable
 
@@ -179,7 +216,7 @@ storage.
 
 `POST /internal/runtimes/{agent_id}/delete`
 
-Delete is valid from `ready` or `disabled`. It removes compute when present,
+Delete is valid from `ready`, `disabled`, or `failed`. It removes compute when present,
 then removes the owned workspace and records the Agent identity as `deleted`.
 Deleted Agent identifiers cannot be initialized again. Partial deletion is
 reconciled with the same request ID.
@@ -234,18 +271,24 @@ Environment facts carrying Agent ID plus opaque revision. Platform process
 facts are Runtime-generation facts projected as Agent ID, revision, event kind,
 execution ID when known, diagnostic summary, and time; generation, digest, and
 platform resource ID remain private. `runtime_missing` means a logical ready
-Environment had no matching resource in a complete platform inventory. Agent
-Controller decides each fact's business meaning.
+Environment had no matching resource in the inventory and a subsequent exact-key
+platform inspection confirmed absence. Agent Controller decides each fact's
+business meaning. Logical Inspect/List return that ready Environment with
+`health=absent`, an empty MCP endpoint and empty execution ID. An inspection
+failure or identity conflict is an error, never proof of deletion.
 
 ## Status
 
-`GET /status` reports process and dependency readiness:
+`GET /status` reports local initialization and own-storage readiness:
 
 ```json
 {"status":"ready","live":true,"ready":true,"database_ready":true,"platform_ready":true,"observation_ready":true}
 ```
 
-One unhealthy Runtime does not make the service unready.
+One unhealthy Runtime does not make the service unready. No Docker or Runtime
+health call is made by this route. The existing `platform_ready` field denotes
+local adapter initialization, not a recursive platform probe. Later platform
+Watch outages are diagnostic conditions, not local readiness failures.
 
 ## Failure Semantics
 
@@ -255,8 +298,13 @@ One unhealthy Runtime does not make the service unready.
 | Stale expected revision | failed / not_started | Reload Runtime and decide again |
 | Definite platform rejection before mutation | failed / not_started | Correct input or platform state |
 | Lost response after possible mutation | unknown / unknown | Retry the same request ID |
-| Compute created but not status-ready | unknown / completed | Inspect and retry the same request ID |
+| Initialize compute created, bounded readiness deadline expired | failed / completed, retained failed Environment | Inspect startup configuration; Delete retained revision before recreating the Agent |
+| Readiness interrupted, identity uncertain, or Update/Enable not status-ready | unknown / completed | Inspect and retry the same request ID |
 | Confirmed complete deletion | completed / completed | Agent deletion may finish |
+
+`not_started` describes the rejected platform substep, not an assertion that
+Initialize allocated nothing. Its workspace may already exist; retained
+Environment ownership and an explicit Delete, not that effect flag, govern cleanup.
 
 Errors use one stable JSON shape and never expose SQL, Docker socket paths,
 credentials, environment values, Runtime output, or physical resource names:

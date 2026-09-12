@@ -3,8 +3,17 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Composer } from "./components/Composer";
 import { Conversation } from "./components/Conversation";
 import { Sidebar } from "./components/Sidebar";
+import { PermissionRequests } from "./components/PermissionRequests";
+import { SessionSettings } from "./components/SessionSettings";
+import { SessionUsage } from "./components/SessionUsage";
+import type { PendingPermission } from "./lib/permissions";
 import { createAgentUIClient, type ConnectedAgent } from "./lib/client";
 import { conversationTitle, formatBytes } from "./lib/presentation";
+import { attachmentAccept, describeAttachment, validateAttachmentCount } from "./lib/attachments";
+import { useConversationHistory } from "./lib/use-conversation-history";
+import { mergeConversationHistory } from "./lib/conversation-history";
+import { useWorkspaceState } from "./lib/use-workspace-state";
+import type { WorkspaceState } from "./lib/workspace-state";
 import type { Attachment, Conversation as ConversationModel, Message, WorkspaceSnapshot } from "./lib/types";
 
 function freshID(prefix: string): string {
@@ -34,14 +43,6 @@ function errorMessage(cause: unknown, fallback: string): string {
   return cause instanceof Error && cause.message.trim() ? cause.message : fallback;
 }
 
-function releaseAttachmentPreviews(attachments: readonly Attachment[], tracked: Set<string>): void {
-  for (const attachment of attachments) {
-    if (!attachment.previewURL) continue;
-    URL.revokeObjectURL(attachment.previewURL);
-    tracked.delete(attachment.previewURL);
-  }
-}
-
 export default function App() {
   const client = useMemo(createAgentUIClient, []);
   const [workspace, setWorkspace] = useState<WorkspaceSnapshot>();
@@ -53,39 +54,150 @@ export default function App() {
   const [cancelling, setCancelling] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const [connectionError, setConnectionError] = useState("");
+  const [permissions, setPermissions] = useState<PendingPermission[]>([]);
+  const [configuring, setConfiguring] = useState(false);
   const previewURLs = useRef(new Set<string>());
-  const connection = useRef<ConnectedAgent | undefined>(undefined);
-  const selectedConversationID = useRef<string | null>(null);
+  const [inFlightAttachments, setInFlightAttachments] = useState<readonly Attachment[]>([]);
+  const [connection, setConnection] = useState<ConnectedAgent>();
+  const [connectionAttempt, setConnectionAttempt] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
+  const [activePrompt, setActivePrompt] = useState<{ connection: ConnectedAgent; sessionID: string }>();
+  const refreshRequest = useRef<AbortController | undefined>(undefined);
+  const mounted = useRef(false);
+  const disposeConnection = useRef(() => {});
+  const workspaceRef = useRef(workspace);
+  workspaceRef.current = workspace;
+  const [recoverHistory, setRecoverHistory] = useState(false);
+  const previousState = useRef<WorkspaceState | undefined>(undefined);
+  const accessEpoch = useRef(0);
+  const preparation = useRef<AbortController | undefined>(undefined);
+  const reconnectFailures = useRef(0);
+  const observation = useWorkspaceState(client, workspace?.preview ? undefined : workspace?.activeAgentId || undefined, acceptBootstrap);
+  const history = useConversationHistory(connection, workspace?.activeConversationId ?? null);
+  useEffect(() => { setCancelling(false); }, [observation.subscription, connection]);
+
+  function acceptBootstrap(latest: WorkspaceSnapshot, reconnect = false) {
+    const current = workspaceRef.current;
+    if (!current) return;
+    const changedIdentity = current.principal.userId !== latest.principal.userId || current.principal.organizationId !== latest.principal.organizationId;
+    const visible = new Set(latest.agents.map(agent => agent.id));
+    const lostAccess = !visible.has(current.activeAgentId);
+    if (changedIdentity || lostAccess) {
+      accessEpoch.current++;
+      disposeConnection.current();
+      setConnection(undefined);
+      setPermissions([]);
+      setDraft("");
+      setAttachments([]);
+      setActivePrompt(undefined);
+      setCancelling(false);
+      setSending(false);
+      setInFlightAttachments([]);
+      setConnectionAttempt(value => value + 1);
+    } else if (reconnect && current.connection === "offline") {
+      setConnectionAttempt(value => value + 1);
+    } else if (reconnect) setRecoverHistory(true);
+    const activeAgentId = !changedIdentity && visible.has(current.activeAgentId) ? current.activeAgentId : latest.activeAgentId;
+    setWorkspace({ ...current, principal: latest.principal, agents: latest.agents, activeAgentId,
+      activeConversationId: !changedIdentity && activeAgentId === current.activeAgentId ? current.activeConversationId : null,
+      conversations: changedIdentity ? [] : current.conversations.filter(conversation => visible.has(conversation.agentId)) });
+  }
 
   useEffect(() => {
+    const state = observation.state;
+    if (!state?.access_allowed || state.availability !== "ready") preparation.current?.abort();
+    if (!state) return;
+    const previous = previousState.current;
+    previousState.current = state;
+    if (!state.access_allowed) {
+      accessEpoch.current++;
+      disposeConnection.current();
+      setConnection(undefined);
+      setPermissions([]);
+      setDraft("");
+      setAttachments([]);
+      setActivePrompt(undefined);
+      setCancelling(false);
+      setSending(false);
+      setInFlightAttachments([]);
+      setWorkspace(current => {
+        if (!current || current.activeAgentId !== state.agent_id) return current;
+        const agents = current.agents.filter(agent => agent.id !== state.agent_id);
+        return { ...current, agents, activeAgentId: agents[0]?.id ?? "", activeConversationId: null,
+          conversations: current.conversations.filter(conversation => conversation.agentId !== state.agent_id), connection: "offline" };
+      });
+      return;
+    }
+    if (previous?.agent_id === state.agent_id && (previous.agent_revision !== state.agent_revision ||
+      (previous.availability !== "ready" && state.availability === "ready"))) setRecoverHistory(true);
+    if (!state.active_session_id || previous?.active_session_id !== state.active_session_id) setCancelling(false);
+  }, [observation.state]);
+
+  useEffect(() => {
+    if (!recoverHistory || sending || observation.state?.availability !== "ready") return;
+    setRecoverHistory(false);
+    disposeConnection.current();
+    setConnection(undefined);
+    setPermissions([]);
+    setConnectionAttempt(value => value + 1);
+  }, [recoverHistory, sending, observation.state]);
+
+  useEffect(() => {
+    if (workspace?.connection === "ready") reconnectFailures.current = 0;
+    if (!workspace || workspace.preview || !workspace.activeAgentId || workspace.connection !== "offline" || sending || refreshing || loggingOut) return;
+    const delay = Math.min(30000, 1000 * 2 ** Math.min(reconnectFailures.current++, 5));
+    const timer = setTimeout(() => { void refreshWorkspace(); }, delay);
+    return () => clearTimeout(timer);
+  }, [workspace?.connection, workspace?.activeAgentId, workspace?.preview, sending, refreshing, loggingOut]);
+
+  useEffect(() => {
+    mounted.current = true;
     const controller = new AbortController();
     client.loadWorkspace(controller.signal).then(setWorkspace).catch((cause: unknown) => {
       if (cause instanceof DOMException && cause.name === "AbortError") return;
       setError(cause instanceof Error ? cause.message : "The Agent workspace could not be loaded.");
     });
-    return () => controller.abort();
+    return () => { mounted.current = false; controller.abort(); };
   }, [client]);
 
   useEffect(() => () => {
+    refreshRequest.current?.abort();
     previewURLs.current.forEach((previewURL) => URL.revokeObjectURL(previewURL));
     previewURLs.current.clear();
   }, []);
 
+  const previewSnapshot = useMemo(() => {
+    const history = workspace?.conversations.flatMap(conversation =>
+      conversation.messages.flatMap(message => message.attachments ?? [])) ?? [];
+    return {
+      candidates: [...previewURLs.current],
+      referenced: new Set([...attachments, ...inFlightAttachments, ...history].map(attachment => attachment.previewURL)),
+    };
+  }, [attachments, inFlightAttachments, workspace?.conversations]);
+
   useEffect(() => {
-    selectedConversationID.current = workspace?.activeConversationId ?? null;
-  }, [workspace?.activeConversationId]);
+    for (const url of previewSnapshot.candidates) {
+      if (previewSnapshot.referenced.has(url) || !previewURLs.current.delete(url)) continue;
+      URL.revokeObjectURL(url);
+    }
+  }, [previewSnapshot]);
 
   useEffect(() => {
     const agentID = workspace?.activeAgentId;
     if (!workspace || workspace.preview || !agentID) return;
 
     let disposed = false;
-    connection.current?.close();
-    connection.current = undefined;
+    const opening = new AbortController();
+    let ownedConnection: ConnectedAgent | undefined;
+    const dispose = () => { disposed = true; opening.abort(); ownedConnection?.close(); };
+    disposeConnection.current = dispose;
+    setConnection(undefined);
     setConnectionError("");
+    setPermissions([]);
     setWorkspace((current) => current ? { ...current, connection: "connecting" } : current);
 
     void client.connectAgent(agentID, {
+      onPermissions: (requests) => { if (!disposed) setPermissions(requests); },
       onConnection: (status, cause) => {
         if (disposed) return;
         setWorkspace((current) => current ? { ...current, connection: status } : current);
@@ -96,51 +208,70 @@ export default function App() {
         setWorkspace((current) => current ? {
           ...current,
           conversations: [
-            conversation,
-            ...current.conversations.filter(({ id }) => id !== conversation.id),
+            mergeConversationHistory(current.conversations.find(({ id, agentId }) => id === conversation.id && agentId === conversation.agentId), conversation),
+            ...current.conversations.filter(({ id, agentId }) => id !== conversation.id || agentId !== conversation.agentId),
           ],
         } : current);
       },
-    }).then((connected) => {
+    }, opening.signal).then((connected) => {
       if (disposed) {
         connected.close();
         return;
       }
-      connection.current = connected;
+      ownedConnection = connected;
+      setConnection(connected);
       const conversations = [...connected.conversations];
-      const selected = conversations.some(({ id }) => id === workspace.activeConversationId)
-        ? workspace.activeConversationId
-        : conversations[0]?.id ?? null;
-      setWorkspace((current) => current ? {
-        ...current,
-        activeConversationId: current.activeAgentId === agentID ? selected : current.activeConversationId,
-        conversations: [
-          ...conversations,
-          ...current.conversations.filter(({ agentId }) => agentId !== agentID),
-        ],
-      } : current);
-      if (selected) {
-        void connected.loadConversation(selected).catch((cause: unknown) => {
-          if (!disposed) setConnectionError(errorMessage(cause, "Conversation history could not be loaded."));
-        });
-      }
+      setWorkspace((current) => {
+        if (!current) return current;
+        const selected = conversations.some(({ id }) => id === current.activeConversationId)
+          ? current.activeConversationId : conversations[0]?.id ?? null;
+        return { ...current,
+          activeConversationId: current.activeAgentId === agentID ? selected : current.activeConversationId,
+          conversations: [
+            ...conversations.map(incoming => mergeConversationHistory(current.conversations.find(cached => cached.id === incoming.id && cached.agentId === incoming.agentId), { ...incoming, historyState: "loading" })),
+            ...current.conversations.filter(({ agentId }) => agentId !== agentID),
+          ],
+        };
+      });
     }).catch((cause: unknown) => {
       if (!disposed) setConnectionError(errorMessage(cause, "The Agent connection could not be opened."));
     });
 
-    return () => {
-      disposed = true;
-      connection.current?.close();
-      connection.current = undefined;
-    };
-  }, [client, workspace?.activeAgentId, workspace?.preview]);
+    return dispose;
+  }, [client, workspace?.activeAgentId, workspace?.preview, connectionAttempt]);
+
+  async function refreshAvailability() {
+    if (!mounted.current) return;
+    refreshRequest.current?.abort();
+    const request = new AbortController();
+    refreshRequest.current = request;
+    const latest = await client.loadWorkspace(request.signal);
+    if (!request.signal.aborted && mounted.current) acceptBootstrap(latest);
+  }
+
+  async function refreshWorkspace() {
+    if (sending || refreshing) return;
+    setRefreshing(true);
+    setConnectionError("");
+    disposeConnection.current();
+    setPermissions([]);
+    setConnection(undefined);
+    setWorkspace(current => current ? { ...current, connection: "offline" } : current);
+    try {
+      await refreshAvailability();
+      observation.refresh(false);
+      setConnectionAttempt(current => current + 1);
+    } catch (cause) {
+      setConnectionError(errorMessage(cause, "Workspace status could not be refreshed."));
+    } finally { setRefreshing(false); }
+  }
 
   async function logout() {
     if (loggingOut) return;
     setLoggingOut(true);
     setConnectionError("");
     try {
-      connection.current?.close();
+      connection?.close();
       await client.logout();
       window.location.assign("/");
     } catch (cause) {
@@ -164,8 +295,8 @@ export default function App() {
 
   if (!workspace) return <main className="loading-page"><span className="loading-mark" /><p>Opening workspace</p></main>;
 
-  const activeAgent = workspace.agents.find(({ id }) => id === workspace.activeAgentId) ?? workspace.agents[0];
-  if (!activeAgent) {
+  const listedAgent = workspace.agents.find(({ id }) => id === workspace.activeAgentId) ?? workspace.agents[0];
+  if (!listedAgent) {
     return (
       <main className="unavailable-page">
         <div className="unavailable-panel">
@@ -183,31 +314,46 @@ export default function App() {
       </main>
     );
   }
-  const activeConversation = workspace.conversations.find(({ id }) => id === workspace.activeConversationId);
-  const connected = workspace.connection === "ready";
+  const activeAgent = workspace.preview ? listedAgent : { ...listedAgent, status: observation.state?.availability ?? "unknown" as const };
+  const stateReady = workspace.preview || observation.state?.access_allowed === true;
+  const activeConversation = workspace.conversations.find(({ id, agentId }) => id === workspace.activeConversationId && agentId === activeAgent.id);
+  const connected = workspace.connection === "ready" && (workspace.preview || Boolean(connection)) && !refreshing;
+  const conversationReady = workspace.preview || (history.ready && !recoverHistory);
   const preview = workspace.preview;
+  const promptCapabilities = preview ? { image: true, audio: true, embeddedContext: true } : connection?.promptCapabilities;
+
+  async function setConfiguration(id: string, value: string) {
+    if (!activeConversation || !connection || !conversationReady || !connected || !stateReady || activeAgent.status !== "ready" || sending || configuring) return;
+    setConfiguring(true);
+    setConnectionError("");
+    try { await connection.setConfiguration(activeConversation.id, id, value); }
+    catch (cause) { setConnectionError(errorMessage(cause, "Session configuration could not be changed.")); }
+    finally { setConfiguring(false); }
+  }
 
   function updateWorkspace(update: (current: WorkspaceSnapshot) => WorkspaceSnapshot) {
     setWorkspace((current) => current ? update(current) : current);
   }
 
   function selectAgent(agentID: string) {
-    if (sending) return;
+    if (sending || refreshing) return;
+    if (agentID === workspace?.activeAgentId) { setMenuOpen(false); return; }
     updateWorkspace((current) => {
       const firstConversation = current.conversations
         .filter(({ agentId }) => agentId === agentID)
         .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt))[0];
-      return { ...current, activeAgentId: agentID, activeConversationId: firstConversation?.id ?? null };
+      return { ...current, connection: current.preview ? "ready" : "connecting", activeAgentId: agentID, activeConversationId: firstConversation?.id ?? null };
     });
     setMenuOpen(false);
   }
 
   async function newConversation() {
     if (!preview && !sending) {
-      if (!connection.current || !connected) return;
+      if (!connection || !connected) return;
       try {
         setConnectionError("");
-        const conversation = await connection.current.createConversation();
+        const conversation = await connection.createConversation();
+        history.acceptCreated(conversation.id);
         updateWorkspace((current) => ({ ...current, activeConversationId: conversation.id }));
         setMenuOpen(false);
       } catch (cause) {
@@ -231,67 +377,58 @@ export default function App() {
   }
 
   function selectConversation(id: string) {
+    if (id === workspace?.activeConversationId) { history.retry(); setMenuOpen(false); return; }
     updateWorkspace((current) => ({ ...current, activeConversationId: id }));
     setMenuOpen(false);
-    if (!preview) {
-      void connection.current?.loadConversation(id).catch((cause: unknown) => {
-        setConnectionError(errorMessage(cause, "Conversation history could not be loaded."));
-      });
-    }
   }
 
   function addFiles(files: FileList) {
-    const additions = Array.from(files).slice(0, Math.max(0, 6 - attachments.length)).map((file) => {
-      const previewURL = file.type.startsWith("image/") ? URL.createObjectURL(file) : undefined;
-      if (previewURL) previewURLs.current.add(previewURL);
-      return {
-        id: freshID("attachment"),
-        name: file.name,
-        kind: file.type.startsWith("image/") ? "image" as const : "file" as const,
-        sizeLabel: formatBytes(file.size),
-        previewURL,
-        mimeType: file.type,
-        file,
-      };
-    });
-    setAttachments((current) => [...current, ...additions]);
+    if (!connected || !conversationReady || configuring || sending || activeAgent.status !== "ready") return;
+    try {
+      validateAttachmentCount(attachments.length + files.length);
+      const selected = Array.from(files).map(file => ({ file, ...describeAttachment(file, promptCapabilities) }));
+      const additions: Attachment[] = selected.map(({ file, kind, mimeType }) => {
+        const previewURL = kind === "image" || kind === "audio" ? URL.createObjectURL(file) : undefined;
+        if (previewURL) previewURLs.current.add(previewURL);
+        return { id: freshID("attachment"), name: file.name, kind: kind === "text" || kind === "pdf" ? "file" : kind,
+          sizeLabel: formatBytes(file.size), previewURL, mimeType, file };
+      });
+      setAttachments(current => [...current, ...additions]);
+      setConnectionError("");
+    } catch (cause) {
+      setConnectionError(errorMessage(cause, "Files could not be attached."));
+    }
   }
 
   function removeAttachment(id: string) {
-    setAttachments((current) => {
-      const removed = current.find((attachment) => attachment.id === id);
-      if (removed?.previewURL) {
-        URL.revokeObjectURL(removed.previewURL);
-        previewURLs.current.delete(removed.previewURL);
-      }
-      return current.filter((attachment) => attachment.id !== id);
-    });
+    setAttachments(current => current.filter(attachment => attachment.id !== id));
   }
 
   async function submit() {
-    if (!workspace || sending || !connected || activeAgent.status !== "ready" || (!draft.trim() && !attachments.length)) return;
+    if (!workspace || configuring || sending || !connected || !conversationReady || activeAgent.status !== "ready" || (!draft.trim() && !attachments.length)) return;
     if (!workspace.preview) {
       await submitToAgent();
       return;
     }
+    const now = new Date().toISOString();
     const conversation = activeConversation ?? {
       id: freshID("conversation"),
       agentId: activeAgent.id,
       title: "New conversation",
-      updatedAt: new Date().toISOString(),
+      updatedAt: now,
       messages: [],
     };
     const message: Message = {
       id: freshID("message"),
       role: "user",
       content: draft.trim(),
-      createdAt: new Date().toISOString(),
+      createdAt: now,
       attachments,
     };
     const updatedConversation = {
       ...conversation,
       title: conversation.messages.length ? conversation.title : conversationTitle(draft || attachments[0]?.name || ""),
-      updatedAt: message.createdAt,
+      updatedAt: now,
       messages: [...conversation.messages, message],
     };
     updateWorkspace((current) => ({
@@ -316,52 +453,52 @@ export default function App() {
   }
 
   async function submitToAgent() {
-    const connectedAgent = connection.current;
+    const connectedAgent = connection;
     if (!connectedAgent) return;
+    const epoch = accessEpoch.current;
+    const admission = new AbortController();
+    preparation.current = admission;
     const submittedText = draft;
     const submittedAttachments = attachments;
+    setInFlightAttachments(submittedAttachments);
     setConnectionError("");
     setSending(true);
-    let promptedSessionID: string | undefined;
-    updateWorkspace((current) => ({
-      ...current,
-      agents: current.agents.map((agent) => agent.id === activeAgent.id ? { ...agent, status: "busy" } : agent),
-    }));
     try {
       const conversation = activeConversation ?? await connectedAgent.createConversation();
-      promptedSessionID = conversation.id;
+      if (epoch !== accessEpoch.current || !mounted.current) return;
+      if (admission.signal.aborted) throw new Error("Agent status changed before the message was sent.");
+      setActivePrompt({ connection: connectedAgent, sessionID: conversation.id });
       if (!activeConversation) {
+        history.acceptCreated(conversation.id);
         updateWorkspace((current) => ({ ...current, activeConversationId: conversation.id }));
       }
       setDraft("");
       setAttachments([]);
-      await connectedAgent.prompt(conversation.id, submittedText, submittedAttachments);
-      releaseAttachmentPreviews(submittedAttachments, previewURLs.current);
+      await connectedAgent.prompt(conversation.id, submittedText, submittedAttachments, admission.signal);
     } catch (cause) {
+      if (epoch !== accessEpoch.current || !mounted.current) return;
       setConnectionError(errorMessage(cause, "The message could not be completed."));
       setDraft((current) => current || submittedText);
       setAttachments((current) => current.length ? current : submittedAttachments);
     } finally {
-      updateWorkspace((current) => ({
-        ...current,
-        agents: current.agents.map((agent) => agent.id === activeAgent.id ? { ...agent, status: "ready" } : agent),
-      }));
-      setSending(false);
-      setCancelling(false);
-      const selected = selectedConversationID.current;
-      if (selected && promptedSessionID && selected !== promptedSessionID) {
-        void connectedAgent.loadConversation(selected).catch((cause: unknown) => {
-          setConnectionError(errorMessage(cause, "Conversation history could not be loaded."));
-        });
+      if (preparation.current === admission) preparation.current = undefined;
+      if (epoch === accessEpoch.current) {
+        setActivePrompt(undefined);
+        if (mounted.current) observation.refresh();
+        setInFlightAttachments([]);
+        setSending(false);
+        setCancelling(false);
       }
     }
   }
 
   async function cancelRun() {
-    if (!activeConversation || !connection.current || cancelling) return;
+    const target = activePrompt ?? (connection && observation.state?.access_allowed && observation.state.active_session_id
+      ? { connection, sessionID: observation.state.active_session_id } : undefined);
+    if (!target || !connected || cancelling) return;
     setCancelling(true);
     try {
-      await connection.current.cancel(activeConversation.id);
+      await target.connection.cancel(target.sessionID);
     } catch (cause) {
       setConnectionError(errorMessage(cause, "The operation could not be stopped."));
       setCancelling(false);
@@ -374,8 +511,8 @@ export default function App() {
       <Sidebar
         activeAgentId={activeAgent.id}
         activeConversationId={workspace.activeConversationId}
-        agentSwitchDisabled={sending}
-        agents={workspace.agents}
+        agentSwitchDisabled={sending || refreshing}
+        agents={workspace.agents.map(agent => agent.id === activeAgent.id ? activeAgent : agent)}
         conversations={workspace.conversations}
         open={menuOpen}
         principal={workspace.principal}
@@ -397,15 +534,19 @@ export default function App() {
               <strong>{activeAgent.name}</strong>
               <small>{activeConversation?.title ?? "New conversation"}</small>
             </div>
-            <span className={`presence presence-${activeAgent.status}`}>{activeAgent.status === "ready" ? "Available" : activeAgent.status === "busy" ? "Working" : "Offline"}</span>
+            <span className={`presence presence-${activeAgent.status}`}>{activeAgent.status === "ready" ? "Available" : activeAgent.status === "busy" ? "Working" : activeAgent.status === "unknown" ? "Synchronizing" : "Offline"}</span>
           </div>
           <div className="topbar-actions">
+            {!preview ? <button className="icon-button" type="button" disabled={sending || refreshing} onClick={() => { void refreshWorkspace(); }} title="Refresh workspace" aria-label="Refresh workspace"><RefreshCw size={17} aria-hidden="true" /></button> : null}
             {workspace.preview ? <span className="preview-label">Preview</span> : null}
             <button className="icon-button" type="button" disabled={sending || !connected} onClick={() => { void newConversation(); }} title="New conversation" aria-label="New conversation">
               <Plus size={17} aria-hidden="true" />
             </button>
           </div>
         </header>
+        <SessionSettings options={activeConversation?.configOptions ?? []}
+          disabled={!connected || !conversationReady || !stateReady || activeAgent.status !== "ready" || configuring || sending} onChange={(id, value) => { void setConfiguration(id, value); }} />
+        <SessionUsage usage={activeConversation?.usage} stale={!connected || activeConversation?.usageStale === true} />
         <section className="thread-region">
           <div className="thread-scroll">
             <div className="thread-width">
@@ -413,11 +554,19 @@ export default function App() {
             </div>
           </div>
           {connectionError ? <div className="workspace-alert" role="alert">{connectionError}</div> : null}
+          {history.error && !preview ? <div className="workspace-alert" role="alert">{history.error} <button className="icon-button" type="button" disabled={!connected} title="Retry conversation" aria-label="Retry conversation" onClick={history.retry}><RefreshCw size={15} aria-hidden="true" /></button></div> : null}
+          <PermissionRequests requests={permissions} conversations={workspace.conversations} onOpen={selectConversation} onAnswer={(id, optionId) => {
+            if (!connection?.answerPermission(id, optionId)) setConnectionError("This permission request is no longer active.");
+          }} />
           <Composer
+            fileAccept={attachmentAccept(promptCapabilities)}
+            configuring={configuring}
+            historyReady={conversationReady}
             agentStatus={activeAgent.status}
             attachments={attachments}
             connected={connected}
             cancelling={cancelling}
+            cancellable={Boolean(activePrompt || (observation.state?.access_allowed && observation.state.active_session_id)) && connected}
             sending={sending}
             value={draft}
             onChange={setDraft}

@@ -9,7 +9,6 @@ import (
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 
@@ -55,7 +54,11 @@ func (p *ObservedPlatform) DeploymentDigest(value deployment.Deployment) (string
 func (p *ObservedPlatform) ResolveImage(ctx context.Context, reference string) (platform.ImageResolution, error) {
 	started := time.Now()
 	ctx, span := platformTracer.Start(ctx, "runtime.platform.resolve_image")
+	span.SetAttributes(attribute.String("antnest.runtime.image.reference", SafeValue(reference)))
 	image, err := p.next.ResolveImage(ctx, reference)
+	if err == nil {
+		span.SetAttributes(attribute.String("antnest.runtime.image.id", SafeValue(image.ImageRef)))
+	}
 	p.finish(ctx, span, started, "resolve_image", effectResult(err), err)
 	return image, err
 }
@@ -65,6 +68,11 @@ func (p *ObservedPlatform) Create(
 ) deployment.EffectOutcome {
 	key := deployment.Key{AgentID: value.RuntimeSpec.AgentID, Generation: value.RuntimeSpec.Generation}
 	return p.mutate(ctx, "create", key, func(operationCtx context.Context) deployment.EffectOutcome {
+		trace.SpanFromContext(operationCtx).SetAttributes(
+			attribute.String("antnest.runtime.image.reference", SafeValue(value.ImageReference)),
+			attribute.String("antnest.runtime.image.id", SafeValue(value.ImageRef)),
+			attribute.String("antnest.runtime.spec_digest", SafeValue(digest)),
+		)
 		return p.next.Create(operationCtx, value, digest)
 	})
 }
@@ -76,6 +84,13 @@ func (p *ObservedPlatform) Inspect(
 	ctx, span := platformTracer.Start(ctx, "runtime.platform.inspect")
 	setRuntimeAttributes(span, key)
 	inspection, err := p.next.Inspect(ctx, key)
+	span.SetAttributes(
+		attribute.String("antnest.runtime.platform_resource_id", SafeValue(inspection.PlatformResourceID)),
+		attribute.String("antnest.runtime.execution_id", SafeValue(inspection.RuntimeExecutionID)),
+		attribute.String("antnest.runtime.health", SafeValue(string(inspection.Health))),
+		attribute.String("antnest.runtime.platform_phase", SafeValue(string(inspection.PlatformPhase))),
+		attribute.String("antnest.runtime.spec_digest", SafeValue(inspection.SpecDigest)),
+	)
 	p.finish(ctx, span, started, "inspect", effectResult(err), err)
 	return inspection, err
 }
@@ -177,6 +192,7 @@ func (p *ObservedPlatform) mutate(
 	ctx, span := platformTracer.Start(ctx, "runtime.platform."+operation)
 	setRuntimeAttributes(span, key)
 	outcome := execute(ctx)
+	span.SetAttributes(attribute.String("antnest.error.code", SafeValue(outcome.Code)))
 	result := string(outcome.State)
 	if result == "" {
 		result = "invalid"
@@ -210,13 +226,9 @@ func (p *ObservedPlatform) finish(
 		attribute.String("antnest.result", result),
 	}
 	span.SetAttributes(attributes...)
+	span.SetAttributes(attribute.String("antnest.operation.phase", operation), attribute.String("antnest.outcome", result))
 	if err != nil {
-		span.RecordError(diagnostics.Error(err))
-		span.SetStatus(codes.Error, result)
-		p.logger.ErrorContext(ctx, "Runtime deployment platform operation failed",
-			"operation", operation, "platform", p.platform,
-			"error_class", "platform_operation_failed", "error", diagnostics.Message(err),
-		)
+		RecordFailure(ctx, span, err, operation, "platform_operation_failed", "Runtime deployment platform operation failed")
 	}
 	span.End()
 	platformCalls.Add(ctx, 1, metric.WithAttributes(attributes...))
@@ -234,7 +246,7 @@ func effectResult(err error) string {
 
 func setRuntimeAttributes(span trace.Span, key deployment.Key) {
 	span.SetAttributes(
-		attribute.String("antnest.agent.id", key.AgentID),
+		attribute.String("antnest.agent.id", SafeValue(key.AgentID)),
 		attribute.Int64("antnest.runtime.generation", int64(key.Generation)),
 	)
 }

@@ -97,7 +97,7 @@ function fixture() {
           key: "http.route",
           value:
             phase === "runtime_disable"
-              ? "POST /internal/runtimes/{agent_id}/disable"
+              ? "/internal/runtimes/{agent_id}/disable"
               : "/internal/agent-network-attachments/{agent_id}",
         },
       ]);
@@ -153,7 +153,7 @@ test("inspection spans cannot substitute for the mutating Disable RPC", () => {
     const traces = fixture();
     traces[index].spans[1].tags = [
       { key: "http.request.method", value: "GET" },
-      { key: "http.route", value: "GET /internal/runtimes/{agent_id}" },
+      { key: "http.route", value: "/internal/runtimes/{agent_id}" },
     ];
     assert.throws(() => inspectOffboardingTrace(traces, expected, []));
   }

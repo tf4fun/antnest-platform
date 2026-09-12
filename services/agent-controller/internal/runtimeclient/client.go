@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,19 +13,14 @@ import (
 	"strings"
 	"time"
 
-	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/codes"
-	"go.opentelemetry.io/otel/propagation"
-	"go.opentelemetry.io/otel/trace"
 
 	"soft/antnest-platform/services/agent-controller/internal/domain"
 	"soft/antnest-platform/services/agent-controller/internal/ports"
+	"soft/antnest-platform/services/agent-controller/internal/telemetry"
 )
 
 const maximumResponseBytes = 1 << 20
-
-var tracer = otel.Tracer("soft/antnest-platform/agent-controller/runtimeclient")
 
 var runtimeRevisionPattern = regexp.MustCompile(`^rtv_[0-9a-f]{32}$`)
 
@@ -55,7 +51,7 @@ func New(baseURL string, timeout time.Duration, httpClient *http.Client) (*Clien
 	if httpClient == nil {
 		httpClient = &http.Client{}
 	}
-	return &Client{baseURL: endpoint, httpClient: httpClient, timeout: timeout}, nil
+	return &Client{baseURL: endpoint, httpClient: telemetry.HTTPClient(httpClient, "runtime-controller"), timeout: timeout}, nil
 }
 
 func (client *Client) InitializeRuntime(
@@ -149,21 +145,8 @@ func (client *Client) InspectRuntime(
 ) (result ports.RuntimeInspection, resultErr error) {
 	ctx, cancel := context.WithTimeout(ctx, client.timeout)
 	defer cancel()
-	ctx, span := tracer.Start(
-		ctx, "agent_controller.runtime.inspect",
-		trace.WithSpanKind(trace.SpanKindClient),
-		trace.WithAttributes(
-			attribute.String("server.address", client.baseURL.Hostname()),
-			attribute.String("antnest.agent.id", agentID),
-			attribute.String("rpc.system", "http_json"),
-		),
-	)
-	defer func() {
-		if resultErr != nil {
-			span.SetStatus(codes.Error, dependencyCode(resultErr))
-		}
-		span.End()
-	}()
+	ctx, span := telemetry.StartHTTPCall(ctx, "inspect", []attribute.KeyValue{attribute.String("antnest.agent.id", agentID)})
+	defer func() { span.Finish(resultErr) }()
 
 	endpoint := *client.baseURL
 	endpoint.Path = "/internal/runtimes/" + url.PathEscape(agentID)
@@ -171,16 +154,15 @@ func (client *Client) InspectRuntime(
 	if err != nil {
 		return ports.RuntimeInspection{}, dependencyFailure("invalid_request", false)
 	}
-	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(request.Header))
 	response, err := client.httpClient.Do(request)
 	if err != nil {
-		return ports.RuntimeInspection{}, dependencyFailure("control_plane_unavailable", true)
+		return ports.RuntimeInspection{}, dependencyFailure("control_plane_unavailable", true, err)
 	}
 	span.SetAttributes(attribute.Int("http.response.status_code", response.StatusCode))
 	responseBody, err := io.ReadAll(io.LimitReader(response.Body, maximumResponseBytes+1))
 	closeErr := response.Body.Close()
 	if err != nil || closeErr != nil || len(responseBody) > maximumResponseBytes {
-		return ports.RuntimeInspection{}, dependencyFailure("invalid_response", true)
+		return ports.RuntimeInspection{}, dependencyFailure("invalid_response", true, err, closeErr)
 	}
 	if response.StatusCode != http.StatusOK {
 		return ports.RuntimeInspection{}, decodeFailure(responseBody, response.StatusCode)
@@ -209,21 +191,15 @@ func (client *Client) callRuntimeOperation(
 ) (result ports.RuntimeOperation, resultErr error) {
 	ctx, cancel := context.WithTimeout(ctx, client.timeout)
 	defer cancel()
-	ctx, span := tracer.Start(
-		ctx, "agent_controller.runtime."+action,
-		trace.WithSpanKind(trace.SpanKindClient),
-		trace.WithAttributes(
-			attribute.String("server.address", client.baseURL.Hostname()),
-			attribute.String("antnest.agent.id", agentID),
-			attribute.String("antnest.operation.request_id", requestID),
-			attribute.String("rpc.system", "http_json"),
-		),
-	)
+	ctx, span := telemetry.StartHTTPCall(ctx, action, []attribute.KeyValue{
+		attribute.String("antnest.agent.id", agentID), attribute.String("antnest.operation.request_id", requestID), attribute.String("antnest.request.id", requestID),
+	})
 	defer func() {
-		if resultErr != nil {
-			span.SetStatus(codes.Error, dependencyCode(resultErr))
+		observedErr := resultErr
+		if observedErr == nil && result.State == "failed" {
+			observedErr = dependencyFailure(result.ErrorCode, false)
 		}
-		span.End()
+		span.Finish(observedErr)
 	}()
 
 	body, err := json.Marshal(payload)
@@ -238,27 +214,38 @@ func (client *Client) callRuntimeOperation(
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Idempotency-Key", requestID)
-	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(request.Header))
 	response, err := client.httpClient.Do(request)
 	if err != nil {
-		return ports.RuntimeOperation{}, dependencyFailure("control_plane_unavailable", true)
+		return ports.RuntimeOperation{}, dependencyFailure("control_plane_unavailable", true, err)
 	}
 	span.SetAttributes(attribute.Int("http.response.status_code", response.StatusCode))
 	responseBody, err := io.ReadAll(io.LimitReader(response.Body, maximumResponseBytes+1))
 	closeErr := response.Body.Close()
 	if err != nil || closeErr != nil || len(responseBody) > maximumResponseBytes {
-		return ports.RuntimeOperation{}, dependencyFailure("invalid_response", true)
+		return ports.RuntimeOperation{}, dependencyFailure("invalid_response", true, err, closeErr)
 	}
 	if response.StatusCode != http.StatusOK && response.StatusCode != http.StatusAccepted {
-		return ports.RuntimeOperation{}, decodeFailure(responseBody, response.StatusCode)
+		failure := decodeFailure(responseBody, response.StatusCode)
+		if !oneOf(dependencyCode(failure), "runtime_not_ready", "platform_unavailable", "operation_failed") {
+			return ports.RuntimeOperation{}, failure
+		}
+		responseBody, err = client.readOperationJournal(ctx, requestID, agentID, failure)
+		if err != nil {
+			return ports.RuntimeOperation{}, err
+		}
 	}
+	result, resultErr = decodeRuntimeOperation(responseBody, requestID, agentID, kind, completion)
+	return result, resultErr
+}
+
+func decodeRuntimeOperation(responseBody []byte, requestID, agentID, kind string, completion completionKind) (ports.RuntimeOperation, error) {
 	var operation runtimeOperationDTO
 	if err := json.Unmarshal(responseBody, &operation); err != nil ||
 		operation.RequestID != requestID || operation.AgentID != agentID ||
 		operation.Kind != kind || !validRuntimeOperation(operation, completion) {
 		return ports.RuntimeOperation{}, dependencyFailure("invalid_response", true)
 	}
-	result = ports.RuntimeOperation{
+	result := ports.RuntimeOperation{
 		State: operation.State, Effect: operation.Effect,
 		RuntimeRevision: operation.TargetRevision,
 		ErrorCode:       operation.ErrorCode, ErrorDetail: operation.ErrorDetail,
@@ -288,10 +275,12 @@ func validRuntimeOperation(operation runtimeOperationDTO, completion completionK
 		return false
 	}
 	switch operation.State {
-	case "running", "unknown":
+	case "running":
 		return operation.Effect == "unknown"
+	case "unknown":
+		return operation.Effect == "unknown" || validUnreadyRuntimeOperation(operation, "unknown")
 	case "failed":
-		return operation.Effect == "not_started"
+		return operation.Effect == "not_started" || (operation.Kind == "initialize_runtime" && validUnreadyRuntimeOperation(operation, "failed"))
 	case "completed":
 	default:
 		return false
@@ -318,12 +307,18 @@ func validRuntimeOperation(operation runtimeOperationDTO, completion completionK
 	}
 }
 
+func validUnreadyRuntimeOperation(operation runtimeOperationDTO, lifecycle string) bool {
+	return operation.Effect == "completed" && operation.ErrorCode == "runtime_not_ready" &&
+		operation.Inspection != nil && operation.Inspection.LifecycleState == lifecycle &&
+		validRuntimeInspection(*operation.Inspection)
+}
+
 func validRuntimeInspection(inspection runtimeInspectionDTO) bool {
 	if !runtimeRevisionPattern.MatchString(inspection.RuntimeRevision) ||
 		!oneOf(
 			inspection.LifecycleState,
 			"initializing", "ready", "updating", "disabling", "disabled",
-			"enabling", "deleting", "deleted", "unknown",
+			"enabling", "deleting", "deleted", "failed", "unknown",
 		) || !oneOf(inspection.Health, "absent", "starting", "healthy", "unhealthy", "unknown") {
 		return false
 	}
@@ -331,11 +326,15 @@ func validRuntimeInspection(inspection runtimeInspectionDTO) bool {
 		return false
 	}
 	switch inspection.LifecycleState {
+	case "failed":
+		return inspection.Health == "unhealthy" && inspection.MCPEndpoint == ""
 	case "ready":
-		return inspection.Health == "healthy" &&
-			strings.TrimSpace(inspection.RuntimeExecutionID) != "" &&
-			validMCPEndpoint(inspection.MCPEndpoint)
-	case "disabled", "deleted":
+		return inspection.Health != "healthy" ||
+			(strings.TrimSpace(inspection.RuntimeExecutionID) != "" && validMCPEndpoint(inspection.MCPEndpoint))
+	case "disabled":
+		return oneOf(inspection.Health, "absent", "unhealthy") &&
+			inspection.RuntimeExecutionID == "" && inspection.MCPEndpoint == ""
+	case "deleted":
 		return inspection.Health == "absent" &&
 			inspection.RuntimeExecutionID == "" && inspection.MCPEndpoint == ""
 	default:
@@ -427,8 +426,8 @@ func decodeFailure(payload []byte, status int) error {
 	return dependencyFailure(response.Code, response.Retryable)
 }
 
-func dependencyFailure(code string, retryable bool) error {
-	return &ports.DependencyError{Service: "runtime-controller", Code: code, Retryable: retryable}
+func dependencyFailure(code string, retryable bool, causes ...error) error {
+	return &ports.DependencyError{Service: "runtime-controller", Code: code, Retryable: retryable, Cause: errors.Join(causes...)}
 }
 
 func dependencyCode(err error) string {

@@ -1,3 +1,9 @@
+import { SessionConfigurationService } from "../../src/application/session-configuration.js";
+import { PostgresToolPermissions } from "../../src/adapters/postgres/tool-permissions.js";
+import { ToolPermissions } from "../../src/application/tool-permissions.js";
+import { PermissionConnections } from "../../src/application/permission-connections.js";
+import { PostgresSessionConfiguration } from "../../src/adapters/postgres/session-configuration.js";
+import { configurationCatalog } from "./fixtures.js";
 import { randomBytes, randomUUID } from "node:crypto";
 
 import type { Pool } from "pg";
@@ -29,7 +35,7 @@ import { runtimeInformation } from "../fixtures/runtime-information.js";
 import { AcpWireClient, type ProtocolVersion } from "./acp-wire-client.js";
 import { snapshot } from "./fixtures.js";
 
-export async function startBoundaryApplication(pool: Pool) {
+export async function startBoundaryApplication(pool: Pool, information = runtimeInformation()) {
   const kernel = new PostgresKernel(pool);
   const sessions = new PostgresSessionRepository(kernel, new SecretBox(randomBytes(32)));
   const executions = new PostgresExecutionRepository(kernel);
@@ -67,6 +73,9 @@ export async function startBoundaryApplication(pool: Pool) {
     });
   });
   const controller = {
+    getSessionConfiguration: vi.fn<AgentControllerPort["getSessionConfiguration"]>(() =>
+      Promise.resolve(configurationCatalog()),
+    ),
     resolveAgentAccess,
     acquireRun,
     resolveCredential: vi.fn<AgentControllerPort["resolveCredential"]>(() =>
@@ -117,11 +126,15 @@ export async function startBoundaryApplication(pool: Pool) {
   };
   const recoveryRequired = vi.fn();
   const events = new PostgresRunEventRepository(kernel);
+  const access = new AccessService({ agentController: controller, id: randomUUID });
+  const permissions = new PermissionConnections();
+  const permissionRepository = new PostgresToolPermissions(kernel);
   const supervisor = new RunSupervisor(
     new RunExecutor({
+      permissions: new ToolPermissions(permissionRepository, permissions, access),
       executions,
       contextBuilder: new ContextBuilder({
-        runtimeInformation: { read: () => Promise.resolve(runtimeInformation()) },
+        runtimeInformation: { read: () => Promise.resolve(information) },
         tools,
         repository: new PostgresContextRepository(kernel),
         id: randomUUID,
@@ -138,7 +151,14 @@ export async function startBoundaryApplication(pool: Pool) {
     }),
   );
   const application = new AcpApplication({
-    access: new AccessService({ agentController: controller, id: randomUUID }),
+    configuration: new SessionConfigurationService({
+      sessions: new SessionService({ repository: sessions, id: randomUUID, now: () => new Date() }),
+      repository: new PostgresSessionConfiguration(kernel),
+      controller,
+      id: randomUUID,
+      now: () => new Date(),
+    }),
+    access,
     sessions: new SessionService({ repository: sessions, id: randomUUID, now: () => new Date() }),
     prompts: new PromptCoordinator({
       repository: runs,
@@ -154,6 +174,7 @@ export async function startBoundaryApplication(pool: Pool) {
   const server = new AgentAcpHttpServer({
     agentController: controller,
     application,
+    permissions,
     ready: () => Promise.resolve(true),
     maxWebSocketPayloadBytes: 64 * 1024,
   });
@@ -171,6 +192,7 @@ export async function startBoundaryApplication(pool: Pool) {
     return {
       httpUrl: `http://127.0.0.1:${address.port}/v1/acp`,
       sessions,
+      permissionRepository,
       events,
       controller,
       identities,

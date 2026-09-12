@@ -15,12 +15,37 @@ import type {
 import type { ModelPort, ModelRequest, ModelResult } from "../ports/model.js";
 import type { TelemetryAttributes, TelemetryPort } from "../ports/telemetry.js";
 import type { ToolCallInput, ToolCallResult, ToolCatalogPort } from "../ports/tools.js";
+import { context, trace } from "@opentelemetry/api";
+import {
+  modelRequest,
+  modelResponse,
+  toolRequest,
+  recordResult,
+  resultOutcome,
+  snapshotAttributes,
+} from "./projections.js";
 
 export class InstrumentedAcpApplication implements AcpApplicationPort {
   public constructor(
     private readonly delegate: AcpApplicationPort,
     private readonly telemetry: TelemetryPort,
   ) {}
+
+  public getSessionConfiguration(
+    input: Parameters<AcpApplicationPort["getSessionConfiguration"]>[0],
+  ) {
+    return this.sessionOperation("get_configuration", input.binding.agentId, input.sessionId, () =>
+      this.delegate.getSessionConfiguration(input),
+    );
+  }
+
+  public setSessionConfiguration(
+    input: Parameters<AcpApplicationPort["setSessionConfiguration"]>[0],
+  ) {
+    return this.sessionOperation("set_configuration", input.binding.agentId, input.sessionId, () =>
+      this.delegate.setSessionConfiguration(input),
+    );
+  }
 
   public assertAccess(
     input: Parameters<AcpApplicationPort["assertAccess"]>[0],
@@ -129,6 +154,14 @@ export class InstrumentedAcpApplication implements AcpApplicationPort {
     };
     return this.telemetry
       .span("agent.run", attributes, async () => {
+        trace.getSpan(context.active())?.setAttributes({
+          ...snapshotAttributes(input.accepted.snapshot),
+          "antnest.request.id": input.accepted.requestId,
+          "antnest.run.id": input.accepted.runId,
+          "antnest.session.id": input.accepted.sessionId,
+          "antnest.operation.phase": "execute",
+        });
+
         let result: ExecuteRunResult;
         try {
           result = await this.delegate.executeRun(input);
@@ -137,6 +170,8 @@ export class InstrumentedAcpApplication implements AcpApplicationPort {
           throw error;
         }
         terminalClass = result.terminalClass;
+        recordResult(result);
+
         this.telemetry.count("antnest.acp.runs", { terminal_class: result.terminalClass });
         return result;
       })
@@ -180,6 +215,17 @@ export class InstrumentedAgentController implements AgentControllerPort {
     private readonly delegate: AgentControllerPort,
     private readonly telemetry: TelemetryPort,
   ) {}
+
+  public getSessionConfiguration(
+    input: Parameters<AgentControllerPort["getSessionConfiguration"]>[0],
+    signal?: AbortSignal,
+  ) {
+    return this.rpc(
+      "get_session_configuration",
+      { "request.id": input.requestId, "agent.id": input.agentId },
+      () => this.delegate.getSessionConfiguration(input, signal),
+    );
+  }
 
   public resolveAgentAccess(
     input: ResolveAgentAccessInput,
@@ -255,11 +301,17 @@ export class InstrumentedModel implements ModelPort {
         "agent.spec_revision": request.snapshot.agentSpecRevision,
         "execution.revision": request.snapshot.executionRevision,
         "model.name": request.snapshot.executionSpec.model.model,
+        "model.purpose": request.purpose ?? "response",
       },
       "antnest.acp.model.duration",
       "antnest.acp.model.requests",
       { protocol: "openai_chat_completions" },
-      () => this.delegate.complete(request),
+      async () => {
+        modelRequest(request);
+        const result = await this.delegate.complete(request);
+        modelResponse(result);
+        return result;
+      },
     );
   }
 }
@@ -319,7 +371,11 @@ export class InstrumentedToolCatalog implements ToolCatalogPort {
       "antnest.acp.mcp.duration",
       "antnest.acp.mcp.requests",
       { operation: "call", source: input.tool.source },
-      () => this.delegate.call(input),
+      async () => {
+        toolRequest(input);
+        const result = await this.delegate.call(input);
+        return result;
+      },
     );
   }
 }
@@ -337,7 +393,11 @@ async function observe<Result>(
   return telemetry.span(spanName, spanAttributes, async () => {
     try {
       const result = await operation();
-      telemetry.count(requestMetric, { ...metricAttributes, result: "ok" });
+      recordResult(result);
+      telemetry.count(requestMetric, {
+        ...metricAttributes,
+        result: resultOutcome(result) === "ok" ? "ok" : "error",
+      });
       return result;
     } catch (error) {
       telemetry.count(requestMetric, { ...metricAttributes, result: "error" });

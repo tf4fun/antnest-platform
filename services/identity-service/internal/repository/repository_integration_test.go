@@ -39,7 +39,7 @@ func TestPostgresIdentityHappyPathAndOwnershipBoundaries(t *testing.T) {
 		t.Fatalf("create isolated test schema: %v", err)
 	}
 	defer func() { _, _ = adminPool.Exec(context.WithoutCancel(ctx), `DROP SCHEMA `+quotedSchema+` CASCADE`) }()
-	poolConfig, err := pgxpool.ParseConfig(databaseURL)
+	poolConfig, err := ParsePoolConfig(databaseURL)
 	if err != nil {
 		t.Fatalf("parse PostgreSQL config: %v", err)
 	}

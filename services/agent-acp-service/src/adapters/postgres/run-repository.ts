@@ -1,4 +1,5 @@
 import type { PoolClient } from "pg";
+import { sessionConfigurationSchema } from "../../domain/session-configuration.js";
 
 import type { EnvironmentChangeFact, SessionRecord } from "../../domain/types.js";
 import { DomainError } from "../../domain/errors.js";
@@ -59,8 +60,9 @@ export class PostgresRunRepository implements RunRepository {
         const session = await client.query<{
           state: string;
           client_mcp_revision_id: string;
+          configuration: unknown;
         }>(
-          `SELECT state, client_mcp_revision_id
+          `SELECT state, client_mcp_revision_id, configuration
              FROM acp_sessions WHERE id = $1 FOR UPDATE`,
           [input.sessionId],
         );
@@ -77,16 +79,17 @@ export class PostgresRunRepository implements RunRepository {
           state: RunIntent["state"];
           pending_user_message_id: string;
           pending_prompt: unknown;
+          session_configuration: unknown;
         }>(
           `INSERT INTO runs(
              id, request_id, session_id, client_mcp_revision_id,
              expected_access_revision, state,
              pending_user_message_id, pending_prompt,
-             created_at, updated_at
-           ) VALUES ($1, $2, $3, $4, $5, 'admitting', $6, $7::jsonb, $8, $8)
+             created_at, updated_at, session_configuration
+           ) VALUES ($1, $2, $3, $4, $5, 'admitting', $6, $7::jsonb, $8, $8, $9::jsonb)
            RETURNING id, request_id, session_id, client_mcp_revision_id,
                      expected_access_revision, state,
-                     pending_user_message_id, pending_prompt`,
+                     pending_user_message_id, pending_prompt, session_configuration`,
           [
             input.runId,
             input.requestId,
@@ -96,6 +99,7 @@ export class PostgresRunRepository implements RunRepository {
             input.userMessageId,
             JSON.stringify(input.prompt),
             input.createdAt,
+            JSON.stringify(sessionConfigurationSchema.parse(sessionRow.configuration)),
           ],
         );
         const row = requireRow(result.rows[0], "Run intent was not created");
@@ -108,6 +112,7 @@ export class PostgresRunRepository implements RunRepository {
           state: row.state,
           userMessageId: row.pending_user_message_id,
           prompt: row.pending_prompt as RunIntent["prompt"],
+          sessionConfiguration: sessionConfigurationSchema.parse(row.session_configuration),
         };
       });
     } catch (error) {

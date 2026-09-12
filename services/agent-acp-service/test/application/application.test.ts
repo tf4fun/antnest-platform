@@ -19,6 +19,7 @@ describe("AcpApplication", () => {
       Promise.resolve(),
     );
     const application = new AcpApplication({
+      configuration: { get: vi.fn(), set: vi.fn() },
       access: { assert } as unknown as AccessService,
       sessions: { requirePromptSession } as unknown as SessionService,
       prompts: { accept } as unknown as PromptCoordinator,
@@ -49,6 +50,7 @@ describe("AcpApplication", () => {
       const admit = vi.fn<RunLifecyclePort["admit"]>();
       const accept = vi.fn<PromptCoordinator["accept"]>();
       const application = new AcpApplication({
+        configuration: { get: vi.fn(), set: vi.fn() },
         access: {} as AccessService,
         sessions: { requirePromptSession } as unknown as SessionService,
         prompts: { accept } as unknown as PromptCoordinator,

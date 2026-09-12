@@ -5,14 +5,14 @@
   "$defs": {
     "tagged_image_reference": {
       "type": "string", "minLength": 1, "maxLength": 512,
-      "description": "Explicit repository:tag accepted by the platform image-reference parser; URLs, untagged names and digest references are rejected."
+      "description": "Original image name, tag, Docker image ID or repository digest accepted by the platform parser. URLs are rejected."
     },
     "image_resolution": {
       "type": "object", "additionalProperties": false,
       "required": ["reference", "image_ref"],
       "properties": {
         "reference": {"$ref": "#/$defs/tagged_image_reference"},
-        "image_ref": {"$ref": "runtime-deployment.schema.json#/properties/image_ref"}
+        "image_ref": {"type": "string", "pattern": "^sha256:[0-9a-fA-F]{64}$"}
       }
     },
     "agent_id": {"type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"},
@@ -62,7 +62,7 @@
       "properties": {
         "agent_id": {"$ref": "#/$defs/agent_id"},
         "runtime_revision": {"$ref": "#/$defs/runtime_revision"},
-        "lifecycle_state": {"enum": ["initializing", "ready", "updating", "disabling", "disabled", "enabling", "deleting", "deleted", "unknown"]},
+        "lifecycle_state": {"enum": ["initializing", "ready", "updating", "disabling", "disabled", "enabling", "deleting", "deleted", "failed", "unknown"]},
         "health": {"enum": ["absent", "starting", "healthy", "unhealthy", "unknown"]},
         "mcp_endpoint": {"type": "string", "format": "uri"},
         "runtime_execution_id": {"type": "string", "minLength": 1},
@@ -81,6 +81,8 @@
       "additionalProperties": false,
       "required": ["request_id", "kind", "agent_id", "target_revision", "state", "effect", "created_at", "updated_at"],
       "properties": {
+        "image_reference": {"$ref": "#/$defs/tagged_image_reference"},
+        "image_id": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
         "request_id": {"$ref": "#/$defs/request_id"},
         "kind": {"enum": ["initialize_runtime", "update_runtime", "disable_runtime", "enable_runtime", "delete_runtime"]},
         "agent_id": {"$ref": "#/$defs/agent_id"},

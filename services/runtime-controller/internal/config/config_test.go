@@ -129,3 +129,27 @@ func TestLoadUsesRuntimeSpecificOTELOverrides(t *testing.T) {
 		t.Fatalf("Runtime-specific telemetry did not override service telemetry: %+v", config.RuntimeOTEL)
 	}
 }
+
+func TestRuntimeRPCContentSwitchUsesSharedEnvironment(t *testing.T) {
+	for _, test := range []struct{ mode, want string }{
+		{"", "false"}, {"true", "true"}, {"false", "false"},
+	} {
+		values := map[string]string{
+			"ANTNEST_RUNTIME_CONTROLLER_DATABASE_URL":    "postgres://runtime:runtime@postgres/runtime",
+			"ANTNEST_RUNTIME_MANAGEMENT_NETWORK":         "management",
+			"ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT":      test.mode,
+			"ANTNEST_RUNTIME_OTEL_EXPORTER_OTLP_HEADERS": "CREDENTIAL_CANARY",
+		}
+		configuration, err := Load(func(key string) string { return values[key] })
+		if err != nil {
+			t.Fatal(err)
+		}
+		if configuration.RuntimeOTEL["ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT"] != test.want || configuration.RuntimeOTEL["OTEL_EXPORTER_OTLP_HEADERS"] != "" {
+			t.Fatal("shared capture switch or credential allowlist changed")
+		}
+		values["ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT"] = "invalid"
+		if _, err := Load(func(key string) string { return values[key] }); err == nil {
+			t.Fatal("invalid switch accepted")
+		}
+	}
+}

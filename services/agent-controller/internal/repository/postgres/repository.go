@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -22,7 +23,7 @@ func WithEventAppendObserver(observer EventAppendObserver) Option {
 }
 
 type Repository struct {
-	pool          *pgxpool.Pool
+	pool          *databasePool
 	eventAppended EventAppendObserver
 }
 
@@ -33,6 +34,7 @@ func Open(ctx context.Context, databaseURL string, options ...Option) (*Reposito
 	if err != nil {
 		return nil, fmt.Errorf("parse Agent Controller database URL: %w", err)
 	}
+	configuration.ConnConfig.Tracer = newDatabaseTracer()
 	configuration.ConnConfig.RuntimeParams["search_path"] = "agent_controller,public"
 	pool, err := pgxpool.NewWithConfig(ctx, configuration)
 	if err != nil {
@@ -42,7 +44,7 @@ func Open(ctx context.Context, databaseURL string, options ...Option) (*Reposito
 		pool.Close()
 		return nil, fmt.Errorf("ping Agent Controller database: %w", err)
 	}
-	repository := &Repository{pool: pool}
+	repository := &Repository{pool: &databasePool{pool}}
 	for _, option := range options {
 		if option != nil {
 			option(repository)
@@ -88,6 +90,8 @@ func (repository *Repository) persistModelProfile(
 	expectedRevision int64,
 	record ports.ModelProfileRecord,
 ) (ports.ModelProfileRecord, error) {
+	record.CreatedAt = record.CreatedAt.UTC().Truncate(time.Microsecond)
+	record.UpdatedAt = record.UpdatedAt.UTC().Truncate(time.Microsecond)
 	transaction, err := repository.pool.Begin(ctx)
 	if err != nil {
 		return ports.ModelProfileRecord{}, fmt.Errorf("begin ModelProfile transaction: %w", err)
@@ -111,7 +115,7 @@ func (repository *Repository) persistModelProfile(
 		err = reviseModelProfile(ctx, transaction, expectedRevision, record)
 	}
 	if err != nil {
-		return ports.ModelProfileRecord{}, err
+		return ports.ModelProfileRecord{}, catalogConflict(err)
 	}
 	if err := insertCatalogRequest(
 		ctx, transaction, kind, record.RequestID, record.RequestFingerprint,
@@ -129,19 +133,16 @@ func (repository *Repository) GetModelProfile(
 	ctx context.Context, id string,
 ) (ports.ModelProfileRecord, error) {
 	row := repository.pool.QueryRow(ctx, `
-SELECT p.id, p.organization_id, p.profile_key, p.display_name,
-       p.enabled, p.created_at, p.updated_at,
-       r.id, r.revision, r.model, r.credential_ref, r.credential_version
+SELECT p.id, p.organization_id, p.profile_key, r.display_name,
+       p.enabled, p.created_at, r.created_at,
+       r.id, r.revision, r.model || jsonb_build_object('base_url', c.base_url), p.provider_connection_id
 FROM agent_controller.model_profiles p
 JOIN agent_controller.model_profile_revisions r
   ON r.id = p.current_revision_id
  AND r.model_profile_id = p.id
  AND r.organization_id = p.organization_id
  AND r.revision = p.current_revision
-JOIN agent_controller.provider_credentials c
-  ON c.credential_ref = r.credential_ref
- AND c.organization_id = r.organization_id
- AND c.credential_version = r.credential_version
+JOIN agent_controller.provider_connections c ON c.id = p.provider_connection_id AND c.organization_id = p.organization_id
 WHERE p.id = $1`, id)
 	return scanModelProfileRecord(row)
 }
@@ -151,16 +152,16 @@ func (repository *Repository) GetModelProfileRevision(ctx context.Context, id st
 	var modelPayload []byte
 	var enabled bool
 	err := repository.pool.QueryRow(ctx, `
-SELECT r.id, r.model_profile_id, r.organization_id, r.revision, r.model,
-       r.credential_ref, r.credential_version, p.enabled
+SELECT r.id, r.model_profile_id, r.organization_id, r.revision, r.model || jsonb_build_object('base_url', c.base_url),
+       (p.enabled AND c.enabled)
 FROM agent_controller.model_profile_revisions r
 JOIN agent_controller.model_profiles p
   ON p.id = r.model_profile_id
  AND p.organization_id = r.organization_id
+JOIN agent_controller.provider_connections c ON c.id=p.provider_connection_id AND c.organization_id=p.organization_id
 WHERE r.id = $1`, id).Scan(
 		&snapshot.ID, &snapshot.ModelProfileID, &snapshot.OrganizationID,
-		&snapshot.Revision, &modelPayload, &snapshot.CredentialRef,
-		&snapshot.CredentialVersion, &enabled,
+		&snapshot.Revision, &modelPayload, &enabled,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.ModelProfileRevision{}, ports.ErrNotFound
@@ -177,6 +178,19 @@ WHERE r.id = $1`, id).Scan(
 	return domain.NewModelProfileRevision(domain.ModelProfileRevisionInput(snapshot))
 }
 
+func (repository *Repository) GetModelProfileRevisionRecord(ctx context.Context, id string) (ports.ModelProfileRecord, error) {
+	var profileID string
+	var revision int64
+	err := repository.pool.QueryRow(ctx, `SELECT model_profile_id, revision FROM agent_controller.model_profile_revisions WHERE id=$1`, id).Scan(&profileID, &revision)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ports.ModelProfileRecord{}, ports.ErrNotFound
+	}
+	if err != nil {
+		return ports.ModelProfileRecord{}, fmt.Errorf("read model revision identity: %w", err)
+	}
+	return loadModelProfileRecord(ctx, repository.pool, profileID, id, revision)
+}
+
 func (repository *Repository) ListModelProfiles(
 	ctx context.Context,
 	organizationID string,
@@ -184,19 +198,16 @@ func (repository *Repository) ListModelProfiles(
 	limit int,
 ) ([]ports.ModelProfileRecord, string, error) {
 	rows, err := repository.pool.Query(ctx, `
-SELECT p.id, p.organization_id, p.profile_key, p.display_name,
-       p.enabled, p.created_at, p.updated_at,
-       r.id, r.revision, r.model, r.credential_ref, r.credential_version
+SELECT p.id, p.organization_id, p.profile_key, r.display_name,
+       p.enabled, p.created_at, r.created_at,
+       r.id, r.revision, r.model || jsonb_build_object('base_url', c.base_url), p.provider_connection_id
 FROM agent_controller.model_profiles p
 JOIN agent_controller.model_profile_revisions r
   ON r.id = p.current_revision_id
  AND r.model_profile_id = p.id
  AND r.organization_id = p.organization_id
  AND r.revision = p.current_revision
-JOIN agent_controller.provider_credentials c
-  ON c.credential_ref = r.credential_ref
- AND c.organization_id = r.organization_id
- AND c.credential_version = r.credential_version
+JOIN agent_controller.provider_connections c ON c.id = p.provider_connection_id AND c.organization_id = p.organization_id
 WHERE p.organization_id = $1
   AND ($2 = '' OR p.id > $2)
 ORDER BY p.id
@@ -256,6 +267,8 @@ func (repository *Repository) persistTemplate(
 	expectedRevision int64,
 	record ports.TemplateRecord,
 ) (ports.TemplateRecord, error) {
+	record.CreatedAt = record.CreatedAt.UTC().Truncate(time.Microsecond)
+	record.UpdatedAt = record.UpdatedAt.UTC().Truncate(time.Microsecond)
 	transaction, err := repository.pool.Begin(ctx)
 	if err != nil {
 		return ports.TemplateRecord{}, fmt.Errorf("begin Template transaction: %w", err)
@@ -299,7 +312,7 @@ func (repository *Repository) GetTemplate(
 	row := repository.pool.QueryRow(ctx, `
 SELECT t.id, t.organization_id, t.template_key, t.name,
        t.enabled, t.created_at, t.updated_at,
-       r.revision, r.model_profile_revision_id, r.system_prompt,
+       r.revision, r.model_profile_id, r.system_prompt,
        r.max_model_requests, r.context_policy_version, r.runtime_input
 FROM agent_controller.agent_templates t
 JOIN agent_controller.agent_template_revisions r
@@ -332,7 +345,7 @@ func (repository *Repository) ListTemplates(
 	rows, err := repository.pool.Query(ctx, `
 SELECT t.id, t.organization_id, t.template_key, t.name,
        t.enabled, t.created_at, t.updated_at,
-       r.revision, r.model_profile_revision_id, r.system_prompt,
+       r.revision, r.model_profile_id, r.system_prompt,
        r.max_model_requests, r.context_policy_version, r.runtime_input
 FROM agent_controller.agent_templates t
 JOIN agent_controller.agent_template_revisions r

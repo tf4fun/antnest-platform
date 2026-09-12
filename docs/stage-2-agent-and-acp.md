@@ -1,7 +1,7 @@
 # Stage 2 Agent And ACP Architecture
 
-> Status: implemented; Stage 3 integration evidence exists, full ACP closeout remains open<br>
-> Updated: 2026-09-07<br>
+> Status: implemented; declared platform-only ACP profile accepted (C1); final platform closeout remains open<br>
+> Updated: 2026-09-10<br>
 > Compatibility: greenfield service rewrite; no prototype wire or database
 > compatibility is retained<br>
 > Protocol baseline: stable ACP v1, side-by-side ACP v2 Draft, and MCP
@@ -39,8 +39,9 @@ are not part of the active closeout.
 5. Every Run acquires one immutable execution snapshot. A planned Agent rebuild
    cannot move that Run to another configuration, Runtime instance, or Runtime
    process lifetime.
-6. Runtime MCP and client-provided MCP are separate sources. Runtime MCP is a
-   platform-owned Agent binding; client MCP is standard ACP Session input.
+6. Runtime MCP is a platform-owned Agent binding. Client MCP is a distinct ACP
+   input, but the current product accepts only `mcpServers: []`; it never turns
+   a client request into administrator-owned Runtime configuration.
 7. Antnest Runtime implements stateless MCP `2026-07-28` Streamable HTTP.
    Replacing its endpoint therefore changes an Agent execution binding, not an
    MCP protocol Session.
@@ -278,17 +279,19 @@ the former is cleared while the latter remains audit history.
    failed. Client MCP and unclassified effects remain fail-closed. Runtime is
    never changed while a Run executor is still active.
 4. Advance the operation from drain to its network barrier.
-5. Read and persist the Agent's current immutable policy assignment, then fence
-	the Agent network. Runtime Egress durably assigns deny-all while fencing.
-	Call `ResetAgentFlows(agent_id)` and require acknowledgement so the stable
-	Tunnel address cannot retain the old Runtime UDP peer.
+5. Read the Agent's Egress attachment and close it with attachment-version CAS.
+   Persist the confirmed closed attachment and coordinates as phase evidence.
+   Egress owns packet gating, writer drain and flow/peer cleanup. The desired
+   policy assignment is independent and is never replaced with deny-all by
+   this lifecycle operation.
 6. Call Runtime Controller `UpdateRuntime` with the current opaque revision and
    complete target configuration. Runtime Controller deletes current compute,
    allocates a private generation, retains workspace, and creates replacement
    compute under one idempotent lifecycle operation.
 7. Wait for Runtime Controller to return a ready endpoint and execution ID.
-8. Restore the captured policy assignment with Egress resource-version CAS,
-	then call `EnsureAgentNetwork` to reconcile and reopen the Agent path.
+8. Open the attachment with its captured resource-version CAS and verify
+   unchanged network coordinates. Egress applies the current desired policy;
+   the Controller neither restores an old policy nor resets flows separately.
 9. Atomically publish the target AgentSpecRevision, new ExecutionRevision,
    Runtime binding, change summary, and state `AVAILABLE`.
 10. Append the corresponding Agent domain event in the same local transaction.
@@ -309,8 +312,8 @@ configuration remains non-executable, and the operator can cancel the Run
 through ACP and retry.
 
 Stage 2 has no force-rebuild shortcut. Standard ACP `session/cancel` stops the
-local Run executor and propagates cancellation to the model and both MCP source
-classes. For MCP `2026-07-28` HTTP, closing a request's SSE response is the
+local Run executor and propagates cancellation to the model and platform MCP
+tools, including Runtime-managed stdio. For MCP `2026-07-28` HTTP, closing a request's SSE response is the
 transport cancellation signal, but cancellation still does not prove that a
 side effect was never started.
 
@@ -323,8 +326,13 @@ admitted in the interval.
 
 ### 4.5 Build failure and retry
 
-- A conclusive failure before old Runtime deletion restores the captured Egress
-  policy and leaves the old executable binding `AVAILABLE`.
+- A drain or other failure before attempting Runtime replacement may retain
+  the original binding without a fresh Runtime inspection. Once a Runtime
+  update has been attempted and rejected, compensation inspects the exact
+  source revision, execution identity, endpoint and health before treating it
+  as preserved executable compute. Owner revocation can require continued
+  fencing in either case. No captured desired policy is restored; unknown
+  effects or changed sources cannot justify reopening access.
 - After Runtime replacement is confirmed, an inconclusive dependency or
   readiness result keeps the same operation running and the Agent fail-closed.
   Exact-request replay must adopt and publish that Runtime; it must not fabricate
@@ -364,9 +372,9 @@ a separate future retention job, never part of the interactive delete request.
 ### 4.7 Agent disable and enable
 
 Disable persists desired state `disabled` and `agent_disable_requested` before
-waiting for the Agent-wide Run admission to settle. It captures the current
-Egress policy assignment as operation recovery evidence, fences the active
-attachment to deny-all, and calls Runtime Controller `DisableRuntime` with the
+waiting for the Agent-wide Run admission to settle. It closes the Egress
+attachment with CAS and stores the confirmed attachment as recovery evidence,
+then calls Runtime Controller `DisableRuntime` with the
 frozen Runtime revision. Completed success must prove compute absent while the
 workspace remains owned by the logical Runtime. Publication retains the
 AgentSpec and last successful ExecutionRevision, clears the executable MCP
@@ -374,29 +382,26 @@ binding, stores the disabled Runtime revision, and appends `agent_disabled`.
 
 If Runtime Controller reports that disable was not started, Agent Controller
 independently inspects the exact frozen Runtime revision, execution identity,
-MCP endpoint, lifecycle, and health before restoring the captured policy and
-old executable projection. A changed or unhealthy Runtime is never restored:
+MCP endpoint, lifecycle, and health before reopening the attachment and
+restoring the old executable projection. Owner revocation prevents this
+compensation from reopening access. A changed or unhealthy Runtime is never restored:
 the Agent becomes unavailable and remains fenced for operator recovery. A
 transport timeout, failed inspection, or unknown effect is not evidence of
 failure; the operation remains running and fail-closed for exact-request
 replay.
 
-Enable is valid only from the published disabled state. The new operation
-freezes the current AgentSpec, disabled Runtime revision, and policy captured by
-the matching completed Disable operation. It first verifies that the current
-policy is either the captured policy or Runtime Egress's canonical deny-all
-policy, reads the retained network attachment without reopening data flow, and
-reasserts and verifies the canonical deny-all fence. It then calls
-`EnableRuntime` with the complete Runtime configuration and
-persists the proven ready result before entering a distinct `network_restore`
-phase. That phase restores only the captured policy (or recognizes it as
-already restored), rejects an unrelated policy assignment, and verifies
-unchanged network coordinates before publishing a new ExecutionRevision and
-`agent_enabled`. Any post-ready restore failure re-fences the Agent before the
-operation returns as retryable. A crash after Runtime readiness or policy
-restoration replays
-the same phase and child identity; it never creates another Runtime. Agent
-configuration is never changed implicitly by Disable or Enable.
+Enable is valid only from the published disabled state. Admission captures
+fresh owner authorization, the current AgentSpec and disabled Runtime revision.
+The worker ensures the retained allocation, closes the attachment if necessary,
+and records its confirmed coordinates/version. It calls `EnableRuntime` with
+the complete Runtime configuration and persists the ready result before the
+`network_restore` phase. That phase opens the attachment with CAS and verifies
+unchanged coordinates before publishing a new ExecutionRevision and
+`agent_enabled`. Desired policy edits made while disabled remain effective;
+there is no policy copied from the prior Disable operation. A post-ready
+failure retains the same operation and physical identity for recovery, not a
+second Runtime. Agent configuration is never changed implicitly by Disable
+or Enable.
 
 A conclusive pre-effect Enable failure returns the Agent to desired/lifecycle
 state `disabled` only after Runtime inspection proves the exact retained
@@ -464,10 +469,12 @@ is idempotent. Calling it asserts the local Agent loop is quiescent and cannot
 issue another model or MCP request. `terminal_class` is a small coordination
 result: completed, cancelled, failed, or unresolved. Once recorded, the report
 is immutable.
-`tool_effect_state` is `none`, `settled`, or `unknown` and covers both Runtime
-and client MCP Tools. An unresolved report also records
+`tool_effect_state` is `none`, `settled`, or `unknown`. Current execution uses
+Runtime MCP, including its hosted stdio tools. An unresolved report also records
 `unknown_effect_source` as `runtime_mcp`, `client_mcp`, or `unclassified`;
-all other terminal reports require it to be null.
+all other terminal reports require it to be null. The latter two source classes
+retain conservative interpretation of stored facts, not permission to inject
+or execute client MCP in the current profile.
 
 `FinishRun` seals one immutable terminal report. A successful RPC response means
 that report is stored, not necessarily that the Agent is available for another
@@ -555,9 +562,12 @@ that principal. Credential remapping never rebinds an existing Session.
 - Stable v1 blocks `session/prompt` until the Run is terminal and returns its
   `stopReason`. Draft v2 acknowledges `session/prompt` with `{}` before sending
   any Session update, then reports completion with an `idle` `state_update`.
-- No ACP Client reconnect is required after a successful rebuild.
-- Stable v1 `session/load` restores durable context, applies the supplied full
-  MCP list, and replays history before returning. Stable v1 `session/resume`
+- Rebuild publishes a new access revision. A stale connection must reconnect
+  and load/resume the same durable Session before further authorized work;
+  it must not replay the previous prompt. Session identity is retained, not
+  the old connection's authorization snapshot.
+- Stable v1 `session/load` restores durable context, validates the required
+  empty MCP list, and replays history before returning. Stable v1 `session/resume`
   restores without historical replay. Draft v2 `session/resume` uses
   `replayFrom=start` for full replay and otherwise resumes without history.
   Resume emits the current durable Run projection when that protocol has a
@@ -576,32 +586,22 @@ that principal. Credential remapping never rebinds an existing Session.
 
 ### 7.1 Client MCP
 
-Client MCP comes only from ACP `session/new.mcpServers` and
-`session/resume.mcpServers`:
+ACP Session methods that accept `mcpServers` require an empty list on both
+versions. Nonempty HTTP, stdio, SSE and MCP-over-ACP inputs are rejected before
+Session writes, activation, replay, or tool execution. No client MCP transport
+capability or administrator enable switch is advertised. In particular, the
+ACP host never starts a client-selected executable.
 
-- it is scoped to one ACP Session;
-- a resume request supplies the complete intended list;
-- changing it does not create AgentSpecRevision or rebuild Runtime;
-- Agent ACP Service stores a normalized revision and protects secret headers;
-- replacing the list atomically changes the Session's encrypted configuration
-  revision; MCP connections are request-scoped and are not retained between
-  Tool operations;
-- only transports advertised during ACP initialization are accepted.
+This product decision supersedes the initial HTTP-only design. Mandatory v1
+client stdio remains a documented baseline incompatibility; acceptance of our
+declared profile is not complete ACP conformance. See the
+[client MCP trust policy](../services/agent-acp-service/docs/client-mcp-policy.md)
+and [protocol matrix](../services/agent-acp-service/docs/protocol-conformance.md).
 
-Remote Antnest ACP initially advertises ACP HTTP MCP support only. It does not
-advertise stdio MCP, because accepting a client-selected command would execute
-an arbitrary program on the Agent ACP Service host. Stage 2 accepts only MCP
-`2026-07-28` stateless HTTP sources; an older session-bearing MCP server is
-reported as unsupported rather than partially emulated.
-
-Client MCP uses a dedicated untrusted HTTP dialer, separate from the Runtime MCP
-client. It permits only configured HTTPS destinations, resolves and validates
-the selected address on every dial, rejects loopback, link-local, metadata,
-deployment-platform, control-plane, Runtime, and configured private CIDRs,
-revalidates every redirect, and never forwards credentials across origins.
-Arbitrary enterprise-internal MCP is unavailable in Stage 2; a future
-administrator-managed MCP source requires its own explicit design instead of a
-hole in the client dialer.
+The existing `client_mcp_revisions` persistence envelope stores the accepted
+empty configuration; its presence is not evidence of a live client MCP feature.
+Administrator-owned managed stdio MCP is already implemented inside Runtime,
+configured through Template revisions and explicit rebuild, not ACP input.
 
 ### 7.2 Platform Runtime MCP
 
@@ -621,15 +621,13 @@ modified through ACP `mcpServers`.
 ```text
 EffectiveMcpSet(run)
   = PlatformRuntimeMcp(run.execution_revision)
-  + ClientMcp(run.session.client_mcp_revision)
 ```
 
-The internal identity is `(source_id, tool_name)`. Platform Runtime tools keep
-their canonical names. Every client Tool receives a deterministic qualified
-model-facing name derived from source ID, Tool name, and a digest suffix. This
-prevents both initial and later `tools/list_changed` updates from shadowing
-`read`, `write`, `edit`, or `bash`; no network-dependent collision preflight is
-required during Session creation.
+Platform Runtime exposes its canonical tools and aggregates its managed stdio
+tools under qualified names. ACP discovers that catalog through the captured
+Runtime endpoint. Qualification and process ownership remain Runtime concerns;
+there is no accepted client-source catalog to merge. See the
+[managed MCP contract](runtime-context-and-managed-mcp.md).
 
 ### 7.4 Stateless Runtime MCP
 
@@ -698,8 +696,8 @@ A Session with no previous admitted Run stores the first Run's revision without
 adding a historical reset notice. Creating or resuming a Session during rebuild
 therefore has no contradictory baseline.
 
-Client MCP changes are already visible through the Tool set and do not create
-this Runtime-reset fact.
+Client MCP changes are not accepted. Administrator-managed MCP changes are
+Runtime configuration changes and follow the explicit rebuild flow above.
 
 ## 9. Service Ownership
 
@@ -743,7 +741,7 @@ Owns:
   access-binding flow;
 - ACP Sessions and replayable messages;
 - Runs, Turns, context, compression checkpoints, and Tool attempts;
-- client MCP lifecycle;
+- validation of the empty client MCP profile and its persisted envelope;
 - model invocation and Tool loop;
 - RunExecutionSnapshot and environment-change context facts.
 
@@ -834,9 +832,8 @@ GetAgentNetwork(agent_id)
 EnsureAgentNetwork(agent_id)
 GetAgentPolicyAssignment(agent_id)
 AssignAgentPolicy(agent_id, policy_id, revision, expected_resource_version)
-ResetAgentFlows(agent_id)
-FenceAgentNetwork(agent_id)
-ReleaseAgentNetwork(agent_id)
+SetAgentNetworkAttachment(agent_id, state, expected_resource_version)
+ReleaseAgentNetwork(agent_id, expected_resource_version)
 ```
 
 Before replacement, rebuild asks Runtime Egress to close the Agent attachment
@@ -971,7 +968,7 @@ span attributes or default logs.
 | Atomic publication fails      | Remain unavailable; never expose an uncommitted endpoint                                 |
 | ACP process crashes           | Session/Run recover from its DB; admission remains fail-closed                           |
 | Runtime MCP call times out    | Keep admission unresolved until settled or Runtime is absent; never replay automatically |
-| Client MCP unavailable        | Fail that source explicitly without replacing Runtime MCP                                |
+| Nonempty client MCP input     | Reject before Session mutation, activation, replay or execution                           |
 | Unexpected Runtime restart    | Record observation; stale execution ID fails closed until explicit rebuild               |
 | Egress policy update          | Apply independently; no Agent rebuild                                                    |
 
@@ -985,7 +982,7 @@ span attributes or default logs.
 4. One Run uses one RunExecutionSnapshot for its complete lifetime.
 5. Agent ACP Service never discovers a Runtime endpoint from Docker/Kubernetes.
 6. Runtime Controller never chooses which Runtime is active.
-7. Client MCP cannot shadow or mutate platform Runtime MCP.
+7. Client MCP input is empty; it cannot shadow or mutate platform Runtime MCP.
 8. An acknowledged rebuild publishes configuration, Runtime binding, execution
    revision, lifecycle state, and event atomically in Agent Controller.
 9. Session state and Run history remain valid after Agent rebuild.
@@ -1040,8 +1037,8 @@ span attributes or default logs.
    revalidation plus stable ACP v1 and draft ACP v2 Session persistence,
    resume/load, prompt, cancellation, content, Tool updates, and replay
    behavior.
-2. Implement safe HTTP-only client MCP plus a separate mandatory platform
-   Runtime MCP client.
+2. Implement the mandatory platform Runtime MCP client and explicit rejection
+   of every nonempty client MCP input (superseding the initial HTTP-only plan).
 3. Persist RunExecutionSnapshot before model execution.
 4. Implement context construction, Tool loop, environment-change fact, and
    Run admission completion.
@@ -1057,8 +1054,9 @@ span attributes or default logs.
    rejected while rebuilding.
 5. Resume the old Session and prove the next Run uses the new snapshot and
    receives one hidden environment-change fact.
-6. Add and replace client HTTP MCP through ACP without rebuilding the Agent;
-   prove the safe dialer cannot reach Runtime or control-plane addresses.
+6. Reject nonempty client MCP input on both versions before writes or side
+   effects. Prove administrator-owned managed MCP through Template -> Runtime
+   configuration -> discovery/call instead of client injection.
 7. Restart Runtime PID 1 and prove stale Run MCP calls fail before Tool dispatch.
 8. Break Runtime creation and prove the Agent remains visibly `UNAVAILABLE`.
 9. Update Egress policy and prove no Runtime or Agent revision changes.
@@ -1079,8 +1077,8 @@ Before Stage 2 is called complete, verification must include:
   revalidation tests;
 - MCP `2026-07-28` tests for headers, POST behavior, SSE response, cancellation,
   and absence of protocol-level Session coupling;
-- SSRF tests covering DNS rebinding, redirects, private ranges, metadata
-  addresses, and cross-origin credential stripping;
+- client MCP rejection tests proving no outbound dial, host process launch,
+  partial configuration write or replay for any rejected transport;
 - restart tests for Agent Controller and Agent ACP Service;
 - trace continuity assertions across ACP, Agent Controller, Runtime Controller,
   and Runtime MCP;
@@ -1089,14 +1087,16 @@ Before Stage 2 is called complete, verification must include:
 
 ### 16.1 Integrated Trace Topology
 
-The Stage 2 Docker acceptance uses two business traces. It must not introduce a
+The Stage 2 Docker acceptance uses two business flows. It must not introduce a
 Runtime Controller proxy into the Tool data path merely to manufacture one
 four-service trace:
 
-1. the lifecycle trace starts at `POST /internal/agents` and contains Agent
-   Controller, Identity Service owner resolution, Runtime Egress control RPC,
-   and Runtime Controller spans through Runtime readiness and atomic Agent
-   publication;
+1. lifecycle admission starts at `POST /internal/agents` and contains Agent
+   Controller and Identity Service owner authorization. The asynchronous
+   `network_ensure`, `runtime_initialize`, and `publish` workers each start a
+   new trace linked to that exact admission and the previous attempt. Their
+   descendants include Runtime Egress control RPC and Runtime Controller
+   readiness/publication work;
 2. the execution trace starts at the ACP WebSocket connection and contains ACP
    Session/Run spans, Agent Controller access and Run-admission RPC spans,
    Identity Service owner revalidation, model spans, and Runtime MCP list/call
@@ -1112,8 +1112,23 @@ attributes.
 
 The deterministic acceptance conversation asks the model to call Runtime
 `write`, verifies the resulting file in the Agent workspace, observes Tool and
-assistant ACP updates, and then queries Jaeger by the two injected trace IDs.
+assistant ACP updates, and then queries Jaeger by the admission/execution trace
+IDs and exact lifecycle request ID. Worker attempt numbers must be contiguous,
+all phases must be present, and the final worker must record completion.
 This gives repeatable evidence without depending on an external model Provider.
+
+The fixture administrator and Agent owner are separate identities. Create and
+delete return admission (`202`), followed by bounded operation polling and an
+authoritative Agent read. After owner revocation the existing ACP connection
+must reject a prompt with non-retryable `access_denied`, and a new connection
+must return HTTP `403`. The fixture waits for automatic disable, then verifies
+the original workspace through a one-shot, networkless, read-only volume mount;
+it does not race `docker exec` against compute removal. Exact create replay is
+still allowed, a new create for that inactive owner is rejected, and completed
+delete must remove both compute and workspace. v2 output evidence requires
+running -> completed Tool -> complete answer -> idle/end_turn, accepting both
+full messages and chunks grouped by message identity. This JSON model fixture
+does not replace the separate SSE streaming and Tool approval profiles.
 
 ## 17. Deferred Decisions
 

@@ -7,14 +7,13 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"soft/antnest-platform/services/agent-controller/internal/application"
 	"soft/antnest-platform/services/agent-controller/internal/credentials"
+	"soft/antnest-platform/services/agent-controller/internal/ports"
 	"soft/antnest-platform/services/agent-controller/internal/repository/postgres"
-	"soft/antnest-platform/services/agent-controller/internal/runtimeclient"
 	"soft/antnest-platform/services/agent-controller/internal/server"
 )
 
@@ -42,57 +41,35 @@ func TestCatalogHappyPathThroughHTTPAndPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create SecretBox: %v", err)
 	}
-	var lookups atomic.Int64
-	var resolverUnavailable atomic.Bool
-	imageID := "sha256:" + strings.Repeat("a", 64)
-	imageServer := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		lookups.Add(1)
-		if request.URL.Path != "/internal/runtime-images/resolve" || request.URL.Query().Get("reference") != "antnest/runtime:local" {
-			t.Errorf("unexpected image query: %s", request.URL)
-		}
-		if resolverUnavailable.Load() {
-			response.WriteHeader(http.StatusServiceUnavailable)
-			if err := json.NewEncoder(response).Encode(map[string]any{"code": "platform_unavailable", "retryable": true}); err != nil {
-				t.Error(err)
-			}
-			return
-		}
-		if err := json.NewEncoder(response).Encode(map[string]string{"reference": "antnest/runtime:local", "image_ref": imageID}); err != nil {
-			t.Error(err)
-		}
-	}))
-	t.Cleanup(imageServer.Close)
-	images, err := runtimeclient.New(imageServer.URL, time.Second, imageServer.Client())
-	if err != nil {
-		t.Fatal(err)
-	}
 	handler, err := server.NewHandler(
-		application.NewCatalogService(repository, secretBox, images, fixedClock{now: time.Unix(1, 0).UTC()}),
+		application.NewCatalogService(repository, secretBox, fixedClock{now: time.Unix(1, 0).UTC()}),
 		catalogOnlyLifecycle{},
 		application.NewRunService(
 			repository, secretBox, fixedClock{now: time.Unix(1, 0).UTC()}, 30*time.Minute,
 		),
-		application.NewAgentQueryService(repository),
+		application.NewAgentQueryService(repository, application.WithWorkspaceStateNotifier(eventNotifier)),
 		application.NewEventService(repository, eventNotifier, repository),
+		catalogOnlyNetworkPolicy{},
 		repository.Ping,
 	)
 	if err != nil {
 		t.Fatalf("create handler: %v", err)
 	}
 
+	assertProviderManagement(t, handler)
+	provider := createTestProvider(t, handler, "catalog-e2e-provider", "catalog-e2e-org", "https://api.example.com/v1", "catalog-e2e-secret")
 	modelResponse := serveJSON(t, handler, http.MethodPost, "/internal/model-profiles", `{
       "request_id":"catalog-e2e-model",
       "organization_id":"catalog-e2e-org",
       "profile_key":"deepseek",
       "display_name":"DeepSeek",
       "model":{
-        "base_url":"https://api.example.com/v1",
         "model":"deepseek-chat",
         "context_window":128000,
         "max_output_tokens":8192,
         "supports_images":false
       },
-      "credential":{"secret_type":"bearer","secret":"catalog-e2e-secret"}
+      "provider_connection_id":"`+provider["connection_id"].(string)+`"
     }`, http.StatusCreated)
 	revisionID, ok := modelResponse["revision_id"].(string)
 	if !ok || revisionID == "" {
@@ -107,7 +84,7 @@ func TestCatalogHappyPathThroughHTTPAndPostgres(t *testing.T) {
       "organization_id":"catalog-e2e-org",
       "template_key":"personal",
       "name":"Personal Agent",
-      "model_profile_revision_id":"` + revisionID + `",
+      "model_profile_id":"` + modelResponse["model_profile_id"].(string) + `",
       "system_prompt":"You are helpful.",
       "max_model_requests":16,
       "context_policy_version":"context-v1",
@@ -130,13 +107,11 @@ func TestCatalogHappyPathThroughHTTPAndPostgres(t *testing.T) {
 	if !ok || len(items) != 1 {
 		t.Fatalf("Template list response = %+v", listResponse)
 	}
-	if lookups.Load() != 0 {
-		t.Fatal("immutable default unexpectedly used the tag resolver")
-	}
-	assertImageChoicePublication(t, handler, templateRequest, imageID, &resolverUnavailable, &lookups)
+	assertImageChoicePublication(t, handler, templateRequest)
+	assertModelPricingPublication(t, handler)
 }
 
-func assertImageChoicePublication(t *testing.T, handler http.Handler, original, imageID string, unavailable *atomic.Bool, lookups *atomic.Int64) {
+func assertImageChoicePublication(t *testing.T, handler http.Handler, original string) {
 	t.Helper()
 	var draft map[string]any
 	if err := json.Unmarshal([]byte(original), &draft); err != nil {
@@ -144,16 +119,15 @@ func assertImageChoicePublication(t *testing.T, handler http.Handler, original, 
 	}
 	draft["request_id"], draft["template_key"] = "catalog-image-choice", "image-choice"
 	runtime := draft["runtime"].(map[string]any)
-	runtime["image_ref"] = "antnest/runtime:local"
+	runtime["image_ref"] = "antnest/runtime:latest"
 	body := mustJSON(t, draft)
 	created := serveJSON(t, handler, http.MethodPost, "/internal/agent-templates", body, http.StatusCreated)
 	path := "/internal/agent-templates/" + created["template_id"].(string)
 	persisted := serveJSON(t, handler, http.MethodGet, path+"?organization_id=catalog-e2e-org", "", http.StatusOK)
 	image := persisted["runtime"].(map[string]any)
-	if image["image_ref"] != imageID || image["image_source"] != "antnest/runtime:local" || lookups.Load() != 1 {
-		t.Fatalf("persisted Runtime image = %+v, lookups = %d", image, lookups.Load())
+	if image["image_ref"] != runtime["image_ref"] || image["image_source"] != nil {
+		t.Fatalf("persisted Runtime changed the submitted reference: %+v", image)
 	}
-	unavailable.Store(true)
 	replayed := serveJSON(t, handler, http.MethodPost, "/internal/agent-templates", body, http.StatusCreated)
 	for _, field := range []string{"created_at", "updated_at"} {
 		instant, err := time.Parse(time.RFC3339Nano, replayed[field].(string))
@@ -162,21 +136,20 @@ func assertImageChoicePublication(t *testing.T, handler http.Handler, original, 
 		}
 		replayed[field] = instant.UTC().Format(time.RFC3339Nano)
 	}
-	if mustJSON(t, replayed) != mustJSON(t, created) || lookups.Load() != 1 {
-		t.Fatalf("replay changed: created=%s replayed=%s lookups=%d", mustJSON(t, created), mustJSON(t, replayed), lookups.Load())
+	if mustJSON(t, replayed) != mustJSON(t, created) {
+		t.Fatalf("replay changed: created=%s replayed=%s", mustJSON(t, created), mustJSON(t, replayed))
 	}
 	delete(draft, "template_key")
 	draft["request_id"], draft["system_prompt"] = "catalog-image-preserve", "Updated prompt"
-	runtime["image_ref"] = imageID
 	revised := serveJSON(t, handler, http.MethodPost, path+"/revisions", mustJSON(t, draft), http.StatusCreated)
-	if revised["runtime"].(map[string]any)["image_source"] != "antnest/runtime:local" || lookups.Load() != 1 {
-		t.Fatal("prompt-only revision lost image source or used the resolver")
+	if revised["runtime"].(map[string]any)["image_ref"] != runtime["image_ref"] || revised["revision"] != float64(2) {
+		t.Fatal("prompt-only revision changed the image reference")
 	}
-	draft["request_id"], runtime["image_ref"] = "catalog-image-unavailable", "antnest/runtime:local"
-	failed := serveJSON(t, handler, http.MethodPost, path+"/revisions", mustJSON(t, draft), http.StatusServiceUnavailable)
+	draft["request_id"], runtime["image_ref"] = "catalog-image-unavailable", "missing.example/runtime:latest"
+	revised = serveJSON(t, handler, http.MethodPost, path+"/revisions", mustJSON(t, draft), http.StatusCreated)
 	current := serveJSON(t, handler, http.MethodGet, path+"?organization_id=catalog-e2e-org", "", http.StatusOK)
-	if failed["code"] != "dependency_unavailable" || current["revision"] != revised["revision"] || lookups.Load() != 2 {
-		t.Fatal("failed image resolution published a revision or lost its dependency error")
+	if current["revision"] != revised["revision"] || current["runtime"].(map[string]any)["image_ref"] != runtime["image_ref"] {
+		t.Fatal("unavailable image prevented publication or changed the reference")
 	}
 }
 
@@ -215,6 +188,16 @@ func mustJSON(t *testing.T, value any) string {
 type fixedClock struct{ now time.Time }
 
 func (clock fixedClock) Now() time.Time { return clock.now }
+
+type catalogOnlyNetworkPolicy struct{}
+
+func (catalogOnlyNetworkPolicy) GetAgentNetworkPolicy(context.Context, string, string) (application.AgentNetworkPolicyView, error) {
+	return application.AgentNetworkPolicyView{}, application.ErrDependencyUnavailable
+}
+
+func (catalogOnlyNetworkPolicy) SetAgentNetworkPolicy(context.Context, application.SetAgentNetworkPolicyInput) (ports.NetworkPolicyAssignment, error) {
+	return ports.NetworkPolicyAssignment{}, application.ErrDependencyUnavailable
+}
 
 type catalogOnlyLifecycle struct{}
 

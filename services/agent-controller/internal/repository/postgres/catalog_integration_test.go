@@ -31,6 +31,7 @@ func TestCatalogRepositoryPersistsAndReplaysRequests(t *testing.T) {
 	}
 
 	record := integrationModelRecord(t)
+	seedProviderForModel(t, repository, record)
 	created, err := repository.PutModelProfile(ctx, record)
 	if err != nil {
 		t.Fatalf("put ModelProfile: %v", err)
@@ -71,9 +72,7 @@ func TestCatalogRepositoryPersistsAndReplaysRequests(t *testing.T) {
 	staleRevision := integrationRevisedModelRecord(t, record)
 	staleRevision.RequestID = "request_model_stale"
 	staleRevision.RequestFingerprint = strings.Repeat("e", 64)
-	staleRevision.Revision = mustIntegrationModelRevision(t, "modelrev_stale", 2, "credential_stale", "credver_stale")
-	staleRevision.CredentialRef = "credential_stale"
-	staleRevision.CredentialVersion = "credver_stale"
+	staleRevision.Revision = mustIntegrationModelRevision(t, "modelrev_stale", 2)
 	if _, err := repository.ReviseModelProfile(ctx, 1, staleRevision); !errors.Is(err, ports.ErrConcurrentChange) {
 		t.Fatalf("stale ModelProfile revision error = %v", err)
 	}
@@ -83,9 +82,13 @@ func TestCatalogRepositoryPersistsAndReplaysRequests(t *testing.T) {
 	}
 
 	template := integrationTemplateRecord(t, revisedModel.Revision)
-	if _, err := repository.PutTemplate(ctx, template); err != nil {
+	template.CreatedAt = template.CreatedAt.Add(536 * time.Nanosecond)
+	template.UpdatedAt = template.CreatedAt
+	createdTemplate, err := repository.PutTemplate(ctx, template)
+	if err != nil {
 		t.Fatalf("put Template: %v", err)
 	}
+	assertTemplateTimeReplay(t, ctx, repository, ports.CreateTemplateRequest, template, createdTemplate)
 	loadedTemplate, err := repository.GetTemplate(ctx, template.TemplateID)
 	if err != nil || !reflect.DeepEqual(loadedTemplate.Revision.Snapshot().Runtime.MCPServers, template.Revision.Snapshot().Runtime.MCPServers) {
 		t.Fatalf("MCP configuration did not survive template persistence: %v", err)
@@ -96,9 +99,12 @@ func TestCatalogRepositoryPersistsAndReplaysRequests(t *testing.T) {
 		t.Fatalf("replay Template request: record=%+v found=%t err=%v", replayed, found, err)
 	}
 	revisedTemplate := integrationRevisedTemplateRecord(t, template, revisedModel.Revision)
-	if _, err := repository.ReviseTemplate(ctx, 1, revisedTemplate); err != nil {
+	revisedTemplate.UpdatedAt = revisedTemplate.UpdatedAt.Add(739 * time.Nanosecond)
+	updatedTemplate, err := repository.ReviseTemplate(ctx, 1, revisedTemplate)
+	if err != nil {
 		t.Fatalf("revise Template: %v", err)
 	}
+	assertTemplateTimeReplay(t, ctx, repository, ports.ReviseTemplateRequest, revisedTemplate, updatedTemplate)
 	currentTemplate, err := repository.GetTemplate(ctx, template.TemplateID)
 	if err != nil || currentTemplate.Revision.Revision() != 2 {
 		t.Fatalf("get current Template: record=%+v err=%v", currentTemplate, err)
@@ -138,6 +144,7 @@ func TestCatalogRepositorySerializesConcurrentRequestReplay(t *testing.T) {
 	}
 
 	record := integrationModelRecord(t)
+	seedProviderForModel(t, repository, record)
 	const callers = 20
 	results := make(chan ports.ModelProfileRecord, callers)
 	errorsFound := make(chan error, callers)
@@ -176,7 +183,6 @@ func integrationModelRecord(t *testing.T) ports.ModelProfileRecord {
 			BaseURL: "https://api.example.com/v1", Model: "model",
 			ContextWindow: 32000, MaxOutputTokens: 2048,
 		},
-		CredentialRef: "credential_integration", CredentialVersion: "credver_integration",
 	})
 	if err != nil {
 		t.Fatalf("model revision: %v", err)
@@ -185,39 +191,38 @@ func integrationModelRecord(t *testing.T) ports.ModelProfileRecord {
 		RequestID: "request_model_integration", RequestFingerprint: strings.Repeat("a", 64),
 		ModelProfileID: "model_integration", OrganizationID: "org-integration",
 		ProfileKey: "model-key", DisplayName: "Model", Revision: revision,
-		CredentialRef: "credential_integration", CredentialVersion: "credver_integration",
-		SealedCredential: ports.SealedSecret{Ciphertext: []byte("ciphertext"), Nonce: []byte("nonce")},
-		Enabled:          true,
-		CreatedAt:        time.Unix(1, 0).UTC(),
-		UpdatedAt:        time.Unix(1, 0).UTC(),
+
+		ProviderConnectionID: "credential_integration",
+		Enabled:              true,
+		CreatedAt:            time.Unix(1, 0).UTC(),
+		UpdatedAt:            time.Unix(1, 0).UTC(),
 	}
 }
 
 func integrationRevisedModelRecord(t *testing.T, current ports.ModelProfileRecord) ports.ModelProfileRecord {
 	t.Helper()
-	revision := mustIntegrationModelRevision(t, "modelrev_integration_v2", 2, "credential_integration_v2", "credver_integration_v2")
+	revision := mustIntegrationModelRevision(t, "modelrev_integration_v2", 2)
 	return ports.ModelProfileRecord{
 		RequestID: "request_model_integration_v2", RequestFingerprint: strings.Repeat("b", 64),
 		ModelProfileID: current.ModelProfileID, OrganizationID: current.OrganizationID,
 		ProfileKey: current.ProfileKey, DisplayName: "Model V2", Revision: revision,
-		CredentialRef: "credential_integration_v2", CredentialVersion: "credver_integration_v2",
-		SealedCredential: ports.SealedSecret{Ciphertext: []byte("ciphertext-v2"), Nonce: []byte("nonce-v2")},
-		Enabled:          true, CreatedAt: current.CreatedAt, UpdatedAt: time.Unix(2, 0).UTC(),
+
+		ProviderConnectionID: current.ProviderConnectionID,
+		Enabled:              true, CreatedAt: current.CreatedAt, UpdatedAt: time.Unix(2, 0).UTC(),
 	}
 }
 
 func mustIntegrationModelRevision(
-	t *testing.T, id string, revisionNumber int64, credentialRef string, credentialVersion string,
+	t *testing.T, id string, revisionNumber int64,
 ) domain.ModelProfileRevision {
 	t.Helper()
 	revision, err := domain.NewModelProfileRevision(domain.ModelProfileRevisionInput{
 		ID: id, ModelProfileID: "model_integration", OrganizationID: "org-integration",
 		Revision: revisionNumber,
 		Model: domain.ModelSpec{
-			BaseURL: "https://api.example.com/v1", Model: "model-v2",
+			BaseURL: "https://api.example.com/v1", Model: "model",
 			ContextWindow: 64000, MaxOutputTokens: 4096,
 		},
-		CredentialRef: credentialRef, CredentialVersion: credentialVersion,
 	})
 	if err != nil {
 		t.Fatalf("model revision: %v", err)
@@ -229,7 +234,7 @@ func integrationTemplateRecord(t *testing.T, model domain.ModelProfileRevision) 
 	t.Helper()
 	revision, err := domain.NewTemplateRevision(domain.TemplateRevisionInput{
 		TemplateID: "template_integration", OrganizationID: "org-integration", Revision: 1,
-		ModelProfileRevisionID: model.ID(), SystemPrompt: "prompt", MaxModelRequests: 8,
+		ModelProfileID: model.Snapshot().ModelProfileID, SystemPrompt: "prompt", MaxModelRequests: 8,
 		ContextPolicyVersion: "context-v1",
 		Runtime: domain.RuntimeSpecInput{
 			ImageRef:   "antnest/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -256,7 +261,7 @@ func integrationRevisedTemplateRecord(
 	t.Helper()
 	revision, err := domain.NewTemplateRevision(domain.TemplateRevisionInput{
 		TemplateID: current.TemplateID, OrganizationID: current.OrganizationID, Revision: 2,
-		ModelProfileRevisionID: model.ID(), SystemPrompt: "prompt-v2", MaxModelRequests: 16,
+		ModelProfileID: model.Snapshot().ModelProfileID, SystemPrompt: "prompt-v2", MaxModelRequests: 16,
 		ContextPolicyVersion: "context-v1",
 		Runtime: domain.RuntimeSpecInput{
 			ImageRef: "antnest/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -280,5 +285,16 @@ func resetCatalogSchema(t *testing.T, ctx context.Context, repository *Repositor
 	t.Helper()
 	if _, err := repository.pool.Exec(ctx, `DROP SCHEMA IF EXISTS agent_controller CASCADE`); err != nil {
 		t.Fatalf("reset Agent Controller schema: %v", err)
+	}
+}
+
+func assertTemplateTimeReplay(t *testing.T, ctx context.Context, repository *Repository, kind ports.CatalogRequestKind, input, written ports.TemplateRecord) {
+	t.Helper()
+	replayed, found, err := repository.ReplayTemplateRequest(ctx, kind, input.RequestID, input.RequestFingerprint)
+	if err != nil || !found {
+		t.Fatalf("read template replay: found=%t err=%v", found, err)
+	}
+	if !written.CreatedAt.Equal(replayed.CreatedAt) || !written.UpdatedAt.Equal(replayed.UpdatedAt) {
+		t.Fatalf("timestamp drift: created=%v/%v updated=%v/%v", written.CreatedAt, replayed.CreatedAt, written.UpdatedAt, replayed.UpdatedAt)
 	}
 }

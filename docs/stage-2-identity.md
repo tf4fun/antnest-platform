@@ -99,8 +99,13 @@ transactions. IDs referenced by other services are opaque strings.
 `identity_events` remains a private audit journal. The dedicated
 `principal_revocations` feed is atomically emitted for deactivation/SCIM delete
 and exposed by bounded internal RPC, with commit-ordered replay. Agent
-Controller consumption and cross-service offboarding acceptance remain separate
-batches; see the [delivery contract](../contracts/identity/principal-revocations.md).
+Controller consumes it with a durable cursor and idempotent Disable operations.
+Scoped/global/SCIM offboarding, offline catch-up and retained workspace/history
+have Docker acceptance in C2-05 of the
+[closeout checklist](docker-single-node-closeout.md). Reactivation does not
+automatically Enable Agents; uncertain Runtime effects remain fenced/pending.
+This is not a generic event bus. See the
+[delivery contract](../contracts/identity/principal-revocations.md).
 
 ## Internal RPC
 
@@ -137,8 +142,12 @@ its `active` value is the conjunction of active User, Membership, and
 Organization state. The broader administrator authorization projection remains
 separate. It does not expose
 email, display name, credentials, or directory enumeration. Agent Controller
-uses it to validate an Agent owner before initial creation and to revalidate the
-owner before resolving Agent access. A request already admitted before a
+uses it to revalidate the owner when resolving Agent access and admitting Runs.
+Create and Enable use `resolve_owner_authorization`, which atomically returns
+the effective owner binding and `last_revocation_sequence`. The Controller
+stores that sequence with authorization, allowing its asynchronous revocation
+consumer to distinguish a later explicit authorization from an older event.
+A request already admitted before a
 concurrent Identity change keeps its immutable authorization snapshot; the next
 business request observes the new Identity state.
 

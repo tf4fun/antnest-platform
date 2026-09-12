@@ -2,6 +2,7 @@ import type { ConnectionBinding } from "../../domain/types.js";
 import type { SessionEvent, SessionOutputSnapshot } from "../../ports/acp-application.js";
 
 type OutputInput = {
+  keepExisting?: boolean;
   key: string;
   connectionId: string;
   afterSequence?: number;
@@ -25,8 +26,20 @@ export class SessionOutputStreams {
 
   public async attach(input: OutputInput): Promise<void> {
     for (const current of this.subscriptions) {
-      if (current.input.key === input.key && current.input.connectionId === input.connectionId)
+      if (
+        input.keepExisting === true &&
+        current.input.key === input.key &&
+        current.input.connectionId === input.connectionId
+      )
+        return;
+      if (current.input.key === input.key && current.input.connectionId === input.connectionId) {
+        current.useSender(input.send);
+        await current.flush();
+        const cursor = current.cursor;
+        if (cursor !== undefined)
+          input = { ...input, afterSequence: Math.max(input.afterSequence ?? 0, cursor) };
         current.close();
+      }
     }
     const subscription = new OutputSubscription(input, () =>
       this.subscriptions.delete(subscription),
@@ -64,6 +77,9 @@ export class SessionOutputStreams {
 
 class OutputSubscription {
   public readonly prepared = Promise.withResolvers<void>();
+  public get cursor(): number | undefined {
+    return this.sequence;
+  }
   private readonly stop = new AbortController();
   private readonly parentAborted = () => this.close();
   private sequence: number | undefined;
@@ -71,11 +87,13 @@ class OutputSubscription {
   private dirty = false;
   private pending: Promise<void> | undefined;
   private first = true;
+  private send: OutputInput["send"];
 
   public constructor(
     public readonly input: OutputInput,
     private readonly remove: () => void,
   ) {
+    this.send = input.send;
     this.sequence = input.afterSequence;
     this.state = input.initialState === undefined ? undefined : JSON.stringify(input.initialState);
   }
@@ -84,6 +102,10 @@ class OutputSubscription {
     this.input.signal.addEventListener("abort", this.parentAborted, { once: true });
     if (this.input.signal.aborted) this.close();
     else this.refresh();
+  }
+
+  public useSender(send: OutputInput["send"]): void {
+    this.send = send;
   }
 
   public close(): void {
@@ -125,9 +147,9 @@ class OutputSubscription {
       if (this.first && this.input.beforeFirst !== undefined)
         await this.bounded(this.input.beforeFirst);
       this.first = false;
-      for (const event of snapshot.events) await this.bounded(() => this.input.send(event));
+      for (const event of snapshot.events) await this.bounded(() => this.send(event));
       const state = JSON.stringify(snapshot.state);
-      if (state !== this.state) await this.bounded(() => this.input.send(snapshot.state));
+      if (state !== this.state) await this.bounded(() => this.send(snapshot.state));
       this.sequence = snapshot.sequence;
       this.state = state;
     }

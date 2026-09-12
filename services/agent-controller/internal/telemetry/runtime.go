@@ -48,6 +48,10 @@ func Setup(ctx context.Context, base slog.Handler, config Config) (*Runtime, err
 	local := correlatedHandler{next: base}
 	localLogger := slog.New(local)
 	runtime := &Runtime{logger: localLogger}
+	capture := strings.ToLower(strings.TrimSpace(os.Getenv("ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT")))
+	if capture != "" && capture != "true" && capture != "false" {
+		return nil, fmt.Errorf("ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT must be true or false")
+	}
 	otel.SetTextMapPropagator(propagation.TraceContext{})
 	otel.SetErrorHandler(otel.ErrorHandlerFunc(func(error) {
 		localLogger.Error("OpenTelemetry export failed", "error_class", "export_error")
@@ -206,6 +210,7 @@ func newResource(ctx context.Context, config Config) (*resource.Resource, error)
 	attributes := []attribute.KeyValue{
 		attribute.String("service.name", serviceName),
 		attribute.String("service.namespace", "antnest"),
+		attribute.String("service.instance.id", fmt.Sprintf("agent-controller-%d-%d", os.Getpid(), time.Now().UnixNano())),
 	}
 	if config.ServiceVersion != "" {
 		attributes = append(attributes, attribute.String("service.version", config.ServiceVersion))

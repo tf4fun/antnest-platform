@@ -220,9 +220,9 @@ func TestListWorkspaceAgentsDerivesAvailabilityAndOpaqueCursor(t *testing.T) {
 	second := first.Add(time.Second)
 	store := &agentQueryStoreStub{workspaceRecords: []ports.WorkspaceAgentRecord{
 		{AgentID: "agent-ready", Name: "Ready", LifecycleState: domain.AgentAvailable,
-			AccessSubject: "subject-ready", CreatedAt: first},
+			DesiredState: domain.DesiredEnabled, AccessSubject: "subject-ready", CreatedAt: first},
 		{AgentID: "agent-busy", Name: "Busy", LifecycleState: domain.AgentAvailable,
-			AccessSubject: "subject-busy", AdmissionState: domain.AdmissionActive, CreatedAt: second},
+			DesiredState: domain.DesiredEnabled, AccessSubject: "subject-busy", AdmissionState: domain.AdmissionActive, CreatedAt: second},
 		{AgentID: "agent-offline", Name: "Offline", LifecycleState: domain.AgentUnavailable,
 			AccessSubject: "subject-offline", CreatedAt: second.Add(time.Second)},
 	}}

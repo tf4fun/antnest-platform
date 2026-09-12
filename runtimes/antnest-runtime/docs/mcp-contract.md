@@ -2,7 +2,7 @@
 
 ## Protocol
 
-Runtime implements MCP `2026-07-28` with the official Rust `rmcp` `3.1.4` SDK and its
+Runtime implements MCP `2026-07-28` with the official Rust `rmcp` `3.2.0` SDK and its
 Streamable HTTP server transport.
 
 - MCP endpoint: `POST /mcp`.
@@ -93,12 +93,12 @@ execution uses the existing executor span. Neither traces nor request logs
 contain instruction bodies, Skill descriptions, or serialized resource content.
 The packet-forwarding path remains untraced.
 
-Delivery is split by service: this batch supplies the Runtime resource, managed
-stdio MCP hosting and their tests. Controller batches then complete configuration
-transport and readiness publication. A later ACP batch reads the resource after Run admission and before model context
-construction, includes it in the context budget, and preserves the two Skill
-namespaces. Refresh on the next Run avoids caching mutable workspace guidance
-for an entire ACP Session. Docker/Jaeger integration follows all service batches.
+Delivery is implemented across service-owned batches: Runtime supplies this
+resource and managed stdio hosting; Controllers transport immutable configuration
+and publish readiness. ACP reads the resource after Run admission and before
+model context construction, budgets it, and preserves the two Skill namespaces.
+Refresh on the next Run avoids caching mutable workspace guidance for an entire
+Session. The delivery plan records the separate Docker/Jaeger integration.
 See [the delivery plan](../../../docs/runtime-context-and-managed-mcp.md) for
 managed-tool aggregation and stdio dispatch. Skill Registry remains outside this work.
 
@@ -133,9 +133,14 @@ API, per-child HTTP endpoint, or control-plane database in Runtime.
 name uses `mcp__<id>__<original-name>`; long names are shortened with a stable hash
 suffix to fit the 64-byte model function-name limit. The routing table stores
 the original name, and rejects duplicate bindings. Descriptions, input schemas
-and output schemas remain intact. Managed tools do not claim support for
-server-initiated sampling, elicitation, roots, resources or prompts; this
-delivery hosts tool discovery and invocation only.
+and output schemas remain intact. Elicitation is deferred until the official
+SDK supports the required URL flow; no local SDK patch or partial interaction
+bridge is maintained. Incoming tool continuations fail before dispatch, and
+unexpected child input requirements fail explicitly with unknown effects.
+Sampling, roots, resources, prompts and elicitation are not delegated. See
+[elicitation](elicitation.md) for the decision and resumption criteria.
+Managed connections use the SDK Auto lifecycle, preferring `2026-07-28`
+discovery with SDK-managed `2025-11-25` initialization fallback.
 
 Startup/discovery shares one 30-second deadline across all configured servers.
 The aggregate catalog is bounded to 128 tools and 1 MiB, discovery to 16 pages
@@ -172,8 +177,31 @@ antnest-runtime edit
 
 These are same-binary container-internal execution entries, not Controller APIs.
 The subcommand identifies the tool, stdin carries the existing tool input JSON,
-and stdout carries one common success/error envelope. No additional public wire
-schema or compatibility version is introduced.
+and stdout carries newline-delimited progress frames followed by one common
+success/error envelope. Non-Bash tools emit only the terminal envelope. No
+additional public wire schema or compatibility version is introduced.
+
+### Live Progress
+
+Calls carrying `_meta.progressToken` may receive standard
+`notifications/progress` before their final result. Bash supplies bounded
+stdout/stderr previews; managed tools forward their actual child progress,
+rewriting the child token to the outer request token. No token means no
+notifications; silent/file tools do not invent progress. The result remains
+authoritative, and notifications stop on completion or cancellation. See the
+[progress contract](tool-progress.md) for limits, process framing, failure
+semantics and the completed ACP consumer / deployment evidence.
+
+### File Observations
+
+Successful builtin `read`, `write` and `edit` can include
+`_meta["io.antnest.runtime/file"]`. It carries the configured absolute target;
+writes/edits additionally carry complete observed UTF-8 before/after text or an
+explicit omission reason. The JSON-encoded metadata budget is 32 KiB. Existing
+`content`, `structuredContent` and tool output schemas remain unchanged. These
+facts are not additional model text, progress, a stable inode/version identity,
+or a file history. See [File observations](file-observations.md) for the exact
+contract and producer-only acceptance boundary.
 
 ### `bash`
 

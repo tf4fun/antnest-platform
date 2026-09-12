@@ -631,7 +631,7 @@ func (s *Service) failSession(
 	if code, _, _ := domain.ErrorDetails(cause); code != "internal_error" {
 		return cause
 	}
-	return domain.NewError("oidc_"+stage+"_failed", "OIDC login failed and must be restarted", false)
+	return domain.WithCause(domain.NewError("oidc_"+stage+"_failed", "OIDC login failed and must be restarted", false), cause)
 }
 
 type sessionSecrets struct {

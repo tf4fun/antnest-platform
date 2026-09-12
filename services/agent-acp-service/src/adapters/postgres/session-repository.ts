@@ -4,6 +4,7 @@ import { DomainError } from "../../domain/errors.js";
 import type { NormalizedClientMcpSource } from "../../domain/mcp.js";
 import type { SessionRecord } from "../../domain/types.js";
 import type { SessionEvent } from "../../ports/acp-application.js";
+import { decodeSessionEvent, type StoredSessionEvent } from "./session-event-codec.js";
 import type {
   CreateSessionInput,
   ForkSessionInput,
@@ -38,7 +39,7 @@ export class PostgresSessionRepository implements SessionRepository {
   public async readOutput(sessionId: string, afterSequence?: number) {
     const result = await this.kernel.query<{
       sequence: string;
-      events: SessionEvent[];
+      events: StoredSessionEvent[];
       state: "admitting" | "running" | "completed" | "cancelled" | "failed" | "unresolved" | null;
       stop_reason: "end_turn" | "max_tokens" | "max_turn_requests" | "refusal" | null;
     }>(
@@ -58,7 +59,7 @@ export class PostgresSessionRepository implements SessionRepository {
     const row = requireRow(result.rows[0], "Session does not exist");
     return {
       sequence: Number(row.sequence),
-      events: row.events,
+      events: row.events.map(decodeSessionEvent),
       state: outputState(row.state, row.stop_reason),
     };
   }
@@ -209,6 +210,11 @@ export class PostgresSessionRepository implements SessionRepository {
           WHERE session_id = $1`,
         [input.sourceSessionId, input.sessionId],
       );
+      await client.query(
+        `UPDATE acp_sessions SET configuration = source.configuration - 'toolRules'
+        FROM acp_sessions source WHERE acp_sessions.id = $2 AND source.id = $1`,
+        [input.sourceSessionId, input.sessionId],
+      );
       await client.query("UPDATE acp_sessions SET client_mcp_revision_id = $2 WHERE id = $1", [
         input.sessionId,
         input.mcpRevisionId,
@@ -250,13 +256,13 @@ export class PostgresSessionRepository implements SessionRepository {
   }
 
   public async replay(sessionId: string): Promise<SessionEvent[]> {
-    const result = await this.kernel.query<{ payload: SessionEvent }>(
+    const result = await this.kernel.query<{ payload: StoredSessionEvent }>(
       `SELECT payload FROM session_messages
         WHERE session_id = $1 AND visible
         ORDER BY sequence`,
       [sessionId],
     );
-    return result.rows.map((row) => row.payload);
+    return result.rows.map((row) => decodeSessionEvent(row.payload));
   }
 
   public async getCurrentRunState(

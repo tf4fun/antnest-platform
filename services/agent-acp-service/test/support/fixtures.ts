@@ -1,4 +1,31 @@
 import type { ConnectionBinding, RunExecutionSnapshot } from "../../src/domain/types.js";
+import {
+  configurationView,
+  type ConfigurationCatalog,
+} from "../../src/domain/session-configuration.js";
+
+export function configurationCatalog(): ConfigurationCatalog & { nextCursor: string } {
+  const model = {
+    modelProfileId: "profile-1",
+    revisionId: "profile-revision-1",
+    displayName: "Example model",
+    model: "example-model",
+    contextWindow: 64000,
+    maxOutputTokens: 4096,
+    supportsImages: false,
+  };
+  return {
+    models: [model],
+    defaultModel: { ...model, available: true },
+    defaultAuthorization: { mode: "auto", toolRules: [] },
+    authorizationRevision: 1,
+    nextCursor: "",
+  };
+}
+
+export function sessionConfigurationView() {
+  return configurationView({}, configurationCatalog());
+}
 
 export function binding(): ConnectionBinding {
   return {

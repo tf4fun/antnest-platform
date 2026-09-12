@@ -162,6 +162,27 @@ func TestFailedOperationUsesStableSanitizedError(t *testing.T) {
 	}
 }
 
+func TestFailedInitializeReadinessHasActionableStableError(t *testing.T) {
+	service := &fakeService{operation: deployment.Operation{
+		RequestID: "request-1", State: deployment.OperationFailed,
+		Effect: deployment.EffectCompleted, ErrorCode: "runtime_not_ready",
+		ErrorDetail: "PRIVATE_PROCESS_ENV must not leak",
+	}}
+	handler := newTestHandler(t, service)
+	encoded, _ := json.Marshal(initializeRequest{Configuration: configurationDTO{}})
+	request := httptest.NewRequest(http.MethodPost, "/internal/runtimes/agent-1/initialize", bytes.NewReader(encoded))
+	request.Header.Set("Idempotency-Key", "request-1")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	var failure errorResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &failure); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusInternalServerError || failure.Code != "runtime_not_ready" || failure.Retryable || !strings.Contains(failure.Message, "MCP") || strings.Contains(response.Body.String(), "PRIVATE_PROCESS_ENV") {
+		t.Fatalf("readiness failure lost stable diagnosis: %d %+v", response.Code, failure)
+	}
+}
+
 func TestLifecycleMutationRoutesForwardOpaqueRevision(t *testing.T) {
 	for _, test := range []struct {
 		name       string

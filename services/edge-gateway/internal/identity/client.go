@@ -11,17 +11,9 @@ import (
 	"net/url"
 	"strings"
 	"time"
-
-	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/codes"
-	"go.opentelemetry.io/otel/propagation"
-	"go.opentelemetry.io/otel/trace"
 )
 
 const maximumResponseBytes = 2 << 20
-
-var tracer = otel.Tracer("soft/antnest-platform/edge-gateway/identity-client")
 
 type Principal struct {
 	UserID           string `json:"user_id"`
@@ -109,7 +101,7 @@ func NewClient(rawBaseURL string, httpClient *http.Client) (*Client, error) {
 
 func (client *Client) Login(ctx context.Context, input LoginInput) (LoginResult, error) {
 	var result LoginResult
-	err := client.doJSON(ctx, "login", http.MethodPost, "/rpc/identity/local-login", input, &result)
+	err := client.doJSON(ctx, http.MethodPost, "/rpc/identity/local-login", input, &result)
 	return result, err
 }
 
@@ -117,7 +109,7 @@ func (client *Client) ListLoginMethods(ctx context.Context, organizationSlug str
 	var result struct {
 		Methods []LoginMethod `json:"methods"`
 	}
-	err := client.doJSON(ctx, "list_login_methods", http.MethodPost,
+	err := client.doJSON(ctx, http.MethodPost,
 		"/rpc/identity/list-login-methods", map[string]string{
 			"organization_slug": organizationSlug,
 		}, &result)
@@ -128,7 +120,7 @@ func (client *Client) StartOIDCLogin(
 	ctx context.Context, input StartOIDCLoginInput,
 ) (StartOIDCLoginResult, error) {
 	var result StartOIDCLoginResult
-	err := client.doJSON(ctx, "start_oidc_login", http.MethodPost,
+	err := client.doJSON(ctx, http.MethodPost,
 		"/rpc/identity/start-oidc-login", input, &result)
 	return result, err
 }
@@ -147,7 +139,7 @@ func (client *Client) CompleteOIDCLogin(
 		Path: "/protocol/oidc/callback", RawQuery: query.Encode(),
 	})
 	var result OIDCCallbackResult
-	err := client.doRequest(ctx, "complete_oidc_login", http.MethodGet, target, nil, &result)
+	err := client.doRequest(ctx, http.MethodGet, target, nil, &result)
 	return result, err
 }
 
@@ -158,7 +150,7 @@ func (client *Client) Resolve(ctx context.Context, accessToken string) (Principa
 			Active *bool `json:"active"`
 		} `json:"principal"`
 	}
-	err := client.doJSON(ctx, "resolve", http.MethodPost, "/rpc/identity/resolve-access-token",
+	err := client.doJSON(ctx, http.MethodPost, "/rpc/identity/resolve-access-token",
 		map[string]string{"access_token": accessToken}, &result)
 	if err != nil {
 		return Principal{}, err
@@ -179,7 +171,7 @@ func (client *Client) RevokeByAccessToken(
 	var result struct {
 		Status RevokeStatus `json:"status"`
 	}
-	err := client.doJSON(ctx, "revoke", http.MethodPost, "/rpc/identity/revoke-access-token",
+	err := client.doJSON(ctx, http.MethodPost, "/rpc/identity/revoke-access-token",
 		map[string]string{"access_token": accessToken}, &result)
 	if err != nil {
 		return "", err
@@ -190,40 +182,28 @@ func (client *Client) RevokeByAccessToken(
 	return result.Status, nil
 }
 
-func (client *Client) Ready(ctx context.Context) error {
-	return client.doJSON(ctx, "status", http.MethodGet, "/status", nil, nil)
-}
-
 func (client *Client) doJSON(
 	ctx context.Context,
-	operation string,
 	method string,
 	path string,
 	input any,
 	output any,
 ) error {
 	target := client.base.ResolveReference(&url.URL{Path: path})
-	return client.doRequest(ctx, operation, method, target, input, output)
+	return client.doRequest(ctx, method, target, input, output)
 }
 
 func (client *Client) doRequest(
 	ctx context.Context,
-	operation string,
 	method string,
 	target *url.URL,
 	input any,
 	output any,
 ) error {
-	ctx, span := tracer.Start(ctx, "identity."+operation, trace.WithSpanKind(trace.SpanKindClient))
-	defer span.End()
-	span.SetAttributes(attribute.String("rpc.system", "http"), attribute.String("rpc.method", operation))
-
 	var body io.Reader
 	if input != nil {
 		payload, err := json.Marshal(input)
 		if err != nil {
-			span.RecordError(err)
-			span.SetStatus(codes.Error, "encode request")
 			return fmt.Errorf("encode identity request: %w", err)
 		}
 		body = bytes.NewReader(payload)
@@ -236,12 +216,9 @@ func (client *Client) doRequest(
 	if input != nil {
 		request.Header.Set("Content-Type", "application/json")
 	}
-	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(request.Header))
 
 	response, err := client.httpClient.Do(request)
 	if err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, "transport failure")
 		return fmt.Errorf("identity service unavailable: %w", err)
 	}
 	defer func() { _ = response.Body.Close() }()
@@ -255,15 +232,12 @@ func (client *Client) doRequest(
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		remote := &RemoteError{StatusCode: response.StatusCode, Code: "identity_error", Message: "Identity request failed"}
 		_ = json.Unmarshal(payload, remote)
-		span.SetStatus(codes.Error, remote.Code)
 		return remote
 	}
 	if output == nil || response.StatusCode == http.StatusNoContent {
 		return nil
 	}
 	if err := json.Unmarshal(payload, output); err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, "invalid response")
 		return fmt.Errorf("decode identity response: %w", err)
 	}
 	return nil

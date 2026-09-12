@@ -1,5 +1,7 @@
-import { context, propagation } from "@opentelemetry/api";
+import { tracedFetch } from "../../telemetry/http.js";
 import { z } from "zod";
+import { catalogSchema, configurationSchema, encodeConfiguration } from "./configuration.js";
+import { modelPricingSchema } from "../../domain/usage.js";
 
 import type {
   AcquireRunInput,
@@ -22,6 +24,27 @@ export { AgentControllerError } from "../../ports/agent-controller.js";
 type FetchFn = (input: URL, init: RequestInit) => Promise<Response>;
 
 const maximumResponseBytes = 1_048_576;
+
+const pricingSchema = z
+  .object({
+    currency: modelPricingSchema.shape.currency,
+    input_per_million: modelPricingSchema.shape.inputPerMillion,
+    output_per_million: modelPricingSchema.shape.outputPerMillion,
+    cache_read_per_million: modelPricingSchema.shape.cacheReadPerMillion,
+    cache_write_per_million: modelPricingSchema.shape.cacheWritePerMillion,
+  })
+  .strict()
+  .transform((price) => ({
+    currency: price.currency,
+    inputPerMillion: price.input_per_million,
+    outputPerMillion: price.output_per_million,
+    ...(price.cache_read_per_million === undefined
+      ? {}
+      : { cacheReadPerMillion: price.cache_read_per_million }),
+    ...(price.cache_write_per_million === undefined
+      ? {}
+      : { cacheWritePerMillion: price.cache_write_per_million }),
+  }));
 
 export type AgentControllerClientOptions = {
   baseUrl: URL;
@@ -58,6 +81,8 @@ const errorContract: Record<
   invalid_request: { status: 400, retryable: false },
   dependency_unavailable: { status: 503, retryable: true },
   internal_error: { status: 500, retryable: true },
+  model_unavailable: { status: 409, retryable: false },
+  configuration_conflict: { status: 409, retryable: false },
 };
 
 const statusSchema = z.object({ status: z.literal("ready") }).strict();
@@ -71,6 +96,7 @@ const accessSchema = z
       .object({
         image: z.boolean(),
         embedded_context: z.boolean(),
+        audio: z.boolean().optional(),
       })
       .strict(),
   })
@@ -94,6 +120,7 @@ const acquireSchema = z
       .strict(),
     execution_spec: z
       .object({
+        configuration: configurationSchema.optional(),
         system_prompt: z.string(),
         context_policy_version: z.literal("context-v1"),
         skill_instructions: z.array(
@@ -113,6 +140,9 @@ const acquireSchema = z
             max_output_tokens: z.number().int().positive(),
             temperature: z.number().min(0).max(2).optional(),
             supports_images: z.boolean(),
+            supports_audio: z.boolean().optional(),
+            supports_pdf: z.boolean().optional(),
+            pricing: pricingSchema.optional(),
           })
           .strict(),
         max_model_requests: z.number().int().min(1).max(128),
@@ -141,7 +171,10 @@ export async function requireAgentControllerReady(
   options: AgentControllerStatusOptions,
   signal?: AbortSignal,
 ): Promise<void> {
-  const fetchFn = options.fetchFn ?? ((input, init) => fetch(input, init));
+  const fetchFn = tracedFetch(
+    options.fetchFn ?? ((input: URL, init: RequestInit) => fetch(input, init)),
+    "agent-controller",
+  );
   const timeout = AbortSignal.timeout(options.timeoutMs);
   const requestSignal = signal === undefined ? timeout : AbortSignal.any([signal, timeout]);
   let response: Response;
@@ -168,7 +201,29 @@ export class AgentControllerClient implements AgentControllerPort {
   private readonly fetchFn: FetchFn;
 
   public constructor(private readonly options: AgentControllerClientOptions) {
-    this.fetchFn = options.fetchFn ?? ((input, init) => fetch(input, init));
+    this.fetchFn = tracedFetch(
+      options.fetchFn ?? ((input: URL, init: RequestInit) => fetch(input, init)),
+      "agent-controller",
+    );
+  }
+
+  public getSessionConfiguration(
+    input: Parameters<AgentControllerPort["getSessionConfiguration"]>[0],
+    signal?: AbortSignal,
+  ) {
+    return this.post(
+      "get-session-configuration",
+      {
+        request_id: input.requestId,
+        agent_id: input.agentId,
+        principal_id: input.principalId,
+        expected_access_revision: input.expectedAccessRevision,
+        ...(input.afterId === undefined ? {} : { after_id: input.afterId }),
+        ...(input.limit === undefined ? {} : { limit: input.limit }),
+      },
+      catalogSchema,
+      signal,
+    );
   }
 
   public async resolveAgentAccess(
@@ -191,6 +246,9 @@ export class AgentControllerClient implements AgentControllerPort {
       promptCapabilities: {
         image: result.prompt_capabilities.image,
         embeddedContext: result.prompt_capabilities.embedded_context,
+        ...(result.prompt_capabilities.audio === undefined
+          ? {}
+          : { audio: result.prompt_capabilities.audio }),
       },
     };
   }
@@ -204,10 +262,18 @@ export class AgentControllerClient implements AgentControllerPort {
         principal_id: input.principalId,
         expected_access_revision: input.expectedAccessRevision,
         session_id: input.sessionId,
+        ...(input.sessionConfiguration === undefined
+          ? {}
+          : { session_configuration: encodeConfiguration(input.sessionConfiguration) }),
       },
       acquireSchema,
       signal,
     );
+    if (
+      input.sessionConfiguration !== undefined &&
+      result.execution_spec.configuration === undefined
+    )
+      throw dependencyUnavailable("Controller omitted the admitted Session configuration");
     return {
       admissionId: result.admission_id,
       admissionDeadline: new Date(result.admission_deadline),
@@ -222,6 +288,9 @@ export class AgentControllerClient implements AgentControllerPort {
         mcpEndpoint: result.runtime.mcp_endpoint,
       },
       executionSpec: {
+        ...(result.execution_spec.configuration === undefined
+          ? {}
+          : { configuration: result.execution_spec.configuration }),
         systemPrompt: result.execution_spec.system_prompt,
         contextPolicyVersion: result.execution_spec.context_policy_version,
         skillInstructions: result.execution_spec.skill_instructions.map((skill) => ({
@@ -238,6 +307,15 @@ export class AgentControllerClient implements AgentControllerPort {
             ? {}
             : { temperature: result.execution_spec.model.temperature }),
           supportsImages: result.execution_spec.model.supports_images,
+          ...(result.execution_spec.model.supports_audio === undefined
+            ? {}
+            : { supportsAudio: result.execution_spec.model.supports_audio }),
+          ...(result.execution_spec.model.supports_pdf === undefined
+            ? {}
+            : { supportsPdf: result.execution_spec.model.supports_pdf }),
+          ...(result.execution_spec.model.pricing === undefined
+            ? {}
+            : { pricing: result.execution_spec.model.pricing }),
         },
         maxModelRequests: result.execution_spec.max_model_requests,
         credentialRef: result.execution_spec.credential_ref,
@@ -380,11 +458,6 @@ function propagatedHeaders(withBody: boolean): Headers {
   const headers = new Headers({ accept: "application/json" });
   if (withBody) {
     headers.set("content-type", "application/json");
-  }
-  const traceHeaders: Record<string, string> = {};
-  propagation.inject(context.active(), traceHeaders);
-  for (const [name, value] of Object.entries(traceHeaders)) {
-    headers.set(name, value);
   }
   return headers;
 }

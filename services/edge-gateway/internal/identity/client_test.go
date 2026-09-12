@@ -12,6 +12,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"soft/antnest-platform/services/edge-gateway/internal/telemetry"
 )
 
 func TestClientCallsIdentityContractAndPropagatesTrace(t *testing.T) {
@@ -26,7 +27,7 @@ func TestClientCallsIdentityContractAndPropagatesTrace(t *testing.T) {
 			"principal":{"user_id":"user-1","organization_id":"org-1","membership_id":"member-1","system_role":"admin","organization_role":"admin","active":true}
 		}`), nil
 	})}
-	client, err := NewClient("http://identity.internal", httpClient)
+	client, err := NewClient("http://identity.internal", &http.Client{Transport: telemetry.NewHTTPTransport(httpClient.Transport)})
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}

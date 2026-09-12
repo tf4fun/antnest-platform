@@ -1,7 +1,11 @@
 import type { ContentBlock, ModelToolDefinition, ToolEffectState } from "../domain/types.js";
 import type { ModelToolCall, ModelUsage } from "./model.js";
+import type { ToolResultPresentation } from "../domain/tool-presentation.js";
+import type { PlanEntry } from "../domain/plan.js";
 
 export interface RunEventPort {
+  updatePlan(runId: string, call: ModelToolCall, entries: PlanEntry[]): Promise<boolean>;
+  toolProgress(runId: string, toolCallId: string, content: ContentBlock[]): Promise<void>;
   toolStarted(
     runId: string,
     toolCallId: string,
@@ -15,8 +19,14 @@ export interface RunEventPort {
     status: "completed" | "failed" | "cancelled",
     content: ContentBlock[],
     toolEffectState: ToolEffectState,
+    presentation?: ToolResultPresentation,
   ): Promise<void>;
-  agentMessage(runId: string, content: ContentBlock[], toolCalls?: ModelToolCall[]): Promise<void>;
-  agentThought(runId: string, content: ContentBlock[]): Promise<void>;
+  agentMessage(
+    runId: string,
+    content: ContentBlock[],
+    toolCalls?: ModelToolCall[],
+    responseId?: string,
+  ): Promise<void>;
+  agentThought(runId: string, content: ContentBlock[], responseId?: string): Promise<void>;
   usage(runId: string, usage: ModelUsage): Promise<void>;
 }

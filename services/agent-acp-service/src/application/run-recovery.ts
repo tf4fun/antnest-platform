@@ -100,6 +100,9 @@ export class RunRecovery {
             principalId: session.principalId,
             expectedAccessRevision: work.expectedAccessRevision,
             sessionId: session.id,
+            ...(work.sessionConfiguration === undefined
+              ? {}
+              : { sessionConfiguration: work.sessionConfiguration }),
           },
           signal,
         ),

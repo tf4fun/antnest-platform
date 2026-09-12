@@ -1,8 +1,23 @@
 # Implemented Business Sequences
 
+> Lifecycle execution update (2026-09-12): all five commands now use Temporal
+> workflows and SDK Activities. The PostgreSQL worker, claim/lease scheduler and
+> custom recovery spans described in the earlier analysis below are superseded
+> by [the current lifecycle contract](../services/agent-controller/docs/lifecycle-workflows.md).
+> The business ordering and domain transactions remain; there is no dual executor.
+
 > Status: implemented-flow baseline and architecture review aid
-> Updated: 2026-09-03
+> Updated: 2026-09-10
 > Scope: Stage 1, Stage 2, and Stage 3 services currently implemented in this repository
+
+The [business-flow entrypoint index](business-flow-entrypoints.md) catalogs the
+current entries for subsequent per-flow expansion and Jaeger reconciliation;
+the grouped scenarios below are not the complete entrypoint inventory.
+
+The [Provider credential/model separation plan](provider-credentials-and-models.md)
+defines the next DeepSeek-focused change and subscription-auth extension boundary.
+It is not implemented yet; B04 and the current wire contracts below remain the
+implementation baseline until their service-owned batches are delivered.
 
 This document follows Antnest operations from their real entrypoints through
 service calls, durable commits, deployment side effects, and user-visible
@@ -367,7 +382,7 @@ sequenceDiagram
     Edge->>Admin: command + trusted principal
     Admin->>Admin: inject actor, organization, request ID
     Admin->>Identity: scoped directory command
-    Identity->>IDDB: authorize and commit fact + Identity event
+    Identity->>IDDB: authorize and commit fact + audit + revocation when deactivating
     IDDB-->>Identity: committed projection
     Identity-->>Admin: secret-free result
     Admin-->>Edge: explicit browser DTO
@@ -527,9 +542,6 @@ sequenceDiagram
     participant Admin as Admin Console BFF
     participant AC as Agent Controller
     participant ACDB as Agent Controller DB
-    participant RC as Runtime Controller
-    participant Docker as Docker Engine
-
     AdminUser->>Edge: POST /api/admin/templates + CSRF + stable Idempotency-Key
     Edge->>Identity: resolve_access_token
     Identity-->>Edge: administrator principal
@@ -542,13 +554,7 @@ sequenceDiagram
     else new command
         AC->>ACDB: read exact Model Profile revision
         AC->>AC: validate same organization
-        opt explicit repository:tag selected
-            AC->>RC: GET /internal/runtime-images/resolve?reference=repository:tag
-            RC->>Docker: inspect installed image (no pull)
-            Docker-->>RC: immutable image ID
-            RC-->>AC: named source + immutable image ID
-        end
-        AC->>AC: validate complete immutable Runtime input
+        AC->>AC: validate Runtime configuration and image reference syntax; preserve submitted reference
         AC->>ACDB: transaction: catalog request + Template head + immutable revision
         AC-->>Admin: Template head + revision
     end
@@ -573,12 +579,13 @@ sequenceDiagram
   current flow.
 - The browser defaults to the platform image without a digest input. An explicit
   tag may be selected, and is required when no default is configured.
-  Revision requests preserve the Template's pinned image even after deployment
+  Revision requests preserve the Template's image reference even after deployment
   defaults change. Ordinary details show an available repository/tag, not its
   digest; an unnamed image ID is displayed as `Platform runtime`.
-- Repository/tag resolution occurs at Runtime Controller before publishing an immutable
-  configuration; neither the browser nor the Console BFF should gain Docker
-  responsibilities.
+- Template publication never calls Runtime Controller or Docker. During a later
+  Runtime build, Runtime Controller resolves the configured reference, persists
+  the image ID in its operation, and creates the container by that ID. Replaying
+  that build uses the persisted ID; a new build resolves the reference again.
 
 ### B05a. Publish a Catalog revision
 
@@ -623,10 +630,10 @@ sequenceDiagram
     Identity-->>Edge: administrator principal
     Edge->>Admin: trusted organization and actor IDs
     Admin->>AC: CreateAgent(stable request_id, organization, actor, owner, Template revision, name)
-    AC->>Identity: resolve_principal(organization, owner_user_id)
-    Identity-->>AC: active owner Membership projection
+    AC->>Identity: resolve_owner_authorization(organization, owner_user_id)
+    Identity-->>AC: active owner Membership + last_revocation_sequence
     AC->>ACDB: read exact Template and Model Profile revisions
-    AC->>ACDB: transaction: Agent + AgentSpec + access binding + running operation + requested event
+    AC->>ACDB: transaction: Agent + owner authorization sequence + AgentSpec + access binding + operation + event
     AC-->>Admin: 202 running operation + provisioning Agent
     Admin-->>Edge: accepted operation and Agent projection
     Edge-->>AdminUser: creation accepted; subscribe to progress
@@ -636,15 +643,16 @@ sequenceDiagram
     Egress->>EDB: allocate/reuse Tunnel IPv4 and policy assignment
     Egress-->>Worker: network attachment
     Worker->>RC: InitializeRuntime(child_request_id, agent_id, configuration)
-    RC->>RCDB: persist idempotent operation and logical Runtime Environment
+    RC->>Docker: inspect configured image reference and resolve actual image ID
+    RC->>RCDB: persist operation, image reference/ID, and logical Runtime Environment
     RC->>Docker: create workspace volume and compute generation
-    Docker->>Runtime: start with one RuntimeSpec
+    Docker->>Runtime: start with one RuntimeSpec and image diagnostic metadata
     Runtime->>Runtime: initialize executor, TUN, MCP, and status
     RC->>Runtime: bounded GET /status
     Runtime-->>RC: ready + execution_id
     RC->>RCDB: commit ready Runtime revision and observations
     RC-->>Worker: runtime_revision + MCP endpoint + execution_id
-    Worker->>Egress: verify active attachment at publication barrier
+    Worker->>Egress: CAS open attachment at publication barrier; retain desired policy
     Worker->>ACDB: transaction: ExecutionRevision + available Agent + completed operation + ready event
     ACDB-->>AdminUser: SSE wake-up; browser re-reads Agent and Operation
 ```
@@ -706,9 +714,8 @@ sequenceDiagram
         Browser->>Edge: GET Agent events after sequence N
         Edge->>Identity: resolve_access_token
         Edge->>Admin: trusted event-list request
-        Admin->>AC: GET Agent (organization scope check)
-        Admin->>AC: GET Agent events after N
-        AC->>ACDB: ordered journal read
+        Admin->>AC: GET Agent events after N with organization
+        AC->>ACDB: scoped Agent check + ordered journal read
         AC-->>Admin: event replay
         Admin-->>Edge: event replay
         Edge-->>Browser: event replay
@@ -726,9 +733,8 @@ sequenceDiagram
     Browser->>Edge: EventSource events/watch?after_sequence=N
     Edge->>Identity: resolve_access_token once for stream admission
     Edge->>Admin: authenticated stream
-    Admin->>AC: GET Agent (organization scope check)
-    Admin->>AC: SSE watch after N
-    AC->>ACDB: replay committed events after N
+    Admin->>AC: SSE watch after N with organization
+    AC->>ACDB: scoped Agent check + replay committed events after N
     AC-->>Admin: agent_event SSE
     Admin-->>Edge: scoped event stream
     Edge-->>Browser: agent_event SSE
@@ -737,8 +743,15 @@ sequenceDiagram
     par Recover event authority
         Browser->>Edge: GET events after latest applied sequence
         Edge-->>Browser: event replay or event-local failure
-        Browser->>Browser: merge replay and advance cursor on success
-        Browser->>Edge: reconnect watch after replay cursor
+        alt Replay succeeds
+            Browser->>Browser: merge replay and advance cursor
+            Browser->>Edge: follow-up GET current Agent projection
+            Edge-->>Browser: Agent projection or Agent-local failure
+            Browser->>Browser: commit fresh authority or retain local failure
+            Browser->>Edge: reconnect watch after replay cursor
+        else Replay fails
+            Browser->>Browser: retry replay only if transient; no follow-up Agent read
+        end
     and Recover Agent authority
         Browser->>Edge: GET current Agent projection
         Edge-->>Browser: Agent projection or Agent-local failure
@@ -766,10 +779,11 @@ request or another Agent are discarded.
 The browser does not automatically fetch the same terminally failed Operation
 again. If Agent refresh fails, the last projection stays readable but lifecycle
 commands close until a fresh authoritative projection is accepted.
-Recovery preserves the same independence. Event replay and Agent refresh begin
-together but commit separately: a successful replay reconnects SSE despite an
-Agent failure, and a successful Agent read updates lifecycle state despite a
-replay failure. Only the failed resource is retried. Operation selection
+Recovery preserves separate projections but orders the final recovery read:
+after successful event replay, the browser awaits one Agent refresh before
+reopening SSE. Refresh failure stays local and does not prevent reopening;
+independent successful Agent reads still commit their state. Failed replay
+retries do not issue repeated Agent reads. Operation selection
 prefers the Agent's active request and otherwise uses the newest
 operation-bearing replayed event, independent of response arrival order.
 Concurrent Agent responses are applied by aggregate sequence, not by request
@@ -795,17 +809,15 @@ dialog or a late rejection from the previous one.
 - SSE is a latency channel, not authority. The browser owns its last applied
   sequence and, after any stream error, closes the native connection, re-lists
   events after that sequence and independently re-reads the Agent projection.
-  Replay alone owns cursor advancement and reopening the watch; it never waits
-  for the Agent read. Event IDs still deduplicate an ambiguous replay. A
+  Replay owns cursor advancement, then awaits one follow-up Agent read before
+  reopening the watch even if that read fails locally. Event IDs still
+  deduplicate an ambiguous replay. A
   cross-reconnect operation hint lets either response order resolve the active
   or newest replayed operation, so terminal progress observed during
   disconnection cannot leave the Console permanently busy.
-- Admin performs one Agent read before event list/watch to enforce organization
-  scope because Agent Controller's trusted internal event endpoint is not
-  principal-aware. Immutable Agent organization prevents a mutation TOCTOU, but
-  the owner endpoint remains organization-unscoped and the BFF becomes the only
-  business-authorization boundary. Agent Controller should enforce the supplied
-  organization in its own query and let Admin remove the pre-read.
+- Admin forwards organization to the event owner without an Agent
+  pre-read. Agent Controller enforces organization scope in its own list/watch
+  query. The BFF shapes browser fields but is not the sole tenant boundary.
 - Two streaming proxies are operationally non-trivial but preserve the single
   public ingress and BFF authorization boundary. A direct public Agent Controller
   stream would duplicate Edge security policy and is not simpler overall.
@@ -822,41 +834,49 @@ sequenceDiagram
     participant Edge as Edge Gateway
     participant Admin as Admin Console BFF
     participant AC as Agent Controller
+    participant Worker as Agent Lifecycle Worker
     participant ACDB as Agent Controller DB
+    participant Identity as Identity Service
     participant Egress as Runtime Egress
     participant RC as Runtime Controller
     participant Docker
 
     AdminUser->>Edge: POST Agent/disable
     Edge->>Admin: authenticated administrator command
-    Admin->>AC: GET Agent for organization scope
-    Admin->>AC: DisableAgent(request_id, agent_id)
-    AC->>ACDB: commit disable intent; close new Run admission
-    Note over AC,ACDB: attachment snapshot, Runtime result, and every phase transition are committed incrementally
-    AC->>AC: wait for active admission to settle
-    AC->>Egress: close Runtime attachment (CAS + flow cleanup)
-    AC->>RC: DisableRuntime(expected_runtime_revision)
+    Admin->>AC: DisableAgent(request_id, agent_id, organization, actor)
+    AC->>ACDB: validate scope; commit disable intent; close new Run admission
+    AC-->>Admin: 202 running operation
+    Admin-->>Edge: accepted operation
+    Edge-->>AdminUser: running; observe operation/events
+    Worker->>ACDB: claim operation; persist phase progress and evidence
+    Worker->>Worker: wait for active admission to settle
+    Worker->>Egress: close Runtime attachment (CAS + flow cleanup)
+    Worker->>RC: DisableRuntime(expected_runtime_revision)
     RC->>Docker: remove compute, retain workspace
-    RC-->>AC: disabled Runtime revision
-    AC->>ACDB: publish disabled Agent, clear executable binding, append event
-    AC-->>Admin: completed disable operation
-    Admin-->>Edge: completed disable operation
-    Edge-->>AdminUser: Agent disabled
+    RC-->>Worker: disabled Runtime revision
+    Worker->>ACDB: publish disabled Agent, completed operation and event
+    Note over AdminUser,ACDB: scoped operation/event reads report completion after publication
 
     AdminUser->>Edge: POST Agent/enable
     Edge->>Admin: authenticated administrator command
-    Admin->>AC: GET Agent for organization scope
-    Admin->>AC: EnableAgent(request_id, agent_id)
-    AC->>ACDB: commit enable intent; keep admission closed
-    AC->>Egress: ensure active allocation remains closed
-    AC->>RC: EnableRuntime(expected_revision, full configuration)
-    RC->>Docker: reuse workspace and create new compute generation
-    RC-->>AC: ready Runtime binding
-    AC->>Egress: open attachment with CAS and verify coordinates
-    AC->>ACDB: publish new ExecutionRevision + available Agent + event
-    AC-->>Admin: completed enable operation
-    Admin-->>Edge: completed enable operation
-    Edge-->>AdminUser: Agent available
+    Admin->>AC: EnableAgent(request_id, agent_id, organization, actor)
+    AC->>Identity: resolve_owner_authorization(organization, owner)
+    Identity-->>AC: active owner + latest revocation sequence
+    AC->>ACDB: commit enable intent and authorization watermark; keep admission closed
+    AC-->>Admin: 202 running operation
+    Admin-->>Edge: accepted operation
+    Edge-->>AdminUser: running; observe operation/events
+    Worker->>ACDB: claim enable operation
+    Worker->>Egress: ensure active allocation remains closed
+    Worker->>RC: EnableRuntime(expected_revision, full configuration)
+    RC->>Docker: resolve original image reference for this build
+    RC->>RC: persist operation with original reference and actual image ID
+    RC->>Docker: reuse workspace and create new compute generation using the image ID
+    RC->>RC: verify Runtime status and persist ready binding
+    RC-->>Worker: ready Runtime binding
+    Worker->>Egress: open attachment with CAS and verify coordinates
+    Worker->>ACDB: publish ExecutionRevision + available Agent + completed operation + event
+    Note over AdminUser,ACDB: scoped operation/event reads report completion after publication
 ```
 
 **Complexity review**
@@ -869,8 +889,15 @@ sequenceDiagram
 - One Egress-owned close operation performs packet gating, writer drain, userspace
   flow removal, and conntrack cleanup. Agent Controller does not duplicate those
   data-plane steps or persist Egress policy state.
-- Like create, disable/enable currently keep the public request open through the
-  Saga and share the same asynchronous-command review target.
+- Like create, disable/enable return admission immediately after commit. The
+  existing worker performs physical effects; HTTP 202 is never a terminal result.
+
+The idle Docker disable acceptance, including retained workspace, closed network
+attachment, and linked traces, is recorded in
+[BF-AGENT-06](business-flow-agent-disable.md). It does not claim an active-Run
+drain test. The subsequent enable acceptance is separately recorded in
+[BF-AGENT-07](business-flow-agent-enable.md), verifying a new compute generation,
+the retained AgentSpec/workspace, and restoration of the network attachment.
 
 ### B09. Explicit Agent rebuild
 
@@ -881,6 +908,7 @@ sequenceDiagram
     participant Edge as Edge Gateway
     participant Admin as Admin Console BFF
     participant AC as Agent Controller
+    participant Worker as Agent Lifecycle Worker
     participant ACDB as Agent Controller DB
     participant Egress as Runtime Egress
     participant RC as Runtime Controller
@@ -889,25 +917,31 @@ sequenceDiagram
 
     AdminUser->>Edge: POST Agent/rebuild with Template revision
     Edge->>Admin: authenticated administrator command
-    Admin->>AC: GET Agent for organization scope
-    Admin->>AC: RebuildAgent(request_id, target Template revision)
-    AC->>ACDB: validate target and commit immutable AgentSpec + rebuild operation
-    Note over AC,ACDB: attachment snapshot, Runtime result, and every phase transition are committed incrementally
-    AC->>ACDB: close new Run admission and freeze source revisions
-    AC->>AC: wait for current Run executor to become quiescent
-    AC->>Egress: close Runtime attachment (CAS + flow cleanup)
-    AC->>RC: UpdateRuntime(expected_revision, complete target configuration)
+    Admin->>AC: RebuildAgent(request_id, target revision, organization, actor)
+    AC->>ACDB: validate scope/target; freeze source revisions; commit AgentSpec + operation + admission fence
+    AC-->>Admin: 202 running operation
+    Admin-->>Edge: accepted operation
+    Edge-->>AdminUser: running; observe operation/events
+    Worker->>ACDB: claim operation; read frozen source and persist phase evidence
+    Worker->>Worker: wait for current Run executor to become quiescent
+    Worker->>Egress: close Runtime attachment (CAS + flow cleanup)
+    Worker->>RC: UpdateRuntime(expected_revision, complete target configuration)
+    RC->>Docker: resolve the original image reference for this build
+    RC->>RC: persist build operation, original reference, and resolved image ID
     RC->>Docker: delete old compute
-    RC->>Docker: reuse workspace and create replacement generation
+    RC->>Docker: reuse workspace and create replacement generation using the resolved image ID
     Docker->>Runtime: start replacement
     RC->>Runtime: verify /status and execution_id
-    RC-->>AC: ready replacement Runtime binding
-    AC->>Egress: open attachment with CAS and verify unchanged coordinates
-    AC->>ACDB: publish AgentSpec + ExecutionRevision + available projection + event
-    AC-->>Admin: completed rebuild operation
-    Admin-->>Edge: completed rebuild operation
-    Edge-->>AdminUser: Agent available
+    RC-->>Worker: ready replacement Runtime binding
+    Worker->>Egress: open attachment with CAS and verify unchanged coordinates
+    Worker->>ACDB: publish AgentSpec + ExecutionRevision + available + completed operation + event
+    Note over AdminUser,ACDB: scoped operation/event reads report completion after publication
 ```
+
+The Docker/Console acceptance for this normal idle rebuild is recorded in
+[BF-AGENT-05](business-flow-agent-rebuild.md). Its original image reference remains
+in the Agent configuration; the resolved image ID is build evidence in Runtime
+Controller and Runtime telemetry, not a replacement for that reference.
 
 **Complexity review**
 
@@ -926,6 +960,11 @@ sequenceDiagram
 
 ### B10. Delete an Agent
 
+The normal idle Docker deletion acceptance is recorded in
+[BF-AGENT-08](business-flow-agent-delete.md): compute and the owned workspace are
+removed, the network allocation is quarantined, and lifecycle evidence remains
+available from the deleted inventory.
+
 ```mermaid
 sequenceDiagram
     autonumber
@@ -933,6 +972,7 @@ sequenceDiagram
     participant Edge as Edge Gateway
     participant Admin as Admin Console BFF
     participant AC as Agent Controller
+    participant Worker as Agent Lifecycle Worker
     participant ACDB as Agent Controller DB
     participant Egress as Runtime Egress
     participant EDB as Egress DB
@@ -941,22 +981,21 @@ sequenceDiagram
 
     AdminUser->>Edge: POST Agent/delete
     Edge->>Admin: authenticated administrator command
-    Admin->>AC: GET Agent for organization scope
-    Admin->>AC: DeleteAgent(request_id, agent_id)
-    AC->>ACDB: commit desired deleted + deleting operation; close admission
-    Note over AC,ACDB: Runtime absence evidence, network evidence, and every phase transition are committed incrementally
-    AC->>AC: settle active Run or retain unresolved effect
-    AC->>Egress: fence network (deny-all and flow reset)
-    AC->>Egress: verify deny-all and reset flows again
-    AC->>RC: DeleteRuntime(expected_revision)
+    Admin->>AC: DeleteAgent(request_id, agent_id, organization, actor)
+    AC->>ACDB: validate scope; commit desired deleted + operation + admission fence
+    AC-->>Admin: 202 running operation
+    Admin-->>Edge: accepted operation
+    Edge-->>AdminUser: removing; observe operation/events
+    Worker->>ACDB: claim operation; commit phase evidence incrementally
+    Worker->>Worker: settle active Run or retain unresolved effect
+    Worker->>Egress: close attachment (CAS + flow reset)
+    Worker->>RC: DeleteRuntime(expected_revision)
     RC->>Docker: remove compute, then owned workspace
-    RC-->>AC: Runtime conclusively absent
-    AC->>Egress: ReleaseAgentNetwork
+    RC-->>Worker: Runtime conclusively absent
+    Worker->>Egress: ReleaseAgentNetwork
     Egress->>EDB: quarantine Tunnel address
-    AC->>ACDB: mark deleted, deactivate access, append event
-    AC-->>Admin: completed delete operation
-    Admin-->>Edge: completed delete operation
-    Edge-->>AdminUser: Agent deleted
+    Worker->>ACDB: mark deleted, deactivate access, complete operation and append event
+    Note over AdminUser,ACDB: scoped operation/event reads report completion after publication
     AdminUser->>Edge: GET current Agent inventory
     Edge-->>AdminUser: deleted Agent omitted
     AdminUser->>Edge: GET inventory with view=deleted
@@ -1024,13 +1063,17 @@ sequenceDiagram
   address.
 - WebSocket admission resolves the selected Agent again rather than trusting a
   stale bootstrap or browser-supplied subject. Cookies and authorization are
-  not forwarded to ACP Service.
+  not forwarded to ACP Service. Edge also revalidates the browser credential
+  after assembling each client message and before forwarding it; this is not
+  retroactive cancellation of work admitted before revocation.
 - Agent UI owns no Session persistence. It lists and loads Sessions through ACP,
   renders replayed message/Tool updates, and disables submission when bootstrap
   or local prompt state reports the Agent busy.
-- Transport loss leaves existing content readable and disables mutation. The
-  current MVP requires an explicit page retry; it does not add a polling state
-  machine or pretend that a disconnected browser remains synchronized.
+- Transport loss leaves existing content readable and disables mutation.
+  Workspace Watch and reconnect recovery re-read authoritative state and load
+  durable Session history before reopening input. Recovery never resubmits a
+  prompt or uses periodic polling as its normal state channel. Service and
+  component evidence does not replace the remaining C4 browser acceptance.
 
 ### B11. Connection binding, Session creation, and prompt admission
 
@@ -1055,16 +1098,16 @@ sequenceDiagram
     ACPClient->>ACP: session/new or session/resume
     ACP->>AC: resolve_agent_access(subject) to assert current binding
     AC->>Identity: resolve_principal
-    ACP->>ACPDB: create/load Session and client MCP revision
+    ACP->>ACP: require empty mcpServers before writes, activation or replay
+    ACP->>ACPDB: create/load Session and empty MCP revision envelope
     ACP-->>ACPClient: standard ACP Session result
 
     ACPClient->>ACP: session/prompt
-    ACP->>AC: resolve_agent_access(subject) to assert current binding
-    AC->>Identity: resolve_principal
+    ACP->>ACPDB: require Session owned by this connection binding
     ACP->>ACPDB: commit admitting Run intent and pending prompt
     ACP->>AC: acquire_run(request_id, agent, principal, access_revision, session)
     AC->>ACDB: resolve Agent/access and exact-request replay
-    AC->>Identity: resolve_principal again for admission freshness
+    AC->>Identity: resolve_principal for authoritative admission
     AC->>ACDB: transaction: lock Agent, create admission, freeze execution snapshot
     AC-->>ACP: admission + immutable execution spec + Runtime binding
     ACP->>ACPDB: transaction: accept prompt + snapshot + optional environment fact
@@ -1082,14 +1125,11 @@ sequenceDiagram
 
 **Complexity review**
 
-- **Concrete redundant path:** `session/prompt` first calls
-  `resolve_agent_access`, which reaches Identity, and `acquire_run` then validates
-  the same access revision and reaches Identity again. The second check is the
-  admission authority and already fails closed. Prompt handling should be
-  reviewed for removing the preliminary assertion or combining access resolution
-  with admission, while preserving assertions for non-Run Session methods. This
-  describes the first supported prompt that reaches admission; an exact
-  `acquire_run` replay can return before the second Identity lookup.
+- Prompt handling performs local Session ownership validation, then calls
+  authoritative `acquire_run` without a redundant preliminary access RPC.
+  Connection and non-Run Session methods retain binding assertions. The
+  Controller validates access revision and Identity for a new admission;
+  exact-request replay returns the original durable admission.
 - Two databases participate because they own different invariants: ACP needs
   messages/Tool recovery; Agent Controller needs one Agent-wide lock across all
   Sessions. Collapsing them would either couple services or lose serialization.
@@ -1108,7 +1148,6 @@ sequenceDiagram
     participant ACDB as Agent Controller DB
     participant Model as Model Provider
     participant Runtime as Platform Runtime MCP
-    participant ClientMCP as Client MCP
 
     ACP->>ACPDB: read messages, context checkpoint, accepted Run snapshot
     ACP->>AC: resolve_credential(active admission, credential_ref)
@@ -1118,13 +1157,9 @@ sequenceDiagram
         ACP->>Model: model request with context and Tools
         Model-->>ACP: assistant content and/or Tool calls
         ACP->>ACPDB: persist Turn/message and Tool intent before dispatch
-        alt Platform Runtime Tool
-            ACP->>Runtime: stateless MCP call + expected execution_id
-            Runtime-->>ACP: result/progress or explicit stale/failure
-        else Client MCP Tool
-            ACP->>ClientMCP: request-scoped MCP call
-            ClientMCP-->>ACP: result/progress or failure
-        end
+        ACP->>Runtime: stateless MCP call + expected execution_id
+        Note over Runtime: built-in Tool or administrator-managed stdio Tool
+        Runtime-->>ACP: result/progress + explicit effect state
         ACP->>ACPDB: settle Tool attempt and append Tool result
     end
     ACP->>ACPDB: commit terminal Run state
@@ -1141,15 +1176,13 @@ sequenceDiagram
   cache.
 - Tool intent is persisted before dispatch because an interrupted external side
   effect may be unknown. Unknown `runtime_mcp` effects can later be fenced by
-  proving Runtime absence; client MCP effects cannot. The distinction is complex
-  but corresponds to a real recoverability difference.
-- The model is currently broken at the MCP adapter boundary. Runtime can return
-  `outcome_unknown` in structured content, while Agent ACP Service projects only
-  `content` and `isError` and marks every received response as `settled`.
-  Conversely, connection/initialization failures before `tools/call` are caught
-  together with post-dispatch disconnects and marked `unknown`. Effect state
-  must be propagated explicitly as `none|settled|unknown`, with the dispatch
-  boundary deciding which transport failures are ambiguous.
+  proving Runtime absence. This stops further execution; it does not prove that
+  a previous external side effect never happened. Nonempty client MCP is rejected.
+- The MCP adapter preserves Runtime's explicit `none|settled|unknown` result,
+  including structured `outcome_unknown`. Pre-dispatch failure is `none`, not
+  an ambiguous executed call. Post-dispatch loss without terminal proof remains
+  `unknown`, ends the Run and retains its admission fence instead of letting the
+  model retry an unobserved side effect.
 - Agent Controller receives only terminal coordination facts, not messages,
   Turns, or Tool payloads. Audit detail remains in ACP DB.
 - A single active Run worker owns recovery in Stage 2. This is an explicit MVP
@@ -1234,11 +1267,10 @@ sequenceDiagram
   replacement Runtime at the same endpoint. It is a consistency fence, not an
   authentication protocol.
 - A Runtime write/edit can rename the replacement file successfully and then
-  fail directory `fsync` or read-back verification. The current executor maps
-  that post-commit ambiguity to ordinary `write_failed`/`edit_failed`, so a
-  caller can retry an operation whose effect already happened. The Runtime Tool
-  contract must distinguish failure before commit from `outcome_unknown` after
-  commit.
+  fail directory `fsync` or read-back verification. The executor reports this
+  post-commit ambiguity as `outcome_unknown`, distinct from an ordinary known
+  pre-commit failure. ACP preserves that classification and does not replay the
+  write merely because its acknowledgement is incomplete.
 - Docker may restart the same generation automatically, while Runtime creates a
   fresh execution ID on every PID 1 start. Agent Controller consumes Runtime
   Controller's ordered observation journal with its own persisted cursor. A
@@ -1326,7 +1358,7 @@ sequenceDiagram
     Identity->>IDDB: resolve hashed SCIM token and Organization
     Identity->>Identity: validate schema, ownership, filter, version, and body limit
     alt User mutation
-        Identity->>IDDB: transaction: User/Membership tombstone-or-resource + event
+        Identity->>IDDB: transaction: User/Membership + audit + revocation when deactivating/deleting
     else Group mutation
         Identity->>IDDB: row-locked transaction: Group + SCIM-owned edges + event
     end
@@ -1338,12 +1370,48 @@ sequenceDiagram
 
 - SCIM-owned resources and edges are separated from local-owned records so an
   IdP cannot silently take over administrator data.
-- Identity events are currently a local transactional audit journal. There is
-  no delivery/consumer pipeline to Agent Controller yet, so SCIM deprovisioning
-  affects the next identity resolution but does not launch an Agent workflow.
+- The general Identity event journal is private. User/Membership deactivation
+  or SCIM User deletion also appends the narrow transactional
+  `principal_revocations` feed. Synchronous authorization rejects new work
+  immediately after it observes the change; the Controller independently
+  consumes revocations and disables affected Agents as described below.
 - Bulk, sorting, ETags, and password mutation are deliberately unsupported.
   Implementing the useful enterprise subset is simpler than claiming complete
   RFC surface with untested behavior.
+
+### B14 continued. Owner revocation to Agent Disable
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Identity as Identity Service
+    participant IDDB as Identity DB
+    participant AC as Agent Controller consumer
+    participant ACDB as Agent Controller DB
+    participant Worker as Agent lifecycle worker
+    participant RC as Runtime Controller
+
+    AC->>ACDB: read durable revocation cursor
+    AC->>Identity: list_principal_revocations(after_sequence, limit)
+    Identity->>IDDB: bounded committed feed read
+    Identity-->>AC: ordered scoped/global revocations + originating trace context
+    AC->>ACDB: transaction: store revocation, fence matching owners, append events, advance cursor
+    AC->>ACDB: reconcile pending revoked Agents and admit idempotent Disable
+    Worker->>ACDB: claim Disable operation
+    Note over Worker,RC: existing Disable flow drains admitted work, then fences network
+    Worker->>RC: disable Runtime with stable child request identity
+    RC-->>Worker: stopped compute or explicit uncertain result
+    Worker->>ACDB: publish disabled Agent only after confirmed effects
+```
+
+The directory/SCIM response confirms Identity's own transaction, not completed
+Agent shutdown. The Controller owns its cursor, matching and lifecycle records;
+it never reads Identity tables. Workspace/history are retained. An uncertain
+Runtime remains fenced/pending; restoring a User or Membership does not Enable
+Agents automatically. Explicit Create/Enable captures the current revocation
+sequence so replay of older events cannot undo a later authorization. This
+narrow offboarding workflow is accepted in C2-05; a generic event bus is deferred.
+See the [revocation contract](../contracts/identity/principal-revocations.md).
 
 ## 8. Cross-Flow Architecture Findings
 
@@ -1357,8 +1425,8 @@ sequenceDiagram
 | Agent-wide Run serialization                     | Shared workspace, processes, Memory, and Personal Skills | Keep                                       |
 | Immutable Run execution snapshot                 | Mid-Run configuration and Runtime drift                  | Keep                                       |
 | Egress-owned attachment gate and flow reset      | Stable Tunnel address with changing UDP peer             | Keep invariant; simplify ownership         |
-| Authoritative list/cursor plus SSE               | Recover from disconnect, lag, and duplication            | Keep model; repair reconnect wiring        |
-| Unknown Tool-effect classification               | Cancellation/crash cannot prove side-effect absence      | Keep model; repair Runtime-to-ACP contract |
+| Authoritative list/cursor plus SSE               | Recover from disconnect, lag, and duplication            | Implemented; retain recovery tests          |
+| Unknown Tool-effect classification               | Cancellation/crash cannot prove side-effect absence      | Implemented explicit effect contract       |
 
 ### 8.2 Confirmed findings after adversarial review
 
@@ -1437,8 +1505,9 @@ dependencies, while owner services still enforce business scope.
 
 ### 8.5 Implemented cores not yet connected to a public business entry
 
-1. Identity events are durable local audit facts; downstream delivery and Agent
-   Controller reactions are not implemented.
+1. The general Identity event journal remains private. The separate owner
+   revocation feed and automatic Agent Disable are implemented in B14; other
+   cross-service Identity event workflows are not implicitly supported.
 2. Skill Registry and Channel Gateway are absent, so no sequence should imply
    Skill distribution or IM delivery is currently available.
 

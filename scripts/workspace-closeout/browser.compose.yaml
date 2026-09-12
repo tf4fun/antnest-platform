@@ -1,0 +1,5 @@
+services:
+  stage3-model:
+    command: ["node", "/scripts/workspace-closeout/browser-model.mjs"]
+    volumes:
+      - ./scripts:/scripts:ro

@@ -23,12 +23,8 @@ func TestLoadRequiresDatabaseAndCanonicalEncryptionKey(t *testing.T) {
 	if loaded.ListenAddress != ":8080" || loaded.ShutdownTimeout != 15*time.Second ||
 		loaded.DependencyTimeout != 150*time.Second || loaded.DrainTimeout != 5*time.Minute ||
 		loaded.RunAdmissionTTL != 30*time.Minute ||
-		loaded.RecoveryPollInterval != 2*time.Second ||
 		loaded.ObservationPollInterval != 2*time.Second ||
-		loaded.IdentityRevocationPollInterval != 2*time.Second ||
-		loaded.RecoveryAttemptTimeout != 10*time.Minute+5*time.Second ||
-		loaded.RecoveryLeaseDuration != 10*time.Minute+35*time.Second ||
-		loaded.RecoveryRetryMax != time.Minute {
+		loaded.IdentityRevocationPollInterval != 2*time.Second {
 		t.Fatalf("defaults = %+v", loaded)
 	}
 	if loaded.RuntimeEgressURL != values["ANTNEST_RUNTIME_EGRESS_URL"] ||
@@ -75,11 +71,6 @@ func TestLoadRejectsInvalidEncryptionKeyAndDuration(t *testing.T) {
 		t.Fatal("non-positive Run admission TTL was accepted")
 	}
 	delete(values, "ANTNEST_AGENT_CONTROLLER_RUN_ADMISSION_TTL")
-	values["ANTNEST_AGENT_CONTROLLER_RECOVERY_POLL_INTERVAL"] = "not-a-duration"
-	if _, err := Load(func(key string) string { return values[key] }); err == nil {
-		t.Fatal("invalid recovery poll interval was accepted")
-	}
-	delete(values, "ANTNEST_AGENT_CONTROLLER_RECOVERY_POLL_INTERVAL")
 	values["ANTNEST_AGENT_CONTROLLER_RUNTIME_OBSERVATION_POLL_INTERVAL"] = "0s"
 	if _, err := Load(func(key string) string { return values[key] }); err == nil {
 		t.Fatal("non-positive Runtime observation poll interval was accepted")

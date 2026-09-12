@@ -57,10 +57,17 @@ func TestImageResolutionPreservesTraceAndUsesBoundedAttributes(t *testing.T) {
 		}
 		for _, attribute := range child.Attributes() {
 			switch attribute.Key {
-			case "antnest.platform", "antnest.platform.operation", "antnest.result":
+			case "antnest.platform", "antnest.platform.operation", "antnest.result", "antnest.outcome", "antnest.operation.phase", "antnest.runtime.image.reference", "antnest.runtime.image.id", "error.type", "antnest.error.type", "antnest.error.stage", "antnest.error.code":
 			default:
 				t.Fatalf("unexpected image or lifecycle attribute: %+v", attribute)
 			}
+		}
+		attrs := spanAttrs(child)
+		if attrs["antnest.runtime.image.reference"].AsString() != want.Reference {
+			t.Fatal("actual image tag missing")
+		}
+		if cause == nil && attrs["antnest.runtime.image.id"].AsString() != want.ImageRef {
+			t.Fatal("actual image identity missing")
 		}
 	}
 }

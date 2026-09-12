@@ -47,6 +47,7 @@ func OpenEventNotifier(
 	if err != nil {
 		return nil, fmt.Errorf("parse Agent event notifier database URL: %w", err)
 	}
+	poolConfig.ConnConfig.Tracer = newDatabaseTracer()
 	connection, err := connectEventListener(ctx, poolConfig.ConnConfig.Copy())
 	if err != nil {
 		return nil, err

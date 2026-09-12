@@ -12,8 +12,10 @@
     },
     "image_ref": {
       "type": "string",
-      "pattern": "^(sha256:[0-9a-fA-F]{64}|[^@\\s]+@sha256:[0-9a-fA-F]{64})$",
-      "description": "Immutable Runtime image selected by Agent Controller."
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^\\S+$",
+      "description": "Caller-selected image name, tag or digest; validated using the image reference parser and passed unchanged to container creation."
     },
     "network": {
       "type": "object",

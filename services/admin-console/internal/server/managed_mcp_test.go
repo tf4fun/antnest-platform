@@ -17,7 +17,7 @@ func TestManagedMCPConfigurationTransportAndProjection(t *testing.T) {
 			backend := newBackendStub()
 			backend.enqueue(http.StatusCreated, `{"template_id":"template-1","runtime":{"mcp_servers":`+managedMCPFixture+`}}`)
 			response := requestAdmin(t, newTestHandler(t, backend), http.MethodPost, path, `{
-				"name":"Template","model_profile_revision_id":"model-1","max_model_requests":32,
+				"name":"Template","model_profile_id":"model-1","max_model_requests":32,
 				"runtime":{"image_ref":"antnest/runtime:local","mcp_servers":[{"id":"documents","command":"node","args":["server.js","two words",""],"env":{"TOKEN":"synthetic-env-value","EMPTY":""}}]}
 			}`)
 			if response.Code != http.StatusCreated {
@@ -40,7 +40,7 @@ func TestManagedMCPClearAndRawValidationReachOwner(t *testing.T) {
 			backend := newBackendStub()
 			backend.enqueue(http.StatusBadRequest, `{"code":"invalid_argument","message":"Invalid MCP configuration"}`)
 			response := requestAdmin(t, newTestHandler(t, backend), http.MethodPost, "/api/admin/templates/template-1/revisions", `{
-				"name":"Template","model_profile_revision_id":"model-1","max_model_requests":32,
+				"name":"Template","model_profile_id":"model-1","max_model_requests":32,
 				"runtime":{"image_ref":"antnest/runtime:local","mcp_servers":`+raw+`}}`)
 			if response.Code != http.StatusBadRequest || !strings.Contains(string(backend.singleCall(t).Body), `"mcp_servers":`+raw) {
 				t.Fatal("raw MCP input did not reach its validation authority")

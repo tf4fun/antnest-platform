@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,18 +13,13 @@ import (
 	"strings"
 	"time"
 
-	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/codes"
-	"go.opentelemetry.io/otel/propagation"
-	"go.opentelemetry.io/otel/trace"
 
 	"soft/antnest-platform/services/agent-controller/internal/ports"
+	"soft/antnest-platform/services/agent-controller/internal/telemetry"
 )
 
 const maximumResponseBytes = 1 << 20
-
-var tracer = otel.Tracer("soft/antnest-platform/agent-controller/egressclient")
 
 type Client struct {
 	baseURL    *url.URL
@@ -44,7 +40,9 @@ func New(baseURL string, timeout time.Duration, httpClient *http.Client) (*Clien
 	if httpClient == nil {
 		httpClient = &http.Client{}
 	}
-	return &Client{baseURL: endpoint, httpClient: httpClient, timeout: timeout}, nil
+	return &Client{
+		baseURL: endpoint, httpClient: telemetry.HTTPClient(httpClient, "runtime-egress"), timeout: timeout,
+	}, nil
 }
 
 func (client *Client) EnsureAgentNetwork(
@@ -56,7 +54,15 @@ func (client *Client) EnsureAgentNetwork(
 func (client *Client) GetAgentNetwork(
 	ctx context.Context, agentID string,
 ) (result ports.NetworkAttachment, resultErr error) {
-	return client.readAgentNetwork(ctx, http.MethodGet, agentID, "get_agent_network", false)
+	resultErr = client.policyRequest(ctx, http.MethodGet, "/internal/agent-networks/"+url.PathEscape(agentID), "get_agent_network", agentID, nil, func(payload []byte) error {
+		var err error
+		result, err = decodeNetworkAttachment(payload, agentID, "")
+		if err != nil {
+			return dependencyFailure("invalid_response", true)
+		}
+		return nil
+	})
+	return result, resultErr
 }
 
 func (client *Client) SetAgentNetworkAttachment(
@@ -102,21 +108,8 @@ func (client *Client) readAgentNetwork(
 ) (result ports.NetworkAttachment, resultErr error) {
 	ctx, cancel := context.WithTimeout(ctx, client.timeout)
 	defer cancel()
-	ctx, span := tracer.Start(
-		ctx, "agent_controller.egress."+operation,
-		trace.WithSpanKind(trace.SpanKindClient),
-		trace.WithAttributes(
-			attribute.String("server.address", client.baseURL.Hostname()),
-			attribute.String("antnest.agent.id", agentID),
-			attribute.String("rpc.system", "http_json"),
-		),
-	)
-	defer func() {
-		if resultErr != nil {
-			span.SetStatus(codes.Error, dependencyCode(resultErr))
-		}
-		span.End()
-	}()
+	ctx, span := telemetry.StartHTTPCall(ctx, operation, []attribute.KeyValue{attribute.String("antnest.agent.id", agentID)})
+	defer func() { span.Finish(resultErr) }()
 
 	endpoint := *client.baseURL
 	endpoint.Path = "/internal/agent-networks/" + url.PathEscape(agentID)
@@ -124,16 +117,15 @@ func (client *Client) readAgentNetwork(
 	if err != nil {
 		return ports.NetworkAttachment{}, dependencyFailure("invalid_request", false)
 	}
-	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(request.Header))
 	response, err := client.httpClient.Do(request)
 	if err != nil {
-		return ports.NetworkAttachment{}, dependencyFailure("control_plane_unavailable", true)
+		return ports.NetworkAttachment{}, dependencyFailure("control_plane_unavailable", true, err)
 	}
 	span.SetAttributes(attribute.Int("http.response.status_code", response.StatusCode))
 	body, err := io.ReadAll(io.LimitReader(response.Body, maximumResponseBytes+1))
 	closeErr := response.Body.Close()
 	if err != nil || closeErr != nil || len(body) > maximumResponseBytes {
-		return ports.NetworkAttachment{}, dependencyFailure("invalid_response", true)
+		return ports.NetworkAttachment{}, dependencyFailure("invalid_response", true, err, closeErr)
 	}
 	if response.StatusCode != http.StatusOK {
 		return ports.NetworkAttachment{}, decodeFailure(body, response.StatusCode)
@@ -159,21 +151,8 @@ func (client *Client) readAgentNetworkAction(
 ) (result ports.NetworkAttachment, resultErr error) {
 	ctx, cancel := context.WithTimeout(ctx, client.timeout)
 	defer cancel()
-	ctx, span := tracer.Start(
-		ctx, "agent_controller.egress."+operation,
-		trace.WithSpanKind(trace.SpanKindClient),
-		trace.WithAttributes(
-			attribute.String("server.address", client.baseURL.Hostname()),
-			attribute.String("antnest.agent.id", agentID),
-			attribute.String("rpc.system", "http_json"),
-		),
-	)
-	defer func() {
-		if resultErr != nil {
-			span.SetStatus(codes.Error, dependencyCode(resultErr))
-		}
-		span.End()
-	}()
+	ctx, span := telemetry.StartHTTPCall(ctx, operation, []attribute.KeyValue{attribute.String("antnest.agent.id", agentID)})
+	defer func() { span.Finish(resultErr) }()
 
 	endpoint := *client.baseURL
 	endpoint.Path = "/internal/agent-networks/" + url.PathEscape(agentID) + "/" + action
@@ -186,16 +165,15 @@ func (client *Client) readAgentNetworkAction(
 		return ports.NetworkAttachment{}, dependencyFailure("invalid_request", false)
 	}
 	request.Header.Set("Content-Type", "application/json")
-	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(request.Header))
 	response, err := client.httpClient.Do(request)
 	if err != nil {
-		return ports.NetworkAttachment{}, dependencyFailure("control_plane_unavailable", true)
+		return ports.NetworkAttachment{}, dependencyFailure("control_plane_unavailable", true, err)
 	}
 	span.SetAttributes(attribute.Int("http.response.status_code", response.StatusCode))
 	responseBody, err := io.ReadAll(io.LimitReader(response.Body, maximumResponseBytes+1))
 	closeErr := response.Body.Close()
 	if err != nil || closeErr != nil || len(responseBody) > maximumResponseBytes {
-		return ports.NetworkAttachment{}, dependencyFailure("invalid_response", true)
+		return ports.NetworkAttachment{}, dependencyFailure("invalid_response", true, err, closeErr)
 	}
 	if response.StatusCode != http.StatusOK {
 		return ports.NetworkAttachment{}, decodeFailure(responseBody, response.StatusCode)
@@ -217,21 +195,8 @@ func (client *Client) writeAgentNetwork(
 ) (result ports.NetworkAttachment, resultErr error) {
 	ctx, cancel := context.WithTimeout(ctx, client.timeout)
 	defer cancel()
-	ctx, span := tracer.Start(
-		ctx, "agent_controller.egress."+operation,
-		trace.WithSpanKind(trace.SpanKindClient),
-		trace.WithAttributes(
-			attribute.String("server.address", client.baseURL.Hostname()),
-			attribute.String("antnest.agent.id", agentID),
-			attribute.String("rpc.system", "http_json"),
-		),
-	)
-	defer func() {
-		if resultErr != nil {
-			span.SetStatus(codes.Error, dependencyCode(resultErr))
-		}
-		span.End()
-	}()
+	ctx, span := telemetry.StartHTTPCall(ctx, operation, []attribute.KeyValue{attribute.String("antnest.agent.id", agentID)})
+	defer func() { span.Finish(resultErr) }()
 
 	endpoint := *client.baseURL
 	endpoint.Path = path
@@ -240,16 +205,15 @@ func (client *Client) writeAgentNetwork(
 		return ports.NetworkAttachment{}, dependencyFailure("invalid_request", false)
 	}
 	request.Header.Set("Content-Type", "application/json")
-	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(request.Header))
 	response, err := client.httpClient.Do(request)
 	if err != nil {
-		return ports.NetworkAttachment{}, dependencyFailure("control_plane_unavailable", true)
+		return ports.NetworkAttachment{}, dependencyFailure("control_plane_unavailable", true, err)
 	}
 	span.SetAttributes(attribute.Int("http.response.status_code", response.StatusCode))
 	responseBody, err := io.ReadAll(io.LimitReader(response.Body, maximumResponseBytes+1))
 	closeErr := response.Body.Close()
 	if err != nil || closeErr != nil || len(responseBody) > maximumResponseBytes {
-		return ports.NetworkAttachment{}, dependencyFailure("invalid_response", true)
+		return ports.NetworkAttachment{}, dependencyFailure("invalid_response", true, err, closeErr)
 	}
 	if response.StatusCode != http.StatusOK {
 		return ports.NetworkAttachment{}, decodeFailure(responseBody, response.StatusCode)
@@ -287,15 +251,8 @@ func decodeFailure(payload []byte, status int) error {
 	return dependencyFailure(response.Code, response.Retryable)
 }
 
-func dependencyFailure(code string, retryable bool) error {
-	return &ports.DependencyError{Service: "runtime-egress", Code: code, Retryable: retryable}
-}
-
-func dependencyCode(err error) string {
-	if failure, ok := err.(*ports.DependencyError); ok {
-		return failure.Code
-	}
-	return "dependency_error"
+func dependencyFailure(code string, retryable bool, causes ...error) error {
+	return &ports.DependencyError{Service: "runtime-egress", Code: code, Retryable: retryable, Cause: errors.Join(causes...)}
 }
 
 func validIPv4(value string) bool {

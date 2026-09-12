@@ -119,6 +119,9 @@ func TestCreateAgentMaterializesSpecAndPublishesOnlyAfterRuntimeReady(t *testing
 		store.published.ReadyEvent.EventType != ports.EventAgentReady {
 		t.Fatalf("publish transaction is incomplete: %+v", store.published)
 	}
+	if !store.initial.Access.PromptCapabilities.EmbeddedContext {
+		t.Fatal("Agent creation disabled built-in embedded text")
+	}
 }
 
 func TestCreateAgentCompletedRetryDoesNotRepeatDependencies(t *testing.T) {
@@ -236,26 +239,25 @@ func TestCreateAgentReplaysConcurrentIntentAfterIdentityFailure(t *testing.T) {
 	}
 }
 
-func TestCreateAgentFingerprintIgnoresTraceContext(t *testing.T) {
+func TestCreateAgentFingerprintNormalizesDisplayName(t *testing.T) {
 	t.Parallel()
 
 	input := CreateAgentInput{
 		RequestID: "request-create-agent", OrganizationID: "org-1",
 		OwnerUserID: "user-1", Name: "Research Agent",
 		TemplateID: "template-1", TemplateRevision: 1,
-		InitialTraceParent: "00-11111111111111111111111111111111-1111111111111111-01",
 	}
 	first, err := createAgentFingerprint(input)
 	if err != nil {
 		t.Fatalf("first fingerprint: %v", err)
 	}
-	input.InitialTraceParent = "00-22222222222222222222222222222222-2222222222222222-01"
+	input.Name = "  Research Agent  "
 	second, err := createAgentFingerprint(input)
 	if err != nil {
 		t.Fatalf("second fingerprint: %v", err)
 	}
 	if first != second {
-		t.Fatalf("trace context changed business fingerprint: %q != %q", first, second)
+		t.Fatalf("display whitespace changed business fingerprint: %q != %q", first, second)
 	}
 }
 
@@ -463,10 +465,10 @@ func (source lifecycleSpecSourceStub) GetTemplateRevision(
 	return source.template, nil
 }
 
-func (source lifecycleSpecSourceStub) GetModelProfileRevision(
+func (source lifecycleSpecSourceStub) GetCurrentModelProfileRevision(
 	_ context.Context, id string,
 ) (domain.ModelProfileRevision, error) {
-	if source.model.ID() != id {
+	if source.model.Snapshot().ModelProfileID != id {
 		return domain.ModelProfileRevision{}, ports.ErrNotFound
 	}
 	return source.model, nil
@@ -611,8 +613,8 @@ func (store *lifecycleStoreStub) SettleAgentRebuildDrain(
 
 func (store *lifecycleStoreStub) AdvanceAgentRebuild(
 	context.Context, ports.AdvanceAgentRebuild,
-) (ports.AgentRebuildState, error) {
-	return ports.AgentRebuildState{}, errors.New("unexpected Agent rebuild advance")
+) (ports.LifecycleAdvanceResult, error) {
+	return ports.LifecycleAdvanceResult{}, errors.New("unexpected Agent rebuild advance")
 }
 
 func (store *lifecycleStoreStub) PublishAgentRebuild(
@@ -813,8 +815,6 @@ func (store *lifecycleStoreStub) PublishAgentCreate(
 	state.Operation.Phase = domain.PhaseCompleted
 	state.Operation.State = domain.OperationCompleted
 	state.Operation.NetworkAttachment = &input.NetworkAttachment
-	state.Operation.RecoveryOwner = ""
-	state.Operation.RecoveryLeaseUntil = nil
 	state.Operation.ChildRequestID = ""
 	state.Operation.UpdatedAt = input.Now
 	store.beginState = state
@@ -852,8 +852,6 @@ func (store *lifecycleStoreStub) FailAgentCreate(
 	state.Agent.AggregateSequence = input.FailedEvent.AggregateSequence
 	state.Agent.UpdatedAt = input.Now
 	state.Operation.State = domain.OperationFailed
-	state.Operation.RecoveryOwner = ""
-	state.Operation.RecoveryLeaseUntil = nil
 	state.Operation.ErrorCode = input.Code
 	state.Operation.ErrorDetail = input.Detail
 	state.Operation.Retryable = input.Retryable
@@ -864,10 +862,11 @@ func (store *lifecycleStoreStub) FailAgentCreate(
 func mustLifecycleTemplate(t *testing.T) domain.TemplateRevision {
 	t.Helper()
 	runtime := validRuntimeInput()
+	runtime.ImageRef = "antnest/runtime:latest"
 	runtime.MCPServers = []domain.MCPServer{{ID: "documents", Command: "node", Args: []string{"/workspace/documents.js"}, Env: map[string]string{"TOKEN": "synthetic-token"}}}
 	revision, err := domain.NewTemplateRevision(domain.TemplateRevisionInput{
 		TemplateID: "template-1", OrganizationID: "org-1", Revision: 1,
-		ModelProfileRevisionID: "model-revision-1", SystemPrompt: "Be useful.",
+		ModelProfileID: "model-1", SystemPrompt: "Be useful.",
 		MaxModelRequests: 12, ContextPolicyVersion: domain.ContextPolicyV1,
 		Runtime: runtime,
 	})

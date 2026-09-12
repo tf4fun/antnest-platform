@@ -164,9 +164,6 @@ func (repository *Repository) advanceCreatePhase(
 	if err != nil {
 		return ports.AgentCreateState{}, err
 	}
-	if err := authorizeLifecycleMutation(ctx, transaction, operation); err != nil {
-		return ports.AgentCreateState{}, err
-	}
 	if operation.Kind != domain.OperationCreate || operation.RequestFingerprint != fingerprint {
 		return ports.AgentCreateState{}, ports.ErrRequestConflict
 	}
@@ -213,9 +210,7 @@ func (repository *Repository) PublishAgentCreate(
 	if err != nil {
 		return ports.AgentCreateState{}, err
 	}
-	replayed, err := authorizeLifecycleMutationOrReplay(
-		ctx, transaction, operation, domain.OperationCreate, input.Fingerprint, domain.OperationCompleted,
-	)
+	replayed, err := authorizeCreateResult(operation, input.Fingerprint, domain.OperationCompleted)
 	if err != nil {
 		return ports.AgentCreateState{}, err
 	}
@@ -248,7 +243,7 @@ UPDATE agent_controller.agent_lifecycle_operations
 SET phase = 'completed', state = 'completed', child_request_id = '',
     network_attachment = $2,
 	    error_code = '', error_detail = '', retryable = FALSE,
-	    recovery_owner = '', recovery_lease_until = NULL, updated_at = $3
+	    updated_at = $3
 WHERE request_id = $1`, input.RequestID, networkPayload, input.Now); err != nil {
 		return ports.AgentCreateState{}, fmt.Errorf("complete Agent create operation: %w", err)
 	}
@@ -279,9 +274,7 @@ func (repository *Repository) FailAgentCreate(
 	if err != nil {
 		return ports.AgentCreateState{}, err
 	}
-	replayed, err := authorizeLifecycleMutationOrReplay(
-		ctx, transaction, operation, domain.OperationCreate, input.Fingerprint, domain.OperationFailed,
-	)
+	replayed, err := authorizeCreateResult(operation, input.Fingerprint, domain.OperationFailed)
 	if err != nil {
 		return ports.AgentCreateState{}, err
 	}
@@ -314,7 +307,7 @@ WHERE id = $1 AND active_operation_request_id = $7 AND aggregate_sequence = $8`,
 UPDATE agent_controller.agent_lifecycle_operations
 SET state = 'failed', child_request_id = '', error_code = $2,
     error_detail = $3, retryable = $4,
-    recovery_owner = '', recovery_lease_until = NULL, updated_at = $5
+    updated_at = $5
 WHERE request_id = $1`, input.RequestID, input.Code, input.Detail, input.Retryable, input.Now); err != nil {
 		return ports.AgentCreateState{}, fmt.Errorf("fail Agent create operation: %w", err)
 	}
@@ -333,7 +326,7 @@ WHERE request_id = $1`, input.RequestID, input.Code, input.Detail, input.Retryab
 	return state, nil
 }
 
-func lockLifecycleRequest(ctx context.Context, transaction pgx.Tx, requestID string) error {
+func lockLifecycleRequest(ctx context.Context, transaction *databaseTransaction, requestID string) error {
 	if _, err := transaction.Exec(
 		ctx, "SELECT pg_advisory_xact_lock($1, hashtext($2))", lifecycleRequestLockNamespace, requestID,
 	); err != nil {
@@ -342,7 +335,14 @@ func lockLifecycleRequest(ctx context.Context, transaction pgx.Tx, requestID str
 	return nil
 }
 
-func insertAgent(ctx context.Context, transaction pgx.Tx, record ports.AgentRecord) error {
+func authorizeCreateResult(operation ports.LifecycleOperationRecord, fingerprint string, target domain.OperationState) (bool, error) {
+	if operation.Kind != domain.OperationCreate || operation.RequestFingerprint != fingerprint {
+		return false, ports.ErrRequestConflict
+	}
+	return operation.State == target, nil
+}
+
+func insertAgent(ctx context.Context, transaction *databaseTransaction, record ports.AgentRecord) error {
 	_, err := transaction.Exec(ctx, `
 INSERT INTO agent_controller.agents (
     id, organization_id, owner_user_id, name, desired_state, lifecycle_state,
@@ -359,7 +359,7 @@ INSERT INTO agent_controller.agents (
 	return nil
 }
 
-func insertAgentSpec(ctx context.Context, transaction pgx.Tx, record ports.AgentSpecRecord) error {
+func insertAgentSpec(ctx context.Context, transaction *databaseTransaction, record ports.AgentSpecRecord) error {
 	payload, err := json.Marshal(record.Snapshot)
 	if err != nil {
 		return fmt.Errorf("encode Agent spec: %w", err)
@@ -379,7 +379,7 @@ INSERT INTO agent_controller.agent_spec_revisions (
 	return nil
 }
 
-func insertAgentAccess(ctx context.Context, transaction pgx.Tx, record ports.AgentAccessRecord) error {
+func insertAgentAccess(ctx context.Context, transaction *databaseTransaction, record ports.AgentAccessRecord) error {
 	_, err := transaction.Exec(ctx, `
 INSERT INTO agent_controller.agent_access_bindings (
     access_subject, agent_id, principal_id, access_revision, active,
@@ -396,7 +396,7 @@ INSERT INTO agent_controller.agent_access_bindings (
 }
 
 func insertLifecycleOperation(
-	ctx context.Context, transaction pgx.Tx, record ports.LifecycleOperationRecord,
+	ctx context.Context, transaction *databaseTransaction, record ports.LifecycleOperationRecord,
 ) error {
 	var inspectionPayload, absenceProofPayload []byte
 	var err error
@@ -419,12 +419,10 @@ func insertLifecycleOperation(
     source_runtime_revision, source_runtime_absent,
     target_spec_revision_id, child_request_id,
     source_runtime_inspection, source_runtime_absence_proof, network_release_outcome,
-    initial_attempt_trace_parent, previous_recovery_trace_parent, attempt,
-    recovery_after, created_at, updated_at, owner_revocation_sequence
+    created_at, updated_at, owner_revocation_sequence
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-    $11, $12, $13, $14, $15, $16, $17, $18,
-    clock_timestamp(), clock_timestamp(), clock_timestamp(), $19
+    $11, $12, $13, $14, $15, clock_timestamp(), clock_timestamp(), $16
 )`,
 		record.RequestID, record.RequestFingerprint, record.AgentID, record.Kind,
 		record.Phase, record.State, record.SourceSpecRevisionID,
@@ -432,8 +430,7 @@ func insertLifecycleOperation(
 		record.SourceRuntimeAbsent, record.TargetSpecRevisionID, record.ChildRequestID,
 		nullJSON(inspectionPayload), nullJSON(absenceProofPayload),
 		record.NetworkReleaseOutcome,
-		record.InitialTraceParent, record.PreviousRecoveryTraceParent,
-		record.Attempt, record.OwnerRevocationSequence,
+		record.OwnerRevocationSequence,
 	)
 	if err != nil {
 		return fmt.Errorf("insert Agent lifecycle operation: %w", err)
@@ -442,7 +439,7 @@ func insertLifecycleOperation(
 }
 
 func (repository *Repository) insertAgentEvent(
-	ctx context.Context, transaction pgx.Tx, record ports.AgentEventRecord,
+	ctx context.Context, transaction *databaseTransaction, record ports.AgentEventRecord,
 ) error {
 	payload, err := json.Marshal(record.Data)
 	if err != nil {
@@ -478,7 +475,7 @@ func (repository *Repository) recordEventAppend(ctx context.Context, eventType s
 }
 
 func insertExecutionRevision(
-	ctx context.Context, transaction pgx.Tx, record ports.ExecutionRecord,
+	ctx context.Context, transaction *databaseTransaction, record ports.ExecutionRecord,
 ) error {
 	changeSummary, err := json.Marshal(record.ChangeSummary)
 	if err != nil {
@@ -502,7 +499,7 @@ INSERT INTO agent_controller.execution_revisions (
 
 func publishAgentProjection(
 	ctx context.Context,
-	transaction pgx.Tx,
+	transaction *databaseTransaction,
 	operation ports.LifecycleOperationRecord,
 	input ports.PublishAgentCreate,
 ) error {
@@ -653,9 +650,7 @@ SELECT request_id, request_fingerprint, agent_id, kind, phase, state,
 	       target_spec_revision_id, child_request_id, network_attachment,
 	       source_runtime_inspection,
 	       source_runtime_absence_proof, runtime_result, network_release_outcome,
-	       initial_attempt_trace_parent, previous_recovery_trace_parent,
-	       attempt, recovery_owner, recovery_lease_until, recovery_after,
-	       recovery_failure_count, error_code, error_detail, retryable,
+	       error_code, error_detail, retryable,
 	       created_at, updated_at, owner_revocation_sequence
 FROM agent_controller.agent_lifecycle_operations
 WHERE request_id = $1`
@@ -677,9 +672,7 @@ func scanLifecycleOperation(scanner lifecycleRowScanner) (ports.LifecycleOperati
 		&record.ChildRequestID, &networkPayload,
 		&inspectionPayload, &absenceProofPayload, &runtimePayload,
 		&record.NetworkReleaseOutcome,
-		&record.InitialTraceParent, &record.PreviousRecoveryTraceParent,
-		&record.Attempt, &record.RecoveryOwner, &record.RecoveryLeaseUntil,
-		&record.RecoveryAfter, &record.RecoveryFailureCount, &record.ErrorCode,
+		&record.ErrorCode,
 		&record.ErrorDetail, &record.Retryable, &record.CreatedAt, &record.UpdatedAt,
 		&record.OwnerRevocationSequence,
 	)

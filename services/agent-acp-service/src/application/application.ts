@@ -7,8 +7,10 @@ import type { AccessService } from "./access-service.js";
 import type { PromptCoordinator } from "./prompt-coordinator.js";
 import type { RunLifecyclePort } from "./run-supervisor.js";
 import type { SessionService } from "./session-service.js";
+import type { SessionConfigurationService } from "./session-configuration.js";
 
 export type AcpApplicationDependencies = {
+  configuration: Pick<SessionConfigurationService, "get" | "set">;
   access: AccessService;
   sessions: SessionService;
   prompts: PromptCoordinator;
@@ -17,6 +19,20 @@ export type AcpApplicationDependencies = {
 
 export class AcpApplication implements AcpApplicationPort {
   public constructor(private readonly dependencies: AcpApplicationDependencies) {}
+
+  public async getSessionConfiguration(
+    input: Parameters<AcpApplicationPort["getSessionConfiguration"]>[0],
+  ) {
+    await this.assertAccess(input);
+    return this.dependencies.configuration.get(input);
+  }
+
+  public async setSessionConfiguration(
+    input: Parameters<AcpApplicationPort["setSessionConfiguration"]>[0],
+  ) {
+    await this.assertAccess(input);
+    return this.dependencies.configuration.set(input);
+  }
 
   public async readSessionOutput(input: Parameters<AcpApplicationPort["readSessionOutput"]>[0]) {
     await this.assertAccess(input);

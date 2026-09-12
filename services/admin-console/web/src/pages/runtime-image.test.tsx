@@ -6,14 +6,14 @@ import { TemplatesPage } from "./templates";
 afterEach(() => { cleanup(); sessionStorage.clear(); });
 
 const model: ModelProfile = {
-  model_profile_id: "model-1", display_name: "Support model",
+  provider_connection_id: "connection-1", model_profile_id: "model-1", display_name: "Support model",
   revision_id: "model-revision-1", revision: 1, enabled: true,
   model: { base_url: "https://models.example.com/v1", model: "support", context_window: 8192, max_output_tokens: 1024, supports_images: false },
   created_at: "2026-09-07T00:00:00Z", updated_at: "2026-09-07T00:00:00Z",
 };
 const template: AgentTemplate = {
   template_id: "template-1", name: "Support template", revision: 1,
-  model_profile_revision_id: model.revision_id, system_prompt: "", max_model_requests: 32,
+  model_profile_id: model.model_profile_id, system_prompt: "", max_model_requests: 32,
   context_policy_version: "context-v1", enabled: true, skill_refs: [],
   runtime: {
     image_ref: `sha256:${"a".repeat(64)}`,
@@ -36,7 +36,7 @@ function mockCatalog(defaultImage: string, reject = false) {
       case "/api/admin/templates": return Response.json({ items: [template] });
       case "/api/admin/templates/template-1": return Response.json(template);
       case "/api/admin/model-profiles": return Response.json({ items: [model] });
-      case "/api/admin/model-profile-revisions/model-revision-1": return Response.json(model);
+      case "/api/admin/model-profiles/model-1": return Response.json(model);
       case "/api/admin/template-defaults": return Response.json({ runtime_image_ref: defaultImage });
       default: throw new Error(`Unexpected request: ${url.pathname}`);
     }
@@ -57,7 +57,7 @@ describe("Runtime image presentation", () => {
     expect(dialog.getByText("Platform runtime")).toBeTruthy();
     expect(screen.queryByText(/sha256:/)).toBeNull();
     fireEvent.change(dialog.getByLabelText("Template name"), { target: { value: "Support template" } });
-    fireEvent.change(dialog.getByLabelText("Model"), { target: { value: model.revision_id } });
+    fireEvent.change(dialog.getByLabelText("Model"), { target: { value: model.model_profile_id } });
     fireEvent.click(dialog.getByRole("button", { name: "Create template" }));
     await waitFor(() => expect(writes).toHaveLength(1));
     expect(writes[0]).not.toHaveProperty("runtime");
@@ -72,7 +72,7 @@ describe("Runtime image presentation", () => {
     fireEvent.click(create);
     const dialog = within(await screen.findByRole("dialog"));
     fireEvent.change(dialog.getByLabelText("Template name"), { target: { value: "Support template" } });
-    fireEvent.change(dialog.getByLabelText("Model"), { target: { value: model.revision_id } });
+    fireEvent.change(dialog.getByLabelText("Model"), { target: { value: model.model_profile_id } });
     fireEvent.change(dialog.getByLabelText("Image tag"), { target: { value: "registry.example:5000/runtime:v2" } });
     fireEvent.click(dialog.getByRole("button", { name: "Create template" }));
     await waitFor(() => expect(writes).toHaveLength(1));

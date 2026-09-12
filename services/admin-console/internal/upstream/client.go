@@ -9,11 +9,7 @@ import (
 	"net/url"
 	"strings"
 
-	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/codes"
-	"go.opentelemetry.io/otel/propagation"
-	"go.opentelemetry.io/otel/trace"
+	"soft/antnest-platform/services/admin-console/internal/telemetry"
 )
 
 type Target string
@@ -22,8 +18,6 @@ const (
 	Identity        Target = "identity-service"
 	AgentController Target = "agent-controller"
 )
-
-var tracer = otel.Tracer("soft/antnest-platform/admin-console/upstream")
 
 type Config struct {
 	IdentityURL        string
@@ -49,7 +43,10 @@ func NewClient(config Config) (*Client, error) {
 	if config.HTTPClient == nil {
 		return nil, fmt.Errorf("upstream HTTP client is required")
 	}
-	return &Client{identity: identityURL, agentController: agentURL, httpClient: config.HTTPClient}, nil
+	httpClient := *config.HTTPClient
+	httpClient.Transport = telemetry.NewHTTPTransport(httpClient.Transport)
+	httpClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
+	return &Client{identity: identityURL, agentController: agentURL, httpClient: &httpClient}, nil
 }
 
 func (client *Client) Do(
@@ -70,11 +67,7 @@ func (client *Client) Do(
 	if _, err := url.ParseQuery(rawQuery); err != nil {
 		return nil, fmt.Errorf("upstream query is invalid")
 	}
-	ctx, span := tracer.Start(ctx, string(target)+" "+method, trace.WithSpanKind(trace.SpanKindClient))
-	span.SetAttributes(
-		attribute.String("rpc.system", "http"), attribute.String("server.address", base.Host),
-		attribute.String("http.request.method", method), attribute.String("url.path", path),
-	)
+	ctx = telemetry.WithTarget(ctx, string(target))
 	targetURL := base.ResolveReference(&url.URL{Path: path, RawQuery: rawQuery})
 	var reader io.Reader
 	if len(body) > 0 {
@@ -82,26 +75,16 @@ func (client *Client) Do(
 	}
 	request, err := http.NewRequestWithContext(ctx, method, targetURL.String(), reader)
 	if err != nil {
-		span.End()
 		return nil, fmt.Errorf("create upstream request: %w", err)
 	}
 	request.Header.Set("Accept", "application/json")
 	if len(body) > 0 {
 		request.Header.Set("Content-Type", "application/json")
 	}
-	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(request.Header))
 	response, err := client.httpClient.Do(request)
 	if err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, "transport failure")
-		span.End()
 		return nil, fmt.Errorf("%s unavailable: %w", target, err)
 	}
-	span.SetAttributes(attribute.Int("http.response.status_code", response.StatusCode))
-	if response.StatusCode >= http.StatusInternalServerError {
-		span.SetStatus(codes.Error, response.Status)
-	}
-	span.End()
 	return response, nil
 }
 

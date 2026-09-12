@@ -110,22 +110,26 @@ type scimTokenIssueSource struct {
 }
 
 type modelProfileSource struct {
-	ModelProfileID string          `json:"model_profile_id"`
-	DisplayName    string          `json:"display_name"`
-	RevisionID     string          `json:"revision_id"`
-	Revision       int64           `json:"revision"`
-	Enabled        bool            `json:"enabled"`
-	Model          json.RawMessage `json:"model"`
-	CreatedAt      string          `json:"created_at"`
-	UpdatedAt      string          `json:"updated_at"`
+	ProviderConnectionID string               `json:"provider_connection_id"`
+	ModelProfileID       string               `json:"model_profile_id"`
+	DisplayName          string               `json:"display_name"`
+	RevisionID           string               `json:"revision_id"`
+	Revision             int64                `json:"revision"`
+	Enabled              bool                 `json:"enabled"`
+	Model                agentModelSpecSource `json:"model"`
+	CreatedAt            string               `json:"created_at"`
+	UpdatedAt            string               `json:"updated_at"`
 }
 
 type modelCatalogEntrySource struct {
-	ModelID         string `json:"model_id"`
-	DisplayName     string `json:"display_name"`
-	ContextWindow   int    `json:"context_window"`
-	MaxOutputTokens int    `json:"max_output_tokens"`
-	SupportsImages  bool   `json:"supports_images"`
+	Pricing         modelPricingSource `json:"pricing,omitzero"`
+	ModelID         string             `json:"model_id"`
+	DisplayName     string             `json:"display_name"`
+	ContextWindow   int                `json:"context_window"`
+	MaxOutputTokens int                `json:"max_output_tokens"`
+	SupportsImages  bool               `json:"supports_images"`
+	SupportsAudio   bool               `json:"supports_audio,omitempty"`
+	SupportsPDF     bool               `json:"supports_pdf,omitempty"`
 }
 
 type modelProviderPresetSource struct {
@@ -148,18 +152,18 @@ type modelProfileListSource struct {
 }
 
 type templateSource struct {
-	TemplateID             string                             `json:"template_id"`
-	Name                   string                             `json:"name"`
-	Revision               int64                              `json:"revision"`
-	ModelProfileRevisionID string                             `json:"model_profile_revision_id"`
-	SystemPrompt           string                             `json:"system_prompt"`
-	MaxModelRequests       int                                `json:"max_model_requests"`
-	ContextPolicyVersion   string                             `json:"context_policy_version"`
-	Runtime                templateRuntimeConfigurationSource `json:"runtime"`
-	SkillRefs              []string                           `json:"skill_refs"`
-	Enabled                bool                               `json:"enabled"`
-	CreatedAt              string                             `json:"created_at"`
-	UpdatedAt              string                             `json:"updated_at"`
+	TemplateID           string                             `json:"template_id"`
+	Name                 string                             `json:"name"`
+	Revision             int64                              `json:"revision"`
+	ModelProfileID       string                             `json:"model_profile_id"`
+	SystemPrompt         string                             `json:"system_prompt"`
+	MaxModelRequests     int                                `json:"max_model_requests"`
+	ContextPolicyVersion string                             `json:"context_policy_version"`
+	Runtime              templateRuntimeConfigurationSource `json:"runtime"`
+	SkillRefs            []string                           `json:"skill_refs"`
+	Enabled              bool                               `json:"enabled"`
+	CreatedAt            string                             `json:"created_at"`
+	UpdatedAt            string                             `json:"updated_at"`
 }
 
 type templateListSource struct {
@@ -172,12 +176,15 @@ type runtimeProjectionSource struct {
 }
 
 type agentModelSpecSource struct {
-	BaseURL         string   `json:"base_url"`
-	Model           string   `json:"model"`
-	ContextWindow   int      `json:"context_window"`
-	MaxOutputTokens int      `json:"max_output_tokens"`
-	Temperature     *float64 `json:"temperature,omitempty"`
-	SupportsImages  bool     `json:"supports_images"`
+	Pricing         modelPricingSource `json:"pricing,omitzero"`
+	BaseURL         string             `json:"base_url"`
+	Model           string             `json:"model"`
+	ContextWindow   int                `json:"context_window"`
+	MaxOutputTokens int                `json:"max_output_tokens"`
+	Temperature     *float64           `json:"temperature,omitempty"`
+	SupportsImages  bool               `json:"supports_images"`
+	SupportsAudio   bool               `json:"supports_audio,omitempty"`
+	SupportsPDF     bool               `json:"supports_pdf,omitempty"`
 }
 
 type agentRuntimeResourcesSource struct {
@@ -237,20 +244,22 @@ type agentConfigurationSource struct {
 }
 
 type agentProjectionSource struct {
-	AgentID                     string                    `json:"agent_id"`
-	OwnerUserID                 string                    `json:"owner_user_id"`
-	Name                        string                    `json:"name"`
-	DesiredState                string                    `json:"desired_state"`
-	LifecycleState              string                    `json:"lifecycle_state"`
-	ExecutableExecutionRevision string                    `json:"executable_execution_revision,omitempty"`
-	Runtime                     *runtimeProjectionSource  `json:"runtime,omitempty"`
-	ActiveOperationRequestID    string                    `json:"active_operation_request_id,omitempty"`
-	FailureStage                string                    `json:"failure_stage,omitempty"`
-	FailureCode                 string                    `json:"failure_code,omitempty"`
-	Configuration               *agentConfigurationSource `json:"configuration,omitempty"`
-	AggregateSequence           int64                     `json:"aggregate_sequence"`
-	CreatedAt                   string                    `json:"created_at"`
-	UpdatedAt                   string                    `json:"updated_at"`
+	AgentID                         string                    `json:"agent_id"`
+	OwnerUserID                     string                    `json:"owner_user_id"`
+	Name                            string                    `json:"name"`
+	DesiredState                    string                    `json:"desired_state"`
+	LifecycleState                  string                    `json:"lifecycle_state"`
+	AgentSpecRevision               string                    `json:"agent_spec_revision,omitempty"`
+	LastSuccessfulExecutionRevision string                    `json:"last_successful_execution_revision,omitempty"`
+	ExecutableExecutionRevision     string                    `json:"executable_execution_revision,omitempty"`
+	Runtime                         *runtimeProjectionSource  `json:"runtime,omitempty"`
+	ActiveOperationRequestID        string                    `json:"active_operation_request_id,omitempty"`
+	FailureStage                    string                    `json:"failure_stage,omitempty"`
+	FailureCode                     string                    `json:"failure_code,omitempty"`
+	Configuration                   *agentConfigurationSource `json:"configuration,omitempty"`
+	AggregateSequence               int64                     `json:"aggregate_sequence"`
+	CreatedAt                       string                    `json:"created_at"`
+	UpdatedAt                       string                    `json:"updated_at"`
 }
 
 type agentListSource struct {
@@ -333,10 +342,6 @@ func projectSCIMTokenIssue(payload []byte) ([]byte, error) {
 
 func projectModelProfile(payload []byte) ([]byte, error) {
 	return projectPayload[modelProfileSource](payload)
-}
-
-func projectModelCatalog(payload []byte) ([]byte, error) {
-	return projectPayload[modelCatalogSource](payload)
 }
 
 func projectModelProfileList(payload []byte) ([]byte, error) {

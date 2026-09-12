@@ -1,6 +1,27 @@
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
 import { assertSecretFree } from "./evidence.mjs";
+import { assertCatalog } from "../acp-commands/evidence.mjs";
+
+export function assertEmptySession(updates, sessionId, version, phase) {
+  assert(phase === "new" || phase === "replay", "unknown Session setup phase");
+  assertCatalog(updates, sessionId);
+  const states = updates.filter(
+    ({ update }) => update.sessionUpdate !== "available_commands_update",
+  );
+  assert.equal(
+    states.length,
+    version === 2 && phase === "replay" ? 1 : 0,
+    "empty Session has missing or unexpected notifications",
+  );
+  for (const { update } of states)
+    assert(
+      update.sessionUpdate === "state_update" &&
+        update.state === "idle" &&
+        update.stopReason === undefined,
+      "rejected prompt entered Session history or execution",
+    );
+}
 
 export function assertCompletedRun(run, accepted, tools) {
   assert(
@@ -35,13 +56,15 @@ export function inspectSessionTrace(trace, traceID, secrets) {
   const root = trace.spans.find(
     (span) =>
       service(span) === "edge-gateway" &&
+      tag(span, "span.kind") === "server" &&
       tag(span, "http.response.status_code") === 101,
   );
   assert(root, "Gateway upgrade completion missing");
   const checks = trace.spans.filter(
     (span) =>
       service(span) === "edge-gateway" &&
-      span.operationName === "identity.resolve",
+      tag(span, "span.kind") === "client" &&
+      tag(span, "rpc.method") === "/rpc/identity/resolve-access-token",
   );
   assert(checks.length >= 4, "message-level Identity checks missing");
   for (const check of checks) {

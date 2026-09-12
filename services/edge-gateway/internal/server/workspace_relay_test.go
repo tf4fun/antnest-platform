@@ -52,18 +52,19 @@ func (service *relayIdentity) reject(principal identity.Principal, failure error
 }
 
 type relayFixture struct {
-	client   *websocket.Conn
-	identity *relayIdentity
-	received chan []byte
-	closed   chan struct{}
-	cancel   context.CancelFunc
+	client        *websocket.Conn
+	identity      *relayIdentity
+	received      chan []byte
+	closed        chan struct{}
+	upstreamClose chan int
+	cancel        context.CancelFunc
 }
 
 func newRelayFixture(t *testing.T, version string, configure ...func(*handler)) *relayFixture {
 	t.Helper()
 	fixture := &relayFixture{
 		identity: &relayIdentity{principal: ordinaryPrincipal()},
-		received: make(chan []byte, 8), closed: make(chan struct{}),
+		received: make(chan []byte, 8), closed: make(chan struct{}), upstreamClose: make(chan int, 1),
 	}
 	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
 	acp := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
@@ -80,6 +81,12 @@ func newRelayFixture(t *testing.T, version string, configure ...func(*handler)) 
 		for {
 			kind, message, readErr := connection.ReadMessage()
 			if readErr != nil {
+				var closeErr *websocket.CloseError
+				if errors.As(readErr, &closeErr) {
+					fixture.upstreamClose <- closeErr.Code
+				} else {
+					fixture.upstreamClose <- 0
+				}
 				return
 			}
 			fixture.received <- message
@@ -99,7 +106,7 @@ func newRelayFixture(t *testing.T, version string, configure ...func(*handler)) 
 	}, Dependencies{
 		Identity: fixture.identity, Agents: &agentServiceStub{agents: []agentcontroller.WorkspaceAgent{{
 			AgentID: "agent-1", AgentAccessSubject: "subject-authoritative",
-		}}}, Sessions: sessions, HTTPClient: acp.Client(), Logger: logger,
+		}}}, Sessions: sessions, HTTPClient: &http.Client{Transport: telemetry.NewHTTPTransport(acp.Client().Transport)}, Logger: logger,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -207,16 +214,23 @@ func TestWorkspaceRelayRejectsChangedSessionBeforeForwarding(t *testing.T) {
 }
 
 func TestWorkspaceRelayClosesIdleSocketsOnShutdown(t *testing.T) {
-	fixture := newRelayFixture(t, "v2")
-	fixture.roundTrip(t, "admitted")
-	fixture.cancel()
-	if _, _, err := fixture.client.ReadMessage(); err == nil {
-		t.Fatal("idle relay survived server shutdown")
-	}
-	select {
-	case <-fixture.closed:
-	case <-time.After(3 * time.Second):
-		t.Fatal("shutdown leaked upstream")
+	for _, version := range []string{"v1", "v2"} {
+		t.Run(version, func(t *testing.T) {
+			fixture := newRelayFixture(t, version)
+			fixture.roundTrip(t, "admitted")
+			fixture.cancel()
+			if _, _, err := fixture.client.ReadMessage(); !websocket.IsCloseError(err, websocket.CloseGoingAway) {
+				t.Fatalf("shutdown must send going-away before socket close: %v", err)
+			}
+			select {
+			case code := <-fixture.upstreamClose:
+				if code != websocket.CloseGoingAway {
+					t.Fatalf("upstream shutdown close=%d; want going-away", code)
+				}
+			case <-time.After(3 * time.Second):
+				t.Fatal("shutdown leaked upstream")
+			}
+		})
 	}
 }
 

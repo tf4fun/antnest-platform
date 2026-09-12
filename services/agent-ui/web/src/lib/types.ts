@@ -1,4 +1,4 @@
-export type AgentStatus = "ready" | "busy" | "offline";
+export type AgentStatus = "ready" | "busy" | "offline" | "unknown";
 export type ConnectionStatus = "ready" | "connecting" | "offline";
 export type ActivityStatus = "running" | "completed" | "failed";
 
@@ -13,7 +13,7 @@ export type AgentSummary = {
 export type Attachment = {
   id: string;
   name: string;
-  kind: "file" | "image";
+  kind: "file" | "image" | "audio";
   sizeLabel: string;
   previewURL?: string;
   mimeType?: string;
@@ -34,12 +34,18 @@ export type Message = {
   id: string;
   role: "user" | "assistant" | "system";
   content: string;
-  createdAt: string;
+  createdAt?: string;
   attachments?: Attachment[];
   activities?: ToolActivity[];
 };
 
 export type Conversation = {
+  historyState?: "loading" | "failed";
+  usage?: SessionUsage;
+  usageStale?: boolean;
+  configOptions?: SessionConfigOption[];
+  configurationSequence?: number;
+  currentModeId?: string;
   id: string;
   agentId: string;
   title: string;
@@ -47,7 +53,12 @@ export type Conversation = {
   messages: Message[];
 };
 
+export type SessionCost = { amount: number; currency: string };
+export type SessionUsage = { used: number; size: number; cost?: SessionCost };
+
 export type Principal = {
+  userId: string;
+  organizationId: string;
   displayName: string;
   organizationName: string;
   administrator: boolean;
@@ -62,3 +73,4 @@ export type WorkspaceSnapshot = {
   activeConversationId: string | null;
   preview: boolean;
 };
+import type { SessionConfigOption } from "@agentclientprotocol/sdk";

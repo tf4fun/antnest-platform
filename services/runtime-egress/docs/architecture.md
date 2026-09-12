@@ -2,7 +2,7 @@
 
 ## 1. Domain
 
-Runtime Egress has four durable concepts and two ephemeral concepts.
+Runtime Egress has five durable concepts and two ephemeral concepts.
 
 ### Durable
 
@@ -10,8 +10,10 @@ Runtime Egress has four durable concepts and two ephemeral concepts.
    duration.
 2. **Agent network**: the stable Tunnel IPv4 currently owned by one Agent.
 3. **Policy revision**: one immutable, schema-versioned policy document.
-4. **Policy assignment**: the exact policy revision currently applied to one
+4. **Policy assignment**: the exact desired policy revision assigned to one
    Agent, guarded by a resource version.
+5. **Runtime attachment**: the independent, versioned lifecycle gate. Saving an
+   allow policy cannot open a closed attachment.
 
 ### Ephemeral
 
@@ -181,10 +183,11 @@ Allocation behaves like a PID allocator:
 
 Release is a barrier, not a delete:
 
-1. Close Agent packet admission and persist deny-all.
-2. Remove userspace flows and corresponding conntrack entries.
-3. Transition the active allocation directly to `quarantined` with a durable
-   deadline.
+1. Require a closed attachment and validate the network resource-version CAS.
+2. Commit the active allocation as `quarantined` with a durable deadline;
+   desired policy is not rewritten. Stale release has no live side effect.
+3. Remove the probe-only route and repeat bounded userspace/conntrack cleanup;
+   an exact release retry reconciles cleanup from durable quarantine.
 4. A sweeper deletes the row only after the deadline and another cleanup check.
 
 Agent IDs are never reused. The numerical Tunnel IP may be reused only after
@@ -224,6 +227,11 @@ invalid Agent IDs. Each immutable route snapshot carries its admission gate:
 therefore replaced atomically instead of being split across a route map and a
 second fence set. Packet admission never waits for the operation lock.
 
+A same-policy/revision assignment on an open, already-applied, unfenced route
+validates the request through the Repository CAS but does not reset flows or
+conntrack. Stale versions still conflict. A matching database value alone is
+insufficient: a fenced or unapplied route follows the full repair barrier below.
+
 The packet loop holds one short output barrier from classification through the
 actual UDP/TUN write. Closing Agent admission and then acquiring that barrier
 drains the one packet that may already be in flight. The barrier is released
@@ -233,8 +241,8 @@ operation.
 The policy mutation barrier is:
 
 ```text
-compile -> close Agent packet admission -> commit CAS
-        -> clear flows -> clear conntrack
+compile -> close Agent packet admission -> clear flows -> clear conntrack
+        -> commit CAS
         -> publish snapshot -> explicitly reopen -> acknowledge
 ```
 
@@ -242,6 +250,20 @@ If the process exits after database commit, cold-start fail-closed recovery
 loads and applies the committed assignment before becoming ready.
 Any post-fence ambiguity or cleanup failure leaves that Agent fenced. A complete
 retry reconciles durable assignment, kernel state, and snapshot before reopening.
+Ensure follows this cleanup barrier when restoring an already-open route, but
+does not touch connections on a healthy, already-applied route. Attachment open
+also completes cleanup before its CAS, including same-state retries. Neither
+operation treats a matching durable version as proof that a hard fence is safe
+to remove. Reconciliation applies the persisted policy, not an uncommitted
+target from a failed mutation.
+
+The control read of an immutable policy revision returns its canonical spec and
+digest through the existing repository port. It has no mutation barrier because
+the addressed revision cannot change, and it does not copy policy into another
+service's database. Consumers read the assignment's exact revision rather than
+guessing its action from the policy ID. Desired policy inspection is not a
+packet-gate health probe; a control failure remains unresolved until a complete
+mutation retry settles the barrier.
 
 ## 7. Packet Contract
 
@@ -353,9 +375,14 @@ flow, reaching an upstream, or adding a session protocol to the data plane.
   for the duration of that Agent's control operation.
 - All queues and buffers are bounded; overload drops packets rather than
   growing memory without limit.
-- OTLP traces are restricted to trusted control RPCs. Packet, flow, DNS, and
-  maintenance paths never emit per-packet logs or OTLP spans; they emit only
-  bounded local aggregates and task-level fatal events.
+- OTLP traces are restricted to control HTTP (including local `/status`) and
+  Egress-owned PostgreSQL query/execute and transaction API boundaries. A single
+  private-handle Client/Transaction wrapper observes SQL without exposing a native
+  handle to repository helpers; pool and operation-deadline semantics stay local
+  to the existing adapter. Packet, flow and DNS paths never
+  emit per-packet logs or spans; they emit only bounded local aggregates and
+  task-level fatal events. Recovery/sweep storage operations use the same
+  database boundary, not per-packet or per-flow observation.
 - A shared UDP socket can receive delayed ICMP errors without the originating
   peer. Known destination-level ICMP errors are counted and dropped without
   mutating any Agent flow; they can neither kill Egress nor be charged to an

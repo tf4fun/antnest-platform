@@ -324,7 +324,7 @@ func TestResolveCredentialOpensOnlyStoreAuthorizedSecret(t *testing.T) {
 	t.Parallel()
 
 	sealed := ports.SealedSecret{Ciphertext: []byte("cipher"), Nonce: []byte("nonce"), KeyVersion: "key-1"}
-	credential := ports.AdmissionCredential{
+	credential := ports.AdmissionCredential{Provider: domain.ProviderExecution{ConnectionID: "credential-1", ProviderKey: "deepseek", CredentialMethod: "api_key", RequestProtocol: "openai_chat_completions"},
 		Identity: ports.CredentialIdentity{
 			OrganizationID: "org-1", CredentialRef: "credential-1", CredentialVersion: "version-1",
 		},
@@ -335,7 +335,7 @@ func TestResolveCredentialOpensOnlyStoreAuthorizedSecret(t *testing.T) {
 	service := NewRunService(store, opener, fixedClock{}, time.Minute)
 	result, err := service.ResolveCredential(context.Background(), ResolveCredentialInput{
 		RequestID: "request-credential-1", AdmissionID: "admission-1",
-		CredentialRef: "credential-1",
+		ProviderConnectionID: "credential-1",
 	})
 	if err != nil {
 		t.Fatalf("resolve credential: %v", err)
@@ -348,19 +348,32 @@ func TestResolveCredentialOpensOnlyStoreAuthorizedSecret(t *testing.T) {
 }
 
 type runStoreStub struct {
-	access        ports.AgentAccessResolution
-	accessSubject string
-	acquire       ports.AcquireRunRecord
-	admission     ports.RunAdmissionRecord
-	finish        ports.FinishRunCommand
-	finished      ports.FinishRunRecord
-	credential    ports.AdmissionCredential
-	credentialAt  time.Time
-	replayed      bool
-	replayCalls   int
-	replayOnCall  int
-	authorization ports.RunAuthorization
-	err           error
+	configuration      ports.SessionConfiguration
+	configurationQuery ports.SessionConfigurationQuery
+	setAuthorization   ports.SetAgentAuthorization
+	access             ports.AgentAccessResolution
+	accessSubject      string
+	acquire            ports.AcquireRunRecord
+	admission          ports.RunAdmissionRecord
+	finish             ports.FinishRunCommand
+	finished           ports.FinishRunRecord
+	credential         ports.AdmissionCredential
+	credentialAt       time.Time
+	replayed           bool
+	replayCalls        int
+	replayOnCall       int
+	authorization      ports.RunAuthorization
+	err                error
+}
+
+func (store *runStoreStub) GetSessionConfiguration(_ context.Context, query ports.SessionConfigurationQuery) (ports.SessionConfiguration, error) {
+	store.configurationQuery = query
+	return store.configuration, store.err
+}
+
+func (store *runStoreStub) SetAgentAuthorization(_ context.Context, input ports.SetAgentAuthorization) (int64, error) {
+	store.setAuthorization = input
+	return input.ExpectedRevision + 1, store.err
 }
 
 func (store *runStoreStub) ResolveAgentAccess(
@@ -427,7 +440,7 @@ func validRunSnapshot() ports.RunExecutionSnapshot {
 		AgentSpecRevisionID: "spec-1", ExecutionRevisionID: "execution-1",
 		RuntimeMCPSourceDigest:   strings.Repeat("a", 64),
 		AgentExecutionSpecDigest: strings.Repeat("b", 64),
-		CredentialVersion:        "version-1",
+
 		Runtime: ports.AdmittedRuntime{
 			RuntimeRevision: "runtime-1", RuntimeExecutionID: "runtime-execution-1",
 			MCPEndpoint: "http://runtime-1:8091/mcp",
@@ -438,7 +451,7 @@ func validRunSnapshot() ports.RunExecutionSnapshot {
 				BaseURL: "https://model.example/v1", Model: "model-1",
 				ContextWindow: 32768, MaxOutputTokens: 4096,
 			},
-			MaxModelRequests: 16, CredentialRef: "credential-1",
+			MaxModelRequests: 16, Provider: domain.ProviderExecution{ConnectionID: "credential-1", ProviderKey: "deepseek", CredentialMethod: "api_key", RequestProtocol: "openai_chat_completions"},
 		},
 	}
 }

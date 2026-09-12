@@ -16,13 +16,10 @@ import (
 	"strings"
 	"time"
 
-	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/propagation"
-	"go.opentelemetry.io/otel/trace"
-
 	"soft/antnest-platform/services/edge-gateway/internal/agentcontroller"
 	"soft/antnest-platform/services/edge-gateway/internal/identity"
 	"soft/antnest-platform/services/edge-gateway/internal/session"
+	"soft/antnest-platform/services/edge-gateway/internal/telemetry"
 )
 
 const (
@@ -46,6 +43,8 @@ var trustedHeaders = []string{
 	HeaderSystemRole, HeaderOrganizationRole, HeaderAgentAccessSubject,
 }
 
+var errInvalidSession = errors.New("browser session is invalid or missing")
+
 type IdentityService interface {
 	Login(context.Context, identity.LoginInput) (identity.LoginResult, error)
 	ListLoginMethods(context.Context, string) ([]identity.LoginMethod, error)
@@ -53,7 +52,6 @@ type IdentityService interface {
 	CompleteOIDCLogin(context.Context, identity.OIDCCallbackInput) (identity.OIDCCallbackResult, error)
 	Resolve(context.Context, string) (identity.Principal, error)
 	RevokeByAccessToken(context.Context, string) (identity.RevokeStatus, error)
-	Ready(context.Context) error
 }
 
 type Config struct {
@@ -79,26 +77,27 @@ type Dependencies struct {
 }
 
 type handler struct {
-	identity       IdentityService
-	agents         agentcontroller.Service
-	sessions       *session.Manager
-	requestTimeout time.Duration
-	streamLease    time.Duration
-	loginWindow    time.Duration
-	loginAdmission *loginAdmission
-	newRequestID   func() string
-	httpClient     *http.Client
-	logger         *slog.Logger
-	consoleURL     *url.URL
-	agentUIURL     *url.URL
-	agentACPURL    *url.URL
-	acpConnections chan struct{}
-	acpMessages    chan struct{}
-	adminProxy     *httputil.ReverseProxy
-	appProxy       *httputil.ReverseProxy
-	workspaceProxy *httputil.ReverseProxy
-	scimProxy      *httputil.ReverseProxy
-	mux            *http.ServeMux
+	identity         IdentityService
+	agents           agentcontroller.Service
+	sessions         *session.Manager
+	requestTimeout   time.Duration
+	streamLease      time.Duration
+	loginWindow      time.Duration
+	loginAdmission   *loginAdmission
+	newRequestID     func() string
+	httpClient       *http.Client
+	logger           *slog.Logger
+	consoleURL       *url.URL
+	agentUIURL       *url.URL
+	agentACPURL      *url.URL
+	acpConnections   chan struct{}
+	acpMessages      chan struct{}
+	stateConnections chan struct{}
+	adminProxy       *httputil.ReverseProxy
+	appProxy         *httputil.ReverseProxy
+	workspaceProxy   *httputil.ReverseProxy
+	scimProxy        *httputil.ReverseProxy
+	mux              *http.ServeMux
 }
 
 func NewHandler(config Config, dependencies Dependencies) (http.Handler, error) {
@@ -158,7 +157,8 @@ func NewHandler(config Config, dependencies Dependencies) (http.Handler, error) 
 		httpClient:   dependencies.HTTPClient, logger: dependencies.Logger,
 		consoleURL: consoleURL, agentUIURL: agentUIURL, agentACPURL: agentACPURL,
 		acpConnections: make(chan struct{}, 64), acpMessages: make(chan struct{}, 4),
-		mux: http.NewServeMux(),
+		stateConnections: make(chan struct{}, 64),
+		mux:              http.NewServeMux(),
 	}
 	h.adminProxy = h.newProxy(consoleURL, "console_unavailable", "Admin Console is unavailable", nil)
 	h.appProxy = h.newProxy(consoleURL, "console_unavailable", "Admin Console is unavailable", nil)
@@ -172,34 +172,36 @@ func NewHandler(config Config, dependencies Dependencies) (http.Handler, error) 
 
 func (h *handler) routes() {
 	h.mux.HandleFunc("GET /status", h.status)
-	h.mux.HandleFunc("POST /api/session/login", h.login)
-	h.mux.HandleFunc("POST /api/session/login-methods", h.loginMethods)
-	h.mux.HandleFunc("POST /api/session/oidc/start", h.startOIDCLogin)
-	h.mux.HandleFunc("GET /api/session", h.getSession)
-	h.mux.HandleFunc("DELETE /api/session", h.logout)
-	h.mux.HandleFunc("GET /api/app/bootstrap", h.workspaceBootstrap)
+	h.mux.HandleFunc("POST /api/session/login", telemetry.Handler(h.login))
+	h.mux.HandleFunc("POST /api/session/login-methods", telemetry.Handler(h.loginMethods))
+	h.mux.HandleFunc("POST /api/session/oidc/start", telemetry.Handler(h.startOIDCLogin))
+	h.mux.HandleFunc("GET /api/session", telemetry.Handler(h.getSession))
+	h.mux.HandleFunc("DELETE /api/session", telemetry.Handler(h.logout))
+	h.mux.HandleFunc("GET /api/app/bootstrap", telemetry.Handler(h.workspaceBootstrap))
+	h.mux.HandleFunc("GET /api/app/agents/{agent_id}/state", telemetry.Handler(h.getWorkspaceState))
+	h.mux.HandleFunc("GET /api/app/agents/{agent_id}/state/watch", telemetry.Handler(h.watchWorkspaceState))
 	for _, route := range []struct{ suffix, version string }{
 		{"acp", "v1"}, {"v1/acp", "v1"}, {"v2/acp", "v2"},
 	} {
 		h.mux.HandleFunc("GET /api/app/agents/{agent_id}/"+route.suffix,
-			func(response http.ResponseWriter, request *http.Request) {
+			telemetry.Handler(func(response http.ResponseWriter, request *http.Request) error {
 				request.SetPathValue("acp_version", route.version)
-				h.workspaceACP(response, request)
-			})
+				return h.workspaceACP(response, request)
+			}))
 		if route.version == "v1" {
 			for _, method := range []string{http.MethodPost, http.MethodDelete} {
 				h.mux.HandleFunc(method+" /api/app/agents/{agent_id}/"+route.suffix,
-					func(response http.ResponseWriter, request *http.Request) {
+					telemetry.Handler(func(response http.ResponseWriter, request *http.Request) error {
 						request.SetPathValue("acp_version", "v1")
-						h.workspaceACP(response, request)
-					})
+						return h.workspaceACP(response, request)
+					}))
 			}
 		}
 	}
 	h.mux.HandleFunc("/api/app/{path...}", func(response http.ResponseWriter, _ *http.Request) {
 		writeError(response, http.StatusNotFound, "not_found", "Resource was not found")
 	})
-	h.mux.HandleFunc("GET /protocol/oidc/callback", h.oidcCallback)
+	h.mux.HandleFunc("GET /protocol/oidc/callback", telemetry.Handler(h.oidcCallback))
 	h.mux.HandleFunc("/protocol/oidc", h.unknownIdentityProtocol)
 	h.mux.HandleFunc("/protocol/oidc/{path...}", h.unknownIdentityProtocol)
 	h.mux.Handle("/scim/v2", h.scimProxy)
@@ -207,7 +209,7 @@ func (h *handler) routes() {
 	h.mux.HandleFunc("/api/admin", func(response http.ResponseWriter, _ *http.Request) {
 		writeError(response, http.StatusNotFound, "not_found", "Resource was not found")
 	})
-	h.mux.HandleFunc("/api/admin/{path...}", h.admin)
+	h.mux.HandleFunc("/api/admin/{path...}", telemetry.Handler(h.admin))
 	h.mux.HandleFunc("/api/{path...}", func(response http.ResponseWriter, _ *http.Request) {
 		writeError(response, http.StatusNotFound, "not_found", "Resource was not found")
 	})
@@ -225,40 +227,29 @@ func (h *handler) ServeHTTP(response http.ResponseWriter, request *http.Request)
 		request.Header.Del(name)
 	}
 	setSecurityHeaders(response)
-	if spanContext := trace.SpanContextFromContext(request.Context()); spanContext.IsValid() {
-		response.Header().Set(HeaderTraceID, spanContext.TraceID().String())
-	}
 	h.mux.ServeHTTP(response, request)
 }
 
 func (h *handler) status(response http.ResponseWriter, request *http.Request) {
-	ctx, cancel := context.WithTimeout(request.Context(), h.requestTimeout)
-	defer cancel()
-	if err := h.identity.Ready(ctx); err != nil || h.agents.Ready(ctx) != nil ||
-		h.serviceReady(ctx, h.consoleURL) != nil || h.serviceReady(ctx, h.agentUIURL) != nil ||
-		h.serviceReady(ctx, h.agentACPURL) != nil {
-		writeJSON(response, http.StatusServiceUnavailable, map[string]string{"status": "not_ready"})
-		return
-	}
 	writeJSON(response, http.StatusOK, map[string]string{"status": "ready"})
 }
 
-func (h *handler) login(response http.ResponseWriter, request *http.Request) {
+func (h *handler) login(response http.ResponseWriter, request *http.Request) error {
 	var payload struct {
 		OrganizationSlug string `json:"organization_slug"`
 		Email            string `json:"email"`
 		Password         string `json:"password"`
 	}
 	if !decodeJSON(response, request, maximumLoginBytes, &payload) {
-		return
+		return nil
 	}
 	if strings.TrimSpace(payload.OrganizationSlug) == "" || strings.TrimSpace(payload.Email) == "" ||
 		payload.Password == "" {
 		writeError(response, http.StatusBadRequest, "invalid_request", "Required login field is empty")
-		return
+		return nil
 	}
 	if !h.admitLogin(response, request, payload.OrganizationSlug, payload.Email) {
-		return
+		return nil
 	}
 	ctx, cancel := context.WithTimeout(request.Context(), h.requestTimeout)
 	defer cancel()
@@ -268,65 +259,66 @@ func (h *handler) login(response http.ResponseWriter, request *http.Request) {
 	})
 	if err != nil {
 		h.writeIdentityError(response, err)
-		return
+		return err
 	}
 	if !result.Principal.Active {
 		writeError(response, http.StatusUnauthorized, "unauthenticated", "Session is inactive")
-		return
+		return nil
 	}
 	if _, err := h.sessions.Establish(response, result.AccessToken, result.ExpiresAt); err != nil {
-		h.logger.ErrorContext(request.Context(), "Failed to establish browser session", "error_class", "session_error")
 		writeError(response, http.StatusServiceUnavailable, "identity_unavailable", "Session could not be established")
-		return
+		return err
 	}
 	response.Header().Set("Cache-Control", "no-store")
 	writeJSON(response, http.StatusOK, map[string]any{
 		"principal": result.Principal, "expires_at": result.ExpiresAt,
 	})
+	return nil
 }
 
-func (h *handler) loginMethods(response http.ResponseWriter, request *http.Request) {
+func (h *handler) loginMethods(response http.ResponseWriter, request *http.Request) error {
 	var payload struct {
 		OrganizationSlug string `json:"organization_slug"`
 	}
 	if !decodeJSON(response, request, maximumLoginBytes, &payload) {
-		return
+		return nil
 	}
 	organizationSlug := strings.TrimSpace(payload.OrganizationSlug)
 	if organizationSlug == "" {
 		writeError(response, http.StatusBadRequest, "invalid_request", "Organization is required")
-		return
+		return nil
 	}
 	ctx, cancel := context.WithTimeout(request.Context(), h.requestTimeout)
 	defer cancel()
 	methods, err := h.identity.ListLoginMethods(ctx, organizationSlug)
 	if err != nil {
 		h.writePublicOIDCError(response, err)
-		return
+		return err
 	}
 	if methods == nil {
 		methods = []identity.LoginMethod{}
 	}
 	response.Header().Set("Cache-Control", "no-store")
 	writeJSON(response, http.StatusOK, map[string]any{"methods": methods})
+	return nil
 }
 
-func (h *handler) startOIDCLogin(response http.ResponseWriter, request *http.Request) {
+func (h *handler) startOIDCLogin(response http.ResponseWriter, request *http.Request) error {
 	var payload struct {
 		OrganizationSlug string `json:"organization_slug"`
 		ProviderName     string `json:"provider_name"`
 	}
 	if !decodeJSON(response, request, maximumLoginBytes, &payload) {
-		return
+		return nil
 	}
 	organizationSlug := strings.TrimSpace(payload.OrganizationSlug)
 	providerName := strings.TrimSpace(payload.ProviderName)
 	if organizationSlug == "" || providerName == "" {
 		writeError(response, http.StatusBadRequest, "invalid_request", "Organization and login method are required")
-		return
+		return nil
 	}
 	if !h.admitLogin(response, request, organizationSlug, "oidc:"+providerName) {
-		return
+		return nil
 	}
 	ctx, cancel := context.WithTimeout(request.Context(), h.requestTimeout)
 	defer cancel()
@@ -335,22 +327,23 @@ func (h *handler) startOIDCLogin(response http.ResponseWriter, request *http.Req
 	})
 	if err != nil {
 		h.writePublicOIDCError(response, err)
-		return
+		return err
 	}
 	if err := h.sessions.BindOIDC(response, result.AuthorizationURL, result.ExpiresAt); err != nil {
 		h.writePublicOIDCError(response, err)
-		return
+		return err
 	}
 	response.Header().Set("Cache-Control", "no-store")
 	writeJSON(response, http.StatusOK, result)
+	return nil
 }
 
-func (h *handler) oidcCallback(response http.ResponseWriter, request *http.Request) {
+func (h *handler) oidcCallback(response http.ResponseWriter, request *http.Request) error {
 	response.Header().Set("Cache-Control", "no-store")
 	query, err := url.ParseQuery(request.URL.RawQuery)
 	if err != nil {
 		h.redirectOIDCFailure(response, request)
-		return
+		return err
 	}
 	input := identity.OIDCCallbackInput{
 		State: strings.TrimSpace(query.Get("state")), Code: strings.TrimSpace(query.Get("code")),
@@ -358,17 +351,17 @@ func (h *handler) oidcCallback(response http.ResponseWriter, request *http.Reque
 	}
 	if input.State == "" || (input.Code == "") == (input.AuthorizationError == "") {
 		h.redirectOIDCFailure(response, request)
-		return
+		return nil
 	}
 	for _, name := range []string{"state", "code", "error"} {
 		if len(query[name]) > 1 {
 			h.redirectOIDCFailure(response, request)
-			return
+			return nil
 		}
 	}
 	if !h.sessions.MatchesOIDC(request, input.State) {
 		h.redirectOIDCFailure(response, request)
-		return
+		return nil
 	}
 	h.sessions.ClearOIDC(response)
 	ctx, cancel := context.WithTimeout(request.Context(), h.requestTimeout)
@@ -376,14 +369,14 @@ func (h *handler) oidcCallback(response http.ResponseWriter, request *http.Reque
 	result, err := h.identity.CompleteOIDCLogin(ctx, input)
 	if err != nil || result.AccessToken == "" || !result.Principal.Active {
 		h.redirectOIDCFailure(response, request)
-		return
+		return err
 	}
 	if _, err := h.sessions.Establish(response, result.AccessToken, result.ExpiresAt); err != nil {
-		h.logger.ErrorContext(request.Context(), "Failed to establish OIDC browser session", "error_class", "session_error")
 		h.redirectOIDCFailure(response, request)
-		return
+		return err
 	}
 	http.Redirect(response, request, "/", http.StatusSeeOther)
+	return nil
 }
 
 func (*handler) redirectOIDCFailure(response http.ResponseWriter, request *http.Request) {
@@ -391,34 +384,36 @@ func (*handler) redirectOIDCFailure(response http.ResponseWriter, request *http.
 	http.Redirect(response, request, "/?auth_error=oidc_login_failed", http.StatusSeeOther)
 }
 
-func (h *handler) getSession(response http.ResponseWriter, request *http.Request) {
-	_, principal, ok := h.authenticate(response, request)
-	if !ok {
-		return
+func (h *handler) getSession(response http.ResponseWriter, request *http.Request) error {
+	_, principal, err := h.authenticate(response, request)
+	if err != nil {
+		return err
 	}
 	response.Header().Set("Cache-Control", "no-store")
 	writeJSON(response, http.StatusOK, map[string]any{"principal": principal})
+	return nil
 }
 
-func (h *handler) logout(response http.ResponseWriter, request *http.Request) {
+func (h *handler) logout(response http.ResponseWriter, request *http.Request) error {
 	values, ok := h.sessions.Read(request)
 	if !ok {
 		h.sessions.Clear(response)
 		response.WriteHeader(http.StatusNoContent)
-		return
+		return nil
 	}
 	if !h.sessions.ValidCSRF(request, values) {
 		writeError(response, http.StatusForbidden, "csrf_failed", "Request could not be verified")
-		return
+		return nil
 	}
 	ctx, cancel := context.WithTimeout(request.Context(), h.requestTimeout)
 	defer cancel()
 	if _, err := h.identity.RevokeByAccessToken(ctx, values.AccessToken); err != nil {
 		writeError(response, http.StatusServiceUnavailable, "identity_unavailable", "Session could not be revoked")
-		return
+		return err
 	}
 	h.sessions.Clear(response)
 	response.WriteHeader(http.StatusNoContent)
+	return nil
 }
 
 type workspacePrincipalResponse struct {
@@ -438,17 +433,16 @@ type workspaceBootstrapResponse struct {
 	Agents    []workspaceAgentResponse   `json:"agents"`
 }
 
-func (h *handler) workspaceBootstrap(response http.ResponseWriter, request *http.Request) {
+func (h *handler) workspaceBootstrap(response http.ResponseWriter, request *http.Request) error {
 	response.Header().Set("Cache-Control", "no-store")
-	_, principal, ok := h.authenticate(response, request)
-	if !ok {
-		return
+	_, principal, err := h.authenticate(response, request)
+	if err != nil {
+		return err
 	}
 	agents, err := h.workspaceAgents(request.Context(), principal)
 	if err != nil {
-		h.logger.ErrorContext(request.Context(), "Workspace bootstrap failed", "error_class", "upstream_unavailable")
 		writeError(response, http.StatusServiceUnavailable, "workspace_unavailable", "Agent workspace is unavailable")
-		return
+		return err
 	}
 	items := make([]workspaceAgentResponse, 0, len(agents))
 	for _, agent := range agents {
@@ -463,17 +457,18 @@ func (h *handler) workspaceBootstrap(response http.ResponseWriter, request *http
 		},
 		Agents: items,
 	})
+	return nil
 }
 
-func (h *handler) workspaceACP(response http.ResponseWriter, request *http.Request) {
+func (h *handler) workspaceACP(response http.ResponseWriter, request *http.Request) error {
 	upgrade := webSocketUpgrade(request)
 	if !upgrade && request.PathValue("acp_version") != "v1" {
 		writeError(response, http.StatusBadRequest, "invalid_request", "WebSocket upgrade is required")
-		return
+		return nil
 	}
 	if (upgrade || request.Header.Get("Origin") != "") && !sameOrigin(request) {
 		writeError(response, http.StatusForbidden, "forbidden", "ACP origin is not allowed")
-		return
+		return nil
 	}
 	permits := h.acpConnections
 	if !upgrade && request.Method != http.MethodGet {
@@ -484,21 +479,20 @@ func (h *handler) workspaceACP(response http.ResponseWriter, request *http.Reque
 		defer func() { <-permits }()
 	default:
 		writeError(response, http.StatusServiceUnavailable, "agent_unavailable", "Agent connection capacity is unavailable")
-		return
+		return nil
 	}
-	values, principal, ok := h.authenticate(response, request)
-	if !ok {
-		return
+	values, principal, err := h.authenticate(response, request)
+	if err != nil {
+		return err
 	}
 	if !upgrade && stateChanging(request.Method) && !h.sessions.ValidCSRF(request, values) {
 		writeError(response, http.StatusForbidden, "csrf_failed", "Request could not be verified")
-		return
+		return nil
 	}
 	agents, err := h.workspaceAgents(request.Context(), principal)
 	if err != nil {
-		h.logger.ErrorContext(request.Context(), "Agent connection admission failed", "error_class", "upstream_unavailable")
 		writeError(response, http.StatusServiceUnavailable, "agent_unavailable", "Agent connection is unavailable")
-		return
+		return err
 	}
 	requestedID := request.PathValue("agent_id")
 	for _, agent := range agents {
@@ -510,9 +504,10 @@ func (h *handler) workspaceACP(response http.ResponseWriter, request *http.Reque
 		} else {
 			h.relayWorkspaceHTTP(response, request, agent.AgentAccessSubject)
 		}
-		return
+		return nil
 	}
 	writeError(response, http.StatusNotFound, "agent_not_found", "Agent was not found")
+	return nil
 }
 
 func (h *handler) workspaceAgents(
@@ -558,32 +553,39 @@ func headerContainsToken(values []string, wanted string) bool {
 
 func sameOrigin(request *http.Request) bool {
 	origin, err := url.Parse(strings.TrimSpace(request.Header.Get("Origin")))
-	return err == nil && (origin.Scheme == "http" || origin.Scheme == "https") &&
-		strings.EqualFold(origin.Host, request.Host)
+	scheme := "http"
+	if request.TLS != nil {
+		scheme = "https"
+	}
+	return err == nil && origin.Scheme == scheme && strings.EqualFold(origin.Host, request.Host) &&
+		origin.User == nil && origin.Path == "" && origin.RawQuery == "" && origin.Fragment == ""
 }
 
-func (h *handler) admin(response http.ResponseWriter, request *http.Request) {
-	values, principal, ok := h.authenticate(response, request)
-	if !ok {
-		return
+func (h *handler) admin(response http.ResponseWriter, request *http.Request) error {
+	values, principal, err := h.authenticate(response, request)
+	if err != nil {
+		return err
 	}
 	if !principal.Administrator() {
 		writeError(response, http.StatusForbidden, "forbidden", "Administrator access is required")
-		return
+		return nil
 	}
 	if stateChanging(request.Method) && !h.sessions.ValidCSRF(request, values) {
 		writeError(response, http.StatusForbidden, "csrf_failed", "Request could not be verified")
-		return
+		return nil
 	}
 	setPrincipalHeaders(request.Header, principal)
 	request.Header.Del("Cookie")
 	request.Header.Del("Authorization")
+	timeout := h.requestTimeout
 	if isAgentEventWatch(request) {
-		ctx, cancel := context.WithTimeout(request.Context(), h.streamLease)
-		defer cancel()
-		request = request.WithContext(ctx)
+		timeout = h.streamLease
 	}
+	ctx, cancel := context.WithTimeout(request.Context(), timeout)
+	defer cancel()
+	request = request.WithContext(ctx)
 	h.adminProxy.ServeHTTP(response, request)
+	return nil
 }
 
 func (h *handler) application(response http.ResponseWriter, request *http.Request) {
@@ -599,27 +601,26 @@ func (h *handler) application(response http.ResponseWriter, request *http.Reques
 func (h *handler) authenticate(
 	response http.ResponseWriter,
 	request *http.Request,
-) (session.Values, identity.Principal, bool) {
+) (session.Values, identity.Principal, error) {
 	response.Header().Set("Cache-Control", "no-store")
 	values, ok := h.sessions.Read(request)
 	if !ok {
 		writeError(response, http.StatusUnauthorized, "unauthenticated", "Login is required")
-		return session.Values{}, identity.Principal{}, false
+		return session.Values{}, identity.Principal{}, errInvalidSession
 	}
 	ctx, cancel := context.WithTimeout(request.Context(), h.requestTimeout)
 	defer cancel()
 	principal, err := h.identity.Resolve(ctx, values.AccessToken)
 	if err != nil && !identity.IsCode(err, "unauthenticated") && !identity.IsCode(err, "inactive_principal") {
-		h.logger.ErrorContext(request.Context(), "Session validation unavailable", "error_class", "identity_unavailable")
 		writeError(response, http.StatusServiceUnavailable, "identity_unavailable", "Session could not be verified")
-		return session.Values{}, identity.Principal{}, false
+		return session.Values{}, identity.Principal{}, err
 	}
 	if err != nil || !principal.Active {
 		h.sessions.Clear(response)
 		writeError(response, http.StatusUnauthorized, "unauthenticated", "Session is invalid or expired")
-		return session.Values{}, identity.Principal{}, false
+		return session.Values{}, identity.Principal{}, errInvalidSession
 	}
-	return values, principal, true
+	return values, principal, nil
 }
 
 func (h *handler) newProxy(
@@ -637,9 +638,6 @@ func (h *handler) newProxy(
 		request.Out.Host = target.Host
 		request.Out.Header.Del("Cookie")
 		request.Out.Header.Del("Authorization")
-		otel.GetTextMapPropagator().Inject(
-			request.Out.Context(), propagation.HeaderCarrier(request.Out.Header),
-		)
 	}
 	proxy.Transport = h.httpClient.Transport
 	if proxy.Transport == nil {
@@ -659,9 +657,6 @@ func (h *handler) newSCIMProxy(target *url.URL) *httputil.ReverseProxy {
 		request.SetXForwarded()
 		request.Out.Host = target.Host
 		request.Out.Header.Del("Cookie")
-		otel.GetTextMapPropagator().Inject(
-			request.Out.Context(), propagation.HeaderCarrier(request.Out.Header),
-		)
 	}
 	proxy.Transport = h.httpClient.Transport
 	if proxy.Transport == nil {
@@ -679,25 +674,6 @@ func (h *handler) newSCIMProxy(target *url.URL) *httputil.ReverseProxy {
 		})
 	}
 	return proxy
-}
-
-func (h *handler) serviceReady(ctx context.Context, service *url.URL) error {
-	target := service.ResolveReference(&url.URL{Path: "/status"})
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
-	if err != nil {
-		return err
-	}
-	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(request.Header))
-	response, err := h.httpClient.Do(request)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = response.Body.Close() }()
-	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
-	if response.StatusCode != http.StatusOK {
-		return fmt.Errorf("service status %d", response.StatusCode)
-	}
-	return nil
 }
 
 func parseServiceURL(raw string) (*url.URL, error) {

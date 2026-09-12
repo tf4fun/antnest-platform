@@ -1,10 +1,11 @@
 {
-  "revision": 3,
+  "revision": 4,
   "transport": "json-over-http",
   "trust_boundary": "internal-network",
   "status_values": ["ready", "degraded"],
   "builtin_policies": {
-    "deny_all": {"policy_id": "builtin/deny-all", "revision": 1}
+    "deny_all": {"policy_id": "builtin/deny-all", "revision": 1},
+    "allow_all": {"policy_id": "builtin/allow-all", "revision": 1}
   },
   "routes": [
     {"method": "GET", "path": "/status"},
@@ -13,6 +14,7 @@
     {"method": "PUT", "path": "/internal/agent-network-attachments/{agent_id}", "request_schema": "attachment-state-request.schema.json"},
     {"method": "POST", "path": "/internal/agent-networks/{agent_id}/release", "request_schema": "resource-version-request.schema.json"},
     {"method": "PUT", "path": "/internal/policies/{policy_id}/revisions/{revision}"},
+    {"method": "GET", "path": "/internal/policies/{policy_id}/revisions/{revision}"},
     {"method": "GET", "path": "/internal/agent-policy-assignments/{agent_id}"},
     {"method": "PUT", "path": "/internal/agent-policy-assignments/{agent_id}"}
   ],

@@ -293,7 +293,7 @@ by default.
 ## 10. Policy Mutation Barrier
 
 Policy assignment is Agent-scoped and independent of Runtime generation. An
-assignment update performs:
+assignment update while the Runtime attachment is open performs:
 
 1. validate and compile the immutable target revision;
 2. close that Agent's data-plane admission gate;
@@ -304,40 +304,49 @@ assignment update performs:
 7. acknowledge the control request.
 
 An acknowledged update means no later packet can be admitted by the previous
-assignment. A policy update never calls Runtime Controller or changes Runtime
+assignment. When the attachment is closed, the assignment CAS persists desired
+policy but does not open packet admission; the next explicit attachment open
+applies it. A policy update never calls Runtime Controller or changes Runtime
 generation.
 
 ## 11. Lifecycle Workflows
 
 ### 11.1 Initial creation
 
-1. Agent Controller persists the Agent and complete Runtime configuration.
-2. It calls Egress `EnsureAgentNetwork`, obtains the stable attachment, and
+1. Agent Controller persists the Agent, frozen Runtime configuration and durable
+   operation, then returns admission. Its worker alone performs the following effects.
+2. It calls Egress `EnsureAgentNetwork`, obtains the stable closed attachment, and
    copies that attachment into the Runtime configuration without reinterpretation.
 3. It calls Runtime Controller `InitializeRuntime`. Runtime Controller creates
    the Agent workspace, privately allocates generation 1, injects platform
    invariants, and creates compute.
 4. Runtime Controller observes platform health, performs one bounded Runtime
    `/status` verification, and publishes the execution identity.
-5. Agent Controller stores the returned opaque `runtime_revision`, atomically
-   publishes its ExecutionRevision, and opens
-   Run admission as defined by Stage 2.
+5. Agent Controller opens the same attachment with its own resource-version
+   CAS and verifies unchanged allocation/configuration facts. It stores the
+   opaque `runtime_revision`, atomically publishes its ExecutionRevision, and
+   opens Run admission as defined by Stage 2. Ensure alone never opens traffic.
 
-A failed Runtime build is visible immediately. The failed resource is deleted,
-but the Agent network and workspace remain available for an explicit retry.
+A definitive Initialize failure retains a non-executable `failed` Environment
+and its resource ownership; compute and workspace may still exist. Exact retry
+returns that terminal failure, not a second Initialize. Explicit Delete uses
+the retained revision and removes owned compute and workspace. An unpublished
+Agent binding is not proof of resource absence. Uncertain effects instead retain
+the operation for exact-request reconciliation.
 
 ### 11.2 Explicit Runtime replacement
 
 1. Agent Controller closes Run admission and waits for the active Run to finish.
-2. It fences the Agent network, calls Egress `ResetAgentFlows`, and requires
-   flow/conntrack cleanup.
+2. It closes the Runtime attachment with attachment resource-version CAS.
+   Egress owns packet fencing and flow/conntrack cleanup as one barrier, without
+   changing desired network policy.
 3. It calls Runtime Controller `UpdateRuntime` with the current
    `runtime_revision` and complete replacement configuration.
 4. Runtime Controller removes the current compute resource, privately allocates
    the next generation, reuses the workspace, and creates verified replacement
    compute.
-5. Agent Controller stores the returned revision, calls Egress
-   `EnsureAgentNetwork` to reopen admission, atomically publishes the new Agent
+5. Agent Controller stores the returned revision, explicitly opens the same
+   attachment with CAS after readiness, atomically publishes the new Agent
    ExecutionRevision, and reopens Run admission.
 
 There is intentionally no compute resource during Runtime Controller's
@@ -346,12 +355,13 @@ compute leaves Agent Run admission closed.
 
 ### 11.3 Disable and enable
 
-Disable closes Run admission and calls `DisableRuntime` with the current
-revision. Runtime Controller removes compute and retains workspace. Enable
-first obtains the latest complete configuration and network attachment, then
-calls `EnableRuntime`; Runtime Controller verifies workspace ownership,
-allocates a new private generation, and creates verified compute. Neither
-command is equivalent to Agent deletion.
+Disable closes Run admission, drains active work, closes the network attachment,
+and calls `DisableRuntime` with the current revision. Runtime Controller removes
+compute and retains workspace. Enable ensures the closed attachment and uses
+the Agent's frozen configuration for `EnableRuntime`; Runtime Controller verifies
+workspace ownership, allocates a new private generation, and creates verified
+compute. Agent Controller opens the attachment and publishes the new executable
+binding only after readiness. Neither command is equivalent to Agent deletion.
 
 ### 11.4 Unexpected Runtime restart
 
@@ -374,8 +384,9 @@ command is equivalent to Agent deletion.
 4. Call Runtime Controller `DeleteRuntime` with the current revision. Runtime
    Controller deletes compute and then its owned workspace as one lifecycle
    operation.
-5. Mark the Agent deleted.
-6. Release its network address into Egress quarantine.
+5. Release the network allocation into Egress quarantine with its network
+   resource-version CAS; Egress requires the attachment to remain closed.
+6. Publish `deleted` only after Runtime absence and network release are proven.
 
 An address is never released while platform deletion is ambiguous.
 
@@ -396,9 +407,8 @@ Runtime Controller
 Runtime Egress
   EnsureAgentNetwork(agent_id)
   InspectAgentNetwork(agent_id)
-  ResetAgentFlows(agent_id)
-  FenceAgentNetwork(agent_id)
-  ReleaseAgentNetwork(agent_id)
+  SetAgentNetworkAttachment(agent_id, state, expected_resource_version)
+  ReleaseAgentNetwork(agent_id, expected_resource_version)
   CreatePolicyRevision(policy_id, revision, spec)
   AssignAgentPolicy(agent_id, policy_ref, expected_resource_version)
 ```
@@ -406,6 +416,9 @@ Runtime Egress
 The Agent Controller and ACP surfaces are defined only by
 [`stage-2-agent-and-acp.md`](stage-2-agent-and-acp.md). Runtime MCP and Runtime
 `/status` remain their standard internal HTTP interfaces.
+The names above describe business operations; exact Egress HTTP paths and
+separate attachment/network CAS versions are in its
+[control contract](../contracts/egress/control-api.md).
 
 Runtime observations and Agent events use monotonic sequence numbers. Watch may
 disconnect, duplicate, or lag; List plus sequence and `InspectRuntime` provide
@@ -568,6 +581,18 @@ components from absorbing those future responsibilities.
 ## 17. Acceptance
 
 ### 17.1 Implemented Stage 1A/1B
+
+The standalone `scripts/e2e-stage1.sh` harness acts as the lifecycle caller;
+it must follow the same Egress contract as Agent Controller. Allocation and an
+allow policy do not open traffic. After Runtime readiness, the harness opens
+the attachment explicitly, exercises policy changes without recreating Runtime,
+then closes the attachment and removes compute before releasing the address.
+Network allocation, attachment, and policy-assignment CAS versions are distinct;
+the release request uses the network version, never the policy-assignment version.
+Control-plane isolation is checked after successful open-attachment outbound
+requests, so a globally closed gate cannot make it pass. Closing an already-open
+attachment must also block a new outbound request before compute is removed;
+this check alone does not claim established-connection drain coverage.
 
 - Repeating `EnsureAgentNetwork` returns one stable address for an Agent.
 - Two Runtime UDP peers using one Agent address receive replies for their own

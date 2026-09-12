@@ -106,7 +106,13 @@ export class SessionService implements Pick<
       session.id,
       input.replayFromStart ? 0 : undefined,
     );
-    return { replay: [...snapshot.events, snapshot.state], sequence: snapshot.sequence };
+    return {
+      replay: [
+        ...snapshot.events.filter((event) => event.kind !== "configuration"),
+        snapshot.state,
+      ],
+      sequence: snapshot.sequence,
+    };
   }
 
   public async closeSession(

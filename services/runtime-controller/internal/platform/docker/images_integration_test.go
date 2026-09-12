@@ -2,12 +2,9 @@ package docker
 
 import (
 	"context"
-	"errors"
 	"os"
 	"testing"
 	"time"
-
-	"soft/antnest-platform/services/runtime-controller/internal/platform"
 )
 
 func TestInstalledImageResolution(t *testing.T) {
@@ -40,7 +37,8 @@ func TestInstalledImageResolution(t *testing.T) {
 	if err != nil || pinned != result.ImageRef {
 		t.Fatalf("resolved image cannot be addressed by its immutable ID: %q, %v", pinned, err)
 	}
-	if _, err := driver.ResolveImage(ctx, result.ImageRef); !errors.Is(err, platform.ErrInvalidImageReference) {
-		t.Fatalf("image picker accepted a bare image ID: %v", err)
+	byID, err := driver.ResolveImage(ctx, result.ImageRef)
+	if err != nil || byID.ImageRef != result.ImageRef {
+		t.Fatalf("immutable image lookup changed identity: %+v %v", byID, err)
 	}
 }

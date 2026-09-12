@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { complete, guidance, skillSummary, skillBody } from "./model.mjs";
-import { inspectTrace } from "./trace.mjs";
+import { inspectTrace, verifyTraces } from "./trace.mjs";
 
 function payload(phase, results = []) {
   const server = phase === "managed-rebuilt" ? "beta" : "alpha";
@@ -10,7 +10,7 @@ function payload(phase, results = []) {
     messages: [
       {
         role: "system",
-        content: `Current Runtime information ${guidance(phase === "managed-fresh" || phase === "managed-rebuilt" ? 2 : 1)} ${skillSummary} .antnest/skills/fixture/SKILL.md`,
+        content: `Current Runtime information ${guidance(["managed-fresh", "managed-rebuilt", "managed-draining"].includes(phase) ? 2 : 1)} ${skillSummary} .antnest/skills/fixture/SKILL.md`,
       },
       { role: "user", content: phase },
       ...results.map((content) => ({ role: "tool", content })),
@@ -27,6 +27,35 @@ const echo = (phase, calls) =>
     supervisor_env: false,
     launcher_env: false,
   });
+
+test("a draining Run uses the same alpha process before and after the rebuild barrier", () => {
+  const phase = "managed-draining";
+  for (const results of [[], [echo(phase, 3)]]) {
+    const response = complete(payload(phase, results));
+    assert.equal(response.choices[0].finish_reason, "tool_calls");
+    assert.equal(
+      response.choices[0].message.tool_calls[0].function.name,
+      "mcp__alpha__echo",
+    );
+  }
+  assert.equal(
+    complete(payload(phase, [echo(phase, 3), echo(phase, 4)])).choices[0]
+      .finish_reason,
+    "stop",
+  );
+  for (const results of [
+    [echo(phase, 1)],
+    [echo(phase, 3), echo(phase, 1)],
+    [echo(phase, 4), echo(phase, 3)],
+  ])
+    assert.throws(
+      () => complete(payload(phase, results)),
+      /restarted or replayed/,
+    );
+  const switched = payload(phase);
+  switched.tools = [{ function: { name: "mcp__beta__echo" } }];
+  assert.throws(() => complete(switched), /managed tool missing/);
+});
 
 test("model fixture rejects appended stale guidance and duplicate Runtime blocks", () => {
   const mixed = payload("managed-fresh");
@@ -113,11 +142,52 @@ function trace() {
       span("6", "1", "model.complete", "acp"),
       span("7", "1", "mcp.tools.list", "acp"),
       span("8", "7", "HTTP POST /mcp", "runtime"),
-      span("5", "3", "HTTP POST /mcp", "runtime"),
+      span("5", "3", "runtime.mcp.tool", "runtime"),
     ],
   };
 }
 const requestEvidence = [{ phase: "first", model_span_id: "6" }];
+test("Tool span must descend from the actual dispatch, not another Runtime request", () => {
+  const value = trace();
+  const tool = value.spans.find((span) => span.spanID === "5");
+  value.spans.push({
+    ...tool,
+    spanID: "http-child",
+    operationName: "HTTP POST /mcp",
+  });
+  tool.references = [{ refType: "CHILD_OF", spanID: "1" }];
+  assert.throws(
+    () => inspectTrace(value, requestEvidence),
+    /Runtime Tool descendant/,
+  );
+});
+test("trace sampling includes a delayed duplicate before declaring convergence", async (t) => {
+  let samples = 0;
+  t.mock.method(globalThis, "fetch", async () => {
+    const value = trace();
+    if (++samples > 1) {
+      value.spans.push({
+        ...value.spans.find((span) => span.spanID === "3"),
+        spanID: "duplicate-call",
+      });
+      value.spans.push({
+        ...value.spans.find((span) => span.spanID === "5"),
+        spanID: "duplicate-runtime",
+        references: [{ refType: "CHILD_OF", spanID: "duplicate-call" }],
+      });
+    }
+    return Response.json({ data: [value] });
+  });
+  const result = await verifyTraces("http://fixture", [
+    { ...requestEvidence[0], trace_id: "fixture" },
+  ]);
+  assert.equal(
+    result[0].tool_calls,
+    2,
+    "a partial first sample hid duplicate dispatch",
+  );
+  assert.equal(samples, 4);
+});
 test("execution trace evidence rejects caller-supplied cookies and encoded secrets", () => {
   const secret = "acp-session-cookie/value+canary";
   assert.equal(

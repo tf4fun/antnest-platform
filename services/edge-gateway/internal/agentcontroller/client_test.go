@@ -10,6 +10,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"soft/antnest-platform/services/edge-gateway/internal/telemetry"
 )
 
 func TestClientPropagatesTraceContext(t *testing.T) {
@@ -19,7 +20,7 @@ func TestClientPropagatesTraceContext(t *testing.T) {
 		_, _ = response.Write([]byte(`{"agents":[],"next_cursor":null}`))
 	}))
 	defer server.Close()
-	client, err := NewClient(server.URL, server.Client())
+	client, err := NewClient(server.URL, &http.Client{Transport: telemetry.NewHTTPTransport(server.Client().Transport)})
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}

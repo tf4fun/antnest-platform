@@ -3,12 +3,9 @@ package config
 import (
 	"fmt"
 	"net/url"
-	"regexp"
 	"strings"
 	"time"
 )
-
-var runtimeDigest = regexp.MustCompile(`^(?:sha256:[0-9a-fA-F]{64}|[^@\s]+@sha256:[0-9a-fA-F]{64})$`)
 
 type Config struct {
 	ListenAddress          string
@@ -44,9 +41,6 @@ func Load(lookup func(string) string) (Config, error) {
 	}
 	if err := serviceURL("ANTNEST_AGENT_CONTROLLER_URL", config.AgentControllerURL); err != nil {
 		return Config{}, err
-	}
-	if config.DefaultRuntimeImageRef != "" && !runtimeDigest.MatchString(config.DefaultRuntimeImageRef) {
-		return Config{}, fmt.Errorf("ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF must be an immutable digest reference")
 	}
 	return config, nil
 }

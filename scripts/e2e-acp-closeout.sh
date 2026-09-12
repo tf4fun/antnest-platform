@@ -11,6 +11,8 @@ esac
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 export ANTNEST_E2E_DEADLINE_MS=$(node -e 'process.stdout.write(String(Date.now()+900000))')
 docker() { node "$root/scripts/acp-closeout/docker.mjs" "$@"; }
+docker_cmd() { docker "$@"; }
+. "$root/scripts/acp-closeout/container-state.sh"
 acp=${ANTNEST_E2E_ACP_CONTAINER:?parent ACP container required}
 [ -n "${ANTNEST_E2E_RUN_ID:-}" ] || exit 1
 [ "$(docker inspect --format '{{index .Config.Labels "io.antnest.e2e-run-id"}}' "$acp")" = "$ANTNEST_E2E_RUN_ID" ]
@@ -27,7 +29,7 @@ cleanup() {
   if [ "$status" -ne 0 ]; then
     docker logs --tail=80 "$client" >&2 || true
     docker logs --tail=80 "$model" >&2 || true
-    docker logs --tail=80 "$acp" >&2 || true
+    printf 'Raw ACP service logs omitted; parent harness summarizes diagnostics.\n' >&2
   fi
   docker rm -f "$client" "$model" >/dev/null 2>&1 || status=1
   rm -rf -- "${checkpoints:?}"
@@ -49,7 +51,7 @@ docker create --name "$client" --label "com.docker.compose.project=$COMPOSE_PROJ
 docker network connect "${COMPOSE_PROJECT_NAME}_agent-acp-database" "$client"
 docker start "$client" >/dev/null
 
-for step in 1 2 3 4 5 6; do
+for step in 1 2 3 4 5 6 7 8; do
   attempt=0
   until [ -f "$checkpoints/request-$step" ]; do
     [ "$(docker inspect --format '{{.State.Running}}' "$client")" = true ] || exit 1
@@ -57,6 +59,7 @@ for step in 1 2 3 4 5 6; do
     [ "$attempt" -le 180 ] || { echo "Checkpoint $step timeout" >&2; exit 1; }
     sleep 1
   done
+  node "$root/scripts/acp-closeout/inflight-barrier.mjs" "$checkpoints/request-$step" >"$checkpoints/proof-$step"
   previous=$(docker inspect --format '{{.State.StartedAt}}' "$acp")
   docker kill --signal KILL "$acp" >/dev/null
   [ "$(docker inspect --format '{{.State.ExitCode}}' "$acp")" = 137 ]
@@ -69,13 +72,30 @@ for step in 1 2 3 4 5 6; do
   done
   [ "$(docker inspect --format '{{.State.StartedAt}}' "$acp")" != "$previous" ]
   touch "$checkpoints/done-$step"
-  printf 'ACP closeout restart %s/6 verified (SIGKILL 137, new process ready)\n' "$step" >&2
+  printf 'ACP closeout restart %s/8 verified (SIGKILL 137, new process ready)\n' "$step" >&2
+  case "$step" in
+    4|8)
+      attempt=0
+      until [ -f "$checkpoints/retire-request-$step" ]; do
+        [ "$(docker inspect --format '{{.State.Running}}' "$client")" = true ] || exit 1
+        attempt=$((attempt + 1))
+        [ "$attempt" -le 150 ] || { echo 'Rebuild retirement checkpoint timeout' >&2; exit 1; }
+        sleep 1
+      done
+      node "$root/scripts/acp-closeout/inflight-barrier.mjs" "$checkpoints/proof-$step" retired
+      touch "$checkpoints/retired-$step"
+      ;;
+  esac
 done
 attempt=0
-while [ "$(docker inspect --format '{{.State.Running}}' "$client")" = true ]; do
+while :; do
+  state=$(client_state "$client")
+  if [ "$state" != running ]; then
+    [ "$state" = exited:0 ] || exit 1
+    break
+  fi
   attempt=$((attempt + 1))
   [ "$attempt" -le 60 ] || { echo 'ACP client did not settle' >&2; exit 1; }
   sleep 1
 done
-[ "$(docker inspect --format '{{.State.ExitCode}}' "$client")" = 0 ]
 docker logs "$client"

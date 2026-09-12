@@ -23,7 +23,9 @@ describe("DurableRunEvents", () => {
     );
     const repository: RunEventRepository = {
       appendAgentMessage: vi.fn(),
+      appendPlan: vi.fn(),
       appendAgentThought: vi.fn(),
+      appendToolProgress: vi.fn(),
       appendRejectedToolCall: vi.fn(),
       appendUsage: vi.fn(),
       startToolAttempt,
@@ -72,7 +74,9 @@ describe("DurableRunEvents", () => {
           content: [{ type: "text", text: "done" }],
         }),
       ),
+      appendPlan: vi.fn(),
       appendAgentThought: vi.fn(),
+      appendToolProgress: vi.fn(),
       appendRejectedToolCall: vi.fn(),
       appendUsage: vi.fn(),
       startToolAttempt: vi.fn(),
@@ -100,7 +104,9 @@ describe("DurableRunEvents", () => {
   it("classifies repository failure separately from best-effort publication", async () => {
     const repository: RunEventRepository = {
       appendAgentMessage: vi.fn(() => Promise.reject(new Error("database unavailable"))),
+      appendPlan: vi.fn(),
       appendAgentThought: vi.fn(),
+      appendToolProgress: vi.fn(),
       appendRejectedToolCall: vi.fn(),
       appendUsage: vi.fn(),
       startToolAttempt: vi.fn(),

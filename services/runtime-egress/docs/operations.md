@@ -36,6 +36,7 @@ NAT and DNS upstream traffic.
 | `ANTNEST_EGRESS_COMMAND_TIMEOUT` | no | `5s` | Bound for Linux reconciliation and cleanup commands |
 | `RUST_LOG` | no | service default | Structured log filter for Runtime Egress targets only |
 | `OTEL_SDK_DISABLED` | no | `true` | Disable OTLP export while retaining local correlation |
+| `ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT` | no | `false` | `true` captures complete control RPC JSON, potentially including secrets; packet traffic and HTTP headers remain excluded |
 | `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | no | `http://127.0.0.1:4318/v1/traces` | Preferred OTLP HTTP traces endpoint |
 | `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | no | `http://127.0.0.1:4318/v1/metrics` | Preferred OTLP HTTP metrics endpoint |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | no | none | Fallback OTLP HTTP base URL; `/v1/traces` and `/v1/metrics` are appended |
@@ -134,14 +135,30 @@ The listener opens only after PostgreSQL snapshot loading, UDP bind, TUN, DNS,
 and kernel reconciliation succeed, so `data_plane_ready=true` summarizes those
 cold-start prerequisites rather than exposing a second set of component
 states. `control_plane_ready` describes shared control infrastructure, not the
-health of every Agent. A warm database outage or shared control-path failure
-marks it false while the last published data plane remains ready. A cleanup
+health of every Agent. Repository connection health is its runtime authority:
+loss of all validated live database connections marks it false while the last
+published data plane remains ready. Losing one pooled connection, a pool wait
+timeout or an individual RPC error is not automatically a global outage.
+Ordinary Agent reads are not proof of a packet-gate repair. A cleanup
 failure fences only the affected Agent and leaves global readiness unchanged;
 its request error, health event, and aggregate fenced-Agent metric expose the
-local degradation. A later successful shared control operation restores global
-control readiness.
+local degradation. A newly validated live database connection restores global
+control readiness; successful RPC results alone do not change that state.
 `snapshot_revision` is a process-local monotonic publication counter, not a
 durable policy version.
+
+For policy inspection, read the Agent assignment and then
+`GET /internal/policies/{encoded_policy_id}/revisions/{revision}`. The returned
+`spec` and `digest` describe that exact immutable revision; neither the policy
+name nor the latest revision is a substitute. Built-in IDs contain `/` and must
+be encoded as a single segment, for example `builtin%2Fallow-all`.
+
+After a failed mutation, a successful assignment GET is not proof that traffic
+has resumed. Retry the original versioned mutation to settle its barrier; a
+version conflict requires a fresh read and an explicit decision. Ensure may
+restore an already-open attachment, and attachment open may restore a hard
+fence, but both must finish flow/conntrack cleanup first. Healthy Ensure does
+not reset connections. Do not use global `/status` to infer per-Agent application.
 
 ## 5. PostgreSQL
 
@@ -197,12 +214,15 @@ part of these Egress operations, not a public lifecycle RPC.
 
 ## 7. Telemetry
 
-Control RPC requests produce OpenTelemetry spans and low-cardinality request
-metrics, and carry their database and kernel work as part of that request span.
-The OTLP trace layer accepts only the
-control HTTP module and only `/internal/` business routes. `/status`, packet
-transport, DNS forwarding, packet rejection, flow maintenance, and packet
-events never enter OTLP traces.
+Control HTTP requests produce SERVER spans and low-cardinality request metrics.
+The common middleware includes `/status` and keeps the incoming W3C parent even
+for successful probes. PostgreSQL query/execute and transaction API boundaries
+produce CLIENT children with SQL text, never bind arguments or rows; SQL capture
+is independent of the RPC content switch. Unconfirmed drop rollback is not success;
+kernel cleanup remains within the control request. The OTLP target allowlist
+accepts only control HTTP and the own-database observation module. Packet
+transport, DNS forwarding, packet rejection and flow maintenance never create
+spans. See [Control Observability](observability.md) for projections and limits.
 
 Callers propagate W3C `traceparent` and optional `tracestate`; invalid context is
 ignored and `baggage` is not consumed. Each control span and completion log
@@ -251,7 +271,8 @@ labels.
 The stderr layer accepts only `antnest_runtime_egress` crate targets, so
 `RUST_LOG` cannot enable PostgreSQL, HTTP, or other dependency payload logs.
 Control RPC failures remain control-plane spans and structured logs. Background
-cleanup, database availability, and task failures remain structured local logs.
+cleanup and task failures retain their structured local logs; own-database
+operations, including recovery/sweeps, use the same database boundary.
 Packet payloads never enter either signal.
 
 Agent IDs, Runtime peer addresses, and destination addresses are not metric
@@ -267,10 +288,11 @@ labels.
 - Runtime does not need rebuilding after Egress restart; its next outbound
   connection establishes new ephemeral flow state.
 - Address quarantine and policy assignment survive restart.
-- A warm PostgreSQL disconnect immediately marks control readiness degraded.
-  The next control operation reconnects,
-  revalidates migrations and seed data, and restores control readiness on
-  success; packet forwarding never waits for that recovery.
+- Losing all validated live PostgreSQL connections marks control readiness
+  degraded; an individual connection/Agent SQL failure does not necessarily
+  change shared readiness. A subsequent control operation reconnects,
+  revalidates migrations and seed data. The resulting validated connection
+  restores repository health; packet forwarding never waits for that recovery.
 
 ## 9. Development Admission
 
@@ -282,6 +304,15 @@ cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked
 docker build -f services/runtime-egress/Dockerfile -t antnest/runtime-egress:local .
 ```
+
+The policy-read HTTP tests cover exact revisions, built-in opaque IDs, stable
+errors, side-effect-free inspection, and incoming W3C parent/error attributes.
+The control-service tests inject cleanup failures and verify recovery with
+actual data-plane packet decisions, including a failed allow request that must
+not override the persisted deny policy. From the platform root,
+`make test-egress-postgres` additionally checks persisted revisions through the
+HTTP router after database reconnection. Use a test-owned Compose project and
+port for this destructive test-database profile, then remove its resources.
 
 Linux container acceptance additionally requires real TUN creation, real
 PostgreSQL migrations, policy allow/deny traffic, flow reset, restart recovery,

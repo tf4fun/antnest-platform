@@ -116,8 +116,8 @@ function TemplateList() {
       const servers = managedMCPInput(data);
       await api.createTemplate({
         name,
-        model_profile_revision_id: String(
-          data.get("model_profile_revision_id") ?? "",
+        model_profile_id: String(
+          data.get("model_profile_id") ?? "",
         ),
         system_prompt: String(data.get("system_prompt") ?? ""),
         max_model_requests: positiveInteger(data.get("max_model_requests"), 32),
@@ -163,10 +163,10 @@ function TemplateList() {
     defaultsAvailable,
     defaultsRetryable: defaults.status === "error" ? defaults.failure.retryable : undefined,
   });
-  const modelsByRevisionID = new Map(models.map((model) => [model.revision_id, model]));
+  const modelsByID = new Map(models.map((model) => [model.model_profile_id, model]));
   const normalized = query.trim().toLowerCase();
   const filtered = (items ?? []).filter((template) => {
-    const model = modelsByRevisionID.get(template.model_profile_revision_id);
+    const model = modelsByID.get(template.model_profile_id);
     return [template.name, model?.display_name ?? ""]
       .some((value) => value.toLowerCase().includes(normalized));
   });
@@ -220,7 +220,7 @@ function TemplateList() {
           {filtered.length === 0 ? <Empty title="No matching templates" detail="Try a different template or model name." /> : <>
           <MobileResourceList label="Agent templates">
             {filtered.map((template) => {
-              const model = modelsByRevisionID.get(template.model_profile_revision_id);
+              const model = modelsByID.get(template.model_profile_id);
               return (
                 <MobileResourceItem key={`${template.template_id}:${template.revision}`}>
                   <div className="flex min-w-0 items-start gap-3">
@@ -237,7 +237,7 @@ function TemplateList() {
                   <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 border-t border-border pt-3 text-sm">
                     <div className="col-span-2 min-w-0">
                       <dt className="text-xs text-muted-foreground">Model profile</dt>
-                      <dd className="mt-1 truncate font-mono text-xs">{model?.display_name ?? template.model_profile_revision_id}</dd>
+                      <dd className="mt-1 truncate font-mono text-xs">{model?.display_name ?? template.model_profile_id}</dd>
                     </div>
                     <div>
                       <dt className="text-xs text-muted-foreground">Revision</dt>
@@ -287,7 +287,7 @@ function TemplateList() {
                     </div>
                   </td>
                   <td className="px-3 py-3 font-mono text-xs text-muted-foreground">
-                    {modelsByRevisionID.get(template.model_profile_revision_id)?.display_name ?? template.model_profile_revision_id}
+                    {modelsByID.get(template.model_profile_id)?.display_name ?? template.model_profile_id}
                   </td>
                   <td className="px-3 py-3">{template.revision}</td>
                   <td className="px-3 py-3">
@@ -328,12 +328,12 @@ function TemplateList() {
             <Input name="name" placeholder="General assistant" required />
           </Field>
           <Field label="Model">
-            <Select name="model_profile_revision_id" required defaultValue="">
+            <Select name="model_profile_id" required defaultValue="">
               <option value="" disabled>
                 Select a model
               </option>
               {models.map((model) => (
-                <option value={model.revision_id} key={model.revision_id}>
+                <option value={model.model_profile_id} key={model.model_profile_id}>
                   {model.display_name} · {model.model.model}
                 </option>
               ))}
@@ -393,6 +393,7 @@ function TemplateDetail({ templateID, revisionID }: { templateID: string; revisi
   const templateRequest = useRef(0);
   const referencedModelRequest = useRef(0);
   const [referencedModelState, setReferencedModelState] = useState<ResourceState<ModelProfile>>({ status: "loading" });
+  const [selectedModelID, setSelectedModelID] = useState<string>();
   const {
     items: models,
     hasMore: modelsHaveMore,
@@ -432,11 +433,11 @@ function TemplateDetail({ templateID, revisionID }: { templateID: string; revisi
     }
   }, [templateID, revisionID]);
 
-  const loadReferencedModel = useCallback(async (modelRevisionID: string) => {
+  const loadReferencedModel = useCallback(async (modelProfileID: string) => {
     const request = referencedModelRequest.current + 1;
     referencedModelRequest.current = request;
     setReferencedModelState({ status: "loading" });
-    const state = await captureResource(() => api.modelRevision(modelRevisionID));
+    const state = await captureResource(() => api.model(modelProfileID));
     if (referencedModelRequest.current === request) setReferencedModelState(state);
   }, []);
 
@@ -445,12 +446,21 @@ function TemplateDetail({ templateID, revisionID }: { templateID: string; revisi
     if (revisionID === undefined) void loadModels();
   }, [load, loadModels, revisionID]);
   useEffect(() => {
-    if (template) void loadReferencedModel(template.model_profile_revision_id);
+    if (template) void loadReferencedModel(template.model_profile_id);
   }, [loadReferencedModel, template]);
+
+  const referencedModel = referencedModelState.status === "ready" ? referencedModelState.data : undefined;
+  const choices = templateModelChoices(models, referencedModel);
+  const modelID = selectedModelID ?? template?.model_profile_id ?? "";
+  const modelSelected = choices.some((model) => model.model_profile_id === modelID);
 
   async function revise(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!template || revisionID !== undefined) return;
+    if (!template || revisionID !== undefined || pending) return;
+    if (!modelSelected) {
+      setFormError("Select an available model.");
+      return;
+    }
     const data = new FormData(event.currentTarget);
     const imageRef = data.get("image_mode") === "custom"
       ? String(data.get("image_ref") ?? "").trim() : template.runtime.image_ref;
@@ -464,7 +474,7 @@ function TemplateDetail({ templateID, revisionID }: { templateID: string; revisi
     try {
       const revised = await api.reviseTemplate(template.template_id, {
         name: String(data.get("name") ?? "").trim(),
-        model_profile_revision_id: String(data.get("model_profile_revision_id") ?? ""),
+        model_profile_id: modelID,
         system_prompt: String(data.get("system_prompt") ?? ""),
         max_model_requests: positiveInteger(data.get("max_model_requests"), template.max_model_requests),
         runtime: {
@@ -474,7 +484,7 @@ function TemplateDetail({ templateID, revisionID }: { templateID: string; revisi
         },
       });
       const selectedModel = models.find(
-        (model) => model.revision_id === revised.model_profile_revision_id,
+        (model) => model.model_profile_id === revised.model_profile_id,
       );
       setTemplate(revised);
       if (selectedModel) setReferencedModelState({ status: "ready", data: selectedModel });
@@ -501,17 +511,15 @@ function TemplateDetail({ templateID, revisionID }: { templateID: string; revisi
     );
   }
   const historical = revisionID !== undefined;
-  const referencedModel = referencedModelState.status === "ready" ? referencedModelState.data : undefined;
-  const hasHistoricalModel = !models.some((model) => model.revision_id === template.model_profile_revision_id);
   const facts: Array<[string, ReactNode]> = [
-    ["Model", referencedModel ? (
+    ["Current model", referencedModel ? (
       <a
         className="font-medium hover:text-primary hover:underline"
-        href={`#models/${referencedModel.model_profile_id}/revisions/${referencedModel.revision_id}`}
+        href={`#models/${encodeURIComponent(referencedModel.model_profile_id)}`}
       >
         {referencedModel.display_name} · {referencedModel.model.model} · revision {referencedModel.revision}
       </a>
-    ) : referencedModelState.status === "loading" ? "Loading model revision" : "Model revision unavailable"],
+    ) : referencedModelState.status === "loading" ? "Loading current model" : "Current model unavailable"],
     [historical ? "Viewed revision" : "Current revision", String(template.revision)],
     ["Maximum requests", String(template.max_model_requests)],
     ["Runtime memory", bytes(template.runtime.resources.memory_bytes)],
@@ -529,11 +537,11 @@ function TemplateDetail({ templateID, revisionID }: { templateID: string; revisi
           : "The current immutable Agent configuration head used for new builds and explicit rebuilds."}
         actions={historical
           ? <><Badge value="historical" /><Button asChild variant="secondary"><a href={`#templates/${templateID}`}>View current revision</a></Button></>
-          : <><Badge value={template.enabled ? "enabled" : "disabled"} /><Button onClick={() => { setFormError(""); setSuccessMessage(""); setOpen(true); }}><Pencil className="h-4 w-4" />Create revision</Button></>}
+          : <><Badge value={template.enabled ? "enabled" : "disabled"} /><Button onClick={() => { setFormError(""); setSuccessMessage(""); setSelectedModelID(undefined); setOpen(true); }}><Pencil className="h-4 w-4" />Create revision</Button></>}
       />
       {successMessage ? <SuccessNotice message={successMessage} onDismiss={() => setSuccessMessage("")} /> : null}
-      {referencedModelState.status === "error" ? <ResourceFailureNotice failure={referencedModelState.failure} message={`Referenced model revision could not be loaded: ${referencedModelState.failure.message}`} retryLabel="Retry model revision" onRetry={() => void loadReferencedModel(template.model_profile_revision_id)} /> : null}
-      {modelFailure ? <ResourceFailureNotice failure={modelFailure} message={`Model revision choices could not be loaded: ${modelFailure.message}`} retryLabel="Retry model choices" onRetry={retryModels} /> : null}
+      {referencedModelState.status === "error" ? <ResourceFailureNotice failure={referencedModelState.failure} message={`Current model could not be loaded: ${referencedModelState.failure.message}`} retryLabel="Retry current model" onRetry={() => void loadReferencedModel(template.model_profile_id)} /> : null}
+      {modelFailure ? <ResourceFailureNotice failure={modelFailure} message={`Model choices could not be loaded: ${modelFailure.message}`} retryLabel="Retry model choices" onRetry={retryModels} /> : null}
       <Section title="Configuration">
         <div className="grid gap-px overflow-hidden rounded-md border border-border bg-border shadow-sm sm:grid-cols-2 lg:grid-cols-3">
           {facts.map(([label, value]) => <div className="bg-white p-4" key={label}><p className="text-xs text-muted-foreground">{label}</p><p className="mt-1 break-words text-sm font-medium">{value}</p></div>)}
@@ -551,9 +559,9 @@ function TemplateDetail({ templateID, revisionID }: { templateID: string; revisi
           {formError ? <ErrorNotice message={formError} /> : null}
           <Field label="Template name"><Input name="name" defaultValue={template.name} required /></Field>
           <Field label="Model">
-            <Select name="model_profile_revision_id" defaultValue={template.model_profile_revision_id} required>
-              {hasHistoricalModel ? <option value={template.model_profile_revision_id}>Current historical model revision</option> : null}
-              {models.map((model) => <option value={model.revision_id} key={model.revision_id}>{model.display_name} · {model.model.model} · revision {model.revision}</option>)}
+            <Select name="model_profile_id" value={modelID} onChange={(event) => setSelectedModelID(event.target.value)} required disabled={pending}>
+              {!modelSelected ? <option value={modelID} disabled>{referencedModelState.status === "loading" ? "Loading current model" : "Select an available model"}</option> : null}
+              {choices.map((model) => <option value={model.model_profile_id} key={model.model_profile_id}>{model.display_name} · {model.model.model}</option>)}
             </Select>
           </Field>
           <ListPagination
@@ -567,9 +575,20 @@ function TemplateDetail({ templateID, revisionID }: { templateID: string; revisi
           <Field label="Maximum model requests"><Input name="max_model_requests" type="number" min="1" max="128" defaultValue={template.max_model_requests} required /></Field>
           <RuntimeImageChoice image={template.runtime.image_ref} source={template.runtime.image_source} inheritedLabel="Keep current image" />
           <ManagedMCPEditor initial={template.runtime.mcp_servers} disabled={pending} />
-          <div className="flex justify-end gap-2"><Button disabled={pending} type="button" variant="secondary" onClick={() => setOpen(false)}>Cancel</Button><Button aria-busy={pending} disabled={pending} type="submit">{pending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}Publish revision</Button></div>
+          <div className="flex justify-end gap-2"><Button disabled={pending} type="button" variant="secondary" onClick={() => setOpen(false)}>Cancel</Button><Button aria-busy={pending} disabled={pending || !modelSelected} type="submit">{pending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}Publish revision</Button></div>
         </form>
       </Dialog> : null}
     </div>
   );
+}
+
+function templateModelChoices(models: ModelProfile[], referenced?: ModelProfile): ModelProfile[] {
+  const choices = new Map(models.map((model) => [model.model_profile_id, model]));
+  if (referenced) {
+    const listed = choices.get(referenced.model_profile_id);
+    if (!listed || listed.revision <= referenced.revision) {
+      choices.set(referenced.model_profile_id, referenced);
+    }
+  }
+  return [...choices.values()].filter((model) => model.enabled);
 }

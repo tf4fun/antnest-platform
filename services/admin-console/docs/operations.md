@@ -7,12 +7,24 @@
 | `ANTNEST_ADMIN_CONSOLE_LISTEN` | no | HTTP listen address, default `:8080` |
 | `ANTNEST_IDENTITY_SERVICE_URL` | yes | trusted Identity Service base URL |
 | `ANTNEST_AGENT_CONTROLLER_URL` | yes | trusted Agent Controller base URL |
-| `ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF` | no | digest-prefill shown when creating a Template |
+| `ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF` | no | platform default image reference for Template creation; revisions retain their pinned value without a digest editor |
 | `ANTNEST_ADMIN_DEPENDENCY_TIMEOUT` | no | bounded non-streaming RPC timeout |
+| `ANTNEST_ADMIN_SHUTDOWN_TIMEOUT` | no | graceful HTTP drain budget, default `15s` |
 | `OTEL_*` | no | standard OTLP HTTP/protobuf signal configuration |
 
-`GET /status` requires both dependencies to be ready. The compiled React assets
-are embedded into the binary, so no writable web volume is required.
+`GET /status` checks local initialization and stopping state only. It never
+probes Identity or Agent Controller; downstream failures are reported by the
+actual business request. The compiled React assets are embedded into the
+binary, so no writable web volume is required. See [observability](observability.md)
+for capture guarantees and pending acceptance.
+
+The default Runtime image is a Template input, not an already published
+execution binding. `ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF` may contain a local
+repository/tag such as `antnest/antnest-runtime:local` or an immutable image
+reference; it may also be empty. Console trims and forwards this default.
+Agent Controller validates it and resolves tags through Runtime Controller when
+publishing a Template revision. Console startup neither inspects Docker nor
+requires a digest; an invalid or missing image is reported by Template creation.
 
 Admin Console must not be published directly. Edge Gateway is its only
 supported external path. The service has no database, migrations, backup, or
@@ -37,3 +49,137 @@ An overview with unavailable Agent inventory is never emitted: that failure
 fails the request. Optional section envelopes should be surfaced as partial-data
 notices by the UI. Repeated degradation indicates an owning service or network
 fault; there is no aggregate cache to repair.
+
+## Shutdown Contract
+
+On SIGTERM or SIGINT, Console closes its upstream event Watches before waiting
+for HTTP requests to drain. A quiet Watch must not keep the process alive until
+the shutdown deadline. Client disconnection cancels only that client's Watch;
+service shutdown cancels all Watches and does not accept new ones. Cancellation
+also expires that stream's downstream write deadline, releasing a Watch blocked
+by an unread response. Event history remains owned by Agent Controller and is
+replayed after browser reconnection.
+
+Ordinary in-flight requests keep their existing request and dependency timeout
+and may finish within the shutdown budget. If they cannot drain, the server
+closes their connections and reports the shutdown failure. After forced close,
+Console allows up to five additional seconds for cancelled handlers to finish
+before shutting down telemetry. A handler that still cannot exit produces a
+separate drain error; its unfinished telemetry is not guaranteed. Expected Watch
+cancellation is not an invalid-upstream-response warning. Telemetry shutdown
+follows the HTTP drain so completed request spans can be exported.
+
+Regression coverage must use real HTTP connections through the production BFF
+and upstream client: stop with a quiet Watch still open, drain a concurrent
+ordinary request, and preserve an actual shutdown-deadline error. Include
+downstream write backpressure and handler/trace completion after forced close.
+This local coverage does not replace Docker signal/restart acceptance in C5.
+
+From the platform root, build the current image and run the bounded container
+regression serially:
+
+```sh
+docker build -t antnest/admin-console:local -f services/admin-console/Dockerfile .
+node services/admin-console/tests/shutdown-docker.mjs
+```
+
+The runner reuses the repository's bounded Docker-command helpers; install the
+root quickstart's Agent ACP Service Node dependencies before running it. The
+controlled upstream container itself uses only Node built-ins.
+
+The regression uses two disposable containers on its own labelled network,
+synthetic trusted headers and a quiet controlled upstream. It tests SIGTERM,
+restart and SIGINT with an open Watch, exit codes and stream cancellation. It
+does not start PostgreSQL, call model providers or inspect integration secrets.
+Success, failure and interruption clean only its own labelled resources. This
+is service shutdown evidence, not the Gateway-rooted Jaeger acceptance report.
+
+## Lifecycle Recovery
+
+`202` acknowledges a durable lifecycle request, not a ready Runtime. The detail
+page reads the operation and Agent independently, displays the failure phase
+and diagnostic detail from the operation, and never retries a mutation merely
+because an event stream or follow-up read failed.
+
+An idle `unavailable` Agent may be deleted even when initial construction never
+published an execution or Runtime binding. The Controller owns discovery and
+cleanup of its retained resources. Without successful execution history, Console
+offers Delete, not Rebuild/Enable/Disable. Correct the Template or deployment
+configuration and create a new Agent after cleanup.
+
+An enabled unavailable Agent with retained spec and last-successful execution
+identifiers can instead request explicit Rebuild using an enabled Template
+revision. Those identifiers are history, never a published execution binding or
+current executable configuration. The BFF projects only those safe identifiers;
+the Controller owns source integrity, identity and locked admission checks.
+Quarantined Agents, unexpected retained executable bindings, active operations
+and uncertain reads do not expose this recovery action. Disable/Enable are not
+unavailable-Agent recovery commands. Runtime loss/restart has a distinct failure
+explanation and retained event label; it is not reported as a failed user change.
+The ordinary Rebuild dialog and asynchronous operation/event flow apply. No
+automatic retry is triggered by reconnect, event replay, or a failed refresh.
+Active lifecycle operations and uncertain Agent reads keep all mutations closed.
+The last operation retains its phase, error code and diagnostic detail after
+completion or failure. The Agent snapshot selects the current request and gates
+actions; it cannot erase an acknowledged operation just because an older snapshot
+has no active request. Operation reads own progress, and a known terminal result
+cannot regress to running when an admission response arrives late. Delete is
+shown as removing until the Agent actually reaches deleted.
+An idle unavailable Agent shows its requested state without claiming an ongoing
+transition. A deleted Agent's absent configuration is removal, not a build error.
+
+After successful event replay, refresh the authoritative Agent and its operation
+again before reopening the stream, closing the read-before-replay race. A failed
+refresh remains a separate read error and keeps mutations closed.
+
+Initial history and explicit event retry also compare the per-Agent aggregate
+sequence against the loaded Agent. When history is newer, reread the Agent;
+if the initial read is still pending, finish that read before deciding whether
+another is needed. A still-lagging or failed read keeps mutations closed with a
+manual state refresh, without adding periodic polling. Events never manufacture
+Agent state. Historical operation hints advance monotonically and cannot replace
+an acknowledged unfinished command. Dialog confirmation and submission use the
+same current action gate as their entry buttons.
+
+The retained lifecycle record and events remain available after
+refresh. Deleting a failed Agent retains its record and ordered events for audit.
+
+On an event-stream disconnect, the page closes that stream, refreshes the Agent
+and replays List from its last applied **global** sequence. A transient List
+failure retries only that read; terminal access/resource failures stop automatic
+recovery. The replacement Watch begins at the returned `next_sequence`.
+History is merged by event identity, not replaced on reconnect. Leaving the page
+disposes the stream and retry timer; late replay responses must not reopen it.
+
+For EventSource reconnect requests the BFF translates `Last-Event-ID` to the
+upstream Watch cursor, taking precedence over a stale `after_sequence` URL.
+Malformed or repeated header values must fail instead of silently replaying
+from zero. Organization scope always comes from the trusted Gateway principal.
+
+Run Console Go tests and `npm --prefix services/admin-console/web test` from
+the platform root for BFF and component evidence. These tests use controlled
+upstreams and events. Docker startup, workspace retention/deletion, lifecycle
+worker restart and cross-service trace acceptance remain integration work in
+[C3](../../../docs/docker-single-node-closeout.md#3-agent-control-workflow-closure-c3).
+
+## Network Policy Recovery
+
+The Agent Network section is independent of lifecycle progress. A policy change
+does not rebuild or enable an Agent. `Network policy saved` confirms the
+assignment command, not an end-to-end traffic probe. A paused attachment remains
+visible separately.
+
+Unconfirmed writes retain non-secret action/version/request-key entries in
+browser local storage, scoped to organization, administrator and Agent. Do not
+clear those entries to resolve `cleanup_failed`: use the explicit retry so the
+same command can finish its cleanup fence. A matching GET cannot confirm that
+work. Conflicts require a fresh read and deliberate new selection. Account
+changes require reloading; the original account's pending entries are retained.
+Lifecycle/reconnect refreshes are independent reads and never resubmit a write.
+See [network policy contract](network-policy.md) for the full state model.
+
+Console does not follow dependency redirects. Incoming W3C trace context is
+continued through the BFF and its single Controller request; body, credential,
+policy internals and packet data are not logged as trace attributes. Real
+HTTP component tests validate parentage without a Collector; deployed
+Gateway/Jaeger and live TUN evidence remain C3 integration acceptance.

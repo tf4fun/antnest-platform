@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Agent, AgentTemplate, ModelProfile } from "../lib/types";
+import type { Agent, AgentTemplate, ModelProfile, ProviderConnection } from "../lib/types";
 import { AgentsPage } from "./agents";
 import { ModelsPage } from "./models";
 import { TemplatesPage } from "./templates";
@@ -9,11 +9,12 @@ afterEach(cleanup);
 
 const timestamps = { created_at: "2026-09-07T00:00:00Z", updated_at: "2026-09-07T00:00:00Z" };
 const model = (id: string): ModelProfile => ({
-  ...timestamps, model_profile_id: id, display_name: id, revision_id: `${id}-revision`, revision: 1, enabled: true,
+  ...timestamps, provider_connection_id: "connection-1", model_profile_id: id, display_name: id, revision_id: `${id}-revision`, revision: 1, enabled: true,
   model: { base_url: "https://models.example.com/v1", model: id, context_window: 8192, max_output_tokens: 1024, supports_images: false },
 });
+const provider = (id: string): ProviderConnection => ({ ...timestamps, connection_id: id, display_name: id, provider_key: "deepseek", base_url: "https://api.deepseek.com", credential_method: "api_key", credential_version: "v1", credential_revision: 1, enabled: true });
 const template = (id: string): AgentTemplate => ({
-  ...timestamps, template_id: id, name: id, revision: 1, model_profile_revision_id: "model-revision", enabled: true,
+  ...timestamps, template_id: id, name: id, revision: 1, model_profile_id: "model", enabled: true,
   system_prompt: "", max_model_requests: 32, context_policy_version: "context-v1", skill_refs: [],
   runtime: { image_ref: `sha256:${"a".repeat(64)}`, resources: { memory_bytes: 1024, pids_limit: 128, tmpfs_bytes: 1024 } },
 });
@@ -22,7 +23,7 @@ const agent = (id: string, view: string): Agent => ({
   desired_state: view === "deleted" ? "deleted" : "enabled", lifecycle_state: view === "deleted" ? "deleted" : "ready",
 });
 const inventories = [
-  { name: "Models", component: <ModelsPage />, path: "/api/admin/model-profiles", cursor: "after_id", next: "next_after_id", row: model, list: "Model providers", view: "" },
+  { name: "Providers", component: <ModelsPage />, path: "/api/admin/provider-connections", cursor: "after_id", next: "next_after_id", row: provider, list: "Model providers", view: "" },
   { name: "Templates", component: <TemplatesPage />, path: "/api/admin/templates", cursor: "after_id", next: "next_after_id", row: template, list: "Agent templates", view: "" },
   ...["current", "deleted"].map((view) => ({
     name: `${view} Agents`, component: <AgentsPage />, path: "/api/admin/agents", cursor: "cursor", next: "next_cursor",

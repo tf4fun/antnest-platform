@@ -99,6 +99,8 @@ func (repository *Repository) ListWorkspaceAgents(
 			&record.AgentID, &record.Name, &record.LifecycleState, &record.AccessSubject,
 			&record.AdmissionState, &record.CreatedAt,
 			&record.IdentityRevoked,
+			&record.DesiredState, &record.ActiveOperation, &record.AggregateSequence,
+			&record.SessionID, &record.AdmissionPrincipalID,
 		); err != nil {
 			return nil, fmt.Errorf("scan workspace Agent projection: %w", err)
 		}
@@ -123,18 +125,24 @@ func buildWorkspaceAgentQueryStatement(query ports.WorkspaceAgentQuery) (string,
 		arguments = append(arguments, query.AfterCreatedAt, query.AfterAgentID)
 		cursor = "\n  AND (agent.created_at, agent.id) > ($3, $4)"
 	}
+	if query.AgentID != "" {
+		arguments = append(arguments, query.AgentID)
+		cursor += fmt.Sprintf("\n  AND agent.id = $%d", len(arguments))
+	}
 	arguments = append(arguments, query.Limit)
 	statement := fmt.Sprintf(`
 SELECT agent.id, agent.name, agent.lifecycle_state, access.access_subject,
        COALESCE(admission.state, ''), agent.created_at,
-       agent.identity_revocation_sequence > agent.owner_authorization_sequence
+       agent.identity_revocation_sequence > agent.owner_authorization_sequence,
+       agent.desired_state, agent.active_operation_request_id <> '', agent.aggregate_sequence,
+       COALESCE(admission.session_id, ''), COALESCE(admission.principal_id, '')
 FROM agent_controller.agents AS agent
 JOIN agent_controller.agent_access_bindings AS access
   ON access.agent_id = agent.id
  AND access.principal_id = $2
  AND access.active
 LEFT JOIN LATERAL (
-  SELECT candidate.state
+  SELECT candidate.state, candidate.session_id, candidate.principal_id
   FROM agent_controller.run_admissions AS candidate
   WHERE candidate.agent_id = agent.id
     AND candidate.state IN ('active', 'blocked_unknown_effect')
@@ -170,7 +178,7 @@ func buildAgentQueryStatement(query ports.AgentQuery) (string, []any, error) {
 		addEquality("lifecycle_state", query.LifecycleState)
 	}
 	if !query.IncludeDeleted {
-		conditions = append(conditions, "desired_state <> 'deleted'")
+		conditions = append(conditions, "lifecycle_state <> 'deleted'")
 	}
 	if !query.AfterCreatedAt.IsZero() {
 		arguments = append(arguments, query.AfterCreatedAt, query.AfterAgentID)

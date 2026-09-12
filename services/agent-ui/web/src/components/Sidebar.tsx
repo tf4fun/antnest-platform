@@ -24,6 +24,7 @@ const statusLabel: Record<AgentSummary["status"], string> = {
   ready: "Ready",
   busy: "Working",
   offline: "Offline",
+  unknown: "Synchronizing",
 };
 
 export function Sidebar(props: Props) {

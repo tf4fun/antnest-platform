@@ -9,23 +9,100 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/jackc/pgx/v5/stdlib"
-
 	"soft/antnest-platform/services/runtime-controller/internal/deployment"
 	repositoryport "soft/antnest-platform/services/runtime-controller/internal/repository"
 )
 
 const integrationSpecDigest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
+func TestRepositoryFailedInitializeRetainsDeleteFence(t *testing.T) {
+	for _, effect := range []deployment.EffectState{deployment.EffectNotStarted, deployment.EffectCompleted} {
+		t.Run(string(effect), func(t *testing.T) {
+			testFailedInitializeDeleteFence(t, effect)
+		})
+	}
+}
+
+func testFailedInitializeDeleteFence(t *testing.T, effect deployment.EffectState) {
+	t.Helper()
+	repository, database, ctx := integrationRepository(t)
+	now := time.Now().UTC()
+	initialize := integrationOperation("failed-init", deployment.OperationInitializeRuntime, now)
+	initialize.ImageReference = "antnest/runtime:latest"
+	initialize.ImageID = integrationSpecDigest
+	initialize.Transition = deployment.LifecycleInitializing
+	started, _, err := repository.BeginTransition(ctx, initialize)
+	if err != nil {
+		t.Fatal(err)
+	}
+	started.State = deployment.OperationFailed
+	started.Effect = effect
+	started.ErrorCode = "platform_unavailable"
+	if effect == deployment.EffectCompleted {
+		started.ErrorCode = "runtime_not_ready"
+	}
+	started.Inspection = integrationEnvironment(started, deployment.LifecycleFailed, now)
+	if _, err := repository.CompleteOperation(ctx, started, nil); err != nil {
+		t.Fatal(err)
+	}
+	environment, err := repository.GetEnvironment(ctx, started.AgentID)
+	if err != nil || environment.RuntimeRevision != started.RuntimeRevision || environment.LifecycleState != deployment.LifecycleFailed || environment.OperationID != "" {
+		t.Fatalf("failed head was not retained/released: %+v %v", environment, err)
+	}
+	if environment.Generation != started.Generation || environment.SpecDigest != started.SpecDigest {
+		t.Fatalf("failed head changed physical identity: %+v", environment)
+	}
+	claim, err := repository.GenerationClaim(ctx, started.RuntimeKey())
+	if err != nil || claim.RuntimeRevision != environment.RuntimeRevision || claim.SpecDigest != environment.SpecDigest {
+		t.Fatalf("failed head disagrees with generation claim: %+v %v", claim, err)
+	}
+	var claims int
+	if err := database.QueryRowContext(ctx, `SELECT COUNT(*) FROM runtime_controller.generation_claims WHERE agent_id = $1`, started.AgentID).Scan(&claims); err != nil || claims != 1 {
+		t.Fatalf("failed init claim count %d: %v", claims, err)
+	}
+	deleted := integrationOperation("delete-failed-init", deployment.OperationDeleteRuntime, now.Add(time.Second))
+	deleted.SourceState = environment.LifecycleState
+	deleted.SourceRevision = environment.RuntimeRevision
+	deleted.ExpectedRevision = environment.RuntimeRevision
+	deleted.SourceGeneration = environment.Generation
+	deleted.Generation = environment.Generation
+	deleted.SourceSpecDigest = environment.SpecDigest
+	deleted.Transition = deployment.LifecycleDeleting
+	deleted, _, err = repository.BeginTransition(ctx, deleted)
+	if err != nil {
+		t.Fatalf("failed Environment not deletable: %v", err)
+	}
+	deleted.State = deployment.OperationCompleted
+	deleted.Effect = deployment.EffectCompleted
+	deleted.Inspection = integrationEnvironment(deleted, deployment.LifecycleDeleted, now.Add(2*time.Second))
+	if _, err := repository.CompleteOperation(ctx, deleted, nil); err != nil {
+		t.Fatal(err)
+	}
+	tombstone, err := repository.GetEnvironment(ctx, started.AgentID)
+	if err != nil || tombstone.LifecycleState != deployment.LifecycleDeleted || tombstone.OperationID != "" {
+		t.Fatalf("delete tombstone: %+v %v", tombstone, err)
+	}
+	retained, err := repository.GetOperation(ctx, initialize.RequestID)
+	if err != nil || retained.ImageReference != initialize.ImageReference || retained.ImageID != initialize.ImageID {
+		t.Fatalf("image audit lost after deletion: %+v %v", retained, err)
+	}
+}
+
 func TestRepositoryLifecycleRoundTrip(t *testing.T) {
 	repository, database, ctx := integrationRepository(t)
 	now := time.Date(2026, 8, 30, 0, 0, 0, 0, time.UTC)
 	initialize := integrationOperation("request-init", deployment.OperationInitializeRuntime, now)
+	initialize.ImageReference = "antnest/runtime:latest"
+	initialize.ImageID = integrationSpecDigest
 	initialize.Transition = deployment.LifecycleInitializing
 
 	started, replay, err := repository.BeginTransition(ctx, initialize)
 	if err != nil || replay || started.Attempt != 1 {
 		t.Fatalf("begin initialization: operation=%+v replay=%t err=%v", started, replay, err)
+	}
+	persisted, err := repository.GetOperation(ctx, initialize.RequestID)
+	if err != nil || persisted.ImageReference != initialize.ImageReference || persisted.ImageID != initialize.ImageID {
+		t.Fatalf("image identity not persisted before execution: %+v %v", persisted, err)
 	}
 	transitioning, err := repository.GetEnvironment(ctx, initialize.AgentID)
 	if err != nil || transitioning.LifecycleState != deployment.LifecycleInitializing ||
@@ -308,12 +385,12 @@ func integrationRepository(t *testing.T) (*Repository, *sql.DB, context.Context)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	t.Cleanup(cancel)
-	database, err := sql.Open("pgx", databaseURL)
+	database, err := OpenDatabase(ctx, databaseURL, 20, 5)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = database.Close() })
-	lockDatabase, err := sql.Open("pgx", databaseURL)
+	lockDatabase, err := OpenDatabase(ctx, databaseURL, 8, 8)
 	if err != nil {
 		t.Fatal(err)
 	}

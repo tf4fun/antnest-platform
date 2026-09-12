@@ -32,7 +32,6 @@ func TestLifecycleRepositoryPersistsAndPublishesDisableSaga(t *testing.T) {
 	if err != nil || replayed {
 		t.Fatalf("begin Agent disable: state=%+v replayed=%t err=%v", started, replayed, err)
 	}
-	ctx = claimLifecycleForTest(t, ctx, repository, requestID)
 	if started.Agent.DesiredState != domain.DesiredDisabled ||
 		started.Agent.LifecycleState != domain.AgentAvailable ||
 		started.Agent.ActiveOperationRequestID != requestID {
@@ -202,7 +201,6 @@ func TestLifecycleRepositoryDisableFailureRestoresExecutableSource(t *testing.T)
 	if err != nil {
 		t.Fatalf("begin Agent disable: %v", err)
 	}
-	ctx = claimLifecycleForTest(t, ctx, repository, requestID)
 	if _, err := repository.FailAgentDisable(ctx, ports.FailAgentDisable{
 		RequestID: requestID, Fingerprint: fingerprint,
 		ExpectedAggregateSequence: started.Agent.AggregateSequence,
@@ -276,7 +274,6 @@ func TestLifecycleRepositoryDisableFailureWithoutSourceProofFailsClosed(t *testi
 	if err != nil {
 		t.Fatalf("begin Agent disable: %v", err)
 	}
-	ctx = claimLifecycleForTest(t, ctx, repository, requestID)
 	if _, err := repository.SettleAgentDisableDrain(
 		ctx, requestID, fingerprint,
 		domain.ChildRequestID(requestID, domain.PhaseNetworkFence), now.Add(time.Second),
@@ -570,7 +567,6 @@ func prepareDisableRuntimeFailure(
 	if err != nil {
 		t.Fatalf("begin Agent disable: %v", err)
 	}
-	ctx = claimLifecycleForTest(t, ctx, repository, requestID)
 	admissionID := ""
 	if withBlockedRun {
 		admissionID = "admission-" + requestID
@@ -629,7 +625,7 @@ func disableBegin(
 			SourceExecutionRevisionID: base.ExecutableExecution.ID,
 			SourceRuntimeRevision:     base.Agent.RuntimeRevision,
 			ChildRequestID:            domain.ChildRequestID(requestID, domain.PhaseDrain),
-			Attempt:                   1, CreatedAt: now, UpdatedAt: now,
+			CreatedAt:                 now, UpdatedAt: now,
 		},
 		RequestedEvent: ports.AgentEventRecord{
 			EventID: "event-disable-requested-" + requestID,

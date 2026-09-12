@@ -75,6 +75,13 @@ func TestValidDeleteAdvanceRequiresExplicitNetworkReleaseOutcome(t *testing.T) {
 		t.Fatal("delete accepted a missing network release result")
 	}
 	input.NetworkReleaseOutcome = ports.NetworkReleaseAuthoritativeNone
+	if validDeleteAdvance(operation, input) {
+		t.Fatal("network absence was accepted before Runtime cleanup proof")
+	}
+	operation.RuntimeResult = &ports.RuntimeOperation{
+		State: "completed", Effect: "completed", RuntimeRevision: "rtv_deleted",
+		LifecycleState: "deleted", Health: "absent",
+	}
 	if !validDeleteAdvance(operation, input) {
 		t.Fatal("authoritative missing network result was rejected")
 	}
@@ -101,7 +108,6 @@ func TestLifecycleRepositoryPersistsDeleteBarrierAndRetainsAuditFacts(t *testing
 	if err != nil || replayed {
 		t.Fatalf("begin Agent delete: state=%+v replayed=%t err=%v", started, replayed, err)
 	}
-	ctx = claimLifecycleForTest(t, ctx, repository, requestID)
 	if started.Agent.DesiredState != domain.DesiredDeleted ||
 		started.Agent.LifecycleState != domain.AgentDeleting ||
 		started.Agent.ActiveOperationRequestID != requestID {
@@ -280,7 +286,6 @@ WHERE id = $1`, base.Agent.AgentID, now); err != nil {
 	if err != nil || replayed {
 		t.Fatalf("begin absent Runtime delete: state=%+v replayed=%t err=%v", started, replayed, err)
 	}
-	ctx = claimLifecycleForTest(t, ctx, repository, requestID)
 
 	const admissionID = "admission-delete-absent-runtime-integration"
 	if _, err := repository.pool.Exec(ctx, `
@@ -349,7 +354,6 @@ func TestRuntimeAbsenceRetainsClientMCPUnknownEffect(t *testing.T) {
 	if _, _, err := repository.BeginAgentDelete(ctx, begin); err != nil {
 		t.Fatalf("begin delete: %v", err)
 	}
-	ctx = claimLifecycleForTest(t, ctx, repository, requestID)
 	const admissionID = "admission-client-effect-integration"
 	if _, err := repository.pool.Exec(ctx, `
 INSERT INTO agent_controller.run_admissions (
@@ -430,7 +434,7 @@ func deleteBegin(
 			Phase: domain.PhaseDrain, State: domain.OperationRunning,
 			SourceRuntimeRevision: agent.RuntimeRevision,
 			ChildRequestID:        domain.ChildRequestID(requestID, domain.PhaseDrain),
-			Attempt:               1, CreatedAt: now, UpdatedAt: now,
+			CreatedAt:             now, UpdatedAt: now,
 		},
 		RequestedEvent: ports.AgentEventRecord{
 			EventID: "event-delete-requested-" + requestID,

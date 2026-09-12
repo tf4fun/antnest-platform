@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { request as httpsRequest } from "node:https";
 import { readFile, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import {
@@ -8,6 +7,7 @@ import {
   verifyIdentityTraces,
 } from "./support.mjs";
 import { fixtureSecret, providerAccessToken } from "./oidc-provider.mjs";
+import { createFixtureClient, parseFixtureJSON } from "./oidc-transport.mjs";
 
 const [gateway, jaeger, port, certPath, canaryPath] = process.argv.slice(2);
 assert(
@@ -34,49 +34,9 @@ const checks = [];
 const remember = (client) => secrets.push(...client.cookies.values());
 const authPath = "/api/admin/provisioning/oidc-providers";
 
-async function idp(path, { method = "GET", account } = {}) {
-  const target = new URL(path, issuer);
-  assert.equal(target.origin, issuer, "unexpected fixture issuer");
-  return new Promise((resolve, reject) => {
-    // Host-published test port, with the same trusted DNS name as Docker clients.
-    const request = httpsRequest(
-      target,
-      {
-        hostname: "127.0.0.1",
-        port: Number(port),
-        servername: "oidc-fixture",
-        ca,
-        method,
-        headers: {
-          Host: target.host,
-          ...(account ? { Cookie: `oidc_fixture_account=${account}` } : {}),
-        },
-        signal: AbortSignal.timeout(10000),
-      },
-      (response) => {
-        let text = "";
-        response.setEncoding("utf8");
-        response.on("data", (chunk) => {
-          text += chunk;
-        });
-        response.on("error", reject);
-        response.on("end", () =>
-          resolve({
-            status: response.statusCode,
-            headers: response.headers,
-            text,
-          }),
-        );
-      },
-    );
-    request.on("error", () =>
-      reject(new Error("HTTPS IdP fixture request failed")),
-    );
-    request.end();
-  });
-}
+const idp = createFixtureClient({ issuer, port, ca });
 async function stats() {
-  return JSON.parse((await idp("/fixture/stats")).text);
+  return parseFixtureJSON((await idp("/fixture/stats")).text);
 }
 
 async function register(name, revision, registrationIssuer = issuer) {
@@ -96,8 +56,16 @@ async function register(name, revision, registrationIssuer = issuer) {
   );
   traces.push({
     traceID: response.traceID,
-    repository: "identity.repository.upsert_oidc_provider",
+    method: "POST",
+    route: "/rpc/identity/upsert-oidc-provider",
+    rpcMethod: "upsert_oidc_provider",
     console: true,
+    oidcRequests: [
+      {
+        method: "GET",
+        url: `${registrationIssuer}/.well-known/openid-configuration`,
+      },
+    ],
   });
   return response;
 }
@@ -247,11 +215,18 @@ assert.equal(identity.organization_role, "member");
 await local.request("/api/admin/provisioning/oidc-providers", { status: 403 });
 traces.push({
   traceID: first.started.traceID,
-  repository: "identity.repository.create_oidc_session",
+  method: "POST",
+  route: "/rpc/identity/start-oidc-login",
+  rpcMethod: "start_oidc_login",
 });
 traces.push({
   traceID: first.completed.traceID,
-  repository: "identity.repository.complete_oidc_login",
+  method: "GET",
+  route: "/protocol/oidc/callback",
+  oidcRequests: [
+    { method: "POST", url: `${issuer}/token` },
+    { method: "GET", url: `${issuer}/jwks` },
+  ],
 });
 let before = await stats();
 await complete(local, first.callback, false);
@@ -327,6 +302,27 @@ for (const account of ["admin", "unknown", "unverified", "badnonce"]) {
   await clean.request("/api/session", { status: 401 });
 }
 checks.push("admin-unknown-unverified-and-wrong-nonce-rejection");
+
+const profileProvider = `${providerName}-profile`;
+await register(profileProvider, 1, `${issuer}/profile`);
+const profileLogin = await login(local, "profile", profileProvider);
+const profileIdentity = await principal(local);
+assert.equal(profileIdentity.user_id, identity.user_id);
+assert.equal(profileIdentity.membership_id, identity.membership_id);
+traces.push({
+  traceID: profileLogin.completed.traceID,
+  method: "GET",
+  route: "/protocol/oidc/callback",
+  oidcRequests: [
+    { method: "POST", url: `${issuer}/profile/token` },
+    { method: "GET", url: `${issuer}/profile/jwks` },
+    { method: "GET", url: `${issuer}/profile/userinfo` },
+  ],
+});
+await admin.request(`${authPath}/${profileProvider}/enabled`, {
+  body: { enabled: false },
+});
+checks.push("userinfo-fallback-preserves-provisioned-identity");
 const afterDirectory = (await admin.request("/api/admin/directory")).body;
 assert.equal(
   afterDirectory.users.length,
@@ -345,15 +341,20 @@ await admin.request(
 );
 for (const browser of [local, scimUser, admin])
   await browser.request("/api/session", { method: "DELETE", status: 204 });
-for (const prefix of ["", "/denials"])
-  secrets.push(...JSON.parse((await idp(`${prefix}/fixture/canaries`)).text));
+for (const prefix of ["", "/denials", "/profile"])
+  secrets.push(
+    ...parseFixtureJSON((await idp(`${prefix}/fixture/canaries`)).text),
+  );
 const evidence = await verifyIdentityTraces(jaeger, traces, secrets);
 const counts = await stats();
-const deniedCounts = JSON.parse((await idp("/denials/fixture/stats")).text);
-for (const key of Object.keys(counts)) counts[key] += deniedCounts[key];
-assert.equal(counts.attempts, 11);
-assert.equal(counts.grants, 11);
-assert(counts.discovery >= 3 && counts.jwks >= 11);
+for (const prefix of ["/denials", "/profile"]) {
+  const other = parseFixtureJSON((await idp(`${prefix}/fixture/stats`)).text);
+  for (const key of Object.keys(counts)) counts[key] += other[key];
+}
+assert.equal(counts.attempts, 12);
+assert.equal(counts.grants, 12);
+assert.equal(counts.userinfo, 1);
+assert(counts.discovery >= 4 && counts.jwks >= 12);
 await writeFile(
   canaryPath,
   JSON.stringify({

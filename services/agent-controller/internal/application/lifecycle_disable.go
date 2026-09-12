@@ -16,7 +16,6 @@ type DisableAgentInput struct {
 	OrganizationID          string
 	ActorPrincipalID        string
 	AgentID                 string
-	InitialTraceParent      string
 }
 
 type DisableAgentResult struct {
@@ -68,7 +67,7 @@ func (service *LifecycleService) DisableAgent(
 		SourceSpecRevision:      base.ExecutableSpec.ID,
 		SourceExecutionRevision: base.ExecutableExecution.ID,
 		SourceRuntimeRevision:   base.Agent.RuntimeRevision,
-		InitialTraceParent:      input.InitialTraceParent, Now: now,
+		Now:                     now,
 	})
 	if err != nil {
 		return DisableAgentResult{}, fmt.Errorf("%w: %v", ErrInvalidInput, err)
@@ -88,8 +87,7 @@ func (service *LifecycleService) DisableAgent(
 			SourceExecutionRevisionID: base.ExecutableExecution.ID,
 			SourceRuntimeRevision:     base.Agent.RuntimeRevision,
 			ChildRequestID:            operation.ChildRequestID(),
-			InitialTraceParent:        input.InitialTraceParent, Attempt: 0,
-			CreatedAt: now, UpdatedAt: now,
+			CreatedAt:                 now, UpdatedAt: now,
 		},
 		RequestedEvent: ports.AgentEventRecord{
 			EventID: derivedID("event-disable-requested", input.RequestID),
@@ -154,7 +152,7 @@ func (service *LifecycleService) fenceDisableNetwork(
 	ctx context.Context, state ports.AgentDisableState,
 ) (ports.AgentDisableState, error) {
 	attachment, err := service.setCurrentNetworkAttachmentState(
-		ctx, state.Agent.AgentID, ports.NetworkAttachmentClosed,
+		ctx, state.Operation, ports.NetworkAttachmentClosed,
 	)
 	if err != nil {
 		return service.handleDisableDependencyFailure(ctx, state, "runtime-egress", err)
@@ -278,7 +276,7 @@ func (service *LifecycleService) failAgentDisable(
 	absenceProof *ports.RuntimeAbsenceProof,
 ) (ports.AgentDisableState, error) {
 	if preserveExecutable && state.Operation.NetworkAttachment != nil {
-		if err := service.restoreNetworkUnlessRevoked(ctx, state.Agent.AgentID, state.Operation.OwnerRevocationSequence); err != nil {
+		if err := service.restoreNetworkUnlessRevoked(ctx, state.Operation, state.Operation.OwnerRevocationSequence); err != nil {
 			return state, fmt.Errorf("%w: runtime-egress attachment restoration", ErrDependencyUnavailable)
 		}
 	}

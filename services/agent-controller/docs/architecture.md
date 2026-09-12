@@ -15,18 +15,59 @@ as vertical business slices. At present ModelProfile/Template Catalog, current
 Agent projection queries, Run admission, and the Agent create, explicit rebuild,
 disable, enable, and delete Sagas are runnable. Lifecycle Runtime barriers
 atomically release unresolved Run occupancy and append the corresponding Agent
-event. HTTP commands only commit durable intent. A background lifecycle worker
-claims fresh or retry-due running operations through PostgreSQL leases and is
-the sole executor of the persisted state machines. Authoritative
+event. HTTP commands return after a Temporal admission Activity commits durable
+intent. Temporal is the sole executor, retry scheduler and recovery engine.
+Business phases and CAS remain in PostgreSQL; worker leases do not. Authoritative
 event replay and best-effort SSE watch are runnable.
+
+[Workspace state](workspace-state.md) is a separate current-state observation
+of lifecycle and Run admission, scoped by organization and principal. It reuses
+the existing query Port and notification connection. Normal Run transitions do
+not enter the audit journal; a committed admission change wakes snapshot readers
+without carrying Session IDs or credentials in the notification. Waiting clients
+hold no business-pool connection. Consumers must treat transport failure as
+uncertain state and re-establish a scoped snapshot before enabling actions.
 
 A small Runtime-observation consumer is intentionally not a general event bus.
 It polls Runtime Controller's authoritative ordered journal with a persisted
 cursor. Initial startup and expired-cursor recovery reconcile current Runtime
-execution identities first. A `restarted` observation for the Agent's current
-opaque Runtime revision atomically clears the executable binding, transitions
-an otherwise idle available Agent to `unavailable`, and appends
-`agent_runtime_restarted`. Recovery is an explicit Agent rebuild.
+execution identities and confirmed missing compute first. A `restarted`,
+`runtime_missing`, or `runtime_deleted` observation for the Agent's current
+opaque Runtime revision atomically clears the executable binding and transitions
+an available Agent without an active lifecycle operation to `unavailable`.
+Restart emits `agent_runtime_restarted`; missing/deleted compute emits
+`agent_runtime_missing`, preserving the precise observation kind in `reason`.
+The same transaction commits the event and consumer cursor. Run admission uses
+the existing Agent row lock, so new Runs after that commit cannot use the stale
+binding. Previously admitted Runs retain their execution snapshots and terminal
+report obligations; observation does not manufacture a result or release a fence.
+
+Initial/expired-cursor reconciliation treats a `ready` Runtime with `absent`
+health as missing. Unknown/unhealthy status or a failed RPC is not proof of
+container deletion. Old Runtime revisions, disabled Agents and active lifecycle
+operations are not overwritten. No observation automatically rebuilds compute or
+restores availability; recovery remains an explicit lifecycle operation.
+
+Runtime-loss recovery reuses **Rebuild**, not a separate repair executor. An
+enabled but unavailable Agent with a retained Runtime revision/spec pointer and
+last-successful execution may supply an immutable `RecoverySource`. This source
+is distinct from `ExecutableSpec`/`ExecutableExecution` and never becomes a Run
+binding. Its Agent, spec and Runtime identities must agree. Initial creation
+failures without a published execution, disabled/deleted Agents, and incomplete
+lineage are not recoverable through this path.
+
+Rebuild admission compares the current aggregate and source identity under the
+Agent row lock, then attaches the normal drain/fence/update/open/publish operation.
+The Agent remains unavailable with an empty executable binding until publication.
+An early failure retains the historical source for another explicit request but
+does not reopen its network attachment. Existing Run drain and unknown-effect
+release barriers remain authoritative; a missing observation is not such a
+barrier. No schema or new public mutation method is required for recovery.
+Quarantined lifecycle invariants are excluded from fresh recovery admission.
+A definitive `not_started` update, or a permanent rejection followed by the
+unchanged ready logical Runtime head, may terminate the recovery attempt while
+retaining unavailable history. This does not prove a Tool effect settled and
+never releases its fence. Unknown update effects stay on the original operation.
 
 The separate [Identity offboarding consumer](identity-offboarding.md) receives
 commit-ordered revocations through Identity RPC. It stores receipt progress and
@@ -34,42 +75,55 @@ per-owner scope watermarks, fences fresh Run admission, and schedules the same
 Disable saga used by manual requests. It does not introduce another lifecycle
 executor. Identity restoration never automatically enables Agents.
 
+The separate [network policy application service](network-policy.md) scopes
+management requests through a read-only Agent lookup, then uses Runtime Egress
+RPC to read an exact policy revision or submit one assignment CAS. Egress remains
+the sole policy authority. This path adds no Controller policy table, AgentSpec
+field, generation, lifecycle operation, or second event journal. Desired policy
+and lifecycle attachment are independent observations, not a packet-health probe.
+
 ## Aggregate Model
 
-### ModelProfile
+### Provider Connection And ModelProfile
 
-A ModelProfile head belongs to one organization and points to one immutable
-revision. A revision freezes the OpenAI-compatible endpoint, model name,
-context/output limits, image support, optional temperature, and one opaque
-credential reference. Credential values are encrypted at rest and never enter
-Agent specs, events, logs, traces, or Run snapshots.
+A Provider connection belongs to one organization and owns its endpoint and
+independently versioned encrypted credential. It can contain multiple ModelProfiles.
+A model revision stores model name, context/output limits, multimodal capabilities,
+optional temperature/pricing and display name; it does not store credential versions
+or copy the endpoint. See [Provider management](provider-management.md).
+
+Run admission combines the current model revision with its authorized Provider
+connection. Templates retain stable model identity; credentials are resolved
+independently against the current connection version, never from a build snapshot. Credential plaintext is absent from
+management responses, specs and events. Development RPC content capture can include
+submitted secrets in Jaeger; see [observability](observability.md).
 
 ### AgentTemplate
 
 A Template head belongs to one organization and points to one immutable
 TemplateRevision. A revision contains:
 
-- one ModelProfile revision;
+- one stable ModelProfile identity;
 - system prompt and maximum model requests;
-- immutable Runtime image reference, resource limits, and optional managed stdio
+- caller-selected Runtime image reference, resource limits, and optional managed stdio
   MCP startup configuration. See [Managed MCP](managed-mcp.md) for bounds and
   configuration privacy.
 
-A draft may select an installed `repository:tag` instead of an immutable image.
-Catalog checks request replay and organization-scoped references before invoking
-Runtime Controller's read-only image resolver. It freezes the returned image ID
-and a server-derived `runtime.image_source` for human-readable presentation.
-The published domain model still rejects mutable execution references. Image
-source is output metadata, not a caller assertion or a second execution input.
+Catalog preserves the submitted `runtime.image_ref`, including mutable tags such
+as `latest`, explicit versions, and immutable image IDs/digests. It validates
+reference syntax but does not resolve tags, query Docker, or depend on Runtime
+Controller availability. Missing images do not prevent saving a Template.
+There is no separately derived image source. Revision immutability preserves
+the submitted configuration, not the bytes later addressed by a mutable tag.
 
-Request fingerprints describe the original draft, not the mutable lookup
-result. Replaying a completed command returns its original revision without
-calling the resolver. Revising other fields with the current immutable image
-preserves its source. Explicitly selecting a tag resolves it again, even when
-its spelling is unchanged. A missing image or unavailable resolver prevents
-publication; neither Catalog nor Console pulls or builds an image. All stored
-facts remain in the existing private revision snapshots; no cross-service table
-or additional image database is introduced.
+Create, revise, read, and replay return the same submitted reference. Agent
+create/rebuild passes that reference to Runtime Controller; image availability
+and container creation are build-time concerns. A new build can use a newer
+image behind the same tag without publishing another Template revision. This
+does not update a running container or guarantee identical image bytes across
+builds. Use an explicit digest when that is required. The current Docker
+deployment uses locally installed images; registry pull policy is not added by
+this change. No image database or cross-service persistence is introduced.
 
 Templates do not contain users, active Runtime endpoints, Egress policy, or
 Skill package bytes. Stage 2 has no Skill Registry dependency, so every derived
@@ -159,8 +213,9 @@ binding.
 An AgentSpecRevision is a complete immutable non-secret snapshot derived
 from a specific Template revision and ModelProfile revision. It freezes the
 system prompt, model request policy, context-policy version, model metadata,
-Runtime image/resources/managed MCP configuration, credential reference/version,
-and canonical digest. Managed MCP arguments and environment are not copied into
+Runtime image/resources/managed MCP configuration and canonical digest. Model
+metadata here records build lineage only; new Run admission resolves the current
+revision of the retained stable model identity. Credentials are not build inputs. Managed MCP arguments and environment are not copied into
 Run admission or operational events.
 `skill_instructions` is always empty in Stage 2.
 
@@ -181,23 +236,20 @@ may be retried only with the same canonical fingerprint. The operation stores
 its source preconditions, target revision, child request IDs, phase, result,
 and failure class before or after each external effect as applicable.
 
-Worker ownership is execution metadata, not Agent state. A worker claims one
-due running operation with `FOR UPDATE SKIP LOCKED`, a bounded lease, and a
-monotonic attempt fencing token. Newly admitted operations are due immediately;
-dependency backoff changes only `recovery_after`. The worker reloads the
-operation by its stored request fingerprint and resumes the existing phase
-machine. It never reconstructs the
-original command body and never allocates a replacement child request ID.
-Operation phase CAS, Agent aggregate CAS, and downstream child-request
-idempotency remain authoritative if an expired worker overlaps a newer worker
-or an explicit client replay. A non-retryable malformed operation is failed and
-audited under the live lease without stopping unrelated operations.
+All five kinds use [Temporal workflows](lifecycle-workflows.md). The SDK records
+intent before the admission transaction and returns the admission result through
+a Workflow Update. Activities reload frozen business snapshots and execute one
+phase each. PostgreSQL retains the business projection, not a work queue.
 
-Initial request and worker attempts are separate traces. Each worker attempt
-stores its own W3C trace parent before making an external call and
-starts a new root span linked to the initial request and previous recovery
-attempt. Worker ownership, lease expiry, and retry scheduling are not emitted
-as domain events or copied into the Agent projection.
+Activity retries reuse stable child request IDs. Operation phase CAS, Agent
+aggregate/source guards and downstream idempotency remain authoritative under
+at-least-once execution. Definitive invariant failure is atomically quarantined,
+releasing lifecycle occupancy while retaining diagnostics and audit events.
+Unknown external effects remain retryable; quarantine is not compensation.
+
+The official SDK interceptor carries the initiating request context. Workflow
+and Activity spans include RPC/transaction/SQL descendants without a business
+traceparent column or manually instrumented phase handler.
 
 Operation kinds and successful paths are:
 
@@ -220,8 +272,14 @@ admission and lifecycle-operation creation.
 
 Run admission is Agent-wide, not Session-wide. An accepted admission freezes
 one complete execution snapshot and a deadline. Provider secret resolution is
-allowed only for the credential reference and version captured by that active
-admission. A terminal report is immutable and idempotent.
+allowed only for the Provider connection captured by that active, unexpired
+admission and its current access binding. The resolver returns the current
+credential version without modifying the execution snapshot. A terminal report is immutable and idempotent.
+
+The first admission response uses the database-materialized timestamps, just
+like a request replay. In-memory nanosecond timestamps must not produce a
+different response from PostgreSQL's microsecond representation. The adapter
+reads the stored values with `INSERT ... RETURNING` inside the transaction.
 
 An unresolved Tool effect records `runtime_mcp`, `client_mcp`, or
 `unclassified` provenance and leaves the Agent fail-closed. Timeouts are never
@@ -268,8 +326,8 @@ candidate Runtime.
 
 ### Define Model And Template
 
-1. Persist an encrypted Provider credential and immutable ModelProfile revision.
-2. Validate a Template against an enabled ModelProfile revision.
+1. Persist a Provider connection, one encrypted credential and initial model revisions atomically.
+2. Validate a Template against an enabled model identity and its enabled Provider connection.
 3. Persist the Template head and immutable revision atomically.
 4. The immutable revisions and idempotency ledger provide the current Catalog
    history. A queryable management-audit stream is added with the event slice;
@@ -294,10 +352,10 @@ candidate Runtime.
 9. Any terminal failure sets `unavailable`, records exact phase/class, and
    appends `agent_build_failed`.
 
-The request thread normally drives these three durable create phases. A
-transport timeout leaves the durable operation at its last committed phase;
-replaying the same request or background recovery continues with the same child
-request identity.
+The request thread commits intent and returns `202 Accepted`; it does not
+execute lifecycle effects. Temporal dispatches Activities and retains child
+request identities across retries/restart. HTTP request
+replay returns the existing operation; only workflow Activities advance effects.
 
 ### Explicit Rebuild
 
@@ -396,6 +454,31 @@ is not changed and the operation remains running with a closed attachment. Once
 a ready Runtime result exists, dependency ambiguity likewise leaves the
 operation running with a closed attachment for exact replay.
 
+Delete admission remains local and asynchronous. An empty published Runtime
+revision means the cleanup target is unresolved, not that deployment resources
+are absent. After draining and closing the network attachment, the worker asks
+Runtime Controller for its authoritative Environment. A stable ready, disabled,
+or failed Environment supplies the exact cleanup revision; only authoritative
+not-found or deleted results supply an absence proof. Transitional or unknown
+state cannot advance deletion. The source inspection/proof is frozen in the
+same transaction as leaving `network_fence`, using existing operation columns.
+Subsequent retries use that revision and the original child request ID; they
+never rebase deletion onto a newly observed revision. Admission performs no
+remote inspection, and no new lifecycle phase or table is introduced.
+Ownership inspection is not executable readiness: stable ready/disabled heads
+may report degraded live health and still supply a cleanup revision. Publishing
+an executable Runtime continues to require a completed, healthy ready result.
+
+Runtime Controller contract revision 7 distinguishes failed Initialize ownership
+from absence. Its failed operation may have `effect=completed` after readiness
+expires. The HTTP client reconciles operation-bearing startup errors against
+the exact request journal so a terminal platform rejection is not retried
+forever merely because its HTTP status is 503. An authoritative missing journal
+retains the original error; unavailable or invalid journal evidence remains
+retryable rather than manufacturing a terminal result. Conflicting request IDs are
+never resolved by adopting another operation. Unknown readiness with completed
+creation remains nonterminal. Only completed/ready publishes an executable Agent.
+
 Delete removes compute and workspace, releases the Egress attachment into
 quarantine, keeps immutable events/revisions for retention, deactivates the
 owner binding, and hides the Agent from default active queries. Once deletion
@@ -425,7 +508,7 @@ the terminal report. The ACP service owns all messages and detailed Tool facts.
 
 The initial schema owns:
 
-- `provider_credentials`;
+- `provider_connections`, `provider_credentials`;
 - `model_profiles`, `model_profile_revisions`;
 - `agent_templates`, `agent_template_revisions`;
 - `agents`, `agent_spec_revisions`, `execution_revisions`;
@@ -438,6 +521,13 @@ The initial schema owns:
 `agents` is the global current-state projection; it is not an event-sourced
 reconstruction requirement. Events and immutable revisions provide audit and
 recovery evidence without forcing every query to replay history.
+
+Agent default authorization lives in `agents.default_authorization` with its
+own CAS revision. It is separate from the Runtime/build specification. New Run
+admissions freeze organization model selection and effective authorization in
+their snapshot. `agent_authorization_updated` records a revision change, not a
+rule-body patch. See [Session configuration](session-configuration.md) for the
+F05 producer contract and the completed ACP consumer/integration references.
 
 `event_journal_cursor` is a singleton ordering primitive, not a consumer
 offset. Every event transaction advances it while holding its row lock and
@@ -475,12 +565,16 @@ Kubernetes, ACP, or PocketBase types.
 
 ## Observability
 
-Every inbound RPC creates or continues a W3C trace. Each lifecycle worker
-attempt starts an independent root span carrying the durable request ID, which
-is also the sole operation identity. Across the request-ID-correlated trace set,
-those roots contain child spans for Egress, Runtime Controller, and database
-phases. They are joined causally with Span Links rather than a fabricated
-parent/child chain across scheduling or process restarts. Outbound clients
+Every inbound business RPC creates or continues a W3C trace. Successful
+readiness probes are deliberately excluded; failed probes remain observable.
+Each lifecycle worker attempt restores the durable causal parent within the
+originating request's trace, carrying the durable request ID as the sole
+operation identity. The first attempt is a child of admission; subsequent
+attempts are children of their predecessors, including across scheduling or
+process restarts. HTTP spans end normally at admission; worker spans contain
+the actual Egress, Runtime Controller and database calls. See the
+[asynchronous tracing contract](observability.md#asynchronous-lifecycle-causality).
+Outbound clients
 propagate `traceparent` and `tracestate`.
 Runtime observation synchronization creates consumer spans; packet forwarding
 remains outside this tracing model.

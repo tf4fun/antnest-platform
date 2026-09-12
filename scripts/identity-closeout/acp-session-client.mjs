@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { connectACP, gateway } from "./acp-connection.mjs";
 import { GatewayClient, verifyIdentityTraces } from "./support.mjs";
+import { assertEmptySession } from "./acp-session-evidence.mjs";
 
 const agent = process.env.ANTNEST_STAGE3_AGENT_ID;
 assert(agent, "Stage 3 Agent ID required");
@@ -26,6 +27,8 @@ for (const version of [1, 2]) {
       cwd: "/workspace",
       mcpServers: [],
     }));
+    assertEmptySession(connection.updates, sessionId, version, "new");
+    const beforeLogout = structuredClone(connection.updates);
     await browser.request("/api/session", { method: "DELETE", status: 204 });
     // Send a real SDK prompt only after authoritative logout has completed.
     await assert.rejects(
@@ -39,9 +42,9 @@ for (const version of [1, 2]) {
       1008,
       "revoked connection did not close with policy violation",
     );
-    assert.equal(
-      connection.updates.length,
-      0,
+    assert.deepEqual(
+      connection.updates,
+      beforeLogout,
       "revoked prompt produced Session updates",
     );
   } finally {
@@ -49,7 +52,9 @@ for (const version of [1, 2]) {
   }
   expectations.push({
     traceID: connection.traceID,
-    repository: "identity.repository.resolve_access_token",
+    method: "POST",
+    route: "/rpc/identity/resolve-access-token",
+    rpcMethod: "resolve_access_token",
   });
 
   // A new login must recover the same durable Session without the rejected input.
@@ -64,12 +69,7 @@ for (const version of [1, 2]) {
       mcpServers: [],
       ...(version === 2 ? { replayFrom: { type: "start" } } : {}),
     });
-    assert(
-      recovered.updates.every(
-        ({ update }) => update.sessionUpdate === "state_update",
-      ),
-      "rejected prompt entered durable Session history",
-    );
+    assertEmptySession(recovered.updates, sessionId, version, "replay");
   } finally {
     recovered.close();
     await browser.request("/api/session", { method: "DELETE", status: 204 });

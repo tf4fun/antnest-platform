@@ -53,9 +53,16 @@ func TestHTTPClientMapsDockerResourcesAndHardening(t *testing.T) {
 			response = jsonResponse(http.StatusCreated, map[string]string{"Name": "antnest-workspace-agent-1"})
 		case "POST /v1.47/containers/create":
 			var body struct {
-				Env         []string          `json:"Env"`
-				Healthcheck dockerHealthcheck `json:"Healthcheck"`
-				HostConfig  struct {
+				Env         []string `json:"Env"`
+				Healthcheck struct {
+					Test          []string `json:"Test"`
+					Interval      int64    `json:"Interval"`
+					StartInterval int64    `json:"StartInterval"`
+					StartPeriod   int64    `json:"StartPeriod"`
+					Timeout       int64    `json:"Timeout"`
+					Retries       int      `json:"Retries"`
+				} `json:"Healthcheck"`
+				HostConfig struct {
 					CapDrop        []string            `json:"CapDrop"`
 					CapAdd         []string            `json:"CapAdd"`
 					ReadonlyRootfs bool                `json:"ReadonlyRootfs"`
@@ -67,6 +74,12 @@ func TestHTTPClientMapsDockerResourcesAndHardening(t *testing.T) {
 			}
 			if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
 				t.Fatalf("decode Docker create request: %v", err)
+			}
+			if body.Healthcheck.StartInterval != int64(2*time.Second) ||
+				body.Healthcheck.Interval != int64(10*time.Second) ||
+				body.Healthcheck.StartPeriod != int64(30*time.Second) ||
+				body.Healthcheck.Timeout != int64(2*time.Second) || body.Healthcheck.Retries != 3 {
+				t.Fatalf("health cadence was lost at the Engine API boundary: %+v", body.Healthcheck)
 			}
 			if body.HostConfig.ReadonlyRootfs || len(body.HostConfig.CapDrop) != 1 ||
 				body.HostConfig.CapDrop[0] != "ALL" || body.HostConfig.RestartPolicy.Name != "unless-stopped" ||

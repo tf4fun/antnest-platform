@@ -67,3 +67,13 @@ test("catalog option pages retain only eligible rows and advance their opaque cu
     nextAfterID: "next-page",
   });
 });
+
+test("an ineligible update removes a previously selectable identity", () => {
+  const result = mergeCatalogOptions(
+    [{ id: "one", enabled: true }],
+    { items: [{ id: "one", enabled: false }] },
+    (item) => item.id,
+    (item) => item.enabled,
+  );
+  assert.deepEqual(result.items, []);
+});

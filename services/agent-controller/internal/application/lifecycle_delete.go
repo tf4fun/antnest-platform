@@ -4,17 +4,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"soft/antnest-platform/services/agent-controller/internal/domain"
 	"soft/antnest-platform/services/agent-controller/internal/ports"
 )
 
 type DeleteAgentInput struct {
-	RequestID          string
-	OrganizationID     string
-	ActorPrincipalID   string
-	AgentID            string
-	InitialTraceParent string
+	RequestID        string
+	OrganizationID   string
+	ActorPrincipalID string
+	AgentID          string
 }
 
 type DeleteAgentResult struct {
@@ -57,19 +57,16 @@ func (service *LifecycleService) DeleteAgent(
 		return DeleteAgentResult{}, err
 	}
 	sourceRuntime := base.Agent.RuntimeRevision
-	runtimeAbsent := sourceRuntime == ""
-	var absenceProof *ports.RuntimeAbsenceProof
-	if runtimeAbsent {
-		absenceProof = &ports.RuntimeAbsenceProof{
-			Reason: "agent_runtime_unassigned", ObservedAt: service.clock.Now(),
-		}
+	if base.Agent.DesiredState == domain.DesiredDeleted {
+		// A new deletion attempt must inspect the current physical state after fencing.
+		sourceRuntime = ""
 	}
 	now := service.clock.Now()
 	operation, err := domain.NewLifecycleOperation(domain.NewLifecycleOperationInput{
 		RequestID: input.RequestID, RequestFingerprint: fingerprint,
 		AgentID: base.Agent.AgentID, Kind: domain.OperationDelete,
-		SourceRuntimeRevision: sourceRuntime, SourceRuntimeAbsent: runtimeAbsent,
-		InitialTraceParent: input.InitialTraceParent, Now: now,
+		SourceRuntimeRevision: sourceRuntime,
+		Now:                   now,
 	})
 	if err != nil {
 		return DeleteAgentResult{}, fmt.Errorf("%w: %v", ErrInvalidInput, err)
@@ -83,10 +80,8 @@ func (service *LifecycleService) DeleteAgent(
 			RequestID: input.RequestID, RequestFingerprint: fingerprint,
 			AgentID: base.Agent.AgentID, Kind: domain.OperationDelete,
 			Phase: operation.Phase(), State: operation.State(),
-			SourceRuntimeRevision: sourceRuntime, SourceRuntimeAbsent: runtimeAbsent,
-			SourceRuntimeAbsenceProof: absenceProof,
-			ChildRequestID:            operation.ChildRequestID(), InitialTraceParent: input.InitialTraceParent,
-			Attempt: 0, CreatedAt: now, UpdatedAt: now,
+			SourceRuntimeRevision: sourceRuntime,
+			ChildRequestID:        operation.ChildRequestID(), CreatedAt: now, UpdatedAt: now,
 		},
 		RequestedEvent: ports.AgentEventRecord{
 			EventID: derivedID("event-delete-requested", input.RequestID),
@@ -96,8 +91,7 @@ func (service *LifecycleService) DeleteAgent(
 			Data: map[string]any{
 				"actor_principal_id":      input.ActorPrincipalID,
 				"source_runtime_revision": sourceRuntime,
-				"source_runtime_absent":   runtimeAbsent,
-				"runtime_absence_reason":  runtimeAbsenceReason(absenceProof),
+				"source_runtime_absent":   false,
 			},
 			OccurredAt: now,
 		},
@@ -140,8 +134,7 @@ func (service *LifecycleService) settleDeleteDrain(
 		return settled, err
 	}
 	if !service.clock.Now().Before(state.Operation.CreatedAt.Add(service.drainTimeout)) {
-		return settled,
-			fmt.Errorf("%w: active Run did not drain before Agent deletion", ErrDependencyUnavailable)
+		return service.failAgentDelete(ctx, settled, "drain_timeout", "Active Run did not drain before Agent deletion; retry deletion after the Run has stopped")
 	}
 	return settled, nil
 }
@@ -151,20 +144,13 @@ func (service *LifecycleService) fenceDeleteNetwork(
 ) (ports.AgentDeleteState, error) {
 	attachment, err := service.egress.GetAgentNetwork(ctx, state.Agent.AgentID)
 	if err != nil && dependencyHasCode(err, "runtime-egress", "agent_network_not_found") {
-		next := domain.PhaseRuntimeDelete
-		if state.Operation.SourceRuntimeAbsent {
-			next = domain.PhaseNetworkRelease
-		}
-		return service.advanceAgentDelete(
-			ctx, state, domain.PhaseNetworkFence, next, nil, nil, "",
-		)
+		return service.advanceDeleteFence(ctx, state, nil)
 	}
 	if err != nil {
 		return state, fmt.Errorf("%w: runtime-egress attachment read", ErrDependencyUnavailable)
 	}
-	attachment, err = service.egress.SetAgentNetworkAttachment(
-		ctx, state.Agent.AgentID, ports.NetworkAttachmentClosed,
-		attachment.AttachmentResourceVersion,
+	attachment, err = service.setOperationNetworkAttachment(
+		ctx, state.Operation, ports.NetworkAttachmentClosed, attachment,
 	)
 	if err != nil && !dependencyHasCode(err, "runtime-egress", "agent_network_not_found") {
 		return state, fmt.Errorf("%w: runtime-egress attachment close", ErrDependencyUnavailable)
@@ -174,21 +160,18 @@ func (service *LifecycleService) fenceDeleteNetwork(
 	) {
 		return state, fmt.Errorf("%w: runtime-egress attachment close is not current", ErrDependencyUnavailable)
 	}
-	next := domain.PhaseRuntimeDelete
-	if state.Operation.SourceRuntimeAbsent {
-		next = domain.PhaseNetworkRelease
-	}
 	if err != nil {
-		return service.advanceAgentDelete(ctx, state, domain.PhaseNetworkFence, next, nil, nil, "")
+		return service.advanceDeleteFence(ctx, state, nil)
 	}
-	return service.advanceAgentDelete(
-		ctx, state, domain.PhaseNetworkFence, next, &attachment, nil, "",
-	)
+	return service.advanceDeleteFence(ctx, state, &attachment)
 }
 
 func (service *LifecycleService) deleteRuntime(
 	ctx context.Context, state ports.AgentDeleteState,
 ) (ports.AgentDeleteState, error) {
+	if state.Operation.SourceRuntimeRevision == "" || state.Operation.SourceRuntimeAbsent {
+		return state, fmt.Errorf("%w: Runtime cleanup target is unresolved", ErrDependencyUnavailable)
+	}
 	result, err := service.runtime.DeleteRuntime(
 		ctx, state.Operation.ChildRequestID, state.Agent.AgentID,
 		state.Operation.SourceRuntimeRevision,
@@ -200,6 +183,9 @@ func (service *LifecycleService) deleteRuntime(
 	case "running", "unknown":
 		return state, nil
 	case "failed":
+		if result.Effect == "not_started" {
+			return service.failAgentDelete(ctx, state, result.ErrorCode, result.ErrorDetail)
+		}
 		return service.reconcileDeletedRuntime(ctx, state)
 	case "completed":
 		if !completedDeletedRuntime(result) {
@@ -209,6 +195,28 @@ func (service *LifecycleService) deleteRuntime(
 	default:
 		return state, fmt.Errorf("%w: invalid Runtime deletion state", ErrDependencyUnavailable)
 	}
+}
+
+func (service *LifecycleService) failAgentDelete(ctx context.Context, state ports.AgentDeleteState, code, detail string) (ports.AgentDeleteState, error) {
+	if code == "" {
+		code = "runtime_delete_failed"
+	}
+	if detail == "" {
+		detail = "Runtime deletion was rejected before execution; correct the deployment configuration and retry deletion"
+	}
+	operation := state.Operation
+	if err := service.store.QuarantineLifecycleOperation(ctx, ports.QuarantineLifecycleOperation{
+		RequestID: operation.RequestID, Fingerprint: operation.RequestFingerprint,
+		ExpectedPhase: operation.Phase, ErrorCode: code, ErrorDetail: detail,
+		EventID: derivedID("event-lifecycle-quarantined", operation.RequestID), TraceID: currentTraceID(ctx),
+	}); err != nil {
+		return state, err
+	}
+	failed, found, err := service.store.ReplayAgentDelete(ctx, operation.RequestID, operation.RequestFingerprint)
+	if !found || err != nil {
+		return state, lifecycleReplayError("delete failure", found, err)
+	}
+	return failed, nil
 }
 
 func (service *LifecycleService) reconcileDeletedRuntime(
@@ -295,6 +303,13 @@ func (service *LifecycleService) advanceAgentDelete(
 	networkReleaseOutcome string,
 ) (ports.AgentDeleteState, error) {
 	now := service.clock.Now()
+	input := deleteAdvanceInput(ctx, state, expected, next, now)
+	input.NetworkAttachment, input.RuntimeResult = attachment, runtime
+	input.NetworkReleaseOutcome = networkReleaseOutcome
+	return service.store.AdvanceAgentDelete(ctx, input)
+}
+
+func deleteAdvanceInput(ctx context.Context, state ports.AgentDeleteState, expected, next domain.OperationPhase, now time.Time) ports.AdvanceAgentDelete {
 	releaseEvent := ports.RunAdmissionEvent{}
 	if expected == domain.PhaseRuntimeDelete ||
 		(expected == domain.PhaseNetworkFence && state.Operation.SourceRuntimeAbsent) {
@@ -307,14 +322,12 @@ func (service *LifecycleService) advanceAgentDelete(
 			state.Operation.SourceRuntimeRevision, now,
 		)
 	}
-	return service.store.AdvanceAgentDelete(ctx, ports.AdvanceAgentDelete{
+	return ports.AdvanceAgentDelete{
 		RequestID: state.Operation.RequestID, Fingerprint: state.Operation.RequestFingerprint,
 		ExpectedPhase: expected, NextPhase: next,
 		NextChildRequestID: domain.ChildRequestID(state.Operation.RequestID, next),
-		NetworkAttachment:  attachment, RuntimeResult: runtime,
-		RunReleaseEvent:       releaseEvent,
-		NetworkReleaseOutcome: networkReleaseOutcome, Now: now,
-	})
+		RunReleaseEvent:    releaseEvent, Now: now,
+	}
 }
 
 func (service *LifecycleService) publishAgentDelete(
@@ -369,9 +382,7 @@ func validateDeleteSource(agent ports.AgentRecord) error {
 			return fmt.Errorf("%w: Agent disabled projection is incomplete", ErrAgentNotReady)
 		}
 	case domain.AgentUnavailable:
-		if agent.DesiredState == domain.DesiredDeleted {
-			return fmt.Errorf("%w: Agent deletion is already in progress", ErrLifecycleConflict)
-		}
+		// Failed deletion retains its intent; an explicit new request may resume cleanup.
 	default:
 		return fmt.Errorf("%w: Agent cannot enter deletion from %s", ErrAgentNotReady, agent.LifecycleState)
 	}
@@ -417,7 +428,7 @@ func validRuntimeAbsenceProof(proof *ports.RuntimeAbsenceProof) bool {
 		return false
 	}
 	switch proof.Reason {
-	case "runtime_not_found", "agent_runtime_unassigned":
+	case "runtime_not_found":
 		return proof.RuntimeRevision == ""
 	case "runtime_deleted":
 		return proof.RuntimeRevision != ""

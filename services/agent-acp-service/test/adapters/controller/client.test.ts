@@ -7,7 +7,7 @@ import {
 } from "../../../src/adapters/controller/client.js";
 
 describe("AgentControllerClient", () => {
-  it("maps one complete acquire response without discovering mutable state", async () => {
+  it("allows historical replay but rejects a new admission missing its configuration", async () => {
     const fetchFn = vi.fn(() =>
       Promise.resolve(
         Response.json({
@@ -80,6 +80,17 @@ describe("AgentControllerClient", () => {
         }),
       }),
     );
+    for (const authorizationMode of ["chat", "approve", "smart_approve"] as const)
+      await expect(
+        client.acquireRun({
+          requestId: "new-request",
+          agentId: "agent-1",
+          principalId: "principal-1",
+          expectedAccessRevision: "access-1",
+          sessionId: "session-1",
+          sessionConfiguration: { authorizationMode },
+        }),
+      ).rejects.toMatchObject({ code: "dependency_unavailable" });
   });
 
   it("preserves domain error code and retryability", async () => {

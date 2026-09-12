@@ -2,14 +2,21 @@ import {
   context,
   isSpanContextValid,
   metrics,
-  SpanStatusCode,
+  ROOT_CONTEXT,
   trace,
   type Counter,
   type Histogram,
 } from "@opentelemetry/api";
 import { OTLPMetricExporter } from "@opentelemetry/exporter-metrics-otlp-http";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
-import { NodeSDK } from "@opentelemetry/sdk-node";
+import { core, node, NodeSDK, resources } from "@opentelemetry/sdk-node";
+import { hostname } from "node:os";
+import {
+  boundaryConfig,
+  configureBoundaries,
+  recordBoundaryError,
+  safeError,
+} from "./diagnostics.js";
 import { PeriodicExportingMetricReader } from "@opentelemetry/sdk-metrics";
 
 import type { AgentAcpConfig } from "../config.js";
@@ -41,21 +48,23 @@ export class ServiceTelemetry implements TelemetryPort {
     attributes: TelemetryAttributes,
     operation: () => Promise<Result>,
   ): Promise<Result> {
+    if (boundaryConfig().disabled) return operation();
+    const source = trace.getSpan(context.active())?.spanContext();
     return this.tracer.startActiveSpan(
       name,
-      { attributes: cleanAttributes(attributes) },
+      {
+        attributes: cleanAttributes(attributes),
+        ...(name === "agent.run" && source !== undefined && isSpanContextValid(source)
+          ? { links: [{ context: source }] }
+          : {}),
+      },
+      name === "agent.run" ? ROOT_CONTEXT : context.active(),
       async (span) => {
         try {
           const result = await operation();
-          span.setStatus({ code: SpanStatusCode.OK });
           return result;
         } catch (error) {
-          span.setStatus({ code: SpanStatusCode.ERROR });
-          const identity = errorIdentity(error);
-          span.setAttribute("error.type", identity.type);
-          if (identity.code !== undefined) {
-            span.setAttribute("error.code", identity.code);
-          }
+          recordBoundaryError(span, error, name);
           throw error;
         } finally {
           span.end();
@@ -65,6 +74,7 @@ export class ServiceTelemetry implements TelemetryPort {
   }
 
   public count(name: string, attributes: TelemetryAttributes, value = 1): void {
+    if (boundaryConfig().disabled) return;
     let counter = this.counters.get(name);
     if (counter === undefined) {
       counter = this.meter.createCounter(name);
@@ -74,6 +84,7 @@ export class ServiceTelemetry implements TelemetryPort {
   }
 
   public duration(name: string, milliseconds: number, attributes: TelemetryAttributes): void {
+    if (boundaryConfig().disabled) return;
     let histogram = this.histograms.get(name);
     if (histogram === undefined) {
       histogram = this.meter.createHistogram(name, { unit: "ms" });
@@ -89,7 +100,7 @@ export class ServiceTelemetry implements TelemetryPort {
     error?: unknown,
   ): void {
     const spanContext = trace.getSpan(context.active())?.spanContext();
-    const identity = error === undefined ? undefined : errorIdentity(error);
+    const identity = error === undefined ? undefined : safeError(error);
     const payload = {
       timestamp: new Date().toISOString(),
       level,
@@ -101,25 +112,44 @@ export class ServiceTelemetry implements TelemetryPort {
         : {}),
       ...(identity === undefined ? {} : { error_type: identity.type }),
       ...(identity?.code === undefined ? {} : { error_code: identity.code }),
+      ...(identity === undefined ? {} : { error_message: identity.message }),
     };
-    this.emit(JSON.stringify(payload));
+    try {
+      this.emit(JSON.stringify(payload));
+    } catch {
+      // A log sink failure cannot alter permission or execution outcomes.
+    }
   }
 }
 
 export function startTelemetry(config: AgentAcpConfig["telemetry"]): Promise<TelemetryRuntime> {
+  configureBoundaries({
+    captureRpcContent: config.captureRpcContent ?? false,
+    disabled: config.disabled,
+  });
   if (
     config.disabled ||
     config.endpoint === undefined ||
     (!config.tracesEnabled && !config.metricsEnabled)
   ) {
+    const provider = new node.NodeTracerProvider({ spanProcessors: [] });
+    provider.register({ propagator: new core.W3CTraceContextPropagator() });
     return Promise.resolve({
       telemetry: new ServiceTelemetry(config.serviceName),
-      shutdown: () => Promise.resolve(),
+      shutdown: () => provider.shutdown(),
     });
   }
 
   const sdk = new NodeSDK({
     serviceName: config.serviceName,
+    textMapPropagator: new core.W3CTraceContextPropagator(),
+    resource: resources.resourceFromAttributes({
+      "service.namespace": "antnest",
+      "service.version": "0.1.0",
+      "service.instance.id": `${hostname()}:${process.pid}`,
+    }),
+    ...(config.tracesEnabled ? {} : { spanProcessors: [] }),
+    ...(config.metricsEnabled ? {} : { metricReaders: [] }),
     ...(config.tracesEnabled
       ? {
           traceExporter: new OTLPTraceExporter({
@@ -149,26 +179,24 @@ export function startTelemetry(config: AgentAcpConfig["telemetry"]): Promise<Tel
 function cleanAttributes(
   attributes: TelemetryAttributes,
 ): Record<string, string | number | boolean> {
-  return Object.fromEntries(
+  const clean = Object.fromEntries(
     Object.entries(attributes).filter(
       (entry): entry is [string, string | number | boolean] => entry[1] !== undefined,
     ),
   );
-}
-
-function errorIdentity(error: unknown): { type: string; code?: string } {
-  if (error instanceof Error) {
-    const code = errorCode(error);
-    return { type: error.name, ...(code === undefined ? {} : { code }) };
+  const aliases: Record<string, string> = {
+    "request.id": "antnest.request.id",
+    "agent.id": "antnest.agent.id",
+    "run.id": "antnest.run.id",
+    "session.id": "antnest.session.id",
+    "admission.id": "antnest.admission.id",
+    "execution.revision": "antnest.execution.revision",
+  };
+  for (const [original, alias] of Object.entries(aliases)) {
+    const value = clean[original];
+    if (value !== undefined) clean[alias] = value;
   }
-  return { type: typeof error };
-}
-
-function errorCode(error: Error): string | undefined {
-  if ("code" in error && typeof error.code === "string" && error.code.length <= 128) {
-    return error.code;
-  }
-  return undefined;
+  return clean;
 }
 
 function signalUrl(endpoint: URL, signal: "traces" | "metrics"): URL {

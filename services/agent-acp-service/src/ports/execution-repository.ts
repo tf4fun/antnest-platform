@@ -1,8 +1,10 @@
 import type { ContentBlock, RunOutcome, RunExecutionSnapshot, RunState } from "../domain/types.js";
+import type { SessionConfiguration } from "../domain/session-configuration.js";
 
 export type RecoveryWork =
   | {
       kind: "admitting";
+      sessionConfiguration?: SessionConfiguration;
       id: string;
       requestId: string;
       sessionId: string;

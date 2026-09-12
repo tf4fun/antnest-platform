@@ -5,88 +5,57 @@ import (
 	"errors"
 	"strings"
 	"testing"
-	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
 	"soft/antnest-platform/services/identity-service/internal/domain"
+	"soft/antnest-platform/services/identity-service/internal/telemetry"
 )
 
-func TestRepositoryErrorClassIsBounded(t *testing.T) {
-	tests := []struct {
-		name string
-		err  error
-		want string
-	}{
-		{name: "not found", err: domain.ErrNotFound, want: "not_found"},
-		{name: "conflict", err: domain.ErrConflict, want: "conflict"},
-		{name: "forbidden", err: domain.ErrForbidden, want: "forbidden"},
-		{name: "invalid argument", err: domain.InvalidArgument("bad filter"), want: "invalid_argument"},
-		{name: "unauthenticated", err: domain.ErrUnauthenticated, want: "unauthenticated"},
-		{name: "inactive", err: domain.ErrInactive, want: "inactive_principal"},
-		{
-			name: "specific domain rejection",
-			err:  domain.NewError("oidc_exchange_in_progress", "callback is already claimed", false),
-			want: "domain_error",
-		},
-		{name: "wrapped", err: errors.New("postgres://user:secret@example.test/identity"), want: "persistence_error"},
+func TestNormalizedDatabaseErrorPreservesCauseAndSQLState(t *testing.T) {
+	cause := &pgconn.PgError{Code: "23505", Message: "PASSWORD-CANARY", Detail: "TOKEN-CANARY"}
+	err := normalizeError(cause)
+	if !errors.Is(err, domain.ErrConflict) || !errors.Is(err, cause) {
+		t.Fatal("normalization lost public error or original cause")
 	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			if got := repositoryErrorClass(test.err); got != test.want {
-				t.Fatalf("repository error class = %q, want %q", got, test.want)
-			}
-		})
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	t.Cleanup(func() {
+		if err := provider.Shutdown(context.Background()); err != nil {
+			t.Errorf("shutdown tracer provider: %v", err)
+		}
+	})
+	_, span := provider.Tracer("test").Start(t.Context(), "protocol")
+	telemetry.RecordFailure(span, "protocol", err)
+	span.End()
+	found := false
+	for _, attr := range recorder.Ended()[0].Attributes() {
+		if string(attr.Key) == "db.response.status_code" && attr.Value.AsString() == "23505" {
+			found = true
+		}
+		if strings.Contains(attr.Value.String(), "CANARY") {
+			t.Fatal("database details leaked into protocol error summary")
+		}
+	}
+	if !found {
+		t.Fatal("SQLSTATE missing")
 	}
 }
 
-func TestRepositorySpanRecordsOnlyBoundedErrorClass(t *testing.T) {
-	tests := []struct {
-		name      string
-		err       error
-		wantClass string
-		sensitive string
-	}{
-		{
-			name: "persistence failure", err: errors.New("postgres://user:secret@example.test/identity"),
-			wantClass: "persistence_error", sensitive: "secret",
-		},
-		{
-			name: "domain rejection",
-			err: domain.NewError(
-				"oidc_exchange_in_progress", "provider response contains sensitive-value", false,
-			),
-			wantClass: "domain_error", sensitive: "sensitive-value",
-		},
+func TestParsePoolConfigInstallsDriverTracerWithoutChangingPoolSettings(t *testing.T) {
+	config, err := ParsePoolConfig("postgres://identity@localhost/identity?sslmode=disable&pool_max_conns=3&application_name=identity-test&search_path=identity_test")
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			recorder := tracetest.NewSpanRecorder()
-			provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
-			t.Cleanup(func() { _ = provider.Shutdown(context.Background()) })
-			ctx, span := provider.Tracer("test").Start(context.Background(), "repository operation")
-
-			finishRepositoryOperation(ctx, span, time.Now(), "test", test.err)
-
-			spans := recorder.Ended()
-			if len(spans) != 1 {
-				t.Fatalf("ended spans = %d, want 1", len(spans))
-			}
-			exceptionMessage := ""
-			for _, event := range spans[0].Events() {
-				for _, attr := range event.Attributes {
-					if string(attr.Key) == "exception.message" {
-						exceptionMessage = attr.Value.AsString()
-					}
-				}
-			}
-			if exceptionMessage != test.wantClass {
-				t.Fatalf("exception message = %q, want %q", exceptionMessage, test.wantClass)
-			}
-			if strings.Contains(exceptionMessage, test.sensitive) {
-				t.Fatalf("repository span leaked raw error: %q", exceptionMessage)
-			}
-		})
+	if _, ok := config.ConnConfig.Tracer.(databaseTracer); !ok {
+		t.Fatalf("connection tracer=%T, want execution-only otelpgx adapter", config.ConnConfig.Tracer)
+	}
+	if config.MaxConns != 3 || config.ConnConfig.RuntimeParams["application_name"] != "identity-test" || config.ConnConfig.RuntimeParams["search_path"] != "identity_test" {
+		t.Fatal("pool settings were not preserved")
+	}
+	if config, err := ParsePoolConfig("postgres://localhost/identity?pool_max_conns=invalid"); err == nil || config != nil {
+		t.Fatal("invalid pool configuration did not preserve parse failure")
 	}
 }

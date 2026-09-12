@@ -7,7 +7,7 @@ import { TemplatesPage } from "./templates";
 afterEach(() => { cleanup(); sessionStorage.clear(); });
 
 const model: ModelProfile = {
-  model_profile_id: "model-1", display_name: "Support model", revision_id: "model-revision-1", revision: 1, enabled: true,
+  provider_connection_id: "connection-1", model_profile_id: "model-1", display_name: "Support model", revision_id: "model-revision-1", revision: 1, enabled: true,
   model: { base_url: "https://models.example.com/v1", model: "support", context_window: 8192, max_output_tokens: 1024, supports_images: false },
   created_at: "2026-09-07T00:00:00Z", updated_at: "2026-09-07T00:00:00Z",
 };
@@ -18,7 +18,7 @@ const catalog: ModelCatalog = {
 };
 const template: AgentTemplate = {
   template_id: "template-1", name: "Support template", revision: 1, enabled: true,
-  model_profile_revision_id: model.revision_id, system_prompt: "Original instructions", max_model_requests: 32,
+  model_profile_id: model.model_profile_id, system_prompt: "Original instructions", max_model_requests: 32,
   context_policy_version: "context-v1", skill_refs: [],
   runtime: { image_ref: `sha256:${"a".repeat(64)}`, resources: { memory_bytes: 1024, pids_limit: 128, tmpfs_bytes: 1024 } },
   created_at: model.created_at, updated_at: model.updated_at,
@@ -26,13 +26,90 @@ const template: AgentTemplate = {
 const workflows = [
   { name: "Model", component: <ModelsPage modelID={model.model_profile_id} />, historical: <ModelsPage modelID={model.model_profile_id} revisionID={model.revision_id} />,
     path: "/api/admin/model-profiles/model-1", revisionPath: "/api/admin/model-profile-revisions/model-revision-1", title: "support",
-    field: "Replacement API key", value: "test-replacement-secret", result: { ...model, revision_id: "model-revision-7", revision: 7 }, back: "Back to model providers" },
+    field: "Maximum output", value: "2048", result: { ...model, revision_id: "model-revision-7", revision: 7 }, back: "Back to model providers" },
   { name: "Template", component: <TemplatesPage templateID={template.template_id} />, historical: <TemplatesPage templateID={template.template_id} revisionID="1" />,
     path: "/api/admin/templates/template-1", revisionPath: "/api/admin/templates/template-1/revisions/1", title: "Support template",
     field: "System prompt", value: "Revised instructions", result: { ...template, system_prompt: "Revised instructions", revision: 7 }, back: "Back to Agent templates" },
 ];
 type Workflow = typeof workflows[number];
 type Request = { method: string; path: string; body: string; key: string | null };
+
+describe("Template stable model reference", () => {
+  it("reads the current model for a historical template without rewriting template history", async () => {
+    const current = { ...model, revision: 8, revision_id: "model-revision-8" };
+    const requests = mockCatalog((request) => request.path === "/api/admin/model-profiles/model-1"
+      ? Response.json(current) : undefined);
+    render(workflows[1]!.historical);
+    const link = await screen.findByRole("link", { name: "Support model · support · revision 8" });
+    expect(link.getAttribute("href")).toBe("#models/model-1");
+    expect(screen.getByText("Current model")).toBeTruthy();
+    expect(screen.getByText("Original instructions")).toBeTruthy();
+    expect(requests.map((request) => request.path)).toEqual([
+      "/api/admin/templates/template-1/revisions/1", "/api/admin/model-profiles/model-1",
+    ]);
+  });
+
+  it("keeps a selected model outside the first page and submits its stable ID", async () => {
+    const requests = mockCatalog((request) => {
+      if (request.path === "/api/admin/model-profiles") return Response.json({ items: [], next_after_id: "page-2" });
+      if (request.method === "POST") return Response.json({ ...template, revision: 2 }, { status: 201 });
+      return undefined;
+    });
+    const dialog = await openRevision(workflows[1]!);
+    await waitFor(() => expect((dialog.getByLabelText("Model") as HTMLSelectElement).value).toBe(model.model_profile_id));
+    fireEvent.click(dialog.getByRole("button", { name: "Publish revision" }));
+    await screen.findByText("Template revision 2 published.");
+    const writes = requests.filter((request) => request.method === "POST");
+    expect(writes).toHaveLength(1);
+    expect(JSON.parse(writes[0]!.body)).toHaveProperty("model_profile_id", model.model_profile_id);
+    expect(JSON.parse(writes[0]!.body)).not.toHaveProperty("model_profile_revision_id");
+  });
+
+  it.each(["missing", "disabled"])("never silently substitutes a %s referenced model", async (state) => {
+    const alternative = { ...model, model_profile_id: "model-2", revision_id: "revision-2", display_name: "Alternative" };
+    const requests = mockCatalog((request) => {
+      if (request.path === "/api/admin/model-profiles") return Response.json({ items: [alternative] });
+      if (request.path === "/api/admin/model-profiles/model-1") return state === "missing"
+        ? Response.json({ message: "Model removed" }, { status: 404 })
+        : Response.json({ ...model, enabled: false });
+      if (request.method === "POST") return Response.json({ ...template, revision: 2, model_profile_id: "model-2" }, { status: 201 });
+      if (request.path === "/api/admin/model-profiles/model-2") return Response.json(alternative);
+      return undefined;
+    });
+    const dialog = await openRevision(workflows[1]!);
+    const select = dialog.getByLabelText("Model") as HTMLSelectElement;
+    const publish = dialog.getByRole("button", { name: "Publish revision" }) as HTMLButtonElement;
+    expect(publish.disabled).toBe(true);
+    expect(select.value).not.toBe(alternative.model_profile_id);
+    fireEvent.click(publish);
+    expect(requests.some((request) => request.method === "POST")).toBe(false);
+    fireEvent.change(select, { target: { value: alternative.model_profile_id } });
+    expect(publish.disabled).toBe(false);
+    fireEvent.click(publish);
+    await screen.findByText("Template revision 2 published.");
+    expect(JSON.parse(requests.find((request) => request.method === "POST")!.body).model_profile_id).toBe("model-2");
+  });
+
+  it("merges model metadata revisions across pages without changing the selection", async () => {
+    let pages = 0;
+    const requests = mockCatalog((request) => {
+      if (request.path === "/api/admin/model-profiles") return Response.json(++pages === 1
+        ? { items: [model], next_after_id: "page-2" }
+        : { items: [{ ...model, revision_id: "model-revision-2", revision: 2, display_name: "Updated model" }] });
+      if (request.method === "POST") return Response.json({ ...template, revision: 2 }, { status: 201 });
+      return undefined;
+    });
+    const dialog = await openRevision(workflows[1]!);
+    fireEvent.click(dialog.getByRole("button", { name: "Load more" }));
+    await dialog.findByRole("option", { name: /Updated model/ });
+    const select = dialog.getByLabelText("Model") as HTMLSelectElement;
+    expect(select.value).toBe(model.model_profile_id);
+    expect(within(select).getAllByRole("option")).toHaveLength(1);
+    fireEvent.click(dialog.getByRole("button", { name: "Publish revision" }));
+    await screen.findByText("Template revision 2 published.");
+    expect(JSON.parse(requests.find((request) => request.method === "POST")!.body).model_profile_id).toBe(model.model_profile_id);
+  });
+});
 
 function mockCatalog(overrides: (request: Request) => Response | Promise<Response> | undefined = () => undefined) {
   const requests: Request[] = [];
@@ -79,7 +156,7 @@ describe.each(workflows)("$name revision workflow", (workflow) => {
     fireEvent.click(dialog.getByRole("button", { name: "Cancel" }));
     expect(screen.queryByRole("dialog")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Create revision" }));
-    expect((screen.getByLabelText(workflow.field) as HTMLInputElement).value).toBe(workflow.name === "Model" ? "" : template.system_prompt);
+    expect((screen.getByLabelText(workflow.field) as HTMLInputElement).value).toBe(workflow.name === "Model" ? "1024" : template.system_prompt);
   });
 
   it("holds the dialog during publication and presents the returned revision with dismissible feedback", async () => {
@@ -138,24 +215,24 @@ it("keeps a published Template and its acknowledgement when its referenced Model
   const requests = mockCatalog((request) => {
     if (request.method === "POST") {
       published = true;
-      return Response.json({ ...template, revision: 2, model_profile_revision_id: revisedModel.revision_id, system_prompt: "Revised instructions" }, { status: 201 });
+      return Response.json({ ...template, revision: 2, model_profile_id: revisedModel.model_profile_id, system_prompt: "Revised instructions" }, { status: 201 });
     }
     if (request.path === "/api/admin/model-profiles") return Response.json({ items: [revisedModel] });
-    if (request.path === "/api/admin/model-profile-revisions/model-revision-2" && published) {
+    if (request.path === "/api/admin/model-profiles/model-1" && published) {
       return ++attempts === 1 ? Response.json({ message: "Model revision unavailable" }, { status: 503 }) : Response.json(revisedModel);
     }
     return undefined;
   });
   const dialog = await openRevision(workflows[1]!);
-  fireEvent.change(dialog.getByLabelText("Model"), { target: { value: revisedModel.revision_id } });
+  fireEvent.change(dialog.getByLabelText("Model"), { target: { value: revisedModel.model_profile_id } });
   fireEvent.click(dialog.getByRole("button", { name: "Publish revision" }));
-  const retry = await screen.findByRole("button", { name: "Retry model revision" });
+  const retry = await screen.findByRole("button", { name: "Retry current model" });
   expect(screen.getByRole("heading", { name: template.name })).toBeTruthy();
   expect(screen.getByText("Revised instructions")).toBeTruthy();
   expect(screen.getByText("Template revision 2 published.")).toBeTruthy();
   fireEvent.click(retry);
   expect((await screen.findByRole("link", { name: "Support model · support · revision 2" })).getAttribute("href"))
-    .toBe("#models/model-1/revisions/model-revision-2");
+    .toBe("#models/model-1");
   expect(requests.filter((request) => request.method === "POST")).toHaveLength(1);
   expect(requests.filter((request) => request.path === "/api/admin/templates/template-1")).toHaveLength(1);
   expect(screen.getByText("Template revision 2 published.")).toBeTruthy();

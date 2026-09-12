@@ -9,15 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-
-	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/codes"
-	"go.opentelemetry.io/otel/propagation"
-	"go.opentelemetry.io/otel/trace"
 )
-
-var tracer = otel.Tracer("soft/antnest-platform/edge-gateway/agent-controller-client")
 
 const (
 	maximumResponseBytes  = 2 << 20
@@ -39,8 +31,9 @@ type ListWorkspaceAgentsInput struct {
 }
 
 type Service interface {
+	GetWorkspaceState(context.Context, WorkspaceStateInput) (WorkspaceState, error)
+	WatchWorkspaceState(context.Context, WorkspaceStateInput, WorkspaceStateEmitter) error
 	ListWorkspaceAgents(context.Context, ListWorkspaceAgentsInput) ([]WorkspaceAgent, error)
-	Ready(context.Context) error
 }
 
 type Client struct {
@@ -79,7 +72,7 @@ func (client *Client) ListWorkspaceAgents(
 			request["cursor"] = cursor
 		}
 		if err := client.doJSON(
-			ctx, "list_workspace_agents", http.MethodPost,
+			ctx, http.MethodPost,
 			"/rpc/agent-controller/list-workspace-agents", request, &result,
 		); err != nil {
 			return nil, err
@@ -105,23 +98,13 @@ func (client *Client) ListWorkspaceAgents(
 	return nil, fmt.Errorf("agent controller workspace pagination exceeded its bound")
 }
 
-func (client *Client) Ready(ctx context.Context) error {
-	return client.doJSON(ctx, "status", http.MethodGet, "/status", nil, nil)
-}
-
 func (client *Client) doJSON(
-	ctx context.Context, operation string, method string, path string, input any, output any,
+	ctx context.Context, method string, path string, input any, output any,
 ) error {
-	ctx, span := tracer.Start(ctx, "agent_controller."+operation, trace.WithSpanKind(trace.SpanKindClient))
-	defer span.End()
-	span.SetAttributes(attribute.String("rpc.system", "http"), attribute.String("rpc.method", operation))
-
 	var body io.Reader
 	if input != nil {
 		payload, err := json.Marshal(input)
 		if err != nil {
-			span.RecordError(err)
-			span.SetStatus(codes.Error, "encode request")
 			return fmt.Errorf("encode Agent Controller request: %w", err)
 		}
 		body = bytes.NewReader(payload)
@@ -135,11 +118,8 @@ func (client *Client) doJSON(
 	if input != nil {
 		request.Header.Set("Content-Type", "application/json")
 	}
-	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(request.Header))
 	response, err := client.httpClient.Do(request)
 	if err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, "transport failure")
 		return fmt.Errorf("agent controller unavailable: %w", err)
 	}
 	defer func() { _ = response.Body.Close() }()
@@ -151,7 +131,6 @@ func (client *Client) doJSON(
 		return fmt.Errorf("agent controller response exceeds limit")
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		span.SetStatus(codes.Error, fmt.Sprintf("status %d", response.StatusCode))
 		return fmt.Errorf("agent controller request failed with status %d", response.StatusCode)
 	}
 	if output == nil {
@@ -160,8 +139,6 @@ func (client *Client) doJSON(
 	decoder := json.NewDecoder(bytes.NewReader(payload))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(output); err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, "invalid response")
 		return fmt.Errorf("decode Agent Controller response: %w", err)
 	}
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {

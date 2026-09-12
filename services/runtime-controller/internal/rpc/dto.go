@@ -116,6 +116,8 @@ func runtimesFromDomain(values []deployment.Environment) []runtimeInspectionDTO 
 }
 
 type operationDTO struct {
+	ImageReference string                     `json:"image_reference,omitempty"`
+	ImageID        string                     `json:"image_id,omitempty"`
 	RequestID      string                     `json:"request_id"`
 	Kind           deployment.OperationKind   `json:"kind"`
 	AgentID        string                     `json:"agent_id"`
@@ -131,6 +133,7 @@ type operationDTO struct {
 
 func operationFromDomain(value deployment.Operation) operationDTO {
 	result := operationDTO{
+		ImageReference: value.ImageReference, ImageID: value.ImageID,
 		RequestID: value.RequestID, Kind: value.Kind, AgentID: value.AgentID,
 		TargetRevision: value.RuntimeRevision, State: value.State, Effect: value.Effect,
 		ErrorCode: value.ErrorCode, ErrorDetail: value.ErrorDetail,

@@ -37,7 +37,9 @@ func New(httpClient *http.Client) (*Client, error) {
 	return &Client{httpClient: &bounded}, nil
 }
 
-func (c *Client) Discover(ctx context.Context, issuer string) (oidcflow.Discovery, error) {
+func (c *Client) Discover(ctx context.Context, issuer string) (_ oidcflow.Discovery, resultErr error) {
+	ctx, finish := startOperation(ctx, "identity.oidc.discover")
+	defer func() { finish(resultErr) }()
 	provider, err := oidc.NewProvider(oidc.ClientContext(ctx, c.httpClient), issuer)
 	if err != nil {
 		if strings.Contains(err.Error(), errResponseTooLarge.Error()) {
@@ -82,7 +84,10 @@ func (c *Client) AuthorizationURL(input oidcflow.AuthorizationInput) (string, er
 func (c *Client) ExchangeAndVerify(
 	ctx context.Context,
 	input oidcflow.ExchangeInput,
-) (oidcflow.VerifiedIdentity, error) {
+) (_ oidcflow.VerifiedIdentity, resultErr error) {
+	ctx, finish := startOperation(ctx, "identity.oidc.exchange_verify")
+	defer func() { finish(resultErr) }()
+	providerFacts(ctx, input.Provider)
 	authStyle, err := tokenEndpointAuthStyle(input.Provider.TokenEndpointAuthMethod)
 	if err != nil {
 		return oidcflow.VerifiedIdentity{}, err

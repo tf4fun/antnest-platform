@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/multitracer"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"soft/antnest-platform/services/identity-service/internal/directory"
@@ -156,7 +157,7 @@ func TestOIDCCompletionDeadlineIncludesDatabaseLockWait(t *testing.T) {
 func (f localAdmissionFixture) tracedStore(t *testing.T, before func(context.Context, *pgx.Conn, string)) *repository.Store {
 	t.Helper()
 	config := f.pool.Config()
-	config.ConnConfig.Tracer = admissionQueryTracer{before: before}
+	config.ConnConfig.Tracer = multitracer.New(admissionQueryTracer{before: before}, config.ConnConfig.Tracer)
 	pool, err := pgxpool.NewWithConfig(t.Context(), config)
 	if err != nil {
 		t.Fatal(err)

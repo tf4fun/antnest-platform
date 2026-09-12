@@ -6,7 +6,11 @@ import (
 	"time"
 )
 
-const RuntimeObservationRestarted = "restarted"
+const (
+	RuntimeObservationRestarted = "restarted"
+	RuntimeObservationMissing   = "runtime_missing"
+	RuntimeObservationDeleted   = "runtime_deleted"
+)
 
 type RuntimeObservation struct {
 	Sequence           uint64

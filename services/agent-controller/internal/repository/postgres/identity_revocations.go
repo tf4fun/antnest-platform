@@ -19,7 +19,7 @@ func (repository *Repository) GetIdentityRevocationCursor(ctx context.Context) (
 
 // Admission readers share this lock. Receipt serializes only the brief local
 // commit boundary, never an Identity RPC or a Runtime operation.
-func lockIdentityAdmission(ctx context.Context, tx pgx.Tx) error {
+func lockIdentityAdmission(ctx context.Context, tx *databaseTransaction) error {
 	var sequence int64
 	if err := tx.QueryRow(ctx, `SELECT last_sequence FROM agent_controller.identity_revocation_cursor WHERE singleton FOR SHARE`).Scan(&sequence); err != nil {
 		return fmt.Errorf("lock Identity admission boundary: %w", err)
@@ -27,7 +27,7 @@ func lockIdentityAdmission(ctx context.Context, tx pgx.Tx) error {
 	return nil
 }
 
-func validateOwnerWatermark(ctx context.Context, tx pgx.Tx, userID, orgID string, authorization int64) error {
+func validateOwnerWatermark(ctx context.Context, tx *databaseTransaction, userID, orgID string, authorization int64) error {
 	var revoked int64
 	if err := tx.QueryRow(ctx, `SELECT COALESCE(MAX(sequence), 0) FROM agent_controller.owner_revocations
 WHERE user_id=$1 AND organization_id IN ('', $2)`, userID, orgID).Scan(&revoked); err != nil {
@@ -90,7 +90,7 @@ type revokedAgent struct {
 	aggregate int64
 }
 
-func lockRevokedAgents(ctx context.Context, tx pgx.Tx, event ports.PrincipalRevocation) ([]revokedAgent, error) {
+func lockRevokedAgents(ctx context.Context, tx *databaseTransaction, event ports.PrincipalRevocation) ([]revokedAgent, error) {
 	rows, err := tx.Query(ctx, `SELECT id, aggregate_sequence FROM agent_controller.agents
 WHERE owner_user_id=$1 AND ($2='' OR organization_id=$2) AND lifecycle_state <> 'deleted'
 AND owner_authorization_sequence < $3 AND identity_revocation_sequence < $3 ORDER BY id FOR UPDATE`,
@@ -110,7 +110,7 @@ AND owner_authorization_sequence < $3 AND identity_revocation_sequence < $3 ORDE
 	return agents, nil
 }
 
-func (repository *Repository) fenceRevokedAgent(ctx context.Context, tx pgx.Tx, agent revokedAgent, event ports.PrincipalRevocation, traceID string) error {
+func (repository *Repository) fenceRevokedAgent(ctx context.Context, tx *databaseTransaction, agent revokedAgent, event ports.PrincipalRevocation, traceID string) error {
 	if _, err := tx.Exec(ctx, `UPDATE agent_controller.agents SET identity_revocation_sequence=$2,
 desired_state=CASE WHEN active_operation_request_id='' AND desired_state <> 'deleted' THEN 'disabled' ELSE desired_state END,
 aggregate_sequence=aggregate_sequence+1, updated_at=clock_timestamp() WHERE id=$1`, agent.id, event.Sequence); err != nil {

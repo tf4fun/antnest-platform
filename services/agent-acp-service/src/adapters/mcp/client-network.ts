@@ -4,6 +4,7 @@ import type { LookupFunction } from "node:net";
 import type { FetchLike } from "@modelcontextprotocol/client";
 import ipaddr from "ipaddr.js";
 import { Agent, fetch as undiciFetch, type Dispatcher } from "undici";
+import { tracedFetch } from "../../telemetry/http.js";
 
 export type ResolveHost = (hostname: string) => Promise<LookupAddress[]>;
 
@@ -162,7 +163,7 @@ export function createClientMcpFetch(options: CreateClientMcpFetchOptions): Mana
     options.request === undefined
       ? new Agent({ connect: { lookup: options.policy.createLookup() } })
       : undefined;
-  const request = options.request ?? defaultRequest;
+  const request = tracedFetch(options.request ?? defaultRequest, "mcp");
   const maxRedirects = options.maxRedirects ?? 5;
   const sensitiveHeaders = new Set([
     "authorization",

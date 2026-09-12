@@ -149,7 +149,7 @@ func TestUpdateRetainsRecoverySlotAfterOldComputeWasRemoved(t *testing.T) {
 	}
 }
 
-func TestInitializeFailureRetainsWorkspaceButNoLogicalEnvironment(t *testing.T) {
+func TestInitializeFailureRetainsWorkspaceAndLogicalEnvironment(t *testing.T) {
 	t.Parallel()
 	repository := newLifecycleRepository()
 	platform := newLifecyclePlatform()
@@ -164,8 +164,8 @@ func TestInitializeFailureRetainsWorkspaceButNoLogicalEnvironment(t *testing.T) 
 	if err != nil || operation.State != deployment.OperationFailed {
 		t.Fatalf("failed initialize: operation=%+v err=%v", operation, err)
 	}
-	if _, err := repository.GetEnvironment(context.Background(), "agent-1"); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("failed initialize published an environment: %v", err)
+	if environment, err := repository.GetEnvironment(context.Background(), "agent-1"); err != nil || environment.LifecycleState != deployment.LifecycleFailed || environment.OperationID != "" {
+		t.Fatalf("failed initialize lost resource ownership: %+v %v", environment, err)
 	}
 	if platform.ensureStorageCalls != 1 || platform.deleteStorageCalls != 0 {
 		t.Fatalf("failed initialize workspace lifecycle: ensure=%d delete=%d",
@@ -445,9 +445,9 @@ func newLifecycleRepository() *lifecycleRepository {
 func (r *lifecycleRepository) Ready(context.Context) error { return nil }
 
 func (r *lifecycleRepository) WithAgentLock(
-	_ context.Context, _ string, execute func(context.Context) error,
+	ctx context.Context, _ string, execute func(context.Context) error,
 ) error {
-	return execute(context.Background())
+	return execute(ctx)
 }
 
 func (r *lifecycleRepository) BeginTransition(
@@ -512,7 +512,12 @@ func (r *lifecycleRepository) CompleteOperation(
 		}
 		r.environments[operation.AgentID] = current
 	} else if operation.SourceState == deployment.LifecycleUninitialized {
-		delete(r.environments, operation.AgentID)
+		if operation.Inspection == nil {
+			return nil, errors.New("failed Initialize has no environment")
+		}
+		environment := *operation.Inspection
+		environment.OperationID = ""
+		r.environments[operation.AgentID] = environment
 	} else {
 		r.environments[operation.AgentID] = deployment.Environment{
 			AgentID: operation.AgentID, RuntimeRevision: operation.SourceRevision,
@@ -603,6 +608,10 @@ func (r *lifecycleRepository) ListObservations(
 }
 
 type lifecyclePlatform struct {
+	imageID              string
+	resolveCalls         int
+	resolveError         error
+	deployments          []deployment.Deployment
 	ensureStorageCalls   int
 	verifyStorageCalls   int
 	createCalls          int
@@ -616,6 +625,7 @@ type lifecyclePlatform struct {
 
 func newLifecyclePlatform() *lifecyclePlatform {
 	return &lifecyclePlatform{
+		imageID:              lifecycleDigest,
 		createOutcome:        deployment.EffectOutcome{State: deployment.EffectCompleted},
 		deleteOutcome:        deployment.EffectOutcome{State: deployment.EffectCompleted},
 		verifyStorageOutcome: deployment.EffectOutcome{State: deployment.EffectCompleted},
@@ -624,8 +634,9 @@ func newLifecyclePlatform() *lifecyclePlatform {
 }
 
 func (*lifecyclePlatform) Ready(context.Context) error { return nil }
-func (*lifecyclePlatform) ResolveImage(context.Context, string) (platform.ImageResolution, error) {
-	return platform.ImageResolution{}, platform.ErrImageNotFound
+func (p *lifecyclePlatform) ResolveImage(_ context.Context, reference string) (platform.ImageResolution, error) {
+	p.resolveCalls++
+	return platform.ImageResolution{Reference: reference, ImageRef: p.imageID}, p.resolveError
 }
 func (*lifecyclePlatform) DeploymentDigest(value deployment.Deployment) (string, error) {
 	return deployment.DigestValue(struct {
@@ -649,6 +660,7 @@ func (p *lifecyclePlatform) Create(
 	_ context.Context, value deployment.Deployment, digest string,
 ) deployment.EffectOutcome {
 	p.createCalls++
+	p.deployments = append(p.deployments, value)
 	if p.createOutcome.State == deployment.EffectCompleted {
 		p.containers[value.RuntimeSpec.AgentID] = deployment.Inspection{
 			AgentID: value.RuntimeSpec.AgentID, Generation: value.RuntimeSpec.Generation,

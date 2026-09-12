@@ -1,21 +1,83 @@
 {
   "contract": "antnest.agent-controller.lifecycle",
-  "revision": 12,
+  "revision": 20,
   "transport": "json-over-http",
   "trust": "internal-network",
   "media_types": {
     "request": "application/json",
     "response": "application/json"
   },
-  "schemas": { "messages": "control-api.schema.json" },
-  "status": { "method": "GET", "path": "/status", "success_status": 200 },
+  "schemas": {
+    "messages": "control-api.schema.json"
+  },
+  "status": {
+    "method": "GET",
+    "path": "/status",
+    "success_status": 200
+  },
   "resources": {
-    "model_catalog": {
+    "provider_connections": {
+      "create": {
+        "method": "POST",
+        "path": "/internal/provider-connections",
+        "request": "control-api.schema.json#/$defs/create_provider_connection_request",
+        "success_status": 201,
+        "response": "control-api.schema.json#/$defs/provider_connection"
+      },
+      "rotate_credential": {
+        "method": "POST",
+        "path": "/internal/provider-connections/{connection_id}/credentials",
+        "request": "control-api.schema.json#/$defs/rotate_provider_credential_request",
+        "success_status": 201,
+        "response": "control-api.schema.json#/$defs/provider_connection"
+      },
       "get": {
         "method": "GET",
-        "path": "/internal/model-catalog",
+        "path": "/internal/provider-connections/{connection_id}",
+        "query": ["organization_id"],
         "success_status": 200,
-        "response": "control-api.schema.json#/$defs/model_catalog"
+        "response": "control-api.schema.json#/$defs/provider_connection"
+      },
+      "list": {
+        "method": "GET",
+        "path": "/internal/provider-connections",
+        "query": ["organization_id", "after_id", "limit"],
+        "success_status": 200,
+        "response": "control-api.schema.json#/$defs/provider_connection_list"
+      }
+    },
+    "workspace_state": {
+      "get": {
+        "method": "GET",
+        "path": "/internal/workspace/agents/{agent_id}/state",
+        "query": ["organization_id", "principal_id"],
+        "success_status": 200,
+        "response": "control-api.schema.json#/$defs/workspace_agent_state"
+      },
+      "watch": {
+        "method": "GET",
+        "path": "/internal/workspace/agents/{agent_id}/state/watch",
+        "query": ["organization_id", "principal_id"],
+        "success_status": 200,
+        "content_type": "text/event-stream",
+        "event": "workspace_state",
+        "data": "control-api.schema.json#/$defs/workspace_agent_state"
+      }
+    },
+    "agent_network_policy": {
+      "get": {
+        "method": "GET",
+        "path": "/internal/agents/{agent_id}/network-policy",
+        "query": ["organization_id"],
+        "success_status": 200,
+        "response": "control-api.schema.json#/$defs/agent_network_policy"
+      },
+      "set": {
+        "method": "PUT",
+        "path": "/internal/agents/{agent_id}/network-policy",
+        "success_status": 200,
+        "request": "control-api.schema.json#/$defs/set_agent_network_policy_request",
+        "response": "control-api.schema.json#/$defs/network_policy_assignment"
       }
     },
     "model_profiles": {
@@ -227,6 +289,7 @@
       "agent_deleted",
       "agent_lifecycle_quarantined",
       "agent_runtime_restarted",
+      "agent_runtime_missing",
       "agent_owner_revoked",
       "agent_build_failed",
       "run_admission_unresolved",
@@ -237,6 +300,12 @@
     "shape": ["code", "message", "retryable"],
     "response": "control-api.schema.json#/$defs/error",
     "status_by_code": {
+      "resource_version_conflict": 409,
+      "policy_revision_not_found": 404,
+      "agent_network_not_found": 404,
+      "agent_network_unavailable": 409,
+      "cleanup_failed": 503,
+      "dependency_invalid_response": 502,
       "invalid_request": 400,
       "runtime_image_invalid": 400,
       "request_id_conflict": 409,
@@ -251,6 +320,12 @@
       "internal_error": 500
     },
     "retryable_by_code": {
+      "resource_version_conflict": false,
+      "policy_revision_not_found": false,
+      "agent_network_not_found": false,
+      "agent_network_unavailable": false,
+      "cleanup_failed": true,
+      "dependency_invalid_response": true,
       "invalid_request": false,
       "runtime_image_invalid": false,
       "request_id_conflict": false,

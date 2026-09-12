@@ -133,9 +133,9 @@ func TestDeploymentRejectsCrossAgentIdentityAndInvalidRuntimeBoundary(t *testing
 			value.RuntimeSpec.Listen.Host = "127.0.0.1"
 			return value
 		}()},
-		{name: "mutable image tag", key: Key{AgentID: "agent-1", Generation: 7}, value: func() Deployment {
+		{name: "image URL is not a reference", key: Key{AgentID: "agent-1", Generation: 7}, value: func() Deployment {
 			value := testDeployment()
-			value.ImageRef = "antnest/antnest-runtime:latest"
+			value.ImageRef = "https://registry.example/antnest-runtime:latest"
 			return value
 		}()},
 		{name: "ambiguous digest-pinned image", key: Key{AgentID: "agent-1", Generation: 7}, value: func() Deployment {

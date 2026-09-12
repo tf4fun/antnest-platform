@@ -38,6 +38,12 @@ fn explicit_tool_subcommands_execute_as_the_agent_user() {
     assert_eq!(write["status"], "success");
     assert_eq!(write["result"]["bytes_written"], 19);
     assert_eq!(
+        write["result"]["file"]["path"],
+        workspace.join("notes/answer.txt").to_str().unwrap()
+    );
+    assert_eq!(write["result"]["file"]["change"]["kind"], "text");
+    assert!(write["result"]["file"]["change"]["before"].is_null());
+    assert_eq!(
         fs::read_to_string(workspace.join("notes/answer.txt")).unwrap(),
         "hello from executor"
     );
@@ -71,6 +77,26 @@ fn explicit_tool_subcommands_execute_as_the_agent_user() {
     );
     assert_eq!(read["status"], "success");
     assert_eq!(read["result"]["content"], "hello from executor");
+    assert!(read["result"]["file"]["change"].is_null());
+
+    let unreadable = workspace.join("root-only.txt");
+    fs::write(&unreadable, "ROOT-ONLY-BEFORE").unwrap();
+    fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o600)).unwrap();
+    let replacement = invoke(
+        "write",
+        &workspace,
+        &system_skills,
+        json!({
+            "path": {"root": "workspace", "path": "root-only.txt"}, "content": "agent replacement"
+        }),
+    );
+    assert_eq!(replacement["status"], "success");
+    assert_eq!(
+        replacement["result"]["file"]["change"]["kind"],
+        "unavailable"
+    );
+    assert!(!replacement.to_string().contains("ROOT-ONLY-BEFORE"));
+    assert_eq!(fs::read_to_string(unreadable).unwrap(), "agent replacement");
 
     let instructions = workspace.join("AGENTS.md");
     fs::write(&instructions, "ROOT-ONLY-INSTRUCTIONS").unwrap();
@@ -118,7 +144,19 @@ fn invoke(command: &str, workspace: &Path, system_skills: &Path, input: Value) -
         "executor failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    serde_json::from_slice(&output.stdout).expect("executor JSON response")
+    let frames: Vec<Value> = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("executor JSON frame"))
+        .collect();
+    assert_eq!(
+        frames
+            .iter()
+            .filter(|frame| frame.get("status").is_some())
+            .count(),
+        1
+    );
+    frames.last().cloned().expect("executor terminal response")
 }
 
 fn make_traversable(path: &Path) {

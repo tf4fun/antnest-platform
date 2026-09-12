@@ -1,0 +1,2 @@
+# Use Temporal defaults. History shard count is configured once in Compose.
+{}

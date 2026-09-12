@@ -24,6 +24,24 @@ and server-side transaction deadline. See [RFC 9700 section 4.7.1](https://www.r
 
 ## Request Pipeline
 
+Gateway follows the [platform observability contract](../../../docs/observability-contract.md).
+`GET /status` reports local readiness only: successful composition and an active
+listener. It does not call another service. A downstream outage is reported by
+the affected business request, not by recursively disabling the entry point.
+
+One shared HTTP Transport creates CLIENT spans and injects their context for
+typed RPC clients, readiness-independent business calls and reverse proxies.
+The receiving service's SERVER span is a child of that CLIENT, not directly of
+the Gateway SERVER span. WebSocket handshakes use the same observation rules
+without changing the message relay or its socket configuration.
+
+HTTP middleware and error-returning handler bindings own request diagnostics.
+Business clients return errors and preserve their causes; they do not create
+spans. HTTP observation records metadata and errors only, without Header values
+or request/response content. ACP/SCIM/Console payloads are not decoded or buffered
+for tracing. The receiving service's RPC adapter owns optional content capture;
+Gateway does not duplicate it on each HTTP hop.
+
 Session rejection and Identity unavailability are distinct. Authoritative
 `unauthenticated`/`inactive_principal` responses or an inactive resolved principal
 return 401 and clear browser cookies. Transport, timeout, malformed-response and
@@ -33,13 +51,14 @@ session. A retry must revalidate with Identity; unavailable never means admitted
 ```text
 HTTP limits/security headers
   -> W3C trace extraction/root span
-  -> remove incoming X-Antnest-* headers
+  -> remove known trusted identity/access-subject headers
   -> route match
   -> cookie token resolution (protected routes)
   -> route-specific admission
        -> administrator + CSRF -> Admin Console
        -> Agent access -> Agent ACP Service
-       -> authenticated bootstrap -> browser-safe JSON
+      -> authenticated bootstrap -> browser-safe JSON
+       -> scoped state observation -> Agent Controller snapshot/watch
   -> Admin Console or Agent UI application proxy
 ```
 
@@ -49,12 +68,23 @@ Console. Workspace bootstrap and ACP admission call Agent Controller's narrow
 principal-scoped projection; Gateway never calls Runtime Controller or reads a
 service database.
 
+[Workspace state observation](workspace-state.md) is a separate leased GET/SSE
+projection of that same authority. Scope comes from the original browser
+principal, never from URL query fields. Typed Controller frames are bounded and
+re-encoded, with Identity revalidation before subsequent frames. Access loss,
+transport failure or lease expiry ends observation without replaying or
+cancelling ACP work. No private Run protocol or state cache is added. The
+service's stream lifecycle also cancels and drains these watches before
+telemetry shutdown; ordinary request drain remains unchanged.
+
 The login page discovers enabled organization OIDC methods through Edge and
 starts authorization through a typed Identity call. Identity completes the
 callback and returns its one-time access token only to Edge; Edge establishes
-the ordinary browser cookies and redirects to the application. OIDC state,
-authorization code, and access token never enter a response body, redirect
-location, log field, or span attribute.
+the ordinary browser cookies and redirects to the application. The start
+response necessarily contains the authorization URL and its OIDC state for
+browser navigation. Callback completion/error redirects do not disclose state,
+authorization code or access token. Those values never belong in logs or span
+attributes, and the access token is never returned to browser JavaScript.
 
 `/scim/v2` is a protocol-preserving proxy to Identity. It forwards method,
 path, query, body, content headers, and SCIM Bearer authorization while removing

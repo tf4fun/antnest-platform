@@ -81,7 +81,7 @@ func TestMachineControlContractMatchesRegisteredBoundary(t *testing.T) {
 	readStrictContractJSON(t, filepath.Join(root, "contracts/agent-controller/control-contract.json"), &contract)
 	var schema machineControlSchema
 	readContractJSON(t, filepath.Join(root, "contracts/agent-controller/control-api.schema.json"), &schema)
-	if contract.Revision != 12 {
+	if contract.Revision != 20 {
 		t.Fatalf("control contract revision = %d", contract.Revision)
 	}
 	if contract.MediaTypes.Request != "application/json" ||
@@ -91,7 +91,8 @@ func TestMachineControlContractMatchesRegisteredBoundary(t *testing.T) {
 
 	endpoint, err := NewHandler(
 		&catalogServiceStub{}, &lifecycleServiceStub{}, &runServiceStub{},
-		&agentQueryServiceStub{}, &agentEventServiceStub{}, func(context.Context) error { return nil },
+		&agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{},
+		func(context.Context) error { return nil },
 	)
 	if err != nil {
 		t.Fatalf("new handler: %v", err)
@@ -131,10 +132,7 @@ func TestMachineControlContractMatchesRegisteredBoundary(t *testing.T) {
 			if pattern != key {
 				t.Fatalf("route %s is registered as %q", key, pattern)
 			}
-			if route.ContentType == "text/event-stream" &&
-				(route.Event == "" || route.EventID == "" || route.Data == "") {
-				t.Fatalf("SSE route %s is incomplete: %+v", key, route)
-			}
+			assertControlSSEMetadata(t, resource, route)
 		}
 	}
 	if len(seen) != len(expected) {
@@ -184,8 +182,10 @@ func TestMachineControlSchemaMatchesGoWireTypes(t *testing.T) {
 	)
 	now := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	model := domain.ModelSpec{
+		Pricing: sampleModelPricing(),
 		BaseURL: "https://api.example.test/v1", Model: "example-model",
 		ContextWindow: 128000, MaxOutputTokens: 8192, SupportsImages: true,
+		SupportsAudio: true, SupportsPDF: true,
 	}
 	runtimeInput := domain.RuntimeSpecInput{
 		ImageRef:   "antnest/runtime@sha256:" + strings.Repeat("a", 64),
@@ -224,26 +224,31 @@ func TestMachineControlSchemaMatchesGoWireTypes(t *testing.T) {
 	}
 
 	values := map[string]any{
-		"model_input":   model,
-		"runtime_input": runtimeInput,
-		"create_model_profile_request": createModelProfileRequest{
+		"model_parameters":                   model.Parameters(),
+		"provider_credential_input":          application.ProviderCredentialInput{Method: "api_key", APIKey: "synthetic"},
+		"provider_model_input":               application.ProviderModelInput{ProfileKey: "model", DisplayName: "Model", Model: model.Parameters()},
+		"create_provider_connection_request": sampleCreateProviderRequest(),
+		"rotate_provider_credential_request": sampleRotateProviderRequest(),
+		"provider_connection":                sampleProviderConnection(),
+		"provider_connection_list":           application.ProviderConnectionPage{Items: []application.ProviderConnectionView{sampleProviderConnection()}},
+		"model_input":                        model,
+		"runtime_input":                      runtimeInput,
+		"create_model_profile_request": createModelProfileRequest{ProviderConnectionID: "provider-1",
 			RequestID: "request-1", OrganizationID: "org-1", ProfileKey: "example",
-			DisplayName: "Example", Model: model,
-			Credential: credentialInput{SecretType: "bearer", Secret: "secret"},
+			DisplayName: "Example", Model: model.Parameters(),
 		},
 		"revise_model_profile_request": reviseModelProfileRequest{
-			RequestID: "request-1", OrganizationID: "org-1", DisplayName: "Example", Model: model,
-			Credential: credentialInput{SecretType: "bearer", Secret: "secret"},
+			RequestID: "request-1", OrganizationID: "org-1", DisplayName: "Example", Model: model.Parameters(),
 		},
 		"create_template_request": createTemplateRequest{
 			RequestID: "request-1", OrganizationID: "org-1", TemplateKey: "personal",
-			Name: "Personal", ModelProfileRevisionID: "model-revision-1",
+			Name: "Personal", ModelProfileID: "model-1",
 			SystemPrompt: "Be useful.", MaxModelRequests: 12,
 			ContextPolicyVersion: domain.ContextPolicyV1, Runtime: runtimeInput,
 		},
 		"revise_template_request": reviseTemplateRequest{
 			RequestID: "request-1", OrganizationID: "org-1",
-			Name: "Personal", ModelProfileRevisionID: "model-revision-1",
+			Name: "Personal", ModelProfileID: "model-1",
 			SystemPrompt: "Be useful.", MaxModelRequests: 12,
 			ContextPolicyVersion: domain.ContextPolicyV1, Runtime: runtimeInput,
 		},
@@ -303,17 +308,6 @@ func TestMachineControlContractValidatesSuccessfulHTTPBoundary(t *testing.T) {
 	event := sampleControlEvent(now, agent.AgentID, operation.RequestID)
 	catalog := &catalogServiceStub{
 		modelView: sampleModelProfileView(),
-		modelCatalog: application.ModelCatalogView{
-			Revision: "2026-09-03",
-			Providers: []application.ModelProviderPresetView{{
-				ProviderKey: "deepseek", DisplayName: "DeepSeek",
-				Description: "DeepSeek API", BaseURL: "https://api.deepseek.com",
-				Models: []application.ModelCatalogEntryView{{
-					ModelID: "deepseek-v4-pro", DisplayName: "DeepSeek V4 Pro",
-					ContextWindow: 1_000_000, MaxOutputTokens: 384_000,
-				}},
-			}},
-		},
 		templatePage: application.TemplatePage{
 			Items: []application.TemplateView{sampleTemplateView()},
 		},
@@ -330,12 +324,13 @@ func TestMachineControlContractValidatesSuccessfulHTTPBoundary(t *testing.T) {
 	}
 	queries := &agentQueryServiceStub{
 		agent: agent, page: application.AgentPage{Items: []application.AgentView{agent}},
+		state: application.WorkspaceAgentState{AgentID: agent.AgentID, Availability: application.WorkspaceAgentReady, AccessAllowed: true, AgentRevision: 2},
 	}
 	events := &agentEventServiceStub{
 		page: application.AgentEventPage{Events: []application.AgentEventView{event}, NextSequence: 1},
 	}
 	boundary, err := NewHandler(
-		catalog, lifecycle, &runServiceStub{}, queries, events,
+		catalog, lifecycle, &runServiceStub{}, queries, events, &networkPolicyServiceStub{},
 		func(context.Context) error { return nil },
 	)
 	if err != nil {
@@ -343,25 +338,29 @@ func TestMachineControlContractValidatesSuccessfulHTTPBoundary(t *testing.T) {
 	}
 	runtimeInput := sampleTemplateView().Runtime
 	requestBodies := map[string]any{
-		"POST /internal/model-profiles": createModelProfileRequest{
+		"POST /internal/provider-connections":                             sampleCreateProviderRequest(),
+		"POST /internal/provider-connections/{connection_id}/credentials": sampleRotateProviderRequest(),
+		"PUT /internal/agents/{agent_id}/network-policy": application.SetAgentNetworkPolicyInput{
+			RequestID: "request-network", OrganizationID: "org-1", ActorPrincipalID: "admin-1",
+			SetNetworkPolicy: ports.SetNetworkPolicy{NetworkPolicyReference: ports.NetworkPolicyReference{PolicyID: "builtin/allow-all", Revision: 1}, ExpectedResourceVersion: 7},
+		},
+		"POST /internal/model-profiles": createModelProfileRequest{ProviderConnectionID: "provider-1",
 			RequestID: "request-model", OrganizationID: "org-1", ProfileKey: "deepseek",
-			DisplayName: "DeepSeek", Model: sampleModelProfileView().Model,
-			Credential: credentialInput{SecretType: "bearer", Secret: "secret"},
+			DisplayName: "DeepSeek", Model: sampleModelProfileView().Model.Parameters(),
 		},
 		"POST /internal/model-profiles/{model_profile_id}/revisions": reviseModelProfileRequest{
 			RequestID: "request-model-revision", OrganizationID: "org-1", DisplayName: "DeepSeek",
-			Model:      sampleModelProfileView().Model,
-			Credential: credentialInput{SecretType: "bearer", Secret: "secret"},
+			Model: sampleModelProfileView().Model.Parameters(),
 		},
 		"POST /internal/agent-templates": createTemplateRequest{
 			RequestID: "request-template", OrganizationID: "org-1", TemplateKey: "personal",
-			Name: "Personal", ModelProfileRevisionID: "model-revision-1",
+			Name: "Personal", ModelProfileID: "model-1",
 			SystemPrompt: "Be useful.", MaxModelRequests: 12,
 			ContextPolicyVersion: domain.ContextPolicyV1, Runtime: runtimeInput,
 		},
 		"POST /internal/agent-templates/{template_id}/revisions": reviseTemplateRequest{
 			RequestID: "request-template-revision", OrganizationID: "org-1", Name: "Personal",
-			ModelProfileRevisionID: "model-revision-1", SystemPrompt: "Be useful.",
+			ModelProfileID: "model-1", SystemPrompt: "Be useful.",
 			MaxModelRequests: 12, ContextPolicyVersion: domain.ContextPolicyV1, Runtime: runtimeInput,
 		},
 		"POST /internal/agents": createAgentRequest{
@@ -403,6 +402,9 @@ func TestMachineControlContractValidatesSuccessfulHTTPBoundary(t *testing.T) {
 			path := concreteControlPath(route.Path)
 			if slices.Contains(route.Query, "organization_id") {
 				path += "?organization_id=org-1"
+			}
+			if slices.Contains(route.Query, "principal_id") {
+				path += "&principal_id=user-1"
 			}
 			request := httptest.NewRequest(route.Method, path, body)
 			if route.Request != "" {
@@ -446,6 +448,12 @@ func TestMachineControlContractValidatesActualHTTPErrorBoundary(t *testing.T) {
 		body   string
 	}{
 		{code: "invalid_request", method: http.MethodPost, path: "/internal/agents", body: "{"},
+		{code: "resource_version_conflict", err: &ports.DependencyError{Service: "runtime-egress", Code: "resource_version_conflict"}, method: http.MethodPut, path: "/internal/agents/agent-1/network-policy", body: networkMutationJSON},
+		{code: "policy_revision_not_found", err: &ports.DependencyError{Service: "runtime-egress", Code: "policy_revision_not_found"}, method: http.MethodPut, path: "/internal/agents/agent-1/network-policy", body: networkMutationJSON},
+		{code: "agent_network_not_found", err: &ports.DependencyError{Service: "runtime-egress", Code: "agent_network_not_found"}, method: http.MethodPut, path: "/internal/agents/agent-1/network-policy", body: networkMutationJSON},
+		{code: "agent_network_unavailable", err: &ports.DependencyError{Service: "runtime-egress", Code: "agent_network_unavailable"}, method: http.MethodPut, path: "/internal/agents/agent-1/network-policy", body: networkMutationJSON},
+		{code: "cleanup_failed", err: &ports.DependencyError{Service: "runtime-egress", Code: "cleanup_failed"}, method: http.MethodPut, path: "/internal/agents/agent-1/network-policy", body: networkMutationJSON},
+		{code: "dependency_invalid_response", err: &ports.DependencyError{Service: "runtime-egress", Code: "invalid_response"}, method: http.MethodPut, path: "/internal/agents/agent-1/network-policy", body: networkMutationJSON},
 		{code: "request_id_conflict", err: ports.ErrRequestConflict},
 		{code: "reference_not_found", err: application.ErrInvalidReference},
 		{code: "reference_disabled", err: ports.ErrDisabledReference},
@@ -458,7 +466,7 @@ func TestMachineControlContractValidatesActualHTTPErrorBoundary(t *testing.T) {
 			path:   "/internal/agent-operations/missing-operation?organization_id=org-1",
 		},
 		{code: "dependency_unavailable", err: application.ErrDependencyUnavailable},
-		{code: "runtime_image_invalid", err: application.ErrRuntimeImageSelection},
+		{code: "runtime_image_invalid", err: domain.ErrInvalidImageReference},
 		{code: "lifecycle_timeout", err: context.DeadlineExceeded},
 		{code: "internal_error", err: errors.New("unexpected failure")},
 	}
@@ -468,8 +476,10 @@ func TestMachineControlContractValidatesActualHTTPErrorBoundary(t *testing.T) {
 			lifecycle := &lifecycleServiceStub{err: test.err}
 			boundary, err := NewHandler(
 				&catalogServiceStub{}, lifecycle, &runServiceStub{}, &agentQueryServiceStub{},
-				&agentEventServiceStub{}, func(context.Context) error { return nil },
-			)
+				&agentEventServiceStub{}, &networkPolicyServiceStub{err: test.err},
+
+				func(context.Context) error { return nil })
+
 			if err != nil {
 				t.Fatalf("new control boundary: %v", err)
 			}
@@ -562,7 +572,8 @@ func TestMachineControlContractValidatesActualSSEBoundary(t *testing.T) {
 		}}
 		boundary, err := NewHandler(
 			&catalogServiceStub{}, &lifecycleServiceStub{}, &runServiceStub{},
-			&agentQueryServiceStub{}, events, func(context.Context) error { return nil },
+			&agentQueryServiceStub{}, events, &networkPolicyServiceStub{},
+			func(context.Context) error { return nil },
 		)
 		if err != nil {
 			t.Fatalf("new SSE boundary: %v", err)
@@ -625,7 +636,9 @@ func TestMachineEventTypesMatchProducerContract(t *testing.T) {
 		ports.EventAgentDeleted,
 		ports.EventAgentLifecycleQuarantined,
 		ports.EventAgentRuntimeRestarted,
+		ports.EventAgentRuntimeMissing,
 		ports.EventAgentOwnerRevoked,
+		ports.EventAgentAuthorizationUpdated,
 		ports.EventRunAdmissionReleased,
 		ports.EventRunAdmissionUnresolved,
 	}
@@ -722,6 +735,25 @@ func assertControlWireType(
 const controlSchemaID = "https://antnest.local/agent-controller/control-api.schema.json"
 const draft202012Schema = "https://json-schema.org/draft/2020-12/schema"
 
+func assertControlSSEMetadata(t *testing.T, resource string, route controlContractRoute) {
+	t.Helper()
+	if route.ContentType != "text/event-stream" {
+		return
+	}
+	if route.Event == "" || route.Data == "" {
+		t.Fatalf("incomplete SSE contract: %+v", route)
+	}
+	if resource == "workspace_state" {
+		if route.Event != "workspace_state" || route.EventID != "" || len(route.Headers) != 0 {
+			t.Fatalf("workspace snapshot must not advertise journal replay: %+v", route)
+		}
+		return
+	}
+	if route.EventID == "" {
+		t.Fatalf("journal SSE requires an event ID: %+v", route)
+	}
+}
+
 func compileControlSchema(t *testing.T, path string) *jsonschema.Compiler {
 	t.Helper()
 	payload, err := os.ReadFile(path)
@@ -814,7 +846,7 @@ func assertControlErrorContract(t *testing.T, contract machineControlContract) {
 	t.Helper()
 	behaviors := []error{
 		application.ErrInvalidInput,
-		application.ErrRuntimeImageSelection,
+		domain.ErrInvalidImageReference,
 		ports.ErrRequestConflict,
 		application.ErrInvalidReference,
 		ports.ErrDisabledReference,
@@ -845,6 +877,13 @@ func assertControlErrorContract(t *testing.T, contract machineControlContract) {
 		)
 	}
 	seen["operation_not_found"] = struct{}{}
+	for _, code := range []string{"resource_version_conflict", "policy_revision_not_found", "agent_network_not_found", "agent_network_unavailable", "cleanup_failed", "invalid_response"} {
+		status, payload := publicNetworkPolicyError(&ports.DependencyError{Service: "runtime-egress", Code: code})
+		if contract.Errors.StatusByCode[payload.Code] != status || contract.Errors.RetryableByCode[payload.Code] != payload.Retryable {
+			t.Fatalf("network error %s does not match contract: %d %+v", code, status, payload)
+		}
+		seen[payload.Code] = struct{}{}
+	}
 	if len(seen) != len(contract.Errors.StatusByCode) {
 		missing := make([]string, 0)
 		for code := range contract.Errors.StatusByCode {

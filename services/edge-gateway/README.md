@@ -15,6 +15,7 @@ Implemented for Stage 3A. The canonical cross-service behavior is
 - browser cookie and CSRF policy;
 - access-token resolution and administrator admission;
 - browser-safe Agent workspace bootstrap and per-Agent access admission;
+- authenticated workspace state snapshots/subscriptions with bounded leases;
 - same-origin Agent UI and ACP v1/v2 WebSocket routing with per-message browser
   session revalidation;
 - ACP v1 Streamable HTTP routing with per-request session and Agent admission;
@@ -32,7 +33,7 @@ Implemented for Stage 3A. The canonical cross-service behavior is
 
 ## Dependencies
 
-- Identity Service for login, token resolution, token revocation, and readiness;
+- Identity Service for login, token resolution, and token revocation;
 - Admin Console for the application and `/api/admin/*` BFF;
 - Agent Controller for the principal-scoped workspace Agent projection;
 - Agent UI for `/workspace/*` static application routes;
@@ -43,8 +44,19 @@ Implemented for Stage 3A. The canonical cross-service behavior is
 
 ## Interfaces
 
+Current availability and active Session observation are documented in
+[Workspace state](docs/workspace-state.md). Gateway consumes Controller state;
+Agent UI consumption and Docker integration are implemented; complete C4
+interactive acceptance remains open. State observation
+does not introduce another conversation API or replace ACP Session operations.
+
 See [`../../contracts/edge-gateway/session-contract.json`](../../contracts/edge-gateway/session-contract.json).
 All other service interfaces remain private deployment details.
+
+Admin authentication and ordinary BFF forwarding each have a bounded request
+deadline. The shared proxy boundary applies the forwarding deadline, including
+POST requests; it never retries writes. Agent event watches use the longer stream
+lease instead, so the ordinary request timeout does not terminate subscriptions.
 
 ## Local Verification
 
@@ -63,6 +75,11 @@ the separate disposable ACP fault profile for post-upgrade expiry, dependency
 outage/recovery and durable Run completion after browser logout/disconnect.
 
 See [architecture](docs/architecture.md) and [operations](docs/operations.md).
+
+Gateway tracing is owned by the HTTP boundary and one shared outbound Transport,
+not individual business clients. See the
+[platform observability contract](../../docs/observability-contract.md).
+`/status` checks only Gateway readiness; it is not a full-stack health probe.
 
 ## ACP HTTP
 

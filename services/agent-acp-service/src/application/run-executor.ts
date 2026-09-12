@@ -2,6 +2,7 @@ import { DurableRunEvents, RunEventPersistenceError } from "./durable-run-events
 import { TurnRunner } from "./turn-runner.js";
 import type { ContextBuilder } from "./context-builder.js";
 import { DomainError } from "../domain/errors.js";
+import { commandReply, type SessionCommand } from "../domain/slash-commands.js";
 import {
   RunRecoveryRequiredError,
   type AcpApplicationPort,
@@ -13,8 +14,10 @@ import type { ModelPort } from "../ports/model.js";
 import type { RunEventRepository } from "../ports/run-event-repository.js";
 import type { ToolCatalogPort } from "../ports/tools.js";
 import { assertWorkerOwnership, withWorkerOwnership } from "./worker-ownership.js";
+import type { ToolPermissionPort } from "../ports/tool-permissions.js";
 
 export type RunExecutorDependencies = {
+  permissions?: ToolPermissionPort;
   executions: ExecutionRepository;
   contextBuilder: ContextBuilder;
   agentController: AgentControllerPort;
@@ -112,6 +115,8 @@ export class RunExecutor implements RunExecutionPort {
     input: Parameters<AcpApplicationPort["executeRun"]>[0],
   ): Promise<ExecuteRunResult> {
     assertWorkerOwnership(this.dependencies.ownershipSignal);
+    input.signal.throwIfAborted();
+    if (input.accepted.command !== undefined) return this.runCommand(input, input.accepted.command);
     const context = await this.dependencies.contextBuilder.build(
       input.accepted.sessionId,
       input.accepted.snapshot,
@@ -139,8 +144,12 @@ export class RunExecutor implements RunExecutionPort {
       id: this.dependencies.id,
       now: this.dependencies.now,
       contextSize: input.accepted.snapshot.executionSpec.model.contextWindow,
+      runtimeWorkspace: context.runtimeWorkspace,
     });
     const runner = new TurnRunner({
+      ...(this.dependencies.permissions === undefined
+        ? {}
+        : { permissions: this.dependencies.permissions }),
       model: this.dependencies.model,
       tools: this.dependencies.tools,
       catalog: context.tools,
@@ -157,6 +166,29 @@ export class RunExecutor implements RunExecutionPort {
         authoritySignal: this.dependencies.ownershipSignal,
       }),
     );
+  }
+
+  private async runCommand(
+    input: Parameters<AcpApplicationPort["executeRun"]>[0],
+    command: SessionCommand,
+  ): Promise<ExecuteRunResult> {
+    const events = new DurableRunEvents({
+      repository: this.dependencies.events,
+      publish: input.publish,
+      id: this.dependencies.id,
+      now: this.dependencies.now,
+      contextSize: input.accepted.snapshot.executionSpec.model.contextWindow,
+    });
+    await withWorkerOwnership(this.dependencies.ownershipSignal, () =>
+      events.agentMessage(input.accepted.runId, commandReply(command)),
+    );
+    input.signal.throwIfAborted();
+    return {
+      terminalClass: "completed",
+      executorState: "quiescent",
+      toolEffectState: "none",
+      stopReason: "end_turn",
+    };
   }
 
   private async closeAdmission(

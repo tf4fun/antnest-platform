@@ -77,9 +77,12 @@ impl ManagedMcp {
             .take()
             .ok_or_else(|| start_error("stdin unavailable"))?;
         let cancel = self.stop.child_token();
-        let initialization =
-            tokio::time::timeout_at(deadline, session::connect(stdout, stdin, cancel.clone()))
-                .await;
+        let progress = super::progress::ProgressSource::default();
+        let initialization = tokio::time::timeout_at(
+            deadline,
+            session::connect(stdout, stdin, cancel.clone(), progress.clone()),
+        )
+        .await;
         let service = match initialization {
             Ok(Ok(service)) => service,
             result => {
@@ -103,7 +106,7 @@ impl ManagedMcp {
             self.stop.clone(),
             unavailable,
         ));
-        tokio::time::timeout_at(deadline, self.catalog.add_server(spec.id(), peer))
+        tokio::time::timeout_at(deadline, self.catalog.add_server(spec.id(), peer, progress))
             .await
             .map_err(|_| start_error("tool discovery deadline exceeded"))?
             .map_err(start_error)?;

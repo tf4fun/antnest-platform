@@ -557,7 +557,7 @@ async fn official_mcp_client_observes_status_and_calls_all_runtime_tools() {
         "unexpected resource error: {error:?}"
     );
 
-    call(
+    let written = call(
         &client,
         "write",
         json!({
@@ -566,7 +566,16 @@ async fn official_mcp_client_observes_status_and_calls_all_runtime_tools() {
         }),
     )
     .await;
-    call(
+    let metadata = serde_json::to_value(&written.meta).unwrap();
+    assert_eq!(
+        metadata["io.antnest.runtime/file"]["diff"],
+        json!({"oldText": null, "newText": "before"})
+    );
+    assert_eq!(
+        written.structured_content.unwrap(),
+        json!({"bytes_written": 6, "effect_state": "settled", "effect_source": null})
+    );
+    let edited = call(
         &client,
         "edit",
         json!({
@@ -576,6 +585,15 @@ async fn official_mcp_client_observes_status_and_calls_all_runtime_tools() {
         }),
     )
     .await;
+    let metadata = serde_json::to_value(&edited.meta).unwrap();
+    assert_eq!(
+        metadata["io.antnest.runtime/file"]["diff"],
+        json!({"oldText": "before", "newText": "after"})
+    );
+    assert_eq!(
+        edited.structured_content.unwrap(),
+        json!({"bytes_written": 5, "effect_state": "settled", "effect_source": null})
+    );
     let read = call(
         &client,
         "read",
@@ -586,8 +604,17 @@ async fn official_mcp_client_observes_status_and_calls_all_runtime_tools() {
         }),
     )
     .await;
+    let metadata = serde_json::to_value(&read.meta).unwrap();
+    assert!(
+        metadata["io.antnest.runtime/file"]["path"]
+            .as_str()
+            .unwrap()
+            .ends_with("/notes.txt")
+    );
+    assert!(metadata["io.antnest.runtime/file"]["diff"].is_null());
     let structured = read.structured_content.unwrap();
     assert_eq!(structured["content"], "after");
+    assert!(structured.get("file").is_none());
     assert_eq!(structured["effect_state"], "settled");
     assert!(structured["effect_source"].is_null());
 

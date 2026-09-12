@@ -14,8 +14,12 @@ import {
 import { NOOP_TELEMETRY, type TelemetryPort } from "../../ports/telemetry.js";
 import type { SessionOutputStreams } from "./session-output.js";
 import { createAcpV1Agent } from "./v1/agent.js";
+import type { PermissionConnectionsPort } from "../../ports/tool-permissions.js";
+import { activeHttpSpan } from "../../telemetry/http.js";
+import { recordBoundaryError } from "../../telemetry/diagnostics.js";
 
 type Options = {
+  permissions?: PermissionConnectionsPort;
   agentController: AgentControllerPort;
   application: AcpApplicationPort;
   outputs: SessionOutputStreams;
@@ -41,27 +45,23 @@ export class AcpHttpTransport {
 
   public async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
     try {
-      await this.telemetry.span(
-        "acp.http",
-        { protocol: "v1", method: request.method },
-        async () => {
-          if (this.stopped || !(await this.options.ready())) return reply(response, 503);
-          if (!["POST", "GET", "DELETE"].includes(request.method ?? "")) {
-            response.setHeader("Allow", "POST, GET, DELETE");
-            return reply(response, 405);
-          }
-          const subject = header(request, "x-antnest-agent-access-subject");
-          if (!subject) return reply(response, 401);
-          const access = await this.options.agentController.resolveAgentAccess({
-            requestId: randomUUID(),
-            agentAccessSubject: subject,
-          });
-          if (this.isStopped() || response.destroyed) return reply(response, 503);
-          const entry = this.admit(request, response, subject, access);
-          if (entry) await entry.handle(request, response);
-        },
-      );
+      if (this.stopped || !(await this.options.ready())) return reply(response, 503);
+      if (!["POST", "GET", "DELETE"].includes(request.method ?? "")) {
+        response.setHeader("Allow", "POST, GET, DELETE");
+        return reply(response, 405);
+      }
+      const subject = header(request, "x-antnest-agent-access-subject");
+      if (!subject) return reply(response, 401);
+      const access = await this.options.agentController.resolveAgentAccess({
+        requestId: randomUUID(),
+        agentAccessSubject: subject,
+      });
+      if (this.isStopped() || response.destroyed) return reply(response, 503);
+      const entry = this.admit(request, response, subject, access);
+      if (entry) await entry.handle(request, response);
     } catch (error) {
+      const span = activeHttpSpan();
+      if (span !== undefined) recordBoundaryError(span, error, "acp.http.admission");
       this.telemetry.log("error", "acp_http_failed", { protocol: "v1" }, error);
       reply(response, rejectionStatus(error));
     }
@@ -124,6 +124,7 @@ export class AcpHttpTransport {
     const entry = new HttpConnection(binding, {
       application: this.options.application,
       outputs: this.options.outputs,
+      ...(this.options.permissions === undefined ? {} : { permissions: this.options.permissions }),
       promptCapabilities: access.promptCapabilities,
       maxPayloadBytes: this.options.maxWebSocketPayloadBytes,
       idleTimeoutMs: this.options.idleTimeoutMs ?? 300_000,
@@ -156,6 +157,7 @@ export class AcpHttpTransport {
 }
 
 type ConnectionOptions = {
+  permissions?: PermissionConnectionsPort;
   application: AcpApplicationPort;
   outputs: SessionOutputStreams;
   promptCapabilities: ResolveAgentAccessResult["promptCapabilities"];

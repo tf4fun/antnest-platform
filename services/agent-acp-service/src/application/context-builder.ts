@@ -1,4 +1,5 @@
 import { DomainError } from "../domain/errors.js";
+import { withPlanTool } from "../domain/plan.js";
 import type {
   ContentBlock,
   ModelMessage,
@@ -24,7 +25,11 @@ export type ContextBuilderDependencies = {
   now: () => Date;
 };
 
-export type PreparedRunContext = { messages: ModelMessage[]; tools: ModelToolDefinition[] };
+export type PreparedRunContext = {
+  messages: ModelMessage[];
+  tools: ModelToolDefinition[];
+  runtimeWorkspace: string;
+};
 
 export class ContextBuilder {
   public constructor(private readonly dependencies: ContextBuilderDependencies) {}
@@ -35,7 +40,10 @@ export class ContextBuilder {
     ownershipSignal: AbortSignal,
   ): Promise<PreparedRunContext> {
     const information = await this.dependencies.runtimeInformation.read(snapshot, ownershipSignal);
-    const tools = await this.dependencies.tools.list(snapshot, ownershipSignal);
+    const tools =
+      snapshot.executionSpec.configuration?.authorization.mode === "chat"
+        ? []
+        : withPlanTool(await this.dependencies.tools.list(snapshot, ownershipSignal));
     assertWorkerOwnership(ownershipSignal);
     const budget = inputBudget(snapshot, tools);
     const source = await withWorkerOwnership(ownershipSignal, () =>
@@ -46,15 +54,26 @@ export class ContextBuilder {
       type: "text",
       text: runtimeContext(information, Math.min(16384, Math.floor(budget / 4) * 4)),
     });
+    const prefix: ModelMessage[] = [system];
+    if (source.plan !== undefined)
+      prefix.push({
+        role: "assistant",
+        content: [
+          {
+            type: "text",
+            text: `Conversation plan at Run start (historical snapshot; later successful update_plan calls replace it):\n${JSON.stringify(source.plan)}`,
+          },
+        ],
+      });
     const checkpoint = checkpointMessage(source.checkpoint);
     const history = source.messages.flatMap(toModelMessages);
-    const complete = [system, ...(checkpoint === null ? [] : [checkpoint]), ...history];
+    const complete = [...prefix, ...(checkpoint === null ? [] : [checkpoint]), ...history];
     if (estimateMessages(complete) <= budget) {
       assertWorkerOwnership(ownershipSignal);
-      return { messages: complete, tools };
+      return { messages: complete, tools, runtimeWorkspace: information.environment.workspace };
     }
 
-    const systemCost = estimateMessages([system]);
+    const systemCost = estimateMessages(prefix);
     const tailBudget = Math.max(1, Math.floor((budget - systemCost) * 0.55));
     const { dropped, kept } = keepNewest(source.messages, tailBudget);
     if (kept.length === 0) {
@@ -89,7 +108,7 @@ export class ContextBuilder {
     }
 
     const compacted = [
-      system,
+      ...prefix,
       ...(summary.length === 0 ? [] : [summaryMessage(summary)]),
       ...kept.flatMap(toModelMessages),
     ];
@@ -100,7 +119,7 @@ export class ContextBuilder {
       );
     }
     assertWorkerOwnership(ownershipSignal);
-    return { messages: compacted, tools };
+    return { messages: compacted, tools, runtimeWorkspace: information.environment.workspace };
   }
 }
 

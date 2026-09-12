@@ -22,6 +22,7 @@ type AgentQuery struct {
 // WorkspaceAgentQuery selects the active access projection consumed by Edge Gateway.
 // The access subject remains an internal routing credential and must not reach a browser.
 type WorkspaceAgentQuery struct {
+	AgentID        string
 	OrganizationID string
 	PrincipalID    string
 	AfterCreatedAt time.Time
@@ -30,13 +31,18 @@ type WorkspaceAgentQuery struct {
 }
 
 type WorkspaceAgentRecord struct {
-	IdentityRevoked bool
-	AgentID         string
-	Name            string
-	LifecycleState  domain.AgentState
-	AccessSubject   string
-	AdmissionState  domain.AdmissionState
-	CreatedAt       time.Time
+	DesiredState         domain.DesiredState
+	ActiveOperation      bool
+	AggregateSequence    int64
+	SessionID            string
+	AdmissionPrincipalID string
+	IdentityRevoked      bool
+	AgentID              string
+	Name                 string
+	LifecycleState       domain.AgentState
+	AccessSubject        string
+	AdmissionState       domain.AdmissionState
+	CreatedAt            time.Time
 }
 
 // AgentConfigurationRecord is the immutable executable configuration selected

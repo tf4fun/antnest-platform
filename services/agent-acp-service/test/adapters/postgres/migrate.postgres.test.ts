@@ -93,6 +93,8 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP migration history", () => 
       "0001_initial.sql",
       "0002_correct_terminal_outcomes.sql",
       "0003_track_unknown_effect_source.sql",
+      "0004_session_configuration.sql",
+      "0005_tool_permissions.sql",
     ]);
     const sources = await pool.query<{ id: string; unknown_effect_source: string | null }>(
       "SELECT id, unknown_effect_source FROM runs ORDER BY id",

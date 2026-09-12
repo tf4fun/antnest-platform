@@ -1,16 +1,10 @@
-use std::{net::Ipv4Addr, sync::Arc, time::Duration};
+mod support;
 
-use antnest_runtime_egress::{
-    application::{ControlConfig, ControlService, KernelCleanup},
-    control::router,
-    repository::{InMemoryRepository, RepositoryConfig},
-    telemetry::EgressMetrics,
-};
-use async_trait::async_trait;
 use axum::{
     body::{Body, to_bytes},
     http::{Request, StatusCode},
 };
+use support::app;
 use tower::ServiceExt;
 
 #[derive(serde::Deserialize)]
@@ -41,39 +35,6 @@ struct BuiltinPolicy {
     revision: u64,
 }
 
-struct NoopKernel;
-
-#[async_trait]
-impl KernelCleanup for NoopKernel {
-    async fn clear_agent(&self, _: Ipv4Addr) -> Result<(), String> {
-        Ok(())
-    }
-}
-
-async fn app() -> axum::Router {
-    let repository = InMemoryRepository::new(RepositoryConfig {
-        pool_id: "default".to_owned(),
-        tunnel_cidr: "100.64.0.0/29".parse().unwrap(),
-        resolver_ipv4: "100.64.0.1".parse().unwrap(),
-        quarantine: Duration::from_secs(300),
-    })
-    .unwrap();
-    let service = ControlService::new(
-        Arc::new(repository),
-        Arc::new(NoopKernel),
-        ControlConfig {
-            advertised_udp_endpoint: "10.20.0.8:8092".parse().unwrap(),
-            resolver_ipv4: "100.64.0.1".parse().unwrap(),
-            max_flows: 32,
-            max_agent_flows: 16,
-            flow_idle: Duration::from_secs(60),
-        },
-    );
-    let service = Arc::new(service);
-    service.recover().await.unwrap();
-    router(service, EgressMetrics::default())
-}
-
 #[test]
 fn machine_contract_matches_the_complete_control_surface() {
     let contract: ControlContract = serde_json::from_str(include_str!(concat!(
@@ -82,7 +43,7 @@ fn machine_contract_matches_the_complete_control_surface() {
     )))
     .expect("control contract");
 
-    assert_eq!(contract.revision, 3);
+    assert_eq!(contract.revision, 4);
     assert_eq!(contract.transport, "json-over-http");
     assert_eq!(contract.trust_boundary, "internal-network");
     assert_eq!(contract.status_values, ["ready", "degraded"]);
@@ -91,6 +52,11 @@ fn machine_contract_matches_the_complete_control_surface() {
         "builtin/deny-all"
     );
     assert_eq!(contract.builtin_policies["deny_all"].revision, 1);
+    assert_eq!(
+        contract.builtin_policies["allow_all"].policy_id,
+        "builtin/allow-all"
+    );
+    assert_eq!(contract.builtin_policies["allow_all"].revision, 1);
     assert_eq!(
         contract
             .routes
@@ -307,12 +273,171 @@ async fn malformed_path_numbers_use_the_stable_error_shape() {
     assert_stable_invalid_request(response).await;
 }
 
+async fn policy_document(app: &axum::Router, path: &str) -> serde_json::Value {
+    let response = app
+        .clone()
+        .oneshot(Request::get(path).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    serde_json::from_slice(&to_bytes(response.into_body(), 4096).await.unwrap()).unwrap()
+}
+
+#[tokio::test]
+async fn policy_reads_expose_builtin_specs_without_creating_agent_state() {
+    let app = app().await;
+    let before = policy_document(&app, "/status").await;
+    for (id, action) in [("allow-all", "allow_all"), ("deny-all", "deny_all")] {
+        let path = format!("/internal/policies/builtin%2F{id}/revisions/1");
+        let first = policy_document(&app, &path).await;
+        assert_eq!(first["policy_id"], format!("builtin/{id}"));
+        assert_eq!(first["revision"], 1);
+        assert_eq!(
+            first["spec"],
+            serde_json::json!({"schema_version": 1, "action": action})
+        );
+        assert_eq!(first.as_object().unwrap().len(), 4);
+        let digest = first["digest"].as_str().unwrap();
+        assert!(digest.starts_with("sha256:") && digest.len() == 71);
+        assert_eq!(policy_document(&app, &path).await, first);
+    }
+    assert_eq!(policy_document(&app, "/status").await, before);
+    let missing = app
+        .oneshot(
+            Request::get("/internal/agent-networks/not-created")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_stable_error(missing, StatusCode::NOT_FOUND, "agent_network_not_found").await;
+}
+
+#[tokio::test]
+async fn policy_reads_resolve_exact_revision_not_name_or_latest_content() {
+    let app = app().await;
+    for (revision, action) in [(1, "deny_all"), (2, "allow_all")] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::put(format!(
+                    "/internal/policies/called-allow/revisions/{revision}"
+                ))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({"spec": {"schema_version": 1, "action": action}})
+                        .to_string(),
+                ))
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let written: serde_json::Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), 4096).await.unwrap()).unwrap();
+        assert!(
+            written.get("spec").is_none(),
+            "PUT metadata contract changed"
+        );
+        let read = policy_document(
+            &app,
+            &format!("/internal/policies/called-allow/revisions/{revision}"),
+        )
+        .await;
+        assert_eq!(read["digest"], written["digest"]);
+        assert_eq!(read["spec"]["action"], action);
+    }
+    let old = policy_document(&app, "/internal/policies/called-allow/revisions/1").await;
+    assert_eq!(old["spec"]["action"], "deny_all");
+    let conflict = app
+        .clone()
+        .oneshot(
+            Request::put("/internal/policies/called-allow/revisions/1")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"spec":{"schema_version":1,"action":"allow_all"}}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_stable_error(conflict, StatusCode::CONFLICT, "policy_revision_conflict").await;
+    assert_eq!(
+        policy_document(&app, "/internal/policies/called-allow/revisions/1").await,
+        old
+    );
+}
+
+#[tokio::test]
+async fn policy_read_errors_do_not_create_or_guess_revisions() {
+    let app = app().await;
+    for (path, status, code) in [
+        (
+            "%FF/revisions/1",
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+        ),
+        (
+            "builtin%2Fallow-all/revisions/%FF",
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+        ),
+        (
+            "missing/revisions/1",
+            StatusCode::NOT_FOUND,
+            "policy_revision_not_found",
+        ),
+        (
+            "builtin%2Fallow-all/revisions/2",
+            StatusCode::NOT_FOUND,
+            "policy_revision_not_found",
+        ),
+        (
+            "builtin%2Fallow-all/revisions/0",
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+        ),
+        (
+            "builtin%2Fallow-all/revisions/-1",
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+        ),
+        (
+            "builtin%2Fallow-all/revisions/no",
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+        ),
+        (
+            "builtin%2Fallow-all/revisions/18446744073709551616",
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+        ),
+        (
+            "%20/revisions/1",
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+        ),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get(format!("/internal/policies/{path}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_stable_error(response, status, code).await;
+    }
+}
+
 async fn assert_stable_invalid_request(response: axum::response::Response) {
     assert_stable_error(response, StatusCode::BAD_REQUEST, "invalid_request").await;
 }
 
 async fn assert_stable_error(response: axum::response::Response, status: StatusCode, code: &str) {
     assert_eq!(response.status(), status);
+    assert_eq!(response.headers()["content-type"], "application/json");
     let body = to_bytes(response.into_body(), 4096).await.unwrap();
     let document: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(document["code"], code);

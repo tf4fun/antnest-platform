@@ -12,13 +12,11 @@ import (
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/metric"
-	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 
 	"soft/antnest-platform/services/runtime-controller/internal/deployment"
-	"soft/antnest-platform/services/runtime-controller/internal/diagnostics"
+	"soft/antnest-platform/services/runtime-controller/internal/telemetry"
 )
 
 const maxStatusBytes = 16 << 10
@@ -43,14 +41,16 @@ func New(httpClient *http.Client, timeout time.Duration) (*Client, error) {
 	if httpClient == nil || timeout <= 0 {
 		return nil, fmt.Errorf("HTTP client and positive status timeout are required")
 	}
-	return &Client{httpClient: httpClient, timeout: timeout}, nil
+	observed := *httpClient
+	observed.Transport = telemetry.NewTransport(httpClient.Transport, "antnest-runtime")
+	return &Client{httpClient: &observed, timeout: timeout}, nil
 }
 
 func (c *Client) Verify(
 	ctx context.Context, inspection deployment.Inspection,
 ) (verified deployment.Inspection, resultErr error) {
 	started := time.Now()
-	ctx, span := statusTracer.Start(ctx, "runtime.status.verify", trace.WithSpanKind(trace.SpanKindClient))
+	ctx, span := statusTracer.Start(ctx, "runtime.status.verify", trace.WithSpanKind(trace.SpanKindInternal))
 	span.SetAttributes(
 		attribute.String("antnest.agent.id", inspection.AgentID),
 		attribute.Int64("antnest.runtime.generation", int64(inspection.Generation)),
@@ -62,8 +62,10 @@ func (c *Client) Verify(
 			if errors.Is(resultErr, deployment.ErrIdentityConflict) {
 				result = "identity_conflict"
 			}
-			span.RecordError(diagnostics.Error(resultErr))
-			span.SetStatus(codes.Error, result)
+			telemetry.RecordFailure(ctx, span, resultErr, "runtime_status", result, "Runtime status verification failed")
+		}
+		if verified.RuntimeExecutionID != "" {
+			span.SetAttributes(attribute.String("antnest.runtime.execution_id", telemetry.SafeValue(verified.RuntimeExecutionID)))
 		}
 		attributes := []attribute.KeyValue{attribute.String("antnest.result", result)}
 		span.SetAttributes(attributes...)
@@ -80,7 +82,6 @@ func (c *Client) Verify(
 	if err != nil {
 		return deployment.Inspection{}, fmt.Errorf("create Runtime status request: %w", err)
 	}
-	otel.GetTextMapPropagator().Inject(requestCtx, propagation.HeaderCarrier(request.Header))
 	response, err := c.httpClient.Do(request)
 	if err != nil {
 		return deployment.Inspection{}, fmt.Errorf("request Runtime status: %w", err)

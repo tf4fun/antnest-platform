@@ -280,8 +280,10 @@ records after an exclusive nonnegative cursor. Empty pages return `events: []`
 and the unchanged cursor. No feed pruning is implemented; consumers own their
 durable cursor and processing state. The
 [contract](../../../contracts/identity/principal-revocations.md) defines scope,
-replay and the remaining Controller/integration batches. Producer availability
-does not imply that Agents are already automatically disabled.
+replay and the accepted Controller/integration batches. The Controller consumes
+this feed with its own cursor and idempotent Disable workflow. Feed delivery
+itself is not proof of completed Runtime shutdown; the lifecycle owner publishes
+that outcome only after confirmed effects.
 
 Agent owner validation continues to use the narrow synchronous
 `resolve_owner_authorization` for explicit create/enable: activity and the latest

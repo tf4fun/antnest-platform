@@ -30,7 +30,7 @@ func ApplyMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 	if err != nil {
 		return err
 	}
-	tx, err := pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := (&databasePool{pool}).BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin identity schema migration: %w", err)
 	}
@@ -99,7 +99,7 @@ func loadMigrationPlan() ([]migration, error) {
 	return plan, nil
 }
 
-func readAppliedMigrations(ctx context.Context, tx pgx.Tx) (map[string]string, error) {
+func readAppliedMigrations(ctx context.Context, tx *databaseTransaction) (map[string]string, error) {
 	rows, err := tx.Query(ctx, `SELECT name, checksum FROM schema_migrations ORDER BY name`)
 	if err != nil {
 		return nil, fmt.Errorf("read identity migration journal: %w", err)

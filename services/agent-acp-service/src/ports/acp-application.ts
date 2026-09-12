@@ -1,11 +1,17 @@
 import type {
   ConnectionBinding,
   ContentBlock,
+  JsonValue,
   RunExecutionSnapshot,
   RunOutcome,
   RunStopReason,
 } from "../domain/types.js";
 import type { ClientMcpInput } from "../domain/mcp.js";
+import type { SessionConfigurationView } from "../domain/session-configuration.js";
+import type { PlanEntry } from "../domain/plan.js";
+import type { SessionCommand } from "../domain/slash-commands.js";
+import type { UsageUpdate } from "../domain/usage.js";
+import type { ToolKind, ToolLocation, ToolFileObservation } from "../domain/tool-presentation.js";
 
 export type AcpSessionInfo = {
   sessionId: string;
@@ -15,14 +21,23 @@ export type AcpSessionInfo = {
 };
 
 export type SessionEvent =
+  | { kind: "configuration"; configuration: SessionConfigurationView }
+  | { kind: "plan"; entries: PlanEntry[] }
   | {
-      kind: "user_message" | "agent_thought";
+      kind: "user_message";
       messageId: string;
+      content: ContentBlock[];
+    }
+  | {
+      kind: "agent_thought";
+      messageId: string;
+      responseId?: string;
       content: ContentBlock[];
     }
   | {
       kind: "agent_message";
       messageId: string;
+      responseId?: string;
       content: ContentBlock[];
       toolCalls?: Array<{
         id: string;
@@ -33,6 +48,10 @@ export type SessionEvent =
   | {
       kind: "tool_call";
       initial: true;
+      file?: ToolFileObservation;
+      toolKind?: ToolKind;
+      locations?: ToolLocation[];
+      rawOutput?: JsonValue;
       toolCallId: string;
       title: string;
       modelName?: string;
@@ -43,6 +62,10 @@ export type SessionEvent =
   | {
       kind: "tool_call";
       initial: false;
+      file?: ToolFileObservation;
+      toolKind?: ToolKind;
+      locations?: ToolLocation[];
+      rawOutput?: JsonValue;
       toolCallId: string;
       title?: string;
       modelName?: string;
@@ -50,11 +73,7 @@ export type SessionEvent =
       status: "pending" | "in_progress" | "completed" | "failed" | "cancelled";
       content?: ContentBlock[];
     }
-  | {
-      kind: "usage";
-      used: number;
-      size: number;
-    }
+  | ({ kind: "usage" } & UsageUpdate)
   | {
       kind: "state";
       state: "running" | "idle";
@@ -72,6 +91,7 @@ export type SessionOutputSnapshot = {
 };
 
 export type AcceptedAcpRun = {
+  command?: SessionCommand;
   runId: string;
   requestId: string;
   sessionId: string;
@@ -93,6 +113,16 @@ export class RunRecoveryRequiredError extends Error {
 }
 
 export interface AcpApplicationPort {
+  getSessionConfiguration(input: {
+    binding: ConnectionBinding;
+    sessionId: string;
+  }): Promise<SessionConfigurationView>;
+  setSessionConfiguration(input: {
+    binding: ConnectionBinding;
+    sessionId: string;
+    configId: string;
+    value: string | boolean;
+  }): Promise<SessionConfigurationView>;
   readSessionOutput(input: {
     binding: ConnectionBinding;
     sessionId: string;

@@ -187,3 +187,29 @@ func lifecycleTestReplayError(kind string, found bool, err error) error {
 	}
 	return nil
 }
+
+func (*lifecycleStoreStub) QuarantineLifecycleOperation(context.Context, ports.QuarantineLifecycleOperation) error {
+	return fmt.Errorf("unexpected invariant failure")
+}
+
+func (*rebuildLifecycleStoreStub) QuarantineLifecycleOperation(context.Context, ports.QuarantineLifecycleOperation) error {
+	return fmt.Errorf("unexpected invariant failure")
+}
+
+func (*disableLifecycleStoreStub) QuarantineLifecycleOperation(context.Context, ports.QuarantineLifecycleOperation) error {
+	return fmt.Errorf("unexpected invariant failure")
+}
+
+func (*enableLifecycleStoreStub) QuarantineLifecycleOperation(context.Context, ports.QuarantineLifecycleOperation) error {
+	return fmt.Errorf("unexpected invariant failure")
+}
+
+func (store *deleteLifecycleStoreStub) QuarantineLifecycleOperation(_ context.Context, input ports.QuarantineLifecycleOperation) error {
+	store.state.Operation.State = domain.OperationFailed
+	store.state.Operation.ErrorCode = input.ErrorCode
+	store.state.Operation.ErrorDetail = input.ErrorDetail
+	store.state.Operation.ChildRequestID = ""
+	store.state.Agent.LifecycleState = domain.AgentUnavailable
+	store.state.Agent.ActiveOperationRequestID = ""
+	return nil
+}

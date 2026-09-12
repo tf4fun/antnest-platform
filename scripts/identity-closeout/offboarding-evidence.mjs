@@ -135,7 +135,7 @@ export function inspectOffboardingTrace(traces, expected, secrets) {
       runtime_disable: {
         service: "runtime-controller",
         method: "POST",
-        route: "POST /internal/runtimes/{agent_id}/disable",
+        route: "/internal/runtimes/{agent_id}/disable",
       },
     }[phase];
     if (dependency)

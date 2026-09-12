@@ -6,12 +6,14 @@ export function decide(payload) {
   const phase = payload.messages[user]?.content;
   assert.match(
     phase,
-    /^v[12]-(baseline|model-blocked|tool-blocked|after-restart-[123]|read-effects)$/,
+    /^v[12]-(baseline|model-blocked|tool-blocked|tool-inflight|recovered-effect|after-restart-[123]|read-effects)$/,
   );
   const results = payload.messages
     .slice(user + 1)
     .filter((item) => item.role === "tool");
   assert(results.length <= 1, "duplicate Tool dispatch");
+  if (phase.endsWith("tool-inflight") || phase.endsWith("recovered-effect"))
+    return uncertainEffect(payload, phase, results);
   if (phase.endsWith("model-blocked")) return { phase, hold: true };
   if (phase.includes("after-restart"))
     return { phase, text: `${phase} verified` };
@@ -51,7 +53,46 @@ export function decide(payload) {
   return { phase, call };
 }
 
-export function startModel() {
+function uncertainEffect(payload, phase, results) {
+  const version = phase.slice(0, 2);
+  const path = `acp-unknown-${version}`;
+  const inFlight = phase.endsWith("tool-inflight");
+  if (inFlight)
+    assert.equal(results.length, 0, "in-flight Tool completed before fault");
+  if (results.length) {
+    const result = JSON.parse(results[0].content);
+    assert.equal(
+      result.content,
+      `${version}-tool-inflight\n`,
+      "lost or repeated physical effect",
+    );
+    return { phase, text: `${phase} verified` };
+  }
+  const call = inFlight
+    ? {
+        name: "bash",
+        arguments: {
+          command: `printf '%s\\n' '${phase}' >> /workspace/${path}.log\nprintf '%s\\n' "$$" > /workspace/${path}.pid\nwhile [ ! -e /workspace/${path}.release ]; do sleep 1; done\nprintf 'unexpected completion\\n'`,
+          working_dir: { root: "workspace", path: "." },
+          timeout_ms: 120000,
+        },
+      }
+    : {
+        name: "read",
+        arguments: {
+          path: { root: "workspace", path: `${path}.log` },
+          offset: 0,
+          limit: 4096,
+        },
+      };
+  assert(
+    payload.tools.some((tool) => tool.function.name === call.name),
+    "Runtime Tool missing",
+  );
+  return { phase, call };
+}
+
+export function startModel(decision = decide) {
   const requests = [];
   const errors = [];
   return createServer(async (request, response) => {
@@ -76,7 +117,7 @@ export function startModel() {
         assert(size <= 1024 * 1024, "fixture body too large");
         chunks.push(chunk);
       }
-      const result = decide(JSON.parse(Buffer.concat(chunks).toString()));
+      const result = decision(JSON.parse(Buffer.concat(chunks).toString()));
       const stage = result.call ? "tool" : result.hold ? "held" : "reply";
       assert(
         !requests.some(

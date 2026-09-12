@@ -19,25 +19,23 @@ func (a *DirectoryAdapter) GetOrganization(
 	ctx context.Context,
 	organizationID string,
 ) (domain.Organization, error) {
-	return observeRepositoryValue(ctx, "get_organization", func(ctx context.Context) (domain.Organization, error) {
-		var organization domain.Organization
-		err := a.store.pool.QueryRow(ctx, `
+	var organization domain.Organization
+	err := a.store.pool.QueryRow(ctx, `
 			SELECT id, slug, name, active, created_at, updated_at
 			FROM organizations
 			WHERE id = $1`, organizationID,
-		).Scan(
-			&organization.ID,
-			&organization.Slug,
-			&organization.Name,
-			&organization.Active,
-			&organization.CreatedAt,
-			&organization.UpdatedAt,
-		)
-		if err != nil {
-			return domain.Organization{}, normalizeError(err)
-		}
-		return organization, nil
-	})
+	).Scan(
+		&organization.ID,
+		&organization.Slug,
+		&organization.Name,
+		&organization.Active,
+		&organization.CreatedAt,
+		&organization.UpdatedAt,
+	)
+	if err != nil {
+		return domain.Organization{}, normalizeError(err)
+	}
+	return organization, nil
 }
 
 func (a *DirectoryAdapter) GetPrincipal(
@@ -45,9 +43,7 @@ func (a *DirectoryAdapter) GetPrincipal(
 	userID string,
 	organizationID string,
 ) (domain.Principal, error) {
-	return observeRepositoryValue(ctx, "get_directory_principal", func(ctx context.Context) (domain.Principal, error) {
-		return a.store.getPrincipal(ctx, a.store.pool, userID, organizationID)
-	})
+	return a.store.getPrincipal(ctx, a.store.pool, userID, organizationID)
 }
 
 func (a *DirectoryAdapter) ResolveOrganizationPrincipal(
@@ -55,13 +51,7 @@ func (a *DirectoryAdapter) ResolveOrganizationPrincipal(
 	userID string,
 	organizationID string,
 ) (domain.Principal, error) {
-	return observeRepositoryValue(
-		ctx,
-		"resolve_organization_principal",
-		func(ctx context.Context) (domain.Principal, error) {
-			return a.store.resolveOrganizationPrincipal(ctx, userID, organizationID)
-		},
-	)
+	return a.store.resolveOrganizationPrincipal(ctx, userID, organizationID)
 }
 
 func (a *DirectoryAdapter) CreateOrganization(
@@ -69,7 +59,7 @@ func (a *DirectoryAdapter) CreateOrganization(
 	command directory.CreateOrganizationCommand,
 ) (domain.Organization, error) {
 	organization := command.Organization
-	err := a.store.inTransaction(ctx, "create_organization", func(tx pgx.Tx) error {
+	err := a.store.inTransaction(ctx, func(tx *databaseTransaction) error {
 		if err := a.store.requireSystemAdmin(ctx, tx, command.ActorPrincipalID); err != nil {
 			return err
 		}
@@ -97,7 +87,7 @@ func (a *DirectoryAdapter) CreateLocalUser(
 	ctx context.Context,
 	command directory.CreateLocalUserCommand,
 ) (directory.CreateLocalUserResult, error) {
-	err := a.store.inTransaction(ctx, "create_local_user", func(tx pgx.Tx) error {
+	err := a.store.inTransaction(ctx, func(tx *databaseTransaction) error {
 		if err := a.store.requireOrganizationAdmin(
 			ctx,
 			tx,
@@ -140,7 +130,7 @@ func (a *DirectoryAdapter) AddOrganizationMembership(
 	command directory.AddOrganizationMembershipCommand,
 ) (domain.OrganizationMembership, error) {
 	membership := command.Membership
-	err := a.store.inTransaction(ctx, "add_organization_membership", func(tx pgx.Tx) error {
+	err := a.store.inTransaction(ctx, func(tx *databaseTransaction) error {
 		if err := a.store.requireOrganizationAdmin(
 			ctx,
 			tx,
@@ -197,30 +187,28 @@ func (a *DirectoryAdapter) GetLocalCredential(
 	ctx context.Context,
 	userID string,
 ) (domain.LocalCredential, error) {
-	return observeRepositoryValue(ctx, "get_local_credential", func(ctx context.Context) (domain.LocalCredential, error) {
-		var credential domain.LocalCredential
-		err := a.store.pool.QueryRow(ctx, `
+	var credential domain.LocalCredential
+	err := a.store.pool.QueryRow(ctx, `
 			SELECT user_id, password_hash, created_at, updated_at
 			FROM local_credentials
 			WHERE user_id = $1`, userID,
-		).Scan(
-			&credential.UserID,
-			&credential.PasswordHash,
-			&credential.CreatedAt,
-			&credential.UpdatedAt,
-		)
-		if err != nil {
-			return domain.LocalCredential{}, normalizeError(err)
-		}
-		return credential, nil
-	})
+	).Scan(
+		&credential.UserID,
+		&credential.PasswordHash,
+		&credential.CreatedAt,
+		&credential.UpdatedAt,
+	)
+	if err != nil {
+		return domain.LocalCredential{}, normalizeError(err)
+	}
+	return credential, nil
 }
 
 func (a *DirectoryAdapter) ChangeLocalPassword(
 	ctx context.Context,
 	command directory.ChangeLocalPasswordCommand,
 ) error {
-	return a.store.inTransaction(ctx, "change_local_password", func(tx pgx.Tx) error {
+	return a.store.inTransaction(ctx, func(tx *databaseTransaction) error {
 		if command.ActorPrincipalID != command.UserID {
 			return domain.ErrForbidden
 		}
@@ -263,36 +251,34 @@ func (a *DirectoryAdapter) GetMembership(
 	organizationID string,
 	membershipID string,
 ) (domain.OrganizationMembership, error) {
-	return observeRepositoryValue(ctx, "get_organization_membership", func(ctx context.Context) (domain.OrganizationMembership, error) {
-		var membership domain.OrganizationMembership
-		err := a.store.pool.QueryRow(ctx, `
+	var membership domain.OrganizationMembership
+	err := a.store.pool.QueryRow(ctx, `
 			SELECT id, organization_id, user_id, email, display_name, role, source, active,
 			       COALESCE(scim_external_id, ''), COALESCE(scim_user_name, ''), scim_deleted_at,
 			       created_at, updated_at
 			FROM organization_memberships
 			WHERE organization_id = $1 AND id = $2 AND scim_deleted_at IS NULL`,
-			organizationID,
-			membershipID,
-		).Scan(
-			&membership.ID,
-			&membership.OrganizationID,
-			&membership.UserID,
-			&membership.Email,
-			&membership.DisplayName,
-			&membership.Role,
-			&membership.Source,
-			&membership.Active,
-			&membership.SCIMExternalID,
-			&membership.SCIMUserName,
-			&membership.SCIMDeletedAt,
-			&membership.CreatedAt,
-			&membership.UpdatedAt,
-		)
-		if err != nil {
-			return domain.OrganizationMembership{}, normalizeError(err)
-		}
-		return membership, nil
-	})
+		organizationID,
+		membershipID,
+	).Scan(
+		&membership.ID,
+		&membership.OrganizationID,
+		&membership.UserID,
+		&membership.Email,
+		&membership.DisplayName,
+		&membership.Role,
+		&membership.Source,
+		&membership.Active,
+		&membership.SCIMExternalID,
+		&membership.SCIMUserName,
+		&membership.SCIMDeletedAt,
+		&membership.CreatedAt,
+		&membership.UpdatedAt,
+	)
+	if err != nil {
+		return domain.OrganizationMembership{}, normalizeError(err)
+	}
+	return membership, nil
 }
 
 func (a *DirectoryAdapter) UpdateMembership(
@@ -300,7 +286,7 @@ func (a *DirectoryAdapter) UpdateMembership(
 	command directory.UpdateMembershipCommand,
 ) (domain.OrganizationMembership, error) {
 	membership := command.Membership
-	err := a.store.inTransaction(ctx, "update_organization_membership", func(tx pgx.Tx) error {
+	err := a.store.inTransaction(ctx, func(tx *databaseTransaction) error {
 		if err := a.store.requireOrganizationAdmin(
 			ctx,
 			tx,
@@ -398,7 +384,7 @@ func (a *DirectoryAdapter) SetUserActive(
 	ctx context.Context,
 	command directory.SetUserActiveCommand,
 ) error {
-	return a.store.inTransaction(ctx, "set_user_active", func(tx pgx.Tx) error {
+	return a.store.inTransaction(ctx, func(tx *databaseTransaction) error {
 		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, systemAdminLifecycleLock); err != nil {
 			return fmt.Errorf("lock system administrator lifecycle: %w", err)
 		}
@@ -460,7 +446,7 @@ func (a *DirectoryAdapter) SetUserActive(
 	})
 }
 
-func retainActiveOrganizationAdministrators(ctx context.Context, tx pgx.Tx, userID string) error {
+func retainActiveOrganizationAdministrators(ctx context.Context, tx *databaseTransaction, userID string) error {
 	rows, err := tx.Query(ctx, `
 		SELECT o.id
 		FROM organizations o
@@ -514,17 +500,15 @@ func retainActiveOrganizationAdministrators(ctx context.Context, tx pgx.Tx, user
 }
 
 func (a *DirectoryAdapter) ListDirectory(ctx context.Context, organizationID string) (directory.Directory, error) {
-	return observeRepositoryValue(ctx, "list_directory", func(ctx context.Context) (directory.Directory, error) {
-		users, err := a.listMembers(ctx, organizationID)
-		if err != nil {
-			return directory.Directory{}, err
-		}
-		groups, err := a.listGroups(ctx, organizationID)
-		if err != nil {
-			return directory.Directory{}, err
-		}
-		return directory.Directory{Users: users, Groups: groups}, nil
-	})
+	users, err := a.listMembers(ctx, organizationID)
+	if err != nil {
+		return directory.Directory{}, err
+	}
+	groups, err := a.listGroups(ctx, organizationID)
+	if err != nil {
+		return directory.Directory{}, err
+	}
+	return directory.Directory{Users: users, Groups: groups}, nil
 }
 
 func (a *DirectoryAdapter) listMembers(ctx context.Context, organizationID string) ([]directory.Member, error) {
@@ -579,7 +563,7 @@ func (a *DirectoryAdapter) listGroups(ctx context.Context, organizationID string
 	return result, nil
 }
 
-func insertMembership(ctx context.Context, tx pgx.Tx, membership domain.OrganizationMembership) error {
+func insertMembership(ctx context.Context, tx *databaseTransaction, membership domain.OrganizationMembership) error {
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO organization_memberships (
 			id, organization_id, user_id, email, display_name, role, source, active,

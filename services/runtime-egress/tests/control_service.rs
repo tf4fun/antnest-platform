@@ -4,7 +4,7 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
-    time::{Duration, SystemTime},
+    time::{Duration, Instant, SystemTime},
 };
 
 use antnest_runtime_egress::{
@@ -39,8 +39,10 @@ impl KernelCleanup for ToggleKernel {
     }
 }
 
-#[tokio::test]
-async fn failed_close_does_not_publish_closed_before_cleanup_succeeds() {
+fn toggle_service() -> (
+    ControlService<InMemoryRepository, ToggleKernel>,
+    Arc<ToggleKernel>,
+) {
     let repository = Arc::new(
         InMemoryRepository::new(RepositoryConfig {
             pool_id: "default".to_owned(),
@@ -62,6 +64,12 @@ async fn failed_close_does_not_publish_closed_before_cleanup_succeeds() {
             flow_idle: Duration::from_secs(60),
         },
     );
+    (service, kernel)
+}
+
+#[tokio::test]
+async fn failed_close_does_not_publish_closed_before_cleanup_succeeds() {
+    let (service, kernel) = toggle_service();
     let agent = AgentId::parse("agent-reconcile").unwrap();
     let allocated = service.ensure_agent_network(agent.clone()).await.unwrap();
     let opened = service
@@ -72,6 +80,7 @@ async fn failed_close_does_not_publish_closed_before_cleanup_succeeds() {
         )
         .await
         .unwrap();
+    let initial_calls = kernel.calls.load(Ordering::Acquire);
 
     kernel.fail_next.store(true, Ordering::Release);
     assert_eq!(
@@ -82,13 +91,17 @@ async fn failed_close_does_not_publish_closed_before_cleanup_succeeds() {
                 opened.attachment_resource_version,
             )
             .await,
-        Err(ControlError::CleanupFailed(FailureContext::new(
-            "set_runtime_attachment.close_cleanup",
-            "kernel_command_failed",
-        )))
+        Err(ControlError::CleanupFailed(
+            FailureContext::new(
+                "set_runtime_attachment.close_cleanup",
+                "kernel_command_failed",
+            )
+            .with_kernel_source("injected cleanup failure".to_owned())
+        ))
     );
-    let unchanged = service.ensure_agent_network(agent.clone()).await.unwrap();
+    let unchanged = service.agent_network(&agent).await.unwrap();
     assert_eq!(unchanged.attachment_state, AttachmentState::Open);
+    assert!(service.dataplane().lock().unwrap().is_agent_fenced(&agent));
 
     let reconciled = service
         .set_runtime_attachment(
@@ -99,8 +112,273 @@ async fn failed_close_does_not_publish_closed_before_cleanup_succeeds() {
         .await
         .unwrap();
 
-    assert_eq!(kernel.calls.load(Ordering::Acquire), 2);
+    assert_eq!(kernel.calls.load(Ordering::Acquire), initial_calls + 2);
     assert_eq!(reconciled.attachment_state, AttachmentState::Closed);
+}
+
+#[tokio::test]
+async fn healthy_same_policy_submission_preserves_existing_flow_and_reply_peer() {
+    let (service, kernel) = toggle_service();
+    let agent = AgentId::parse("agent-noop-policy").unwrap();
+    let allocated = service.ensure_agent_network(agent.clone()).await.unwrap();
+    let policy = PolicyId::parse("builtin/allow-all").unwrap();
+    let assignment = service
+        .assign_policy(agent.clone(), policy.clone(), 1, 1)
+        .await
+        .unwrap();
+    service
+        .set_runtime_attachment(
+            agent.clone(),
+            AttachmentState::Open,
+            allocated.attachment_resource_version,
+        )
+        .await
+        .unwrap();
+    let mut packet = readiness_probe(allocated.tunnel_ipv4);
+    packet[16..20].copy_from_slice(&Ipv4Addr::new(93, 184, 216, 34).octets());
+    packet[22..24].copy_from_slice(&443_u16.to_be_bytes());
+    let peer = "10.20.0.9:12345".parse().unwrap();
+    assert_eq!(
+        service
+            .dataplane()
+            .lock()
+            .unwrap()
+            .handle_uplink(&packet, peer, Instant::now()),
+        DataPlaneAction::WriteTun(packet.clone())
+    );
+    let calls = kernel.calls.load(Ordering::Acquire);
+    for version in [assignment.resource_version, assignment.resource_version - 1] {
+        assert_eq!(
+            service
+                .assign_policy(agent.clone(), policy.clone(), 1, version)
+                .await
+                .unwrap(),
+            assignment
+        );
+        assert_eq!(kernel.calls.load(Ordering::Acquire), calls);
+        assert_eq!(service.dataplane().lock().unwrap().flow_count(), 1);
+    }
+    let mut reply = packet.clone();
+    reply[12..16].copy_from_slice(&packet[16..20]);
+    reply[16..20].copy_from_slice(&packet[12..16]);
+    reply[20..22].copy_from_slice(&packet[22..24]);
+    reply[22..24].copy_from_slice(&packet[20..22]);
+    assert!(
+        matches!(service.dataplane().lock().unwrap().handle_downlink(&reply, Instant::now()), DataPlaneAction::SendUdp { peer: actual, .. } if actual == peer)
+    );
+    assert!(matches!(
+        service.assign_policy(agent.clone(), policy, 1, 0).await,
+        Err(ControlError::ResourceVersionConflict)
+    ));
+    assert_eq!(kernel.calls.load(Ordering::Acquire), calls);
+}
+
+#[tokio::test]
+async fn same_policy_repairs_a_failed_barrier_instead_of_skipping_cleanup() {
+    let (service, kernel) = toggle_service();
+    let agent = AgentId::parse("agent-policy-repair").unwrap();
+    let allocated = service.ensure_agent_network(agent.clone()).await.unwrap();
+    let policy = PolicyId::parse("builtin/allow-all").unwrap();
+    let assignment = service
+        .assign_policy(agent.clone(), policy.clone(), 1, 1)
+        .await
+        .unwrap();
+    service
+        .set_runtime_attachment(
+            agent.clone(),
+            AttachmentState::Open,
+            allocated.attachment_resource_version,
+        )
+        .await
+        .unwrap();
+    kernel.fail_next.store(true, Ordering::Release);
+    assert!(
+        service
+            .assign_policy(
+                agent.clone(),
+                PolicyId::parse("builtin/deny-all").unwrap(),
+                1,
+                assignment.resource_version
+            )
+            .await
+            .is_err()
+    );
+    assert!(service.dataplane().lock().unwrap().is_agent_fenced(&agent));
+    let calls = kernel.calls.load(Ordering::Acquire);
+    assert_eq!(
+        service
+            .assign_policy(agent.clone(), policy, 1, assignment.resource_version)
+            .await
+            .unwrap(),
+        assignment
+    );
+    assert_eq!(kernel.calls.load(Ordering::Acquire), calls + 1);
+    assert!(!service.dataplane().lock().unwrap().is_agent_fenced(&agent));
+}
+
+#[tokio::test]
+async fn reopening_a_failed_barrier_requires_successful_cleanup() {
+    for (use_ensure, fail_close, previously_allowed) in [
+        (true, true, true),
+        (false, true, true),
+        (true, false, true),
+        (false, false, true),
+        (true, false, false),
+        (false, false, false),
+    ] {
+        let (service, kernel) = toggle_service();
+        let agent = AgentId::parse("agent-fenced").unwrap();
+        let allocated = service.ensure_agent_network(agent.clone()).await.unwrap();
+        let persisted = service
+            .assign_policy(
+                agent.clone(),
+                PolicyId::parse(if previously_allowed {
+                    "builtin/allow-all"
+                } else {
+                    "builtin/deny-all"
+                })
+                .unwrap(),
+                1,
+                1,
+            )
+            .await
+            .unwrap();
+        let mut packet = readiness_probe(allocated.tunnel_ipv4);
+        packet[16..20].copy_from_slice(&Ipv4Addr::new(93, 184, 216, 34).octets());
+        packet[22..24].copy_from_slice(&443_u16.to_be_bytes());
+        let peer = "10.20.0.9:12345".parse().unwrap();
+        let opened = service
+            .set_runtime_attachment(
+                agent.clone(),
+                AttachmentState::Open,
+                allocated.attachment_resource_version,
+            )
+            .await
+            .unwrap();
+        kernel.fail_next.store(true, Ordering::Release);
+        let failed = if fail_close {
+            service
+                .set_runtime_attachment(
+                    agent.clone(),
+                    AttachmentState::Closed,
+                    opened.attachment_resource_version,
+                )
+                .await
+                .map(|_| ())
+        } else {
+            service
+                .assign_policy(
+                    agent.clone(),
+                    PolicyId::parse(if previously_allowed {
+                        "builtin/deny-all"
+                    } else {
+                        "builtin/allow-all"
+                    })
+                    .unwrap(),
+                    1,
+                    persisted.resource_version,
+                )
+                .await
+                .map(|_| ())
+        };
+        assert!(matches!(failed, Err(ControlError::CleanupFailed(_))));
+        let calls = kernel.calls.load(Ordering::Acquire);
+
+        kernel.fail_next.store(true, Ordering::Release);
+        let repair = if use_ensure {
+            service.ensure_agent_network(agent.clone()).await
+        } else {
+            service
+                .set_runtime_attachment(
+                    agent.clone(),
+                    AttachmentState::Open,
+                    opened.attachment_resource_version,
+                )
+                .await
+        };
+        assert!(
+            matches!(repair, Err(ControlError::CleanupFailed(_))),
+            "ensure={use_ensure}, close={fail_close}: {repair:?}"
+        );
+        assert_eq!(kernel.calls.load(Ordering::Acquire), calls + 1);
+        assert!(service.dataplane().lock().unwrap().is_agent_fenced(&agent));
+        assert_eq!(
+            service
+                .dataplane()
+                .lock()
+                .unwrap()
+                .handle_uplink(&packet, peer, Instant::now()),
+            DataPlaneAction::Drop(DropReason::AgentFenced)
+        );
+        assert_eq!(service.agent_network(&agent).await.unwrap(), opened);
+        assert_eq!(service.policy_assignment(&agent).await.unwrap(), persisted);
+
+        let repaired = if use_ensure {
+            service.ensure_agent_network(agent.clone()).await
+        } else {
+            service
+                .set_runtime_attachment(
+                    agent.clone(),
+                    AttachmentState::Open,
+                    opened.attachment_resource_version,
+                )
+                .await
+        }
+        .unwrap();
+        assert_eq!(repaired, opened);
+        assert_eq!(kernel.calls.load(Ordering::Acquire), calls + 2);
+        assert!(!service.dataplane().lock().unwrap().is_agent_fenced(&agent));
+        assert_eq!(service.policy_assignment(&agent).await.unwrap(), persisted);
+        let plane = service.dataplane();
+        {
+            let mut plane = plane.lock().unwrap();
+            let action = plane.handle_uplink(&packet, peer, Instant::now());
+            if previously_allowed {
+                assert_eq!(action, DataPlaneAction::WriteTun(packet));
+                assert_eq!(plane.flow_count(), 1);
+            } else {
+                assert!(
+                    matches!(action, DataPlaneAction::SendUdp { peer: actual, .. } if actual == peer)
+                );
+                assert_eq!(plane.flow_count(), 0);
+            }
+        }
+
+        assert_eq!(service.ensure_agent_network(agent).await.unwrap(), opened);
+        assert_eq!(kernel.calls.load(Ordering::Acquire), calls + 2);
+    }
+}
+
+#[tokio::test]
+async fn failed_initial_open_keeps_durable_attachment_closed() {
+    let (service, kernel) = toggle_service();
+    let agent = AgentId::parse("agent-open-failure").unwrap();
+    let allocated = service.ensure_agent_network(agent.clone()).await.unwrap();
+    kernel.fail_next.store(true, Ordering::Release);
+    let result = service
+        .set_runtime_attachment(
+            agent.clone(),
+            AttachmentState::Open,
+            allocated.attachment_resource_version,
+        )
+        .await;
+    assert!(matches!(result, Err(ControlError::CleanupFailed(_))));
+    assert_eq!(service.agent_network(&agent).await.unwrap(), allocated);
+    assert!(service.dataplane().lock().unwrap().is_agent_fenced(&agent));
+    let opened = service
+        .set_runtime_attachment(
+            agent.clone(),
+            AttachmentState::Open,
+            allocated.attachment_resource_version,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        opened.attachment_resource_version,
+        allocated.attachment_resource_version + 1
+    );
+    assert_eq!(opened.attachment_state, AttachmentState::Open);
+    assert!(!service.dataplane().lock().unwrap().is_agent_fenced(&agent));
 }
 
 #[async_trait]
@@ -705,10 +983,10 @@ async fn cleanup_failure_keeps_only_that_agent_fenced_until_retry_completes() {
 
     assert_eq!(
         result,
-        Err(ControlError::CleanupFailed(FailureContext::new(
-            "assign_policy.kernel_cleanup",
-            "kernel_command_failed",
-        )))
+        Err(ControlError::CleanupFailed(
+            FailureContext::new("assign_policy.kernel_cleanup", "kernel_command_failed",)
+                .with_kernel_source("injected cleanup failure".to_owned())
+        ))
     );
     assert!(service.dataplane().lock().unwrap().is_agent_fenced(&failed));
     assert!(

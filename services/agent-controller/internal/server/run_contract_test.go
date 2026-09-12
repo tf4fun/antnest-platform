@@ -56,13 +56,14 @@ func TestMachineRunContractMatchesRegisteredBoundary(t *testing.T) {
 	t.Parallel()
 
 	contract := readMachineRunContract(t)
-	if contract.Revision != 9 || contract.SchemaDialect != draft202012Schema ||
+	if contract.Revision != 13 || contract.SchemaDialect != draft202012Schema ||
 		contract.BasePath != "/rpc/agent-controller" {
 		t.Fatalf("Run contract identity = %+v", contract)
 	}
 	boundary, err := NewHandler(
 		&catalogServiceStub{}, &lifecycleServiceStub{}, &runServiceStub{},
-		&agentQueryServiceStub{}, &agentEventServiceStub{}, func(context.Context) error { return nil },
+		&agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{},
+		func(context.Context) error { return nil },
 	)
 	if err != nil {
 		t.Fatalf("new Run boundary: %v", err)
@@ -102,15 +103,23 @@ func TestMachineRunContractValidatesActualHTTPBoundary(t *testing.T) {
 	contract := readMachineRunContract(t)
 	now := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	runs := &runServiceStub{
+		configuration: ports.SessionConfiguration{
+			Models: []ports.SessionModelOption{},
+			DefaultModel: ports.DefaultSessionModel{SessionModelOption: ports.SessionModelOption{
+				ModelProfileID: "profile-1", RevisionID: "revision-1", DisplayName: "Model", Model: "model-1",
+				ContextWindow: 8192, MaxOutputTokens: 1024}, Available: true},
+			DefaultAuthorization:  domain.Authorization{Mode: domain.AuthorizationAuto, ToolRules: []domain.ToolRule{}},
+			AuthorizationRevision: 1,
+		},
 		access: application.AgentAccessView{
 			PrincipalID: "user-1", AgentID: "agent-1", AccessRevision: "access-1",
-			PromptCapabilities: ports.PromptCapabilities{Image: true, EmbeddedContext: true},
+			PromptCapabilities: ports.PromptCapabilities{Image: true, Audio: true, EmbeddedContext: true},
 		},
 		acquired: application.AcquireRunResult{
 			AdmissionID: "admission-1", AdmissionDeadline: now.Add(time.Minute),
 			AgentSpecRevision: "spec-1", ExecutionRevision: "execution-1",
 			RuntimeMCPSourceDigest:   strings.Repeat("a", 64),
-			AgentExecutionSpecDigest: strings.Repeat("b", 64), CredentialVersion: "version-1",
+			AgentExecutionSpecDigest: strings.Repeat("b", 64),
 			Runtime: ports.AdmittedRuntime{
 				RuntimeRevision: "runtime-1", RuntimeExecutionID: "runtime-execution-1",
 				MCPEndpoint: "http://runtime-1:8091/mcp",
@@ -118,14 +127,16 @@ func TestMachineRunContractValidatesActualHTTPBoundary(t *testing.T) {
 			ExecutionSpec: ports.AdmittedExecutionSpec{
 				SystemPrompt: "Useful", ContextPolicyVersion: domain.ContextPolicyV1,
 				SkillInstructions: []ports.SkillInstruction{}, Model: domain.ModelSpec{
+					Pricing: sampleModelPricing(),
 					BaseURL: "https://model.example/v1", Model: "model-1",
 					ContextWindow: 32768, MaxOutputTokens: 4096,
+					SupportsAudio: true, SupportsPDF: true,
 				},
-				MaxModelRequests: 16, CredentialRef: "credential-1",
+				MaxModelRequests: 16, Provider: domain.ProviderExecution{ConnectionID: "credential-1", ProviderKey: "deepseek", CredentialMethod: "api_key", RequestProtocol: "openai_chat_completions"},
 			},
 		},
 		credential: application.CredentialView{
-			CredentialVersion: "version-1", SecretType: "bearer", Secret: "secret-1",
+			Provider: domain.ProviderExecution{ConnectionID: "credential-1", ProviderKey: "deepseek", CredentialMethod: "api_key", RequestProtocol: "openai_chat_completions"}, CredentialVersion: "version-1", SecretType: "bearer", Secret: "secret-1",
 		},
 		finished: application.FinishRunResult{
 			Status: "finished", AdmissionState: domain.AdmissionReleased,
@@ -133,17 +144,20 @@ func TestMachineRunContractValidatesActualHTTPBoundary(t *testing.T) {
 	}
 	boundary, err := NewHandler(
 		&catalogServiceStub{}, &lifecycleServiceStub{}, runs,
-		&agentQueryServiceStub{}, &agentEventServiceStub{}, func(context.Context) error { return nil },
+		&agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{},
+		func(context.Context) error { return nil },
 	)
 	if err != nil {
 		t.Fatalf("new Run boundary: %v", err)
 	}
 	requestBodies := map[string]string{
-		"list_workspace_agents": `{"request_id":"request-workspace","organization_id":"org-1","principal_id":"user-1","limit":100}`,
-		"resolve_agent_access":  `{"request_id":"request-access","agent_access_subject":"subject-1"}`,
-		"acquire_run":           `{"request_id":"request-acquire","agent_id":"agent-1","principal_id":"user-1","expected_access_revision":"access-1","session_id":"session-1"}`,
-		"resolve_credential":    `{"request_id":"request-credential","admission_id":"admission-1","credential_ref":"credential-1"}`,
-		"finish_run":            `{"request_id":"request-finish","admission_id":"admission-1","terminal_class":"completed","tool_effect_state":"settled","unknown_effect_source":null,"stop_reason":"end_turn","error_class":null}`,
+		"get_session_configuration": `{"request_id":"get-config","agent_id":"agent-1","principal_id":"user-1","expected_access_revision":"access-1"}`,
+		"set_agent_authorization":   `{"request_id":"set-config","agent_id":"agent-1","principal_id":"user-1","expected_access_revision":"access-1","expected_authorization_revision":1,"authorization":{"mode":"approve","tool_rules":[]}}`,
+		"list_workspace_agents":     `{"request_id":"request-workspace","organization_id":"org-1","principal_id":"user-1","limit":100}`,
+		"resolve_agent_access":      `{"request_id":"request-access","agent_access_subject":"subject-1"}`,
+		"acquire_run":               `{"request_id":"request-acquire","agent_id":"agent-1","principal_id":"user-1","expected_access_revision":"access-1","session_id":"session-1"}`,
+		"resolve_credential":        `{"request_id":"request-credential","admission_id":"admission-1","provider_connection_id":"credential-1"}`,
+		"finish_run":                `{"request_id":"request-finish","admission_id":"admission-1","terminal_class":"completed","tool_effect_state":"settled","unknown_effect_source":null,"stop_reason":"end_turn","error_class":null}`,
 	}
 
 	status := httptest.NewRecorder()
@@ -182,6 +196,8 @@ func TestMachineRunContractValidatesActualHTTPErrorBoundary(t *testing.T) {
 		{code: "agent_rebuilding", err: application.ErrAgentRebuilding},
 		{code: "agent_build_failed", err: application.ErrAgentBuildFailed},
 		{code: "agent_not_ready", err: application.ErrAgentNotReady},
+		{code: "model_unavailable", err: ports.ErrModelUnavailable},
+		{code: "configuration_conflict", err: ports.ErrConcurrentChange},
 		{code: "admission_not_found", err: application.ErrAdmissionNotFound},
 		{code: "credential_not_allowed", err: application.ErrCredentialNotAllowed},
 		{code: "invalid_request", err: application.ErrInvalidInput},
@@ -194,7 +210,8 @@ func TestMachineRunContractValidatesActualHTTPErrorBoundary(t *testing.T) {
 		t.Run(test.code, func(t *testing.T) {
 			boundary, err := NewHandler(
 				&catalogServiceStub{}, &lifecycleServiceStub{}, &runServiceStub{err: test.err},
-				&agentQueryServiceStub{}, &agentEventServiceStub{}, func(context.Context) error { return nil },
+				&agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{},
+				func(context.Context) error { return nil },
 			)
 			if err != nil {
 				t.Fatalf("new Run error boundary: %v", err)

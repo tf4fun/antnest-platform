@@ -1,5 +1,6 @@
 import { DomainError } from "../domain/errors.js";
 import { normalizePromptResources } from "../domain/embedded-resource.js";
+import { matchCommand, type SessionCommand } from "../domain/slash-commands.js";
 import {
   authorizeSession,
   defaultSessionTitle,
@@ -28,6 +29,7 @@ export type AcceptPromptInput = {
 };
 
 export type AcceptedRun = {
+  command?: SessionCommand;
   runId: string;
   requestId: string;
   sessionId: string;
@@ -82,6 +84,9 @@ export class PromptCoordinator {
           principalId: input.binding.principalId,
           expectedAccessRevision: intent.expectedAccessRevision,
           sessionId: session.id,
+          ...(intent.sessionConfiguration === undefined
+            ? {}
+            : { sessionConfiguration: intent.sessionConfiguration }),
         },
         signal,
       );
@@ -132,7 +137,9 @@ export class PromptCoordinator {
       throw error;
     }
 
+    const command = matchCommand(intent.prompt);
     return {
+      ...(command === undefined ? {} : { command }),
       runId,
       requestId,
       sessionId: session.id,

@@ -75,6 +75,9 @@ func TestRebuildAgentReplacesRuntimeAndPublishesTargetSpecAtomically(t *testing.
 		store.published.RebuiltEvent.EventType != ports.EventAgentRebuilt {
 		t.Fatalf("rebuild publication = %+v", store.published)
 	}
+	if !store.published.PromptCapabilities.EmbeddedContext {
+		t.Fatal("Agent rebuild disabled built-in embedded text")
+	}
 	if store.runReleaseEvent.EventType != ports.EventRunAdmissionReleased ||
 		store.runReleaseEvent.Data["release_reason"] != "runtime_replaced" ||
 		store.runReleaseEvent.Data["source_runtime_revision"] != base.Agent.RuntimeRevision {
@@ -700,7 +703,7 @@ func (store *rebuildLifecycleStoreStub) SettleAgentRebuildDrain(
 
 func (store *rebuildLifecycleStoreStub) AdvanceAgentRebuild(
 	_ context.Context, input ports.AdvanceAgentRebuild,
-) (ports.AgentRebuildState, error) {
+) (ports.LifecycleAdvanceResult, error) {
 	if input.RunReleaseEvent.EventID != "" {
 		store.runReleaseEvent = input.RunReleaseEvent
 	}
@@ -715,7 +718,7 @@ func (store *rebuildLifecycleStoreStub) AdvanceAgentRebuild(
 		runtime := *input.RuntimeResult
 		store.state.Operation.RuntimeResult = &runtime
 	}
-	return store.state, nil
+	return ports.LifecycleAdvanceResult{Agent: store.state.Agent, Operation: store.state.Operation, RunReleaseOutcome: store.state.RunReleaseOutcome}, nil
 }
 
 func (store *rebuildLifecycleStoreStub) PublishAgentRebuild(
@@ -734,8 +737,6 @@ func (store *rebuildLifecycleStoreStub) PublishAgentRebuild(
 	store.state.Agent.UpdatedAt = input.Now
 	store.state.Operation.Phase = domain.PhaseCompleted
 	store.state.Operation.State = domain.OperationCompleted
-	store.state.Operation.RecoveryOwner = ""
-	store.state.Operation.RecoveryLeaseUntil = nil
 	store.state.Operation.ChildRequestID = ""
 	store.state.Operation.UpdatedAt = input.Now
 	return store.state, nil
@@ -761,8 +762,6 @@ func (store *rebuildLifecycleStoreStub) FailAgentRebuild(
 	store.state.Agent.AggregateSequence = input.FailedEvent.AggregateSequence
 	store.state.Agent.UpdatedAt = input.Now
 	store.state.Operation.State = domain.OperationFailed
-	store.state.Operation.RecoveryOwner = ""
-	store.state.Operation.RecoveryLeaseUntil = nil
 	store.state.Operation.ErrorCode = input.Code
 	store.state.Operation.ErrorDetail = input.Detail
 	store.state.Operation.UpdatedAt = input.Now
@@ -810,4 +809,8 @@ func completedRebuildState(t *testing.T, base ports.AgentLifecycleBase) ports.Ag
 			TargetSpecRevisionID:      target.ID,
 		},
 	}
+}
+
+func (store *rebuildLifecycleStoreStub) GetLifecycleOperation(context.Context, string) (ports.LifecycleOperationRecord, error) {
+	return store.state.Operation, nil
 }

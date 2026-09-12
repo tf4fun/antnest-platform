@@ -10,6 +10,7 @@ export type AgentAcpConfig = {
   maxWebSocketPayloadBytes: number;
   shutdownTimeoutMs: number;
   telemetry: {
+    captureRpcContent?: boolean;
     disabled: boolean;
     serviceName: string;
     endpoint?: URL;
@@ -59,6 +60,10 @@ function telemetryConfig(environment: NodeJS.ProcessEnv): AgentAcpConfig["teleme
   const endpoint = optional(environment.OTEL_EXPORTER_OTLP_ENDPOINT);
   const exportByDefault = endpoint !== undefined;
   return {
+    captureRpcContent: parseBoolean(
+      (environment.ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT ?? "false").trim().toLowerCase(),
+      "ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT",
+    ),
     disabled: parseBoolean(environment.OTEL_SDK_DISABLED ?? "false", "OTEL_SDK_DISABLED"),
     serviceName: optional(environment.OTEL_SERVICE_NAME) ?? "agent-acp-service",
     tracesEnabled: signalEnabled(environment.OTEL_TRACES_EXPORTER, exportByDefault),

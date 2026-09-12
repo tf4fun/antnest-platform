@@ -2,7 +2,9 @@
 
 Admin Console extends the existing Template workflow, not a new MCP registry.
 Platform-managed stdio servers belong to the frozen Runtime configuration.
-Client-supplied HTTP MCP remains Session-owned and outside this screen.
+Client MCP injection is disabled: both ACP versions accept only `mcpServers: []`.
+This screen configures administrator-managed Runtime stdio servers, not an
+exception to the client-injection restriction.
 
 ## Browser Workflow
 

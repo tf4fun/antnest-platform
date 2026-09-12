@@ -31,7 +31,7 @@ const methodSchema = z.object({
 });
 
 const contractSchema = z.object({
-  revision: z.literal(9),
+  revision: z.literal(12),
   base_path: z.string().startsWith("/"),
   status: z.object({
     method: z.literal("GET"),
@@ -50,6 +50,7 @@ const contractSchema = z.object({
     properties: z.object({ code: z.object({ enum: z.array(z.string()) }) }),
   }),
   methods: z.object({
+    get_session_configuration: methodSchema,
     resolve_agent_access: methodSchema,
     acquire_run: methodSchema,
     resolve_credential: methodSchema,
@@ -63,6 +64,110 @@ const CONTRACT_URL = new URL(
 );
 
 describe("Agent Controller consumer contract", () => {
+  it.each([
+    { currency: "USD", input_per_million: 2, output_per_million: 8 },
+    {
+      currency: "USD",
+      input_per_million: 0,
+      output_per_million: 0,
+      cache_read_per_million: 0,
+      cache_write_per_million: 3,
+    },
+  ])("accepts the shared F10 admission pricing contract %j", async (pricing) => {
+    const responses = responseFixtures();
+    const spec = responses.acquire_run.execution_spec as { model: Record<string, unknown> };
+    spec.model.pricing = pricing;
+    const contract = contractSchema.parse(JSON.parse(readFileSync(CONTRACT_URL, "utf8")));
+    const validate = new Ajv({ strict: false, validateFormats: false }).compile(
+      contract.methods.acquire_run.response,
+    );
+    expect(validate(responses.acquire_run), JSON.stringify(validate.errors)).toBe(true);
+    const client = new AgentControllerClient({
+      baseUrl: new URL("http://agent-controller:8080/rpc/agent-controller/"),
+      timeoutMs: 5000,
+      fetchFn: () => Promise.resolve(Response.json(responses.acquire_run)),
+    });
+    const admitted = await client.acquireRun({
+      requestId: "run",
+      agentId: "agent",
+      principalId: "principal",
+      expectedAccessRevision: "r1",
+      sessionId: "session",
+    });
+    expect(admitted.executionSpec.model.pricing).toEqual({
+      currency: "USD",
+      inputPerMillion: pricing.input_per_million,
+      outputPerMillion: pricing.output_per_million,
+      ...(pricing.cache_read_per_million === undefined
+        ? {}
+        : { cacheReadPerMillion: pricing.cache_read_per_million }),
+      ...(pricing.cache_write_per_million === undefined
+        ? {}
+        : { cacheWritePerMillion: pricing.cache_write_per_million }),
+    });
+    for (const invalid of [
+      null,
+      { ...pricing, currency: "EUR" },
+      { ...pricing, cache_read_per_million: null },
+      { ...pricing, cache_write_per_million: null },
+      { ...pricing, input_per_million: -1 },
+      { currency: "USD", input_per_million: 2 },
+      { ...pricing, output_per_million: "8" },
+    ]) {
+      spec.model.pricing = invalid;
+      expect(validate(responses.acquire_run)).toBe(false);
+      await expect(
+        client.acquireRun({
+          requestId: "run",
+          agentId: "agent",
+          principalId: "principal",
+          expectedAccessRevision: "r1",
+          sessionId: "session",
+        }),
+      ).rejects.toMatchObject({ code: "dependency_unavailable" });
+    }
+  });
+
+  it.each([true, false, undefined])(
+    "decodes the F09 optional native input flags (%s) without inferring support",
+    async (enabled) => {
+      const responses = responseFixtures();
+      const access = responses.resolve_agent_access.prompt_capabilities as Record<string, unknown>;
+      const spec = responses.acquire_run.execution_spec as { model: Record<string, unknown> };
+      if (enabled !== undefined) {
+        access.audio = enabled;
+        spec.model.supports_audio = enabled;
+        spec.model.supports_pdf = enabled;
+      }
+      const client = new AgentControllerClient({
+        baseUrl: new URL("http://agent-controller:8080/rpc/agent-controller/"),
+        timeoutMs: 5000,
+        fetchFn: (url) =>
+          Promise.resolve(
+            Response.json(
+              url.pathname.endsWith("resolve-agent-access")
+                ? responses.resolve_agent_access
+                : responses.acquire_run,
+            ),
+          ),
+      });
+      const resolved = await client.resolveAgentAccess({
+        requestId: "access",
+        agentAccessSubject: "subject",
+      });
+      expect(resolved.promptCapabilities.audio ?? false).toBe(enabled ?? false);
+      const admitted = await client.acquireRun({
+        requestId: "run",
+        agentId: "agent",
+        principalId: "principal",
+        expectedAccessRevision: "r1",
+        sessionId: "session",
+      });
+      expect(admitted.executionSpec.model.supportsAudio ?? false).toBe(enabled ?? false);
+      expect(admitted.executionSpec.model.supportsPdf ?? false).toBe(enabled ?? false);
+    },
+  );
+
   it("keeps every outbound RPC path and request envelope aligned with the owned contract", async () => {
     const contract = contractSchema.parse(JSON.parse(readFileSync(CONTRACT_URL, "utf8")));
     expect(contract.error.properties.code.enum).toEqual([...AGENT_CONTROLLER_ERROR_CODES]);
@@ -103,12 +208,26 @@ describe("Agent Controller consumer contract", () => {
       requestId: "request-access",
       agentAccessSubject: "subject-1",
     });
+    await client.getSessionConfiguration({
+      requestId: "request-config",
+      agentId: "agent-1",
+      principalId: "principal-1",
+      expectedAccessRevision: "access-1",
+      limit: 200,
+    });
     await client.acquireRun({
       requestId: "request-acquire",
       agentId: "agent-1",
       principalId: "principal-1",
       expectedAccessRevision: "access-1",
       sessionId: "session-1",
+      sessionConfiguration: {
+        modelProfileId: "profile-1",
+        authorizationMode: "chat",
+        toolRules: [
+          { source: "runtime", sourceId: "runtime", toolName: "read", decision: "allow" },
+        ],
+      },
     });
     await client.resolveCredential({
       requestId: "request-credential",
@@ -126,6 +245,7 @@ describe("Agent Controller consumer contract", () => {
 
     const methods = [
       "resolve_agent_access",
+      "get_session_configuration",
       "acquire_run",
       "resolve_credential",
       "finish_run",
@@ -272,6 +392,32 @@ function parseRequestBody(body: BodyInit | null | undefined): Record<string, unk
 
 function responseFixtures(): Record<MethodName, Record<string, unknown>> {
   return {
+    get_session_configuration: {
+      models: [
+        {
+          model_profile_id: "profile-1",
+          revision_id: "r1",
+          display_name: "Model",
+          model: "model",
+          context_window: 32000,
+          max_output_tokens: 2048,
+          supports_images: false,
+        },
+      ],
+      next_cursor: "",
+      default_model: {
+        model_profile_id: "profile-1",
+        revision_id: "r1",
+        display_name: "Model",
+        model: "model",
+        context_window: 32000,
+        max_output_tokens: 2048,
+        supports_images: false,
+        available: true,
+      },
+      default_authorization: { mode: "auto", tool_rules: [] },
+      authorization_revision: 1,
+    },
     resolve_agent_access: {
       principal_id: "principal-1",
       agent_id: "agent-1",
@@ -292,6 +438,13 @@ function responseFixtures(): Record<MethodName, Record<string, unknown>> {
         mcp_endpoint: "http://runtime-1:8080/mcp",
       },
       execution_spec: {
+        configuration: {
+          model_profile_id: "profile-1",
+          model_profile_revision_id: "r1",
+          authorization: { mode: "chat", tool_rules: [] },
+          authorization_revision: 1,
+          digest: "c".repeat(64),
+        },
         system_prompt: "system",
         context_policy_version: "context-v1",
         skill_instructions: [],

@@ -78,7 +78,8 @@ export class AcpWireClient {
         () => {
           const failure = this.failures[0];
           if (failure !== undefined) throw failure;
-          if (this.frames.some((frame) => frame.id === id)) return true;
+          if (this.frames.some((frame) => frame.id === id && frame.method === undefined))
+            return true;
           if (this.socket.readyState === WebSocket.CLOSED)
             throw new Error("ACP connection closed before the response");
           return false;
@@ -86,13 +87,17 @@ export class AcpWireClient {
         { timeout: 10_000 },
       )
       .toBe(true);
-    const response = this.frames.find((frame) => frame.id === id);
+    const response = this.frames.find((frame) => frame.id === id && frame.method === undefined);
     if (response === undefined) throw new Error(`Missing response for ${method}`);
     return response;
   }
 
   public notify(method: string, params: Record<string, unknown>): void {
     this.socket.send(JSON.stringify({ jsonrpc: "2.0", method, params }));
+  }
+
+  public respond(id: number, result: Record<string, unknown>): void {
+    this.socket.send(JSON.stringify({ jsonrpc: "2.0", id, result }));
   }
 
   public async close(): Promise<void> {

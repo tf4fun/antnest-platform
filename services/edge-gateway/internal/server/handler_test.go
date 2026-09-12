@@ -15,6 +15,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"soft/antnest-platform/services/edge-gateway/internal/telemetry"
 
 	"soft/antnest-platform/services/edge-gateway/internal/agentcontroller"
 	"soft/antnest-platform/services/edge-gateway/internal/identity"
@@ -105,7 +106,7 @@ func testWorkspaceACPRoute(t *testing.T, publicPath, upstreamPath string) {
 		RequestTimeout: time.Second, NewRequestID: func() string { return "edge-request" },
 	}, Dependencies{
 		Identity: &identityServiceStub{resolvePrincipal: ordinaryPrincipal()}, Agents: agents,
-		Sessions: sessions, HTTPClient: acp.Client(), Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Sessions: sessions, HTTPClient: &http.Client{Transport: telemetry.NewHTTPTransport(acp.Client().Transport)}, Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
 	if err != nil {
 		t.Fatalf("NewHandler: %v", err)
@@ -586,34 +587,24 @@ func TestLogoutPreservesCookiesWhenRevocationIsRetryable(t *testing.T) {
 	}
 }
 
-func TestStatusRequiresBothDependencies(t *testing.T) {
-	identityStub := &identityServiceStub{}
-	consoleStatus := http.StatusOK
-	console := http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if request.URL.Path != "/status" {
-			t.Fatalf("status probe path=%s", request.URL.Path)
+func TestStatusDoesNotProbeDownstreamServices(t *testing.T) {
+	for _, unavailable := range []bool{false, true} {
+		identities := &identityServiceStub{}
+		agents := &agentServiceStub{}
+		if unavailable {
+			identities.readyErr = context.DeadlineExceeded
+			agents.readyErr = context.DeadlineExceeded
 		}
-		response.WriteHeader(consoleStatus)
-	})
-	handler := newTestHandler(t, identityStub, console, time.Now())
-
-	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/status", nil))
-	if response.Code != http.StatusOK {
-		t.Fatalf("ready status=%d body=%s", response.Code, response.Body.String())
-	}
-	identityStub.readyErr = context.DeadlineExceeded
-	response = httptest.NewRecorder()
-	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/status", nil))
-	if response.Code != http.StatusServiceUnavailable {
-		t.Fatalf("identity failure status=%d", response.Code)
-	}
-	identityStub.readyErr = nil
-	consoleStatus = http.StatusServiceUnavailable
-	response = httptest.NewRecorder()
-	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/status", nil))
-	if response.Code != http.StatusServiceUnavailable {
-		t.Fatalf("console failure status=%d", response.Code)
+		calls := 0
+		h := newTestHandlerWithAgents(t, identities, agents, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			calls++
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}), time.Now(), Config{})
+		response := httptest.NewRecorder()
+		h.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/status", nil))
+		if response.Code != http.StatusOK || response.Body.String() != "{\"status\":\"ready\"}\n" || calls != 0 || identities.readyCalls != 0 || agents.readyCalls != 0 {
+			t.Fatalf("local readiness: status=%d calls=%d/%d/%d", response.Code, calls, identities.readyCalls, agents.readyCalls)
+		}
 	}
 }
 
@@ -663,7 +654,7 @@ func newTestHandlerWithAgents(
 	config.Now = func() time.Time { return now }
 	handler, err := NewHandler(config, Dependencies{
 		Identity: identityService, Agents: agents, Sessions: sessions,
-		HTTPClient: httpClient, Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		HTTPClient: &http.Client{Transport: telemetry.NewHTTPTransport(httpClient.Transport)}, Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
 	if err != nil {
 		t.Fatalf("NewHandler: %v", err)
@@ -672,10 +663,31 @@ func newTestHandlerWithAgents(
 }
 
 type agentServiceStub struct {
-	agents   []agentcontroller.WorkspaceAgent
-	input    agentcontroller.ListWorkspaceAgentsInput
-	listErr  error
-	readyErr error
+	state      agentcontroller.WorkspaceState
+	stateInput agentcontroller.WorkspaceStateInput
+	stateErr   error
+	watchState func(context.Context, agentcontroller.WorkspaceStateEmitter) error
+	agents     []agentcontroller.WorkspaceAgent
+	input      agentcontroller.ListWorkspaceAgentsInput
+	listErr    error
+	readyErr   error
+	readyCalls int
+}
+
+func (stub *agentServiceStub) GetWorkspaceState(_ context.Context, input agentcontroller.WorkspaceStateInput) (agentcontroller.WorkspaceState, error) {
+	stub.stateInput = input
+	return stub.state, stub.stateErr
+}
+
+func (stub *agentServiceStub) WatchWorkspaceState(ctx context.Context, input agentcontroller.WorkspaceStateInput, emit agentcontroller.WorkspaceStateEmitter) error {
+	stub.stateInput = input
+	if stub.stateErr != nil {
+		return stub.stateErr
+	}
+	if stub.watchState != nil {
+		return stub.watchState(ctx, emit)
+	}
+	return emit(stub.state)
 }
 
 func (stub *agentServiceStub) ListWorkspaceAgents(
@@ -685,7 +697,7 @@ func (stub *agentServiceStub) ListWorkspaceAgents(
 	return stub.agents, stub.listErr
 }
 
-func (stub *agentServiceStub) Ready(context.Context) error { return stub.readyErr }
+func (stub *agentServiceStub) Ready(context.Context) error { stub.readyCalls++; return stub.readyErr }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
@@ -733,6 +745,7 @@ type identityServiceStub struct {
 	resolvePrincipal         identity.Principal
 	resolveErr               error
 	readyErr                 error
+	readyCalls               int
 	revokedAccessToken       string
 	revokeStatus             identity.RevokeStatus
 	revokeErr                error
@@ -789,4 +802,7 @@ func (stub *identityServiceStub) CompleteOIDCLogin(
 	return stub.completeOIDCResult, stub.completeOIDCErr
 }
 
-func (stub *identityServiceStub) Ready(context.Context) error { return stub.readyErr }
+func (stub *identityServiceStub) Ready(context.Context) error {
+	stub.readyCalls++
+	return stub.readyErr
+}

@@ -31,3 +31,7 @@ test("relativeTime returns compact stable labels", () => {
   assert.equal(relativeTime("2026-09-02T09:42:00Z", now), "18m");
   assert.equal(relativeTime("2026-09-01T08:00:00Z", now), "1d");
 });
+test("pending Session configuration prevents both click and keyboard submission", () => {
+  assert.equal(canSubmit({text:"hello",attachments:[],agentStatus:"ready",connected:true,configuring:true}), false);
+  assert.equal(canSubmit({text:"hello",attachments:[],agentStatus:"ready",connected:true,configuring:false}), true);
+});

@@ -19,8 +19,13 @@ its identity IDs for binding but must explicitly project browser-safe fields;
 the RPC never returns credential material.
 The internal `list_principal_revocations` RPC supplies a durable, replayable
 deactivation feed, separate from synchronous authorization and the general audit
-journal. Agent Controller consumption is a separate delivery batch, not yet a
-completed automatic Agent-disable workflow. The service contract is
+journal. Agent Controller now consumes it with a durable cursor and idempotent
+Disable operations; C2-05 Docker acceptance covers scoped/global/SCIM revocation
+and offline catch-up. Workspace and history are retained, uncertain Runtime
+effects stay fenced/pending, and reactivation never automatically enables an
+Agent. Create/Enable use `resolve_owner_authorization` to read the active owner
+and latest revocation sequence atomically. Identity still does not own Agent
+lifecycle or read Controller storage. The service contract is
 [`../../docs/stage-2-identity.md`](../../docs/stage-2-identity.md); this
 directory is the only implementation authority for this service.
 

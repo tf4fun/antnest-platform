@@ -132,11 +132,12 @@ func (scheduler *revocationSchedulerStub) DisableAgent(_ context.Context, input 
 func TestCompensationObservesRevocationDuringNetworkRead(t *testing.T) {
 	base := disableLifecycleBase(t)
 	store := &disableLifecycleStoreStub{base: base}
+	store.state.Operation = ports.LifecycleOperationRecord{RequestID: "restore", AgentID: base.Agent.AgentID, State: domain.OperationRunning, Phase: domain.PhaseRuntimeDisable}
 	deps := newDisableDependencies(base, ports.RuntimeOperation{})
 	deps.attachmentClosed = true
 	egress := &revokingNetworkRead{disableDependenciesStub: deps, revoke: func() { store.base.Agent.IdentityRevocationSequence = 7 }}
 	service := NewLifecycleService(lifecycleSpecSourceStub{}, store, egress, deps, fixedClock{now: time.Now()})
-	if err := service.restoreNetworkUnlessRevoked(context.Background(), base.Agent.AgentID, 0); err != nil {
+	if err := service.restoreNetworkUnlessRevoked(context.Background(), store.state.Operation, 0); err != nil {
 		t.Fatal(err)
 	}
 	if slices.Contains(deps.calls, "egress.attachment.open") {
@@ -158,11 +159,12 @@ func (deps *revokingNetworkRead) GetAgentNetwork(ctx context.Context, id string)
 func TestCompensationReclosesWhenRevocationCommitsDuringOpen(t *testing.T) {
 	base := disableLifecycleBase(t)
 	store := &disableLifecycleStoreStub{base: base}
+	store.state.Operation = ports.LifecycleOperationRecord{RequestID: "restore", AgentID: base.Agent.AgentID, State: domain.OperationRunning, Phase: domain.PhaseRuntimeDisable}
 	deps := newDisableDependencies(base, ports.RuntimeOperation{})
 	deps.attachmentClosed = true
 	egress := &revokingNetworkOpen{disableDependenciesStub: deps, revoke: func() { store.base.Agent.IdentityRevocationSequence = 7 }}
 	service := NewLifecycleService(lifecycleSpecSourceStub{}, store, egress, deps, fixedClock{now: time.Now()})
-	if err := service.restoreNetworkUnlessRevoked(context.Background(), base.Agent.AgentID, 0); err != nil {
+	if err := service.restoreNetworkUnlessRevoked(context.Background(), store.state.Operation, 0); err != nil {
 		t.Fatal(err)
 	}
 	if !slices.Equal(deps.calls, []string{"egress.get", "egress.attachment.open", "egress.attachment.closed"}) || !deps.attachmentClosed {

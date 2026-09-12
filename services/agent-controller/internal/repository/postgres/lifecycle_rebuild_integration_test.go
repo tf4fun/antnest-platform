@@ -7,11 +7,14 @@ import (
 	"testing"
 	"time"
 
+	"go.opentelemetry.io/otel"
+
 	"soft/antnest-platform/services/agent-controller/internal/domain"
 	"soft/antnest-platform/services/agent-controller/internal/ports"
 )
 
 func TestLifecycleRepositoryPersistsAndPublishesRebuildSaga(t *testing.T) {
+	recorder := installDatabaseSpanRecorder(t)
 	databaseURL := os.Getenv("ANTNEST_AGENT_CONTROLLER_TEST_DATABASE_URL")
 	if databaseURL == "" {
 		t.Skip("ANTNEST_AGENT_CONTROLLER_TEST_DATABASE_URL is not set")
@@ -54,7 +57,7 @@ func TestLifecycleRepositoryPersistsAndPublishesRebuildSaga(t *testing.T) {
 			SourceRuntimeRevision:     base.Agent.RuntimeRevision,
 			TargetSpecRevisionID:      "agentspec-rebuild-integration",
 			ChildRequestID:            domain.ChildRequestID("request-rebuild-integration", domain.PhaseDrain),
-			Attempt:                   1, CreatedAt: now, UpdatedAt: now,
+			CreatedAt:                 now, UpdatedAt: now,
 		},
 		RequestedEvent: ports.AgentEventRecord{
 			EventID: "event-rebuild-requested-integration", AgentID: base.Agent.AgentID,
@@ -71,7 +74,6 @@ func TestLifecycleRepositoryPersistsAndPublishesRebuildSaga(t *testing.T) {
 	if err != nil || replayed {
 		t.Fatalf("begin Agent rebuild: state=%+v replayed=%t err=%v", started, replayed, err)
 	}
-	ctx = claimLifecycleForTest(t, ctx, repository, begin.Operation.RequestID)
 	if started.Agent.LifecycleState != domain.AgentAvailable ||
 		started.Agent.ActiveOperationRequestID != begin.Operation.RequestID ||
 		started.Operation.SourceRuntimeRevision != base.Agent.RuntimeRevision {
@@ -124,7 +126,10 @@ WHERE admission_id = $1`, "admission-rebuild-integration", now.Add(time.Second))
 		State: ports.NetworkStateActive, NetworkResourceVersion: 1,
 		AttachmentState: ports.NetworkAttachmentClosed, AttachmentResourceVersion: 2,
 	}
-	withFence, err := repository.AdvanceAgentRebuild(ctx, ports.AdvanceAgentRebuild{
+	phaseContext, phaseSpan := otel.Tracer("phase-write-test").Start(ctx, "advance")
+	defer phaseSpan.End()
+	spanOffset := len(recorder.Ended())
+	withFence, err := repository.AdvanceAgentRebuild(phaseContext, ports.AdvanceAgentRebuild{
 		RequestID: begin.Operation.RequestID, Fingerprint: fingerprint,
 		ExpectedPhase: domain.PhaseNetworkFence, NextPhase: domain.PhaseRuntimeUpdate,
 		NextChildRequestID: domain.ChildRequestID(begin.Operation.RequestID, domain.PhaseRuntimeUpdate),
@@ -132,6 +137,19 @@ WHERE admission_id = $1`, "admission-rebuild-integration", now.Add(time.Second))
 	})
 	if err != nil || withFence.Operation.Phase != domain.PhaseRuntimeUpdate {
 		t.Fatalf("record network fence: state=%+v err=%v", withFence, err)
+	}
+	queries := 0
+	for _, span := range recorder.Ended()[spanOffset:] {
+		query := databaseSpanAttribute(span, "db.query.text")
+		if query != "" {
+			queries++
+		}
+		if strings.Contains(query, "agent_spec_revisions") || strings.Contains(query, "execution_revisions") {
+			t.Fatalf("phase write reloaded immutable execution input: %s", query)
+		}
+	}
+	if queries == 0 {
+		t.Fatal("phase SQL observation missing")
 	}
 	runtime := ports.RuntimeOperation{
 		State: "completed", Effect: "completed",
@@ -296,7 +314,7 @@ FROM agent_controller.run_admissions WHERE admission_id = $1`,
 			SourceRuntimeRevision:     retryBase.Agent.RuntimeRevision,
 			TargetSpecRevisionID:      "agentspec-pre-barrier-failure",
 			ChildRequestID:            domain.ChildRequestID(failureRequestID, domain.PhaseDrain),
-			Attempt:                   1, CreatedAt: now.Add(8 * time.Second), UpdatedAt: now.Add(8 * time.Second),
+			CreatedAt:                 now.Add(8 * time.Second), UpdatedAt: now.Add(8 * time.Second),
 		},
 		RequestedEvent: ports.AgentEventRecord{
 			EventID: "event-pre-barrier-failure-requested", AgentID: retryBase.Agent.AgentID,
@@ -310,7 +328,6 @@ FROM agent_controller.run_admissions WHERE admission_id = $1`,
 	if err != nil {
 		t.Fatalf("begin pre-barrier failure rebuild: %v", err)
 	}
-	ctx = claimLifecycleForTest(t, ctx, repository, failureRequestID)
 	failed, err := repository.FailAgentRebuild(ctx, ports.FailAgentRebuild{
 		RequestID: failureRequestID, Fingerprint: failureFingerprint,
 		ExpectedAggregateSequence: startedFailure.Agent.AggregateSequence,
@@ -348,6 +365,7 @@ func seedAvailableAgentForRebuild(
 		t.Fatalf("migrate repository: %v", err)
 	}
 	model := integrationModelRecord(t)
+	seedProviderForModel(t, repository, model)
 	if _, err := repository.PutModelProfile(ctx, model); err != nil {
 		t.Fatalf("put ModelProfile: %v", err)
 	}
@@ -389,7 +407,7 @@ func seedAvailableAgentForRebuild(
 			Phase: domain.PhaseNetworkEnsure, State: domain.OperationRunning,
 			TargetSpecRevisionID: "agentspec-create-for-rebuild",
 			ChildRequestID:       domain.ChildRequestID("request-create-for-rebuild", domain.PhaseNetworkEnsure),
-			Attempt:              1, CreatedAt: now, UpdatedAt: now,
+			CreatedAt:            now, UpdatedAt: now,
 		},
 		RequestedEvent: ports.AgentEventRecord{
 			EventID: "event-create-for-rebuild", AgentID: "agent-rebuild-integration",
@@ -400,7 +418,7 @@ func seedAvailableAgentForRebuild(
 	if _, _, err := repository.BeginAgentCreate(ctx, begin); err != nil {
 		t.Fatalf("begin seed Agent create: %v", err)
 	}
-	mutationCtx := claimLifecycleForTest(t, ctx, repository, begin.Operation.RequestID)
+	mutationCtx := ctx
 	attachment := *closedNetworkAttachment(begin.Agent.AgentID)
 	if _, err := repository.RecordCreateNetwork(
 		mutationCtx, begin.Operation.RequestID, fingerprint, attachment,

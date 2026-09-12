@@ -20,6 +20,7 @@ use crate::{
     policy::PolicySpec,
 };
 
+mod observation;
 mod postgres;
 
 pub use postgres::PostgresRepository;
@@ -44,7 +45,7 @@ pub struct RepositoryConfig {
 
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum RepositoryError {
-    #[error("database connection is unavailable: {0}")]
+    #[error("database connection is unavailable; raw detail omitted")]
     ConnectionUnavailable(String),
     #[error("address pool is invalid: {0}")]
     InvalidPool(AllocationError),
@@ -60,10 +61,57 @@ pub enum RepositoryError {
     PolicyRevisionConflict,
     #[error("policy assignment resource version changed")]
     ResourceVersionConflict,
-    #[error("repository is unavailable: {0}")]
+    #[error("repository is unavailable; raw detail omitted")]
     Unavailable(String),
-    #[error("repository operation failed: {0}")]
+    #[error("repository operation failed; raw detail omitted")]
     OperationFailed(String),
+    #[error("database connection failed")]
+    DatabaseConnection(#[source] DriverError),
+    #[error("database operation failed")]
+    DatabaseOperation(#[source] DriverError),
+    #[error("database operation exceeded its configured deadline")]
+    OperationTimedOut,
+}
+
+#[derive(Clone, Debug)]
+pub struct DriverError {
+    source: Arc<tokio_postgres::Error>,
+}
+
+impl std::fmt::Display for DriverError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("PostgreSQL driver failure; raw detail omitted")
+    }
+}
+
+impl std::error::Error for DriverError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.source.as_ref())
+    }
+}
+
+impl DriverError {
+    pub(crate) fn new(source: tokio_postgres::Error) -> Self {
+        Self {
+            source: Arc::new(source),
+        }
+    }
+}
+
+impl PartialEq for DriverError {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.source, &other.source)
+    }
+}
+impl Eq for DriverError {}
+
+impl RepositoryError {
+    pub(crate) fn is_connection_failure(&self) -> bool {
+        matches!(
+            self,
+            Self::ConnectionUnavailable(_) | Self::DatabaseConnection(_)
+        )
+    }
 }
 
 #[async_trait]

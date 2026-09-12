@@ -16,7 +16,7 @@ func TestManagedMCPConfigurationIsFrozenInRevisionAndAgentSpec(t *testing.T) {
 	}
 	model, err := NewModelProfileRevision(ModelProfileRevisionInput{
 		ID: "model-rev", ModelProfileID: "model", OrganizationID: "org", Revision: 1,
-		Model: validModel(), CredentialRef: "credential", CredentialVersion: "version",
+		Model: validModel(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -120,7 +120,7 @@ func managedTemplateInput() TemplateRevisionInput {
 	runtime.MCPServers = []MCPServer{{ID: "documents", Command: "node", Args: []string{"server.js"}, Env: map[string]string{"TOKEN": "synthetic-token"}}}
 	return TemplateRevisionInput{
 		TemplateID: "template", OrganizationID: "org", Revision: 1,
-		ModelProfileRevisionID: "model-rev", MaxModelRequests: 8,
+		ModelProfileID: "model", MaxModelRequests: 8,
 		ContextPolicyVersion: ContextPolicyV1, Runtime: runtime,
 	}
 }

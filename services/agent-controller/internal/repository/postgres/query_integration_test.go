@@ -29,6 +29,7 @@ func TestAgentQueryRepositoryLoadsExecutableConfigurationLineage(t *testing.T) {
 	}
 
 	model := integrationModelRecord(t)
+	seedProviderForModel(t, repository, model)
 	if _, err := repository.PutModelProfile(ctx, model); err != nil {
 		t.Fatalf("put ModelProfile: %v", err)
 	}

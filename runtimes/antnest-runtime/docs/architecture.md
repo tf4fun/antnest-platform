@@ -3,7 +3,8 @@
 ## Mission
 
 Antnest Runtime gives one Agent an isolated Linux workspace and exposes that
-workspace as four MCP tools. Agent reasoning, scheduling, generation selection,
+workspace through four built-in MCP tools, configured managed stdio tools and
+a bounded information Resource. Agent reasoning, scheduling, generation selection,
 container lifecycle, persistence, and audit stay outside this process.
 
 Runtime is an internal remote MCP server. It is not an Agent, a Controller, a
@@ -32,13 +33,19 @@ Runtime identity is the pair `(agent_id, generation)`:
 
 - `agent_id` is a stable 1-255 byte visible-ASCII identifier for the Agent and
   its workspace;
-- `generation` is the immutable RuntimeSpec revision;
-- replacing a failed instance with the same RuntimeSpec keeps the same generation;
-- a configuration change creates a new generation.
+- `generation` is the Controller-assigned deployment generation frozen in RuntimeSpec;
+- a process restart within that deployment retains its generation but changes
+  `execution_id`; recovery/replay of the same lifecycle operation also retains
+  its already-allocated target generation;
+- every new Initialize, Update or Enable allocates a new generation, even when
+  the requested configuration is unchanged.
 
-There is no Runtime instance ID, boot ID, connection epoch, admission token, or
-Egress token. Docker or Kubernetes and their internal network are trusted
-infrastructure. Platform resource IDs remain Runtime Controller adapter details.
+Each PID 1 start also generates a fresh `execution_id`, returned by `/status`
+and checked against the expected-execution header before MCP dispatch. It
+detects a changed process environment even when the generation is unchanged;
+it is not a credential, connection epoch or deployment generation. There is no
+separate admission/Egress token. Docker or Kubernetes and their internal network
+are trusted infrastructure. Platform resource IDs remain Controller details.
 
 ## Bootstrap Sequence
 
@@ -89,8 +96,9 @@ Any failure before step 8 exits the process. Runtime-owned network artifacts use
 stable names and priorities and are reconciled on every start, so Docker or
 Kubernetes may restart the container in an existing network namespace. Failure
 to prove convergence is fatal. Runtime Controller may instead replace the complete
-container or Pod sandbox. Either recovery path reattaches the Agent workspace
-and keeps the generation only when RuntimeSpec is unchanged.
+container or Pod sandbox through an explicit lifecycle operation. Both paths
+retain the Agent workspace; a new Update/Enable advances generation, whereas
+same-deployment restart or same-operation recovery retains its allocated value.
 
 ## Internal HTTP Surface
 
@@ -124,13 +132,24 @@ snapshot's expected execution ID on every request. Runtime rejects missing or
 stale execution identity before MCP dispatch. Runtime performs no
 self-registration and maintains no reverse control connection.
 
+## File Observation Boundary
+
+`file_observation.rs` defines transport-neutral location/change facts.
+`tools.rs` observes them at the unprivileged execution boundary, using bounded
+best-effort before-images for replacement and existing buffers for edit.
+`file_observation_wire.rs` owns bounded JSON conversion for the private executor
+codec and MCP result metadata. The MCP adapter keeps facts out of the ordinary
+tool output schema. No ACP types, service persistence or post-write rereads are
+added; ACP presentation is a separate consumer. See [contract](file-observations.md).
+
 ## MCP Tool Model
 
-Runtime uses the latest released MCP revision, `2026-07-28`, through the
+Runtime uses the pinned MCP revision, `2026-07-28`, through the
 official Rust `rmcp` SDK. Antnest does not hand-write MCP framing, lifecycle,
 cancellation, discovery, or version negotiation.
 
-The server advertises only the `tools` feature and exactly four tools:
+The server advertises tools and its information Resource. These four built-ins
+are always present; configured managed stdio tools extend the discovered list:
 
 | Tool | Effect |
 | --- | --- |
@@ -177,7 +196,8 @@ termination, and reaping. Every invocation uses cleared environment state,
 piped stdin/stdout/stderr, and a dedicated process group. The subcommand drops
 to UID/GID 1000 with empty supplementary groups and capability sets, enables
 `no_new_privileges`, validates that state, then reads exactly one bounded JSON
-request from stdin. It emits exactly one bounded JSON response on stdout and
+request from stdin. It emits bounded newline-delimited progress frames and
+exactly one terminal JSON response on stdout and
 uses stderr only for bounded diagnostics.
 
 The tool name is already encoded by the subcommand, so the JSON request has no
@@ -235,20 +255,21 @@ whose exit status is still owned by a tool or managed MCP task.
 
 ## Explicit Runtime Replacement
 
-Agent Controller allocates generations and owns the rebuild workflow:
+Agent Controller owns the rebuild workflow without choosing physical generations:
 
 1. close Agent Run admission and wait for the current Run to finish;
-2. delete the old generation through Runtime Controller and require an
-   `Absent` result;
-3. call Runtime Egress `ResetAgentFlows` and wait for acknowledgement;
-4. create the replacement generation through Runtime Controller;
-5. wait for platform health and matching `/status`;
+2. close the Egress attachment with CAS, including Egress-owned flow cleanup;
+3. call Runtime Controller `UpdateRuntime` with the opaque source revision and
+   complete target configuration;
+4. Runtime Controller removes old compute, selects the next private generation,
+   reuses workspace, and verifies replacement health and matching `/status`;
+5. open the attachment with CAS after the replacement is ready;
 6. atomically publish the new Agent ExecutionRevision and reopen admission.
 
 Runtime does not implement drain, shutdown, candidate, or activation RPCs.
-Runtime Controller only realizes and removes the caller-selected generation.
-Ambiguous deletion or Egress reset keeps admission closed and prevents creation
-of a second Runtime.
+Runtime Controller owns physical generation allocation and platform resources.
+An ambiguous platform effect or attachment barrier keeps Agent admission closed;
+the existing operation must reconcile before another lifecycle mutation.
 
 ## Network Boundary
 
@@ -289,6 +310,7 @@ carries packet data and Runtime Egress never carries tool calls.
 | `tools` | Four execution operations without transport semantics |
 | `execution_actor` | Single-flight spawn, cancellation, timeout, and process cleanup |
 | `managed_mcp` | Validated stdio configuration, non-root launch, SDK discovery/call dispatch and child lifecycle |
+| `progress` / `mcp_progress` | Transport-neutral bounded previews / request-scoped SDK notification delivery; see [contract](tool-progress.md) |
 | `processes` | Direct-child wait ownership and PID 1 reaping of exited orphans |
 | `startup` | Drive network forwarding during managed MCP initialization before HTTP readiness |
 | `mcp` | Official SDK adapter, `/mcp`, and `/status` HTTP composition |
@@ -311,12 +333,13 @@ Runtime has no legacy compatibility branch. A
 change to RuntimeSpec, status, tools, tool schemas, or the UDP packet contract
 must update the applicable file under `contracts/runtime`, Runtime DTOs or
 domain types, contract tests, and these documents in one lockstep change.
-Adding a fifth tool requires a deliberate architecture decision; it is not a
-local handler-only edit.
+Adding another built-in tool requires a deliberate architecture decision; it
+is not a local handler-only edit. Configured managed tools use the existing
+discovery/dispatch contract rather than extending this built-in list.
 
-### Approved Stage 1C Change, Not Yet Implemented
+### Implemented Execution Identity Fence
 
-Runtime Controller integration requires one future lockstep contract change:
+Runtime, the language-neutral contract, and consumer integration implement:
 
 1. PID 1 generates a fresh random `execution_id` on every process start.
 2. `/status` returns that value with `agent_id`, `generation`, and readiness.
@@ -325,6 +348,5 @@ Runtime Controller integration requires one future lockstep contract change:
 4. Runtime rejects a mismatch before Tool dispatch.
 
 This identity is a stale-execution consistency check, not an authentication
-credential or rollout generation. Until the Runtime code, language-neutral contract, and tests land
-together, the implemented identity and status body remain exactly as described
-earlier in this document.
+credential or rollout generation. A stale execution fails before Tool dispatch;
+it is never transparently retargeted to a restarted process.

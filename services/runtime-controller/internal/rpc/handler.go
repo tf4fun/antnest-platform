@@ -21,9 +21,9 @@ import (
 
 	"soft/antnest-platform/services/runtime-controller/internal/control"
 	"soft/antnest-platform/services/runtime-controller/internal/deployment"
-	"soft/antnest-platform/services/runtime-controller/internal/diagnostics"
 	"soft/antnest-platform/services/runtime-controller/internal/observation"
 	"soft/antnest-platform/services/runtime-controller/internal/platform"
+	"soft/antnest-platform/services/runtime-controller/internal/telemetry"
 )
 
 const maxRequestBytes = 1 << 20
@@ -80,17 +80,20 @@ func NewHandler(
 		service: service, hub: hub, heartbeat: heartbeat, requestTimeout: requestTimeout,
 	}
 	mux := http.NewServeMux()
+	registerRPC := func(pattern string, endpoint http.HandlerFunc) {
+		mux.Handle(pattern, telemetry.RPCHandler(pattern, endpoint))
+	}
 	mux.HandleFunc("GET /status", handler.status)
-	mux.HandleFunc("GET /internal/runtime-images/resolve", handler.resolveImage)
-	mux.HandleFunc("GET /internal/runtimes", handler.listRuntimes)
-	mux.HandleFunc("GET /internal/runtimes/{agent_id}", handler.inspectRuntime)
-	mux.HandleFunc("POST /internal/runtimes/{agent_id}/initialize", handler.initializeRuntime)
-	mux.HandleFunc("POST /internal/runtimes/{agent_id}/update", handler.updateRuntime)
-	mux.HandleFunc("POST /internal/runtimes/{agent_id}/disable", handler.disableRuntime)
-	mux.HandleFunc("POST /internal/runtimes/{agent_id}/enable", handler.enableRuntime)
-	mux.HandleFunc("POST /internal/runtimes/{agent_id}/delete", handler.deleteRuntime)
-	mux.HandleFunc("GET /internal/runtime-operations/{request_id}", handler.getOperation)
-	mux.HandleFunc("GET /internal/runtime-observations", handler.listObservations)
+	registerRPC("GET /internal/runtime-images/resolve", handler.resolveImage)
+	registerRPC("GET /internal/runtimes", handler.listRuntimes)
+	registerRPC("GET /internal/runtimes/{agent_id}", handler.inspectRuntime)
+	registerRPC("POST /internal/runtimes/{agent_id}/initialize", handler.initializeRuntime)
+	registerRPC("POST /internal/runtimes/{agent_id}/update", handler.updateRuntime)
+	registerRPC("POST /internal/runtimes/{agent_id}/disable", handler.disableRuntime)
+	registerRPC("POST /internal/runtimes/{agent_id}/enable", handler.enableRuntime)
+	registerRPC("POST /internal/runtimes/{agent_id}/delete", handler.deleteRuntime)
+	registerRPC("GET /internal/runtime-operations/{request_id}", handler.getOperation)
+	registerRPC("GET /internal/runtime-observations", handler.listObservations)
 	mux.HandleFunc("GET /internal/runtime-observations/watch", handler.watchObservations)
 	for _, pattern := range []string{
 		"/internal/runtime-images/resolve",
@@ -115,6 +118,7 @@ func (h *Handler) ServeHTTP(response http.ResponseWriter, request *http.Request)
 	ctx, cancel := context.WithTimeout(request.Context(), h.requestTimeout)
 	defer cancel()
 	bounded := request.WithContext(ctx)
+	defer func() { request.Pattern = bounded.Pattern }()
 	h.mux.ServeHTTP(response, bounded)
 	// Outer observability middleware reads routing metadata after this handler.
 	request.Pattern = bounded.Pattern
@@ -127,6 +131,7 @@ func (h *Handler) status(response http.ResponseWriter, request *http.Request) {
 	if err != nil || !status.Ready() {
 		label = "not_ready"
 		code = http.StatusServiceUnavailable
+		telemetry.ObserveError(response, err, "readiness", "not_ready", "Local Runtime Controller readiness is unavailable")
 	}
 	writeJSON(response, code, readinessFromDomain(label, status))
 }
@@ -301,6 +306,9 @@ func (h *Handler) watchObservations(response http.ResponseWriter, request *http.
 			slog.InfoContext(metricCtx, "Runtime observation Watch closed",
 				"component", "observation_watch", "result", termination,
 				"duration", time.Since(started))
+		}
+		if termination == "delivery_error" {
+			telemetry.ObserveError(response, nil, "observation_watch", "delivery_error", "Observation delivery ended after a read or write failure")
 		}
 	}()
 	after, _, err := observationCursor(request)
@@ -477,11 +485,15 @@ func decodeJSON(response http.ResponseWriter, request *http.Request, target any)
 	decoder := json.NewDecoder(request.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
-		return fmt.Errorf("%w: invalid JSON body", control.ErrInvalidRequest)
+		return fmt.Errorf("%w: invalid JSON body: %w", control.ErrInvalidRequest, err)
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return fmt.Errorf("%w: request body must contain one JSON value", control.ErrInvalidRequest)
+		if err == nil {
+			return fmt.Errorf("%w: request body must contain one JSON value", control.ErrInvalidRequest)
+		}
+		return fmt.Errorf("%w: request body must contain one JSON value: %w", control.ErrInvalidRequest, err)
 	}
+	observeRequest(request, target)
 	return nil
 }
 
@@ -497,8 +509,8 @@ func writeOperation(
 		result = "error"
 	}
 	attributes := []any{
-		"operation_id", valueOr(operation.RequestID, call.requestID), "operation_kind", call.kind,
-		"agent_id", valueOr(operation.AgentID, call.agentID),
+		"operation_id", telemetry.SafeValue(valueOr(operation.RequestID, call.requestID)), "operation_kind", call.kind,
+		"agent_id", telemetry.SafeValue(valueOr(operation.AgentID, call.agentID)),
 		"target_revision", operation.RuntimeRevision,
 		"result", result, "error_code", operation.ErrorCode,
 	}
@@ -539,8 +551,8 @@ func beginLifecycle(
 	ctx, span := rpcTracer.Start(request.Context(), "runtime.lifecycle."+string(kind))
 	agentID := request.PathValue("agent_id")
 	span.SetAttributes(
-		attribute.String("antnest.agent.id", agentID),
-		attribute.String("antnest.operation.id", requestID),
+		attribute.String("antnest.agent.id", telemetry.SafeValue(agentID)),
+		attribute.String("antnest.operation.id", telemetry.SafeValue(requestID)),
 		attribute.String("antnest.operation.kind", string(kind)),
 	)
 	return lifecycleCall{
@@ -559,8 +571,12 @@ func finishLifecycle(
 	if err != nil {
 		result = "error"
 		errorClass = lifecycleErrorClass(err)
-		call.span.RecordError(diagnostics.Error(err))
-		call.span.SetStatus(codes.Error, errorClass)
+		if classifyError(err).status >= 500 {
+			// The shared RPC error writer records the detailed cause on SERVER.
+			call.span.SetStatus(codes.Error, errorClass)
+		} else {
+			call.span.SetAttributes(attribute.String("antnest.outcome", "rejected"))
+		}
 	} else if operation.State == deployment.OperationFailed || operation.State == deployment.OperationUnknown {
 		call.span.SetStatus(codes.Error, errorClass)
 	}
@@ -576,14 +592,15 @@ func finishLifecycle(
 		attribute.String("antnest.error.class", errorClass),
 	}
 	if operation.RequestID != "" {
-		spanAttributes = append(spanAttributes, attribute.String("antnest.operation.id", operation.RequestID))
+		spanAttributes = append(spanAttributes, attribute.String("antnest.operation.id", telemetry.SafeValue(operation.RequestID)))
 	}
 	if operation.AgentID != "" {
-		spanAttributes = append(spanAttributes, attribute.String("antnest.agent.id", operation.AgentID))
+		spanAttributes = append(spanAttributes, attribute.String("antnest.agent.id", telemetry.SafeValue(operation.AgentID)))
 	}
 	if operation.RuntimeRevision != "" {
 		spanAttributes = append(spanAttributes,
-			attribute.String("antnest.runtime.target_revision", string(operation.RuntimeRevision)))
+			attribute.String("antnest.runtime.target_revision", telemetry.SafeValue(string(operation.RuntimeRevision))),
+			attribute.String("antnest.runtime.revision", telemetry.SafeValue(string(operation.RuntimeRevision))))
 	}
 	call.span.SetAttributes(spanAttributes...)
 	call.span.End()
@@ -642,6 +659,9 @@ func writeOperationError(response http.ResponseWriter, operation deployment.Oper
 	status := http.StatusConflict
 	retryable := false
 	switch code {
+	case "runtime_not_ready":
+		message = "Runtime did not become ready; check its startup configuration and required MCP processes"
+		status = http.StatusInternalServerError
 	case "runtime_drift":
 		message = "managed Runtime has different immutable identity"
 	case "storage_in_use":
@@ -671,6 +691,9 @@ type errorDescriptor struct {
 }
 
 func classifyError(err error) errorDescriptor {
+	if descriptor, ok := classifyImageError(err); ok {
+		return descriptor
+	}
 	result := errorDescriptor{
 		status: http.StatusInternalServerError,
 		response: errorResponse{
@@ -726,10 +749,14 @@ func classifyError(err error) errorDescriptor {
 
 func writeError(response http.ResponseWriter, err error) {
 	descriptor := classifyError(err)
+	if descriptor.status >= 500 {
+		telemetry.ObserveError(response, err, "rpc", descriptor.response.Code, descriptor.response.Message)
+	}
 	writeJSON(response, descriptor.status, descriptor.response)
 }
 
 func writeJSON(response http.ResponseWriter, status int, value any) {
+	observeResponse(response, value)
 	response.Header().Set("Content-Type", "application/json")
 	response.WriteHeader(status)
 	_ = json.NewEncoder(response).Encode(value)

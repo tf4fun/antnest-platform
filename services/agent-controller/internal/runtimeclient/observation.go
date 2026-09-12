@@ -11,15 +11,15 @@ import (
 	"strings"
 	"time"
 
-	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/propagation"
-
 	"soft/antnest-platform/services/agent-controller/internal/ports"
+	"soft/antnest-platform/services/agent-controller/internal/telemetry"
 )
 
 func (client *Client) ListRuntimeObservations(
 	ctx context.Context, after uint64, limit int,
-) (ports.RuntimeObservationPage, error) {
+) (page ports.RuntimeObservationPage, resultErr error) {
+	ctx, call := telemetry.StartHTTPCall(ctx, "list_runtime_observations", nil)
+	defer func() { call.Finish(resultErr) }()
 	if limit < 1 || limit > 500 {
 		return ports.RuntimeObservationPage{}, dependencyFailure("invalid_request", false)
 	}
@@ -80,7 +80,9 @@ func (client *Client) ListRuntimeObservations(
 
 func (client *Client) ListRuntimes(
 	ctx context.Context,
-) ([]ports.RuntimeEnvironmentSnapshot, error) {
+) (snapshots []ports.RuntimeEnvironmentSnapshot, resultErr error) {
+	ctx, call := telemetry.StartHTTPCall(ctx, "list_runtimes", nil)
+	defer func() { call.Finish(resultErr) }()
 	payload, status, err := client.get(ctx, "/internal/runtimes", nil)
 	if err != nil {
 		return nil, err
@@ -120,18 +122,17 @@ func (client *Client) get(
 	if err != nil {
 		return nil, 0, dependencyFailure("invalid_request", false)
 	}
-	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(request.Header))
 	response, err := client.httpClient.Do(request)
 	if err != nil {
-		return nil, 0, dependencyFailure("control_plane_unavailable", true)
+		return nil, 0, dependencyFailure("control_plane_unavailable", true, err)
 	}
 	if response == nil || response.Body == nil {
 		return nil, 0, dependencyFailure("invalid_response", true)
 	}
-	defer func() { _ = response.Body.Close() }()
 	payload, err := io.ReadAll(io.LimitReader(response.Body, maximumResponseBytes+1))
-	if err != nil || len(payload) > maximumResponseBytes {
-		return nil, 0, dependencyFailure("invalid_response", true)
+	closeErr := response.Body.Close()
+	if err != nil || closeErr != nil || len(payload) > maximumResponseBytes {
+		return nil, 0, dependencyFailure("invalid_response", true, err, closeErr)
 	}
 	return payload, response.StatusCode, nil
 }

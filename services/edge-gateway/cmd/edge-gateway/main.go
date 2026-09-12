@@ -57,7 +57,7 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 	}()
 	logger := telemetryRuntime.Logger()
 
-	httpClient := &http.Client{Transport: http.DefaultTransport}
+	httpClient := &http.Client{Transport: telemetry.NewHTTPTransport(http.DefaultTransport)}
 	identityClient, err := identity.NewClient(cfg.IdentityURL, httpClient)
 	if err != nil {
 		return fmt.Errorf("create Identity client: %w", err)
@@ -82,7 +82,7 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 	if err != nil {
 		return fmt.Errorf("compose Gateway: %w", err)
 	}
-	lifecycle := newWebSocketLifecycle(telemetry.HTTPHandler(handler, logger))
+	lifecycle := newStreamLifecycle(telemetry.HTTPHandler(handler, logger), logger)
 	defer lifecycle.stop()
 	httpServer := &http.Server{
 		Addr: cfg.ListenAddress, Handler: lifecycle,
@@ -99,7 +99,7 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 
 func serveHTTP(
 	ctx context.Context, httpServer *http.Server, listener net.Listener,
-	lifecycle *webSocketLifecycle, timeout time.Duration,
+	lifecycle *streamLifecycle, timeout time.Duration,
 ) (resultErr error) {
 	serveErrors := make(chan error, 1)
 	go func() { serveErrors <- httpServer.Serve(listener) }()
@@ -116,7 +116,15 @@ func serveHTTP(
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
 		resultErr = errors.Join(resultErr, fmt.Errorf("shutdown HTTP: %w", err), httpServer.Close())
 	}
-	return errors.Join(resultErr, lifecycle.wait(shutdownCtx))
+	if err := lifecycle.wait(shutdownCtx); err != nil {
+		resultErr = errors.Join(resultErr, fmt.Errorf("drain HTTP handlers: %w", err))
+		cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancelCleanup()
+		if err := lifecycle.wait(cleanupCtx); err != nil {
+			resultErr = errors.Join(resultErr, fmt.Errorf("drain cancelled HTTP handlers: %w", err))
+		}
+	}
+	return resultErr
 }
 
 func checkHealth(lookup func(string) string) error {

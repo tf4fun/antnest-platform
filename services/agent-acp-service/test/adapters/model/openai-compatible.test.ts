@@ -172,9 +172,7 @@ describe("OpenAICompatibleModel", () => {
 
     const [url, init] = fetchFn.mock.calls[0] ?? [];
     expect(url).toBe("https://api.example.test/v1/chat/completions");
-    expect(init?.headers).toEqual(
-      expect.objectContaining({ authorization: "Bearer provider-secret" }),
-    );
+    expect(new Headers(init?.headers).get("authorization")).toBe("Bearer provider-secret");
     expect(typeof init?.body).toBe("string");
     if (typeof init?.body !== "string") {
       throw new Error("request body is not JSON text");
@@ -275,7 +273,7 @@ describe("OpenAICompatibleModel", () => {
       kind: "message",
       content: [{ type: "text", text: "Partial response" }],
       stopReason: "max_tokens",
-      usage: { inputTokens: 0, outputTokens: 0 },
+      usage: {},
     });
   });
 

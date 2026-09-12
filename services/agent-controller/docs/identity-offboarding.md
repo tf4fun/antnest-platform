@@ -13,7 +13,7 @@ never reads Identity tables. This is a narrow consumer, not a general event bus.
   then publish `disabled` only with the existing Runtime effect proof.
 - Work already admitted retains its frozen snapshot and completion/replay
   contract. This is eventual offboarding, not emergency process cancellation.
-- Busy lifecycle operations finish through their existing recovery worker.
+- Busy lifecycle operations finish through their Temporal workflows.
   The offboarding intent survives them. Failed/unavailable or uncertain Runtime
   states remain fenced and pending; they are not reported as successfully stopped.
 - Identity restoration does not re-enable an Agent. Explicit Enable requires a
@@ -50,7 +50,7 @@ availability. Each pass receives at most 100 source events and examines at most
 caller/client deadline); a stalled read cannot indefinitely starve local work.
 The poll interval defaults to two seconds and is independently configurable.
 It schedules ordinary Disable operations with a durable revocation
-cause and deterministic request IDs; the lifecycle recovery worker executes them.
+cause and deterministic request IDs; the shared Temporal orchestration facade executes them.
 Running/unknown operations retain their original request IDs. A terminal failed
 attempt leaves the fence intact and may be retried with a new operation.
 Terminal failed offboarding attempts have a 30-second cooldown in the local

@@ -184,22 +184,47 @@ pub enum ControlError {
     #[error("policy assignment resource version changed")]
     ResourceVersionConflict,
     #[error("data-plane cleanup failed")]
-    CleanupFailed(FailureContext),
+    CleanupFailed(#[source] FailureContext),
     #[error("control operation failed")]
-    OperationFailed(FailureContext),
+    OperationFailed(#[source] FailureContext),
     #[error("control plane is unavailable")]
-    ControlPlaneUnavailable(FailureContext),
+    ControlPlaneUnavailable(#[source] FailureContext),
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Error, Eq, PartialEq)]
+#[error("{stage}: {cause}")]
 pub struct FailureContext {
     pub stage: &'static str,
     pub cause: &'static str,
+    #[source]
+    source: Option<Arc<FailureSource>>,
+}
+
+#[derive(Clone, Debug, Error, Eq, PartialEq)]
+enum FailureSource {
+    #[error("repository operation failed; raw detail omitted")]
+    Repository(#[source] RepositoryError),
+    #[error("kernel cleanup failed; raw detail omitted")]
+    Kernel(String),
 }
 
 impl FailureContext {
     pub const fn new(stage: &'static str, cause: &'static str) -> Self {
-        Self { stage, cause }
+        Self {
+            stage,
+            cause,
+            source: None,
+        }
+    }
+
+    pub fn with_kernel_source(mut self, source: String) -> Self {
+        self.source = Some(Arc::new(FailureSource::Kernel(source)));
+        self
+    }
+
+    fn with_repository_source(mut self, source: RepositoryError) -> Self {
+        self.source = Some(Arc::new(FailureSource::Repository(source)));
+        self
     }
 }
 
@@ -208,7 +233,7 @@ impl ControlError {
         match self {
             Self::CleanupFailed(context)
             | Self::OperationFailed(context)
-            | Self::ControlPlaneUnavailable(context) => Some(*context),
+            | Self::ControlPlaneUnavailable(context) => Some(context.clone()),
             _ => None,
         }
     }
@@ -221,23 +246,36 @@ impl ControlError {
             RepositoryError::PolicyRevisionNotFound => Self::PolicyRevisionNotFound,
             RepositoryError::PolicyRevisionConflict => Self::PolicyRevisionConflict,
             RepositoryError::ResourceVersionConflict => Self::ResourceVersionConflict,
-            RepositoryError::InvalidPool(_) => {
-                Self::ControlPlaneUnavailable(FailureContext::new(stage, "repository_invalid_pool"))
-            }
-            RepositoryError::ConnectionUnavailable(_) => Self::ControlPlaneUnavailable(
-                FailureContext::new(stage, "repository_connection_unavailable"),
+            error @ RepositoryError::InvalidPool(_) => Self::ControlPlaneUnavailable(
+                FailureContext::new(stage, "repository_invalid_pool").with_repository_source(error),
             ),
-            RepositoryError::OperationFailed(_) => {
-                Self::OperationFailed(FailureContext::new(stage, "repository_operation_failed"))
+            error @ (RepositoryError::ConnectionUnavailable(_)
+            | RepositoryError::DatabaseConnection(_)) => Self::ControlPlaneUnavailable(
+                FailureContext::new(stage, "repository_connection_unavailable")
+                    .with_repository_source(error),
+            ),
+            error @ (RepositoryError::OperationFailed(_)
+            | RepositoryError::DatabaseOperation(_)
+            | RepositoryError::OperationTimedOut) => {
+                let cause = if matches!(error, RepositoryError::OperationTimedOut) {
+                    "repository_operation_timeout"
+                } else {
+                    "repository_operation_failed"
+                };
+                Self::OperationFailed(
+                    FailureContext::new(stage, cause).with_repository_source(error),
+                )
             }
-            RepositoryError::Unavailable(_) => {
-                Self::ControlPlaneUnavailable(FailureContext::new(stage, "repository_unavailable"))
-            }
+            error @ RepositoryError::Unavailable(_) => Self::ControlPlaneUnavailable(
+                FailureContext::new(stage, "repository_unavailable").with_repository_source(error),
+            ),
         }
     }
 
-    fn cleanup(stage: &'static str) -> Self {
-        Self::CleanupFailed(FailureContext::new(stage, "kernel_command_failed"))
+    fn cleanup(stage: &'static str, source: String) -> Self {
+        Self::CleanupFailed(
+            FailureContext::new(stage, "kernel_command_failed").with_kernel_source(source),
+        )
     }
 }
 
@@ -399,6 +437,12 @@ where
             .is_some_and(|version| *version == assignment.resource_version);
         if was_fenced || !already_applied {
             self.fence_dataplane(agent_id.clone()).await;
+            self.reset_flows_and_kernel(
+                &agent_id,
+                network.tunnel_ipv4,
+                "ensure_agent_network.open_cleanup",
+            )
+            .await?;
             self.publish_route(&network, &assignment, RouteGate::Open)
                 .await?;
             self.applied_assignments
@@ -488,6 +532,13 @@ where
                 attachment
             }
             AttachmentState::Open => {
+                self.fence_dataplane(agent_id.clone()).await;
+                self.reset_flows_and_kernel(
+                    &agent_id,
+                    network.tunnel_ipv4,
+                    "set_runtime_attachment.open_cleanup",
+                )
+                .await?;
                 let attachment = self
                     .repository
                     .compare_and_swap_attachment(&agent_id, desired, expected_resource_version)
@@ -502,7 +553,6 @@ where
                         .map_err(|error| {
                             ControlError::repository("set_runtime_attachment.repository", error)
                         })?;
-                self.fence_dataplane(agent_id.clone()).await;
                 self.publish_route(&network, &assignment, RouteGate::Open)
                     .await?;
                 self.applied_assignments
@@ -540,6 +590,17 @@ where
             .map_err(|error| ControlError::repository("policy_assignment.repository", error))
     }
 
+    pub async fn policy_revision(
+        &self,
+        policy_id: &PolicyId,
+        revision: u64,
+    ) -> Result<PolicyRevision, ControlError> {
+        self.repository
+            .policy_revision(policy_id, revision)
+            .await
+            .map_err(|error| ControlError::repository("policy_revision.repository", error))
+    }
+
     pub async fn assign_policy(
         &self,
         agent_id: AgentId,
@@ -573,6 +634,24 @@ where
             .map_err(|error| ControlError::repository("assign_policy.repository", error))?;
         if network.state != NetworkState::Active {
             return Err(ControlError::AgentNetworkUnavailable);
+        }
+        if attachment.state == AttachmentState::Open
+            && current.policy_id == policy_id
+            && current.revision == revision
+            && self
+                .assignment_is_active(&agent_id, current.resource_version)
+                .await
+        {
+            return self
+                .repository
+                .compare_and_swap_assignment(
+                    &agent_id,
+                    policy_id,
+                    revision,
+                    expected_resource_version,
+                )
+                .await
+                .map_err(|error| ControlError::repository("assign_policy.repository", error));
         }
         let compiled_policy = policy.spec.compile(self.config.resolver_ipv4);
         if attachment.state == AttachmentState::Closed {
@@ -611,6 +690,16 @@ where
         Ok(assignment)
     }
 
+    async fn assignment_is_active(&self, agent_id: &AgentId, version: u64) -> bool {
+        let applied = self.applied_assignments.lock().await.get(agent_id).copied() == Some(version);
+        applied
+            && !self
+                .dataplane
+                .lock()
+                .expect("data-plane mutex poisoned")
+                .is_agent_fenced(agent_id)
+    }
+
     pub async fn release_agent_network(
         &self,
         agent_id: AgentId,
@@ -644,8 +733,7 @@ where
             .clear_agent(network.tunnel_ipv4)
             .await
             .map_err(|error| {
-                log_cleanup_failure(&agent_id, "release_agent_network.kernel_cleanup", &error);
-                ControlError::cleanup("release_agent_network.kernel_cleanup")
+                ControlError::cleanup("release_agent_network.kernel_cleanup", error)
             })?;
         Ok(self.attachment(network, attachment))
     }
@@ -769,10 +857,10 @@ where
             .lock()
             .expect("data-plane mutex poisoned")
             .reset_agent_flows(agent_id);
-        self.kernel.clear_agent(address).await.map_err(|error| {
-            log_cleanup_failure(agent_id, stage, &error);
-            ControlError::cleanup(stage)
-        })
+        self.kernel
+            .clear_agent(address)
+            .await
+            .map_err(|error| ControlError::cleanup(stage, error))
     }
 
     async fn fence_dataplane(&self, agent_id: AgentId) {
@@ -837,14 +925,12 @@ const fn route_gate(state: AttachmentState) -> RouteGate {
     }
 }
 
-fn log_cleanup_failure(agent_id: &AgentId, stage: &'static str, detail: &str) {
-    let detail: String = detail.chars().take(512).collect();
+fn log_cleanup_failure(agent_id: &AgentId, stage: &'static str, _detail: &str) {
     tracing::warn!(
         lifecycle.event = "agent_cleanup_failed",
         "antnest.agent.id" = agent_id.as_str(),
         failure.stage = stage,
         failure.cause = "kernel_command_failed",
-        failure.detail = detail,
         "Agent kernel cleanup failed"
     );
 }

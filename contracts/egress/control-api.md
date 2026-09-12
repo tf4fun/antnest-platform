@@ -17,7 +17,7 @@ Control callers propagate W3C `traceparent` and optional `tracestate` headers.
 Invalid trace context is ignored without rejecting the business request.
 Runtime Egress does not accept `baggage` as part of its control contract.
 
-This document describes control contract revision 3.
+This document describes control contract revision 4.
 
 ## Status
 
@@ -92,9 +92,11 @@ version. It never rewrites the Agent's desired policy.
   userspace flow and conntrack state. It commits `closed` only after that
   barrier succeeds, then publishes the probe-only route. Durable `closed`
   therefore proves cleanup completed.
-- Opening commits the CAS, compiles the current desired policy, publishes the
-  route, and opens the packet gate only after the caller has established
-  Runtime readiness.
+- Opening hard-fences and completes flow/conntrack cleanup before committing
+  the CAS, then compiles the current desired policy and publishes the open
+  route. The caller must first establish Runtime readiness. Same-state open
+  retries also complete cleanup; durable idempotency does not mean live
+  connections survive a repeated open request.
 - Every transition requires an active allocation. An exact same-state retry is
   accepted only when its expected resource version is the current version or
   the immediately preceding version consumed by that transition. Older-cycle
@@ -142,6 +144,33 @@ different content returns `policy_revision_conflict`.
 The initial implementation accepts only the policy documents described by
 [`policy.schema.json`](policy.schema.json).
 
+`GET /internal/policies/{policy_id}/revisions/{revision}` reads the exact
+immutable revision, including its policy document:
+
+```json
+{
+  "policy_id": "internet-enabled",
+  "revision": 3,
+  "spec": {"schema_version": 1, "action": "allow_all"},
+  "digest": "sha256:..."
+}
+```
+
+Policy identifiers are opaque. Callers percent-encode the complete identifier
+as one path segment, including the slash in `builtin/allow-all`. Both built-in
+policies (`builtin/allow-all` and `builtin/deny-all`, revision 1) are seeded by
+Egress. A caller must read `spec.action`, not infer behavior from an ID/name.
+`allow_all` means public IPv4 access under the existing non-bypassable private/
+special-address baseline, not access to the deployment platform.
+
+Reading never creates a missing revision or Agent network, changes an
+assignment, clears flows or opens an attachment. Unknown keys return
+`404 policy_revision_not_found`; malformed identifiers or nonpositive revisions
+return `400 invalid_request`. A repository failure uses the existing bounded
+control error contract. This is a control RPC with W3C trace propagation; it
+does not add any packet-level tracing. PUT responses retain their existing
+metadata-only shape.
+
 ## Policy Assignment
 
 `PUT /internal/agent-policy-assignments/{agent_id}`
@@ -154,14 +183,16 @@ The initial implementation accepts only the policy documents described by
 }
 ```
 
-`expected_resource_version` is `0` when no assignment is expected. A stale
-value returns `resource_version_conflict`. An exact retry that already produced
+Ensure creates the initial deny assignment at resource version 1. Callers use
+the assignment's current version; this operation cannot create an assignment
+for a missing network. A stale value returns `resource_version_conflict`.
+An exact retry that already produced
 the requested assignment returns the current assignment instead of advancing
 the version again.
 
 Policy assignment changes only desired policy. When the Runtime attachment is
-open, Egress closes the packet gate, commits the assignment CAS, clears flows,
-publishes the new policy snapshot, and reopens the gate. When the attachment is
+open, Egress closes the packet gate, clears flows and conntrack, commits the
+assignment CAS, publishes the new policy snapshot, and reopens the gate. When the attachment is
 closed, the same CAS changes durable desired policy without opening traffic;
 the next attachment open applies the latest revision. Other Agents never wait
 for this Agent's gate.
@@ -177,6 +208,24 @@ for this Agent's gate.
 
 `GET /internal/agent-policy-assignments/{agent_id}` returns the current
 assignment.
+
+Assignment inspection describes durable desired policy, not proof of live
+traffic. A failed post-fence operation may leave the Agent fenced while its old
+assignment remains readable. On timeout or `503`, callers must not announce
+that traffic is enabled merely because a subsequent GET returns that policy;
+an identical PUT reconciles the packet gate before acknowledging success.
+`200` on PUT means the barrier and snapshot are settled. With a closed attachment
+it means the desired policy is saved for the next lifecycle open, not that
+traffic has opened. Version conflicts require a fresh read and explicit user
+decision, never silently replacing `expected_resource_version` and retrying.
+
+Ensure may restore an already-open attachment's route, but must complete flow
+and conntrack cleanup before removing a hard fence. Explicit attachment open
+uses the same barrier, including same-state retries. If cleanup fails, the
+packet gate stays fenced and the operation returns `cleanup_failed`; a read or
+matching durable version cannot bypass this barrier. Successful reconciliation
+applies the current durable assignment, not a target from a previously failed
+policy change. A healthy Ensure is a no-op and does not reset live connections.
 
 ## Errors
 

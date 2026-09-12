@@ -35,9 +35,7 @@ func Setup(ctx context.Context, base slog.Handler, config Config) (*Runtime, err
 	}
 	correlated := correlatedHandler{next: base}
 	runtime := &Runtime{logger: slog.New(correlated)}
-	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
-		propagation.TraceContext{}, propagation.Baggage{},
-	))
+	otel.SetTextMapPropagator(propagation.TraceContext{})
 	if !tracesEnabled() {
 		return runtime, nil
 	}

@@ -24,11 +24,22 @@ const (
 var ErrQueryContract = errors.New("query store contract violation")
 
 type AgentQueryService struct {
-	store ports.AgentQueryStore
+	store         ports.AgentQueryStore
+	notifications ports.AgentEventNotifier
 }
 
-func NewAgentQueryService(store ports.AgentQueryStore) *AgentQueryService {
-	return &AgentQueryService{store: store}
+type AgentQueryServiceOption func(*AgentQueryService)
+
+func WithWorkspaceStateNotifier(notifier ports.AgentEventNotifier) AgentQueryServiceOption {
+	return func(service *AgentQueryService) { service.notifications = notifier }
+}
+
+func NewAgentQueryService(store ports.AgentQueryStore, options ...AgentQueryServiceOption) *AgentQueryService {
+	service := &AgentQueryService{store: store}
+	for _, option := range options {
+		option(service)
+	}
+	return service
 }
 
 type ListAgentsInput struct {
@@ -238,7 +249,8 @@ func (service *AgentQueryService) ListWorkspaceAgents(
 }
 
 func workspaceAvailability(record ports.WorkspaceAgentRecord) WorkspaceAvailability {
-	if record.IdentityRevoked || record.LifecycleState != domain.AgentAvailable {
+	if record.IdentityRevoked || record.DesiredState != domain.DesiredEnabled ||
+		record.ActiveOperation || record.LifecycleState != domain.AgentAvailable {
 		return WorkspaceAgentOffline
 	}
 	switch record.AdmissionState {

@@ -17,7 +17,14 @@ fmt:
 	cargo fmt --manifest-path runtimes/antnest-runtime/Cargo.toml --all
 	cargo fmt --manifest-path services/runtime-egress/Cargo.toml --all
 	npm --prefix services/agent-acp-service run format
-	services/agent-acp-service/node_modules/.bin/prettier --write scripts/managed-mcp/*.mjs scripts/acp-closeout/*.mjs scripts/identity-closeout/*.mjs
+	services/agent-acp-service/node_modules/.bin/prettier --write scripts/lifecycle-closeout/*.mjs
+	services/agent-acp-service/node_modules/.bin/prettier --write scripts/workspace-closeout/*.mjs
+	services/agent-acp-service/node_modules/.bin/prettier --write scripts/deployment.test.mjs
+	services/agent-acp-service/node_modules/.bin/prettier --write scripts/observability/*.mjs
+	services/agent-acp-service/node_modules/.bin/prettier --write scripts/verification/*.mjs
+	services/agent-acp-service/node_modules/.bin/prettier --write services/admin-console/tests/*.mjs
+	services/agent-acp-service/node_modules/.bin/prettier --write services/edge-gateway/tests/*.mjs
+	services/agent-acp-service/node_modules/.bin/prettier --write scripts/managed-mcp/*.mjs scripts/acp-closeout/*.mjs scripts/identity-closeout/*.mjs scripts/acp-progress/*.mjs scripts/acp-files/*.mjs scripts/acp-plan/*.mjs scripts/acp-permissions/*.mjs scripts/acp-commands/*.mjs scripts/acp-multimodal/*.mjs scripts/acp-cost/*.mjs
 
 fmt-check:
 	@unformatted="$$(gofmt -l $$(find services -name '*.go' -type f))" || exit $$?; \
@@ -25,7 +32,14 @@ fmt-check:
 	cargo fmt --manifest-path runtimes/antnest-runtime/Cargo.toml --all --check
 	cargo fmt --manifest-path services/runtime-egress/Cargo.toml --all --check
 	npm --prefix services/agent-acp-service run format:check
-	services/agent-acp-service/node_modules/.bin/prettier --check scripts/managed-mcp/*.mjs scripts/acp-closeout/*.mjs scripts/identity-closeout/*.mjs
+	services/agent-acp-service/node_modules/.bin/prettier --check scripts/lifecycle-closeout/*.mjs
+	services/agent-acp-service/node_modules/.bin/prettier --check scripts/workspace-closeout/*.mjs
+	services/agent-acp-service/node_modules/.bin/prettier --check scripts/deployment.test.mjs
+	services/agent-acp-service/node_modules/.bin/prettier --check scripts/observability/*.mjs
+	services/agent-acp-service/node_modules/.bin/prettier --check scripts/verification/*.mjs
+	services/agent-acp-service/node_modules/.bin/prettier --check services/admin-console/tests/*.mjs
+	services/agent-acp-service/node_modules/.bin/prettier --check services/edge-gateway/tests/*.mjs
+	services/agent-acp-service/node_modules/.bin/prettier --check scripts/managed-mcp/*.mjs scripts/acp-closeout/*.mjs scripts/identity-closeout/*.mjs scripts/acp-progress/*.mjs scripts/acp-files/*.mjs scripts/acp-plan/*.mjs scripts/acp-permissions/*.mjs scripts/acp-commands/*.mjs scripts/acp-multimodal/*.mjs scripts/acp-cost/*.mjs
 
 lint: go-lint rust-clippy node-lint
 
@@ -37,6 +51,9 @@ rust-clippy:
 	cargo clippy --manifest-path services/runtime-egress/Cargo.toml --locked --all-targets -- -D warnings
 
 node-lint:
+	node --check scripts/verification/go-service.mjs
+	node --check services/admin-console/tests/shutdown-docker.mjs
+	node --check services/edge-gateway/tests/shutdown-docker.mjs
 	npm --prefix services/agent-acp-service run lint
 	npm --prefix services/agent-acp-service run typecheck
 	npm --prefix services/admin-console/web run typecheck
@@ -56,18 +73,115 @@ test-go:
 
 test-rust:
 	cargo test --manifest-path runtimes/antnest-runtime/Cargo.toml --locked
+	cargo test --manifest-path runtimes/antnest-runtime/Cargo.toml --locked --example managed-mcp-fixture
 	cargo test --manifest-path services/runtime-egress/Cargo.toml --locked
 
 test-node:
+	node --test scripts/verification/*.test.mjs
+	node --test scripts/deployment.test.mjs
+	node --test scripts/observability/*.test.mjs
+	node --test --test-concurrency=1 services/agent-acp-service/scripts/stage2-*.test.mjs
 	npm --prefix services/agent-acp-service test
 	npm --prefix services/admin-console/web test
 	npm --prefix services/agent-ui/web test
 	$(MAKE) test-managed-mcp-fixtures
+	$(MAKE) test-tool-progress-fixtures
+	$(MAKE) test-file-observation-fixtures
+	$(MAKE) test-plan-fixtures
+	$(MAKE) test-permission-fixtures
+	$(MAKE) test-command-fixtures
+	$(MAKE) test-multimodal-fixtures
+	$(MAKE) test-cost-fixtures
+	$(MAKE) test-lifecycle-fixtures
+	$(MAKE) test-workspace-fixtures
 	node --test --test-concurrency=1 scripts/acp-closeout/*.test.mjs
 	node --test --test-concurrency=1 scripts/identity-closeout/*.test.mjs
 
 test-managed-mcp-fixtures:
-	node --test scripts/managed-mcp/fixtures.test.mjs
+	node --test --test-concurrency=1 scripts/managed-mcp/*.test.mjs
+
+.PHONY: test-lifecycle-fixtures e2e-lifecycle
+test-lifecycle-fixtures:
+	node --test --test-concurrency=1 scripts/lifecycle-closeout/*.test.mjs
+
+e2e-lifecycle:
+	node scripts/lifecycle-closeout/run.mjs
+
+.PHONY: e2e-lifecycle-shutdown
+e2e-lifecycle-shutdown:
+	node scripts/lifecycle-closeout/run.mjs shutdown
+
+.PHONY: test-workspace-fixtures e2e-workspace
+test-workspace-fixtures:
+	node --test --test-concurrency=1 scripts/workspace-closeout/*.test.mjs
+
+e2e-workspace:
+	node scripts/workspace-closeout/run.mjs
+
+.PHONY: e2e-lifecycle-interrupted
+e2e-lifecycle-interrupted:
+	node scripts/lifecycle-closeout/interrupted-run.mjs
+
+.PHONY: e2e-lifecycle-network
+e2e-lifecycle-network:
+	node scripts/lifecycle-closeout/run.mjs network
+
+.PHONY: e2e-lifecycle-loss
+e2e-lifecycle-loss:
+	node scripts/lifecycle-closeout/run.mjs loss
+
+.PHONY: e2e-rpc-response-loss
+e2e-rpc-response-loss:
+	ANTNEST_E2E_RPC_RESPONSE_LOSS=true sh scripts/e2e-stage3a.sh
+
+.PHONY: test-tool-progress-fixtures e2e-tool-progress
+test-tool-progress-fixtures:
+	node --test --test-concurrency=1 scripts/acp-progress/*.test.mjs
+
+e2e-tool-progress:
+	ANTNEST_E2E_TOOL_PROGRESS=true sh scripts/e2e-stage3a.sh
+
+.PHONY: test-file-observation-fixtures e2e-file-observations
+test-file-observation-fixtures:
+	node --test --test-concurrency=1 scripts/acp-files/*.test.mjs
+
+e2e-file-observations:
+	ANTNEST_E2E_FILE_OBSERVATIONS=true sh scripts/e2e-stage3a.sh
+
+.PHONY: test-plan-fixtures e2e-structured-plan
+test-plan-fixtures:
+	node --test --test-concurrency=1 scripts/acp-plan/*.test.mjs
+
+e2e-structured-plan:
+	ANTNEST_E2E_STRUCTURED_PLAN=true sh scripts/e2e-stage3a.sh
+
+.PHONY: test-permission-fixtures e2e-tool-permissions
+test-permission-fixtures:
+	node --test --test-concurrency=1 scripts/acp-permissions/*.test.mjs
+
+e2e-tool-permissions:
+	sh scripts/e2e-tool-permissions.sh
+
+.PHONY: test-command-fixtures e2e-slash-commands
+test-command-fixtures:
+	node --test --test-concurrency=1 scripts/acp-commands/*.test.mjs
+
+e2e-slash-commands:
+	ANTNEST_E2E_SLASH_COMMANDS=true sh scripts/e2e-stage3a.sh
+
+.PHONY: test-multimodal-fixtures e2e-multimodal
+test-multimodal-fixtures:
+	node --test --test-concurrency=1 scripts/acp-multimodal/*.test.mjs
+
+e2e-multimodal:
+	ANTNEST_E2E_MULTIMODAL=true sh scripts/e2e-stage3a.sh
+
+.PHONY: test-cost-fixtures e2e-session-cost
+test-cost-fixtures:
+	node --test --test-concurrency=1 scripts/acp-cost/*.test.mjs
+
+e2e-session-cost:
+	ANTNEST_E2E_SESSION_COST=true sh scripts/e2e-stage3a.sh
 
 test-postgres:
 	sh scripts/test-postgres.sh
@@ -76,7 +190,7 @@ test-egress-postgres:
 	$(call reset-test-database,antnest_egress,antnest_egress_test)
 	ANTNEST_EGRESS_TEST_DATABASE_URL=postgres://antnest_egress:$${ANTNEST_EGRESS_POSTGRES_PASSWORD:-antnest-egress-dev}@127.0.0.1:$${ANTNEST_POSTGRES_HOST_PORT:-55432}/antnest_egress_test \
 	ANTNEST_EGRESS_TEST_ADMIN_DATABASE_URL=postgres://antnest_test_admin:$${ANTNEST_POSTGRES_ADMIN_PASSWORD:-antnest-postgres-dev}@127.0.0.1:$${ANTNEST_POSTGRES_HOST_PORT:-55432}/antnest_egress_test \
-	cargo test --manifest-path services/runtime-egress/Cargo.toml --locked --test postgres_repository -- --ignored --test-threads=1
+	cargo test --manifest-path services/runtime-egress/Cargo.toml --locked --lib --test postgres_repository -- --ignored --test-threads=1
 
 test-runtime-controller-postgres:
 	$(call reset-test-database,antnest_runtime_controller,antnest_runtime_controller_test)
@@ -108,7 +222,12 @@ docker-build-agent-ui:
 	docker build -f services/agent-ui/Dockerfile -t antnest/agent-ui:local .
 
 docker-build-stage3: docker-build-runtime-controller
-	docker compose --profile stage3 build agent-acp-service identity-service agent-controller admin-console agent-ui edge-gateway
+	docker compose --profile stage3 build agent-acp-service
+	docker compose --profile stage3 build identity-service
+	docker compose --profile stage3 build agent-controller
+	docker compose --profile stage3 build admin-console
+	docker compose --profile stage3 build agent-ui
+	docker compose --profile stage3 build edge-gateway
 
 compose-up: docker-build-runtime-controller
 	docker compose up -d --wait postgres runtime-egress runtime-controller

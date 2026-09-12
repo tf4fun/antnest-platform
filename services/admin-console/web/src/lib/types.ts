@@ -102,21 +102,52 @@ export type SCIMToken = {
 export type SCIMTokenList = { tokens: SCIMToken[] };
 export type SCIMTokenIssue = { token: SCIMToken; credential: string };
 
+export type ModelPricing = {
+  currency: "USD";
+  input_per_million: number;
+  output_per_million: number;
+  cache_read_per_million?: number;
+  cache_write_per_million?: number;
+};
+
 export type ModelSpec = {
+  pricing?: ModelPricing;
   base_url: string;
   model: string;
   context_window: number;
   max_output_tokens: number;
   temperature?: number;
   supports_images: boolean;
+  supports_audio?: boolean;
+  supports_pdf?: boolean;
 };
 
+export type ModelParameters = Omit<ModelSpec, "base_url">;
+export type ProviderCredential = { method: "api_key"; api_key: string };
+export type ProviderConnection = {
+  connection_id: string;
+  provider_key: string;
+  display_name: string;
+  base_url: string;
+  credential_method: "api_key";
+  credential_version: string;
+  credential_revision: number;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+};
+export type ProviderConnectionList = { items: ProviderConnection[]; next_after_id?: string | null };
+export type ProviderModelInput = { display_name: string; model: ModelParameters };
+
 export type ModelCatalogEntry = {
+  pricing?: ModelPricing;
   model_id: string;
   display_name: string;
   context_window: number;
   max_output_tokens: number;
   supports_images: boolean;
+  supports_audio?: boolean;
+  supports_pdf?: boolean;
 };
 
 export type ModelProviderPreset = {
@@ -134,6 +165,7 @@ export type ModelCatalog = {
 };
 
 export type ModelProfile = {
+  provider_connection_id: string;
   model_profile_id: string;
   display_name: string;
   revision_id: string;
@@ -163,7 +195,7 @@ export type AgentTemplate = {
   template_id: string;
   name: string;
   revision: number;
-  model_profile_revision_id: string;
+  model_profile_id: string;
   system_prompt: string;
   max_model_requests: number;
   context_policy_version: string;
@@ -189,6 +221,8 @@ export type Agent = {
   name: string;
   desired_state: string;
   lifecycle_state: string;
+  agent_spec_revision?: string;
+  last_successful_execution_revision?: string;
   executable_execution_revision?: string;
   configuration?: {
     template: {

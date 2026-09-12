@@ -19,39 +19,39 @@ func (h *Handler) resolveImage(response http.ResponseWriter, request *http.Reque
 	response.Header().Set("Cache-Control", "no-store")
 	query, err := url.ParseQuery(request.URL.RawQuery)
 	if err != nil || len(query) != 1 || len(query["reference"]) != 1 {
-		writeImageError(response, platform.ErrInvalidImageReference)
+		writeError(response, platform.ErrInvalidImageReference)
 		return
 	}
 	reference := strings.TrimSpace(query.Get("reference"))
 	if reference == "" || len(reference) > 512 {
-		writeImageError(response, platform.ErrInvalidImageReference)
+		writeError(response, platform.ErrInvalidImageReference)
 		return
 	}
 	image, err := h.service.ResolveImage(request.Context(), reference)
 	if err != nil {
-		writeImageError(response, err)
+		writeError(response, err)
 		return
 	}
 	writeJSON(response, http.StatusOK, imageResolutionResponse{Reference: image.Reference, ImageRef: image.ImageRef})
 }
 
-func writeImageError(response http.ResponseWriter, err error) {
+func classifyImageError(err error) (errorDescriptor, bool) {
 	switch {
 	case errors.Is(err, platform.ErrInvalidImageReference):
-		writeJSON(response, http.StatusBadRequest, errorResponse{
-			Code: "invalid_request", Message: "Select an explicit repository:tag image reference", Retryable: false,
-		})
+		return errorDescriptor{status: http.StatusBadRequest, response: errorResponse{
+			Code: "invalid_request", Message: "Select a valid image name, tag or digest reference", Retryable: false,
+		}}, true
 	case errors.Is(err, platform.ErrImageNotFound):
-		writeJSON(response, http.StatusNotFound, errorResponse{
+		return errorDescriptor{status: http.StatusNotFound, response: errorResponse{
 			Code: "image_not_found", Message: "Runtime image is not installed; ask the platform operator to build or load it first", Retryable: false,
-		})
+		}}, true
 	case errors.Is(err, context.DeadlineExceeded):
-		writeError(response, err)
+		return errorDescriptor{}, false
 	case errors.Is(err, platform.ErrImageResolutionUnavailable):
-		writeJSON(response, http.StatusServiceUnavailable, errorResponse{
+		return errorDescriptor{status: http.StatusServiceUnavailable, response: errorResponse{
 			Code: "platform_unavailable", Message: "Runtime image resolution is temporarily unavailable", Retryable: true,
-		})
+		}}, true
 	default:
-		writeError(response, err)
+		return errorDescriptor{}, false
 	}
 }

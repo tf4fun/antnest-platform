@@ -12,11 +12,11 @@ than around one shared application package.
 | Runtime Egress     | Rust service owning Agent addresses, network policy, UDP/TUN forwarding, rejection, and address reuse                             | Implemented and accepted with Runtime  |
 | Runtime Controller | Logical Runtime Environment lifecycle, private deployment realization, and platform observation with an in-process Docker adapter | Implemented and accepted for Docker    |
 | Agent Controller   | Owns Agent lifecycle, immutable configuration/execution revisions, explicit Runtime rebuild, Run admission, and Agent events      | Implemented and accepted in Stage 3A   |
-| Agent ACP Service  | Owns ACP v1/v2 Sessions, Runs, context, model/Tool loop, and per-Run Runtime MCP calls                                            | Stage 3 integrated; protocol closeout open |
-| Identity Service   | Owns Organizations, Users, local login, OIDC, SCIM, credentials, and the directory journal                                        | Stage 3 integrated; event delivery not implemented |
+| Agent ACP Service  | Owns ACP v1/v2 Sessions, Runs, context, model/Tool loop, and per-Run Runtime MCP calls                                            | Declared profile and scoped Docker closeout accepted |
+| Identity Service   | Owns Organizations, Users, local login, OIDC, SCIM, credentials, and the directory journal                                        | Identity and owner-offboarding profile accepted |
 | Edge Gateway       | Sole browser ingress, Identity-backed sessions, administrator/Agent admission, trusted routing, and trace propagation              | Implemented for Stage 3                |
 | Admin Console      | React administrator application and thin BFF for Identity and Agent lifecycle management                                           | Implemented for Stage 3A               |
-| Agent UI           | React end-user conversation workspace for Agents, ACP Sessions, tool activity, and attachments                                    | Implemented through Edge and ACP v1    |
+| Agent UI           | React end-user conversation workspace for Agents, ACP Sessions, tool activity, and attachments                                    | Implemented; client acceptance explicitly deferred |
 | Contracts          | Language-neutral Runtime, Egress, Agent Controller, ACP, and Identity contracts                                                   | Evolving with each rewritten component |
 
 The repository layout and ownership rules are defined in
@@ -37,14 +37,27 @@ The shared browser product language is defined in
 The target ownership and restoration status of browser workflows are tracked
 in [`docs/product-surfaces.md`](docs/product-surfaces.md).
 
+Start with the [business-flow entrypoint index](docs/business-flow-entrypoints.md)
+for the current user, protocol, background and operational flow inventory.
 The implemented entry-to-storage call chains, data exchanges, commit points,
 and architecture simplification findings are maintained in
 [`docs/business-sequences.md`](docs/business-sequences.md).
 
-The active closeout scope and ordered acceptance checklist are maintained in
+The proposed cross-service [observability contract](docs/observability-contract.md)
+defines span boundaries, request/response diagnostics, error reporting, payload
+budgets and local-only readiness. It is a target for staged implementation,
+not a claim that the current services already conform.
+The [service-owned rollout](docs/observability-rollout.md) tracks the bounded
+parallel implementation batches and coordinator-only serial acceptance.
+
+The agreed closeout scope and ordered acceptance checklist are maintained in
 [`docs/docker-single-node-closeout.md`](docs/docker-single-node-closeout.md).
-ACP and identity come first; Docker identity, Agent management, and Agent UI
-must close with Gateway-rooted Jaeger evidence before broader expansion.
+The Docker single-node closeout is accepted as of 2026-09-11: 25 items pass,
+with five Agent Web UI client checks explicitly deferred, not passed. Identity,
+Agent management and server-side ACP/Runtime usage have Gateway-rooted evidence
+in the [verification report](docs/docker-single-node-verification-report.md).
+Admin Console recovery and live Jaeger navigation are included; this is not a
+claim of universal ACP conformance or completed Agent Web UI acceptance.
 Skill Registry and Channel Gateway are not started. Scheduler and Kubernetes
 remain planning-only; horizontal scaling and HA are deferred.
 
@@ -65,18 +78,23 @@ Template, and Agent creation plus disable, enable, rebuild, delete, lifecycle
 events, end-user ACP Session/Tool execution, port isolation, and Jaeger trace
 continuity.
 
-This is scenario-specific acceptance, not a fully conformant ACP claim or a
-complete Identity event-driven workflow. Runtime-managed stdio MCP does not
-implement client-injected ACP stdio. Full-platform interruption recovery,
-cross-identity isolation, Identity linkage, and operational acceptance remain
-tracked in the single-node closeout above.
+This is scenario-specific acceptance, not unrestricted ACP conformance or a
+generic Identity event bus. ACP stable v1 and draft v2 are accepted for the
+declared platform-owned MCP profile; client-injected MCP remains explicitly
+rejected. Identity's narrow principal-revocation feed now drives Agent
+offboarding. C1-C3 are accepted in the checklist; final Agent UI browser,
+operations and combined Jaeger/regression acceptance remain in C4-C6.
 
 ## Stage 3 Local Applications
+
+Follow the [single-node runbook](docs/docker-single-node-operations.md) for
+configuration, secrets, image ownership, readiness, diagnosis and cleanup.
+The commands below are a short local-development entry, not production setup.
 
 Build and start the production-shaped administrator stack:
 
 ```bash
-make docker-build-stage3
+COMPOSE_PARALLEL_LIMIT=1 make -j1 docker-build-stage3
 ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF=antnest/antnest-runtime:local \
   docker compose -f compose.yaml -f compose.stage3.yaml \
   --profile stage3 --profile observability up -d --wait
@@ -92,8 +110,12 @@ port in this topology.
 
 ## Repository Commands
 
+Install the ACP service's locked Node dependencies before host-side checks or
+Stage 3 E2E scripts: `npm --prefix services/agent-acp-service ci`. The E2E
+network selector reuses its `ipaddr.js` parser to avoid existing Docker subnets.
+
 ```bash
-make fmt-check   # Go and Rust formatting
+make fmt-check   # Go, Rust, TypeScript and test-fixture formatting
 make lint        # Go golangci-lint standard rules, Rust clippy, and Node lint/typecheck
 make test        # Unit and integration tests that need no running Compose stack
 make docker-build
@@ -101,6 +123,8 @@ make compose-up
 make e2e-stage1  # Isolated disposable Stage 1 Runtime/Egress acceptance
 make e2e-runtime-controller  # Isolated Runtime Controller lifecycle acceptance
 make e2e-stage3  # Empty Stage 3 stack, lifecycle, Agent workspace ACP, port, and Jaeger acceptance
+make e2e-lifecycle-network  # Real Runtime TUN policy/revocation/isolation and Gateway-rooted traces
+make e2e-workspace  # Scoped state, ACP reconnect/cancel/rebuild/revocation and Jaeger; not browser acceptance
 make test-postgres  # All persistence suites against one disposable PostgreSQL instance
 ```
 
@@ -125,7 +149,15 @@ migration journal, and DSN; sharing the test server does not permit cross-servic
 table access. Production may place those logical databases on separate servers
 without changing service code.
 
+The [offline backup/restore runbook](docs/docker-backup-restore.md) covers the
+five service databases, application encryption keys and persistent Runtime
+volumes. Its disposable `restore` profile verifies actual storage replacement;
+it does not promise an atomic online snapshot or recovery of running processes.
+
 Periodic CPU spikes have been observed in otherwise idle containers after test
-runs. The root cause is not yet established. Until it is diagnosed, treat
-post-test container inspection and cleanup as part of verification rather than
-leaving an idle test stack running indefinitely.
+runs. The [bounded CPU investigation](docs/docker-single-node-closeout.md#c5-idle-cpu-and-runtime-health-batch-2026-09-10)
+identified frequent health probes as a measurable contributor; it did not
+reproduce sustained 100% service CPU. New Runtimes probe every two seconds during
+startup and every ten seconds in steady state. Existing Runtimes receive this
+setting on explicit recreation. Post-test inspection and cleanup remain required;
+do not leave disposable test stacks running indefinitely.

@@ -41,19 +41,17 @@ type CredentialSealer interface {
 }
 
 type ModelProfileRecord struct {
-	RequestID          string
-	RequestFingerprint string
-	ModelProfileID     string
-	OrganizationID     string
-	ProfileKey         string
-	DisplayName        string
-	Revision           domain.ModelProfileRevision
-	CredentialRef      string
-	CredentialVersion  string
-	SealedCredential   SealedSecret
-	Enabled            bool
-	CreatedAt          time.Time
-	UpdatedAt          time.Time
+	ProviderConnectionID string
+	RequestID            string
+	RequestFingerprint   string
+	ModelProfileID       string
+	OrganizationID       string
+	ProfileKey           string
+	DisplayName          string
+	Revision             domain.ModelProfileRevision
+	Enabled              bool
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
 }
 
 type TemplateRecord struct {
@@ -70,11 +68,14 @@ type TemplateRecord struct {
 }
 
 type CatalogStore interface {
+	GetCurrentModelProfileRevision(context.Context, string) (domain.ModelProfileRevision, error)
+	ProviderStore
 	ReplayModelProfileRequest(ctx context.Context, kind CatalogRequestKind, requestID string, fingerprint string) (ModelProfileRecord, bool, error)
 	PutModelProfile(ctx context.Context, record ModelProfileRecord) (ModelProfileRecord, error)
 	ReviseModelProfile(ctx context.Context, expectedRevision int64, record ModelProfileRecord) (ModelProfileRecord, error)
 	GetModelProfile(ctx context.Context, id string) (ModelProfileRecord, error)
 	GetModelProfileRevision(ctx context.Context, id string) (domain.ModelProfileRevision, error)
+	GetModelProfileRevisionRecord(ctx context.Context, id string) (ModelProfileRecord, error)
 	ListModelProfiles(ctx context.Context, organizationID string, afterID string, limit int) ([]ModelProfileRecord, string, error)
 	ReplayTemplateRequest(ctx context.Context, kind CatalogRequestKind, requestID string, fingerprint string) (TemplateRecord, bool, error)
 	PutTemplate(ctx context.Context, record TemplateRecord) (TemplateRecord, error)

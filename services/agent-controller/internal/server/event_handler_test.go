@@ -185,8 +185,10 @@ func newEventTestHandler(t *testing.T, events AgentEventService) http.Handler {
 	t.Helper()
 	handler, err := NewHandler(
 		&catalogServiceStub{}, &lifecycleServiceStub{}, &runServiceStub{},
-		&agentQueryServiceStub{}, events, func(context.Context) error { return nil },
-	)
+		&agentQueryServiceStub{}, events, &networkPolicyServiceStub{},
+
+		func(context.Context) error { return nil })
+
 	if err != nil {
 		t.Fatalf("new handler: %v", err)
 	}

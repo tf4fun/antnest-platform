@@ -38,6 +38,30 @@ func TestCreateRejectsDifferentGenerationWithoutReplacingIt(t *testing.T) {
 	}
 }
 
+func TestCreateExistingTargetStillRequiresOwnedWorkspace(t *testing.T) {
+	for _, foreign := range []bool{false, true} {
+		t.Run(map[bool]string{false: "missing", true: "foreign"}[foreign], func(t *testing.T) {
+			engine := newFakeEngine()
+			engine.container = exactContainer()
+			name := "antnest-workspace-agent-1"
+			want := "storage_not_found"
+			if foreign {
+				engine.volumes[name].Labels[labelScope] = "other-scope"
+				want = "storage_ownership_conflict"
+			} else {
+				delete(engine.volumes, name)
+			}
+			outcome := newTestDriver(t, engine).Create(context.Background(), testDeployment(), testDigest)
+			if outcome.State != deployment.EffectNotStarted || outcome.Code != want {
+				t.Fatalf("existing target bypassed workspace check: %+v", outcome)
+			}
+			if engine.createCalls != 0 || engine.startCalls != 0 || engine.stopCalls != 0 || engine.removeCalls != 0 || engine.removeVolumeCalls != 0 {
+				t.Fatalf("workspace failure mutated target/storage: %+v", engine)
+			}
+		})
+	}
+}
+
 func TestCreateDistinguishesMissingStorageFromDockerFailure(t *testing.T) {
 	for _, test := range []struct {
 		name   string
@@ -89,6 +113,19 @@ func TestCreateMapsImmutableRuntimeSpecToHardenedContainer(t *testing.T) {
 	}
 }
 
+func TestCreateSeparatesStartupAndSteadyHealthCadence(t *testing.T) {
+	engine := newFakeEngine()
+	outcome := newTestDriver(t, engine).Create(context.Background(), testDeployment(), testDigest)
+	if outcome.State != deployment.EffectCompleted {
+		t.Fatalf("create failed: %+v", outcome)
+	}
+	health := engine.created.Healthcheck
+	if health.Interval != 10*time.Second || health.Timeout != 2*time.Second ||
+		health.StartPeriod != 30*time.Second || health.Retries != 3 {
+		t.Fatalf("startup-frequency probing leaked into steady state: %+v", health)
+	}
+}
+
 func TestDeploymentDigestCoversControllerPhysicalMapping(t *testing.T) {
 	first := newTestDriver(t, newFakeEngine())
 	firstDigest, err := first.DeploymentDigest(testDeployment())
@@ -110,6 +147,29 @@ func TestDeploymentDigestCoversControllerPhysicalMapping(t *testing.T) {
 	}
 	if firstDigest == secondDigest {
 		t.Fatal("Controller-injected physical configuration was omitted from the deployment digest")
+	}
+}
+
+func TestRuntimeDiagnosticModeIsInjectedWithoutRuntimeSpecChanges(t *testing.T) {
+	engine := newFakeEngine()
+	driver := newTestDriver(t, engine)
+	before, err := driver.DeploymentDigest(testDeployment())
+	if err != nil {
+		t.Fatal(err)
+	}
+	driver.config.RuntimeOTEL = map[string]string{"ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT": "true"}
+	after, err := driver.DeploymentDigest(testDeployment())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before == after {
+		t.Fatal("diagnostic mode absent from physical mapping digest")
+	}
+	if outcome := driver.Create(context.Background(), testDeployment(), after); outcome.State != deployment.EffectCompleted {
+		t.Fatalf("create = %+v", outcome)
+	}
+	if engine.created.Environment["ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT"] != "true" {
+		t.Fatal("Runtime mode was not injected")
 	}
 }
 

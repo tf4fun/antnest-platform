@@ -1,5 +1,11 @@
 # Business Flow Reliability Remediation Plan
 
+> Lifecycle execution update (2026-09-12): all five commands now use Temporal
+> workflows and SDK Activities. The PostgreSQL worker, claim/lease scheduler and
+> custom recovery spans described in the earlier analysis below are superseded
+> by [the current lifecycle contract](../services/agent-controller/docs/lifecycle-workflows.md).
+> The business ordering and domain transactions remain; there is no dual executor.
+
 > Date: 2026-09-02
 > Status: implementation corrections complete; full admission verification passed
 > Scope: the reconstructed `antnest-platform` services only
@@ -368,14 +374,14 @@ Each package requires:
 External provider tests are not required for these control-plane corrections.
 Docker-backed tests must clean up containers and volumes after completion.
 
-Asynchronous lifecycle observability is verified as a trace set, not as one
-artificially long trace. The admission request remains one trace. Every durable
-worker attempt is a new root with Span Links to the admission request and the
-previous attempt. Acceptance queries Jaeger by the lifecycle request ID,
-validates one root per returned phase trace, verifies the causal link chain,
-aggregates required dependency services across the set, and scans every trace
-for forbidden secret material. The terminal event trace is retained only as
-evidence for the phase that emitted that event.
+Asynchronous lifecycle observability is verified within the originating
+business trace. The admission HTTP span ends normally at `202`; the first
+durable attempt restores its parent from that admission, and later attempts
+restore the preceding attempt's context. Acceptance validates the exact
+Gateway -> Console -> Controller ancestry, ordered attempt parents and actual
+downstream calls in one trace. Independent roots connected only by Span Links
+do not satisfy this requirement. See the Agent Controller
+[observability contract](../services/agent-controller/docs/observability.md#asynchronous-lifecycle-causality).
 
 ## 8. Implementation Record
 

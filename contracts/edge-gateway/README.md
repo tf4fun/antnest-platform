@@ -9,6 +9,14 @@ Identity access tokens are cookie-only secrets. Token IDs remain Identity audit
 identifiers and are not stored in the browser session. Neither may appear in
 the JSON response schemas described by this contract.
 
+Workspace state GET and SSE expose only five fields: Agent ID, availability,
+access permission, Agent aggregate revision and nullable active Session ID.
+They reject caller-provided scope and replay cursors. Identity determines
+User/Organization; Controller determines Agent access and Session disclosure.
+Subscriptions have a bounded authentication lease and never renew inside
+Gateway. See [Workspace state](../../services/edge-gateway/docs/workspace-state.md)
+for response validation, revocation, shutdown and client recovery requirements.
+
 OIDC discovery/start and callback routes bridge Identity Service into the
 browser session boundary. The callback consumes Identity's one-time access
 token server-side, sets the normal session cookies, and redirects without

@@ -30,7 +30,7 @@ const identityBootstrapLockID int64 = 0x41544e4553544942
 
 func (s *Store) Bootstrap(ctx context.Context, input BootstrapInput) (BootstrapResult, error) {
 	var result BootstrapResult
-	err := s.inTransaction(ctx, "bootstrap", func(tx pgx.Tx) error {
+	err := s.inTransaction(ctx, func(tx *databaseTransaction) error {
 		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, identityBootstrapLockID); err != nil {
 			return fmt.Errorf("lock identity bootstrap: %w", err)
 		}
@@ -57,7 +57,7 @@ func (s *Store) Bootstrap(ctx context.Context, input BootstrapInput) (BootstrapR
 
 func (s *Store) bootstrapOrganization(
 	ctx context.Context,
-	tx pgx.Tx,
+	tx *databaseTransaction,
 	input BootstrapInput,
 ) (domain.Organization, bool, error) {
 	var organization domain.Organization
@@ -95,7 +95,7 @@ func (s *Store) bootstrapOrganization(
 
 func (s *Store) bootstrapAdministrator(
 	ctx context.Context,
-	tx pgx.Tx,
+	tx *databaseTransaction,
 	organizationID string,
 	input BootstrapInput,
 ) (domain.User, domain.OrganizationMembership, bool, error) {
@@ -140,7 +140,7 @@ func (s *Store) bootstrapAdministrator(
 
 func findBootstrapAdministrator(
 	ctx context.Context,
-	tx pgx.Tx,
+	tx *databaseTransaction,
 	organizationID string,
 	email string,
 ) (domain.User, domain.OrganizationMembership, error) {
@@ -172,7 +172,7 @@ func findBootstrapAdministrator(
 func (s *Store) FailExpiredOIDCSessions(ctx context.Context, now time.Time) (int64, error) {
 	type expiredSession struct{ id, organizationID, requestID string }
 	var expired []expiredSession
-	err := s.inTransaction(ctx, "expire_interrupted_oidc_sessions", func(tx pgx.Tx) error {
+	err := s.inTransaction(ctx, func(tx *databaseTransaction) error {
 		rows, err := tx.Query(ctx, `
 			SELECT id, organization_id, request_id
 			FROM oidc_auth_sessions

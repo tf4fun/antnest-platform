@@ -21,8 +21,10 @@ unknown fields, missing required fields, and semantic violations. Individual
 deployment variables such as `ANTNEST_AGENT_ID` or
 `ANTNEST_RUNTIME_EGRESS_ENDPOINT` are not alternate configuration inputs.
 
-A changed value creates a new generation. Replacing an instance with the same
-values keeps the same generation. The workspace and system-Skill roots must be
+Controller freezes generation at lifecycle admission: a new Initialize,
+Update or Enable allocates the next value even with unchanged configuration.
+A same-deployment restart or exact-operation recovery retains the allocated
+generation. The workspace and system-Skill roots must be
 normalized absolute paths without `..` and must not overlap. No bootstrap
 secret is injected.
 
@@ -133,11 +135,14 @@ official MCP client so an incompatible kernel or seccomp policy fails before
 deployment.
 
 The long-lived Supervisor remains root and must not execute Agent-selected file
-or shell operations. Each MCP request starts exactly one of the explicit
-`bash`, `read`, `write`, or `edit` subcommands. Before reading stdin, that
+or shell operations. Each built-in tool call starts its matching explicit
+`bash`, `read`, `write`, or `edit` subcommand; information Resource reads use
+`info`. Before reading stdin, that
 subcommand clears supplementary groups, drops irreversibly to UID/GID 1000,
 clears all capability sets, enables `no_new_privileges`, and verifies the final
-process state.
+process state. Managed tool calls instead forward through their already-running
+UID/GID 1000 stdio server, started by the `mcp-stdio` launcher; discovery/status
+requests do not create a one-shot Executor.
 
 Bootstrap verifies that every required Supervisor capability is present,
 including `CAP_KILL`. Runtime Controller owns the exact capability set. This
@@ -210,8 +215,10 @@ on the governed TUN path without a split-resolver special case.
    Runtime-owned network state or fail closed.
 4. **`/status` identity differs:** Runtime Controller or Agent Controller selected the wrong
    endpoint; never route work to it.
-5. **`tools/list` fails after status succeeds:** MCP is defective; fail Runtime
-   creation and do not publish the Agent execution revision.
+5. **`tools/list` fails after status succeeds:** inspect MCP discovery/transport
+   and managed server health. Controller readiness uses platform health and
+   `/status`, not a `tools/list` probe. ACP must fail preparation rather than
+   invent an empty tool list; status alone does not prove discovery succeeds.
 6. **`/status` succeeds but public traffic fails:** the Runtime-to-Egress packet
    path was ready at startup, but `/status` does not prove external reachability;
    inspect current Egress health, policy, DNS upstream, and destination state.
@@ -242,10 +249,13 @@ endpoint unavailable and the container platform restarts or replaces it:
   rule or route at those identifiers is treated as a platform conflict and
   bootstrap fails before installing Agent routing;
 - Runtime Controller reattaches the persistent Agent workspace;
-- unchanged RuntimeSpec keeps the same generation; a changed RuntimeSpec gets a
-  new generation;
-- Controller resumes routing only after the replacement passes `/status` and
-  MCP `tools/list`.
+- same-deployment restart keeps generation but changes execution ID; each new
+  Update/Enable allocates a new generation even with unchanged configuration;
+- Runtime Controller records the new execution from platform health and
+  `/status`. Agent Controller's observation consumer invalidates the old binding
+  and requires explicit Rebuild before publishing a new executable binding;
+  healthy container restart alone does not resume Agent routing. ACP owns later
+  MCP discovery, not Runtime Controller.
 
 Runtime does not implement restart, drain, retire, purge, or rollback methods.
 Those are Runtime Controller and Agent Controller lifecycle effects.

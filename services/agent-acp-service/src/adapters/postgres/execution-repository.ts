@@ -1,4 +1,9 @@
 import { z } from "zod";
+import { modelPricingSchema } from "../../domain/usage.js";
+import {
+  admittedConfigurationSchema,
+  sessionConfigurationSchema,
+} from "../../domain/session-configuration.js";
 
 import type {
   RunExecutionSnapshot,
@@ -29,6 +34,7 @@ const snapshotSchema = z.object({
     mcpEndpoint: z.url(),
   }),
   executionSpec: z.object({
+    configuration: admittedConfigurationSchema.optional(),
     systemPrompt: z.string(),
     contextPolicyVersion: z.literal("context-v1"),
     skillInstructions: z.array(
@@ -41,6 +47,9 @@ const snapshotSchema = z.object({
       maxOutputTokens: z.number().int().positive(),
       temperature: z.number().optional(),
       supportsImages: z.boolean(),
+      supportsAudio: z.boolean().optional(),
+      supportsPdf: z.boolean().optional(),
+      pricing: modelPricingSchema.optional(),
     }),
     maxModelRequests: z.number().int().positive(),
     credentialRef: z.string().min(1),
@@ -61,11 +70,15 @@ export class PostgresExecutionRepository implements ExecutionRepository {
 
   public async finish(input: FinishLocalRunInput): Promise<void> {
     const result = await this.kernel.query(
-      `UPDATE runs
+      `WITH finished AS (UPDATE runs
           SET state = $2, terminal_class = $2, executor_state = $3,
               tool_effect_state = $4, unknown_effect_source = $5,
               stop_reason = $6, error_class = $7, updated_at = $8
-        WHERE id = $1 AND state = 'running'`,
+        WHERE id = $1 AND state = 'running' RETURNING id),
+       cancelled_permissions AS (
+         UPDATE tool_permissions SET decision = 'cancelled', reason = 'run_finished', decided_at = $8
+         FROM finished WHERE tool_permissions.run_id = finished.id AND decision IS NULL
+       ) SELECT id FROM finished`,
       [
         input.runId,
         input.terminalClass,
@@ -137,6 +150,7 @@ export class PostgresExecutionRepository implements ExecutionRepository {
       state: RunState;
       pending_user_message_id: string | null;
       pending_prompt: unknown;
+      session_configuration: unknown;
       execution_snapshot: unknown;
       admission_id: string | null;
       terminal_class: "completed" | "cancelled" | "failed" | "unresolved" | null;
@@ -149,7 +163,7 @@ export class PostgresExecutionRepository implements ExecutionRepository {
       `SELECT id, request_id, session_id, client_mcp_revision_id,
               expected_access_revision, state,
               pending_user_message_id,
-              pending_prompt, execution_snapshot, admission_id, terminal_class,
+              pending_prompt, session_configuration, execution_snapshot, admission_id, terminal_class,
               executor_state, tool_effect_state, unknown_effect_source,
               stop_reason, error_class
          FROM runs
@@ -185,6 +199,7 @@ function mapRecoveryWork(row: {
   state: RunState;
   pending_user_message_id: string | null;
   pending_prompt: unknown;
+  session_configuration: unknown;
   execution_snapshot: unknown;
   admission_id: string | null;
   terminal_class: "completed" | "cancelled" | "failed" | "unresolved" | null;
@@ -207,6 +222,9 @@ function mapRecoveryWork(row: {
       expectedAccessRevision: row.expected_access_revision,
       userMessageId: row.pending_user_message_id,
       prompt: contentSchema.parse(row.pending_prompt),
+      ...(row.session_configuration === null
+        ? {}
+        : { sessionConfiguration: sessionConfigurationSchema.parse(row.session_configuration) }),
     };
   }
   if (row.state === "running") {

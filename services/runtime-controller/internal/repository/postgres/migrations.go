@@ -137,6 +137,31 @@ ALTER TABLE runtime_controller.observations
 `
 )
 
+const failedEnvironmentSQL = `
+ALTER TABLE runtime_controller.operations
+    DROP CONSTRAINT operations_source_state_check;
+ALTER TABLE runtime_controller.operations
+    ADD CONSTRAINT operations_source_state_check
+    CHECK (source_state IN ('uninitialized', 'ready', 'disabled', 'failed'));
+ALTER TABLE runtime_controller.runtime_environments
+    DROP CONSTRAINT runtime_environments_lifecycle_state_check;
+ALTER TABLE runtime_controller.runtime_environments
+    ADD CONSTRAINT runtime_environments_lifecycle_state_check CHECK (lifecycle_state IN (
+        'initializing', 'ready', 'updating', 'disabling', 'disabled',
+        'enabling', 'deleting', 'deleted', 'failed', 'unknown'
+    ));
+`
+
+const buildImageSQL = `
+ALTER TABLE runtime_controller.operations
+    ADD COLUMN image_reference TEXT NOT NULL DEFAULT '',
+    ADD COLUMN image_id TEXT NOT NULL DEFAULT '',
+    ADD CONSTRAINT operations_image_identity_check CHECK (
+        (image_reference = '' AND image_id = '') OR
+        (length(image_reference) BETWEEN 1 AND 512 AND image_id ~ '^sha256:[0-9a-f]{64}$')
+    );
+`
+
 type migration struct {
 	version  int64
 	name     string
@@ -159,6 +184,16 @@ var schemaMigrations = []migration{
 		version: 3, name: "separate_observation_identity_scopes",
 		checksum: "57b2fbfa2e54f8c2d982d153d78ba091d75bc4728b29663a35d29a40a98f0e0a",
 		sql:      observationIdentityScopesSQL,
+	},
+	{
+		version: 4, name: "retain_failed_runtime_ownership",
+		checksum: "8a8ef935d84f23aa98a3ae37c3e035c0b346bc094d46e727ea11831131f76ee0",
+		sql:      failedEnvironmentSQL,
+	},
+	{
+		version: 5, name: "retain_build_image_identity",
+		checksum: "6c623ac49702a3c8393490a20eb2d7abca2d32232e26b68b59c1e95edcbd0fe8",
+		sql:      buildImageSQL,
 	},
 }
 

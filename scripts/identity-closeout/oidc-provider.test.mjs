@@ -5,13 +5,13 @@ import { createHash, createPublicKey, verify } from "node:crypto";
 import test from "node:test";
 import { createOIDCProvider, fixtureSecret } from "./oidc-provider.mjs";
 
-async function setup(t, prefix = "") {
+async function setup(t, prefix = "", userInfo = false) {
   const server = createServer();
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
   const issuer = `http://127.0.0.1:${server.address().port}${prefix}`;
   const callback = "http://127.0.0.1:8090/protocol/oidc/callback";
-  const provider = createOIDCProvider({ issuer, callback });
+  const provider = createOIDCProvider({ issuer, callback, userInfo });
   server.on("request", provider.handle);
   t.after(
     () =>
@@ -144,4 +144,33 @@ test("IdP rejects incorrect PKCE, redirect, client secret, and authorization reg
     assert.equal(response.headers.get("location"), null);
   }
   assert.equal(f.provider.stats().grants, 0);
+});
+
+test("profile issuer forces authenticated UserInfo fallback for the same subject", async (t) => {
+  const f = await setup(t, "/profile", true);
+  const metadata = await (
+    await fetch(`${f.issuer}/.well-known/openid-configuration`)
+  ).json();
+  assert.equal(metadata.userinfo_endpoint, `${f.issuer}/userinfo`);
+  const authorized = await f.authorize({}, "profile");
+  assert.equal(authorized.status, 302);
+  const code = new URL(authorized.headers.get("location")).searchParams.get(
+    "code",
+  );
+  const token = await (await f.exchange(code)).json();
+  const claims = JSON.parse(
+    Buffer.from(token.id_token.split(".")[1], "base64url"),
+  );
+  assert(!claims.email, "ID token must not satisfy the email requirement");
+  const denied = await fetch(metadata.userinfo_endpoint);
+  assert.equal(denied.status, 401);
+  const response = await fetch(metadata.userinfo_endpoint, {
+    headers: { Authorization: `Bearer ${token.access_token}` },
+  });
+  assert.equal(response.status, 200);
+  const info = await response.json();
+  assert.equal(info.sub, claims.sub);
+  assert.equal(info.email, "oidc-local@example.com");
+  assert.equal(info.email_verified, true);
+  assert.equal(f.provider.stats().userinfo, 1);
 });

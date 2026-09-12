@@ -9,15 +9,23 @@ import type {
   UnknownEffectSource,
 } from "../domain/types.js";
 import { boundToolResult } from "../domain/tool-result.js";
+import { boundedRawOutput } from "../domain/tool-presentation.js";
 import { DomainError } from "../domain/errors.js";
+import { RunToolAuthorization } from "./run-tool-authorization.js";
+import { ModelRequestBudget, PermissionJudge } from "./permission-judge.js";
+import type { ToolPermissionPort } from "../ports/tool-permissions.js";
+import { planResult, type PlanEntry } from "../domain/plan.js";
 import { assertModelInputBudget } from "./context-budget.js";
-import type { ModelPort } from "../ports/model.js";
+import { ModelError, type ModelPort } from "../ports/model.js";
 import type { RunEventPort } from "../ports/run-events.js";
 import type { ToolCatalogPort } from "../ports/tools.js";
 import { RunEventPersistenceError } from "./durable-run-events.js";
+import { ModelOutput } from "./model-output.js";
+import { ToolProgress } from "./tool-progress.js";
 import { ToolPreflight, ToolPreflightError, type PreparedToolCall } from "./tool-preflight.js";
 
 export type TurnRunnerDependencies = {
+  permissions?: ToolPermissionPort;
   model: ModelPort;
   tools: Pick<ToolCatalogPort, "call">;
   catalog: ModelToolDefinition[];
@@ -43,30 +51,32 @@ export class TurnRunner {
     const messages = [...input.context];
     let effectState: ToolEffectState = "none";
     const preflight = new ToolPreflight();
+    const budget = new ModelRequestBudget(input.snapshot.executionSpec.maxModelRequests);
+    const authorization = new RunToolAuthorization(
+      this.dependencies.permissions,
+      new PermissionJudge(this.dependencies.model, budget, (runId, usage) =>
+        this.dependencies.events.usage(runId, usage),
+      ),
+    );
 
     try {
       const tools = this.dependencies.catalog;
       assertAuthority(input.authoritySignal);
-      for (let request = 0; request < input.snapshot.executionSpec.maxModelRequests; request += 1) {
+      for (let request = 0; budget.take(); request += 1) {
         input.signal.throwIfAborted();
         assertModelInputBudget(input.snapshot, tools, messages);
-        const response = await this.dependencies.model.complete({
-          snapshot: input.snapshot,
-          credential: input.credential,
-          messages,
-          tools,
-          signal: input.signal,
-        });
+        const responseId = createHash("sha256")
+          .update(JSON.stringify([input.runId, request]))
+          .digest("hex");
+        const { response, output } = await this.completeModel(input, messages, responseId);
         assertAuthority(input.authoritySignal);
-        await this.dependencies.events.usage(input.runId, response.usage);
-        assertAuthority(input.authoritySignal);
-        if (response.thought !== undefined) {
+        if (response.thought !== undefined && !output.kinds.has("thought")) {
           await this.dependencies.events.agentThought(input.runId, response.thought);
           assertAuthority(input.authoritySignal);
         }
 
         if (response.kind === "message") {
-          if (response.content.length > 0) {
+          if (response.content.length > 0 && !output.kinds.has("message")) {
             await this.dependencies.events.agentMessage(input.runId, response.content);
             assertAuthority(input.authoritySignal);
           }
@@ -83,7 +93,11 @@ export class TurnRunner {
             .digest("hex"),
         }));
         const inspected = preflight.inspect(calls, tools);
-        await this.dependencies.events.agentMessage(input.runId, response.content, calls);
+        if (output.kinds.has("message")) {
+          await this.dependencies.events.agentMessage(input.runId, [], calls, responseId);
+        } else {
+          await this.dependencies.events.agentMessage(input.runId, response.content, calls);
+        }
         assertAuthority(input.authoritySignal);
         messages.push({
           role: "assistant",
@@ -109,7 +123,7 @@ export class TurnRunner {
             await this.closeUndispatched(input, inspected.calls.slice(index));
             return cancelled(effectState);
           }
-          const outcome = await this.callTool(input, prepared, effectState);
+          const outcome = await this.callTool(input, prepared, effectState, authorization);
           effectState = outcome.effectState;
           if (outcome.terminal !== null) {
             await this.closeUndispatched(input, inspected.calls.slice(index + 1));
@@ -133,6 +147,40 @@ export class TurnRunner {
     }
   }
 
+  private async completeModel(input: RunTurnInput, messages: ModelMessage[], responseId: string) {
+    const output = new ModelOutput(async (delta) => {
+      assertAuthority(input.authoritySignal);
+      const content = [{ type: "text" as const, text: delta.text }];
+      if (delta.kind === "message") {
+        await this.dependencies.events.agentMessage(input.runId, content, undefined, responseId);
+      } else {
+        await this.dependencies.events.agentThought(input.runId, content, `${responseId}-thought`);
+      }
+      assertAuthority(input.authoritySignal);
+    });
+    try {
+      const response = await this.dependencies.model.complete({
+        snapshot: input.snapshot,
+        credential: input.credential,
+        messages,
+        tools: this.dependencies.catalog,
+        signal: AbortSignal.any([input.signal, input.authoritySignal, output.signal]),
+        onDelta: (delta) => output.append(delta),
+      });
+      assertAuthority(input.authoritySignal);
+      await this.dependencies.events.usage(input.runId, response.usage);
+      return { response, output };
+    } catch (error) {
+      assertAuthority(input.authoritySignal);
+      if (error instanceof ModelError && error.usage !== undefined) {
+        await this.dependencies.events.usage(input.runId, error.usage);
+      }
+      throw error;
+    } finally {
+      await output.finish();
+    }
+  }
+
   private async closeUndispatched(
     input: RunTurnInput,
     calls: readonly PreparedToolCall[],
@@ -147,30 +195,88 @@ export class TurnRunner {
     }
   }
 
+  private async executeTool(input: RunTurnInput, { tool, call }: PreparedToolCall) {
+    const progress = new ToolProgress(async (text) => {
+      assertAuthority(input.authoritySignal);
+      await this.dependencies.events.toolProgress(input.runId, call.id, [{ type: "text", text }]);
+      assertAuthority(input.authoritySignal);
+    });
+    const signal = AbortSignal.any([input.signal, input.authoritySignal, progress.signal]);
+    try {
+      return await this.dependencies.tools.call({
+        runId: input.runId,
+        snapshot: input.snapshot,
+        tool,
+        arguments: call.arguments,
+        signal,
+        onProgress: (update) => {
+          if (!signal.aborted) progress.append(update);
+        },
+      });
+    } finally {
+      await progress.finish();
+    }
+  }
+
   private async callTool(
     input: RunTurnInput,
     prepared: PreparedToolCall,
     currentEffect: ToolEffectState,
+    authorization: RunToolAuthorization,
   ): Promise<{
     effectState: ToolEffectState;
     message: Extract<ModelMessage, { role: "tool" }>;
     terminal: RunTurnResult | null;
   }> {
     const { call, tool } = prepared;
+    let text: string | null;
+    let approvalError: unknown;
+    try {
+      text = await authorization.check(input, prepared);
+      input.signal.throwIfAborted();
+    } catch (error) {
+      assertAuthority(input.authoritySignal);
+      if (error instanceof RunEventPersistenceError) throw error;
+      approvalError = error;
+      text = "Tool was not executed because permission could not be confirmed.";
+    }
+    if (text !== null) {
+      await this.dependencies.events.toolRejected(input.runId, call, text);
+      assertAuthority(input.authoritySignal);
+      return {
+        effectState: currentEffect,
+        message: { role: "tool", toolCallId: call.id, content: [{ type: "text", text }] },
+        terminal: input.signal.aborted
+          ? cancelled(currentEffect)
+          : approvalError === undefined
+            ? null
+            : failure(currentEffect, "tool_permission_failed"),
+      };
+    }
+    if (tool.source === "agent") {
+      assertAuthority(input.authoritySignal);
+      const applied = await this.dependencies.events.updatePlan(
+        input.runId,
+        call,
+        call.arguments.entries as PlanEntry[],
+      );
+      assertAuthority(input.authoritySignal);
+      if (!applied) await this.closeUndispatched(input, [prepared]);
+      return {
+        effectState: currentEffect,
+        message: { role: "tool", toolCallId: call.id, content: planResult },
+        terminal: applied ? null : cancelled(currentEffect),
+      };
+    }
     const unknownEffectSource = unknownSourceForTool(tool.source);
     await this.dependencies.events.toolStarted(input.runId, call.id, tool, call.arguments);
     assertAuthority(input.authoritySignal);
     let result: Awaited<ReturnType<ToolCatalogPort["call"]>>;
     try {
-      result = await this.dependencies.tools.call({
-        runId: input.runId,
-        snapshot: input.snapshot,
-        tool,
-        arguments: call.arguments,
-        signal: input.signal,
-      });
+      result = await this.executeTool(input, prepared);
     } catch (error) {
       assertAuthority(input.authoritySignal);
+      if (error instanceof RunEventPersistenceError) throw error;
       const failedEffect = effectFromError(error);
       const effectState = combineEffects(currentEffect, failedEffect);
       const content = [
@@ -225,6 +331,7 @@ export class TurnRunner {
     }
     assertAuthority(input.authoritySignal);
     const content = boundToolResult(toolResultContent(result));
+    const rawOutput = boundedRawOutput(result.structuredContent);
     const effectState = combineEffects(currentEffect, result.toolEffectState);
     try {
       await this.dependencies.events.toolFinished(
@@ -233,6 +340,12 @@ export class TurnRunner {
         result.isError ? "failed" : "completed",
         content,
         result.toolEffectState,
+        {
+          ...(rawOutput === undefined ? {} : { rawOutput }),
+          ...(result.isError || result.toolEffectState !== "settled" || result.file === undefined
+            ? {}
+            : { file: result.file }),
+        },
       );
     } catch (error) {
       if (error instanceof RunEventPersistenceError) {
@@ -367,7 +480,9 @@ function completed(
 }
 
 function errorClass(error: unknown): string {
-  return error instanceof ToolPreflightError || error instanceof DomainError
+  return error instanceof ToolPreflightError ||
+    error instanceof DomainError ||
+    error instanceof ModelError
     ? error.code
     : "run_failed";
 }

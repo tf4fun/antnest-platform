@@ -1,4 +1,5 @@
 import type { ContentBlock } from "../../domain/types.js";
+import { decodeSessionEvent, type StoredSessionEvent } from "./session-event-codec.js";
 import type {
   ContextCheckpoint,
   ContextRepository,
@@ -37,9 +38,24 @@ export class PostgresContextRepository implements ContextRepository {
         ORDER BY sequence`,
       [sessionId, checkpoint?.throughSequence ?? 0],
     );
+    const plan = await this.kernel.query<{ payload: StoredSessionEvent }>(
+      "SELECT payload FROM session_messages WHERE session_id = $1 AND kind = 'plan' ORDER BY sequence DESC LIMIT 1",
+      [sessionId],
+    );
+    const latestPlan =
+      plan.rows[0] === undefined ? undefined : decodeSessionEvent(plan.rows[0].payload);
     return {
       checkpoint,
-      messages: mapContextMessages(messagesResult.rows),
+      messages: mapContextMessages(
+        messagesResult.rows.map((row) => ({
+          ...row,
+          payload:
+            row.kind === "agent_message"
+              ? decodeSessionEvent(row.payload as StoredSessionEvent)
+              : row.payload,
+        })),
+      ),
+      ...(latestPlan?.kind === "plan" ? { plan: latestPlan.entries } : {}),
     };
   }
 
@@ -78,7 +94,7 @@ function mapContextMessages(
 ): StoredContextMessage[] {
   const messages: StoredContextMessage[] = [];
   let pending: PendingToolExchange | null = null;
-  for (const row of rows) {
+  for (const row of combineAssistantChunks(rows)) {
     if (row.kind === "agent_message") {
       if (pending !== null) {
         throw new Error("Assistant Tool exchange is incomplete");
@@ -87,6 +103,7 @@ function mapContextMessages(
       if (message.toolCalls.length === 0) {
         messages.push({
           sequence: message.sequence,
+          ...(message.endSequence === undefined ? {} : { endSequence: message.endSequence }),
           kind: "agent_message",
           content: message.content,
         });
@@ -142,6 +159,7 @@ function mapContextMessages(
 
 type PendingToolExchange = {
   sequence: number;
+  endSequence?: number;
   content: ContentBlock[];
   toolCalls: Extract<StoredContextMessage, { kind: "tool_exchange" }>["assistant"]["toolCalls"];
   results: Map<string, ContentBlock[]>;
@@ -149,14 +167,68 @@ type PendingToolExchange = {
 
 function mapAgentMessage(row: {
   sequence: string;
+  endSequence?: number;
   payload: unknown;
 }): Omit<PendingToolExchange, "results"> {
   const payload = asRecord(row.payload, "Agent message payload is invalid");
   return {
     sequence: Number(row.sequence),
+    ...(row.endSequence === undefined ? {} : { endSequence: row.endSequence }),
     content: asContent(payload.content),
     toolCalls: mapToolCalls(payload.toolCalls),
   };
+}
+
+type ContextRow = { sequence: string; kind: string; payload: unknown; endSequence?: number };
+
+// Durable delivery is chunked; the model and compaction see a whole assistant response.
+function combineAssistantChunks(rows: ContextRow[]): ContextRow[] {
+  const result: ContextRow[] = [];
+  let activeId: string | undefined;
+  for (const row of rows) {
+    if (row.kind !== "agent_message") {
+      activeId = undefined;
+      result.push(row);
+      continue;
+    }
+    const payload = asRecord(row.payload, "Agent message payload is invalid");
+    const responseId = typeof payload.responseId === "string" ? payload.responseId : undefined;
+    const previous = result.at(-1);
+    if (responseId === undefined || activeId !== responseId || previous === undefined) {
+      activeId = responseId;
+      result.push({
+        ...row,
+        ...(responseId === undefined ? {} : { endSequence: Number(row.sequence) }),
+      });
+      continue;
+    }
+    const prior = asRecord(previous.payload, "Agent message payload is invalid");
+    previous.payload = {
+      ...prior,
+      ...payload,
+      content: joinTextBlocks([...asContent(prior.content), ...asContent(payload.content)]),
+    };
+    previous.endSequence = Number(row.sequence);
+  }
+  return result;
+}
+
+function joinTextBlocks(content: ContentBlock[]): ContentBlock[] {
+  const result: ContentBlock[] = [];
+  for (const block of content) {
+    const previous = result.at(-1);
+    if (
+      block.type === "text" &&
+      typeof block.text === "string" &&
+      previous?.type === "text" &&
+      typeof previous.text === "string"
+    ) {
+      previous.text += block.text;
+    } else {
+      result.push({ ...block });
+    }
+  }
+  return result;
 }
 
 function mapContextMessage(row: {

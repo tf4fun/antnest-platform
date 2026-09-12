@@ -79,11 +79,12 @@ type Mount struct {
 }
 
 type Healthcheck struct {
-	Test        []string
-	Interval    time.Duration
-	Timeout     time.Duration
-	StartPeriod time.Duration
-	Retries     int
+	Test          []string
+	Interval      time.Duration
+	Timeout       time.Duration
+	StartPeriod   time.Duration
+	StartInterval time.Duration
+	Retries       int
 }
 
 type ContainerSpec struct {
@@ -486,6 +487,10 @@ func (d *Driver) containerSpec(value deployment.Deployment, digest string) (Cont
 	for key, raw := range d.config.RuntimeOTEL {
 		environment[key] = raw
 	}
+	if value.ImageReference != "" {
+		environment["ANTNEST_RUNTIME_IMAGE_REFERENCE"] = value.ImageReference
+		environment["ANTNEST_RUNTIME_IMAGE_ID"] = value.ImageRef
+	}
 	port := strconv.FormatUint(uint64(value.RuntimeSpec.Listen.Port), 10)
 	return ContainerSpec{
 		Name: containerName(value.RuntimeSpec.AgentID), Image: value.ImageRef, User: "0:0",
@@ -516,8 +521,12 @@ func (d *Driver) containerSpec(value deployment.Deployment, digest string) (Cont
 		PidsLimit: int64(value.Resources.PidsLimit), MemoryBytes: int64(value.Resources.MemoryBytes),
 		RestartPolicy: "unless-stopped",
 		Healthcheck: Healthcheck{
-			Test:     []string{"CMD", "curl", "--fail", "--silent", "http://127.0.0.1:" + port + "/status"},
-			Interval: 2 * time.Second, Timeout: 2 * time.Second, StartPeriod: 2 * time.Second, Retries: 15,
+			Test:          []string{"CMD", "curl", "--fail", "--silent", "http://127.0.0.1:" + port + "/status"},
+			Interval:      10 * time.Second,
+			Timeout:       2 * time.Second,
+			StartPeriod:   30 * time.Second,
+			StartInterval: 2 * time.Second,
+			Retries:       3,
 		},
 	}, nil
 }

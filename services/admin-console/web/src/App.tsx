@@ -487,7 +487,7 @@ export default function App() {
           ) : null}
           {route.page === "models" ? <ModelsPage modelID={route.resourceID} revisionID={route.revisionID} /> : null}
           {route.page === "templates" ? <TemplatesPage templateID={route.resourceID} revisionID={route.revisionID} /> : null}
-          {route.page === "agents" ? <AgentsPage agentID={route.resourceID} /> : null}
+          {route.page === "agents" ? <AgentsPage agentID={route.resourceID} networkScope={JSON.stringify([session.principal.organization_id, session.principal.user_id])} /> : null}
         </main>
       </div>
     </div>

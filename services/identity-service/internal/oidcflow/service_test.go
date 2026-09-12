@@ -372,6 +372,9 @@ func TestCompleteLoginTerminalizesExchangeFailure(t *testing.T) {
 	if err == nil || repository.failed.SessionID == "" || repository.failed.Stage != "exchange" {
 		t.Fatalf("exchange error=%v failure=%#v", err, repository.failed)
 	}
+	if !errors.Is(err, federation.exchangeErr) {
+		t.Fatal("terminal OIDC error lost its original cause")
+	}
 	if strings.Contains(repository.failed.Reason, sensitiveProviderResponse) {
 		t.Fatalf("failure reason persisted sensitive provider response: %q", repository.failed.Reason)
 	}

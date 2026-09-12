@@ -11,6 +11,27 @@ After privileged bootstrap, Runtime emits:
 Telemetry is diagnostic, never an audit ledger. Export failure does not change
 status, MCP tool results, or network policy.
 
+Runtime Controller injects optional `ANTNEST_RUNTIME_IMAGE_REFERENCE` (the original
+configured name/tag/digest) and `ANTNEST_RUNTIME_IMAGE_ID` (the Docker image ID
+selected for this build). Runtime captures them once at startup and attaches
+`antnest.runtime.image.reference` and `antnest.runtime.image.id` to its trace
+resource and initialization log. Every exported Runtime span therefore identifies
+its build without per-handler instrumentation. Missing values remain unknown;
+Runtime does not inspect Docker or resolve tags. Neither value is a metric
+dimension, RuntimeSpec field, MCP tool, or model-context instruction. The durable
+audit record belongs to Runtime Controller's operation, not the container logs.
+
+Tool progress is caller-facing output, not telemetry. Preview frames stay on
+the Executor pipe / MCP response and create no per-chunk spans or audit rows.
+Delivery failure emits a bounded `progress_delivery_failed` or
+`progress_delivery_timeout` warning inside the existing request trace, without
+tokens or message content. Slow subscribers do not change the authoritative
+Tool outcome. See [Tool progress](tool-progress.md) for delivery bounds.
+
+File before/after observations are MCP result metadata, not telemetry. They do
+not add spans or log fields. The existing MCP result can be captured as an RPC
+response when content capture is explicitly enabled; it is never copied to logs. See [File observations](file-observations.md).
+
 Request, tool, and Executor records carry:
 
 - `service.name=antnest-runtime`;
@@ -36,23 +57,28 @@ standard resource attributes for local operations.
 | --- | --- |
 | `runtime.process` | One Runtime process lifetime, from telemetry initialization through service shutdown |
 | `runtime.network` | One UDP-tunnel network session from start through shutdown or fatal error |
-| `runtime.http` | One `/status` or `/mcp` HTTP request |
+| `HTTP GET /status`, `HTTP POST /mcp`, etc. | One normalized HTTP SERVER request, including upstream-context health checks |
 | `runtime.mcp.tool` | One `bash`, `read`, `write`, or `edit` call |
 | `runtime.executor` | One non-privileged tool subprocess from spawn through complete reaping |
+| `runtime.mcp.stdio` | One managed stdio tool CLIENT call, including its protocol result |
 
 HTTP path labels are normalized to `/status`, `/mcp`, or `unmatched`; arbitrary
-request paths are never exported. HTTP spans describe transport completion only.
-Official SDK handler hooks emit a separate normalized `runtime.mcp.operation`
+request paths are never exported. HTTP status and transport outcome describe
+transport completion; protocol failure also marks the shared SERVER span as
+failed without overwriting the actual HTTP status.
+One official SDK `ServerHandler` decorator emits a normalized `runtime.mcp.operation`
 span for initialize, discovery, tool listing, tool dispatch, resource listing,
 and resource reads, including MCP
 outcome and stable JSON-RPC error code. A tool execution span begins only after
-the SDK has decoded its typed parameters. MCP/JSON-RPC errors encoded in a
-successful HTTP response therefore remain errors at the MCP layer without being
-misreported as HTTP failures or tool executions.
+the SDK has decoded its typed parameters. Handler-returned MCP/JSON-RPC errors
+encoded in a successful HTTP response remain protocol errors without inventing
+an HTTP 500. Rejections made inside the SDK before handler dispatch do not create
+a tool execution or handler span; they currently retain HTTP transport evidence
+only. The SDK, not the decorator, owns protocol dispatch.
 
 `antnest://runtime/info` adds an `info` Executor span beneath `resources/read`;
-it is not counted as a model Tool invocation. Instruction text, Skill metadata,
-and the serialized information Resource are excluded from logs and spans.
+it is not counted as a model Tool invocation. The complete information Resource is captured only as a discrete RPC result when
+the shared content switch is enabled, never as an extra snapshot or log record.
 
 Every HTTP request also emits one structured completion event after its body
 reaches end-of-stream, fails, or is dropped by a disconnected client. The event
@@ -60,11 +86,11 @@ uses a normalized route, method, status code, outcome, and bounded error type.
 It is present when OTLP is disabled, so stderr logs remain a complete
 request-level diagnostic channel.
 
-Tool and Executor spans record only tool name, outcome, stable error code,
-duration, child PID, exit classification, Agent ID, and generation. Relative
-filesystem paths may appear in error logs, but
-spans and logs must not record command text, environment values, file contents,
-stdout/stderr, raw packets, DNS questions, prompts, or model messages.
+Tool and Executor spans record tool name, outcome, stable error code,
+duration, child PID, numeric exit status, deadline, Agent ID, and generation.
+HTTP, Executor, managed stdio CLIENT spans and completion logs are metadata-only.
+Discrete inbound MCP requests/results use the shared RPC capture switch below.
+No packet or progress notification contents are captured.
 
 The Runtime-to-Egress packet path does not participate in distributed tracing.
 Runtime records one bounded network-session span and start/completion events,
@@ -88,8 +114,43 @@ The official MCP SDK owns MCP request metadata. Runtime extracts W3C
 `baggage`. Trace propagation must not be implemented as a second custom MCP
 envelope.
 
-The Agent system owns the parent tool-call span. Runtime's tool span is its
-server-side child. Packet-level events are not traced individually.
+The Agent system owns the upstream tool-call span. Runtime's tool span is its
+server-side descendant through HTTP and MCP dispatch. Packet-level events are
+not traced individually.
+
+## Boundary Diagnostic Contract
+
+This service implements the service-owned portion of
+[the platform contract](../../../docs/observability-contract.md). Linux unit,
+HTTP component, CLI, Clippy and build results are recorded in the
+[platform rollout](../../../docs/observability-rollout.md). A deployed Agent's
+complete Jaeger chain remains a separate business-scenario acceptance step.
+
+The single deployment switch `ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT=false` is
+read at startup, before environment sanitization. Set it to `true` to capture
+complete decoded MCP request/result JSON, including tool arguments, results,
+metadata and runtime information. These may contain credentials or private files;
+enable only for authorized diagnostic collection. No field registry, redaction
+projection, application payload cap or custom event budget is maintained.
+Standard OTel SDK limits and exporter behavior still apply.
+
+The official SDK ServerHandler decorator records payloads once on its discrete
+RPC operation span. HTTP middleware owns the SERVER span through EOF/error/drop
+without reading ahead or capturing headers/bodies. Executor and managed MCP
+CLIENT spans retain timing, outcomes and error causes, without duplicating RPC
+content. Notifications, progress and streamed transport frames are never captured.
+Turning capture off does not serialize values or emit omission events.
+
+MCP `isError` and JSON-RPC failures mark the operation and parent HTTP span as
+failed without changing the real HTTP status. The SDK owns protocol dispatch;
+rejections before handler dispatch retain HTTP evidence only. No retry, execution
+policy, wire envelope or lifecycle change is introduced by telemetry.
+
+Managed CLIENT spans inject W3C context through the official SDK request metadata.
+Child-side tracing remains the managed program's responsibility. Readiness checks
+initialized local state, never downstream platform services. Packet forwarding is
+outside distributed tracing. Deployment Jaeger checks remain a separate acceptance
+step from local tests.
 
 ## OTLP Configuration
 

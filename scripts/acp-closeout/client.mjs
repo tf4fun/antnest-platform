@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, writeFile } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import { Pool } from "pg";
 import {
   BrowserSession,
@@ -9,6 +9,10 @@ import {
   assertMessageReplay,
 } from "./support.mjs";
 import { verifyTraces } from "../managed-mcp/trace.mjs";
+import { assertEmptySession } from "../identity-closeout/acp-session-evidence.mjs";
+import { assertOrdinaryTool } from "../acp-commands/evidence.mjs";
+import { uncertainEffect } from "./uncertain.mjs";
+import { publishCheckpoint } from "./checkpoint.mjs";
 
 const admin = new BrowserSession();
 const owner = new BrowserSession();
@@ -77,20 +81,28 @@ async function settled(session) {
     return run?.admission_finished_at ? run : false;
   }, "admission finished");
 }
-async function restartACP() {
+async function restartACP(checkpoint = { kind: "restart" }) {
   const id = ++restarts;
-  await writeFile(`/checkpoints/request-${id}`, "restart ACP only\n");
+  await publishCheckpoint(`/checkpoints/request-${id}`, checkpoint);
+  await waitCheckpoint(`done-${id}`);
+  return JSON.parse(await readFile(`/checkpoints/proof-${id}`, "utf8"));
+}
+async function observeRetirement() {
+  await publishCheckpoint(`/checkpoints/retire-request-${restarts}`, {});
+  await waitCheckpoint(`retired-${restarts}`);
+}
+async function waitCheckpoint(name) {
   await until(
     async () => {
       try {
-        await access(`/checkpoints/done-${id}`);
+        await access(`/checkpoints/${name}`);
         return true;
       } catch (error) {
         if (error.code === "ENOENT") return false;
         throw error;
       }
     },
-    "host process restart",
+    `host checkpoint ${name}`,
     90000,
   );
 }
@@ -121,6 +133,8 @@ async function isolation(version, agent, session, ownerClient) {
       listed.sessions.some((item) => item.sessionId === created.sessionId),
     );
     assert(!listed.sessions.some((item) => item.sessionId === session));
+    assertEmptySession(client.updates, created.sessionId, version, "new");
+    const setupUpdates = structuredClone(client.updates);
     const before = await snapshot();
     for (const method of [
       version === 1 ? "load" : "resume",
@@ -146,7 +160,7 @@ async function isolation(version, agent, session, ownerClient) {
       );
       assert.deepEqual(await snapshot(), before);
     }
-    assert.deepEqual(client.updates, [], "foreign history leaked");
+    assert.deepEqual(client.updates, setupUpdates, "foreign history leaked");
     close(client);
   }
   const revoked = await ownerClient.request("new", {
@@ -172,10 +186,35 @@ async function isolation(version, agent, session, ownerClient) {
   // Edge rejects before ACP admission; even a failed Run intent would be a regression.
   assert.deepEqual(await snapshot(), before);
   assert.deepEqual(await modelStatus(), beforeCalls);
+  for (const ownedAgent of agents.slice(0, 2))
+    await until(
+      async () =>
+        (await admin.request(`/api/admin/agents/${ownedAgent}`))
+          .lifecycle_state === "disabled",
+      "owner offboarding settled",
+      120000,
+    );
   await admin.request(
     `/api/admin/directory/users/${owner.principal.user_id}/active`,
     { active: true },
   );
+  // Restoring a person never silently re-enables their Agents.
+  for (const ownedAgent of agents.slice(0, 2)) {
+    assert.equal(
+      (await admin.request(`/api/admin/agents/${ownedAgent}`)).lifecycle_state,
+      "disabled",
+    );
+    const enabled = await admin.request(
+      `/api/admin/agents/${ownedAgent}/enable`,
+      {},
+      202,
+    );
+    await admin.waitOperation(enabled.request_id);
+    assert.equal(
+      (await admin.request(`/api/admin/agents/${ownedAgent}`)).lifecycle_state,
+      "available",
+    );
+  }
   await owner.login("acp-owner@example.com", "acp-owner-password");
 }
 
@@ -272,7 +311,7 @@ async function exercise(version) {
   assertMessageReplay(first, await history(session), version);
   const encoded = JSON.stringify(first);
   assert(encoded.includes(`${phase} verified`));
-  assert(encoded.includes(`${phase}-tool`));
+  assertOrdinaryTool(first, version, phase);
   assert(encoded.indexOf(phase) < encoded.indexOf(`${phase} verified`));
   assert.deepEqual(await client.replay(session, "end_turn"), first);
   const before = await snapshot();
@@ -339,11 +378,28 @@ async function exercise(version) {
       `replayed effect: ${marker}`,
     );
   close(client);
+  const uncertain = await uncertainEffect({
+    version,
+    agent,
+    session,
+    admin,
+    owner,
+    pool,
+    open,
+    close,
+    history,
+    currentRun,
+    modelStatus,
+    restartACP,
+    observeRetirement,
+    settled,
+  });
   metrics.push({
     version,
     identity_isolation: true,
     owner_deactivation: true,
-    restarts: 3,
+    restarts: 4,
+    uncertain_effect: uncertain,
     replay_without_execution: true,
     no_repeated_append: true,
     traces,
@@ -412,6 +468,8 @@ try {
   }
   for (const version of [1, 2]) await exercise(version);
   const calls = await modelStatus();
+  assert.equal(restarts, 8);
+  assert.equal(calls.length, 26);
   process.stdout.write(
     JSON.stringify({
       status: "passed",

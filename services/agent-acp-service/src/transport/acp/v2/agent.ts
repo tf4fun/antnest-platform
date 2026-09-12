@@ -1,7 +1,12 @@
 import * as acp from "@agentclientprotocol/sdk/experimental/v2";
-import { context, propagation, type TextMapGetter } from "@opentelemetry/api";
+import { fileContent } from "./file-content.js";
+import { v2Configuration } from "../configuration.js";
+import { permissionRequest, v2Permission } from "../permission-request.js";
+import type { PermissionConnectionsPort } from "../../../ports/tool-permissions.js";
+import { createAcpDispatcher } from "../../../telemetry/acp-dispatch.js";
 
 import { DomainError } from "../../../domain/errors.js";
+import { availableCommands } from "../../../domain/slash-commands.js";
 import type { ClientMcpInput } from "../../../domain/mcp.js";
 import type { ConnectionBinding, ContentBlock } from "../../../domain/types.js";
 import type {
@@ -14,9 +19,10 @@ import { SessionOutputStreams, sessionOutputKey } from "../session-output.js";
 
 export type CreateAcpAgentInput = {
   binding: ConnectionBinding;
-  promptCapabilities: { image: boolean; embeddedContext: boolean };
+  promptCapabilities: { image: boolean; embeddedContext: boolean; audio?: boolean };
   application: AcpApplicationPort;
   outputs?: SessionOutputStreams;
+  permissions?: PermissionConnectionsPort;
 };
 
 export function createAcpV2Agent({
@@ -24,16 +30,71 @@ export function createAcpV2Agent({
   promptCapabilities,
   application,
   outputs = new SessionOutputStreams(),
+  permissions,
 }: CreateAcpAgentInput): acp.AgentApp {
+  const dispatch = createAcpDispatcher("v2", binding);
   let connection: acp.AgentConnection;
+  const attachPermission = (sessionId: string) =>
+    permissions?.attach({
+      binding,
+      sessionId,
+      signal: connection.signal,
+      request: (request, signal) =>
+        permissionRequest(
+          () =>
+            connection.client.request(
+              acp.methods.client.session.requestPermission,
+              v2Permission(request),
+              { cancellationSignal: signal },
+            ),
+          signal,
+          (error) => connection.close(error),
+        ),
+    });
+  const sessionSetup = async (sessionId: string) => {
+    const result = v2Configuration(
+      await mapError(() => application.getSessionConfiguration({ binding, sessionId })),
+    );
+    await connection.client.notify(acp.methods.client.session.update, {
+      sessionId,
+      update: {
+        sessionUpdate: "available_commands_update",
+        availableCommands: availableCommands(),
+      },
+    });
+    return result;
+  };
+  const attach = async (sessionId: string) => {
+    const output = await mapError(() => application.readSessionOutput({ binding, sessionId }));
+    await outputs.attach({
+      keepExisting: true,
+      afterSequence: output.sequence,
+      initialState: output.state,
+      key: sessionOutputKey(binding, sessionId),
+      connectionId: binding.connectionId,
+      signal: connection.signal,
+      onFailure: (error) => connection.close(error),
+      read: (cursor) =>
+        application.readSessionOutput({
+          binding,
+          sessionId,
+          ...(cursor === undefined ? {} : { afterSequence: cursor }),
+        }),
+      send: (event) =>
+        sendEvent(event, (update) =>
+          connection.client.notify(acp.methods.client.session.update, { sessionId, update }),
+        ),
+    });
+    attachPermission(sessionId);
+  };
   return acp
     .agent({ name: "antnest-agent-acp-service" })
     .onConnect((opened) => {
       connection = opened;
       void opened.closed.then(() => outputs.disconnect(binding.connectionId));
     })
-    .onRequest(acp.methods.agent.initialize, ({ params }) =>
-      withAcpTrace(params._meta, () => ({
+    .onRequest(acp.methods.agent.initialize, ({ params, requestId }) =>
+      dispatch("initialize", params, requestId, () => ({
         protocolVersion: acp.PROTOCOL_VERSION,
         info: {
           name: "antnest-agent-acp-service",
@@ -46,26 +107,29 @@ export function createAcpV2Agent({
             fork: {},
             prompt: {
               ...(promptCapabilities.image ? { image: {} } : {}),
+              ...(promptCapabilities.audio ? { audio: {} } : {}),
               ...(promptCapabilities.embeddedContext ? { embeddedContext: {} } : {}),
             },
           },
         },
       })),
     )
-    .onRequest(acp.methods.agent.session.new, ({ params }) =>
-      withAcpTrace(params._meta, () =>
-        mapError(() =>
+    .onRequest(acp.methods.agent.session.new, ({ params, requestId }) =>
+      dispatch("session/new", params, requestId, async () => {
+        const result = await mapError(() =>
           application.createSession({
             binding,
             cwd: params.cwd,
             additionalDirectories: [...(params.additionalDirectories ?? [])],
             mcpServers: toClientMcpInputs(params.mcpServers ?? []),
           }),
-        ),
-      ),
+        );
+        await attach(result.sessionId);
+        return { ...result, ...(await sessionSetup(result.sessionId)) };
+      }),
     )
-    .onRequest(acp.methods.agent.session.list, ({ params }) =>
-      withAcpTrace(params._meta, async () => {
+    .onRequest(acp.methods.agent.session.list, ({ params, requestId }) =>
+      dispatch("session/list", params, requestId, async () => {
         const result = await mapError(() =>
           application.listSessions({
             binding,
@@ -86,15 +150,16 @@ export function createAcpV2Agent({
         };
       }),
     )
-    .onRequest(acp.methods.agent.session.delete, ({ params }) =>
-      withAcpTrace(params._meta, async () => {
+    .onRequest(acp.methods.agent.session.delete, ({ params, requestId }) =>
+      dispatch("session/delete", params, requestId, async () => {
         await mapError(() => application.deleteSession({ binding, sessionId: params.sessionId }));
+        permissions?.detach(params.sessionId);
         return {};
       }),
     )
-    .onRequest(acp.methods.agent.session.fork, ({ params }) =>
-      withAcpTrace(params._meta, () =>
-        mapError(() =>
+    .onRequest(acp.methods.agent.session.fork, ({ params, requestId }) =>
+      dispatch("session/fork", params, requestId, async () => {
+        const result = await mapError(() =>
           application.forkSession({
             binding,
             sessionId: params.sessionId,
@@ -102,11 +167,13 @@ export function createAcpV2Agent({
             additionalDirectories: [...(params.additionalDirectories ?? [])],
             mcpServers: toClientMcpInputs(params.mcpServers ?? []),
           }),
-        ),
-      ),
+        );
+        await attach(result.sessionId);
+        return { ...result, ...(await sessionSetup(result.sessionId)) };
+      }),
     )
-    .onRequest(acp.methods.agent.session.resume, ({ params, client }) =>
-      withAcpTrace(params._meta, async () => {
+    .onRequest(acp.methods.agent.session.resume, ({ params, client, requestId }) =>
+      dispatch("session/resume", params, requestId, async () => {
         if (
           params.replayFrom !== null &&
           params.replayFrom !== undefined &&
@@ -128,10 +195,12 @@ export function createAcpV2Agent({
           }),
         );
         for (const event of result.replay) {
-          await client.notify(acp.methods.client.session.update, {
-            sessionId: params.sessionId,
-            update: toAcpUpdate(event),
-          });
+          await sendEvent(event, (update) =>
+            client.notify(acp.methods.client.session.update, {
+              sessionId: params.sessionId,
+              update,
+            }),
+          );
         }
         const initialState = result.replay.find((event) => event.kind === "state");
         await outputs.attach({
@@ -148,22 +217,47 @@ export function createAcpV2Agent({
               ...(cursor === undefined ? {} : { afterSequence: cursor }),
             }),
           send: (event) =>
-            client.notify(acp.methods.client.session.update, {
-              sessionId: params.sessionId,
-              update: toAcpUpdate(event),
-            }),
+            sendEvent(event, (update) =>
+              client.notify(acp.methods.client.session.update, {
+                sessionId: params.sessionId,
+                update,
+              }),
+            ),
         });
-        return {};
+        attachPermission(params.sessionId);
+        return sessionSetup(params.sessionId);
       }),
     )
-    .onRequest(acp.methods.agent.session.close, ({ params }) =>
-      withAcpTrace(params._meta, async () => {
+    .onRequest(acp.methods.agent.session.setConfigOption, ({ params, requestId }) =>
+      dispatch("session/set_config_option", params, requestId, async () => {
+        if (params.type !== "id" && params.type !== "boolean")
+          throw acp.RequestError.invalidParams(undefined, "Unsupported configuration value type");
+        if (typeof params.value !== "string" && typeof params.value !== "boolean")
+          throw acp.RequestError.invalidParams(undefined, "Unsupported configuration value");
+        await attach(params.sessionId);
+        const result = await mapError(() =>
+          application.setSessionConfiguration({
+            binding,
+            sessionId: params.sessionId,
+            configId: params.configId,
+            value: params.value as string | boolean,
+          }),
+        );
+        const key = sessionOutputKey(binding, params.sessionId);
+        outputs.invalidate(key);
+        await outputs.flush(key, binding.connectionId);
+        return v2Configuration(result);
+      }),
+    )
+    .onRequest(acp.methods.agent.session.close, ({ params, requestId }) =>
+      dispatch("session/close", params, requestId, async () => {
         await mapError(() => application.closeSession({ binding, sessionId: params.sessionId }));
+        permissions?.detach(params.sessionId);
         return {};
       }),
     )
-    .onRequest(acp.methods.agent.session.prompt, ({ params }) =>
-      withAcpTrace(params._meta, async () => {
+    .onRequest(acp.methods.agent.session.prompt, ({ params, requestId }) =>
+      dispatch("session/prompt", params, requestId, async () => {
         if (!isPromptSupported(params.prompt, promptCapabilities)) {
           await mapError(() => application.assertAccess({ binding }));
           assertPromptSupported(params.prompt, promptCapabilities);
@@ -175,6 +269,7 @@ export function createAcpV2Agent({
             prompt: toDomainContent(params.prompt),
           }),
         );
+        attachPermission(params.sessionId);
         setImmediate(() => {
           void startRun({
             application,
@@ -190,7 +285,7 @@ export function createAcpV2Agent({
       }),
     )
     .onNotification(acp.methods.agent.session.cancel, ({ params }) =>
-      withAcpTrace(params._meta, () =>
+      dispatch("session/cancel", params, undefined, () =>
         mapError(() => application.cancelRun({ binding, sessionId: params.sessionId })),
       ),
     );
@@ -229,7 +324,11 @@ async function startRun({
           ...(cursor === undefined ? {} : { afterSequence: cursor }),
         }),
       send: (event) =>
-        client.notify(acp.methods.client.session.update, { sessionId, update: toAcpUpdate(event) }),
+        event.kind === "user_message" && event.messageId === accepted.userMessageId
+          ? Promise.resolve()
+          : sendEvent(event, (update) =>
+              client.notify(acp.methods.client.session.update, { sessionId, update }),
+            ),
       beforeFirst: async () => {
         await client.notify(acp.methods.client.session.update, {
           sessionId,
@@ -262,8 +361,36 @@ async function startRun({
   }
 }
 
+async function sendEvent(
+  event: SessionEvent,
+  send: (update: acp.SessionUpdate) => Promise<void>,
+): Promise<void> {
+  if (
+    (event.kind === "agent_message" || event.kind === "agent_thought") &&
+    event.responseId !== undefined
+  ) {
+    for (const content of event.content) {
+      await send({
+        sessionUpdate:
+          event.kind === "agent_message" ? "agent_message_chunk" : "agent_thought_chunk",
+        messageId: event.responseId,
+        content: content as acp.ContentBlock,
+      });
+    }
+    return;
+  }
+  await send(toAcpUpdate(event));
+}
+
 function toAcpUpdate(event: SessionEvent): acp.SessionUpdate {
   switch (event.kind) {
+    case "configuration":
+      return { sessionUpdate: "config_option_update", ...v2Configuration(event.configuration) };
+    case "plan":
+      return {
+        sessionUpdate: "plan_update",
+        plan: { type: "items", planId: "current", entries: event.entries },
+      };
     case "user_message":
     case "agent_message":
     case "agent_thought":
@@ -276,21 +403,36 @@ function toAcpUpdate(event: SessionEvent): acp.SessionUpdate {
       return {
         sessionUpdate: "tool_call_update",
         toolCallId: event.toolCallId,
+        ...(event.toolKind === undefined ? {} : { kind: event.toolKind }),
+        ...(event.file === undefined
+          ? event.locations === undefined
+            ? {}
+            : { locations: event.locations }
+          : { locations: [{ path: event.file.path }] }),
+        ...(event.rawOutput === undefined ? {} : { rawOutput: event.rawOutput }),
         ...(event.modelName === undefined ? {} : { name: event.modelName }),
         ...(event.title === undefined ? {} : { title: event.title }),
         ...(event.arguments === undefined ? {} : { rawInput: event.arguments }),
         status: event.status,
-        ...(event.content === undefined
+        ...(event.content === undefined && event.file === undefined
           ? {}
           : {
-              content: event.content.map((content) => ({
-                type: "content" as const,
-                content: content,
-              })),
+              content: [
+                ...(event.content ?? []).map((content) => ({
+                  type: "content" as const,
+                  content: content,
+                })),
+                ...fileContent(event.file),
+              ],
             }),
       };
     case "usage":
-      return { sessionUpdate: "usage_update", used: event.used, size: event.size };
+      return {
+        sessionUpdate: "usage_update",
+        used: event.used,
+        size: event.size,
+        ...(event.cost === undefined ? {} : { cost: event.cost }),
+      };
     case "state":
       return {
         sessionUpdate: "state_update",
@@ -313,6 +455,7 @@ function assertPromptSupported(
       block.type === "text" ||
       block.type === "resource_link" ||
       (block.type === "image" && capabilities.image) ||
+      (block.type === "audio" && capabilities.audio === true) ||
       (block.type === "resource" && capabilities.embeddedContext);
     if (!supported) {
       throw acp.RequestError.invalidParams(
@@ -332,6 +475,7 @@ function isPromptSupported(
       block.type === "text" ||
       block.type === "resource_link" ||
       (block.type === "image" && capabilities.image) ||
+      (block.type === "audio" && capabilities.audio === true) ||
       (block.type === "resource" && capabilities.embeddedContext),
   );
 }
@@ -339,25 +483,6 @@ function isPromptSupported(
 function toClientMcpInputs(servers: readonly acp.McpServer[]): ClientMcpInput[] {
   return servers.map((server) => structuredClone(server) as ClientMcpInput);
 }
-
-function withAcpTrace<Result>(
-  metadata: { [key: string]: unknown } | null | undefined,
-  operation: () => Result,
-): Result {
-  if (metadata === null || metadata === undefined) {
-    return operation();
-  }
-  const requestContext = propagation.extract(context.active(), metadata, META_GETTER);
-  return context.with(requestContext, operation);
-}
-
-const META_GETTER: TextMapGetter<{ [key: string]: unknown }> = {
-  keys: (metadata) => Object.keys(metadata),
-  get: (metadata, key) => {
-    const value = metadata[key];
-    return typeof value === "string" || Array.isArray(value) ? value : undefined;
-  },
-};
 
 async function mapError<T>(operation: () => Promise<T>): Promise<T> {
   try {
@@ -367,16 +492,22 @@ async function mapError<T>(operation: () => Promise<T>): Promise<T> {
       throw error;
     }
     if (error instanceof DomainError) {
-      throw new acp.RequestError(-32020, error.message, {
-        code: error.code,
-        retryable: false,
-      });
+      throw Object.assign(
+        new acp.RequestError(-32020, error.message, {
+          code: error.code,
+          retryable: false,
+        }),
+        { cause: error },
+      );
     }
     if (error instanceof AgentControllerError) {
-      throw new acp.RequestError(-32021, error.message, {
-        code: error.code,
-        retryable: error.retryable,
-      });
+      throw Object.assign(
+        new acp.RequestError(-32021, error.message, {
+          code: error.code,
+          retryable: error.retryable,
+        }),
+        { cause: error },
+      );
     }
     throw error;
   }

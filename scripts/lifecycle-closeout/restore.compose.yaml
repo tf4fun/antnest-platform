@@ -1,0 +1,4 @@
+# Test-only deterministic model; all product services remain unmodified.
+services:
+  stage3-model:
+    command: ["node", "/lifecycle/restore-model.mjs"]

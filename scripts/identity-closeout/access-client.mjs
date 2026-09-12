@@ -234,7 +234,9 @@ const changed = await a.request("/api/admin/account/password", {
 assert.equal(changed.body.status, "changed");
 traces.push({
   traceID: changed.traceID,
-  repository: "identity.repository.change_local_password",
+  method: "POST",
+  route: "/rpc/identity/change-local-password",
+  rpcMethod: "change_local_password",
   console: true,
 });
 for (const browser of [a, a2, shared])
@@ -291,7 +293,9 @@ const disabled = await root.request(
 );
 traces.push({
   traceID: disabled.traceID,
-  repository: "identity.repository.set_user_active",
+  method: "POST",
+  route: "/rpc/identity/set-user-active",
+  rpcMethod: "set_user_active",
   console: true,
 });
 for (const active of [false, true]) {

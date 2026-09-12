@@ -22,6 +22,7 @@ import (
 	"soft/antnest-platform/services/agent-controller/internal/application"
 	"soft/antnest-platform/services/agent-controller/internal/domain"
 	"soft/antnest-platform/services/agent-controller/internal/ports"
+	"soft/antnest-platform/services/agent-controller/internal/telemetry"
 )
 
 const maximumRequestBytes = 2 << 20
@@ -49,7 +50,7 @@ var (
 )
 
 type CatalogService interface {
-	ModelCatalog(context.Context) application.ModelCatalogView
+	ProviderService
 	CreateModelProfile(context.Context, application.CreateModelProfileInput) (application.ModelProfileView, error)
 	ReviseModelProfile(context.Context, application.ReviseModelProfileInput) (application.ModelProfileView, error)
 	GetModelProfile(context.Context, string, string) (application.ModelProfileView, error)
@@ -72,6 +73,8 @@ type LifecycleService interface {
 }
 
 type RunService interface {
+	GetSessionConfiguration(context.Context, application.SessionConfigurationInput) (ports.SessionConfiguration, error)
+	SetAgentAuthorization(context.Context, application.SetAgentAuthorizationInput) (int64, error)
 	ResolveAgentAccess(context.Context, application.ResolveAgentAccessInput) (application.AgentAccessView, error)
 	AcquireRun(context.Context, application.AcquireRunInput) (application.AcquireRunResult, error)
 	ResolveCredential(context.Context, application.ResolveCredentialInput) (application.CredentialView, error)
@@ -79,6 +82,8 @@ type RunService interface {
 }
 
 type AgentQueryService interface {
+	GetWorkspaceAgentState(context.Context, application.WorkspaceStateInput) (application.WorkspaceAgentState, error)
+	WatchWorkspaceAgentState(context.Context, application.WorkspaceStateInput, application.WorkspaceStateEmitter) error
 	GetAgent(context.Context, string) (application.AgentView, error)
 	GetAgentForOrganization(context.Context, string, string) (application.AgentView, error)
 	ListAgents(context.Context, application.ListAgentsInput) (application.AgentPage, error)
@@ -100,12 +105,14 @@ type handler struct {
 	runs      RunService
 	queries   AgentQueryService
 	events    AgentEventService
+	network   NetworkPolicyService
 	health    HealthCheck
 }
 
 type routeDefinition struct {
-	pattern string
-	handler http.HandlerFunc
+	pattern      string
+	handler      http.HandlerFunc
+	metadataOnly bool
 }
 
 func NewHandler(
@@ -114,6 +121,7 @@ func NewHandler(
 	runs RunService,
 	queries AgentQueryService,
 	events AgentEventService,
+	network NetworkPolicyService,
 	health HealthCheck,
 ) (http.Handler, error) {
 	if catalog == nil {
@@ -134,26 +142,40 @@ func NewHandler(
 	if health == nil {
 		return nil, fmt.Errorf("health check is required")
 	}
+	if network == nil {
+		return nil, fmt.Errorf("network policy service is required")
+	}
 	h := &handler{
-		catalog: catalog, lifecycle: lifecycle, runs: runs, queries: queries, events: events, health: health,
+		catalog: catalog, lifecycle: lifecycle, runs: runs, queries: queries, events: events, network: network, health: health,
 	}
 	mux := http.NewServeMux()
 	for _, route := range h.routes() {
-		mux.HandleFunc(route.pattern, route.handler)
+		var endpoint http.Handler = route.handler
+		if !route.metadataOnly {
+			endpoint = telemetry.RPCHandler(route.pattern, endpoint)
+		}
+		mux.Handle(route.pattern, endpoint)
 	}
 	return mux, nil
 }
 
 func (h *handler) routes() []routeDefinition {
 	return []routeDefinition{
-		{pattern: "GET /status", handler: h.status},
-		{pattern: "GET /rpc/agent-controller/status", handler: h.status},
+		{pattern: "GET /status", handler: h.status, metadataOnly: true},
+		{pattern: "GET /rpc/agent-controller/status", handler: h.status, metadataOnly: true},
 		{pattern: "POST /rpc/agent-controller/list-workspace-agents", handler: h.listWorkspaceAgents},
 		{pattern: "POST /rpc/agent-controller/resolve-agent-access", handler: h.resolveAgentAccess},
 		{pattern: "POST /rpc/agent-controller/acquire-run", handler: h.acquireRun},
+		{pattern: "POST /rpc/agent-controller/get-session-configuration", handler: h.getSessionConfiguration},
+		{pattern: "POST /rpc/agent-controller/set-agent-authorization", handler: h.setAgentAuthorization},
 		{pattern: "POST /rpc/agent-controller/resolve-credential", handler: h.resolveCredential},
 		{pattern: "POST /rpc/agent-controller/finish-run", handler: h.finishRun},
-		{pattern: "GET /internal/model-catalog", handler: h.modelCatalog},
+		{pattern: "GET /internal/workspace/agents/{agent_id}/state", handler: h.getWorkspaceState},
+		{pattern: "GET /internal/workspace/agents/{agent_id}/state/watch", handler: h.watchWorkspaceState, metadataOnly: true},
+		{pattern: "POST /internal/provider-connections", handler: h.createProviderConnection},
+		{pattern: "GET /internal/provider-connections", handler: h.listProviderConnections},
+		{pattern: "GET /internal/provider-connections/{connection_id}", handler: h.getProviderConnection},
+		{pattern: "POST /internal/provider-connections/{connection_id}/credentials", handler: h.rotateProviderCredential},
 		{pattern: "POST /internal/model-profiles", handler: h.createModelProfile},
 		{pattern: "GET /internal/model-profiles", handler: h.listModelProfiles},
 		{pattern: "GET /internal/model-profiles/{model_profile_id}", handler: h.getModelProfile},
@@ -167,61 +189,57 @@ func (h *handler) routes() []routeDefinition {
 		{pattern: "POST /internal/agents", handler: h.createAgent},
 		{pattern: "GET /internal/agents", handler: h.listAgents},
 		{pattern: "GET /internal/agents/{agent_id}", handler: h.getAgent},
+		{pattern: "GET /internal/agents/{agent_id}/network-policy", handler: h.getAgentNetworkPolicy},
+		{pattern: "PUT /internal/agents/{agent_id}/network-policy", handler: h.setAgentNetworkPolicy},
 		{pattern: "POST /internal/agents/{agent_id}/rebuild", handler: h.rebuildAgent},
 		{pattern: "POST /internal/agents/{agent_id}/disable", handler: h.disableAgent},
 		{pattern: "POST /internal/agents/{agent_id}/enable", handler: h.enableAgent},
 		{pattern: "POST /internal/agents/{agent_id}/delete", handler: h.deleteAgent},
 		{pattern: "GET /internal/agent-operations/{request_id}", handler: h.getLifecycleOperation},
 		{pattern: "GET /internal/agent-events", handler: h.listGlobalAgentEvents},
-		{pattern: "GET /internal/agent-events/watch", handler: h.watchGlobalAgentEvents},
+		{pattern: "GET /internal/agent-events/watch", handler: h.watchGlobalAgentEvents, metadataOnly: true},
 		{pattern: "GET /internal/agents/{agent_id}/events", handler: h.listAgentEvents},
-		{pattern: "GET /internal/agents/{agent_id}/events/watch", handler: h.watchAgentEvents},
+		{pattern: "GET /internal/agents/{agent_id}/events/watch", handler: h.watchAgentEvents, metadataOnly: true},
 	}
 }
 
-type credentialInput struct {
-	SecretType string `json:"secret_type"`
-	Secret     string `json:"secret"`
-}
-
 type createModelProfileRequest struct {
-	RequestID      string           `json:"request_id"`
-	OrganizationID string           `json:"organization_id"`
-	ProfileKey     string           `json:"profile_key"`
-	DisplayName    string           `json:"display_name"`
-	Model          domain.ModelSpec `json:"model"`
-	Credential     credentialInput  `json:"credential"`
+	RequestID            string                 `json:"request_id"`
+	OrganizationID       string                 `json:"organization_id"`
+	ProfileKey           string                 `json:"profile_key"`
+	DisplayName          string                 `json:"display_name"`
+	Model                domain.ModelParameters `json:"model"`
+	ProviderConnectionID string                 `json:"provider_connection_id"`
 }
 
 type reviseModelProfileRequest struct {
-	RequestID      string           `json:"request_id"`
-	OrganizationID string           `json:"organization_id"`
-	DisplayName    string           `json:"display_name"`
-	Model          domain.ModelSpec `json:"model"`
-	Credential     credentialInput  `json:"credential"`
+	RequestID      string                 `json:"request_id"`
+	OrganizationID string                 `json:"organization_id"`
+	DisplayName    string                 `json:"display_name"`
+	Model          domain.ModelParameters `json:"model"`
 }
 
 type createTemplateRequest struct {
-	RequestID              string                  `json:"request_id"`
-	OrganizationID         string                  `json:"organization_id"`
-	TemplateKey            string                  `json:"template_key"`
-	Name                   string                  `json:"name"`
-	ModelProfileRevisionID string                  `json:"model_profile_revision_id"`
-	SystemPrompt           string                  `json:"system_prompt"`
-	MaxModelRequests       int                     `json:"max_model_requests"`
-	ContextPolicyVersion   string                  `json:"context_policy_version"`
-	Runtime                domain.RuntimeSpecInput `json:"runtime"`
+	RequestID            string                  `json:"request_id"`
+	OrganizationID       string                  `json:"organization_id"`
+	TemplateKey          string                  `json:"template_key"`
+	Name                 string                  `json:"name"`
+	ModelProfileID       string                  `json:"model_profile_id"`
+	SystemPrompt         string                  `json:"system_prompt"`
+	MaxModelRequests     int                     `json:"max_model_requests"`
+	ContextPolicyVersion string                  `json:"context_policy_version"`
+	Runtime              domain.RuntimeSpecInput `json:"runtime"`
 }
 
 type reviseTemplateRequest struct {
-	RequestID              string                  `json:"request_id"`
-	OrganizationID         string                  `json:"organization_id"`
-	Name                   string                  `json:"name"`
-	ModelProfileRevisionID string                  `json:"model_profile_revision_id"`
-	SystemPrompt           string                  `json:"system_prompt"`
-	MaxModelRequests       int                     `json:"max_model_requests"`
-	ContextPolicyVersion   string                  `json:"context_policy_version"`
-	Runtime                domain.RuntimeSpecInput `json:"runtime"`
+	RequestID            string                  `json:"request_id"`
+	OrganizationID       string                  `json:"organization_id"`
+	Name                 string                  `json:"name"`
+	ModelProfileID       string                  `json:"model_profile_id"`
+	SystemPrompt         string                  `json:"system_prompt"`
+	MaxModelRequests     int                     `json:"max_model_requests"`
+	ContextPolicyVersion string                  `json:"context_policy_version"`
+	Runtime              domain.RuntimeSpecInput `json:"runtime"`
 }
 
 type createAgentRequest struct {
@@ -262,17 +280,18 @@ type listWorkspaceAgentsRequest struct {
 }
 
 type acquireRunRequest struct {
-	RequestID              string `json:"request_id"`
-	AgentID                string `json:"agent_id"`
-	PrincipalID            string `json:"principal_id"`
-	ExpectedAccessRevision string `json:"expected_access_revision"`
-	SessionID              string `json:"session_id"`
+	SessionConfiguration   *domain.SessionConfigurationOverrides `json:"session_configuration,omitempty"`
+	RequestID              string                                `json:"request_id"`
+	AgentID                string                                `json:"agent_id"`
+	PrincipalID            string                                `json:"principal_id"`
+	ExpectedAccessRevision string                                `json:"expected_access_revision"`
+	SessionID              string                                `json:"session_id"`
 }
 
 type resolveCredentialRequest struct {
-	RequestID     string `json:"request_id"`
-	AdmissionID   string `json:"admission_id"`
-	CredentialRef string `json:"credential_ref"`
+	RequestID            string `json:"request_id"`
+	AdmissionID          string `json:"admission_id"`
+	ProviderConnectionID string `json:"provider_connection_id"`
 }
 
 type nullableString struct {
@@ -303,35 +322,34 @@ type finishRunRequest struct {
 }
 
 type modelProfileResponse struct {
-	ModelProfileID    string           `json:"model_profile_id"`
-	OrganizationID    string           `json:"organization_id"`
-	ProfileKey        string           `json:"profile_key"`
-	DisplayName       string           `json:"display_name"`
-	RevisionID        string           `json:"revision_id"`
-	Revision          int64            `json:"revision"`
-	Enabled           bool             `json:"enabled"`
-	Model             domain.ModelSpec `json:"model"`
-	CredentialRef     string           `json:"credential_ref"`
-	CredentialVersion string           `json:"credential_version"`
-	CreatedAt         time.Time        `json:"created_at"`
-	UpdatedAt         time.Time        `json:"updated_at"`
+	ProviderConnectionID string           `json:"provider_connection_id"`
+	ModelProfileID       string           `json:"model_profile_id"`
+	OrganizationID       string           `json:"organization_id"`
+	ProfileKey           string           `json:"profile_key"`
+	DisplayName          string           `json:"display_name"`
+	RevisionID           string           `json:"revision_id"`
+	Revision             int64            `json:"revision"`
+	Enabled              bool             `json:"enabled"`
+	Model                domain.ModelSpec `json:"model"`
+	CreatedAt            time.Time        `json:"created_at"`
+	UpdatedAt            time.Time        `json:"updated_at"`
 }
 
 type templateResponse struct {
-	TemplateID             string                  `json:"template_id"`
-	OrganizationID         string                  `json:"organization_id"`
-	TemplateKey            string                  `json:"template_key"`
-	Name                   string                  `json:"name"`
-	Revision               int64                   `json:"revision"`
-	ModelProfileRevisionID string                  `json:"model_profile_revision_id"`
-	SystemPrompt           string                  `json:"system_prompt"`
-	MaxModelRequests       int                     `json:"max_model_requests"`
-	ContextPolicyVersion   string                  `json:"context_policy_version"`
-	Runtime                domain.RuntimeSpecInput `json:"runtime"`
-	SkillRefs              []string                `json:"skill_refs"`
-	Enabled                bool                    `json:"enabled"`
-	CreatedAt              time.Time               `json:"created_at"`
-	UpdatedAt              time.Time               `json:"updated_at"`
+	TemplateID           string                  `json:"template_id"`
+	OrganizationID       string                  `json:"organization_id"`
+	TemplateKey          string                  `json:"template_key"`
+	Name                 string                  `json:"name"`
+	Revision             int64                   `json:"revision"`
+	ModelProfileID       string                  `json:"model_profile_id"`
+	SystemPrompt         string                  `json:"system_prompt"`
+	MaxModelRequests     int                     `json:"max_model_requests"`
+	ContextPolicyVersion string                  `json:"context_policy_version"`
+	Runtime              domain.RuntimeSpecInput `json:"runtime"`
+	SkillRefs            []string                `json:"skill_refs"`
+	Enabled              bool                    `json:"enabled"`
+	CreatedAt            time.Time               `json:"created_at"`
+	UpdatedAt            time.Time               `json:"updated_at"`
 }
 
 type modelProfileListResponse struct {
@@ -461,15 +479,15 @@ type acquireRunResponse struct {
 	ExecutionRevision        string                      `json:"execution_revision"`
 	RuntimeMCPSourceDigest   string                      `json:"runtime_mcp_source_digest"`
 	AgentExecutionSpecDigest string                      `json:"agent_execution_spec_digest"`
-	CredentialVersion        string                      `json:"credential_version"`
 	Runtime                  ports.AdmittedRuntime       `json:"runtime"`
 	ExecutionSpec            ports.AdmittedExecutionSpec `json:"execution_spec"`
 }
 
 type resolveCredentialResponse struct {
-	CredentialVersion string `json:"credential_version"`
-	SecretType        string `json:"secret_type"`
-	Secret            string `json:"secret"`
+	Provider          domain.ProviderExecution `json:"provider"`
+	CredentialVersion string                   `json:"credential_version"`
+	SecretType        string                   `json:"secret_type"`
+	Secret            string                   `json:"secret"`
 }
 
 type finishRunResponse struct {
@@ -485,14 +503,11 @@ type errorResponse struct {
 
 func (h *handler) status(response http.ResponseWriter, request *http.Request) {
 	if err := h.health(request.Context()); err != nil {
+		telemetry.RecordBoundaryError(request.Context(), err, "readiness", "internal_error", "local readiness check failed", true)
 		writeJSON(response, http.StatusServiceUnavailable, map[string]string{"status": "not_ready"})
 		return
 	}
 	writeJSON(response, http.StatusOK, map[string]string{"status": "ready"})
-}
-
-func (h *handler) modelCatalog(response http.ResponseWriter, request *http.Request) {
-	writeJSON(response, http.StatusOK, h.catalog.ModelCatalog(request.Context()))
 }
 
 func (h *handler) resolveAgentAccess(response http.ResponseWriter, request *http.Request) {
@@ -547,7 +562,8 @@ func (h *handler) acquireRun(response http.ResponseWriter, request *http.Request
 		return
 	}
 	result, err := h.runs.AcquireRun(request.Context(), application.AcquireRunInput{
-		RequestID: payload.RequestID, AgentID: payload.AgentID,
+		SessionConfiguration: payload.SessionConfiguration,
+		RequestID:            payload.RequestID, AgentID: payload.AgentID,
 		PrincipalID: payload.PrincipalID, ExpectedAccessRevision: payload.ExpectedAccessRevision,
 		SessionID: payload.SessionID,
 	})
@@ -560,8 +576,8 @@ func (h *handler) acquireRun(response http.ResponseWriter, request *http.Request
 		AgentSpecRevision: result.AgentSpecRevision, ExecutionRevision: result.ExecutionRevision,
 		RuntimeMCPSourceDigest:   result.RuntimeMCPSourceDigest,
 		AgentExecutionSpecDigest: result.AgentExecutionSpecDigest,
-		CredentialVersion:        result.CredentialVersion, Runtime: result.Runtime,
-		ExecutionSpec: result.ExecutionSpec,
+		Runtime:                  result.Runtime,
+		ExecutionSpec:            result.ExecutionSpec,
 	})
 }
 
@@ -574,15 +590,15 @@ func (h *handler) resolveCredential(response http.ResponseWriter, request *http.
 	}
 	result, err := h.runs.ResolveCredential(request.Context(), application.ResolveCredentialInput{
 		RequestID: payload.RequestID, AdmissionID: payload.AdmissionID,
-		CredentialRef: payload.CredentialRef,
+		ProviderConnectionID: payload.ProviderConnectionID,
 	})
 	if err != nil {
 		writeRunError(request.Context(), response, err)
 		return
 	}
 	writeJSON(response, http.StatusOK, resolveCredentialResponse{
-		CredentialVersion: result.CredentialVersion,
-		SecretType:        result.SecretType, Secret: result.Secret,
+		Provider: result.Provider, CredentialVersion: result.CredentialVersion,
+		SecretType: result.SecretType, Secret: result.Secret,
 	})
 }
 
@@ -620,14 +636,10 @@ func (h *handler) createModelProfile(response http.ResponseWriter, request *http
 	if !decodeJSON(response, request, &payload) {
 		return
 	}
-	if payload.Credential.SecretType != "bearer" {
-		writeError(response, http.StatusBadRequest, "invalid_request", "request is invalid", false)
-		return
-	}
 	view, err := h.catalog.CreateModelProfile(request.Context(), application.CreateModelProfileInput{
 		RequestID: payload.RequestID, OrganizationID: payload.OrganizationID,
 		ProfileKey: payload.ProfileKey, DisplayName: payload.DisplayName,
-		Model: payload.Model, CredentialSecret: payload.Credential.Secret,
+		Model: payload.Model, ProviderConnectionID: payload.ProviderConnectionID,
 	})
 	if err != nil {
 		writeServiceError(request.Context(), response, err)
@@ -641,15 +653,10 @@ func (h *handler) reviseModelProfile(response http.ResponseWriter, request *http
 	if !decodeJSON(response, request, &payload) {
 		return
 	}
-	if payload.Credential.SecretType != "bearer" {
-		writeError(response, http.StatusBadRequest, "invalid_request", "request is invalid", false)
-		return
-	}
 	view, err := h.catalog.ReviseModelProfile(request.Context(), application.ReviseModelProfileInput{
 		RequestID: payload.RequestID, ModelProfileID: request.PathValue("model_profile_id"),
 		OrganizationID: payload.OrganizationID,
 		DisplayName:    payload.DisplayName, Model: payload.Model,
-		CredentialSecret: payload.Credential.Secret,
 	})
 	if err != nil {
 		writeServiceError(request.Context(), response, err)
@@ -715,8 +722,8 @@ func (h *handler) createTemplate(response http.ResponseWriter, request *http.Req
 	view, err := h.catalog.CreateTemplate(request.Context(), application.CreateTemplateInput{
 		RequestID: payload.RequestID, OrganizationID: payload.OrganizationID,
 		TemplateKey: payload.TemplateKey, Name: payload.Name,
-		ModelProfileRevisionID: payload.ModelProfileRevisionID,
-		SystemPrompt:           payload.SystemPrompt, MaxModelRequests: payload.MaxModelRequests,
+		ModelProfileID: payload.ModelProfileID,
+		SystemPrompt:   payload.SystemPrompt, MaxModelRequests: payload.MaxModelRequests,
 		ContextPolicyVersion: payload.ContextPolicyVersion, Runtime: payload.Runtime,
 	})
 	if err != nil {
@@ -733,9 +740,9 @@ func (h *handler) reviseTemplate(response http.ResponseWriter, request *http.Req
 	}
 	view, err := h.catalog.ReviseTemplate(request.Context(), application.ReviseTemplateInput{
 		RequestID: payload.RequestID, TemplateID: request.PathValue("template_id"), Name: payload.Name,
-		OrganizationID:         payload.OrganizationID,
-		ModelProfileRevisionID: payload.ModelProfileRevisionID,
-		SystemPrompt:           payload.SystemPrompt, MaxModelRequests: payload.MaxModelRequests,
+		OrganizationID: payload.OrganizationID,
+		ModelProfileID: payload.ModelProfileID,
+		SystemPrompt:   payload.SystemPrompt, MaxModelRequests: payload.MaxModelRequests,
 		ContextPolicyVersion: payload.ContextPolicyVersion, Runtime: payload.Runtime,
 	})
 	if err != nil {
@@ -812,7 +819,6 @@ func (h *handler) createAgent(response http.ResponseWriter, request *http.Reques
 		ActorPrincipalID: payload.ActorPrincipalID,
 		OwnerUserID:      payload.OwnerUserID, Name: payload.Name,
 		TemplateID: payload.TemplateID, TemplateRevision: payload.TemplateRevision,
-		InitialTraceParent: traceParentFromContext(ctx),
 	})
 	observeLifecycleResult(ctx, result.Operation)
 	if err != nil {
@@ -820,17 +826,6 @@ func (h *handler) createAgent(response http.ResponseWriter, request *http.Reques
 		return
 	}
 	writeJSON(response, http.StatusAccepted, createAgentPayload(result))
-}
-
-func traceParentFromContext(ctx context.Context) string {
-	spanContext := trace.SpanContextFromContext(ctx)
-	if !spanContext.IsValid() {
-		return ""
-	}
-	return fmt.Sprintf(
-		"00-%s-%s-%02x",
-		spanContext.TraceID(), spanContext.SpanID(), byte(spanContext.TraceFlags()),
-	)
 }
 
 func (h *handler) getAgent(response http.ResponseWriter, request *http.Request) {
@@ -1021,7 +1016,6 @@ func (h *handler) rebuildAgent(response http.ResponseWriter, request *http.Reque
 		RequestID: payload.RequestID, OrganizationID: payload.OrganizationID,
 		ActorPrincipalID: payload.ActorPrincipalID, AgentID: request.PathValue("agent_id"),
 		TemplateID: payload.TemplateID, TemplateRevision: payload.TemplateRevision,
-		InitialTraceParent: traceParentFromContext(ctx),
 	})
 	observeLifecycleResult(ctx, result.Operation)
 	if err != nil {
@@ -1044,7 +1038,6 @@ func (h *handler) disableAgent(response http.ResponseWriter, request *http.Reque
 	result, err := h.lifecycle.DisableAgent(ctx, application.DisableAgentInput{
 		RequestID: payload.RequestID, OrganizationID: payload.OrganizationID,
 		ActorPrincipalID: payload.ActorPrincipalID, AgentID: request.PathValue("agent_id"),
-		InitialTraceParent: traceParentFromContext(ctx),
 	})
 	observeLifecycleResult(ctx, result.Operation)
 	if err != nil {
@@ -1067,7 +1060,6 @@ func (h *handler) enableAgent(response http.ResponseWriter, request *http.Reques
 	result, err := h.lifecycle.EnableAgent(ctx, application.EnableAgentInput{
 		RequestID: payload.RequestID, OrganizationID: payload.OrganizationID,
 		ActorPrincipalID: payload.ActorPrincipalID, AgentID: request.PathValue("agent_id"),
-		InitialTraceParent: traceParentFromContext(ctx),
 	})
 	observeLifecycleResult(ctx, result.Operation)
 	if err != nil {
@@ -1090,7 +1082,6 @@ func (h *handler) deleteAgent(response http.ResponseWriter, request *http.Reques
 	result, err := h.lifecycle.DeleteAgent(ctx, application.DeleteAgentInput{
 		RequestID: payload.RequestID, OrganizationID: payload.OrganizationID,
 		ActorPrincipalID: payload.ActorPrincipalID, AgentID: request.PathValue("agent_id"),
-		InitialTraceParent: traceParentFromContext(ctx),
 	})
 	observeLifecycleResult(ctx, result.Operation)
 	if err != nil {
@@ -1294,24 +1285,30 @@ func decodeJSON(response http.ResponseWriter, request *http.Request, target any)
 	decoder := json.NewDecoder(request.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
+		telemetry.RecordBoundaryError(request.Context(), err, "decode_request", "invalid_request", "request JSON could not be decoded", false)
 		writeError(response, http.StatusBadRequest, "invalid_request", "request body is invalid", false)
 		return false
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		if err == nil {
+			err = errors.New("request contains trailing JSON")
+		}
+		telemetry.RecordBoundaryError(request.Context(), err, "decode_request", "invalid_request", "request JSON contains trailing or incomplete data", false)
 		writeError(response, http.StatusBadRequest, "invalid_request", "request body is invalid", false)
 		return false
 	}
+	observeDTO(response, "request", target)
 	return true
 }
 
 func modelProfilePayload(view application.ModelProfileView) modelProfileResponse {
 	return modelProfileResponse{
-		ModelProfileID: view.ModelProfileID, OrganizationID: view.OrganizationID,
+		ProviderConnectionID: view.ProviderConnectionID,
+		ModelProfileID:       view.ModelProfileID, OrganizationID: view.OrganizationID,
 		ProfileKey: view.ProfileKey, DisplayName: view.DisplayName,
 		RevisionID: view.RevisionID, Revision: view.Revision, Enabled: view.Enabled,
-		Model: view.Model, CredentialRef: view.CredentialRef,
-		CredentialVersion: view.CredentialVersion,
-		CreatedAt:         view.CreatedAt, UpdatedAt: view.UpdatedAt,
+		Model:     view.Model,
+		CreatedAt: view.CreatedAt, UpdatedAt: view.UpdatedAt,
 	}
 }
 
@@ -1319,7 +1316,7 @@ func templatePayload(view application.TemplateView) templateResponse {
 	return templateResponse{
 		TemplateID: view.TemplateID, OrganizationID: view.OrganizationID,
 		TemplateKey: view.TemplateKey, Name: view.Name, Revision: view.Revision,
-		ModelProfileRevisionID: view.ModelProfileRevisionID, SystemPrompt: view.SystemPrompt,
+		ModelProfileID: view.ModelProfileID, SystemPrompt: view.SystemPrompt,
 		MaxModelRequests: view.MaxModelRequests, ContextPolicyVersion: view.ContextPolicyVersion,
 		Runtime: view.Runtime, SkillRefs: []string{}, Enabled: view.Enabled,
 		CreatedAt: view.CreatedAt, UpdatedAt: view.UpdatedAt,
@@ -1409,6 +1406,7 @@ func optionalString(value string) *string {
 
 func writeServiceError(ctx context.Context, response http.ResponseWriter, err error) {
 	status, payload := publicError(err)
+	telemetry.RecordBoundaryError(ctx, err, "dispatch", payload.Code, payload.Message, status >= 500)
 	if status == http.StatusInternalServerError {
 		slog.ErrorContext(ctx, "Agent Controller request failed", "error_class", payload.Code)
 	}
@@ -1417,6 +1415,7 @@ func writeServiceError(ctx context.Context, response http.ResponseWriter, err er
 
 func writeRunError(ctx context.Context, response http.ResponseWriter, err error) {
 	status, payload := publicRunError(err)
+	telemetry.RecordBoundaryError(ctx, err, "run_admission", payload.Code, payload.Message, status >= 500)
 	if status == http.StatusInternalServerError {
 		slog.ErrorContext(ctx, "Agent Controller Run request failed", "error_class", payload.Code)
 	}
@@ -1425,6 +1424,12 @@ func writeRunError(ctx context.Context, response http.ResponseWriter, err error)
 
 func publicRunError(err error) (int, errorResponse) {
 	switch {
+	case errors.Is(err, ports.ErrModelUnavailable):
+		return http.StatusConflict, errorResponse{Code: "model_unavailable", Message: "Select an available organization model"}
+	case errors.Is(err, ports.ErrConcurrentChange):
+		return http.StatusConflict, errorResponse{Code: "configuration_conflict", Message: "Reload the Agent authorization before updating"}
+	case errors.Is(err, ports.ErrRunAccessDenied):
+		return http.StatusForbidden, errorResponse{Code: "access_denied", Message: "Agent access is denied"}
 	case errors.Is(err, application.ErrInvalidInput):
 		return http.StatusBadRequest, errorResponse{Code: "invalid_request", Message: "request is invalid"}
 	case errors.Is(err, application.ErrAccessDenied):
@@ -1471,9 +1476,9 @@ func publicRunError(err error) (int, errorResponse) {
 
 func publicError(err error) (int, errorResponse) {
 	switch {
-	case errors.Is(err, application.ErrRuntimeImageSelection):
+	case errors.Is(err, domain.ErrInvalidImageReference):
 		return http.StatusBadRequest, errorResponse{
-			Code: "runtime_image_invalid", Message: "Select an installed repository:tag image. Ask the platform operator to build or load it first.",
+			Code: "runtime_image_invalid", Message: "Enter a valid image name, tag, or digest reference.",
 		}
 	case errors.Is(err, application.ErrInvalidInput):
 		return http.StatusBadRequest, errorResponse{Code: "invalid_request", Message: "request is invalid"}
@@ -1529,7 +1534,7 @@ func observeLifecycleResult(ctx context.Context, operation application.Operation
 		)
 	}
 	span.SetAttributes(append(
-		[]attribute.KeyValue{attribute.String("antnest.agent.id", operation.AgentID)},
+		[]attribute.KeyValue{attribute.String("antnest.agent.id", operation.AgentID), attribute.String("antnest.operation.id", operation.RequestID), attribute.String("antnest.operation.phase", string(operation.Phase)), attribute.String("antnest.outcome", string(operation.State))},
 		metricAttributes...,
 	)...)
 	lifecycleOperations.Add(ctx, 1, metric.WithAttributes(metricAttributes...))
@@ -1596,6 +1601,7 @@ func writeJSON(response http.ResponseWriter, status int, value any) {
 	}
 	response.Header().Set("Content-Type", "application/json")
 	response.WriteHeader(status)
+	observeDTO(response, "response", value)
 	if _, err := response.Write(append(payload, '\n')); err != nil {
 		slog.Error("write Agent Controller response", "error_class", "response_write")
 	}

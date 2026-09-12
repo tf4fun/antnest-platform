@@ -6,4 +6,7 @@ node_modules/
 target/
 *.tsbuildinfo
 .env
+.env.*
+!.env.example
 .secret
+auth.json

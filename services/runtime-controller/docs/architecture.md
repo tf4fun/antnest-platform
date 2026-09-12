@@ -1,7 +1,7 @@
 # Runtime Controller Architecture
 
 > Status: implemented for Docker; Kubernetes adapter pending<br>
-> Updated: 2026-09-07
+> Updated: 2026-09-10
 
 ## Mission
 
@@ -20,7 +20,7 @@ RuntimeEnvironment
   lifecycle_state
 
 RuntimeConfiguration
-  immutable image
+  caller-selected image reference (including mutable tags)
   Egress attachment
   resource policy
 
@@ -177,8 +177,16 @@ Initialize is valid only when no Environment exists. Runtime Controller creates
 or adopts the owned workspace, allocates a private generation, builds the full
 RuntimeSpec from caller configuration plus service invariants, creates compute,
 waits for platform health, verifies Runtime `/status`, and commits state
-`ready`. A workspace created before compute failure remains owned by the Agent
-and is reused by the exact retry.
+`ready`. Definitive initialization failure retains a `failed` Environment,
+including its revision, generation and deployment identity. Workspace is not
+rolled back and ownership is not erased. The terminal operation can be queried
+and replayed without repeating effects; Delete of the retained revision removes
+owned compute, if any, before workspace. A bounded readiness failure after
+confirmed creation is terminal for Initialize. Cancellation, identity drift and
+unknown platform effects retain the nonterminal slot for exact reconciliation.
+Identity conflicts from either platform inspection or Runtime status verification
+stop readiness checks immediately; a later timeout cannot downgrade that evidence.
+This distinction prevents a 404 logical projection from hiding allocated data.
 
 ### Update
 
@@ -187,6 +195,27 @@ Controller removes the exact current compute resource, preserves the workspace,
 allocates a new private generation, creates and verifies the replacement, then
 commits a new revision. It does not roll back to old compute after a destructive
 effect; uncertainty retains the mutation slot for exact-request recovery.
+
+Update recovery uses physical identity, not a new attempt counter or a second
+phase journal. Before removing compute, inspect the recorded source. Only an
+exact source identity/digest can be deleted. An absent source means replacement
+may already have started. If the Agent-named resource belongs to another
+generation, only the exact target bound to this operation may be reused; the
+platform's idempotent Create still enforces scope, generation, digest and
+workspace ownership before reuse/start. Required Runtime status verification
+and the ordinary completion transaction remain mandatory.
+
+A target that exists after lost Create/readiness/completion responses must
+never be interpreted as an unstarted source deletion. Source absence, target
+drift or inconclusive inspection cannot restore the old logical head. Such
+failures keep the operation `unknown` and its mutation slot. A definitive
+source deletion rejection may report `failed/not_started` only after a second
+inspection and Runtime status verification prove that the exact source is
+still running and healthy. A stopped source from an earlier partial deletion,
+an identity change between Inspect and Delete, or an unreadable source stays
+unknown. No new RPC, table or persisted
+configuration is needed; retry retains the original source/target claim,
+request digest and opaque revision.
 
 ### Disable And Enable
 
@@ -201,7 +230,7 @@ desired configuration while disabled.
 
 ### Delete
 
-Delete is valid from `ready` or `disabled`. It removes exact owned compute when
+Delete is valid from `ready`, `disabled`, or `failed`. It removes exact owned compute when
 present, then removes the owned workspace and commits the terminal `deleted`
 state. A deleted Agent identifier cannot be initialized again. Partial deletion
 is retried under the same operation identity.
@@ -221,18 +250,31 @@ Controller alone injects physical RuntimeSpec and platform invariants.
 
 ### Resolve Image
 
-The separate read-only image query translates a caller-selected `repository:tag`
+The separate read-only image query translates a caller-selected image reference
 into an installed Docker image ID. It does not choose the image, pull from a
 registry, or change an Environment. The Docker adapter owns reference parsing
 and inspection; the control layer delegates without repository access, an Agent
 lock, or an operation journal entry. A mutable tag lookup is not cached.
 
-The response includes only the normalized named reference and immutable image
+The response includes only the original reference and immutable Docker image
 ID. Docker configuration, environment variables, labels, and history never
 leave the adapter. A locally built image need not have a registry manifest
 digest; its image ID must not be presented as a `repository@manifest-digest`.
-The caller is responsible for freezing the resolved ID when publishing its
-configuration. Subsequent lifecycle commands still require an immutable image.
+This is an optional diagnostic query, not a Template publication prerequisite.
+Lifecycle commands preserve the caller's original reference in Agent configuration.
+Before the first platform mutation, each new build resolves it to an installed
+Docker image ID and persists `image_reference` and `image_id` in its operation.
+The physical deployment uses that ID; its digest includes both the ID and the
+original-reference metadata. Recovery uses the persisted pair without resolving
+the tag again. A later explicit build resolves the original reference afresh.
+This does not introduce registry pulls or automatic updates of running containers.
+
+Containers receive `ANTNEST_RUNTIME_IMAGE_REFERENCE` and
+`ANTNEST_RUNTIME_IMAGE_ID` as startup metadata outside RuntimeSpec. The retained
+operation exposes the same pair after container deletion. Selected image metadata
+alone does not mean a build succeeded; callers must inspect its lifecycle state.
+Historical operations without metadata remain unknown; unfinished ones must not
+silently resolve a new image during recovery.
 Resolution has the ordinary RPC deadline and a short platform child span, with
 bounded operation labels rather than image names or IDs in metric dimensions.
 
@@ -281,8 +323,11 @@ Rules:
 6. On a detected platform gap, the service first records one service-wide
    `observation_gap`, reconciles physical inventory in both directions against
    logical ready Environment heads, and records one service-wide `reconciled`
-   fact. Missing expected compute emits `runtime_missing`. A gap is valid even
-   when List returns no Runtime.
+   fact. A missing inventory entry is a candidate, not proof: the service
+   inspects that exact logical head once more before emitting `runtime_missing`.
+   This avoids misclassifying a container created after the inventory snapshot.
+   An inspection error or contradictory identity fails reconciliation without
+   fabricating absence. A gap is valid even when List returns no Runtime.
 7. Consumers treat a service-wide gap as a requirement to List logical Runtime
    Environments. It is not a fabricated per-Runtime transition.
 8. It never fabricates a restart count, cause, or intermediate transition.
@@ -308,6 +353,14 @@ against a private generation claim before their logical projection is
 published. Transient platform inspection failure fails reconciliation instead
 of fabricating a fact. Agent Controller decides whether a fact creates an
 Agent event.
+
+Logical Runtime Inspect/List also represent confirmed missing compute: a ready
+Environment retains its Agent ID and opaque revision, but reports `health=absent`
+with no executable endpoint or execution ID. An absent resource has no deployment
+digest to compare; absence must instead match the requested key, absent platform
+phase/health, and empty physical identity/endpoint fields. This does not weaken
+digest/claim validation for present resources. Querying absence is read-only;
+the observation monitor remains responsible for publishing platform facts.
 
 ## Runtime Status Verification
 
@@ -379,8 +432,10 @@ No other service reads these tables. Agent Controller consumes RPCs.
 2. A mutation that definitely did not start may return `not_started`.
 3. A completed platform mutation returns `completed` plus inspection.
 4. A lost response after a possible platform mutation returns `unknown`.
-5. A readiness deadline after successful platform creation remains `unknown`;
-   retrying the same request ID reconciles readiness under the Agent lock.
+5. Initialize's bounded readiness deadline after confirmed creation is a terminal
+   failure with a retained, deletable Environment. Cancellation, identity drift,
+   and Update/Enable readiness uncertainty remain `unknown`; exact-request
+   retries reconcile those effects under the Agent lock.
 6. Unknown mutations are inspected; they are never blindly replayed under a
    new operation ID.
 7. Operation terminal state and its operation-caused observation commit in one
@@ -404,11 +459,17 @@ Reconciliation is a root operation span. Each platform event creates a
 consumer span whose children include current-state inspection, Runtime status
 verification, and journal persistence. After normalization, that consumer span
 records the spec digest, platform resource ID, and execution ID when known.
-Internal logs and spans retain the
-actual platform/database error while public RPC errors remain sanitized.
-Long-lived platform Watch, PostgreSQL LISTEN, and observation SSE sessions emit
-lifecycle logs and metrics but never create unbounded spans. Finite repository
-reads and delivery work retain ordinary tracing.
+Application error helpers retain bounded typed causes and registered safe
+platform/database messages. The original error chain remains in-process.
+PostgreSQL connections use the default otelpgx driver tracer for SQL execution,
+including transactions, dedicated advisory locks and native LISTEN. SQL spans
+retain statement text without bind parameters or returned row contents; default
+driver error text can still contain server-supplied values. SQL tracing requires
+a recording parent and adds no root for unparented background queries. LISTEN
+has a finite SQL span, not a session-lifetime repository span or wrapper metric.
+Docker event HTTP CLIENT and observation SSE SERVER spans follow their actual
+stream lifetimes. `/status` checks only local initialization and own storage,
+not fresh Docker or Runtime health.
 
 Each lifecycle mutation has one finite `runtime.lifecycle.*` span plus an
 operation count and duration metric labeled only by operation kind, result,
@@ -425,8 +486,10 @@ Recommended metrics use low-cardinality labels only:
 - journal append and delivery failures;
 - deletion convergence duration.
 
-Runtime status bodies contain no secrets. RuntimeSpec logging must redact any
-future secret-bearing extension by default.
+RuntimeSpec is never logged. Diagnostic DTO projection excludes MCP bootstrap,
+environment and mount contents, unknown fields and raw exception strings.
+See [`observability.md`](observability.md) for budgets, mode forwarding and
+pending coordinator acceptance.
 
 ## Invariants
 

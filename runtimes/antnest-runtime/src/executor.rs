@@ -48,8 +48,18 @@ pub(crate) fn run(command: ToolCommand) -> Result<(), ExecutorEntryError> {
             write_reply(encode_info_reply(result).map_err(protocol_error)?)
         }
         ToolCommand::Bash => {
-            let result = decode_bash_request(&input)
-                .and_then(|request| runtime.block_on(engine.bash(request, cancel)));
+            let progress = crate::progress::ProgressSink::new(|update| {
+                let sent = serde_json::to_vec(&serde_json::json!({"progress": update}))
+                    .map_err(protocol_error)
+                    .and_then(write_reply);
+                if sent.is_err() {
+                    // Losing the parent pipe is fatal to this executor, never a retry.
+                    std::process::exit(74);
+                }
+            });
+            let result = decode_bash_request(&input).and_then(|request| {
+                runtime.block_on(engine.bash_with_progress(request, cancel, progress))
+            });
             write_reply(encode_bash_reply(result).map_err(protocol_error)?)
         }
         ToolCommand::Read => {
@@ -103,6 +113,7 @@ fn write_reply(encoded: Vec<u8>) -> Result<(), ExecutorEntryError> {
     let mut stdout = io::stdout().lock();
     stdout
         .write_all(&encoded)
+        .and_then(|()| stdout.write_all(b"\n"))
         .and_then(|()| stdout.flush())
         .map_err(|error| ExecutorEntryError::Protocol(error.to_string()))
 }

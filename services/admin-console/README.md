@@ -1,5 +1,11 @@
 # Admin Console
 
+Provider connections, credential rotation and model metadata now have separate
+management workflows. Builtin defaults remain Console-owned, persisted choices
+Controller-owned. See [Provider management](docs/provider-management.md) for
+routes, boundaries and verification. Custom providers and subscription login
+are not yet exposed.
+
 Template creation and revision include optional **MCP servers**: stdio command,
 ordered arguments and environment variables. Template details retain the complete
 configuration; Agent details show the deployed server IDs and commands. Publish a
@@ -15,13 +21,36 @@ second source of truth.
 Implemented for Stage 3A, including Directory administration, enterprise
 OIDC/SCIM provisioning, release-managed model provider presets, and
 organization-scoped Model Profile and Template detail/revision management.
-Known model capabilities come from Agent Controller; custom OpenAI-compatible
-APIs expose explicit endpoint and limit fields. The canonical lifecycle workflow is
+Builtin model capabilities come from Console; Controller persists the selected
+configuration. Only DeepSeek connections are currently enabled. Unlisted models
+under an existing connection expose explicit limit and Image/Audio/PDF fields. Native
+capabilities are preserved across BFF projections, creation and immutable revision
+editing; builtin presets prefill editable drafts, while saved values take precedence. See [Native model inputs](docs/multimodal-models.md)
+for the F09 service boundary. Agent UI and protocol deployment results are in
+[ACP conformance](../agent-acp-service/docs/protocol-conformance.md); full C4
+interactive acceptance remains separate.
+Model pricing now follows the Controller's optional USD-per-million contract:
+catalog estimates by default, editable rates, immutable historical snapshots,
+and explicit unknown versus zero. Console owns builtin default metadata only. Organization configuration and
+credentials remain in Controller's database. See [Model pricing](docs/model-pricing.md) for this service's evidence
+and [ACP conformance](../agent-acp-service/docs/protocol-conformance.md) for the
+completed F10 consumer/deployed integration batch.
+The canonical lifecycle workflow is
 [`../../docs/stage-3-admin-control-plane.md`](../../docs/stage-3-admin-control-plane.md).
+Agent details include an independent public-network policy switch. It saves a
+single version-checked assignment through Controller without rebuilding an Agent
+or opening a paused attachment. Uncertain updates survive page close and retain
+their original retry identity; stale-account requests are rejected before
+dispatch. See [Network policy management](docs/network-policy.md).
 Agent Fleet presents current records by default, retains deleted projections
 behind an explicit audit view, gates lifecycle commands from authoritative
 state, and re-synchronizes Agent, event, and durable operation state after an
 event-stream interruption.
+An unfinished deletion remains in the current administrator fleet. A failed
+cleanup can be explicitly retried, but cannot be enabled or rebuilt. Only a
+completed deletion enters the retained view. Unknown HTTP results retain their
+request key; observing the resulting terminal operation establishes a new intent
+boundary for the next explicit command.
 Deleted Agent details stay open for audit, including after a live deletion
 completes. Replaying a completed operation never redirects the page. The active
 request distinguishes `Current operation` from `Last operation`; a terminal
@@ -47,9 +76,10 @@ a newer request. Later Agent refresh and owner-resolution failures preserve
 their loaded projections and use the same structured retry policy.
 SSE recovery does not join event replay and Agent refresh into a false client
 transaction. Each successful read updates its own projection immediately and
-each failure stays local. Event replay alone advances the cursor and reopens
-the stream, while Agent refresh alone updates lifecycle command authority.
-Event retry therefore does not repeatedly call the Agent endpoint. Concurrent
+each failure stays local. After successful replay, recovery awaits one Agent
+refresh before reopening the stream; a refresh failure is recorded locally and
+does not prevent reopening. This read-after-replay closes the missed terminal
+state window. Failed replay retries do not repeatedly call the Agent endpoint. Concurrent
 Agent responses converge by aggregate sequence instead of arrival order.
 Revision-qualified links open read-only historical Catalog detail, so later
 Template or Model updates do not rewrite an older Agent's explanation.

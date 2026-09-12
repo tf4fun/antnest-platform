@@ -11,7 +11,9 @@ import (
 	"strconv"
 	"strings"
 
+	"go.opentelemetry.io/otel/attribute"
 	"soft/antnest-platform/services/identity-service/internal/domain"
+	"soft/antnest-platform/services/identity-service/internal/telemetry"
 )
 
 const (
@@ -45,6 +47,7 @@ func NewHTTPHandler(service *Service, publicBaseURL string) (*HTTPHandler, error
 }
 
 func (h *HTTPHandler) ServeHTTP(response http.ResponseWriter, request *http.Request) {
+	h.registerObservation(response, request)
 	h.mux.ServeHTTP(response, request)
 }
 
@@ -109,6 +112,7 @@ func (h *HTTPHandler) withAuthorization(scope string, next authorizedHandler) ht
 			writeServiceError(response, err)
 			return
 		}
+		telemetry.ProtocolFacts(response, attribute.String("antnest.organization.id", authorization.OrganizationID), attribute.String("antnest.identity.token.id", authorization.TokenID), attribute.String("antnest.identity.resource.id", request.PathValue("id")))
 		next(response, request, authorization)
 	}
 }
@@ -335,6 +339,7 @@ func writeSCIM(response http.ResponseWriter, status int, value any) {
 }
 
 func writeServiceError(response http.ResponseWriter, err error) {
+	telemetry.ProtocolError(response, err)
 	switch {
 	case errors.Is(err, domain.ErrInvalidArgument):
 		writeSCIMError(response, http.StatusBadRequest, "invalidValue", err.Error())
@@ -379,6 +384,7 @@ func setBearerChallenge(response http.ResponseWriter, err error, requiredScope s
 }
 
 func writeSCIMError(response http.ResponseWriter, status int, scimType, detail string) {
+	telemetry.ProtocolError(response, domain.NewError("scim_protocol_error", "SCIM rejected the protocol request", false))
 	value := map[string]any{
 		"schemas": []string{errorSchema}, "status": strconv.Itoa(status), "detail": detail,
 	}

@@ -80,6 +80,9 @@ fn decode_runtime_spec(encoded: &str) -> Result<RuntimeSpec, ConfigError> {
 
 pub(crate) fn load_telemetry() -> crate::telemetry::TelemetryConfig {
     crate::telemetry::TelemetryConfig::resolve(crate::telemetry::TelemetryEnvironment {
+        image_reference: env::var("ANTNEST_RUNTIME_IMAGE_REFERENCE").ok(),
+        image_id: env::var("ANTNEST_RUNTIME_IMAGE_ID").ok(),
+        capture_rpc_content: env::var("ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT").ok(),
         log_filter: env::var("RUST_LOG").ok(),
         sdk_disabled: env::var("OTEL_SDK_DISABLED").ok(),
         exporter: env::var("OTEL_TRACES_EXPORTER").ok(),

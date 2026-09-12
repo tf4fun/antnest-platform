@@ -28,8 +28,13 @@ resources. Closing or expiring a transport never deletes a persisted Session
 or cancels a durable Run. Reconnect uses initialize followed by session/load
 or session/resume; SDK transport queues are not a durable replay journal.
 
-HTTP bodies use the existing ACP payload limit. Logs and traces record request
-method, protocol and outcome, never subjects, connection IDs or message bodies.
+HTTP bodies use the existing ACP payload limit. Traces record request method,
+protocol and outcome, never subjects or raw messages. Registered parsed ACP
+requests/responses can emit bounded safe diagnostic projections as described in
+[observability](observability.md); the SDK continues to own HTTP/SSE parsing,
+queues and streaming. HTTP SERVER lifetime ends at response completion or close,
+not when headers become available. Follow-on POST-to-SSE request correlation
+without protocol `_meta` is an explicit SDK integration gap.
 
 ## Delivery batches
 

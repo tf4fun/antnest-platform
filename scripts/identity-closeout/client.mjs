@@ -59,7 +59,9 @@ async function localSessions() {
   assert.equal(loggedIn.body.principal.organization_role, "member");
   traces.push({
     traceID: loggedIn.traceID,
-    repository: "identity.repository.issue_access_token",
+    method: "POST",
+    route: "/rpc/identity/local-login",
+    rpcMethod: "local_login",
   });
   await member.request("/api/admin/directory", { status: 403 });
   await member.request("/api/admin/provisioning/scim-tokens", {
@@ -168,7 +170,9 @@ async function tokenBoundary() {
   credential = first.body.credential;
   traces.push({
     traceID: first.traceID,
-    repository: "identity.repository.issue_scim_token",
+    method: "POST",
+    route: "/rpc/identity/issue-scim-token",
+    rpcMethod: "issue_scim_token",
     console: true,
   });
   const read = await issueToken("read", ["scim:read"]);
@@ -236,7 +240,8 @@ async function usersAndGroups() {
   assert.equal(readCreated.body.meta.location, created.headers.get("location"));
   traces.push({
     traceID: created.traceID,
-    repository: "identity.repository.create_scim_user",
+    method: "POST",
+    route: "/scim/v2/Users",
   });
   await scim("Users", { body: input, status: 409 });
   const { body: b } = await scim("Users", {

@@ -80,7 +80,7 @@ describe("ContextBuilder", () => {
       now: () => new Date("2026-08-30T00:00:00Z"),
     });
     const constrained = snapshot();
-    constrained.executionSpec.model.contextWindow = 1_024;
+    constrained.executionSpec.model.contextWindow = 1_536;
     constrained.executionSpec.model.maxOutputTokens = 128;
 
     const { messages } = await builder.build(
@@ -228,7 +228,7 @@ describe("ContextBuilder", () => {
       now: () => new Date("2026-08-30T00:00:00Z"),
     });
     const constrained = snapshot();
-    constrained.executionSpec.model.contextWindow = 1_024;
+    constrained.executionSpec.model.contextWindow = 1_536;
     constrained.executionSpec.model.maxOutputTokens = 128;
 
     await expect(builder.build("session-1", constrained, ownership.signal)).rejects.toThrow(

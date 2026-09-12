@@ -87,8 +87,8 @@ type NewLifecycleOperationInput struct {
 	SourceRuntimeRevision   string
 	SourceRuntimeAbsent     bool
 	TargetSpecRevision      string
-	InitialTraceParent      string
-	Now                     time.Time
+
+	Now time.Time
 }
 
 type LifecycleOperation struct {
@@ -223,8 +223,8 @@ func validateOperationInput(input NewLifecycleOperationInput) error {
 			return fmt.Errorf("enable operation requires source Agent spec, source Runtime, and target Agent spec revisions")
 		}
 	case OperationDelete:
-		if targetSpec != "" || (sourceRuntime != "") == input.SourceRuntimeAbsent {
-			return fmt.Errorf("delete operation requires exactly one of a source Runtime revision or proof that Runtime is absent")
+		if targetSpec != "" || (sourceRuntime != "" && input.SourceRuntimeAbsent) {
+			return fmt.Errorf("delete operation cannot combine a source Runtime revision with an absence claim")
 		}
 		if sourceSpec != "" || sourceExecution != "" {
 			return fmt.Errorf("delete operation does not accept unrelated Agent spec or execution revisions")

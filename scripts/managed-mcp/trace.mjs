@@ -1,34 +1,62 @@
 import assert from "node:assert/strict";
+import { setTimeout as delay } from "node:timers/promises";
 import { assertSecretFree } from "../identity-closeout/evidence.mjs";
 
-export async function verifyTraces(base, requests, secrets = []) {
+export async function verifyTraces(
+  base,
+  requests,
+  secrets = [],
+  inspect = inspectTrace,
+) {
   const evidence = [];
   const traceIDs = [...new Set(requests.map((request) => request.trace_id))];
   for (const id of traceIDs) {
-    let lastError;
-    for (let attempt = 0; attempt < 40; attempt++) {
-      try {
-        const response = await fetch(`${base}/api/traces/${id}`, {
-          signal: AbortSignal.timeout(5000),
-        });
-        const trace = (await response.json()).data?.[0];
-        evidence.push(
-          inspectTrace(
-            trace,
-            requests.filter((request) => request.trace_id === id),
-            secrets,
-          ),
-        );
-        lastError = undefined;
-        break;
-      } catch (error) {
-        lastError = error;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-    }
-    if (lastError) throw lastError;
+    evidence.push(
+      await collectTrace(base, id, (trace) =>
+        inspect(
+          trace,
+          requests.filter((request) => request.trace_id === id),
+          secrets,
+        ),
+      ),
+    );
   }
   return evidence;
+}
+
+export async function collectTrace(base, id, inspect, signal) {
+  let lastError;
+  let previous;
+  let stableSamples = 0;
+  for (let attempt = 0; attempt < 40; attempt++) {
+    signal?.throwIfAborted();
+    try {
+      const response = await fetch(`${base}/api/traces/${id}`, {
+        signal: signal
+          ? AbortSignal.any([signal, AbortSignal.timeout(5000)])
+          : AbortSignal.timeout(5000),
+      });
+      assert.equal(response.status, 200, "Jaeger trace request failed");
+      const trace = (await response.json()).data?.[0];
+      const result = inspect(trace);
+      const spanIDs = JSON.stringify(
+        trace.spans.map((span) => span.spanID).sort(),
+      );
+      stableSamples = spanIDs === previous ? stableSamples + 1 : 1;
+      previous = spanIDs;
+      if (stableSamples >= 3) {
+        return result;
+      }
+      lastError = new Error("trace export did not converge");
+    } catch (error) {
+      signal?.throwIfAborted();
+      lastError = error;
+      stableSamples = 0;
+      previous = undefined;
+    }
+    await delay(1000, undefined, { signal });
+  }
+  throw lastError;
 }
 
 export function inspectTrace(trace, requests, secrets = []) {
@@ -80,6 +108,15 @@ export function inspectTrace(trace, requests, secrets = []) {
       ),
       `missing Runtime child span: ${upstream.operationName}`,
     );
+  for (const call of calls)
+    assert(
+      runtimes.some(
+        (span) =>
+          span.operationName === "runtime.mcp.tool" &&
+          ancestors(span).some((parent) => parent.spanID === call.spanID),
+      ),
+      "missing Runtime Tool descendant of ACP dispatch",
+    );
   const phases = verifyPreparations(spans, service, infos, lists, requests);
   const encoded = JSON.stringify(trace);
   assertSecretFree(encoded, secrets);
@@ -96,6 +133,9 @@ export function inspectTrace(trace, requests, secrets = []) {
     information_reads: infos.length,
     catalog_reads: lists.length,
     tool_calls: calls.length,
+    runtime_tool_calls: runtimes.filter(
+      (span) => span.operationName === "runtime.mcp.tool",
+    ).length,
     phases,
     gateway_ancestry: true,
     services: [...new Set(trace.spans.map(service))].sort(),

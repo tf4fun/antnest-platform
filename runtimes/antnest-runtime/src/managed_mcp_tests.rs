@@ -146,7 +146,7 @@ mod bridge {
         let mut child = child.await.unwrap();
         let mut catalog = Catalog::default();
         catalog
-            .add_server("fixture", client.peer().clone())
+            .add_server("fixture", client.peer().clone(), Default::default())
             .await
             .unwrap();
         let workspace = tempfile::tempdir().unwrap();
@@ -201,7 +201,10 @@ mod bridge {
             };
             let server = tokio::spawn(async move { fixture.serve(server_io).await.unwrap() });
             let client = ().serve(client_io).await.unwrap();
-            catalog.add_server(id, client.peer().clone()).await.unwrap();
+            catalog
+                .add_server(id, client.peer().clone(), Default::default())
+                .await
+                .unwrap();
             servers.push(server.await.unwrap());
             clients.push(client);
         }

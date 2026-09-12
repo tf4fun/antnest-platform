@@ -111,6 +111,17 @@ mod platform {
             Ok(self.workspace_path.join(normalize_relative_path(path)?))
         }
 
+        pub fn target_path(&self, root: NamedRoot, path: &str) -> Result<PathBuf, RootError> {
+            let base = match root {
+                NamedRoot::Workspace => &self.workspace_path,
+                NamedRoot::SystemSkills => &self.system_skills,
+            };
+            Ok(base
+                .join(normalize_relative_path(path)?)
+                .components()
+                .collect())
+        }
+
         pub fn workspace_root(&self) -> &Path {
             &self.workspace_path
         }
@@ -279,6 +290,15 @@ mod platform {
 
     fn open_relative(root: RawFd, path: &str, flags: u64, mode: u64) -> Result<OwnedFd, RootError> {
         let path = normalize_relative_path(path)?;
+        open_normalized_relative(root, path, flags, mode)
+    }
+
+    fn open_normalized_relative(
+        root: RawFd,
+        path: &str,
+        flags: u64,
+        mode: u64,
+    ) -> Result<OwnedFd, RootError> {
         let value =
             CString::new(path).map_err(|_| RootError::InvalidPath("path contains NUL".into()))?;
         let how = OpenHow {
@@ -306,22 +326,40 @@ mod platform {
         let Some(parent) = Path::new(path).parent() else {
             return Ok(());
         };
-        let mut current = PathBuf::new();
+        let mut current = open_relative(
+            root,
+            ".",
+            (libc::O_PATH | libc::O_DIRECTORY | libc::O_CLOEXEC) as u64,
+            0,
+        )?;
         for component in parent.components() {
             let Component::Normal(component) = component else {
                 continue;
             };
-            current.push(component);
-            let value = CString::new(current.as_os_str().as_encoded_bytes())
+            let value = CString::new(component.as_encoded_bytes())
                 .map_err(|_| RootError::InvalidPath(path.to_owned()))?;
-            let result = unsafe { libc::mkdirat(root, value.as_ptr(), 0o700) };
-            if result == 0 {
-                continue;
+            let result = unsafe { libc::mkdirat(current.as_raw_fd(), value.as_ptr(), 0o700) };
+            if result != 0 {
+                let source = io::Error::last_os_error();
+                if source.kind() != io::ErrorKind::AlreadyExists {
+                    return Err(system("create named-root parent directory", source));
+                }
             }
-            let source = io::Error::last_os_error();
-            if source.kind() != io::ErrorKind::AlreadyExists {
-                return Err(system("create named-root parent directory", source));
+            // Each parent must itself be a directory, never a followed symlink.
+            let fd = unsafe {
+                libc::openat(
+                    current.as_raw_fd(),
+                    value.as_ptr(),
+                    libc::O_PATH | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+                )
+            };
+            if fd < 0 {
+                return Err(system(
+                    "open named-root parent directory",
+                    io::Error::last_os_error(),
+                ));
             }
+            current = unsafe { OwnedFd::from_raw_fd(fd) };
         }
         Ok(())
     }
@@ -335,11 +373,15 @@ mod platform {
         if file_name.as_encoded_bytes() == b"." {
             return Err(RootError::InvalidPath(normalized.to_owned()));
         }
-        let parent = target.parent().unwrap_or_else(|| Path::new("."));
+        let parent = target
+            .parent()
+            .filter(|path| !path.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
         let parent_path = parent
             .to_str()
             .ok_or_else(|| RootError::InvalidPath(normalized.to_owned()))?;
-        let parent_fd = open_relative(
+        // A component split from the normalized target must retain its whitespace.
+        let parent_fd = open_normalized_relative(
             root,
             parent_path,
             (libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_DIRECTORY) as u64,
@@ -536,6 +578,13 @@ mod platform {
             Err(RootError)
         }
         pub fn read(&self, _root: NamedRoot, _path: &str) -> Result<ReadResult, RootError> {
+            Err(RootError)
+        }
+        pub fn target_path(
+            &self,
+            _root: NamedRoot,
+            _path: &str,
+        ) -> Result<std::path::PathBuf, RootError> {
             Err(RootError)
         }
         pub fn read_preview(

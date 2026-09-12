@@ -12,7 +12,11 @@ serialized Run, resolve one admission-scoped Provider secret, and close the
 admission. Agent ACP Service must not read Agent Controller tables or
 reconstruct current Agent configuration from separate calls.
 
-The machine-readable request and response shapes are in
+F05 adds the owner-scoped Session configuration directory and Agent default
+authorization CAS. Controller production, ACP consumption and the scoped
+Gateway/Runtime deployment profile have passed; later capability/pricing
+extensions are included in the current machine contract. The machine-readable
+request and response shapes are in
 [`run-contract.json`](run-contract.json).
 
 ## Identity Changes And Lifecycle State
@@ -30,11 +34,13 @@ change. An explicitly disabled/deleted Agent or revoked binding remains
 unusable: Identity reactivation is not an Agent enable command. Ownership uses
 the stable User/Organization pair, not the replaceable Membership ID or profile.
 
-The preceding describes current admission checks, not the required completed
-offboarding workflow. Identity deactivation must also cause automatic Agent and
-Runtime disable with retained data. The [revocation contract](../identity/principal-revocations.md)
-tracks the separate Identity producer, Controller consumer and integration
-batches. Once consumed, restoration must not automatically undo that disable.
+The preceding describes synchronous admission checks. The separate implemented
+offboarding workflow consumes owner revocations and disables associated Agents
+and Runtime with retained data. The
+[revocation contract](../identity/principal-revocations.md) records its producer,
+consumer and scoped C2-05 integration acceptance. Once consumed, restoration
+must not automatically undo that disable; uncertain Runtime effects remain
+fenced/pending instead of being reported as stopped.
 
 An exact retry of a committed admission returns the original snapshot, not a
 second authorization or a new Run. Admission-scoped credential resolution and
@@ -63,13 +69,39 @@ Session parameters.
 
 An ACP connection binds the returned `principal_id`, `agent_id`, and
 `access_revision` for its lifetime. Agent ACP Service calls
-`resolve_agent_access` before every ACP business operation and rejects the
-connection if any bound fact changed. Agent Controller must advance the
-revision whenever access, Agent mapping, or prompt capabilities change. An
+`resolve_agent_access` before Session-management operations. Prompt admission
+instead validates the same binding through authoritative `acquire_run`, without
+a duplicate preliminary access call. A changed binding rejects the old
+connection. Agent Controller must advance the
+revision whenever access or Agent mapping changes. Image/audio input availability
+includes only enabled organization model heads on enabled Provider connections,
+not stale access-binding flags or arbitrary historical revisions. Audio is an
+optional boolean (omitted means false). Embedded context is declared for built-in
+UTF-8 text, not universal binary support. This metadata is not an access grant.
+ACP must validate `supports_images`, optional `supports_audio` and `supports_pdf`
+(omitted means false) from each admitted model snapshot. See
+[multimodal authority](../../services/agent-controller/docs/multimodal-input.md).
+An
 existing Session also stores the principal/Agent pair; remapping cannot
 silently move a Session to another Agent.
 
 ## Methods
+
+### Session Configuration
+
+`get_session_configuration` returns a sanitized, paginated organization model
+directory plus Agent default authorization. `set_agent_authorization` updates
+defaults with a revision CAS, without Runtime changes or modifying active Runs.
+Both require a current Agent owner binding and Identity membership. See the
+[service contract and sequence](../../services/agent-controller/docs/session-configuration.md)
+for exact ownership, inheritance and errors.
+
+`acquire_run.session_configuration` optionally selects a model profile and
+overrides authorization. New admissions return `execution_spec.configuration`;
+its digest identifies the effective model/authorization, separately
+from the unchanged Agent build digest. Omitted configuration on historical
+admission replay remains valid. Clients must not substitute current settings
+into an already accepted Run. Admission deadlines are rendered in UTC.
 
 ### `GET /status`
 
@@ -118,6 +150,15 @@ successful response is a complete, immutable, non-secret input for one Run. The
 response is copied into Agent ACP Service's private `RunExecutionSnapshot`
 before the prompt is acknowledged.
 
+The optional `execution_spec.model.pricing` contains frozen USD per-million-token
+input/output rates and optional cache-read/cache-write rates. Both ordinary
+rates are required when present; explicit zero is valid, absence is unknown.
+The selected model revision is the only authority. Session callers cannot
+submit rates. Revising a Model Profile does not reprice an admitted Run or an
+Agent's build audit snapshot. Default and explicit model selections both take the
+current enabled head at the next admission. Recovery and replay return the originally saved
+rates; ACP may use them for cost estimates, not invoicing.
+
 The snapshot includes one opaque Runtime revision, MCP endpoint, and execution
 identity. Physical Runtime generation and instance identifiers are private to
 Runtime Controller and never appear here. Agent ACP Service must never discover
@@ -125,18 +166,28 @@ or refresh that endpoint through Docker, Kubernetes, Runtime Controller, or DNS
 metadata.
 
 The response also freezes `runtime_mcp_source_digest`,
-`agent_execution_spec_digest`, `context_policy_version`, and the non-secret
-`credential_version`. Stage 2 supports `context-v1`; an unknown version is
-rejected before execution rather than interpreted as the current policy. The
-credential resolver must return that same version; a mismatch fails the Run
-before the first model request rather than silently executing under configuration
-that differs from the admitted snapshot.
+`agent_execution_spec_digest` and `context_policy_version`. It also freezes
+`execution_spec.provider`: `connection_id`, `provider_key`,
+`credential_method`, `request_protocol`. Only DeepSeek / api_key /
+openai_chat_completions is currently supported. Stage 2 supports `context-v1`;
+unknown protocol/Provider combinations fail rather than falling back. Credential
+versions are not execution configuration and are not returned by admission.
 
 ### `resolve_credential`
 
-Resolves one opaque `credential_ref` only while its `admission_id` is active.
-The returned secret is held in memory for that Run and must not enter the ACP
-database, logs, traces, errors, or Tool results.
+Accepts `admission_id` and `provider_connection_id`. The connection must match
+the admitted Provider binding, belong to the Agent organization and be enabled.
+Admission must be active/unexpired and retain its current owner/access binding.
+The response contains `provider`, the actual `credential_version`,
+`secret_type=bearer` and `secret`. It reads the current credential at each
+resolution: rotation does not invalidate the model snapshot or require rebuilding
+the Agent/Runtime. Consumers must resolve again before a later model call, not
+cache the initial key for the entire Run or compare it to a build-time version.
+This is a local lookup, not a remote authentication refresh.
+
+Secrets must not enter ACP persistence, errors or Tool results. Development full
+RPC payload capture can include them in local Jaeger, as explicitly configured in
+the shared observability policy; repository spans do not collect secret bodies.
 
 ### `finish_run`
 
@@ -191,20 +242,25 @@ Every non-success response uses the error envelope from the JSON contract.
 | `agent_not_ready`        | yes     | Agent is disabled, deleting, or otherwise not executable                 |
 | `admission_not_found`    | inspect | Admission is absent or no longer visible                                 |
 | `credential_not_allowed` | no      | Reference is not part of the admitted snapshot                           |
+| `model_unavailable`      | no      | Select another enabled model from the Agent organization                 |
+| `configuration_conflict` | reload  | Authorization CAS is stale; reload before issuing a new revision update  |
 | `invalid_request`        | no      | Request shape or immutable terminal facts violate the contract           |
 | `dependency_unavailable` | yes     | A required service could not provide a trustworthy response; retry later |
 | `internal_error`         | yes     | Request outcome is unknown unless the method is retried with the same ID |
 
 ## Compatibility Rules
 
-1. This document and machine catalog describe contract revision 9.
+1. This document and machine catalog describe contract revision 13. P2 updates
+   the Controller producer only; the matching ACP consumer remains pending.
+   Do not deploy mixed versions. The current
+   strict ACP consumer must be upgraded before deployment with this producer.
 2. Contract fields are `snake_case`; ACP wire fields remain the ACP-defined
    `camelCase` shapes.
 3. New optional response fields may be added. Existing required fields cannot
    change meaning.
 4. Secrets cannot be added to `acquire_run` merely to remove one RPC.
-5. Agent ACP Service tests use a contract fixture until Agent Controller is
-   implemented. A fake is not an alternate production authority.
+5. Contract fixtures complement Controller HTTP/PostgreSQL tests and deployment
+   integration. A fake is not an alternate production authority.
 6. Every method's HTTP verb, successful status, and content type are part of
    the machine contract rather than transport-adapter convention.
 

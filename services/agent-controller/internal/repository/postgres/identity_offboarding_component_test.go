@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"os"
 	"slices"
-	"strings"
 	"testing"
 	"time"
 
@@ -17,22 +16,17 @@ import (
 	"soft/antnest-platform/services/agent-controller/internal/application"
 	"soft/antnest-platform/services/agent-controller/internal/domain"
 	"soft/antnest-platform/services/agent-controller/internal/ports"
-	"soft/antnest-platform/services/agent-controller/internal/telemetry"
 )
 
 func TestIdentityOffboardingComponentDisablesRuntimeAndRequiresExplicitEnable(t *testing.T) {
-	repository, base := identityTestRepository(t)
 	ctx := context.Background()
 	recorder := tracetest.NewSpanRecorder()
 	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
 	previous := otel.GetTracerProvider()
 	otel.SetTracerProvider(provider)
 	t.Cleanup(func() { otel.SetTracerProvider(previous); _ = provider.Shutdown(context.Background()) })
+	repository, base := identityTestRepository(t)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	observed, err := telemetry.ObserveIdentityRevocationStore(repository, logger)
-	if err != nil {
-		t.Fatal(err)
-	}
 	deps := &offboardingDependencies{runtime: ports.RuntimeOperation{State: "completed", Effect: "completed", RuntimeRevision: base.Agent.RuntimeRevision,
 		RuntimeExecutionID: base.Agent.RuntimeExecutionID, MCPEndpoint: base.Agent.RuntimeMCPEndpoint, LifecycleState: "ready", Health: "healthy"},
 		network: *closedNetworkAttachment(base.Agent.AgentID)}
@@ -40,7 +34,7 @@ func TestIdentityOffboardingComponentDisablesRuntimeAndRequiresExplicitEnable(t 
 	identity := &offboardingIdentity{principal: ports.IdentityPrincipal{UserID: base.Agent.OwnerUserID, OrganizationID: base.Agent.OrganizationID, MembershipID: "membership", Active: false, LastRevocationSequence: 5},
 		event: ports.PrincipalRevocation{Sequence: 5, UserID: base.Agent.OwnerUserID, Reason: "user_deactivated", OccurredAt: time.Now().UTC(), TraceParent: "00-11111111111111111111111111111111-2222222222222222-01"}}
 	lifecycle := application.NewLifecycleService(repository, repository, deps, deps, offboardingClock{}, application.WithIdentityDirectory(identity))
-	worker, err := application.NewIdentityRevocationWorker(identity, observed, lifecycle, time.Second, logger)
+	worker, err := application.NewIdentityRevocationWorker(identity, repository, lifecycle, time.Second, logger)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,9 +52,6 @@ func TestIdentityOffboardingComponentDisablesRuntimeAndRequiresExplicitEnable(t 
 	if err != nil || operation.OwnerRevocationSequence != 5 {
 		t.Fatalf("operation=%+v err=%v", operation, err)
 	}
-	if !strings.Contains(operation.InitialTraceParent, "11111111111111111111111111111111") {
-		t.Fatalf("source trace lost: %s", operation.InitialTraceParent)
-	}
 	for range 2 {
 		if err := worker.RunOnce(ctx); err != nil {
 			t.Fatal(err)
@@ -70,15 +61,7 @@ func TestIdentityOffboardingComponentDisablesRuntimeAndRequiresExplicitEnable(t 
 	if err != nil || latest.ActiveOperationRequestID != operation.RequestID {
 		t.Fatal("duplicate receipt replaced operation")
 	}
-	instrumentation, err := telemetry.ObserveLifecycleRecoveryAttempt(logger)
-	if err != nil {
-		t.Fatal(err)
-	}
-	recovery, err := application.NewLifecycleRecoveryWorker(repository, lifecycle, instrumentation, application.LifecycleRecoveryWorkerConfig{
-		WorkerID: "offboarding-test", PollInterval: 10 * time.Millisecond, AttemptTimeout: time.Second, LeaseDuration: 2 * time.Second, RetryMax: time.Second})
-	if err != nil {
-		t.Fatal(err)
-	}
+	recovery := lifecycle
 	finishOffboardingOperation(t, repository, recovery, operation.RequestID, domain.OperationCompleted)
 	disabled, err := loadAgentRecord(ctx, repository.pool, base.Agent.AgentID)
 	if err != nil || disabled.LifecycleState != domain.AgentDisabled || deps.disableCalls != 1 || deps.network.AttachmentState != ports.NetworkAttachmentClosed {
@@ -119,28 +102,6 @@ func TestIdentityOffboardingComponentDisablesRuntimeAndRequiresExplicitEnable(t 
 	if !found {
 		t.Fatal("missing causal consumer trace")
 	}
-}
-
-func finishOffboardingOperation(t *testing.T, repo *Repository, worker *application.LifecycleRecoveryWorker, requestID string, expected domain.OperationState) {
-	t.Helper()
-	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
-		if _, err := worker.RunOnce(context.Background()); err != nil {
-			t.Fatal(err)
-		}
-		operation, err := repo.GetLifecycleOperation(context.Background(), requestID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if operation.State == expected {
-			return
-		}
-		if operation.State != domain.OperationRunning {
-			t.Fatalf("operation failed: %+v", operation)
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	operation, err := repo.GetLifecycleOperation(context.Background(), requestID)
-	t.Fatalf("operation did not converge: %+v %v", operation, err)
 }
 
 func assertOffboardingEventStream(t *testing.T, repo *Repository, agent ports.AgentRecord) {
@@ -261,15 +222,7 @@ func TestIdentityOffboardingRetriesFailedDisableWithoutRestoringAccess(t *testin
 		t.Fatal(err)
 	}
 	firstRequest := agent.ActiveOperationRequestID
-	instrumentation, err := telemetry.ObserveLifecycleRecoveryAttempt(logger)
-	if err != nil {
-		t.Fatal(err)
-	}
-	recovery, err := application.NewLifecycleRecoveryWorker(repository, lifecycle, instrumentation, application.LifecycleRecoveryWorkerConfig{
-		WorkerID: "offboarding-retry", PollInterval: 10 * time.Millisecond, AttemptTimeout: time.Second, LeaseDuration: 2 * time.Second, RetryMax: time.Second})
-	if err != nil {
-		t.Fatal(err)
-	}
+	recovery := lifecycle
 	finishOffboardingOperation(t, repository, recovery, firstRequest, domain.OperationFailed)
 	failed, err := loadAgentRecord(ctx, repository.pool, agent.AgentID)
 	if err != nil || failed.DesiredState != domain.DesiredDisabled || !failed.IdentityRevoked() || failed.ExecutionRevisionID != base.Agent.ExecutionRevisionID || deps.network.AttachmentState != ports.NetworkAttachmentClosed {
@@ -302,4 +255,9 @@ func (deps *offboardingDependencies) EnableRuntime(context.Context, string, stri
 }
 func (deps *offboardingDependencies) InspectRuntime(_ context.Context, id string) (ports.RuntimeInspection, error) {
 	return ports.RuntimeInspection{AgentID: id, RuntimeRevision: deps.runtime.RuntimeRevision, RuntimeExecutionID: deps.runtime.RuntimeExecutionID, MCPEndpoint: deps.runtime.MCPEndpoint, LifecycleState: deps.runtime.LifecycleState, Health: deps.runtime.Health}, nil
+}
+
+func finishOffboardingOperation(t *testing.T, repo *Repository, service *application.LifecycleService, requestID string, expected domain.OperationState) {
+	t.Helper()
+	executeLifecycleWorkflowForTest(t, repo, service, requestID, expected)
 }

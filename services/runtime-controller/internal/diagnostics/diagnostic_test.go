@@ -1,7 +1,9 @@
 package diagnostics
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -21,6 +23,23 @@ func TestMessageRedactsCommonCredentialForms(t *testing.T) {
 	}
 	if !strings.Contains(diagnostic, "REDACTED") {
 		t.Fatalf("diagnostic did not preserve a redaction marker: %s", diagnostic)
+	}
+}
+
+func TestMessagesExposeSafeTypedCausesWithoutArbitraryExceptionText(t *testing.T) {
+	err := fmt.Errorf("OIDC code=CODE_CANARY state=STATE_CANARY cookie=COOKIE_CANARY: %w", context.DeadlineExceeded)
+	message := Message(err)
+	if !strings.Contains(message, "deadline exceeded") || strings.Contains(message, "CANARY") {
+		t.Fatalf("unsafe or unhelpful cause: %s", message)
+	}
+	for i := 0; i < 10; i++ {
+		err = fmt.Errorf("secret wrapper %w", err)
+	}
+	if got := Causes(err); len(got) > 4 {
+		t.Fatalf("cause budget = %d", len(got))
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatal("diagnostics changed original error")
 	}
 }
 

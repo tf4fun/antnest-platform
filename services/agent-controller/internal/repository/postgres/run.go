@@ -26,13 +26,22 @@ func (repository *Repository) ResolveAgentAccess(
 	var result ports.AgentAccessResolution
 	err := repository.pool.QueryRow(ctx, `
 SELECT access.principal_id, access.agent_id, agent.organization_id,
-       access.access_revision, access.prompt_image, access.prompt_embedded_context
+       access.access_revision, capabilities.image, capabilities.audio
 FROM agent_controller.agent_access_bindings access
 JOIN agent_controller.agents agent ON agent.id = access.agent_id
+CROSS JOIN LATERAL (
+    SELECT COALESCE(bool_or((r.model->>'supports_images')::boolean), false) AS image,
+           COALESCE(bool_or((r.model->>'supports_audio')::boolean), false) AS audio
+    FROM agent_controller.model_profiles p
+    JOIN agent_controller.model_profile_revisions r ON r.model_profile_id = p.id AND r.organization_id = p.organization_id
+    JOIN agent_controller.provider_connections c ON c.id=p.provider_connection_id AND c.organization_id=p.organization_id
+    WHERE p.organization_id = agent.organization_id AND p.enabled AND c.enabled
+      AND r.id = p.current_revision_id
+) capabilities
 WHERE access.access_subject = $1 AND access.active
 AND agent.identity_revocation_sequence <= agent.owner_authorization_sequence`, accessSubject).Scan(
 		&result.PrincipalID, &result.AgentID, &result.OrganizationID, &result.AccessRevision,
-		&result.PromptCapabilities.Image, &result.PromptCapabilities.EmbeddedContext,
+		&result.PromptCapabilities.Image, &result.PromptCapabilities.Audio,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ports.AgentAccessResolution{}, ports.ErrRunAccessDenied
@@ -40,6 +49,8 @@ AND agent.identity_revocation_sequence <= agent.owner_authorization_sequence`, a
 	if err != nil {
 		return ports.AgentAccessResolution{}, fmt.Errorf("resolve Agent access binding: %w", err)
 	}
+	// Embedded UTF-8 text is an ACP feature, not a per-model binary modality.
+	result.PromptCapabilities.EmbeddedContext = true
 	return result, nil
 }
 
@@ -150,6 +161,9 @@ func (repository *Repository) AcquireRun(
 	if err != nil {
 		return ports.RunAdmissionRecord{}, false, err
 	}
+	if err := applyRunConfiguration(ctx, transaction, agent, input.SessionConfiguration, &snapshot); err != nil {
+		return ports.RunAdmissionRecord{}, false, err
+	}
 	if err := ports.ValidateRunExecutionSnapshot(snapshot); err != nil {
 		return ports.RunAdmissionRecord{}, false, fmt.Errorf("validate Run execution snapshot: %w", err)
 	}
@@ -161,7 +175,7 @@ func (repository *Repository) AcquireRun(
 		Deadline: input.Deadline, RuntimeRevision: snapshot.Runtime.RuntimeRevision,
 		Snapshot: snapshot, CreatedAt: input.Now, UpdatedAt: input.Now,
 	}
-	if err := insertRunAdmission(ctx, transaction, record); err != nil {
+	if err := insertRunAdmission(ctx, transaction, &record); err != nil {
 		return ports.RunAdmissionRecord{}, false, err
 	}
 	if err := transaction.Commit(ctx); err != nil {
@@ -288,7 +302,7 @@ func (repository *Repository) GetAdmissionCredential(
 		return ports.AdmissionCredential{}, err
 	}
 	if admission.State != domain.AdmissionActive || !admission.Deadline.After(now) ||
-		admission.Snapshot.ExecutionSpec.CredentialRef != credentialRef {
+		admission.Snapshot.ExecutionSpec.Provider.ConnectionID != credentialRef {
 		return ports.AdmissionCredential{}, ports.ErrCredentialNotAllowed
 	}
 	var record ports.AdmissionCredential
@@ -296,9 +310,14 @@ func (repository *Repository) GetAdmissionCredential(
 SELECT c.organization_id, c.credential_ref, c.credential_version, c.secret_type,
        c.ciphertext, c.nonce, c.key_version
 FROM agent_controller.agents a
-JOIN agent_controller.provider_credentials c ON c.organization_id = a.organization_id
-WHERE a.id = $1 AND c.credential_ref = $2 AND c.credential_version = $3`,
-		admission.AgentID, credentialRef, admission.Snapshot.CredentialVersion,
+JOIN agent_controller.provider_connections p ON p.organization_id = a.organization_id AND p.id=$2 AND p.enabled
+JOIN agent_controller.provider_credentials c ON c.organization_id = p.organization_id
+ AND c.credential_ref=p.id AND c.credential_version=p.current_credential_version
+WHERE a.id = $1 AND a.identity_revocation_sequence <= a.owner_authorization_sequence
+ AND a.owner_user_id=$3 AND a.access_revision=$4
+ AND EXISTS (SELECT 1 FROM agent_controller.agent_access_bindings b WHERE b.agent_id=a.id
+ AND b.principal_id=$3 AND b.access_revision=$4 AND b.active)`,
+		admission.AgentID, credentialRef, admission.PrincipalID, admission.AccessRevision,
 	).Scan(
 		&record.Identity.OrganizationID, &record.Identity.CredentialRef,
 		&record.Identity.CredentialVersion, &record.SecretType,
@@ -310,13 +329,17 @@ WHERE a.id = $1 AND c.credential_ref = $2 AND c.credential_version = $3`,
 	if err != nil {
 		return ports.AdmissionCredential{}, fmt.Errorf("load admission Provider credential: %w", err)
 	}
+	record.Provider = admission.Snapshot.ExecutionSpec.Provider
+	if err := record.Provider.Validate(); err != nil {
+		return ports.AdmissionCredential{}, err
+	}
 	if err := transaction.Commit(ctx); err != nil {
 		return ports.AdmissionCredential{}, fmt.Errorf("commit admission credential read: %w", err)
 	}
 	return record, nil
 }
 
-func lockRunRequest(ctx context.Context, transaction pgx.Tx, requestID string) error {
+func lockRunRequest(ctx context.Context, transaction *databaseTransaction, requestID string) error {
 	if _, err := transaction.Exec(
 		ctx, "SELECT pg_advisory_xact_lock($1, hashtext($2))", runRequestLockNamespace, requestID,
 	); err != nil {
@@ -346,7 +369,7 @@ func validateAgentForRun(agent ports.AgentRecord) error {
 }
 
 func validateRunAccess(
-	ctx context.Context, transaction pgx.Tx, agent ports.AgentRecord, input ports.AcquireRunRecord,
+	ctx context.Context, transaction *databaseTransaction, agent ports.AgentRecord, input ports.AcquireRunRecord,
 ) error {
 	var active bool
 	err := transaction.QueryRow(ctx, `
@@ -364,7 +387,7 @@ ORDER BY access_subject LIMIT 1 FOR UPDATE`,
 	return nil
 }
 
-func agentRunOccupied(ctx context.Context, transaction pgx.Tx, agentID string) (bool, error) {
+func agentRunOccupied(ctx context.Context, transaction *databaseTransaction, agentID string) (bool, error) {
 	var admissionID string
 	err := transaction.QueryRow(ctx, `
 SELECT admission_id FROM agent_controller.run_admissions
@@ -402,7 +425,6 @@ func loadRunExecutionSnapshot(
 		AgentSpecRevisionID: spec.ID, ExecutionRevisionID: execution.ID,
 		RuntimeMCPSourceDigest:   execution.RuntimeMCPSourceDigest,
 		AgentExecutionSpecDigest: spec.CanonicalDigest,
-		CredentialVersion:        snapshot.CredentialVersion,
 		Runtime: ports.AdmittedRuntime{
 			RuntimeRevision:    execution.RuntimeRevision,
 			RuntimeExecutionID: execution.RuntimeExecutionID,
@@ -410,29 +432,30 @@ func loadRunExecutionSnapshot(
 		},
 		ExecutionSpec: ports.AdmittedExecutionSpec{
 			SystemPrompt: snapshot.SystemPrompt, ContextPolicyVersion: snapshot.ContextPolicyVersion,
-			SkillInstructions: make([]ports.SkillInstruction, 0), Model: snapshot.Model,
-			MaxModelRequests: snapshot.MaxModelRequests, CredentialRef: snapshot.CredentialRef,
+			SkillInstructions: make([]ports.SkillInstruction, 0),
+			MaxModelRequests:  snapshot.MaxModelRequests,
 		},
 	}, nil
 }
 
 func insertRunAdmission(
-	ctx context.Context, transaction pgx.Tx, record ports.RunAdmissionRecord,
+	ctx context.Context, transaction *databaseTransaction, record *ports.RunAdmissionRecord,
 ) error {
 	snapshot, err := json.Marshal(record.Snapshot)
 	if err != nil {
 		return fmt.Errorf("encode Run execution snapshot: %w", err)
 	}
-	_, err = transaction.Exec(ctx, `
+	err = transaction.QueryRow(ctx, `
 INSERT INTO agent_controller.run_admissions (
     admission_id, request_id, request_fingerprint, agent_id, session_id,
     principal_id, access_revision, state, deadline, runtime_revision,
     snapshot, created_at, updated_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+RETURNING deadline, created_at, updated_at`,
 		record.AdmissionID, record.RequestID, record.RequestFingerprint, record.AgentID,
 		record.SessionID, record.PrincipalID, record.AccessRevision, record.State,
 		record.Deadline, record.RuntimeRevision, snapshot, record.CreatedAt, record.UpdatedAt,
-	)
+	).Scan(&record.Deadline, &record.CreatedAt, &record.UpdatedAt)
 	if err != nil {
 		return mapRunConstraintError(err)
 	}

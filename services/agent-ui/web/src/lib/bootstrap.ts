@@ -18,6 +18,8 @@ export function workspaceFromBootstrap(payload: unknown): WorkspaceSnapshot {
   const bootstrap = bootstrapSchema.parse(payload);
   return {
     principal: {
+      userId: bootstrap.principal.user_id,
+      organizationId: bootstrap.principal.organization_id,
       displayName: bootstrap.principal.administrator ? "Administrator" : "Signed in",
       organizationName: "Organization workspace",
       administrator: bootstrap.principal.administrator,

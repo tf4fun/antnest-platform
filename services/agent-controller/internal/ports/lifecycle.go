@@ -38,6 +38,7 @@ const (
 	EventAgentDeleted              = "agent_deleted"
 	EventAgentLifecycleQuarantined = "agent_lifecycle_quarantined"
 	EventAgentRuntimeRestarted     = "agent_runtime_restarted"
+	EventAgentRuntimeMissing       = "agent_runtime_missing"
 	EventAgentOwnerRevoked         = "agent_owner_revoked"
 )
 
@@ -45,7 +46,7 @@ var ErrRunAdmissionRuntimeMismatch = errors.New("run admission Runtime does not 
 
 type AgentSpecSource interface {
 	GetTemplateRevision(context.Context, string, int64) (domain.TemplateRevision, error)
-	GetModelProfileRevision(context.Context, string) (domain.ModelProfileRevision, error)
+	GetCurrentModelProfileRevision(context.Context, string) (domain.ModelProfileRevision, error)
 }
 
 type NetworkAttachment struct {
@@ -115,7 +116,10 @@ type DependencyError struct {
 	Service   string
 	Code      string
 	Retryable bool
+	Cause     error `json:"-"`
 }
+
+func (failure *DependencyError) Unwrap() error { return failure.Cause }
 
 func (failure *DependencyError) Error() string {
 	return fmt.Sprintf("%s dependency failed with %s", failure.Service, failure.Code)
@@ -176,36 +180,29 @@ type AgentSpecRecord struct {
 }
 
 type LifecycleOperationRecord struct {
-	OwnerRevocationSequence     int64
-	RequestID                   string
-	RequestFingerprint          string
-	AgentID                     string
-	Kind                        domain.OperationKind
-	Phase                       domain.OperationPhase
-	State                       domain.OperationState
-	SourceSpecRevisionID        string
-	SourceExecutionRevisionID   string
-	SourceRuntimeRevision       string
-	SourceRuntimeAbsent         bool
-	TargetSpecRevisionID        string
-	ChildRequestID              string
-	NetworkAttachment           *NetworkAttachment
-	SourceRuntimeInspection     *RuntimeInspection
-	SourceRuntimeAbsenceProof   *RuntimeAbsenceProof
-	RuntimeResult               *RuntimeOperation
-	NetworkReleaseOutcome       string
-	InitialTraceParent          string
-	PreviousRecoveryTraceParent string
-	Attempt                     int64
-	RecoveryOwner               string
-	RecoveryLeaseUntil          *time.Time
-	RecoveryAfter               time.Time
-	RecoveryFailureCount        int64
-	ErrorCode                   string
-	ErrorDetail                 string
-	Retryable                   bool
-	CreatedAt                   time.Time
-	UpdatedAt                   time.Time
+	OwnerRevocationSequence   int64
+	RequestID                 string
+	RequestFingerprint        string
+	AgentID                   string
+	Kind                      domain.OperationKind
+	Phase                     domain.OperationPhase
+	State                     domain.OperationState
+	SourceSpecRevisionID      string
+	SourceExecutionRevisionID string
+	SourceRuntimeRevision     string
+	SourceRuntimeAbsent       bool
+	TargetSpecRevisionID      string
+	ChildRequestID            string
+	NetworkAttachment         *NetworkAttachment
+	SourceRuntimeInspection   *RuntimeInspection
+	SourceRuntimeAbsenceProof *RuntimeAbsenceProof
+	RuntimeResult             *RuntimeOperation
+	NetworkReleaseOutcome     string
+	ErrorCode                 string
+	ErrorDetail               string
+	Retryable                 bool
+	CreatedAt                 time.Time
+	UpdatedAt                 time.Time
 }
 
 type AgentEventRecord struct {
@@ -246,8 +243,15 @@ type AgentLifecycleBase struct {
 	Agent                 AgentRecord
 	ExecutableSpec        AgentSpecRecord
 	ExecutableExecution   ExecutionRecord
+	RecoverySource        *AgentExecutionSource
 	NextSpecRevision      int64
 	NextExecutionRevision int64
+}
+
+// AgentExecutionSource is immutable lineage, not permission to execute a Run.
+type AgentExecutionSource struct {
+	Spec      AgentSpecRecord
+	Execution ExecutionRecord
 }
 
 type AgentRebuildState struct {
@@ -341,6 +345,13 @@ type AdvanceAgentRebuild struct {
 	RuntimeResult      *RuntimeOperation
 	RunReleaseEvent    RunAdmissionEvent
 	Now                time.Time
+}
+
+// LifecycleAdvanceResult contains mutable projections only, not execution snapshots.
+type LifecycleAdvanceResult struct {
+	Agent             AgentRecord
+	Operation         LifecycleOperationRecord
+	RunReleaseOutcome string
 }
 
 type PublishAgentRebuild struct {
@@ -467,16 +478,18 @@ type BeginAgentDelete struct {
 }
 
 type AdvanceAgentDelete struct {
-	RequestID             string
-	Fingerprint           string
-	ExpectedPhase         domain.OperationPhase
-	NextPhase             domain.OperationPhase
-	NextChildRequestID    string
-	NetworkAttachment     *NetworkAttachment
-	RuntimeResult         *RuntimeOperation
-	RunReleaseEvent       RunAdmissionEvent
-	NetworkReleaseOutcome string
-	Now                   time.Time
+	SourceRuntimeInspection   *RuntimeInspection
+	SourceRuntimeAbsenceProof *RuntimeAbsenceProof
+	RequestID                 string
+	Fingerprint               string
+	ExpectedPhase             domain.OperationPhase
+	NextPhase                 domain.OperationPhase
+	NextChildRequestID        string
+	NetworkAttachment         *NetworkAttachment
+	RuntimeResult             *RuntimeOperation
+	RunReleaseEvent           RunAdmissionEvent
+	NetworkReleaseOutcome     string
+	Now                       time.Time
 }
 
 type PublishAgentDelete struct {
@@ -487,6 +500,7 @@ type PublishAgentDelete struct {
 }
 
 type LifecycleStore interface {
+	QuarantineLifecycleOperation(context.Context, QuarantineLifecycleOperation) error
 	GetLifecycleOperation(context.Context, string) (LifecycleOperationRecord, error)
 	GetAgentLifecycleBase(context.Context, string) (AgentLifecycleBase, error)
 	ReplayAgentCreate(context.Context, string, string) (AgentCreateState, bool, error)
@@ -498,7 +512,7 @@ type LifecycleStore interface {
 	ReplayAgentRebuild(context.Context, string, string) (AgentRebuildState, bool, error)
 	BeginAgentRebuild(context.Context, BeginAgentRebuild) (AgentRebuildState, bool, error)
 	SettleAgentRebuildDrain(context.Context, string, string, string, time.Time) (AgentRebuildState, error)
-	AdvanceAgentRebuild(context.Context, AdvanceAgentRebuild) (AgentRebuildState, error)
+	AdvanceAgentRebuild(context.Context, AdvanceAgentRebuild) (LifecycleAdvanceResult, error)
 	PublishAgentRebuild(context.Context, PublishAgentRebuild) (AgentRebuildState, error)
 	FailAgentRebuild(context.Context, FailAgentRebuild) (AgentRebuildState, error)
 	ReplayAgentDisable(context.Context, string, string) (AgentDisableState, bool, error)

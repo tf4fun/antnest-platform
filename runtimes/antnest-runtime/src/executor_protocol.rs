@@ -8,6 +8,43 @@ use crate::tool_error::{ToolError, ToolErrorCode};
 pub(crate) const MAX_EXECUTOR_MESSAGE_BYTES: usize = 64 * 1024 * 1024;
 pub(crate) const MAX_EXECUTOR_DIAGNOSTIC_BYTES: usize = 64 * 1024;
 
+pub(crate) async fn read_executor_output(
+    reader: impl tokio::io::AsyncRead + Unpin,
+    progress: crate::progress::ProgressSink,
+) -> std::io::Result<(Vec<u8>, bool)> {
+    use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, BufReader};
+    let mut reader = BufReader::new(reader.take((MAX_EXECUTOR_MESSAGE_BYTES + 1) as u64));
+    let mut frame = Vec::new();
+    let mut terminal = None;
+    let mut size = 0;
+    loop {
+        frame.clear();
+        let count = reader.read_until(b'\n', &mut frame).await?;
+        if count == 0 {
+            break;
+        }
+        size += count;
+        if size > MAX_EXECUTOR_MESSAGE_BYTES {
+            return Ok((Vec::new(), true));
+        }
+        if terminal.is_some() || frame.last() != Some(&b'\n') {
+            return Err(std::io::Error::other("invalid executor frame sequence"));
+        }
+        let value: serde_json::Value = serde_json::from_slice(&frame)?;
+        if let Some(update) = value.get("progress") {
+            if value.as_object().is_none_or(|object| object.len() != 1) {
+                return Err(std::io::Error::other("invalid executor progress frame"));
+            }
+            progress.emit(serde_json::from_value(update.clone())?);
+        } else {
+            terminal = Some(frame.clone());
+        }
+    }
+    terminal
+        .map(|value| (value, false))
+        .ok_or_else(|| std::io::Error::other("executor ended without a terminal result"))
+}
+
 pub(crate) fn decode_info_request(input: &[u8]) -> Result<(), ToolError> {
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
@@ -140,16 +177,19 @@ struct WireBashResult {
 struct WireReadResult {
     content: String,
     truncated: bool,
+    file: Option<crate::file_observation_wire::WireFileObservation>,
 }
 
 #[derive(Deserialize, Serialize)]
 struct WireWriteResult {
     bytes_written: u64,
+    file: Option<crate::file_observation_wire::WireFileObservation>,
 }
 
 #[derive(Deserialize, Serialize)]
 struct WireEditResult {
     bytes_written: u64,
+    file: Option<crate::file_observation_wire::WireFileObservation>,
 }
 
 pub(crate) fn encode_bash_request(
@@ -260,9 +300,14 @@ pub(crate) fn decode_bash_reply(
 pub(crate) fn encode_read_reply(
     result: Result<execution::ReadResult, ToolError>,
 ) -> Result<Vec<u8>, serde_json::Error> {
-    encode_reply(result.map(|result| WireReadResult {
-        content: result.content,
-        truncated: result.truncated,
+    encode_reply(result.map(|result| {
+        WireReadResult {
+            content: result.content,
+            truncated: result.truncated,
+            file: result
+                .file
+                .and_then(crate::file_observation_wire::WireFileObservation::bounded),
+        }
     }))
 }
 
@@ -272,14 +317,20 @@ pub(crate) fn decode_read_reply(
     decode_reply(input, |result: WireReadResult| execution::ReadResult {
         content: result.content,
         truncated: result.truncated,
+        file: result.file.map(Into::into),
     })
 }
 
 pub(crate) fn encode_write_reply(
     result: Result<execution::WriteResult, ToolError>,
 ) -> Result<Vec<u8>, serde_json::Error> {
-    encode_reply(result.map(|result| WireWriteResult {
-        bytes_written: result.bytes_written,
+    encode_reply(result.map(|result| {
+        WireWriteResult {
+            bytes_written: result.bytes_written,
+            file: result
+                .file
+                .and_then(crate::file_observation_wire::WireFileObservation::bounded),
+        }
     }))
 }
 
@@ -288,14 +339,20 @@ pub(crate) fn decode_write_reply(
 ) -> Result<Result<execution::WriteResult, ExecutorFailure>, serde_json::Error> {
     decode_reply(input, |result: WireWriteResult| execution::WriteResult {
         bytes_written: result.bytes_written,
+        file: result.file.map(Into::into),
     })
 }
 
 pub(crate) fn encode_edit_reply(
     result: Result<execution::EditResult, ToolError>,
 ) -> Result<Vec<u8>, serde_json::Error> {
-    encode_reply(result.map(|result| WireEditResult {
-        bytes_written: result.bytes_written,
+    encode_reply(result.map(|result| {
+        WireEditResult {
+            bytes_written: result.bytes_written,
+            file: result
+                .file
+                .and_then(crate::file_observation_wire::WireFileObservation::bounded),
+        }
     }))
 }
 
@@ -304,6 +361,7 @@ pub(crate) fn decode_edit_reply(
 ) -> Result<Result<execution::EditResult, ExecutorFailure>, serde_json::Error> {
     decode_reply(input, |result: WireEditResult| execution::EditResult {
         bytes_written: result.bytes_written,
+        file: result.file.map(Into::into),
     })
 }
 
@@ -442,6 +500,7 @@ mod tests {
         let encoded = encode_read_reply(Ok(ReadResult {
             content: "hello".into(),
             truncated: false,
+            file: None,
         }))
         .unwrap();
         assert_eq!(

@@ -14,6 +14,80 @@ import type { ToolCatalogPort } from "../../src/ports/tools.js";
 import type { AcceptedAcpRun } from "../../src/ports/acp-application.js";
 
 describe("RunExecutor", () => {
+  it.each(["success", "cancelled", "expired", "persistence-failed", "ownership-lost"] as const)(
+    "handles help %s without model, credentials or Runtime setup",
+    async (scenario) => {
+      const order: string[] = [];
+      const executions = executionRepository(order);
+      const controller = agentController(order);
+      const context = contextBuilder();
+      const model = terminalModel();
+      const tools = emptyTools();
+      const events = eventRepository();
+      const appendAgentMessage = vi.spyOn(events, "appendAgentMessage");
+      const appendUsage = vi.spyOn(events, "appendUsage");
+      const build = vi.spyOn(context, "build");
+      const list = vi.spyOn(tools, "list");
+      const call = vi.spyOn(tools, "call");
+      const recoveryRequired = vi.fn();
+      const cancellation = new AbortController();
+      const ownership = new AbortController();
+      const input = { ...accepted(), command: { name: "help" as const, locale: "en" as const } };
+      if (scenario === "cancelled") cancellation.abort();
+      if (scenario === "expired") input.snapshot.admissionDeadline = new Date("2026-08-29");
+      if (scenario === "ownership-lost") ownership.abort(new WorkerOwnershipLostError());
+      if (scenario === "persistence-failed")
+        appendAgentMessage.mockRejectedValue(new Error("database unavailable"));
+      const executor = new RunExecutor({
+        executions: executions.port,
+        contextBuilder: context,
+        agentController: controller.port,
+        model,
+        tools,
+        events,
+        ownershipSignal: ownership.signal,
+        recoveryRequired,
+        id: sequentialIds(),
+        now: () => new Date("2026-08-30T00:00:00Z"),
+      });
+      const result = executor.execute({
+        accepted: input,
+        publish: vi.fn(),
+        signal: cancellation.signal,
+      });
+      if (scenario === "ownership-lost") {
+        await expect(result).rejects.toBeInstanceOf(WorkerOwnershipLostError);
+      } else if (scenario === "persistence-failed") {
+        await expect(result).rejects.toBeInstanceOf(RunRecoveryRequiredError);
+        expect(recoveryRequired).toHaveBeenCalledOnce();
+      } else {
+        await expect(result).resolves.toMatchObject({
+          terminalClass:
+            scenario === "success" ? "completed" : scenario === "expired" ? "failed" : "cancelled",
+          toolEffectState: "none",
+        });
+        expect(order).toEqual(["local-finish", "controller-finish", "mark-finished"]);
+      }
+      if (scenario === "success") {
+        expect(appendAgentMessage).toHaveBeenCalledOnce();
+        expect(appendAgentMessage.mock.calls[0]?.[0].runId).toBe(input.runId);
+        expect(appendAgentMessage.mock.calls[0]?.[0].content[0]?.text).toContain("/help");
+      } else if (scenario !== "persistence-failed") {
+        expect(appendAgentMessage).not.toHaveBeenCalled();
+      }
+      if (scenario === "persistence-failed" || scenario === "ownership-lost") {
+        expect(executions.finish).not.toHaveBeenCalled();
+        expect(controller.finishRun).not.toHaveBeenCalled();
+      }
+      expect(build).not.toHaveBeenCalled();
+      expect(controller.resolveCredential).not.toHaveBeenCalled();
+      expect(model.complete).not.toHaveBeenCalled();
+      expect(list).not.toHaveBeenCalled();
+      expect(call).not.toHaveBeenCalled();
+      expect(appendUsage).not.toHaveBeenCalled();
+    },
+  );
+
   it("passes Runtime context into the actual model request without publishing it", async () => {
     const controller = agentController([]);
     const tools = emptyTools();
@@ -314,7 +388,7 @@ describe("RunExecutor", () => {
     const appendUsage = vi.fn<RunEventRepository["appendUsage"]>((input) =>
       Promise.resolve({
         kind: "usage" as const,
-        used: input.usage.inputTokens + input.usage.outputTokens,
+        used: (input.usage.inputTokens ?? 0) + (input.usage.outputTokens ?? 0),
         size: input.contextSize,
       }),
     );
@@ -398,6 +472,7 @@ function agentController(order: string[]) {
     }),
   );
   const port: AgentControllerPort = {
+    getSessionConfiguration: vi.fn(),
     resolveAgentAccess: vi.fn(),
     acquireRun: vi.fn(),
     resolveCredential,
@@ -446,12 +521,14 @@ function eventRepository(): RunEventRepository {
         content: input.content,
       }),
     ),
+    appendPlan: vi.fn(),
     appendAgentThought: vi.fn(),
+    appendToolProgress: vi.fn(),
     appendRejectedToolCall: vi.fn(),
     appendUsage: vi.fn<RunEventRepository["appendUsage"]>((input) =>
       Promise.resolve({
         kind: "usage" as const,
-        used: input.usage.inputTokens + input.usage.outputTokens,
+        used: (input.usage.inputTokens ?? 0) + (input.usage.outputTokens ?? 0),
         size: input.contextSize,
       }),
     ),

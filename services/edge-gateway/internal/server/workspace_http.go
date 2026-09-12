@@ -3,8 +3,6 @@ package server
 import (
 	"context"
 	"errors"
-	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/propagation"
 	"net/http"
 	"net/http/httputil"
 )
@@ -37,7 +35,6 @@ func (h *handler) relayWorkspaceHTTP(response http.ResponseWriter, request *http
 				}
 			}
 			headers.Set(HeaderAgentAccessSubject, subject)
-			otel.GetTextMapPropagator().Inject(proxyRequest.Out.Context(), propagation.HeaderCarrier(headers))
 			proxyRequest.Out.Header = headers
 		},
 		ModifyResponse: func(upstream *http.Response) error {

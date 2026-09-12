@@ -1,6 +1,7 @@
 package postgres
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -25,7 +26,7 @@ func TestRunRepositoryAcquiresFinishesAndScopesCredential(t *testing.T) {
 		t.Fatalf("open repository: %v", err)
 	}
 	t.Cleanup(repository.Close)
-	base, seed := seedAvailableAgentForRebuild(t, ctx, repository)
+	base, _ := seedAvailableAgentForRebuild(t, ctx, repository)
 	assertManagedMCPRunPrivacy(t, ctx, repository, base)
 
 	access, err := repository.ResolveAgentAccess(ctx, "access-rebuild-integration")
@@ -50,7 +51,7 @@ func TestRunRepositoryAcquiresFinishesAndScopesCredential(t *testing.T) {
 		t.Fatalf("foreign Run principal error = %v", err)
 	}
 
-	now := time.Unix(1200, 0).UTC()
+	now := time.Unix(1200, 123456789).UTC()
 	command := acquireRunCommand(base.Agent, "request-run-integration", "admission-integration", now)
 	if replay, found, err := repository.ReplayRunAdmission(
 		ctx, command.RequestID, command.RequestFingerprint,
@@ -65,7 +66,6 @@ func TestRunRepositoryAcquiresFinishesAndScopesCredential(t *testing.T) {
 		admission.Snapshot.AgentSpecRevisionID != base.Agent.AgentSpecRevisionID ||
 		admission.Snapshot.ExecutionRevisionID != base.Agent.ExecutionRevisionID ||
 		admission.Snapshot.AgentExecutionSpecDigest != base.ExecutableSpec.CanonicalDigest ||
-		admission.Snapshot.CredentialVersion != seed.Model.CredentialVersion ||
 		len(admission.Snapshot.ExecutionSpec.SkillInstructions) != 0 {
 		t.Fatalf("admission snapshot = %+v", admission)
 	}
@@ -75,18 +75,20 @@ func TestRunRepositoryAcquiresFinishesAndScopesCredential(t *testing.T) {
 	if err != nil || !found || replayedAdmission.AdmissionID != admission.AdmissionID {
 		t.Fatalf("query Run replay: admission=%+v found=%t err=%v", replayedAdmission, found, err)
 	}
+	assertSameAdmissionRecord(t, admission, replayedAdmission)
 	replayedAdmission, replayed, err = repository.AcquireRun(ctx, command)
 	if err != nil || !replayed || replayedAdmission.AdmissionID != admission.AdmissionID {
 		t.Fatalf("replay Run: admission=%+v replayed=%t err=%v", replayedAdmission, replayed, err)
 	}
+	assertSameAdmissionRecord(t, admission, replayedAdmission)
 
 	credential, err := repository.GetAdmissionCredential(
-		ctx, admission.AdmissionID, admission.Snapshot.ExecutionSpec.CredentialRef, now,
+		ctx, admission.AdmissionID, admission.Snapshot.ExecutionSpec.Provider.ConnectionID, now,
 	)
 	if err != nil {
 		t.Fatalf("get admission credential: %v", err)
 	}
-	if credential.Identity.CredentialVersion != seed.Model.CredentialVersion ||
+	if credential.Identity.CredentialVersion != "version-credential_integration" ||
 		credential.SecretType != "bearer" || len(credential.Sealed.Ciphertext) == 0 {
 		t.Fatalf("admission credential = %+v", credential)
 	}
@@ -96,7 +98,7 @@ func TestRunRepositoryAcquiresFinishesAndScopesCredential(t *testing.T) {
 		t.Fatalf("foreign credential error = %v", err)
 	}
 	if _, err := repository.GetAdmissionCredential(
-		ctx, admission.AdmissionID, admission.Snapshot.ExecutionSpec.CredentialRef,
+		ctx, admission.AdmissionID, admission.Snapshot.ExecutionSpec.Provider.ConnectionID,
 		admission.Deadline,
 	); !errors.Is(err, ports.ErrCredentialNotAllowed) {
 		t.Fatalf("expired admission credential error = %v", err)
@@ -126,13 +128,30 @@ SELECT count(*) FROM agent_controller.agent_events WHERE admission_id = $1`,
 		t.Fatalf("normal FinishRun emitted %d lifecycle release events", finishEvents)
 	}
 	if _, err := repository.GetAdmissionCredential(
-		ctx, admission.AdmissionID, admission.Snapshot.ExecutionSpec.CredentialRef, now,
+		ctx, admission.AdmissionID, admission.Snapshot.ExecutionSpec.Provider.ConnectionID, now,
 	); !errors.Is(err, ports.ErrCredentialNotAllowed) {
 		t.Fatalf("finished admission credential error = %v", err)
 	}
 	replayedAdmission, replayed, err = repository.AcquireRun(ctx, command)
 	if err != nil || !replayed || replayedAdmission.State != domain.AdmissionReleased {
 		t.Fatalf("replay released Run: admission=%+v replayed=%t err=%v", replayedAdmission, replayed, err)
+	}
+}
+
+func assertSameAdmissionRecord(t *testing.T, first, replay ports.RunAdmissionRecord) {
+	t.Helper()
+	firstJSON, err := json.Marshal(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayJSON, err := json.Marshal(replay)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(firstJSON, replayJSON) {
+		t.Fatalf("initial and persisted admission differ: deadline %s / %s, created %s / %s",
+			first.Deadline.Format(time.RFC3339Nano), replay.Deadline.Format(time.RFC3339Nano),
+			first.CreatedAt.Format(time.RFC3339Nano), replay.CreatedAt.Format(time.RFC3339Nano))
 	}
 }
 

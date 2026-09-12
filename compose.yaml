@@ -35,7 +35,81 @@ services:
         agent-acp-database,
         identity-database,
         agent-controller-database,
+        temporal-database,
       ]
+
+  temporal-databases:
+    profiles: [stage2, stage3]
+    image: postgres:17-bookworm
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGHOST: postgres
+      PGUSER: antnest_test_admin
+      PGPASSWORD: ${ANTNEST_POSTGRES_ADMIN_PASSWORD:-antnest-postgres-dev}
+      ANTNEST_TEMPORAL_POSTGRES_PASSWORD: ${ANTNEST_TEMPORAL_POSTGRES_PASSWORD:-antnest-temporal-dev}
+    entrypoint: [sh, /scripts/init-databases.sh]
+    volumes:
+      - ./scripts/temporal/init-databases.sh:/scripts/init-databases.sh:ro
+    networks: [temporal-database]
+
+  temporal-schema:
+    profiles: [stage2, stage3]
+    image: temporalio/admin-tools:1.31.0
+    depends_on:
+      temporal-databases:
+        condition: service_completed_successfully
+    environment:
+      SQL_PASSWORD: ${ANTNEST_TEMPORAL_POSTGRES_PASSWORD:-antnest-temporal-dev}
+    entrypoint: [sh, /scripts/setup-schema.sh]
+    volumes:
+      - ./scripts/temporal/setup-schema.sh:/scripts/setup-schema.sh:ro
+    networks: [temporal-database]
+
+  temporal:
+    profiles: [stage2, stage3]
+    image: temporalio/server:1.31.0
+    depends_on:
+      temporal-schema:
+        condition: service_completed_successfully
+    environment:
+      DB: postgres12
+      DB_PORT: 5432
+      DBNAME: antnest_temporal
+      VISIBILITY_DBNAME: antnest_temporal_visibility
+      POSTGRES_USER: antnest_temporal
+      POSTGRES_PWD: ${ANTNEST_TEMPORAL_POSTGRES_PASSWORD:-antnest-temporal-dev}
+      POSTGRES_SEEDS: postgres
+      BIND_ON_IP: 0.0.0.0
+      NUM_HISTORY_SHARDS: 4
+      DYNAMIC_CONFIG_FILE_PATH: /etc/temporal/config/dynamicconfig/docker.yaml
+    volumes:
+      - ./scripts/temporal/dynamicconfig.yaml:/etc/temporal/config/dynamicconfig/docker.yaml:ro
+    healthcheck:
+      test: [CMD, nc, -z, localhost, "7233"]
+      interval: 30s
+      timeout: 3s
+      retries: 5
+      start_period: 60s
+      start_interval: 2s
+    ports:
+      - 127.0.0.1:${ANTNEST_TEMPORAL_HOST_PORT:-7233}:7233
+    networks: [temporal-database, development]
+    stop_grace_period: 30s
+
+  temporal-namespace:
+    profiles: [stage2, stage3]
+    image: temporalio/admin-tools:1.31.0
+    depends_on:
+      temporal:
+        condition: service_healthy
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+    entrypoint: [sh, /scripts/setup-namespace.sh]
+    volumes:
+      - ./scripts/temporal/setup-namespace.sh:/scripts/setup-namespace.sh:ro
+    networks: [development]
 
   runtime-egress:
     image: antnest/runtime-egress:local
@@ -53,6 +127,7 @@ services:
       ANTNEST_EGRESS_TUNNEL_CIDR: 100.64.0.0/10
       ANTNEST_EGRESS_RESOLVER_IPV4: 100.64.0.1
       ANTNEST_EGRESS_DNS_UPSTREAM: ${ANTNEST_EGRESS_DNS_UPSTREAM:-127.0.0.11:53}
+      ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT: ${ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT:-false}
       OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-true}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
     cap_add: [NET_ADMIN]
@@ -99,6 +174,7 @@ services:
       ANTNEST_RUNTIME_MANAGEMENT_NETWORK: ${ANTNEST_RUNTIME_MANAGEMENT_NETWORK:-antnest-runtime-management}
       ANTNEST_RUNTIME_SYSTEM_SKILLS_VOLUME: ${ANTNEST_RUNTIME_SYSTEM_SKILLS_VOLUME:-antnest-system-skills}
       ANTNEST_RUNTIME_MUTATION_TIMEOUT: ${ANTNEST_RUNTIME_MUTATION_TIMEOUT:-2m}
+      ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT: ${ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT:-false}
       OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-true}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       OTEL_EXPORTER_OTLP_PROTOCOL: ${OTEL_EXPORTER_OTLP_PROTOCOL:-http/protobuf}
@@ -153,6 +229,7 @@ services:
       OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-true}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       OTEL_SERVICE_NAME: agent-acp-service
+      ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT: ${ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT:-false}
     ports:
       - 127.0.0.1:${ANTNEST_ACP_HOST_PORT:-58081}:8080
     healthcheck:
@@ -254,6 +331,7 @@ services:
       OTEL_METRICS_EXPORTER: ${OTEL_METRICS_EXPORTER:-}
       OTEL_LOGS_EXPORTER: ${OTEL_LOGS_EXPORTER:-}
       OTEL_SERVICE_NAME: identity-service
+      ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT: ${ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT:-false}
     ports:
       - 127.0.0.1:${ANTNEST_IDENTITY_HOST_PORT:-58082}:8080
     healthcheck:
@@ -273,6 +351,8 @@ services:
       context: .
       dockerfile: services/agent-controller/Dockerfile
     depends_on:
+      temporal-namespace:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       runtime-egress:
@@ -282,14 +362,13 @@ services:
       identity-service:
         condition: service_healthy
     environment:
+      ANTNEST_TEMPORAL_ADDRESS: temporal:7233
       ANTNEST_AGENT_CONTROLLER_DATABASE_URL: postgres://antnest_agent_controller:${ANTNEST_AGENT_CONTROLLER_POSTGRES_PASSWORD:-antnest-agent-controller-dev}@postgres:5432/antnest_agent_controller
       ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY: ${ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY:-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=}
       ANTNEST_AGENT_CONTROLLER_LISTEN: :8080
       ANTNEST_AGENT_CONTROLLER_DEPENDENCY_TIMEOUT: ${ANTNEST_AGENT_CONTROLLER_DEPENDENCY_TIMEOUT:-150s}
       ANTNEST_AGENT_CONTROLLER_DRAIN_TIMEOUT: ${ANTNEST_AGENT_CONTROLLER_DRAIN_TIMEOUT:-5m}
       ANTNEST_AGENT_CONTROLLER_RUN_ADMISSION_TTL: ${ANTNEST_AGENT_CONTROLLER_RUN_ADMISSION_TTL:-30m}
-      ANTNEST_AGENT_CONTROLLER_RECOVERY_POLL_INTERVAL: ${ANTNEST_AGENT_CONTROLLER_RECOVERY_POLL_INTERVAL:-}
-      ANTNEST_AGENT_CONTROLLER_RECOVERY_STALE_AFTER: ${ANTNEST_AGENT_CONTROLLER_RECOVERY_STALE_AFTER:-}
       ANTNEST_AGENT_CONTROLLER_SHUTDOWN_TIMEOUT: ${ANTNEST_AGENT_CONTROLLER_SHUTDOWN_TIMEOUT:-15s}
       ANTNEST_RUNTIME_EGRESS_URL: http://${ANTNEST_EGRESS_CONTROL_IPV4:-172.31.255.3}:8081
       ANTNEST_RUNTIME_CONTROLLER_URL: http://runtime-controller:8080
@@ -301,6 +380,7 @@ services:
       OTEL_METRICS_EXPORTER: ${OTEL_METRICS_EXPORTER:-}
       OTEL_LOGS_EXPORTER: ${OTEL_LOGS_EXPORTER:-}
       OTEL_SERVICE_NAME: agent-controller
+      ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT: ${ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT:-false}
     ports:
       - 127.0.0.1:${ANTNEST_AGENT_CONTROLLER_HOST_PORT:-58083}:8080
     healthcheck:
@@ -336,6 +416,7 @@ services:
       OTEL_EXPORTER_OTLP_PROTOCOL: ${OTEL_EXPORTER_OTLP_PROTOCOL:-http/protobuf}
       OTEL_TRACES_EXPORTER: ${OTEL_TRACES_EXPORTER:-}
       OTEL_SERVICE_NAME: admin-console
+      ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT: ${ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT:-false}
     healthcheck:
       test: ["CMD", "/usr/local/bin/admin-console", "--healthcheck"]
       interval: 30s
@@ -389,6 +470,7 @@ services:
       ANTNEST_EDGE_COOKIE_SECURE: ${ANTNEST_EDGE_COOKIE_SECURE:-false}
       ANTNEST_EDGE_REQUEST_TIMEOUT: ${ANTNEST_EDGE_REQUEST_TIMEOUT:-150s}
       ANTNEST_EDGE_SHUTDOWN_TIMEOUT: ${ANTNEST_EDGE_SHUTDOWN_TIMEOUT:-15s}
+      ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT: ${ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT:-false}
       OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-true}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       OTEL_EXPORTER_OTLP_PROTOCOL: ${OTEL_EXPORTER_OTLP_PROTOCOL:-http/protobuf}
@@ -404,7 +486,7 @@ services:
       start_period: 30s
       start_interval: 2s
     networks: [development, observability]
-    stop_grace_period: 20s
+    stop_grace_period: 30s
 
   jaeger:
     profiles: [observability]
@@ -438,6 +520,8 @@ networks:
   agent-acp-database: {}
   identity-database: {}
   agent-controller-database: {}
+  temporal-database:
+    internal: true
 
 volumes:
   postgres-data:

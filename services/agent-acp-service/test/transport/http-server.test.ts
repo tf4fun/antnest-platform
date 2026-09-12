@@ -1,3 +1,5 @@
+import { sessionConfigurationView } from "../support/fixtures.js";
+import { v1Configuration, v2Configuration } from "../../src/transport/acp/configuration.js";
 import * as acpV1 from "@agentclientprotocol/sdk";
 import * as acpV2 from "@agentclientprotocol/sdk/experimental/v2";
 import { createWebSocketStream } from "@agentclientprotocol/sdk/experimental/ws-client";
@@ -97,7 +99,10 @@ describe("AgentAcpHttpServer", () => {
       });
 
     expect(initialized.protocolVersion).toBe(acpV2.PROTOCOL_VERSION);
-    expect(created).toEqual({ sessionId: "session-1" });
+    expect(created).toEqual({
+      sessionId: "session-1",
+      ...v2Configuration(sessionConfigurationView()),
+    });
     expect(controller.resolveAgentAccess).toHaveBeenCalledWith({
       requestId: "id-1",
       agentAccessSubject: "subject-1",
@@ -139,7 +144,10 @@ describe("AgentAcpHttpServer", () => {
     });
 
     expect(initialized.protocolVersion).toBe(acpV1.PROTOCOL_VERSION);
-    expect(created).toEqual({ sessionId: "session-1" });
+    expect(created).toEqual({
+      sessionId: "session-1",
+      ...v1Configuration(sessionConfigurationView()),
+    });
     expect(controller.resolveAgentAccess).toHaveBeenCalledWith({
       requestId: "id-1",
       agentAccessSubject: "subject-1",
@@ -343,7 +351,7 @@ describe("AgentAcpHttpServer", () => {
     socket.close();
   });
 
-  it("closes an ACP connection that sends a binary frame", async () => {
+  it.each(["/v1/acp", "/v2/acp"])("closes %s when it sends a binary frame", async (path) => {
     server = new AgentAcpHttpServer({
       agentController: controllerPort().port,
       application: applicationPort(),
@@ -351,7 +359,7 @@ describe("AgentAcpHttpServer", () => {
       maxWebSocketPayloadBytes: 64 * 1024,
     });
     await server.listen("127.0.0.1", 0);
-    const socket = await openRawWebSocket(server, "/v1/acp");
+    const socket = await openRawWebSocket(server, path);
     const closed = new Promise<number>((resolve) => {
       socket.once("close", (code) => resolve(code));
     });
@@ -361,22 +369,68 @@ describe("AgentAcpHttpServer", () => {
     await expect(closed).resolves.toBe(1003);
   });
 
-  it("closes an ACP connection whose message exceeds the configured bound", async () => {
+  it.each(["/v1/acp", "/v2/acp"])(
+    "closes %s when its message exceeds the configured bound",
+    async (path) => {
+      server = new AgentAcpHttpServer({
+        agentController: controllerPort().port,
+        application: applicationPort(),
+        ready: vi.fn(() => Promise.resolve(true)),
+        maxWebSocketPayloadBytes: 32,
+      });
+      await server.listen("127.0.0.1", 0);
+      const socket = await openRawWebSocket(server, path);
+      const closed = new Promise<number>((resolve) => {
+        socket.once("close", (code) => resolve(code));
+      });
+
+      socket.send(JSON.stringify({ jsonrpc: "2.0", method: "x".repeat(64) }));
+
+      await expect(closed).resolves.toBe(1009);
+    },
+  );
+
+  it("rejects every v2 Session request before initialize without entering application code", async () => {
+    const application = applicationPort();
     server = new AgentAcpHttpServer({
       agentController: controllerPort().port,
-      application: applicationPort(),
+      application,
       ready: vi.fn(() => Promise.resolve(true)),
-      maxWebSocketPayloadBytes: 32,
+      maxWebSocketPayloadBytes: 64 * 1024,
     });
     await server.listen("127.0.0.1", 0);
     const socket = await openRawWebSocket(server, "/v2/acp");
-    const closed = new Promise<number>((resolve) => {
-      socket.once("close", (code) => resolve(code));
-    });
-
-    socket.send(JSON.stringify({ jsonrpc: "2.0", method: "x".repeat(64) }));
-
-    await expect(closed).resolves.toBe(1009);
+    const setup = { sessionId: "session-1", cwd: "/workspace", mcpServers: [] };
+    const requests = [
+      ["session/new", setup],
+      ["session/list", {}],
+      ["session/delete", { sessionId: "session-1" }],
+      ["session/fork", setup],
+      ["session/resume", setup],
+      [
+        "session/set_config_option",
+        { sessionId: "session-1", configId: "model", type: "id", value: "primary" },
+      ],
+      ["session/close", { sessionId: "session-1" }],
+      ["session/prompt", { sessionId: "session-1", prompt: [{ type: "text", text: "hi" }] }],
+    ] as const;
+    try {
+      for (const [index, [method, params]] of requests.entries()) {
+        const id = index + 10;
+        await expect(
+          sendJsonAndRead(socket, { jsonrpc: "2.0", id, method, params }),
+        ).resolves.toMatchObject({
+          jsonrpc: "2.0",
+          id,
+          error: { code: -32600 },
+        });
+      }
+      for (const method of Object.values(application)) expect(method).not.toHaveBeenCalled();
+      await initializeRaw(socket, 2);
+      expect(socket.readyState).toBe(WebSocket.OPEN);
+    } finally {
+      socket.close();
+    }
   });
 
   it.each([
@@ -610,6 +664,7 @@ function controllerPort() {
     }),
   );
   const port: AgentControllerPort = {
+    getSessionConfiguration: vi.fn(),
     resolveAgentAccess,
     acquireRun: vi.fn(),
     resolveCredential: vi.fn(),
@@ -621,6 +676,8 @@ function controllerPort() {
 function applicationPort(): AcpApplicationPort {
   return {
     assertAccess: vi.fn(() => Promise.resolve()),
+    getSessionConfiguration: vi.fn(() => Promise.resolve(sessionConfigurationView())),
+    setSessionConfiguration: vi.fn(() => Promise.resolve(sessionConfigurationView())),
     createSession: vi.fn(() => Promise.resolve({ sessionId: "session-1" })),
     listSessions: vi.fn(() => Promise.resolve({ sessions: [] })),
     deleteSession: vi.fn(),

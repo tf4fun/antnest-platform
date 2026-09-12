@@ -5,10 +5,8 @@ import type {
   RunExecutionSnapshot,
 } from "../domain/types.js";
 
-export type ModelUsage = {
-  inputTokens: number;
-  outputTokens: number;
-};
+import type { ModelUsage } from "../domain/usage.js";
+export type { ModelUsage } from "../domain/usage.js";
 
 export type ModelToolCall = {
   id: string;
@@ -31,14 +29,36 @@ export type ModelResult = (
     }
 ) & { thought?: ContentBlock[] };
 
+export type ModelDelta = { kind: "message" | "thought"; text: string };
+
 export type ModelRequest = {
+  purpose?: "permission_judge";
   snapshot: RunExecutionSnapshot;
   credential: string;
   messages: ModelMessage[];
   tools: ModelToolDefinition[];
   signal: AbortSignal;
+  onDelta?: (delta: ModelDelta) => Promise<void>;
 };
 
 export interface ModelPort {
   complete(request: ModelRequest): Promise<ModelResult>;
+}
+
+export class ModelError extends Error {
+  public usage?: ModelUsage;
+  public constructor(
+    public readonly code:
+      | "model_unsupported_content"
+      | "model_unavailable"
+      | "model_http_error"
+      | "model_invalid_response",
+    message: string,
+    public readonly retryable: boolean,
+    public readonly status?: number,
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+    this.name = "ModelError";
+  }
 }

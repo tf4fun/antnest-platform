@@ -11,7 +11,8 @@ CREATE TABLE IF NOT EXISTS agent_controller.catalog_requests (
     request_id TEXT PRIMARY KEY,
     request_kind TEXT NOT NULL CHECK (request_kind IN (
         'create_model_profile', 'revise_model_profile',
-        'create_template', 'revise_template'
+        'create_template', 'revise_template',
+        'create_provider_connection', 'rotate_provider_credential'
     )),
     request_fingerprint TEXT NOT NULL CHECK (request_fingerprint ~ '^[0-9a-f]{64}$'),
     resource_id TEXT NOT NULL,
@@ -20,8 +21,23 @@ CREATE TABLE IF NOT EXISTS agent_controller.catalog_requests (
     created_at TIMESTAMPTZ NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS agent_controller.provider_connections (
+    id TEXT PRIMARY KEY,
+    organization_id TEXT NOT NULL,
+    provider_key TEXT NOT NULL CHECK (provider_key = 'deepseek'),
+    display_name TEXT NOT NULL CHECK (display_name <> ''),
+    base_url TEXT NOT NULL,
+    credential_method TEXT NOT NULL CHECK (credential_method = 'api_key'),
+    current_credential_version TEXT NOT NULL,
+    credential_revision BIGINT NOT NULL CHECK (credential_revision > 0),
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL,
+    UNIQUE (id, organization_id)
+);
+
 CREATE TABLE IF NOT EXISTS agent_controller.provider_credentials (
-    credential_ref TEXT PRIMARY KEY,
+    credential_ref TEXT NOT NULL,
     organization_id TEXT NOT NULL,
     credential_version TEXT NOT NULL UNIQUE,
     secret_type TEXT NOT NULL CHECK (secret_type = 'bearer'),
@@ -29,20 +45,36 @@ CREATE TABLE IF NOT EXISTS agent_controller.provider_credentials (
     nonce BYTEA NOT NULL,
     key_version TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL,
-    UNIQUE (credential_ref, organization_id, credential_version)
+    PRIMARY KEY (credential_ref, credential_version),
+    UNIQUE (credential_ref, organization_id, credential_version),
+    FOREIGN KEY (credential_ref, organization_id)
+        REFERENCES agent_controller.provider_connections (id, organization_id)
+        DEFERRABLE INITIALLY DEFERRED
 );
+
+ALTER TABLE agent_controller.provider_connections
+    ADD CONSTRAINT provider_credential_head_fk
+    FOREIGN KEY (id, organization_id, current_credential_version)
+    REFERENCES agent_controller.provider_credentials (credential_ref, organization_id, credential_version)
+    DEFERRABLE INITIALLY DEFERRED;
 
 CREATE TABLE IF NOT EXISTS agent_controller.model_profiles (
     id TEXT PRIMARY KEY,
     organization_id TEXT NOT NULL,
     profile_key TEXT NOT NULL,
+    provider_connection_id TEXT NOT NULL,
+    api_model_id TEXT NOT NULL,
     display_name TEXT NOT NULL CHECK (display_name <> ''),
     current_revision_id TEXT NOT NULL,
     current_revision BIGINT NOT NULL CHECK (current_revision > 0),
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL,
-    UNIQUE (organization_id, profile_key)
+    UNIQUE (provider_connection_id, profile_key),
+    UNIQUE (provider_connection_id, api_model_id),
+    UNIQUE (id, organization_id),
+    FOREIGN KEY (provider_connection_id, organization_id)
+        REFERENCES agent_controller.provider_connections (id, organization_id)
 );
 
 CREATE TABLE IF NOT EXISTS agent_controller.model_profile_revisions (
@@ -51,17 +83,11 @@ CREATE TABLE IF NOT EXISTS agent_controller.model_profile_revisions (
     organization_id TEXT NOT NULL,
     revision BIGINT NOT NULL CHECK (revision > 0),
     model JSONB NOT NULL,
-    credential_ref TEXT NOT NULL,
-    credential_version TEXT NOT NULL,
+    display_name TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL,
     UNIQUE (model_profile_id, revision),
     UNIQUE (id, organization_id),
-    UNIQUE (id, model_profile_id, organization_id, revision),
-    CONSTRAINT model_profile_credential_fk
-        FOREIGN KEY (credential_ref, organization_id, credential_version)
-        REFERENCES agent_controller.provider_credentials (
-            credential_ref, organization_id, credential_version
-        )
+    UNIQUE (id, model_profile_id, organization_id, revision)
 );
 
 ALTER TABLE agent_controller.model_profiles
@@ -88,7 +114,7 @@ CREATE TABLE IF NOT EXISTS agent_controller.agent_template_revisions (
     template_id TEXT NOT NULL REFERENCES agent_controller.agent_templates(id),
     organization_id TEXT NOT NULL,
     revision BIGINT NOT NULL CHECK (revision > 0),
-    model_profile_revision_id TEXT NOT NULL,
+    model_profile_id TEXT NOT NULL,
     system_prompt TEXT NOT NULL,
     max_model_requests INTEGER NOT NULL CHECK (max_model_requests BETWEEN 1 AND 128),
     context_policy_version TEXT NOT NULL,
@@ -96,9 +122,9 @@ CREATE TABLE IF NOT EXISTS agent_controller.agent_template_revisions (
     created_at TIMESTAMPTZ NOT NULL,
     PRIMARY KEY (template_id, revision),
     UNIQUE (template_id, organization_id, revision),
-    CONSTRAINT template_model_revision_fk
-        FOREIGN KEY (model_profile_revision_id, organization_id)
-        REFERENCES agent_controller.model_profile_revisions (id, organization_id)
+    CONSTRAINT template_model_fk
+        FOREIGN KEY (model_profile_id, organization_id)
+        REFERENCES agent_controller.model_profiles (id, organization_id)
 );
 
 ALTER TABLE agent_controller.agent_templates

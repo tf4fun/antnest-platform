@@ -1,6 +1,6 @@
 {
   "contract": "antnest.edge-gateway.session",
-  "version": 9,
+  "version": 10,
   "session_validation": {
     "invalid_or_expired": "401 unauthenticated; clear browser cookies",
     "identity_unavailable": "503 identity_unavailable; preserve cookies; never admit upstream requests",
@@ -11,6 +11,7 @@
       "method": "GET",
       "path": "/status",
       "authentication": "none",
+      "scope": "local Gateway readiness; no downstream status requests",
       "success_status": 200
     },
     "login": {
@@ -71,6 +72,26 @@
         "runtime_endpoint",
         "provider_credential"
       ]
+    },
+    "workspace_state": {
+      "method": "GET",
+      "path": "/api/app/agents/{agent_id}/state",
+      "authentication": "browser_session_and_controller_agent_access",
+      "scope": "original authenticated organization and principal only; no query fields",
+      "success_status": 200,
+      "response_required": ["agent_id", "availability", "access_allowed", "agent_revision", "active_session_id"]
+    },
+    "workspace_state_watch": {
+      "method": "GET",
+      "path": "/api/app/agents/{agent_id}/state/watch",
+      "authentication": "browser_session_at_entry_and_before_each_subsequent_snapshot",
+      "success_status": 200,
+      "transport": "SSE",
+      "event": "workspace_state",
+      "replay": "none; reject query fields and Last-Event-ID",
+      "lease": "ANTNEST_EDGE_STREAM_LEASE; no automatic Gateway renewal",
+      "disconnect": "cancel upstream observation only; never cancel or replay ACP work",
+      "response_required": ["agent_id", "availability", "access_allowed", "agent_revision", "active_session_id"]
     },
     "workspace_acp_http": {
       "method": "POST|GET|DELETE",

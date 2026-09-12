@@ -25,7 +25,11 @@ describe("OfficialMcpDialer", () => {
     try {
       const tools = await connection.listTools(AbortSignal.timeout(5_000));
       expect(tools).toHaveLength(1);
-      expect(tools[0]).toMatchObject({ name: "echo", description: "Echo text" });
+      expect(tools[0]).toMatchObject({
+        name: "echo",
+        description: "Echo text",
+        annotations: { readOnlyHint: true, destructiveHint: false },
+      });
       expect(tools[0]?.inputSchema).toMatchObject({ type: "object" });
       await expect(
         connection.callTool(
@@ -35,6 +39,9 @@ describe("OfficialMcpDialer", () => {
       ).resolves.toEqual({
         content: [{ type: "text", text: "hello" }],
         isError: false,
+        meta: {
+          "io.modelcontextprotocol/serverInfo": { name: "official-client-test", version: "1.0.0" },
+        },
         structuredContent: {
           effect_source: null,
           effect_state: "settled",
@@ -95,6 +102,7 @@ async function startMcpFixture(): Promise<{
         "echo",
         {
           description: "Echo text",
+          annotations: { readOnlyHint: true, destructiveHint: false },
           inputSchema: z.object({ text: z.string() }),
         },
         ({ text }) =>

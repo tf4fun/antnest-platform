@@ -29,7 +29,7 @@ type catalogRequest struct {
 	fingerprint string
 }
 
-func lockCatalogRequest(ctx context.Context, transaction pgx.Tx, requestID string) error {
+func lockCatalogRequest(ctx context.Context, transaction *databaseTransaction, requestID string) error {
 	if _, err := transaction.Exec(
 		ctx, "SELECT pg_advisory_xact_lock($1, hashtext($2))", catalogRequestLockNamespace, requestID,
 	); err != nil {
@@ -89,19 +89,16 @@ func loadModelProfileRecord(
 	revisionNumber int64,
 ) (ports.ModelProfileRecord, error) {
 	row := queryer.QueryRow(ctx, `
-SELECT p.id, p.organization_id, p.profile_key, p.display_name,
-       p.enabled, p.created_at, p.updated_at,
-       r.id, r.revision, r.model, r.credential_ref, r.credential_version
+SELECT p.id, p.organization_id, p.profile_key, r.display_name,
+       p.enabled, p.created_at, r.created_at,
+       r.id, r.revision, r.model || jsonb_build_object('base_url', c.base_url), p.provider_connection_id
 FROM agent_controller.model_profiles p
 JOIN agent_controller.model_profile_revisions r
   ON r.model_profile_id = p.id
  AND r.organization_id = p.organization_id
  AND r.id = $2
  AND r.revision = $3
-JOIN agent_controller.provider_credentials c
-  ON c.credential_ref = r.credential_ref
- AND c.organization_id = r.organization_id
- AND c.credential_version = r.credential_version
+JOIN agent_controller.provider_connections c ON c.id = p.provider_connection_id AND c.organization_id = p.organization_id
 WHERE p.id = $1`, profileID, revisionID, revisionNumber)
 	return scanModelProfileRecord(row)
 }
@@ -114,7 +111,7 @@ func scanModelProfileRecord(scanner catalogRowScanner) (ports.ModelProfileRecord
 		&record.ModelProfileID, &record.OrganizationID, &record.ProfileKey, &record.DisplayName,
 		&record.Enabled, &record.CreatedAt, &record.UpdatedAt,
 		&snapshot.ID, &snapshot.Revision, &modelPayload,
-		&snapshot.CredentialRef, &snapshot.CredentialVersion,
+		&record.ProviderConnectionID,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ports.ModelProfileRecord{}, ports.ErrNotFound
@@ -131,77 +128,73 @@ func scanModelProfileRecord(scanner catalogRowScanner) (ports.ModelProfileRecord
 		return ports.ModelProfileRecord{}, fmt.Errorf("restore ModelProfile revision: %w", err)
 	}
 	record.Revision = revision
-	record.CredentialRef = snapshot.CredentialRef
-	record.CredentialVersion = snapshot.CredentialVersion
+	record.CreatedAt, record.UpdatedAt = record.CreatedAt.UTC(), record.UpdatedAt.UTC()
 	return record, nil
 }
 
-func insertProviderCredential(
-	ctx context.Context, transaction pgx.Tx, record ports.ModelProfileRecord,
-) error {
-	if _, err := transaction.Exec(ctx, `
-INSERT INTO agent_controller.provider_credentials (
-    credential_ref, organization_id, credential_version, secret_type,
-    ciphertext, nonce, key_version, created_at
-) VALUES ($1, $2, $3, 'bearer', $4, $5, $6, $7)`,
-		record.CredentialRef, record.OrganizationID, record.CredentialVersion,
-		record.SealedCredential.Ciphertext, record.SealedCredential.Nonce,
-		record.SealedCredential.KeyVersion, record.UpdatedAt,
-	); err != nil {
-		return fmt.Errorf("insert Provider credential: %w", err)
-	}
-	return nil
-}
-
 func insertModelProfileRevision(
-	ctx context.Context, transaction pgx.Tx, record ports.ModelProfileRecord,
+	ctx context.Context, transaction *databaseTransaction, record ports.ModelProfileRecord,
 ) error {
-	modelPayload, err := json.Marshal(record.Revision.Snapshot().Model)
+	modelPayload, err := json.Marshal(record.Revision.Snapshot().Model.Parameters())
 	if err != nil {
 		return fmt.Errorf("encode ModelProfile model: %w", err)
 	}
 	if _, err := transaction.Exec(ctx, `
 INSERT INTO agent_controller.model_profile_revisions (
-    id, model_profile_id, organization_id, revision, model,
-    credential_ref, credential_version, created_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+    id, model_profile_id, organization_id, revision, model, created_at, display_name
+) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
 		record.Revision.ID(), record.ModelProfileID, record.OrganizationID,
-		record.Revision.Revision(), modelPayload, record.CredentialRef,
-		record.CredentialVersion, record.UpdatedAt,
+		record.Revision.Revision(), modelPayload, record.UpdatedAt, record.DisplayName,
 	); err != nil {
 		return fmt.Errorf("insert ModelProfile revision: %w", err)
 	}
 	return nil
 }
 
-func insertModelProfile(ctx context.Context, transaction pgx.Tx, record ports.ModelProfileRecord) error {
-	if err := insertProviderCredential(ctx, transaction, record); err != nil {
+func insertModelProfile(ctx context.Context, transaction *databaseTransaction, record ports.ModelProfileRecord) error {
+	if err := lockModelProvider(ctx, transaction, record); err != nil {
 		return err
 	}
 	if _, err := transaction.Exec(ctx, `
 INSERT INTO agent_controller.model_profiles (
     id, organization_id, profile_key, display_name, current_revision_id,
-    current_revision, enabled, created_at, updated_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+    current_revision, enabled, created_at, updated_at, provider_connection_id, api_model_id
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
 		record.ModelProfileID, record.OrganizationID, record.ProfileKey,
 		record.DisplayName, record.Revision.ID(), record.Revision.Revision(),
-		record.Enabled, record.CreatedAt, record.UpdatedAt,
+		record.Enabled, record.CreatedAt, record.UpdatedAt, record.ProviderConnectionID, record.Revision.Snapshot().Model.Model,
 	); err != nil {
 		return fmt.Errorf("insert ModelProfile: %w", err)
 	}
 	return insertModelProfileRevision(ctx, transaction, record)
 }
 
+func lockModelProvider(ctx context.Context, tx *databaseTransaction, record ports.ModelProfileRecord) error {
+	var enabled bool
+	err := tx.QueryRow(ctx, `SELECT enabled FROM agent_controller.provider_connections
+WHERE id=$1 AND organization_id=$2 FOR SHARE`, record.ProviderConnectionID, record.OrganizationID).Scan(&enabled)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ports.ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("lock model Provider: %w", err)
+	}
+	if !enabled {
+		return ports.ErrDisabledReference
+	}
+	return nil
+}
+
 func reviseModelProfile(
 	ctx context.Context,
-	transaction pgx.Tx,
+	transaction *databaseTransaction,
 	expectedRevision int64,
 	record ports.ModelProfileRecord,
 ) error {
 	if err := lockModelProfileHead(ctx, transaction, expectedRevision, record); err != nil {
 		return err
 	}
-	if err := insertProviderCredential(ctx, transaction, record); err != nil {
+	if err := lockModelProvider(ctx, transaction, record); err != nil {
 		return err
 	}
 	if err := insertModelProfileRevision(ctx, transaction, record); err != nil {
@@ -230,7 +223,7 @@ WHERE id = $1
 
 func lockModelProfileHead(
 	ctx context.Context,
-	transaction pgx.Tx,
+	transaction *databaseTransaction,
 	expectedRevision int64,
 	record ports.ModelProfileRecord,
 ) error {
@@ -273,7 +266,7 @@ func loadTemplateRecord(
 	row := queryer.QueryRow(ctx, `
 SELECT t.id, t.organization_id, t.template_key, t.name,
        t.enabled, t.created_at, t.updated_at,
-       r.revision, r.model_profile_revision_id, r.system_prompt,
+       r.revision, r.model_profile_id, r.system_prompt,
        r.max_model_requests, r.context_policy_version, r.runtime_input
 FROM agent_controller.agent_templates t
 JOIN agent_controller.agent_template_revisions r
@@ -291,7 +284,7 @@ func scanTemplateRecord(scanner catalogRowScanner) (ports.TemplateRecord, error)
 	if err := scanner.Scan(
 		&record.TemplateID, &record.OrganizationID, &record.TemplateKey, &record.Name,
 		&record.Enabled, &record.CreatedAt, &record.UpdatedAt,
-		&snapshot.Revision, &snapshot.ModelProfileRevisionID, &snapshot.SystemPrompt,
+		&snapshot.Revision, &snapshot.ModelProfileID, &snapshot.SystemPrompt,
 		&snapshot.MaxModelRequests, &snapshot.ContextPolicyVersion, &runtimePayload,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -313,7 +306,7 @@ func scanTemplateRecord(scanner catalogRowScanner) (ports.TemplateRecord, error)
 }
 
 func insertTemplateRevision(
-	ctx context.Context, transaction pgx.Tx, record ports.TemplateRecord,
+	ctx context.Context, transaction *databaseTransaction, record ports.TemplateRecord,
 ) error {
 	snapshot := record.Revision.Snapshot()
 	runtimePayload, err := json.Marshal(snapshot.Runtime)
@@ -322,11 +315,11 @@ func insertTemplateRevision(
 	}
 	if _, err := transaction.Exec(ctx, `
 INSERT INTO agent_controller.agent_template_revisions (
-    template_id, organization_id, revision, model_profile_revision_id,
+    template_id, organization_id, revision, model_profile_id,
     system_prompt, max_model_requests, context_policy_version, runtime_input, created_at
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
 		record.TemplateID, record.OrganizationID, snapshot.Revision,
-		snapshot.ModelProfileRevisionID, snapshot.SystemPrompt, snapshot.MaxModelRequests,
+		snapshot.ModelProfileID, snapshot.SystemPrompt, snapshot.MaxModelRequests,
 		snapshot.ContextPolicyVersion, runtimePayload, record.UpdatedAt,
 	); err != nil {
 		return fmt.Errorf("insert Template revision: %w", err)
@@ -334,7 +327,7 @@ INSERT INTO agent_controller.agent_template_revisions (
 	return nil
 }
 
-func insertTemplate(ctx context.Context, transaction pgx.Tx, record ports.TemplateRecord) error {
+func insertTemplate(ctx context.Context, transaction *databaseTransaction, record ports.TemplateRecord) error {
 	if _, err := transaction.Exec(ctx, `
 INSERT INTO agent_controller.agent_templates (
     id, organization_id, template_key, name, current_revision,
@@ -350,7 +343,7 @@ INSERT INTO agent_controller.agent_templates (
 
 func reviseTemplate(
 	ctx context.Context,
-	transaction pgx.Tx,
+	transaction *databaseTransaction,
 	expectedRevision int64,
 	record ports.TemplateRecord,
 ) error {
@@ -382,7 +375,7 @@ WHERE id = $1
 
 func lockTemplateHead(
 	ctx context.Context,
-	transaction pgx.Tx,
+	transaction *databaseTransaction,
 	expectedRevision int64,
 	record ports.TemplateRecord,
 ) error {
@@ -406,7 +399,7 @@ FOR UPDATE`, record.TemplateID, record.OrganizationID).Scan(&currentRevision)
 
 func insertCatalogRequest(
 	ctx context.Context,
-	transaction pgx.Tx,
+	transaction *databaseTransaction,
 	kind ports.CatalogRequestKind,
 	requestID string,
 	fingerprint string,

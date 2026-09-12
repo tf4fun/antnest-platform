@@ -113,10 +113,11 @@ func (s *Service) Status(ctx context.Context) (Readiness, error) {
 	} else {
 		status.ObservationReady = true
 	}
-	if err := s.platform.Ready(ctx); err != nil {
-		result = errors.Join(result, fmt.Errorf("deployment platform: %w", err))
-	} else {
-		status.PlatformReady = true
+	// The public field retains its shape but reports local adapter initialization.
+	// Docker/Runtime reachability is observed by actual lifecycle operations.
+	status.PlatformReady = s.platform != nil
+	if ctx.Err() != nil {
+		result = errors.Join(result, ctx.Err())
 	}
 	return status, result
 }
@@ -199,7 +200,7 @@ func (s *Service) lifecycle(ctx context.Context, input lifecycleRequest) (deploy
 			if input.Configuration == nil {
 				return deployment.Operation{}, fmt.Errorf("%w: Runtime configuration is required", ErrInvalidRequest)
 			}
-			physical, err = input.Configuration.Resolve(operation.AgentID, operation.Generation)
+			physical, err = deploymentForOperation(*input.Configuration, operation)
 			if err != nil {
 				return deployment.Operation{}, fmt.Errorf("%w: %v", ErrInvalidRequest, err)
 			}
@@ -301,17 +302,6 @@ func (s *Service) prepareOperation(
 		}
 	}
 	revision := deployment.RevisionFor(input.RequestID, requestDigest)
-	specDigest := source.SpecDigest
-	if input.Configuration != nil {
-		physical, resolveErr := input.Configuration.Resolve(input.AgentID, generation)
-		if resolveErr != nil {
-			return deployment.Operation{}, false, fmt.Errorf("%w: %v", ErrInvalidRequest, resolveErr)
-		}
-		specDigest, resolveErr = s.platform.DeploymentDigest(physical)
-		if resolveErr != nil {
-			return deployment.Operation{}, false, resolveErr
-		}
-	}
 	now := s.now().UTC()
 	candidate := deployment.Operation{
 		RequestID: input.RequestID, RequestDigest: requestDigest, Kind: input.Kind,
@@ -320,8 +310,13 @@ func (s *Service) prepareOperation(
 		ExpectedRevision: input.ExpectedRevision,
 		SourceState:      source.LifecycleState, SourceRevision: source.RuntimeRevision,
 		SourceGeneration: source.Generation, SourceSpecDigest: source.SpecDigest,
-		Generation: generation, SpecDigest: specDigest, Transition: transition,
+		Generation: generation, SpecDigest: source.SpecDigest, Transition: transition,
 		CreatedAt: now, UpdatedAt: now,
+	}
+	if input.Configuration != nil {
+		if err := s.prepareBuildImage(ctx, &candidate, *input.Configuration); err != nil {
+			return deployment.Operation{}, false, err
+		}
 	}
 	operation, replay, beginErr := s.repository.BeginTransition(ctx, candidate)
 	if beginErr != nil {
@@ -349,10 +344,7 @@ func (s *Service) executeOperation(
 		}
 		return s.createAndVerify(ctx, operation, physical, false)
 	case deployment.OperationUpdateRuntime:
-		if outcome := s.deleteSource(ctx, operation); outcome.State != deployment.EffectCompleted {
-			return s.finishFromEffect(ctx, operation, outcome, false)
-		}
-		return s.createAndVerify(ctx, operation, physical, true)
+		return s.updateRuntime(ctx, operation, physical)
 	case deployment.OperationDisableRuntime:
 		if outcome := s.deleteSource(ctx, operation); outcome.State != deployment.EffectCompleted {
 			return s.finishFromEffect(ctx, operation, outcome, false)
@@ -365,7 +357,7 @@ func (s *Service) executeOperation(
 		return s.createAndVerify(ctx, operation, physical, false)
 	case deployment.OperationDeleteRuntime:
 		destructive := false
-		if operation.SourceState == deployment.LifecycleReady {
+		if operation.SourceState == deployment.LifecycleReady || operation.SourceState == deployment.LifecycleFailed {
 			if outcome := s.deleteSource(ctx, operation); outcome.State != deployment.EffectCompleted {
 				return s.finishFromEffect(ctx, operation, outcome, false)
 			}
@@ -400,17 +392,7 @@ func (s *Service) createAndVerify(
 	}
 	inspection, readyErr := s.waitUntilReady(ctx, operation.RuntimeKey(), operation.SpecDigest)
 	if readyErr != nil {
-		environment := operationEnvironment(operation, deployment.LifecycleUnknown, s.now().UTC())
-		if inspection.RuntimeKey() == operation.RuntimeKey() && inspection.SpecDigest == operation.SpecDigest {
-			environment = environment.WithInspection(inspection)
-		}
-		operation.State = deployment.OperationUnknown
-		operation.Effect = deployment.EffectCompleted
-		operation.Inspection = &environment
-		operation.ErrorCode = "runtime_not_ready"
-		operation.ErrorDetail = "Runtime readiness could not be confirmed before the operation deadline"
-		operation.UpdatedAt = s.now().UTC()
-		return s.persistOperation(ctx, operation, nil)
+		return s.finishReadinessFailure(ctx, operation, inspection, readyErr)
 	}
 	environment := operationEnvironment(operation, deployment.LifecycleReady, inspection.ObservedAt).WithInspection(inspection)
 	operation.State = deployment.OperationCompleted
@@ -421,6 +403,31 @@ func (s *Service) createAndVerify(
 	operation.UpdatedAt = s.now().UTC()
 	observation := lifecycleObservation(operation, environment)
 	return s.persistOperation(ctx, operation, &observation)
+}
+
+func (s *Service) finishReadinessFailure(
+	ctx context.Context, operation deployment.Operation, inspection deployment.Inspection, readyErr error,
+) (deployment.Operation, error) {
+	state := deployment.LifecycleUnknown
+	operation.State = deployment.OperationUnknown
+	if operation.Kind == deployment.OperationInitializeRuntime && ctx.Err() == nil && !errors.Is(readyErr, ErrDrift) {
+		state = deployment.LifecycleFailed
+		operation.State = deployment.OperationFailed
+	}
+	environment := operationEnvironment(operation, state, s.now().UTC())
+	if inspection.RuntimeKey() == operation.RuntimeKey() && inspection.SpecDigest == operation.SpecDigest {
+		environment = environment.WithInspection(inspection)
+	}
+	if state == deployment.LifecycleFailed {
+		environment.Health = deployment.HealthUnhealthy
+		environment.MCPEndpoint = ""
+	}
+	operation.Effect = deployment.EffectCompleted
+	operation.Inspection = &environment
+	operation.ErrorCode = "runtime_not_ready"
+	operation.ErrorDetail = "Runtime readiness could not be confirmed before the operation deadline; inspect the Runtime startup configuration and required MCP processes"
+	operation.UpdatedAt = s.now().UTC()
+	return s.persistOperation(ctx, operation, nil)
 }
 
 func (s *Service) finishWithoutCompute(
@@ -462,6 +469,10 @@ func (s *Service) finishFromEffect(
 	} else {
 		operation.State = deployment.OperationFailed
 		operation.Effect = deployment.EffectNotStarted
+		if operation.Kind == deployment.OperationInitializeRuntime {
+			environment := operationEnvironment(operation, deployment.LifecycleFailed, operation.UpdatedAt)
+			operation.Inspection = &environment
+		}
 	}
 	return s.persistOperation(ctx, operation, nil)
 }
@@ -513,6 +524,9 @@ func (s *Service) inspectEnvironment(
 ) (deployment.Environment, error) {
 	environment.ObservedAt = s.now().UTC()
 	switch environment.LifecycleState {
+	case deployment.LifecycleFailed:
+		environment.Health = deployment.HealthUnhealthy
+		return environment, nil
 	case deployment.LifecycleDisabled:
 		outcome := s.platform.VerifyStorage(ctx, environment.AgentID)
 		if err := outcome.Validate(); err != nil {
@@ -532,27 +546,7 @@ func (s *Service) inspectEnvironment(
 		environment.Health = deployment.HealthAbsent
 		return environment, nil
 	case deployment.LifecycleReady:
-		key, ok := environment.RuntimeKey()
-		if !ok {
-			return deployment.Environment{}, ErrDrift
-		}
-		inspection, inspectErr := s.platform.Inspect(ctx, key)
-		if inspectErr != nil {
-			return deployment.Environment{}, inspectErr
-		}
-		if inspection.RuntimeKey() != key || inspection.SpecDigest != environment.SpecDigest {
-			return deployment.Environment{}, ErrDrift
-		}
-		if validateErr := s.ValidateRuntimeInspection(ctx, inspection); validateErr != nil {
-			return deployment.Environment{}, validateErr
-		}
-		if inspection.Health == deployment.HealthHealthy {
-			inspection, inspectErr = s.verifier.Verify(ctx, inspection)
-			if inspectErr != nil {
-				return deployment.Environment{}, inspectErr
-			}
-		}
-		return environment.WithInspection(inspection), nil
+		return s.inspectReadyEnvironment(ctx, environment)
 	default:
 		environment.Health = deployment.HealthUnknown
 		return environment, nil
@@ -590,12 +584,20 @@ func (s *Service) ReconcileExpectedRuntimes(
 		if _, ok := present[key]; ok {
 			continue
 		}
-		_, err := s.RecordPlatformObservation(ctx, deployment.Observation{
+		// Logical heads may have been created after the platform inventory snapshot.
+		inspection, err := s.inspectExpectedRuntime(ctx, environment)
+		if err != nil {
+			return fmt.Errorf("recheck missing Runtime for Agent %q: %w", environment.AgentID, err)
+		}
+		if inspection.Health != deployment.HealthAbsent {
+			continue
+		}
+		_, err = s.RecordPlatformObservation(ctx, deployment.Observation{
 			AgentID: environment.AgentID, RuntimeRevision: environment.RuntimeRevision,
 			Generation: environment.Generation, SpecDigest: environment.SpecDigest,
 			Kind: deployment.ObservationRuntimeMissing, Source: "platform_reconciliation",
-			DiagnosticSummary: "Expected Runtime compute is missing from the platform inventory",
-			ObservedAt:        s.now().UTC(),
+			DiagnosticSummary: "Expected Runtime compute is absent after exact-key platform inspection",
+			ObservedAt:        inspection.ObservedAt,
 		})
 		if err != nil {
 			return fmt.Errorf("record missing Runtime compute for Agent %q: %w", environment.AgentID, err)
@@ -804,6 +806,9 @@ func (s *Service) waitUntilReady(
 	var lastInspection deployment.Inspection
 	for {
 		inspection, err := s.platform.Inspect(deadlineCtx, key)
+		if errors.Is(err, deployment.ErrIdentityConflict) || errors.Is(err, ErrDrift) {
+			return deployment.Inspection{}, ErrDrift
+		}
 		if err == nil {
 			if inspection.RuntimeKey() != key || inspection.SpecDigest != digest {
 				return deployment.Inspection{}, ErrDrift

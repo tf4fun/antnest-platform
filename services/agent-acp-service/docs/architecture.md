@@ -1,7 +1,7 @@
 # Agent ACP Service Architecture
 
 > Status: Stage 2 implementation contract<br>
-> Updated: 2026-08-31
+> Updated: 2026-09-09
 
 ## Mission
 
@@ -25,6 +25,18 @@ ownership and cleanup. `/v1/acp` carries individual stable v1 JSON-RPC messages;
 The unversioned `/acp` is absent. Version-specific transport code maps wire
 requests and updates only; authorization, persistence, Run admission, model
 execution, and Tool execution remain shared application behavior.
+
+## Tool Presentation Boundary
+
+The MCP adapter accepts bounded file observations only from successful platform
+builtin read/write/edit calls. The domain records an optional path and complete
+before/after beside the terminal Tool event; presentation is separate from model
+content, raw output and result summaries. PostgreSQL persists these facts in the
+existing event payload using adapter-private JSON text, with no extra table or
+filesystem reads. Version-specific transports map the same facts to v1 diff
+content or v2 changes/optional git patch. Replay does not re-execute tools or the
+model. Trust, size bounds and deployment evidence are specified in
+[Tool presentation](tool-presentation.md).
 
 ## Domain Model
 
@@ -97,6 +109,20 @@ in-memory executor-only operation.
 
 ### RunExecutionSnapshot
 
+Session model/mode overrides belong to ACP, while enabled organization models,
+Agent defaults and credentials belong to Controller. See
+[Session configuration](session-configuration.md). `acp_sessions.configuration`
+stores only overrides; `configuration_revision` protects concurrent writes.
+The configuration change and a visible ordered Session event commit together;
+configuration events never enter LLM context. New/load/resume/fork return fresh
+configuration, and fork copies overrides without changing the source Session.
+
+Run intent creation captures `runs.session_configuration` under the Session
+lock. Admission recovery uses that captured value, even if a later configuration
+write has committed. New Controller admissions must return a validated frozen
+configuration; only historical intent replay may omit this newly added field.
+No configuration request mutates Runtime or an active Run.
+
 The snapshot is copied from one successful `acquire_run` response and augmented
 with the client MCP revision captured in the durable Run intent. It freezes the Runtime MCP
 source digest, Agent execution-spec digest, and non-secret Provider credential
@@ -118,7 +144,7 @@ store model credentials or raw secret headers.
 session/prompt
   -> authorize Session against ConnectionBinding
   -> insert durable Run intent(state=admitting, request_id,
-       expected_access_revision, client_mcp_revision_id)
+       expected_access_revision, client_mcp_revision_id, session_configuration)
   -> Agent Controller acquire_run(same request_id, principal_id,
        expected_access_revision)
   -> transaction:
@@ -149,9 +175,11 @@ starting model or Tool work.
 
 1. Read fresh Runtime information and list platform Runtime MCP
    Tools once for the admitted Run. Managed stdio tools are Runtime-owned.
-2. Qualify client Tool names; retain Runtime names. Budget Tool schemas together
+2. Retain Runtime names and add the ACP-owned `update_plan` tool; reject collisions.
+   Client MCP injection remains disabled. Budget Tool schemas together
    with transient Runtime guidance/Skill summaries, the system prompt,
-   compression checkpoint and durable messages. See [Runtime context](runtime-context.md).
+   compression checkpoint, durable messages and labelled Run-start plan snapshot.
+   See [Runtime context](runtime-context.md) and [Structured plans](structured-plan.md).
 3. Resolve the Provider credential for the active admission and hold it only in
    process memory.
 4. Check the complete model-input budget before each model request.
@@ -164,7 +192,10 @@ starting model or Tool work.
    names, and JSON Schema arguments, before the first Tool effect. If any call
    is invalid, execute none of them and return explicit Tool errors to the
    model for one normal repair turn.
-7. Persist the assistant response before dispatch. For each validated Tool call,
+7. Persist the assistant response before dispatch. The local plan tool atomically
+   appends its full plan and Tool result under the Run/Session locks, with no
+   remote attempt or effect; a committed cancellation rejects that update.
+   For each validated remote Tool call,
    persist its in-progress state, invoke the source client once, bound
    retained/model-visible output to 64 KiB with a digest marker, append its
    terminal result, and continue. If cancellation or an unknown Tool outcome
@@ -231,11 +262,20 @@ session_messages
 context_checkpoints
 runs
 tool_attempts
+tool_permissions
 ```
 
 There are no cross-service foreign keys, views, triggers, or SQL queries.
 External identifiers are opaque text values. One transaction may update only
 this service's records.
+
+F06 permission decisions precede Tool attempts. A separate approval ledger binds
+the exact Run/tool-call/arguments; only a committed allow decision permits Tool
+dispatch. Always merges a Session-only rule under Session-then-Run locks, while
+the active Run retains its admitted model/mode and uses only its own learned
+rules. Fork excludes these rules. Connection registration and user interaction
+are ACP application/transport concerns, never Runtime or Controller tables.
+See [Tool permissions](tool-permissions.md) for cancellation and restart boundaries.
 
 ## Module Map
 
@@ -254,6 +294,12 @@ src/main.ts               composition only
 
 Dependencies point inward. Domain/application code never imports PostgreSQL,
 HTTP, WebSocket, an SDK transport, or another service implementation.
+
+Observation is installed around HTTP, ACP SDK dispatch and existing adapter
+interfaces. `ToolPermissions` returns decisions without a telemetry dependency;
+its existing `acp.permission.wait` operation is owned by the permission
+decorator, including persistence. Recovery still contains legacy telemetry
+counters and is a documented remaining coupling. See [observability](observability.md).
 
 Agent Controller owns the only cross-service business contract consumed here:
 [`../../../contracts/agent-controller/run-api.md`](../../../contracts/agent-controller/run-api.md)
@@ -337,9 +383,57 @@ output operation has a 30-second bound. Disconnection, authorization failure,
 or stalled delivery closes/detaches the connection; it does not cancel durable
 execution. Reconnect/load repairs delivery from the retained transcript.
 
-Embedded text resources are normalized before Run admission: UTF-8 text blobs
-are decoded, while unhandled binary formats (including PDF) are rejected with
-`unsupported_resource_content` rather than injected as Base64 prose. Image
+Model completion accepts an awaited text/thought delta callback as well as the
+final typed result. The OpenAI-compatible adapter requests SSE with trailing
+usage, decodes it with `eventsource-parser`, and assembles indexed Tool arguments
+only for a valid Tool finish reason. JSON completions from compatible endpoints
+remain supported without pretending they are incremental. A missing completion
+marker, invalid chunk, cancelled reader or oversized response does not trigger
+an automatic retry. SSE buffering and aggregate response data are bounded at
+4 Mi characters; readers are cancelled/released on every exit path.
+
+`ModelOutput` publishes the first fragment immediately and batches subsequent
+fragments for at most 100 ms or 4096 characters (flushing earlier at content-kind
+boundaries). Persistence is serial and precedes delivery invalidation. A timed
+persistence failure aborts model IO and is rethrown to the existing Run recovery
+path. Normal cancellation/failure drains accepted buffered output; loss of worker
+authority still forbids further persistence. No per-token audit journal is added.
+
+Each persisted chunk has its own row/sequence, plus an internal `responseId`
+shared by the same model response; thoughts use a separate response identity.
+Both ACP versions expose stable standard message IDs and chunk notifications
+for streamed output, not a new private protocol field. Final text is not sent
+twice. Context reconstruction joins those text chunks into one assistant message
+and, if applicable, its complete Tool exchange. The combined sequence range keeps
+compaction from cutting inside a response. Interrupted output is retained, but
+unfinished Tool arguments are never promoted into executable calls.
+
+### Tool Progress
+
+The official MCP client owns progress tokens. The Tool port carries transport-neutral
+progress values and messages to a per-call `ToolProgress` accumulator. It publishes
+the first preview immediately and coalesces later reports at 100 ms, with at most one
+database write in flight. Each Tool has a 32-update/16-KiB-text-per-update preview
+budget; truncation is explicit and never cancels the Tool. There is no unbounded
+callback promise queue and silent Tools generate no artificial progress.
+
+Progress uses existing `session_messages` and Session sequencing. The repository
+requires a running Run and an in-progress attempt but does not change its effect
+classification. ACP v1/v2 receive replacement `tool_call_update.content` snapshots
+for the same Tool ID. Completion/cancellation/failure drains accepted previews before
+the terminal Tool result. Late callbacks cannot reopen the Tool. Persistence failure
+aborts MCP IO and follows existing recovery; live publication remains best effort.
+Context construction ignores in-progress events and uses only the final Tool result.
+Progress payloads are not logs or trace attributes. See [contract and tests](tool-progress.md).
+
+Prompt attachments are validated before Run admission: UTF-8 text blobs are
+decoded, supported PDF/audio envelopes remain binary, and malformed/oversized
+or unsupported content is rejected rather than injected as Base64 prose.
+The native model adapter checks the frozen model's audio/PDF flags, including
+on historical input after a Session model change. Typed ModelPort errors retain
+their bounded classification in Run finalization, not provider response bodies.
+Snapshot recovery retains the same modality flags. See
+[F09 input contract and delivery boundaries](multimodal-content.md). Image
 Tool results remain in durable history. For vision models, the OpenAI adapter
 places them in an attributed user image message after the entire Tool batch;
 for non-vision models it sends an explicit omission note. Local conversion

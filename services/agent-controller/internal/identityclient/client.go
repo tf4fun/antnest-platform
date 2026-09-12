@@ -16,12 +16,10 @@ import (
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/metric"
-	"go.opentelemetry.io/otel/propagation"
-	"go.opentelemetry.io/otel/trace"
 
 	"soft/antnest-platform/services/agent-controller/internal/ports"
+	"soft/antnest-platform/services/agent-controller/internal/telemetry"
 )
 
 const maximumResponseBytes = 1 << 20
@@ -29,7 +27,6 @@ const maximumResponseBytes = 1 << 20
 var identityIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,199}$`)
 
 var (
-	tracer   = otel.Tracer("soft/antnest-platform/agent-controller/identityclient")
 	meter    = otel.Meter("soft/antnest-platform/agent-controller/identityclient")
 	requests = mustCounter(meter.Int64Counter(
 		"antnest.agent_controller.dependency.requests",
@@ -64,7 +61,7 @@ func New(baseURL string, timeout time.Duration, httpClient *http.Client) (*Clien
 	effectiveClient.CheckRedirect = func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
 	}
-	return &Client{baseURL: endpoint, httpClient: &effectiveClient, timeout: timeout}, nil
+	return &Client{baseURL: endpoint, httpClient: telemetry.HTTPClient(&effectiveClient, "identity-service"), timeout: timeout}, nil
 }
 
 func (client *Client) ResolvePrincipal(
@@ -93,15 +90,7 @@ func (client *Client) invoke(
 	started := time.Now()
 	ctx, cancel := context.WithTimeout(ctx, client.timeout)
 	defer cancel()
-	ctx, span := tracer.Start(
-		ctx,
-		"agent_controller.identity."+method,
-		trace.WithSpanKind(trace.SpanKindClient),
-		trace.WithAttributes(
-			attribute.String("server.address", client.baseURL.Hostname()),
-			attribute.String("rpc.system", "http_json"),
-		),
-	)
+	ctx, span := telemetry.StartHTTPCall(ctx, method, nil)
 	defer func() {
 		result, errorClass := dependencyObservation(resultErr)
 		attributes := []attribute.KeyValue{
@@ -111,11 +100,7 @@ func (client *Client) invoke(
 			attribute.String("error.type", errorClass),
 		}
 		span.SetAttributes(attributes...)
-		if resultErr != nil {
-			span.RecordError(errors.New(errorClass))
-			span.SetStatus(codes.Error, errorClass)
-		}
-		span.End()
+		span.Finish(resultErr)
 		requests.Add(ctx, 1, metric.WithAttributes(attributes...))
 		duration.Record(ctx, time.Since(started).Seconds(), metric.WithAttributes(attributes...))
 	}()
@@ -133,16 +118,15 @@ func (client *Client) invoke(
 		return dependencyFailure("invalid_request", false)
 	}
 	request.Header.Set("Content-Type", "application/json")
-	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(request.Header))
 	response, err := client.httpClient.Do(request)
 	if err != nil {
-		return dependencyFailure("identity_unavailable", true)
+		return dependencyFailure("identity_unavailable", true, err)
 	}
 	span.SetAttributes(attribute.Int("http.response.status_code", response.StatusCode))
 	responseBody, err := io.ReadAll(io.LimitReader(response.Body, maximumResponseBytes+1))
 	closeErr := response.Body.Close()
 	if err != nil || closeErr != nil || len(responseBody) > maximumResponseBytes {
-		return dependencyFailure("invalid_response", true)
+		return dependencyFailure("invalid_response", true, err, closeErr)
 	}
 	mediaType, _, mediaTypeErr := mime.ParseMediaType(response.Header.Get("Content-Type"))
 	if mediaTypeErr != nil || mediaType != "application/json" {
@@ -195,8 +179,8 @@ var resolvePrincipalFailures = map[string]failureContract{
 	"internal_error":   {status: http.StatusInternalServerError, retryable: true},
 }
 
-func dependencyFailure(code string, retryable bool) error {
-	return &ports.DependencyError{Service: "identity", Code: code, Retryable: retryable}
+func dependencyFailure(code string, retryable bool, causes ...error) error {
+	return &ports.DependencyError{Service: "identity", Code: code, Retryable: retryable, Cause: errors.Join(causes...)}
 }
 
 func dependencyCode(err error) string {

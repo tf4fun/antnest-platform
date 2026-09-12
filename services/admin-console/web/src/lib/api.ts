@@ -1,4 +1,5 @@
 import { csrfFromCookie } from "./forms";
+import { decodeNetworkAssignment, decodeNetworkPolicy, type PendingNetwork } from "./network-policy";
 import { invalidatesBrowserSession } from "./session-errors";
 import {
   agentPagePath,
@@ -21,6 +22,11 @@ import type {
   ModelCatalog,
   ModelProfile,
   ModelProfileList,
+  ModelParameters,
+  ProviderConnection,
+  ProviderConnectionList,
+  ProviderCredential,
+  ProviderModelInput,
   ManagedMCPServer,
   Overview,
   OIDCLoginStart,
@@ -117,7 +123,7 @@ async function idempotentRequest<T>(scope: string, path: string, input: unknown)
     sessionStorage.removeItem(storageKey);
     return result;
   } catch (error) {
-    if (error instanceof APIError && error.status < 500 && ![408, 429].includes(error.status)) {
+    if (error instanceof APIError && error.status >= 400 && error.status < 500 && ![408, 429].includes(error.status)) {
       sessionStorage.removeItem(storageKey);
     }
     throw error;
@@ -133,6 +139,11 @@ function oneShotCommand<T>(path: string, input: unknown): Promise<T> {
 }
 
 export const api = {
+  networkPolicy: async (agentID: string, signal?: AbortSignal) => decodeNetworkPolicy(await request<unknown>(`/api/admin/agents/${encodeURIComponent(agentID)}/network-policy`, { signal }), agentID),
+  setNetworkPolicy: async (agentID: string, intent: PendingNetwork, scope: string) => decodeNetworkAssignment(await request<unknown>(`/api/admin/agents/${encodeURIComponent(agentID)}/network-policy`, {
+    method: "PUT", headers: { "Idempotency-Key": intent.idempotency_key, "X-Antnest-Expected-Principal": encodeURIComponent(scope) },
+    body: json({ action: intent.action, expected_resource_version: intent.expected_resource_version }),
+  }), agentID, intent),
   session: () => request<Session>("/api/session"),
   loginMethods: (organization_slug: string) => request<LoginMethodList>("/api/session/login-methods", {
     method: "POST",
@@ -208,6 +219,12 @@ export const api = {
     `/api/admin/provisioning/scim-tokens/${encodeURIComponent(tokenID)}/revoke`,
     {},
   ),
+  providers: (options?: CatalogPageOptions) => request<ProviderConnectionList>(catalogPagePath("/api/admin/provider-connections", options)),
+  provider: (id: string) => request<ProviderConnection>(`/api/admin/provider-connections/${encodeURIComponent(id)}`),
+  createProvider: (input: { provider_key: string; display_name: string; base_url: string; credential: ProviderCredential; models: ProviderModelInput[] }) =>
+    idempotentRequest<ProviderConnection>("create-provider", "/api/admin/provider-connections", input),
+  rotateProviderCredential: (id: string, input: { expected_version: string; credential: ProviderCredential }) =>
+    idempotentRequest<ProviderConnection>(`provider-credential:${id}`, `/api/admin/provider-connections/${encodeURIComponent(id)}/credentials`, input),
   modelCatalog: () => request<ModelCatalog>("/api/admin/model-catalog"),
   models: (options: CatalogPageOptions = {}) =>
     request<ModelProfileList>(catalogPagePath("/api/admin/model-profiles", options)),
@@ -217,25 +234,12 @@ export const api = {
     request<ModelProfile>(`/api/admin/model-profile-revisions/${encodeURIComponent(revisionID)}`),
   createModel: (input: {
     display_name: string;
-    api_key: string;
-    model: {
-      base_url: string;
-      model: string;
-      context_window: number;
-      max_output_tokens: number;
-      supports_images: boolean;
-    };
+    provider_connection_id: string;
+    model: ModelParameters;
   }) => idempotentRequest<ModelProfile>("create-model", "/api/admin/model-profiles", input),
   reviseModel: (modelProfileID: string, input: {
     display_name: string;
-    api_key: string;
-    model: {
-      base_url: string;
-      model: string;
-      context_window: number;
-      max_output_tokens: number;
-      supports_images: boolean;
-    };
+    model: ModelParameters;
   }) => idempotentRequest<ModelProfile>(
     `revise-model:${modelProfileID}`,
     `/api/admin/model-profiles/${encodeURIComponent(modelProfileID)}/revisions`,
@@ -252,14 +256,14 @@ export const api = {
     ),
   createTemplate: (input: {
     name: string;
-    model_profile_revision_id: string;
+    model_profile_id: string;
     system_prompt: string;
     max_model_requests: number;
     runtime?: { image_ref?: string; mcp_servers?: ManagedMCPServer[] };
   }) => idempotentRequest<AgentTemplate>("create-template", "/api/admin/templates", input),
   reviseTemplate: (templateID: string, input: {
     name: string;
-    model_profile_revision_id: string;
+    model_profile_id: string;
     system_prompt: string;
     max_model_requests: number;
     runtime: {
@@ -284,9 +288,10 @@ export const api = {
     agentID: string,
     action: "rebuild" | "disable" | "enable" | "delete",
     input: Record<string, unknown> = {},
+    afterOperation = "",
   ) =>
     idempotentRequest<LifecycleOperation>(
-      `${action}:${agentID}`,
+      `${action}:${agentID}:after:${afterOperation}`,
       `/api/admin/agents/${encodeURIComponent(agentID)}/${action}`,
       input,
     ),

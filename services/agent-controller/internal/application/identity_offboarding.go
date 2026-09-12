@@ -122,11 +122,11 @@ func (worker *IdentityRevocationWorker) schedule(ctx context.Context, item ports
 	ctx, span := identityRevocationTracer.Start(ctx, "agent_controller.identity_offboarding.disable",
 		trace.WithSpanKind(trace.SpanKindConsumer), trace.WithAttributes(attribute.String("agent.id", item.AgentID), attribute.Int64("identity.revocation.sequence", item.Sequence)))
 	defer span.End()
-	carrier := propagation.MapCarrier{}
-	propagation.TraceContext{}.Inject(ctx, carrier)
-	_, err := worker.scheduler.DisableAgent(ctx, DisableAgentInput{
+	callCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	_, err := worker.scheduler.DisableAgent(callCtx, DisableAgentInput{
 		RequestID: derivedID("owner-disable", fmt.Sprintf("%s:%d:%d", item.AgentID, item.Sequence, item.AggregateSequence)),
-		AgentID:   item.AgentID, OwnerRevocationSequence: item.Sequence, InitialTraceParent: carrier.Get("traceparent"),
+		AgentID:   item.AgentID, OwnerRevocationSequence: item.Sequence,
 	})
 	if errors.Is(err, ErrAgentNotReady) || errors.Is(err, ErrLifecycleConflict) || errors.Is(err, ports.ErrConcurrentChange) || errors.Is(err, ErrAgentNotFound) {
 		span.SetAttributes(attribute.String("antnest.result", "pending"))

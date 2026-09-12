@@ -108,3 +108,10 @@ func TestResolveImageRPCHidesPlatformDetailsAndMapsFailures(t *testing.T) {
 		})
 	}
 }
+
+func TestLifecycleUsesSameImageErrorClassification(t *testing.T) {
+	descriptor := classifyError(platform.ErrImageNotFound)
+	if descriptor.status != http.StatusNotFound || descriptor.response.Code != "image_not_found" || descriptor.response.Retryable {
+		t.Fatalf("missing build image became retryable internal failure: %+v", descriptor)
+	}
+}

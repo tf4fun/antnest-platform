@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -35,6 +36,7 @@ import (
 	"soft/antnest-platform/services/identity-service/internal/rpc"
 	"soft/antnest-platform/services/identity-service/internal/scim"
 	"soft/antnest-platform/services/identity-service/internal/server"
+	"soft/antnest-platform/services/identity-service/internal/telemetry"
 )
 
 func TestIdentityProtocolHappyPath(t *testing.T) {
@@ -42,6 +44,8 @@ func TestIdentityProtocolHappyPath(t *testing.T) {
 	if databaseURL == "" {
 		t.Skip("ANTNEST_IDENTITY_TEST_DATABASE_URL is not set")
 	}
+	t.Setenv("ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT", "false")
+	_, recorder := recordDatabaseSpans(t)
 	pool := newIsolatedPool(t, databaseURL)
 	if err := repository.ApplyMigrations(t.Context(), pool); err != nil {
 		t.Fatalf("apply migrations: %v", err)
@@ -115,7 +119,7 @@ func TestIdentityProtocolHappyPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	readiness.Set(true)
-	identity.Config.Handler = handler
+	identity.Config.Handler = telemetry.HTTPHandler(handler, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	identity.Start()
 
 	var login localauth.LoginResult
@@ -174,6 +178,9 @@ func TestIdentityProtocolHappyPath(t *testing.T) {
 	t.Run("SCIM revocation delivery", func(t *testing.T) {
 		assertSCIMRevocationDelivery(t, identity, issued.Credential, createdUser)
 	})
+	for _, route := range []string{rpc.ContractRoutes["local_login"], "/scim/v2/Users", "/protocol/oidc/callback"} {
+		assertProtocolDatabaseSpans(t, recorder.Ended(), route)
+	}
 }
 
 func newIsolatedPool(t *testing.T, databaseURL string) *pgxpool.Pool {
@@ -189,7 +196,7 @@ func newIsolatedPool(t *testing.T, databaseURL string) *pgxpool.Pool {
 		adminPool.Close()
 		t.Fatalf("create isolated schema: %v", err)
 	}
-	config, err := pgxpool.ParseConfig(databaseURL)
+	config, err := repository.ParsePoolConfig(databaseURL)
 	if err != nil {
 		adminPool.Close()
 		t.Fatal(err)

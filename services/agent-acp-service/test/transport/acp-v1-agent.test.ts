@@ -1,3 +1,5 @@
+import { sessionConfigurationView } from "../support/fixtures.js";
+import { v1Configuration } from "../../src/transport/acp/configuration.js";
 import * as acp from "@agentclientprotocol/sdk";
 import { describe, expect, it, vi } from "vitest";
 import { withOutputHistory } from "../support/output-application.js";
@@ -19,6 +21,65 @@ const binding: ConnectionBinding = {
 };
 
 describe("ACP v1 agent mapping", () => {
+  it.each([true, false])(
+    "negotiates and enforces audio=%s using standard v1 content",
+    async (audio) => {
+      const application = createApplication({});
+      const acceptPrompt = vi.spyOn(application, "acceptPrompt");
+      const agent = createAcpV1Agent({
+        binding,
+        application,
+        promptCapabilities: { image: false, embeddedContext: true, audio },
+      });
+      const prompt: acp.ContentBlock[] = [{ type: "audio", data: "aGk=", mimeType: "audio/wav" }];
+      await acp.client().connectWith(agent, async (context) => {
+        const initialized = await context.request(acp.methods.agent.initialize, {
+          protocolVersion: acp.PROTOCOL_VERSION,
+        });
+        expect(initialized.agentCapabilities?.promptCapabilities?.audio ?? false).toBe(audio);
+        const result = context.request(acp.methods.agent.session.prompt, {
+          sessionId: "session-1",
+          prompt,
+        });
+        if (audio) await expect(result).resolves.toEqual({ stopReason: "end_turn" });
+        else await expect(result).rejects.toMatchObject({ code: -32602 });
+      });
+      expect(acceptPrompt).toHaveBeenCalledTimes(audio ? 1 : 0);
+      if (audio) expect(acceptPrompt).toHaveBeenCalledWith(expect.objectContaining({ prompt }));
+    },
+  );
+
+  it("announces the executable command catalog at each successful Session setup", async () => {
+    const updates: acp.SessionUpdate[] = [];
+    const agent = createAcpV1Agent({
+      binding,
+      application: createApplication({}),
+      promptCapabilities: { image: false, embeddedContext: false },
+    });
+    const client = acp.client().onNotification(acp.methods.client.session.update, ({ params }) => {
+      updates.push(params.update);
+    });
+    await client.connectWith(agent, async (context) => {
+      await context.request(acp.methods.agent.initialize, {
+        protocolVersion: acp.PROTOCOL_VERSION,
+        clientCapabilities: {},
+      });
+      const setup = { sessionId: "session-1", cwd: "/workspace", mcpServers: [] };
+      await context.request(acp.methods.agent.session.new, setup);
+      await context.request(acp.methods.agent.session.resume, setup);
+      await context.request(acp.methods.agent.session.fork, setup);
+      await context.request(acp.methods.agent.session.load, setup);
+    });
+    expect(
+      updates.filter((update) => update.sessionUpdate === "available_commands_update"),
+    ).toEqual(
+      Array.from({ length: 4 }, () => ({
+        sessionUpdate: "available_commands_update",
+        availableCommands: [{ name: "help", description: "Show available commands (also /帮助)" }],
+      })),
+    );
+  });
+
   it.each(["completed", "cancelled"] as const)(
     "delivers all content before the %s Prompt response under backpressure",
     async (terminalClass) => {
@@ -146,6 +207,8 @@ describe("ACP v1 agent mapping", () => {
       "deleteSession",
       "acceptPrompt",
       "cancelRun",
+      "getSessionConfiguration",
+      "setSessionConfiguration",
     ] as const;
     const spies = calls.map((method) => vi.spyOn(application, method));
     const agent = createAcpV1Agent({
@@ -164,6 +227,17 @@ describe("ACP v1 agent mapping", () => {
         () => context.request(acp.methods.agent.session.list, {}),
         () => context.request(acp.methods.agent.session.close, { sessionId: setup.sessionId }),
         () => context.request(acp.methods.agent.session.delete, { sessionId: setup.sessionId }),
+        () =>
+          context.request(acp.methods.agent.session.setConfigOption, {
+            sessionId: setup.sessionId,
+            configId: "mode",
+            value: "chat",
+          }),
+        () =>
+          context.request(acp.methods.agent.session.setMode, {
+            sessionId: setup.sessionId,
+            modeId: "chat",
+          }),
         () =>
           context.request(acp.methods.agent.session.prompt, {
             sessionId: setup.sessionId,
@@ -214,7 +288,10 @@ describe("ACP v1 agent mapping", () => {
           cwd: "/workspace",
           mcpServers: [],
         }),
-      ).resolves.toEqual({ sessionId: "session-1" });
+      ).resolves.toEqual({
+        sessionId: "session-1",
+        ...v1Configuration(sessionConfigurationView()),
+      });
     });
   });
 
@@ -360,6 +437,14 @@ describe("ACP v1 agent mapping", () => {
         messageId: "message-1",
         content: { type: "text", text: "past" },
       },
+      {
+        sessionUpdate: "available_commands_update",
+        availableCommands: [{ name: "help", description: "Show available commands (also /帮助)" }],
+      },
+      {
+        sessionUpdate: "available_commands_update",
+        availableCommands: [{ name: "help", description: "Show available commands (also /帮助)" }],
+      },
     ]);
   });
 
@@ -448,7 +533,10 @@ describe("ACP v1 agent mapping", () => {
           cwd: "/workspace",
           mcpServers: [],
         }),
-      ).resolves.toEqual({ sessionId: "session-fork" });
+      ).resolves.toEqual({
+        sessionId: "session-fork",
+        ...v1Configuration(sessionConfigurationView()),
+      });
     });
 
     expect(forkSession).toHaveBeenCalledWith({
@@ -479,6 +567,7 @@ describe("ACP v1 agent mapping", () => {
     );
     const closeSession = vi.fn<AcpApplicationPort["closeSession"]>(() => Promise.resolve());
     const deleteSession = vi.fn<AcpApplicationPort["deleteSession"]>(() => Promise.resolve());
+    const permissions = { attach: vi.fn(), detach: vi.fn() };
     const cancelRun = vi.fn<AcpApplicationPort["cancelRun"]>(() => Promise.resolve());
     const application = createApplication({
       createSession,
@@ -491,6 +580,7 @@ describe("ACP v1 agent mapping", () => {
       binding,
       promptCapabilities: { image: false, embeddedContext: false },
       application,
+      permissions,
     });
 
     await acp.client().connectWith(agent, async (context) => {
@@ -510,7 +600,10 @@ describe("ACP v1 agent mapping", () => {
             },
           ],
         }),
-      ).resolves.toEqual({ sessionId: "session-created" });
+      ).resolves.toEqual({
+        sessionId: "session-created",
+        ...v1Configuration(sessionConfigurationView()),
+      });
       await expect(
         context.request(acp.methods.agent.session.list, {
           cwd: "/workspace",
@@ -527,12 +620,24 @@ describe("ACP v1 agent mapping", () => {
         ],
         nextCursor: "cursor-next",
       });
+      closeSession.mockRejectedValueOnce(new acp.RequestError(-32020, "denied"));
+      await expect(
+        context.request(acp.methods.agent.session.close, { sessionId: "session-created" }),
+      ).rejects.toThrow("denied");
+      expect(permissions.detach).not.toHaveBeenCalled();
       await expect(
         context.request(acp.methods.agent.session.close, { sessionId: "session-created" }),
       ).resolves.toEqual({});
+      expect(permissions.detach).toHaveBeenCalledExactlyOnceWith("session-created");
+      deleteSession.mockRejectedValueOnce(new acp.RequestError(-32020, "denied"));
+      await expect(
+        context.request(acp.methods.agent.session.delete, { sessionId: "session-created" }),
+      ).rejects.toThrow("denied");
+      expect(permissions.detach).toHaveBeenCalledOnce();
       await expect(
         context.request(acp.methods.agent.session.delete, { sessionId: "session-created" }),
       ).resolves.toEqual({});
+      expect(permissions.detach).toHaveBeenCalledTimes(2);
       await context.notify(acp.methods.agent.session.cancel, { sessionId: "session-created" });
       await vi.waitFor(() => expect(cancelRun).toHaveBeenCalledOnce());
     });
@@ -622,7 +727,17 @@ describe("ACP v1 agent mapping", () => {
         messageId: "thought-1",
         content: [{ type: "text", text: "reasoning" }],
       });
-      await publish({ kind: "usage", used: 120, size: 2_000 });
+      await publish({
+        kind: "usage",
+        used: 120,
+        size: 2_000,
+        cost: { amount: 0.02, currency: "USD" },
+        measurement: {
+          inputTokens: 100,
+          outputTokens: 20,
+          cost: { amount: 0.02, currency: "USD", source: "provider_reported" },
+        },
+      });
       await publish({
         kind: "tool_call",
         initial: true,
@@ -672,6 +787,12 @@ describe("ACP v1 agent mapping", () => {
       "tool_call",
       "tool_call_update",
     ]);
+    expect(updates.find((update) => update.sessionUpdate === "usage_update")).toEqual({
+      sessionUpdate: "usage_update",
+      used: 120,
+      size: 2_000,
+      cost: { amount: 0.02, currency: "USD" },
+    });
     expect(updates.at(-1)).toMatchObject({ status: "failed" });
   });
 
@@ -763,6 +884,8 @@ describe("ACP v1 agent mapping", () => {
 function createApplication(overrides: Partial<AcpApplicationPort> = {}): AcpApplicationPort {
   return withOutputHistory({
     assertAccess: vi.fn(() => Promise.resolve()),
+    getSessionConfiguration: vi.fn(() => Promise.resolve(sessionConfigurationView())),
+    setSessionConfiguration: vi.fn(() => Promise.resolve(sessionConfigurationView())),
     createSession: vi.fn(() => Promise.resolve({ sessionId: "session-1" })),
     listSessions: vi.fn(() => Promise.resolve({ sessions: [] })),
     deleteSession: vi.fn(() => Promise.resolve()),

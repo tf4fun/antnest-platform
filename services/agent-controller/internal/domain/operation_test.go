@@ -17,8 +17,8 @@ func TestLifecycleOperationAdvancesOnlyInPlanOrder(t *testing.T) {
 		SourceExecutionRevision: "execution-1",
 		SourceRuntimeRevision:   "runtime-1",
 		TargetSpecRevision:      "spec-2",
-		InitialTraceParent:      "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01",
-		Now:                     time.Unix(1, 0).UTC(),
+
+		Now: time.Unix(1, 0).UTC(),
 	})
 	if err != nil {
 		t.Fatalf("create operation: %v", err)

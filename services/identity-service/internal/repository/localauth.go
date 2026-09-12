@@ -21,10 +21,9 @@ func (a *LocalAuthAdapter) FindLocalCredential(
 	organizationSlug string,
 	email string,
 ) (localauth.LocalCredential, error) {
-	return observeRepositoryValue(ctx, "find_local_credential", func(ctx context.Context) (localauth.LocalCredential, error) {
-		var result localauth.LocalCredential
-		var userActive, membershipActive, organizationActive bool
-		err := a.store.pool.QueryRow(ctx, `
+	var result localauth.LocalCredential
+	var userActive, membershipActive, organizationActive bool
+	err := a.store.pool.QueryRow(ctx, `
 			SELECT c.password_hash, u.id, m.organization_id, m.id, u.system_role, m.role,
 			       u.active, m.active, o.active
 			FROM users u
@@ -32,25 +31,24 @@ func (a *LocalAuthAdapter) FindLocalCredential(
 			JOIN organization_memberships m ON m.user_id = u.id
 			JOIN organizations o ON o.id = m.organization_id
 			WHERE o.slug = $1 AND m.email = $2 AND m.scim_deleted_at IS NULL`,
-			organizationSlug, email,
-		).Scan(
-			&result.PasswordHash, &result.Principal.UserID, &result.Principal.OrganizationID,
-			&result.Principal.MembershipID, &result.Principal.SystemRole,
-			&result.Principal.OrganizationRole, &userActive, &membershipActive, &organizationActive,
-		)
-		if err != nil {
-			return localauth.LocalCredential{}, normalizeError(err)
-		}
-		result.Principal.Active = userActive && membershipActive && organizationActive
-		return result, nil
-	})
+		organizationSlug, email,
+	).Scan(
+		&result.PasswordHash, &result.Principal.UserID, &result.Principal.OrganizationID,
+		&result.Principal.MembershipID, &result.Principal.SystemRole,
+		&result.Principal.OrganizationRole, &userActive, &membershipActive, &organizationActive,
+	)
+	if err != nil {
+		return localauth.LocalCredential{}, normalizeError(err)
+	}
+	result.Principal.Active = userActive && membershipActive && organizationActive
+	return result, nil
 }
 
 func (a *LocalAuthAdapter) IssueToken(
 	ctx context.Context,
 	command localauth.IssueTokenCommand,
 ) (localauth.Token, error) {
-	err := a.store.inTransaction(ctx, "issue_access_token", func(tx pgx.Tx) error {
+	err := a.store.inTransaction(ctx, func(tx *databaseTransaction) error {
 		if err := lockVerifiedLocalCredential(ctx, tx, command); err != nil {
 			return err
 		}
@@ -74,7 +72,7 @@ func (a *LocalAuthAdapter) IssueToken(
 	return localauth.Token{ID: command.TokenID, ExpiresAt: command.ExpiresAt}, err
 }
 
-func lockVerifiedLocalCredential(ctx context.Context, tx pgx.Tx, command localauth.IssueTokenCommand) error {
+func lockVerifiedLocalCredential(ctx context.Context, tx *databaseTransaction, command localauth.IssueTokenCommand) error {
 	// Match directory authorization/deactivation: User, then Organization,
 	// then Membership/credential. Hold verified facts through issuance.
 	var userID string
@@ -125,8 +123,6 @@ func (a *LocalAuthAdapter) ResolveToken(
 	digest string,
 	now time.Time,
 ) (principal domain.Principal, resultErr error) {
-	ctx, finish := startRepositoryOperation(ctx, "resolve_access_token")
-	defer func() { finish(resultErr) }()
 	var userActive, membershipActive, organizationActive bool
 	var tokenID string
 	var lastUsedAt *time.Time
@@ -176,7 +172,7 @@ func (a *LocalAuthAdapter) RevokeByTokenHash(
 	ctx context.Context, digest string, now time.Time,
 ) (status localauth.RevokeStatus, resultErr error) {
 	status = localauth.RevokeStatusAlreadyInvalid
-	resultErr = a.store.inTransaction(ctx, "revoke_access_token", func(tx pgx.Tx) error {
+	resultErr = a.store.inTransaction(ctx, func(tx *databaseTransaction) error {
 		var tokenID, ownerUserID, organizationID string
 		var expiresAt time.Time
 		var revokedAt *time.Time

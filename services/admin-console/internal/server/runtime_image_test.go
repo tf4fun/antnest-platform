@@ -14,7 +14,7 @@ func TestTemplateTagChoiceDelegatesToCatalogWithoutResolvingInConsole(t *testing
 			backend := newBackendStub()
 			backend.enqueue(http.StatusCreated, `{"template_id":"template-1","runtime":{"image_ref":"sha256:`+strings.Repeat("a", 64)+`","image_source":"antnest/runtime:local","registry_password":"must-not-reach-browser","resources":{}}}`)
 			response := requestAdmin(t, newTestHandler(t, backend), http.MethodPost, path, `{
-				"name":"Template","model_profile_revision_id":"model-1","max_model_requests":32,
+				"name":"Template","model_profile_id":"model-1","max_model_requests":32,
 				"runtime":{"image_ref":"antnest/runtime:local"}
 			}`)
 			if response.Code != http.StatusCreated {
@@ -39,7 +39,7 @@ func TestTemplateTagChoiceDelegatesToCatalogWithoutResolvingInConsole(t *testing
 func TestTemplateRejectsForgedImageSourceBeforeForwarding(t *testing.T) {
 	backend := newBackendStub()
 	response := requestAdmin(t, newTestHandler(t, backend), http.MethodPost, "/api/admin/templates", `{
-		"name":"Template","model_profile_revision_id":"model-1",
+		"name":"Template","model_profile_id":"model-1",
 		"runtime":{"image_ref":"antnest/runtime:local","image_source":"forged:source"}
 	}`)
 	if response.Code != http.StatusBadRequest || len(backend.calls) != 0 {

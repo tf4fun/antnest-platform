@@ -9,7 +9,7 @@ export const fixtureSecret = (revision) =>
   `synthetic-oidc-client-secret-${revision}`;
 export const providerAccessToken = "synthetic-oidc-provider-access-token";
 
-export function createOIDCProvider({ issuer, callback }) {
+export function createOIDCProvider({ issuer, callback, userInfo = false }) {
   const { privateKey, publicKey } = generateKeyPairSync("rsa", {
     modulusLength: 2048,
   });
@@ -22,9 +22,16 @@ export function createOIDCProvider({ issuer, callback }) {
   const codes = new Map();
   const canaries = new Set();
   const basePath = new URL(issuer).pathname.replace(/\/$/, "");
-  const counters = { discovery: 0, attempts: 0, grants: 0, jwks: 0 };
+  const counters = {
+    discovery: 0,
+    attempts: 0,
+    grants: 0,
+    jwks: 0,
+    userinfo: 0,
+  };
   let secretRevision = 1;
   const accounts = {
+    ...(userInfo ? { profile: { sub: "local-subject" } } : {}),
     local: { sub: "local-subject", email: "oidc-local@example.com" },
     scim: { sub: "scim-subject", email: "oidc-scim@example.com" },
     renamed: { sub: "scim-subject", email: "oidc-scim-renamed@example.com" },
@@ -157,6 +164,7 @@ export function createOIDCProvider({ issuer, callback }) {
           authorization_endpoint: `${issuer}/authorize`,
           token_endpoint: `${issuer}/token`,
           jwks_uri: `${issuer}/jwks`,
+          ...(userInfo ? { userinfo_endpoint: `${issuer}/userinfo` } : {}),
           response_types_supported: ["code"],
           subject_types_supported: ["public"],
           scopes_supported: ["openid", "email", "profile"],
@@ -171,6 +179,17 @@ export function createOIDCProvider({ issuer, callback }) {
       case "GET /jwks":
         counters.jwks++;
         return json(response, 200, { keys: [key] });
+      case "GET /userinfo":
+        if (!userInfo) return json(response, 404, { error: "not_found" });
+        if (request.headers.authorization !== `Bearer ${providerAccessToken}`)
+          return json(response, 401, { error: "invalid_token" });
+        counters.userinfo++;
+        return json(response, 200, {
+          sub: "local-subject",
+          email: "oidc-local@example.com",
+          email_verified: true,
+          name: "OIDC fixture profile",
+        });
       default:
         return json(response, 404, { error: "not_found" });
     }

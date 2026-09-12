@@ -38,7 +38,7 @@ def rpc_message(data):
     if data.startswith("{"):
         return json.loads(data)
     messages = [json.loads(line[5:].strip()) for line in data.splitlines() if line.startswith("data:")]
-    return next(value for value in reversed(messages) if "result" in value or "error" in value)
+    return next((value for value in reversed(messages) if "result" in value or "error" in value), None)
 
 
 class ManagedMcpE2E(unittest.TestCase):
@@ -118,7 +118,7 @@ class ManagedMcpE2E(unittest.TestCase):
 
     def request(self, method, params=None):
         params = dict(params or {})
-        params["_meta"] = {"io.modelcontextprotocol/protocolVersion": "2026-07-28", "io.modelcontextprotocol/clientCapabilities": {}}
+        params.setdefault("_meta", {}).update({"io.modelcontextprotocol/protocolVersion": "2026-07-28", "io.modelcontextprotocol/clientCapabilities": {}})
         body = {"jsonrpc": "2.0", "id": next(self.requests), "method": method, "params": params}
         headers = {"content-type": "application/json", "accept": "application/json, text/event-stream",
                    "mcp-protocol-version": "2026-07-28", "mcp-method": method,
@@ -140,6 +140,7 @@ class ManagedMcpE2E(unittest.TestCase):
         finally:
             connection.close()
         result = rpc_message(data)
+        self.assertIsNotNone(result, "MCP response ended without a terminal result")
         self.assertNotIn("error", result, result)
         return result["result"]
 
@@ -153,7 +154,7 @@ class ManagedMcpE2E(unittest.TestCase):
         self.start()
         self.ready()
         tools = self.rpc("tools/list")["tools"]
-        self.assertEqual(len(tools), 12)
+        self.assertEqual(len(tools), 14)
         first = self.tool("mcp__a__echo", {"value": "one"})["structuredContent"]
         second = self.tool("mcp__a__echo", {"value": "two"})["structuredContent"]
         other = self.tool("mcp__b__echo", {"value": "other"})["structuredContent"]
@@ -203,6 +204,82 @@ class ManagedMcpE2E(unittest.TestCase):
         self.assertEqual(len(self.rpc("tools/list")["tools"]), 4)
         self.assertEqual(self.rpc("resources/list")["resources"][0]["uri"], "antnest://runtime/info")
 
+    def progress_call(self, name, arguments, release, fail=False):
+        token = "outer-" + uuid.uuid4().hex
+        connection = self.request("tools/call", {"name": name, "arguments": arguments, "_meta": {"progressToken": token}})
+        try:
+            response = connection.getresponse()
+            self.assertEqual(response.status, 200)
+            events = []
+            while True:
+                line = response.readline()
+                self.assertTrue(line, "completion arrived without live progress")
+                if not line.startswith(b"data:"):
+                    continue
+                frame = json.loads(line[5:])
+                events.append(frame)
+                self.assertNotIn("result", frame, "tool completed before its first progress")
+                if frame.get("method") == "notifications/progress":
+                    break
+            self.assertEqual(events[-1]["params"]["progressToken"], token)
+            self.assertFalse(release.exists())
+            release.write_text("finish")
+            tail = response.read().decode()
+            events.extend(json.loads(line[5:]) for line in tail.splitlines() if line.startswith("data:"))
+            self.assertEqual(sum("result" in event for event in events), 1)
+            self.assertIn("result", events[-1])
+            updates = [event["params"] for event in events if event.get("method") == "notifications/progress"]
+            self.assertTrue(all(update["progressToken"] == token for update in updates))
+            self.assertTrue(all(a["progress"] < b["progress"] for a, b in zip(updates, updates[1:])))
+            self.assertEqual(events[-1]["result"].get("isError", False), fail)
+            return updates, events[-1]["result"]
+        finally:
+            release.touch()
+            connection.close()
+
+    def test_bash_progress_crosses_the_non_root_executor_and_http_before_completion(self):
+        self.start([])
+        self.ready()
+        command = "printf bash-progress-canary; while [ ! -e bash-release ]; do sleep 0.05; done; printf tail; printf diagnostic >&2"
+        updates, result = self.progress_call("bash", {"command": command, "working_dir": {"root": "workspace", "path": "."}, "env": [], "timeout_ms": 5000}, self.workspace / "bash-release")
+        self.assertTrue(any("bash-progress-canary" in update.get("message", "") for update in updates))
+        self.assertTrue(all("total" not in update for update in updates))
+        self.assertEqual(result["structuredContent"]["stdout"], "bash-progress-canarytail")
+        self.assertEqual(result["structuredContent"]["stderr"], "diagnostic")
+        connection = self.request("tools/call", {"name": "bash", "arguments": {"command": "printf quiet", "working_dir": {"root": "workspace", "path": "."}, "env": [], "timeout_ms": 1000}})
+        try:
+            body = connection.getresponse().read().decode()
+            self.assertNotIn("notifications/progress", body)
+            self.assertEqual(rpc_message(body)["result"]["structuredContent"]["stdout"], "quiet")
+        finally:
+            connection.close()
+        self.assertNotIn("bash-progress-canary", docker("logs", self.name))
+
+    def test_managed_progress_preserves_values_and_stops_on_failure_or_cancel(self):
+        self.start()
+        self.ready()
+        updates, _ = self.progress_call("mcp__a__progress", {"fail": True, "gate": "progress-error"}, self.workspace / "progress-error-release", fail=True)
+        self.assertEqual([(update["progress"], update["total"]) for update in updates], [(0.5, 2.0), (2.0, 2.0)])
+        self.assertNotIn("progress-payload-canary", docker("logs", self.name))
+        # Each invocation owns its markers; no cross-host unlink/recreate race.
+        connection = self.request("tools/call", {"name": "mcp__a__progress", "arguments": {"gate": "progress-cancel"}, "_meta": {"progressToken": "cancel-preview"}})
+        response = None
+        try:
+            response = connection.getresponse()
+            while True:
+                line = response.readline()
+                self.assertTrue(line, "progress stream ended before cancellation")
+                if b"notifications/progress" in line:
+                    break
+        finally:
+            if response is not None:
+                response.close()
+            connection.close()
+        eventually(lambda: (self.workspace / "progress-cancel-canceled").exists())
+        eventually(lambda: (self.workspace / "cancel-received").exists())
+        self.assertEqual(json.loads((self.workspace / "cancel-received").read_text()), json.loads((self.workspace / "progress-cancel-started").read_text()))
+        self.assertFalse(self.tool("mcp__a__echo", {"value": "after-progress-cancel"}).get("isError", False))
+
     def assert_failed_start(self, config, seconds=10):
         self.start(config)
         eventually(lambda: json.loads(docker("inspect", self.name))[0]["State"]["Running"] is False, seconds)
@@ -235,7 +312,11 @@ class ManagedMcpE2E(unittest.TestCase):
             data = response.read().decode()
             # Fatal child exit races response delivery with Supervisor shutdown.
             if response.status == 200:
-                self.assertTrue(rpc_message(data)["result"]["isError"], data)
+                # SSE headers may already be sent when the fatal shutdown
+                # closes the body. Exit code and fault log below remain mandatory.
+                terminal = rpc_message(data)
+                if terminal is not None:
+                    self.assertTrue(terminal["result"]["isError"], data)
             else:
                 self.assertIn(response.status, [500, 503], data)
         except (OSError, http.client.HTTPException):

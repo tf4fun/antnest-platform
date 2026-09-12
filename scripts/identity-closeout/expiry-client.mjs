@@ -100,7 +100,9 @@ if (phase === "prepare") {
     [
       {
         traceID: denied.traceID,
-        repository: "identity.repository.resolve_access_token",
+        method: "POST",
+        route: "/rpc/identity/resolve-access-token",
+        rpcMethod: "resolve_access_token",
       },
     ],
     secrets,

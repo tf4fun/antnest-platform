@@ -1,4 +1,6 @@
 import type { PoolClient } from "pg";
+import { isDeepStrictEqual } from "node:util";
+import { projectUsage } from "../../domain/usage.js";
 
 import type { ToolEffectState, UnknownEffectSource } from "../../domain/types.js";
 import type { InterruptedToolEffects } from "../../ports/run-event-repository.js";
@@ -6,15 +8,63 @@ import type { InterruptedToolEffects } from "../../ports/run-event-repository.js
 import type { SessionEvent } from "../../ports/acp-application.js";
 import type {
   AppendAgentMessageInput,
+  AppendToolProgressInput,
   AppendRejectedToolCallInput,
   FinishToolAttemptInput,
   RunEventRepository,
   StartToolAttemptInput,
 } from "../../ports/run-event-repository.js";
 import type { PostgresKernel } from "./kernel.js";
+import {
+  decodeSessionEvent,
+  encodeSessionEvent,
+  type StoredSessionEvent,
+} from "./session-event-codec.js";
 
 export class PostgresRunEventRepository implements RunEventRepository {
   public constructor(private readonly kernel: PostgresKernel) {}
+
+  public appendPlan(input: Parameters<RunEventRepository["appendPlan"]>[0]): Promise<boolean> {
+    return this.kernel.transaction(async (client) => {
+      const locked = await lockRunAndSession(client, input.runId);
+      const run = await client.query<{ cancel_requested_at: Date | null }>(
+        "SELECT cancel_requested_at FROM runs WHERE id = $1",
+        [input.runId],
+      );
+      if (requireRow(run.rows[0], "Run does not exist").cancel_requested_at !== null) return false;
+      for (const [index, event] of input.events.entries()) {
+        await appendLocked(
+          client,
+          { ...locked, nextSequence: locked.nextSequence + index },
+          `${input.id}:${index}`,
+          event.kind,
+          event,
+          input.createdAt,
+        );
+      }
+      return true;
+    });
+  }
+
+  public async appendToolProgress(input: AppendToolProgressInput): Promise<SessionEvent> {
+    const event: SessionEvent = {
+      kind: "tool_call",
+      initial: false,
+      toolCallId: input.toolCallId,
+      status: "in_progress",
+      content: input.content,
+    };
+    await this.kernel.transaction(async (client) => {
+      const locked = await lockRunAndSession(client, input.runId);
+      const attempt = await client.query(
+        "SELECT id FROM tool_attempts WHERE run_id = $1 AND tool_call_id = $2 AND state = 'in_progress'",
+        [input.runId, input.toolCallId],
+      );
+      if (attempt.rowCount !== 1) throw new Error("Tool attempt is not in progress");
+      await appendLocked(client, locked, input.id, "tool_call", event, input.createdAt);
+    });
+    return event;
+  }
 
   public async appendAgentMessage(input: AppendAgentMessageInput): Promise<SessionEvent> {
     const event: SessionEvent = {
@@ -22,6 +72,7 @@ export class PostgresRunEventRepository implements RunEventRepository {
       messageId: input.id,
       content: input.content,
       ...(input.toolCalls === undefined ? {} : { toolCalls: input.toolCalls }),
+      ...(input.responseId === undefined ? {} : { responseId: input.responseId }),
     };
     await this.append(
       input.runId,
@@ -38,26 +89,40 @@ export class PostgresRunEventRepository implements RunEventRepository {
     const event: SessionEvent = {
       kind: "agent_thought",
       messageId: input.id,
+      ...(input.responseId === undefined ? {} : { responseId: input.responseId }),
       content: input.content,
     };
     await this.append(input.runId, input.id, "agent_thought", event, input.createdAt);
     return event;
   }
 
-  public async appendUsage(input: {
-    id: string;
-    runId: string;
-    usage: { inputTokens: number; outputTokens: number };
-    contextSize: number;
-    createdAt: Date;
-  }): Promise<SessionEvent> {
-    const event: SessionEvent = {
-      kind: "usage",
-      used: input.usage.inputTokens + input.usage.outputTokens,
-      size: input.contextSize,
-    };
-    await this.append(input.runId, input.id, "usage", event, input.createdAt);
-    return event;
+  public appendUsage(
+    input: Parameters<RunEventRepository["appendUsage"]>[0],
+  ): Promise<SessionEvent> {
+    return this.kernel.transaction(async (client) => {
+      const existing = await storedUsage(client, input);
+      if (existing !== undefined) return existing;
+      const locked = await lockSessionRun(client, input.runId);
+      const concurrent = await storedUsage(client, input);
+      if (concurrent !== undefined) return concurrent;
+      requireRunning(locked.state);
+      const previous = await client.query<{ payload: StoredSessionEvent }>(
+        "SELECT payload FROM session_messages WHERE session_id = $1 AND kind = 'usage' ORDER BY sequence DESC LIMIT 1",
+        [locked.sessionId],
+      );
+      const stored = previous.rows[0]?.payload;
+      const prior = stored === undefined ? undefined : decodeSessionEvent(stored);
+      const event: SessionEvent = {
+        kind: "usage",
+        ...projectUsage(
+          input.usage,
+          input.contextSize,
+          prior?.kind === "usage" ? prior.cost : undefined,
+        ),
+      };
+      await appendLocked(client, locked, input.id, "usage", event, input.createdAt);
+      return event;
+    });
   }
 
   public async startToolAttempt(input: StartToolAttemptInput): Promise<SessionEvent> {
@@ -66,6 +131,7 @@ export class PostgresRunEventRepository implements RunEventRepository {
       initial: true,
       toolCallId: input.toolCallId,
       title: input.tool.name,
+      ...input.presentation,
       modelName: input.tool.modelName,
       arguments: input.arguments,
       status: "in_progress",
@@ -115,6 +181,8 @@ export class PostgresRunEventRepository implements RunEventRepository {
       toolCallId: input.toolCallId,
       status: input.status,
       content: input.content,
+      ...(input.rawOutput === undefined ? {} : { rawOutput: input.rawOutput }),
+      ...(input.file === undefined ? {} : { file: input.file }),
     };
     await this.kernel.transaction(async (client) => {
       const locked = await lockRunAndSession(client, input.runId);
@@ -149,12 +217,11 @@ export class PostgresRunEventRepository implements RunEventRepository {
       const attempts = await client.query<{
         id: string;
         tool_call_id: string;
-        tool_name: string;
         source: "runtime" | "client";
         state: string;
         tool_effect_state: ToolEffectState;
       }>(
-        `SELECT id, tool_call_id, tool_name, source, state, tool_effect_state
+        `SELECT id, tool_call_id, source, state, tool_effect_state
            FROM tool_attempts
           WHERE run_id = $1
           ORDER BY created_at, id
@@ -197,7 +264,6 @@ export class PostgresRunEventRepository implements RunEventRepository {
             kind: "tool_call",
             initial: false,
             toolCallId: attempt.tool_call_id,
-            title: attempt.tool_name,
             status: "failed",
             content,
           },
@@ -243,7 +309,41 @@ function mergeUnknownEffectSource(
 
 type LockedRun = { runId: string; sessionId: string; nextSequence: number };
 
+async function storedUsage(
+  client: PoolClient,
+  input: Parameters<RunEventRepository["appendUsage"]>[0],
+): Promise<SessionEvent | undefined> {
+  const result = await client.query<{ run_id: string; payload: StoredSessionEvent }>(
+    "SELECT run_id, payload FROM session_messages WHERE id = $1",
+    [input.id],
+  );
+  const row = result.rows[0];
+  if (row === undefined) return undefined;
+  const event = decodeSessionEvent(row.payload);
+  if (
+    row.run_id !== input.runId ||
+    event.kind !== "usage" ||
+    event.size !== input.contextSize ||
+    !isDeepStrictEqual(event.measurement, input.usage)
+  )
+    throw new Error("Usage receipt identity conflict");
+  return event;
+}
+
 async function lockRunAndSession(client: PoolClient, runId: string): Promise<LockedRun> {
+  const locked = await lockSessionRun(client, runId);
+  requireRunning(locked.state);
+  return locked;
+}
+
+function requireRunning(state: string): void {
+  if (state !== "running") throw new Error("Run is not running");
+}
+
+async function lockSessionRun(
+  client: PoolClient,
+  runId: string,
+): Promise<LockedRun & { state: string }> {
   const identity = await client.query<{ session_id: string }>(
     "SELECT session_id FROM runs WHERE id = $1",
     [runId],
@@ -262,12 +362,10 @@ async function lockRunAndSession(client: PoolClient, runId: string): Promise<Loc
   if (runRow.session_id !== sessionId) {
     throw new Error("Run changed Session identity");
   }
-  if (runRow.state !== "running") {
-    throw new Error("Run is not running");
-  }
   return {
     runId,
     sessionId,
+    state: runRow.state,
     nextSequence: Number(sessionRow.last_message_sequence) + 1,
   };
 }
@@ -292,7 +390,7 @@ async function appendLocked(
       locked.nextSequence,
       kind,
       visible,
-      JSON.stringify(event),
+      JSON.stringify(encodeSessionEvent(event)),
       createdAt,
     ],
   );
@@ -328,8 +426,8 @@ async function appendUnstartedToolResults(
        FROM session_messages
       WHERE run_id = $1
         AND kind = 'agent_message'
-        AND jsonb_typeof(payload -> 'toolCalls') = 'array'
-        AND jsonb_array_length(payload -> 'toolCalls') > 0
+        AND (COALESCE(payload ->> 'toolCallsJson', '[]') <> '[]'
+          OR (jsonb_typeof(payload -> 'toolCalls') = 'array' AND jsonb_array_length(payload -> 'toolCalls') > 0))
       ORDER BY sequence DESC
       LIMIT 1`,
     [runId],
@@ -338,7 +436,7 @@ async function appendUnstartedToolResults(
   if (row === undefined) {
     return;
   }
-  const calls = recoveryToolCalls(row.payload);
+  const calls = recoveryToolCalls(decodeSessionEvent(row.payload as StoredSessionEvent));
   const events = await client.query<{ payload: unknown }>(
     `SELECT payload
        FROM session_messages

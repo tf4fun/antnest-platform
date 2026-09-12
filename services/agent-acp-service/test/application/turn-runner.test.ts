@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { TurnRunner, type TurnRunnerDependencies } from "../../src/application/turn-runner.js";
 import { RunEventPersistenceError } from "../../src/application/durable-run-events.js";
 import { MAX_TOOL_RESULT_BYTES } from "../../src/domain/tool-result.js";
-import type { ModelPort } from "../../src/ports/model.js";
+import { ModelError, type ModelPort } from "../../src/ports/model.js";
 import type { ToolCatalogPort } from "../../src/ports/tools.js";
 import type { RunEventPort } from "../../src/ports/run-events.js";
 import type {
@@ -43,6 +43,384 @@ const snapshot: RunExecutionSnapshot = {
 };
 
 describe("TurnRunner", () => {
+  it("records known failed-call cost once without executing tools", async () => {
+    const error = new ModelError("model_invalid_response", "invalid", false);
+    error.usage = { cost: { amount: 0.01, currency: "USD", source: "provider_reported" } };
+    const events = createEvents();
+    const call = vi.fn();
+    const runner = new TurnRunner({
+      model: { complete: vi.fn().mockRejectedValue(error) },
+      tools: { call },
+      catalog: [],
+      events: events.port,
+    });
+    await expect(run(runner)).resolves.toMatchObject({
+      terminalClass: "failed",
+      errorClass: "model_invalid_response",
+    });
+    expect(events.usage).toHaveBeenCalledExactlyOnceWith("run-1", error.usage);
+    expect(call).not.toHaveBeenCalled();
+  });
+
+  it("saves returned cost before a final output flush failure", async () => {
+    const events = createEvents();
+    const failure = new RunEventPersistenceError("agent message", new Error("write failed"));
+    events.agentMessage.mockResolvedValueOnce(undefined).mockRejectedValue(failure);
+    const usage = {
+      inputTokens: 1,
+      outputTokens: 1,
+      cost: { amount: 0.01, currency: "USD" as const, source: "provider_reported" as const },
+    };
+    const complete = vi.fn<ModelPort["complete"]>(async (request) => {
+      await request.onDelta?.({ kind: "message", text: "first flush" });
+      await request.onDelta?.({ kind: "message", text: "short pending flush" });
+      return { kind: "message", content: [], stopReason: "end_turn", usage };
+    });
+    const runner = new TurnRunner({
+      model: { complete },
+      tools: { call: vi.fn() },
+      catalog: [],
+      events: events.port,
+    });
+    await expect(run(runner)).rejects.toBe(failure);
+    expect(events.usage).toHaveBeenCalledExactlyOnceWith("run-1", usage);
+  });
+  it("preserves a typed model content failure without retaining the provider message", async () => {
+    const complete = vi
+      .fn<ModelPort["complete"]>()
+      .mockRejectedValue(new ModelError("model_unsupported_content", "private-file-body", false));
+    const call = vi.fn();
+    const events = createEvents();
+    const runner = new TurnRunner({
+      model: { complete },
+      tools: { call },
+      catalog: [],
+      events: events.port,
+    });
+    await expect(run(runner)).resolves.toEqual({
+      terminalClass: "failed",
+      executorState: "quiescent",
+      toolEffectState: "none",
+      errorClass: "model_unsupported_content",
+    });
+    expect(complete).toHaveBeenCalledOnce();
+    expect(call).not.toHaveBeenCalled();
+    expect(events.usage).not.toHaveBeenCalled();
+  });
+
+  it("propagates permission-judge accounting failures to recovery before any Tool effect", async () => {
+    const events = createEvents();
+    const failure = new RunEventPersistenceError("usage", new Error("write failed"));
+    events.usage.mockResolvedValueOnce(undefined).mockRejectedValueOnce(failure);
+    const snap = structuredClone(snapshot);
+    snap.executionSpec.configuration = {
+      modelProfileId: "p",
+      modelProfileRevisionId: "r",
+      authorizationRevision: 1,
+      authorization: { mode: "smart_approve", toolRules: [] },
+      digest: "a".repeat(64),
+    };
+    const model = vi
+      .fn<ModelPort["complete"]>()
+      .mockResolvedValueOnce({
+        kind: "tool_calls",
+        content: [],
+        usage: { inputTokens: 1, outputTokens: 1 },
+        calls: [{ id: "c", name: "bash", arguments: { command: "pwd" } }],
+      })
+      .mockResolvedValue({
+        kind: "message",
+        content: [{ type: "text", text: "{}" }],
+        stopReason: "end_turn",
+        usage: { inputTokens: 2, outputTokens: 2 },
+      });
+    const call = vi.fn();
+    const request = vi.fn();
+    const runner = new TurnRunner({
+      model: { complete: model },
+      tools: { call },
+      permissions: { request },
+      events: events.port,
+      catalog: [
+        {
+          source: "runtime",
+          sourceId: "runtime",
+          name: "bash",
+          modelName: "bash",
+          description: "shell",
+        },
+      ],
+    });
+    const signal = new AbortController().signal;
+    await expect(
+      runner.run({
+        runId: "r",
+        sessionId: "s",
+        snapshot: snap,
+        credential: "test",
+        context: [],
+        signal,
+        authoritySignal: signal,
+      }),
+    ).rejects.toBe(failure);
+    expect(call).not.toHaveBeenCalled();
+    expect(request).not.toHaveBeenCalled();
+    expect(events.toolStarted).not.toHaveBeenCalled();
+  });
+  it.each(["cancel", "failure", "authority"] as const)(
+    "drains a blocked progress write before %s handling without accepting late callbacks",
+    async (ending) => {
+      const events = createEvents();
+      const blocked = Promise.withResolvers<void>();
+      events.toolProgress.mockReturnValueOnce(blocked.promise);
+      const tool = Promise.withResolvers<never>();
+      const started = Promise.withResolvers<Parameters<ToolCatalogPort["call"]>[0]>();
+      const cancelled = new AbortController();
+      const authority = new AbortController();
+      const runner = new TurnRunner({
+        events: events.port,
+        catalog: [
+          {
+            source: "runtime",
+            sourceId: "runtime",
+            name: "read",
+            modelName: "read",
+            description: "Read",
+          },
+        ],
+        model: {
+          complete: () =>
+            Promise.resolve({
+              kind: "tool_calls",
+              content: [],
+              calls: [{ id: "call", name: "read", arguments: {} }],
+              usage: { inputTokens: 1, outputTokens: 1 },
+            }),
+        },
+        tools: {
+          call(input) {
+            input.onProgress?.({ progress: 1, message: "first" });
+            input.onProgress?.({ progress: 2, message: "tail" });
+            started.resolve(input);
+            return tool.promise;
+          },
+        },
+      });
+      const pending = runner.run({
+        runId: "run-1",
+        sessionId: "session-1",
+        snapshot,
+        credential: "synthetic",
+        context: [],
+        signal: cancelled.signal,
+        authoritySignal: authority.signal,
+      });
+      const observed = pending.catch(() => undefined);
+      const input = await started.promise;
+      try {
+        const error = Object.assign(new Error("interrupted"), { effectState: "unknown" });
+        if (ending === "cancel") cancelled.abort(error);
+        if (ending === "authority") authority.abort(error);
+        tool.reject(error);
+        expect(events.toolFinished).not.toHaveBeenCalled();
+        blocked.resolve();
+        if (ending === "authority") {
+          await expect(pending).rejects.toBe(error);
+          expect(events.toolProgress).toHaveBeenCalledOnce();
+          expect(events.toolFinished).not.toHaveBeenCalled();
+          expect(input.signal.aborted).toBe(true);
+        } else {
+          expect(await pending).toMatchObject({ terminalClass: "unresolved" });
+          expect(events.toolProgress).toHaveBeenCalledTimes(2);
+          expect(events.toolFinished).toHaveBeenCalledOnce();
+          expect(events.toolProgress.mock.lastCall?.[2]).toEqual([
+            { type: "text", text: "first\ntail" },
+          ]);
+        }
+        input.onProgress?.({ progress: 3, message: "late" });
+        expect(events.toolProgress).toHaveBeenCalledTimes(ending === "authority" ? 1 : 2);
+      } finally {
+        blocked.resolve();
+        tool.reject(new Error("test cleanup"));
+        await observed;
+      }
+    },
+  );
+
+  it.each(["completed", "failed", "cancelled"] as const)(
+    "flushes Tool progress before %s and keeps previews out of model context",
+    async (ending) => {
+      const events = createEvents();
+      const controller = new AbortController();
+      const complete = vi
+        .fn<ModelPort["complete"]>()
+        .mockResolvedValue({
+          kind: "message",
+          content: [{ type: "text", text: "done" }],
+          usage: { inputTokens: 1, outputTokens: 1 },
+          stopReason: "end_turn",
+        })
+        .mockResolvedValueOnce({
+          kind: "tool_calls",
+          content: [],
+          usage: { inputTokens: 1, outputTokens: 1 },
+          calls: [{ id: "call", name: "read", arguments: {} }],
+        });
+      let late: Parameters<ToolCatalogPort["call"]>[0]["onProgress"];
+      const runner = new TurnRunner({
+        model: { complete },
+        events: events.port,
+        catalog: [
+          {
+            source: "runtime",
+            sourceId: "runtime",
+            name: "read",
+            modelName: "read",
+            description: "Read",
+          },
+        ],
+        tools: {
+          call(input) {
+            late = input.onProgress;
+            input.onProgress?.({ progress: 1, message: "preview first" });
+            input.onProgress?.({ progress: 2, message: "preview tail" });
+            if (ending === "cancelled") {
+              controller.abort();
+              return Promise.reject(
+                Object.assign(new Error("disconnected"), { effectState: "unknown" }),
+              );
+            }
+            return Promise.resolve({
+              content: [{ type: "text", text: "final result" }],
+              isError: ending === "failed",
+              toolEffectState: "settled",
+            });
+          },
+        },
+      });
+      await runner.run({
+        runId: "run-1",
+        sessionId: "session-1",
+        snapshot,
+        credential: "synthetic",
+        context: [],
+        signal: controller.signal,
+        authoritySignal: new AbortController().signal,
+      });
+      const callId = events.toolStarted.mock.calls[0]?.[1];
+      expect(events.toolProgress.mock.calls.map((args) => args[1])).toEqual([callId, callId]);
+      expect(events.toolProgress.mock.lastCall).toEqual([
+        "run-1",
+        callId,
+        [{ type: "text", text: "preview first\npreview tail" }],
+      ]);
+      expect(events.toolStarted).toHaveBeenCalledBefore(events.toolProgress);
+      expect(Math.max(...events.toolProgress.mock.invocationCallOrder)).toBeLessThan(
+        events.toolFinished.mock.invocationCallOrder[0] ?? 0,
+      );
+      expect(events.toolFinished.mock.lastCall?.[2]).toBe(ending);
+      expect(JSON.stringify(complete.mock.calls)).not.toContain("preview");
+      late?.({ progress: 3, message: "late" });
+      expect(events.toolProgress).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it("aborts the active Tool on failed progress persistence and leaves recovery to close it", async () => {
+    const events = createEvents();
+    const failure = new RunEventPersistenceError(
+      "Tool progress",
+      new Error("database unavailable"),
+    );
+    events.toolProgress.mockRejectedValue(failure);
+    const call = vi.fn<ToolCatalogPort["call"]>((input) => {
+      const pending = new Promise<never>((_resolve, reject) => {
+        input.signal.addEventListener(
+          "abort",
+          () => reject(new Error("Tool cancelled", { cause: input.signal.reason })),
+          { once: true },
+        );
+      });
+      input.onProgress?.({ progress: 1, message: "started" });
+      return pending;
+    });
+    const runner = new TurnRunner({
+      events: events.port,
+      tools: { call },
+      catalog: [
+        {
+          source: "runtime",
+          sourceId: "runtime",
+          name: "read",
+          modelName: "read",
+          description: "Read",
+        },
+      ],
+      model: {
+        complete: () =>
+          Promise.resolve({
+            kind: "tool_calls",
+            content: [],
+            calls: [{ id: "call", name: "read", arguments: {} }],
+            usage: { inputTokens: 1, outputTokens: 1 },
+          }),
+      },
+    });
+    await expect(run(runner)).rejects.toBe(failure);
+    expect(call).toHaveBeenCalledOnce();
+    expect(events.toolFinished).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])(
+    "retains streamed output once, including cancellation=%s",
+    async (cancel) => {
+      const events = createEvents();
+      const controller = new AbortController();
+      const runner = new TurnRunner({
+        model: {
+          async complete(input) {
+            await input.onDelta?.({ kind: "thought", text: "think" });
+            await input.onDelta?.({ kind: "message", text: "hello" });
+            await input.onDelta?.({ kind: "message", text: " world" });
+            if (cancel) {
+              controller.abort();
+              throw new Error("aborted");
+            }
+            return {
+              kind: "message",
+              content: [{ type: "text", text: "hello world" }],
+              thought: [{ type: "text", text: "think" }],
+              stopReason: "end_turn",
+              usage: { inputTokens: 1, outputTokens: 2 },
+            };
+          },
+        },
+        tools: { call: vi.fn() },
+        catalog: [],
+        events: events.port,
+      });
+      expect(
+        await runner.run({
+          runId: "run-1",
+          sessionId: "session-1",
+          snapshot,
+          credential: "synthetic",
+          context: [],
+          signal: controller.signal,
+          authoritySignal: new AbortController().signal,
+        }),
+      ).toMatchObject({ terminalClass: cancel ? "cancelled" : "completed" });
+      expect(
+        events.agentMessage.mock.calls
+          .flatMap((args) => args[1])
+          .map((block) => block.text)
+          .join(""),
+      ).toBe("hello world");
+      expect(events.agentThought.mock.calls.flatMap((args) => args[1])).toEqual([
+        { type: "text", text: "think" },
+      ]);
+    },
+  );
+
   it("keeps Tool identities unique across model requests and Runs, with paired model history", async () => {
     const events = createEvents();
     const contexts: ModelMessage[][] = [];
@@ -753,6 +1131,7 @@ function run(runner: TurnRunner) {
 }
 
 function createEvents() {
+  const toolProgress = vi.fn<RunEventPort["toolProgress"]>(() => Promise.resolve());
   const toolStarted = vi.fn<RunEventPort["toolStarted"]>(() => Promise.resolve());
   const toolRejected = vi.fn<RunEventPort["toolRejected"]>(() => Promise.resolve());
   const toolFinished = vi.fn<RunEventPort["toolFinished"]>(() => Promise.resolve());
@@ -760,6 +1139,8 @@ function createEvents() {
   const agentThought = vi.fn<RunEventPort["agentThought"]>(() => Promise.resolve());
   const usage = vi.fn<RunEventPort["usage"]>(() => Promise.resolve());
   const port: RunEventPort = {
+    updatePlan: vi.fn(() => Promise.resolve(true)),
+    toolProgress,
     toolStarted,
     toolRejected,
     toolFinished,
@@ -767,5 +1148,14 @@ function createEvents() {
     agentThought,
     usage,
   };
-  return { port, toolStarted, toolRejected, toolFinished, agentMessage, agentThought, usage };
+  return {
+    port,
+    toolProgress,
+    toolStarted,
+    toolRejected,
+    toolFinished,
+    agentMessage,
+    agentThought,
+    usage,
+  };
 }

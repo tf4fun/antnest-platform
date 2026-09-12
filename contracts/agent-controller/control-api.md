@@ -1,47 +1,160 @@
 # Agent Controller Lifecycle And Management Contract
 
 > Status: Stage 2B implementation contract<br>
-> Revision: 9<br>
+> Revision: 19<br>
 > Transport: trusted internal JSON over HTTP<br>
 > Owner: Agent Controller
 
 This contract manages ModelProfiles, Templates, Agents, lifecycle operations,
 global Agent status projection, and Agent events. It is internal RPC, not a
-public OpenAPI. The future Edge Gateway decides which management operations are
+public OpenAPI. Edge Gateway decides which management operations are
 externally available and performs transport authentication.
 
-All mutating requests carry a stable `request_id`. Reusing a request ID with a
+Lifecycle and catalog mutations carry a stable `request_id`. Reusing a request ID with a
 different canonical request returns `request_id_conflict`. Cross-service IDs
 are opaque strings and have no database foreign keys.
 
-Catalog request IDs are unique across every ModelProfile and Template command,
+Catalog request IDs are unique across every Provider connection, credential, ModelProfile and Template command,
 not merely within one route. Concurrent retries serialize on that identity. A
 revision command compares the head revision it read with the head locked by the
 repository; a concurrent successful revision returns `lifecycle_conflict` and
 the caller submits a new intent instead of silently rebasing it.
 
-## Model Catalog
+## Workspace State
 
-`GET /internal/model-catalog` returns the provider and model presets supported
-by the current model adapter. The result is global product metadata: it carries
-no organization state, credentials, or discovered Provider data and is not
-persisted in the Agent Controller database.
+`GET /internal/workspace/agents/{agent_id}/state` and the corresponding
+`/state/watch` endpoint require `organization_id` and `principal_id`. They return
+only current availability, access permission, Agent aggregate revision and the
+requesting principal's active Session ID. Neither returns an access subject,
+Provider credential, prompt, or executable configuration.
 
-For a catalog model, Agent Controller is authoritative for the endpoint,
-context window, output limit, and image-input capability. Create and revision
-commands canonicalize those fields even when an internal caller supplies stale
-values. The custom OpenAI-compatible preset has no fixed endpoint or models;
-administrators must provide its model identity and capability limits.
+Watch emits full `workspace_state` SSE snapshots without event IDs or replay
+cursors. It is a current-state observation, separate from the ordered audit
+journal. Lost access produces a sanitized terminal snapshot; failed reads or
+subscription registration close the stream. A retrying LISTEN connection alone
+does not provide a freshness bound. See the service's
+[Workspace state contract](../../services/agent-controller/docs/workspace-state.md)
+for lifecycle barriers, admission semantics, freshness limits and consumer duties.
+Gateway/UI consumption and Docker state integration are implemented; full C4
+interactive acceptance remains open in
+[single-node closeout](../../docs/docker-single-node-closeout.md).
+
+## Agent Network Policy
+
+`GET /internal/agents/{agent_id}/network-policy?organization_id=org-1`
+reads the desired policy and independent Runtime attachment. Organization scope
+is mandatory. Unknown, cross-organization and deleting/deleted Agents return
+`agent_not_found` before any Egress call. Gateway/Console enforce administrator
+authorization on the external management entry; this trusted internal service
+does not implement another transport authentication scheme.
+
+```json
+{
+  "agent_id": "agent-1",
+  "policy": {
+    "policy_id": "builtin/allow-all", "revision": 1, "resource_version": 3,
+    "spec": {"schema_version": 1, "action": "allow_all"},
+    "digest": "sha256:..."
+  },
+  "attachment": {"state": "open", "resource_version": 2}
+}
+```
+
+The policy spec is read from the assignment's exact immutable revision, not
+inferred from its name or replaced with a newer revision. Attachment and policy
+are independent observations, not an atomic live-traffic health snapshot.
+`open` and `allow_all` describe durable desired state, not proof that a failed
+packet cleanup has recovered. Allow-all retains Egress's protected-address
+baseline; it is not permission to access deployment control networks.
+
+`PUT /internal/agents/{agent_id}/network-policy`:
+
+```json
+{
+  "request_id": "request-network-1", "organization_id": "org-1",
+  "actor_principal_id": "admin-1", "policy_id": "builtin/deny-all",
+  "revision": 1, "expected_resource_version": 3
+}
+```
+
+Returns the Egress-confirmed assignment with HTTP 200:
+
+```json
+{"agent_id":"agent-1","policy_id":"builtin/deny-all","revision":1,"resource_version":4}
+```
+
+The caller supplies a positive observed assignment version. `request_id`
+correlates the request/log/trace; this operation does not introduce a Controller
+idempotency journal. Durable retry identity is Egress's unchanged
+`(agent_id, policy_id, revision, expected_resource_version)` tuple. No automatic
+retry or silent rebasing is performed. `resource_version_conflict` is 409;
+unknown revisions and unallocated networks are 404. Cleanup failure returns
+`cleanup_failed` (503). Other unavailable/ambiguous dependency outcomes return
+503, malformed dependency responses return 502. A timeout is not proof that
+the policy was unchanged, and a successful later GET does not clear that error.
+
+The command never allocates a missing network, changes attachment state,
+updates AgentSpec, creates a lifecycle operation or rebuilds Runtime. Disabled
+Agents may save a policy for their next lifecycle open. It writes no Controller
+table or domain event; Egress owns assignment persistence, and request outcomes
+are structured control logs/spans. A successful write returns immediately after
+Egress acknowledgement, without a subsequent read that could obscure success.
+Controller checks do not lock other services: concurrent lifecycle operations
+remain governed by Egress's independent attachment gate and per-Agent barrier.
+
+## Model Configuration Authority
+
+Builtin model defaults belong to Admin Console. Agent Controller has no builtin
+model-catalog endpoint and does not infer capabilities or pricing from model IDs.
+Create/revision requests must carry complete, valid execution parameters.
+Controller persists exactly the confirmed values, including capability overrides,
+explicit zero prices and omitted (unknown) pricing. The same rules apply to all
+model names; an official name cannot bypass validation.
+
+Stored revisions and Run snapshots remain Controller-owned and independent of
+Console releases. Removing a preset does not delete or change organization data.
+Provider credential/model lifecycle separation is tracked in
+[the implementation plan](../../docs/provider-credentials-and-models.md).
+
+## Provider Connections
+
+`POST /internal/provider-connections` accepts `request_id`, `organization_id`,
+`provider_key: "deepseek"`, `display_name`, `base_url`, a typed
+`credential: {method: "api_key", api_key: "..."}`, and `models` (an explicit
+array, possibly empty). Each initial model supplies `profile_key`,
+`display_name` and complete `model` parameters without `base_url`. The entire
+connection, one encrypted credential and all initial models commit atomically.
+There is no provider-name-based defaulting. OAuth/custom providers are rejected.
+
+`GET /internal/provider-connections` lists organization-scoped connections with
+`after_id`/`limit` pagination. `GET /internal/provider-connections/{connection_id}`
+requires `organization_id`. Responses include credential method/version and the
+implemented `request_protocol`, never the key or encrypted bytes.
+
+`POST /internal/provider-connections/{connection_id}/credentials` takes
+`request_id`, `organization_id`, `expected_version`, and the same typed credential.
+It advances only the connection credential, using version CAS. A stale edit is
+409; an identical committed request replays its original version even after
+later rotations. Connection metadata/endpoint changes and disable/delete remain
+outside this batch.
+
+See [service-owned Provider management](../../services/agent-controller/docs/provider-management.md).
+The existing Run contract still uses admission-frozen bearer material; updating
+its resolution and template identity semantics is a separate batch.
 
 ## Model Profiles
 
-`POST /internal/model-profiles` creates a profile and first immutable revision.
-`POST /internal/model-profiles/{model_profile_id}/revisions` creates a new
-revision. Provider bearer credentials are accepted only on this trusted
-management boundary, encrypted at rest, and returned only through the
-admission-scoped Run contract.
+`POST /internal/model-profiles` creates a profile and first immutable revision,
+referencing an existing enabled `provider_connection_id` in the request organization.
+`POST /internal/model-profiles/{model_profile_id}/revisions` edits the selected
+profile's model parameters and display name. Neither command accepts a credential
+or model endpoint. Revision input cannot move a model to another connection or
+change its API model ID. The same API model ID is allowed on distinct connections.
 
-Profile revision contains endpoint/model metadata and a credential reference.
+Profile revisions persist model parameters and display name, not credentials or
+endpoint copies. Execution projections combine the connection with the model.
+Management responses expose the connection ID and resolved model configuration,
+but no credential reference or credential version.
 Stage 2 creates profiles as enabled. Profile disable/delete management is
 deferred; historical Agent revisions are never rewritten.
 
@@ -50,9 +163,9 @@ requires its owning `organization_id`. Revision commands carry the same
 organization authority and fail closed when the opaque ID belongs elsewhere.
 `GET /internal/model-profile-revisions/{revision_id}` returns one immutable
 historical revision after verifying its organization. The globally unique
-revision identifies its parent profile. Display name and profile key are current catalog
-labels; the revision ID, number, model limits, endpoint, and model identity are
-the immutable configuration authority.
+revision identifies its parent profile. Display name and parameters belong to
+the immutable revision; the profile key and connection ID identify the stable model.
+The endpoint comes from its connection (immutable in this batch).
 `GET /internal/model-profiles` requires `organization_id` and uses stable
 `after_id` plus bounded `limit` pagination. It never returns encrypted
 credential bytes or plaintext secrets.
@@ -61,24 +174,24 @@ credential bytes or plaintext secrets.
 
 `POST /internal/agent-templates` creates a Template and immutable revision.
 `POST /internal/agent-templates/{template_id}/revisions` creates another
-revision. The request references one enabled ModelProfile revision and contains
+revision. Create/revise/read use `model_profile_id`, the stable identity of one
+enabled model on an enabled connection, not `model_profile_revision_id`. It contains
 Runtime image/resource inputs. Skill references are absent until Skill Registry
 exists; the effective list is empty.
 
-The draft `runtime.image_ref` accepts either an immutable image identity or an
-installed `repository:tag`. Catalog resolves tagged choices through Runtime
-Controller after request replay and organization/reference validation, then
-publishes only an immutable image. The response's optional
-`runtime.image_source` retains the resolved human-readable source; callers must
-not submit this field. Selecting an immutable current image when revising
-preserves its original source. Selecting a tag explicitly resolves it again.
+`runtime.image_ref` preserves the submitted image reference: a name/tag, image
+ID, or digest-pinned reference. Catalog performs syntax and organization/model
+checks only. Save, revise, replay and read never call Runtime Controller or
+Docker. A syntactically invalid reference returns `400 runtime_image_invalid`;
+a valid but currently unavailable image can be saved. No `image_source` is
+derived. Revision immutability applies to configuration, not mutable tag content.
 
-Completed request replay retains its original pin without a resolver call,
-even if the tag moves. An invalid/missing image returns
-`400 runtime_image_invalid`; an unavailable resolver returns
-`503 dependency_unavailable`. Neither failure publishes a revision. Catalog
-never builds or pulls an image, and image lookup does not prove Tool protocol
-compatibility: Agent creation still performs the normal Runtime readiness check.
+Agent creation/rebuild forwards the original reference to Runtime Controller.
+`latest` remains `latest` on every new build; runtime revisions or observed image
+IDs must not replace this input. A moved tag can produce different containers
+from the same Template. Existing containers are not automatically updated, and
+an idempotent replay is not a new build. Current Docker deployments use locally
+installed images; automatic registry pulling is a separate deployment policy.
 
 Template get/revise/list are organization scoped. The ordinary get and list
 return current heads. `GET

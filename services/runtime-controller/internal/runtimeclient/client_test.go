@@ -9,8 +9,38 @@ import (
 	"testing"
 	"time"
 
+	"go.opentelemetry.io/otel/codes"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace"
+
 	"soft/antnest-platform/services/runtime-controller/internal/deployment"
 )
+
+func TestHTTP200ProtocolFailureIsRecordedAtVerificationBoundary(t *testing.T) {
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	previous := statusTracer
+	statusTracer = provider.Tracer("runtime-status-test")
+	t.Cleanup(func() {
+		statusTracer = previous
+		if err := provider.Shutdown(context.Background()); err != nil {
+			t.Error(err)
+		}
+	})
+	client := newTestClient(t, `{"agent_id":"agent-OTHER","generation":7,"execution_id":"exec-1","status":"ready"}`)
+	_, err := client.Verify(context.Background(), deployment.Inspection{AgentID: "agent-1", Generation: 7, StatusEndpoint: "http://runtime.internal/status"})
+	if !errors.Is(err, deployment.ErrIdentityConflict) {
+		t.Fatalf("cause lost: %v", err)
+	}
+	spans := recorder.Ended()
+	if len(spans) != 1 || spans[0].Name() != "runtime.status.verify" || spans[0].SpanKind() != trace.SpanKindInternal || spans[0].Status().Code != codes.Error {
+		t.Fatal("protocol failure was hidden or duplicate CLIENT retained")
+	}
+	if len(spans[0].Events()) == 0 {
+		t.Fatal("typed failure summary missing")
+	}
+}
 
 func TestVerifyAcceptsExactReadyRuntimeExecution(t *testing.T) {
 	client := newTestClient(t, `{"agent_id":"agent-1","generation":7,"execution_id":"exec-1","status":"ready"}`)

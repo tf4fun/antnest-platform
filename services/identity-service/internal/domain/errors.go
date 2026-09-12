@@ -19,6 +19,27 @@ func NewError(code, message string, retryable bool) *Error {
 	return &Error{Code: code, Message: message, Retryable: retryable}
 }
 
+type causedError struct {
+	public *Error
+	cause  error
+}
+
+func (e *causedError) Error() string        { return e.public.Error() }
+func (e *causedError) Is(target error) bool { return e.public.Is(target) }
+func (e *causedError) As(target any) bool {
+	if result, ok := target.(**Error); ok {
+		*result = e.public
+		return true
+	}
+	return false
+}
+func (e *causedError) Unwrap() error { return e.cause }
+
+// WithCause retains a private cause without changing the public wire error.
+func WithCause(public *Error, cause error) error {
+	return &causedError{public: public, cause: cause}
+}
+
 func InvalidArgument(message string) *Error {
 	return NewError(ErrInvalidArgument.Code, message, false)
 }

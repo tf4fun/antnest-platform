@@ -1,9 +1,15 @@
-import { context, propagation } from "@opentelemetry/api";
+import { tracedFetch } from "../../telemetry/http.js";
 import { z } from "zod";
 
-import type { ContentBlock, JsonValue, ModelMessage } from "../../domain/types.js";
-import { normalizeEmbeddedResource } from "../../domain/embedded-resource.js";
+import type { ContentBlock, JsonValue } from "../../domain/types.js";
+import { toOpenAIMessages } from "./openai-content.js";
 import type { ModelPort, ModelRequest, ModelResult } from "../../ports/model.js";
+import { OpenAICompatibleModelError, invalidResponse } from "./errors.js";
+import { readStream } from "./openai-stream.js";
+import { extractUsage, modelUsage } from "./openai-usage.js";
+import type { ModelUsage } from "../../domain/usage.js";
+
+export { OpenAICompatibleModelError } from "./errors.js";
 
 type FetchFn = (input: string, init: RequestInit) => Promise<Response>;
 
@@ -35,32 +41,16 @@ const responseSchema = z.object({
       }),
     )
     .min(1),
-  usage: z
-    .object({
-      prompt_tokens: z.number().int().nonnegative(),
-      completion_tokens: z.number().int().nonnegative(),
-    })
-    .optional(),
 });
-
-export class OpenAICompatibleModelError extends Error {
-  public constructor(
-    public readonly code: string,
-    message: string,
-    public readonly retryable: boolean,
-    public readonly status?: number,
-    options?: ErrorOptions,
-  ) {
-    super(message, options);
-    this.name = "OpenAICompatibleModelError";
-  }
-}
 
 export class OpenAICompatibleModel implements ModelPort {
   private readonly fetchFn: FetchFn;
 
   public constructor(options: OpenAICompatibleModelOptions = {}) {
-    this.fetchFn = options.fetchFn ?? ((input, init) => fetch(input, init));
+    this.fetchFn = tracedFetch(
+      options.fetchFn ?? ((input: string, init: RequestInit) => fetch(input, init)),
+      "model",
+    );
   }
 
   public async complete(request: ModelRequest): Promise<ModelResult> {
@@ -68,7 +58,6 @@ export class OpenAICompatibleModel implements ModelPort {
       authorization: `Bearer ${request.credential}`,
       "content-type": "application/json",
     };
-    propagation.inject(context.active(), headers);
     const body = JSON.stringify(toRequestBody(request));
 
     let response: Response;
@@ -90,6 +79,7 @@ export class OpenAICompatibleModel implements ModelPort {
     }
 
     if (!response.ok) {
+      await response.body?.cancel();
       throw new OpenAICompatibleModelError(
         "model_http_error",
         `Model API returned HTTP ${response.status}`,
@@ -98,12 +88,21 @@ export class OpenAICompatibleModel implements ModelPort {
       );
     }
 
-    const payload = await readPayload(response);
-    const parsed = responseSchema.safeParse(payload);
-    if (!parsed.success) {
-      throw invalidResponse("Model API returned an invalid completion", parsed.error);
+    const payload =
+      response.headers.get("content-type")?.split(";")[0]?.trim() === "text/event-stream"
+        ? await readStream(response, request)
+        : await readPayload(response);
+    const usage = modelUsage(extractUsage(payload), request.snapshot.executionSpec.model.pricing);
+    try {
+      const parsed = responseSchema.safeParse(payload);
+      if (!parsed.success)
+        throw invalidResponse("Model API returned an invalid completion", parsed.error);
+      return toModelResult(parsed.data, usage);
+    } catch (error) {
+      if (error instanceof OpenAICompatibleModelError && Object.keys(usage).length > 0)
+        error.usage = usage;
+      throw error;
     }
-    return toModelResult(parsed.data);
   }
 }
 
@@ -115,7 +114,12 @@ function toRequestBody(request: ModelRequest): Record<string, unknown> {
   const model = request.snapshot.executionSpec.model;
   return {
     model: model.model,
-    messages: toOpenAIMessages(request.messages, model.supportsImages),
+    stream: true,
+    stream_options: { include_usage: true },
+    messages: toOpenAIMessages(request.messages, model),
+    ...(request.messages.some((message) => message.content.some((block) => block.type === "audio"))
+      ? { modalities: ["text"] }
+      : {}),
     max_tokens: model.maxOutputTokens,
     ...(model.temperature === undefined ? {} : { temperature: model.temperature }),
     ...(request.tools.length === 0
@@ -133,130 +137,11 @@ function toRequestBody(request: ModelRequest): Record<string, unknown> {
   };
 }
 
-function toOpenAIMessages(
-  messages: ModelMessage[],
-  supportsImages: boolean,
-): Record<string, unknown>[] {
-  const result: Record<string, unknown>[] = [];
-  let images: ContentBlock[] = [];
-  const flushImages = () => {
-    if (images.length > 0) result.push(toOpenAIMessage({ role: "user", content: images }, true));
-    images = [];
-  };
-  for (const message of messages) {
-    if (message.role !== "tool") {
-      flushImages();
-      result.push(toOpenAIMessage(message, supportsImages));
-      continue;
-    }
-    const content = message.content.map((block) => {
-      if (block.type !== "image") return block;
-      if (supportsImages)
-        images.push({ type: "text", text: `Image from Tool ${message.toolCallId}:` }, block);
-      return {
-        type: "text",
-        text: supportsImages
-          ? "Tool image follows after this Tool batch."
-          : "Tool image omitted: model does not support images.",
-      };
-    });
-    result.push(toOpenAIMessage({ ...message, content }, supportsImages));
-  }
-  flushImages();
-  return result;
-}
-
-function toOpenAIMessage(message: ModelMessage, supportsImages: boolean): Record<string, unknown> {
-  if (message.role === "tool") {
-    return {
-      role: "tool",
-      tool_call_id: message.toolCallId,
-      content: textContent(message.content),
-    };
-  }
-  if (message.role === "assistant") {
-    return {
-      role: "assistant",
-      content: message.content.length === 0 ? null : textContent(message.content),
-      ...(message.toolCalls === undefined
-        ? {}
-        : {
-            tool_calls: message.toolCalls.map((call) => ({
-              id: call.id,
-              type: "function",
-              function: { name: call.name, arguments: JSON.stringify(call.arguments) },
-            })),
-          }),
-    };
-  }
-  return {
-    role: message.role,
-    content: userOrSystemContent(message.content, supportsImages),
-  };
-}
-
-function userOrSystemContent(content: ContentBlock[], supportsImages: boolean): unknown {
-  const hasImage = content.some((block) => block.type === "image");
-  if (!hasImage) {
-    return textContent(content);
-  }
-  if (!supportsImages) {
-    throw new OpenAICompatibleModelError(
-      "model_unsupported_content",
-      "The selected model does not accept image content",
-      false,
-    );
-  }
-  return content.map((block) => {
-    if (
-      block.type === "image" &&
-      typeof block.data === "string" &&
-      typeof block.mimeType === "string"
-    ) {
-      return {
-        type: "image_url",
-        image_url: { url: `data:${block.mimeType};base64,${block.data}` },
-      };
-    }
-    return { type: "text", text: textContent([block]) };
-  });
-}
-
-function textContent(content: ContentBlock[]): string {
-  return content
-    .map((block) => {
-      if (block.type === "text" && typeof block.text === "string") {
-        return block.text;
-      }
-      if (block.type === "resource") {
-        return embeddedResourceText(block.resource);
-      }
-      if (block.type === "resource_link" && typeof block.uri === "string") {
-        const name = typeof block.name === "string" ? block.name : block.uri;
-        const description =
-          typeof block.description === "string" && block.description.length > 0
-            ? `\nDescription: ${block.description}`
-            : "";
-        return `Resource: ${name}\nURI: ${block.uri}${description}`;
-      }
-      throw new OpenAICompatibleModelError(
-        "model_unsupported_content",
-        `Unsupported textual content block ${block.type}`,
-        false,
-      );
-    })
-    .join("\n");
-}
-
-function toModelResult(response: z.infer<typeof responseSchema>): ModelResult {
+function toModelResult(response: z.infer<typeof responseSchema>, usage: ModelUsage): ModelResult {
   const choice = response.choices[0];
   if (choice === undefined) {
     throw invalidResponse("Model API returned no completion choice");
   }
-  const usage = {
-    inputTokens: response.usage?.prompt_tokens ?? 0,
-    outputTokens: response.usage?.completion_tokens ?? 0,
-  };
   const thought = textBlock(choice.message.reasoning_content);
   const toolCalls = choice.message.tool_calls ?? [];
   if (choice.finish_reason === "length") {
@@ -321,11 +206,6 @@ function toModelResult(response: z.infer<typeof responseSchema>): ModelResult {
   };
 }
 
-function embeddedResourceText(value: unknown): string {
-  const resource = normalizeEmbeddedResource(value);
-  return `Embedded resource: ${resource.uri}\n${resource.text}`;
-}
-
 function textBlock(value: string | null | undefined): ContentBlock[] | undefined {
   return typeof value === "string" && value.length > 0
     ? [{ type: "text", text: value }]
@@ -355,16 +235,6 @@ async function readPayload(response: Response): Promise<unknown> {
   } catch (error) {
     throw invalidResponse("Model API returned non-JSON content", error);
   }
-}
-
-function invalidResponse(message: string, cause?: unknown): OpenAICompatibleModelError {
-  return new OpenAICompatibleModelError(
-    "model_invalid_response",
-    message,
-    false,
-    undefined,
-    cause === undefined ? undefined : { cause },
-  );
 }
 
 function isRetryableStatus(status: number): boolean {

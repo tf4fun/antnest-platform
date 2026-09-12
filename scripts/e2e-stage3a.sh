@@ -5,7 +5,7 @@ repository_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$repository_root"
 
 port_base=$((42000 + ($$ % 8000)))
-network_octet=$((1 + ($$ % 200)))
+network_octet=$(node scripts/acp-closeout/network.mjs "$((1 + ($$ % 200)))")
 export COMPOSE_PROJECT_NAME="antnest-stage3-e2e-$$"
 export ANTNEST_E2E_RUN_ID=$(node -e 'process.stdout.write(crypto.randomUUID())')
 export ANTNEST_POSTGRES_HOST_PORT=$port_base
@@ -36,6 +36,78 @@ keep_stack=${ANTNEST_E2E_KEEP_STACK:-false}
 identity_access=${ANTNEST_E2E_IDENTITY_ACCESS:-false}
 acp_session=${ANTNEST_E2E_ACP_SESSION:-false}
 agent_access=${ANTNEST_E2E_AGENT_ACCESS:-false}
+tool_progress=${ANTNEST_E2E_TOOL_PROGRESS:-false}
+file_observations=${ANTNEST_E2E_FILE_OBSERVATIONS:-false}
+structured_plan=${ANTNEST_E2E_STRUCTURED_PLAN:-false}
+slash_commands=${ANTNEST_E2E_SLASH_COMMANDS:-false}
+multimodal=${ANTNEST_E2E_MULTIMODAL:-false}
+session_cost=${ANTNEST_E2E_SESSION_COST:-false}
+rpc_response_loss=${ANTNEST_E2E_RPC_RESPONSE_LOSS:-false}
+case "$rpc_response_loss" in
+  true|false) ;;
+  *) echo 'ANTNEST_E2E_RPC_RESPONSE_LOSS must be true or false' >&2; exit 1 ;;
+esac
+if [ "$rpc_response_loss" = true ]; then
+  for incompatible in "$session_cost" "$multimodal" "$slash_commands" "$structured_plan" "$file_observations" "$tool_progress" "$keep_stack" "$agent_access" "$identity_access" "$acp_session" "${ANTNEST_E2E_ACP_CLOSEOUT:-false}" "${ANTNEST_E2E_MANAGED_MCP:-false}"; do
+    [ "$incompatible" = false ] || { echo 'RPC response loss requires a separate disposable profile' >&2; exit 1; }
+  done
+fi
+case "$session_cost" in
+  true|false) ;;
+  *) echo "ANTNEST_E2E_SESSION_COST must be true or false" >&2; exit 1 ;;
+esac
+if [ "$session_cost" = true ] && { [ "$multimodal" = true ] || [ "$slash_commands" = true ] || [ "$structured_plan" = true ] || [ "$file_observations" = true ] || [ "$tool_progress" = true ] || [ "$keep_stack" = true ] || [ "$agent_access" = true ] || [ "$identity_access" = true ] || [ "$acp_session" = true ] || [ "${ANTNEST_E2E_ACP_CLOSEOUT:-false}" = true ]; }; then
+  echo "Session cost requires a separate disposable profile" >&2
+  exit 1
+fi
+case "$multimodal" in
+  true|false) ;;
+  *) echo "ANTNEST_E2E_MULTIMODAL must be true or false" >&2; exit 1 ;;
+esac
+if [ "$multimodal" = true ] && { [ "$slash_commands" = true ] || [ "$structured_plan" = true ] || [ "$file_observations" = true ] || [ "$tool_progress" = true ] || [ "$keep_stack" = true ] || [ "$agent_access" = true ] || [ "$identity_access" = true ] || [ "$acp_session" = true ] || [ "${ANTNEST_E2E_ACP_CLOSEOUT:-false}" = true ]; }; then
+  echo "Multimodal input requires a separate disposable profile" >&2
+  exit 1
+fi
+case "$slash_commands" in
+  true|false) ;;
+  *) echo "ANTNEST_E2E_SLASH_COMMANDS must be true or false" >&2; exit 1 ;;
+esac
+if [ "$slash_commands" = true ] && { [ "$structured_plan" = true ] || [ "$file_observations" = true ] || [ "$tool_progress" = true ] || [ "$keep_stack" = true ] || [ "$agent_access" = true ] || [ "$identity_access" = true ] || [ "$acp_session" = true ] || [ "${ANTNEST_E2E_ACP_CLOSEOUT:-false}" = true ]; }; then
+  echo "Slash commands require a separate disposable profile" >&2
+  exit 1
+fi
+case "$structured_plan" in
+  true|false) ;;
+  *) echo "ANTNEST_E2E_STRUCTURED_PLAN must be true or false" >&2; exit 1 ;;
+esac
+if [ "$structured_plan" = true ] && { [ "$file_observations" = true ] || [ "$tool_progress" = true ] || [ "$keep_stack" = true ] || [ "$agent_access" = true ] || [ "$identity_access" = true ] || [ "$acp_session" = true ] || [ "${ANTNEST_E2E_ACP_CLOSEOUT:-false}" = true ]; }; then
+  echo "Structured plan requires a separate disposable profile" >&2
+  exit 1
+fi
+case "$file_observations" in
+  true|false) ;;
+  *) echo "ANTNEST_E2E_FILE_OBSERVATIONS must be true or false" >&2; exit 1 ;;
+esac
+if [ "$file_observations" = true ] && { [ "$tool_progress" = true ] || [ "$keep_stack" = true ] || [ "$agent_access" = true ] || [ "$identity_access" = true ] || [ "$acp_session" = true ] || [ "${ANTNEST_E2E_ACP_CLOSEOUT:-false}" = true ]; }; then
+  echo "File observations require a separate disposable profile" >&2
+  exit 1
+fi
+tool_profile=""
+[ "$tool_progress" != true ] || tool_profile=tool-progress
+[ "$file_observations" != true ] || tool_profile=file-observations
+[ "$structured_plan" != true ] || tool_profile=structured-plan
+[ "$slash_commands" != true ] || tool_profile=slash-commands
+[ "$multimodal" != true ] || tool_profile=multimodal
+[ "$session_cost" != true ] || tool_profile=session-cost
+[ "$rpc_response_loss" != true ] || tool_profile=rpc-response-loss
+case "$tool_progress" in
+  true|false) ;;
+  *) echo "ANTNEST_E2E_TOOL_PROGRESS must be true or false" >&2; exit 1 ;;
+esac
+if [ "$tool_progress" = true ] && { [ "$keep_stack" = true ] || [ "$agent_access" = true ] || [ "$identity_access" = true ] || [ "$acp_session" = true ] || [ "${ANTNEST_E2E_ACP_CLOSEOUT:-false}" = true ]; }; then
+  echo "Tool progress requires a separate disposable profile" >&2
+  exit 1
+fi
 case "$agent_access" in
   true|false) ;;
   *) echo "ANTNEST_E2E_AGENT_ACCESS must be true or false" >&2; exit 1 ;;
@@ -61,6 +133,10 @@ if [ "$identity_access" = true ] && { [ "$keep_stack" = true ] || [ "${ANTNEST_E
   exit 1
 fi
 export ANTNEST_IDENTITY_ACCESS_TOKEN_TTL=12h
+if [ -n "$tool_profile" ]; then
+  export ANTNEST_E2E_DEADLINE_MS=$(node -e 'process.stdout.write(String(Date.now()+900000))')
+  docker() { node "$repository_root/scripts/acp-closeout/docker.mjs" "$@"; }
+fi
 case "$keep_stack" in
   true|false) ;;
   *) echo "ANTNEST_E2E_KEEP_STACK must be true or false" >&2; exit 1 ;;
@@ -81,6 +157,22 @@ workspace_cookie_jar="$temporary_root/workspace-cookies.txt"
 agent_id=""
 
 compose() {
+  if [ "$rpc_response_loss" = true ]; then
+    if [ "$1" = up ]; then
+      docker --lifecycle compose -f compose.yaml -f compose.stage3.yaml -f scripts/acp-closeout/rpc-compose.yaml --profile stage3 --profile observability "$@"
+    else
+      docker compose -f compose.yaml -f compose.stage3.yaml -f scripts/acp-closeout/rpc-compose.yaml --profile stage3 --profile observability "$@"
+    fi
+    return
+  fi
+  if [ -n "$tool_profile" ]; then
+    if [ "$1" = up ]; then
+      docker --lifecycle compose -f compose.yaml -f compose.stage3.yaml --profile stage3 --profile observability "$@"
+    else
+      docker compose -f compose.yaml -f compose.stage3.yaml --profile stage3 --profile observability "$@"
+    fi
+    return
+  fi
   if [ "$acp_session" = true ]; then
     docker compose -f compose.yaml -f compose.stage3.yaml -f scripts/identity-closeout/oidc-compose.yaml \
       -f scripts/identity-closeout/acp-session-compose.yaml --profile stage3 --profile stage3-e2e --profile observability "$@"
@@ -102,6 +194,9 @@ compose() {
 cleanup() {
   status=$?
   trap - EXIT INT TERM
+  if [ -n "$tool_profile" ]; then
+    export ANTNEST_E2E_DEADLINE_MS=$(node -e 'process.stdout.write(String(Date.now()+120000))')
+  fi
   if [ "$status" -ne 0 ]; then
     compose ps >&2 || true
     compose logs --no-color --tail=200 edge-gateway admin-console agent-ui agent-acp-service \
@@ -111,11 +206,20 @@ cleanup() {
     printf 'Raw service and runtime logs omitted: they may contain credentials.\n' >&2
   fi
   if [ "$status" -eq 0 ] && [ "$keep_stack" = true ]; then
+    if [ -f "$temporary_root/lifecycle-trace-evidence.json" ]; then
+      cat "$temporary_root/lifecycle-trace-evidence.json" || return 1
+    fi
     rm -rf -- "${temporary_root:?}"
     return
   fi
   # Stop asynchronous creators before enumerating their Docker resources.
   compose stop agent-controller runtime-controller >/dev/null 2>&1 || status=1
+  if [ -n "$tool_profile" ]; then
+    docker ps -aq --filter "label=com.docker.compose.project=$COMPOSE_PROJECT_NAME" |
+      while IFS= read -r owned_container; do
+        [ -z "$owned_container" ] || docker rm -f "$owned_container" >/dev/null 2>&1 || true
+      done
+  fi
   docker ps -aq --filter "label=io.antnest.runtime-controller-scope=$COMPOSE_PROJECT_NAME" 2>/dev/null |
     while IFS= read -r runtime_container; do
       [ -z "$runtime_container" ] || docker rm -f "$runtime_container" >/dev/null 2>&1 || true
@@ -136,7 +240,22 @@ cleanup() {
       status=1
     fi
   done
+  if [ "$status" -eq 0 ] && [ "${ANTNEST_E2E_MANAGED_MCP:-false}" = true ]; then
+    cat "$temporary_root/managed-mcp-evidence.json" || status=1
+  fi
+  if [ "$status" -eq 0 ] && [ "${ANTNEST_E2E_ACP_CLOSEOUT:-false}" = true ]; then
+    cat "$temporary_root/acp-closeout.json" || status=1
+  fi
+  if [ "$status" -eq 0 ] && [ "$tool_profile" = rpc-response-loss ]; then
+    cat "$temporary_root/rpc-response-loss.json" || status=1
+  fi
+  if [ "$status" -eq 0 ] && [ -f "$temporary_root/lifecycle-trace-evidence.json" ]; then
+    cat "$temporary_root/lifecycle-trace-evidence.json" || status=1
+  fi
   rm -rf -- "${temporary_root:?}"
+  if [ -n "$tool_profile" ] && [ "$status" -eq 0 ]; then
+    echo "ACP v1/v2 deployed $tool_profile E2E passed; owned resources removed"
+  fi
   exit "$status"
 }
 trap cleanup EXIT
@@ -242,6 +361,17 @@ wait_operation() {
   printf 'Lifecycle operation %s did not settle\n' "$request_id" >&2
   return 1
 }
+
+if [ -n "$tool_profile" ]; then
+  compose up -d --wait
+  if [ "$rpc_response_loss" = true ]; then
+    ANTNEST_E2E_DISPOSABLE=true sh scripts/e2e-rpc-response-loss.sh >"$temporary_root/rpc-response-loss.json"
+    assert_field "$temporary_root/rpc-response-loss.json" status passed
+  else
+    ANTNEST_E2E_DISPOSABLE=true sh "scripts/e2e-${tool_profile}.sh"
+  fi
+  exit 0
+fi
 
 mkdir "$temporary_root/certs"
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=oidc-fixture \
@@ -722,7 +852,7 @@ initial_runtime=$(json_field "$temporary_root/created-agent.json" runtime.runtim
 
 gateway_request GET "/api/admin/agents/${agent_id}/events" - "$temporary_root/events.json" 200
 node -e 'const p=require(process.argv[1]); if (!Array.isArray(p.events) || p.events.length === 0) process.exit(1)' "$temporary_root/events.json"
-worker_trace_id=$(event_trace_id "$temporary_root/events.json" agent_ready "$create_request_id")
+event_trace_id "$temporary_root/events.json" agent_ready "$create_request_id" >/dev/null
 
 set +e
 stream_status=$(curl -s -N --max-time 2 -o /dev/null -w '%{http_code}' \
@@ -815,8 +945,8 @@ assert_field "$temporary_root/workspace-acp-evidence.json" status passed
 
 docker run --rm --network "${COMPOSE_PROJECT_NAME}_development" \
   -e "ANTNEST_STAGE3_AGENT_ID=$agent_id" \
-  -v "$repository_root/scripts/identity-closeout:/app/identity-closeout:ro" \
-  antnest/agent-acp-service:local node /app/identity-closeout/acp-session-client.mjs \
+  -v "$repository_root/scripts:/app/scripts:ro" \
+  antnest/agent-acp-service:local node /app/scripts/identity-closeout/acp-session-client.mjs \
   >"$temporary_root/acp-session-evidence.json"
 assert_field "$temporary_root/acp-session-evidence.json" status passed
 cat "$temporary_root/acp-session-evidence.json"
@@ -826,7 +956,6 @@ if [ "${ANTNEST_E2E_ACP_CLOSEOUT:-false}" = true ]; then
   ANTNEST_E2E_DISPOSABLE=true ANTNEST_E2E_ACP_CONTAINER=$(compose ps -q agent-acp-service) \
     sh scripts/e2e-acp-closeout.sh >"$temporary_root/acp-closeout.json"
   assert_field "$temporary_root/acp-closeout.json" status passed
-  cat "$temporary_root/acp-closeout.json"
 fi
 
 if [ "${ANTNEST_E2E_MANAGED_MCP:-false}" = true ]; then
@@ -834,17 +963,11 @@ if [ "${ANTNEST_E2E_MANAGED_MCP:-false}" = true ]; then
     TEST_USER_COOKIE="$workspace_cookie" sh scripts/e2e-managed-mcp.sh \
     >"$temporary_root/managed-mcp-evidence.json"
   assert_field "$temporary_root/managed-mcp-evidence.json" status passed
-  cat "$temporary_root/managed-mcp-evidence.json"
+  assert_field "$temporary_root/managed-mcp-evidence.json" version "${ANTNEST_E2E_MANAGED_MCP_VERSION:-1}"
 fi
 
-node scripts/stage3-trace-assert.mjs "$jaeger_url" "$trace_id" \
-  edge-gateway admin-console identity-service agent-controller \
-  >"$temporary_root/admission-trace-evidence.json"
-node scripts/stage3-trace-assert.mjs "$jaeger_url" "$worker_trace_id" \
-  agent-controller antnest-runtime-egress \
-  >"$temporary_root/worker-trace-evidence.json"
-node scripts/stage3-lifecycle-trace-assert.mjs "$jaeger_url" "$create_request_id" create \
-  agent-controller antnest-runtime-egress runtime-controller \
+node scripts/stage3-lifecycle-trace-assert.mjs "$jaeger_url" "$trace_id" \
+  "$temporary_root/create-operation.json" "$cookie_jar" \
   >"$temporary_root/lifecycle-trace-evidence.json"
 
 if [ "$keep_stack" = false ]; then

@@ -1,3 +1,4 @@
+import { AgentNetworkPolicy } from "../components/agent-network-policy";
 import {
   Archive,
   ArrowLeft,
@@ -41,14 +42,15 @@ import { Field, Input, Select } from "../components/ui/input";
 import {
   agentActionAvailability,
   agentEventLabel,
+  agentFailureMessage,
+  agentRecoveryAvailable,
   agentOwnerView,
   agentStatusPresentation,
   agentsForView,
-  latestOperationRequestID,
   mergeAgentEvents,
   reconcileAgentOperation,
-  recoveryOperationRequestID,
   selectAgentSnapshot,
+  selectOperationSnapshot,
   type AgentFleetView,
 } from "../lib/agent-fleet";
 import {
@@ -69,8 +71,8 @@ import type {
   LifecycleOperation,
 } from "../lib/types";
 
-export function AgentsPage({ agentID }: { agentID?: string }) {
-  return agentID ? <AgentDetail agentID={agentID} key={agentID} /> : <AgentInventory />;
+export function AgentsPage({ agentID, networkScope }: { agentID?: string; networkScope?: string }) {
+  return agentID ? <AgentDetail agentID={agentID} networkScope={networkScope} key={JSON.stringify([agentID, networkScope])} /> : <AgentInventory />;
 }
 
 function AgentInventory() {
@@ -480,8 +482,10 @@ function AgentInventory() {
   );
 }
 
-function AgentDetail({ agentID }: { agentID: string }) {
+function AgentDetail({ agentID, networkScope }: { agentID: string; networkScope?: string }) {
   const [agent, setAgent] = useState<Agent>();
+  const [networkRefreshRevision, setNetworkRefreshRevision] = useState(0);
+  const networkNeedsResync = useRef(false);
   const agentSnapshot = useRef<Agent | undefined>(undefined);
   const renderedAgentID = useRef(agentID);
   renderedAgentID.current = agentID;
@@ -504,8 +508,12 @@ function AgentDetail({ agentID }: { agentID: string }) {
   const [directoryReloadGeneration, setDirectoryReloadGeneration] = useState(0);
   const [operation, setOperation] = useState<LifecycleOperation>();
   const operationRequest = useRef(0);
+  const operationReadRequestID = useRef<string | undefined>(undefined);
   const terminalOperationRequestID = useRef<string | undefined>(undefined);
-  const recoveredOperationRequestID = useRef<string | undefined>(undefined);
+  const observedOperationRequestID = useRef<string | undefined>(undefined);
+  const observedOperationSequence = useRef(-1);
+  const observedAgentSequence = useRef(0);
+  const acceptedOperationRequestID = useRef<string | undefined>(undefined);
   const [operationLoadingRequestID, setOperationLoadingRequestID] = useState<string>();
   const [operationFailure, setOperationFailure] = useState<{
     requestID: string;
@@ -531,6 +539,7 @@ function AgentDetail({ agentID }: { agentID: string }) {
     terminalOperationRequestID.current = undefined;
     const request = operationRequest.current + 1;
     operationRequest.current = request;
+    operationReadRequestID.current = requestID;
     setOperation((current) => reconcileAgentOperation(requestID, current));
     setOperationLoadingRequestID(requestID);
     setOperationFailure(undefined);
@@ -541,9 +550,12 @@ function AgentDetail({ agentID }: { agentID: string }) {
       }
       if (operationRequest.current === request) {
         terminalOperationRequestID.current = undefined;
-        setOperation(reconcileAgentOperation(
+        if (acceptedOperationRequestID.current === requestID && next.state !== "running") {
+          acceptedOperationRequestID.current = undefined;
+        }
+        setOperation((current) => reconcileAgentOperation(
           agentSnapshot.current?.active_operation_request_id,
-          next,
+          selectOperationSnapshot(current, next),
         ));
       }
     } catch (cause) {
@@ -570,32 +582,44 @@ function AgentDetail({ agentID }: { agentID: string }) {
       void loadOperation(next.active_operation_request_id);
       return true;
     }
-    setOperation((current) => reconcileAgentOperation(undefined, current));
-    if (recoveredOperationRequestID.current) {
-      const requestID = recoveredOperationRequestID.current;
-      recoveredOperationRequestID.current = undefined;
+    const requestID = acceptedOperationRequestID.current ?? observedOperationRequestID.current ?? operationReadRequestID.current;
+    if (requestID) {
       void loadOperation(requestID);
     }
     return true;
   }, [loadOperation]);
 
   const rememberEventOperation = useCallback((incoming: AgentEvent[]) => {
-    const replayedRequestID = latestOperationRequestID(incoming);
-    if (replayedRequestID) recoveredOperationRequestID.current = replayedRequestID;
+    for (const event of incoming) {
+      if (event.agent_id !== agentID) continue;
+      observedAgentSequence.current = Math.max(observedAgentSequence.current, event.aggregate_sequence);
+      if (!event.operation_request_id || event.global_sequence <= observedOperationSequence.current) continue;
+      observedOperationSequence.current = event.global_sequence;
+      // Historical hints cannot replace an acknowledged, unfinished command.
+      if (!acceptedOperationRequestID.current || event.operation_request_id === acceptedOperationRequestID.current) {
+        observedOperationRequestID.current = event.operation_request_id;
+      }
+    }
     const currentAgent = agentSnapshot.current;
-    const requestID = recoveryOperationRequestID(currentAgent, incoming);
+    const requestID = currentAgent?.active_operation_request_id ??
+      acceptedOperationRequestID.current ?? observedOperationRequestID.current;
     if (requestID && !currentAgent?.active_operation_request_id) {
-      recoveredOperationRequestID.current = undefined;
       void loadOperation(requestID);
     }
-  }, [loadOperation]);
+  }, [agentID, loadOperation]);
 
   const acceptOperation = useCallback((next: LifecycleOperation) => {
-    operationRequest.current += 1;
-    terminalOperationRequestID.current = undefined;
-    setOperationLoadingRequestID(undefined);
-    setOperationFailure(undefined);
-    setOperation(next);
+    observedOperationRequestID.current = next.request_id;
+    acceptedOperationRequestID.current = next.state === "running" ? next.request_id : undefined;
+    // Admission must not discard a same-request progress read already in flight.
+    if (operationReadRequestID.current !== next.request_id) {
+      operationRequest.current += 1;
+      operationReadRequestID.current = undefined;
+      terminalOperationRequestID.current = undefined;
+      setOperationLoadingRequestID(undefined);
+      setOperationFailure(undefined);
+    }
+    setOperation((current) => selectOperationSnapshot(current, next));
   }, []);
 
   const refreshAgent = useCallback(async (reportStateError = false) => {
@@ -625,8 +649,12 @@ function AgentDetail({ agentID }: { agentID: string }) {
     const request = agentReadRequest.current + 1;
     agentReadRequest.current = request;
     operationRequest.current += 1;
+    operationReadRequestID.current = undefined;
     terminalOperationRequestID.current = undefined;
-    recoveredOperationRequestID.current = undefined;
+    observedOperationRequestID.current = undefined;
+    observedOperationSequence.current = -1;
+    observedAgentSequence.current = 0;
+    acceptedOperationRequestID.current = undefined;
     agentSnapshot.current = undefined;
     setAgent(undefined);
     setOperation(undefined);
@@ -640,6 +668,9 @@ function AgentDetail({ agentID }: { agentID: string }) {
       .then((nextAgent) => {
         if (cancelled) return;
         applyAgentSnapshot(nextAgent);
+        if (nextAgent.aggregate_sequence < observedAgentSequence.current) {
+          void refreshAgent(true).catch(() => undefined);
+        }
       })
       .catch((cause: unknown) => {
         if (!cancelled && agentReadRequest.current === request) setLoadFailure(resourceFailure(cause));
@@ -650,7 +681,7 @@ function AgentDetail({ agentID }: { agentID: string }) {
       if (agentReadRequest.current === request) agentReadRequest.current += 1;
       operationRequest.current += 1;
     };
-  }, [agentID, applyAgentSnapshot, loadTemplates]);
+  }, [agentID, applyAgentSnapshot, loadTemplates, refreshAgent]);
 
   useEffect(() => {
     let cancelled = false;
@@ -682,10 +713,13 @@ function AgentDetail({ agentID }: { agentID: string }) {
     api.events(agentID)
       .then((page) => {
         if (cancelled) return;
-        setEvents(page.events);
+        setEvents((current) => mergeAgentEvents(current, page.events));
         rememberEventOperation(page.events);
-        latestSequence.current = page.next_sequence;
-        setStreamCursor(page.next_sequence);
+        if (agentSnapshot.current && agentSnapshot.current.aggregate_sequence < observedAgentSequence.current) {
+          void refreshAgent(true).catch(() => undefined);
+        }
+        latestSequence.current = Math.max(latestSequence.current, page.next_sequence);
+        setStreamCursor(latestSequence.current);
         setStreamGeneration((value) => value + 1);
       })
       .catch((cause: unknown) => {
@@ -696,7 +730,7 @@ function AgentDetail({ agentID }: { agentID: string }) {
     return () => {
       cancelled = true;
     };
-  }, [agentID, eventReloadGeneration, rememberEventOperation]);
+  }, [agentID, eventReloadGeneration, rememberEventOperation, refreshAgent]);
 
   useEffect(() => {
     if (streamCursor === null) return;
@@ -705,6 +739,11 @@ function AgentDetail({ agentID }: { agentID: string }) {
     let disposed = false;
     let retryTimer: number | undefined;
     stream.onopen = () => {
+      if (disposed) return;
+      if (networkNeedsResync.current) {
+        networkNeedsResync.current = false;
+        setNetworkRefreshRevision(current => current + 1);
+      }
       setEventFailure(undefined);
       setStreamState("live");
     };
@@ -717,6 +756,8 @@ function AgentDetail({ agentID }: { agentID: string }) {
         rememberEventOperation(page.events);
         latestSequence.current = page.next_sequence;
         setEventFailure(undefined);
+        await recoverAgent();
+        if (disposed) return;
         setStreamCursor(page.next_sequence);
         retryTimer = window.setTimeout(() => {
           setStreamGeneration((value) => value + 1);
@@ -745,6 +786,7 @@ function AgentDetail({ agentID }: { agentID: string }) {
     stream.onerror = () => {
       if (reconnecting) return;
       reconnecting = true;
+      networkNeedsResync.current = true;
       stream.close();
       setStreamState("resyncing");
       void recoverAgent();
@@ -780,14 +822,17 @@ function AgentDetail({ agentID }: { agentID: string }) {
     action: "disable" | "enable" | "delete" | "rebuild",
     input: Record<string, unknown> = {},
   ) {
-    if (pending) return;
+    const permitted = { rebuild: actions.canRebuild, disable: actions.canDisable, enable: actions.canEnable, delete: actions.canDelete };
+    if (pending || !permitted[action]) return;
     setPending(action);
     setError("");
     setDeleteError("");
     setRebuildError("");
     setAcknowledgement("");
     try {
-      acceptOperation(await api.lifecycle(agentID, action, input));
+      // An observed terminal operation ends the previous intent, including a lost HTTP response.
+      const afterOperation = visibleOperation?.state !== "running" ? visibleOperation?.request_id : undefined;
+      acceptOperation(await api.lifecycle(agentID, action, input, afterOperation));
     } catch (cause) {
       const reportFailure = action === "delete" ? setDeleteError : action === "rebuild" ? setRebuildError : setError;
       reportFailure(errorMessage(cause));
@@ -855,9 +900,14 @@ function AgentDetail({ agentID }: { agentID: string }) {
     pending !== "" ||
     visibleOperation?.state === "running" ||
     Boolean(agent.active_operation_request_id);
+  const observedAggregate = events.reduce((highest, event) => event.agent_id === agentID ? Math.max(highest, event.aggregate_sequence) : highest, 0);
+  const stateFailure = agentStateFailure ?? (agent.aggregate_sequence < observedAggregate ? {
+    kind: "unavailable" as const, retryable: true,
+    message: "Newer lifecycle events are available. Refresh the Agent state before making changes.",
+  } : undefined);
   const actions = agentActionAvailability(
     agent,
-    operationRunning || Boolean(agentStateFailure) || agentStateRetryPending,
+    operationRunning || Boolean(stateFailure) || agentStateRetryPending,
   );
   const status = agentStatusPresentation(agent);
   const owner = members?.find(({ user }) => user.id === agent.owner_user_id)?.membership;
@@ -942,14 +992,14 @@ function AgentDetail({ agentID }: { agentID: string }) {
       />
       {acknowledgement ? <SuccessNotice message={acknowledgement} onDismiss={() => setAcknowledgement("")} /> : null}
       {error ? <ErrorNotice message={error} /> : null}
-      {agentStateFailure ? <ResourceFailureNotice failure={agentStateFailure} pending={agentStateRetryPending} retryLabel="Retry Agent state" onRetry={() => void retryAgentState()} /> : null}
+      {stateFailure ? <ResourceFailureNotice failure={stateFailure} pending={agentStateRetryPending} retryLabel="Retry Agent state" onRetry={() => void retryAgentState()} /> : null}
       {templateOptionFailure ? <ResourceFailureNotice failure={templateOptionFailure} message={`Rebuild options could not be loaded: ${templateOptionFailure.message}`} retryLabel="Retry template choices" onRetry={retryTemplates} /> : null}
       {directoryFailure ? <ResourceFailureNotice failure={directoryFailure} retryLabel="Retry owner profile" onRetry={() => {
         setDirectoryReloadGeneration((value) => value + 1);
       }} /> : null}
       {agent.failure_code ? (
         <ErrorNotice
-          message={`The latest lifecycle change failed${agent.failure_stage ? ` during ${agent.failure_stage.replaceAll("_", " ")}` : ""}: ${agent.failure_code}. Review the retained lifecycle history below.`}
+          message={agentFailureMessage(agent)}
         />
       ) : null}
       {actions.retained ? (
@@ -973,7 +1023,7 @@ function AgentDetail({ agentID }: { agentID: string }) {
           <div>
             <p className="text-sm font-medium">Lifecycle status</p>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              {status.target ? `Transitioning toward ${status.target.toLowerCase()}` : "Current state matches the requested state"}
+              {status.target ? `${operationRunning ? "Transitioning toward" : "Requested state:"} ${status.target.toLowerCase()}` : "Current state matches the requested state"}
             </p>
           </div>
         </div>
@@ -1015,14 +1065,21 @@ function AgentDetail({ agentID }: { agentID: string }) {
           <Empty
             title="No executable configuration"
             detail={
-              agent.lifecycle_state === "provisioning"
+              agent.lifecycle_state === "deleted"
+                ? "No active executable configuration remains after deletion."
+                : agent.lifecycle_state === "provisioning"
                 ? "Configuration appears after the first execution revision is published."
-                : "No execution revision has been published. Inspect the lifecycle failure and rebuild the Agent."
+                : operationRunning
+                ? "Configuration becomes available when the lifecycle change completes."
+                : agentRecoveryAvailable(agent)
+                ? "Rebuild can restore the execution environment from a selected template. The previous successful execution remains in the retained history."
+                : "No executable configuration is currently available. Correct the template or Runtime configuration before creating a new Agent."
             }
           />
         )}
       </Section>
       {agent.configuration ? <Section title="Deployed MCP servers"><ManagedMCPSummary servers={agent.configuration.runtime.mcp_servers} /></Section> : null}
+      <AgentNetworkPolicy agent={agent} scope={networkScope} refreshRevision={networkRefreshRevision} />
       <div className="grid gap-px overflow-hidden rounded-md border border-border bg-border shadow-sm sm:grid-cols-2 lg:grid-cols-3">
         <Fact
           label="Owner"
@@ -1035,7 +1092,7 @@ function AgentDetail({ agentID }: { agentID: string }) {
         />
         <Fact
           label="Runtime environment"
-          value={agent.desired_state === "deleted" ? "Removed" : agent.runtime ? "Assigned" : "Not assigned"}
+          value={agent.lifecycle_state === "deleted" ? "Removed" : agent.desired_state === "deleted" ? "Removing" : agent.runtime ? "Assigned" : "Not assigned"}
         />
         <Fact
           label="Executable configuration"
@@ -1064,7 +1121,7 @@ function AgentDetail({ agentID }: { agentID: string }) {
         ]}
       />
       {visibleOperation || operationLoadingRequestID || operationFailure ? (
-        <Section title={agent.active_operation_request_id ? "Current operation" : "Last operation"}>
+        <Section title={agent.active_operation_request_id || visibleOperation?.state === "running" ? "Current operation" : "Last operation"}>
           <div className="grid gap-3">
             {operationFailure ? (
               <ResourceFailureNotice
@@ -1093,8 +1150,11 @@ function AgentDetail({ agentID }: { agentID: string }) {
                     <p className="mt-1 text-xs capitalize text-muted-foreground">{visibleOperation.phase.replaceAll("_", " ")}</p>
                   ) : null}
                 </div>
-                {visibleOperation.error_detail ? (
-                  <span className="text-sm text-red-700">{visibleOperation.error_detail}</span>
+                {visibleOperation.error_detail || visibleOperation.error_code ? (
+                  <div className="min-w-0 text-sm text-red-700">
+                    {visibleOperation.error_detail ? <p className="break-words">{visibleOperation.error_detail}</p> : null}
+                    {visibleOperation.error_code ? <p className="mt-1 text-xs">Code: <code className="break-all">{visibleOperation.error_code}</code></p> : null}
+                  </div>
                 ) : null}
               </div>
             ) : null}
@@ -1189,7 +1249,7 @@ function AgentDetail({ agentID }: { agentID: string }) {
             >
               Cancel
             </Button>
-            <Button aria-busy={pending === "rebuild"} disabled={pending === "rebuild"} type="submit">
+            <Button aria-busy={pending === "rebuild"} disabled={!actions.canRebuild || templatesPending} type="submit">
               {pending === "rebuild" ? (
                 <LoaderCircle className="h-4 w-4 animate-spin" />
               ) : (
@@ -1232,7 +1292,7 @@ function AgentDetail({ agentID }: { agentID: string }) {
             </Button>
             <Button
               aria-busy={pending === "delete"}
-              disabled={pending === "delete"}
+              disabled={!actions.canDelete}
               type="button"
               variant="destructive"
               onClick={() => void changeLifecycle("delete")}

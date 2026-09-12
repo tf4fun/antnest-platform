@@ -1,5 +1,10 @@
 import assert from "node:assert/strict";
-import { setTimeout as delay } from "node:timers/promises";
+import { collectTrace } from "../observability/collect.mjs";
+import {
+  assertCaptureDisabled,
+  owningServer,
+  traceTree,
+} from "../observability/trace-tree.mjs";
 import { assertSecretFree } from "./evidence.mjs";
 import { assertMessageReplay } from "../acp-closeout/replay.mjs";
 
@@ -160,25 +165,22 @@ export function inspectAccessTrace(trace, expected, secrets) {
     trace?.traceID === expected.traceID && trace.spans?.length,
     "wrong or missing access trace",
   );
-  const spans = new Map(trace.spans.map((span) => [span.spanID, span]));
-  const service = (span) => trace.processes[span.processID]?.serviceName;
-  let current = trace.spans.find(
-    (span) =>
-      service(span) === expected.service &&
-      span.operationName === expected.operation &&
-      (!expected.spanID || span.spanID === expected.spanID),
+  const { service, chain: ancestors } = traceTree(trace);
+  assertCaptureDisabled(trace);
+  assert(
+    !expected.operation?.includes(".repository."),
+    "Repository selectors are no longer supported",
   );
-  assert(current, "expected owning-service span missing");
-  const chain = [],
-    seen = new Set();
-  while (current && !seen.has(current.spanID)) {
-    seen.add(current.spanID);
-    chain.push(service(current));
-    const parent = current.references?.find(
-      (ref) => ref.refType === "CHILD_OF" && ref.traceID === trace.traceID,
-    );
-    current = spans.get(parent?.spanID);
-  }
+  const matches = expected.route
+    ? [owningServer(trace, expected).server]
+    : trace.spans.filter(
+        (span) =>
+          service(span) === expected.service &&
+          span.operationName === expected.operation &&
+          (!expected.spanID || span.spanID === expected.spanID),
+      );
+  assert.equal(matches.length, 1, "missing/duplicate owning-service span");
+  const chain = ancestors(matches[0]).map(service);
   const gateway = chain.indexOf("edge-gateway");
   assert(gateway > 0, "missing Gateway ancestry");
   for (const via of expected.via ?? [])
@@ -190,38 +192,29 @@ export function inspectAccessTrace(trace, expected, secrets) {
   return {
     trace_id: trace.traceID,
     spans: trace.spans.length,
-    operation: expected.operation,
+    operation: expected.route ?? expected.operation,
+    capture_rpc_content: false,
     services: [...new Set(chain)],
     gateway_ancestry: true,
   };
 }
 
-export async function verifyAccessTraces(base, expectations, secrets) {
+export async function verifyAccessTraces(base, expectations, secrets, options) {
   const results = [];
-  for (const expected of expectations) {
-    assert.match(expected.traceID ?? "", /^[a-f0-9]{32}$/);
-    let last;
-    for (let attempt = 0; attempt < 60; attempt++) {
-      try {
-        const response = await fetch(`${base}/api/traces/${expected.traceID}`, {
-          signal: AbortSignal.timeout(5000),
-        });
-        assert.equal(response.status, 200);
-        results.push(
-          inspectAccessTrace(
-            (await response.json()).data?.[0],
-            expected,
-            secrets,
-          ),
-        );
-        last = undefined;
-        break;
-      } catch (error) {
-        last = error;
-      }
-      await delay(500);
-    }
-    if (last) throw last;
+  for (const traceID of new Set(expectations.map((item) => item.traceID))) {
+    assert.match(traceID ?? "", /^[a-f0-9]{32}$/);
+    results.push(
+      ...(await collectTrace(
+        base,
+        traceID,
+        (trace) =>
+          expectations
+            .filter((item) => item.traceID === traceID)
+            .map((item) => inspectAccessTrace(trace, item, secrets)),
+        undefined,
+        options,
+      )),
+    );
   }
   return results;
 }

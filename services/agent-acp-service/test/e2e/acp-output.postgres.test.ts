@@ -1,3 +1,5 @@
+import { v1Configuration, v2Configuration } from "../../src/transport/acp/configuration.js";
+import { sessionConfigurationView } from "../support/fixtures.js";
 import { Pool } from "pg";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -202,7 +204,9 @@ describe.skipIf(databaseUrl === undefined)("ACP durable output delivery", () => 
         sessionId,
         ...(version === 2 ? { replayFrom: { type: "start" } } : {}),
       });
-      expect(restored.result).toEqual({});
+      expect(restored.result).toEqual(
+        (version === 1 ? v1Configuration : v2Configuration)(sessionConfigurationView()),
+      );
       const foreign = await app.connect(version, "other-user");
       expect((await foreign.request(method, { ...setup, sessionId })).error?.data?.code).toBe(
         "session_access_denied",
@@ -269,7 +273,9 @@ describe.skipIf(databaseUrl === undefined)("ACP durable output delivery", () => 
     expect(live[2]?.toolCallId).toBe(live[3]?.toolCallId);
     expect(live[0]?.toolCallId).not.toBe(live[2]?.toolCallId);
     const offset = client.frames.length;
-    expect((await client.request("session/load", { ...setup, sessionId })).result).toEqual({});
+    expect((await client.request("session/load", { ...setup, sessionId })).result).toEqual(
+      v1Configuration(sessionConfigurationView()),
+    );
     const replay = updates(client.frames.slice(offset)).filter(
       (item) => item.sessionUpdate === "tool_call" || item.sessionUpdate === "tool_call_update",
     );

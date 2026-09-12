@@ -22,11 +22,11 @@ import (
 	"soft/antnest-platform/services/agent-controller/internal/ports"
 )
 
-func TestCatalogHandlerCreatesModelProfileWithoutEchoingSecret(t *testing.T) {
+func TestCatalogHandlerCreatesModelProfileFromProviderReference(t *testing.T) {
 	t.Parallel()
 
 	service := &catalogServiceStub{modelView: sampleModelProfileView()}
-	handler, err := NewHandler(service, &lifecycleServiceStub{}, &runServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, func(context.Context) error { return nil })
+	handler, err := NewHandler(service, &lifecycleServiceStub{}, &runServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil })
 	if err != nil {
 		t.Fatalf("new handler: %v", err)
 	}
@@ -36,13 +36,12 @@ func TestCatalogHandlerCreatesModelProfileWithoutEchoingSecret(t *testing.T) {
         "profile_key":"deepseek",
         "display_name":"DeepSeek",
         "model":{
-          "base_url":"https://api.example.com/v1",
           "model":"deepseek-chat",
           "context_window":128000,
           "max_output_tokens":8192,
           "supports_images":false
         },
-        "credential":{"secret_type":"bearer","secret":"top-secret"}
+        "provider_connection_id":"provider-1"
       }`
 	response := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPost, "/internal/model-profiles", strings.NewReader(body))
@@ -51,8 +50,8 @@ func TestCatalogHandlerCreatesModelProfileWithoutEchoingSecret(t *testing.T) {
 	if response.Code != http.StatusCreated {
 		t.Fatalf("status = %d body=%s", response.Code, response.Body.String())
 	}
-	if service.createModelInput.CredentialSecret != "top-secret" {
-		t.Fatal("credential was not delivered to Catalog service")
+	if service.createModelInput.ProviderConnectionID != "provider-1" {
+		t.Fatal("Provider reference was not delivered to Catalog service")
 	}
 	if bytes.Contains(response.Body.Bytes(), []byte("top-secret")) || bytes.Contains(response.Body.Bytes(), []byte("ciphertext")) {
 		t.Fatalf("response leaked credential material: %s", response.Body.String())
@@ -66,31 +65,15 @@ func TestCatalogHandlerCreatesModelProfileWithoutEchoingSecret(t *testing.T) {
 	}
 }
 
-func TestCatalogHandlerPublishesAuthoritativeModelCatalog(t *testing.T) {
-	service := &catalogServiceStub{modelCatalog: application.ModelCatalogView{
-		Revision: "2026-09-03",
-		Providers: []application.ModelProviderPresetView{{
-			ProviderKey: "deepseek", DisplayName: "DeepSeek",
-			BaseURL: "https://api.deepseek.com",
-			Models: []application.ModelCatalogEntryView{{
-				ModelID: "deepseek-v4-pro", DisplayName: "DeepSeek V4 Pro",
-				ContextWindow: 1_000_000, MaxOutputTokens: 384_000,
-			}},
-		}},
-	}}
-	handler, err := NewHandler(service, &lifecycleServiceStub{}, &runServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, func(context.Context) error { return nil })
+func TestBuiltinCatalogIsNotAControllerEndpoint(t *testing.T) {
+	handler, err := NewHandler(&catalogServiceStub{}, &lifecycleServiceStub{}, &runServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil })
 	if err != nil {
-		t.Fatalf("new handler: %v", err)
+		t.Fatal(err)
 	}
-	request := httptest.NewRequest(http.MethodGet, "/internal/model-catalog", nil)
 	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, request)
-	if response.Code != http.StatusOK {
-		t.Fatalf("status = %d body = %s", response.Code, response.Body.String())
-	}
-	if !strings.Contains(response.Body.String(), `"model_id":"deepseek-v4-pro"`) ||
-		!strings.Contains(response.Body.String(), `"context_window":1000000`) {
-		t.Fatalf("catalog response = %s", response.Body.String())
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/internal/model-catalog", nil))
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("status=%d", response.Code)
 	}
 }
 
@@ -101,7 +84,7 @@ func TestCatalogHandlerReadsHistoricalCatalogRevisions(t *testing.T) {
 	templateView.Revision = 3
 	templateView.SystemPrompt = "historical"
 	service := &catalogServiceStub{modelView: sampleModelProfileView(), templateView: templateView}
-	handler, err := NewHandler(service, &lifecycleServiceStub{}, &runServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, func(context.Context) error { return nil })
+	handler, err := NewHandler(service, &lifecycleServiceStub{}, &runServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil })
 	if err != nil {
 		t.Fatalf("new handler: %v", err)
 	}
@@ -156,7 +139,7 @@ func TestCatalogHandlerRejectsUnknownFieldsAndTrailingJSON(t *testing.T) {
 	t.Parallel()
 
 	service := &catalogServiceStub{}
-	handler, err := NewHandler(service, &lifecycleServiceStub{}, &runServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, func(context.Context) error { return nil })
+	handler, err := NewHandler(service, &lifecycleServiceStub{}, &runServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil })
 	if err != nil {
 		t.Fatalf("new handler: %v", err)
 	}
@@ -183,7 +166,7 @@ func TestCatalogHandlerListsCurrentTemplatesWithNullableCursor(t *testing.T) {
 	service := &catalogServiceStub{templatePage: application.TemplatePage{
 		Items: []application.TemplateView{sampleTemplateView()}, NextAfterID: "template-1",
 	}}
-	handler, err := NewHandler(service, &lifecycleServiceStub{}, &runServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, func(context.Context) error { return nil })
+	handler, err := NewHandler(service, &lifecycleServiceStub{}, &runServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil })
 	if err != nil {
 		t.Fatalf("new handler: %v", err)
 	}
@@ -235,7 +218,7 @@ func TestCatalogHandlerMapsStableErrors(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			service := &catalogServiceStub{getModelErr: test.err}
-			handler, err := NewHandler(service, &lifecycleServiceStub{}, &runServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, func(context.Context) error { return nil })
+			handler, err := NewHandler(service, &lifecycleServiceStub{}, &runServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil })
 			if err != nil {
 				t.Fatalf("new handler: %v", err)
 			}
@@ -277,7 +260,7 @@ func TestLifecycleHandlerCreatesAgentWithStableContract(t *testing.T) {
 			CreatedAt: now, UpdatedAt: now,
 		},
 	}}
-	handler, err := NewHandler(&catalogServiceStub{}, lifecycle, &runServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, func(context.Context) error { return nil })
+	handler, err := NewHandler(&catalogServiceStub{}, lifecycle, &runServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil })
 	if err != nil {
 		t.Fatalf("new handler: %v", err)
 	}
@@ -297,8 +280,7 @@ func TestLifecycleHandlerCreatesAgentWithStableContract(t *testing.T) {
 	if response.Code != http.StatusAccepted {
 		t.Fatalf("status = %d body=%s", response.Code, response.Body.String())
 	}
-	if lifecycle.input.InitialTraceParent != testServerTraceParent ||
-		lifecycle.input.ActorPrincipalID != "user-admin" ||
+	if lifecycle.input.ActorPrincipalID != "user-admin" ||
 		lifecycle.input.OwnerUserID != "user-1" || lifecycle.input.TemplateRevision != 1 {
 		t.Fatalf("CreateAgent input = %+v", lifecycle.input)
 	}
@@ -334,7 +316,7 @@ func TestLifecycleHandlerGetsDurableOperation(t *testing.T) {
 		Phase: domain.PhaseRuntimeInitialize, State: domain.OperationRunning,
 		CreatedAt: now, UpdatedAt: now,
 	}}
-	handler, err := NewHandler(&catalogServiceStub{}, lifecycle, &runServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, func(context.Context) error { return nil })
+	handler, err := NewHandler(&catalogServiceStub{}, lifecycle, &runServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil })
 	if err != nil {
 		t.Fatalf("new handler: %v", err)
 	}
@@ -365,7 +347,8 @@ func TestLifecycleHandlerUsesOperationSpecificNotFoundError(t *testing.T) {
 	lifecycle := &lifecycleServiceStub{err: ports.ErrNotFound}
 	handler, err := NewHandler(
 		&catalogServiceStub{}, lifecycle, &runServiceStub{}, &agentQueryServiceStub{},
-		&agentEventServiceStub{}, func(context.Context) error { return nil },
+		&agentEventServiceStub{}, &networkPolicyServiceStub{},
+		func(context.Context) error { return nil },
 	)
 	if err != nil {
 		t.Fatalf("new handler: %v", err)
@@ -407,7 +390,7 @@ func TestLifecycleHandlerRequestsAgentRebuildWithStableContract(t *testing.T) {
 			State: domain.OperationCompleted, CreatedAt: now, UpdatedAt: now,
 		},
 	}}
-	handler, err := NewHandler(&catalogServiceStub{}, lifecycle, &runServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, func(context.Context) error { return nil })
+	handler, err := NewHandler(&catalogServiceStub{}, lifecycle, &runServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil })
 	if err != nil {
 		t.Fatalf("new handler: %v", err)
 	}
@@ -431,8 +414,7 @@ func TestLifecycleHandlerRequestsAgentRebuildWithStableContract(t *testing.T) {
 	if lifecycle.rebuildInput.AgentID != "agent-1" ||
 		lifecycle.rebuildInput.OrganizationID != "org-1" ||
 		lifecycle.rebuildInput.ActorPrincipalID != "user-admin" ||
-		lifecycle.rebuildInput.TemplateRevision != 2 ||
-		lifecycle.rebuildInput.InitialTraceParent != testServerTraceParent {
+		lifecycle.rebuildInput.TemplateRevision != 2 {
 		t.Fatalf("RebuildAgent input = %+v", lifecycle.rebuildInput)
 	}
 	var payload operationResponse
@@ -462,7 +444,7 @@ func TestLifecycleHandlerRequestsAgentDisableWithStableContract(t *testing.T) {
 	}}
 	handler, err := NewHandler(
 		&catalogServiceStub{}, lifecycle, &runServiceStub{}, &agentQueryServiceStub{},
-		&agentEventServiceStub{},
+		&agentEventServiceStub{}, &networkPolicyServiceStub{},
 		func(context.Context) error { return nil },
 	)
 	if err != nil {
@@ -482,8 +464,7 @@ func TestLifecycleHandlerRequestsAgentDisableWithStableContract(t *testing.T) {
 	if lifecycle.disableInput.AgentID != "agent-1" ||
 		lifecycle.disableInput.RequestID != "request-disable-1" ||
 		lifecycle.disableInput.OrganizationID != "org-1" ||
-		lifecycle.disableInput.ActorPrincipalID != "user-admin" ||
-		lifecycle.disableInput.InitialTraceParent != testServerTraceParent {
+		lifecycle.disableInput.ActorPrincipalID != "user-admin" {
 		t.Fatalf("DisableAgent input = %+v", lifecycle.disableInput)
 	}
 	var payload operationResponse
@@ -513,7 +494,7 @@ func TestLifecycleHandlerRequestsAgentEnableWithStableContract(t *testing.T) {
 	}}
 	handler, err := NewHandler(
 		&catalogServiceStub{}, lifecycle, &runServiceStub{}, &agentQueryServiceStub{},
-		&agentEventServiceStub{},
+		&agentEventServiceStub{}, &networkPolicyServiceStub{},
 		func(context.Context) error { return nil },
 	)
 	if err != nil {
@@ -533,8 +514,7 @@ func TestLifecycleHandlerRequestsAgentEnableWithStableContract(t *testing.T) {
 	if lifecycle.enableInput.AgentID != "agent-1" ||
 		lifecycle.enableInput.RequestID != "request-enable-1" ||
 		lifecycle.enableInput.OrganizationID != "org-1" ||
-		lifecycle.enableInput.ActorPrincipalID != "user-admin" ||
-		lifecycle.enableInput.InitialTraceParent != testServerTraceParent {
+		lifecycle.enableInput.ActorPrincipalID != "user-admin" {
 		t.Fatalf("EnableAgent input = %+v", lifecycle.enableInput)
 	}
 	var payload operationResponse
@@ -564,7 +544,7 @@ func TestLifecycleHandlerRequestsAgentDeleteWithStableContract(t *testing.T) {
 	}}
 	handler, err := NewHandler(
 		&catalogServiceStub{}, lifecycle, &runServiceStub{}, &agentQueryServiceStub{},
-		&agentEventServiceStub{},
+		&agentEventServiceStub{}, &networkPolicyServiceStub{},
 		func(context.Context) error { return nil },
 	)
 	if err != nil {
@@ -584,8 +564,7 @@ func TestLifecycleHandlerRequestsAgentDeleteWithStableContract(t *testing.T) {
 	if lifecycle.deleteInput.AgentID != "agent-1" ||
 		lifecycle.deleteInput.RequestID != "request-delete-1" ||
 		lifecycle.deleteInput.OrganizationID != "org-1" ||
-		lifecycle.deleteInput.ActorPrincipalID != "user-admin" ||
-		lifecycle.deleteInput.InitialTraceParent != testServerTraceParent {
+		lifecycle.deleteInput.ActorPrincipalID != "user-admin" {
 		t.Fatalf("DeleteAgent input = %+v", lifecycle.deleteInput)
 	}
 	var payload operationResponse
@@ -609,7 +588,8 @@ func TestLifecycleHandlerDoesNotWrapDurableIntentInPrivateTimeout(t *testing.T) 
 	}}
 	handler, err := NewHandler(
 		&catalogServiceStub{}, lifecycle, &runServiceStub{}, &agentQueryServiceStub{},
-		&agentEventServiceStub{}, func(context.Context) error { return nil },
+		&agentEventServiceStub{}, &networkPolicyServiceStub{},
+		func(context.Context) error { return nil },
 	)
 	if err != nil {
 		t.Fatalf("new handler: %v", err)
@@ -640,8 +620,6 @@ func TestLifecycleHandlerDoesNotWrapDurableIntentInPrivateTimeout(t *testing.T) 
 		t.Fatalf("accepted response=%+v private_deadline=%v", payload, lifecycle.createHadDeadline)
 	}
 }
-
-const testServerTraceParent = "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01"
 
 func requestWithServerSpan(t *testing.T, request *http.Request) *http.Request {
 	t.Helper()
@@ -688,7 +666,6 @@ type catalogServiceStub struct {
 	createModelCalls int
 	modelView        application.ModelProfileView
 	templateView     application.TemplateView
-	modelCatalog     application.ModelCatalogView
 	getModelErr      error
 	templatePage     application.TemplatePage
 	listInput        application.ListCatalogInput
@@ -698,10 +675,6 @@ type catalogServiceStub struct {
 	templateRevisionOrganizationID string
 	templateRevisionTemplateID     string
 	templateRevision               int64
-}
-
-func (service *catalogServiceStub) ModelCatalog(context.Context) application.ModelCatalogView {
-	return service.modelCatalog
 }
 
 type lifecycleServiceStub struct {
@@ -840,9 +813,10 @@ func (service *catalogServiceStub) ListTemplates(
 
 func sampleModelProfileView() application.ModelProfileView {
 	return application.ModelProfileView{
-		ModelProfileID: "model-1", OrganizationID: "org-1", ProfileKey: "deepseek",
+		ProviderConnectionID: "provider-1",
+		ModelProfileID:       "model-1", OrganizationID: "org-1", ProfileKey: "deepseek",
 		DisplayName: "DeepSeek", RevisionID: "model-revision-1", Revision: 1,
-		CredentialRef: "credential-1", CredentialVersion: "credential-version-1", Enabled: true,
+		Enabled: true,
 		Model: domain.ModelSpec{
 			BaseURL: "https://api.example.com/v1", Model: "deepseek-chat",
 			ContextWindow: 128000, MaxOutputTokens: 8192,
@@ -854,7 +828,7 @@ func sampleModelProfileView() application.ModelProfileView {
 func sampleTemplateView() application.TemplateView {
 	return application.TemplateView{
 		TemplateID: "template-1", OrganizationID: "org-1", TemplateKey: "personal",
-		Name: "Personal", Revision: 1, ModelProfileRevisionID: "model-revision-1",
+		Name: "Personal", Revision: 1, ModelProfileID: "model-revision-1",
 		SystemPrompt: "You are helpful.", MaxModelRequests: 16,
 		ContextPolicyVersion: domain.ContextPolicyV1,
 		Runtime: domain.RuntimeSpecInput{

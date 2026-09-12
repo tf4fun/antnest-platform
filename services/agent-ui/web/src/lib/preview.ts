@@ -3,6 +3,8 @@ import type { WorkspaceSnapshot } from "./types";
 export function previewWorkspace(): WorkspaceSnapshot {
   return {
     principal: {
+      userId: "preview-user",
+      organizationId: "preview-org",
       displayName: "Lin Xia",
       organizationName: "Antnest Labs",
       administrator: true,
@@ -39,6 +41,7 @@ export function previewWorkspace(): WorkspaceSnapshot {
         id: "conversation-market",
         agentId: "agent-research",
         title: "Enterprise agent market signals",
+        usage: { used: 8246, size: 128000, cost: { amount: 0.01234, currency: "USD" } },
         updatedAt: "2026-09-02T09:46:00+08:00",
         messages: [
           {
@@ -88,6 +91,7 @@ export function previewWorkspace(): WorkspaceSnapshot {
         id: "conversation-brief",
         agentId: "agent-research",
         title: "Weekly technology brief",
+        usage: { used: 0, size: 128000 },
         updatedAt: "2026-09-01T16:12:00+08:00",
         messages: [],
       },

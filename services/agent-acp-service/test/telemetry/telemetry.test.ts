@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { context, propagation, trace } from "@opentelemetry/api";
 
 import { ServiceTelemetry, startTelemetry } from "../../src/telemetry/telemetry.js";
+import { extractedContext, tracedFetch } from "../../src/telemetry/http.js";
 
 describe("ServiceTelemetry", () => {
   it("keeps structured logs useful without leaking error messages or undefined fields", () => {
@@ -48,7 +50,24 @@ describe("ServiceTelemetry", () => {
       metricsEnabled: false,
     });
 
-    runtime.telemetry.count("agent.runs", { terminal_class: "completed" });
-    await expect(runtime.shutdown()).resolves.toBeUndefined();
+    try {
+      runtime.telemetry.count("agent.runs", { terminal_class: "completed" });
+      const incoming = "00-11111111111111111111111111111111-2222222222222222-01";
+      const parent = extractedContext({ traceparent: incoming });
+      await context.with(parent, async () => {
+        await Promise.resolve();
+        let headers: Headers | undefined;
+        await tracedFetch((_input, init) => {
+          headers = new Headers(init.headers);
+          return Promise.resolve(new Response(null, { status: 204 }));
+        }, "model")("https://model.test", {});
+        expect(headers?.get("traceparent")).toBe(incoming);
+      });
+    } finally {
+      await runtime.shutdown();
+      trace.disable();
+      context.disable();
+      propagation.disable();
+    }
   });
 });

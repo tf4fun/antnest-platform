@@ -7,7 +7,7 @@ import {
   type AcquireRunResult,
 } from "../../src/ports/agent-controller.js";
 import type { AcceptRunInput, RunRepository } from "../../src/ports/run-repository.js";
-import type { ConnectionBinding, SessionRecord } from "../../src/domain/types.js";
+import type { ConnectionBinding, ContentBlock, SessionRecord } from "../../src/domain/types.js";
 
 const binding: ConnectionBinding = {
   connectionId: "connection-1",
@@ -103,6 +103,7 @@ function createRepository() {
 function createController(acquireRun: AgentControllerPort["acquireRun"]): AgentControllerPort {
   return {
     resolveAgentAccess: vi.fn(),
+    getSessionConfiguration: vi.fn(),
     acquireRun,
     resolveCredential: vi.fn(),
     finishRun: vi.fn(),
@@ -110,6 +111,34 @@ function createController(acquireRun: AgentControllerPort["acquireRun"]): AgentC
 }
 
 describe("PromptCoordinator", () => {
+  it.each(["/帮助", "ordinary request"])(
+    "classifies %s only after admission without changing the saved prompt",
+    async (text) => {
+      const { repository, accepted, createRunIntent } = createRepository();
+      const acquireRun = vi.fn<AgentControllerPort["acquireRun"]>(() => Promise.resolve(acquired));
+      const coordinator = new PromptCoordinator({
+        repository,
+        agentController: createController(acquireRun),
+        executions: { markAdmissionFinished: vi.fn() },
+        recoveryRequired: vi.fn(),
+        id: sequentialIds(),
+        now: () => new Date("2026-08-30T00:00:00Z"),
+      });
+      const prompt: ContentBlock[] = [
+        {
+          type: "resource",
+          resource: { uri: "file:///notes.txt", mimeType: "text/plain", text: "/help" },
+        },
+        { type: "text", text },
+      ];
+      const result = await coordinator.accept({ binding, sessionId: session.id, prompt });
+      expect(result.command).toEqual(text === "/帮助" ? { name: "help", locale: "zh" } : undefined);
+      expect(acquireRun).toHaveBeenCalledOnce();
+      expect(accepted).toHaveLength(1);
+      expect(createRunIntent).toHaveBeenCalledWith(expect.objectContaining({ prompt }));
+    },
+  );
+
   it("does not persist an accepted user message when admission is rejected", async () => {
     const { repository, accepted, createRunIntent, rejectRun } = createRepository();
     const recoveryRequired = vi.fn();

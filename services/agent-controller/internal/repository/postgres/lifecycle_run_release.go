@@ -15,7 +15,7 @@ import (
 
 func (repository *Repository) releaseBlockedRunAdmission(
 	ctx context.Context,
-	transaction pgx.Tx,
+	transaction *databaseTransaction,
 	operation ports.LifecycleOperationRecord,
 	barrier runReleaseBarrier,
 	event ports.RunAdmissionEvent,
@@ -133,7 +133,7 @@ func validateRunReleaseBarrier(
 	case domain.OperationDisable:
 		return validateDisableRunBarrier(operation, barrier.runtimeResult)
 	case domain.OperationDelete:
-		return validateDeleteRunBarrier(operation, barrier)
+		return validateDeleteRunBarrier(operation, barrier, now)
 	default:
 		return "", "", false
 	}
@@ -156,7 +156,7 @@ func validateDisableRunBarrier(
 }
 
 func validateDeleteRunBarrier(
-	operation ports.LifecycleOperationRecord, barrier runReleaseBarrier,
+	operation ports.LifecycleOperationRecord, barrier runReleaseBarrier, now time.Time,
 ) (string, string, bool) {
 	if operation.Phase == domain.PhaseRuntimeDelete && barrier.runtimeResult != nil &&
 		deletedRuntimeResult(*barrier.runtimeResult) {
@@ -165,7 +165,7 @@ func validateDeleteRunBarrier(
 	proof := barrier.absenceProof
 	if operation.Phase == domain.PhaseNetworkFence && operation.SourceRuntimeAbsent &&
 		proof != nil && operation.SourceRuntimeAbsenceProof != nil &&
-		proof.Reason == "runtime_not_found" && proof.RuntimeRevision == "" &&
+		validRuntimeAbsenceProof(proof) && !proof.ObservedAt.After(now) &&
 		proof.Reason == operation.SourceRuntimeAbsenceProof.Reason &&
 		proof.RuntimeRevision == operation.SourceRuntimeAbsenceProof.RuntimeRevision &&
 		proof.ObservedAt.Equal(operation.SourceRuntimeAbsenceProof.ObservedAt) {

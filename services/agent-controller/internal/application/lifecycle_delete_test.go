@@ -119,15 +119,16 @@ func TestDeleteAgentWithAuthoritativelyAbsentRuntimeSkipsRuntimeDelete(t *testin
 		t.Fatalf("delete absent Agent Runtime: %v", err)
 	}
 	wantCalls := []string{
-		"egress.network.get", "egress.network.get",
+		"egress.network.get", "runtime.inspect", "egress.network.get",
 	}
 	if !reflect.DeepEqual(dependencies.calls, wantCalls) {
 		t.Fatalf("dependency order = %v, want %v", dependencies.calls, wantCalls)
 	}
-	if !store.begin.Operation.SourceRuntimeAbsent ||
+	if store.begin.Operation.SourceRuntimeAbsent ||
 		store.begin.Operation.SourceRuntimeRevision != "" ||
-		store.begin.Operation.SourceRuntimeAbsenceProof == nil ||
-		store.begin.Operation.SourceRuntimeAbsenceProof.Reason != "agent_runtime_unassigned" ||
+		store.begin.Operation.SourceRuntimeAbsenceProof != nil ||
+		store.state.Operation.SourceRuntimeAbsenceProof == nil ||
+		store.state.Operation.SourceRuntimeAbsenceProof.Reason != "runtime_not_found" ||
 		result.Operation.State != domain.OperationCompleted {
 		t.Fatalf("absent Runtime delete = %+v begin=%+v", result, store.begin)
 	}
@@ -138,7 +139,7 @@ func TestDeleteAgentWithAuthoritativelyAbsentRuntimeSkipsRuntimeDelete(t *testin
 	}
 }
 
-func TestDeleteAgentDoesNotConsultRuntimeWhenProjectionHasNoRevision(t *testing.T) {
+func TestDeleteAgentRejectsForeignRuntimeWhenProjectionHasNoRevision(t *testing.T) {
 	t.Parallel()
 
 	base := deleteAgentBase(domain.AgentUnavailable)
@@ -159,16 +160,14 @@ func TestDeleteAgentDoesNotConsultRuntimeWhenProjectionHasNoRevision(t *testing.
 	result, err := executeDeleteForTest(service, context.Background(), DeleteAgentInput{
 		RequestID: "request-delete-wrong-agent", AgentID: base.Agent.AgentID,
 	})
-	if err != nil {
-		t.Fatalf("delete without projected Runtime: %v", err)
+	if !errors.Is(err, ErrDependencyUnavailable) {
+		t.Fatalf("foreign Runtime inspection accepted: %+v %v", result, err)
 	}
-	if slices.Contains(dependencies.calls, "runtime.inspect") {
-		t.Fatalf("delete consulted Runtime outside the durable projection: %v", dependencies.calls)
+	if !slices.Contains(dependencies.calls, "runtime.inspect") {
+		t.Fatalf("missing authoritative Runtime inspection: %v", dependencies.calls)
 	}
-	if result.Operation.State != domain.OperationCompleted ||
-		store.begin.Operation.SourceRuntimeAbsenceProof == nil ||
-		store.begin.Operation.SourceRuntimeAbsenceProof.Reason != "agent_runtime_unassigned" {
-		t.Fatalf("delete without projected Runtime = %+v begin=%+v", result, store.begin)
+	if store.state.Operation.Phase != domain.PhaseNetworkFence || slices.Contains(dependencies.calls, "egress.release") {
+		t.Fatalf("foreign Runtime crossed cleanup barrier: %+v %v", store.state.Operation, dependencies.calls)
 	}
 }
 
@@ -469,6 +468,14 @@ func (store *deleteLifecycleStoreStub) SettleAgentDeleteDrain(
 func (store *deleteLifecycleStoreStub) AdvanceAgentDelete(
 	_ context.Context, input ports.AdvanceAgentDelete,
 ) (ports.AgentDeleteState, error) {
+	if input.SourceRuntimeInspection != nil {
+		store.state.Operation.SourceRuntimeInspection = input.SourceRuntimeInspection
+		store.state.Operation.SourceRuntimeRevision = input.SourceRuntimeInspection.RuntimeRevision
+	}
+	if input.SourceRuntimeAbsenceProof != nil {
+		store.state.Operation.SourceRuntimeAbsent = true
+		store.state.Operation.SourceRuntimeAbsenceProof = input.SourceRuntimeAbsenceProof
+	}
 	if input.RunReleaseEvent.EventID != "" {
 		store.runReleaseEvent = input.RunReleaseEvent
 	}
@@ -485,6 +492,9 @@ func (store *deleteLifecycleStoreStub) AdvanceAgentDelete(
 	}
 	if input.NetworkReleaseOutcome != "" {
 		store.state.Operation.NetworkReleaseOutcome = input.NetworkReleaseOutcome
+		if input.NetworkReleaseOutcome == ports.NetworkReleaseAuthoritativeNone {
+			store.state.Operation.NetworkAttachment = nil
+		}
 	}
 	return store.state, nil
 }
@@ -504,8 +514,6 @@ func (store *deleteLifecycleStoreStub) PublishAgentDelete(
 	store.state.Agent.AggregateSequence = input.DeletedEvent.AggregateSequence
 	store.state.Operation.Phase = domain.PhaseCompleted
 	store.state.Operation.State = domain.OperationCompleted
-	store.state.Operation.RecoveryOwner = ""
-	store.state.Operation.RecoveryLeaseUntil = nil
 	store.state.Operation.ChildRequestID = ""
 	return store.state, nil
 }
@@ -532,3 +540,7 @@ func deleteAgentBase(state domain.AgentState) ports.AgentDeleteBase {
 var _ ports.LifecycleStore = (*deleteLifecycleStoreStub)(nil)
 var _ ports.EgressClient = (*deleteDependenciesStub)(nil)
 var _ ports.RuntimeClient = (*deleteDependenciesStub)(nil)
+
+func (store *deleteLifecycleStoreStub) GetLifecycleOperation(context.Context, string) (ports.LifecycleOperationRecord, error) {
+	return store.state.Operation, nil
+}

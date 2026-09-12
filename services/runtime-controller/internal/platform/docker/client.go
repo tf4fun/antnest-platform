@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"soft/antnest-platform/services/runtime-controller/internal/platform"
+	"soft/antnest-platform/services/runtime-controller/internal/telemetry"
 )
 
 const dockerAPIVersion = "v1.47"
@@ -43,7 +44,9 @@ func NewHTTPClient(httpClient *http.Client, baseURL string) (*Client, error) {
 	if httpClient == nil || strings.TrimSpace(baseURL) == "" {
 		return nil, fmt.Errorf("docker HTTP client and base URL are required")
 	}
-	return &Client{httpClient: httpClient, baseURL: strings.TrimRight(baseURL, "/")}, nil
+	observed := *httpClient
+	observed.Transport = telemetry.NewTransport(httpClient.Transport, "docker")
+	return &Client{httpClient: &observed, baseURL: strings.TrimRight(baseURL, "/")}, nil
 }
 
 func (c *Client) Ping(ctx context.Context) error {
@@ -246,7 +249,7 @@ func dockerCreateRequest(spec ContainerSpec) createContainerRequest {
 		Healthcheck: dockerHealthcheck{
 			Test: spec.Healthcheck.Test, Interval: int64(spec.Healthcheck.Interval),
 			Timeout: int64(spec.Healthcheck.Timeout), StartPeriod: int64(spec.Healthcheck.StartPeriod),
-			Retries: spec.Healthcheck.Retries,
+			StartInterval: int64(spec.Healthcheck.StartInterval), Retries: spec.Healthcheck.Retries,
 		},
 		NetworkingConfig: dockerNetworkingConfig{EndpointsConfig: dockerEndpoints(spec.Networks)},
 		HostConfig: dockerHostConfig{
@@ -413,11 +416,12 @@ type createContainerRequest struct {
 }
 
 type dockerHealthcheck struct {
-	Test        []string `json:"Test"`
-	Interval    int64    `json:"Interval"`
-	Timeout     int64    `json:"Timeout"`
-	StartPeriod int64    `json:"StartPeriod"`
-	Retries     int      `json:"Retries"`
+	Test          []string `json:"Test"`
+	Interval      int64    `json:"Interval"`
+	Timeout       int64    `json:"Timeout"`
+	StartPeriod   int64    `json:"StartPeriod"`
+	StartInterval int64    `json:"StartInterval"`
+	Retries       int      `json:"Retries"`
 }
 
 type dockerNetworkingConfig struct {

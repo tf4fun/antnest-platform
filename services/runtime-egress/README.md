@@ -19,6 +19,8 @@ without adding a garbage-collected pause or a second low-level helper process.
 - Own a private PostgreSQL schema and migrations.
 - Allocate one stable Tunnel IPv4 per Agent and quarantine released addresses.
 - Store immutable policy revisions and versioned Agent-policy assignments.
+- Expose exact policy revision reads so control clients can display the policy
+  document without guessing from its identifier.
 - Compile policy into immutable in-memory snapshots.
 - Receive one complete inner IP packet per Runtime UDP datagram.
 - Resolve the inner source Tunnel IP to an Agent and apply its current policy.
@@ -107,5 +109,6 @@ cargo test --locked
 ```
 
 See [`docs/architecture.md`](docs/architecture.md),
-[`docs/operations.md`](docs/operations.md), and the cross-service
+[`docs/operations.md`](docs/operations.md),
+[`docs/observability.md`](docs/observability.md), and the cross-service
 [`../../docs/stage-1-runtime.md`](../../docs/stage-1-runtime.md).

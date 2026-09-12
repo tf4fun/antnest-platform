@@ -1,6 +1,7 @@
 # Build from the repository root:
 #   docker build -f runtimes/antnest-runtime/Dockerfile -t antnest/antnest-runtime:local .
 FROM rust:1.96-bookworm AS build
+ARG CARGO_BUILD_JOBS=2
 RUN apt-get update \
     && apt-get install -y --no-install-recommends libnftables-dev pkg-config \
     && rm -rf /var/lib/apt/lists/*
@@ -15,6 +16,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cargo fmt --check \
     && cargo clippy --locked --all-targets -- -D warnings \
     && cargo test --locked \
+    && cargo test --locked --example managed-mcp-fixture \
     && cargo build --locked --example managed-mcp-fixture \
     && cp target/debug/examples/managed-mcp-fixture /tmp/managed-mcp-fixture \
     && cargo build --locked --release \

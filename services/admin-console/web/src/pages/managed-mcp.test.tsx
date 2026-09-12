@@ -8,7 +8,7 @@ afterEach(() => { cleanup(); sessionStorage.clear(); });
 const server: ManagedMCPServer = { id: "documents", command: "node", args: ["server.js", "two words", ""], env: { TOKEN: "synthetic-token", EMPTY: "" } };
 const template: AgentTemplate = {
   template_id: "template-1", revision: 1, name: "Support template", enabled: true,
-  model_profile_revision_id: "model-rev-1", system_prompt: "", max_model_requests: 32,
+  model_profile_id: "model-1", system_prompt: "", max_model_requests: 32,
   context_policy_version: "context-v1", skill_refs: [], created_at: "2026-09-07T00:00:00Z", updated_at: "2026-09-07T00:00:00Z",
   runtime: { image_ref: "runtime:local", resources: { memory_bytes: 1024, pids_limit: 128, tmpfs_bytes: 1024 }, mcp_servers: [server] },
 };
@@ -28,7 +28,7 @@ function catalog(rejectFirst = false) {
     if (path === "/api/admin/template-defaults") return Response.json({ runtime_image_ref: "runtime:local" });
     const model = { model_profile_id: "model-1", revision_id: "model-rev-1", revision: 1, display_name: "Support model", enabled: true, model: { model: "support" } };
     if (path === "/api/admin/model-profiles") return Response.json({ items: [model] });
-    if (path.startsWith("/api/admin/model-profile-revisions/")) return Response.json(model);
+    if (path.startsWith("/api/admin/model-profiles/")) return Response.json(model);
     throw new Error(`Unexpected request: ${path}`);
   }));
   return writes;
@@ -43,7 +43,7 @@ describe("Managed MCP template configuration", () => {
     fireEvent.click(create);
     const dialog = within(await screen.findByRole("dialog"));
     fireEvent.change(dialog.getByLabelText("Template name"), { target: { value: "New template" } });
-    fireEvent.change(dialog.getByLabelText("Model"), { target: { value: "model-rev-1" } });
+    fireEvent.change(dialog.getByLabelText("Model"), { target: { value: "model-1" } });
     fireEvent.click(dialog.getByRole("button", { name: "Add MCP server" }));
     fireEvent.change(dialog.getByLabelText("Server ID"), { target: { value: "documents" } });
     fireEvent.change(dialog.getByLabelText("Command"), { target: { value: "node" } });

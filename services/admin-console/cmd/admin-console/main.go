@@ -67,15 +67,18 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 	if err != nil {
 		return fmt.Errorf("load embedded application: %w", err)
 	}
+	streamContext, stopStreams := context.WithCancel(context.Background())
+	defer stopStreams()
 	handler, err := server.NewHandler(server.Config{
 		DefaultRuntimeImageRef: cfg.DefaultRuntimeImageRef,
 		RequestTimeout:         cfg.DependencyTimeout,
-	}, server.Dependencies{Backend: backend, Assets: assets, Logger: logger})
+	}, server.Dependencies{Backend: backend, Assets: assets, Logger: logger, StreamContext: streamContext})
 	if err != nil {
 		return fmt.Errorf("compose Admin Console: %w", err)
 	}
+	drain := newRequestDrain(telemetry.HTTPHandler(handler, logger))
 	httpServer := &http.Server{
-		Addr: cfg.ListenAddress, Handler: telemetry.HTTPHandler(handler, logger),
+		Addr: cfg.ListenAddress, Handler: drain,
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second,
 		IdleTimeout: 90 * time.Second, MaxHeaderBytes: 1 << 20,
 	}
@@ -93,10 +96,17 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 			resultErr = fmt.Errorf("serve HTTP: %w", err)
 		}
 	}
+	drain.stop()
+	stopStreams()
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer cancel()
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
 		resultErr = errors.Join(resultErr, fmt.Errorf("shutdown HTTP: %w", err), httpServer.Close())
+		cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancelCleanup()
+		if err := drain.wait(cleanupCtx); err != nil {
+			resultErr = errors.Join(resultErr, fmt.Errorf("drain cancelled HTTP handlers: %w", err))
+		}
 	}
 	return resultErr
 }

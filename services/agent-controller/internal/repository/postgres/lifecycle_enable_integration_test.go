@@ -54,7 +54,7 @@ func TestLifecycleRepositoryPersistsAndPublishesEnableSaga(t *testing.T) {
 			SourceRuntimeRevision:     base.Agent.RuntimeRevision,
 			TargetSpecRevisionID:      base.Spec.ID,
 			ChildRequestID:            domain.ChildRequestID(requestID, domain.PhaseNetworkEnsure),
-			Attempt:                   1, CreatedAt: now, UpdatedAt: now,
+			CreatedAt:                 now, UpdatedAt: now,
 		},
 		RequestedEvent: ports.AgentEventRecord{
 			EventID: "event-enable-requested-integration", AgentID: base.Agent.AgentID,
@@ -68,7 +68,6 @@ func TestLifecycleRepositoryPersistsAndPublishesEnableSaga(t *testing.T) {
 	if err != nil || replayed {
 		t.Fatalf("begin Agent enable: state=%+v replayed=%t err=%v", started, replayed, err)
 	}
-	ctx = claimLifecycleForTest(t, ctx, repository, requestID)
 	if started.Agent.DesiredState != domain.DesiredEnabled ||
 		started.Agent.LifecycleState != domain.AgentDisabled {
 		t.Fatalf("started enable = %+v", started)
@@ -166,7 +165,6 @@ func seedDisabledAgentForEnable(
 	if _, _, err := repository.BeginAgentDisable(ctx, begin); err != nil {
 		t.Fatalf("begin prerequisite Agent disable: %v", err)
 	}
-	ctx = claimLifecycleForTest(t, ctx, repository, requestID)
 	if _, err := repository.SettleAgentDisableDrain(
 		ctx, requestID, fingerprint,
 		domain.ChildRequestID(requestID, domain.PhaseNetworkFence), now.Add(time.Second),

@@ -18,11 +18,11 @@ var catalogCreationCases = []struct {
 }{
 	{
 		name: "model", path: "/api/admin/model-profiles", keyField: "profile_key",
-		body: `{"display_name":"Support model","api_key":"test-secret","model":{"base_url":"https://models.example.com/v1","model":"support","context_window":8192,"max_output_tokens":1024}}`,
+		body: `{"display_name":"Support model","provider_connection_id":"connection-1","model":{"model":"support","context_window":8192,"max_output_tokens":1024}}`,
 	},
 	{
 		name: "template", path: "/api/admin/templates", keyField: "template_key",
-		body: `{"name":"Support template","model_profile_revision_id":"model-revision-1","system_prompt":"Help users."}`,
+		body: `{"name":"Support template","model_profile_id":"model-1","system_prompt":"Help users."}`,
 	},
 }
 

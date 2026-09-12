@@ -102,10 +102,11 @@ describe("RunRecovery", () => {
     );
   });
 
-  it("reacquires a durable admitting prompt with the original request id", async () => {
+  it("reacquires a durable admitting prompt with its original request id and captured configuration", async () => {
     const work: RecoveryWork = {
       kind: "admitting",
       id: "run-2",
+      sessionConfiguration: { modelProfileId: "captured-model", authorizationMode: "chat" },
       requestId: "request-2",
       sessionId: "session-1",
       clientMcpRevisionId: "client-mcp-captured",
@@ -132,6 +133,7 @@ describe("RunRecovery", () => {
     expect(controller.acquireRun).toHaveBeenCalledWith(
       {
         requestId: "request-2",
+        sessionConfiguration: { modelProfileId: "captured-model", authorizationMode: "chat" },
         agentId: "agent-1",
         principalId: "principal-1",
         expectedAccessRevision: "access-1",
@@ -504,6 +506,7 @@ function controllerPort() {
   );
   const finishRun = vi.fn<AgentControllerPort["finishRun"]>(() => Promise.resolve());
   const port: AgentControllerPort = {
+    getSessionConfiguration: vi.fn(),
     resolveAgentAccess: vi.fn(),
     acquireRun,
     resolveCredential: vi.fn(),
@@ -534,7 +537,9 @@ function runEventRepository() {
   );
   const port: RunEventRepository = {
     appendAgentMessage: vi.fn(),
+    appendPlan: vi.fn(),
     appendAgentThought: vi.fn(),
+    appendToolProgress: vi.fn(),
     appendRejectedToolCall: vi.fn(),
     appendUsage: vi.fn(),
     startToolAttempt: vi.fn(),

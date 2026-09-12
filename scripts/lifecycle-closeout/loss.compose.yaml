@@ -1,0 +1,3 @@
+services:
+  stage3-model:
+    command: ["node", "/lifecycle/loss-model.mjs"]

@@ -1,6 +1,7 @@
 use std::net::IpAddr;
 use std::time::{Duration, Instant};
 
+use opentelemetry::propagation::TextMapPropagator as _;
 use opentelemetry::propagation::{Extractor, Injector};
 use opentelemetry::trace::{TraceContextExt as _, TracerProvider as _};
 use opentelemetry::{
@@ -43,6 +44,9 @@ pub(crate) struct Telemetry {
 
 #[derive(Clone, Debug)]
 pub(crate) struct TelemetryConfig {
+    image_reference: String,
+    image_id: String,
+    capture_rpc_content: bool,
     log_filter: String,
     export: ExportDecision,
     endpoint: String,
@@ -52,6 +56,9 @@ pub(crate) struct TelemetryConfig {
 
 #[derive(Default)]
 pub(crate) struct TelemetryEnvironment {
+    pub(crate) image_reference: Option<String>,
+    pub(crate) image_id: Option<String>,
+    pub(crate) capture_rpc_content: Option<String>,
     pub(crate) log_filter: Option<String>,
     pub(crate) sdk_disabled: Option<String>,
     pub(crate) exporter: Option<String>,
@@ -66,6 +73,7 @@ pub(crate) struct TelemetryEnvironment {
 
 #[derive(Clone, Debug)]
 pub(crate) struct RuntimeMetrics {
+    pub(crate) capture_rpc_content: bool,
     http_requests: Counter<u64>,
     http_duration_ms: Histogram<f64>,
     mcp_operations: Counter<u64>,
@@ -108,6 +116,7 @@ impl TelemetryWarning {
 impl RuntimeMetrics {
     fn new(meter: Meter) -> Self {
         Self {
+            capture_rpc_content: false,
             http_requests: meter
                 .u64_counter("antnest.runtime.http.requests")
                 .with_description("Completed Runtime HTTP requests")
@@ -168,6 +177,11 @@ impl RuntimeMetrics {
                 .u64_counter("antnest.runtime.network.malformed.packets")
                 .build(),
         }
+    }
+
+    pub(crate) fn with_rpc_content(mut self, capture_rpc_content: bool) -> Self {
+        self.capture_rpc_content = capture_rpc_content;
+        self
     }
 
     pub(crate) fn http(
@@ -315,7 +329,8 @@ impl Telemetry {
             configured_tracer(identity, platform, config, &mut warnings);
         let (meter_provider, metrics_otlp_enabled) =
             configured_meter(platform, config, &mut warnings);
-        let metrics = RuntimeMetrics::new(meter_provider.meter(SERVICE_NAME));
+        let metrics = RuntimeMetrics::new(meter_provider.meter(SERVICE_NAME))
+            .with_rpc_content(config.capture_rpc_content);
         let tracer = tracer_provider.tracer(SERVICE_NAME);
         layers.push(
             tracing_opentelemetry::layer()
@@ -344,6 +359,8 @@ impl Telemetry {
         tracing::info!(
             trace_otlp_enabled,
             metrics_otlp_enabled,
+            "antnest.runtime.image.reference" = %config.image_reference,
+            "antnest.runtime.image.id" = %config.image_id,
             "service.name" = SERVICE_NAME,
             "service.version" = env!("CARGO_PKG_VERSION"),
             "antnest.agent.id" = identity.agent_id(),
@@ -430,6 +447,9 @@ impl Telemetry {
 impl TelemetryConfig {
     pub(crate) fn resolve(environment: TelemetryEnvironment) -> Self {
         let TelemetryEnvironment {
+            image_reference,
+            image_id,
+            capture_rpc_content,
             log_filter,
             sdk_disabled,
             exporter,
@@ -467,6 +487,10 @@ impl TelemetryConfig {
             metrics_export
         };
         Self {
+            capture_rpc_content: capture_rpc_content
+                .is_some_and(|value| value.trim().eq_ignore_ascii_case("true")),
+            image_reference: image_reference.unwrap_or_default(),
+            image_id: image_id.unwrap_or_default(),
             log_filter: log_filter
                 .filter(|value| !value.trim().is_empty())
                 .unwrap_or_else(|| "info,hyper=warn,reqwest=warn".into()),
@@ -544,11 +568,11 @@ fn configured_tracer(
         platform,
         "traces",
         warnings,
-        |endpoint| build_otlp_provider(identity, endpoint),
+        |endpoint| build_otlp_provider(identity, config, endpoint),
     );
     let enabled = provider.is_some();
     (
-        provider.unwrap_or_else(|| build_local_provider(identity)),
+        provider.unwrap_or_else(|| build_local_provider(identity, config)),
         enabled,
     )
 }
@@ -616,6 +640,7 @@ fn configured_export<T>(
 
 fn build_otlp_provider(
     identity: &RuntimeIdentity,
+    config: &TelemetryConfig,
     endpoint: &str,
 ) -> Result<SdkTracerProvider, Box<dyn std::error::Error + Send + Sync>> {
     let exporter = opentelemetry_otlp::SpanExporter::builder()
@@ -624,13 +649,13 @@ fn build_otlp_provider(
         .build()?;
     Ok(SdkTracerProvider::builder()
         .with_batch_exporter(exporter)
-        .with_resource(runtime_resource(identity))
+        .with_resource(runtime_resource(identity, config))
         .build())
 }
 
-fn build_local_provider(identity: &RuntimeIdentity) -> SdkTracerProvider {
+fn build_local_provider(identity: &RuntimeIdentity, config: &TelemetryConfig) -> SdkTracerProvider {
     SdkTracerProvider::builder()
-        .with_resource(runtime_resource(identity))
+        .with_resource(runtime_resource(identity, config))
         .build()
 }
 
@@ -653,7 +678,7 @@ fn build_local_meter_provider() -> SdkMeterProvider {
         .build()
 }
 
-fn runtime_resource(identity: &RuntimeIdentity) -> Resource {
+fn runtime_resource(identity: &RuntimeIdentity, config: &TelemetryConfig) -> Resource {
     Resource::builder()
         .with_service_name(SERVICE_NAME)
         .with_attributes([
@@ -665,6 +690,15 @@ fn runtime_resource(identity: &RuntimeIdentity) -> Resource {
                 identity.generation().to_string(),
             ),
         ])
+        .with_attributes(
+            [
+                ("antnest.runtime.image.reference", &config.image_reference),
+                ("antnest.runtime.image.id", &config.image_id),
+            ]
+            .into_iter()
+            .filter(|(_, value)| !value.is_empty())
+            .map(|(key, value)| KeyValue::new(key, value.clone())),
+        )
         .build()
 }
 
@@ -807,8 +841,24 @@ pub(crate) fn set_remote_parent(span: &tracing::Span, carrier: Option<&TraceCont
     let Some(carrier) = carrier else {
         return;
     };
-    let context = global::get_text_map_propagator(|propagator| propagator.extract(carrier));
+    let context = TraceContextPropagator::new().extract(carrier);
+    if !context.span().span_context().is_valid() {
+        return;
+    }
     let _ = span.set_parent(context);
+}
+
+pub(crate) fn mcp_client_context(span: &tracing::Span) -> rmcp::model::RequestMetaObject {
+    let mut carrier = TraceContext::default();
+    TraceContextPropagator::new().inject_context(&span.context(), &mut carrier);
+    let mut meta = rmcp::model::RequestMetaObject::default();
+    if !carrier.traceparent.is_empty() {
+        meta.set_traceparent(carrier.traceparent);
+    }
+    if let Some(value) = carrier.tracestate {
+        meta.set_tracestate(value);
+    }
+    meta
 }
 
 pub(crate) fn record_span_identity(span: &tracing::Span) {
@@ -833,7 +883,7 @@ pub(crate) fn span_identity(span: &tracing::Span) -> (String, String) {
     )
 }
 
-fn is_runtime_trace(metadata: &tracing::Metadata<'_>) -> bool {
+pub(crate) fn is_runtime_trace(metadata: &tracing::Metadata<'_>) -> bool {
     is_runtime_target(metadata.target())
 }
 
@@ -875,6 +925,43 @@ mod tests {
     }
 
     #[test]
+    fn build_image_metadata_is_on_trace_resource_not_metrics() {
+        let identity = RuntimeIdentity::new("agent-image", 2).unwrap();
+        let image_id = format!("sha256:{}", "a".repeat(64));
+        let config = TelemetryConfig::resolve(TelemetryEnvironment {
+            image_reference: Some("antnest/runtime:latest".into()),
+            image_id: Some(image_id.clone()),
+            ..Default::default()
+        });
+        let resource = super::runtime_resource(&identity, &config);
+        assert_eq!(
+            resource
+                .get(&"antnest.runtime.image.reference".into())
+                .unwrap()
+                .as_str(),
+            "antnest/runtime:latest"
+        );
+        assert_eq!(
+            resource
+                .get(&"antnest.runtime.image.id".into())
+                .unwrap()
+                .as_str(),
+            image_id
+        );
+        assert!(
+            super::metrics_resource()
+                .get(&"antnest.runtime.image.id".into())
+                .is_none()
+        );
+        let unknown = TelemetryConfig::resolve(TelemetryEnvironment::default());
+        assert!(
+            super::runtime_resource(&identity, &unknown)
+                .get(&"antnest.runtime.image.id".into())
+                .is_none()
+        );
+    }
+
+    #[test]
     fn stderr_log_filter_cannot_disable_runtime_trace_spans() {
         let exporter = InMemorySpanExporter::default();
         let provider = SdkTracerProvider::builder()
@@ -913,7 +1000,10 @@ mod tests {
     fn local_tracer_preserves_remote_parent_without_an_exporter() {
         global::set_text_map_propagator(TraceContextPropagator::new());
         let identity = RuntimeIdentity::new("agent-telemetry", 3).unwrap();
-        let provider = build_local_provider(&identity);
+        let provider = build_local_provider(
+            &identity,
+            &TelemetryConfig::resolve(TelemetryEnvironment::default()),
+        );
         let tracer = provider.tracer(SERVICE_NAME);
         let subscriber = tracing_subscriber::Registry::default()
             .with(tracing_opentelemetry::layer().with_tracer(tracer));
@@ -1014,6 +1104,7 @@ mod tests {
     #[test]
     fn trace_specific_configuration_wins_without_late_environment_reads() {
         let config = TelemetryConfig::resolve(TelemetryEnvironment {
+            capture_rpc_content: None,
             log_filter: Some("debug".into()),
             sdk_disabled: None,
             exporter: Some("otlp".into()),
@@ -1024,6 +1115,7 @@ mod tests {
             metrics_exporter: Some("otlp".into()),
             metrics_endpoint: Some("http://127.0.0.1:9001".into()),
             metrics_protocol: Some("http/protobuf".into()),
+            ..Default::default()
         });
         assert_eq!(config.log_filter, "debug");
         assert_eq!(config.export, ExportDecision::Otlp);
@@ -1035,6 +1127,7 @@ mod tests {
     #[test]
     fn common_otlp_endpoint_expands_standard_signal_paths() {
         let config = TelemetryConfig::resolve(TelemetryEnvironment {
+            capture_rpc_content: None,
             log_filter: None,
             sdk_disabled: None,
             exporter: Some("otlp".into()),
@@ -1045,6 +1138,7 @@ mod tests {
             metrics_exporter: Some("otlp".into()),
             metrics_endpoint: None,
             metrics_protocol: None,
+            ..Default::default()
         });
 
         assert_eq!(config.endpoint, "http://127.0.0.1:4318/collector/v1/traces");
@@ -1069,6 +1163,55 @@ mod tests {
             }))
             .is_err()
         );
+    }
+
+    #[test]
+    fn managed_metadata_injects_the_client_span_as_the_receiving_parent() {
+        let exporter = InMemorySpanExporter::default();
+        let provider = SdkTracerProvider::builder()
+            .with_simple_exporter(exporter.clone())
+            .build();
+        let subscriber = tracing_subscriber::Registry::default()
+            .with(tracing_opentelemetry::layer().with_tracer(provider.tracer(SERVICE_NAME)));
+        let mut injected_parent = None;
+        tracing::subscriber::with_default(subscriber, || {
+            let parent = tracing::info_span!("runtime.mcp.tool");
+            let client =
+                tracing::info_span!(parent: &parent, "runtime.mcp.stdio", otel.kind = "client");
+            let context = client.context();
+            injected_parent = Some(context.span().span_context().span_id());
+            let meta = super::mcp_client_context(&client);
+            assert!(meta.get_baggage().is_none());
+            let remote = TraceContext {
+                traceparent: meta.get_traceparent().unwrap().into(),
+                tracestate: meta.get_tracestate().map(str::to_owned),
+            };
+            let receiving =
+                tracing::info_span!(parent: None, "managed.receiving", otel.kind = "server");
+            set_remote_parent(&receiving, Some(&remote));
+        });
+        provider.force_flush().unwrap();
+        let spans = exporter.get_finished_spans().unwrap();
+        let receiving = spans
+            .iter()
+            .find(|span| span.name == "managed.receiving")
+            .unwrap();
+        let client = spans
+            .iter()
+            .find(|span| span.name == "runtime.mcp.stdio")
+            .unwrap();
+        let tool = spans
+            .iter()
+            .find(|span| span.name == "runtime.mcp.tool")
+            .unwrap();
+        assert_eq!(receiving.parent_span_id, injected_parent.unwrap());
+        assert_eq!(client.parent_span_id, tool.span_context.span_id());
+        assert_eq!(
+            receiving.span_context.trace_id(),
+            client.span_context.trace_id()
+        );
+        assert_ne!(receiving.parent_span_id, tool.span_context.span_id());
+        provider.shutdown().unwrap();
     }
 
     #[test]

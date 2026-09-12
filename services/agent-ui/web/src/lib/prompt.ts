@@ -1,62 +1,45 @@
 import type { ContentBlock, PromptCapabilities } from "@agentclientprotocol/sdk";
 import type { Attachment } from "./types";
 
-const MAX_ATTACHMENT_BYTES = 4 * 1024 * 1024;
+import { describeAttachment, validateAttachmentCount } from "./attachments.ts";
 
 export async function buildPromptBlocks(
   text: string,
   attachments: readonly Attachment[],
   capabilities: PromptCapabilities | null | undefined,
 ): Promise<ContentBlock[]> {
+  validateAttachmentCount(attachments.length);
+  const files = attachments.map(attachment => {
+    if (!attachment.file) throw new Error(`${attachment.name} is no longer available in this browser tab.`);
+    return { file: attachment.file, ...describeAttachment(attachment.file, capabilities) };
+  });
   const blocks: ContentBlock[] = [];
   if (text.trim()) blocks.push({ type: "text", text: text.trim() });
-  for (const attachment of attachments) {
-    if (!attachment.file) throw new Error(`${attachment.name} is no longer available in this browser tab.`);
-    if (attachment.file.size > MAX_ATTACHMENT_BYTES) {
-      throw new Error(`${attachment.name} exceeds the 4 MB attachment limit.`);
+  for (const { file, kind, mimeType } of files) {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const uri = `attachment:///${encodeURIComponent(file.name)}`;
+    if (kind === "text") {
+      const content = utf8Text(bytes, file.name);
+      blocks.push(capabilities?.embeddedContext
+        ? { type: "resource", resource: { uri, mimeType, text: content } }
+        : { type: "text", text: `\n\nAttachment: ${file.name}\n\n${content}` });
+    } else if (kind === "pdf") {
+      if (String.fromCharCode(...bytes.subarray(0, 5)) !== "%PDF-") throw new Error(`${file.name} is not a PDF document.`);
+      blocks.push({ type: "resource", resource: { uri, mimeType, blob: base64(bytes) } });
+    } else {
+      blocks.push({ type: kind, mimeType, data: base64(bytes) });
     }
-    if (attachment.kind === "image") {
-      if (!capabilities?.image) throw new Error("This Agent does not accept image prompts.");
-      blocks.push({
-        type: "image",
-        data: await fileBase64(attachment.file),
-        mimeType: attachment.mimeType || attachment.file.type || "application/octet-stream",
-      });
-      continue;
-    }
-    if (isTextFile(attachment.file)) {
-      blocks.push({
-        type: "text",
-        text: `\n\nAttachment: ${attachment.name}\n\n${await attachment.file.text()}`,
-      });
-      continue;
-    }
-    if (!capabilities?.embeddedContext) {
-      throw new Error("This Agent accepts text files and images only.");
-    }
-    blocks.push({
-      type: "resource",
-      resource: {
-        uri: `attachment:///${encodeURIComponent(attachment.name)}`,
-        mimeType: attachment.mimeType || attachment.file.type || "application/octet-stream",
-        blob: await fileBase64(attachment.file),
-      },
-    });
   }
   if (!blocks.length) throw new Error("Enter a message or attach a file.");
   return blocks;
 }
 
-function isTextFile(file: File): boolean {
-  if (file.type.startsWith("text/")) return true;
-  if (["application/json", "application/javascript", "application/xml", "application/yaml"].includes(file.type)) {
-    return true;
-  }
-  return /\.(?:c|cc|cpp|css|csv|go|h|html|java|js|json|jsx|md|py|rb|rs|sh|sql|toml|ts|tsx|txt|xml|ya?ml)$/i.test(file.name);
+function utf8Text(bytes: Uint8Array, name: string): string {
+  try { return new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
+  catch { throw new Error(`${name} must contain valid UTF-8 text.`); }
 }
 
-async function fileBase64(file: File): Promise<string> {
-  const bytes = new Uint8Array(await file.arrayBuffer());
+function base64(bytes: Uint8Array): string {
   let binary = "";
   for (let start = 0; start < bytes.length; start += 0x8000) {
     binary += String.fromCharCode(...bytes.subarray(start, start + 0x8000));

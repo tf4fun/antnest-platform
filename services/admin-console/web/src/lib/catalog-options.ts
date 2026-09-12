@@ -21,7 +21,7 @@ type CatalogOptions<T> = {
   retry: () => void;
 };
 
-const modelKey = (model: ModelProfile) => model.revision_id;
+const modelKey = (model: ModelProfile) => model.model_profile_id;
 const modelEnabled = (model: ModelProfile) => model.enabled;
 const templateKey = (template: AgentTemplate) => template.template_id;
 const templateEnabled = (template: AgentTemplate) => template.enabled;

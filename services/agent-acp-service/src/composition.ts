@@ -1,11 +1,13 @@
+import { SessionConfigurationService } from "./application/session-configuration.js";
+import { PostgresToolPermissions } from "./adapters/postgres/tool-permissions.js";
+import { PermissionConnections } from "./application/permission-connections.js";
+import { ToolPermissions } from "./application/tool-permissions.js";
+import { PostgresSessionConfiguration } from "./adapters/postgres/session-configuration.js";
 import { randomUUID } from "node:crypto";
 
 import { Pool } from "pg";
 
-import {
-  AgentControllerClient,
-  requireAgentControllerReady,
-} from "./adapters/controller/client.js";
+import { AgentControllerClient } from "./adapters/controller/client.js";
 import { OfficialMcpDialer } from "./adapters/mcp/official-client.js";
 import { McpToolCatalog } from "./adapters/mcp/tool-catalog.js";
 import { OpenAICompatibleModel } from "./adapters/model/openai-compatible.js";
@@ -36,6 +38,7 @@ import {
   InstrumentedRuntimeInformation,
 } from "./telemetry/instrumented-ports.js";
 import { AgentAcpHttpServer } from "./transport/http-server.js";
+import { InstrumentedToolPermissions } from "./telemetry/instrumented-permissions.js";
 
 export type RunningAgentAcpService = {
   failure: Promise<Error>;
@@ -67,7 +70,7 @@ export async function startAgentAcpService(
     await telemetry.span("postgres.migrate", { "db.system.name": "postgresql" }, () =>
       migrate(pool),
     );
-    await requireDependenciesReady(pool, config, telemetry);
+    await requireDependenciesReady(pool, telemetry);
     const acquiredWorkerLock = await telemetry.span(
       "postgres.worker_lock.acquire",
       { "db.system.name": "postgresql" },
@@ -84,7 +87,14 @@ export async function startAgentAcpService(
       recoveryRequired(ownershipLoss);
     });
 
-    await waitForStartupRecovery(built.recovery.recover(ownership.signal), failure.promise);
+    await waitForStartupRecovery(
+      (async () => {
+        await built.permissionRepository.cancelAbandoned();
+        ownership.signal.throwIfAborted();
+        await built.recovery.recover(ownership.signal);
+      })(),
+      failure.promise,
+    );
     if (requestedFailure !== undefined) {
       throw requestedFailure;
     }
@@ -97,12 +107,11 @@ export async function startAgentAcpService(
     const server = new AgentAcpHttpServer({
       agentController: built.agentController,
       application: built.application,
+      permissions: built.permissionConnections,
       maxWebSocketPayloadBytes: config.maxWebSocketPayloadBytes,
       telemetry,
       ready: async () =>
-        serving &&
-        acquiredWorkerLock.isHeld() &&
-        (await dependenciesReady(pool, config, telemetry)),
+        serving && acquiredWorkerLock.isHeld() && (await dependenciesReady(pool, telemetry)),
     });
     await server.listen(config.listen.host, config.listen.port);
     serving = true;
@@ -183,7 +192,15 @@ function buildComponents(
   });
   const tools = new InstrumentedToolCatalog(rawTools, telemetry);
   const information = new InstrumentedRuntimeInformation(rawTools, telemetry);
+  const access = new AccessService({ agentController, id: randomUUID });
+  const permissionConnections = new PermissionConnections();
+  const permissionRepository = new PostgresToolPermissions(kernel);
+  const permissions = new InstrumentedToolPermissions(
+    new ToolPermissions(permissionRepository, permissionConnections, access),
+    telemetry,
+  );
   const executor = new RunExecutor({
+    permissions,
     executions,
     contextBuilder: new ContextBuilder({
       repository: contexts,
@@ -202,10 +219,18 @@ function buildComponents(
     now,
   });
   const supervisor = new RunSupervisor(executor);
+  const sessionService = new SessionService({ repository: sessions, id: randomUUID, now });
   const application = new InstrumentedAcpApplication(
     new AcpApplication({
-      access: new AccessService({ agentController, id: randomUUID }),
-      sessions: new SessionService({ repository: sessions, id: randomUUID, now }),
+      configuration: new SessionConfigurationService({
+        sessions: sessionService,
+        repository: new PostgresSessionConfiguration(kernel),
+        controller: agentController,
+        id: randomUUID,
+        now,
+      }),
+      access,
+      sessions: sessionService,
       prompts: new PromptCoordinator({
         repository: runs,
         agentController,
@@ -228,43 +253,35 @@ function buildComponents(
     id: randomUUID,
     now,
   });
-  return { agentController, application, recovery, supervisor };
+  return {
+    agentController,
+    application,
+    recovery,
+    supervisor,
+    permissionConnections,
+    permissionRepository,
+  };
 }
 
-async function requireDependenciesReady(
-  pool: Pool,
-  config: AgentAcpConfig,
-  telemetry: TelemetryPort,
-): Promise<void> {
-  if (!(await dependenciesReady(pool, config, telemetry))) {
+async function requireDependenciesReady(pool: Pool, telemetry: TelemetryPort): Promise<void> {
+  if (!(await dependenciesReady(pool, telemetry))) {
     throw new Error("Agent ACP Service dependencies are not ready");
   }
 }
 
-async function dependenciesReady(
-  pool: Pool,
-  config: AgentAcpConfig,
+export async function dependenciesReady(
+  pool: { query(sql: string): Promise<unknown> },
   telemetry: TelemetryPort,
 ): Promise<boolean> {
   try {
-    await Promise.all([
-      telemetry.span("postgres.ready", { "db.system.name": "postgresql" }, () =>
-        pool.query("SELECT 1"),
-      ),
-      telemetry.span("agent_controller.status", {}, () => controllerReady(config)),
-    ]);
+    await telemetry.span("postgres.ready", { "db.system.name": "postgresql" }, () =>
+      pool.query("SELECT 1"),
+    );
     return true;
   } catch (error) {
     telemetry.log("warn", "dependency_not_ready", {}, error);
     return false;
   }
-}
-
-async function controllerReady(config: AgentAcpConfig): Promise<void> {
-  await requireAgentControllerReady({
-    serviceUrl: config.agentControllerUrl,
-    timeoutMs: config.controllerTimeoutMs,
-  });
 }
 
 function now(): Date {

@@ -48,7 +48,7 @@ export function mergeCatalogOptions<T>(
   eligible: (item: T) => boolean,
 ): CatalogOptionState<T> {
   return {
-    items: mergePage(current, page.items.filter(eligible), key),
+    items: mergePage(current, page.items, key).filter(eligible),
     nextAfterID: page.next_after_id ?? undefined,
   };
 }

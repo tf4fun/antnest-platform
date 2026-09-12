@@ -1,3 +1,4 @@
+use std::os::unix::process::ExitStatusExt as _;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
@@ -13,6 +14,7 @@ use tokio::sync::{Notify, mpsc};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::Instrument as _;
+use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 
 use crate::command::ToolCommand;
 use crate::execution::{
@@ -25,6 +27,7 @@ use crate::executor_protocol::{
     encode_bash_request, encode_edit_request, encode_read_request, encode_write_request,
 };
 use crate::information::RuntimeContext;
+use crate::progress::ProgressSink;
 use crate::spec::RuntimeIdentity;
 use crate::telemetry::RuntimeMetrics;
 use crate::tool_error::{ToolError, ToolErrorCode};
@@ -98,6 +101,16 @@ impl ExecutionActor {
         request: BashRequest,
         cancel: CancellationToken,
     ) -> Result<BashResult, ToolError> {
+        self.bash_with_progress(request, cancel, ProgressSink::default())
+            .await
+    }
+
+    pub(crate) async fn bash_with_progress(
+        &self,
+        request: BashRequest,
+        cancel: CancellationToken,
+        progress: ProgressSink,
+    ) -> Result<BashResult, ToolError> {
         let timeout = request.timeout().saturating_add(EXECUTOR_GRACE);
         let encoded = encode_bash_request(request).map_err(executor_request_error)?;
         self.execute(
@@ -106,6 +119,7 @@ impl ExecutionActor {
             decode_bash_reply,
             cancel,
             timeout,
+            progress,
         )
         .await
     }
@@ -122,6 +136,7 @@ impl ExecutionActor {
             decode_read_reply,
             cancel,
             FILE_TOOL_TIMEOUT,
+            ProgressSink::default(),
         )
         .await
     }
@@ -138,6 +153,7 @@ impl ExecutionActor {
             decode_write_reply,
             cancel,
             FILE_TOOL_TIMEOUT,
+            ProgressSink::default(),
         )
         .await
     }
@@ -154,6 +170,7 @@ impl ExecutionActor {
             decode_edit_reply,
             cancel,
             FILE_TOOL_TIMEOUT,
+            ProgressSink::default(),
         )
         .await
     }
@@ -168,6 +185,7 @@ impl ExecutionActor {
             decode_info_reply,
             cancel,
             FILE_TOOL_TIMEOUT,
+            ProgressSink::default(),
         )
         .await
     }
@@ -200,6 +218,7 @@ impl ExecutionActor {
         decode_reply: ReplyDecoder<O>,
         cancel: CancellationToken,
         timeout: Duration,
+        progress: ProgressSink,
     ) -> Result<O, ToolError>
     where
         O: Send + 'static,
@@ -225,6 +244,7 @@ impl ExecutionActor {
             ));
         }
         let call = ExecutorCall {
+            progress,
             tool,
             request,
             workspace: self.workspace.clone(),
@@ -243,6 +263,8 @@ impl ExecutionActor {
             "antnest.agent.id" = self.identity.agent_id(),
             "antnest.runtime.generation" = %self.identity.generation(),
             "executor.tool.name" = tool.as_str(),
+            "executor.program.path" = "/proc/self/exe",
+            "antnest.execution.timeout_ms" = u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX),
             "executor.child.pid" = tracing::field::Empty,
             "executor.exit.classification" = tracing::field::Empty,
             "executor.outcome" = tracing::field::Empty,
@@ -274,14 +296,15 @@ impl ExecutionActor {
                 Err(ToolError::new(
                     ToolErrorCode::ChildProcessContainmentUnproven,
                     format!("Executor coordination task failed: {error}"),
-                ))
+                )
+                .with_source(error))
             }
         }
     }
 }
 
 fn executor_request_error(error: serde_json::Error) -> ToolError {
-    ToolError::new(ToolErrorCode::RuntimeFailed, error)
+    ToolError::new(ToolErrorCode::RuntimeFailed, &error).with_source(error)
 }
 
 fn validate_probe_result(result: BashResult) -> Result<(), ToolError> {
@@ -409,6 +432,7 @@ impl AdmissionError {
 pub(crate) struct ExecutionFatal;
 
 struct ExecutorCall {
+    progress: ProgressSink,
     tool: ToolCommand,
     request: Vec<u8>,
     workspace: PathBuf,
@@ -443,10 +467,9 @@ impl ExecutorCall {
             .stderr(Stdio::piped())
             .kill_on_drop(true)
             .process_group(0);
-        let mut owned = self
-            .children
-            .spawn(&mut command)
-            .map_err(|error| ToolError::new(ToolErrorCode::SpawnFailed, error))?;
+        let mut owned = self.children.spawn(&mut command).map_err(|error| {
+            ToolError::new(ToolErrorCode::SpawnFailed, &error).with_source(error)
+        })?;
         let child = &mut owned.child;
         if let Some(pid) = child.id() {
             tracing::Span::current().record("executor.child.pid", u64::from(pid));
@@ -479,7 +502,10 @@ impl ExecutorCall {
             stdin.write_all(&request).await?;
             stdin.shutdown().await
         });
-        let output = tokio::spawn(read_bounded(stdout, MAX_EXECUTOR_MESSAGE_BYTES));
+        let output = tokio::spawn(crate::executor_protocol::read_executor_output(
+            stdout,
+            self.progress.clone(),
+        ));
         let diagnostics = tokio::spawn(read_bounded(stderr, MAX_EXECUTOR_DIAGNOSTIC_BYTES));
         let mut io = ExecutorIo {
             input,
@@ -506,9 +532,9 @@ impl ExecutorCall {
                 Err(error) => {
                     tracing::Span::current().record("executor.exit.classification", "wait_error");
                     self.stop_executor(child, process_group, &mut io).await?;
-                    return Err(
-                        self.unobserved_error(format!("wait for executor process: {error}"))
-                    );
+                    return Err(self
+                        .unobserved_error(format!("wait for executor process: {error}"))
+                        .with_source(error));
                 }
             },
             Exit::Canceled => {
@@ -542,12 +568,21 @@ impl ExecutorCall {
                 "nonzero"
             },
         );
+        if let Some(code) = status.code() {
+            tracing::Span::current().set_attribute("process.exit.code", i64::from(code));
+        }
+        if let Some(signal) = status.signal() {
+            tracing::Span::current().set_attribute("executor.exit.signal", i64::from(signal));
+        }
 
         let (output, output_truncated, diagnostics, diagnostics_truncated) =
             tokio::time::timeout(PROCESS_STOP_TIMEOUT, io.finish())
                 .await
-                .map_err(|_| self.unobserved_error("executor response drain timed out"))?
-                .map_err(|error| self.unobserved_error(error))?;
+                .map_err(|error| {
+                    self.unobserved_error("executor response drain timed out")
+                        .with_source(error)
+                })?
+                .map_err(|error| self.unobserved_error(&error).with_source(error))?;
         if output_truncated {
             return Err(self.unobserved_error("executor response exceeded the encoded limit"));
         }
@@ -555,9 +590,10 @@ impl ExecutorCall {
             let reason = diagnostic_summary(&diagnostics, diagnostics_truncated);
             return Err(self.unobserved_error(reason));
         }
-        match decode_reply(&output)
-            .map_err(|error| self.unobserved_error(format!("decode executor response: {error}")))?
-        {
+        match decode_reply(&output).map_err(|error| {
+            self.unobserved_error(format!("decode executor response: {error}"))
+                .with_source(error)
+        })? {
             Ok(result) => Ok(result),
             Err(error) => {
                 if matches!(
@@ -584,17 +620,17 @@ impl ExecutorCall {
         if let Err(error) = result {
             self.gate.poison();
             let _ = self.fatal.send(ExecutionFatal);
-            return Err(ToolError::unknown(
-                ToolErrorCode::ChildProcessContainmentUnproven,
-                error,
-            ));
+            return Err(
+                ToolError::unknown(ToolErrorCode::ChildProcessContainmentUnproven, &error)
+                    .with_source(error),
+            );
         }
         Ok(())
     }
 
     fn interrupted_error(&self, code: ToolErrorCode, message: &'static str) -> ToolError {
         if self.tool.may_have_side_effects() {
-            ToolError::outcome_unknown(message)
+            ToolError::outcome_unknown(message).with_source(ToolError::new(code, message))
         } else {
             ToolError::new(code, message)
         }
@@ -648,6 +684,8 @@ fn record_executor_result(
             });
         }
         Err(error) => {
+            crate::diagnostics::record_tool_error(span, "executor", error);
+
             metrics.executor(tool.as_str(), "error", error.code.as_str(), duration);
             span.record("executor.outcome", "error");
             span.record("otel.status_code", "ERROR");

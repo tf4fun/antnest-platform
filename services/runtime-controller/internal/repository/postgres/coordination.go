@@ -8,8 +8,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jackc/pgx/v5/stdlib"
-
 	"soft/antnest-platform/services/runtime-controller/internal/repository"
 )
 
@@ -239,11 +237,11 @@ func (r *Repository) ListenObservationNotifications(
 	}
 	defer joinCloseError(&resultErr, "observation notification connection", connection.Close)
 	return connection.Raw(func(raw any) error {
-		stdlibConnection, ok := raw.(*stdlib.Conn)
+		stdlibConnection, ok := raw.(*transactionConnection)
 		if !ok {
 			return fmt.Errorf("observation notification requires the pgx database driver")
 		}
-		postgresConnection := stdlibConnection.Conn()
+		postgresConnection := stdlibConnection.Conn.Conn()
 		if _, err := postgresConnection.Exec(ctx, "LISTEN runtime_controller_observation"); err != nil {
 			return fmt.Errorf("listen for Runtime observations: %w", err)
 		}

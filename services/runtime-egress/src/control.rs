@@ -1,10 +1,13 @@
-use std::{net::Ipv4Addr, sync::Arc, time::Instant};
+use std::{net::Ipv4Addr, sync::Arc};
 
 use async_trait::async_trait;
 use axum::{
-    Json, Router,
+    Router,
     body::Body,
-    extract::{MatchedPath, Path, State, rejection::JsonRejection},
+    extract::{
+        MatchedPath, Path, State,
+        rejection::{JsonRejection, PathRejection},
+    },
     http::{Request, StatusCode},
     middleware,
     middleware::Next,
@@ -23,7 +26,12 @@ use crate::{
     domain::{AgentId, AttachmentState, NetworkState, PolicyAssignment, PolicyId, PolicyRevision},
     policy::PolicySpec,
     repository::Repository,
-    telemetry::EgressMetrics,
+    telemetry::{EgressMetrics, capture_rpc_content_from_environment},
+};
+
+mod observation;
+use observation::{
+    CaptureHandle, Completion, ControlJson, RequestBody, rpc_scope, safe_identifier,
 };
 
 pub use crate::application::ServiceStatus;
@@ -42,6 +50,7 @@ pub const CONTROL_ROUTES: &[(&str, &str)] = &[
     ("PUT", ATTACHMENT_ROUTE),
     ("POST", RELEASE_ROUTE),
     ("PUT", POLICY_REVISION_ROUTE),
+    ("GET", POLICY_REVISION_ROUTE),
     ("GET", POLICY_ASSIGNMENT_ROUTE),
     ("PUT", POLICY_ASSIGNMENT_ROUTE),
 ];
@@ -84,6 +93,11 @@ trait ControlApi: Send + Sync {
         spec: PolicySpec,
     ) -> Result<PolicyRevision, ControlError>;
     async fn assignment(&self, agent_id: &AgentId) -> Result<PolicyAssignment, ControlError>;
+    async fn policy(
+        &self,
+        policy_id: &PolicyId,
+        revision: u64,
+    ) -> Result<PolicyRevision, ControlError>;
     async fn assign(
         &self,
         agent_id: AgentId,
@@ -104,15 +118,11 @@ where
     }
 
     async fn ensure(&self, agent_id: AgentId) -> Result<RuntimeNetworkAttachment, ControlError> {
-        let result = self.ensure_agent_network(agent_id).await;
-        self.observe_control_result(&result);
-        result
+        self.ensure_agent_network(agent_id).await
     }
 
     async fn network(&self, agent_id: &AgentId) -> Result<RuntimeNetworkAttachment, ControlError> {
-        let result = self.agent_network(agent_id).await;
-        self.observe_control_result(&result);
-        result
+        self.agent_network(agent_id).await
     }
 
     async fn set_attachment(
@@ -121,11 +131,8 @@ where
         state: AttachmentState,
         expected_resource_version: u64,
     ) -> Result<RuntimeNetworkAttachment, ControlError> {
-        let result = self
-            .set_runtime_attachment(agent_id, state, expected_resource_version)
-            .await;
-        self.observe_control_result(&result);
-        result
+        self.set_runtime_attachment(agent_id, state, expected_resource_version)
+            .await
     }
 
     async fn release(
@@ -133,11 +140,8 @@ where
         agent_id: AgentId,
         expected_resource_version: u64,
     ) -> Result<RuntimeNetworkAttachment, ControlError> {
-        let result = self
-            .release_agent_network(agent_id, expected_resource_version)
-            .await;
-        self.observe_control_result(&result);
-        result
+        self.release_agent_network(agent_id, expected_resource_version)
+            .await
     }
 
     async fn put_policy(
@@ -146,15 +150,19 @@ where
         revision: u64,
         spec: PolicySpec,
     ) -> Result<PolicyRevision, ControlError> {
-        let result = self.put_policy_revision(policy_id, revision, spec).await;
-        self.observe_control_result(&result);
-        result
+        self.put_policy_revision(policy_id, revision, spec).await
     }
 
     async fn assignment(&self, agent_id: &AgentId) -> Result<PolicyAssignment, ControlError> {
-        let result = self.policy_assignment(agent_id).await;
-        self.observe_control_result(&result);
-        result
+        self.policy_assignment(agent_id).await
+    }
+
+    async fn policy(
+        &self,
+        policy_id: &PolicyId,
+        revision: u64,
+    ) -> Result<PolicyRevision, ControlError> {
+        self.policy_revision(policy_id, revision).await
     }
 
     async fn assign(
@@ -164,11 +172,8 @@ where
         revision: u64,
         expected_resource_version: u64,
     ) -> Result<PolicyAssignment, ControlError> {
-        let result = self
-            .assign_policy(agent_id, policy_id, revision, expected_resource_version)
-            .await;
-        self.observe_control_result(&result);
-        result
+        self.assign_policy(agent_id, policy_id, revision, expected_resource_version)
+            .await
     }
 }
 
@@ -176,6 +181,7 @@ where
 struct AppState {
     api: Arc<dyn ControlApi>,
     metrics: EgressMetrics,
+    capture_rpc_content: bool,
 }
 
 pub fn router<R, K>(service: Arc<ControlService<R, K>>, metrics: EgressMetrics) -> Router
@@ -183,16 +189,32 @@ where
     R: Repository,
     K: KernelCleanup,
 {
+    router_with_capture_rpc_content(service, metrics, capture_rpc_content_from_environment())
+}
+
+pub fn router_with_capture_rpc_content<R, K>(
+    service: Arc<ControlService<R, K>>,
+    metrics: EgressMetrics,
+    capture_rpc_content: bool,
+) -> Router
+where
+    R: Repository,
+    K: KernelCleanup,
+{
     let state = AppState {
         api: service,
         metrics,
+        capture_rpc_content,
     };
     Router::new()
         .route(STATUS_ROUTE, get(status_handler))
         .route(AGENT_NETWORK_ROUTE, get(get_network).put(ensure_network))
         .route(ATTACHMENT_ROUTE, put(set_attachment))
         .route(RELEASE_ROUTE, post(release_network))
-        .route(POLICY_REVISION_ROUTE, put(put_policy_revision))
+        .route(
+            POLICY_REVISION_ROUTE,
+            put(put_policy_revision).get(get_policy_revision),
+        )
         .route(
             POLICY_ASSIGNMENT_ROUTE,
             get(get_assignment).put(assign_policy),
@@ -226,22 +248,25 @@ async fn trace_request(
     request: Request<Body>,
     next: Next,
 ) -> Response {
-    let method = request.method().clone();
-    let is_control_request = request.uri().path().starts_with("/internal/");
+    let method = match request.method().as_str() {
+        "GET" | "POST" | "PUT" | "DELETE" | "PATCH" | "HEAD" | "OPTIONS" | "CONNECT" | "TRACE" => {
+            request.method().to_string()
+        }
+        _ => "_OTHER".to_owned(),
+    };
     let route = request
         .extensions()
         .get::<MatchedPath>()
         .map(MatchedPath::as_str)
         .unwrap_or("unmatched")
         .to_owned();
-    if !is_business_control_route(&route) && !is_control_request {
-        return next.run(request).await;
-    }
     let parent = global::get_text_map_propagator(|propagator| {
         propagator.extract(&HeaderExtractor(request.headers()))
     });
     let span = tracing::info_span!(
         "egress.control",
+        otel.name = format!("HTTP {method} {route}"),
+        otel.kind = "server",
         "service.name" = crate::telemetry::SERVICE_NAME,
         "http.request.method" = %method,
         "http.route" = route,
@@ -257,64 +282,50 @@ async fn trace_request(
         trace_id = tracing::field::Empty,
         span_id = tracing::field::Empty,
     );
-    if let Err(error) = span.set_parent(parent) {
-        tracing::debug!(?error, "incoming trace context was not attached");
+    if span.set_parent(parent).is_err() {
+        tracing::debug!("incoming trace context was not attached");
     }
     crate::telemetry::record_span_identity(&span);
-    let started = Instant::now();
-    let response = next.run(request).instrument(span.clone()).await;
-    let status = response.status();
-    let error_type = response
-        .extensions()
-        .get::<ControlErrorCode>()
-        .map_or("", |code| code.0);
-    let diagnostic = response.extensions().get::<FailureContext>().copied();
-    let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-    let outcome = if status.is_success() {
-        "success"
-    } else {
-        "error"
-    };
-    state.metrics.control(
-        method.as_str(),
-        &route,
-        status.as_u16(),
-        outcome,
-        error_type,
-        started.elapsed(),
-    );
-    span.record("http.response.status_code", status.as_u16());
-    span.record("http.server.request.duration_ms", duration_ms);
-    span.record(
-        "otel.status_code",
-        if status.is_client_error() || status.is_server_error() {
-            "ERROR"
-        } else {
-            "OK"
-        },
-    );
-    span.record("error.type", error_type);
-    if let Some(diagnostic) = diagnostic {
-        span.record("failure.stage", diagnostic.stage);
-        span.record("failure.cause", diagnostic.cause);
+    span.set_attribute("network.protocol.name", "http");
+    match request.version() {
+        axum::http::Version::HTTP_10 => span.set_attribute("network.protocol.version", "1.0"),
+        axum::http::Version::HTTP_11 => span.set_attribute("network.protocol.version", "1.1"),
+        axum::http::Version::HTTP_2 => span.set_attribute("network.protocol.version", "2"),
+        axum::http::Version::HTTP_3 => span.set_attribute("network.protocol.version", "3"),
+        _ => {}
     }
-    span.in_scope(|| {
-        tracing::info!(
-            http.request.method = %method,
-            http.route = route,
-            http.response.status_code = status.as_u16(),
-            http.server.request.duration_ms = duration_ms,
-            error.type = error_type,
-            failure.stage = diagnostic.map_or("", |value| value.stage),
-            failure.cause = diagnostic.map_or("", |value| value.cause),
-            "Runtime Egress control request completed"
-        );
-    });
-    response
+    if let Some(operation) = control_operation(&method, &route) {
+        span.set_attribute("rpc.service", "runtime-egress.control");
+        span.set_attribute("rpc.method", operation);
+    }
+    let enabled = state.capture_rpc_content && control_operation(&method, &route).is_some();
+    let capture = CaptureHandle::new();
+    let completion = Completion::new(span.clone(), method, route, state.metrics, capture.clone());
+    let (mut parts, body) = request.into_parts();
+    parts.extensions.insert(capture.clone());
+    let request = Request::from_parts(
+        parts,
+        Body::new(RequestBody {
+            inner: body,
+            capture,
+        }),
+    );
+    let response = rpc_scope(enabled, next.run(request)).instrument(span).await;
+    completion.respond(response)
 }
 
-fn is_business_control_route(route: &str) -> bool {
-    route.starts_with("/internal/")
+fn control_operation(method: &str, route: &str) -> Option<&'static str> {
+    match (method, route) {
+        ("PUT", AGENT_NETWORK_ROUTE) => Some("ensure_agent_network"),
+        ("GET", AGENT_NETWORK_ROUTE) => Some("agent_network"),
+        ("PUT", ATTACHMENT_ROUTE) => Some("set_runtime_attachment"),
+        ("POST", RELEASE_ROUTE) => Some("release_agent_network"),
+        ("PUT", POLICY_REVISION_ROUTE) => Some("put_policy_revision"),
+        ("GET", POLICY_REVISION_ROUTE) => Some("policy_revision"),
+        ("GET", POLICY_ASSIGNMENT_ROUTE) => Some("policy_assignment"),
+        ("PUT", POLICY_ASSIGNMENT_ROUTE) => Some("assign_policy"),
+        _ => None,
+    }
 }
 
 struct HeaderExtractor<'a>(&'a axum::http::HeaderMap);
@@ -329,14 +340,30 @@ impl Extractor for HeaderExtractor<'_> {
     }
 }
 
-async fn status_handler(State(state): State<AppState>) -> Json<ServiceStatus> {
-    Json(state.api.status())
+async fn status_handler(State(state): State<AppState>) -> Response {
+    status_response(state.api.status())
+}
+
+fn status_response(status: ServiceStatus) -> Response {
+    let failed = status.status != "ready";
+    let mut response = axum::Json(status).into_response();
+    if failed {
+        response
+            .extensions_mut()
+            .insert(ControlErrorCode("service_not_ready"));
+        response.extensions_mut().insert(SafeFailure {
+            code: "service_not_ready",
+            message: "Egress initialization or local readiness is incomplete",
+            diagnostic: None,
+        });
+    }
+    response
 }
 
 async fn ensure_network(
     State(state): State<AppState>,
     Path(agent_id): Path<String>,
-) -> Result<Json<NetworkResponse>, ApiError> {
+) -> Result<ControlJson<NetworkResponse>, ApiError> {
     let agent_id = parse_agent_id(agent_id)?;
     record_agent_id(&agent_id);
     state
@@ -344,14 +371,14 @@ async fn ensure_network(
         .ensure(agent_id)
         .await
         .map(NetworkResponse::from)
-        .map(Json)
+        .map(ControlJson)
         .map_err(ApiError::from)
 }
 
 async fn get_network(
     State(state): State<AppState>,
     Path(agent_id): Path<String>,
-) -> Result<Json<NetworkResponse>, ApiError> {
+) -> Result<ControlJson<NetworkResponse>, ApiError> {
     let agent_id = parse_agent_id(agent_id)?;
     record_agent_id(&agent_id);
     state
@@ -359,16 +386,16 @@ async fn get_network(
         .network(&agent_id)
         .await
         .map(NetworkResponse::from)
-        .map(Json)
+        .map(ControlJson)
         .map_err(ApiError::from)
 }
 
 async fn set_attachment(
     State(state): State<AppState>,
     Path(agent_id): Path<String>,
-    request: Result<Json<SetAttachmentRequest>, JsonRejection>,
-) -> Result<Json<NetworkResponse>, ApiError> {
-    let Json(request) = request.map_err(|_| ApiError::invalid_request())?;
+    request: Result<ControlJson<SetAttachmentRequest>, JsonRejection>,
+) -> Result<ControlJson<NetworkResponse>, ApiError> {
+    let ControlJson(request) = request.map_err(|_| ApiError::invalid_request())?;
     validate_resource_version(request.expected_resource_version)?;
     let agent_id = parse_agent_id(agent_id)?;
     record_agent_id(&agent_id);
@@ -377,11 +404,11 @@ async fn set_attachment(
         .set_attachment(agent_id, request.state, request.expected_resource_version)
         .await
         .map(NetworkResponse::from)
-        .map(Json)
+        .map(ControlJson)
         .map_err(ApiError::from)
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct SetAttachmentRequest {
     state: AttachmentState,
@@ -391,9 +418,9 @@ struct SetAttachmentRequest {
 async fn release_network(
     State(state): State<AppState>,
     Path(agent_id): Path<String>,
-    request: Result<Json<ExpectedResourceVersionRequest>, JsonRejection>,
-) -> Result<Json<NetworkResponse>, ApiError> {
-    let Json(request) = request.map_err(|_| ApiError::invalid_request())?;
+    request: Result<ControlJson<ExpectedResourceVersionRequest>, JsonRejection>,
+) -> Result<ControlJson<NetworkResponse>, ApiError> {
+    let ControlJson(request) = request.map_err(|_| ApiError::invalid_request())?;
     validate_resource_version(request.expected_resource_version)?;
     let agent_id = parse_agent_id(agent_id)?;
     record_agent_id(&agent_id);
@@ -402,11 +429,11 @@ async fn release_network(
         .release(agent_id, request.expected_resource_version)
         .await
         .map(NetworkResponse::from)
-        .map(Json)
+        .map(ControlJson)
         .map_err(ApiError::from)
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct ExpectedResourceVersionRequest {
     expected_resource_version: u64,
@@ -419,7 +446,7 @@ fn validate_resource_version(resource_version: u64) -> Result<(), ApiError> {
     Ok(())
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct PutPolicyRequest {
     spec: PolicySpec,
@@ -428,9 +455,9 @@ struct PutPolicyRequest {
 async fn put_policy_revision(
     State(state): State<AppState>,
     Path((policy_id, revision)): Path<(String, String)>,
-    request: Result<Json<PutPolicyRequest>, JsonRejection>,
-) -> Result<Json<PolicyRevisionResponse>, ApiError> {
-    let Json(request) = request.map_err(|_| ApiError::invalid_request())?;
+    request: Result<ControlJson<PutPolicyRequest>, JsonRejection>,
+) -> Result<ControlJson<PolicyRevisionResponse>, ApiError> {
+    let ControlJson(request) = request.map_err(|_| ApiError::invalid_request())?;
     let policy_id = parse_policy_id(policy_id)?;
     let revision = parse_positive_revision(&revision)?;
     record_policy(&policy_id, revision);
@@ -439,14 +466,31 @@ async fn put_policy_revision(
         .put_policy(policy_id, revision, request.spec)
         .await
         .map(PolicyRevisionResponse::from)
-        .map(Json)
+        .map(ControlJson)
+        .map_err(ApiError::from)
+}
+
+async fn get_policy_revision(
+    State(state): State<AppState>,
+    path: Result<Path<(String, String)>, PathRejection>,
+) -> Result<ControlJson<PolicyRevisionDetailResponse>, ApiError> {
+    let Path((policy_id, revision)) = path.map_err(|_| ApiError::invalid_request())?;
+    let policy_id = parse_policy_id(policy_id)?;
+    let revision = parse_positive_revision(&revision)?;
+    record_policy(&policy_id, revision);
+    state
+        .api
+        .policy(&policy_id, revision)
+        .await
+        .map(PolicyRevisionDetailResponse::from)
+        .map(ControlJson)
         .map_err(ApiError::from)
 }
 
 async fn get_assignment(
     State(state): State<AppState>,
     Path(agent_id): Path<String>,
-) -> Result<Json<AssignmentResponse>, ApiError> {
+) -> Result<ControlJson<AssignmentResponse>, ApiError> {
     let agent_id = parse_agent_id(agent_id)?;
     record_agent_id(&agent_id);
     state
@@ -454,11 +498,11 @@ async fn get_assignment(
         .assignment(&agent_id)
         .await
         .map(AssignmentResponse::from)
-        .map(Json)
+        .map(ControlJson)
         .map_err(ApiError::from)
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct AssignPolicyRequest {
     policy_id: String,
@@ -469,9 +513,9 @@ struct AssignPolicyRequest {
 async fn assign_policy(
     State(state): State<AppState>,
     Path(agent_id): Path<String>,
-    request: Result<Json<AssignPolicyRequest>, JsonRejection>,
-) -> Result<Json<AssignmentResponse>, ApiError> {
-    let Json(request) = request.map_err(|_| ApiError::invalid_request())?;
+    request: Result<ControlJson<AssignPolicyRequest>, JsonRejection>,
+) -> Result<ControlJson<AssignmentResponse>, ApiError> {
+    let ControlJson(request) = request.map_err(|_| ApiError::invalid_request())?;
     let agent_id = parse_agent_id(agent_id)?;
     let policy_id = parse_policy_id(request.policy_id)?;
     record_agent_id(&agent_id);
@@ -486,7 +530,7 @@ async fn assign_policy(
         )
         .await
         .map(AssignmentResponse::from)
-        .map(Json)
+        .map(ControlJson)
         .map_err(ApiError::from)
 }
 
@@ -548,6 +592,25 @@ impl From<PolicyRevision> for PolicyRevisionResponse {
 }
 
 #[derive(Serialize)]
+struct PolicyRevisionDetailResponse {
+    policy_id: PolicyId,
+    revision: u64,
+    spec: PolicySpec,
+    digest: String,
+}
+
+impl From<PolicyRevision> for PolicyRevisionDetailResponse {
+    fn from(value: PolicyRevision) -> Self {
+        Self {
+            policy_id: value.policy_id,
+            revision: value.revision,
+            spec: value.spec,
+            digest: value.digest,
+        }
+    }
+}
+
+#[derive(Serialize)]
 struct AssignmentResponse {
     agent_id: AgentId,
     policy_id: PolicyId,
@@ -577,6 +640,13 @@ struct ApiError {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct ControlErrorCode(&'static str);
+
+#[derive(Clone)]
+struct SafeFailure {
+    code: &'static str,
+    message: &'static str,
+    diagnostic: Option<FailureContext>,
+}
 
 #[derive(Serialize)]
 struct ErrorBody {
@@ -682,7 +752,7 @@ impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let mut response = (
             self.status,
-            Json(ErrorBody {
+            ControlJson(ErrorBody {
                 code: self.code,
                 message: self.message,
                 retryable: self.retryable,
@@ -692,6 +762,11 @@ impl IntoResponse for ApiError {
         response
             .extensions_mut()
             .insert(ControlErrorCode(self.code));
+        response.extensions_mut().insert(SafeFailure {
+            code: self.code,
+            message: self.message,
+            diagnostic: self.diagnostic.clone(),
+        });
         if let Some(diagnostic) = self.diagnostic {
             response.extensions_mut().insert(diagnostic);
         }
@@ -716,32 +791,31 @@ fn parse_positive_revision(value: &str) -> Result<u64, ApiError> {
 }
 
 fn record_agent_id(agent_id: &AgentId) {
-    tracing::Span::current().record("antnest.agent.id", agent_id.as_str());
+    if safe_identifier(agent_id.as_str()) {
+        tracing::Span::current().record("antnest.agent.id", agent_id.as_str());
+    }
 }
 
 fn record_policy(policy_id: &PolicyId, revision: u64) {
     let span = tracing::Span::current();
-    span.record("antnest.policy.id", policy_id.as_str());
-    span.record("antnest.policy.revision", revision);
+    if safe_identifier(policy_id.as_str()) {
+        span.record("antnest.policy.id", policy_id.as_str());
+    }
+    span.record("antnest.policy.revision", revision.to_string());
 }
 
 #[cfg(test)]
 mod tests {
     use axum::{http::StatusCode, response::IntoResponse};
 
-    use super::{ApiError, ControlErrorCode, is_business_control_route};
+    use super::{ApiError, CONTROL_ROUTES, ControlErrorCode};
     use crate::application::{ControlError, FailureContext};
 
     #[test]
-    fn otlp_route_boundary_excludes_operational_endpoints() {
-        assert!(is_business_control_route(
-            "/internal/agent-networks/{agent_id}"
-        ));
-        assert!(is_business_control_route(
-            "/internal/agent-policy-assignments/{agent_id}"
-        ));
-        assert!(!is_business_control_route("/status"));
-        assert!(!is_business_control_route("unmatched"));
+    fn route_registry_includes_local_status_and_control_endpoints() {
+        assert!(CONTROL_ROUTES.contains(&("GET", "/status")));
+        assert!(CONTROL_ROUTES.contains(&("PUT", "/internal/agent-networks/{agent_id}")));
+        assert!(CONTROL_ROUTES.contains(&("PUT", "/internal/agent-policy-assignments/{agent_id}")));
     }
 
     #[test]
@@ -757,7 +831,8 @@ mod tests {
     fn safe_failure_stage_and_cause_are_available_to_control_telemetry() {
         let diagnostic =
             FailureContext::new("assign_policy.kernel_cleanup", "kernel_command_failed");
-        let response = ApiError::from(ControlError::CleanupFailed(diagnostic)).into_response();
+        let response =
+            ApiError::from(ControlError::CleanupFailed(diagnostic.clone())).into_response();
 
         assert_eq!(
             response.extensions().get::<FailureContext>(),
@@ -773,7 +848,8 @@ mod tests {
     fn scoped_repository_failure_has_a_retryable_stable_error() {
         let diagnostic =
             FailureContext::new("agent_network.repository", "repository_operation_failed");
-        let response = ApiError::from(ControlError::OperationFailed(diagnostic)).into_response();
+        let response =
+            ApiError::from(ControlError::OperationFailed(diagnostic.clone())).into_response();
 
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(

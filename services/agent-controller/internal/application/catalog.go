@@ -33,40 +33,37 @@ var identifierPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,199}$`)
 type CatalogService struct {
 	store  ports.CatalogStore
 	sealer ports.CredentialSealer
-	images ports.ImageResolver
 	clock  ports.Clock
 }
 
-func NewCatalogService(store ports.CatalogStore, sealer ports.CredentialSealer, images ports.ImageResolver, clock ports.Clock) *CatalogService {
-	return &CatalogService{store: store, sealer: sealer, images: images, clock: clock}
+func NewCatalogService(store ports.CatalogStore, sealer ports.CredentialSealer, clock ports.Clock) *CatalogService {
+	return &CatalogService{store: store, sealer: sealer, clock: clock}
 }
 
 type CreateModelProfileInput struct {
-	RequestID        string
-	OrganizationID   string
-	ProfileKey       string
-	DisplayName      string
-	Model            domain.ModelSpec
-	CredentialSecret string
+	RequestID            string
+	OrganizationID       string
+	ProfileKey           string
+	DisplayName          string
+	Model                domain.ModelParameters
+	ProviderConnectionID string
 }
 
 type ModelProfileView struct {
-	ModelProfileID    string
-	OrganizationID    string
-	ProfileKey        string
-	DisplayName       string
-	RevisionID        string
-	Revision          int64
-	CredentialRef     string
-	CredentialVersion string
-	Enabled           bool
-	Model             domain.ModelSpec
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
+	ProviderConnectionID string
+	ModelProfileID       string
+	OrganizationID       string
+	ProfileKey           string
+	DisplayName          string
+	RevisionID           string
+	Revision             int64
+	Enabled              bool
+	Model                domain.ModelSpec
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
 }
 
 func (service *CatalogService) CreateModelProfile(ctx context.Context, input CreateModelProfileInput) (ModelProfileView, error) {
-	input.Model = canonicalModelSpec(input.Model)
 	if err := validateModelProfileInput(input); err != nil {
 		return ModelProfileView{}, err
 	}
@@ -83,34 +80,19 @@ func (service *CatalogService) CreateModelProfile(ctx context.Context, input Cre
 	if found {
 		return modelProfileView(replayed), nil
 	}
-	profileID := derivedID("model", input.RequestID)
-	revisionID := derivedID("modelrev", input.RequestID)
-	credentialRef := derivedID("credential", input.RequestID)
-	credentialVersion := derivedID("credver", input.RequestID)
-	revision, err := domain.NewModelProfileRevision(domain.ModelProfileRevisionInput{
-		ID: revisionID, ModelProfileID: profileID, OrganizationID: input.OrganizationID,
-		Revision: 1, Model: input.Model, CredentialRef: credentialRef,
-		CredentialVersion: credentialVersion,
-	})
+	connection, err := service.loadEnabledProvider(ctx, input.OrganizationID, input.ProviderConnectionID)
 	if err != nil {
-		return ModelProfileView{}, fmt.Errorf("%w: %v", ErrInvalidInput, err)
+		return ModelProfileView{}, err
 	}
-	sealed, err := service.sealer.Seal(ctx, ports.CredentialIdentity{
-		OrganizationID: input.OrganizationID, CredentialRef: credentialRef,
-		CredentialVersion: credentialVersion,
-	}, input.CredentialSecret)
+	record, err := newProviderModel(connection, input.RequestID, ProviderModelInput{
+		ProfileKey: input.ProfileKey, DisplayName: input.DisplayName, Model: input.Model,
+	}, 1, derivedID("model", input.RequestID))
 	if err != nil {
-		return ModelProfileView{}, fmt.Errorf("seal Provider credential: %w", err)
+		return ModelProfileView{}, err
 	}
-	now := service.clock.Now()
-	record, err := service.store.PutModelProfile(ctx, ports.ModelProfileRecord{
-		RequestID: input.RequestID, RequestFingerprint: fingerprint,
-		ModelProfileID: profileID, OrganizationID: input.OrganizationID,
-		ProfileKey: input.ProfileKey, DisplayName: input.DisplayName,
-		Revision: revision, CredentialRef: credentialRef,
-		CredentialVersion: credentialVersion, SealedCredential: sealed,
-		Enabled: true, CreatedAt: now, UpdatedAt: now,
-	})
+	record.RequestID, record.RequestFingerprint = input.RequestID, fingerprint
+	record.CreatedAt, record.UpdatedAt = service.clock.Now(), service.clock.Now()
+	record, err = service.store.PutModelProfile(ctx, record)
 	if err != nil {
 		return ModelProfileView{}, fmt.Errorf("persist ModelProfile: %w", err)
 	}
@@ -118,21 +100,22 @@ func (service *CatalogService) CreateModelProfile(ctx context.Context, input Cre
 }
 
 type ReviseModelProfileInput struct {
-	RequestID        string
-	OrganizationID   string
-	ModelProfileID   string
-	DisplayName      string
-	Model            domain.ModelSpec
-	CredentialSecret string
+	RequestID      string
+	OrganizationID string
+	ModelProfileID string
+	DisplayName    string
+	Model          domain.ModelParameters
 }
 
 func (service *CatalogService) ReviseModelProfile(
 	ctx context.Context, input ReviseModelProfileInput,
 ) (ModelProfileView, error) {
-	input.Model = canonicalModelSpec(input.Model)
+	if err := input.Model.Pricing.Validate(); err != nil {
+		return ModelProfileView{}, fmt.Errorf("%w: %w", ErrInvalidInput, err)
+	}
 	if !validIdentifier(input.RequestID) || !validIdentifier(input.OrganizationID) ||
 		!validIdentifier(input.ModelProfileID) ||
-		strings.TrimSpace(input.DisplayName) == "" || strings.TrimSpace(input.CredentialSecret) == "" {
+		strings.TrimSpace(input.DisplayName) == "" {
 		return ModelProfileView{}, fmt.Errorf("%w: ModelProfile revision input", ErrInvalidInput)
 	}
 	fingerprint, err := requestFingerprint(input)
@@ -155,32 +138,22 @@ func (service *CatalogService) ReviseModelProfile(
 	if current.OrganizationID != input.OrganizationID {
 		return ModelProfileView{}, fmt.Errorf("%w: ModelProfile belongs to another organization", ErrInvalidReference)
 	}
-	revisionID := derivedID("modelrev", input.RequestID)
-	credentialRef := derivedID("credential", input.RequestID)
-	credentialVersion := derivedID("credver", input.RequestID)
-	revision, err := domain.NewModelProfileRevision(domain.ModelProfileRevisionInput{
-		ID: revisionID, ModelProfileID: current.ModelProfileID, OrganizationID: current.OrganizationID,
-		Revision: current.Revision.Revision() + 1, Model: input.Model,
-		CredentialRef: credentialRef, CredentialVersion: credentialVersion,
-	})
-	if err != nil {
-		return ModelProfileView{}, fmt.Errorf("%w: %v", ErrInvalidInput, err)
+	if input.Model.Model != current.Revision.Snapshot().Model.Model {
+		return ModelProfileView{}, fmt.Errorf("%w: API model identity cannot be changed", ErrInvalidInput)
 	}
-	sealed, err := service.sealer.Seal(ctx, ports.CredentialIdentity{
-		OrganizationID: current.OrganizationID, CredentialRef: credentialRef,
-		CredentialVersion: credentialVersion,
-	}, input.CredentialSecret)
+	connection, err := service.loadEnabledProvider(ctx, input.OrganizationID, current.ProviderConnectionID)
 	if err != nil {
-		return ModelProfileView{}, fmt.Errorf("seal Provider credential: %w", err)
+		return ModelProfileView{}, err
 	}
-	record, err := service.store.ReviseModelProfile(ctx, current.Revision.Revision(), ports.ModelProfileRecord{
-		RequestID: input.RequestID, RequestFingerprint: fingerprint,
-		ModelProfileID: current.ModelProfileID, OrganizationID: current.OrganizationID,
-		ProfileKey: current.ProfileKey, DisplayName: input.DisplayName,
-		Revision: revision, CredentialRef: credentialRef, CredentialVersion: credentialVersion,
-		SealedCredential: sealed, Enabled: current.Enabled,
-		CreatedAt: current.CreatedAt, UpdatedAt: service.clock.Now(),
-	})
+	record, err := newProviderModel(connection, input.RequestID, ProviderModelInput{
+		ProfileKey: current.ProfileKey, DisplayName: input.DisplayName, Model: input.Model,
+	}, current.Revision.Revision()+1, current.ModelProfileID)
+	if err != nil {
+		return ModelProfileView{}, err
+	}
+	record.RequestID, record.RequestFingerprint = input.RequestID, fingerprint
+	record.CreatedAt, record.UpdatedAt, record.Enabled = current.CreatedAt, service.clock.Now(), current.Enabled
+	record, err = service.store.ReviseModelProfile(ctx, current.Revision.Revision(), record)
 	if err != nil {
 		return ModelProfileView{}, fmt.Errorf("persist ModelProfile revision: %w", err)
 	}
@@ -188,31 +161,31 @@ func (service *CatalogService) ReviseModelProfile(
 }
 
 type CreateTemplateInput struct {
-	RequestID              string
-	OrganizationID         string
-	TemplateKey            string
-	Name                   string
-	ModelProfileRevisionID string
-	SystemPrompt           string
-	MaxModelRequests       int
-	ContextPolicyVersion   string
-	Runtime                domain.RuntimeSpecInput
+	RequestID            string
+	OrganizationID       string
+	TemplateKey          string
+	Name                 string
+	ModelProfileID       string
+	SystemPrompt         string
+	MaxModelRequests     int
+	ContextPolicyVersion string
+	Runtime              domain.RuntimeSpecInput
 }
 
 type TemplateView struct {
-	TemplateID             string
-	OrganizationID         string
-	TemplateKey            string
-	Name                   string
-	Revision               int64
-	ModelProfileRevisionID string
-	SystemPrompt           string
-	MaxModelRequests       int
-	ContextPolicyVersion   string
-	Runtime                domain.RuntimeSpecInput
-	Enabled                bool
-	CreatedAt              time.Time
-	UpdatedAt              time.Time
+	TemplateID           string
+	OrganizationID       string
+	TemplateKey          string
+	Name                 string
+	Revision             int64
+	ModelProfileID       string
+	SystemPrompt         string
+	MaxModelRequests     int
+	ContextPolicyVersion string
+	Runtime              domain.RuntimeSpecInput
+	Enabled              bool
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
 }
 
 func (service *CatalogService) CreateTemplate(ctx context.Context, input CreateTemplateInput) (TemplateView, error) {
@@ -232,7 +205,7 @@ func (service *CatalogService) CreateTemplate(ctx context.Context, input CreateT
 	if found {
 		return templateView(replayed), nil
 	}
-	modelRevision, err := service.store.GetModelProfileRevision(ctx, input.ModelProfileRevisionID)
+	modelRevision, err := service.store.GetCurrentModelProfileRevision(ctx, input.ModelProfileID)
 	if err != nil {
 		if errors.Is(err, ports.ErrNotFound) {
 			return TemplateView{}, fmt.Errorf("%w: ModelProfile revision", ErrInvalidReference)
@@ -242,19 +215,15 @@ func (service *CatalogService) CreateTemplate(ctx context.Context, input CreateT
 	if modelRevision.OrganizationID() != input.OrganizationID {
 		return TemplateView{}, fmt.Errorf("%w: cross-organization ModelProfile", ErrInvalidReference)
 	}
-	runtime, err := service.resolveTemplateImage(ctx, input.Runtime, domain.RuntimeSpecInput{})
-	if err != nil {
-		return TemplateView{}, err
-	}
 	templateID := derivedID("template", input.RequestID)
 	revision, err := domain.NewTemplateRevision(domain.TemplateRevisionInput{
 		TemplateID: templateID, OrganizationID: input.OrganizationID, Revision: 1,
-		ModelProfileRevisionID: input.ModelProfileRevisionID,
-		SystemPrompt:           input.SystemPrompt, MaxModelRequests: input.MaxModelRequests,
-		Runtime: runtime, ContextPolicyVersion: input.ContextPolicyVersion,
+		ModelProfileID: input.ModelProfileID,
+		SystemPrompt:   input.SystemPrompt, MaxModelRequests: input.MaxModelRequests,
+		Runtime: input.Runtime, ContextPolicyVersion: input.ContextPolicyVersion,
 	})
 	if err != nil {
-		return TemplateView{}, fmt.Errorf("%w: %v", ErrInvalidInput, err)
+		return TemplateView{}, fmt.Errorf("%w: %w", ErrInvalidInput, err)
 	}
 	now := service.clock.Now()
 	record, err := service.store.PutTemplate(ctx, ports.TemplateRecord{
@@ -270,15 +239,15 @@ func (service *CatalogService) CreateTemplate(ctx context.Context, input CreateT
 }
 
 type ReviseTemplateInput struct {
-	RequestID              string
-	OrganizationID         string
-	TemplateID             string
-	Name                   string
-	ModelProfileRevisionID string
-	SystemPrompt           string
-	MaxModelRequests       int
-	ContextPolicyVersion   string
-	Runtime                domain.RuntimeSpecInput
+	RequestID            string
+	OrganizationID       string
+	TemplateID           string
+	Name                 string
+	ModelProfileID       string
+	SystemPrompt         string
+	MaxModelRequests     int
+	ContextPolicyVersion string
+	Runtime              domain.RuntimeSpecInput
 }
 
 func (service *CatalogService) ReviseTemplate(
@@ -286,7 +255,7 @@ func (service *CatalogService) ReviseTemplate(
 ) (TemplateView, error) {
 	if !validIdentifier(input.RequestID) || !validIdentifier(input.OrganizationID) ||
 		!validIdentifier(input.TemplateID) ||
-		!validIdentifier(input.ModelProfileRevisionID) || strings.TrimSpace(input.Name) == "" {
+		!validIdentifier(input.ModelProfileID) || strings.TrimSpace(input.Name) == "" {
 		return TemplateView{}, fmt.Errorf("%w: Template revision input", ErrInvalidInput)
 	}
 	fingerprint, err := requestFingerprint(input)
@@ -309,25 +278,21 @@ func (service *CatalogService) ReviseTemplate(
 	if current.OrganizationID != input.OrganizationID {
 		return TemplateView{}, fmt.Errorf("%w: Template belongs to another organization", ErrInvalidReference)
 	}
-	modelRevision, err := service.store.GetModelProfileRevision(ctx, input.ModelProfileRevisionID)
+	modelRevision, err := service.store.GetCurrentModelProfileRevision(ctx, input.ModelProfileID)
 	if err != nil {
 		return TemplateView{}, fmt.Errorf("load ModelProfile revision: %w", err)
 	}
 	if modelRevision.OrganizationID() != current.OrganizationID {
 		return TemplateView{}, fmt.Errorf("%w: cross-organization ModelProfile", ErrInvalidReference)
 	}
-	runtime, err := service.resolveTemplateImage(ctx, input.Runtime, current.Revision.Snapshot().Runtime)
-	if err != nil {
-		return TemplateView{}, err
-	}
 	revision, err := domain.NewTemplateRevision(domain.TemplateRevisionInput{
 		TemplateID: current.TemplateID, OrganizationID: current.OrganizationID,
-		Revision: current.Revision.Revision() + 1, ModelProfileRevisionID: input.ModelProfileRevisionID,
+		Revision: current.Revision.Revision() + 1, ModelProfileID: input.ModelProfileID,
 		SystemPrompt: input.SystemPrompt, MaxModelRequests: input.MaxModelRequests,
-		ContextPolicyVersion: input.ContextPolicyVersion, Runtime: runtime,
+		ContextPolicyVersion: input.ContextPolicyVersion, Runtime: input.Runtime,
 	})
 	if err != nil {
-		return TemplateView{}, fmt.Errorf("%w: %v", ErrInvalidInput, err)
+		return TemplateView{}, fmt.Errorf("%w: %w", ErrInvalidInput, err)
 	}
 	record, err := service.store.ReviseTemplate(ctx, current.Revision.Revision(), ports.TemplateRecord{
 		RequestID: input.RequestID, RequestFingerprint: fingerprint,
@@ -379,24 +344,13 @@ func (service *CatalogService) GetModelProfileRevision(
 	if !validIdentifier(organizationID) || !validIdentifier(revisionID) {
 		return ModelProfileView{}, fmt.Errorf("%w: ModelProfile revision identity", ErrInvalidInput)
 	}
-	revision, err := service.store.GetModelProfileRevision(ctx, revisionID)
+	record, err := service.store.GetModelProfileRevisionRecord(ctx, revisionID)
 	if err != nil {
 		return ModelProfileView{}, fmt.Errorf("load ModelProfile revision: %w", err)
 	}
-	snapshot := revision.Snapshot()
-	if snapshot.OrganizationID != organizationID {
-		return ModelProfileView{}, fmt.Errorf("%w: ModelProfile revision belongs to another organization", ErrInvalidReference)
-	}
-	record, err := service.store.GetModelProfile(ctx, snapshot.ModelProfileID)
-	if err != nil {
-		return ModelProfileView{}, fmt.Errorf("load ModelProfile: %w", err)
-	}
-	if record.OrganizationID != organizationID {
+	if record.OrganizationID != organizationID || record.Revision.OrganizationID() != organizationID {
 		return ModelProfileView{}, fmt.Errorf("%w: ModelProfile belongs to another organization", ErrInvalidReference)
 	}
-	record.Revision = revision
-	record.CredentialRef = snapshot.CredentialRef
-	record.CredentialVersion = snapshot.CredentialVersion
 	return modelProfileView(record), nil
 }
 
@@ -481,15 +435,18 @@ func validateModelProfileInput(input CreateModelProfileInput) error {
 	if !validIdentifier(input.RequestID) || !validIdentifier(input.OrganizationID) || !validIdentifier(input.ProfileKey) {
 		return fmt.Errorf("%w: request, organization, or profile identity", ErrInvalidInput)
 	}
-	if strings.TrimSpace(input.DisplayName) == "" || strings.TrimSpace(input.CredentialSecret) == "" {
-		return fmt.Errorf("%w: display name and credential are required", ErrInvalidInput)
+	if strings.TrimSpace(input.DisplayName) == "" || !validIdentifier(input.ProviderConnectionID) {
+		return fmt.Errorf("%w: display name and Provider connection are required", ErrInvalidInput)
+	}
+	if err := input.Model.Pricing.Validate(); err != nil {
+		return fmt.Errorf("%w: %w", ErrInvalidInput, err)
 	}
 	return nil
 }
 
 func validateTemplateInput(input CreateTemplateInput) error {
 	if !validIdentifier(input.RequestID) || !validIdentifier(input.OrganizationID) ||
-		!validIdentifier(input.TemplateKey) || !validIdentifier(input.ModelProfileRevisionID) {
+		!validIdentifier(input.TemplateKey) || !validIdentifier(input.ModelProfileID) {
 		return fmt.Errorf("%w: Template identity or reference", ErrInvalidInput)
 	}
 	if strings.TrimSpace(input.Name) == "" {
@@ -530,10 +487,10 @@ func validIdentifier(value string) bool { return identifierPattern.MatchString(v
 func modelProfileView(record ports.ModelProfileRecord) ModelProfileView {
 	snapshot := record.Revision.Snapshot()
 	return ModelProfileView{
-		ModelProfileID: record.ModelProfileID, OrganizationID: record.OrganizationID,
+		ProviderConnectionID: record.ProviderConnectionID,
+		ModelProfileID:       record.ModelProfileID, OrganizationID: record.OrganizationID,
 		ProfileKey: record.ProfileKey, DisplayName: record.DisplayName,
 		RevisionID: record.Revision.ID(), Revision: record.Revision.Revision(),
-		CredentialRef: record.CredentialRef, CredentialVersion: record.CredentialVersion,
 		Enabled: record.Enabled, Model: snapshot.Model,
 		CreatedAt: record.CreatedAt, UpdatedAt: record.UpdatedAt,
 	}
@@ -544,14 +501,14 @@ func templateView(record ports.TemplateRecord) TemplateView {
 	return TemplateView{
 		TemplateID: record.TemplateID, OrganizationID: record.OrganizationID,
 		TemplateKey: record.TemplateKey, Name: record.Name,
-		Revision:               record.Revision.Revision(),
-		ModelProfileRevisionID: record.Revision.ModelProfileRevisionID(),
-		SystemPrompt:           snapshot.SystemPrompt,
-		MaxModelRequests:       snapshot.MaxModelRequests,
-		ContextPolicyVersion:   record.Revision.ContextPolicyVersion(),
-		Runtime:                snapshot.Runtime,
-		Enabled:                record.Enabled,
-		CreatedAt:              record.CreatedAt,
-		UpdatedAt:              record.UpdatedAt,
+		Revision:             record.Revision.Revision(),
+		ModelProfileID:       record.Revision.ModelProfileID(),
+		SystemPrompt:         snapshot.SystemPrompt,
+		MaxModelRequests:     snapshot.MaxModelRequests,
+		ContextPolicyVersion: record.Revision.ContextPolicyVersion(),
+		Runtime:              snapshot.Runtime,
+		Enabled:              record.Enabled,
+		CreatedAt:            record.CreatedAt,
+		UpdatedAt:            record.UpdatedAt,
 	}
 }

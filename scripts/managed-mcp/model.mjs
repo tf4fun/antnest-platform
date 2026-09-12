@@ -5,7 +5,6 @@ export const guidance = (version) =>
   `Managed workspace guidance version ${version}`;
 export const skillSummary = "Managed Skill summary";
 export const skillBody = "PRIVATE_SKILL_BODY_NOT_FOR_INITIAL_CONTEXT";
-const requests = [];
 
 export function complete(payload) {
   const lastUser = payload.messages.findLastIndex(
@@ -40,19 +39,18 @@ export function complete(payload) {
     "process environment leaked to model",
   );
   if (phase !== "managed-bootstrap") {
-    const version = ["managed-fresh", "managed-rebuilt"].includes(phase)
+    const version = [
+      "managed-fresh",
+      "managed-rebuilt",
+      "managed-draining",
+    ].includes(phase)
       ? 2
       : 1;
     assert(
       !system.includes(guidance(version === 2 ? 1 : 2)),
       "stale guidance retained",
     );
-    assert(
-      system.includes(
-        guidance(["managed-fresh", "managed-rebuilt"].includes(phase) ? 2 : 1),
-      ),
-      "stale guidance",
-    );
+    assert(system.includes(guidance(version)), "stale guidance");
     assert(system.includes(skillSummary), "Skill summary missing");
     assert(
       system.includes(".antnest/skills/fixture/SKILL.md"),
@@ -82,6 +80,10 @@ export function complete(payload) {
     "managed-rebuilt": [
       { name: "mcp__beta__echo", arguments: { value: "managed-rebuilt" } },
     ],
+    "managed-draining": [
+      { name: "mcp__alpha__echo", arguments: { value: "managed-draining" } },
+      { name: "mcp__alpha__echo", arguments: { value: "managed-draining" } },
+    ],
   };
   const plan = plans[phase];
   assert(plan, "unknown fixture phase");
@@ -91,22 +93,17 @@ export function complete(payload) {
       results[0].content.includes("fixture tool failed"),
       "ordinary tool error was lost",
     );
-  if (
+  if (phase === "managed-draining") {
+    for (const [index, content] of results.entries())
+      assertEcho(content.content, phase, 3 + index);
+  } else if (
     results.length === plan.length &&
     ["managed-exercise", "managed-fresh", "managed-rebuilt"].includes(phase)
   ) {
-    const content = results.at(-1).content;
-    const result = JSON.parse(content.slice(content.indexOf("{")));
-    assert.equal(result.value, phase);
-    assert.equal(result.uid, 1000);
-    assert.equal(result.gid, 1000);
-    assert.equal(result.explicit_env, true);
-    assert.equal(result.supervisor_env, false);
-    assert.equal(result.launcher_env, false);
-    assert.equal(
-      result.calls,
+    assertEcho(
+      results.at(-1).content,
+      phase,
       phase === "managed-fresh" ? 2 : 1,
-      "child process was restarted or replayed",
     );
   }
   const call = plan[results.length];
@@ -136,15 +133,37 @@ export function complete(payload) {
   };
 }
 
-export function startModel() {
+function assertEcho(content, phase, calls) {
+  const result = JSON.parse(content.slice(content.indexOf("{")));
+  assert.equal(result.value, phase);
+  assert.equal(result.uid, 1000);
+  assert.equal(result.gid, 1000);
+  assert.equal(result.explicit_env, true);
+  assert.equal(result.supervisor_env, false);
+  assert.equal(result.launcher_env, false);
+  assert.equal(result.calls, calls, "child process was restarted or replayed");
+}
+
+export function createModelFixture({ timeoutMs = 60000 } = {}) {
+  const requests = [];
+  const errors = [];
+  let held = null;
+  let release;
   return createServer(async (request, response) => {
     const reply = (status, payload) => {
       response.writeHead(status, { "content-type": "application/json" });
       response.end(JSON.stringify(payload));
     };
     if (request.method === "GET" && request.url === "/status")
-      return reply(200, { requests });
+      return reply(200, { requests, errors, held });
+    if (request.method === "POST" && /^\/release\/[12]$/.test(request.url)) {
+      if (!held || held.step !== Number(request.url.split("/").at(-1)))
+        return reply(409, { error: "no_matching_barrier" });
+      release();
+      return reply(200, { released: true });
+    }
     try {
+      assert.equal(request.method, "POST");
       assert.equal(request.url, "/v1/chat/completions");
       assert.equal(request.headers.authorization, "Bearer managed-model-test");
       assert.match(
@@ -160,18 +179,57 @@ export function startModel() {
       }
       const payload = JSON.parse(Buffer.concat(chunks).toString());
       const result = complete(payload);
+      const lastUser = payload.messages.findLastIndex(
+        (message) => message.role === "user",
+      );
+      const phase = payload.messages[lastUser].content;
+      const step = payload.messages
+        .slice(lastUser + 1)
+        .filter((message) => message.role === "tool").length;
+      assert(
+        !requests.some((item) => item.phase === phase && item.step === step),
+        "duplicate model request",
+      );
       requests.push({
-        phase: payload.messages.findLast((message) => message.role === "user")
-          .content,
+        phase,
+        step,
         trace_id: request.headers.traceparent.split("-")[1],
         model_span_id: request.headers.traceparent.split("-")[2],
         outcome: "validated",
       });
+      if (phase === "managed-draining" && step > 0) {
+        assert.equal(held, null, "overlapping model barriers");
+        held = { phase, step, received_at: Date.now() };
+        let active = true;
+        const finish = () => {
+          active = false;
+          clearTimeout(timer);
+          held = null;
+          release = undefined;
+        };
+        const timer = setTimeout(() => {
+          finish();
+          errors.push("barrier_timeout");
+          reply(504, { error: "barrier_timeout" });
+        }, timeoutMs);
+        release = () => {
+          finish();
+          reply(200, result);
+        };
+        response.once("close", () => {
+          if (active) {
+            finish();
+            errors.push("barrier_disconnected");
+          }
+        });
+        return;
+      }
       reply(200, result);
-    } catch (error) {
-      console.error(error);
-      reply(400, { error: error.message });
+    } catch {
+      errors.push("invalid_model_request");
+      reply(400, { error: "invalid_model_request" });
     }
-  }).listen(8080, "0.0.0.0");
+  });
 }
+export const startModel = () => createModelFixture().listen(8080, "0.0.0.0");
 if (process.argv[1]?.endsWith("/model.mjs")) startModel();

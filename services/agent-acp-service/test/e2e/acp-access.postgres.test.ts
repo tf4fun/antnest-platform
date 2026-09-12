@@ -40,6 +40,13 @@ describe.skipIf(databaseUrl === undefined)("ACP wire and PostgreSQL access bound
         await completePrompt(owner, sessionId, version);
         const foreign = await app.connect(version, subject);
         const foreignSessionId = await createSession(foreign);
+        const setupUpdates = foreign.frames.filter((frame) => frame.method === "session/update");
+        expect(setupUpdates).toHaveLength(1);
+        expect(setupUpdates[0]?.params).toMatchObject({
+          sessionId: foreignSessionId,
+          update: { sessionUpdate: "available_commands_update" },
+        });
+        const foreignOffset = foreign.frames.length;
         const listed = await foreign.request("session/list", {});
         expect(listed.result?.sessions).toEqual([
           expect.objectContaining({ sessionId: foreignSessionId }),
@@ -59,7 +66,9 @@ describe.skipIf(databaseUrl === undefined)("ACP wire and PostgreSQL access bound
         expect(app.model.complete).toHaveBeenCalledTimes(modelCount);
         expect(app.tools.call).toHaveBeenCalledTimes(toolCount);
         expect(app.recoveryRequired).not.toHaveBeenCalled();
-        expect(foreign.frames.filter((frame) => frame.method === "session/update")).toEqual([]);
+        expect(
+          foreign.frames.slice(foreignOffset).filter((frame) => frame.method === "session/update"),
+        ).toEqual([]);
         expect(JSON.stringify(foreign.frames)).not.toMatch(/owner-only|private\.txt/u);
 
         await assertReplay(owner, sessionId, version);

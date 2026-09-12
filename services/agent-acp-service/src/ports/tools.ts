@@ -5,6 +5,13 @@ import type {
   ToolEffectState,
 } from "../domain/types.js";
 import type { NormalizedClientMcpSource } from "../domain/mcp.js";
+import type { ToolFileObservation } from "../domain/tool-presentation.js";
+
+export type ToolProgressUpdate = {
+  progress: number;
+  total?: number;
+  message?: string;
+};
 
 export type ToolCallInput = {
   runId: string;
@@ -12,9 +19,11 @@ export type ToolCallInput = {
   tool: ModelToolDefinition;
   arguments: { [key: string]: unknown };
   signal: AbortSignal;
+  onProgress?: (update: ToolProgressUpdate) => void;
 };
 
 export type ToolCallResult = {
+  file?: ToolFileObservation;
   content: ContentBlock[];
   structuredContent?: unknown;
   isError: boolean;

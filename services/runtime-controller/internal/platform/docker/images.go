@@ -25,18 +25,13 @@ func (c *Client) InspectImage(ctx context.Context, image string) (string, error)
 }
 
 func (d *Driver) ResolveImage(ctx context.Context, value string) (platform.ImageResolution, error) {
-	value = strings.TrimSpace(value)
-	if len(value) == 0 || len(value) > 512 {
+	if len(value) == 0 || len(value) > 512 || strings.TrimSpace(value) != value {
 		return platform.ImageResolution{}, platform.ErrInvalidImageReference
 	}
-	parsed, err := reference.ParseAnyReference(value)
-	named, tagged := parsed.(reference.NamedTagged)
-	_, pinned := parsed.(reference.Digested)
-	if err != nil || !tagged || pinned {
+	if _, err := reference.ParseAnyReference(value); err != nil {
 		return platform.ImageResolution{}, platform.ErrInvalidImageReference
 	}
-	name := reference.FamiliarString(named)
-	imageID, err := d.engine.InspectImage(ctx, name)
+	imageID, err := d.engine.InspectImage(ctx, value)
 	if errors.Is(err, ErrNotFound) {
 		return platform.ImageResolution{}, platform.ErrImageNotFound
 	}
@@ -47,5 +42,5 @@ func (d *Driver) ResolveImage(ctx context.Context, value string) (platform.Image
 	if err != nil || identity.Algorithm() != digest.SHA256 {
 		return platform.ImageResolution{}, platform.ErrImageResolutionUnavailable
 	}
-	return platform.ImageResolution{Reference: name, ImageRef: imageID}, nil
+	return platform.ImageResolution{Reference: value, ImageRef: imageID}, nil
 }

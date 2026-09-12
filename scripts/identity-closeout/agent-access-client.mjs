@@ -259,7 +259,9 @@ async function administratorIsolation() {
         traces.push({
           traceID: response.traceID,
           service: "agent-controller",
-          operation: "agent_controller.repository.get_agent",
+          method: "GET",
+          route: "/internal/agents/{agent_id}",
+          rpcMethod: "GET /internal/agents/{agent_id}",
           via: ["admin-console"],
         });
     }
@@ -386,7 +388,9 @@ async function rejectedUpgrade(version, item, browser, status = 404) {
     traces.push({
       traceID: response.headers["x-antnest-trace-id"],
       service: "agent-controller",
-      operation: "agent_controller.repository.list_workspace_agents",
+      method: "POST",
+      route: "/rpc/agent-controller/list-workspace-agents",
+      rpcMethod: "POST /rpc/agent-controller/list-workspace-agents",
     });
   } finally {
     socket.terminate();

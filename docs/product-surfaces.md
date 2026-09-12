@@ -223,9 +223,10 @@ that would otherwise rely on stale command preconditions. A terminal Operation
 failure is not fetched again automatically until the Agent names a new active
 request.
 Stream recovery preserves those same boundaries. Event replay commits its own
-history and cursor and reopens the watch independently of Agent refresh. Agent
-refresh commits lifecycle state independently of replay. Their errors and
-retries remain local, replay retry does not create repeated Agent traffic, and
+history and cursor, then awaits one Agent refresh before reopening the watch.
+A refresh failure stays local and does not prevent reopening. This ordering
+captures lifecycle changes missed before replay without coupling successful
+projection updates. Their errors remain local, failed replay retries do not create repeated Agent traffic, and
 a terminal replay failure cannot create an unbounded recovery loop.
 The active request on the refreshed Agent wins operation selection; an idle
 Agent uses the newest operation-bearing replayed event. Concurrent Agent reads

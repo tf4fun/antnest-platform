@@ -16,6 +16,7 @@ describe("loadConfig", () => {
     expect(config.maxWebSocketPayloadBytes).toBe(16 * 1024 * 1024);
     expect(config.shutdownTimeoutMs).toBe(15_000);
     expect(config.telemetry).toEqual({
+      captureRpcContent: false,
       disabled: false,
       metricsEnabled: false,
       serviceName: "agent-acp-service",
@@ -33,6 +34,7 @@ describe("loadConfig", () => {
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel:4318",
       OTEL_SERVICE_NAME: "antnest-acp-test",
       OTEL_SDK_DISABLED: "true",
+      ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT: "true",
       OTEL_TRACES_EXPORTER: "otlp",
       OTEL_METRICS_EXPORTER: "none",
     });
@@ -42,6 +44,7 @@ describe("loadConfig", () => {
     expect(config.maxWebSocketPayloadBytes).toBe(1_048_576);
     expect(config.shutdownTimeoutMs).toBe(120_000);
     expect(config.telemetry).toEqual({
+      captureRpcContent: true,
       disabled: true,
       endpoint: new URL("http://otel:4318/"),
       metricsEnabled: false,
@@ -60,6 +63,7 @@ describe("loadConfig", () => {
     ["zero timeout", { ANTNEST_ACP_CONTROLLER_TIMEOUT: "0s" }],
     ["oversized payload", { ANTNEST_ACP_MAX_PROMPT_BYTES: String(65 * 1024 * 1024) }],
     ["invalid OTEL disable flag", { OTEL_SDK_DISABLED: "yes" }],
+    ["invalid RPC content switch", { ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT: "raw" }],
     ["invalid OTEL traces exporter", { OTEL_TRACES_EXPORTER: "console" }],
     ["invalid OTEL metrics exporter", { OTEL_METRICS_EXPORTER: "prometheus" }],
   ])("rejects %s", (_name, overrides) => {

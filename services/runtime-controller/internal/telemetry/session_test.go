@@ -14,7 +14,6 @@ import (
 
 	"soft/antnest-platform/services/runtime-controller/internal/deployment"
 	"soft/antnest-platform/services/runtime-controller/internal/platform"
-	"soft/antnest-platform/services/runtime-controller/internal/repository"
 )
 
 func TestPlatformWatchDoesNotCreateLongLivedSpan(t *testing.T) {
@@ -42,29 +41,6 @@ func TestPlatformWatchDoesNotCreateLongLivedSpan(t *testing.T) {
 	}
 }
 
-func TestObservationListenerDoesNotCreateLongLivedSpan(t *testing.T) {
-	recorder := tracetest.NewSpanRecorder()
-	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
-	original := repositoryTracer
-	repositoryTracer = provider.Tracer(instrumentationName + "/repository")
-	t.Cleanup(func() {
-		repositoryTracer = original
-		_ = provider.Shutdown(context.Background())
-	})
-	observed, err := ObserveRepository(
-		&sessionRepository{}, slog.New(slog.NewTextHandler(io.Discard, nil)), "postgresql",
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := observed.ListenObservationNotifications(context.Background(), func() {}, func(string) {}); err != nil {
-		t.Fatal(err)
-	}
-	if spans := recorder.Ended(); len(spans) != 0 {
-		t.Fatalf("observation listener created session-long spans: %d", len(spans))
-	}
-}
-
 func TestSessionResultPreservesTerminationCause(t *testing.T) {
 	for _, test := range []struct {
 		name string
@@ -84,7 +60,7 @@ func TestSessionResultPreservesTerminationCause(t *testing.T) {
 	}
 }
 
-func TestObservationWatchDoesNotCreateConnectionLifetimeSpan(t *testing.T) {
+func TestObservationWatchRetainsServerUntilConnectionEnds(t *testing.T) {
 	recorder := tracetest.NewSpanRecorder()
 	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
 	original := httpTracer
@@ -111,14 +87,17 @@ func TestObservationWatchDoesNotCreateConnectionLifetimeSpan(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("observation Watch handler did not start")
 	}
-	if spans := recorder.Started(); len(spans) != 0 {
-		t.Fatalf("observation Watch created a connection-lifetime span: %d", len(spans))
+	if spans := recorder.Started(); len(spans) != 1 || len(recorder.Ended()) != 0 {
+		t.Fatalf("observation Watch must have one unfinished SERVER span: %d", len(spans))
 	}
 	close(release)
 	select {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("observation Watch handler did not stop")
+	}
+	if spans := recorder.Ended(); len(spans) != 1 {
+		t.Fatal("watch SERVER span did not end")
 	}
 }
 
@@ -156,45 +135,5 @@ func (*sessionPlatform) Watch(
 	if err := ready(ctx); err != nil {
 		return err
 	}
-	return nil
-}
-
-type sessionRepository struct{}
-
-func (*sessionRepository) BeginTransition(context.Context, deployment.Operation) (deployment.Operation, bool, error) {
-	return deployment.Operation{}, false, nil
-}
-func (*sessionRepository) GenerationClaim(context.Context, deployment.Key) (repository.GenerationClaim, error) {
-	return repository.GenerationClaim{}, nil
-}
-func (*sessionRepository) CompleteOperation(context.Context, deployment.Operation, *deployment.Observation) (*deployment.Observation, error) {
-	return nil, nil
-}
-func (*sessionRepository) GetOperation(context.Context, string) (deployment.Operation, error) {
-	return deployment.Operation{}, nil
-}
-func (*sessionRepository) GetEnvironment(context.Context, string) (deployment.Environment, error) {
-	return deployment.Environment{}, nil
-}
-func (*sessionRepository) ListEnvironments(context.Context) ([]deployment.Environment, error) {
-	return nil, nil
-}
-func (*sessionRepository) AppendObservation(_ context.Context, value deployment.Observation) (deployment.Observation, error) {
-	return value, nil
-}
-func (*sessionRepository) ListObservations(context.Context, uint64, int) (deployment.ObservationWindow, error) {
-	return deployment.ObservationWindow{}, nil
-}
-func (*sessionRepository) Ready(context.Context) error { return nil }
-func (*sessionRepository) WithAgentLock(_ context.Context, _ string, execute func(context.Context) error) error {
-	return execute(context.Background())
-}
-func (*sessionRepository) TryAcquireObservationLeadership(context.Context) (repository.Leadership, bool, error) {
-	return nil, false, nil
-}
-func (*sessionRepository) ObservationMonitorReady(context.Context) (bool, error) { return true, nil }
-func (*sessionRepository) ListenObservationNotifications(_ context.Context, ready func(), notify func(string)) error {
-	ready()
-	notify("")
 	return nil
 }

@@ -3,18 +3,13 @@ package config
 import (
 	"encoding/base64"
 	"fmt"
-	"math"
 	"strings"
 	"time"
 )
 
-const (
-	maximumRecoveryPhaseCalls = 4
-	recoveryFinalizationGrace = 30 * time.Second
-)
-
 type Config struct {
 	ListenAddress                  string
+	TemporalAddress                string
 	DatabaseURL                    string
 	EncryptionKey                  []byte
 	RuntimeEgressURL               string
@@ -23,12 +18,8 @@ type Config struct {
 	DependencyTimeout              time.Duration
 	DrainTimeout                   time.Duration
 	RunAdmissionTTL                time.Duration
-	RecoveryPollInterval           time.Duration
 	ObservationPollInterval        time.Duration
 	IdentityRevocationPollInterval time.Duration
-	RecoveryAttemptTimeout         time.Duration
-	RecoveryLeaseDuration          time.Duration
-	RecoveryRetryMax               time.Duration
 	ShutdownTimeout                time.Duration
 }
 
@@ -68,14 +59,6 @@ func Load(lookup func(string) string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	recoveryPollInterval, err := positiveDuration(
-		lookup("ANTNEST_AGENT_CONTROLLER_RECOVERY_POLL_INTERVAL"),
-		"ANTNEST_AGENT_CONTROLLER_RECOVERY_POLL_INTERVAL",
-		2*time.Second,
-	)
-	if err != nil {
-		return Config{}, err
-	}
 	observationPollInterval, err := positiveDuration(
 		lookup("ANTNEST_AGENT_CONTROLLER_RUNTIME_OBSERVATION_POLL_INTERVAL"),
 		"ANTNEST_AGENT_CONTROLLER_RUNTIME_OBSERVATION_POLL_INTERVAL",
@@ -91,15 +74,8 @@ func Load(lookup func(string) string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	recoveryAttemptTimeout, err := durationBudget(
-		dependencyTimeout, maximumRecoveryPhaseCalls, 5*time.Second,
-		"lifecycle recovery attempt timeout",
-	)
-	if err != nil {
-		return Config{}, err
-	}
-	recoveryLeaseDuration := recoveryAttemptTimeout + recoveryFinalizationGrace
 	config := Config{
+		TemporalAddress:                strings.TrimSpace(lookup("ANTNEST_TEMPORAL_ADDRESS")),
 		ListenAddress:                  strings.TrimSpace(lookup("ANTNEST_AGENT_CONTROLLER_LISTEN")),
 		DatabaseURL:                    strings.TrimSpace(lookup("ANTNEST_AGENT_CONTROLLER_DATABASE_URL")),
 		RuntimeEgressURL:               strings.TrimSpace(lookup("ANTNEST_RUNTIME_EGRESS_URL")),
@@ -108,16 +84,15 @@ func Load(lookup func(string) string) (Config, error) {
 		DependencyTimeout:              dependencyTimeout,
 		DrainTimeout:                   drainTimeout,
 		RunAdmissionTTL:                runAdmissionTTL,
-		RecoveryPollInterval:           recoveryPollInterval,
 		ObservationPollInterval:        observationPollInterval,
 		IdentityRevocationPollInterval: identityRevocationPollInterval,
-		RecoveryAttemptTimeout:         recoveryAttemptTimeout,
-		RecoveryLeaseDuration:          recoveryLeaseDuration,
-		RecoveryRetryMax:               time.Minute,
 		ShutdownTimeout:                shutdownTimeout,
 	}
 	if config.ListenAddress == "" {
 		config.ListenAddress = ":8080"
+	}
+	if config.TemporalAddress == "" {
+		config.TemporalAddress = "127.0.0.1:7233"
 	}
 	if config.DatabaseURL == "" {
 		return Config{}, fmt.Errorf("ANTNEST_AGENT_CONTROLLER_DATABASE_URL is required")
@@ -137,15 +112,6 @@ func Load(lookup func(string) string) (Config, error) {
 	}
 	config.EncryptionKey = key
 	return config, nil
-}
-
-func durationBudget(
-	base time.Duration, calls int64, grace time.Duration, name string,
-) (time.Duration, error) {
-	if calls <= 0 || grace < 0 || base > (time.Duration(math.MaxInt64)-grace)/time.Duration(calls) {
-		return 0, fmt.Errorf("%s exceeds the supported duration", name)
-	}
-	return base*time.Duration(calls) + grace, nil
 }
 
 func decodeEncryptionKey(raw string) ([]byte, error) {

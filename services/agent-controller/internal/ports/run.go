@@ -31,6 +31,7 @@ const (
 
 type PromptCapabilities struct {
 	Image           bool `json:"image"`
+	Audio           bool `json:"audio,omitempty"`
 	EmbeddedContext bool `json:"embedded_context"`
 }
 
@@ -60,12 +61,13 @@ type AdmittedRuntime struct {
 }
 
 type AdmittedExecutionSpec struct {
-	SystemPrompt         string             `json:"system_prompt"`
-	ContextPolicyVersion string             `json:"context_policy_version"`
-	SkillInstructions    []SkillInstruction `json:"skill_instructions"`
-	Model                domain.ModelSpec   `json:"model"`
-	MaxModelRequests     int                `json:"max_model_requests"`
-	CredentialRef        string             `json:"credential_ref"`
+	Configuration        *AdmittedConfiguration   `json:"configuration,omitempty"`
+	SystemPrompt         string                   `json:"system_prompt"`
+	ContextPolicyVersion string                   `json:"context_policy_version"`
+	SkillInstructions    []SkillInstruction       `json:"skill_instructions"`
+	Model                domain.ModelSpec         `json:"model"`
+	MaxModelRequests     int                      `json:"max_model_requests"`
+	Provider             domain.ProviderExecution `json:"provider"`
 }
 
 type RunExecutionSnapshot struct {
@@ -73,7 +75,6 @@ type RunExecutionSnapshot struct {
 	ExecutionRevisionID      string                `json:"execution_revision"`
 	RuntimeMCPSourceDigest   string                `json:"runtime_mcp_source_digest"`
 	AgentExecutionSpecDigest string                `json:"agent_execution_spec_digest"`
-	CredentialVersion        string                `json:"credential_version"`
 	Runtime                  AdmittedRuntime       `json:"runtime"`
 	ExecutionSpec            AdmittedExecutionSpec `json:"execution_spec"`
 }
@@ -88,23 +89,34 @@ func ValidateRunExecutionSnapshot(snapshot RunExecutionSnapshot) error {
 		strings.TrimSpace(snapshot.ExecutionRevisionID) == "" ||
 		!runDigestPattern.MatchString(snapshot.RuntimeMCPSourceDigest) ||
 		!runDigestPattern.MatchString(snapshot.AgentExecutionSpecDigest) ||
-		strings.TrimSpace(snapshot.CredentialVersion) == "" ||
 		strings.TrimSpace(snapshot.Runtime.RuntimeRevision) == "" ||
 		strings.TrimSpace(snapshot.Runtime.RuntimeExecutionID) == "" ||
 		snapshot.ExecutionSpec.ContextPolicyVersion != domain.ContextPolicyV1 ||
 		len(snapshot.ExecutionSpec.SkillInstructions) != 0 ||
 		snapshot.ExecutionSpec.MaxModelRequests < 1 ||
-		snapshot.ExecutionSpec.MaxModelRequests > 128 ||
-		strings.TrimSpace(snapshot.ExecutionSpec.CredentialRef) == "" {
+		snapshot.ExecutionSpec.MaxModelRequests > 128 {
 		return fmt.Errorf("run execution snapshot is incomplete")
+	}
+	if err := snapshot.ExecutionSpec.Provider.Validate(); err != nil {
+		return err
 	}
 	if err := domain.ValidateModelSpec(snapshot.ExecutionSpec.Model); err != nil {
 		return fmt.Errorf("run execution snapshot model: %w", err)
+	}
+	if configuration := snapshot.ExecutionSpec.Configuration; configuration != nil {
+		if configuration.ModelProfileID == "" || configuration.ModelProfileRevisionID == "" ||
+			configuration.AuthorizationRevision < 1 || !runDigestPattern.MatchString(configuration.Digest) {
+			return fmt.Errorf("run execution configuration is incomplete")
+		}
+		if err := configuration.Authorization.Validate(); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
 type AcquireRunRecord struct {
+	SessionConfiguration   domain.SessionConfigurationOverrides
 	RequestID              string
 	RequestFingerprint     string
 	AdmissionID            string
@@ -158,6 +170,7 @@ type FinishRunRecord struct {
 }
 
 type AdmissionCredential struct {
+	Provider   domain.ProviderExecution
 	Identity   CredentialIdentity
 	SecretType string
 	Sealed     SealedSecret
@@ -168,6 +181,7 @@ type CredentialOpener interface {
 }
 
 type RunStore interface {
+	SessionConfigurationStore
 	ResolveAgentAccess(context.Context, string) (AgentAccessResolution, error)
 	ReplayRunAdmission(context.Context, string, string) (RunAdmissionRecord, bool, error)
 	ResolveRunAuthorization(context.Context, string, string, string) (RunAuthorization, error)

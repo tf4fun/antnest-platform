@@ -23,11 +23,11 @@ the Egress attachment, deactivates owner access, and retains immutable audit
 facts. Agent-wide Run admission resolves access, freezes one immutable execution
 snapshot, scopes Provider credential access, and seals terminal Tool-effect
 facts. Current Agent projection queries and authoritative event replay/watch
-routes are runnable. Lifecycle HTTP commands atomically persist intent and
-return `202`; a supervised PostgreSQL-leased worker is the sole phase executor
-and can claim fresh due operations immediately. It fences overlapping attempts,
-isolates malformed operations, and emits a new trace linked to the original
-request and previous worker attempt. A separate bounded observation consumer
+routes are runnable. Lifecycle HTTP commands return `202` after durable admission.
+[All lifecycle operations use Temporal](docs/lifecycle-workflows.md), with an
+embedded SDK Worker and automatic workflow/activity tracing. Identity-triggered
+Disable uses the same executor. PostgreSQL retains business state, not a second
+scheduler. Every workflow preserves the original business trace. A separate bounded observation consumer
 reads Runtime Controller's ordered journal. A same-revision process restart
 invalidates the executable binding, marks the Agent unavailable, and requires
 an explicit rebuild instead of silently using a stale execution identity.
@@ -39,12 +39,13 @@ and operational acceptance remains tracked in the
 ## Owns
 
 - Agent identity, organization, owner user, desired state, and current status;
-- Model profiles and encrypted Provider credentials used by Agent execution;
-- mutable Template heads and immutable Template revisions;
+- [Provider connections and model management](docs/provider-management.md), with independent encrypted credential versions;
+- mutable Template heads and immutable Template revisions referencing stable model identities;
 - immutable Agent configuration and execution revisions;
 - the current opaque Runtime binding returned by Runtime Controller;
 - durable lifecycle operations for create, rebuild, disable, enable, and delete;
-- Agent-wide serialized Run admission and admission-scoped credential access;
+- Agent-wide serialized Run admission freezing current model parameters, with independently resolved current connection credentials;
+- Agent default authorization and organization-scoped Session model selection;
 - Agent access-subject mappings and revisions;
 - the ordered Agent domain-event journal.
 - the persisted Runtime-observation consumer cursor and its Agent-state
@@ -66,12 +67,25 @@ state.
 
 ## Internal Interfaces
 
+- scoped current workspace availability and active Session observation: see
+  [Workspace state](docs/workspace-state.md). Snapshots reuse Run admission data
+  and PostgreSQL notifications without adding normal-Run audit events. Gateway
+  and Agent UI subscription consumers remain a separate C4 delivery batch.
+- Session model directory and Agent authorization defaults: see
+  [Session configuration](docs/session-configuration.md). F05 configuration and
+  F06 permissions have passed ACP/UI and deployment integration. Native audio/PDF
+  authority and F09 delivery boundaries are documented in
+  [Multimodal input](docs/multimodal-input.md). Do not roll a changed producer into
+  an old strict ACP decoder.
 - lifecycle and management RPC: see
   [`../../contracts/agent-controller/control-api.md`](../../contracts/agent-controller/control-api.md);
 - ACP Run admission RPC: see
   [`../../contracts/agent-controller/run-api.md`](../../contracts/agent-controller/run-api.md);
 - Runtime lifecycle dependency: Runtime Controller internal control API;
 - network lifecycle dependency: Runtime Egress control API.
+- organization-scoped network policy read/CAS commands: see
+  [Network policy management](docs/network-policy.md). These do not rebuild
+  Runtime or change its lifecycle attachment.
 - owner-binding dependency: Identity Service `resolve_principal` internal RPC.
 
 All interfaces are trusted internal JSON-over-HTTP RPC. Edge Gateway
@@ -104,7 +118,11 @@ Docker and Jaeger acceptance commands are documented in
 
 ## Further Reading
 
+- [Observability guarantees and pending acceptance](docs/observability.md)
 - [Architecture](docs/architecture.md)
 - [Operations](docs/operations.md)
 - [Identity offboarding](docs/identity-offboarding.md)
+- [Model pricing and immutable Run snapshots](docs/model-pricing.md)
 - [Stage 2 Agent and ACP design](../../docs/stage-2-agent-and-acp.md)
+
+All lifecycle commands, including Identity-triggered disable, use [Temporal workflows](docs/lifecycle-workflows.md). PostgreSQL stores business state and audit history, not retry queues or worker leases.

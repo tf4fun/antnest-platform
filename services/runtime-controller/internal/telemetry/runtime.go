@@ -2,6 +2,8 @@ package telemetry
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -39,9 +41,7 @@ type Config struct {
 }
 
 func defaultPropagator() propagation.TextMapPropagator {
-	return propagation.NewCompositeTextMapPropagator(
-		propagation.TraceContext{}, propagation.Baggage{},
-	)
+	return propagation.TraceContext{}
 }
 
 type Runtime struct {
@@ -54,6 +54,9 @@ type Runtime struct {
 func Setup(ctx context.Context, base slog.Handler, cfg Config) (*Runtime, error) {
 	if base == nil {
 		return nil, fmt.Errorf("base log handler is required")
+	}
+	if capture := strings.ToLower(strings.TrimSpace(os.Getenv("ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT"))); capture != "" && capture != "true" && capture != "false" {
+		return nil, fmt.Errorf("ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT must be true or false")
 	}
 	local := correlatedHandler{next: base}
 	runtime := &Runtime{logger: slog.New(local)}
@@ -236,8 +239,13 @@ func newResource(ctx context.Context, cfg Config) (*resource.Resource, error) {
 	}
 	attrs := []attribute.KeyValue{
 		attribute.String("service.name", serviceName),
-		attribute.String("service.namespace", defaultServiceName),
+		attribute.String("service.namespace", "antnest"),
 	}
+	var instance [16]byte
+	if _, err := rand.Read(instance[:]); err != nil {
+		return nil, fmt.Errorf("create telemetry instance identity: %w", err)
+	}
+	attrs = append(attrs, attribute.String("service.instance.id", hex.EncodeToString(instance[:])))
 	if version := strings.TrimSpace(cfg.ServiceVersion); version != "" {
 		attrs = append(attrs, attribute.String("service.version", version))
 	}
@@ -250,7 +258,6 @@ func newResource(ctx context.Context, cfg Config) (*resource.Resource, error) {
 		resource.WithTelemetrySDK(),
 		resource.WithHost(),
 		resource.WithOS(),
-		resource.WithProcess(),
 		resource.WithContainer(),
 		resource.WithAttributes(attrs...),
 	)

@@ -10,35 +10,31 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/codes"
-	"go.opentelemetry.io/otel/metric"
-	"go.opentelemetry.io/otel/trace"
 
 	"soft/antnest-platform/services/identity-service/internal/domain"
 )
 
 type Store struct {
-	pool  *pgxpool.Pool
+	pool  *databasePool
 	newID func() string
 	now   func() time.Time
 }
 
-var (
-	repositoryTracer     = otel.Tracer("soft/antnest-platform/identity-service/repository")
-	repositoryMeter      = otel.Meter("soft/antnest-platform/identity-service/repository")
-	repositoryOperations = mustCounter(repositoryMeter.Int64Counter("antnest.identity.repository.operations"))
-	repositoryDuration   = mustHistogram(repositoryMeter.Float64Histogram(
-		"antnest.identity.repository.duration", metric.WithUnit("s"),
-	))
-)
+// ParsePoolConfig instruments every connection before the caller creates its pool.
+func ParsePoolConfig(databaseURL string) (*pgxpool.Config, error) {
+	config, err := pgxpool.ParseConfig(databaseURL)
+	if err != nil {
+		return nil, err
+	}
+	config.ConnConfig.Tracer = newDatabaseTracer()
+	return config, nil
+}
 
 func New(pool *pgxpool.Pool, newID func() string, now func() time.Time) (*Store, error) {
 	if pool == nil || newID == nil || now == nil {
 		return nil, fmt.Errorf("identity repository requires pool, ID generator, and clock")
 	}
-	return &Store{pool: pool, newID: newID, now: now}, nil
+	return &Store{pool: &databasePool{pool}, newID: newID, now: now}, nil
 }
 
 func (s *Store) Directory() *DirectoryAdapter { return &DirectoryAdapter{store: s} }
@@ -47,23 +43,18 @@ func (s *Store) OIDC() *OIDCAdapter           { return &OIDCAdapter{store: s} }
 func (s *Store) SCIM() *SCIMAdapter           { return &SCIMAdapter{store: s} }
 
 func (s *Store) Ping(ctx context.Context) error {
-	return observeRepositoryError(ctx, "ping", func(ctx context.Context) error {
-		if err := s.pool.Ping(ctx); err != nil {
-			return fmt.Errorf("ping identity database: %w", err)
-		}
-		return nil
-	})
+	if err := s.pool.Ping(ctx); err != nil {
+		return fmt.Errorf("ping identity database: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) Close() { s.pool.Close() }
 
 func (s *Store) inTransaction(
 	ctx context.Context,
-	operationName string,
-	operation func(pgx.Tx) error,
-) (resultErr error) {
-	ctx, finish := startRepositoryOperation(ctx, operationName)
-	defer func() { finish(resultErr) }()
+	operation func(*databaseTransaction) error,
+) error {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin identity transaction: %w", err)
@@ -78,106 +69,6 @@ func (s *Store) inTransaction(
 	return nil
 }
 
-func observeRepositoryValue[T any](
-	ctx context.Context,
-	operationName string,
-	operation func(context.Context) (T, error),
-) (result T, resultErr error) {
-	ctx, finish := startRepositoryOperation(ctx, operationName)
-	defer func() { finish(resultErr) }()
-	return operation(ctx)
-}
-
-func observeRepositoryError(
-	ctx context.Context,
-	operationName string,
-	operation func(context.Context) error,
-) (resultErr error) {
-	ctx, finish := startRepositoryOperation(ctx, operationName)
-	defer func() { finish(resultErr) }()
-	return operation(ctx)
-}
-
-func startRepositoryOperation(ctx context.Context, operationName string) (context.Context, func(error)) {
-	ctx, span := repositoryTracer.Start(
-		ctx, "identity.repository."+operationName, trace.WithSpanKind(trace.SpanKindClient),
-	)
-	started := time.Now()
-	return ctx, func(err error) {
-		finishRepositoryOperation(ctx, span, started, operationName, err)
-	}
-}
-
-func finishRepositoryOperation(
-	ctx context.Context,
-	span trace.Span,
-	started time.Time,
-	operation string,
-	err error,
-) {
-	result := "success"
-	errorClass := "none"
-	if err != nil {
-		result = "error"
-		errorClass = repositoryErrorClass(err)
-		span.RecordError(errors.New(errorClass))
-		span.SetStatus(codes.Error, errorClass)
-	}
-	attributes := []attribute.KeyValue{
-		attribute.String("db.system.name", "postgresql"),
-		attribute.String("antnest.repository.operation", operation),
-		attribute.String("antnest.result", result),
-		attribute.String("error.type", errorClass),
-	}
-	span.SetAttributes(attributes...)
-	span.End()
-	repositoryOperations.Add(ctx, 1, metric.WithAttributes(attributes...))
-	repositoryDuration.Record(ctx, time.Since(started).Seconds(), metric.WithAttributes(attributes...))
-}
-
-func repositoryErrorClass(err error) string {
-	switch {
-	case errors.Is(err, domain.ErrNotFound):
-		return "not_found"
-	case errors.Is(err, domain.ErrConflict):
-		return "conflict"
-	case errors.Is(err, domain.ErrForbidden):
-		return "forbidden"
-	}
-	var domainError *domain.Error
-	if errors.As(err, &domainError) {
-		switch domainError.Code {
-		case domain.ErrInvalidArgument.Code:
-			return "invalid_argument"
-		case domain.ErrInvalidReference.Code:
-			return "invalid_reference"
-		case domain.ErrVersionConflict.Code:
-			return "version_conflict"
-		case domain.ErrUnauthenticated.Code:
-			return "unauthenticated"
-		case domain.ErrInactive.Code:
-			return "inactive_principal"
-		default:
-			return "domain_error"
-		}
-	}
-	return "persistence_error"
-}
-
-func mustCounter(instrument metric.Int64Counter, err error) metric.Int64Counter {
-	if err != nil {
-		panic(err)
-	}
-	return instrument
-}
-
-func mustHistogram(instrument metric.Float64Histogram, err error) metric.Float64Histogram {
-	if err != nil {
-		panic(err)
-	}
-	return instrument
-}
-
 type event struct {
 	OrganizationID   string
 	ActorPrincipalID string
@@ -190,7 +81,7 @@ type event struct {
 	CreatedAt        time.Time
 }
 
-func (s *Store) appendEvent(ctx context.Context, tx pgx.Tx, value event) error {
+func (s *Store) appendEvent(ctx context.Context, tx *databaseTransaction, value event) error {
 	metadata, err := json.Marshal(value.Metadata)
 	if err != nil {
 		return fmt.Errorf("encode identity event metadata: %w", err)
@@ -281,7 +172,7 @@ func (s *Store) resolveOrganizationPrincipal(
 	return principal, nil
 }
 
-func (s *Store) requireSystemAdmin(ctx context.Context, tx pgx.Tx, actorUserID string) error {
+func (s *Store) requireSystemAdmin(ctx context.Context, tx *databaseTransaction, actorUserID string) error {
 	var role domain.SystemRole
 	var active bool
 	if err := tx.QueryRow(ctx, `
@@ -300,7 +191,7 @@ func (s *Store) requireSystemAdmin(ctx context.Context, tx pgx.Tx, actorUserID s
 
 func (s *Store) requireOrganizationAdmin(
 	ctx context.Context,
-	tx pgx.Tx,
+	tx *databaseTransaction,
 	actorUserID string,
 	organizationID string,
 ) error {
@@ -350,13 +241,13 @@ func normalizeError(err error) error {
 		return nil
 	}
 	if errors.Is(err, pgx.ErrNoRows) {
-		return domain.ErrNotFound
+		return domain.WithCause(domain.ErrNotFound, err)
 	}
 	var postgresError *pgconn.PgError
 	if errors.As(err, &postgresError) {
 		switch postgresError.Code {
 		case "23505", "23503", "23514":
-			return domain.ErrConflict
+			return domain.WithCause(domain.ErrConflict, err)
 		}
 	}
 	return err

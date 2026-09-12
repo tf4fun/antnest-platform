@@ -27,9 +27,6 @@ func (h *Health) ObservationReady() error {
 	if !h.journal.Load() {
 		return fmt.Errorf("observation journal write path is not ready")
 	}
-	if !h.monitor.Load() {
-		return fmt.Errorf("platform observation monitor is not ready")
-	}
 	if !h.notifications.Load() {
 		return fmt.Errorf("cross-replica observation notifications are not ready")
 	}

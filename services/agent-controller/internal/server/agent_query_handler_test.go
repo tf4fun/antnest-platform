@@ -26,7 +26,8 @@ func TestAgentQueryHandlerListsWorkspaceAgentsWithoutBroadProjection(t *testing.
 	}}
 	handler, err := NewHandler(
 		&catalogServiceStub{}, &lifecycleServiceStub{}, &runServiceStub{}, queries,
-		&agentEventServiceStub{}, func(context.Context) error { return nil },
+		&agentEventServiceStub{}, &networkPolicyServiceStub{},
+		func(context.Context) error { return nil },
 	)
 	if err != nil {
 		t.Fatalf("new handler: %v", err)
@@ -70,7 +71,7 @@ func TestAgentQueryHandlerGetsKnownDeletedProjection(t *testing.T) {
 	}}
 	handler, err := NewHandler(
 		&catalogServiceStub{}, &lifecycleServiceStub{}, &runServiceStub{}, queries,
-		&agentEventServiceStub{},
+		&agentEventServiceStub{}, &networkPolicyServiceStub{},
 		func(context.Context) error { return nil },
 	)
 	if err != nil {
@@ -128,7 +129,8 @@ func TestAgentQueryHandlerReturnsSafeExecutableConfigurationLineage(t *testing.T
 	}}
 	handler, err := NewHandler(
 		&catalogServiceStub{}, &lifecycleServiceStub{}, &runServiceStub{}, queries,
-		&agentEventServiceStub{}, func(context.Context) error { return nil },
+		&agentEventServiceStub{}, &networkPolicyServiceStub{},
+		func(context.Context) error { return nil },
 	)
 	if err != nil {
 		t.Fatalf("new handler: %v", err)
@@ -165,7 +167,7 @@ func TestAgentQueryHandlerOmitsNonExecutableRuntimeRevision(t *testing.T) {
 	}}
 	handler, err := NewHandler(
 		&catalogServiceStub{}, &lifecycleServiceStub{}, &runServiceStub{}, queries,
-		&agentEventServiceStub{},
+		&agentEventServiceStub{}, &networkPolicyServiceStub{},
 		func(context.Context) error { return nil },
 	)
 	if err != nil {
@@ -193,7 +195,7 @@ func TestAgentQueryHandlerRejectsQueryOnExactGet(t *testing.T) {
 	queries := &agentQueryServiceStub{}
 	handler, err := NewHandler(
 		&catalogServiceStub{}, &lifecycleServiceStub{}, &runServiceStub{}, queries,
-		&agentEventServiceStub{},
+		&agentEventServiceStub{}, &networkPolicyServiceStub{},
 		func(context.Context) error { return nil },
 	)
 	if err != nil {
@@ -223,7 +225,7 @@ func TestAgentQueryHandlerListsWithStrictFilters(t *testing.T) {
 	}}
 	handler, err := NewHandler(
 		&catalogServiceStub{}, &lifecycleServiceStub{}, &runServiceStub{}, queries,
-		&agentEventServiceStub{},
+		&agentEventServiceStub{}, &networkPolicyServiceStub{},
 		func(context.Context) error { return nil },
 	)
 	if err != nil {
@@ -282,7 +284,7 @@ func TestAgentQueryHandlerRejectsAmbiguousOrUnknownQuery(t *testing.T) {
 			queries := &agentQueryServiceStub{}
 			handler, err := NewHandler(
 				&catalogServiceStub{}, &lifecycleServiceStub{}, &runServiceStub{}, queries,
-				&agentEventServiceStub{},
+				&agentEventServiceStub{}, &networkPolicyServiceStub{},
 				func(context.Context) error { return nil },
 			)
 			if err != nil {
@@ -303,7 +305,7 @@ func TestAgentQueryHandlerMapsServiceError(t *testing.T) {
 	queries := &agentQueryServiceStub{err: application.ErrAgentNotFound}
 	handler, err := NewHandler(
 		&catalogServiceStub{}, &lifecycleServiceStub{}, &runServiceStub{}, queries,
-		&agentEventServiceStub{},
+		&agentEventServiceStub{}, &networkPolicyServiceStub{},
 		func(context.Context) error { return nil },
 	)
 	if err != nil {
@@ -326,6 +328,9 @@ func TestAgentQueryHandlerMapsServiceError(t *testing.T) {
 }
 
 type agentQueryServiceStub struct {
+	state          application.WorkspaceAgentState
+	stateInput     application.WorkspaceStateInput
+	watchState     func(context.Context, application.WorkspaceStateEmitter) error
 	agent          application.AgentView
 	page           application.AgentPage
 	err            error
@@ -335,6 +340,22 @@ type agentQueryServiceStub struct {
 	listCalls      int
 	workspacePage  application.WorkspaceAgentPage
 	workspaceInput application.ListWorkspaceAgentsInput
+}
+
+func (service *agentQueryServiceStub) GetWorkspaceAgentState(_ context.Context, input application.WorkspaceStateInput) (application.WorkspaceAgentState, error) {
+	service.stateInput = input
+	return service.state, service.err
+}
+
+func (service *agentQueryServiceStub) WatchWorkspaceAgentState(ctx context.Context, input application.WorkspaceStateInput, emit application.WorkspaceStateEmitter) error {
+	service.stateInput = input
+	if service.watchState != nil {
+		return service.watchState(ctx, emit)
+	}
+	if service.err != nil {
+		return service.err
+	}
+	return emit(service.state)
 }
 
 func (service *agentQueryServiceStub) GetAgent(

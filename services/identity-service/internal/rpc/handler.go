@@ -14,6 +14,7 @@ import (
 	"soft/antnest-platform/services/identity-service/internal/localauth"
 	"soft/antnest-platform/services/identity-service/internal/oidcflow"
 	"soft/antnest-platform/services/identity-service/internal/scim"
+	"soft/antnest-platform/services/identity-service/internal/telemetry"
 )
 
 const maxRequestBytes = 1 << 20
@@ -123,6 +124,7 @@ func NewHandler(dependencies Dependencies) (*Handler, error) {
 }
 
 func (h *Handler) ServeHTTP(response http.ResponseWriter, request *http.Request) {
+	h.registerObservation(response, request)
 	h.mux.ServeHTTP(response, request)
 }
 
@@ -581,6 +583,7 @@ func decodeRequest(response http.ResponseWriter, request *http.Request, target a
 		writeError(response, domain.NewError("bad_request", "Request body must contain one JSON object", false))
 		return false
 	}
+	telemetry.RequestValue(response, target)
 	return true
 }
 
@@ -613,6 +616,7 @@ func writeResult(response http.ResponseWriter, value any, err error) {
 }
 
 func writeError(response http.ResponseWriter, err error) {
+	telemetry.ProtocolError(response, err)
 	status := http.StatusInternalServerError
 	code, message, retryable := domain.ErrorDetails(err)
 	switch {
@@ -647,6 +651,7 @@ func writeError(response http.ResponseWriter, err error) {
 }
 
 func writeJSON(response http.ResponseWriter, status int, value any) {
+	telemetry.ResponseValue(response, value)
 	response.Header().Set("Content-Type", "application/json")
 	response.WriteHeader(status)
 	_ = json.NewEncoder(response).Encode(value)

@@ -1,14 +1,17 @@
 import * as acp from "@agentclientprotocol/sdk";
 import { createWebSocketStream } from "@agentclientprotocol/sdk/experimental/ws-client";
-import { appendLocalUserPrompt, applySessionUpdate } from "./acp-state";
+import { appendLocalUserPrompt, applySessionUpdate, applyConfigurationResponse, resetConversationReplay, restoreFailedReplayUsage } from "./acp-state";
 import { workspaceFromBootstrap } from "./bootstrap";
 import { previewWorkspace } from "./preview";
 import { buildPromptBlocks } from "./prompt";
 import { csrfFromCookie } from "./session";
+import { PermissionInbox, type PendingPermission } from "./permissions";
+import { watchWorkspaceState, type StateListener } from "./workspace-state";
 import type { Attachment, ConnectionStatus, Conversation, WorkspaceSnapshot } from "./types";
 
 const WORKSPACE_CWD = "/workspace";
 const MAX_SESSION_PAGES = 100;
+type PromptOperation = { phase: "preparing" | "sent" | "cancelled" };
 
 export class WorkspaceUnavailableError extends Error {
   constructor(message: string, readonly status?: number) {
@@ -18,26 +21,32 @@ export class WorkspaceUnavailableError extends Error {
 }
 
 export type AgentConnectionListener = {
+  onPermissions: (requests: PendingPermission[]) => void;
   onConnection: (status: ConnectionStatus, error?: string) => void;
   onConversation: (conversation: Conversation) => void;
 };
 
 export interface ConnectedAgent {
+  readonly promptCapabilities: acp.PromptCapabilities;
+  answerPermission(id: string, optionId: string): boolean;
+  setConfiguration(sessionID: string, configId: string, value: string): Promise<void>;
   readonly conversations: readonly Conversation[];
   createConversation(): Promise<Conversation>;
   loadConversation(sessionID: string): Promise<void>;
-  prompt(sessionID: string, text: string, attachments: readonly Attachment[]): Promise<void>;
+  prompt(sessionID: string, text: string, attachments: readonly Attachment[], admission?: AbortSignal): Promise<void>;
   cancel(sessionID: string): Promise<void>;
   close(): void;
 }
 
 export interface AgentUIClient {
   loadWorkspace(signal?: AbortSignal): Promise<WorkspaceSnapshot>;
-  connectAgent(agentID: string, listener: AgentConnectionListener): Promise<ConnectedAgent>;
+  watchState(agentID: string, listener: StateListener): () => void;
+  connectAgent(agentID: string, listener: AgentConnectionListener, signal?: AbortSignal): Promise<ConnectedAgent>;
   logout(): Promise<void>;
 }
 
 class GatewayClient implements AgentUIClient {
+  watchState(agentID: string, listener: StateListener): () => void { return watchWorkspaceState(agentID, listener); }
   async loadWorkspace(signal?: AbortSignal): Promise<WorkspaceSnapshot> {
     const response = await fetch("/api/app/bootstrap", {
       credentials: "same-origin",
@@ -59,8 +68,8 @@ class GatewayClient implements AgentUIClient {
     return workspaceFromBootstrap(await response.json());
   }
 
-  connectAgent(agentID: string, listener: AgentConnectionListener): Promise<ConnectedAgent> {
-    return GatewayAgentConnection.open(agentID, listener);
+  connectAgent(agentID: string, listener: AgentConnectionListener, signal?: AbortSignal): Promise<ConnectedAgent> {
+    return GatewayAgentConnection.open(agentID, listener, signal);
   }
 
   async logout(): Promise<void> {
@@ -75,7 +84,11 @@ class GatewayClient implements AgentUIClient {
 }
 
 class GatewayAgentConnection implements ConnectedAgent {
+  private readonly permissions: PermissionInbox;
   private readonly sessions = new Map<string, Conversation>();
+  private readonly loading = new Map<string, Promise<void>>();
+  private readonly prompting = new Map<string, PromptOperation>();
+  private readonly replaying = new Map<string, Conversation>();
   private connection?: acp.ClientConnection;
   private capabilities?: acp.AgentCapabilities;
   private intentionallyClosed = false;
@@ -83,12 +96,18 @@ class GatewayAgentConnection implements ConnectedAgent {
   private constructor(
     private readonly agentID: string,
     private readonly listener: AgentConnectionListener,
-  ) {}
+  ) { this.permissions = new PermissionInbox(listener.onPermissions); }
 
-  static async open(agentID: string, listener: AgentConnectionListener): Promise<GatewayAgentConnection> {
+  static async open(agentID: string, listener: AgentConnectionListener, signal?: AbortSignal): Promise<GatewayAgentConnection> {
+    signal?.throwIfAborted();
     const connected = new GatewayAgentConnection(agentID, listener);
-    await connected.initialize();
-    return connected;
+    const abort = () => connected.close();
+    signal?.addEventListener("abort", abort, { once: true });
+    try {
+      await connected.initialize();
+      signal?.throwIfAborted();
+      return connected;
+    } finally { signal?.removeEventListener("abort", abort); }
   }
 
   get conversations(): readonly Conversation[] {
@@ -97,35 +116,81 @@ class GatewayAgentConnection implements ConnectedAgent {
     );
   }
 
+  get promptCapabilities(): acp.PromptCapabilities {
+    return { ...this.capabilities?.promptCapabilities };
+  }
+
   async createConversation(): Promise<Conversation> {
     const response = await this.agent().request(acp.methods.agent.session.new, {
       cwd: WORKSPACE_CWD,
       mcpServers: [],
     });
-    const conversation = emptyConversation(response.sessionId, this.agentID);
+    const conversation = { ...emptyConversation(response.sessionId, this.agentID),
+      configOptions: response.configOptions ?? [], currentModeId: response.modes?.currentModeId };
     this.publish(conversation);
     return conversation;
   }
 
-  async loadConversation(sessionID: string): Promise<void> {
-    const current = this.sessions.get(sessionID) ?? emptyConversation(sessionID, this.agentID);
-    this.publish({ ...current, messages: [] });
-    await this.agent().request(acp.methods.agent.session.load, {
-      sessionId: sessionID,
-      cwd: WORKSPACE_CWD,
-      mcpServers: [],
-    });
+  loadConversation(sessionID: string): Promise<void> {
+    if (this.prompting.has(sessionID)) return Promise.resolve();
+    const current = this.loading.get(sessionID);
+    if (current) return current;
+    const pending = this.replayConversation(sessionID).finally(() => this.loading.delete(sessionID));
+    this.loading.set(sessionID, pending);
+    return pending;
   }
 
-  async prompt(sessionID: string, text: string, attachments: readonly Attachment[]): Promise<void> {
+  private async replayConversation(sessionID: string): Promise<void> {
+    const current = this.sessions.get(sessionID) ?? emptyConversation(sessionID, this.agentID);
+    this.replaying.set(sessionID, current);
+    this.publish(resetConversationReplay(current));
+    try {
+      const response = await this.agent().request(acp.methods.agent.session.load, {
+        sessionId: sessionID,
+        cwd: WORKSPACE_CWD,
+        mcpServers: [],
+      });
+      const loaded = applyConfigurationResponse(this.sessions.get(sessionID)!, response.configOptions ?? [], current.configurationSequence ?? 0);
+      this.replaying.delete(sessionID);
+      this.publish(loaded);
+    } catch (cause) {
+      const recovered = restoreFailedReplayUsage(this.sessions.get(sessionID)!, current);
+      this.replaying.delete(sessionID);
+      this.publish({ ...recovered, messages: current.messages }, "failed");
+      throw cause;
+    }
+  }
+
+  answerPermission(id: string, optionId: string): boolean { return this.permissions.answer(id, optionId); }
+
+  async setConfiguration(sessionID: string, configId: string, value: string): Promise<void> {
+    const sequence = this.sessions.get(sessionID)?.configurationSequence ?? 0;
+    const result = await this.agent().request(acp.methods.agent.session.setConfigOption, {sessionId: sessionID, configId, value});
+    const current = this.sessions.get(sessionID);
+    if (current) this.publish(applyConfigurationResponse(current, result.configOptions, sequence));
+  }
+
+  async prompt(sessionID: string, text: string, attachments: readonly Attachment[], admission?: AbortSignal): Promise<void> {
+    if (this.loading.has(sessionID)) throw new Error("Conversation history is still loading.");
+    if (this.prompting.has(sessionID)) throw new Error("An operation is already in progress.");
+    const operation: PromptOperation = { phase: "preparing" };
+    this.prompting.set(sessionID, operation);
+    try { await this.sendPrompt(sessionID, text, attachments, operation, admission); }
+    finally { this.prompting.delete(sessionID); }
+  }
+
+  private async sendPrompt(sessionID: string, text: string, attachments: readonly Attachment[], operation: PromptOperation, admission?: AbortSignal): Promise<void> {
     const prompt = await buildPromptBlocks(text, attachments, this.capabilities?.promptCapabilities);
+    if (operation.phase === "cancelled" || this.intentionallyClosed) return;
+    if (admission?.aborted) throw new Error("Agent status changed before the message was sent.");
+    operation.phase = "sent";
     const current = this.sessions.get(sessionID) ?? emptyConversation(sessionID, this.agentID);
     this.publish(appendLocalUserPrompt(current, text, attachments));
     try {
       await this.agent().request(acp.methods.agent.session.prompt, { sessionId: sessionID, prompt });
     } catch (cause) {
       try {
-        await this.loadConversation(sessionID);
+        await this.replayConversation(sessionID);
       } catch {
         // Preserve the original prompt failure when authoritative replay is unavailable.
       }
@@ -134,11 +199,17 @@ class GatewayAgentConnection implements ConnectedAgent {
   }
 
   async cancel(sessionID: string): Promise<void> {
+    const operation = this.prompting.get(sessionID);
+    if (operation && operation.phase !== "sent") {
+      operation.phase = "cancelled";
+      return;
+    }
     await this.agent().notify(acp.methods.agent.session.cancel, { sessionId: sessionID });
   }
 
   close(): void {
     this.intentionallyClosed = true;
+    this.permissions.clear();
     this.connection?.close();
   }
 
@@ -148,20 +219,20 @@ class GatewayAgentConnection implements ConnectedAgent {
       .client({ name: "antnest-agent-ui" })
       .onNotification(acp.methods.client.session.update, ({ params }) => {
         const current = this.sessions.get(params.sessionId) ?? emptyConversation(params.sessionId, this.agentID);
-        this.publish(applySessionUpdate(current, params.update));
+        this.publish(applySessionUpdate(current, params.update, undefined, this.replaying.has(params.sessionId) ? "replay" : "live"));
       })
-      .onRequest(acp.methods.client.session.requestPermission, () => ({
-        outcome: { outcome: "cancelled" },
-      }));
+      .onRequest(acp.methods.client.session.requestPermission, ({params, signal}) => this.permissions.request(params, signal));
     const connection = application.connect(createWebSocketStream(agentWebSocketURL(this.agentID), {
       cookies: "include",
     }));
     this.connection = connection;
     void connection.closed.then(
       () => {
+        this.permissions.clear();
         if (!this.intentionallyClosed) this.listener.onConnection("offline", "The Agent connection closed.");
       },
       () => {
+        this.permissions.clear();
         if (!this.intentionallyClosed) this.listener.onConnection("offline", "The Agent connection closed.");
       },
     );
@@ -210,9 +281,12 @@ class GatewayAgentConnection implements ConnectedAgent {
     throw new Error("ACP session pagination exceeded its safety limit");
   }
 
-  private publish(conversation: Conversation): void {
+  private publish(conversation: Conversation, historyState?: Conversation["historyState"]): void {
     this.sessions.set(conversation.id, conversation);
-    this.listener.onConversation(conversation);
+    const previous = this.replaying.get(conversation.id);
+    this.listener.onConversation(previous
+      ? { ...conversation, historyState: "loading", messages: previous.messages }
+      : { ...conversation, historyState });
   }
 
   private agent(): acp.ClientContext {
@@ -222,6 +296,7 @@ class GatewayAgentConnection implements ConnectedAgent {
 }
 
 class PreviewClient implements AgentUIClient {
+  watchState(): () => void { return () => {}; }
   async loadWorkspace(): Promise<WorkspaceSnapshot> {
     return previewWorkspace();
   }

@@ -10,12 +10,14 @@ use std::{
 use async_trait::async_trait;
 use sha2::{Digest, Sha256};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, watch};
-use tokio_postgres::{Client, NoTls, Row, config::SslMode};
+use tokio_postgres::{NoTls, Row, config::SslMode};
 use tokio_postgres_rustls::MakeRustlsConnect;
 
 use super::{
-    BUILTIN_ALLOW_ALL, BUILTIN_DENY_ALL, BUILTIN_REVISION, DatabaseTlsMode, Repository,
-    RepositoryConfig, RepositoryError, policy_revision,
+    BUILTIN_ALLOW_ALL, BUILTIN_DENY_ALL, BUILTIN_REVISION, DatabaseTlsMode, DriverError,
+    Repository, RepositoryConfig, RepositoryError,
+    observation::{Client, Transaction},
+    policy_revision,
 };
 use crate::{
     allocator::{AddressPool, AllocationError},
@@ -138,10 +140,6 @@ impl PostgresRepository {
 
     pub fn health(&self) -> watch::Receiver<bool> {
         self.health.subscribe()
-    }
-
-    async fn acquire_client(&self) -> Result<ClientLease, RepositoryError> {
-        self.pool.acquire().await
     }
 }
 
@@ -334,17 +332,17 @@ async fn connect_without_tls(
     let (client, connection) = config
         .connect(NoTls)
         .await
-        .map_err(connection_unavailable)?;
+        .map_err(database_connection_error)?;
     let registration = Arc::new(ConnectionRegistration::new(health));
     let driver_registration = Arc::clone(&registration);
     tokio::spawn(async move {
-        if let Err(error) = connection.await {
-            tracing::error!(error = %error, "PostgreSQL connection terminated");
+        if connection.await.is_err() {
+            tracing::error!(error.type = "repository_connection_unavailable", "PostgreSQL connection terminated");
         }
         driver_registration.close();
     });
     Ok(UnvalidatedClient {
-        client,
+        client: Client::new(client, &config),
         registration,
     })
 }
@@ -354,8 +352,8 @@ async fn connect_with_tls(
     health: Arc<ConnectionHealth>,
 ) -> Result<UnvalidatedClient, RepositoryError> {
     let certificates = rustls_native_certs::load_native_certs();
-    for error in certificates.errors {
-        tracing::warn!(%error, "one native certificate root could not be loaded");
+    for _ in certificates.errors {
+        tracing::warn!(error.type = "native_certificate_invalid", "one native certificate root could not be loaded");
     }
     let mut roots = rustls::RootCertStore::empty();
     for certificate in certificates.certs {
@@ -376,17 +374,17 @@ async fn connect_with_tls(
     let (client, connection) = postgres_config
         .connect(connector)
         .await
-        .map_err(connection_unavailable)?;
+        .map_err(database_connection_error)?;
     let registration = Arc::new(ConnectionRegistration::new(health));
     let driver_registration = Arc::clone(&registration);
     tokio::spawn(async move {
-        if let Err(error) = connection.await {
-            tracing::error!(error = %error, "PostgreSQL TLS connection terminated");
+        if connection.await.is_err() {
+            tracing::error!(error.type = "repository_connection_unavailable", "PostgreSQL TLS connection terminated");
         }
         driver_registration.close();
     });
     Ok(UnvalidatedClient {
-        client,
+        client: Client::new(client, &postgres_config),
         registration,
     })
 }
@@ -397,7 +395,7 @@ fn database_config(
 ) -> Result<tokio_postgres::Config, RepositoryError> {
     let mut config = database_url
         .parse::<tokio_postgres::Config>()
-        .map_err(connection_unavailable)?;
+        .map_err(database_connection_error)?;
     config.ssl_mode(match tls_mode {
         DatabaseTlsMode::Require => SslMode::Require,
         DatabaseTlsMode::Disable => SslMode::Disable,
@@ -628,7 +626,7 @@ async fn seed_repository(
 }
 
 async fn verify_pool(
-    transaction: &tokio_postgres::Transaction<'_>,
+    transaction: &Transaction<'_>,
     config: &RepositoryConfig,
 ) -> Result<(), RepositoryError> {
     let row = transaction
@@ -660,7 +658,7 @@ impl Repository for PostgresRepository {
         agent_id: AgentId,
     ) -> Result<AgentNetwork, RepositoryError> {
         let pool_id = self.config.pool_id.as_str();
-        let mut client = self.acquire_client().await?;
+        let mut client = self.pool.acquire().await?;
         let result = tokio::time::timeout(CLIENT_OPERATION_TIMEOUT, async {
             let transaction = client
                 .transaction()
@@ -761,7 +759,7 @@ impl Repository for PostgresRepository {
     }
 
     async fn agent_network(&self, agent_id: &AgentId) -> Result<AgentNetwork, RepositoryError> {
-        let mut client = self.acquire_client().await?;
+        let mut client = self.pool.acquire().await?;
         let result = tokio::time::timeout(CLIENT_OPERATION_TIMEOUT, async {
             select_network_client(&client, agent_id)
                 .await?
@@ -781,7 +779,7 @@ impl Repository for PostgresRepository {
             return Err(RepositoryError::PolicyRevisionConflict);
         }
         let candidate = policy_revision(policy_id, revision, spec);
-        let mut client = self.acquire_client().await?;
+        let mut client = self.pool.acquire().await?;
         let result = tokio::time::timeout(CLIENT_OPERATION_TIMEOUT, async {
             client
                 .execute(
@@ -814,7 +812,7 @@ impl Repository for PostgresRepository {
         policy_id: &PolicyId,
         revision: u64,
     ) -> Result<PolicyRevision, RepositoryError> {
-        let mut client = self.acquire_client().await?;
+        let mut client = self.pool.acquire().await?;
         let result = tokio::time::timeout(
             CLIENT_OPERATION_TIMEOUT,
             select_policy_revision(&client, policy_id, revision),
@@ -827,7 +825,7 @@ impl Repository for PostgresRepository {
         &self,
         agent_id: &AgentId,
     ) -> Result<PolicyAssignment, RepositoryError> {
-        let mut client = self.acquire_client().await?;
+        let mut client = self.pool.acquire().await?;
         let result = tokio::time::timeout(CLIENT_OPERATION_TIMEOUT, async {
             select_assignment_client(&client, agent_id)
                 .await?
@@ -841,7 +839,7 @@ impl Repository for PostgresRepository {
         &self,
         agent_id: &AgentId,
     ) -> Result<RuntimeAttachment, RepositoryError> {
-        let mut client = self.acquire_client().await?;
+        let mut client = self.pool.acquire().await?;
         let result = tokio::time::timeout(CLIENT_OPERATION_TIMEOUT, async {
             select_attachment_client(&client, agent_id)
                 .await?
@@ -857,7 +855,7 @@ impl Repository for PostgresRepository {
         desired: AttachmentState,
         expected_resource_version: u64,
     ) -> Result<RuntimeAttachment, RepositoryError> {
-        let mut client = self.acquire_client().await?;
+        let mut client = self.pool.acquire().await?;
         let result = tokio::time::timeout(CLIENT_OPERATION_TIMEOUT, async {
             let transaction = client
                 .transaction()
@@ -921,7 +919,7 @@ impl Repository for PostgresRepository {
         revision: u64,
         expected_resource_version: u64,
     ) -> Result<PolicyAssignment, RepositoryError> {
-        let mut client = self.acquire_client().await?;
+        let mut client = self.pool.acquire().await?;
         let result = tokio::time::timeout(CLIENT_OPERATION_TIMEOUT, async {
             let transaction = client
                 .transaction()
@@ -998,7 +996,7 @@ impl Repository for PostgresRepository {
         expected_resource_version: u64,
         now: SystemTime,
     ) -> Result<AgentNetwork, RepositoryError> {
-        let mut client = self.acquire_client().await?;
+        let mut client = self.pool.acquire().await?;
         let result = tokio::time::timeout(CLIENT_OPERATION_TIMEOUT, async {
             let transaction = client
                 .transaction()
@@ -1052,7 +1050,7 @@ impl Repository for PostgresRepository {
     }
 
     async fn active_bindings(&self) -> Result<Vec<ActiveBinding>, RepositoryError> {
-        let mut client = self.acquire_client().await?;
+        let mut client = self.pool.acquire().await?;
         let result = tokio::time::timeout(CLIENT_OPERATION_TIMEOUT, async {
             let rows = client
                 .query(
@@ -1081,7 +1079,7 @@ impl Repository for PostgresRepository {
         &self,
         now: SystemTime,
     ) -> Result<Vec<AgentNetwork>, RepositoryError> {
-        let mut client = self.acquire_client().await?;
+        let mut client = self.pool.acquire().await?;
         let result = tokio::time::timeout(CLIENT_OPERATION_TIMEOUT, async {
             client
                 .query(
@@ -1106,7 +1104,7 @@ impl Repository for PostgresRepository {
         agent_id: &AgentId,
         expected_resource_version: u64,
     ) -> Result<bool, RepositoryError> {
-        let mut client = self.acquire_client().await?;
+        let mut client = self.pool.acquire().await?;
         let result = tokio::time::timeout(CLIENT_OPERATION_TIMEOUT, async {
             let deleted = client
                 .execute(
@@ -1155,7 +1153,7 @@ fn binding_from_row(row: Row) -> Result<ActiveBinding, RepositoryError> {
 }
 
 async fn select_network(
-    transaction: &tokio_postgres::Transaction<'_>,
+    transaction: &Transaction<'_>,
     agent_id: &AgentId,
 ) -> Result<Option<AgentNetwork>, RepositoryError> {
     transaction
@@ -1172,7 +1170,7 @@ async fn select_network(
 }
 
 async fn select_network_for_update(
-    transaction: &tokio_postgres::Transaction<'_>,
+    transaction: &Transaction<'_>,
     agent_id: &AgentId,
 ) -> Result<Option<AgentNetwork>, RepositoryError> {
     transaction
@@ -1278,7 +1276,7 @@ async fn select_assignment_client(
 }
 
 async fn select_assignment(
-    transaction: &tokio_postgres::Transaction<'_>,
+    transaction: &Transaction<'_>,
     agent_id: &AgentId,
     for_update: bool,
 ) -> Result<Option<PolicyAssignment>, RepositoryError> {
@@ -1321,7 +1319,7 @@ async fn select_attachment_client(
 }
 
 async fn select_attachment(
-    transaction: &tokio_postgres::Transaction<'_>,
+    transaction: &Transaction<'_>,
     agent_id: &AgentId,
     for_update: bool,
 ) -> Result<Option<RuntimeAttachment>, RepositoryError> {
@@ -1409,25 +1407,30 @@ fn finish_operation<T>(
     client: &mut ClientLease,
     result: Result<Result<T, RepositoryError>, tokio::time::error::Elapsed>,
 ) -> Result<T, RepositoryError> {
+    // Preserve the operation deadline and lease-discard policy; SQL observes itself.
     match result {
-        Ok(Err(RepositoryError::ConnectionUnavailable(error))) => {
+        Ok(Err(error)) if error.is_connection_failure() => {
             client.discard();
-            Err(RepositoryError::ConnectionUnavailable(error))
+            Err(error)
         }
         Ok(result) => result,
         Err(_) => {
             client.discard();
-            Err(operation_failed("PostgreSQL operation timed out"))
+            Err(RepositoryError::OperationTimedOut)
         }
     }
 }
 
 fn database_operation_error(error: tokio_postgres::Error) -> RepositoryError {
     if error.as_db_error().is_some() {
-        operation_failed(error)
+        RepositoryError::DatabaseOperation(DriverError::new(error))
     } else {
-        connection_unavailable(error)
+        database_connection_error(error)
     }
+}
+
+fn database_connection_error(error: tokio_postgres::Error) -> RepositoryError {
+    RepositoryError::DatabaseConnection(DriverError::new(error))
 }
 
 fn operation_failed(error: impl std::fmt::Display) -> RepositoryError {
@@ -1454,8 +1457,8 @@ where
     let attempts = async {
         loop {
             match connect().await {
-                Err(RepositoryError::ConnectionUnavailable(error)) => {
-                    tracing::warn!(%error, "PostgreSQL is not reachable; retrying startup");
+                Err(error) if error.is_connection_failure() => {
+                    tracing::warn!(error.type = "repository_connection_unavailable", "PostgreSQL is not reachable; retrying startup");
                     tokio::time::sleep(retry_delay).await;
                 }
                 result => return result,

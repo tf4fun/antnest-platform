@@ -1,3 +1,5 @@
+import { v1Configuration } from "../../src/transport/acp/configuration.js";
+import { sessionConfigurationView } from "../support/fixtures.js";
 import * as acp from "@agentclientprotocol/sdk";
 import { createHttpStream } from "@agentclientprotocol/sdk/experimental/http-client";
 import { Pool } from "pg";
@@ -78,12 +80,47 @@ describe.skipIf(databaseUrl === undefined)("ACP official HTTP client with Postgr
     await client.connection.closed;
     const recovered = await connect();
     await recovered.agent.request(acp.methods.agent.session.load, { sessionId, ...setup });
-    expect(recovered.updates).toHaveLength(6);
+    expect(recovered.updates).toHaveLength(7);
+    expect(recovered.updates.at(-1)).toMatchObject({ sessionUpdate: "available_commands_update" });
     expect(JSON.stringify(recovered.updates)).toContain("owner-only-tool-output");
     const ws = await app.connect(1);
-    expect((await ws.request("session/load", { sessionId, ...setup })).result).toEqual({});
+    expect((await ws.request("session/load", { sessionId, ...setup })).result).toEqual(
+      v1Configuration(sessionConfigurationView()),
+    );
     expect(app.controller.acquireRun).toHaveBeenCalledOnce();
     expect(app.model.complete).toHaveBeenCalledTimes(2);
+  });
+
+  it("executes an advertised command through the official HTTP client without model or Tool calls", async () => {
+    const client = await connect();
+    const { sessionId } = await client.agent.request<acp.NewSessionResponse>(
+      acp.methods.agent.session.new,
+      setup,
+    );
+    // HTTP setup responses and the notification SSE stream are separate deliveries.
+    await expect.poll(() => client.updates.length).toBe(1);
+    expect(client.updates).toMatchObject([
+      {
+        sessionUpdate: "available_commands_update",
+        availableCommands: [{ name: "help" }],
+      },
+    ]);
+    expect(
+      await client.agent.request(acp.methods.agent.session.prompt, {
+        sessionId,
+        prompt: [{ type: "text", text: "/help" }],
+      }),
+    ).toEqual({ stopReason: "end_turn" });
+    expect(client.updates.at(-1)).toMatchObject({
+      sessionUpdate: "agent_message_chunk",
+    });
+    expect(JSON.stringify(client.updates.at(-1))).toContain("Available commands");
+    expect((await app.sessions.readOutput(sessionId, 0)).events).toHaveLength(2);
+    expect(app.controller.finishRun).toHaveBeenCalledOnce();
+    expect(app.controller.resolveCredential).not.toHaveBeenCalled();
+    expect(app.model.complete).not.toHaveBeenCalled();
+    expect(app.tools.list).not.toHaveBeenCalled();
+    expect(app.tools.call).not.toHaveBeenCalled();
   });
 
   it.each(["other-user", "other-agent"])("denies persisted session load to %s", async (subject) => {

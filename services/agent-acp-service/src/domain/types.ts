@@ -1,3 +1,6 @@
+import type { AdmittedConfiguration } from "./session-configuration.js";
+import type { ModelPricing } from "./usage.js";
+
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonObject = { [key: string]: JsonValue };
 export type JsonValue = JsonPrimitive | JsonValue[] | JsonObject;
@@ -39,6 +42,9 @@ export type ModelSpec = {
   maxOutputTokens: number;
   temperature?: number;
   supportsImages: boolean;
+  supportsAudio?: boolean;
+  supportsPdf?: boolean;
+  pricing?: ModelPricing;
 };
 
 export type SkillInstruction = {
@@ -48,6 +54,7 @@ export type SkillInstruction = {
 };
 
 export type AgentExecutionSpec = {
+  configuration?: AdmittedConfiguration;
   systemPrompt: string;
   contextPolicyVersion: "context-v1";
   skillInstructions: SkillInstruction[];
@@ -148,6 +155,8 @@ export type ModelMessage =
     };
 
 export type ToolDefinition = {
+  annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean };
+  title?: string;
   source: "runtime" | "client";
   sourceId: string;
   name: string;
@@ -156,6 +165,7 @@ export type ToolDefinition = {
   inputSchema?: JsonObject;
 };
 
-export type ModelToolDefinition = ToolDefinition & {
+export type ModelToolDefinition = Omit<ToolDefinition, "source"> & {
+  source: ToolDefinition["source"] | "agent";
   modelName: string;
 };

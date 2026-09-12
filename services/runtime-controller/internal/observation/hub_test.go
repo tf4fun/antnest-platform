@@ -9,6 +9,20 @@ import (
 	"soft/antnest-platform/services/runtime-controller/internal/repository"
 )
 
+func TestLocalReadinessDoesNotDependOnPlatformWatchHealth(t *testing.T) {
+	health := &Health{}
+	health.MarkJournal(true)
+	health.MarkNotifications(true)
+	health.MarkMonitor(false)
+	if err := health.ObservationReady(); err != nil {
+		t.Fatalf("remote platform affected local readiness: %v", err)
+	}
+	health.MarkNotifications(false)
+	if err := health.ObservationReady(); err == nil {
+		t.Fatal("own notification initialization was ignored")
+	}
+}
+
 func TestRepositoryPublishesOnlyPersistedObservations(t *testing.T) {
 	base := &fakeRepository{}
 	hub := NewHub()

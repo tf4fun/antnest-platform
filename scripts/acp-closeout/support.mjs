@@ -1,22 +1,15 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { setTimeout as delay } from "node:timers/promises";
+import { until } from "./wait.mjs";
+export { until } from "./wait.mjs";
 import * as v1 from "@agentclientprotocol/sdk";
 import * as v2 from "@agentclientprotocol/sdk/experimental/v2";
 import { createWebSocketStream } from "@agentclientprotocol/sdk/experimental/ws-client";
 import { WebSocket } from "ws";
+import { observeSocket, requestWithin } from "./connection.mjs";
 export { assertMessageReplay } from "./replay.mjs";
 
 export const gateway = "http://edge-gateway:8080";
-export async function until(probe, label, timeout = 30000) {
-  const deadline = Date.now() + timeout;
-  while (Date.now() < deadline) {
-    const value = await probe();
-    if (value) return value;
-    await delay(100);
-  }
-  throw new Error(`Timed out: ${label}`);
-}
 
 export class BrowserSession {
   cookie = "";
@@ -73,14 +66,10 @@ export async function connect(version, agent, browser) {
   const acp = version === 1 ? v1 : v2;
   const updates = [];
   let closeCode;
-  class ObservedSocket extends WebSocket {
-    constructor(...args) {
-      super(...args);
-      this.once("close", (code) => {
-        closeCode = code;
-      });
-    }
-  }
+  const closed = new AbortController();
+  const ObservedSocket = observeSocket(WebSocket, closed, (code) => {
+    closeCode = code;
+  });
   const connection = acp
     .client()
     .onNotification(acp.methods.client.session.update, ({ params }) =>
@@ -99,12 +88,17 @@ export async function connect(version, agent, browser) {
       ),
     );
   // Only SDK descriptors cross the transport boundary; versions differ in init/replay/completion.
+  const send = (method, params, timeout = 30000) =>
+    requestWithin(
+      (options) => connection.agent.request(method, params, options),
+      closed.signal,
+      () => connection.close(),
+      timeout,
+    );
   const request = (name, params) =>
-    connection.agent.request(acp.methods.agent.session[name], params, {
-      signal: AbortSignal.timeout(30000),
-    });
+    send(acp.methods.agent.session[name], params);
   try {
-    const initialized = await connection.agent.request(
+    const initialized = await send(
       acp.methods.agent.initialize,
       version === 1
         ? { protocolVersion: acp.PROTOCOL_VERSION, clientCapabilities: {} }
@@ -113,7 +107,7 @@ export async function connect(version, agent, browser) {
             info: { name: "closeout", version: "1" },
             capabilities: {},
           },
-      { signal: AbortSignal.timeout(10000) },
+      10000,
     );
     assert.equal(initialized.protocolVersion, acp.PROTOCOL_VERSION);
   } catch (error) {

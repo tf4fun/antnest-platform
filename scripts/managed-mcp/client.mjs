@@ -1,14 +1,35 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import * as acp from "@agentclientprotocol/sdk";
+import * as v1 from "@agentclientprotocol/sdk";
+import * as v2 from "@agentclientprotocol/sdk/experimental/v2";
 import { createWebSocketStream } from "@agentclientprotocol/sdk/experimental/ws-client";
 import { WebSocket } from "ws";
 import { verifyTraces } from "./trace.mjs";
+import { until } from "../acp-closeout/wait.mjs";
+import {
+  parseVersion,
+  initializeParams,
+  replayRequest,
+  assertPromptComplete,
+  assertReplay,
+  assertStillRunning,
+} from "./protocol.mjs";
+import {
+  captureRuntime,
+  assertDraining,
+  assertRebuilt,
+  inspectDrain,
+  assertModelSequence,
+  inspectPinnedTrace,
+  isStalePromptDenied,
+} from "./rebuild-evidence.mjs";
 
 const organization = process.env.TEST_ORGANIZATION_ID;
 const owner = process.env.TEST_OWNER_ID;
 const cookie = process.env.TEST_USER_COOKIE;
 const image = process.env.TEST_RUNTIME_IMAGE;
+const version = parseVersion(process.env.TEST_ACP_VERSION);
+const acp = version === 1 ? v1 : v2;
 assert(
   organization && owner && cookie && image,
   "integration configuration missing",
@@ -19,6 +40,72 @@ let csrf = "";
 let agentID;
 let connection;
 const updates = [];
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const runtime = () =>
+  request("http://runtime-controller:8080", `/internal/runtimes/${agentID}`);
+async function modelState() {
+  const response = await fetch("http://managed-model:8080/status", {
+    signal: AbortSignal.timeout(5000),
+  });
+  assert.equal(response.status, 200);
+  const state = await response.json();
+  assert.deepEqual(state.errors, [], "model fixture rejected the real request");
+  return state;
+}
+async function waitHeld(step) {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const state = await modelState();
+    if (state.held?.step === step) return state.held;
+    await delay(200);
+  }
+  throw new Error(`model response barrier ${step} not reached`);
+}
+async function release(step) {
+  const response = await fetch(`http://managed-model:8080/release/${step}`, {
+    method: "POST",
+    signal: AbortSignal.timeout(5000),
+  });
+  assert.equal(response.status, 200, "model barrier release failed");
+}
+async function observeDrain(requestID, held, before) {
+  const query = new URLSearchParams({
+    service: "agent-controller",
+    operation: "recover Agent lifecycle operation",
+    tags: JSON.stringify({ "antnest.lifecycle.request_id": requestID }),
+    lookback: "1h",
+    limit: "100",
+  });
+  let observation;
+  let last;
+  for (let attempt = 0; attempt < 40; attempt++) {
+    try {
+      const response = await fetch(`http://jaeger:16686/api/traces?${query}`, {
+        signal: AbortSignal.timeout(5000),
+      });
+      assert.equal(response.status, 200);
+      observation = inspectDrain((await response.json()).data ?? [], {
+        agentID,
+        requestID,
+        receivedAt: held.received_at,
+      });
+      break;
+    } catch (error) {
+      last = error;
+    }
+    await delay(500);
+  }
+  if (!observation) throw last;
+  assert.equal(
+    (await modelState()).held?.step,
+    held.step,
+    "barrier ended before drain inspection",
+  );
+  const agent = await api(`/api/admin/agents/${agentID}`);
+  const inspection = await runtime();
+  const operation = await api(`/api/admin/operations/${requestID}`);
+  assertDraining(before, agent, inspection, operation, requestID);
+  return { step: held.step, ...observation };
+}
 
 async function request(base, path, body, expected = 200) {
   const response = await fetch(base + path, {
@@ -68,56 +155,56 @@ async function connect() {
   connection = acp
     .client({ name: "managed-mcp-integration" })
     .onNotification(acp.methods.client.session.update, ({ params }) =>
-      updates.push(params.update),
+      updates.push(params),
     )
     .onRequest(acp.methods.client.session.requestPermission, () => ({
       outcome: { outcome: "cancelled" },
     }))
     .connect(
       createWebSocketStream(
-        `ws://edge-gateway:8080/api/app/agents/${agentID}/acp`,
+        `ws://edge-gateway:8080/api/app/agents/${agentID}/v${version}/acp`,
         {
           WebSocket,
           headers: { Cookie: cookie, Origin: gateway },
         },
       ),
     );
-  await call(acp.methods.agent.initialize, {
-    protocolVersion: acp.PROTOCOL_VERSION,
-    clientCapabilities: {},
-    clientInfo: { name: "managed-mcp-integration", version: "1" },
-  });
+  const initialized = await call(
+    acp.methods.agent.initialize,
+    initializeParams(version, acp.PROTOCOL_VERSION),
+  );
+  assert.equal(initialized.protocolVersion, acp.PROTOCOL_VERSION);
 }
 const call = (method, params) =>
   connection.agent.request(method, params, {
     signal: AbortSignal.timeout(120000),
   });
 async function prompt(sessionId, phase) {
-  updates.length = 0;
+  const offset = updates.length;
   const result = await call(acp.methods.agent.session.prompt, {
     sessionId,
     prompt: [{ type: "text", text: phase }],
   });
-  assert.equal(
-    result.stopReason,
-    "end_turn",
-    `${phase}: ${JSON.stringify(updates)}`,
-  );
-  assert(
-    updates.some(
-      (update) =>
-        update.sessionUpdate === "agent_message_chunk" &&
-        JSON.stringify(update).includes(`${phase} verified`),
-    ),
-    `${phase}: missing verified reply`,
-  );
-  assert(
-    updates.some(
-      (update) =>
-        update.sessionUpdate === "tool_call_update" &&
-        update.status === "completed",
-    ),
-    "missing completed tool",
+  if (version === 2)
+    await until(
+      () =>
+        updates
+          .slice(offset)
+          .some(
+            ({ sessionId: target, update }) =>
+              target === sessionId &&
+              update.sessionUpdate === "state_update" &&
+              update.state === "idle",
+          ),
+      `${phase}: v2 idle`,
+      120000,
+    );
+  assertPromptComplete(
+    version,
+    result,
+    updates.slice(offset),
+    phase,
+    sessionId,
   );
 }
 
@@ -203,8 +290,25 @@ try {
     "managed-fresh",
   ])
     await prompt(session.sessionId, phase);
-  connection.close();
-  connection = undefined;
+  const source = captureRuntime(before, await runtime());
+  const other = await call(acp.methods.agent.session.new, {
+    cwd: "/workspace",
+    mcpServers: [],
+  });
+  // Handle rejection immediately while HTTP probes run, then surface it below.
+  let completed = false;
+  const drainOffset = updates.length;
+  const pending = prompt(session.sessionId, "managed-draining").then(
+    () => {
+      completed = true;
+      return { ok: true };
+    },
+    (error) => {
+      completed = true;
+      return { error };
+    },
+  );
+  const firstBarrier = await waitHeld(1);
   await api(
     `/api/admin/templates/${template.template_id}/revisions`,
     templateBody("beta"),
@@ -217,45 +321,157 @@ try {
     historical.runtime.mcp_servers,
     templateBody("alpha").runtime.mcp_servers,
   );
+  assert.deepEqual(
+    captureRuntime(await api(`/api/admin/agents/${agentID}`), await runtime()),
+    source,
+    "Template publication changed a running Agent",
+  );
   const rebuild = await api(
     `/api/admin/agents/${agentID}/rebuild`,
     { template_id: template.template_id, template_revision: 2 },
     202,
   );
+  const drains = [await observeDrain(rebuild.request_id, firstBarrier, source)];
+  assert.equal(
+    completed,
+    false,
+    "held Run completed before first response release",
+  );
+  assertStillRunning(version, updates.slice(drainOffset), session.sessionId);
+  const deniedOffset = updates.length;
+  const modelCount = (await modelState()).requests.length;
+  await assert.rejects(
+    call(acp.methods.agent.session.prompt, {
+      sessionId: other.sessionId,
+      prompt: [{ type: "text", text: "managed-rebuild-denied" }],
+    }),
+    (error) =>
+      error.code === -32021 &&
+      error.data?.code === "agent_rebuilding" &&
+      error.data?.retryable === true,
+  );
+  assert.equal(
+    (await modelState()).requests.length,
+    modelCount,
+    "denied prompt called the model",
+  );
+  assert(
+    !updates
+      .slice(deniedOffset)
+      .some((item) => item.sessionId === other.sessionId),
+    "denied prompt produced conversation or Tool events",
+  );
+  await release(1);
+  const secondBarrier = await waitHeld(2);
+  drains.push(await observeDrain(rebuild.request_id, secondBarrier, source));
+  assert.equal(
+    completed,
+    false,
+    "held Run completed before final answer release",
+  );
+  assertStillRunning(version, updates.slice(drainOffset), session.sessionId);
+  await release(2);
+  const finished = await pending;
+  if (finished.error) throw finished.error;
+  assert.equal(finished.ok, true);
   await waitOperation(rebuild.request_id);
   const after = await api(`/api/admin/agents/${agentID}`);
   assert.deepEqual(after.configuration.runtime.mcp_servers, [
     { id: "beta", command: "/usr/local/bin/managed-mcp-fixture" },
   ]);
-  assert.notEqual(
-    before.runtime.runtime_revision,
-    after.runtime.runtime_revision,
+  const replacement = assertRebuilt(source, after, await runtime());
+  const beforeStale = (await modelState()).requests.length;
+  const staleOffset = updates.length;
+  await assert.rejects(
+    call(acp.methods.agent.session.prompt, {
+      sessionId: session.sessionId,
+      prompt: [{ type: "text", text: "managed-stale-denied" }],
+    }),
+    isStalePromptDenied,
   );
+  assert.equal(
+    (await modelState()).requests.length,
+    beforeStale,
+    "stale Prompt invoked model",
+  );
+  assert.equal(
+    updates.length,
+    staleOffset,
+    "stale Prompt emitted Session events",
+  );
+  const beforeReplay = (await modelState()).requests.length;
+  const originalHistory = structuredClone(updates);
+  connection.close();
+  connection = undefined;
   await connect();
-  await call(acp.methods.agent.session.load, {
-    sessionId: session.sessionId,
-    cwd: "/workspace",
-    mcpServers: [],
-  });
+  const replayOffset = updates.length;
+  const replay = replayRequest(version, session.sessionId);
+  await call(acp.methods.agent.session[replay.method], replay.params);
+  assert.equal(
+    (await modelState()).requests.length,
+    beforeReplay,
+    "Session replay executed the model",
+  );
+  assertReplay(
+    version,
+    originalHistory,
+    updates.slice(replayOffset),
+    [
+      "managed-bootstrap",
+      "managed-exercise",
+      "managed-mutate",
+      "managed-fresh",
+      "managed-draining",
+    ],
+    session.sessionId,
+    // The deliberate stale Prompt left a failed, unadmitted intent. It did not
+    // rewrite the earlier successful Run or produce a conversation message.
+    "_failed",
+  );
   await prompt(session.sessionId, "managed-rebuilt");
   connection.close();
   connection = undefined;
-  const model = await (await fetch("http://managed-model:8080/status")).json();
+  const model = await modelState();
+  assertModelSequence(model);
   const phases = [...new Set(model.requests.map((item) => item.phase))];
-  assert.equal(phases.length, 5);
-  const traces = await verifyTraces("http://jaeger:16686", model.requests);
+  const traces = await verifyTraces(
+    "http://jaeger:16686",
+    model.requests,
+    [cookie, adminCookie],
+    (trace, requests, secrets) =>
+      inspectPinnedTrace(trace, requests, secrets, source, replacement),
+  );
+  for (const [key, expected] of [
+    ["tool_calls", 9],
+    ["information_reads", 6],
+    ["catalog_reads", 6],
+  ])
+    assert.equal(
+      traces.reduce((sum, trace) => sum + trace[key], 0),
+      expected,
+      `unexpected ${key}`,
+    );
+  const deleted = await api(`/api/admin/agents/${agentID}/delete`, {}, 202);
+  await waitOperation(deleted.request_id);
   process.stdout.write(
     JSON.stringify({
       status: "passed",
+      version,
       phases,
       model_requests: model.requests.length,
+      rebuild: {
+        drain_observations: drains,
+        source_runtime: source.runtime_revision,
+        replacement_runtime: replacement.runtime_revision,
+        distinct_executions:
+          source.runtime_execution_id !== replacement.runtime_execution_id,
+        second_session_denied: true,
+        stale_connection_denied: true,
+      },
       traces,
     }) + "\n",
   );
 } finally {
   connection?.close();
-  if (agentID) {
-    const deleted = await api(`/api/admin/agents/${agentID}/delete`, {}, 202);
-    await waitOperation(deleted.request_id);
-  }
+  // The parent owns container/volume cleanup, including failed active Runs.
 }

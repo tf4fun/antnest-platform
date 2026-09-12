@@ -21,6 +21,11 @@ use tracing_subscriber::{
 
 pub const SERVICE_NAME: &str = "antnest-runtime-egress";
 
+pub fn capture_rpc_content_from_environment() -> bool {
+    env::var("ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT")
+        .is_ok_and(|value| value.trim().eq_ignore_ascii_case("true"))
+}
+
 #[derive(Debug, Error)]
 pub enum TelemetryError {
     #[error("initialize OTLP exporter: {0}")]
@@ -97,6 +102,7 @@ impl Telemetry {
         let otlp_enabled = !sdk_disabled();
         let tracer_provider = if !otlp_enabled {
             SdkTracerProvider::builder()
+                .with_max_events_per_span(32)
                 .with_resource(service_resource())
                 .build()
         } else {
@@ -108,6 +114,7 @@ impl Telemetry {
                 .build()
                 .map_err(|error| TelemetryError::Exporter(error.to_string()))?;
             SdkTracerProvider::builder()
+                .with_max_events_per_span(32)
                 .with_batch_exporter(exporter)
                 .with_resource(service_resource())
                 .build()
@@ -421,17 +428,38 @@ fn resolve_otlp_endpoint(
 }
 
 fn service_resource() -> Resource {
-    Resource::builder()
-        .with_service_name(SERVICE_NAME)
-        .with_attributes([
-            KeyValue::new("service.namespace", "antnest"),
-            KeyValue::new("service.version", env!("CARGO_PKG_VERSION")),
-        ])
-        .build()
+    static RESOURCE: std::sync::OnceLock<Resource> = std::sync::OnceLock::new();
+    RESOURCE
+        .get_or_init(|| {
+            let configured = Resource::builder().build();
+            let started = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos();
+            Resource::builder_empty()
+                .with_attributes([
+                    KeyValue::new("service.version", env!("CARGO_PKG_VERSION")),
+                    KeyValue::new(
+                        "service.instance.id",
+                        format!("{}-{}-{started}", SERVICE_NAME, std::process::id()),
+                    ),
+                    KeyValue::new("deployment.environment.name", "unspecified"),
+                ])
+                .with_attributes(
+                    configured
+                        .iter()
+                        .map(|(key, value)| KeyValue::new(key.clone(), value.clone())),
+                )
+                .with_service_name(SERVICE_NAME)
+                .with_attribute(KeyValue::new("service.namespace", "antnest"))
+                .build()
+        })
+        .clone()
 }
 
 fn is_control_otlp_target(target: &str) -> bool {
     target == "antnest_runtime_egress::control"
+        || target == "antnest_runtime_egress::repository::observation"
 }
 
 fn is_service_log(metadata: &tracing::Metadata<'_>) -> bool {
@@ -489,6 +517,9 @@ mod tests {
     #[test]
     fn otlp_boundary_excludes_every_data_plane_target() {
         assert!(is_control_otlp_target("antnest_runtime_egress::control"));
+        assert!(is_control_otlp_target(
+            "antnest_runtime_egress::repository::observation"
+        ));
         assert!(!is_control_otlp_target("antnest_runtime_egress::dataplane"));
         assert!(!is_control_otlp_target("antnest_runtime_egress::network"));
         assert!(!is_control_otlp_target("antnest_runtime_egress::dns"));

@@ -41,6 +41,16 @@ control_request() {
   docker compose exec -T runtime-egress curl --fail-with-body -sS "$@"
 }
 
+network_version() {
+  node -e '
+    const value = JSON.parse(process.argv[1])[process.argv[2]];
+    if (!Number.isSafeInteger(value) || value < 1) {
+      throw new Error("Missing positive Egress resource version");
+    }
+    process.stdout.write(String(value));
+  ' "$1" "$2"
+}
+
 mcp_request() {
   request=$1
   method=$2
@@ -75,9 +85,12 @@ chmod 0777 "$workspace"
 docker compose up -d --wait postgres runtime-egress
 
 control_request "$control_url/status" | grep -q '"status":"ready"'
-control_request -X PUT \
-  "$control_url/internal/agent-networks/agent-stage1-e2e" \
-  | grep -q '"tunnel_ipv4":"100.64.0.2"'
+network=$(control_request -X PUT \
+  "$control_url/internal/agent-networks/agent-stage1-e2e")
+printf '%s' "$network" | grep -q '"tunnel_ipv4":"100.64.0.2"'
+printf '%s' "$network" | grep -q '"attachment_state":"closed"'
+network_resource_version=$(network_version "$network" network_resource_version)
+attachment_resource_version=$(network_version "$network" attachment_resource_version)
 control_request -X PUT \
   -H 'content-type: application/json' \
   -d '{"spec":{"schema_version":1,"action":"allow_all"}}' \
@@ -156,7 +169,31 @@ fi
 mcp_request '{"jsonrpc":"2.0","id":6,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}' 'tools/list' \
   | grep -q '"name":"bash"'
 
-echo "Checking control-plane network isolation"
+echo "Checking closed attachment with an allow_all desired policy"
+if docker exec --user 1000 "$runtime_name" \
+  curl -kfsS --connect-timeout 2 --max-time 2 https://1.1.1.1 \
+  >/dev/null 2>&1; then
+  echo "A closed attachment allowed outbound traffic" >&2
+  exit 1
+fi
+
+opened=$(control_request -X PUT \
+  -H 'content-type: application/json' \
+  -d "{\"state\":\"open\",\"expected_resource_version\":${attachment_resource_version}}" \
+  "$control_url/internal/agent-network-attachments/agent-stage1-e2e")
+printf '%s' "$opened" | grep -q '"attachment_state":"open"'
+attachment_resource_version=$(network_version "$opened" attachment_resource_version)
+test "$(network_version "$opened" network_resource_version)" = "$network_resource_version"
+
+echo "Checking open attachment allow_all data path"
+docker exec --user 1000 "$runtime_name" \
+  curl -kfsS --connect-timeout 5 --max-time 10 https://1.1.1.1 \
+  >/dev/null
+docker exec --user 1000 "$runtime_name" \
+  curl -fsS --connect-timeout 5 --max-time 10 https://example.com \
+  | grep -q 'Example Domain'
+
+echo "Checking control-plane isolation with an open allow_all attachment"
 for control_address in "$ANTNEST_EGRESS_IPV4" "$ANTNEST_EGRESS_CONTROL_IPV4"; do
   if docker exec --user 1000 "$runtime_name" \
     curl -fsS --connect-timeout 1 --max-time 2 \
@@ -173,14 +210,6 @@ for control_address in "$ANTNEST_EGRESS_IPV4" "$ANTNEST_EGRESS_CONTROL_IPV4"; do
     exit 1
   fi
 done
-
-echo "Checking allow_all data path"
-docker exec --user 1000 "$runtime_name" \
-  curl -kfsS --connect-timeout 5 --max-time 10 https://1.1.1.1 \
-  >/dev/null
-docker exec --user 1000 "$runtime_name" \
-  curl -fsS --connect-timeout 5 --max-time 10 https://example.com \
-  | grep -q 'Example Domain'
 
 control_request -X PUT \
   -H 'content-type: application/json' \
@@ -220,9 +249,23 @@ docker exec --user 1000 "$runtime_name" \
   curl -fsS --connect-timeout 5 --max-time 10 https://example.com \
   | grep -q 'Example Domain'
 
+echo "Checking attachment closure and independent network release"
+closed=$(control_request -X PUT \
+  -H 'content-type: application/json' \
+  -d "{\"state\":\"closed\",\"expected_resource_version\":${attachment_resource_version}}" \
+  "$control_url/internal/agent-network-attachments/agent-stage1-e2e")
+printf '%s' "$closed" | grep -q '"attachment_state":"closed"'
+test "$(network_version "$closed" network_resource_version)" = "$network_resource_version"
+if docker exec --user 1000 "$runtime_name" \
+  curl -kfsS --connect-timeout 2 --max-time 2 https://1.1.1.1 \
+  >/dev/null 2>&1; then
+  echo "Closing an open attachment left outbound traffic available" >&2
+  exit 1
+fi
+docker rm -f "$runtime_name" >/dev/null
 control_request -X POST \
   -H 'content-type: application/json' \
-  -d '{"expected_resource_version":4}' \
+  -d "{\"expected_resource_version\":${network_resource_version}}" \
   "$control_url/internal/agent-networks/agent-stage1-e2e/release" \
   | grep -q '"state":"quarantined"'
 

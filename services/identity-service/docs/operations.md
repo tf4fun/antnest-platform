@@ -38,6 +38,13 @@ and do not affect process readiness.
 
 Bootstrap variables are all-or-none. Repeated startup verifies the same
 organization/admin identity and never resets an existing password.
+Keep the configured slug/name and email stable: an existing Organization with
+a different name or inactive state fails bootstrap; a new unmatched email can
+create an additional administrator. Disabling bootstrap requires all four
+values to be empty in the service environment. Removing them from the root
+`.env` alone restores Compose defaults. The
+[deployment runbook](../../../docs/docker-single-node-operations.md) describes
+the explicit override and credential/data ownership precautions.
 
 ## Secret Handling
 
@@ -58,24 +65,34 @@ organization/admin identity and never resets an existing password.
 
 Inbound HTTP spans propagate W3C trace context and structured completion logs
 record only method, route template, status, and result. Outbound OIDC requests
-inject trace context. Every public repository command and query has a client
-span and bounded result/error metric; transaction internals are represented by
-their owning operation rather than SQL-level child spans. Startup and shutdown
-failures log a stable stage class such as `database_migration`, `listener`, or
+inject trace context. PostgreSQL connections use the default otelpgx v0.12.0
+driver tracer installed by `repository.ParsePoolConfig`. SQL execution, batches
+and transaction statements are observed automatically under a recording parent;
+repository methods do not add CLIENT wrappers or create SQL root spans. Startup
+and shutdown failures log a stable stage class such as `database_migration`, `listener`, or
 `http_shutdown`, never the underlying error text. The implemented metrics use
 bounded labels:
 
 - `antnest.identity.http.requests` and `antnest.identity.http.duration` by HTTP
   method, route template, status, and result;
-- `antnest.identity.repository.operations` and
-  `antnest.identity.repository.duration` by operation, result, and bounded
-  error class;
-- standard `otelhttp` client telemetry for OIDC discovery, token, UserInfo,
-  and JWKS requests.
+- `db.client.operation.duration` and `db.client.operation.errors` from otelpgx,
+  with database system and pgx operation type labels; the old
+  `antnest.identity.repository.operations` / `antnest.identity.repository.duration`
+  business-operation series are removed;
+- one shared HTTP transport for OIDC discovery, token, UserInfo, and JWKS
+  requests, plus semantic validation at the existing OIDC adapter boundary.
 
 User, organization, subject, Provider, SCIM resource, token, request, event,
-and raw URL path values are never metric labels. SQL text, bind values, and
-protocol bodies are never telemetry.
+and raw URL path values are never metric labels. SQL text with placeholders is
+recorded as `db.query.text`, but bind values, result sets, full connection strings
+and ordinary HTTP bodies are not captured. Driver error status/exception messages
+are not bounded protocol summaries and may include server-supplied text; SQLSTATE
+is `pgx.sql_state`. The shared boolean
+`ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT` defaults to `false`; enabling it records
+complete RPC parameters and results, including credentials they contain.
+There is no per-field filtering or bespoke payload size limit. See
+[Identity observability](observability.md) for the development-data warning and
+pending integration acceptance.
 
 ## Protocol Operations
 
@@ -134,9 +151,10 @@ protocol bodies are never telemetry.
 ## Revocation Feed Recovery
 
 `list_principal_revocations` is private trusted-network RPC and must not be
-forwarded by Gateway. It uses the same bounded route/repository spans and
-metrics as other RPC queries; event payloads are not logged. The stored W3C
-trace parent lets a future consumer correlate asynchronous lifecycle work with
+forwarded by Gateway. It uses the same route and automatic driver spans and
+metrics as other RPC queries; completion logs do not contain event payloads.
+The existing RPC content switch still controls complete RPC parameters/results.
+The stored W3C trace parent lets the Controller consumer correlate asynchronous Disable work with
 the originating request, without persisting baggage or credentials.
 
 Back up `principal_revocations` with the rest of the Identity database. Do not

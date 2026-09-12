@@ -11,7 +11,14 @@ import type { RunExecutionSnapshot } from "../../../src/domain/types.js";
 
 describe("McpToolCatalog", () => {
   it("lists only platform Runtime Tools", async () => {
-    const runtime = fakeDialer([{ name: "read", description: "Read" }]);
+    const runtime = fakeDialer([
+      {
+        name: "read",
+        title: "Read document",
+        description: "Read",
+        annotations: { readOnlyHint: true, destructiveHint: false },
+      },
+    ]);
     const catalog = new McpToolCatalog({
       runtimeDialer: runtime.dialer,
       revisions: revisions(),
@@ -20,7 +27,12 @@ describe("McpToolCatalog", () => {
     const tools = await catalog.list(snapshot(), new AbortController().signal);
 
     expect(tools).toHaveLength(1);
-    expect(tools[0]).toMatchObject({ source: "runtime", modelName: "read" });
+    expect(tools[0]).toMatchObject({
+      source: "runtime",
+      modelName: "read",
+      title: "Read document",
+      annotations: { readOnlyHint: true, destructiveHint: false },
+    });
     expect(runtime.connect).toHaveBeenCalledWith(
       expect.objectContaining({
         endpoint: new URL("http://runtime-1:8080/mcp"),
@@ -204,7 +216,12 @@ describe("McpToolCatalog", () => {
 });
 
 function fakeDialer(
-  tools: Array<{ name: string; description: string }>,
+  tools: Array<{
+    name: string;
+    description: string;
+    title?: string;
+    annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean };
+  }>,
   result: {
     content: Array<{ type: string; [key: string]: unknown }>;
     isError: boolean;

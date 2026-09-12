@@ -1,7 +1,7 @@
 # Runtime Controller Operations
 
 > Status: implemented Docker operations model<br>
-> Updated: 2026-08-31
+> Updated: 2026-09-10
 
 ## Runtime Requirements
 
@@ -54,6 +54,8 @@ Finite RPC spans retain the matched method/route through the request-deadline
 wrapper. Inspect and Disable must remain distinguishable in Jaeger; matching
 only the service name or an `unmatched` route is not lifecycle trace evidence.
 
+`ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT=false` is the shared boolean content switch. Enabling it records complete RPC parameters and results, including credentials. New Runtime processes inherit the same value; there is no per-runtime override or custom body budget. Ordinary HTTP and streams never capture content. See [observability](observability.md).
+
 The same supported keys prefixed with `ANTNEST_RUNTIME_` override values passed
 to managed Runtime containers. This is required when the Controller can reach a
 collector by service DNS but Runtime's direct platform-network policy requires
@@ -95,16 +97,17 @@ Controller readiness requires:
 1. private database connectivity and completed ordered migrations; migrations
    are serialized by a PostgreSQL advisory lock, committed transactionally,
    and refuse an unknown future schema version;
-2. the selected platform adapter can perform a lightweight managed-resource
-   list permission probe;
-3. the configured Docker management network exists;
-4. the configured system-Skill volume exists;
-5. a rollback-safe observation journal insert/read probe succeeds without
+2. local adapter construction and required startup initialization have completed;
+3. a rollback-safe observation journal insert/read probe succeeds without
    leaving a synthetic business fact;
-6. a separately committed, payload-only notification probe traverses the
+4. a separately committed, payload-only notification probe traverses the
    active PostgreSQL LISTEN callback without entering the journal;
-7. a deployment-platform Watch has completed its response handshake and holds
-   the shared readiness lease; leadership without an active Watch is unready.
+
+Platform inventory/Watch initialization still occurs at startup, but `/status`
+does not call Docker or Runtime `/status`, and a later Docker Watch outage does
+not make local readiness recursively depend on the deployment platform. The
+legacy `platform_ready` field denotes successful local adapter initialization.
+Network/volume/Runtime readiness failures surface on actual lifecycle calls.
 
 One unhealthy Runtime does not make the Controller unready. Its state appears
 in `InspectRuntime` and Runtime observations. Readiness never inspects every
@@ -114,6 +117,41 @@ Runtime; full inventory belongs only to reconciliation.
 
 Docker or Kubernetes owns Runtime liveness checks and restart policy. Runtime
 Controller consumes platform events instead of polling every Runtime.
+
+Managed Docker Runtimes use separate startup and steady-state health cadence:
+`StartInterval=2s`, `StartPeriod=30s`, `Interval=10s`, `Timeout=2s`, and
+`Retries=3`. Startup stays responsive; an already healthy idle Runtime no longer
+forks a `curl` process every two seconds. Three consecutive failures are required
+in steady state, with a nominal thirty-second failure window plus probe time.
+The existing one-minute Runtime readiness budget remains independent.
+
+This uses Docker's standard
+[startup health-check interval](https://docs.docker.com/reference/cli/docker/container/run/#options),
+supported by the adapter's Engine API version. Docker restarts the startup
+schedule after container restart. Health failure is an observation, not a claim
+that Docker automatically restarts an unhealthy but still-running process.
+Restart policy remains `unless-stopped`. Existing Runtimes receive the new
+settings on explicit recreation, not through an implicit configuration mutation.
+
+The repository's `health` lifecycle profile exercises these settings on a
+disposable Runtime created through the real Gateway and Controllers. It records
+idle cgroup/PID-1 CPU, a three-second unprivileged CPU calibration and the return
+to idle, then verifies unhealthy/healthy transitions and fast readiness after
+restart. It retains only final metrics and cleans its own labelled resources.
+
+Startup timing is measured from the current `State.StartedAt` to a successful
+probe that started at or after that timestamp. Retained health logs from a
+previous process must not count as evidence that the new process is ready.
+
+```sh
+docker compose build runtime-controller
+node scripts/lifecycle-closeout/run.mjs health
+```
+
+The profile needs the other local Stage 3 images and shared Node test dependencies
+from the platform quickstart. The calibration is a bounded test workload, not
+an LLM performance benchmark. Docker CPU percentages are relative to one CPU,
+not the sum of all host CPUs.
 
 When the platform reports a new Healthy process, the Controller performs one
 bounded `/status` verification and records the returned `execution_id`. A Watch
@@ -131,8 +169,8 @@ consumer. Followers continue serving control and observation RPCs and take over
 after leadership loss. Transactional PostgreSQL notifications wake each
 replica's local SSE clients; reconnecting clients always resume from the
 durable sequence and never rely on notification delivery.
-Observation SSE connections use lifecycle metrics rather than one
-connection-duration trace span; each finite journal read remains traced.
+Observation SSE connections retain one HTTP SERVER span until delivery ends,
+plus existing lifecycle metrics; each finite journal read remains traced.
 If a consumer cursor falls outside the configured retention window, List or
 Watch returns `observation_cursor_expired`. The consumer performs a full Runtime
 List, then resumes from the returned reset sequence.
@@ -165,6 +203,31 @@ re-inspected before exact resources are adopted. The Docker adapter owns:
 - internal network attachment and Runtime endpoint discovery;
 - platform health configuration.
 
+An interrupted Update may already have replaced the old compute. Retry the
+same request/body/key: the service observes the recorded source and converges
+only the target claimed by that operation. A target already present is reused,
+not deleted using the old generation. Retained workspace ownership and Runtime
+readiness are still checked. A stopped source, mismatched identity or unreadable
+platform cannot be restored as the executable old revision. Only a definitive
+source deletion rejection followed by successful reinspection/status verification
+can retain a ready source. No additional migration or operator-supplied phase is
+required for this recovery behavior.
+
+Migration 4 adds `failed` to the owned Environment and operation source states;
+earlier migration checksums remain unchanged. Definitive Initialize failures
+retain revision/generation ownership instead of erasing the Environment while
+leaving a workspace behind. Inspect that failed revision and use Delete to
+clean it; do not retry with a new Initialize key. `runtime_not_ready` after the
+Initialize readiness deadline is terminal and points administrators to startup
+configuration/required MCP processes. Cancellation and unknown physical effects
+remain nonterminal and still require exact-request reconciliation.
+
+Migration 4 changes constraints, not historical ownership data. It does not
+reconstruct Environment heads erased by failed Initialize operations under
+migration 3. This batch verifies failures created with migration 4 on an empty
+test database; it does not claim recovery of older orphaned resources. Existing
+deployments with such resources require separate operator reconciliation.
+
 Initialize creates workspace plus compute. Update replaces compute while
 retaining workspace. Disable removes compute while retaining workspace. Enable
 recreates compute. Delete removes compute and then workspace. No workspace
@@ -185,8 +248,8 @@ drift observations.
 
 ## Failure Diagnosis
 
-1. Check Controller readiness to separate platform/database failure from one
-   Runtime failure.
+1. Check Controller readiness for local initialization/database failure, then
+   inspect actual platform/lifecycle failures separately.
 2. Inspect the Agent Runtime and read observations after the last known sequence.
 3. Correlate Runtime revision, operation ID, trace ID, and execution ID in
    cross-service logs. Adapter logs additionally carry private generation and

@@ -1,3 +1,5 @@
+import { v1Configuration } from "../../src/transport/acp/configuration.js";
+import { sessionConfigurationView } from "../support/fixtures.js";
 import { randomUUID } from "node:crypto";
 
 import { Pool } from "pg";
@@ -44,7 +46,7 @@ describe.skipIf(databaseUrl === undefined)("ACP v1 interface lifecycle", () => {
 
     const offset = client.frames.length;
     const loaded = await client.request("session/load", { ...setup, sessionId });
-    expect(loaded.result).toEqual({});
+    expect(loaded.result).toEqual(v1Configuration(sessionConfigurationView()));
     expect(client.frames.at(-1)).toEqual(loaded);
     const history = updates(client.frames.slice(offset));
     expect(history.map((update) => update.sessionUpdate)).toEqual([
@@ -54,6 +56,7 @@ describe.skipIf(databaseUrl === undefined)("ACP v1 interface lifecycle", () => {
       "tool_call_update",
       "usage_update",
       "agent_message_chunk",
+      "available_commands_update",
     ]);
     expect(history[0]).toMatchObject({ content: { type: "text", text: "inspect workspace" } });
     expect(history[1]).toMatchObject({ used: 6, size: 64000 });
@@ -91,8 +94,12 @@ describe.skipIf(databaseUrl === undefined)("ACP v1 interface lifecycle", () => {
       expect(await transcript(pool, sessionId)).toEqual(before);
 
       const offset = client.frames.length;
-      expect((await client.request(method, { ...setup, sessionId })).result).toEqual({});
-      expect(updates(client.frames.slice(offset))).toHaveLength(method === "session/load" ? 6 : 0);
+      expect((await client.request(method, { ...setup, sessionId })).result).toEqual(
+        v1Configuration(sessionConfigurationView()),
+      );
+      const restoredUpdates = updates(client.frames.slice(offset));
+      expect(restoredUpdates).toHaveLength(method === "session/load" ? 7 : 1);
+      expect(restoredUpdates.at(-1)).toMatchObject({ sessionUpdate: "available_commands_update" });
       expect(await app.sessions.get(sessionId)).toMatchObject({ state: "active" });
       expect(app.model.complete).toHaveBeenCalledTimes(2);
       expect((await prompt(client, sessionId)).result).toEqual({ stopReason: "end_turn" });
@@ -126,35 +133,38 @@ describe.skipIf(databaseUrl === undefined)("ACP v1 interface lifecycle", () => {
     expect(app.controller.acquireRun).toHaveBeenCalledTimes(2);
   });
 
-  it("list paginates owned Sessions with stable metadata and no duplicate or foreign entries", async () => {
-    const client = await app.connect(1);
-    const ids = new Set<string>();
-    for (let index = 0; index < 52; index++) ids.add(await createSession(client));
-    const foreign = await app.connect(1, "other-user");
-    const foreignId = await createSession(foreign);
-    const first = await client.request("session/list", { cwd: "/workspace" });
-    const page = first.result?.sessions as Array<{
-      sessionId: string;
-      cwd: string;
-      updatedAt: string;
-    }>;
-    expect(page).toHaveLength(50);
-    expect(
-      page.every(
-        (item) => item.cwd === "/workspace" && Number.isFinite(Date.parse(item.updatedAt)),
-      ),
-    ).toBe(true);
-    const cursor = first.result?.nextCursor;
-    expect(cursor).toEqual(expect.any(String));
-    const second = await client.request("session/list", { cwd: "/workspace", cursor });
-    const tail = second.result?.sessions as Array<{ sessionId: string }>;
-    expect(tail).toHaveLength(2);
-    expect(second.result?.nextCursor).toBeUndefined();
-    const listed = [...page, ...tail].map((item) => item.sessionId);
-    expect(new Set(listed)).toEqual(ids);
-    expect(listed).not.toContain(foreignId);
-    expect(app.model.complete).not.toHaveBeenCalled();
-  });
+  it.each([1, 2] as const)(
+    "v%i list paginates owned Sessions with stable metadata and no duplicate or foreign entries",
+    async (version) => {
+      const client = await app.connect(version);
+      const ids = new Set<string>();
+      for (let index = 0; index < 52; index++) ids.add(await createSession(client));
+      const foreign = await app.connect(version, "other-user");
+      const foreignId = await createSession(foreign);
+      const first = await client.request("session/list", { cwd: "/workspace" });
+      const page = first.result?.sessions as Array<{
+        sessionId: string;
+        cwd: string;
+        updatedAt: string;
+      }>;
+      expect(page).toHaveLength(50);
+      expect(
+        page.every(
+          (item) => item.cwd === "/workspace" && Number.isFinite(Date.parse(item.updatedAt)),
+        ),
+      ).toBe(true);
+      const cursor = first.result?.nextCursor;
+      expect(cursor).toEqual(expect.any(String));
+      const second = await client.request("session/list", { cwd: "/workspace", cursor });
+      const tail = second.result?.sessions as Array<{ sessionId: string }>;
+      expect(tail).toHaveLength(2);
+      expect(second.result?.nextCursor).toBeUndefined();
+      const listed = [...page, ...tail].map((item) => item.sessionId);
+      expect(new Set(listed)).toEqual(ids);
+      expect(listed).not.toContain(foreignId);
+      expect(app.model.complete).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([1, 2] as const)(
     "v%i deletion is idempotent, retains records, and cannot touch foreign Sessions",
@@ -241,8 +251,6 @@ describe.skipIf(databaseUrl === undefined)("ACP v1 interface lifecycle", () => {
       "providers/list",
       "providers/set",
       "providers/disable",
-      "session/set_mode",
-      "session/set_config_option",
       "nes/start",
       "nes/suggest",
       "nes/accept",
@@ -252,6 +260,8 @@ describe.skipIf(databaseUrl === undefined)("ACP v1 interface lifecycle", () => {
     ]) {
       expect((await client.request(method, {})).error?.code, method).toBe(-32601);
     }
+    for (const method of ["session/set_mode", "session/set_config_option"])
+      expect((await client.request(method, {})).error?.code, method).toBe(-32602);
     for (const method of [
       "document/didOpen",
       "document/didChange",
