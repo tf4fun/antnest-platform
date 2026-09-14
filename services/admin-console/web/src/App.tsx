@@ -2,6 +2,7 @@ import {
   Bot,
   Boxes,
   BrainCircuit,
+  ClipboardList,
   ChevronRight,
   LayoutDashboard,
   KeyRound,
@@ -19,6 +20,7 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Brand } from "./components/brand";
 import { AccountSecurity } from "./components/account-security";
+import { ConfigurationSynchronization } from "./components/configuration-synchronization";
 import { ResourceFailurePage } from "./components/page";
 import { Button } from "./components/ui/button";
 import { ErrorNotice, Loading } from "./components/ui/feedback";
@@ -38,6 +40,7 @@ import { LoginPage } from "./pages/login";
 import { ModelsPage } from "./pages/models";
 import { ProvisioningPage } from "./pages/provisioning";
 import { TemplatesPage } from "./pages/templates";
+import { ExecutionAuditsPage } from "./pages/execution-audits";
 
 type NavigationItem = { page: Page; label: string; icon: LucideIcon };
 type NavigationGroup = { label: string; items: NavigationItem[] };
@@ -48,6 +51,7 @@ const navigation: NavigationGroup[] = [
     items: [
       { page: "overview", label: "Overview", icon: LayoutDashboard },
       { page: "agents", label: "Agents", icon: Bot },
+      { page: "audits", label: "Execution history", icon: ClipboardList },
     ],
   },
   {
@@ -73,6 +77,7 @@ const pageLabels: Record<Page, string> = {
   models: "Model providers",
   templates: "Agent templates",
   agents: "Agents",
+  audits: "Execution history",
 };
 
 function Navigation({ route, onNavigate }: { route: Route; onNavigate: () => void }) {
@@ -158,7 +163,7 @@ export default function App() {
   }, []);
 
   const startSession = useCallback((result: Session) => {
-    resetSessionRequests();
+    resetSessionRequests(result.principal);
     setSession(result);
   }, []);
 
@@ -323,7 +328,7 @@ export default function App() {
   const role = session.principal.system_role === "admin" ? "System administrator" : "Organization administrator";
   const account = accountPresentation(accountState);
   const pageLabel = route.resourceID
-    ? route.page === "agents" ? "Agent detail" : route.page === "models" ? "Model detail" : "Template detail"
+    ? route.page === "agents" ? "Agent detail" : route.page === "models" ? "Model detail" : route.page === "audits" ? "Execution detail" : "Template detail"
     : pageLabels[route.page];
 
   return (
@@ -474,6 +479,7 @@ export default function App() {
           ref={mainContentRef}
           tabIndex={-1}
         >
+          {["models", "templates", "agents"].includes(route.page) ? <ConfigurationSynchronization key={JSON.stringify([session.principal.organization_id, session.principal.user_id])} /> : null}
           {route.page === "overview" ? <DashboardPage /> : null}
           {route.page === "directory" ? (
             <DirectoryPage
@@ -488,6 +494,7 @@ export default function App() {
           {route.page === "models" ? <ModelsPage modelID={route.resourceID} /> : null}
           {route.page === "templates" ? <TemplatesPage templateID={route.resourceID} revisionID={route.revisionID} /> : null}
           {route.page === "agents" ? <AgentsPage agentID={route.resourceID} networkScope={JSON.stringify([session.principal.organization_id, session.principal.user_id])} /> : null}
+          {route.page === "audits" ? <ExecutionAuditsPage runID={route.resourceID} agentID={route.agentID} /> : null}
         </main>
       </div>
     </div>

@@ -56,7 +56,7 @@ describe.skipIf(databaseUrl === undefined)("ACP commands over protocol and Postg
     await expect
       .poll(async () => {
         const result = await pool.query<{ count: string }>(
-          "SELECT count(*) FROM runs WHERE session_id = $1 AND admission_finished_at IS NOT NULL",
+          "SELECT count(*) FROM runs WHERE session_id = $1 AND state IN ('completed', 'cancelled', 'failed', 'unresolved')",
           [sessionId],
         );
         return Number(result.rows[0]?.count);
@@ -116,10 +116,10 @@ describe.skipIf(databaseUrl === undefined)("ACP commands over protocol and Postg
       expect(savedReply.content).toHaveLength(1);
       expect(savedReply.content[0]?.text).toContain("可用命令");
       expect(app.model.complete).not.toHaveBeenCalled();
-      expect(app.controller.resolveCredential).not.toHaveBeenCalled();
+      expect(app.acquireClient).not.toHaveBeenCalled();
       expect(app.tools.list).not.toHaveBeenCalled();
       expect(app.tools.call).not.toHaveBeenCalled();
-      expect(app.controller.finishRun).toHaveBeenCalledOnce();
+      expect(app.finish).toHaveBeenCalledOnce();
       expect(
         client.frames.some((frame) => frame.params?.update?.sessionUpdate === "usage_update"),
       ).toBe(false);
@@ -132,7 +132,7 @@ describe.skipIf(databaseUrl === undefined)("ACP commands over protocol and Postg
       expect(normal.error).toBeUndefined();
       await finished(sessionId, 2);
       expect(app.model.complete).toHaveBeenCalledOnce();
-      expect(app.controller.resolveCredential).toHaveBeenCalledOnce();
+      expect(app.acquireClient).toHaveBeenCalledOnce();
       expect(app.recoveryRequired).not.toHaveBeenCalled();
     });
 
@@ -173,7 +173,7 @@ describe.skipIf(databaseUrl === undefined)("ACP commands over protocol and Postg
       expect(forkHistory.map((message) => message.kind)).toEqual(["user_message", "agent_message"]);
       expect(JSON.stringify(forkHistory)).toContain("Available commands");
       expect(app.model.complete).not.toHaveBeenCalled();
-      expect(app.controller.acquireRun).not.toHaveBeenCalled();
+      expect(app.acceptRun).not.toHaveBeenCalled();
     });
 
     it(`v${version}: commands cannot bypass Session isolation, active Runs, closed Sessions or disabled identities`, async () => {
@@ -199,20 +199,21 @@ describe.skipIf(databaseUrl === undefined)("ACP commands over protocol and Postg
       try {
         await expect.poll(() => app.model.complete.mock.calls.length).toBe(1);
         expect((await client.request("session/prompt", prompt)).error?.data?.code).toBe(
-          "session_busy",
+          "agent_busy",
         );
       } finally {
         release.resolve(reply);
         expect((await running).error).toBeUndefined();
         await finished(sessionId, 1);
       }
-      expect(app.controller.acquireRun).toHaveBeenCalledOnce();
+      expect(app.acceptRun).toHaveBeenCalledOnce();
       expect((await client.request("session/close", { sessionId })).error).toBeUndefined();
       expect((await client.request("session/prompt", prompt)).error?.data?.code).toBe(
         "session_not_active",
       );
       const fresh = String((await client.request("session/new", setup)).result?.sessionId);
-      app.authorizations.get("principal-1:agent-1")!.active = false;
+      app.configuration.agents[0]!.principal_ids = ["principal-2"];
+      await app.publishConfiguration();
       const count = catalogs(client).length;
       expect(
         (await client.request("session/prompt", { ...prompt, sessionId: fresh })).error?.data?.code,
@@ -221,8 +222,8 @@ describe.skipIf(databaseUrl === undefined)("ACP commands over protocol and Postg
         (await client.request("session/resume", { ...setup, sessionId: fresh })).error?.data?.code,
       ).toBe("access_denied");
       expect(catalogs(client)).toHaveLength(count);
-      // Live admission, not a cached connection identity, rejects the disabled principal.
-      expect(app.controller.acquireRun).toHaveBeenCalledTimes(2);
+      // The published local policy rejects revoked access before accepting another Run.
+      expect(app.acceptRun).toHaveBeenCalledOnce();
       expect((await history.load(fresh)).messages).toEqual([]);
       expect(app.model.complete).toHaveBeenCalledOnce();
       expect(app.recoveryRequired).not.toHaveBeenCalled();

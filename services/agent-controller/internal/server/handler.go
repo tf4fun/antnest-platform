@@ -51,6 +51,7 @@ var (
 
 type CatalogService interface {
 	ProviderService
+	SetCatalogAvailability(context.Context, application.SetCatalogAvailabilityInput) (ports.CatalogAvailability, error)
 	CreateModelProfile(context.Context, application.CreateModelProfileInput) (application.ModelProfileView, error)
 	ReviseModelProfile(context.Context, application.ReviseModelProfileInput) (application.ModelProfileView, error)
 	GetModelProfile(context.Context, string, string) (application.ModelProfileView, error)
@@ -71,18 +72,12 @@ type LifecycleService interface {
 	GetLifecycleOperation(context.Context, string) (application.OperationView, error)
 }
 
-type RunService interface {
-	GetSessionConfiguration(context.Context, application.SessionConfigurationInput) (ports.SessionConfiguration, error)
+type AgentConfigurationService interface {
 	SetAgentAuthorization(context.Context, application.SetAgentAuthorizationInput) (int64, error)
-	ResolveAgentAccess(context.Context, application.ResolveAgentAccessInput) (application.AgentAccessView, error)
-	AcquireRun(context.Context, application.AcquireRunInput) (application.AcquireRunResult, error)
-	ResolveCredential(context.Context, application.ResolveCredentialInput) (application.CredentialView, error)
-	FinishRun(context.Context, application.FinishRunInput) (application.FinishRunResult, error)
+	GetExecutionSynchronization(context.Context, string) (application.ExecutionSynchronizationView, error)
 }
 
 type AgentQueryService interface {
-	GetWorkspaceAgentState(context.Context, application.WorkspaceStateInput) (application.WorkspaceAgentState, error)
-	WatchWorkspaceAgentState(context.Context, application.WorkspaceStateInput, application.WorkspaceStateEmitter) error
 	GetAgent(context.Context, string) (application.AgentView, error)
 	GetAgentForOrganization(context.Context, string, string) (application.AgentView, error)
 	ListAgents(context.Context, application.ListAgentsInput) (application.AgentPage, error)
@@ -99,13 +94,13 @@ type AgentEventService interface {
 type HealthCheck func(context.Context) error
 
 type handler struct {
-	catalog   CatalogService
-	lifecycle LifecycleService
-	runs      RunService
-	queries   AgentQueryService
-	events    AgentEventService
-	network   NetworkPolicyService
-	health    HealthCheck
+	catalog       CatalogService
+	lifecycle     LifecycleService
+	configuration AgentConfigurationService
+	queries       AgentQueryService
+	events        AgentEventService
+	network       NetworkPolicyService
+	health        HealthCheck
 }
 
 type routeDefinition struct {
@@ -117,7 +112,7 @@ type routeDefinition struct {
 func NewHandler(
 	catalog CatalogService,
 	lifecycle LifecycleService,
-	runs RunService,
+	configuration AgentConfigurationService,
 	queries AgentQueryService,
 	events AgentEventService,
 	network NetworkPolicyService,
@@ -129,8 +124,8 @@ func NewHandler(
 	if lifecycle == nil {
 		return nil, fmt.Errorf("lifecycle service is required")
 	}
-	if runs == nil {
-		return nil, fmt.Errorf("run service is required")
+	if configuration == nil {
+		return nil, fmt.Errorf("agent configuration service is required")
 	}
 	if queries == nil {
 		return nil, fmt.Errorf("agent query service is required")
@@ -145,7 +140,7 @@ func NewHandler(
 		return nil, fmt.Errorf("network policy service is required")
 	}
 	h := &handler{
-		catalog: catalog, lifecycle: lifecycle, runs: runs, queries: queries, events: events, network: network, health: health,
+		catalog: catalog, lifecycle: lifecycle, configuration: configuration, queries: queries, events: events, network: network, health: health,
 	}
 	mux := http.NewServeMux()
 	for _, route := range h.routes() {
@@ -163,18 +158,15 @@ func (h *handler) routes() []routeDefinition {
 		{pattern: "GET /status", handler: h.status, metadataOnly: true},
 		{pattern: "GET /rpc/agent-controller/status", handler: h.status, metadataOnly: true},
 		{pattern: "POST /rpc/agent-controller/list-workspace-agents", handler: h.listWorkspaceAgents},
-		{pattern: "POST /rpc/agent-controller/resolve-agent-access", handler: h.resolveAgentAccess},
-		{pattern: "POST /rpc/agent-controller/acquire-run", handler: h.acquireRun},
-		{pattern: "POST /rpc/agent-controller/get-session-configuration", handler: h.getSessionConfiguration},
 		{pattern: "POST /rpc/agent-controller/set-agent-authorization", handler: h.setAgentAuthorization},
-		{pattern: "POST /rpc/agent-controller/resolve-credential", handler: h.resolveCredential},
-		{pattern: "POST /rpc/agent-controller/finish-run", handler: h.finishRun},
-		{pattern: "GET /internal/workspace/agents/{agent_id}/state", handler: h.getWorkspaceState},
-		{pattern: "GET /internal/workspace/agents/{agent_id}/state/watch", handler: h.watchWorkspaceState, metadataOnly: true},
-		{pattern: "POST /internal/provider-connections", handler: h.createProviderConnection},
+		{pattern: "GET /internal/execution-synchronization", handler: h.getExecutionSynchronization},
+		{pattern: "POST /internal/provider-connections", handler: h.createProviderConnection, metadataOnly: true},
+		{pattern: "PUT /internal/provider-connections/{connection_id}/availability", handler: h.setProviderAvailability},
+		{pattern: "PUT /internal/model-profiles/{model_profile_id}/availability", handler: h.setModelAvailability},
+		{pattern: "PUT /internal/agent-templates/{template_id}/availability", handler: h.setTemplateAvailability},
 		{pattern: "GET /internal/provider-connections", handler: h.listProviderConnections},
 		{pattern: "GET /internal/provider-connections/{connection_id}", handler: h.getProviderConnection},
-		{pattern: "POST /internal/provider-connections/{connection_id}/credentials", handler: h.rotateProviderCredential},
+		{pattern: "POST /internal/provider-connections/{connection_id}/credentials", handler: h.rotateProviderCredential, metadataOnly: true},
 		{pattern: "POST /internal/model-profiles", handler: h.createModelProfile},
 		{pattern: "GET /internal/model-profiles", handler: h.listModelProfiles},
 		{pattern: "GET /internal/model-profiles/{model_profile_id}", handler: h.getModelProfile},
@@ -265,59 +257,12 @@ type lifecycleRequest struct {
 	ActorPrincipalID string `json:"actor_principal_id"`
 }
 
-type resolveAgentAccessRequest struct {
-	RequestID          string `json:"request_id"`
-	AgentAccessSubject string `json:"agent_access_subject"`
-}
-
 type listWorkspaceAgentsRequest struct {
 	RequestID      string `json:"request_id"`
 	OrganizationID string `json:"organization_id"`
 	PrincipalID    string `json:"principal_id"`
 	Limit          int    `json:"limit,omitempty"`
 	Cursor         string `json:"cursor,omitempty"`
-}
-
-type acquireRunRequest struct {
-	SessionConfiguration   *domain.SessionConfigurationOverrides `json:"session_configuration,omitempty"`
-	RequestID              string                                `json:"request_id"`
-	AgentID                string                                `json:"agent_id"`
-	PrincipalID            string                                `json:"principal_id"`
-	ExpectedAccessRevision string                                `json:"expected_access_revision"`
-	SessionID              string                                `json:"session_id"`
-}
-
-type resolveCredentialRequest struct {
-	RequestID            string `json:"request_id"`
-	AdmissionID          string `json:"admission_id"`
-	ProviderConnectionID string `json:"provider_connection_id"`
-}
-
-type nullableString struct {
-	Present bool
-	Null    bool
-	Value   string
-}
-
-func (value *nullableString) UnmarshalJSON(payload []byte) error {
-	value.Present = true
-	if string(payload) == "null" {
-		value.Null = true
-		value.Value = ""
-		return nil
-	}
-	value.Null = false
-	return json.Unmarshal(payload, &value.Value)
-}
-
-type finishRunRequest struct {
-	RequestID           string                 `json:"request_id"`
-	AdmissionID         string                 `json:"admission_id"`
-	TerminalClass       domain.TerminalClass   `json:"terminal_class"`
-	ToolEffectState     domain.ToolEffectState `json:"tool_effect_state"`
-	UnknownEffectSource nullableString         `json:"unknown_effect_source"`
-	StopReason          nullableString         `json:"stop_reason"`
-	ErrorClass          nullableString         `json:"error_class"`
 }
 
 type modelProfileResponse struct {
@@ -363,8 +308,8 @@ type templateListResponse struct {
 
 type runtimeBindingResponse struct {
 	RuntimeRevision    string `json:"runtime_revision"`
-	RuntimeExecutionID string `json:"runtime_execution_id"`
-	MCPEndpoint        string `json:"mcp_endpoint"`
+	RuntimeExecutionID string `json:"runtime_execution_id,omitempty"`
+	MCPEndpoint        string `json:"mcp_endpoint,omitempty"`
 }
 
 type agentTemplateLineageResponse struct {
@@ -390,6 +335,11 @@ type agentConfigurationResponse struct {
 }
 
 type agentResponse struct {
+	ActivationState                 domain.ActivationState      `json:"activation_state,omitempty"`
+	RuntimeState                    domain.RuntimeState         `json:"runtime_state"`
+	RuntimeReason                   string                      `json:"runtime_reason,omitempty"`
+	RuntimeDetail                   string                      `json:"runtime_detail,omitempty"`
+	RuntimeObservedAt               *time.Time                  `json:"runtime_observed_at,omitempty"`
 	AgentID                         string                      `json:"agent_id"`
 	OrganizationID                  string                      `json:"organization_id"`
 	OwnerUserID                     string                      `json:"owner_user_id"`
@@ -423,7 +373,6 @@ type agentEventResponse struct {
 	AgentID            string         `json:"agent_id"`
 	EventType          string         `json:"event_type"`
 	OperationRequestID string         `json:"operation_request_id,omitempty"`
-	AdmissionID        string         `json:"admission_id,omitempty"`
 	TraceID            string         `json:"trace_id,omitempty"`
 	OccurredAt         time.Time      `json:"occurred_at"`
 	Data               map[string]any `json:"data"`
@@ -447,23 +396,13 @@ type operationResponse struct {
 }
 
 type createAgentResponse struct {
-	Agent              agentResponse     `json:"agent"`
-	AgentAccessSubject string            `json:"agent_access_subject"`
-	Operation          operationResponse `json:"operation"`
-}
-
-type resolveAgentAccessResponse struct {
-	PrincipalID        string                   `json:"principal_id"`
-	AgentID            string                   `json:"agent_id"`
-	AccessRevision     string                   `json:"access_revision"`
-	PromptCapabilities ports.PromptCapabilities `json:"prompt_capabilities"`
+	Agent     agentResponse     `json:"agent"`
+	Operation operationResponse `json:"operation"`
 }
 
 type workspaceAgentResponse struct {
-	AgentID            string                            `json:"agent_id"`
-	Name               string                            `json:"name"`
-	Availability       application.WorkspaceAvailability `json:"availability"`
-	AgentAccessSubject string                            `json:"agent_access_subject"`
+	AgentID string `json:"agent_id"`
+	Name    string `json:"name"`
 }
 
 type workspaceAgentListResponse struct {
@@ -471,33 +410,12 @@ type workspaceAgentListResponse struct {
 	NextCursor *string                  `json:"next_cursor"`
 }
 
-type acquireRunResponse struct {
-	AdmissionID              string                      `json:"admission_id"`
-	AdmissionDeadline        time.Time                   `json:"admission_deadline"`
-	AgentSpecRevision        string                      `json:"agent_spec_revision"`
-	ExecutionRevision        string                      `json:"execution_revision"`
-	RuntimeMCPSourceDigest   string                      `json:"runtime_mcp_source_digest"`
-	AgentExecutionSpecDigest string                      `json:"agent_execution_spec_digest"`
-	Runtime                  ports.AdmittedRuntime       `json:"runtime"`
-	ExecutionSpec            ports.AdmittedExecutionSpec `json:"execution_spec"`
-}
-
-type resolveCredentialResponse struct {
-	Provider          domain.ProviderExecution `json:"provider"`
-	CredentialVersion string                   `json:"credential_version"`
-	SecretType        string                   `json:"secret_type"`
-	Secret            string                   `json:"secret"`
-}
-
-type finishRunResponse struct {
-	Status         string                `json:"status"`
-	AdmissionState domain.AdmissionState `json:"admission_state"`
-}
-
 type errorResponse struct {
-	Code      string `json:"code"`
-	Message   string `json:"message"`
-	Retryable bool   `json:"retryable"`
+	Code                string                   `json:"code"`
+	Message             string                   `json:"message"`
+	Retryable           bool                     `json:"retryable"`
+	References          []ports.CatalogReference `json:"references,omitempty"`
+	ReferencesTruncated bool                     `json:"references_truncated,omitempty"`
 }
 
 func (h *handler) status(response http.ResponseWriter, request *http.Request) {
@@ -507,24 +425,6 @@ func (h *handler) status(response http.ResponseWriter, request *http.Request) {
 		return
 	}
 	writeJSON(response, http.StatusOK, map[string]string{"status": "ready"})
-}
-
-func (h *handler) resolveAgentAccess(response http.ResponseWriter, request *http.Request) {
-	var payload resolveAgentAccessRequest
-	if !decodeJSON(response, request, &payload) {
-		return
-	}
-	result, err := h.runs.ResolveAgentAccess(request.Context(), application.ResolveAgentAccessInput{
-		RequestID: payload.RequestID, AgentAccessSubject: payload.AgentAccessSubject,
-	})
-	if err != nil {
-		writeRunError(request.Context(), response, err)
-		return
-	}
-	writeJSON(response, http.StatusOK, resolveAgentAccessResponse{
-		PrincipalID: result.PrincipalID, AgentID: result.AgentID,
-		AccessRevision: result.AccessRevision, PromptCapabilities: result.PromptCapabilities,
-	})
 }
 
 func (h *handler) listWorkspaceAgents(response http.ResponseWriter, request *http.Request) {
@@ -540,93 +440,17 @@ func (h *handler) listWorkspaceAgents(response http.ResponseWriter, request *htt
 		},
 	)
 	if err != nil {
-		writeRunError(request.Context(), response, err)
+		writeQueryError(request.Context(), response, err)
 		return
 	}
 	agents := make([]workspaceAgentResponse, 0, len(page.Items))
 	for _, item := range page.Items {
 		agents = append(agents, workspaceAgentResponse{
-			AgentID: item.AgentID, Name: item.Name, Availability: item.Availability,
-			AgentAccessSubject: item.AccessSubject,
+			AgentID: item.AgentID, Name: item.Name,
 		})
 	}
 	writeJSON(response, http.StatusOK, workspaceAgentListResponse{
 		Agents: agents, NextCursor: optionalString(page.NextCursor),
-	})
-}
-
-func (h *handler) acquireRun(response http.ResponseWriter, request *http.Request) {
-	var payload acquireRunRequest
-	if !decodeJSON(response, request, &payload) {
-		return
-	}
-	result, err := h.runs.AcquireRun(request.Context(), application.AcquireRunInput{
-		SessionConfiguration: payload.SessionConfiguration,
-		RequestID:            payload.RequestID, AgentID: payload.AgentID,
-		PrincipalID: payload.PrincipalID, ExpectedAccessRevision: payload.ExpectedAccessRevision,
-		SessionID: payload.SessionID,
-	})
-	if err != nil {
-		writeRunError(request.Context(), response, err)
-		return
-	}
-	writeJSON(response, http.StatusOK, acquireRunResponse{
-		AdmissionID: result.AdmissionID, AdmissionDeadline: result.AdmissionDeadline,
-		AgentSpecRevision: result.AgentSpecRevision, ExecutionRevision: result.ExecutionRevision,
-		RuntimeMCPSourceDigest:   result.RuntimeMCPSourceDigest,
-		AgentExecutionSpecDigest: result.AgentExecutionSpecDigest,
-		Runtime:                  result.Runtime,
-		ExecutionSpec:            result.ExecutionSpec,
-	})
-}
-
-func (h *handler) resolveCredential(response http.ResponseWriter, request *http.Request) {
-	response.Header().Set("Cache-Control", "no-store")
-	response.Header().Set("Pragma", "no-cache")
-	var payload resolveCredentialRequest
-	if !decodeJSON(response, request, &payload) {
-		return
-	}
-	result, err := h.runs.ResolveCredential(request.Context(), application.ResolveCredentialInput{
-		RequestID: payload.RequestID, AdmissionID: payload.AdmissionID,
-		ProviderConnectionID: payload.ProviderConnectionID,
-	})
-	if err != nil {
-		writeRunError(request.Context(), response, err)
-		return
-	}
-	writeJSON(response, http.StatusOK, resolveCredentialResponse{
-		Provider: result.Provider, CredentialVersion: result.CredentialVersion,
-		SecretType: result.SecretType, Secret: result.Secret,
-	})
-}
-
-func (h *handler) finishRun(response http.ResponseWriter, request *http.Request) {
-	var payload finishRunRequest
-	if !decodeJSON(response, request, &payload) {
-		return
-	}
-	if !payload.UnknownEffectSource.Present || !payload.StopReason.Present || !payload.ErrorClass.Present {
-		writeRunError(request.Context(), response, application.ErrInvalidInput)
-		return
-	}
-	if (payload.TerminalClass == domain.TerminalUnresolved && payload.UnknownEffectSource.Null) ||
-		(payload.TerminalClass != domain.TerminalUnresolved && !payload.UnknownEffectSource.Null) {
-		writeRunError(request.Context(), response, application.ErrInvalidInput)
-		return
-	}
-	result, err := h.runs.FinishRun(request.Context(), application.FinishRunInput{
-		RequestID: payload.RequestID, AdmissionID: payload.AdmissionID,
-		TerminalClass: payload.TerminalClass, ToolEffectState: payload.ToolEffectState,
-		UnknownEffectSource: domain.UnknownEffectSource(payload.UnknownEffectSource.Value),
-		StopReason:          payload.StopReason.Value, ErrorClass: payload.ErrorClass.Value,
-	})
-	if err != nil {
-		writeRunError(request.Context(), response, err)
-		return
-	}
-	writeJSON(response, http.StatusOK, finishRunResponse{
-		Status: result.Status, AdmissionState: result.AdmissionState,
 	})
 }
 
@@ -1138,7 +962,7 @@ func catalogListInput(response http.ResponseWriter, request *http.Request) (appl
 
 func agentListInput(response http.ResponseWriter, request *http.Request) (application.ListAgentsInput, bool) {
 	allowed := map[string]struct{}{
-		"organization_id": {}, "owner_user_id": {}, "lifecycle_state": {},
+		"organization_id": {}, "owner_user_id": {}, "lifecycle_state": {}, "activation_state": {}, "runtime_state": {},
 		"include_deleted": {}, "limit": {}, "cursor": {},
 	}
 	query, ok := strictQuery(response, request, allowed)
@@ -1168,7 +992,8 @@ func agentListInput(response http.ResponseWriter, request *http.Request) (applic
 	}
 	return application.ListAgentsInput{
 		OrganizationID: query.Get("organization_id"), OwnerUserID: query.Get("owner_user_id"),
-		LifecycleState: domain.AgentState(query.Get("lifecycle_state")),
+		LifecycleState:  domain.AgentState(query.Get("lifecycle_state")),
+		ActivationState: domain.ActivationState(query.Get("activation_state")), RuntimeState: domain.RuntimeState(query.Get("runtime_state")),
 		IncludeDeleted: includeDeleted, Limit: limit, Cursor: query.Get("cursor"),
 	}, true
 }
@@ -1310,13 +1135,15 @@ func templatePayload(view application.TemplateView) templateResponse {
 
 func createAgentPayload(result application.CreateAgentResult) createAgentResponse {
 	return createAgentResponse{
-		Agent: agentPayload(result.Agent), AgentAccessSubject: result.AgentAccessSubject,
+		Agent:     agentPayload(result.Agent),
 		Operation: operationPayload(result.Operation),
 	}
 }
 
 func agentPayload(agent application.AgentView) agentResponse {
 	response := agentResponse{
+		ActivationState: agent.ActivationState, RuntimeState: agent.RuntimeState,
+		RuntimeReason: agent.RuntimeReason, RuntimeDetail: agent.RuntimeDetail, RuntimeObservedAt: agent.RuntimeObservedAt,
 		AgentID: agent.AgentID, OrganizationID: agent.OrganizationID,
 		OwnerUserID: agent.OwnerUserID, Name: agent.Name,
 		DesiredState: agent.DesiredState, LifecycleState: agent.LifecycleState,
@@ -1328,7 +1155,7 @@ func agentPayload(agent application.AgentView) agentResponse {
 		AggregateSequence: agent.AggregateSequence,
 		CreatedAt:         agent.CreatedAt, UpdatedAt: agent.UpdatedAt,
 	}
-	if agent.RuntimeRevision != "" && agent.RuntimeExecutionID != "" && agent.RuntimeMCPEndpoint != "" {
+	if agent.RuntimeRevision != "" {
 		response.Runtime = &runtimeBindingResponse{
 			RuntimeRevision: agent.RuntimeRevision, RuntimeExecutionID: agent.RuntimeExecutionID,
 			MCPEndpoint: agent.RuntimeMCPEndpoint,
@@ -1377,8 +1204,8 @@ func agentEventPayload(event application.AgentEventView) agentEventResponse {
 		EventID: event.EventID, GlobalSequence: event.GlobalSequence,
 		AggregateSequence: event.AggregateSequence, SchemaVersion: event.SchemaVersion,
 		AgentID: event.AgentID, EventType: event.EventType,
-		OperationRequestID: event.OperationRequestID, AdmissionID: event.AdmissionID,
-		TraceID: event.TraceID, OccurredAt: event.OccurredAt, Data: event.Data,
+		OperationRequestID: event.OperationRequestID,
+		TraceID:            event.TraceID, OccurredAt: event.OccurredAt, Data: event.Data,
 	}
 }
 
@@ -1398,68 +1225,21 @@ func writeServiceError(ctx context.Context, response http.ResponseWriter, err er
 	writeJSON(response, status, payload)
 }
 
-func writeRunError(ctx context.Context, response http.ResponseWriter, err error) {
-	status, payload := publicRunError(err)
-	telemetry.RecordBoundaryError(ctx, err, "run_admission", payload.Code, payload.Message, status >= 500)
-	if status == http.StatusInternalServerError {
-		slog.ErrorContext(ctx, "Agent Controller Run request failed", "error_class", payload.Code)
+func writeQueryError(ctx context.Context, response http.ResponseWriter, err error) {
+	if !errors.Is(err, context.DeadlineExceeded) {
+		writeServiceError(ctx, response, err)
+		return
 	}
+	status, payload := publicError(application.ErrDependencyUnavailable)
+	telemetry.RecordBoundaryError(ctx, err, "dispatch", payload.Code, payload.Message, true)
 	writeJSON(response, status, payload)
 }
 
-func publicRunError(err error) (int, errorResponse) {
-	switch {
-	case errors.Is(err, ports.ErrModelUnavailable):
-		return http.StatusConflict, errorResponse{Code: "model_unavailable", Message: "Select an available organization model"}
-	case errors.Is(err, ports.ErrConcurrentChange):
-		return http.StatusConflict, errorResponse{Code: "configuration_conflict", Message: "Reload the Agent authorization before updating"}
-	case errors.Is(err, ports.ErrRunAccessDenied):
-		return http.StatusForbidden, errorResponse{Code: "access_denied", Message: "Agent access is denied"}
-	case errors.Is(err, application.ErrInvalidInput):
-		return http.StatusBadRequest, errorResponse{Code: "invalid_request", Message: "request is invalid"}
-	case errors.Is(err, application.ErrAccessDenied):
-		return http.StatusForbidden, errorResponse{Code: "access_denied", Message: "Agent access is denied"}
-	case errors.Is(err, application.ErrAgentNotFound):
-		return http.StatusNotFound, errorResponse{Code: "agent_not_found", Message: "Agent was not found"}
-	case errors.Is(err, application.ErrAgentBusy):
-		return http.StatusConflict, errorResponse{Code: "agent_busy", Message: "Agent is busy", Retryable: true}
-	case errors.Is(err, application.ErrAgentRebuilding):
-		return http.StatusConflict, errorResponse{
-			Code: "agent_rebuilding", Message: "Agent lifecycle is changing", Retryable: true,
-		}
-	case errors.Is(err, application.ErrAgentBuildFailed):
-		return http.StatusConflict, errorResponse{
-			Code: "agent_build_failed", Message: "Agent build requires administrator action",
-		}
-	case errors.Is(err, application.ErrAgentNotReady):
-		return http.StatusConflict, errorResponse{
-			Code: "agent_not_ready", Message: "Agent is not executable", Retryable: true,
-		}
-	case errors.Is(err, application.ErrAdmissionNotFound):
-		return http.StatusNotFound, errorResponse{
-			Code: "admission_not_found", Message: "Run admission was not found",
-		}
-	case errors.Is(err, application.ErrCredentialNotAllowed):
-		return http.StatusForbidden, errorResponse{
-			Code: "credential_not_allowed", Message: "credential is not allowed for this Run",
-		}
-	case errors.Is(err, application.ErrLifecycleConflict), errors.Is(err, ports.ErrRequestConflict):
-		return http.StatusBadRequest, errorResponse{
-			Code: "invalid_request", Message: "Run terminal facts conflict with the stored report",
-		}
-	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled),
-		errors.Is(err, application.ErrDependencyUnavailable):
-		return http.StatusServiceUnavailable, errorResponse{
-			Code: "dependency_unavailable", Message: "dependency is unavailable", Retryable: true,
-		}
-	default:
-		return http.StatusInternalServerError, errorResponse{
-			Code: "internal_error", Message: "internal service error", Retryable: true,
-		}
-	}
-}
-
 func publicError(err error) (int, errorResponse) {
+	var references *ports.CatalogReferenceConflict
+	if errors.As(err, &references) {
+		return http.StatusConflict, errorResponse{Code: "resource_in_use", Message: "remove current catalog references before disabling this resource", References: references.References, ReferencesTruncated: references.Truncated}
+	}
 	switch {
 	case errors.Is(err, domain.ErrInvalidImageReference):
 		return http.StatusBadRequest, errorResponse{
@@ -1469,6 +1249,8 @@ func publicError(err error) (int, errorResponse) {
 		return http.StatusBadRequest, errorResponse{Code: "invalid_request", Message: "request is invalid"}
 	case errors.Is(err, application.ErrInvalidReference), errors.Is(err, ports.ErrNotFound):
 		return http.StatusNotFound, errorResponse{Code: "reference_not_found", Message: "referenced resource was not found"}
+	case errors.Is(err, application.ErrAccessDenied):
+		return http.StatusForbidden, errorResponse{Code: "access_denied", Message: "Agent access is denied"}
 	case errors.Is(err, application.ErrAgentNotFound):
 		return http.StatusNotFound, errorResponse{Code: "agent_not_found", Message: "Agent was not found"}
 	case errors.Is(err, application.ErrAgentNotReady):
@@ -1479,6 +1261,8 @@ func publicError(err error) (int, errorResponse) {
 		return http.StatusConflict, errorResponse{Code: "lifecycle_conflict", Message: "Agent lifecycle is busy"}
 	case errors.Is(err, ports.ErrDisabledReference):
 		return http.StatusConflict, errorResponse{Code: "reference_disabled", Message: "referenced resource is disabled"}
+	case errors.Is(err, ports.ErrExecutionCapacityExceeded):
+		return http.StatusConflict, errorResponse{Code: "execution_configuration_capacity_exceeded", Message: "execution configuration exceeds the deployment capacity; reduce the proposed configuration"}
 	case errors.Is(err, ports.ErrRequestConflict):
 		return http.StatusConflict, errorResponse{Code: "request_id_conflict", Message: "request identity is already used"}
 	case errors.Is(err, ports.ErrConcurrentChange):

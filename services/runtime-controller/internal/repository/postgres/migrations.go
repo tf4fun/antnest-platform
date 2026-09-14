@@ -195,6 +195,11 @@ var schemaMigrations = []migration{
 		checksum: "6c623ac49702a3c8393490a20eb2d7abca2d32232e26b68b59c1e95edcbd0fe8",
 		sql:      buildImageSQL,
 	},
+	{
+		version: 6, name: "separate_creation_from_readiness",
+		checksum: "d432fef4aa3753f72222633ed18696730fb6c000db230f278ec0c554cd4553c9",
+		sql:      provisionedEnvironmentSQL,
+	},
 }
 
 func Migrate(ctx context.Context, database *sql.DB) error {

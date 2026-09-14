@@ -1,65 +1,117 @@
 import { createServer } from "node:http";
+import { pathToFileURL } from "node:url";
 
-const listenPort = Number(process.env.ANTNEST_STAGE2_MODEL_PORT ?? "8080");
-const expectedCredential = process.env.ANTNEST_STAGE2_MODEL_CREDENTIAL ?? "stage2-model-secret";
 const maximumBodyBytes = 1024 * 1024;
-let completionCount = 0;
-
-const server = createServer(async (request, response) => {
-  if (request.method === "GET" && request.url === "/status") {
-    writeJson(response, 200, { status: "ready", completion_count: completionCount });
-    return;
-  }
-  if (request.method !== "POST" || request.url !== "/v1/chat/completions") {
-    writeJson(response, 404, { error: "not_found" });
-    return;
-  }
-  if (request.headers.authorization !== `Bearer ${expectedCredential}`) {
-    writeJson(response, 401, { error: "invalid_credential" });
-    return;
-  }
-  if (!validTraceparent(request.headers.traceparent)) {
-    writeJson(response, 400, { error: "missing_trace_context" });
-    return;
-  }
-
-  try {
-    const payload = JSON.parse(await readBody(request));
-    if (!Array.isArray(payload.messages)) {
-      throw new Error("messages must be an array");
-    }
-    completionCount += 1;
-    console.log(
-      JSON.stringify({
-        event: "stage2_model_request",
-        request_number: completionCount,
-        has_trace_context: validTraceparent(request.headers.traceparent),
-        has_tool_result: payload.messages.some((message) => message?.role === "tool"),
-        tool_names: advertisedToolNames(payload.tools),
-      }),
-    );
-    if (payload.messages.some((message) => message?.role === "tool")) {
-      writeJson(response, 200, finalCompletion());
+export function createModelFixture({ credential, controls = false }) {
+  let expectedCredential = credential;
+  let generation = 1;
+  let holdNext = false;
+  const pending = new Set();
+  const requests = [];
+  const attempts = [];
+  const server = createServer(async (request, response) => {
+    if (request.method === "GET" && request.url === "/status") {
+      writeJson(response, 200, { status: "ready", completion_count: requests.length });
       return;
     }
-    if (!advertisesWrite(payload.tools)) {
-      throw new Error("Runtime write Tool was not advertised");
+    if (controls && request.method === "GET" && request.url === "/fixture/state") {
+      writeJson(response, 200, { held: pending.size, requests, attempts });
+      return;
     }
-    writeJson(response, 200, writeToolCompletion());
-  } catch (error) {
-    console.error(
-      JSON.stringify({
-        event: "stage2_model_rejected",
-        reason: error instanceof Error ? error.message : "invalid_request",
-      }),
-    );
-    writeJson(response, 400, {
-      error: error instanceof Error ? error.message : "invalid_request",
+    if (controls && request.method === "POST" && request.url === "/fixture/control") {
+      try {
+        const command = JSON.parse(await readBody(request));
+        if (typeof command.credential === "string" && command.credential.length > 0) {
+          expectedCredential = command.credential;
+          generation += 1;
+        }
+        if (command.hold_next === true) holdNext = true;
+        if (command.release === true) for (const release of pending) release();
+        writeJson(response, 200, { credential_generation: generation });
+      } catch {
+        writeJson(response, 400, { error: "invalid_control" });
+      }
+      return;
+    }
+    if (request.method !== "POST" || request.url !== "/v1/chat/completions") {
+      writeJson(response, 404, { error: "not_found" });
+      return;
+    }
+    const authorized = request.headers.authorization === `Bearer ${expectedCredential}`;
+    const attempt = {
+      credential_generation: authorized ? generation : null,
+      trace_id: validTraceparent(request.headers.traceparent)
+        ? request.headers.traceparent.split("-")[1]
+        : null,
+      status: null,
+    };
+    attempts.push(attempt);
+    response.once("finish", () => {
+      attempt.status = response.statusCode;
     });
-  }
-});
+    response.once("close", () => {
+      attempt.status ??= 499;
+    });
+    if (!authorized) {
+      writeJson(response, 401, { error: "invalid_credential" });
+      return;
+    }
+    if (!validTraceparent(request.headers.traceparent)) {
+      writeJson(response, 400, { error: "missing_trace_context" });
+      return;
+    }
 
-server.listen(listenPort, "0.0.0.0");
+    try {
+      const payload = JSON.parse(await readBody(request));
+      if (!Array.isArray(payload.messages)) {
+        throw new Error("messages must be an array");
+      }
+      const lastUser = payload.messages.findLastIndex((message) => message?.role === "user");
+      const hasToolResult = payload.messages
+        .slice(lastUser + 1)
+        .some((message) => message?.role === "tool");
+      requests.push({
+        request_number: requests.length + 1,
+        credential_generation: generation,
+        trace_id: request.headers.traceparent.split("-")[1],
+        has_tool_result: hasToolResult,
+      });
+      if (holdNext) {
+        holdNext = false;
+        await new Promise((resolve) => {
+          const release = () => {
+            pending.delete(release);
+            response.off("close", release);
+            resolve();
+          };
+          pending.add(release);
+          response.once("close", release);
+        });
+        if (response.destroyed) return;
+      }
+      if (hasToolResult) {
+        writeJson(response, 200, finalCompletion());
+        return;
+      }
+      if (!advertisesWrite(payload.tools)) {
+        throw new Error("Runtime write Tool was not advertised");
+      }
+      writeJson(response, 200, writeToolCompletion());
+    } catch (error) {
+      writeJson(response, 400, {
+        error: error instanceof Error ? error.message : "invalid_request",
+      });
+    }
+  });
+  return server;
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  createModelFixture({
+    credential: process.env.ANTNEST_STAGE2_MODEL_CREDENTIAL ?? "stage2-model-secret",
+    controls: process.env.ANTNEST_STAGE2_MODEL_CONTROLS === "true",
+  }).listen(Number(process.env.ANTNEST_STAGE2_MODEL_PORT ?? "8080"), "0.0.0.0");
+}
 
 function advertisesWrite(tools) {
   return advertisedToolNames(tools).includes("write");

@@ -1,0 +1,9 @@
+services:
+  stage2-model:
+    environment:
+      ANTNEST_STAGE2_MODEL_CONTROLS: "true"
+    ports:
+      - 127.0.0.1:${ANTNEST_STAGE2_MODEL_HOST_PORT:?}:8080
+  jaeger:
+    ports:
+      - 127.0.0.1:${ANTNEST_STAGE2_OTLP_HOST_PORT:?}:4318

@@ -88,7 +88,7 @@ function overview(input: {
     owner_user_id: "user-0",
     name: `Agent ${index}`,
     desired_state: "enabled",
-    lifecycle_state: "available",
+    lifecycle_state: "created", activation_state: "enabled", runtime_state: "available",
     aggregate_sequence: 1,
     created_at: "2026-09-03T00:00:00Z",
     updated_at: "2026-09-03T00:00:00Z",

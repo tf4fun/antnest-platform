@@ -36,7 +36,18 @@ export function startHttpBoundary(request: IncomingMessage): {
   context: Context;
   finish: (status?: number, error?: unknown) => void;
 } {
-  const route = ["/status", "/v1/acp", "/v2/acp"].includes(request.url ?? "")
+  const route = [
+    "/status",
+    "/v1/acp",
+    "/v2/acp",
+    "/rpc/agent-acp/apply-execution-snapshot",
+    "/rpc/agent-acp/settle-agent",
+    "/rpc/agent-acp/get-agent-execution-state",
+    "/rpc/agent-acp/watch-agent-execution-state",
+    "/rpc/agent-acp/list-execution-audits",
+    "/rpc/agent-acp/get-execution-audit",
+    "/rpc/agent-acp/list-execution-events",
+  ].includes(request.url ?? "")
     ? request.url!
     : "unmatched";
   const method = request.method ?? "GET";

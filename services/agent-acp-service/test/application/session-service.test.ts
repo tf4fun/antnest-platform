@@ -6,10 +6,9 @@ import type { ConnectionBinding, SessionRecord } from "../../src/domain/types.js
 
 const binding: ConnectionBinding = {
   connectionId: "connection-1",
-  agentAccessSubject: "subject-1",
+  organizationId: "organization-1",
   principalId: "principal-1",
   agentId: "agent-1",
-  accessRevision: "access-1",
 };
 
 describe("SessionService", () => {
@@ -146,6 +145,7 @@ describe("SessionService", () => {
     });
 
     expect(repository.list).toHaveBeenCalledWith({
+      organizationId: "organization-1",
       principalId: "principal-1",
       agentId: "agent-1",
       cwd: "/workspace",
@@ -242,6 +242,7 @@ describe("SessionService", () => {
 function createRepository() {
   const session: SessionRecord = {
     id: "session-1",
+    organizationId: "organization-1",
     principalId: "principal-1",
     agentId: "agent-1",
     cwd: "/workspace",

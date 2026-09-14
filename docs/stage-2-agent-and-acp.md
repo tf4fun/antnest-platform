@@ -1,5 +1,12 @@
 # Stage 2 Agent And ACP Architecture
 
+> Execution ownership in this historical baseline has been superseded by
+> [Controller / ACP execution boundary](controller-acp-execution-boundary-plan.md).
+> Controller Run admission, finish receipts and credential callbacks below are
+> retired, not current APIs. Current service contracts and B5 acceptance status
+> are maintained in that plan. Runtime/MCP and protocol decisions not superseded
+> there retain their original scope.
+
 > Status: implemented; declared platform-only ACP profile accepted (C1); final platform closeout remains open<br>
 > Updated: 2026-09-10<br>
 > Compatibility: greenfield service rewrite; no prototype wire or database
@@ -11,8 +18,8 @@ Stage 2 turns the Stage 1 Runtime and Egress foundation into the smallest useful
 Agent platform: create an Agent, build its isolated Runtime, expose the Agent
 through standard ACP, and execute one serialized Run at a time.
 
-This document is authoritative for Agent rebuild, Run admission, ACP Session
-ownership, and MCP source composition. It supersedes candidate/active Runtime
+This document records the earlier Agent rebuild, Run admission, ACP Session
+ownership, and MCP source composition baseline. It superseded candidate/active Runtime
 rollout, transparent Runtime switching, environment epochs, generation-based
 execution fencing, and stable Runtime MCP proxy designs in older documents. It
 retains one process identity check solely to reject a stale MCP request after a

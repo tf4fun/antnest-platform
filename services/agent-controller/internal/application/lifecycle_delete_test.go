@@ -15,12 +15,13 @@ import (
 func TestDeleteAgentFencesDeletesReleasesThenPublishes(t *testing.T) {
 	t.Parallel()
 
-	base := deleteAgentBase(domain.AgentAvailable)
+	base := deleteAgentBase(domain.RuntimeAvailable)
 	store := &deleteLifecycleStoreStub{base: base}
 	dependencies := newDeleteDependencies(base.Agent)
 	service := NewLifecycleService(
 		lifecycleSpecSourceStub{}, store, dependencies, dependencies,
 		fixedClock{now: time.Unix(700, 0).UTC()},
+		WithLifecycleExecution(testExecutionForStore(store)),
 	)
 
 	result, err := executeDeleteForTest(service, context.Background(), DeleteAgentInput{
@@ -50,17 +51,12 @@ func TestDeleteAgentFencesDeletesReleasesThenPublishes(t *testing.T) {
 	if store.published.DeletedEvent.EventType != ports.EventAgentDeleted {
 		t.Fatalf("deleted event = %+v", store.published.DeletedEvent)
 	}
-	if store.runReleaseEvent.EventType != ports.EventRunAdmissionReleased ||
-		store.runReleaseEvent.Data["release_reason"] != "runtime_deleted" ||
-		store.runReleaseEvent.Data["source_runtime_revision"] != base.Agent.RuntimeRevision {
-		t.Fatalf("delete Run release event = %+v", store.runReleaseEvent)
-	}
 }
 
 func TestDeleteNetworkReleaseTreatsQuarantineAsLostResponseReplay(t *testing.T) {
 	t.Parallel()
 
-	base := deleteAgentBase(domain.AgentDeleting)
+	base := deleteAgentBase(domain.RuntimeAvailable)
 	operation := ports.LifecycleOperationRecord{
 		RequestID: "request-delete-release-replay", RequestFingerprint: "fingerprint",
 		AgentID: base.Agent.AgentID, Kind: domain.OperationDelete,
@@ -74,6 +70,7 @@ func TestDeleteNetworkReleaseTreatsQuarantineAsLostResponseReplay(t *testing.T) 
 	service := NewLifecycleService(
 		lifecycleSpecSourceStub{}, store, dependencies, dependencies,
 		fixedClock{now: time.Unix(705, 0).UTC()},
+		WithLifecycleExecution(testExecutionForStore(store)),
 	)
 
 	advanced, err := service.releaseDeleteNetwork(context.Background(), state)
@@ -92,7 +89,7 @@ func TestDeleteNetworkReleaseTreatsQuarantineAsLostResponseReplay(t *testing.T) 
 func TestDeleteAgentWithAuthoritativelyAbsentRuntimeSkipsRuntimeDelete(t *testing.T) {
 	t.Parallel()
 
-	base := deleteAgentBase(domain.AgentUnavailable)
+	base := deleteAgentBase(domain.RuntimeUnknown)
 	base.Agent.RuntimeRevision = ""
 	base.Agent.RuntimeExecutionID = ""
 	base.Agent.RuntimeMCPEndpoint = ""
@@ -110,6 +107,7 @@ func TestDeleteAgentWithAuthoritativelyAbsentRuntimeSkipsRuntimeDelete(t *testin
 	service := NewLifecycleService(
 		lifecycleSpecSourceStub{}, store, dependencies, dependencies,
 		fixedClock{now: time.Unix(710, 0).UTC()},
+		WithLifecycleExecution(testExecutionForStore(store)),
 	)
 
 	result, err := executeDeleteForTest(service, context.Background(), DeleteAgentInput{
@@ -132,17 +130,12 @@ func TestDeleteAgentWithAuthoritativelyAbsentRuntimeSkipsRuntimeDelete(t *testin
 		result.Operation.State != domain.OperationCompleted {
 		t.Fatalf("absent Runtime delete = %+v begin=%+v", result, store.begin)
 	}
-	if store.runReleaseEvent.EventType != ports.EventRunAdmissionReleased ||
-		store.runReleaseEvent.Data["release_reason"] != "runtime_absent" ||
-		store.runReleaseEvent.Data["source_runtime_revision"] != "" {
-		t.Fatalf("absent Runtime Run release event = %+v", store.runReleaseEvent)
-	}
 }
 
 func TestDeleteAgentRejectsForeignRuntimeWhenProjectionHasNoRevision(t *testing.T) {
 	t.Parallel()
 
-	base := deleteAgentBase(domain.AgentUnavailable)
+	base := deleteAgentBase(domain.RuntimeUnknown)
 	base.Agent.RuntimeRevision = ""
 	base.Agent.RuntimeExecutionID = ""
 	base.Agent.RuntimeMCPEndpoint = ""
@@ -155,6 +148,7 @@ func TestDeleteAgentRejectsForeignRuntimeWhenProjectionHasNoRevision(t *testing.
 	service := NewLifecycleService(
 		lifecycleSpecSourceStub{}, store, dependencies, dependencies,
 		fixedClock{now: time.Unix(715, 0).UTC()},
+		WithLifecycleExecution(testExecutionForStore(store)),
 	)
 
 	result, err := executeDeleteForTest(service, context.Background(), DeleteAgentInput{
@@ -174,12 +168,13 @@ func TestDeleteAgentRejectsForeignRuntimeWhenProjectionHasNoRevision(t *testing.
 func TestDeleteAgentWaitsForActiveRun(t *testing.T) {
 	t.Parallel()
 
-	base := deleteAgentBase(domain.AgentAvailable)
+	base := deleteAgentBase(domain.RuntimeAvailable)
 	store := &deleteLifecycleStoreStub{base: base, drainBlocked: true}
 	dependencies := newDeleteDependencies(base.Agent)
 	service := NewLifecycleService(
 		lifecycleSpecSourceStub{}, store, dependencies, dependencies,
 		fixedClock{now: time.Unix(720, 0).UTC()},
+		WithLifecycleExecution(testExecutionForStore(store)),
 	)
 
 	result, err := executeDeleteForTest(service, context.Background(), DeleteAgentInput{
@@ -193,33 +188,37 @@ func TestDeleteAgentWaitsForActiveRun(t *testing.T) {
 	}
 }
 
-func TestDeleteAgentRechecksDrainBeforeApplyingTimeout(t *testing.T) {
+func TestDeleteAgentExpiredDeadlineDoesNotQueryACPOrMutateRuntime(t *testing.T) {
 	t.Parallel()
 
-	base := deleteAgentBase(domain.AgentAvailable)
+	base := deleteAgentBase(domain.RuntimeAvailable)
 	store := &deleteLifecycleStoreStub{base: base}
 	dependencies := newDeleteDependencies(base.Agent)
 	now := time.Unix(900, 0).UTC()
 	service := NewLifecycleServiceWithDrainTimeout(
 		lifecycleSpecSourceStub{}, store, dependencies, dependencies,
 		fixedClock{now: now}, time.Minute,
+		WithLifecycleExecution(testExecutionForStore(store)),
 	)
+
 	state := ports.AgentDeleteState{
 		Agent: base.Agent,
 		Operation: ports.LifecycleOperationRecord{
 			RequestID: "request-delete-expired-drain", RequestFingerprint: "fingerprint",
-			AgentID: base.Agent.AgentID, Kind: domain.OperationDelete,
+			DrainDeadlineAt: testDrainDeadline(now.Add(-time.Minute)),
+			AgentID:         base.Agent.AgentID, Kind: domain.OperationDelete,
 			Phase: domain.PhaseDrain, State: domain.OperationRunning,
 			CreatedAt: now.Add(-2 * time.Minute), UpdatedAt: now.Add(-2 * time.Minute),
 		},
 	}
 	store.state = state
+	store.replayed = true
 
 	settled, err := service.settleDeleteDrain(context.Background(), state)
 	if err != nil {
 		t.Fatalf("settle expired but empty drain: %v", err)
 	}
-	if settled.Operation.Phase != domain.PhaseNetworkFence {
+	if settled.Operation.State != domain.OperationFailed || settled.Operation.ErrorCode != "drain_timeout" || len(dependencies.calls) != 0 {
 		t.Fatalf("settled phase = %q", settled.Operation.Phase)
 	}
 }
@@ -227,7 +226,7 @@ func TestDeleteAgentRechecksDrainBeforeApplyingTimeout(t *testing.T) {
 func TestDeleteAgentKeepsUnknownRuntimeEffectNonterminal(t *testing.T) {
 	t.Parallel()
 
-	base := deleteAgentBase(domain.AgentAvailable)
+	base := deleteAgentBase(domain.RuntimeAvailable)
 	store := &deleteLifecycleStoreStub{base: base}
 	dependencies := newDeleteDependencies(base.Agent)
 	dependencies.runtime = ports.RuntimeOperation{
@@ -236,6 +235,7 @@ func TestDeleteAgentKeepsUnknownRuntimeEffectNonterminal(t *testing.T) {
 	service := NewLifecycleService(
 		lifecycleSpecSourceStub{}, store, dependencies, dependencies,
 		fixedClock{now: time.Unix(730, 0).UTC()},
+		WithLifecycleExecution(testExecutionForStore(store)),
 	)
 
 	result, err := executeDeleteForTest(service, context.Background(), DeleteAgentInput{
@@ -258,7 +258,9 @@ func TestDeleteAgentKeepsUnknownRuntimeEffectNonterminal(t *testing.T) {
 func TestDeleteAgentCompletedRetryDoesNotRepeatEffects(t *testing.T) {
 	t.Parallel()
 
-	base := deleteAgentBase(domain.AgentDeleted)
+	base := deleteAgentBase(domain.RuntimeAbsent)
+	base.Agent.LifecycleState = domain.AgentDeleted
+	base.Agent.ActivationState = ""
 	base.Agent.DesiredState = domain.DesiredDeleted
 	state := ports.AgentDeleteState{
 		Agent: base.Agent,
@@ -273,6 +275,7 @@ func TestDeleteAgentCompletedRetryDoesNotRepeatEffects(t *testing.T) {
 	service := NewLifecycleService(
 		lifecycleSpecSourceStub{}, store, dependencies, dependencies,
 		fixedClock{now: time.Unix(740, 0).UTC()},
+		WithLifecycleExecution(testExecutionForStore(store)),
 	)
 
 	result, err := executeDeleteForTest(service, context.Background(), DeleteAgentInput{
@@ -316,7 +319,7 @@ func newDeleteDependencies(agent ports.AgentRecord) *deleteDependenciesStub {
 		inspection: ports.RuntimeInspection{
 			AgentID: agent.AgentID, RuntimeRevision: agent.RuntimeRevision,
 			RuntimeExecutionID: agent.RuntimeExecutionID,
-			MCPEndpoint:        agent.RuntimeMCPEndpoint, LifecycleState: "ready", Health: "healthy",
+			MCPEndpoint:        agent.RuntimeMCPEndpoint, LifecycleState: "provisioned", Health: "healthy",
 		},
 	}
 }
@@ -415,13 +418,12 @@ func (dependency *deleteDependenciesStub) EnableRuntime(
 
 type deleteLifecycleStoreStub struct {
 	lifecycleStoreStub
-	base            ports.AgentDeleteBase
-	begin           ports.BeginAgentDelete
-	state           ports.AgentDeleteState
-	replayed        bool
-	drainBlocked    bool
-	published       ports.PublishAgentDelete
-	runReleaseEvent ports.RunAdmissionEvent
+	base         ports.AgentDeleteBase
+	begin        ports.BeginAgentDelete
+	state        ports.AgentDeleteState
+	replayed     bool
+	drainBlocked bool
+	published    ports.PublishAgentDelete
 }
 
 func (store *deleteLifecycleStoreStub) GetAgentDeleteBase(
@@ -445,24 +447,11 @@ func (store *deleteLifecycleStoreStub) BeginAgentDelete(
 	}
 	agent := store.base.Agent
 	agent.DesiredState = domain.DesiredDeleted
-	agent.LifecycleState = domain.AgentDeleting
 	agent.ActiveOperationRequestID = input.Operation.RequestID
 	agent.AggregateSequence = input.RequestedEvent.AggregateSequence
 	store.state = ports.AgentDeleteState{Agent: agent, Operation: input.Operation}
 	store.replayed = true
 	return store.state, false, nil
-}
-
-func (store *deleteLifecycleStoreStub) SettleAgentDeleteDrain(
-	_ context.Context, _ string, _ string, nextChildRequestID string, now time.Time,
-) (ports.AgentDeleteState, error) {
-	if store.drainBlocked {
-		return store.state, nil
-	}
-	store.state.Operation.Phase = domain.PhaseNetworkFence
-	store.state.Operation.ChildRequestID = nextChildRequestID
-	store.state.Operation.UpdatedAt = now
-	return store.state, nil
 }
 
 func (store *deleteLifecycleStoreStub) AdvanceAgentDelete(
@@ -475,9 +464,6 @@ func (store *deleteLifecycleStoreStub) AdvanceAgentDelete(
 	if input.SourceRuntimeAbsenceProof != nil {
 		store.state.Operation.SourceRuntimeAbsent = true
 		store.state.Operation.SourceRuntimeAbsenceProof = input.SourceRuntimeAbsenceProof
-	}
-	if input.RunReleaseEvent.EventID != "" {
-		store.runReleaseEvent = input.RunReleaseEvent
 	}
 	store.state.Operation.Phase = input.NextPhase
 	store.state.Operation.ChildRequestID = input.NextChildRequestID
@@ -505,6 +491,8 @@ func (store *deleteLifecycleStoreStub) PublishAgentDelete(
 	store.published = input
 	store.state.Agent.DesiredState = domain.DesiredDeleted
 	store.state.Agent.LifecycleState = domain.AgentDeleted
+	store.state.Agent.ActivationState = ""
+	store.state.Agent.RuntimeState = domain.RuntimeAbsent
 	store.state.Agent.AgentSpecRevisionID = ""
 	store.state.Agent.ExecutionRevisionID = ""
 	store.state.Agent.RuntimeRevision = ""
@@ -518,15 +506,12 @@ func (store *deleteLifecycleStoreStub) PublishAgentDelete(
 	return store.state, nil
 }
 
-func deleteAgentBase(state domain.AgentState) ports.AgentDeleteBase {
-	desired := domain.DesiredEnabled
-	if state == domain.AgentDisabled {
-		desired = domain.DesiredDisabled
-	}
+func deleteAgentBase(state domain.RuntimeState) ports.AgentDeleteBase {
 	now := time.Unix(600, 0).UTC()
 	return ports.AgentDeleteBase{Agent: ports.AgentRecord{
 		AgentID: "agent-delete", OrganizationID: "org-1", OwnerUserID: "user-1",
-		Name: "Delete Agent", DesiredState: desired, LifecycleState: state,
+		Name: "Delete Agent", DesiredState: domain.DesiredEnabled, LifecycleState: domain.AgentCreated,
+		ActivationState: domain.ActivationEnabled, RuntimeState: state,
 		AccessRevision: "access-revision-delete", AgentSpecRevisionID: "spec-delete",
 		ExecutionRevisionID:               "execution-delete",
 		LastSuccessfulExecutionRevisionID: "execution-delete",

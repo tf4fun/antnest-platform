@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"soft/antnest-platform/services/edge-gateway/internal/agentacp"
 	"soft/antnest-platform/services/edge-gateway/internal/agentcontroller"
 	"soft/antnest-platform/services/edge-gateway/internal/identity"
 	"soft/antnest-platform/services/edge-gateway/internal/session"
@@ -28,6 +29,8 @@ const (
 	HeaderMembershipID       = "X-Antnest-Membership-ID"
 	HeaderSystemRole         = "X-Antnest-System-Role"
 	HeaderOrganizationRole   = "X-Antnest-Organization-Role"
+	HeaderPrincipalID        = "X-Antnest-Principal-ID"
+	HeaderAgentID            = "X-Antnest-Agent-ID"
 	HeaderTraceID            = "X-Antnest-Trace-ID"
 	HeaderAgentAccessSubject = "X-Antnest-Agent-Access-Subject"
 	maximumLoginBytes        = 64 << 10
@@ -40,7 +43,7 @@ const (
 
 var trustedHeaders = []string{
 	HeaderUserID, HeaderOrganizationID, HeaderMembershipID,
-	HeaderSystemRole, HeaderOrganizationRole, HeaderAgentAccessSubject,
+	HeaderSystemRole, HeaderOrganizationRole, HeaderAgentAccessSubject, HeaderPrincipalID, HeaderAgentID,
 }
 
 var errInvalidSession = errors.New("browser session is invalid or missing")
@@ -71,6 +74,7 @@ type Config struct {
 type Dependencies struct {
 	Identity   IdentityService
 	Agents     agentcontroller.Service
+	Execution  agentacp.Service
 	Sessions   *session.Manager
 	HTTPClient *http.Client
 	Logger     *slog.Logger
@@ -79,6 +83,7 @@ type Dependencies struct {
 type handler struct {
 	identity         IdentityService
 	agents           agentcontroller.Service
+	execution        agentacp.Service
 	sessions         *session.Manager
 	requestTimeout   time.Duration
 	streamLease      time.Duration
@@ -117,7 +122,7 @@ func NewHandler(config Config, dependencies Dependencies) (http.Handler, error) 
 	if err != nil {
 		return nil, fmt.Errorf("identity service URL is invalid")
 	}
-	if dependencies.Identity == nil || dependencies.Agents == nil ||
+	if dependencies.Identity == nil || dependencies.Agents == nil || dependencies.Execution == nil ||
 		dependencies.Sessions == nil || dependencies.HTTPClient == nil {
 		return nil, fmt.Errorf("gateway dependencies are incomplete")
 	}
@@ -146,7 +151,7 @@ func NewHandler(config Config, dependencies Dependencies) (http.Handler, error) 
 		config.NewRequestID = randomRequestID
 	}
 	h := &handler{
-		identity: dependencies.Identity, agents: dependencies.Agents, sessions: dependencies.Sessions,
+		identity: dependencies.Identity, agents: dependencies.Agents, execution: dependencies.Execution, sessions: dependencies.Sessions,
 		requestTimeout: config.RequestTimeout, streamLease: config.StreamLease,
 		loginWindow: config.LoginWindow,
 		loginAdmission: newLoginAdmission(loginAdmissionConfig{
@@ -423,9 +428,8 @@ type workspacePrincipalResponse struct {
 }
 
 type workspaceAgentResponse struct {
-	AgentID      string `json:"agent_id"`
-	Name         string `json:"name"`
-	Availability string `json:"availability"`
+	AgentID string `json:"agent_id"`
+	Name    string `json:"name"`
 }
 
 type workspaceBootstrapResponse struct {
@@ -447,7 +451,7 @@ func (h *handler) workspaceBootstrap(response http.ResponseWriter, request *http
 	items := make([]workspaceAgentResponse, 0, len(agents))
 	for _, agent := range agents {
 		items = append(items, workspaceAgentResponse{
-			AgentID: agent.AgentID, Name: agent.Name, Availability: agent.Availability,
+			AgentID: agent.AgentID, Name: agent.Name,
 		})
 	}
 	writeJSON(response, http.StatusOK, workspaceBootstrapResponse{
@@ -489,24 +493,11 @@ func (h *handler) workspaceACP(response http.ResponseWriter, request *http.Reque
 		writeError(response, http.StatusForbidden, "csrf_failed", "Request could not be verified")
 		return nil
 	}
-	agents, err := h.workspaceAgents(request.Context(), principal)
-	if err != nil {
-		writeError(response, http.StatusServiceUnavailable, "agent_unavailable", "Agent connection is unavailable")
-		return err
+	if upgrade {
+		h.relayWorkspaceACP(response, request, values.AccessToken, principal)
+	} else {
+		h.relayWorkspaceHTTP(response, request, principal)
 	}
-	requestedID := request.PathValue("agent_id")
-	for _, agent := range agents {
-		if agent.AgentID != requestedID {
-			continue
-		}
-		if upgrade {
-			h.relayWorkspaceACP(response, request, values.AccessToken, principal, agent.AgentAccessSubject)
-		} else {
-			h.relayWorkspaceHTTP(response, request, agent.AgentAccessSubject)
-		}
-		return nil
-	}
-	writeError(response, http.StatusNotFound, "agent_not_found", "Agent was not found")
 	return nil
 }
 

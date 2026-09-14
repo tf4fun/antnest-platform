@@ -131,6 +131,38 @@ func TestHealthyEventDoesNotHidePlatformOrClaimFailureAsStatusUnverified(t *test
 	}
 }
 
+func TestStaleHealthyEventUsesCurrentStartingState(t *testing.T) {
+	sink := &fakeSink{inspection: &deployment.Inspection{
+		AgentID: "agent-1", Generation: 7, SpecDigest: testSpecDigest,
+		PlatformPhase: deployment.PhaseRunning, Health: deployment.HealthStarting,
+		ObservedAt: time.Now(),
+	}}
+	runner := newTestRunner(t, &fakeSource{}, sink)
+	if err := runner.record(context.Background(), deployment.Observation{
+		AgentID: "agent-1", Generation: 7, Kind: deployment.ObservationHealthy,
+		SpecDigest: testSpecDigest, Source: "docker_event", ObservedAt: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.values) != 1 || sink.values[0].Kind != deployment.ObservationStarting || sink.values[0].RuntimeExecutionID != "" {
+		t.Fatalf("stale event retained healthy state: %+v", sink.values)
+	}
+}
+
+func TestReconcileIncludesStartingRuntimes(t *testing.T) {
+	source := &fakeSource{inspections: []deployment.Inspection{{
+		AgentID: "agent-1", Generation: 7, SpecDigest: testSpecDigest,
+		PlatformPhase: deployment.PhaseRunning, Health: deployment.HealthStarting,
+	}}}
+	sink := &fakeSink{}
+	if err := newTestRunner(t, source, sink).Reconcile(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.values) != 2 || sink.values[0].Kind != deployment.ObservationStarting {
+		t.Fatalf("starting baseline was omitted: %+v", sink.values)
+	}
+}
+
 func TestHealthyEventTraceCarriesVerifiedRuntimeIdentity(t *testing.T) {
 	recorder := tracetest.NewSpanRecorder()
 	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
@@ -350,6 +382,7 @@ func (*fakeSource) Watch(
 }
 
 type fakeSink struct {
+	inspection              *deployment.Inspection
 	values                  []deployment.Observation
 	inspectErr              error
 	validateErr             error
@@ -378,6 +411,9 @@ func (s *fakeSink) ValidateRuntimeInspection(context.Context, deployment.Inspect
 func (s *fakeSink) InspectPlatformRuntime(_ context.Context, key deployment.Key) (deployment.Inspection, error) {
 	if s.inspectErr != nil {
 		return deployment.Inspection{}, s.inspectErr
+	}
+	if s.inspection != nil {
+		return *s.inspection, nil
 	}
 	return deployment.Inspection{
 		AgentID: key.AgentID, Generation: key.Generation,

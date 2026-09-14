@@ -17,8 +17,6 @@ type Config struct {
 	SystemSkillsVolume    string
 	RuntimeStatusTimeout  time.Duration
 	MutationTimeout       time.Duration
-	RuntimeReadyTimeout   time.Duration
-	RuntimePollInterval   time.Duration
 	RPCRequestTimeout     time.Duration
 	ReconciliationTimeout time.Duration
 	ObservationRetention  time.Duration
@@ -35,14 +33,6 @@ func Load(lookup func(string) string) (Config, error) {
 		return Config{}, err
 	}
 	mutationTimeout, err := duration(lookup, "ANTNEST_RUNTIME_MUTATION_TIMEOUT", 2*time.Minute)
-	if err != nil {
-		return Config{}, err
-	}
-	readyTimeout, err := duration(lookup, "ANTNEST_RUNTIME_READY_TIMEOUT", time.Minute)
-	if err != nil {
-		return Config{}, err
-	}
-	pollInterval, err := duration(lookup, "ANTNEST_RUNTIME_POLL_INTERVAL", 500*time.Millisecond)
 	if err != nil {
 		return Config{}, err
 	}
@@ -77,8 +67,6 @@ func Load(lookup func(string) string) (Config, error) {
 		SystemSkillsVolume:    valueOr(lookup, "ANTNEST_RUNTIME_SYSTEM_SKILLS_VOLUME", "antnest-system-skills"),
 		RuntimeStatusTimeout:  statusTimeout,
 		MutationTimeout:       mutationTimeout,
-		RuntimeReadyTimeout:   readyTimeout,
-		RuntimePollInterval:   pollInterval,
 		RPCRequestTimeout:     rpcTimeout,
 		ReconciliationTimeout: reconciliationTimeout,
 		ObservationRetention:  retention,
@@ -106,12 +94,6 @@ func Load(lookup func(string) string) (Config, error) {
 		return Config{}, fmt.Errorf("ANTNEST_DOCKER_HOST must be a unix:// socket URL")
 	}
 	config.DockerSocketPath = parsedHost.Path
-	if config.RuntimePollInterval > config.RuntimeReadyTimeout {
-		return Config{}, fmt.Errorf("ANTNEST_RUNTIME_POLL_INTERVAL must not exceed ANTNEST_RUNTIME_READY_TIMEOUT")
-	}
-	if config.RuntimeReadyTimeout >= config.MutationTimeout {
-		return Config{}, fmt.Errorf("ANTNEST_RUNTIME_READY_TIMEOUT must be less than ANTNEST_RUNTIME_MUTATION_TIMEOUT")
-	}
 	if config.RPCRequestTimeout <= config.MutationTimeout {
 		return Config{}, fmt.Errorf("ANTNEST_RUNTIME_RPC_TIMEOUT must exceed ANTNEST_RUNTIME_MUTATION_TIMEOUT")
 	}

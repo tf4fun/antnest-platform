@@ -75,7 +75,7 @@ func TestBFFTemplateTransformationAndRealHTTPParentIDs(t *testing.T) {
 	})
 	controller := httptest.NewServer(telemetry.HTTPHandler(controllerMux, logger))
 	defer controller.Close()
-	backend, err := upstream.NewClient(upstream.Config{IdentityURL: controller.URL, AgentControllerURL: controller.URL, HTTPClient: controller.Client()})
+	backend, err := upstream.NewClient(upstream.Config{IdentityURL: controller.URL, AgentControllerURL: controller.URL, AgentACPURL: controller.URL, HTTPClient: controller.Client()})
 	if err != nil {
 		t.Fatal(err)
 	}

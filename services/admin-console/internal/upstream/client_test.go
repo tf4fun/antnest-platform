@@ -7,9 +7,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"soft/antnest-platform/services/admin-console/internal/principal"
 )
 
 func TestClientTargetsOnlyConfiguredServiceAndPropagatesTrace(t *testing.T) {
@@ -22,7 +24,7 @@ func TestClientTargetsOnlyConfiguredServiceAndPropagatesTrace(t *testing.T) {
 		}, nil
 	})}
 	client, err := NewClient(Config{
-		IdentityURL: "http://identity.internal", AgentControllerURL: "http://agent-controller.internal",
+		IdentityURL: "http://identity.internal", AgentControllerURL: "http://agent-controller.internal", AgentACPURL: "http://acp.internal",
 		HTTPClient: httpClient,
 	})
 	if err != nil {
@@ -57,6 +59,45 @@ func TestClientTargetsOnlyConfiguredServiceAndPropagatesTrace(t *testing.T) {
 	}
 }
 
+func TestACPDispatchRequiresAnAdministratorContext(t *testing.T) {
+	t.Parallel()
+	requests := 0
+	httpClient := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		requests++
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{}`))}, nil
+	})}
+	client, err := NewClient(Config{IdentityURL: "http://identity.internal", AgentControllerURL: "http://controller.internal", AgentACPURL: "http://acp.internal", HTTPClient: httpClient})
+	require.NoError(t, err)
+	_, err = client.Do(t.Context(), AgentACP, http.MethodPost, "/rpc/agent-acp/list-execution-audits", "", []byte(`{}`))
+	require.Error(t, err)
+	for _, actor := range []principal.Principal{
+		{UserID: "user", OrganizationID: "org", MembershipID: "member", SystemRole: "user", OrganizationRole: "member"},
+		{UserID: "user,other", OrganizationID: "org", MembershipID: "member", SystemRole: "admin", OrganizationRole: "member"},
+		{UserID: "user", OrganizationID: "org", SystemRole: "admin", OrganizationRole: "member"},
+	} {
+		_, err := client.Do(principal.WithContext(t.Context(), actor), AgentACP, http.MethodPost, "/rpc/agent-acp/list-execution-audits", "", []byte(`{}`))
+		require.Error(t, err)
+	}
+	require.Zero(t, requests)
+}
+
+func TestACPIdentityDoesNotLeakToOtherUpstreams(t *testing.T) {
+	t.Parallel()
+	actor := principal.Principal{UserID: "user", OrganizationID: "org", MembershipID: "member", SystemRole: "admin", OrganizationRole: "member"}
+	httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		require.Empty(t, request.Header.Get(principal.HeaderUserID))
+		require.Empty(t, request.Header.Get(principal.HeaderMembershipID))
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{}`))}, nil
+	})}
+	client, err := NewClient(Config{IdentityURL: "http://identity.internal", AgentControllerURL: "http://controller.internal", AgentACPURL: "http://acp.internal", HTTPClient: httpClient})
+	require.NoError(t, err)
+	for _, target := range []Target{Identity, AgentController} {
+		response, err := client.Do(principal.WithContext(t.Context(), actor), target, http.MethodGet, "/status", "", nil)
+		require.NoError(t, err)
+		require.NoError(t, response.Body.Close())
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func TestClientDoesNotRedirectMutation(t *testing.T) {
@@ -66,7 +107,7 @@ func TestClientDoesNotRedirectMutation(t *testing.T) {
 			calls++
 			return &http.Response{StatusCode: status, Header: http.Header{"Location": {"http://unexpected.internal/target"}}, Body: io.NopCloser(strings.NewReader("")), Request: request}, nil
 		})}
-		client, err := NewClient(Config{IdentityURL: "http://identity.internal", AgentControllerURL: "http://controller.internal", HTTPClient: httpClient})
+		client, err := NewClient(Config{IdentityURL: "http://identity.internal", AgentControllerURL: "http://controller.internal", AgentACPURL: "http://acp.internal", HTTPClient: httpClient})
 		if err != nil {
 			t.Fatal(err)
 		}

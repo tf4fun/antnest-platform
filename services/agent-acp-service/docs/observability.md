@@ -10,17 +10,25 @@ SDK dispatch and existing application/adapter boundaries. Acceptance is coordina
 - One HTTP SERVER span covers response finish, disconnect and upgrade. Extract
   W3C trace context before starting it; never propagate inbound baggage.
 - A common fetch wrapper creates CLIENT before injection and ends at response
-  EOF, cancellation or read failure. Controller, model and Runtime MCP use it.
+  EOF, cancellation or read failure. Model and Runtime MCP use it; ordinary
+  execution no longer calls Controller.
   Adapter operations are INTERNAL, not duplicate CLIENT spans.
 - The ACP dispatcher records registered v1/v2 requests with their own context,
   complete decoded request/response values (when enabled) and protocol outcome. WebSocket requests
   without request metadata use connection Links, not a handshake parent.
+- For v1 HTTP, the telemetry adapter carries the actual receiving SERVER context
+  through standard ACP `_meta.traceparent`/`tracestate`. The SDK's persistent
+  queue does not preserve the current POST's async-local context. The adapter
+  reads only the already byte-bounded JSON copy, preserves other fields and
+  delegates invalid inputs, routing and responses to the official SDK. It does
+  not create a private wire field or require a modified client.
 - `ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT=false` is the single switch. When true,
   discrete ACP RPC parameters/results are captured on the receiving dispatcher
   span as `antnest.request` / `antnest.response`, each with one
   `antnest.payload.json` attribute. New and nested fields require no registration.
-  Credential-bearing parameters, prompts and returned content are included; this
-  is an explicit development diagnostic choice, not a secure retention policy.
+  Prompts and returned content are included; this is an explicit development
+  diagnostic choice, not a secure retention policy. The execution snapshot
+  endpoint is metadata-only because it receives Provider credentials.
 - HTTP headers/bodies, WebSocket/SSE frames, session notifications, model streams
   and progress are not captured or reconstructed. INTERNAL Run/Tool/permission
   spans remain metadata-only. HTTP CLIENT spans do not duplicate receiving RPC
@@ -45,11 +53,11 @@ Final serial admission results are recorded in the
 [platform rollout](../../../docs/observability-rollout.md).
 
 The SDK owns malformed/unknown wire requests before application dispatch,
-HTTP body parsing, streaming queues and notification serialization. A handler
-dispatcher cannot observe every pre-dispatch rejection or reconstruct an HTTP
-request context lost inside a persistent SDK queue. These SDK boundaries need
-real-transport parent and failure validation; no private protocol fields or
-second parser are introduced to claim coverage.
+HTTP size enforcement, protocol parsing, streaming queues and notification
+serialization. The HTTP telemetry adapter only joins request context across the
+queue; it does not validate or implement ACP semantics. Real official-SDK tests
+prove that initialize, new Session and prompt belong to their own POST traces.
+Pre-dispatch protocol failures still require their own transport evidence.
 
 Other explicit limits: content is recorded once at the receiving RPC boundary,
 not at model/Tool/Internal decorators. Non-RPC error metadata retains stable
@@ -73,37 +81,36 @@ profiles, not inferred from unit-test span counts.
 - Removed operations: `acp.http` (replaced by the actual HTTP SERVER lifetime)
   and `agent_controller.status` (readiness no longer calls Controller).
 - Existing meaningful INTERNAL names remain, including `agent.run`,
-  `acp.session.*`, `agent_controller.*`, `model.complete`, `mcp.tools.*`,
+  `acp.session.*`, `model.complete`, `mcp.tools.*`,
   `mcp.runtime.info`, `acp.permission.wait` and `postgres.ready`.
 - `acp.permission.wait` now includes the existing permission request's
   persistence boundary. `agent.run` is a bounded root with a source Link, not
   a long-lived child of the accepted ACP request. Root trace scripts expecting
   the old ancestry must follow Links and retained Run/Session IDs.
 - HTTP names are `HTTP METHOD /status`, `HTTP METHOD /v1/acp`, `HTTP METHOD /v2/acp`,
-  `HTTP METHOD unmatched`; CLIENT names are `HTTP METHOD agent-controller`, `HTTP METHOD model`,
+  `HTTP METHOD unmatched`; CLIENT names are `HTTP METHOD model`,
   `HTTP METHOD antnest-runtime`, `HTTP METHOD mcp`. ACP dispatcher names are
   `acp initialize` and `acp session/...` for registered methods.
 - Existing identifier attributes are retained. Added aliases are
   `request.id -> antnest.request.id`, `agent.id -> antnest.agent.id`,
   `session.id -> antnest.session.id`, `run.id -> antnest.run.id`,
-  `admission.id -> antnest.admission.id`, and
   `execution.revision -> antnest.execution.revision`.
-  An admission ID is not relabeled as a Controller lifecycle operation ID.
   Runtime revisions, model profile IDs, context counts and terminal outcomes
   are additional attributes. `error.code` remains for known errors alongside
   the string `antnest.error.code`.
 - Readiness assertions must expect private PostgreSQL only, zero Controller
   status calls and a SERVER span even for a successful traced health request.
 - No package/dependency/lock changes are needed; tests use existing SDK exports.
-- Service-owned Stage 2 assertions now require one exact
-  `INTERNAL agent_controller.* -> CLIENT HTTP POST agent-controller -> receiving SERVER`
-  chain for each observed resolve/acquire/finish operation. Duplicate sends and
-  bypassed/foreign parent IDs fail fixtures. Execution evidence discovers the
-  linked `agent.run` trace and requires exactly one successful root linked to
-  the exact ACP prompt. Cross-service Controller/Identity/Runtime selectors use
-  the normalized HTTP names; fixtures retain exact parent and operation checks.
-  The no-content default profile prohibits business payloads. When content capture
-  is explicitly enabled, complete RPC events are allowed; HTTP/stream content is not.
+- Stage 2 assertions reject Controller/Identity calls in execution traces and
+  require model requests, Runtime MCP calls and ACP-owned persistence under the
+  linked `agent.run`. Configuration publication and lifecycle settlement flow
+  from Controller to ACP, separately from the prompt execution path. The client
+  exports actual source spans; fabricated parent IDs are not accepted.
+- The [integration scenarios](execution-boundary-e2e.md) use the development RPC
+  capture mode and synthetic Provider credentials. Secret checks inspect captured
+  event values as well as metadata. A process killed mid-Run cannot flush its
+  complete trace; interruption is proved by retained execution audit and absence
+  of replay, not by pretending the interrupted span tree is complete.
 
 Service and integration checks, executed serially:
 

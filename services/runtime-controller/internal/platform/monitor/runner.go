@@ -370,8 +370,10 @@ func observationFromInspection(
 		kind = deployment.ObservationHealthy
 	case inspection.Health == deployment.HealthUnhealthy:
 		kind = deployment.ObservationUnhealthy
+	case inspection.Health == deployment.HealthStarting || inspection.PlatformPhase == deployment.PhaseCreated:
+		kind = deployment.ObservationStarting
 	default:
-		return deployment.Observation{}, false
+		kind = deployment.ObservationStatusUnverified
 	}
 	return deployment.Observation{
 		AgentID: inspection.AgentID, Generation: inspection.Generation,

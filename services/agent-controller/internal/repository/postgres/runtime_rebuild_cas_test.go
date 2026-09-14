@@ -35,7 +35,7 @@ func TestRuntimeLossRebuildRechecksHistoricalSourceUnderRowLock(t *testing.T) {
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
-			ctx, repository, _ := workspaceStateRepository(t)
+			ctx, repository, _ := controllerTestConnection(t)
 			base, seed := seedAvailableAgentForRebuild(t, ctx, repository)
 			if err := repository.ApplyRuntimeObservation(ctx, ports.RuntimeObservation{
 				Sequence: 1, AgentID: base.Agent.AgentID, RuntimeRevision: base.Agent.RuntimeRevision,
@@ -49,7 +49,7 @@ func TestRuntimeLossRebuildRechecksHistoricalSourceUnderRowLock(t *testing.T) {
 				}
 			}}
 			deps := newRuntimeRebuildDependencies(base.Agent)
-			service := application.NewLifecycleService(repository, store, deps, deps, offboardingClock{})
+			service := application.NewLifecycleService(repository, store, deps, deps, offboardingClock{}, application.WithLifecycleExecution(testLifecycleExecution(repository)))
 			_, err := service.RebuildAgent(ctx, application.RebuildAgentInput{
 				RequestID: "stale-recovery", AgentID: base.Agent.AgentID,
 				TemplateID: seed.Revision.Snapshot().TemplateID, TemplateRevision: seed.Revision.Revision(),

@@ -62,8 +62,43 @@ func (repository *Repository) reconcileRuntimeObservationCursor(
 	if (!reset && cursor.Initialized) || (reset && cursor.Sequence > sequence) {
 		return transaction.Commit(ctx)
 	}
+	agentIDs := make([]string, 0, len(runtimes))
+	for _, runtime := range runtimes {
+		agentIDs = append(agentIDs, runtime.AgentID)
+	}
+	before, err := lockRuntimeExecutionAgents(ctx, transaction, agentIDs, true)
+	if err != nil {
+		return err
+	}
+	lockedIDs := make([]string, 0, len(before))
+	locked := make(map[string]bool, len(before))
+	for _, agent := range before {
+		lockedIDs = append(lockedIDs, agent.AgentID)
+		locked[agent.AgentID] = true
+	}
+	// Missing journal entries may describe process changes absent from inventory.
+	// Reject every pending Inspect that predates this bootstrap or reset.
+	if _, err := transaction.Exec(ctx, `
+UPDATE agent_controller.agents
+SET aggregate_sequence = aggregate_sequence + 1, updated_at = clock_timestamp()
+WHERE id=ANY($1::text[]) AND `+pendingObservationPredicate, lockedIDs); err != nil {
+		return fmt.Errorf("fence pending Runtime reconciliation: %w", err)
+	}
 	eventCounts := make(map[string]int)
 	for _, runtime := range runtimes {
+		if !locked[runtime.AgentID] {
+			continue
+		}
+		if !runtime.ObservedAt.IsZero() {
+			if err := repository.applyCurrentRuntimeCondition(ctx, transaction, &ports.RuntimeInspection{
+				AgentID: runtime.AgentID, RuntimeRevision: runtime.RuntimeRevision, RuntimeExecutionID: runtime.RuntimeExecutionID,
+				LifecycleState: runtime.LifecycleState, Phase: runtime.Phase, Health: runtime.Health,
+				Reason: runtime.Reason, DiagnosticSummary: runtime.DiagnosticSummary, ObservedAt: runtime.ObservedAt,
+			}, false); err != nil {
+				return err
+			}
+			continue
+		}
 		invalidation, observedExecutionID, ok := runtimeSnapshotInvalidation(runtime)
 		if !ok {
 			continue
@@ -85,6 +120,9 @@ UPDATE agent_controller.runtime_observation_cursor
 SET last_sequence = $1, initialized = TRUE
 WHERE singleton = TRUE`, int64(sequence)); err != nil {
 		return fmt.Errorf("update Runtime observation cursor: %w", err)
+	}
+	if err := repository.advanceRuntimeExecutionChanges(ctx, transaction, before); err != nil {
+		return err
 	}
 	if err := transaction.Commit(ctx); err != nil {
 		return fmt.Errorf("commit Runtime observation reconciliation: %w", err)
@@ -118,12 +156,47 @@ func (repository *Repository) ApplyRuntimeObservation(
 	if observation.Sequence <= cursor.Sequence {
 		return transaction.Commit(ctx)
 	}
+	before, err := lockRuntimeExecutionAgents(ctx, transaction, []string{observation.AgentID}, false)
+	if err != nil {
+		return err
+	}
 	changed := false
 	invalidation, shouldInvalidate := runtimeObservationInvalidation(observation.Kind)
+	fencePending := shouldInvalidate
+	if len(before) == 0 {
+		shouldInvalidate, fencePending = false, false
+	}
+	observedExecutionID := ""
+	if observation.Current != nil {
+		current := observation.Current
+		if current.AgentID != observation.AgentID {
+			return fmt.Errorf("current Runtime observation belongs to another Agent")
+		}
+		if len(before) > 0 {
+			if err := repository.applyCurrentRuntimeCondition(ctx, transaction, current,
+				fencePending && current.RuntimeRevision == observation.RuntimeRevision); err != nil {
+				return err
+			}
+		}
+		shouldInvalidate, fencePending = false, false
+	}
+	if fencePending || shouldInvalidate {
+		// Fence an Inspect that began before this process change. Pending Agents
+		// have no execution to invalidate yet, but must reject that stale result.
+		if _, err := transaction.Exec(ctx, `
+UPDATE agent_controller.agents
+SET aggregate_sequence = aggregate_sequence + 1, updated_at = clock_timestamp()
+WHERE id = $1 AND runtime_revision = $2 AND lifecycle_state = 'created' AND activation_state = 'enabled'
+  AND executable_execution_revision_id = ''
+  AND desired_state = 'enabled' AND active_operation_request_id = ''`,
+			observation.AgentID, observation.RuntimeRevision); err != nil {
+			return fmt.Errorf("fence pending Runtime observation: %w", err)
+		}
+	}
 	if shouldInvalidate {
 		changed, err = invalidateRuntimeExecution(
 			ctx, transaction, observation.AgentID, observation.RuntimeRevision,
-			"",
+			observedExecutionID,
 			"runtime-observation-"+strconv.FormatUint(observation.Sequence, 10),
 			invalidation, observation.Sequence,
 		)
@@ -136,6 +209,9 @@ UPDATE agent_controller.runtime_observation_cursor
 SET last_sequence = $1, initialized = TRUE
 WHERE singleton = TRUE`, int64(observation.Sequence)); err != nil {
 		return fmt.Errorf("advance Runtime observation cursor: %w", err)
+	}
+	if err := repository.advanceRuntimeExecutionChanges(ctx, transaction, before); err != nil {
+		return err
 	}
 	if err := transaction.Commit(ctx); err != nil {
 		return fmt.Errorf("commit Runtime observation transaction: %w", err)
@@ -174,7 +250,7 @@ func invalidateRuntimeExecution(
 	var aggregateSequence int64
 	err := transaction.QueryRow(ctx, `
 UPDATE agent_controller.agents
-SET lifecycle_state = 'unavailable',
+SET runtime_state = 'unknown', runtime_reason = $3, runtime_detail = $5,
     executable_execution_revision_id = '',
     runtime_execution_id = '',
     runtime_mcp_endpoint = '',
@@ -186,7 +262,7 @@ SET lifecycle_state = 'unavailable',
 WHERE id = $1
   AND runtime_revision = $2
   AND desired_state = 'enabled'
-  AND lifecycle_state = 'available'
+  AND lifecycle_state = 'created' AND activation_state = 'enabled' AND executable_execution_revision_id <> ''
   AND active_operation_request_id = ''
   AND ($4 = '' OR runtime_execution_id <> $4)
 RETURNING aggregate_sequence`, agentID, runtimeRevision, invalidation.code, observedExecutionID, invalidation.detail).Scan(&aggregateSequence)

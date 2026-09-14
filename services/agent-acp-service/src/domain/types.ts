@@ -12,16 +12,16 @@ export type ContentBlock = {
 
 export type ConnectionBinding = {
   connectionId: string;
-  agentAccessSubject: string;
+  organizationId: string;
   principalId: string;
   agentId: string;
-  accessRevision: string;
 };
 
 export type SessionState = "active" | "closed" | "deleted";
 
 export type SessionRecord = {
   id: string;
+  organizationId: string;
   principalId: string;
   agentId: string;
   cwd: "/workspace";
@@ -60,7 +60,6 @@ export type AgentExecutionSpec = {
   skillInstructions: SkillInstruction[];
   model: ModelSpec;
   maxModelRequests: number;
-  credentialRef: string;
 };
 
 export type RuntimeBinding = {
@@ -70,13 +69,16 @@ export type RuntimeBinding = {
 };
 
 export type RunExecutionSnapshot = {
-  admissionId: string;
-  admissionDeadline: Date;
+  organizationId: string;
+  providerConnectionId: string;
+  modelProfileId: string;
+  configurationRevision: number;
+  accessRevision: string;
+  deadlineAt: Date;
   agentSpecRevision: string;
   executionRevision: string;
   runtimeMcpSourceDigest: string;
   agentExecutionSpecDigest: string;
-  credentialVersion: string;
   runtime: RuntimeBinding;
   executionSpec: AgentExecutionSpec;
   clientMcpRevisionId: string;

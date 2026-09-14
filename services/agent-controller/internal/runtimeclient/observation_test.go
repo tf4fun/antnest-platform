@@ -59,7 +59,7 @@ func TestListRuntimesRejectsInvalidRuntimeProjection(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
 		_, _ = response.Write([]byte(`{"runtimes":[{
 			"agent_id":"agent-1","runtime_revision":"not-a-revision",
-			"lifecycle_state":"ready","health":"healthy",
+			"lifecycle_state":"provisioned","health":"healthy",
 			"runtime_execution_id":"execution-1","mcp_endpoint":"http://runtime:8091/mcp"
 		}]}`))
 	}))

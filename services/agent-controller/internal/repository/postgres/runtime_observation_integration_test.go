@@ -28,7 +28,7 @@ func TestRuntimeRestartObservationInvalidatesExecutableAgentAtomically(t *testin
 	now := time.Date(2026, time.September, 2, 0, 0, 0, 0, time.UTC)
 	insertQueryAgent(
 		t, ctx, repository, "agent-runtime-restart", "org-1", "user-1",
-		domain.DesiredEnabled, domain.AgentAvailable, now,
+		domain.DesiredEnabled, domain.AgentCreated, now,
 	)
 	const revision = "rtv_11111111111111111111111111111111"
 	if _, err := repository.pool.Exec(ctx, `
@@ -50,7 +50,7 @@ WHERE id = $1`, "agent-runtime-restart", revision); err != nil {
 	if err != nil {
 		t.Fatalf("get invalidated Agent: %v", err)
 	}
-	if agent.LifecycleState != domain.AgentUnavailable || agent.ExecutionRevisionID != "" ||
+	if (agent.LifecycleState != domain.AgentCreated || agent.ActivationState != domain.ActivationEnabled || agent.RuntimeState != domain.RuntimeUnknown) || agent.ExecutionRevisionID != "" ||
 		agent.RuntimeExecutionID != "" || agent.RuntimeMCPEndpoint != "" ||
 		agent.LastSuccessfulExecutionRevisionID != "execution-revision-1" ||
 		agent.FailureCode != "runtime_restarted" {

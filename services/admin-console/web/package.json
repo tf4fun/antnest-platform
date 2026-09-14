@@ -9,7 +9,9 @@
     "typecheck": "tsc -b --pretty false",
     "test": "npm run test:unit && npm run test:components",
     "test:unit": "node --test --experimental-strip-types src/lib/*.test.ts",
-    "test:components": "vitest run --config vitest.config.ts"
+    "test:components": "vitest run --config vitest.config.ts",
+    "test:browser:audit": "node ../tests/execution-audit-browser.mjs",
+    "test:browser:catalog": "node ../tests/catalog-browser.mjs"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.15",
@@ -29,6 +31,7 @@
     "@vitejs/plugin-react": "^5.1.1",
     "autoprefixer": "^10.4.23",
     "jsdom": "^30.0.1",
+    "playwright": "1.62.1",
     "postcss": "^8.5.6",
     "tailwindcss": "^3.4.19",
     "typescript": "^5.9.3",

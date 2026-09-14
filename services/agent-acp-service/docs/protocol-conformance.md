@@ -1,5 +1,12 @@
 # ACP Protocol Conformance
 
+> Execution-boundary update (2026-09-15): earlier deployed evidence below uses
+> the former Controller Run-admission architecture. It does not certify the current
+> refactor. ACP now checks locally published access/configuration and owns Run
+> records; Controller does not admit or finish Runs. Current integration evidence
+> is tracked in [the boundary plan](../../../docs/controller-acp-execution-boundary-plan.md).
+> Agent UI acceptance is deferred; the protocol requirements remain in scope.
+
 ## Purpose
 
 This document defines ACP tests from the protocol inward. It must not infer

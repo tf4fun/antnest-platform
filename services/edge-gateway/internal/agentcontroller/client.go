@@ -18,10 +18,8 @@ const (
 )
 
 type WorkspaceAgent struct {
-	AgentID            string `json:"agent_id"`
-	Name               string `json:"name"`
-	Availability       string `json:"availability"`
-	AgentAccessSubject string `json:"agent_access_subject"`
+	AgentID string `json:"agent_id"`
+	Name    string `json:"name"`
 }
 
 type ListWorkspaceAgentsInput struct {
@@ -31,8 +29,6 @@ type ListWorkspaceAgentsInput struct {
 }
 
 type Service interface {
-	GetWorkspaceState(context.Context, WorkspaceStateInput) (WorkspaceState, error)
-	WatchWorkspaceState(context.Context, WorkspaceStateInput, WorkspaceStateEmitter) error
 	ListWorkspaceAgents(context.Context, ListWorkspaceAgentsInput) ([]WorkspaceAgent, error)
 }
 
@@ -76,6 +72,9 @@ func (client *Client) ListWorkspaceAgents(
 			"/rpc/agent-controller/list-workspace-agents", request, &result,
 		); err != nil {
 			return nil, err
+		}
+		if result.Agents == nil {
+			return nil, fmt.Errorf("agent controller returned a missing workspace list")
 		}
 		for _, agent := range result.Agents {
 			if !validWorkspaceAgent(agent) {
@@ -148,16 +147,7 @@ func (client *Client) doJSON(
 }
 
 func validWorkspaceAgent(agent WorkspaceAgent) bool {
-	if strings.TrimSpace(agent.AgentID) == "" || strings.TrimSpace(agent.Name) == "" ||
-		strings.TrimSpace(agent.AgentAccessSubject) == "" {
-		return false
-	}
-	switch agent.Availability {
-	case "ready", "busy", "offline":
-		return true
-	default:
-		return false
-	}
+	return strings.TrimSpace(agent.AgentID) != "" && strings.TrimSpace(agent.Name) != ""
 }
 
 var _ Service = (*Client)(nil)

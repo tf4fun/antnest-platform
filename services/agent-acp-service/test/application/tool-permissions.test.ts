@@ -8,6 +8,7 @@ import { RunToolAuthorization } from "../../src/application/run-tool-authorizati
 import { DomainError } from "../../src/domain/errors.js";
 import type { PermissionRepository, PermissionRequest } from "../../src/ports/tool-permissions.js";
 import { binding, snapshot } from "../support/fixtures.js";
+import type { AccessService } from "../../src/application/access-service.js";
 
 const request: PermissionRequest = {
   runId: "run-1",
@@ -25,11 +26,14 @@ function setup() {
   const connections = new PermissionConnections();
   const identity = binding();
   const repository = {
-    open: vi.fn<PermissionRepository["open"]>().mockResolvedValue(identity),
+    open: vi
+      .fn<PermissionRepository["open"]>()
+      .mockResolvedValue({ ...identity, accessRevision: "access-1" }),
     decide: vi.fn<PermissionRepository["decide"]>().mockResolvedValue(true),
     cancelAbandoned: vi.fn<PermissionRepository["cancelAbandoned"]>().mockResolvedValue(),
   };
-  const access = { assert: vi.fn().mockResolvedValue(undefined) };
+  const withAccess: AccessService["withAccess"] = (_identity, commit) => commit("access-1");
+  const access = { assert: vi.fn().mockResolvedValue(undefined), withAccess };
   const service = new ToolPermissions(repository, connections, access);
   const cancellation = new AbortController();
   const input = {
@@ -61,12 +65,11 @@ describe("Durable Tool permissions", () => {
     const snap = snapshot();
     snap.executionSpec.configuration = {
       modelProfileId: "m",
-      modelProfileRevisionId: "r",
       authorizationRevision: 1,
       authorization: { mode: "smart_approve", toolRules: [] },
       digest: "a".repeat(64),
     };
-    const input = { ...h.input, snapshot: snap, credential: "test", context: [] };
+    const input = { ...h.input, snapshot: snap, context: [] };
     const permission = {
       request: vi.fn().mockResolvedValue({ decision: "reject_once", reason: "client_response" }),
     };
@@ -196,17 +199,20 @@ describe("Durable Tool permissions", () => {
     expect(h.repository.decide.mock.calls[0]?.[0].rule).toBeUndefined();
   });
 
-  it("does not route an approval to another principal or access revision", async () => {
-    const h = setup();
-    const wrong = vi.fn(() => Promise.resolve(selected("allow_always")));
-    h.attach(wrong, "foreign", { ...binding(), principalId: "other" });
-    const pending = h.service.request(h.input);
-    await vi.waitFor(() => expect(h.repository.open).toHaveBeenCalledOnce());
-    h.attach(wrong, "stale", { ...binding(), accessRevision: "old" });
-    h.cancellation.abort();
-    expect(await pending).toMatchObject({ decision: "cancelled" });
-    expect(wrong).not.toHaveBeenCalled();
-  });
+  it.each(["principalId", "organizationId", "agentId"] as const)(
+    "does not route an approval to another %s",
+    async (field) => {
+      const h = setup();
+      const wrong = vi.fn(() => Promise.resolve(selected("allow_always")));
+      h.attach(wrong, "foreign", { ...binding(), [field]: "other" });
+      const pending = h.service.request(h.input);
+      await vi.waitFor(() => expect(h.repository.open).toHaveBeenCalledOnce());
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      h.cancellation.abort();
+      expect(await pending).toMatchObject({ decision: "cancelled" });
+      expect(wrong).not.toHaveBeenCalled();
+    },
+  );
 
   it("ends an unresponsive wait on cancellation without accepting a late answer", async () => {
     const h = setup();
@@ -254,12 +260,11 @@ describe("Durable Tool permissions", () => {
     const snap = snapshot();
     snap.executionSpec.configuration = {
       modelProfileId: "m",
-      modelProfileRevisionId: "r",
       authorizationRevision: 1,
       authorization: { mode: "approve", toolRules: [] },
       digest: "a".repeat(64),
     };
-    const input = { ...h.input, snapshot: snap, credential: "test", context: [] };
+    const input = { ...h.input, snapshot: snap, context: [] };
     const permission = {
       request: vi
         .fn()

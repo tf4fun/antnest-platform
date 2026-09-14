@@ -53,8 +53,10 @@ const present = (value, field) => {
 };
 export function captureRuntime(agent, runtime) {
   assert.equal(agent.desired_state, "enabled");
-  assert.equal(agent.lifecycle_state, "available");
-  assert.equal(runtime.lifecycle_state, "ready");
+  assert.equal(agent.lifecycle_state, "created");
+  assert.equal(agent.activation_state, "enabled");
+  assert.equal(agent.runtime_state, "available");
+  assert.equal(runtime.lifecycle_state, "provisioned");
   assert.equal(runtime.health, "healthy");
   assert.equal(agent.runtime?.runtime_revision, runtime.runtime_revision);
   assert.equal(agent.agent_id, runtime.agent_id);

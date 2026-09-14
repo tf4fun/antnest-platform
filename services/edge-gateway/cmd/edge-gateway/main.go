@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"soft/antnest-platform/services/edge-gateway/internal/agentacp"
 	"soft/antnest-platform/services/edge-gateway/internal/agentcontroller"
 	"soft/antnest-platform/services/edge-gateway/internal/config"
 	"soft/antnest-platform/services/edge-gateway/internal/identity"
@@ -66,6 +67,10 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 	if err != nil {
 		return fmt.Errorf("create Agent Controller client: %w", err)
 	}
+	executionClient, err := agentacp.NewClient(cfg.AgentACPURL, httpClient)
+	if err != nil {
+		return fmt.Errorf("create Agent ACP client: %w", err)
+	}
 	sessions, err := session.NewManager(session.Config{Secure: cfg.CookieSecure})
 	if err != nil {
 		return fmt.Errorf("create session manager: %w", err)
@@ -76,7 +81,7 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 		StreamLease: cfg.StreamLease, LoginWindow: cfg.LoginWindow,
 		LoginSourceMax: cfg.LoginSourceMax, LoginAccountMax: cfg.LoginAccountMax,
 	}, server.Dependencies{
-		Identity: identityClient, Agents: agentClient, Sessions: sessions,
+		Identity: identityClient, Agents: agentClient, Execution: executionClient, Sessions: sessions,
 		HTTPClient: httpClient, Logger: logger,
 	})
 	if err != nil {

@@ -23,7 +23,7 @@ func resolveDeleteAdvanceSource(operation ports.LifecycleOperationRecord, input 
 	}
 	if inspection != nil {
 		if inspection.AgentID != operation.AgentID || inspection.RuntimeRevision == "" ||
-			(inspection.LifecycleState != "ready" && inspection.LifecycleState != "disabled" && inspection.LifecycleState != "failed") {
+			(inspection.LifecycleState != "provisioned" && inspection.LifecycleState != "disabled" && inspection.LifecycleState != "failed") {
 			return operation, ports.ErrConcurrentChange
 		}
 		operation.SourceRuntimeRevision = inspection.RuntimeRevision
@@ -47,7 +47,7 @@ func advanceDeleteOperation(ctx context.Context, transaction *databaseTransactio
 		return fmt.Errorf("encode delete evidence: %w", err)
 	}
 	result, err := transaction.Exec(ctx, `
-UPDATE agent_controller.agent_lifecycle_operations
+UPDATE agent_controller.agent_lifecycle_operations AS operation
 SET phase=$2, child_request_id=$3, updated_at=$4,
     source_runtime_revision=$5, source_runtime_absent=$6,
     source_runtime_inspection=NULLIF($7::jsonb, 'null'::jsonb),
@@ -56,7 +56,12 @@ SET phase=$2, child_request_id=$3, updated_at=$4,
         ELSE COALESCE(NULLIF($9::jsonb, 'null'::jsonb), network_attachment) END,
     runtime_result=COALESCE(NULLIF($10::jsonb, 'null'::jsonb), runtime_result),
     network_release_outcome=CASE WHEN $12='network_release' THEN $11 ELSE network_release_outcome END
-WHERE request_id=$1 AND state='running' AND phase=$12`,
+WHERE request_id=$1 AND state='running' AND phase=$12
+  AND EXISTS (
+      SELECT 1 FROM agent_controller.agents AS agent
+      WHERE agent.id = operation.agent_id
+        AND agent.active_operation_request_id = operation.request_id
+  )`,
 		operation.RequestID, input.NextPhase, input.NextChildRequestID, input.Now,
 		operation.SourceRuntimeRevision, operation.SourceRuntimeAbsent, inspection, proof,
 		attachment, runtime, input.NetworkReleaseOutcome, input.ExpectedPhase,

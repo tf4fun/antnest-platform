@@ -58,12 +58,8 @@ describe.skipIf(databaseUrl === undefined)(
         runtimeDialer: new OfficialMcpDialer({ trust: "runtime" }),
         revisions: { getClientMcpRevision: () => Promise.resolve([]) },
       });
-      const acquire = app.controller.acquireRun.getMockImplementation()!;
-      app.controller.acquireRun.mockImplementation(async (input) => {
-        const execution = await acquire(input);
-        execution.runtime.mcpEndpoint = fixture.endpoint.href;
-        return execution;
-      });
+      app.configuration.agents[0]!.runtime!.mcp_endpoint = fixture.endpoint.href;
+      await app.publishConfiguration();
       app.tools.list.mockImplementation(catalog.list.bind(catalog));
       app.tools.call.mockImplementation(catalog.call.bind(catalog));
       app.model.complete

@@ -38,9 +38,6 @@ func testFailedInitializeDeleteFence(t *testing.T, effect deployment.EffectState
 	started.State = deployment.OperationFailed
 	started.Effect = effect
 	started.ErrorCode = "platform_unavailable"
-	if effect == deployment.EffectCompleted {
-		started.ErrorCode = "runtime_not_ready"
-	}
 	started.Inspection = integrationEnvironment(started, deployment.LifecycleFailed, now)
 	if _, err := repository.CompleteOperation(ctx, started, nil); err != nil {
 		t.Fatal(err)
@@ -116,7 +113,7 @@ func TestRepositoryLifecycleRoundTrip(t *testing.T) {
 
 	replayed.State = deployment.OperationCompleted
 	replayed.Effect = deployment.EffectCompleted
-	replayed.Inspection = integrationEnvironment(replayed, deployment.LifecycleReady, now.Add(time.Second))
+	replayed.Inspection = integrationEnvironment(replayed, deployment.LifecycleProvisioned, now.Add(time.Second))
 	replayed.UpdatedAt = now.Add(time.Second)
 	observation := deployment.Observation{
 		AgentID: replayed.AgentID, RuntimeRevision: replayed.RuntimeRevision,
@@ -127,7 +124,7 @@ func TestRepositoryLifecycleRoundTrip(t *testing.T) {
 		t.Fatalf("complete initialization: observation=%+v err=%v", storedObservation, err)
 	}
 	ready, err := repository.GetEnvironment(ctx, initialize.AgentID)
-	if err != nil || ready.LifecycleState != deployment.LifecycleReady || ready.OperationID != "" {
+	if err != nil || ready.LifecycleState != deployment.LifecycleProvisioned || ready.OperationID != "" {
 		t.Fatalf("ready environment: %+v err=%v", ready, err)
 	}
 	claim, err := repository.GenerationClaim(ctx, mustRuntimeKey(t, ready))
@@ -211,7 +208,7 @@ func TestRepositoryListExcludesDeletedEnvironmentButDirectReadRetainsTombstone(t
 		agentID string
 		state   deployment.LifecycleState
 	}{
-		{agentID: "active-agent", state: deployment.LifecycleReady},
+		{agentID: "active-agent", state: deployment.LifecycleProvisioned},
 		{agentID: "deleted-agent", state: deployment.LifecycleDeleted},
 	} {
 		if _, err := database.ExecContext(ctx, insertEnvironmentSQL,

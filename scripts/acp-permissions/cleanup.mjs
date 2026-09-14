@@ -33,7 +33,7 @@ export async function cleanupPermissionAgents(api, runID, cancel) {
         agent = await api(`/api/admin/agents/${candidate.agent_id}`);
       }
       if (agent.lifecycle_state === "deleted") continue;
-      if (agent.lifecycle_state === "available") await cancel(agent.agent_id);
+      if (agent.lifecycle_state === "created") await cancel(agent.agent_id);
       const deleted = await api(
         `/api/admin/agents/${agent.agent_id}/delete`,
         {},

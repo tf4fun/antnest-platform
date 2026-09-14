@@ -2,7 +2,7 @@ import { sessionConfigurationView } from "../support/fixtures.js";
 import { v1Configuration } from "../../src/transport/acp/configuration.js";
 import * as acp from "@agentclientprotocol/sdk";
 import { describe, expect, it, vi } from "vitest";
-import { withOutputHistory } from "../support/output-application.js";
+import { withOutputHistory, type OutputApplication } from "../support/output-application.js";
 
 import type { ConnectionBinding } from "../../src/domain/types.js";
 import type {
@@ -11,16 +11,93 @@ import type {
   ExecuteRunResult,
 } from "../../src/ports/acp-application.js";
 import { createAcpV1Agent } from "../../src/transport/acp/v1/agent.js";
+import { SessionOutputStreams, sessionOutputKey } from "../../src/transport/acp/session-output.js";
 
 const binding: ConnectionBinding = {
   connectionId: "connection-1",
-  agentAccessSubject: "subject-1",
+  organizationId: "organization-1",
   principalId: "principal-1",
   agentId: "agent-1",
-  accessRevision: "access-1",
 };
 
 describe("ACP v1 agent mapping", () => {
+  it("keeps accepted execution observable after its first output attachment fails", async () => {
+    const proceed = Promise.withResolvers<void>();
+    const finished = Promise.withResolvers<void>();
+    const lifetime = new AbortController();
+    const outputs = new SessionOutputStreams();
+    vi.spyOn(outputs, "attach").mockRejectedValueOnce(new Error("Output attachment failed"));
+    const application = createApplication({
+      execute: async ({ publish }) => {
+        await proceed.promise;
+        try {
+          await publish({
+            kind: "agent_message",
+            messageId: "answer-after-reconnect",
+            content: [{ type: "text", text: "still running" }],
+          });
+          return {
+            terminalClass: "completed",
+            executorState: "quiescent",
+            toolEffectState: "none",
+            stopReason: "end_turn",
+          };
+        } finally {
+          finished.resolve();
+        }
+      },
+    });
+    const agent = createAcpV1Agent({
+      binding,
+      application,
+      outputs,
+      promptCapabilities: { image: false, embeddedContext: false },
+    });
+    const send = vi.fn(() => Promise.resolve());
+    try {
+      await acp.client().connectWith(agent, async (context) => {
+        await context.request(acp.methods.agent.initialize, {
+          protocolVersion: acp.PROTOCOL_VERSION,
+        });
+        await expect(
+          context.request(acp.methods.agent.session.prompt, {
+            sessionId: "session-1",
+            prompt: [{ type: "text", text: "continue" }],
+          }),
+        ).rejects.toMatchObject({ code: -32603 });
+        await outputs.attach({
+          key: sessionOutputKey(binding, "session-1"),
+          identity: binding,
+          connectionId: "reconnected",
+          afterSequence: 0,
+          read: (afterSequence) =>
+            application.readSessionOutput({
+              binding,
+              sessionId: "session-1",
+              ...(afterSequence === undefined ? {} : { afterSequence }),
+            }),
+          send,
+          signal: lifetime.signal,
+          onFailure: (error) => {
+            throw error;
+          },
+        });
+        proceed.resolve();
+        await finished.promise;
+        await outputs.flush(sessionOutputKey(binding, "session-1"), "reconnected");
+        expect(send).toHaveBeenCalledWith({
+          kind: "agent_message",
+          messageId: "answer-after-reconnect",
+          content: [{ type: "text", text: "still running" }],
+        });
+      });
+    } finally {
+      proceed.resolve();
+      await finished.promise;
+      lifetime.abort();
+    }
+  });
+
   it.each([true, false])(
     "negotiates and enforces audio=%s using standard v1 content",
     async (audio) => {
@@ -105,7 +182,7 @@ describe("ACP v1 agent mapping", () => {
         },
       });
       const application = createApplication({
-        executeRun: vi.fn<AcpApplicationPort["executeRun"]>(async ({ publish }) => {
+        execute: vi.fn<OutputApplication["execute"]>(async ({ publish }) => {
           await publish({
             kind: "agent_message",
             messageId: "answer",
@@ -295,10 +372,58 @@ describe("ACP v1 agent mapping", () => {
     });
   });
 
+  it("delivers fast consecutive Runs without replaying the previous Run's output", async () => {
+    const texts: string[] = [];
+    let sequence = 0;
+    const application = createApplication({
+      execute: async ({ publish }) => {
+        sequence += 1;
+        await publish({
+          kind: "agent_message",
+          messageId: `answer-${sequence}`,
+          content: [{ type: "text", text: `answer-${sequence}` }],
+        });
+        return {
+          terminalClass: "completed",
+          executorState: "quiescent",
+          toolEffectState: "none",
+          stopReason: "end_turn",
+        };
+      },
+    });
+    const agent = createAcpV1Agent({
+      binding,
+      application,
+      promptCapabilities: { image: false, embeddedContext: false },
+    });
+    const client = acp.client().onNotification(acp.methods.client.session.update, ({ params }) => {
+      if (
+        params.update.sessionUpdate === "agent_message_chunk" &&
+        params.update.content.type === "text"
+      )
+        texts.push(params.update.content.text);
+    });
+    await client.connectWith(agent, async (context) => {
+      await context.request(acp.methods.agent.initialize, {
+        protocolVersion: acp.PROTOCOL_VERSION,
+        clientCapabilities: {},
+      });
+      for (const text of ["first", "second"]) {
+        await expect(
+          context.request(acp.methods.agent.session.prompt, {
+            sessionId: "session-1",
+            prompt: [{ type: "text", text }],
+          }),
+        ).resolves.toEqual({ stopReason: "end_turn" });
+      }
+    });
+    expect(texts).toEqual(["answer-1", "answer-2"]);
+  });
+
   it("advertises the implemented stable surface and waits for prompt completion", async () => {
     const finished = Promise.withResolvers<ExecuteRunResult>();
     const updates: acp.SessionUpdate[] = [];
-    const executeRun = vi.fn<AcpApplicationPort["executeRun"]>(async ({ publish }) => {
+    const execute = vi.fn<OutputApplication["execute"]>(async ({ publish }) => {
       await publish({
         kind: "agent_message",
         messageId: "assistant-1",
@@ -310,7 +435,7 @@ describe("ACP v1 agent mapping", () => {
       return finished.promise;
     });
     const application = createApplication({
-      executeRun,
+      execute,
     });
     const agent = createAcpV1Agent({
       binding,
@@ -346,7 +471,7 @@ describe("ACP v1 agent mapping", () => {
         sessionId: "session-1",
         prompt: [{ type: "text", text: "hi" }],
       });
-      await vi.waitFor(() => expect(executeRun).toHaveBeenCalledOnce());
+      await vi.waitFor(() => expect(execute).toHaveBeenCalledOnce());
       let settled = false;
       void prompt.finally(() => {
         settled = true;
@@ -450,7 +575,7 @@ describe("ACP v1 agent mapping", () => {
 
   it("creates a v1 Tool call before publishing its terminal update", async () => {
     const updates: acp.SessionUpdate[] = [];
-    const executeRun = vi.fn<AcpApplicationPort["executeRun"]>(async ({ publish }) => {
+    const execute = vi.fn<OutputApplication["execute"]>(async ({ publish }) => {
       await publish({
         kind: "tool_call",
         initial: true,
@@ -477,7 +602,7 @@ describe("ACP v1 agent mapping", () => {
     const agent = createAcpV1Agent({
       binding,
       promptCapabilities: { image: false, embeddedContext: false },
-      application: createApplication({ executeRun }),
+      application: createApplication({ execute }),
     });
     const client = acp.client().onNotification(acp.methods.client.session.update, ({ params }) => {
       updates.push(params.update);
@@ -666,8 +791,9 @@ describe("ACP v1 agent mapping", () => {
   });
 
   it("accepts baseline and advertised prompt blocks while rejecting undeclared audio", async () => {
-    const acceptPrompt = vi.fn<AcpApplicationPort["acceptPrompt"]>(() =>
+    const acceptPrompt = vi.fn<OutputApplication["acceptPrompt"]>(() =>
       Promise.resolve({
+        outputSequence: 0,
         runId: "run-1",
         requestId: "request-1",
         sessionId: "session-1",
@@ -721,7 +847,7 @@ describe("ACP v1 agent mapping", () => {
 
   it("serializes thought, usage, state, and cancelled Tool events with v1 semantics", async () => {
     const updates: acp.SessionUpdate[] = [];
-    const executeRun = vi.fn<AcpApplicationPort["executeRun"]>(async ({ publish }) => {
+    const execute = vi.fn<OutputApplication["execute"]>(async ({ publish }) => {
       await publish({
         kind: "agent_thought",
         messageId: "thought-1",
@@ -761,7 +887,7 @@ describe("ACP v1 agent mapping", () => {
     const agent = createAcpV1Agent({
       binding,
       promptCapabilities: { image: false, embeddedContext: false },
-      application: createApplication({ executeRun }),
+      application: createApplication({ execute }),
     });
     const client = acp.client().onNotification(acp.methods.client.session.update, ({ params }) => {
       updates.push(params.update);
@@ -799,7 +925,7 @@ describe("ACP v1 agent mapping", () => {
   it("returns cancelled only after a stable Prompt cancellation settles", async () => {
     const started = Promise.withResolvers<void>();
     const cancelled = Promise.withResolvers<void>();
-    const executeRun = vi.fn<AcpApplicationPort["executeRun"]>(async () => {
+    const execute = vi.fn<OutputApplication["execute"]>(async () => {
       started.resolve();
       await cancelled.promise;
       return {
@@ -815,7 +941,7 @@ describe("ACP v1 agent mapping", () => {
     const agent = createAcpV1Agent({
       binding,
       promptCapabilities: { image: false, embeddedContext: false },
-      application: createApplication({ executeRun, cancelRun }),
+      application: createApplication({ execute, cancelRun }),
     });
 
     await acp.client().connectWith(agent, async (context) => {
@@ -841,7 +967,7 @@ describe("ACP v1 agent mapping", () => {
   ] as const)(
     "maps a %s terminal Run to its stable ACP error",
     async (terminalClass, code, errorClass) => {
-      const executeRun = vi.fn<AcpApplicationPort["executeRun"]>(() =>
+      const execute = vi.fn<OutputApplication["execute"]>(() =>
         Promise.resolve(
           terminalClass === "failed"
             ? {
@@ -862,7 +988,7 @@ describe("ACP v1 agent mapping", () => {
       const agent = createAcpV1Agent({
         binding,
         promptCapabilities: { image: false, embeddedContext: false },
-        application: createApplication({ executeRun }),
+        application: createApplication({ execute }),
       });
 
       await acp.client().connectWith(agent, async (context) => {
@@ -881,7 +1007,7 @@ describe("ACP v1 agent mapping", () => {
   );
 });
 
-function createApplication(overrides: Partial<AcpApplicationPort> = {}): AcpApplicationPort {
+function createApplication(overrides: Partial<OutputApplication> = {}): AcpApplicationPort {
   return withOutputHistory({
     assertAccess: vi.fn(() => Promise.resolve()),
     getSessionConfiguration: vi.fn(() => Promise.resolve(sessionConfigurationView())),
@@ -895,6 +1021,7 @@ function createApplication(overrides: Partial<AcpApplicationPort> = {}): AcpAppl
     cancelRun: vi.fn(() => Promise.resolve()),
     acceptPrompt: vi.fn((): Promise<AcceptedAcpRun> =>
       Promise.resolve({
+        outputSequence: 0,
         runId: "run-1",
         requestId: "request-1",
         sessionId: "session-1",
@@ -906,7 +1033,7 @@ function createApplication(overrides: Partial<AcpApplicationPort> = {}): AcpAppl
         snapshot: snapshot(),
       }),
     ),
-    executeRun: vi.fn<AcpApplicationPort["executeRun"]>(() =>
+    execute: vi.fn<OutputApplication["execute"]>(() =>
       Promise.resolve({
         terminalClass: "completed",
         executorState: "quiescent",
@@ -920,13 +1047,16 @@ function createApplication(overrides: Partial<AcpApplicationPort> = {}): AcpAppl
 
 function snapshot(): AcceptedAcpRun["snapshot"] {
   return {
-    admissionId: "admission-1",
-    admissionDeadline: new Date("2026-08-30T00:10:00Z"),
+    organizationId: "organization-1",
+    providerConnectionId: "connection-1",
+    modelProfileId: "profile-1",
+    configurationRevision: 1,
+    accessRevision: "access-1",
+    deadlineAt: new Date("2026-08-30T00:10:00Z"),
     agentSpecRevision: "config-1",
     executionRevision: "execution-1",
     runtimeMcpSourceDigest: "a".repeat(64),
     agentExecutionSpecDigest: "b".repeat(64),
-    credentialVersion: "credential-version-1",
     runtime: {
       revision: "runtime-1",
       executionId: "runtime-execution-1",
@@ -944,7 +1074,6 @@ function snapshot(): AcceptedAcpRun["snapshot"] {
         supportsImages: false,
       },
       maxModelRequests: 8,
-      credentialRef: "credential-1",
     },
     clientMcpRevisionId: "mcp-1",
   };

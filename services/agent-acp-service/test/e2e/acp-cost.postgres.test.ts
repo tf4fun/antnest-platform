@@ -1,10 +1,8 @@
-import { randomUUID } from "node:crypto";
 import { Pool } from "pg";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { OpenAICompatibleModel } from "../../src/adapters/model/openai-compatible.js";
 import { migrate } from "../../src/adapters/postgres/migrate.js";
 import { startBoundaryApplication } from "../support/postgres-boundary-application.js";
-import { snapshot } from "../support/fixtures.js";
 import type { AcpWireClient } from "../support/acp-wire-client.js";
 import type { ModelPricing } from "../../src/domain/usage.js";
 
@@ -17,24 +15,19 @@ describe.skipIf(databaseUrl === undefined)(
   () => {
     const pool = new Pool({ connectionString: databaseUrl, max: 4 });
     let app: Awaited<ReturnType<typeof startBoundaryApplication>>;
-    let pricing: ModelPricing | undefined;
     let usage: Record<string, unknown> | undefined;
     beforeEach(async () => {
       await pool.query("DROP SCHEMA public CASCADE");
       await pool.query("CREATE SCHEMA public");
       await migrate(pool);
       app = await startBoundaryApplication(pool);
-      pricing = rates;
       usage = undefined;
-      app.controller.acquireRun.mockImplementation(() => {
-        const admitted = snapshot();
-        if (pricing !== undefined) admitted.executionSpec.model.pricing = { ...pricing };
-        return Promise.resolve({
-          ...admitted,
-          admissionId: randomUUID(),
-          admissionDeadline: new Date(Date.now() + 60000),
-        });
-      });
+      app.configuration.models[0]!.pricing = {
+        currency: "USD",
+        input_per_million: rates.inputPerMillion,
+        output_per_million: rates.outputPerMillion,
+      };
+      await app.publishConfiguration();
       const model = new OpenAICompatibleModel({
         fetchFn: () =>
           Promise.resolve(
@@ -57,13 +50,13 @@ describe.skipIf(databaseUrl === undefined)(
 
     async function prompt(client: AcpWireClient, sessionId: string) {
       const offset = client.frames.length;
-      const finished = app.controller.finishRun.mock.calls.length;
+      const finished = app.finish.mock.calls.length;
       const result = await client.request("session/prompt", {
         sessionId,
         prompt: [{ type: "text", text: "hello" }],
       });
       expect(result.error).toBeUndefined();
-      await vi.waitFor(() => expect(app.controller.finishRun).toHaveBeenCalledTimes(finished + 1));
+      await vi.waitFor(() => expect(app.finish).toHaveBeenCalledTimes(finished + 1));
       await vi.waitFor(() => expect(updates(client, offset)).toHaveLength(1));
       return updates(client, offset)[0];
     }
@@ -97,7 +90,8 @@ describe.skipIf(databaseUrl === undefined)(
         expect(await prompt(client, sessionId)).toMatchObject({
           cost: { amount: 0.0128, currency: "USD" },
         });
-        pricing = undefined;
+        delete app.configuration.models[0]!.pricing;
+        await app.publishConfiguration();
         expect(await prompt(client, sessionId)).toMatchObject({ cost: { amount: 0.0128 } });
         const rows = await pool.query<{ payload: unknown }>(
           "SELECT payload FROM session_messages WHERE session_id = $1 AND kind = 'usage' ORDER BY sequence",

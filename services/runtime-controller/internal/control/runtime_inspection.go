@@ -2,20 +2,32 @@ package control
 
 import (
 	"context"
+	"errors"
 
 	"soft/antnest-platform/services/runtime-controller/internal/deployment"
 )
 
-func (s *Service) inspectReadyEnvironment(ctx context.Context, environment deployment.Environment) (deployment.Environment, error) {
+func (s *Service) inspectProvisionedEnvironment(ctx context.Context, environment deployment.Environment) (deployment.Environment, error) {
 	inspection, err := s.inspectExpectedRuntime(ctx, environment)
 	if err != nil {
 		return deployment.Environment{}, err
 	}
 	if inspection.Health == deployment.HealthHealthy {
-		inspection, err = s.verifier.Verify(ctx, inspection)
-		if err != nil {
-			return deployment.Environment{}, err
+		verified, verifyErr := s.verifier.Verify(ctx, inspection)
+		if errors.Is(verifyErr, deployment.ErrIdentityConflict) {
+			return deployment.Environment{}, ErrDrift
 		}
+		if ctx.Err() != nil {
+			return deployment.Environment{}, ctx.Err()
+		}
+		if verifyErr != nil {
+			inspection.Health = deployment.HealthUnknown
+			inspection.RuntimeExecutionID = ""
+			inspection.Reason = "runtime_status_unverified"
+			inspection.DiagnosticSummary = "Runtime status could not be verified"
+			return environment.WithInspection(inspection), nil
+		}
+		inspection = verified
 	}
 	return environment.WithInspection(inspection), nil
 }

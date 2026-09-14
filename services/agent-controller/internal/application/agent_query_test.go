@@ -18,7 +18,7 @@ func TestGetAgentReturnsCurrentProjection(t *testing.T) {
 	store := &agentQueryStoreStub{record: ports.AgentRecord{
 		AgentID: "agent-1", OrganizationID: "org-1", OwnerUserID: "user-1",
 		Name: "Research Agent", DesiredState: domain.DesiredEnabled,
-		LifecycleState: domain.AgentAvailable, AccessRevision: "access-1",
+		LifecycleState: domain.AgentCreated, ActivationState: domain.ActivationEnabled, RuntimeState: domain.RuntimeAvailable, AccessRevision: "access-1",
 		AgentSpecRevisionID: "spec-3", ExecutionRevisionID: "execution-4",
 		LastSuccessfulExecutionRevisionID: "execution-4", RuntimeRevision: "runtime-2",
 		RuntimeExecutionID: "runtime-execution-2", RuntimeMCPEndpoint: "http://runtime/mcp",
@@ -87,7 +87,7 @@ func TestGetAgentForOrganizationMasksCrossOrganizationProjection(t *testing.T) {
 	store := &agentQueryStoreStub{record: ports.AgentRecord{
 		AgentID: "agent-1", OrganizationID: "org-1", OwnerUserID: "user-1",
 		Name: "Agent", DesiredState: domain.DesiredEnabled,
-		LifecycleState: domain.AgentAvailable, AccessRevision: "access-1",
+		LifecycleState: domain.AgentCreated, ActivationState: domain.ActivationEnabled, RuntimeState: domain.RuntimeAvailable, AccessRevision: "access-1",
 		AggregateSequence: 1, CreatedAt: time.Unix(1, 0).UTC(), UpdatedAt: time.Unix(1, 0).UTC(),
 	}}
 	service := NewAgentQueryService(store)
@@ -109,15 +109,15 @@ func TestListAgentsUsesStableOpaqueKeysetCursor(t *testing.T) {
 	firstTime := time.Date(2026, time.September, 1, 12, 0, 0, 0, time.UTC)
 	secondTime := firstTime.Add(time.Second)
 	store := &agentQueryStoreStub{records: []ports.AgentRecord{
-		queryAgentRecord("agent-1", "user-1", domain.AgentAvailable, firstTime),
-		queryAgentRecord("agent-2", "user-1", domain.AgentAvailable, secondTime),
-		queryAgentRecord("agent-3", "user-1", domain.AgentAvailable, secondTime),
+		queryAgentRecord("agent-1", "user-1", domain.AgentCreated, firstTime),
+		queryAgentRecord("agent-2", "user-1", domain.AgentCreated, secondTime),
+		queryAgentRecord("agent-3", "user-1", domain.AgentCreated, secondTime),
 	}}
 	service := NewAgentQueryService(store)
 
 	page, err := service.ListAgents(context.Background(), ListAgentsInput{
 		OrganizationID: "org-1", OwnerUserID: "user-1",
-		LifecycleState: domain.AgentAvailable, Limit: 2,
+		LifecycleState: domain.AgentCreated, ActivationState: domain.ActivationEnabled, RuntimeState: domain.RuntimeAvailable, Limit: 2,
 	})
 	if err != nil {
 		t.Fatalf("list Agents: %v", err)
@@ -127,14 +127,14 @@ func TestListAgentsUsesStableOpaqueKeysetCursor(t *testing.T) {
 	}
 	if store.query.Limit != 3 || store.query.IncludeDeleted ||
 		store.query.OrganizationID != "org-1" || store.query.OwnerUserID != "user-1" ||
-		store.query.LifecycleState != domain.AgentAvailable {
+		(store.query.LifecycleState != domain.AgentCreated || store.query.ActivationState != domain.ActivationEnabled || store.query.RuntimeState != domain.RuntimeAvailable) {
 		t.Fatalf("query filters were not preserved: %+v", store.query)
 	}
 
 	store.records = nil
 	_, err = service.ListAgents(context.Background(), ListAgentsInput{
 		OrganizationID: "org-1", OwnerUserID: "user-1",
-		LifecycleState: domain.AgentAvailable, Limit: 2, Cursor: page.NextCursor,
+		LifecycleState: domain.AgentCreated, ActivationState: domain.ActivationEnabled, RuntimeState: domain.RuntimeAvailable, Limit: 2, Cursor: page.NextCursor,
 	})
 	if err != nil {
 		t.Fatalf("continue Agent list: %v", err)
@@ -202,9 +202,9 @@ func TestListAgentsRejectsStoreContractOverrun(t *testing.T) {
 
 	now := time.Date(2026, time.September, 1, 12, 0, 0, 0, time.UTC)
 	store := &agentQueryStoreStub{records: []ports.AgentRecord{
-		queryAgentRecord("agent-1", "user-1", domain.AgentAvailable, now),
-		queryAgentRecord("agent-2", "user-1", domain.AgentAvailable, now),
-		queryAgentRecord("agent-3", "user-1", domain.AgentAvailable, now),
+		queryAgentRecord("agent-1", "user-1", domain.AgentCreated, now),
+		queryAgentRecord("agent-2", "user-1", domain.AgentCreated, now),
+		queryAgentRecord("agent-3", "user-1", domain.AgentCreated, now),
 	}}
 	service := NewAgentQueryService(store)
 	_, err := service.ListAgents(context.Background(), ListAgentsInput{Limit: 1})
@@ -213,18 +213,15 @@ func TestListAgentsRejectsStoreContractOverrun(t *testing.T) {
 	}
 }
 
-func TestListWorkspaceAgentsDerivesAvailabilityAndOpaqueCursor(t *testing.T) {
+func TestListWorkspaceAgentsReturnsMetadataAndOpaqueCursor(t *testing.T) {
 	t.Parallel()
 
 	first := time.Date(2026, time.September, 3, 8, 0, 0, 0, time.UTC)
 	second := first.Add(time.Second)
 	store := &agentQueryStoreStub{workspaceRecords: []ports.WorkspaceAgentRecord{
-		{AgentID: "agent-ready", Name: "Ready", LifecycleState: domain.AgentAvailable,
-			DesiredState: domain.DesiredEnabled, AccessSubject: "subject-ready", CreatedAt: first},
-		{AgentID: "agent-busy", Name: "Busy", LifecycleState: domain.AgentAvailable,
-			DesiredState: domain.DesiredEnabled, AccessSubject: "subject-busy", AdmissionState: domain.AdmissionActive, CreatedAt: second},
-		{AgentID: "agent-offline", Name: "Offline", LifecycleState: domain.AgentUnavailable,
-			AccessSubject: "subject-offline", CreatedAt: second.Add(time.Second)},
+		{AgentID: "agent-ready", Name: "Ready", CreatedAt: first},
+		{AgentID: "agent-busy", Name: "Busy", CreatedAt: second},
+		{AgentID: "agent-offline", Name: "Offline", CreatedAt: second.Add(time.Second)},
 	}}
 	service := NewAgentQueryService(store)
 
@@ -235,9 +232,8 @@ func TestListWorkspaceAgentsDerivesAvailabilityAndOpaqueCursor(t *testing.T) {
 		t.Fatalf("list workspace Agents: %v", err)
 	}
 	if len(page.Items) != 2 || page.NextCursor == "" ||
-		page.Items[0].Availability != WorkspaceAgentReady ||
-		page.Items[1].Availability != WorkspaceAgentBusy ||
-		page.Items[0].AccessSubject != "subject-ready" {
+		page.Items[0] != (WorkspaceAgentView{AgentID: "agent-ready", Name: "Ready"}) ||
+		page.Items[1] != (WorkspaceAgentView{AgentID: "agent-busy", Name: "Busy"}) {
 		t.Fatalf("workspace page = %+v", page)
 	}
 	if store.workspaceQuery.OrganizationID != "org-1" ||

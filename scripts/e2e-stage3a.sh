@@ -362,6 +362,24 @@ wait_operation() {
   return 1
 }
 
+wait_agent_ready() {
+  ready_agent_id=$1
+  ready_response_file=$2
+  ready_attempt=0
+  while [ "$ready_attempt" -lt 120 ]; do
+    gateway_request GET "/api/admin/agents/${ready_agent_id}" - "$ready_response_file" 200
+    if node --input-type=module -e '
+      import { readFileSync } from "node:fs";
+      import { agentReady } from "./scripts/verification/agent-state.mjs";
+      process.exitCode = agentReady(JSON.parse(readFileSync(process.argv[1], "utf8"))) ? 0 : 1;
+    ' "$ready_response_file"; then return 0; fi
+    ready_attempt=$((ready_attempt + 1))
+    sleep 1
+  done
+  printf 'Agent %s did not become executable\n' "$ready_agent_id" >&2
+  return 1
+}
+
 if [ -n "$tool_profile" ]; then
   compose up -d --wait
   if [ "$rpc_response_loss" = true ]; then
@@ -749,8 +767,7 @@ compose exec -T stage3-model node --input-type=module -e '
   const foreign = await fetch(url, { signal: AbortSignal.timeout(10000) });
   assert.equal(foreign.status, 404, "Another organization must not resolve the Agent");
 ' "$agent_id" "$organization_id" "$owner_user_id"
-gateway_request GET "/api/admin/agents/${agent_id}" - "$temporary_root/created-agent.json" 200
-assert_field "$temporary_root/created-agent.json" lifecycle_state available
+wait_agent_ready "$agent_id" "$temporary_root/created-agent.json"
 assert_field "$temporary_root/created-agent.json" configuration.runtime.image_source antnest/antnest-runtime:local
 node -e '
   const payload = require(process.argv[1]);
@@ -869,13 +886,13 @@ gateway_request POST "/api/admin/agents/${agent_id}/disable" "$temporary_root/em
 disable_request_id=$(json_field "$temporary_root/disable.json" request_id)
 wait_operation "$disable_request_id" "$temporary_root/disable-operation.json"
 gateway_request GET "/api/admin/agents/${agent_id}" - "$temporary_root/disabled-agent.json" 200
-assert_field "$temporary_root/disabled-agent.json" lifecycle_state disabled
+assert_field "$temporary_root/disabled-agent.json" lifecycle_state created
+assert_field "$temporary_root/disabled-agent.json" activation_state disabled
 
 gateway_request POST "/api/admin/agents/${agent_id}/enable" "$temporary_root/empty.json" "$temporary_root/enable.json" 202
 enable_request_id=$(json_field "$temporary_root/enable.json" request_id)
 wait_operation "$enable_request_id" "$temporary_root/enable-operation.json"
-gateway_request GET "/api/admin/agents/${agent_id}" - "$temporary_root/enabled-agent.json" 200
-assert_field "$temporary_root/enabled-agent.json" lifecycle_state available
+wait_agent_ready "$agent_id" "$temporary_root/enabled-agent.json"
 
 cat >"$temporary_root/rebuild.json" <<EOF
 {"template_id":"$template_id","template_revision":1}
@@ -883,7 +900,7 @@ EOF
 gateway_request POST "/api/admin/agents/${agent_id}/rebuild" "$temporary_root/rebuild.json" "$temporary_root/rebuild-response.json" 202
 rebuild_request_id=$(json_field "$temporary_root/rebuild-response.json" request_id)
 wait_operation "$rebuild_request_id" "$temporary_root/rebuild-operation.json"
-gateway_request GET "/api/admin/agents/${agent_id}" - "$temporary_root/rebuilt-agent.json" 200
+wait_agent_ready "$agent_id" "$temporary_root/rebuilt-agent.json"
 rebuilt_runtime=$(json_field "$temporary_root/rebuilt-agent.json" runtime.runtime_revision)
 if [ "$rebuilt_runtime" = "$initial_runtime" ]; then
   echo "Agent rebuild did not publish a new Runtime revision" >&2

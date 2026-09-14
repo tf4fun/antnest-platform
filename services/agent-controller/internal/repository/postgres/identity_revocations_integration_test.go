@@ -43,15 +43,16 @@ func TestIdentityRevocationPersistsFenceAndDeduplicates(t *testing.T) {
 	if err != nil || !agent.IdentityRevoked() {
 		t.Fatalf("agent=%+v err=%v", agent, err)
 	}
-	if agent.LifecycleState != domain.AgentAvailable {
+	if agent.LifecycleState != domain.AgentCreated || agent.ActivationState != domain.ActivationEnabled || agent.RuntimeState != domain.RuntimeAvailable {
 		t.Fatalf("receipt fabricated shutdown: %+v", agent)
 	}
 	workspace, err := repository.ListWorkspaceAgents(ctx, ports.WorkspaceAgentQuery{OrganizationID: agent.OrganizationID, PrincipalID: agent.OwnerUserID, Limit: 10})
-	if err != nil || len(workspace) != 1 || !workspace[0].IdentityRevoked {
-		t.Fatalf("workspace hid fence: %+v %v", workspace, err)
+	if err != nil || len(workspace) != 0 {
+		t.Fatalf("revoked owner still discovers Agent metadata: %+v %v", workspace, err)
 	}
-	if _, err := repository.ResolveRunAuthorization(ctx, agent.AgentID, agent.OwnerUserID, agent.AccessRevision); !errors.Is(err, ports.ErrRunAccessDenied) {
-		t.Fatalf("revoked authorization accepted: %v", err)
+	assertExecutionClosed(t, repository, agent)
+	if len(publishedAgent(t, repository, agent).PrincipalIDs) != 0 {
+		t.Fatal("revoked owner still published")
 	}
 	cursor, err := repository.GetIdentityRevocationCursor(ctx)
 	if err != nil || cursor != 5 {
@@ -76,12 +77,11 @@ func TestIdentityRevocationPersistsFenceAndDeduplicates(t *testing.T) {
 func TestIdentityRevocationScopesAndLateCreate(t *testing.T) {
 	repository, base := identityTestRepository(t)
 	ctx := context.Background()
-	for _, org := range []string{"org-integration", "org-other"} {
-		input := identityCreate(base, "before-"+org, org, 0)
-		if _, _, err := repository.BeginAgentCreate(ctx, input); err != nil {
-			t.Fatal(err)
-		}
+	input := identityCreate(base, "before-org-integration", base.Agent.OrganizationID, 0)
+	if _, _, err := repository.BeginAgentCreate(ctx, input); err != nil {
+		t.Fatal(err)
 	}
+	otherAgent := seedExecutionAgentInOrganization(t, repository, base, "org-other")
 	event := ports.PrincipalRevocation{Sequence: 5, UserID: base.Agent.OwnerUserID,
 		OrganizationID: base.Agent.OrganizationID, Reason: "membership_deleted", OccurredAt: time.Now().UTC()}
 	if err := repository.ApplyIdentityRevocation(ctx, 0, event, ""); err != nil {
@@ -99,7 +99,7 @@ func TestIdentityRevocationScopesAndLateCreate(t *testing.T) {
 		id      string
 		revoked bool
 	}{
-		{"before-org-integration", true}, {"before-org-other", false}, {"restored-create", false},
+		{"before-org-integration", true}, {otherAgent.AgentID, false}, {"restored-create", false},
 	} {
 		agent, err := loadAgentRecord(ctx, repository.pool, test.id)
 		if err != nil || agent.IdentityRevoked() != test.revoked {
@@ -110,7 +110,7 @@ func TestIdentityRevocationScopesAndLateCreate(t *testing.T) {
 	if err := repository.ApplyIdentityRevocation(ctx, 5, event, ""); err != nil {
 		t.Fatal(err)
 	}
-	for _, id := range []string{"before-org-other", "restored-create"} {
+	for _, id := range []string{otherAgent.AgentID, "restored-create"} {
 		agent, err := loadAgentRecord(ctx, repository.pool, id)
 		if err != nil || !agent.IdentityRevoked() {
 			t.Fatalf("global revocation missed %s: %+v %v", id, agent, err)
@@ -142,14 +142,14 @@ func TestIdentityRevocationCursorAndAgentFenceRollbackTogether(t *testing.T) {
 
 func identityCreate(base ports.AgentLifecycleBase, id, org string, authorization int64) ports.BeginAgentCreate {
 	now := time.Now().UTC()
-	spec := base.ExecutableSpec
+	spec := base.ConfiguredSpec
 	spec.ID, spec.AgentID, spec.Revision = "spec-"+id, id, 1
 	return ports.BeginAgentCreate{
 		Agent: ports.AgentRecord{AgentID: id, OrganizationID: org, OwnerUserID: base.Agent.OwnerUserID,
-			Name: id, DesiredState: domain.DesiredEnabled, LifecycleState: domain.AgentProvisioning,
+			Name: id, DesiredState: domain.DesiredEnabled, LifecycleState: domain.AgentCreated, ActivationState: domain.ActivationEnabled, RuntimeState: domain.RuntimeUnknown,
 			AccessRevision: "access-" + id, ActiveOperationRequestID: "request-" + id, AggregateSequence: 1,
 			OwnerAuthorizationSequence: authorization, CreatedAt: now, UpdatedAt: now},
-		Access: ports.AgentAccessRecord{AccessSubject: "access-" + id, AgentID: id, PrincipalID: base.Agent.OwnerUserID,
+		Access: ports.AgentAccessRecord{AgentID: id, PrincipalID: base.Agent.OwnerUserID,
 			AccessRevision: "access-" + id, Active: true, CreatedAt: now, UpdatedAt: now},
 		Spec: spec,
 		Operation: ports.LifecycleOperationRecord{RequestID: "request-" + id, RequestFingerprint: strings.Repeat("a", 64),
@@ -157,32 +157,6 @@ func identityCreate(base ports.AgentLifecycleBase, id, org string, authorization
 			TargetSpecRevisionID: spec.ID, ChildRequestID: domain.ChildRequestID("request-"+id, domain.PhaseNetworkEnsure), CreatedAt: now, UpdatedAt: now},
 		RequestedEvent: ports.AgentEventRecord{EventID: "event-" + id, AgentID: id, AggregateSequence: 1, SchemaVersion: 1,
 			EventType: ports.EventAgentCreateRequested, OperationRequestID: "request-" + id, Data: map[string]any{}, OccurredAt: now},
-	}
-}
-
-func TestIdentityRevocationFencesFreshAdmissionButPreservesReplayAndFinish(t *testing.T) {
-	repository, base := identityTestRepository(t)
-	ctx := context.Background()
-	now := time.Now().UTC()
-	command := acquireRunCommand(base.Agent, "identity-run", "identity-admission", now)
-	admitted, _, err := repository.AcquireRun(ctx, command)
-	if err != nil {
-		t.Fatal(err)
-	}
-	event := ports.PrincipalRevocation{Sequence: 5, UserID: base.Agent.OwnerUserID, Reason: "user_deactivated", OccurredAt: now}
-	if err := repository.ApplyIdentityRevocation(ctx, 0, event, ""); err != nil {
-		t.Fatal(err)
-	}
-	if replay, replayed, err := repository.AcquireRun(ctx, command); err != nil || !replayed || replay.AdmissionID != admitted.AdmissionID {
-		t.Fatalf("admitted replay lost: %+v %t %v", replay, replayed, err)
-	}
-	fresh := acquireRunCommand(base.Agent, "identity-run-new", "identity-admission-new", now)
-	if _, _, err := repository.AcquireRun(ctx, fresh); !errors.Is(err, ports.ErrRunAccessDenied) {
-		t.Fatalf("new admission escaped fence: %v", err)
-	}
-	report := domain.TerminalReport{Class: domain.TerminalCompleted, ToolEffectState: domain.ToolEffectSettled, StopReason: "end_turn"}
-	if _, err := repository.FinishRun(ctx, finishRunCommand(admitted, "identity-finish", report, now)); err != nil {
-		t.Fatal(err)
 	}
 }
 

@@ -1,7 +1,7 @@
 # Agent Controller Lifecycle And Management Contract
 
 > Status: Stage 2B implementation contract<br>
-> Revision: 19<br>
+> Revision: 28<br>
 > Transport: trusted internal JSON over HTTP<br>
 > Owner: Agent Controller
 
@@ -9,6 +9,31 @@ This contract manages ModelProfiles, Templates, Agents, lifecycle operations,
 global Agent status projection, and Agent events. It is internal RPC, not a
 public OpenAPI. Edge Gateway decides which management operations are
 externally available and performs transport authentication.
+
+## Execution Boundary
+
+`POST /rpc/agent-controller/set-agent-authorization` updates Agent defaults with
+owner authorization and a revision CAS. It does not modify Session overrides.
+`POST /rpc/agent-controller/list-workspace-agents` lists the authenticated
+principal's management projection. Both methods belong to this management
+contract, not a Run admission contract.
+
+Controller no longer exposes `resolve-agent-access`, `get-session-configuration`,
+`acquire-run`, `resolve-credential` or `finish-run`. ACP consumes the current
+configuration publisher and owns protocol authorization, execution and audit.
+These removed routes return 404; there is no compatibility switch or proxy.
+
+Workspace items now contain only agent_id/name. The Controller state get/watch
+endpoints are removed. Gateway and Console migration remains B3/B4; do not deploy
+this intermediate producer independently.
+
+Agent lifecycle is `not_created | created | deleted`. A created Agent has
+confirmed `activation_state=enabled|disabled`; its `runtime_state` independently
+reports `waiting|available|unhealthy|exited|absent|unknown`, with optional reason,
+detail and observation time. Operation remains responsible for progress and
+terminal errors. Disable intent blocks new Runs before confirmed stopping;
+failed disablement is not a disabled Agent. See
+[state semantics](../../services/agent-controller/docs/agent-state.md).
 
 Lifecycle and catalog mutations carry a stable `request_id`. Reusing a request ID with a
 different canonical request returns `request_id_conflict`. Cross-service IDs
@@ -20,24 +45,55 @@ revision command compares the head revision it read with the head locked by the
 repository; a concurrent successful revision returns `lifecycle_conflict` and
 the caller submits a new intent instead of silently rebasing it.
 
-## Workspace State
+## Execution Configuration Synchronization
 
-`GET /internal/workspace/agents/{agent_id}/state` and the corresponding
-`/state/watch` endpoint require `organization_id` and `principal_id`. They return
-only current availability, access permission, Agent aggregate revision and the
-requesting principal's active Session ID. Neither returns an access subject,
-Provider credential, prompt, or executable configuration.
+`GET /internal/execution-synchronization?organization_id=org-1` reads the
+Controller's current configuration revision and persisted ACP acknowledgement.
+Only one nonempty `organization_id` query parameter is accepted. As with other
+management reads, the trusted caller supplies its verified organization scope;
+Gateway/Console enforce external administrator access. This method does not
+perform another identity lookup or return configuration/credential payloads.
 
-Watch emits full `workspace_state` SSE snapshots without event IDs or replay
-cursors. It is a current-state observation, separate from the ordered audit
-journal. Lost access produces a sanitized terminal snapshot; failed reads or
-subscription registration close the stream. A retrying LISTEN connection alone
-does not provide a freshness bound. See the service's
-[Workspace state contract](../../services/agent-controller/docs/workspace-state.md)
-for lifecycle barriers, admission semantics, freshness limits and consumer duties.
-Gateway/UI consumption and Docker state integration are implemented; full C4
-interactive acceptance remains open in
-[single-node closeout](../../docs/docker-single-node-closeout.md).
+```json
+{
+  "organization_id": "org-1",
+  "synchronization": {
+    "revision": 8,
+    "applied_revision": 7,
+    "updated_at": "2026-09-14T12:00:00Z",
+    "applied_at": "2026-09-14T11:59:00Z"
+  }
+}
+```
+
+HTTP 200 with `synchronization: null` means no configuration change has yet
+created a synchronization record for this organization. It is not an empty or
+already-applied configuration, nor proof the organization exists in Identity.
+With a record, `revision` is positive, `0 <= applied_revision <= revision`, and
+`applied_at` is null exactly when no revision has been acknowledged. A lower
+applied revision means the latest configuration is not yet confirmed. Matching
+revisions report a past acknowledgement, not ACP liveness, Agent availability,
+an idle Run, or proof that volatile credentials survived a process restart.
+
+This is one read of `agent_controller.execution_configuration_sync`; it does not
+advance revisions, trigger publication, enter a workflow, or call ACP/Runtime/
+Identity. It uses the common HTTP/RPC and database instrumentation and returns
+`Cache-Control: no-store`. Invalid queries return 400; timeout/cancellation
+returns 503, other storage errors return the existing generic 500 response.
+Failures never become a successful null/zero/synchronized view.
+
+## Workspace Metadata
+
+`POST /rpc/agent-controller/list-workspace-agents` returns agent_id/name items with
+a nullable next_cursor. It is scoped by organization, principal, active binding
+and owner revocation watermark. Deleted desired state is excluded; ordinary
+disablement and Runtime unavailability do not remove authorized metadata.
+It contains no execution availability, active Session or opaque access subject.
+
+Controller's former state get/watch endpoints return 404. ACP owns execution
+state and subscriptions; Controller's management event journal remains independent.
+See the [metadata boundary](../../services/agent-controller/docs/workspace-state.md).
+Consumers migrate in B3/B4U before full-stack deployment.
 
 ## Agent Network Policy
 
@@ -111,8 +167,8 @@ Controller persists exactly the confirmed values, including capability overrides
 explicit zero prices and omitted (unknown) pricing. The same rules apply to all
 model names; an official name cannot bypass validation.
 
-Stored revisions and Run snapshots remain Controller-owned and independent of
-Console releases. Removing a preset does not delete or change organization data.
+Current management records and immutable build revisions remain Controller-owned
+and independent of Console releases. ACP owns Run snapshots and execution audit. Removing a preset does not delete or change organization data.
 Provider credential/model lifecycle separation is tracked in
 [the implementation plan](../../docs/provider-credentials-and-models.md).
 
@@ -135,12 +191,13 @@ implemented `request_protocol`, never the key or encrypted bytes.
 `request_id`, `organization_id`, `expected_version`, and the same typed credential.
 It advances only the connection credential, using version CAS. A stale edit is
 409; an identical committed request replays its original version even after
-later rotations. Connection metadata/endpoint changes and disable/delete remain
-outside this batch.
+later rotations. Connection metadata/endpoint changes and physical deletion
+remain outside this batch. Availability has the independent operation below.
 
 See [service-owned Provider management](../../services/agent-controller/docs/provider-management.md).
-The Controller Run contract resolves the authorized connection's current bearer
-material; the pending ACP consumer update is a separate batch.
+The configuration publisher sends the connection's current credential to ACP.
+There is no per-Run credential resolver. ACP keeps current call credentials in
+its logical clients; normal management responses never contain them.
 
 ## Model Profiles
 
@@ -162,8 +219,40 @@ Profiles persist current model parameters and display name, not credentials or
 endpoint copies. Execution projections combine the connection with the model.
 Management responses expose the connection ID and resolved model configuration,
 but no credential reference or credential version.
-Stage 2 creates profiles as enabled. Profile disable/delete management is
-deferred; historical Agent revisions are never rewritten.
+Profiles are created enabled. Availability changes never rewrite historical
+Agent revisions; physical deletion remains deferred.
+
+## Catalog Availability
+
+`PUT /internal/provider-connections/{connection_id}/availability`,
+`PUT /internal/model-profiles/{model_profile_id}/availability`, and
+`PUT /internal/agent-templates/{template_id}/availability` accept
+`request_id`, `organization_id`, `expected_enabled`, and `enabled` (both explicit
+booleans). They return 200 with `resource_id`, `enabled`, and `updated_at`.
+The expected flag detects conflicting state edits; it is not a credential or
+model version. Credentials, model parameters and Template revisions are unchanged.
+An identical committed request replays its saved response, even after a later
+opposite transition. A no-op records its receipt without updating timestamps or
+execution revision. An uncommitted conflict records no receipt.
+
+Disabling a Provider or Model with live references returns 409 `resource_in_use`
+and `references`: ordered `{kind, resource_id, agent_id?, operation_id?}` entries
+for enabled Template heads, current non-deleted Agents and running lifecycle
+targets. At most 100 references are returned, with `references_truncated=true`
+when more exist. Historical revisions and idle Session model choices are not
+permanent blockers. All reference checks and writes share the organization
+transaction lock. Agent create/rebuild revalidates its recorded Template and
+Model before registering a new target; prior application reads are insufficient.
+
+Disabling a Template only prevents new derivations. Existing Agents and already
+registered targets are unchanged. Revising a disabled Template does not re-enable
+it. Enabling a Template requires its current Model and Provider to be enabled in
+the same organization; enabling a Model requires its Provider. A disabled
+Provider does not rewrite each Model's own flag. Template changes do not create
+an execution revision unless an actual Agent execution input changes.
+
+These are Controller-local management operations, not ACP Session controls or
+Provider workflows. Gateway/Console consumption is the later B3/B4 batch.
 
 `GET /internal/model-profiles/{model_profile_id}` returns the current head and
 requires its owning `organization_id`. Revision commands carry the same
@@ -228,28 +317,38 @@ Identity state.
 Lifecycle methods return the durable operation; callers inspect by request ID
 after any timeout.
 
-Delete persists desired state `deleted` and lifecycle state `deleting` before
+Create, rebuild and enable complete after Runtime resource creation and network
+attachment opening, independently of MCP readiness. A completed operation may
+have a `created/enabled` Agent with `runtime_state=unknown` and no executable binding. `agent_created`,
+`agent_rebuilt` and `agent_enabled` record that completion; independent healthy
+observation publishes an ExecutionRevision and emits `agent_ready`. Only an
+enabled, available Agent with a complete execution binding admits Runs. A
+configured Agent that has never become ready still supports management actions.
+
+Delete persists desired state `deleted`, retaining confirmed lifecycle, before
 draining Run occupancy. It then fences and resets Egress, removes Runtime
 compute and workspace behind the frozen Runtime revision, releases the network
 attachment into quarantine, deactivates Agent access, and publishes `deleted`.
 An absent Runtime or network is an idempotent success only when the owning
 service returns its stable not-found code. Ambiguous effects keep the same
 operation non-terminal. Immutable revisions, events, terminal operations, and
-Run admissions remain available for retention and audit.
+management snapshots remain available for retention and audit. ACP retains its own
+Session/Run history; Controller does not preserve an execution copy.
 
 `GET /internal/agents` is the global current-state projection. Deleted Agents
 are excluded unless `include_deleted=true`. `GET /internal/agents/{agent_id}`
 returns the current projection, active immutable revision identifiers, and an
-optional safe `configuration` lineage for the executable AgentSpec. That
+optional safe `configuration` lineage for the configured AgentSpec. That
 detail-only lineage identifies the exact Template and Model Profile revisions,
 their current display labels, frozen model limits/execution policy, and Runtime
 input. It never returns credential references, credential versions, Runtime
-execution identity, or the internal MCP endpoint. A provisioning Agent has no
-`configuration` until its first ExecutionRevision is published; list items stay
-lightweight and omit it.
+execution identity, or the internal MCP endpoint. A created but never-ready Agent exposes
+`configuration` once its resource-creation operation commits the configured
+AgentSpec, even before its first healthy execution; list items stay lightweight
+and omit it.
 
 The list route accepts optional `organization_id`, `owner_user_id`, and
-`lifecycle_state` filters. `owner_user_id` is the immutable Identity Service
+`lifecycle_state`, `activation_state`, and `runtime_state` filters. `owner_user_id` is the immutable Identity Service
 user identity frozen at Agent creation; Agent Controller neither copies user
 profiles nor joins the Identity Service database. Results are ordered by the
 immutable `(created_at, agent_id)` pair. `cursor` is an opaque, versioned
@@ -257,15 +356,16 @@ continuation token for that pair, and `limit` is bounded to 1–200 (default 100
 Clients must continue with the same filter set; changing filters starts a new
 query. Present-but-empty, duplicate, malformed, and unknown query parameters
 are rejected rather than interpreted as a broader query.
-An explicit `lifecycle_state=deleting|deleted` filter does not override deletion
+An explicit `lifecycle_state=deleted` filter does not override deletion
 visibility: callers must also set `include_deleted=true`. Explicit get remains
 available for deleted Agents so audit and administrator workflows can resolve a
 known identity.
 
-Every Agent response includes `aggregate_sequence`. It is the sequence of the
-last event already reflected by the current projection, allowing callers to
-correlate query state with the event journal without treating query pagination
-as an event stream.
+Every Agent response includes `aggregate_sequence`, its concurrency revision.
+Domain transitions and observation fences advance it. Events carry the revision
+they published, but not every increment creates an event. It is neither an event
+count nor a journal cursor; ordered change consumption uses the journal's global
+sequence, not this field or query pagination.
 
 ## Operations And Events
 
@@ -323,7 +423,16 @@ failure. A bounded lifecycle request returns retryable `lifecycle_timeout`
 with HTTP 504; replay uses the original request ID. SQL, secrets, Provider
 responses, and platform stderr are never returned.
 
+`execution_configuration_capacity_exceeded` uses HTTP 409 with `retryable=false`.
+It means the proposed configuration, including capacity reserved for closure
+and already registered Runtime targets, cannot be published within the
+deployment budget. The resource mutation, command receipt and configuration
+revision are rolled back together. Reduce the proposed configuration or review
+the shared deployment limit; blind retries cannot resolve the rejection.
+The guard and production publisher are connected in B2. Consumer migration and
+cross-service deployment remain pending; local contracts are not E2E evidence.
+
 The machine-readable route catalog is in
 [`control-contract.json`](control-contract.json), and message definitions are
-in [`control-api.schema.json`](control-api.schema.json). Run admission remains
-a separate consumer-specific contract in [`run-contract.json`](run-contract.json).
+in [`control-api.schema.json`](control-api.schema.json). It includes the retained
+Agent-default and workspace-list RPCs; there is no Controller Run admission API.

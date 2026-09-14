@@ -12,7 +12,8 @@ afterEach(() => {
 const timestamp = "2026-09-07T00:00:00Z";
 const agent: Agent = {
   agent_id: "agent-1", owner_user_id: "user-1", name: "Support Agent",
-  desired_state: "enabled", lifecycle_state: "available", aggregate_sequence: 2,
+  desired_state: "enabled", lifecycle_state: "created", activation_state: "enabled", runtime_state: "available", aggregate_sequence: 2,
+  agent_spec_revision: "spec-1", runtime: { runtime_revision: "runtime-1" }, executable_execution_revision: "execution-1",
   created_at: timestamp, updated_at: timestamp,
 };
 const template: AgentTemplate = {
@@ -46,7 +47,7 @@ function operation(action: Action, state: "running" | "completed" = "completed")
 }
 
 function mockWorkflow(action: Action, command: () => Promise<Response>) {
-  const initial = action === "enable" ? { ...agent, desired_state: "disabled", lifecycle_state: "disabled" } : agent;
+  const initial = action === "enable" ? { ...agent, desired_state: "disabled", lifecycle_state: "created", activation_state: "disabled", runtime_state: "absent" } : agent;
   const state = { read: async () => Response.json(initial), eventsRead: async () => Response.json({ events: [], next_sequence: 0 }), operation: operation(action), operationRead: async (): Promise<Response> => Response.json(state.operation) };
   const streams: EventTarget[] = [];
   class TestEventSource extends EventTarget {
@@ -108,7 +109,7 @@ describe("Agent lifecycle command boundaries", () => {
     await within(await screen.findByRole("dialog")).findByText("Connection lost");
     const firstKey = new Headers(postCalls(fetch)[0]![1].headers).get("Idempotency-Key");
     firstPage.unmount();
-    state.read = async () => Response.json({ ...agent, desired_state: "deleted", lifecycle_state: "unavailable", aggregate_sequence: 3 });
+    state.read = async () => Response.json({ ...agent, desired_state: "deleted", lifecycle_state: "created", activation_state: "enabled", runtime_state: "unknown", aggregate_sequence: 3 });
     state.operation = { ...operation("delete"), state: "failed", error_code: "docker_denied", error_detail: "Deletion was rejected" };
     state.eventsRead = async () => Response.json({ events: [{ event_id: "failed", global_sequence: 8, aggregate_sequence: 3, schema_version: 1, agent_id: agent.agent_id, operation_request_id: "request-1", event_type: "agent_lifecycle_quarantined", occurred_at: timestamp }], next_sequence: 8 });
     const previous = fetch.getMockImplementation()!;
@@ -125,7 +126,7 @@ describe("Agent lifecycle command boundaries", () => {
   it.each(["drain_timeout", "docker_denied"])("reopens a failed deletion with a new request identity (%s)", async (failure_code) => {
     const next = {...operation("delete", "running"), request_id:"request-next"};
     const {state, fetch} = mockWorkflow("delete", async () => Response.json(next, {status:202}));
-    const failedAgent = {...agent, desired_state:"deleted", lifecycle_state:"unavailable", failure_code, failure_stage:"runtime_delete"};
+    const failedAgent = {...agent, desired_state:"deleted", lifecycle_state: "created", activation_state: "enabled", runtime_state: "unknown", failure_code, failure_stage:"runtime_delete"};
     state.read = async () => Response.json(failedAgent);
     state.operation = {...operation("delete"), state:"failed", error_code:failure_code, error_detail:"Deletion could not complete"};
     state.eventsRead = async () => Response.json({events:[{event_id:"failure", global_sequence:8, aggregate_sequence:2, schema_version:1, agent_id:agent.agent_id, operation_request_id:"request-1", event_type:"agent_lifecycle_quarantined", occurred_at:timestamp}], next_sequence:8});
@@ -150,14 +151,17 @@ describe("Agent lifecycle command boundaries", () => {
     render(<AgentsPage agentID={agent.agent_id} />);
     if (!historyFirst) await screen.findByRole("button", { name: "Disable" });
     state.read = async () => outcome === "fresh"
-      ? Response.json({ ...agent, aggregate_sequence: 3, lifecycle_state: "unavailable", failure_code: "runtime_missing", agent_spec_revision: "spec-old", last_successful_execution_revision: "execution-old" })
+      ? Response.json({ ...agent, aggregate_sequence: 3, runtime_state: "absent", executable_execution_revision: undefined, failure_code: "runtime_missing", agent_spec_revision: "spec-old", last_successful_execution_revision: "execution-old" })
       : outcome === "failed" ? Response.json({ message: "Agent refresh failed" }, { status: 503 }) : Response.json(agent);
     await act(async () => history.resolve(Response.json({ events: [{ event_id: "lost", global_sequence: 111, aggregate_sequence: 3, schema_version: 1, agent_id: agent.agent_id, event_type: "agent_runtime_missing", occurred_at: timestamp }], next_sequence: 111 })));
     if (historyFirst) await act(async () => initial.resolve(Response.json(agent)));
     await screen.findByText("Runtime missing");
-    await waitFor(() => expect(screen.queryByRole("button", { name: "Disable" })).toBeNull());
-    if (outcome === "fresh") expect(screen.getByRole("button", { name: "Rebuild" })).toBeTruthy();
+    if (outcome === "fresh") {
+      expect(screen.getByRole("button", { name: "Rebuild" })).toBeTruthy();
+      expect((screen.getByRole("button", { name: "Disable" }) as HTMLButtonElement).disabled).toBe(false);
+    }
     else {
+      expect(screen.queryByRole("button", { name: "Disable" })).toBeNull();
       state.read = async () => Response.json({ ...agent, aggregate_sequence: 3 });
       fireEvent.click(screen.getByRole("button", { name: "Retry Agent state" }));
       await screen.findByRole("button", { name: "Disable" });
@@ -212,7 +216,7 @@ describe("Agent lifecycle command boundaries", () => {
     fireEvent.change(dialog.getByLabelText("Template"), { target: { value: template.template_id } });
     state.read = async () => outcome === "forbidden" || outcome === "offline"
       ? Response.json({ message: "State not trustworthy" }, { status: outcome === "forbidden" ? 403 : 503 })
-      : Response.json({ ...agent, aggregate_sequence: 3, ...(outcome === "active" ? { active_operation_request_id: "request-1" } : { lifecycle_state: "unavailable", failure_code: "lifecycle_invariant_failed", agent_spec_revision: "spec-old", last_successful_execution_revision: "execution-old" }) });
+      : Response.json({ ...agent, aggregate_sequence: 3, ...(outcome === "active" ? { active_operation_request_id: "request-1" } : { lifecycle_state: "created", activation_state: "enabled", runtime_state: "unknown", failure_code: "lifecycle_invariant_failed", agent_spec_revision: "spec-old", last_successful_execution_revision: "execution-old" }) });
     state.operation = operation("rebuild", "running");
     await waitFor(() => expect(streams.length).toBeGreaterThan(0));
     await act(async () => streams.at(-1)!.dispatchEvent(new MessageEvent("agent_event", { data: JSON.stringify({ event_id: "changed", global_sequence: 111, aggregate_sequence: 3, schema_version: 1, agent_id: agent.agent_id, event_type: "agent_runtime_missing", occurred_at: timestamp }) })));
@@ -223,10 +227,10 @@ describe("Agent lifecycle command boundaries", () => {
     expect(postCalls(fetch)).toHaveLength(0);
   });
   it.each(["runtime_deleted", "runtime_missing", "runtime_restarted"])("rebuilds a %s Agent explicitly and settles through authoritative events", async (failure_code) => {
-    const lost = { ...agent, lifecycle_state: "unavailable", agent_spec_revision: "spec-old", last_successful_execution_revision: "execution-old", failure_code, failure_stage: "runtime_observation" };
+    const lost = { ...agent, runtime_state: "unknown", executable_execution_revision: undefined, agent_spec_revision: "spec-old", last_successful_execution_revision: "execution-old", failure_code, failure_stage: "runtime_observation" };
     const { state, streams, fetch } = mockWorkflow("rebuild", async () => {
       state.operation = operation("rebuild", "running");
-      state.read = async () => Response.json({ ...lost, aggregate_sequence: 3, lifecycle_state: "rebuilding", active_operation_request_id: "request-1" });
+      state.read = async () => Response.json({ ...lost, aggregate_sequence: 3, active_operation_request_id: "request-1" });
       return Response.json(state.operation, { status: 202 });
     });
     state.read = async () => Response.json(lost);
@@ -234,7 +238,7 @@ describe("Agent lifecycle command boundaries", () => {
     const reason = failure_code === "runtime_restarted" ? "The runtime restarted" : "The runtime is missing";
     expect((await screen.findByRole("alert")).textContent).toContain(reason);
     expect(screen.getByText(/Rebuild can restore the execution environment/)).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Disable" })).toBeNull();
+    expect((screen.getByRole("button", { name: "Disable" }) as HTMLButtonElement).disabled).toBe(false);
     expect(screen.queryByRole("button", { name: "Enable" })).toBeNull();
     expect(postCalls(fetch)).toHaveLength(0);
     await start("rebuild");
@@ -259,10 +263,10 @@ describe("Agent lifecycle command boundaries", () => {
   it("cleans up an unavailable Agent with no published Runtime through the existing Delete command", async () => {
     const { state, fetch } = mockWorkflow("delete", async () => {
       state.operation = operation("delete", "running");
-      state.read = async () => Response.json({ ...agent, aggregate_sequence: 4, desired_state: "deleted", lifecycle_state: "deleting", active_operation_request_id: "request-1" });
+      state.read = async () => Response.json({ ...agent, aggregate_sequence: 4, desired_state: "deleted", lifecycle_state: "created", activation_state: "enabled", runtime_state: "unknown", active_operation_request_id: "request-1" });
       return Response.json(state.operation, { status: 202 });
     });
-    state.read = async () => Response.json({ ...agent, lifecycle_state: "unavailable", failure_stage: "runtime_initialize", failure_code: "runtime_start_failed" });
+    state.read = async () => Response.json({ ...agent, lifecycle_state: "not_created", activation_state: undefined, runtime_state: "unknown", agent_spec_revision: undefined, runtime: undefined, executable_execution_revision: undefined, failure_stage: "runtime_initialize", failure_code: "runtime_start_failed" });
     render(<AgentsPage agentID={agent.agent_id} />);
     await start("delete");
     await screen.findByRole("heading", { name: "Current operation" });
@@ -328,7 +332,10 @@ describe("Agent lifecycle command boundaries", () => {
     state.operation = operation(action);
     await act(async () => read.resolve(Response.json({
       ...agent, aggregate_sequence: 4, desired_state: desired,
-      lifecycle_state: desired === "enabled" ? "available" : desired,
+      lifecycle_state: desired === "deleted" ? "deleted" : "created",
+      activation_state: desired === "deleted" ? undefined : desired,
+      runtime_state: desired === "enabled" ? "available" : "absent",
+      executable_execution_revision: desired === "enabled" ? "execution-1" : undefined,
     })));
     await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
     expect(await screen.findByText("completed", { exact: true })).toBeTruthy();
@@ -344,7 +351,7 @@ describe("Agent lifecycle command boundaries", () => {
     const { state, streams, fetch } = mockWorkflow("disable", () => command.promise);
     render(<AgentsPage agentID={agent.agent_id} />);
     await start("disable");
-    state.read = async () => Response.json({ ...agent, aggregate_sequence: 4, desired_state: "disabled", lifecycle_state: terminal === "completed" ? "disabled" : "unavailable" });
+    state.read = async () => Response.json({ ...agent, aggregate_sequence: 4, desired_state: "disabled", activation_state: terminal === "completed" ? "disabled" : "enabled", runtime_state: terminal === "completed" ? "absent" : "unknown", executable_execution_revision: undefined });
     state.operation = { ...operation("disable"), state: terminal, error_code: terminal === "failed" ? "runtime_stop_failed" : undefined, error_detail: terminal === "failed" ? "Runtime did not stop" : undefined };
     await act(async () => streams.at(-1)!.dispatchEvent(new MessageEvent("agent_event", {
       data: JSON.stringify({ event_id: "terminal-event", global_sequence: 110, aggregate_sequence: 4, schema_version: 1, agent_id: agent.agent_id, operation_request_id: "request-1", event_type: "agent_disabled", occurred_at: timestamp }),
@@ -372,7 +379,7 @@ describe("Agent lifecycle command boundaries", () => {
     render(<AgentsPage agentID={agent.agent_id} />);
     await start("disable");
     state.operationRead = async () => (await progress.promise).clone();
-    state.read = async () => Response.json({ ...agent, aggregate_sequence: 4, desired_state: "disabled", lifecycle_state: "disabled" });
+    state.read = async () => Response.json({ ...agent, aggregate_sequence: 4, desired_state: "disabled", lifecycle_state: "created", activation_state: "disabled", runtime_state: "absent" });
     await act(async () => streams.at(-1)!.dispatchEvent(new MessageEvent("agent_event", {
       data: JSON.stringify({ event_id: "terminal-event", global_sequence: 110, aggregate_sequence: 4, schema_version: 1, agent_id: agent.agent_id, operation_request_id: "request-1", event_type: "agent_disabled", occurred_at: timestamp }),
     })));
@@ -408,7 +415,10 @@ describe("Agent lifecycle command boundaries", () => {
     const desired = action === "delete" ? "deleted" : action === "disable" ? "disabled" : "enabled";
     state.read = async () => Response.json({
       ...agent, aggregate_sequence: 4, desired_state: desired,
-      lifecycle_state: desired === "enabled" ? "available" : desired,
+      lifecycle_state: desired === "deleted" ? "deleted" : "created",
+      activation_state: desired === "deleted" ? undefined : desired,
+      runtime_state: desired === "enabled" ? "available" : "absent",
+      executable_execution_revision: desired === "enabled" ? "execution-1" : undefined,
     });
     state.operation = operation(action);
     await act(async () => streams.at(-1)!.dispatchEvent(new MessageEvent("agent_event", {
@@ -471,7 +481,7 @@ describe("Agent creation admission", () => {
   it.each(["lost response", "503"])("retains one creation intent after %s and navigates only after acknowledgement", async (failure) => {
     const command = deferred<Response>();
     const state = {
-      agent: { ...agent, lifecycle_state: "provisioning", active_operation_request_id: "request-1" } as Agent,
+      agent: { ...agent, lifecycle_state: "not_created", activation_state: undefined, runtime_state: "unknown", runtime: undefined, agent_spec_revision: undefined, executable_execution_revision: undefined, active_operation_request_id: "request-1" } as Agent,
       operation: { ...operation("rebuild", "running"), kind: "create", phase: "network_ensure" },
     };
     const streams: EventTarget[] = [];
@@ -494,7 +504,7 @@ describe("Agent creation admission", () => {
           if (failure === "lost response") throw new TypeError("Response lost after admission");
           return Response.json({ message: "Admission response unavailable" }, { status: 503 });
         }
-        return Response.json({ agent: { ...agent, lifecycle_state: "provisioning" }, operation: { ...operation("rebuild", "running"), kind: "create", phase: "network_ensure" } }, { status: 202 });
+        return Response.json({ agent: state.agent, operation: state.operation }, { status: 202 });
       }
       switch (url.pathname) {
         case "/api/admin/agents": return Response.json({ items: [] });

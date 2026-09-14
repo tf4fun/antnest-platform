@@ -46,7 +46,7 @@ func (worker *RuntimeObservationWorker) Run(ctx context.Context) {
 	ticker := time.NewTicker(worker.pollInterval)
 	defer ticker.Stop()
 	for {
-		if err := worker.synchronize(ctx); err != nil && ctx.Err() == nil {
+		if err := worker.RunOnce(ctx); err != nil && ctx.Err() == nil {
 			worker.logger.WarnContext(ctx, "Runtime observation synchronization failed",
 				"component", "runtime_observation", "error_class", "runtime_observation_sync_failed")
 		}
@@ -58,7 +58,7 @@ func (worker *RuntimeObservationWorker) Run(ctx context.Context) {
 	}
 }
 
-func (worker *RuntimeObservationWorker) synchronize(ctx context.Context) (resultErr error) {
+func (worker *RuntimeObservationWorker) RunOnce(ctx context.Context) (resultErr error) {
 	ctx, span := runtimeObservationTracer.Start(
 		ctx, "agent_controller.runtime_observation.synchronize", trace.WithSpanKind(trace.SpanKindConsumer),
 	)
@@ -68,6 +68,10 @@ func (worker *RuntimeObservationWorker) synchronize(ctx context.Context) (result
 		}
 		span.End()
 	}()
+	return errors.Join(worker.synchronizeJournal(ctx), worker.reconcilePendingBindings(ctx))
+}
+
+func (worker *RuntimeObservationWorker) synchronizeJournal(ctx context.Context) error {
 	cursor, err := worker.store.GetRuntimeObservationCursor(ctx)
 	if err != nil {
 		return fmt.Errorf("read Runtime observation cursor: %w", err)
@@ -107,7 +111,7 @@ func (worker *RuntimeObservationWorker) synchronize(ctx context.Context) (result
 			if observation.Sequence <= cursor.Sequence {
 				continue
 			}
-			if err := worker.store.ApplyRuntimeObservation(ctx, observation); err != nil {
+			if err := worker.applyObservation(ctx, observation); err != nil {
 				return fmt.Errorf("apply Runtime observation %d: %w", observation.Sequence, err)
 			}
 			cursor.Sequence = observation.Sequence

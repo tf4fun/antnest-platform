@@ -2,15 +2,14 @@ import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 import { createNodeHttpHandler } from "@agentclientprotocol/sdk/experimental/node";
-import { AcpServer } from "@agentclientprotocol/sdk/experimental/server";
+import type { AcpServer } from "@agentclientprotocol/sdk/experimental/server";
+import { TracedAcpHttpServer } from "../../telemetry/acp-http.js";
 
 import type { ConnectionBinding } from "../../domain/types.js";
 import type { AcpApplicationPort } from "../../ports/acp-application.js";
-import {
-  AgentControllerError,
-  type AgentControllerPort,
-  type ResolveAgentAccessResult,
-} from "../../ports/agent-controller.js";
+import type { ExecutionIdentity } from "../../domain/execution-configuration.js";
+import { trustedIdentity } from "../trusted-identity.js";
+import { promptCapabilities } from "./capabilities.js";
 import { NOOP_TELEMETRY, type TelemetryPort } from "../../ports/telemetry.js";
 import type { SessionOutputStreams } from "./session-output.js";
 import { createAcpV1Agent } from "./v1/agent.js";
@@ -20,7 +19,6 @@ import { recordBoundaryError } from "../../telemetry/diagnostics.js";
 
 type Options = {
   permissions?: PermissionConnectionsPort;
-  agentController: AgentControllerPort;
   application: AcpApplicationPort;
   outputs: SessionOutputStreams;
   ready: () => Promise<boolean>;
@@ -50,20 +48,16 @@ export class AcpHttpTransport {
         response.setHeader("Allow", "POST, GET, DELETE");
         return reply(response, 405);
       }
-      const subject = header(request, "x-antnest-agent-access-subject");
-      if (!subject) return reply(response, 401);
-      const access = await this.options.agentController.resolveAgentAccess({
-        requestId: randomUUID(),
-        agentAccessSubject: subject,
-      });
+      const identity = trustedIdentity(request.headers);
+      if (identity === null) return reply(response, 401);
       if (this.isStopped() || response.destroyed) return reply(response, 503);
-      const entry = this.admit(request, response, subject, access);
+      const entry = this.admit(request, response, identity);
       if (entry) await entry.handle(request, response);
     } catch (error) {
       const span = activeHttpSpan();
       if (span !== undefined) recordBoundaryError(span, error, "acp.http.admission");
       this.telemetry.log("error", "acp_http_failed", { protocol: "v1" }, error);
-      reply(response, rejectionStatus(error));
+      reply(response, 503);
     }
   }
 
@@ -80,8 +74,7 @@ export class AcpHttpTransport {
   private admit(
     request: IncomingMessage,
     response: ServerResponse,
-    subject: string,
-    access: ResolveAgentAccessResult,
+    identity: ExecutionIdentity,
   ): HttpConnection | undefined {
     const id = header(request, "acp-connection-id");
     if (id) {
@@ -92,15 +85,10 @@ export class AcpHttpTransport {
       }
       const owner = entry.binding;
       if (
-        owner.agentAccessSubject !== subject ||
-        owner.principalId !== access.principalId ||
-        owner.agentId !== access.agentId
+        owner.organizationId !== identity.organizationId ||
+        owner.principalId !== identity.principalId ||
+        owner.agentId !== identity.agentId
       ) {
-        reply(response, 403);
-        return;
-      }
-      if (owner.accessRevision !== access.accessRevision) {
-        this.release(entry);
         reply(response, 403);
         return;
       }
@@ -116,16 +104,13 @@ export class AcpHttpTransport {
     }
     const binding: ConnectionBinding = {
       connectionId: randomUUID(),
-      agentAccessSubject: subject,
-      principalId: access.principalId,
-      agentId: access.agentId,
-      accessRevision: access.accessRevision,
+      ...identity,
     };
     const entry = new HttpConnection(binding, {
       application: this.options.application,
       outputs: this.options.outputs,
       ...(this.options.permissions === undefined ? {} : { permissions: this.options.permissions }),
-      promptCapabilities: access.promptCapabilities,
+      promptCapabilities,
       maxPayloadBytes: this.options.maxWebSocketPayloadBytes,
       idleTimeoutMs: this.options.idleTimeoutMs ?? 300_000,
       register: (id) => this.byId.set(id, entry),
@@ -160,7 +145,7 @@ type ConnectionOptions = {
   permissions?: PermissionConnectionsPort;
   application: AcpApplicationPort;
   outputs: SessionOutputStreams;
-  promptCapabilities: ResolveAgentAccessResult["promptCapabilities"];
+  promptCapabilities: typeof promptCapabilities;
   maxPayloadBytes: number;
   idleTimeoutMs: number;
   register: (id: string) => void;
@@ -174,14 +159,21 @@ class HttpConnection {
   private readonly handler: ReturnType<typeof createNodeHttpHandler>;
   private timer: ReturnType<typeof setTimeout> | undefined;
   private stopped = false;
+  private pendingDeletes = 0;
+  private sdkClosed = false;
 
   public constructor(
     public readonly binding: ConnectionBinding,
     private readonly options: ConnectionOptions,
   ) {
-    this.server = new AcpServer({
+    this.server = new TracedAcpHttpServer({
       agent: createAcpV1Agent({ binding, ...options }).onConnect((connection) => {
-        void connection.closed.then(options.release);
+        void connection.closed.then(() => {
+          // DELETE closes the SDK first; its HTTP acknowledgement still owns
+          // the response until finish/close releases the outer connection.
+          this.sdkClosed = true;
+          if (this.pendingDeletes === 0) options.release();
+        });
       }),
     });
     this.handler = createNodeHttpHandler(this.server, {
@@ -191,6 +183,7 @@ class HttpConnection {
 
   public handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
     clearTimeout(this.timer);
+    if (request.method === "DELETE") this.pendingDeletes++;
     this.requests.add(response);
     return new Promise((resolve) => {
       response.once("finish", () => {
@@ -208,7 +201,9 @@ class HttpConnection {
       });
       response.once("close", () => {
         this.requests.delete(response);
-        if (this.id === undefined) this.options.release();
+        if (request.method === "DELETE") this.pendingDeletes--;
+        if (this.id === undefined || (this.sdkClosed && this.pendingDeletes === 0))
+          this.options.release();
         if (!this.stopped && this.requests.size === 0) {
           this.timer = setTimeout(this.options.release, this.options.idleTimeoutMs);
           this.timer.unref();
@@ -238,12 +233,4 @@ function reply(response: ServerResponse, status: number): void {
   if (response.destroyed || response.writableEnded) return;
   response.writeHead(status, { "content-type": "application/json" });
   response.end(JSON.stringify({ status }));
-}
-
-function rejectionStatus(error: unknown): number {
-  if (error instanceof AgentControllerError && !error.retryable) {
-    if (error.code === "access_denied") return 403;
-    if (error.code === "invalid_request") return 400;
-  }
-  return 503;
 }

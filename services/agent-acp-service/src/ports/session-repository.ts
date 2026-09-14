@@ -11,6 +11,7 @@ export type CreateSessionInput = {
 };
 
 export type ListSessionsInput = {
+  organizationId: string;
   principalId: string;
   agentId: string;
   cwd: string | undefined;

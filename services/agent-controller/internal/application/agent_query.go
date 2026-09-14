@@ -24,45 +24,28 @@ const (
 var ErrQueryContract = errors.New("query store contract violation")
 
 type AgentQueryService struct {
-	store         ports.AgentQueryStore
-	notifications ports.AgentEventNotifier
+	store ports.AgentQueryStore
 }
 
-type AgentQueryServiceOption func(*AgentQueryService)
-
-func WithWorkspaceStateNotifier(notifier ports.AgentEventNotifier) AgentQueryServiceOption {
-	return func(service *AgentQueryService) { service.notifications = notifier }
-}
-
-func NewAgentQueryService(store ports.AgentQueryStore, options ...AgentQueryServiceOption) *AgentQueryService {
-	service := &AgentQueryService{store: store}
-	for _, option := range options {
-		option(service)
-	}
-	return service
+func NewAgentQueryService(store ports.AgentQueryStore) *AgentQueryService {
+	return &AgentQueryService{store: store}
 }
 
 type ListAgentsInput struct {
-	OrganizationID string
-	OwnerUserID    string
-	LifecycleState domain.AgentState
-	IncludeDeleted bool
-	Limit          int
-	Cursor         string
+	ActivationState domain.ActivationState
+	RuntimeState    domain.RuntimeState
+	OrganizationID  string
+	OwnerUserID     string
+	LifecycleState  domain.AgentState
+	IncludeDeleted  bool
+	Limit           int
+	Cursor          string
 }
 
 type AgentPage struct {
 	Items      []AgentView
 	NextCursor string
 }
-
-type WorkspaceAvailability string
-
-const (
-	WorkspaceAgentReady   WorkspaceAvailability = "ready"
-	WorkspaceAgentBusy    WorkspaceAvailability = "busy"
-	WorkspaceAgentOffline WorkspaceAvailability = "offline"
-)
 
 type ListWorkspaceAgentsInput struct {
 	RequestID      string
@@ -73,10 +56,8 @@ type ListWorkspaceAgentsInput struct {
 }
 
 type WorkspaceAgentView struct {
-	AgentID       string
-	Name          string
-	Availability  WorkspaceAvailability
-	AccessSubject string
+	AgentID string
+	Name    string
 }
 
 type WorkspaceAgentPage struct {
@@ -161,8 +142,7 @@ func (service *AgentQueryService) ListAgents(
 	if err != nil {
 		return AgentPage{}, err
 	}
-	if !query.IncludeDeleted &&
-		(query.LifecycleState == domain.AgentDeleting || query.LifecycleState == domain.AgentDeleted) {
+	if !query.IncludeDeleted && query.LifecycleState == domain.AgentDeleted {
 		return AgentPage{Items: []AgentView{}}, nil
 	}
 	records, err := service.store.ListAgents(ctx, query)
@@ -233,7 +213,6 @@ func (service *AgentQueryService) ListWorkspaceAgents(
 	for _, record := range records {
 		page.Items = append(page.Items, WorkspaceAgentView{
 			AgentID: record.AgentID, Name: record.Name,
-			Availability: workspaceAvailability(record), AccessSubject: record.AccessSubject,
 		})
 	}
 	if hasNext {
@@ -248,26 +227,14 @@ func (service *AgentQueryService) ListWorkspaceAgents(
 	return page, nil
 }
 
-func workspaceAvailability(record ports.WorkspaceAgentRecord) WorkspaceAvailability {
-	if record.IdentityRevoked || record.DesiredState != domain.DesiredEnabled ||
-		record.ActiveOperation || record.LifecycleState != domain.AgentAvailable {
-		return WorkspaceAgentOffline
-	}
-	switch record.AdmissionState {
-	case "":
-		return WorkspaceAgentReady
-	case domain.AdmissionActive:
-		return WorkspaceAgentBusy
-	default:
-		return WorkspaceAgentOffline
-	}
-}
-
 func buildAgentQuery(input ListAgentsInput) (ports.AgentQuery, int, error) {
 	if (input.OrganizationID != "" && !validIdentifier(input.OrganizationID)) ||
 		(input.OwnerUserID != "" && !validIdentifier(input.OwnerUserID)) ||
 		!validAgentStateFilter(input.LifecycleState) {
 		return ports.AgentQuery{}, 0, fmt.Errorf("%w: Agent list filter", ErrInvalidInput)
+	}
+	if !validActivationFilter(input.ActivationState) || !validRuntimeFilter(input.RuntimeState) {
+		return ports.AgentQuery{}, 0, fmt.Errorf("%w: Agent status filter", ErrInvalidInput)
 	}
 	limit := input.Limit
 	if limit == 0 {
@@ -277,6 +244,7 @@ func buildAgentQuery(input ListAgentsInput) (ports.AgentQuery, int, error) {
 		return ports.AgentQuery{}, 0, fmt.Errorf("%w: Agent list limit", ErrInvalidInput)
 	}
 	query := ports.AgentQuery{
+		ActivationState: input.ActivationState, RuntimeState: input.RuntimeState,
 		OrganizationID: input.OrganizationID, OwnerUserID: input.OwnerUserID,
 		LifecycleState: input.LifecycleState, IncludeDeleted: input.IncludeDeleted,
 		Limit: limit + 1,
@@ -293,8 +261,20 @@ func buildAgentQuery(input ListAgentsInput) (ports.AgentQuery, int, error) {
 
 func validAgentStateFilter(state domain.AgentState) bool {
 	switch state {
-	case "", domain.AgentProvisioning, domain.AgentAvailable, domain.AgentUnavailable,
-		domain.AgentDisabled, domain.AgentDeleting, domain.AgentDeleted:
+	case "", domain.AgentNotCreated, domain.AgentCreated, domain.AgentDeleted:
+		return true
+	default:
+		return false
+	}
+}
+
+func validActivationFilter(state domain.ActivationState) bool {
+	return state == "" || state == domain.ActivationEnabled || state == domain.ActivationDisabled
+}
+
+func validRuntimeFilter(state domain.RuntimeState) bool {
+	switch state {
+	case "", domain.RuntimeUnknown, domain.RuntimeWaiting, domain.RuntimeAvailable, domain.RuntimeUnhealthy, domain.RuntimeExited, domain.RuntimeAbsent:
 		return true
 	default:
 		return false

@@ -94,7 +94,8 @@ func (service *LifecycleService) RebuildAgent(
 			Snapshot: targetSpec.Snapshot(), CanonicalDigest: digest, CreatedAt: now,
 		},
 		Operation: ports.LifecycleOperationRecord{
-			RequestID: input.RequestID, RequestFingerprint: fingerprint,
+			DrainDeadlineAt: service.drainDeadline(now),
+			RequestID:       input.RequestID, RequestFingerprint: fingerprint,
 			AgentID: input.AgentID, Kind: domain.OperationRebuild,
 			Phase: operation.Phase(), State: operation.State(),
 			SourceSpecRevisionID:      source.Spec.ID,
@@ -150,20 +151,21 @@ func (service *LifecycleService) stepAgentRebuild(
 func (service *LifecycleService) settleRebuildDrain(
 	ctx context.Context, state ports.AgentRebuildState,
 ) (ports.AgentRebuildState, error) {
-	settled, err := service.store.SettleAgentRebuildDrain(
-		ctx, state.Operation.RequestID, state.Operation.RequestFingerprint,
-		domain.ChildRequestID(state.Operation.RequestID, domain.PhaseNetworkFence),
-		service.clock.Now(),
-	)
-	if err != nil || settled.Operation.Phase != domain.PhaseDrain {
-		return settled, err
-	}
-	if !service.clock.Now().Before(state.Operation.CreatedAt.Add(service.drainTimeout)) {
+	outcome, err := service.settleLifecycleExecution(ctx, state.Agent, state.Operation)
+	if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil && !service.clock.Now().Before(*state.Operation.DrainDeadlineAt) {
 		return service.failRebuildPreservingSource(
-			ctx, settled, "run_drain_timeout", "active Run did not drain before the deadline", false,
+			ctx, state, "run_drain_timeout", "Agent execution did not settle before the deadline", false,
 		)
 	}
-	return settled, nil
+	if err != nil || outcome == ports.ExecutionNotSettled {
+		return state, err
+	}
+	operation, err := service.confirmLifecycleDrain(ctx, state.Operation, outcome)
+	if err != nil {
+		return state, err
+	}
+	state.Operation = operation
+	return state, nil
 }
 
 func (service *LifecycleService) fenceRebuildNetwork(
@@ -248,7 +250,7 @@ func (service *LifecycleService) updateRebuildRuntime(
 		}
 		return service.reconcileRejectedRebuildRuntime(ctx, state, code, result.ErrorDetail)
 	case "completed":
-		if !completedReadyRuntime(result) {
+		if !completedProvisionedRuntime(result) {
 			return state, fmt.Errorf(
 				"%w: runtime-controller returned an unprovable completed effect",
 				ErrDependencyUnavailable,
@@ -266,11 +268,7 @@ func (service *LifecycleService) updateRebuildRuntime(
 		ExpectedPhase: domain.PhaseRuntimeUpdate, NextPhase: domain.PhaseNetworkEnsure,
 		NextChildRequestID: domain.ChildRequestID(state.Operation.RequestID, domain.PhaseNetworkEnsure),
 		RuntimeResult:      &result,
-		RunReleaseEvent: lifecycleRunReleaseEvent(
-			ctx, state.Operation.RequestID, "runtime_replaced",
-			state.Operation.SourceRuntimeRevision, now,
-		),
-		Now: now,
+		Now:                now,
 	})
 }
 
@@ -312,7 +310,7 @@ func (service *LifecycleService) advanceRebuild(ctx context.Context, state ports
 	if err != nil {
 		return state, err
 	}
-	state.Agent, state.Operation, state.RunReleaseOutcome = result.Agent, result.Operation, result.RunReleaseOutcome
+	state.Agent, state.Operation = result.Agent, result.Operation
 	return state, nil
 }
 
@@ -324,30 +322,11 @@ func (service *LifecycleService) publishAgentRebuild(
 	}
 	runtime := *state.Operation.RuntimeResult
 	now := service.clock.Now()
-	executionID := derivedID("execution-rebuild", state.Operation.RequestID)
 	accessRevision := derivedID("access-rebuild", state.Operation.RequestID)
 	return service.store.PublishAgentRebuild(ctx, ports.PublishAgentRebuild{
 		RequestID:      state.Operation.RequestID,
 		Fingerprint:    state.Operation.RequestFingerprint,
 		AccessRevision: accessRevision,
-		PromptCapabilities: ports.PromptCapabilities{
-			Image: state.TargetSpec.Snapshot.Model.SupportsImages, EmbeddedContext: true,
-		},
-		Execution: ports.ExecutionRecord{
-			ID: executionID, AgentID: state.Agent.AgentID,
-			Revision:               state.SourceExecution.Revision + 1,
-			AgentSpecRevisionID:    state.TargetSpec.ID,
-			RuntimeRevision:        runtime.RuntimeRevision,
-			RuntimeExecutionID:     runtime.RuntimeExecutionID,
-			RuntimeMCPEndpoint:     runtime.MCPEndpoint,
-			RuntimeMCPSourceDigest: digestString(runtime.MCPEndpoint),
-			ChangeSummary: map[string]any{
-				"kind":                          "rebuild",
-				"source_agent_spec_revision_id": state.SourceSpec.ID,
-				"target_agent_spec_revision_id": state.TargetSpec.ID,
-			},
-			PublishedAt: now,
-		},
 		RebuiltEvent: ports.AgentEventRecord{
 			EventID:           derivedID("event-rebuilt", state.Operation.RequestID),
 			AgentID:           state.Agent.AgentID,
@@ -356,7 +335,6 @@ func (service *LifecycleService) publishAgentRebuild(
 			OperationRequestID: state.Operation.RequestID, TraceID: currentTraceID(ctx),
 			Data: map[string]any{
 				"agent_spec_revision_id": state.TargetSpec.ID,
-				"execution_revision_id":  executionID,
 				"runtime_revision":       runtime.RuntimeRevision,
 			},
 			OccurredAt: now,
@@ -392,7 +370,10 @@ func (service *LifecycleService) failRebuildPreservingSource(
 	detail string,
 	retryable bool,
 ) (ports.AgentRebuildState, error) {
-	if state.Operation.NetworkAttachment != nil && state.Agent.ExecutionRevisionID != "" {
+	// Restore a still-bound source, or a target which has never had a binding.
+	// A historical execution without a current binding is an invalidated source.
+	canRestore := state.Agent.ExecutionRevisionID != "" || state.SourceExecution.ID == ""
+	if state.Operation.NetworkAttachment != nil && state.Agent.HasConfiguredRuntime() && canRestore {
 		if err := service.restoreNetworkUnlessRevoked(ctx, state.Operation, 0); err != nil {
 			return state, fmt.Errorf("%w: runtime-egress attachment restoration", ErrDependencyUnavailable)
 		}
@@ -402,7 +383,7 @@ func (service *LifecycleService) failRebuildPreservingSource(
 
 func (service *LifecycleService) restoreNetworkUnlessRevoked(ctx context.Context, operation ports.LifecycleOperationRecord, cause int64) error {
 	agentID := operation.AgentID
-	if cause > 0 {
+	if cause > 0 || operation.SettlementOutcome == ports.ExecutionRuntimeBarrierRequired {
 		return nil
 	}
 	attachment, err := service.egress.GetAgentNetwork(ctx, agentID)
@@ -457,12 +438,12 @@ func (service *LifecycleService) reconcileRejectedRebuildRuntime(
 		return state, fmt.Errorf("%w: runtime-controller inspection", ErrDependencyUnavailable)
 	}
 	// A rejected recovery update need not resurrect the historical process.
-	// An unchanged logical head permits terminal failure, not Run/fence release.
+	// An unchanged logical head permits a management failure without assuming a live process.
 	if state.Agent.ExecutionRevisionID == "" && inspection.AgentID == state.Agent.AgentID &&
-		inspection.RuntimeRevision == state.Operation.SourceRuntimeRevision && inspection.LifecycleState == "ready" {
+		inspection.RuntimeRevision == state.Operation.SourceRuntimeRevision && inspection.LifecycleState == "provisioned" {
 		return service.failRebuildPreservingSource(ctx, state, code, detail, false)
 	}
-	if exactReadyRuntime(
+	if exactRuntimeSource(
 		state.Agent.AgentID, state.Operation.SourceRuntimeRevision,
 		state.SourceExecution.RuntimeExecutionID,
 		state.SourceExecution.RuntimeMCPEndpoint, inspection,
@@ -489,13 +470,6 @@ func (service *LifecycleService) failAgentRebuild(
 	proof *ports.RuntimeAbsenceProof,
 ) (ports.AgentRebuildState, error) {
 	now := service.clock.Now()
-	releaseEvent := ports.RunAdmissionEvent{}
-	if proof != nil {
-		releaseEvent = lifecycleRunReleaseEvent(
-			ctx, state.Operation.RequestID, proof.Reason,
-			state.Operation.SourceRuntimeRevision, now,
-		)
-	}
 	return service.store.FailAgentRebuild(ctx, ports.FailAgentRebuild{
 		RequestID:                 state.Operation.RequestID,
 		Fingerprint:               state.Operation.RequestFingerprint,
@@ -513,7 +487,7 @@ func (service *LifecycleService) failAgentRebuild(
 			OccurredAt: now,
 		},
 		PreserveExecutable: preserveExecutable, RuntimeAbsenceProof: proof,
-		RunReleaseEvent: releaseEvent, Now: now,
+		Now: now,
 	})
 }
 
@@ -526,18 +500,15 @@ func validateRebuildAgentInput(input RebuildAgentInput) error {
 	return nil
 }
 
-func resolveRebuildSource(base ports.AgentLifecycleBase) (ports.AgentExecutionSource, error) {
+func resolveRebuildSource(base ports.AgentLifecycleBase) (ports.AgentRuntimeSource, error) {
 	agent := base.Agent
 	if agent.ActiveOperationRequestID != "" {
-		return ports.AgentExecutionSource{}, fmt.Errorf("%w: Agent already has an active lifecycle operation", ErrLifecycleConflict)
+		return ports.AgentRuntimeSource{}, fmt.Errorf("%w: Agent already has an active lifecycle operation", ErrLifecycleConflict)
 	}
-	source := ports.AgentExecutionSource{Spec: base.ExecutableSpec, Execution: base.ExecutableExecution}
-	if agent.ExecutionRevisionID == "" && base.RecoverySource != nil {
-		source = *base.RecoverySource
-	}
-	if !source.MatchesAgent(agent) || base.NextSpecRevision <= source.Spec.Revision ||
+	source := ports.AgentRuntimeSource{Spec: base.ConfiguredSpec, Execution: base.SourceExecution}
+	if agent.DesiredState != domain.DesiredEnabled || agent.IdentityRevoked() || !source.MatchesAgent(agent) || base.NextSpecRevision <= source.Spec.Revision ||
 		base.NextExecutionRevision <= source.Execution.Revision {
-		return ports.AgentExecutionSource{}, fmt.Errorf("%w: Agent has no complete rebuild source", ErrAgentNotReady)
+		return ports.AgentRuntimeSource{}, fmt.Errorf("%w: Agent has no complete rebuild source", ErrAgentNotReady)
 	}
 	return source, nil
 }

@@ -27,15 +27,16 @@ func TestRebuildAgentReplacesRuntimeAndPublishesTargetSpecAtomically(t *testing.
 		runtime: ports.RuntimeOperation{
 			State: "completed", Effect: "completed",
 			RuntimeRevision:    "rtv_22222222222222222222222222222222",
-			RuntimeExecutionID: "runtime-execution-rebuilt",
-			MCPEndpoint:        "http://runtime-rebuilt:8091/mcp",
-			LifecycleState:     "ready", Health: "healthy",
+			RuntimeExecutionID: "",
+			MCPEndpoint:        "",
+			LifecycleState:     "provisioned", Health: "unknown",
 		},
 	}
 	service := NewLifecycleService(
 		lifecycleSpecSourceStub{template: template, model: model},
-		store, dependencies, dependencies, fixedClock{now: time.Unix(100, 0).UTC()},
-	)
+		store, dependencies, dependencies, fixedClock{now: time.Unix(100, 0).UTC()}, WithLifecycleExecution(testExecutionForStore(
+
+			store)))
 
 	result, err := executeRebuildForTest(service, context.Background(), RebuildAgentInput{
 		RequestID: "request-rebuild-agent", AgentID: base.Agent.AgentID,
@@ -65,23 +66,14 @@ func TestRebuildAgentReplacesRuntimeAndPublishesTargetSpecAtomically(t *testing.
 		store.begin.TargetSpec.Snapshot.TemplateRevision != 1 {
 		t.Fatalf("target Agent spec = %+v", store.begin.TargetSpec)
 	}
-	if result.Agent.LifecycleState != domain.AgentAvailable ||
+	if (result.Agent.LifecycleState != domain.AgentCreated || result.Agent.ActivationState != domain.ActivationEnabled || result.Agent.RuntimeState != domain.RuntimeUnknown) ||
 		result.Operation.State != domain.OperationCompleted ||
 		result.Agent.AgentSpecRevisionID != store.begin.TargetSpec.ID ||
-		result.Agent.ExecutionRevisionID != store.published.Execution.ID {
+		result.Agent.ExecutionRevisionID != "" {
 		t.Fatalf("rebuild result = %+v", result)
 	}
-	if store.published.Execution.Revision != base.NextExecutionRevision ||
-		store.published.RebuiltEvent.EventType != ports.EventAgentRebuilt {
+	if store.published.RebuiltEvent.EventType != ports.EventAgentRebuilt {
 		t.Fatalf("rebuild publication = %+v", store.published)
-	}
-	if !store.published.PromptCapabilities.EmbeddedContext {
-		t.Fatal("Agent rebuild disabled built-in embedded text")
-	}
-	if store.runReleaseEvent.EventType != ports.EventRunAdmissionReleased ||
-		store.runReleaseEvent.Data["release_reason"] != "runtime_replaced" ||
-		store.runReleaseEvent.Data["source_runtime_revision"] != base.Agent.RuntimeRevision {
-		t.Fatalf("rebuild Run release event = %+v", store.runReleaseEvent)
 	}
 }
 
@@ -100,15 +92,16 @@ func TestRebuildAgentTreatsAlreadyClosedAttachmentAsLostResponseReplay(t *testin
 		runtime: ports.RuntimeOperation{
 			State: "completed", Effect: "completed",
 			RuntimeRevision:    "rtv_33333333333333333333333333333333",
-			RuntimeExecutionID: "runtime-execution-replayed-close",
-			MCPEndpoint:        "http://runtime-replayed-close:8091/mcp",
-			LifecycleState:     "ready", Health: "healthy",
+			RuntimeExecutionID: "",
+			MCPEndpoint:        "",
+			LifecycleState:     "provisioned", Health: "unknown",
 		},
 	}
 	service := NewLifecycleService(
 		lifecycleSpecSourceStub{template: template, model: model},
-		store, dependencies, dependencies, fixedClock{now: time.Unix(105, 0).UTC()},
-	)
+		store, dependencies, dependencies, fixedClock{now: time.Unix(105, 0).UTC()}, WithLifecycleExecution(testExecutionForStore(
+
+			store)))
 
 	result, err := executeRebuildForTest(service, context.Background(), RebuildAgentInput{
 		RequestID: "request-rebuild-closed-replay", AgentID: base.Agent.AgentID,
@@ -137,8 +130,9 @@ func TestRebuildAgentWaitsForActiveRunWithoutExternalEffects(t *testing.T) {
 	dependencies := &rebuildDependenciesStub{}
 	service := NewLifecycleService(
 		lifecycleSpecSourceStub{template: template, model: model},
-		store, dependencies, dependencies, fixedClock{now: time.Unix(110, 0).UTC()},
-	)
+		store, dependencies, dependencies, fixedClock{now: time.Unix(110, 0).UTC()}, WithLifecycleExecution(testExecutionForStore(
+
+			store)))
 
 	result, err := executeRebuildForTest(service, context.Background(), RebuildAgentInput{
 		RequestID: "request-rebuild-drain", AgentID: store.base.Agent.AgentID,
@@ -163,16 +157,17 @@ func TestRebuildAgentDrainTimeoutPreservesExecutableSource(t *testing.T) {
 	base := rebuildLifecycleBase(t, template, model)
 	createdAt := time.Unix(100, 0).UTC()
 	state := ports.AgentRebuildState{
-		Agent: base.Agent, SourceSpec: base.ExecutableSpec,
-		SourceExecution: base.ExecutableExecution, TargetSpec: base.ExecutableSpec,
+		Agent: base.Agent, SourceSpec: base.ConfiguredSpec,
+		SourceExecution: base.SourceExecution, TargetSpec: base.ConfiguredSpec,
 		Operation: ports.LifecycleOperationRecord{
 			RequestID: "request-rebuild-timeout", RequestFingerprint: "fingerprint",
-			AgentID: base.Agent.AgentID, Kind: domain.OperationRebuild,
+			DrainDeadlineAt: testDrainDeadline(createdAt.Add(5 * time.Minute)),
+			AgentID:         base.Agent.AgentID, Kind: domain.OperationRebuild,
 			Phase: domain.PhaseDrain, State: domain.OperationRunning,
-			SourceSpecRevisionID:      base.ExecutableSpec.ID,
-			SourceExecutionRevisionID: base.ExecutableExecution.ID,
+			SourceSpecRevisionID:      base.ConfiguredSpec.ID,
+			SourceExecutionRevisionID: base.SourceExecution.ID,
 			SourceRuntimeRevision:     base.Agent.RuntimeRevision,
-			TargetSpecRevisionID:      base.ExecutableSpec.ID,
+			TargetSpecRevisionID:      base.ConfiguredSpec.ID,
 			CreatedAt:                 createdAt, UpdatedAt: createdAt,
 		},
 	}
@@ -181,8 +176,9 @@ func TestRebuildAgentDrainTimeoutPreservesExecutableSource(t *testing.T) {
 	dependencies := &rebuildDependenciesStub{}
 	service := NewLifecycleServiceWithDrainTimeout(
 		lifecycleSpecSourceStub{template: template, model: model},
-		store, dependencies, dependencies, fixedClock{now: createdAt.Add(6 * time.Minute)}, 5*time.Minute,
-	)
+		store, dependencies, dependencies, fixedClock{now: createdAt.Add(6 * time.Minute)}, 5*time.Minute, WithLifecycleExecution(testExecutionForStore(
+
+			store)))
 
 	result, err := executeRebuildForTest(service, context.Background(), RebuildAgentInput{
 		RequestID: state.Operation.RequestID, AgentID: base.Agent.AgentID,
@@ -192,7 +188,7 @@ func TestRebuildAgentDrainTimeoutPreservesExecutableSource(t *testing.T) {
 		t.Fatalf("timeout rebuild: %v", err)
 	}
 	if result.Operation.State != domain.OperationFailed || result.Operation.ErrorCode != "run_drain_timeout" ||
-		result.Agent.LifecycleState != domain.AgentAvailable ||
+		(result.Agent.LifecycleState != domain.AgentCreated || result.Agent.ActivationState != domain.ActivationEnabled || result.Agent.RuntimeState != domain.RuntimeAvailable) ||
 		result.Agent.ExecutionRevisionID != base.Agent.ExecutionRevisionID ||
 		!store.failed.PreserveExecutable {
 		t.Fatalf("timeout result = %+v failed=%+v", result, store.failed)
@@ -202,7 +198,7 @@ func TestRebuildAgentDrainTimeoutPreservesExecutableSource(t *testing.T) {
 	}
 }
 
-func TestRebuildAgentRechecksDrainBeforeApplyingTimeout(t *testing.T) {
+func TestRebuildAgentExpiredDeadlineDoesNotQueryACPOrMutateRuntime(t *testing.T) {
 	t.Parallel()
 
 	template := mustLifecycleTemplate(t)
@@ -210,11 +206,12 @@ func TestRebuildAgentRechecksDrainBeforeApplyingTimeout(t *testing.T) {
 	base := rebuildLifecycleBase(t, template, model)
 	now := time.Unix(160, 0).UTC()
 	state := ports.AgentRebuildState{
-		Agent: base.Agent, SourceSpec: base.ExecutableSpec,
-		SourceExecution: base.ExecutableExecution, TargetSpec: base.ExecutableSpec,
+		Agent: base.Agent, SourceSpec: base.ConfiguredSpec,
+		SourceExecution: base.SourceExecution, TargetSpec: base.ConfiguredSpec,
 		Operation: ports.LifecycleOperationRecord{
 			RequestID: "request-rebuild-expired-drain", RequestFingerprint: "fingerprint",
-			AgentID: base.Agent.AgentID, Kind: domain.OperationRebuild,
+			DrainDeadlineAt: testDrainDeadline(now.Add(-time.Minute)),
+			AgentID:         base.Agent.AgentID, Kind: domain.OperationRebuild,
 			Phase: domain.PhaseDrain, State: domain.OperationRunning,
 			CreatedAt: now.Add(-2 * time.Minute), UpdatedAt: now.Add(-2 * time.Minute),
 		},
@@ -223,14 +220,15 @@ func TestRebuildAgentRechecksDrainBeforeApplyingTimeout(t *testing.T) {
 	dependencies := &rebuildDependenciesStub{}
 	service := NewLifecycleServiceWithDrainTimeout(
 		lifecycleSpecSourceStub{template: template, model: model},
-		store, dependencies, dependencies, fixedClock{now: now}, time.Minute,
-	)
+		store, dependencies, dependencies, fixedClock{now: now}, time.Minute, WithLifecycleExecution(testExecutionForStore(
+
+			store)))
 
 	settled, err := service.settleRebuildDrain(context.Background(), state)
 	if err != nil {
 		t.Fatalf("settle expired but empty rebuild drain: %v", err)
 	}
-	if settled.Operation.Phase != domain.PhaseNetworkFence || store.failed.Code != "" {
+	if settled.Operation.State != domain.OperationFailed || store.failed.Code != "run_drain_timeout" || len(dependencies.calls) != 0 {
 		t.Fatalf("settled rebuild phase = %q failed=%+v", settled.Operation.Phase, store.failed)
 	}
 }
@@ -251,15 +249,16 @@ func TestRebuildAgentKnownRuntimeFailureRestoresPolicyAndSource(t *testing.T) {
 		},
 		inspection: ports.RuntimeInspection{
 			AgentID: base.Agent.AgentID, RuntimeRevision: base.Agent.RuntimeRevision,
-			RuntimeExecutionID: base.ExecutableExecution.RuntimeExecutionID,
-			MCPEndpoint:        base.ExecutableExecution.RuntimeMCPEndpoint,
-			LifecycleState:     "ready", Health: "healthy",
+			RuntimeExecutionID: base.SourceExecution.RuntimeExecutionID,
+			MCPEndpoint:        base.SourceExecution.RuntimeMCPEndpoint,
+			LifecycleState:     "provisioned", Health: "healthy",
 		},
 	}
 	service := NewLifecycleService(
 		lifecycleSpecSourceStub{template: template, model: model},
-		store, dependencies, dependencies, fixedClock{now: time.Unix(115, 0).UTC()},
-	)
+		store, dependencies, dependencies, fixedClock{now: time.Unix(115, 0).UTC()}, WithLifecycleExecution(testExecutionForStore(
+
+			store)))
 
 	result, err := executeRebuildForTest(service, context.Background(), RebuildAgentInput{
 		RequestID: "request-rebuild-runtime-failed", AgentID: base.Agent.AgentID,
@@ -269,7 +268,7 @@ func TestRebuildAgentKnownRuntimeFailureRestoresPolicyAndSource(t *testing.T) {
 		t.Fatalf("known Runtime failure: %v", err)
 	}
 	if result.Operation.State != domain.OperationFailed || result.Operation.ErrorCode != "image_not_found" ||
-		result.Agent.LifecycleState != domain.AgentAvailable ||
+		(result.Agent.LifecycleState != domain.AgentCreated || result.Agent.ActivationState != domain.ActivationEnabled || result.Agent.RuntimeState != domain.RuntimeAvailable) ||
 		result.Agent.RuntimeRevision != base.Agent.RuntimeRevision || !store.failed.PreserveExecutable {
 		t.Fatalf("known Runtime failure result = %+v failed=%+v", result, store.failed)
 	}
@@ -299,8 +298,10 @@ func TestRebuildAgentRuntimeNotFoundRemainsRunningAndFenced(t *testing.T) {
 	}
 	service := NewLifecycleService(
 		lifecycleSpecSourceStub{template: template, model: model},
-		store, dependencies, dependencies, fixedClock{now: time.Unix(117, 0).UTC()},
-	)
+		store, dependencies, dependencies, fixedClock{now: time.Unix(117, 0).UTC()}, WithLifecycleExecution(testExecutionForStore(
+
+			store)))
+
 	result, err := executeRebuildForTest(service, context.Background(), RebuildAgentInput{
 		RequestID: "request-rebuild-runtime-missing", AgentID: base.Agent.AgentID,
 		TemplateID: "template-1", TemplateRevision: 1,
@@ -342,8 +343,10 @@ func TestRebuildAgentDeletedRuntimeInspectionFailsClosedAndReleasesBlockedRun(t 
 	}
 	service := NewLifecycleService(
 		lifecycleSpecSourceStub{template: template, model: model},
-		store, dependencies, dependencies, fixedClock{now: time.Unix(118, 0).UTC()},
-	)
+		store, dependencies, dependencies, fixedClock{now: time.Unix(118, 0).UTC()}, WithLifecycleExecution(testExecutionForStore(
+
+			store)))
+
 	traceID := trace.TraceID{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}
 	spanID := trace.SpanID{1, 2, 3, 4, 5, 6, 7, 8}
 	ctx := trace.ContextWithSpanContext(context.Background(), trace.NewSpanContext(trace.SpanContextConfig{
@@ -358,11 +361,9 @@ func TestRebuildAgentDeletedRuntimeInspectionFailsClosedAndReleasesBlockedRun(t 
 		t.Fatalf("rebuild Agent after deleted Runtime inspection: %v", err)
 	}
 	if result.Operation.State != domain.OperationFailed ||
-		result.Agent.LifecycleState != domain.AgentUnavailable ||
+		(result.Agent.LifecycleState != domain.AgentCreated || result.Agent.ActivationState != domain.ActivationEnabled || result.Agent.RuntimeState != domain.RuntimeUnknown) ||
 		store.failed.RuntimeAbsenceProof == nil ||
 		store.failed.RuntimeAbsenceProof.Reason != "runtime_deleted" ||
-		store.failed.RunReleaseEvent.Data["release_reason"] != "runtime_deleted" ||
-		store.failed.RunReleaseEvent.TraceID != traceID.String() ||
 		store.failed.FailedEvent.TraceID != traceID.String() {
 		t.Fatalf("deleted-Runtime rebuild result=%+v failure=%+v", result, store.failed)
 	}
@@ -385,8 +386,9 @@ func TestRebuildAgentCompletedReplayDoesNotRepeatDependencies(t *testing.T) {
 	dependencies := &rebuildDependenciesStub{}
 	service := NewLifecycleService(
 		lifecycleSpecSourceStub{template: template, model: model},
-		store, dependencies, dependencies, fixedClock{now: time.Unix(120, 0).UTC()},
-	)
+		store, dependencies, dependencies, fixedClock{now: time.Unix(120, 0).UTC()}, WithLifecycleExecution(testExecutionForStore(
+
+			store)))
 
 	result, err := executeRebuildForTest(service, context.Background(), RebuildAgentInput{
 		RequestID: "request-rebuild-agent", AgentID: base.Agent.AgentID,
@@ -419,7 +421,8 @@ func TestRebuildAgentReturnsStableAgentStateErrors(t *testing.T) {
 		{
 			name: "not ready",
 			prepare: func(store *rebuildLifecycleStoreStub) {
-				store.base.Agent.LifecycleState = domain.AgentUnavailable
+				store.base.Agent.LifecycleState = domain.AgentNotCreated
+				store.base.Agent.ActivationState = ""
 			},
 			want: ErrAgentNotReady,
 		},
@@ -438,8 +441,10 @@ func TestRebuildAgentReturnsStableAgentStateErrors(t *testing.T) {
 			dependencies := &rebuildDependenciesStub{}
 			service := NewLifecycleService(
 				lifecycleSpecSourceStub{template: template, model: model},
-				store, dependencies, dependencies, fixedClock{now: time.Unix(125, 0).UTC()},
-			)
+				store, dependencies, dependencies, fixedClock{now: time.Unix(125, 0).UTC()}, WithLifecycleExecution(testExecutionForStore(
+
+					store)))
+
 			_, err := executeRebuildForTest(service, context.Background(), RebuildAgentInput{
 				RequestID: "request-rebuild-state-error", AgentID: base.Agent.AgentID,
 				TemplateID: "template-1", TemplateRevision: 1,
@@ -468,15 +473,16 @@ func TestRebuildAgentRejectsChangedNetworkBeforePublication(t *testing.T) {
 		runtime: ports.RuntimeOperation{
 			State: "completed", Effect: "completed",
 			RuntimeRevision:    "rtv_33333333333333333333333333333333",
-			RuntimeExecutionID: "runtime-execution-changed",
-			MCPEndpoint:        "http://runtime-changed:8091/mcp",
-			LifecycleState:     "ready", Health: "healthy",
+			RuntimeExecutionID: "",
+			MCPEndpoint:        "",
+			LifecycleState:     "provisioned", Health: "unknown",
 		},
 	}
 	service := NewLifecycleService(
 		lifecycleSpecSourceStub{template: template, model: model},
-		store, dependencies, dependencies, fixedClock{now: time.Unix(130, 0).UTC()},
-	)
+		store, dependencies, dependencies, fixedClock{now: time.Unix(130, 0).UTC()}, WithLifecycleExecution(testExecutionForStore(
+
+			store)))
 
 	result, err := executeRebuildForTest(service, context.Background(), RebuildAgentInput{
 		RequestID: "request-rebuild-changed-network", AgentID: base.Agent.AgentID,
@@ -485,12 +491,12 @@ func TestRebuildAgentRejectsChangedNetworkBeforePublication(t *testing.T) {
 	if !errors.Is(err, ErrDependencyUnavailable) {
 		t.Fatalf("rebuild Agent error = %v", err)
 	}
-	if result.Agent.LifecycleState != domain.AgentAvailable ||
+	if (result.Agent.LifecycleState != domain.AgentCreated || result.Agent.ActivationState != domain.ActivationEnabled || result.Agent.RuntimeState != domain.RuntimeAvailable) ||
 		result.Operation.State != domain.OperationRunning ||
 		result.Operation.Phase != domain.PhaseNetworkEnsure {
 		t.Fatalf("changed-network result = %+v", result)
 	}
-	if store.published.Execution.ID != "" {
+	if store.published.RequestID != "" {
 		t.Fatalf("changed network was published: %+v", store.published)
 	}
 }
@@ -513,8 +519,9 @@ func TestRebuildAgentKeepsAmbiguousRuntimeUpdateReplayable(t *testing.T) {
 	}
 	service := NewLifecycleService(
 		lifecycleSpecSourceStub{template: template, model: model},
-		store, dependencies, dependencies, fixedClock{now: time.Unix(140, 0).UTC()},
-	)
+		store, dependencies, dependencies, fixedClock{now: time.Unix(140, 0).UTC()}, WithLifecycleExecution(testExecutionForStore(
+
+			store)))
 
 	result, err := executeRebuildForTest(service, context.Background(), RebuildAgentInput{
 		RequestID: "request-rebuild-unknown", AgentID: base.Agent.AgentID,
@@ -646,15 +653,14 @@ func (dependency *rebuildDependenciesStub) InspectRuntime(
 
 type rebuildLifecycleStoreStub struct {
 	lifecycleStoreStub
-	base            ports.AgentLifecycleBase
-	baseErr         error
-	begin           ports.BeginAgentRebuild
-	state           ports.AgentRebuildState
-	replayed        bool
-	drainBlocked    bool
-	published       ports.PublishAgentRebuild
-	failed          ports.FailAgentRebuild
-	runReleaseEvent ports.RunAdmissionEvent
+	base         ports.AgentLifecycleBase
+	baseErr      error
+	begin        ports.BeginAgentRebuild
+	state        ports.AgentRebuildState
+	replayed     bool
+	drainBlocked bool
+	published    ports.PublishAgentRebuild
+	failed       ports.FailAgentRebuild
 }
 
 func (store *rebuildLifecycleStoreStub) GetAgentLifecycleBase(
@@ -681,32 +687,17 @@ func (store *rebuildLifecycleStoreStub) BeginAgentRebuild(
 	agent.AggregateSequence = input.RequestedEvent.AggregateSequence
 	agent.UpdatedAt = input.Now
 	store.state = ports.AgentRebuildState{
-		Agent: agent, SourceSpec: store.base.ExecutableSpec,
-		SourceExecution: store.base.ExecutableExecution,
+		Agent: agent, SourceSpec: store.base.ConfiguredSpec,
+		SourceExecution: store.base.SourceExecution,
 		TargetSpec:      input.TargetSpec, Operation: input.Operation,
 	}
 	store.replayed = true
 	return store.state, false, nil
 }
 
-func (store *rebuildLifecycleStoreStub) SettleAgentRebuildDrain(
-	_ context.Context, _ string, _ string, nextChildRequestID string, now time.Time,
-) (ports.AgentRebuildState, error) {
-	if store.drainBlocked {
-		return store.state, nil
-	}
-	store.state.Operation.Phase = domain.PhaseNetworkFence
-	store.state.Operation.ChildRequestID = nextChildRequestID
-	store.state.Operation.UpdatedAt = now
-	return store.state, nil
-}
-
 func (store *rebuildLifecycleStoreStub) AdvanceAgentRebuild(
 	_ context.Context, input ports.AdvanceAgentRebuild,
 ) (ports.LifecycleAdvanceResult, error) {
-	if input.RunReleaseEvent.EventID != "" {
-		store.runReleaseEvent = input.RunReleaseEvent
-	}
 	store.state.Operation.Phase = input.NextPhase
 	store.state.Operation.ChildRequestID = input.NextChildRequestID
 	store.state.Operation.UpdatedAt = input.Now
@@ -718,21 +709,20 @@ func (store *rebuildLifecycleStoreStub) AdvanceAgentRebuild(
 		runtime := *input.RuntimeResult
 		store.state.Operation.RuntimeResult = &runtime
 	}
-	return ports.LifecycleAdvanceResult{Agent: store.state.Agent, Operation: store.state.Operation, RunReleaseOutcome: store.state.RunReleaseOutcome}, nil
+	return ports.LifecycleAdvanceResult{Agent: store.state.Agent, Operation: store.state.Operation}, nil
 }
 
 func (store *rebuildLifecycleStoreStub) PublishAgentRebuild(
 	_ context.Context, input ports.PublishAgentRebuild,
 ) (ports.AgentRebuildState, error) {
 	store.published = input
-	store.state.Agent.AgentSpecRevisionID = input.Execution.AgentSpecRevisionID
-	store.state.Agent.ExecutionRevisionID = input.Execution.ID
-	store.state.Agent.LastSuccessfulExecutionRevisionID = input.Execution.ID
-	store.state.Agent.RuntimeRevision = input.Execution.RuntimeRevision
-	store.state.Agent.RuntimeExecutionID = input.Execution.RuntimeExecutionID
-	store.state.Agent.RuntimeMCPEndpoint = input.Execution.RuntimeMCPEndpoint
+	store.state.Agent.AgentSpecRevisionID = store.state.TargetSpec.ID
+	store.state.Agent.ExecutionRevisionID = ""
+	store.state.Agent.RuntimeRevision = store.state.Operation.RuntimeResult.RuntimeRevision
+	store.state.Agent.RuntimeExecutionID = ""
+	store.state.Agent.RuntimeMCPEndpoint = ""
 	store.state.Agent.ActiveOperationRequestID = ""
-	store.state.Agent.LifecycleState = domain.AgentAvailable
+	store.state.Agent.LifecycleState, store.state.Agent.ActivationState, store.state.Agent.RuntimeState = domain.AgentCreated, domain.ActivationEnabled, domain.RuntimeUnknown
 	store.state.Agent.AggregateSequence = input.RebuiltEvent.AggregateSequence
 	store.state.Agent.UpdatedAt = input.Now
 	store.state.Operation.Phase = domain.PhaseCompleted
@@ -749,7 +739,7 @@ func (store *rebuildLifecycleStoreStub) FailAgentRebuild(
 	store.failed = input
 	store.state.Operation.SourceRuntimeAbsenceProof = input.RuntimeAbsenceProof
 	if !input.PreserveExecutable {
-		store.state.Agent.LifecycleState = domain.AgentUnavailable
+		store.state.Agent.LifecycleState, store.state.Agent.ActivationState, store.state.Agent.RuntimeState = domain.AgentCreated, domain.ActivationEnabled, domain.RuntimeUnknown
 		store.state.Agent.AgentSpecRevisionID = ""
 		store.state.Agent.ExecutionRevisionID = ""
 		store.state.Agent.RuntimeRevision = ""
@@ -776,8 +766,8 @@ func rebuildLifecycleBase(
 	created.Agent.RuntimeRevision = "rtv_11111111111111111111111111111111"
 	created.Spec.CanonicalDigest = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	return ports.AgentLifecycleBase{
-		Agent: created.Agent, ExecutableSpec: created.Spec,
-		ExecutableExecution: ports.ExecutionRecord{
+		Agent: created.Agent, ConfiguredSpec: created.Spec,
+		SourceExecution: ports.ExecutionRecord{
 			ID: created.Agent.ExecutionRevisionID, AgentID: created.Agent.AgentID, Revision: 1,
 			AgentSpecRevisionID: created.Spec.ID, RuntimeRevision: created.Agent.RuntimeRevision,
 			RuntimeExecutionID: created.Agent.RuntimeExecutionID,
@@ -789,7 +779,7 @@ func rebuildLifecycleBase(
 
 func completedRebuildState(t *testing.T, base ports.AgentLifecycleBase) ports.AgentRebuildState {
 	t.Helper()
-	target := base.ExecutableSpec
+	target := base.ConfiguredSpec
 	target.ID = "agentspec-rebuilt"
 	target.Revision = base.NextSpecRevision
 	agent := base.Agent
@@ -797,14 +787,14 @@ func completedRebuildState(t *testing.T, base ports.AgentLifecycleBase) ports.Ag
 	agent.ExecutionRevisionID = "execution-rebuilt"
 	agent.LastSuccessfulExecutionRevisionID = "execution-rebuilt"
 	return ports.AgentRebuildState{
-		Agent: agent, SourceSpec: base.ExecutableSpec,
-		SourceExecution: base.ExecutableExecution, TargetSpec: target,
+		Agent: agent, SourceSpec: base.ConfiguredSpec,
+		SourceExecution: base.SourceExecution, TargetSpec: target,
 		Operation: ports.LifecycleOperationRecord{
 			RequestID: "request-rebuild-agent", RequestFingerprint: "fingerprint",
 			AgentID: agent.AgentID, Kind: domain.OperationRebuild,
 			Phase: domain.PhaseCompleted, State: domain.OperationCompleted,
-			SourceSpecRevisionID:      base.ExecutableSpec.ID,
-			SourceExecutionRevisionID: base.ExecutableExecution.ID,
+			SourceSpecRevisionID:      base.ConfiguredSpec.ID,
+			SourceExecutionRevisionID: base.SourceExecution.ID,
 			SourceRuntimeRevision:     base.Agent.RuntimeRevision,
 			TargetSpecRevisionID:      target.ID,
 		},

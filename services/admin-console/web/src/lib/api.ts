@@ -1,6 +1,8 @@
 import { csrfFromCookie } from "./forms";
+import type { AvailabilityChange, AvailabilityReceipt, CatalogKind, ExecutionSynchronization } from "./catalog-availability";
 import { decodeNetworkAssignment, decodeNetworkPolicy, type PendingNetwork } from "./network-policy";
 import { invalidatesBrowserSession } from "./session-errors";
+import { auditQuery, type AuditFilters, type AuditPage, type ExecutionAuditSummary, type ExecutionAuditDetail, type ExecutionAuditEvent, type ExecutionAuditPermission } from "./execution-audit";
 import {
   agentPagePath,
   catalogPagePath,
@@ -45,6 +47,7 @@ export class APIError extends Error {
     public readonly status: number,
     public readonly code: string,
     message: string,
+    public readonly details?: RemoteErrorBody,
   ) {
     super(message);
     this.name = "APIError";
@@ -52,9 +55,11 @@ export class APIError extends Error {
 }
 
 let browserSession = Symbol();
+let commandPrincipal = "uninitialized";
 
-export function resetSessionRequests(): void {
+export function resetSessionRequests(principal?: Pick<Session["principal"], "organization_id" | "user_id" | "membership_id">): void {
   browserSession = Symbol();
+  commandPrincipal = principal ? JSON.stringify([principal.organization_id, principal.user_id, principal.membership_id]) : crypto.randomUUID();
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -84,7 +89,12 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const code = typeof remote.code === "string" ? remote.code : "request_failed";
     const message = typeof remote.message === "string" ? remote.message : "Request failed.";
     notifySessionFailure(requestSession, path, response.status, code);
-    throw new APIError(response.status, code, message);
+    throw new APIError(response.status, code, message, remote);
+  }
+  if (requestSession === browserSession && !["GET", "HEAD", "OPTIONS"].includes(method) &&
+      (/^\/api\/admin\/(provider-connections|model-profiles|templates)(\/|$)/.test(path) ||
+        /^\/api\/admin\/agents($|\/[^/]+\/(rebuild|disable|enable|delete)$)/.test(path))) {
+    window.dispatchEvent(new Event("antnest:configuration-changed"));
   }
   return body as T;
 }
@@ -107,10 +117,12 @@ function intentStorageKey(scope: string, input: unknown): string {
   return `antnest:lifecycle:${scope}:${(hash >>> 0).toString(16)}`;
 }
 
-async function idempotentRequest<T>(scope: string, path: string, input: unknown): Promise<T> {
-  const storageKey = intentStorageKey(scope, input);
+async function idempotentRequest<T>(scope: string, path: string, input: unknown, method: "POST" | "PUT" = "POST"): Promise<T> {
+  const requestSession = browserSession;
+  const scopedIntent = `${commandPrincipal}:${scope}`;
+  const storageKey = intentStorageKey(scopedIntent, input);
   // A changed command replaces the pending intent, even if an older body is used again later.
-  const prefix = `antnest:lifecycle:${scope}:`;
+  const prefix = `antnest:lifecycle:${scopedIntent}:`;
   for (const key of Object.keys(sessionStorage)) {
     if (key.startsWith(prefix) && key !== storageKey) sessionStorage.removeItem(key);
   }
@@ -121,15 +133,15 @@ async function idempotentRequest<T>(scope: string, path: string, input: unknown)
   }
   try {
     const result = await request<T>(path, {
-      method: "POST",
+      method,
       headers: { "Idempotency-Key": idempotencyKey },
       body: json(input),
     });
-    sessionStorage.removeItem(storageKey);
+    if (browserSession === requestSession && sessionStorage.getItem(storageKey) === idempotencyKey) sessionStorage.removeItem(storageKey);
     return result;
   } catch (error) {
     if (error instanceof APIError && error.status >= 400 && error.status < 500 && ![408, 429].includes(error.status)) {
-      sessionStorage.removeItem(storageKey);
+      if (browserSession === requestSession && sessionStorage.getItem(storageKey) === idempotencyKey) sessionStorage.removeItem(storageKey);
     }
     throw error;
   }
@@ -144,6 +156,18 @@ function oneShotCommand<T>(path: string, input: unknown): Promise<T> {
 }
 
 export const api = {
+  setCatalogAvailability: (kind: CatalogKind, id: string, input: AvailabilityChange) =>
+    idempotentRequest<AvailabilityReceipt>(`availability:${kind}:${id}`, `/api/admin/${kind}/${encodeURIComponent(id)}/availability`, input, "PUT"),
+  executionSynchronization: (signal?: AbortSignal) =>
+    request<{ synchronization: ExecutionSynchronization | null }>("/api/admin/execution-synchronization", { signal }),
+  executionAudits: (filters: AuditFilters, cursor?: string, signal?: AbortSignal) =>
+    request<AuditPage<ExecutionAuditSummary>>(`/api/admin/execution-audits?${auditQuery({ ...filters, cursor })}`, { signal }),
+  executionAudit: (runID: string, signal?: AbortSignal) =>
+    request<ExecutionAuditDetail>(`/api/admin/execution-audits/${encodeURIComponent(runID)}`, { signal }),
+  executionAuditEvents: (runID: string, cursor?: string, signal?: AbortSignal) =>
+    request<AuditPage<ExecutionAuditEvent>>(`/api/admin/execution-audits/${encodeURIComponent(runID)}/events?${auditQuery({ stream: "execution", cursor })}`, { signal }),
+  executionAuditPermissions: (runID: string, cursor?: string, signal?: AbortSignal) =>
+    request<AuditPage<ExecutionAuditPermission>>(`/api/admin/execution-audits/${encodeURIComponent(runID)}/events?${auditQuery({ stream: "permissions", cursor })}`, { signal }),
   networkPolicy: async (agentID: string, signal?: AbortSignal) => decodeNetworkPolicy(await request<unknown>(`/api/admin/agents/${encodeURIComponent(agentID)}/network-policy`, { signal }), agentID),
   setNetworkPolicy: async (agentID: string, intent: PendingNetwork, scope: string) => decodeNetworkAssignment(await request<unknown>(`/api/admin/agents/${encodeURIComponent(agentID)}/network-policy`, {
     method: "PUT", headers: { "Idempotency-Key": intent.idempotency_key, "X-Antnest-Expected-Principal": encodeURIComponent(scope) },
@@ -225,7 +249,7 @@ export const api = {
     {},
   ),
   providers: (options?: CatalogPageOptions) => request<ProviderConnectionList>(catalogPagePath("/api/admin/provider-connections", options)),
-  provider: (id: string) => request<ProviderConnection>(`/api/admin/provider-connections/${encodeURIComponent(id)}`),
+  provider: (id: string, signal?: AbortSignal) => request<ProviderConnection>(`/api/admin/provider-connections/${encodeURIComponent(id)}`, { signal }),
   createProvider: (input: { provider_key: string; display_name: string; base_url: string; credential: ProviderCredential; models: ProviderModelInput[] }) =>
     idempotentRequest<ProviderConnection>("create-provider", "/api/admin/provider-connections", input),
   rotateProviderCredential: (id: string, input: { expected_version: string; credential: ProviderCredential }) =>
@@ -233,8 +257,8 @@ export const api = {
   modelCatalog: () => request<ModelCatalog>("/api/admin/model-catalog"),
   models: (options: CatalogPageOptions = {}) =>
     request<ModelProfileList>(catalogPagePath("/api/admin/model-profiles", options)),
-  model: (modelProfileID: string) =>
-    request<ModelProfile>(`/api/admin/model-profiles/${encodeURIComponent(modelProfileID)}`),
+  model: (modelProfileID: string, signal?: AbortSignal) =>
+    request<ModelProfile>(`/api/admin/model-profiles/${encodeURIComponent(modelProfileID)}`, { signal }),
   createModel: (input: {
     display_name: string;
     provider_connection_id: string;
@@ -252,8 +276,8 @@ export const api = {
   templates: (options: CatalogPageOptions = {}) =>
     request<TemplateList>(catalogPagePath("/api/admin/templates", options)),
   templateDefaults: () => request<TemplateDefaults>("/api/admin/template-defaults"),
-  template: (templateID: string) =>
-    request<AgentTemplate>(`/api/admin/templates/${encodeURIComponent(templateID)}`),
+  template: (templateID: string, signal?: AbortSignal) =>
+    request<AgentTemplate>(`/api/admin/templates/${encodeURIComponent(templateID)}`, { signal }),
   templateRevision: (templateID: string, revision: number) =>
     request<AgentTemplate>(
       `/api/admin/templates/${encodeURIComponent(templateID)}/revisions/${encodeURIComponent(String(revision))}`,

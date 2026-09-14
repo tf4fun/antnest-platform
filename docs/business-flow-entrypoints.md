@@ -1,6 +1,6 @@
 # 业务流程入口总索引
 
-> 更新日期：2026-09-13
+> 更新日期：2026-09-14
 > 状态：基于当前实现的入口盘点，供后续逐流程展开与 Jaeger 核对。
 > 范围：`antnest-platform` 已开发服务，Docker 单节点。
 
@@ -29,18 +29,34 @@
 
 ### 当前优先核对顺序
 
-按场景独立执行；每完成一项提供其 Jaeger 地址并等待用户检查，再进入下一项。
+默认按场景独立执行，每完成一项提供 Jaeger 地址并等待用户检查。
+9 月 13 日按用户“其余 Agent 生命周期验收并汇总 Trace 列表”的要求，重建、停用、启用、删除连续完成后统一提交审阅。
 
 **新镜像复验已重新开始。** BF-OPS-02 的就绪/首页入口已获用户确认；
 BF-AUTH-01 的真实浏览器登录、概览加载与刷新流程已获用户确认；
 BF-CAT-02 已在 9 月 13 日的精简存储新镜像上完成真实表单创建、模型展示及刷新持久化核对，
 11 条请求 Trace 完整；创建为 22 Span、5 次 INSERT，用户已确认。
 BF-CAT-06 已完成浏览器创建、详情与刷新核对，15 条请求 Trace 完整，创建为 18 Span、3 次 INSERT，
-用户已确认。BF-AGENT-04 已真实创建 Agent，页面与数据库为 available，Runtime 健康；
-主 Trace 181 Span / 7 服务，正常创建场景已获用户确认。事件流取消/租期的观测噪声及发布竞态候选单独保留，
-不宣称所有异常路径通过。重建及后续场景尚未重跑。最新进度以
-[新镜像逐场景复验](business-flow-trace-review.md#18-新镜像逐场景复验2026-09-12)为准。
-下表及其计数保留上一轮基线，不作为本轮完成状态。
+用户已确认。BF-AGENT-04 分层状态/创建就绪分离已部署：Gateway 创建 Trace 164 Span，独立就绪 Trace 60 Span，
+API 状态、持久化绑定与容器核对通过；[最新时序](business-flow-agent-create.md)已获用户确认。
+BF-AGENT-06 新状态模型下的[停用场景](business-flow-agent-disable.md)也已获确认（166 Span）。
+BF-AGENT-07 [启用场景](business-flow-agent-enable.md)技术核对通过，用户已确认：
+177 Span 启用链路与 61 Span 独立就绪链路；原工作卷保留、新绑定生效、同键重放通过。
+本轮未重做浏览器表单/SSE，也未将旧版本页面验收结论直接继承。历史四项生命周期记录保留，
+不宣称所有异常路径通过。重建、停用、启用、删除已完成真实 Console 操作、主 Trace 和资源/数据交叉核对；
+[历史四项 Trace 列表](business-flow-agent-lifecycle-traces.md)为 231 / 164 / 196 / 173 Span；它们属于分离前的镜像，不表示新合同已复验。
+BF-AGENT-05 [显式重建场景](business-flow-agent-rebuild.md)在 9 月 14 日完成技术核对，用户已确认：
+215 Span 主链路与 61 Span 独立就绪，原文件保留、访问修订轮换、同键重放通过。
+BF-AGENT-08 [删除场景](business-flow-agent-delete.md)技术核对通过，用户已确认：
+175 Span；deleted/absent、执行入口关闭、容器与独占卷回收、共享卷与 19 条历史事件保留。
+网络先隔离后回收，同键重放通过。旧四项及本轮验收 Agent 均已删除并回收独占资源，历史记录保留；
+实例内另一 Agent 未受影响。本轮五类正常生命周期已有技术证据，不代表浏览器或全部异常路径验收通过。
+追加 BF-AGENT-05 的[新模板配置重建变体](business-flow-agent-rebuild.md#6-新模板配置重建复验)：
+新建专用 Agent，模板 revision 2 发布保持原 Agent 不变，显式重建才应用新模型、预算和资源配额。
+发布/重建/独立就绪分别为 20/215/61 Span，技术核对通过，等待用户检查；专用 Agent 与工作卷保留。
+分层状态改造后的最新进度以 [状态模型集成记录](agent-lifecycle-state-model.md#progress)和各场景文档为准；
+[此前新镜像逐场景复验](business-flow-trace-review.md#18-新镜像逐场景复验2026-09-12)保留历史范围。
+下表逐行标记当前复验或历史基线，尚未复验的流程不继承旧版本结论。
 
 Provider 验收讨论形成了 [凭证与模型分离方案](provider-credentials-and-models.md)。
 BF-CAT-02 已按新连接/模型合同重新核对管理链路，见
@@ -49,17 +65,17 @@ BF-CAT-02 已按新连接/模型合同重新核对管理链路，见
 连接采用合成测试凭证，不能直接调用 DeepSeek；真实模型调用前必须替换凭证。
 按用户要求暂不修改 ACP，先逐项验证管理流程；ACP 执行兼容性不作为已通过结论。
 
-| 顺序     | 入口                         | 上一轮基线（本轮状态见上文）                                           |
+| 顺序     | 入口                         | 复验状态与历史基线                                           |
 | -------- | ---------------------------- | ---------------------------------------------------------------------- |
 | 1        | BF-OPS-01 部署流程           | [部署场景记录](business-flow-deployment.md)，用户已确认，允许推进登录 |
 | 2        | BF-AUTH-01 管理员本地登录    | [登录场景记录](business-flow-local-admin-login.md)，用户已确认最新链路 |
 | 模板前置 | BF-CAT-02 创建 Provider 连接与模型 | 上一轮通过管理 API 建立连接与模型；[场景记录](business-flow-provider-connection.md)现已更新为本轮真实浏览器证据，未调用外部模型 |
 | 3        | BF-CAT-06 模板创建 | [模板场景](business-flow-template-create.md)：仅保存原始镜像引用；最终 Gateway 复验见该文档 |
-| 4 | BF-AGENT-04 创建 Agent | 原基线 181 Span；[场景文档](business-flow-agent-create.md)已替换为本轮真实浏览器、资源与 Trace 证据 |
-| 5 | BF-AGENT-05 显式重建 Agent | [当前单业务 Trace](business-flow-agent-rebuild.md)：239 Span，统一 Temporal 执行，技术验收通过，等待人工审阅 |
-| 6 | BF-AGENT-06 停用 Agent | [当前单业务 Trace](business-flow-agent-disable.md)：165 Span，统一 Temporal 执行，技术验收通过，等待人工审阅 |
-| 7 | BF-AGENT-07 启用 Agent | [当前单业务 Trace](business-flow-agent-enable.md)：196 Span，统一 Temporal 执行，技术验收通过，等待人工审阅 |
-| 8 | BF-AGENT-08 删除 Agent 与资源回收 | [当前单业务 Trace](business-flow-agent-delete.md)：176 Span，统一 Temporal 执行，技术验收通过，等待人工审阅 |
+| 4 | BF-AGENT-04 创建 Agent | 当前分层状态复验：164 + 60 Span；[场景文档](business-flow-agent-create.md)，用户已确认 |
+| 5 | BF-AGENT-05 显式重建 Agent | 同配置重建已确认；[新配置变体](business-flow-agent-rebuild.md#6-新模板配置重建复验)新增 20 + 215 + 61 Span，技术核对通过，等待检查 |
+| 6 | BF-AGENT-06 停用 Agent | 当前分层状态复验：[场景文档](business-flow-agent-disable.md)，166 Span，用户已确认 |
+| 7 | BF-AGENT-07 启用 Agent | 当前分层状态复验：[场景文档](business-flow-agent-enable.md)，177 + 61 Span，用户已确认 |
+| 8 | BF-AGENT-08 删除 Agent 与资源回收 | 当前分层状态复验：[场景文档](business-flow-agent-delete.md)，175 Span，用户已确认 |
 
 上一轮 BF-AGENT-04..08 已按同一 Gateway Trace 内的完整父子结构核对，不再以旧的
 26 条分散 Trace 作为通过依据。五条基线 Trace 全部通过 SDK 阶段、具体成功 RPC、

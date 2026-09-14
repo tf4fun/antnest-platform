@@ -57,7 +57,7 @@ func verifyNetworkHTTPTrace(t *testing.T, provider *sdktrace.TracerProvider, rec
 		_, _ = io.WriteString(w, body)
 	}))
 	defer controller.Close()
-	client, err := upstream.NewClient(upstream.Config{IdentityURL: controller.URL, AgentControllerURL: controller.URL, HTTPClient: controller.Client()})
+	client, err := upstream.NewClient(upstream.Config{IdentityURL: controller.URL, AgentControllerURL: controller.URL, AgentACPURL: controller.URL, HTTPClient: controller.Client()})
 	if err != nil {
 		t.Fatal(err)
 	}

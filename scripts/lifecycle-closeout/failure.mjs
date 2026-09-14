@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { setTimeout as delay } from "node:timers/promises";
 import { assertEventPage } from "./evidence.mjs";
 
 export function assertStartupFailure({
@@ -10,16 +11,20 @@ export function assertStartupFailure({
 }) {
   assert.equal(operation.agent_id, agentID);
   assert.equal(operation.kind, "create");
-  assert.equal(operation.state, "failed");
-  assert.equal(operation.phase, "runtime_initialize");
-  assert.equal(operation.error_code, "runtime_not_ready");
-  assert.match(operation.error_detail ?? "", /startup configuration.*MCP/i);
+  assert.equal(operation.state, "completed");
+  assert.equal(operation.phase, "completed");
   assert.equal(agent.agent_id, agentID);
-  assert.equal(agent.lifecycle_state, "unavailable");
-  assert.equal(agent.failure_stage, "runtime_initialize");
-  assert.equal(agent.failure_code, "runtime_not_ready");
+  assert.equal(agent.lifecycle_state, "created");
+  assert.equal(agent.activation_state, "enabled");
   assert(
-    !agent.executable_execution_revision && !agent.runtime,
+    ["unhealthy", "exited"].includes(agent.runtime_state) ||
+      (agent.runtime_state === "waiting" &&
+        agent.runtime_reason === "runtime_restarting"),
+  );
+  assert(agent.runtime_reason, "observed startup diagnostic missing");
+  assert(agent.runtime?.runtime_revision, "configured target missing");
+  assert(
+    !agent.executable_execution_revision && !agent.runtime?.mcp_endpoint,
     "failed Agent has an executable binding",
   );
   assert.equal(physical.containers.length, 1);
@@ -52,7 +57,7 @@ export function assertMCPStartupLog(text, agentID, generation) {
 
 export function assertFailureEvents(events, createRequestID, deleteRequestID) {
   for (const [id, expected] of [
-    [createRequestID, ["agent_create_requested", "agent_build_failed"]],
+    [createRequestID, ["agent_create_requested", "agent_created"]],
     [deleteRequestID, ["agent_delete_requested", "agent_deleted"]],
   ])
     assert.deepEqual(
@@ -86,22 +91,28 @@ export async function exerciseStartupFailure({
     },
   });
   assert.equal(template.runtime.image_ref, image);
-  const created = await command(
-    "create",
-    undefined,
-    {
-      ...agentBody,
-      name: "Failed lifecycle Agent",
-      template_id: template.template_id,
-    },
-    { outcome: "runtime_start_failed" },
-  );
+  const created = await command("create", undefined, {
+    ...agentBody,
+    name: "Failed lifecycle Agent",
+    template_id: template.template_id,
+  });
   const agentID = created.agentID;
   const path = `/api/admin/agents/${agentID}`;
+  const deadline = Date.now() + 120000;
+  let agent;
+  do {
+    agent = await json(path);
+    if (
+      ["unhealthy", "exited"].includes(agent.runtime_state) ||
+      agent.runtime_reason === "runtime_restarting"
+    )
+      break;
+    await delay(250);
+  } while (Date.now() < deadline);
   const physical = await resources(agentID);
   assertStartupFailure({
     operation: created.terminal,
-    agent: await json(path),
+    agent,
     physical,
     agentID,
     image,
@@ -112,12 +123,7 @@ export async function exerciseStartupFailure({
     agentID,
     container.Config.Labels["io.antnest.runtime-generation"],
   );
-  const deleted = await command(
-    "delete",
-    agentID,
-    {},
-    { cleanupFromFailed: true },
-  );
+  const deleted = await command("delete", agentID, {});
   assert.deepEqual(
     await resources(agentID),
     { containers: [], volumes: [] },

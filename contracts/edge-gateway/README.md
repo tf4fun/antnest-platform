@@ -9,10 +9,12 @@ Identity access tokens are cookie-only secrets. Token IDs remain Identity audit
 identifiers and are not stored in the browser session. Neither may appear in
 the JSON response schemas described by this contract.
 
-Workspace state GET and SSE expose only five fields: Agent ID, availability,
-access permission, Agent aggregate revision and nullable active Session ID.
-They reject caller-provided scope and replay cursors. Identity determines
-User/Organization; Controller determines Agent access and Session disclosure.
+Revision 11 workspace state GET/SSE expose six ACP-owned fields: Agent ID,
+availability, access permission, nullable configuration digest, nullable active
+Session ID and nullable unavailability reason. Missing/revoked access returns a
+sanitized offline view; source failure is never an idle state.
+They reject supplied scope and replay cursors. Identity determines the
+User/Organization; ACP determines Agent access and Session disclosure.
 Subscriptions have a bounded authentication lease and never renew inside
 Gateway. See [Workspace state](../../services/edge-gateway/docs/workspace-state.md)
 for response validation, revocation, shutdown and client recovery requirements.
@@ -27,10 +29,12 @@ SCIM requests pass through to Identity Service with their protocol Bearer
 credential intact. Browser cookies and forged trusted-principal headers are
 removed; Identity remains the sole SCIM authentication and business authority.
 
-Agent workspace bootstrap responses contain browser-safe Agent facts only.
-Edge resolves the selected Agent again during WebSocket admission and injects
-its opaque access subject into the ACP upstream request; that subject is never
-returned to JavaScript or accepted from an incoming browser header.
+Workspace bootstrap returns only Agent ID/name discovery metadata from
+Controller. It does not aggregate execution availability. Protocol and state
+requests go directly to ACP with trusted Organization/Principal/Agent headers,
+without a Controller lookup. Incoming identity headers, including the retired
+access subject, are removed. Pending Agent UI/Console consumer changes and
+Docker acceptance are tracked in the execution-boundary plan.
 
 After upgrade, Edge terminates both WebSocket hops and relays opaque complete
 messages using the existing Gorilla WebSocket library. Before each client data
@@ -50,8 +54,7 @@ is recorded by the relay; admission checks retain the Gateway trace context.
 The check is the admission point, not a distributed revocation transaction:
 messages already admitted can finish, and an idle connection is not polled.
 Server output for admitted work may continue until another client message or
-disconnection. Closing a socket does not claim to cancel a durable Run. Agent
-Controller/ACP continue to own Agent and Session authorization. No Identity or
+disconnection. Closing a socket does not claim to cancel a durable Run. ACP continues to own Agent and Session authorization. No Identity or
 ACP RPC contract or database is added for browser session revalidation.
 
 Per Gateway process, 64 upgraded/admitting connections and four buffered data

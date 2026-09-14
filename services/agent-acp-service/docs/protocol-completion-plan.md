@@ -1,5 +1,10 @@
 # ACP v1 功能补齐与 Goose 复用方案
 
+> 执行边界更新（2026-09-15）：下文为此前 F01-F10 的历史交付计划和证据，不代表本轮重构已验收。
+> `acquire-run`、Controller 固定凭证快照及完成回执不再是当前合同；ACP 本地拥有执行和协议准入，
+> Controller 发布管理配置。当前方案与进度见 [执行边界方案](../../../docs/controller-acp-execution-boundary-plan.md)；
+> Agent UI 暂缓，不将历史 UI 通过记录套用到本轮。
+
 > 核查日期：2026-09-08
 > 代码基线：`325e8ab`；承接未提交的服务端完整性目标修订
 > 状态：F01 已通过服务级验收；F02–F06、F08–F10 已通过服务级及 Gateway/Runtime/Jaeger 部署联调；F05/F06 的配置、模式及审批已接入 Agent UI；F07 经用户确认暂缓，等待官方 MCP SDK 支持，不维护本地补丁；F09 原生输入按模型能力限定，不承诺任意格式或真实 Provider 识别质量；F10 的 ACP、Controller、Console/BFF、Agent UI 和部署联调已验收；单节点 C1–C6 总验收仍需逐项收口；W1–W5 实施基线已明确

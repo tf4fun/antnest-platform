@@ -65,6 +65,8 @@ func (c *Client) InspectContainer(ctx context.Context, identifier string) (Conta
 	return Container{
 		ID: response.ID, Name: strings.TrimPrefix(response.Name, "/"),
 		Running: response.State.Running, Health: health,
+		Status: response.State.Status, ExitCode: response.State.ExitCode,
+		OOMKilled: response.State.OOMKilled, Error: response.State.Error,
 		RestartCount: response.RestartCount, Labels: response.Config.Labels,
 	}, nil
 }
@@ -344,8 +346,12 @@ type inspectContainerResponse struct {
 	Name         string `json:"Name"`
 	RestartCount uint64 `json:"RestartCount"`
 	State        struct {
-		Running bool `json:"Running"`
-		Health  *struct {
+		Running   bool   `json:"Running"`
+		Status    string `json:"Status"`
+		ExitCode  int    `json:"ExitCode"`
+		OOMKilled bool   `json:"OOMKilled"`
+		Error     string `json:"Error"`
+		Health    *struct {
 			Status string `json:"Status"`
 		} `json:"Health"`
 	} `json:"State"`

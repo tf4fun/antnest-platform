@@ -63,6 +63,10 @@ type Container struct {
 	ID           string
 	Name         string
 	Running      bool
+	Status       string
+	ExitCode     int
+	OOMKilled    bool
+	Error        string
 	Health       string
 	RestartCount uint64
 	Labels       map[string]string
@@ -418,24 +422,13 @@ func (d *Driver) inspectContainer(container Container) (deployment.Inspection, e
 	if err != nil || port == 0 {
 		return deployment.Inspection{}, fmt.Errorf("normalize managed Runtime container: Runtime port is malformed")
 	}
-	phase := deployment.PhaseExited
-	health := deployment.HealthUnknown
-	if container.Running {
-		phase = deployment.PhaseRunning
-		switch container.Health {
-		case "healthy":
-			health = deployment.HealthHealthy
-		case "starting":
-			health = deployment.HealthStarting
-		case "unhealthy":
-			health = deployment.HealthUnhealthy
-		}
-	}
+	condition := containerCondition(container)
 	base := "http://" + container.Name + ":" + strconv.FormatUint(port, 10)
 	return deployment.Inspection{
 		AgentID: key.AgentID, Generation: key.Generation,
 		SpecDigest: digest, PlatformResourceID: container.ID,
-		PlatformPhase: phase, Health: health, StatusEndpoint: base + "/status",
+		PlatformPhase: condition.phase, Health: condition.health, Reason: condition.reason,
+		DiagnosticSummary: condition.detail, StatusEndpoint: base + "/status",
 		MCPEndpoint: base + "/mcp", RestartCount: container.RestartCount,
 		ObservedAt: time.Now().UTC(),
 	}, nil
@@ -548,6 +541,8 @@ func (d *Driver) owns(labels map[string]string) bool {
 
 func observationKind(action string) (deployment.ObservationKind, bool) {
 	switch strings.TrimSpace(action) {
+	case "start", "health_status: starting":
+		return deployment.ObservationStarting, true
 	case "restart":
 		return deployment.ObservationRestarted, true
 	case "health_status: healthy":

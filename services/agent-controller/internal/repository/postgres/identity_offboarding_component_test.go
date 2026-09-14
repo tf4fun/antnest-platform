@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"go.opentelemetry.io/otel"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
@@ -26,14 +28,15 @@ func TestIdentityOffboardingComponentDisablesRuntimeAndRequiresExplicitEnable(t 
 	otel.SetTracerProvider(provider)
 	t.Cleanup(func() { otel.SetTracerProvider(previous); _ = provider.Shutdown(context.Background()) })
 	repository, base := identityTestRepository(t)
+	staleDefault := agentAuthorizationCommand(base.Agent)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	deps := &offboardingDependencies{runtime: ports.RuntimeOperation{State: "completed", Effect: "completed", RuntimeRevision: base.Agent.RuntimeRevision,
-		RuntimeExecutionID: base.Agent.RuntimeExecutionID, MCPEndpoint: base.Agent.RuntimeMCPEndpoint, LifecycleState: "ready", Health: "healthy"},
+		RuntimeExecutionID: "", MCPEndpoint: "", LifecycleState: "provisioned", Health: "unknown"},
 		network: *closedNetworkAttachment(base.Agent.AgentID)}
 	deps.network.AttachmentState = ports.NetworkAttachmentOpen
 	identity := &offboardingIdentity{principal: ports.IdentityPrincipal{UserID: base.Agent.OwnerUserID, OrganizationID: base.Agent.OrganizationID, MembershipID: "membership", Active: false, LastRevocationSequence: 5},
 		event: ports.PrincipalRevocation{Sequence: 5, UserID: base.Agent.OwnerUserID, Reason: "user_deactivated", OccurredAt: time.Now().UTC(), TraceParent: "00-11111111111111111111111111111111-2222222222222222-01"}}
-	lifecycle := application.NewLifecycleService(repository, repository, deps, deps, offboardingClock{}, application.WithIdentityDirectory(identity))
+	lifecycle := application.NewLifecycleService(repository, repository, deps, deps, offboardingClock{}, application.WithIdentityDirectory(identity), application.WithLifecycleExecution(testLifecycleExecution(repository)))
 	worker, err := application.NewIdentityRevocationWorker(identity, repository, lifecycle, time.Second, logger)
 	if err != nil {
 		t.Fatal(err)
@@ -48,6 +51,11 @@ func TestIdentityOffboardingComponentDisablesRuntimeAndRequiresExplicitEnable(t 
 	if err != nil || !fenced.IdentityRevoked() || fenced.ActiveOperationRequestID == "" {
 		t.Fatalf("fence=%+v err=%v", fenced, err)
 	}
+	queries := application.NewAgentQueryService(repository)
+	workspaceInput := application.ListWorkspaceAgentsInput{RequestID: "offboarding-list", OrganizationID: base.Agent.OrganizationID, PrincipalID: base.Agent.OwnerUserID}
+	workspace, err := queries.ListWorkspaceAgents(ctx, workspaceInput)
+	require.NoError(t, err)
+	require.Empty(t, workspace.Items, "revoked owner cannot discover Agent metadata")
 	operation, err := repository.GetLifecycleOperation(ctx, fenced.ActiveOperationRequestID)
 	if err != nil || operation.OwnerRevocationSequence != 5 {
 		t.Fatalf("operation=%+v err=%v", operation, err)
@@ -64,7 +72,7 @@ func TestIdentityOffboardingComponentDisablesRuntimeAndRequiresExplicitEnable(t 
 	recovery := lifecycle
 	finishOffboardingOperation(t, repository, recovery, operation.RequestID, domain.OperationCompleted)
 	disabled, err := loadAgentRecord(ctx, repository.pool, base.Agent.AgentID)
-	if err != nil || disabled.LifecycleState != domain.AgentDisabled || deps.disableCalls != 1 || deps.network.AttachmentState != ports.NetworkAttachmentClosed {
+	if err != nil || (disabled.LifecycleState != domain.AgentCreated || disabled.ActivationState != domain.ActivationDisabled || disabled.RuntimeState != domain.RuntimeAbsent) || deps.disableCalls != 1 || deps.network.AttachmentState != ports.NetworkAttachmentClosed {
 		t.Fatalf("disabled=%+v calls=%d err=%v", disabled, deps.disableCalls, err)
 	}
 	if disabled.LastSuccessfulExecutionRevisionID != base.Agent.ExecutionRevisionID {
@@ -75,24 +83,44 @@ func TestIdentityOffboardingComponentDisablesRuntimeAndRequiresExplicitEnable(t 
 		t.Fatalf("inactive owner enabled Agent: %v", err)
 	}
 	identity.principal.Active = true
+	configuration := application.NewAgentConfigurationService(repository, identity, offboardingClock{})
+	_, defaultErr := configuration.SetAgentAuthorization(ctx, application.SetAgentAuthorizationInput{
+		RequestID: "before-explicit-enable", AgentID: base.Agent.AgentID, PrincipalID: base.Agent.OwnerUserID,
+		ExpectedAccessRevision: base.Agent.AccessRevision, ExpectedAuthorizationRevision: 1,
+		Authorization: staleDefault.Authorization})
+	require.ErrorIs(t, defaultErr, application.ErrAccessDenied)
 	if err := worker.RunOnce(ctx); err != nil {
 		t.Fatal(err)
 	}
 	afterRestore, err := loadAgentRecord(ctx, repository.pool, base.Agent.AgentID)
-	if err != nil || afterRestore.LifecycleState != domain.AgentDisabled {
+	if err != nil || (afterRestore.LifecycleState != domain.AgentCreated || afterRestore.ActivationState != domain.ActivationDisabled || afterRestore.RuntimeState != domain.RuntimeAbsent) {
 		t.Fatal("Identity restore auto-enabled Agent")
 	}
+	workspace, err = queries.ListWorkspaceAgents(ctx, workspaceInput)
+	require.NoError(t, err)
+	require.Empty(t, workspace.Items, "Identity restoration alone does not restore Agent access")
 	if _, err := lifecycle.EnableAgent(ctx, application.EnableAgentInput{RequestID: "enable-restored", AgentID: base.Agent.AgentID}); err != nil {
 		t.Fatal(err)
 	}
 	finishOffboardingOperation(t, repository, recovery, "enable-restored", domain.OperationCompleted)
 	enabled, err := loadAgentRecord(ctx, repository.pool, base.Agent.AgentID)
-	if err != nil || enabled.IdentityRevoked() || enabled.OwnerAuthorizationSequence != 5 || enabled.LifecycleState != domain.AgentAvailable {
+	if err != nil || enabled.IdentityRevoked() || enabled.OwnerAuthorizationSequence != 5 || (enabled.LifecycleState != domain.AgentCreated || enabled.ActivationState != domain.ActivationEnabled || enabled.RuntimeState != domain.RuntimeUnknown) {
 		t.Fatalf("explicit enable=%+v err=%v", enabled, err)
 	}
-	if _, err := repository.ResolveRunAuthorization(ctx, enabled.AgentID, enabled.OwnerUserID, enabled.AccessRevision); err != nil {
-		t.Fatal(err)
-	}
+	require.Equal(t, enabled.OwnerAuthorizationSequence, enabled.IdentityRevocationSequence)
+	workspace, err = queries.ListWorkspaceAgents(ctx, workspaceInput)
+	require.NoError(t, err)
+	require.Len(t, workspace.Items, 1, "explicit Enable restores discovery even before Runtime readiness")
+	require.Equal(t, enabled.AgentID, workspace.Items[0].AgentID)
+	projection := publishedAgent(t, repository, enabled)
+	require.Equal(t, []string{enabled.OwnerUserID}, projection.PrincipalIDs)
+	assertExecutionClosed(t, repository, enabled)
+	require.Equal(t, staleDefault.Query.ExpectedAccessRevision, enabled.AccessRevision)
+	_, err = repository.SetAgentAuthorization(ctx, staleDefault)
+	require.ErrorIs(t, err, ports.ErrAgentAccessDenied, "old identity proof must not survive revoke and explicit Enable")
+	staleDefault.OwnerRevocationSequence = identity.principal.LastRevocationSequence
+	_, err = repository.SetAgentAuthorization(ctx, staleDefault)
+	require.NoError(t, err, "fresh proof may update the default after explicit Enable")
 	found := false
 	for _, span := range recorder.Ended() {
 		if span.Name() == "agent_controller.identity_offboarding.receive" && span.SpanContext().TraceID().String() == "11111111111111111111111111111111" {
@@ -207,9 +235,9 @@ func TestIdentityOffboardingRetriesFailedDisableWithoutRestoringAccess(t *testin
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	deps := &offboardingDependencies{rejectDisable: true, network: *closedNetworkAttachment(base.Agent.AgentID),
 		runtime: ports.RuntimeOperation{RuntimeRevision: base.Agent.RuntimeRevision, RuntimeExecutionID: base.Agent.RuntimeExecutionID,
-			MCPEndpoint: base.Agent.RuntimeMCPEndpoint, LifecycleState: "ready", Health: "healthy"}}
+			MCPEndpoint: base.Agent.RuntimeMCPEndpoint, LifecycleState: "provisioned", Health: "healthy"}}
 	identity := &offboardingIdentity{event: ports.PrincipalRevocation{Sequence: 5, UserID: base.Agent.OwnerUserID, Reason: "user_deactivated", OccurredAt: time.Now().UTC()}}
-	lifecycle := application.NewLifecycleService(repository, repository, deps, deps, offboardingClock{})
+	lifecycle := application.NewLifecycleService(repository, repository, deps, deps, offboardingClock{}, application.WithLifecycleExecution(testLifecycleExecution(repository)))
 	worker, err := application.NewIdentityRevocationWorker(identity, repository, lifecycle, time.Second, logger)
 	if err != nil {
 		t.Fatal(err)
@@ -245,12 +273,12 @@ func TestIdentityOffboardingRetriesFailedDisableWithoutRestoringAccess(t *testin
 	deps.rejectDisable = false
 	finishOffboardingOperation(t, repository, recovery, second.ActiveOperationRequestID, domain.OperationCompleted)
 	stopped, err := loadAgentRecord(ctx, repository.pool, agent.AgentID)
-	if err != nil || stopped.LifecycleState != domain.AgentDisabled || deps.disableCalls != 2 {
+	if err != nil || (stopped.LifecycleState != domain.AgentCreated || stopped.ActivationState != domain.ActivationDisabled || stopped.RuntimeState != domain.RuntimeAbsent) || deps.disableCalls != 2 {
 		t.Fatalf("retry did not converge: %+v calls=%d %v", stopped, deps.disableCalls, err)
 	}
 }
 func (deps *offboardingDependencies) EnableRuntime(context.Context, string, string, string, ports.RuntimeConfiguration) (ports.RuntimeOperation, error) {
-	deps.runtime = ports.RuntimeOperation{State: "completed", Effect: "completed", RuntimeRevision: "rtv_33333333333333333333333333333333", RuntimeExecutionID: "restored-execution", MCPEndpoint: "http://runtime-restored:8091/mcp", LifecycleState: "ready", Health: "healthy"}
+	deps.runtime = ports.RuntimeOperation{State: "completed", Effect: "completed", RuntimeRevision: "rtv_33333333333333333333333333333333", RuntimeExecutionID: "", MCPEndpoint: "", LifecycleState: "provisioned", Health: "unknown"}
 	return deps.runtime, nil
 }
 func (deps *offboardingDependencies) InspectRuntime(_ context.Context, id string) (ports.RuntimeInspection, error) {

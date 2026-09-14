@@ -8,7 +8,8 @@ import { recordBoundaryError } from "../telemetry/diagnostics.js";
 import { WebSocketServer, type WebSocket } from "ws";
 
 import type { AcpApplicationPort } from "../ports/acp-application.js";
-import { AgentControllerError, type AgentControllerPort } from "../ports/agent-controller.js";
+import { trustedIdentity } from "./trusted-identity.js";
+import { promptCapabilities } from "./acp/capabilities.js";
 import { NOOP_TELEMETRY, type TelemetryPort } from "../ports/telemetry.js";
 import {
   createAcpV1WebSocketStream,
@@ -19,10 +20,31 @@ import { createAcpV2Agent } from "./acp/v2/agent.js";
 import { SessionOutputStreams } from "./acp/session-output.js";
 import { AcpHttpTransport } from "./acp/http-transport.js";
 import type { PermissionConnectionsPort } from "../ports/tool-permissions.js";
+import type { ExecutionConfigurationPort } from "../ports/execution-configuration.js";
+import type { AgentSettlementPort } from "../ports/agent-settlement.js";
+import type { AgentExecutionStatePort } from "../ports/agent-execution-state.js";
+import type { ExecutionAuditPort } from "../ports/execution-audit.js";
+import { executionAuditRoute, serveExecutionAudit } from "./execution-audit.js";
+import {
+  AGENT_EXECUTION_STATE_PATH,
+  AGENT_EXECUTION_WATCH_PATH,
+  serveAgentExecutionState,
+} from "./agent-execution-state.js";
+import { AGENT_SETTLEMENT_PATH, settleAgent } from "./agent-settlement.js";
+import {
+  applyExecutionConfiguration,
+  EXECUTION_CONFIGURATION_PATH,
+} from "./execution-configuration.js";
 
 export type AgentAcpHttpServerOptions = {
+  outputs?: SessionOutputStreams;
+  executionConfiguration?: ExecutionConfigurationPort;
+  settlement?: AgentSettlementPort;
+  executionState?: AgentExecutionStatePort;
+  executionAudits?: ExecutionAuditPort;
+  stateDeliveryTimeoutMs?: number;
+  maxConfigurationBytes?: number;
   permissions?: PermissionConnectionsPort;
-  agentController: AgentControllerPort;
   application: AcpApplicationPort;
   ready: () => Promise<boolean>;
   id?: () => string;
@@ -32,7 +54,7 @@ export type AgentAcpHttpServerOptions = {
 };
 
 export class AgentAcpHttpServer {
-  private readonly outputs = new SessionOutputStreams();
+  private readonly outputs: SessionOutputStreams;
   private readonly server: Server;
   private readonly webSockets: WebSocketServer;
   private readonly connections = new Set<WebSocket>();
@@ -42,6 +64,7 @@ export class AgentAcpHttpServer {
   private closePromise: Promise<void> | undefined;
 
   public constructor(private readonly options: AgentAcpHttpServerOptions) {
+    this.outputs = options.outputs ?? new SessionOutputStreams();
     this.id = options.id ?? randomUUID;
     this.telemetry = options.telemetry ?? NOOP_TELEMETRY;
     this.httpTransport = new AcpHttpTransport({ ...options, outputs: this.outputs });
@@ -111,6 +134,48 @@ export class AgentAcpHttpServer {
   }
 
   private async handleHttp(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    const auditRoute = executionAuditRoute(request.url);
+    if (auditRoute !== undefined) {
+      await serveExecutionAudit(
+        request,
+        response,
+        auditRoute,
+        this.options.executionAudits,
+        this.options.maxConfigurationBytes ?? 16 * 1024 * 1024,
+        this.options.ready,
+      );
+      return;
+    }
+    if (request.url === AGENT_EXECUTION_STATE_PATH || request.url === AGENT_EXECUTION_WATCH_PATH) {
+      await serveAgentExecutionState(
+        request,
+        response,
+        this.options.executionState,
+        this.options.maxConfigurationBytes ?? 16 * 1024 * 1024,
+        this.options.ready,
+        this.options.stateDeliveryTimeoutMs,
+      );
+      return;
+    }
+    if (request.url === AGENT_SETTLEMENT_PATH) {
+      await settleAgent(
+        request,
+        response,
+        this.options.settlement,
+        this.options.maxConfigurationBytes ?? 16 * 1024 * 1024,
+        this.options.ready,
+      );
+      return;
+    }
+    if (request.url === EXECUTION_CONFIGURATION_PATH) {
+      await applyExecutionConfiguration(
+        request,
+        response,
+        this.options.executionConfiguration,
+        this.options.maxConfigurationBytes ?? 16 * 1024 * 1024,
+      );
+      return;
+    }
     if (request.url === "/v1/acp") {
       await this.httpTransport.handle(request, response);
       return;
@@ -152,8 +217,8 @@ export class AgentAcpHttpServer {
       if (span !== undefined) recordBoundaryError(span, error, "readiness");
       return rejectUpgrade(socket, 503, "Service Unavailable");
     }
-    const subject = oneHeader(request, "x-antnest-agent-access-subject");
-    if (subject === null) {
+    const identity = trustedIdentity(request.headers);
+    if (identity === null) {
       this.telemetry.count("antnest.acp.connections", {
         result: "rejected",
         reason: "unauthorized",
@@ -162,16 +227,9 @@ export class AgentAcpHttpServer {
     }
     socket.pause();
     try {
-      const access = await this.options.agentController.resolveAgentAccess({
-        requestId: this.id(),
-        agentAccessSubject: subject,
-      });
       const binding = {
         connectionId: this.id(),
-        agentAccessSubject: subject,
-        principalId: access.principalId,
-        agentId: access.agentId,
-        accessRevision: access.accessRevision,
+        ...identity,
       };
       this.webSockets.handleUpgrade(request, socket, head, (webSocket) => {
         this.telemetry.count("antnest.acp.connections", { result: "accepted", protocol });
@@ -185,7 +243,7 @@ export class AgentAcpHttpServer {
           if (protocol === "v1") {
             const connection = createAcpV1Agent({
               binding,
-              promptCapabilities: access.promptCapabilities,
+              promptCapabilities,
               application: this.options.application,
               outputs: this.outputs,
               ...(this.options.permissions === undefined
@@ -196,7 +254,7 @@ export class AgentAcpHttpServer {
           } else {
             const connection = createAcpV2Agent({
               binding,
-              promptCapabilities: access.promptCapabilities,
+              promptCapabilities,
               application: this.options.application,
               outputs: this.outputs,
               ...(this.options.permissions === undefined
@@ -213,15 +271,14 @@ export class AgentAcpHttpServer {
       socket.resume();
       return 101;
     } catch (error) {
-      const rejection = accessRejection(error);
       this.telemetry.count("antnest.acp.connections", {
         result: "rejected",
-        reason: rejection.metricReason,
+        reason: "connection_setup_failed",
       });
       this.report(error, "upgrade_authentication");
       const span = activeHttpSpan();
       if (span !== undefined) recordBoundaryError(span, error, "upgrade_authentication");
-      return rejectUpgrade(socket, rejection.status, rejection.reason);
+      return rejectUpgrade(socket, 503, "Service Unavailable");
     }
   }
 
@@ -259,33 +316,6 @@ function acpProtocol(url: string | undefined): "v1" | "v2" | null {
     default:
       return null;
   }
-}
-
-function oneHeader(request: IncomingMessage, name: string): string | null {
-  const value = request.headers[name];
-  if (typeof value !== "string") {
-    return null;
-  }
-  const normalized = value.trim();
-  return normalized.length === 0 ? null : normalized;
-}
-
-function accessRejection(error: unknown): {
-  status: number;
-  reason: string;
-  metricReason: string;
-} {
-  if (error instanceof AgentControllerError && error.code === "access_denied" && !error.retryable) {
-    return { status: 403, reason: "Forbidden", metricReason: "forbidden" };
-  }
-  if (
-    error instanceof AgentControllerError &&
-    error.code === "invalid_request" &&
-    !error.retryable
-  ) {
-    return { status: 400, reason: "Bad Request", metricReason: "invalid_request" };
-  }
-  return { status: 503, reason: "Service Unavailable", metricReason: "dependency_unavailable" };
 }
 
 function json(response: ServerResponse, status: number, body: unknown): void {

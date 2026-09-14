@@ -1,18 +1,17 @@
-import type { AcpApplicationPort, ExecuteRunResult } from "../ports/acp-application.js";
+import type { RunExecutionPort } from "../application/run-executor.js";
+import type {
+  AcpApplicationPort,
+  ExecuteRunResult,
+  RunExecutionInput,
+} from "../ports/acp-application.js";
 import type { RuntimeInformationPort } from "../ports/runtime-information.js";
 import { DomainError } from "../domain/errors.js";
-import { AgentControllerError, isAgentControllerErrorCode } from "../ports/agent-controller.js";
+import { safeError } from "./diagnostics.js";
 import type {
-  AgentControllerPort,
-  AcquireRunInput,
-  AcquireRunResult,
-  FinishRunInput,
-  ResolveAgentAccessInput,
-  ResolveAgentAccessResult,
-  ResolveCredentialInput,
-  ResolveCredentialResult,
-} from "../ports/agent-controller.js";
-import type { ModelPort, ModelRequest, ModelResult } from "../ports/model.js";
+  AuthenticatedModelTransport,
+  AuthenticatedModelRequest,
+  ModelResult,
+} from "../ports/model.js";
 import type { TelemetryAttributes, TelemetryPort } from "../ports/telemetry.js";
 import type { ToolCallInput, ToolCallResult, ToolCatalogPort } from "../ports/tools.js";
 import { context, trace } from "@opentelemetry/api";
@@ -141,47 +140,6 @@ export class InstrumentedAcpApplication implements AcpApplicationPort {
     );
   }
 
-  public executeRun(
-    input: Parameters<AcpApplicationPort["executeRun"]>[0],
-  ): ReturnType<AcpApplicationPort["executeRun"]> {
-    const started = performance.now();
-    let terminalClass = "executor_error";
-    const attributes = {
-      "run.id": input.accepted.runId,
-      "session.id": input.accepted.sessionId,
-      "admission.id": input.accepted.snapshot.admissionId,
-      "execution.revision": input.accepted.snapshot.executionRevision,
-    };
-    return this.telemetry
-      .span("agent.run", attributes, async () => {
-        trace.getSpan(context.active())?.setAttributes({
-          ...snapshotAttributes(input.accepted.snapshot),
-          "antnest.request.id": input.accepted.requestId,
-          "antnest.run.id": input.accepted.runId,
-          "antnest.session.id": input.accepted.sessionId,
-          "antnest.operation.phase": "execute",
-        });
-
-        let result: ExecuteRunResult;
-        try {
-          result = await this.delegate.executeRun(input);
-        } catch (error) {
-          this.telemetry.count("antnest.acp.runs", { terminal_class: "executor_error" });
-          throw error;
-        }
-        terminalClass = result.terminalClass;
-        recordResult(result);
-
-        this.telemetry.count("antnest.acp.runs", { terminal_class: result.terminalClass });
-        return result;
-      })
-      .finally(() => {
-        this.telemetry.duration("antnest.acp.run.duration", performance.now() - started, {
-          terminal_class: terminalClass,
-        });
-      });
-  }
-
   private sessionOperation<Result>(
     method: string,
     agentId: string,
@@ -200,104 +158,76 @@ export class InstrumentedAcpApplication implements AcpApplicationPort {
   }
 }
 
+export class InstrumentedRunExecutor implements RunExecutionPort {
+  public constructor(
+    private readonly delegate: RunExecutionPort,
+    private readonly telemetry: TelemetryPort,
+  ) {}
+
+  public execute(input: RunExecutionInput): Promise<ExecuteRunResult> {
+    const started = performance.now();
+    let terminalClass = "executor_error";
+    const attributes = {
+      "run.id": input.accepted.runId,
+      "session.id": input.accepted.sessionId,
+      "organization.id": input.accepted.snapshot.organizationId,
+      "execution.revision": input.accepted.snapshot.executionRevision,
+    };
+    return this.telemetry
+      .span("agent.run", attributes, async () => {
+        trace.getSpan(context.active())?.setAttributes({
+          ...snapshotAttributes(input.accepted.snapshot),
+          "antnest.request.id": input.accepted.requestId,
+          "antnest.run.id": input.accepted.runId,
+          "antnest.session.id": input.accepted.sessionId,
+          "antnest.operation.phase": "execute",
+        });
+
+        let result: ExecuteRunResult;
+        try {
+          result = await this.delegate.execute(input);
+        } catch (error) {
+          this.telemetry.count("antnest.acp.runs", { terminal_class: "executor_error" });
+          throw error;
+        }
+        terminalClass = result.terminalClass;
+        trace.getSpan(context.active())?.setAttributes({
+          "run.terminal_class": result.terminalClass,
+          "run.executor_state": result.executorState,
+          "run.tool_effect_state": result.toolEffectState,
+          "run.unknown_effect_source": result.unknownEffectSource,
+        });
+        recordResult(result);
+
+        this.telemetry.count("antnest.acp.runs", { terminal_class: result.terminalClass });
+        return result;
+      })
+      .finally(() => {
+        this.telemetry.duration("antnest.acp.run.duration", performance.now() - started, {
+          terminal_class: terminalClass,
+        });
+      });
+  }
+}
+
 function rejectionClass(error: unknown): string {
-  if (error instanceof DomainError) {
-    return error.code;
-  }
-  if (error instanceof AgentControllerError) {
-    return isAgentControllerErrorCode(error.code) ? error.code : "dependency_unavailable";
-  }
-  return "internal_error";
+  if (!(error instanceof DomainError)) return "internal_error";
+  const code = safeError(error).code;
+  return typeof code === "string" ? code : "internal_error";
 }
 
-export class InstrumentedAgentController implements AgentControllerPort {
+export class InstrumentedModel implements AuthenticatedModelTransport {
   public constructor(
-    private readonly delegate: AgentControllerPort,
+    private readonly delegate: AuthenticatedModelTransport,
     private readonly telemetry: TelemetryPort,
   ) {}
 
-  public getSessionConfiguration(
-    input: Parameters<AgentControllerPort["getSessionConfiguration"]>[0],
-    signal?: AbortSignal,
-  ) {
-    return this.rpc(
-      "get_session_configuration",
-      { "request.id": input.requestId, "agent.id": input.agentId },
-      () => this.delegate.getSessionConfiguration(input, signal),
-    );
-  }
-
-  public resolveAgentAccess(
-    input: ResolveAgentAccessInput,
-    signal?: AbortSignal,
-  ): Promise<ResolveAgentAccessResult> {
-    return this.rpc("resolve_agent_access", { "request.id": input.requestId }, () =>
-      this.delegate.resolveAgentAccess(input, signal),
-    );
-  }
-
-  public acquireRun(input: AcquireRunInput, signal?: AbortSignal): Promise<AcquireRunResult> {
-    return this.rpc(
-      "acquire_run",
-      { "request.id": input.requestId, "agent.id": input.agentId, "session.id": input.sessionId },
-      () => this.delegate.acquireRun(input, signal),
-    );
-  }
-
-  public resolveCredential(
-    input: ResolveCredentialInput,
-    signal?: AbortSignal,
-  ): Promise<ResolveCredentialResult> {
-    return this.rpc(
-      "resolve_credential",
-      { "request.id": input.requestId, "admission.id": input.admissionId },
-      () => this.delegate.resolveCredential(input, signal),
-    );
-  }
-
-  public finishRun(input: FinishRunInput, signal?: AbortSignal): Promise<void> {
-    return this.rpc(
-      "finish_run",
-      {
-        "request.id": input.requestId,
-        "admission.id": input.admissionId,
-        "run.terminal_class": input.terminalClass,
-        "run.tool_effect_state": input.toolEffectState,
-        "run.unknown_effect_source": input.unknownEffectSource,
-      },
-      () => this.delegate.finishRun(input, signal),
-    );
-  }
-
-  private rpc<Result>(
-    method: string,
-    spanAttributes: TelemetryAttributes,
-    operation: () => Promise<Result>,
-  ): Promise<Result> {
-    return observe(
-      this.telemetry,
-      `agent_controller.${method}`,
-      spanAttributes,
-      "antnest.acp.agent_controller.duration",
-      "antnest.acp.agent_controller.requests",
-      { method },
-      operation,
-    );
-  }
-}
-
-export class InstrumentedModel implements ModelPort {
-  public constructor(
-    private readonly delegate: ModelPort,
-    private readonly telemetry: TelemetryPort,
-  ) {}
-
-  public complete(request: ModelRequest): Promise<ModelResult> {
+  public complete(request: AuthenticatedModelRequest): Promise<ModelResult> {
     return observe(
       this.telemetry,
       "model.complete",
       {
-        "admission.id": request.snapshot.admissionId,
+        "organization.id": request.snapshot.organizationId,
         "agent.spec_revision": request.snapshot.agentSpecRevision,
         "execution.revision": request.snapshot.executionRevision,
         "model.name": request.snapshot.executionSpec.model.model,
@@ -328,7 +258,10 @@ export class InstrumentedRuntimeInformation implements RuntimeInformationPort {
     return observe(
       this.telemetry,
       "mcp.runtime.info",
-      { "admission.id": snapshot.admissionId, "execution.revision": snapshot.executionRevision },
+      {
+        "organization.id": snapshot.organizationId,
+        "execution.revision": snapshot.executionRevision,
+      },
       "antnest.acp.mcp.duration",
       "antnest.acp.mcp.requests",
       { operation: "info", source: "runtime" },
@@ -350,7 +283,10 @@ export class InstrumentedToolCatalog implements ToolCatalogPort {
     return observe(
       this.telemetry,
       "mcp.tools.list",
-      { "admission.id": snapshot.admissionId, "execution.revision": snapshot.executionRevision },
+      {
+        "organization.id": snapshot.organizationId,
+        "execution.revision": snapshot.executionRevision,
+      },
       "antnest.acp.mcp.duration",
       "antnest.acp.mcp.requests",
       { operation: "list", source: "all" },
@@ -364,7 +300,7 @@ export class InstrumentedToolCatalog implements ToolCatalogPort {
       "mcp.tools.call",
       {
         "run.id": input.runId,
-        "admission.id": input.snapshot.admissionId,
+        "organization.id": input.snapshot.organizationId,
         "tool.name": input.tool.modelName,
         "mcp.source_id": input.tool.sourceId,
       },

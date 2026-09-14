@@ -209,7 +209,7 @@ func (store *deleteLifecycleStoreStub) QuarantineLifecycleOperation(_ context.Co
 	store.state.Operation.ErrorCode = input.ErrorCode
 	store.state.Operation.ErrorDetail = input.ErrorDetail
 	store.state.Operation.ChildRequestID = ""
-	store.state.Agent.LifecycleState = domain.AgentUnavailable
+	store.state.Agent.LifecycleState, store.state.Agent.ActivationState, store.state.Agent.RuntimeState = domain.AgentCreated, domain.ActivationEnabled, domain.RuntimeUnknown
 	store.state.Agent.ActiveOperationRequestID = ""
 	return nil
 }

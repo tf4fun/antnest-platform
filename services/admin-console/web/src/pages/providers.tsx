@@ -22,6 +22,7 @@ import {
   SearchField,
 } from "../components/page";
 import { Badge } from "../components/ui/badge";
+import { CatalogAvailabilityControl } from "../components/catalog-availability";
 import { Button } from "../components/ui/button";
 import { Dialog } from "../components/ui/dialog";
 import {
@@ -421,17 +422,26 @@ function ProviderDetail({
   const [open, setOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [rotating, setRotating] = useState(false);
+  const [availabilityBusy, setAvailabilityBusy] = useState(false);
   const [failure, setFailure] = useState<ResourceFailure>();
   const [success, setSuccess] = useState("");
+  const connectionRead = useRef<AbortController | undefined>(undefined);
+  useEffect(() => () => connectionRead.current?.abort(), []);
   async function refresh() {
+    if (open || availabilityBusy) return;
+    connectionRead.current?.abort();
+    const controller = new AbortController();
+    connectionRead.current = controller;
     setRefreshing(true);
     setFailure(undefined);
     try {
-      onChange(await api.provider(connection.connection_id));
+      const current = await api.provider(connection.connection_id, controller.signal);
+      if (current.connection_id !== connection.connection_id) throw new Error("The provider response does not match this connection.");
+      if (!controller.signal.aborted) onChange(current);
     } catch (cause) {
-      setFailure(resourceFailure(cause));
+      if (!controller.signal.aborted) setFailure(resourceFailure(cause));
     } finally {
-      setRefreshing(false);
+      if (!controller.signal.aborted) setRefreshing(false);
     }
   }
   return (
@@ -445,7 +455,7 @@ function ProviderDetail({
           <Button
             size="sm"
             variant="secondary"
-            disabled={refreshing || Boolean(failure)}
+            disabled={refreshing || Boolean(failure) || availabilityBusy}
             onClick={() => {
               setSuccess("");
               setOpen(true);
@@ -459,7 +469,7 @@ function ProviderDetail({
             variant="ghost"
             aria-label="Refresh connection"
             title="Refresh connection"
-            disabled={refreshing}
+            disabled={refreshing || open || availabilityBusy}
             onClick={() => void refresh()}
           >
             <RefreshCw
@@ -478,6 +488,12 @@ function ProviderDetail({
       {success ? (
         <SuccessNotice message={success} onDismiss={() => setSuccess("")} />
       ) : null}
+      <CatalogAvailabilityControl kind="provider-connections" resourceID={connection.connection_id} enabled={connection.enabled}
+        disabled={open || refreshing || Boolean(failure)} onBusyChange={setAvailabilityBusy} onReload={async (signal) => {
+          const current = await api.provider(connection.connection_id, signal);
+          if (current.connection_id !== connection.connection_id) throw new Error("The provider response does not match this connection.");
+          if (!signal.aborted) onChange(current);
+        }} />
       <ConnectionModels connection={connection} catalog={catalog} />
       <Dialog
         open={open}

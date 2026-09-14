@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -63,7 +62,7 @@ func (repository *Repository) BeginAgentDelete(
 	if err := lockLifecycleRequest(ctx, transaction, input.Operation.RequestID); err != nil {
 		return ports.AgentDeleteState{}, false, err
 	}
-	existing, err := loadLifecycleOperation(ctx, transaction, input.Operation.RequestID, "FOR UPDATE")
+	existing, err := loadLifecycleOperation(ctx, transaction, input.Operation.RequestID, "")
 	switch {
 	case err == nil:
 		if existing.Kind != domain.OperationDelete ||
@@ -76,6 +75,9 @@ func (repository *Repository) BeginAgentDelete(
 		return ports.AgentDeleteState{}, false, err
 	}
 
+	if err := lockAgentExecutionConfiguration(ctx, transaction, input.AgentID); err != nil {
+		return ports.AgentDeleteState{}, false, err
+	}
 	agent, err := loadAgentRecordForUpdate(ctx, transaction, input.AgentID)
 	if err != nil {
 		return ports.AgentDeleteState{}, false, err
@@ -88,7 +90,7 @@ func (repository *Repository) BeginAgentDelete(
 	}
 	result, err := transaction.Exec(ctx, `
 UPDATE agent_controller.agents
-SET desired_state = 'deleted', lifecycle_state = 'deleting',
+SET desired_state = 'deleted',
     active_operation_request_id = $2, failure_stage = '', failure_code = '',
     failure_detail = '', aggregate_sequence = $3, updated_at = $4
 WHERE id = $1 AND active_operation_request_id = '' AND aggregate_sequence = $5
@@ -107,7 +109,6 @@ WHERE id = $1 AND active_operation_request_id = '' AND aggregate_sequence = $5
 		return ports.AgentDeleteState{}, false, err
 	}
 	agent.DesiredState = domain.DesiredDeleted
-	agent.LifecycleState = domain.AgentDeleting
 	agent.ActiveOperationRequestID = input.Operation.RequestID
 	agent.FailureStage = ""
 	agent.FailureCode = ""
@@ -115,49 +116,14 @@ WHERE id = $1 AND active_operation_request_id = '' AND aggregate_sequence = $5
 	agent.AggregateSequence = input.RequestedEvent.AggregateSequence
 	agent.UpdatedAt = input.Now
 	state := ports.AgentDeleteState{Agent: agent, Operation: input.Operation}
+	if err := repository.advanceExecutionRevision(ctx, transaction, agent.OrganizationID); err != nil {
+		return ports.AgentDeleteState{}, false, err
+	}
 	if err := transaction.Commit(ctx); err != nil {
 		return ports.AgentDeleteState{}, false, fmt.Errorf("commit Agent delete transaction: %w", err)
 	}
 	repository.recordEventAppend(ctx, input.RequestedEvent.EventType)
 	return state, false, nil
-}
-
-func (repository *Repository) SettleAgentDeleteDrain(
-	ctx context.Context,
-	requestID string,
-	fingerprint string,
-	nextChildRequestID string,
-	now time.Time,
-) (ports.AgentDeleteState, error) {
-	transaction, err := repository.pool.Begin(ctx)
-	if err != nil {
-		return ports.AgentDeleteState{}, fmt.Errorf("begin Agent delete drain transaction: %w", err)
-	}
-	defer func() { _ = transaction.Rollback(ctx) }()
-	operation, err := loadLifecycleOperation(ctx, transaction, requestID, "FOR UPDATE")
-	if err != nil {
-		return ports.AgentDeleteState{}, err
-	}
-	if operation.Kind != domain.OperationDelete || operation.RequestFingerprint != fingerprint {
-		return ports.AgentDeleteState{}, ports.ErrRequestConflict
-	}
-	if operation.State != domain.OperationRunning || operation.Phase != domain.PhaseDrain {
-		return loadAgentDeleteState(ctx, transaction, operation)
-	}
-	blocked, err := activeRunBlocksDrain(ctx, transaction, operation.AgentID)
-	if err != nil {
-		return ports.AgentDeleteState{}, err
-	}
-	if blocked {
-		return loadAgentDeleteState(ctx, transaction, operation)
-	}
-	if err := advanceLifecycleOperation(
-		ctx, transaction, operation, domain.PhaseDrain, domain.PhaseNetworkFence,
-		nextChildRequestID, nil, nil, now,
-	); err != nil {
-		return ports.AgentDeleteState{}, err
-	}
-	return commitAgentDeleteState(ctx, transaction, requestID, "commit Agent delete drain")
 }
 
 func (repository *Repository) AdvanceAgentDelete(
@@ -168,7 +134,7 @@ func (repository *Repository) AdvanceAgentDelete(
 		return ports.AgentDeleteState{}, fmt.Errorf("begin Agent delete phase transaction: %w", err)
 	}
 	defer func() { _ = transaction.Rollback(ctx) }()
-	operation, err := loadLifecycleOperation(ctx, transaction, input.RequestID, "FOR UPDATE")
+	operation, err := loadLifecycleExecutionMutation(ctx, transaction, input.RequestID)
 	if err != nil {
 		return ports.AgentDeleteState{}, err
 	}
@@ -186,30 +152,11 @@ func (repository *Repository) AdvanceAgentDelete(
 	if err := advanceDeleteOperation(ctx, transaction, operation, input); err != nil {
 		return ports.AgentDeleteState{}, err
 	}
-	releasedRun, retainedRun := false, false
-	if deleteCrossedRuntimeBarrier(operation, input) {
-		barrier := runReleaseBarrier{runtimeResult: input.RuntimeResult}
-		if operation.SourceRuntimeAbsent {
-			barrier = runReleaseBarrier{absenceProof: operation.SourceRuntimeAbsenceProof}
-		}
-		releasedRun, retainedRun, err = repository.releaseBlockedRunAdmission(
-			ctx, transaction, operation, barrier, input.RunReleaseEvent, input.Now,
-		)
-		if err != nil {
-			return ports.AgentDeleteState{}, err
-		}
-	}
 	state, err := commitAgentDeleteState(
 		ctx, transaction, input.RequestID, "commit Agent delete phase",
 	)
 	if err != nil {
 		return ports.AgentDeleteState{}, err
-	}
-	state.RunReleaseOutcome = runReleaseOutcome(
-		deleteCrossedRuntimeBarrier(operation, input), releasedRun, retainedRun,
-	)
-	if releasedRun {
-		repository.recordEventAppend(ctx, ports.EventRunAdmissionReleased)
 	}
 	return state, nil
 }
@@ -222,7 +169,7 @@ func (repository *Repository) PublishAgentDelete(
 		return ports.AgentDeleteState{}, fmt.Errorf("begin Agent delete publish transaction: %w", err)
 	}
 	defer func() { _ = transaction.Rollback(ctx) }()
-	operation, err := loadLifecycleOperation(ctx, transaction, input.RequestID, "FOR UPDATE")
+	operation, err := loadLifecycleExecutionMutation(ctx, transaction, input.RequestID)
 	if err != nil {
 		return ports.AgentDeleteState{}, err
 	}
@@ -247,20 +194,21 @@ func (repository *Repository) PublishAgentDelete(
 	if err != nil {
 		return ports.AgentDeleteState{}, err
 	}
-	if agent.DesiredState != domain.DesiredDeleted || agent.LifecycleState != domain.AgentDeleting ||
+	if agent.DesiredState != domain.DesiredDeleted || agent.LifecycleState == domain.AgentDeleted ||
 		agent.ActiveOperationRequestID != operation.RequestID ||
 		input.DeletedEvent.AggregateSequence != agent.AggregateSequence+1 {
 		return ports.AgentDeleteState{}, ports.ErrConcurrentChange
 	}
 	result, err := transaction.Exec(ctx, `
 UPDATE agent_controller.agents
-SET desired_state = 'deleted', lifecycle_state = 'deleted',
+SET desired_state = 'deleted', lifecycle_state = 'deleted', activation_state = '', runtime_state = 'absent',
+    runtime_reason = '', runtime_detail = '', runtime_observed_at = NULL,
     executable_spec_revision_id = '', executable_execution_revision_id = '',
     runtime_revision = '', runtime_execution_id = '', runtime_mcp_endpoint = '',
     active_operation_request_id = '',
     failure_stage = '', failure_code = '', failure_detail = '',
     aggregate_sequence = $2, updated_at = $3
-WHERE id = $1 AND desired_state = 'deleted' AND lifecycle_state = 'deleting'
+WHERE id = $1 AND desired_state = 'deleted' AND lifecycle_state <> 'deleted'
   AND active_operation_request_id = $4 AND aggregate_sequence = $5`,
 		operation.AgentID, input.DeletedEvent.AggregateSequence, input.Now,
 		operation.RequestID, agent.AggregateSequence,
@@ -293,6 +241,9 @@ WHERE request_id = $1 AND state = 'running' AND phase = 'publish'`,
 	}
 	if completed.RowsAffected() != 1 {
 		return ports.AgentDeleteState{}, ports.ErrConcurrentChange
+	}
+	if err := repository.advanceExecutionRevision(ctx, transaction, agent.OrganizationID); err != nil {
+		return ports.AgentDeleteState{}, err
 	}
 	state, err := commitAgentDeleteState(ctx, transaction, input.RequestID, "commit Agent delete publish")
 	if err != nil {
@@ -335,22 +286,16 @@ func validDeleteAdvance(
 		if operation.SourceRuntimeAbsent {
 			next = domain.PhaseNetworkRelease
 		}
-		validReleaseEvent := emptyRunAdmissionEvent(input.RunReleaseEvent)
-		if operation.SourceRuntimeAbsent {
-			validReleaseEvent = validRunEvent(input.RunReleaseEvent, domain.AdmissionReleased)
-		}
 		return input.NextPhase == next && input.RuntimeResult == nil &&
-			input.NetworkReleaseOutcome == "" && validReleaseEvent
+			input.NetworkReleaseOutcome == ""
 	case domain.PhaseRuntimeDelete:
 		return !operation.SourceRuntimeAbsent && input.NextPhase == domain.PhaseNetworkRelease &&
 			input.NetworkAttachment == nil && input.RuntimeResult != nil &&
-			input.NetworkReleaseOutcome == "" && deletedRuntimeResult(*input.RuntimeResult) &&
-			validRunEvent(input.RunReleaseEvent, domain.AdmissionReleased)
+			input.NetworkReleaseOutcome == "" && deletedRuntimeResult(*input.RuntimeResult)
 	case domain.PhaseNetworkRelease:
 		return input.NextPhase == domain.PhasePublish && input.RuntimeResult == nil &&
 			deleteOperationHasRuntimeProof(operation) &&
-			validDeleteNetworkReleaseInput(operation.AgentID, input) &&
-			emptyRunAdmissionEvent(input.RunReleaseEvent)
+			validDeleteNetworkReleaseInput(operation.AgentID, input)
 	default:
 		return false
 	}
@@ -359,7 +304,7 @@ func validDeleteAdvance(
 func validDeleteRuntimeSource(
 	agent ports.AgentRecord, operation ports.LifecycleOperationRecord,
 ) bool {
-	if agent.DesiredState == domain.DesiredDeleted && agent.LifecycleState == domain.AgentUnavailable {
+	if agent.DesiredState == domain.DesiredDeleted && agent.LifecycleState != domain.AgentDeleted {
 		return operation.SourceRuntimeRevision == "" && !operation.SourceRuntimeAbsent &&
 			operation.SourceRuntimeInspection == nil && operation.SourceRuntimeAbsenceProof == nil
 	}
@@ -431,33 +376,6 @@ func deleteOperationHasRuntimeProof(operation ports.LifecycleOperationRecord) bo
 		runtimeProven = operation.RuntimeResult != nil && deletedRuntimeResult(*operation.RuntimeResult)
 	}
 	return runtimeProven
-}
-
-func deleteCrossedRuntimeBarrier(
-	operation ports.LifecycleOperationRecord, input ports.AdvanceAgentDelete,
-) bool {
-	return input.ExpectedPhase == domain.PhaseRuntimeDelete ||
-		(operation.SourceRuntimeAbsent && input.ExpectedPhase == domain.PhaseNetworkFence)
-}
-
-func activeRunBlocksDrain(ctx context.Context, transaction *databaseTransaction, agentID string) (bool, error) {
-	var admissionState string
-	err := transaction.QueryRow(ctx, `
-SELECT state FROM agent_controller.run_admissions
-WHERE agent_id = $1 AND state IN ('active', 'blocked_unknown_effect')
-ORDER BY admission_id LIMIT 1 FOR UPDATE`, agentID).Scan(&admissionState)
-	switch {
-	case err == nil && admissionState == "active":
-		return true, nil
-	case err == nil && admissionState == "blocked_unknown_effect":
-		return false, nil
-	case errors.Is(err, pgx.ErrNoRows):
-		return false, nil
-	case err != nil:
-		return false, fmt.Errorf("inspect Agent delete occupancy: %w", err)
-	default:
-		return false, fmt.Errorf("unsupported Run admission state %q", admissionState)
-	}
 }
 
 func deletedRuntimeResult(result ports.RuntimeOperation) bool {

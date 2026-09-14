@@ -1,80 +1,80 @@
 import { describe, expect, it, vi } from "vitest";
-
-import { AcpApplication } from "../../src/application/application.js";
-import type { AccessService } from "../../src/application/access-service.js";
-import type { PromptCoordinator } from "../../src/application/prompt-coordinator.js";
-import type { RunLifecyclePort } from "../../src/application/run-supervisor.js";
-import type { SessionService } from "../../src/application/session-service.js";
-import type { ConnectionBinding } from "../../src/domain/types.js";
+import {
+  AcpApplication,
+  type AcpApplicationDependencies,
+} from "../../src/application/application.js";
+import { RunSupervisor } from "../../src/application/run-supervisor.js";
+import type { RunExecutionPort } from "../../src/application/run-executor.js";
 import { DomainError } from "../../src/domain/errors.js";
+import { binding, snapshot } from "../support/fixtures.js";
 
-describe("AcpApplication", () => {
-  it("uses acquire-run admission instead of resolving access twice for a prompt", async () => {
-    const assert = vi.fn(() => Promise.resolve());
-    const accept = vi.fn<PromptCoordinator["accept"]>(() => Promise.resolve({} as never));
-    const admit = vi.fn<RunLifecyclePort["admit"]>((_, operation) =>
-      operation(new AbortController().signal),
-    );
-    const requirePromptSession = vi.fn<SessionService["requirePromptSession"]>(() =>
-      Promise.resolve(),
-    );
-    const application = new AcpApplication({
-      configuration: { get: vi.fn(), set: vi.fn() },
-      access: { assert } as unknown as AccessService,
-      sessions: { requirePromptSession } as unknown as SessionService,
-      prompts: { accept } as unknown as PromptCoordinator,
-      runs: { admit } as unknown as RunLifecyclePort,
-    });
-    const input = {
-      binding: binding(),
-      sessionId: "session-1",
-      prompt: [{ type: "text" as const, text: "hello" }],
-    };
+function setup() {
+  const sessions: AcpApplicationDependencies["sessions"] = {
+    createSession: vi.fn(),
+    listSessions: vi.fn(),
+    deleteSession: vi.fn(),
+    forkSession: vi.fn(),
+    resumeSession: vi.fn(),
+    closeSession: vi.fn(),
+    requestCancellation: vi.fn(),
+    readOutput: vi.fn(),
+    requirePromptSession: vi.fn().mockResolvedValue(undefined),
+  };
+  const assert = vi.fn().mockResolvedValue(undefined);
+  const accept = vi.fn<AcpApplicationDependencies["prompts"]["accept"]>().mockResolvedValue({
+    runId: "run-1",
+    requestId: "request-1",
+    sessionId: "session-1",
+    userMessageId: "message-1",
+    snapshot: snapshot(),
+    outputSequence: 0,
+    sessionInfoUpdate: { updatedAt: "2026-09-14T00:00:00Z" },
+  });
+  const execute = vi.fn<RunExecutionPort["execute"]>().mockResolvedValue({
+    terminalClass: "completed",
+    executorState: "quiescent",
+    toolEffectState: "none",
+    stopReason: "end_turn",
+  });
+  const application = new AcpApplication({
+    configuration: { get: vi.fn(), set: vi.fn() },
+    access: { assert },
+    sessions,
+    prompts: { accept },
+    runs: new RunSupervisor({ execute }),
+  });
+  const input = {
+    binding: binding(),
+    sessionId: "session-1",
+    prompt: [{ type: "text", text: "hello" }],
+    outputChanged: vi.fn(),
+  };
+  return { application, sessions, assert, accept, execute, input };
+}
 
-    await application.acceptPrompt(input);
-
+describe("AcpApplication prompt ownership", () => {
+  it("checks the Session before locally submitting and executing the prompt", async () => {
+    const { application, sessions, assert, accept, execute, input } = setup();
+    const result = await application.acceptPrompt(input);
+    await expect(result.completion).resolves.toMatchObject({ terminalClass: "completed" });
     expect(assert).not.toHaveBeenCalled();
-    expect(requirePromptSession).toHaveBeenCalledWith(input.sessionId, input.binding);
-    expect(requirePromptSession.mock.invocationCallOrder[0]).toBeLessThan(
-      admit.mock.invocationCallOrder[0]!,
+    expect(sessions.requirePromptSession).toHaveBeenCalledWith(input.sessionId, input.binding);
+    expect(vi.mocked(sessions.requirePromptSession).mock.invocationCallOrder[0]).toBeLessThan(
+      accept.mock.invocationCallOrder[0]!,
     );
-    expect(admit).toHaveBeenCalledOnce();
     expect(accept).toHaveBeenCalledWith(input, expect.any(AbortSignal));
+    expect(execute).toHaveBeenCalledOnce();
   });
 
   it.each(["session_access_denied", "client_mcp_not_allowed"])(
-    "does not admit a Run when Session validation rejects with %s",
+    "does not accept or execute after Session validation rejects with %s",
     async (code) => {
+      const { application, sessions, accept, execute, input } = setup();
       const denied = new DomainError(code, "Session validation rejected");
-      const requirePromptSession = vi.fn(() => Promise.reject(denied));
-      const admit = vi.fn<RunLifecyclePort["admit"]>();
-      const accept = vi.fn<PromptCoordinator["accept"]>();
-      const application = new AcpApplication({
-        configuration: { get: vi.fn(), set: vi.fn() },
-        access: {} as AccessService,
-        sessions: { requirePromptSession } as unknown as SessionService,
-        prompts: { accept } as unknown as PromptCoordinator,
-        runs: { admit } as unknown as RunLifecyclePort,
-      });
-      await expect(
-        application.acceptPrompt({
-          binding: binding(),
-          sessionId: "foreign-session",
-          prompt: [{ type: "text", text: "hello" }],
-        }),
-      ).rejects.toBe(denied);
-      expect(admit).not.toHaveBeenCalled();
+      vi.mocked(sessions.requirePromptSession).mockRejectedValue(denied);
+      await expect(application.acceptPrompt(input)).rejects.toBe(denied);
       expect(accept).not.toHaveBeenCalled();
+      expect(execute).not.toHaveBeenCalled();
     },
   );
 });
-
-function binding(): ConnectionBinding {
-  return {
-    connectionId: "connection-1",
-    agentAccessSubject: "subject-1",
-    principalId: "principal-1",
-    agentId: "agent-1",
-    accessRevision: "access-1",
-  };
-}

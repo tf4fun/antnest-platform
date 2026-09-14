@@ -20,7 +20,8 @@ function overview(directoryStatus = 200): Overview {
       data: {
         items: [{
           agent_id: "agent-1", owner_user_id: "user-1", name: "Support assistant",
-          desired_state: "enabled", lifecycle_state: "available", aggregate_sequence: 1,
+          desired_state: "enabled", lifecycle_state: "created", activation_state: "enabled", runtime_state: "available", aggregate_sequence: 1,
+          executable_execution_revision: "execution-1",
           created_at: "2026-09-07T00:00:00Z", updated_at: "2026-09-07T00:00:00Z",
         }],
       },

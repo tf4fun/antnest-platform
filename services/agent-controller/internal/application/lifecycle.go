@@ -25,9 +25,14 @@ type LifecycleService struct {
 	identities   ports.OwnerAuthorizationSource
 	clock        ports.Clock
 	drainTimeout time.Duration
+	execution    ports.LifecycleExecution
 }
 
 type LifecycleOption func(*LifecycleService)
+
+func WithLifecycleExecution(execution ports.LifecycleExecution) LifecycleOption {
+	return func(service *LifecycleService) { service.execution = execution }
+}
 
 func WithIdentityDirectory(directory ports.OwnerAuthorizationSource) LifecycleOption {
 	return func(service *LifecycleService) {
@@ -85,6 +90,11 @@ type CreateAgentInput struct {
 }
 
 type AgentView struct {
+	ActivationState                   domain.ActivationState
+	RuntimeState                      domain.RuntimeState
+	RuntimeReason                     string
+	RuntimeDetail                     string
+	RuntimeObservedAt                 *time.Time
 	AgentID                           string
 	OrganizationID                    string
 	OwnerUserID                       string
@@ -134,9 +144,8 @@ type OperationView struct {
 }
 
 type CreateAgentResult struct {
-	Agent              AgentView
-	AgentAccessSubject string
-	Operation          OperationView
+	Agent     AgentView
+	Operation OperationView
 }
 
 func (service *LifecycleService) CreateAgent(
@@ -177,7 +186,6 @@ func (service *LifecycleService) CreateAgent(
 	now := service.clock.Now()
 	agentID := derivedID("agent", input.RequestID)
 	specID := derivedID("agentspec", input.RequestID)
-	accessSubject := derivedID("agentaccess", input.RequestID)
 	accessRevision := derivedID("accessrev", input.RequestID)
 	operation, err := domain.NewLifecycleOperation(domain.NewLifecycleOperationInput{
 		RequestID: input.RequestID, RequestFingerprint: fingerprint,
@@ -193,16 +201,15 @@ func (service *LifecycleService) CreateAgent(
 		Agent: ports.AgentRecord{
 			AgentID: agentID, OrganizationID: input.OrganizationID, OwnerUserID: input.OwnerUserID,
 			Name: strings.TrimSpace(input.Name), DesiredState: domain.DesiredEnabled,
-			LifecycleState: domain.AgentProvisioning, AccessRevision: accessRevision,
+			LifecycleState: domain.AgentNotCreated, RuntimeState: domain.RuntimeUnknown, AccessRevision: accessRevision,
 			ActiveOperationRequestID: input.RequestID, AggregateSequence: 1,
 			CreatedAt: now, UpdatedAt: now,
 			OwnerAuthorizationSequence: authorization.LastRevocationSequence,
 		},
 		Access: ports.AgentAccessRecord{
-			AccessSubject: accessSubject, AgentID: agentID, PrincipalID: input.OwnerUserID,
-			AccessRevision:     accessRevision,
-			PromptCapabilities: ports.PromptCapabilities{Image: spec.Snapshot().Model.SupportsImages, EmbeddedContext: true},
-			Active:             true, CreatedAt: now, UpdatedAt: now,
+			AgentID: agentID, PrincipalID: input.OwnerUserID,
+			AccessRevision: accessRevision,
+			Active:         true, CreatedAt: now, UpdatedAt: now,
 		},
 		Spec: ports.AgentSpecRecord{
 			ID: specID, AgentID: agentID, Revision: 1,
@@ -392,8 +399,8 @@ func (service *LifecycleService) initializeCreateRuntime(
 		}
 		return service.failCreate(ctx, state, code, result.ErrorDetail, false)
 	case "completed":
-		if !completedReadyRuntime(result) {
-			return service.failCreate(ctx, state, "invalid_runtime_result", "Runtime initialization did not prove a completed ready effect", false)
+		if !completedProvisionedRuntime(result) {
+			return service.failCreate(ctx, state, "invalid_runtime_result", "Runtime initialization did not prove a completed provisioned effect", false)
 		}
 	default:
 		return service.failCreate(ctx, state, "invalid_runtime_result", "Runtime Controller returned an unknown state", false)
@@ -436,25 +443,17 @@ func (service *LifecycleService) publishAgentCreate(
 	}
 	runtime := *state.Operation.RuntimeResult
 	now := service.clock.Now()
-	executionID := derivedID("execution", state.Operation.RequestID)
 	published, err := service.store.PublishAgentCreate(ctx, ports.PublishAgentCreate{
 		RequestID: state.Operation.RequestID, Fingerprint: state.Operation.RequestFingerprint,
 		NetworkAttachment: attachment,
-		Execution: ports.ExecutionRecord{
-			ID: executionID, AgentID: state.Agent.AgentID, Revision: 1,
-			AgentSpecRevisionID: state.Spec.ID, RuntimeRevision: runtime.RuntimeRevision,
-			RuntimeExecutionID: runtime.RuntimeExecutionID, RuntimeMCPEndpoint: runtime.MCPEndpoint,
-			RuntimeMCPSourceDigest: digestString(runtime.MCPEndpoint),
-			ChangeSummary:          map[string]any{"kind": "create"}, PublishedAt: now,
-		},
-		ReadyEvent: ports.AgentEventRecord{
-			EventID: derivedID("event-ready", state.Operation.RequestID), AgentID: state.Agent.AgentID,
+		CreatedEvent: ports.AgentEventRecord{
+			EventID: derivedID("event-created", state.Operation.RequestID), AgentID: state.Agent.AgentID,
 			AggregateSequence: state.Agent.AggregateSequence + 1, SchemaVersion: 1,
-			EventType: ports.EventAgentReady, OperationRequestID: state.Operation.RequestID,
+			EventType: ports.EventAgentCreated, OperationRequestID: state.Operation.RequestID,
 			TraceID: currentTraceID(ctx),
 			Data: map[string]any{
-				"agent_spec_revision_id": state.Spec.ID, "execution_revision_id": executionID,
-				"runtime_revision": runtime.RuntimeRevision,
+				"agent_spec_revision_id": state.Spec.ID,
+				"runtime_revision":       runtime.RuntimeRevision,
 			},
 			OccurredAt: now,
 		},
@@ -530,10 +529,10 @@ func (service *LifecycleService) setKnownNetworkAttachmentState(
 	)
 }
 
-func completedReadyRuntime(result ports.RuntimeOperation) bool {
+func completedProvisionedRuntime(result ports.RuntimeOperation) bool {
 	return result.State == "completed" && result.Effect == "completed" &&
-		result.LifecycleState == "ready" && result.Health == "healthy" &&
-		result.RuntimeRevision != "" && result.RuntimeExecutionID != "" && result.MCPEndpoint != ""
+		result.LifecycleState == "provisioned" && result.Health == "unknown" &&
+		result.RuntimeRevision != "" && result.RuntimeExecutionID == "" && result.MCPEndpoint == ""
 }
 
 func (service *LifecycleService) handleCreateDependencyFailure(
@@ -614,14 +613,15 @@ func createAgentFingerprint(input CreateAgentInput) (string, error) {
 func createAgentResult(state ports.AgentCreateState) CreateAgentResult {
 	operation := state.Operation
 	return CreateAgentResult{
-		Agent:              agentView(state.Agent),
-		AgentAccessSubject: state.Access.AccessSubject,
-		Operation:          lifecycleOperationView(operation),
+		Agent:     agentView(state.Agent),
+		Operation: lifecycleOperationView(operation),
 	}
 }
 
 func agentView(agent ports.AgentRecord) AgentView {
 	return AgentView{
+		ActivationState: agent.ActivationState, RuntimeState: agent.RuntimeState,
+		RuntimeReason: agent.RuntimeReason, RuntimeDetail: agent.RuntimeDetail, RuntimeObservedAt: agent.RuntimeObservedAt,
 		AgentID: agent.AgentID, OrganizationID: agent.OrganizationID,
 		OwnerUserID: agent.OwnerUserID, Name: agent.Name,
 		DesiredState: agent.DesiredState, LifecycleState: agent.LifecycleState,
@@ -658,24 +658,6 @@ func currentTraceID(ctx context.Context) string {
 	return spanContext.TraceID().String()
 }
 
-func lifecycleRunReleaseEvent(
-	ctx context.Context,
-	requestID string,
-	reason string,
-	sourceRuntimeRevision string,
-	now time.Time,
-) ports.RunAdmissionEvent {
-	return ports.RunAdmissionEvent{
-		EventID:   derivedID("event-run-release", requestID),
-		EventType: ports.EventRunAdmissionReleased, TraceID: currentTraceID(ctx),
-		Data: map[string]any{
-			"release_reason":          reason,
-			"source_runtime_revision": sourceRuntimeRevision,
-		},
-		OccurredAt: now,
-	}
-}
-
 func deletedRuntimeAbsenceProof(
 	expectedAgentID string,
 	expectedRuntimeRevision string,
@@ -691,18 +673,25 @@ func deletedRuntimeAbsenceProof(
 	}, true
 }
 
-func exactReadyRuntime(
+func exactRuntimeSource(
 	expectedAgentID string,
 	expectedRevision string,
 	expectedExecutionID string,
 	expectedMCPEndpoint string,
 	inspection ports.RuntimeInspection,
 ) bool {
+	if inspection.AgentID != expectedAgentID || inspection.RuntimeRevision != expectedRevision ||
+		inspection.LifecycleState != "provisioned" {
+		return false
+	}
+	if expectedExecutionID == "" && expectedMCPEndpoint == "" {
+		return true
+	}
 	return inspection.AgentID == expectedAgentID &&
 		inspection.RuntimeRevision == expectedRevision &&
 		inspection.RuntimeExecutionID == expectedExecutionID &&
 		inspection.MCPEndpoint == expectedMCPEndpoint &&
-		inspection.LifecycleState == "ready" && inspection.Health == "healthy"
+		inspection.LifecycleState == "provisioned" && inspection.Health == "healthy"
 }
 
 func digestString(value string) string {

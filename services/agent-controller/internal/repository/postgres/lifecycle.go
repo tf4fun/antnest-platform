@@ -80,7 +80,13 @@ func (repository *Repository) BeginAgentCreate(
 	if err := lockIdentityAdmission(ctx, transaction); err != nil {
 		return ports.AgentCreateState{}, false, err
 	}
+	if err := lockExecutionOrganization(ctx, transaction, input.Agent.OrganizationID); err != nil {
+		return ports.AgentCreateState{}, false, err
+	}
 	if err := validateOwnerWatermark(ctx, transaction, input.Agent.OwnerUserID, input.Agent.OrganizationID, input.Agent.OwnerAuthorizationSequence); err != nil {
+		return ports.AgentCreateState{}, false, err
+	}
+	if err := requireEnabledTemplateSpec(ctx, transaction, input.Agent.OrganizationID, input.Spec.Snapshot); err != nil {
 		return ports.AgentCreateState{}, false, err
 	}
 	if err := insertAgent(ctx, transaction, input.Agent); err != nil {
@@ -100,6 +106,9 @@ func (repository *Repository) BeginAgentCreate(
 	}
 	state := ports.AgentCreateState{
 		Agent: input.Agent, Access: input.Access, Spec: input.Spec, Operation: input.Operation,
+	}
+	if err := repository.advanceExecutionRevision(ctx, transaction, input.Agent.OrganizationID); err != nil {
+		return ports.AgentCreateState{}, false, err
 	}
 	if err := transaction.Commit(ctx); err != nil {
 		return ports.AgentCreateState{}, false, fmt.Errorf("commit Agent create transaction: %w", err)
@@ -160,7 +169,7 @@ func (repository *Repository) advanceCreatePhase(
 		return ports.AgentCreateState{}, fmt.Errorf("begin create phase transaction: %w", err)
 	}
 	defer func() { _ = transaction.Rollback(ctx) }()
-	operation, err := loadLifecycleOperation(ctx, transaction, requestID, "FOR UPDATE")
+	operation, err := loadLifecycleExecutionMutation(ctx, transaction, requestID)
 	if err != nil {
 		return ports.AgentCreateState{}, err
 	}
@@ -206,7 +215,7 @@ func (repository *Repository) PublishAgentCreate(
 		return ports.AgentCreateState{}, fmt.Errorf("begin Agent publish transaction: %w", err)
 	}
 	defer func() { _ = transaction.Rollback(ctx) }()
-	operation, err := loadLifecycleOperation(ctx, transaction, input.RequestID, "FOR UPDATE")
+	operation, err := loadLifecycleExecutionMutation(ctx, transaction, input.RequestID)
 	if err != nil {
 		return ports.AgentCreateState{}, err
 	}
@@ -229,13 +238,10 @@ func (repository *Repository) PublishAgentCreate(
 	if err != nil {
 		return ports.AgentCreateState{}, fmt.Errorf("encode published Agent network attachment: %w", err)
 	}
-	if err := insertExecutionRevision(ctx, transaction, input.Execution); err != nil {
+	if err := publishRuntimeTarget(ctx, transaction, operation, input.CreatedEvent, input.Now); err != nil {
 		return ports.AgentCreateState{}, err
 	}
-	if err := publishAgentProjection(ctx, transaction, operation, input); err != nil {
-		return ports.AgentCreateState{}, err
-	}
-	if err := repository.insertAgentEvent(ctx, transaction, input.ReadyEvent); err != nil {
+	if err := repository.insertAgentEvent(ctx, transaction, input.CreatedEvent); err != nil {
 		return ports.AgentCreateState{}, err
 	}
 	if _, err := transaction.Exec(ctx, `
@@ -255,10 +261,13 @@ WHERE request_id = $1`, input.RequestID, networkPayload, input.Now); err != nil 
 	if err != nil {
 		return ports.AgentCreateState{}, err
 	}
+	if err := repository.advanceExecutionRevision(ctx, transaction, state.Agent.OrganizationID); err != nil {
+		return ports.AgentCreateState{}, err
+	}
 	if err := transaction.Commit(ctx); err != nil {
 		return ports.AgentCreateState{}, fmt.Errorf("commit Agent publish transaction: %w", err)
 	}
-	repository.recordEventAppend(ctx, input.ReadyEvent.EventType)
+	repository.recordEventAppend(ctx, input.CreatedEvent.EventType)
 	return state, nil
 }
 
@@ -270,7 +279,7 @@ func (repository *Repository) FailAgentCreate(
 		return ports.AgentCreateState{}, fmt.Errorf("begin Agent failure transaction: %w", err)
 	}
 	defer func() { _ = transaction.Rollback(ctx) }()
-	operation, err := loadLifecycleOperation(ctx, transaction, input.RequestID, "FOR UPDATE")
+	operation, err := loadLifecycleExecutionMutation(ctx, transaction, input.RequestID)
 	if err != nil {
 		return ports.AgentCreateState{}, err
 	}
@@ -286,7 +295,7 @@ func (repository *Repository) FailAgentCreate(
 	}
 	result, err := transaction.Exec(ctx, `
 UPDATE agent_controller.agents
-SET lifecycle_state = 'unavailable', active_operation_request_id = '',
+SET active_operation_request_id = '',
     failure_stage = $2, failure_code = $3, failure_detail = $4,
     aggregate_sequence = $5, updated_at = $6
 WHERE id = $1 AND active_operation_request_id = $7 AND aggregate_sequence = $8`,
@@ -319,6 +328,9 @@ WHERE request_id = $1`, input.RequestID, input.Code, input.Detail, input.Retryab
 	if err != nil {
 		return ports.AgentCreateState{}, err
 	}
+	if err := repository.advanceExecutionRevision(ctx, transaction, state.Agent.OrganizationID); err != nil {
+		return ports.AgentCreateState{}, err
+	}
 	if err := transaction.Commit(ctx); err != nil {
 		return ports.AgentCreateState{}, fmt.Errorf("commit Agent failure transaction: %w", err)
 	}
@@ -346,12 +358,14 @@ func insertAgent(ctx context.Context, transaction *databaseTransaction, record p
 	_, err := transaction.Exec(ctx, `
 INSERT INTO agent_controller.agents (
     id, organization_id, owner_user_id, name, desired_state, lifecycle_state,
-    access_revision, active_operation_request_id, aggregate_sequence, created_at, updated_at, owner_authorization_sequence
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+    access_revision, active_operation_request_id, aggregate_sequence, created_at, updated_at, owner_authorization_sequence,
+    activation_state, runtime_state
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, COALESCE(NULLIF($14,''),'unknown'))`,
 		record.AgentID, record.OrganizationID, record.OwnerUserID, record.Name,
 		record.DesiredState, record.LifecycleState, record.AccessRevision,
 		record.ActiveOperationRequestID, record.AggregateSequence, record.CreatedAt, record.UpdatedAt,
 		record.OwnerAuthorizationSequence,
+		record.ActivationState, record.RuntimeState,
 	)
 	if err != nil {
 		return fmt.Errorf("insert Agent: %w", err)
@@ -382,12 +396,10 @@ INSERT INTO agent_controller.agent_spec_revisions (
 func insertAgentAccess(ctx context.Context, transaction *databaseTransaction, record ports.AgentAccessRecord) error {
 	_, err := transaction.Exec(ctx, `
 INSERT INTO agent_controller.agent_access_bindings (
-    access_subject, agent_id, principal_id, access_revision, active,
-    prompt_image, prompt_embedded_context, created_at, updated_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-		record.AccessSubject, record.AgentID, record.PrincipalID, record.AccessRevision,
-		record.Active, record.PromptCapabilities.Image,
-		record.PromptCapabilities.EmbeddedContext, record.CreatedAt, record.UpdatedAt,
+    agent_id, principal_id, access_revision, active, created_at, updated_at
+) VALUES ($1, $2, $3, $4, $5, $6)`,
+		record.AgentID, record.PrincipalID, record.AccessRevision,
+		record.Active, record.CreatedAt, record.UpdatedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("insert Agent access binding: %w", err)
@@ -419,10 +431,10 @@ func insertLifecycleOperation(
     source_runtime_revision, source_runtime_absent,
     target_spec_revision_id, child_request_id,
     source_runtime_inspection, source_runtime_absence_proof, network_release_outcome,
-    created_at, updated_at, owner_revocation_sequence
+    created_at, updated_at, owner_revocation_sequence, drain_deadline_at
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-    $11, $12, $13, $14, $15, clock_timestamp(), clock_timestamp(), $16
+    $11, $12, $13, $14, $15, clock_timestamp(), clock_timestamp(), $16, $17
 )`,
 		record.RequestID, record.RequestFingerprint, record.AgentID, record.Kind,
 		record.Phase, record.State, record.SourceSpecRevisionID,
@@ -431,6 +443,7 @@ func insertLifecycleOperation(
 		nullJSON(inspectionPayload), nullJSON(absenceProofPayload),
 		record.NetworkReleaseOutcome,
 		record.OwnerRevocationSequence,
+		record.DrainDeadlineAt,
 	)
 	if err != nil {
 		return fmt.Errorf("insert Agent lifecycle operation: %w", err)
@@ -456,10 +469,10 @@ RETURNING last_sequence`).Scan(&globalSequence); err != nil {
 	_, err = transaction.Exec(ctx, `
 INSERT INTO agent_controller.agent_events (
     global_sequence, event_id, agent_id, aggregate_sequence, schema_version, event_type,
-    operation_request_id, admission_id, trace_id, data, occurred_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+    operation_request_id, trace_id, data, occurred_at
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
 		globalSequence, record.EventID, record.AgentID, record.AggregateSequence, record.SchemaVersion,
-		record.EventType, record.OperationRequestID, record.AdmissionID,
+		record.EventType, record.OperationRequestID,
 		record.TraceID, payload, record.OccurredAt,
 	)
 	if err != nil {
@@ -497,28 +510,31 @@ INSERT INTO agent_controller.execution_revisions (
 	return nil
 }
 
-func publishAgentProjection(
-	ctx context.Context,
-	transaction *databaseTransaction,
-	operation ports.LifecycleOperationRecord,
-	input ports.PublishAgentCreate,
+// Lifecycle completion owns the configured resource, not its later health.
+func publishRuntimeTarget(
+	ctx context.Context, transaction *databaseTransaction,
+	operation ports.LifecycleOperationRecord, event ports.AgentEventRecord, now time.Time,
 ) error {
+	if operation.RuntimeResult == nil || !provisionedRuntimeResult(*operation.RuntimeResult) ||
+		operation.TargetSpecRevisionID == "" || event.AgentID != operation.AgentID ||
+		event.OperationRequestID != operation.RequestID {
+		return ports.ErrConcurrentChange
+	}
 	result, err := transaction.Exec(ctx, `
 UPDATE agent_controller.agents
-SET lifecycle_state = 'available', executable_spec_revision_id = $2,
-    executable_execution_revision_id = $3,
-    last_successful_execution_revision_id = $3,
-    runtime_revision = $4, runtime_execution_id = $5, runtime_mcp_endpoint = $6,
+SET lifecycle_state = 'created', activation_state = 'enabled', runtime_state = 'unknown',
+    runtime_reason = 'runtime_observation_pending', runtime_detail = '', runtime_observed_at = NULL,
+    executable_spec_revision_id = $2,
+    executable_execution_revision_id = '',
+    runtime_revision = $3, runtime_execution_id = '', runtime_mcp_endpoint = '',
     active_operation_request_id = '', failure_stage = '', failure_code = '', failure_detail = '',
-    aggregate_sequence = $7, updated_at = $8
-WHERE id = $1 AND active_operation_request_id = $9 AND aggregate_sequence = $10`,
-		operation.AgentID, input.Execution.AgentSpecRevisionID, input.Execution.ID,
-		input.Execution.RuntimeRevision, input.Execution.RuntimeExecutionID,
-		input.Execution.RuntimeMCPEndpoint, input.ReadyEvent.AggregateSequence,
-		input.Now, input.RequestID, input.ReadyEvent.AggregateSequence-1,
+    aggregate_sequence = $4, updated_at = $5
+WHERE id = $1 AND active_operation_request_id = $6 AND aggregate_sequence = $7`,
+		operation.AgentID, operation.TargetSpecRevisionID, operation.RuntimeResult.RuntimeRevision,
+		event.AggregateSequence, now, operation.RequestID, event.AggregateSequence-1,
 	)
 	if err != nil {
-		return fmt.Errorf("publish Agent projection: %w", err)
+		return fmt.Errorf("publish configured Agent Runtime: %w", err)
 	}
 	if result.RowsAffected() != 1 {
 		return ports.ErrConcurrentChange
@@ -555,7 +571,8 @@ SELECT id, organization_id, owner_user_id, name, desired_state, lifecycle_state,
        last_successful_execution_revision_id, runtime_revision, runtime_execution_id,
        runtime_mcp_endpoint, active_operation_request_id, failure_stage, failure_code,
        failure_detail, aggregate_sequence, created_at, updated_at,
-       owner_authorization_sequence, identity_revocation_sequence
+       owner_authorization_sequence, identity_revocation_sequence,
+       activation_state, runtime_state, runtime_reason, runtime_detail, runtime_observed_at
 FROM agent_controller.agents WHERE id = $1`, agentID))
 }
 
@@ -568,7 +585,8 @@ SELECT id, organization_id, owner_user_id, name, desired_state, lifecycle_state,
        last_successful_execution_revision_id, runtime_revision, runtime_execution_id,
        runtime_mcp_endpoint, active_operation_request_id, failure_stage, failure_code,
        failure_detail, aggregate_sequence, created_at, updated_at,
-       owner_authorization_sequence, identity_revocation_sequence
+       owner_authorization_sequence, identity_revocation_sequence,
+       activation_state, runtime_state, runtime_reason, runtime_detail, runtime_observed_at
 FROM agent_controller.agents WHERE id = $1 FOR UPDATE`, agentID))
 }
 
@@ -583,6 +601,7 @@ func scanAgentRecord(scanner lifecycleRowScanner) (ports.AgentRecord, error) {
 		&record.ActiveOperationRequestID, &record.FailureStage, &record.FailureCode,
 		&record.FailureDetail, &record.AggregateSequence, &record.CreatedAt, &record.UpdatedAt,
 		&record.OwnerAuthorizationSequence, &record.IdentityRevocationSequence,
+		&record.ActivationState, &record.RuntimeState, &record.RuntimeReason, &record.RuntimeDetail, &record.RuntimeObservedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ports.AgentRecord{}, ports.ErrNotFound
@@ -598,11 +617,10 @@ func loadOwnerAccess(
 ) (ports.AgentAccessRecord, error) {
 	var record ports.AgentAccessRecord
 	err := queryer.QueryRow(ctx, `
-SELECT access_subject, agent_id, principal_id, access_revision, active, created_at, updated_at
+SELECT agent_id, principal_id, access_revision, active, created_at, updated_at
 FROM agent_controller.agent_access_bindings
-WHERE agent_id = $1 AND principal_id = $2
-ORDER BY access_subject LIMIT 1`, agentID, ownerUserID).Scan(
-		&record.AccessSubject, &record.AgentID, &record.PrincipalID,
+WHERE agent_id = $1 AND principal_id = $2`, agentID, ownerUserID).Scan(
+		&record.AgentID, &record.PrincipalID,
 		&record.AccessRevision, &record.Active, &record.CreatedAt, &record.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -651,7 +669,7 @@ SELECT request_id, request_fingerprint, agent_id, kind, phase, state,
 	       source_runtime_inspection,
 	       source_runtime_absence_proof, runtime_result, network_release_outcome,
 	       error_code, error_detail, retryable,
-	       created_at, updated_at, owner_revocation_sequence
+	       created_at, updated_at, owner_revocation_sequence, drain_deadline_at, settlement_outcome
 FROM agent_controller.agent_lifecycle_operations
 WHERE request_id = $1`
 	if lockClause == "FOR UPDATE" {
@@ -675,12 +693,17 @@ func scanLifecycleOperation(scanner lifecycleRowScanner) (ports.LifecycleOperati
 		&record.ErrorCode,
 		&record.ErrorDetail, &record.Retryable, &record.CreatedAt, &record.UpdatedAt,
 		&record.OwnerRevocationSequence,
+		&record.DrainDeadlineAt, &record.SettlementOutcome,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ports.LifecycleOperationRecord{}, ports.ErrNotFound
 	}
 	if err != nil {
 		return ports.LifecycleOperationRecord{}, fmt.Errorf("load Agent lifecycle operation: %w", err)
+	}
+	if record.DrainDeadlineAt != nil {
+		deadline := record.DrainDeadlineAt.UTC()
+		record.DrainDeadlineAt = &deadline
 	}
 	if len(networkPayload) != 0 {
 		var attachment ports.NetworkAttachment

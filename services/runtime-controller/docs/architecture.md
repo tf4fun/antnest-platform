@@ -175,24 +175,22 @@ the service does not persist an imperative step counter.
 
 Initialize is valid only when no Environment exists. Runtime Controller creates
 or adopts the owned workspace, allocates a private generation, builds the full
-RuntimeSpec from caller configuration plus service invariants, creates compute,
-waits for platform health, verifies Runtime `/status`, and commits state
-`ready`. Definitive initialization failure retains a `failed` Environment,
+RuntimeSpec from caller configuration plus service invariants, creates/starts
+compute and commits state `provisioned`. Creation and current readiness are
+independent; see [the contract](creation-and-observation.md). Definitive initialization failure retains a `failed` Environment,
 including its revision, generation and deployment identity. Workspace is not
 rolled back and ownership is not erased. The terminal operation can be queried
 and replayed without repeating effects; Delete of the retained revision removes
-owned compute, if any, before workspace. A bounded readiness failure after
-confirmed creation is terminal for Initialize. Cancellation, identity drift and
-unknown platform effects retain the nonterminal slot for exact reconciliation.
-Identity conflicts from either platform inspection or Runtime status verification
-stop readiness checks immediately; a later timeout cannot downgrade that evidence.
+owned compute, if any, before workspace. Confirmed create/start remains complete
+even if the caller disconnects or later status verification fails. Uncertain
+platform effects retain the nonterminal slot for exact reconciliation.
 This distinction prevents a 404 logical projection from hiding allocated data.
 
 ### Update
 
-Update is valid only from `ready` with a matching expected revision. Runtime
+Update is valid from `provisioned` with a matching expected revision. Runtime
 Controller removes the exact current compute resource, preserves the workspace,
-allocates a new private generation, creates and verifies the replacement, then
+allocates a new private generation, creates/starts the replacement, then
 commits a new revision. It does not roll back to old compute after a destructive
 effect; uncertainty retains the mutation slot for exact-request recovery.
 
@@ -202,16 +200,16 @@ exact source identity/digest can be deleted. An absent source means replacement
 may already have started. If the Agent-named resource belongs to another
 generation, only the exact target bound to this operation may be reused; the
 platform's idempotent Create still enforces scope, generation, digest and
-workspace ownership before reuse/start. Required Runtime status verification
-and the ordinary completion transaction remain mandatory.
+workspace ownership before reuse/start. The ordinary completion transaction
+remains mandatory; application readiness is not a completion condition.
 
-A target that exists after lost Create/readiness/completion responses must
+A target that exists after lost Create/completion responses must
 never be interpreted as an unstarted source deletion. Source absence, target
 drift or inconclusive inspection cannot restore the old logical head. Such
 failures keep the operation `unknown` and its mutation slot. A definitive
 source deletion rejection may report `failed/not_started` only after a second
-inspection and Runtime status verification prove that the exact source is
-still running and healthy. A stopped source from an earlier partial deletion,
+inspection proves that the exact source is still running. This is proof of
+retained platform resources, not proof of application readiness. A stopped source from an earlier partial deletion,
 an identity change between Inspect and Delete, or an unreadable source stays
 unknown. No new RPC, table or persisted
 configuration is needed; retry retains the original source/target claim,
@@ -219,25 +217,25 @@ request digest and opaque revision.
 
 ### Disable And Enable
 
-Disable is valid only from `ready`. It deletes compute and commits `disabled`
+Disable is valid from `provisioned`, regardless of health. It deletes compute and commits `disabled`
 while preserving workspace. A stopped container is not retained because that
 would leak Docker behavior and would not release portable compute resources.
 
 Enable is valid only from `disabled`. It receives the latest complete caller
-configuration, allocates a new private generation, and creates verified compute
+configuration, allocates a new private generation, and creates/starts compute
 over the existing workspace. Runtime Controller therefore stores no Agent
 desired configuration while disabled.
 
 ### Delete
 
-Delete is valid from `ready`, `disabled`, or `failed`. It removes exact owned compute when
+Delete is valid from `provisioned`, `disabled`, or `failed`. It removes exact owned compute when
 present, then removes the owned workspace and commits the terminal `deleted`
 state. A deleted Agent identifier cannot be initialized again. Partial deletion
 is retried under the same operation identity.
 
 ### Inspect
 
-Inspect loads the logical Environment head. For `ready`, it verifies the private
+Inspect loads the logical Environment head. For `provisioned`, it verifies the private
 generation claim against platform identity and performs one bounded Runtime
 `/status` request. The cross-service response contains lifecycle, opaque
 revision, health, MCP endpoint, execution identity, and observation time only.
@@ -322,7 +320,7 @@ Rules:
    platform observation gap.
 6. On a detected platform gap, the service first records one service-wide
    `observation_gap`, reconciles physical inventory in both directions against
-   logical ready Environment heads, and records one service-wide `reconciled`
+   logical provisioned Environment heads, and records one service-wide `reconciled`
    fact. A missing inventory entry is a candidate, not proof: the service
    inspects that exact logical head once more before emitting `runtime_missing`.
    This avoids misclassifying a container created after the inventory snapshot.
@@ -354,7 +352,7 @@ published. Transient platform inspection failure fails reconciliation instead
 of fabricating a fact. Agent Controller decides whether a fact creates an
 Agent event.
 
-Logical Runtime Inspect/List also represent confirmed missing compute: a ready
+Logical Runtime Inspect/List also represent confirmed missing compute: a provisioned
 Environment retains its Agent ID and opaque revision, but reports `health=absent`
 with no executable endpoint or execution ID. An absent resource has no deployment
 digest to compare; absence must instead match the requested key, absent platform
@@ -380,7 +378,7 @@ liveness and restart policy. Runtime Controller verifies status:
 
 1. after a resource first becomes Healthy;
 2. after a platform event indicates a restart or new healthy process;
-3. during every explicit Inspect or List read of a platform-Healthy, ready
+3. during every explicit Inspect or List read of a platform-Healthy, provisioned
    Environment.
 
 A status mismatch is a failed inspection and an observation. It is never
@@ -432,10 +430,11 @@ No other service reads these tables. Agent Controller consumes RPCs.
 2. A mutation that definitely did not start may return `not_started`.
 3. A completed platform mutation returns `completed` plus inspection.
 4. A lost response after a possible platform mutation returns `unknown`.
-5. Initialize's bounded readiness deadline after confirmed creation is a terminal
-   failure with a retained, deletable Environment. Cancellation, identity drift,
-   and Update/Enable readiness uncertainty remain `unknown`; exact-request
-   retries reconcile those effects under the Agent lock.
+5. Confirmed create/start completes without a readiness check. Later startup or
+   health failure is an observation, not a failed creation. Cancellation before
+   the platform effect is known and identity drift still require exact-request
+   reconciliation under the Agent lock; a confirmed effect is committed using
+   the bounded completion context even if the request was cancelled.
 6. Unknown mutations are inspected; they are never blindly replayed under a
    new operation ID.
 7. Operation terminal state and its operation-caused observation commit in one

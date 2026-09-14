@@ -27,7 +27,7 @@ No Temporal management UI is required. Do not use workflow termination as a
 substitute for the product's lifecycle cancellation/deletion policy.
 
 One binary serves internal HTTP RPC, an embedded Temporal Worker, and bounded
-Runtime-observation and Identity-offboarding consumers. The Identity consumer
+Runtime-observation, Identity-offboarding and current execution-publication consumers. The Identity consumer
 only records fences and schedules lifecycle operations; it never executes
 Runtime mutations directly. See [offboarding](identity-offboarding.md) for
 pending-state inspection and recovery.
@@ -43,18 +43,24 @@ publication. Rebuild drains, closes the attachment, replaces Runtime, reopens
 the attachment, and publishes. Disable drains, closes the attachment, removes
 compute while retaining workspace, and publishes the disabled state. Enable
 ensures the closed attachment, creates compute from the frozen spec, opens the
-attachment, and publishes a new Execution revision. Delete drains Run occupancy,
+attachment, and completes with a configured Runtime. Independent observation
+publishes its first healthy Execution revision. Delete requests Agent-level ACP settlement,
 closes the attachment, proves Runtime
 compute and workspace absent, releases the Tunnel allocation into quarantine,
 then atomically publishes `deleted` and deactivates all Agent access bindings.
-Run admission is served at `/rpc/agent-controller`: access resolution binds an
-ACP connection to one Agent, acquire serializes on the Agent row and persists a
-complete immutable execution snapshot, credential resolution is restricted to
-an active admission, and finish seals one immutable terminal report. Admission
-deadline expiry is not an automatic release condition. Rebuild, disable, and
-delete release `blocked_unknown_effect` only after a Runtime-absence barrier;
-the phase transition, admission release, Agent aggregate sequence, and
-`run_admission_released` event share one PostgreSQL transaction.
+Management clients can read `GET /internal/execution-synchronization?organization_id=...`
+without contacting ACP. A null record means no configuration revision exists;
+an older applied revision means a newer configuration has not been confirmed.
+An equal applied revision is historical acknowledgement, not ACP health or
+proof that credentials remain loaded after a restart. Database read failures
+are errors, never a synchronized result. See the
+[read contract](../../../contracts/agent-controller/control-api.md#execution-configuration-synchronization).
+
+Configuration commits notify the execution publisher; startup and periodic passes
+resend the current organization snapshot. Lifecycle drain confirms a closed
+configuration at ACP, then waits for or cancels execution through its Agent-level
+settlement RPC. It never reads Run/Tool state or writes execution audit.
+The old resolve/access/acquire/credential/finish RPCs are removed.
 Current projection reads are served from `GET /internal/agents` and
 `GET /internal/agents/{agent_id}`. Lists use `(created_at, agent_id)` keyset
 pagination, hide desired state `deleted` by default, and may filter by opaque
@@ -75,9 +81,9 @@ do not consume the lifecycle/query connection pool. A disconnect is
 recovered by List from the consumer-owned cursor, never by assuming the last
 socket write was applied.
 
-Multiple replicas may serve reads and Run admission. Temporal dispatches lifecycle
-Activities; PostgreSQL Agent-row constraints and phase CAS remain the final
-business serialization guard.
+The current release targets one Controller instance. Temporal dispatches lifecycle
+Activities; PostgreSQL management locks and phase/Agent-ownership CAS remain the
+business serialization guard. Horizontal deployment is not part of this batch.
 
 ## Configuration
 
@@ -87,7 +93,8 @@ Required:
 - `ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY`: base64-encoded 32-byte AES key;
 - `ANTNEST_RUNTIME_CONTROLLER_URL`;
 - `ANTNEST_RUNTIME_EGRESS_URL`.
-- `ANTNEST_IDENTITY_SERVICE_URL`.
+- `ANTNEST_IDENTITY_SERVICE_URL`;
+- `ANTNEST_AGENT_ACP_SERVICE_URL` (execution configuration/settlement RPC).
 
 The Runtime-reachable Egress endpoint is returned by Runtime Egress and is not
 duplicated in Agent Controller configuration.
@@ -97,7 +104,6 @@ Optional:
 - `ANTNEST_AGENT_CONTROLLER_LISTEN` (default `:8080`);
 - `ANTNEST_AGENT_CONTROLLER_DEPENDENCY_TIMEOUT` (default `150s`);
 - `ANTNEST_AGENT_CONTROLLER_DRAIN_TIMEOUT` (default `5m`);
-- `ANTNEST_AGENT_CONTROLLER_RUN_ADMISSION_TTL` (default `30m`);
 - `ANTNEST_AGENT_CONTROLLER_RUNTIME_OBSERVATION_POLL_INTERVAL` (default `2s`);
 - `ANTNEST_AGENT_CONTROLLER_IDENTITY_REVOCATION_POLL_INTERVAL` (default `2s`);
 - `ANTNEST_AGENT_CONTROLLER_SHUTDOWN_TIMEOUT` (default `15s`);
@@ -147,12 +153,14 @@ of the old Run. Observation does not resolve an already admitted uncertain Tool
 effect. Synchronization is eventual; there is no platform probe on every Run.
 
 An enabled Agent invalidated by observation can use the existing Rebuild RPC.
-Admission resolves its immutable last-successful execution and matching spec
-as recovery lineage, not as an executable binding. The normal asynchronous
-drain/fence/update/open/publish phases install the replacement; new Runs remain
-denied until publication. Stale admission, revoked identity and quarantined
-`lifecycle_invariant_failed` records are rejected. Initial construction failures
-without successful execution history are not eligible for this recovery path.
+Admission resolves its configured Spec and Runtime; matching last-successful
+execution is optional recovery history, not an executable binding. The normal
+asynchronous drain/fence/update/open/publish phases install the replacement;
+new Runs remain denied until independent healthy observation publishes execution.
+Stale admission, revoked identity and quarantined `lifecycle_invariant_failed`
+records are rejected. A completed construction that has never become healthy
+can still be rebuilt, disabled or deleted. An initial construction failure with
+no committed configured target remains a failed operation, not a pending Runtime.
 
 A definite failure before replacement keeps the Agent unavailable and its
 historical source intact. Correct the reported dependency/configuration problem
@@ -163,10 +171,10 @@ Runtime head clears an unresolved Run effect: exact replacement evidence is
 still required. Do not repair availability by editing the database or
 reattaching an old endpoint; that bypasses lifecycle admission.
 
-Current closeout limitation: the unavailable-Agent Console recovery action and
-real Docker live/cold-loss integration are not yet accepted. Disable still
-requires an available source; it is not an alternative unavailable-Agent
-recovery command.
+The current service tests cover never-ready management and unavailable-Agent
+recovery. Fresh Gateway/Console and Docker acceptance for the creation/observation
+split remains a separate integration batch; previous deployment traces are not
+evidence for this new contract.
 
 Identity Service is checked before initial Agent creation and before Agent
 access resolution. Missing or inactive organization membership fails closed;
@@ -197,29 +205,29 @@ an Identity transport failure is retryable and does not create or admit work.
 - A rebuild transport timeout follows the same rule. Before Runtime replacement,
   a conclusive failure reopens the attachment and preserves the old executable
   binding. After replacement, replay the exact command until attachment opening,
-  network readiness, and publication are conclusive.
-- A rebuild in `drain` has made no external mutation. It advances only after no
-  active Run executor occupies the Agent.
+  network configuration, and creation publication are conclusive; readiness is
+  observed separately.
+- A rebuild in `drain` has already published closed execution permission to ACP.
+  It advances only after ACP confirms Agent-level settlement under the original
+  persisted deadline; no Runtime mutation has happened yet.
 - A draining Agent is revisited by the worker after the active Run settles; no
   manual request replay is required.
-- An enable timeout before Runtime readiness is retried with the same request
-  ID. After Runtime readiness, attachment opening remains a durable phase and
-  must complete before the Agent becomes available. Policy changes made while
+- An enable creation timeout is retried with the same request ID. Attachment
+  opening remains a durable lifecycle phase. The completed operation may still
+  have a `created/enabled` Agent with Runtime `unknown` or `waiting`: inspect Runtime health and the independent
+  observation consumer, not Temporal retries. Healthy observation alone publishes
+  the execution binding. Policy changes made while
   disabled remain durable in Runtime Egress and are applied when the attachment
   opens.
-- An unresolved Run remains fail-closed until rebuild/delete proves its Runtime
-  absent. Disable provides the same proof when Runtime Controller confirms the
-  source Runtime is disabled with no running compute. The event-journal append
-  counter records the resulting `run_admission_released` fact. The durable
-  lifecycle operation and journal identify the barrier; driver SQL spans show
-  its database work under the request or SDK Activity.
+- ACP retains execution-stop protection. Controller only consumes the settlement
+  outcome and performs the requested Runtime barrier; it never releases a Run or
+  synthesizes a Run audit event. A barrier-required outcome or identity revocation
+  must not reopen the old attachment after a management failure.
 - A stable deleted inspection for the exact source Runtime revision during
-  rebuild/disable is an authoritative source-absence result. Agent Controller
-  atomically stores that proof, releases any matching unresolved admission,
-  projects the Agent unavailable, and appends the release fact before the
-  lifecycle-failure fact. If no blocked admission exists, no release event is
-  synthesized. Replaying the terminal operation changes neither sequence. A
-  plain `runtime_not_found` response is ambiguous and leaves the operation
+  rebuild/disable is an authoritative source-absence result. Controller stores
+  that proof, projects the Agent unavailable and appends one management failure
+  event atomically. Replaying the terminal operation changes neither sequence.
+  A plain `runtime_not_found` response is ambiguous and leaves the operation
   running with its attachment closed for inspection or replay.
 - Delete intent is irreversible. A timeout or ambiguous Runtime/Egress effect
   leaves the same delete operation running; replay the original request ID.
@@ -262,15 +270,20 @@ configured loopback port. The create admission trace shows the bounded HTTP
 route, Identity owner resolution, and atomic lifecycle-intent commit. The
 durable lifecycle attempts correlated by request ID collectively show Runtime
 Egress ensure, Runtime Controller initialize, and atomic publication. Once
-Stage 2 is complete, a Run trace must show:
+the boundary refactor is integrated, a Run trace must show:
 
 ```text
-ACP session/prompt
-  -> Agent Controller resolve_agent_access -> Identity resolve_principal
-  -> Agent Controller acquire_run -> Identity resolve_principal
+Gateway authentication and ACP forwarding
+  -> ACP protocol authorization using its synchronized Agent configuration
+  -> ACP Session / Run persistence
   -> model / Runtime MCP work
-  -> Agent Controller finish_run
+  -> ACP local execution audit and terminal result
 ```
+
+No per-Run Controller or Identity RPC belongs below ACP. Configuration publication
+and Agent lifecycle settlement have their own management request chains.
+Controller does not own execution tickets, terminal reports or Session overrides.
+This is the target B5 trace; the unintegrated worktree is not deployment evidence.
 
 Lifecycle tracing is provided by official SDK interceptors and common RPC/SQL
 boundaries. Gateway -> Console -> admission -> Workflow -> Activities remains
@@ -281,8 +294,9 @@ See [lifecycle workflows](lifecycle-workflows.md) for rollout prerequisites.
 ## Retention And Backup
 
 Back up the Agent Controller database independently. Events, immutable
-configuration/execution revisions, terminal operations, and terminal
-admissions are retained according to organization audit policy. Deleting an
+configuration/execution revisions and terminal management operations are
+retained according to organization audit policy. ACP backs up and retains its
+own Session/Run records and execution audit; Controller holds no execution copy. Deleting an
 Agent does not immediately erase those facts. A future retention job may purge
 the closed aggregate after the configured policy window.
 
@@ -301,9 +315,27 @@ OTEL_SDK_DISABLED=false OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318 \
 
 `make e2e-stage2` builds an isolated blank deployment, creates an Agent, proves
 Runtime readiness and one ACP Runtime Tool Run, verifies workspace effects,
-and deletes the Agent with its external Runtime resources. Lifecycle evidence
-is a request-ID-correlated set of independently rooted attempt traces through
-Agent Controller, Runtime Egress, and Runtime Controller. Execution remains one
-business trace through Agent ACP Service, Agent Controller Run admission, and
-Runtime MCP. Runtime Controller is intentionally absent from the Tool data
-path.
+and deletes the Agent with its external Runtime resources. These scripts still
+require B5 migration to the new contracts. Final lifecycle evidence must preserve
+Gateway ancestry through official Temporal workflow/Activity instrumentation,
+Agent Controller, Runtime Egress and Runtime Controller. Execution traces pass
+through Gateway, ACP and Runtime MCP; neither Controller belongs in the Tool data
+path. Earlier traces are not acceptance of the new boundary.
+
+## Creation And Readiness
+
+A completed create/rebuild/enable operation means the configured Runtime exists,
+not that MCP is already healthy. Agent `created/enabled`, Runtime `unknown/waiting`, with no active operation
+means readiness is pending. Run admission remains closed; management operations
+are still available. `agent_created`/`agent_rebuilt`/`agent_enabled` describe
+lifecycle completion; `agent_ready` describes later executable availability.
+
+The worker reconciles pending Agents even when no new Runtime event arrives.
+Owner revocation, concurrent lifecycle changes, consumed restart observations
+and mismatched Runtime revisions fence stale publication. Once an available
+execution is invalidated, it is not automatically resurrected.
+
+This service batch requires Runtime Controller contract revision 8. The existing
+development containers have not been replaced by these source changes.
+Cross-service image rebuild and fresh Jaeger acceptance belong to the next
+integration batch; old readiness timings are not evidence for this contract.

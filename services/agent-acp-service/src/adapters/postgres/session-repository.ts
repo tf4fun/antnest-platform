@@ -17,6 +17,7 @@ import type { SecretBox } from "./secret-box.js";
 
 type SessionRow = {
   id: string;
+  organization_id: string;
   principal_id: string;
   agent_id: string;
   cwd: "/workspace";
@@ -47,11 +48,10 @@ export class PostgresSessionRepository implements SessionRepository {
               COALESCE((SELECT jsonb_agg(m.payload ORDER BY m.sequence)
                 FROM session_messages m WHERE m.session_id = s.id AND m.visible
                   AND m.sequence > COALESCE($2::bigint, s.last_message_sequence)), '[]'::jsonb) AS events,
-              CASE WHEN r.admission_id IS NOT NULL AND r.admission_finished_at IS NULL
-                   THEN 'running' ELSE r.state END AS state,
+              r.state,
               r.stop_reason
          FROM acp_sessions s
-         LEFT JOIN LATERAL (SELECT state, stop_reason, admission_id, admission_finished_at FROM runs
+         LEFT JOIN LATERAL (SELECT state, stop_reason FROM runs
            WHERE session_id = s.id ORDER BY created_at DESC, id DESC LIMIT 1) r ON true
         WHERE s.id = $1`,
       [sessionId, afterSequence ?? null],
@@ -70,9 +70,16 @@ export class PostgresSessionRepository implements SessionRepository {
       await client.query(
         `INSERT INTO acp_sessions(
            id, principal_id, agent_id, cwd, state,
-           client_mcp_revision_id, created_at, updated_at
-         ) VALUES ($1, $2, $3, $4, 'active', NULL, $5, $5)`,
-        [input.sessionId, input.binding.principalId, input.binding.agentId, input.cwd, now],
+           client_mcp_revision_id, created_at, updated_at, organization_id
+         ) VALUES ($1, $2, $3, $4, 'active', NULL, $5, $5, $6)`,
+        [
+          input.sessionId,
+          input.binding.principalId,
+          input.binding.agentId,
+          input.cwd,
+          now,
+          input.binding.organizationId,
+        ],
       );
       await this.insertMcpRevision(
         client,
@@ -91,7 +98,7 @@ export class PostgresSessionRepository implements SessionRepository {
 
   public async get(sessionId: string): Promise<SessionRecord | null> {
     const result = await this.kernel.query<SessionRow>(
-      `SELECT id, principal_id, agent_id, cwd, state, title, forked_from_session_id,
+      `SELECT id, organization_id, principal_id, agent_id, cwd, state, title, forked_from_session_id,
               client_mcp_revision_id,
               last_execution_revision, last_message_sequence, created_at, updated_at
          FROM acp_sessions WHERE id = $1`,
@@ -106,12 +113,13 @@ export class PostgresSessionRepository implements SessionRepository {
   }> {
     const cursor = decodeCursor(input.cursor);
     const result = await this.kernel.query<SessionRow>(
-      `SELECT id, principal_id, agent_id, cwd, state, title, forked_from_session_id,
+      `SELECT id, organization_id, principal_id, agent_id, cwd, state, title, forked_from_session_id,
               client_mcp_revision_id,
               last_execution_revision, last_message_sequence, created_at, updated_at
          FROM acp_sessions
         WHERE principal_id = $1
           AND agent_id = $2
+          AND organization_id = $7
           AND state <> 'deleted'
           AND ($3::text IS NULL OR cwd = $3)
           AND ($4::timestamptz IS NULL OR (updated_at, id) < ($4, $5))
@@ -124,6 +132,7 @@ export class PostgresSessionRepository implements SessionRepository {
         cursor?.updatedAt ?? null,
         cursor?.id ?? null,
         input.limit + 1,
+        input.organizationId,
       ],
     );
     const hasMore = result.rows.length > input.limit;
@@ -157,8 +166,8 @@ export class PostgresSessionRepository implements SessionRepository {
         `INSERT INTO acp_sessions(
            id, principal_id, agent_id, cwd, state, title, forked_from_session_id,
            client_mcp_revision_id, last_execution_revision,
-           last_message_sequence, created_at, updated_at
-         ) VALUES ($1, $2, $3, $4, 'active', $5, $6, NULL, $7, $8, $9, $9)`,
+           last_message_sequence, created_at, updated_at, organization_id
+         ) VALUES ($1, $2, $3, $4, 'active', $5, $6, NULL, $7, $8, $9, $9, $10)`,
         [
           input.sessionId,
           source.principal_id,
@@ -169,6 +178,7 @@ export class PostgresSessionRepository implements SessionRepository {
           source.last_execution_revision,
           source.last_message_sequence,
           input.createdAt,
+          source.organization_id,
         ],
       );
       await this.insertMcpRevision(
@@ -246,7 +256,7 @@ export class PostgresSessionRepository implements SessionRepository {
         `UPDATE acp_sessions
             SET client_mcp_revision_id = $2, state = 'active', updated_at = $3
           WHERE id = $1
-        RETURNING id, principal_id, agent_id, cwd, state, title, forked_from_session_id,
+        RETURNING id, organization_id, principal_id, agent_id, cwd, state, title, forked_from_session_id,
                   client_mcp_revision_id,
                   last_execution_revision, last_message_sequence, created_at, updated_at`,
         [input.sessionId, input.mcpRevisionId, now],
@@ -388,7 +398,7 @@ async function markRunsCancelled(
 
 async function selectSessionForUpdate(client: PoolClient, sessionId: string): Promise<SessionRow> {
   const result = await client.query<SessionRow>(
-    `SELECT id, principal_id, agent_id, cwd, state, title, forked_from_session_id,
+    `SELECT id, organization_id, principal_id, agent_id, cwd, state, title, forked_from_session_id,
             client_mcp_revision_id,
             last_execution_revision, last_message_sequence, created_at, updated_at
        FROM acp_sessions WHERE id = $1 FOR UPDATE`,
@@ -400,6 +410,7 @@ async function selectSessionForUpdate(client: PoolClient, sessionId: string): Pr
 function mapSession(row: SessionRow): SessionRecord {
   return {
     id: row.id,
+    organizationId: row.organization_id,
     principalId: row.principal_id,
     agentId: row.agent_id,
     cwd: row.cwd,

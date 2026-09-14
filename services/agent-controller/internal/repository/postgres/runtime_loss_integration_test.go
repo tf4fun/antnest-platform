@@ -2,7 +2,6 @@ package postgres
 
 import (
 	"context"
-	"errors"
 	"reflect"
 	"testing"
 	"time"
@@ -12,17 +11,13 @@ import (
 	"soft/antnest-platform/services/agent-controller/internal/ports"
 )
 
-func TestRuntimeLossInvalidatesBindingAndPreservesAdmittedRun(t *testing.T) {
+func TestRuntimeLossPublishesClosedBindingWithoutErasingManagementHistory(t *testing.T) {
 	for _, kind := range []string{"runtime_missing", "runtime_deleted"} {
 		t.Run(kind, func(t *testing.T) {
-			ctx, repository, databaseURL := workspaceStateRepository(t)
+			ctx, repository, databaseURL := controllerTestConnection(t)
 			base, _ := seedAvailableAgentForRebuild(t, ctx, repository)
 			now := time.Now().UTC()
-			command := acquireRunCommand(base.Agent, "before-loss", "before-loss", now)
-			admission, _, err := repository.AcquireRun(ctx, command)
-			if err != nil {
-				t.Fatal(err)
-			}
+			initial := currentExecutionSnapshot(t, repository, base.Agent.OrganizationID)
 			notifier, err := OpenEventNotifier(ctx, databaseURL)
 			if err != nil {
 				t.Fatal(err)
@@ -40,16 +35,21 @@ func TestRuntimeLossInvalidatesBindingAndPreservesAdmittedRun(t *testing.T) {
 				t.Fatal(err)
 			}
 			assertRuntimeLoss(t, ctx, repository, base.Agent, kind)
-			awaitWorkspaceNotification(t, ctx, signal)
+			awaitAgentNotification(t, ctx, signal)
 			service := application.NewAgentQueryService(repository)
-			assertWorkspaceState(t, ctx, service, application.WorkspaceStateInput{
-				AgentID: base.Agent.AgentID, OrganizationID: base.Agent.OrganizationID, PrincipalID: base.Agent.OwnerUserID,
-			}, application.WorkspaceAgentOffline, command.SessionID)
-			replayed, found, err := repository.ReplayRunAdmission(ctx, command.RequestID, command.RequestFingerprint)
-			if err != nil || !found || replayed.State != domain.AdmissionActive {
-				t.Fatalf("prior admission changed: %+v found=%t error=%v", replayed, found, err)
+			page, err := service.ListWorkspaceAgents(ctx, application.ListWorkspaceAgentsInput{
+				RequestID: "runtime-loss-list", OrganizationID: base.Agent.OrganizationID, PrincipalID: base.Agent.OwnerUserID,
+			})
+			if err != nil || len(page.Items) != 1 || page.Items[0].AgentID != base.Agent.AgentID {
+				t.Fatalf("Runtime loss must not erase authorized metadata: page=%+v error=%v", page, err)
 			}
-			assertSameAdmissionRecord(t, admission, replayed)
+			changed := currentExecutionSnapshot(t, repository, base.Agent.OrganizationID)
+			if changed.Revision != initial.Revision+1 {
+				t.Fatal("Runtime loss did not publish its configuration change")
+			}
+			if publishedAgent(t, repository, base.Agent).Runtime != nil {
+				t.Fatal("Runtime loss retained executable endpoint")
+			}
 			before := runtimeLossEvents(t, ctx, repository, base.Agent.AgentID)
 			for _, sequence := range []uint64{1, 2} {
 				observation.Sequence = sequence
@@ -60,6 +60,9 @@ func TestRuntimeLossInvalidatesBindingAndPreservesAdmittedRun(t *testing.T) {
 			if after := runtimeLossEvents(t, ctx, repository, base.Agent.AgentID); !reflect.DeepEqual(before, after) {
 				t.Fatal("duplicate loss notification appended another audit event")
 			}
+			if current := currentExecutionSnapshot(t, repository, base.Agent.OrganizationID); !reflect.DeepEqual(changed, current) {
+				t.Fatal("duplicate observation changed execution configuration")
+			}
 			assertRuntimeCursor(t, ctx, repository, 2)
 		})
 	}
@@ -68,11 +71,11 @@ func TestRuntimeLossInvalidatesBindingAndPreservesAdmittedRun(t *testing.T) {
 func TestRuntimeLossReconciliationUsesConfirmedAbsence(t *testing.T) {
 	for _, reset := range []bool{false, true} {
 		t.Run(map[bool]string{false: "bootstrap", true: "expired_cursor"}[reset], func(t *testing.T) {
-			ctx, repository, _ := workspaceStateRepository(t)
+			ctx, repository, _ := controllerTestConnection(t)
 			base, _ := seedAvailableAgentForRebuild(t, ctx, repository)
 			snapshots := []ports.RuntimeEnvironmentSnapshot{{
 				AgentID: base.Agent.AgentID, RuntimeRevision: base.Agent.RuntimeRevision,
-				LifecycleState: "ready", Health: "absent",
+				LifecycleState: "provisioned", Health: "absent",
 			}}
 			apply := func() error { return repository.InitializeRuntimeObservationCursor(ctx, snapshots) }
 			sequence := uint64(0)
@@ -106,11 +109,11 @@ func TestRuntimeLossDoesNotOverwriteNewRevisionOrLifecycle(t *testing.T) {
 	}{
 		{"new_revision", "runtime_revision = 'rtv_22222222222222222222222222222222'"},
 		{"lifecycle_in_progress", "active_operation_request_id = 'pending-disable'"},
-		{"disabled", "desired_state = 'disabled', lifecycle_state = 'disabled'"},
+		{"disabled", "desired_state = 'disabled', activation_state = 'disabled', runtime_state = 'absent'"},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
-			ctx, repository, _ := workspaceStateRepository(t)
+			ctx, repository, _ := controllerTestConnection(t)
 			base, _ := seedAvailableAgentForRebuild(t, ctx, repository)
 			if _, err := repository.pool.Exec(ctx, "UPDATE agent_controller.agents SET "+test.set+" WHERE id=$1", base.Agent.AgentID); err != nil {
 				t.Fatal(err)
@@ -141,16 +144,16 @@ func TestRuntimeLossDoesNotOverwriteNewRevisionOrLifecycle(t *testing.T) {
 func TestRuntimeLossReconciliationDoesNotInferDeletionFromUncertainty(t *testing.T) {
 	for _, health := range []string{"unknown", "unhealthy", "starting", "healthy"} {
 		t.Run(health, func(t *testing.T) {
-			ctx, repository, _ := workspaceStateRepository(t)
+			ctx, repository, _ := controllerTestConnection(t)
 			base, _ := seedAvailableAgentForRebuild(t, ctx, repository)
 			if err := repository.InitializeRuntimeObservationCursor(ctx, []ports.RuntimeEnvironmentSnapshot{{
 				AgentID: base.Agent.AgentID, RuntimeRevision: base.Agent.RuntimeRevision,
-				RuntimeExecutionID: base.Agent.RuntimeExecutionID, LifecycleState: "ready", Health: health,
+				RuntimeExecutionID: base.Agent.RuntimeExecutionID, LifecycleState: "provisioned", Health: health,
 			}}); err != nil {
 				t.Fatal(err)
 			}
 			agent, err := repository.GetAgent(ctx, base.Agent.AgentID)
-			if err != nil || agent.LifecycleState != domain.AgentAvailable || agent.ExecutionRevisionID != base.Agent.ExecutionRevisionID {
+			if err != nil || (agent.LifecycleState != domain.AgentCreated || agent.ActivationState != domain.ActivationEnabled || agent.RuntimeState != domain.RuntimeAvailable) || agent.ExecutionRevisionID != base.Agent.ExecutionRevisionID {
 				t.Fatalf("uncertain/unchanged Runtime invalidated: %+v error=%v", agent, err)
 			}
 		})
@@ -158,7 +161,7 @@ func TestRuntimeLossReconciliationDoesNotInferDeletionFromUncertainty(t *testing
 }
 
 func TestRuntimeLossEventFailureRollsBackAgentAndCursor(t *testing.T) {
-	ctx, repository, _ := workspaceStateRepository(t)
+	ctx, repository, _ := controllerTestConnection(t)
 	base, _ := seedAvailableAgentForRebuild(t, ctx, repository)
 	if _, err := repository.pool.Exec(ctx, `UPDATE agent_controller.agent_events
 SET event_id='runtime-observation-1' WHERE event_id='event-ready-for-rebuild'`); err != nil {
@@ -196,18 +199,15 @@ func assertRuntimeLoss(t *testing.T, ctx context.Context, repository *Repository
 	if err != nil {
 		t.Fatal(err)
 	}
-	if agent.LifecycleState != domain.AgentUnavailable || agent.ExecutionRevisionID != "" ||
+	if (agent.LifecycleState != domain.AgentCreated || agent.ActivationState != domain.ActivationEnabled || agent.RuntimeState != domain.RuntimeUnknown) || agent.ExecutionRevisionID != "" ||
 		agent.RuntimeMCPEndpoint != "" || agent.RuntimeExecutionID != "" || agent.FailureCode != reason ||
 		agent.FailureStage != "runtime_observation" || agent.RuntimeRevision != before.RuntimeRevision ||
 		agent.LastSuccessfulExecutionRevisionID != before.ExecutionRevisionID || agent.FailureDetail == "" {
 		t.Fatalf("missing Runtime still executable or evidence lost: %+v", agent)
 	}
-	_, _, err = repository.AcquireRun(ctx, acquireRunCommand(before, "after-loss", "after-loss", time.Now().UTC()))
-	if !errors.Is(err, ports.ErrAgentBuildFailed) {
-		t.Fatalf("new Run after loss error=%v", err)
-	}
+	assertExecutionClosed(t, repository, before)
 	events := runtimeLossEvents(t, ctx, repository, before.AgentID)
-	if len(events) != 3 || events[2].EventType != "agent_runtime_missing" || events[2].Data["reason"] != reason {
+	if len(events) != 4 || events[3].EventType != "agent_runtime_missing" || events[3].Data["reason"] != reason {
 		t.Fatalf("missing/wrong Runtime loss audit: %+v", events)
 	}
 }

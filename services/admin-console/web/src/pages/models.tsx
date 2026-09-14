@@ -1,6 +1,7 @@
 import { ArrowLeft, Pencil, Server } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ModelRates } from "../components/model-pricing";
+import { CatalogAvailabilityControl } from "../components/catalog-availability";
 import { PageHeader, ResourceFailureNotice, ResourceFailurePage, Section } from "../components/page";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
@@ -26,6 +27,7 @@ function ModelDetail({ modelID }: { modelID: string }) {
   const [loadFailure, setLoadFailure] = useState<ResourceFailure>();
   const [open, setOpen] = useState(false);
   const [pending, setPending] = useState(false);
+  const [availabilityBusy, setAvailabilityBusy] = useState(false);
   const [conflict, setConflict] = useState(false);
   const [successMessage, setSuccessMessage] = useState("");
 
@@ -113,9 +115,14 @@ function ModelDetail({ modelID }: { modelID: string }) {
         eyebrow={modelProfileLabel(catalog, profile)}
         title={profile.model.model}
         detail={profile.model.base_url}
-        actions={<><Badge value={profile.enabled ? "enabled" : "disabled"} /><Button disabled={!catalogGate.changeAllowed} title={catalogGate.message} onClick={() => { setSuccessMessage(""); setOpen(true); }}><Pencil className="h-4 w-4" />Edit model</Button></>}
+        actions={<><Badge value={profile.enabled ? "enabled" : "disabled"} /><Button disabled={!catalogGate.changeAllowed || availabilityBusy} title={catalogGate.message} onClick={() => { setSuccessMessage(""); setOpen(true); }}><Pencil className="h-4 w-4" />Edit model</Button></>}
       />
       {successMessage ? <SuccessNotice message={successMessage} onDismiss={() => setSuccessMessage("")} /> : null}
+      <CatalogAvailabilityControl kind="model-profiles" resourceID={modelID} enabled={profile.enabled} disabled={open || pending}
+        onBusyChange={setAvailabilityBusy} onReload={async (signal) => {
+          const current = await readModel(modelID, signal);
+          if (!signal.aborted) setProfile(current);
+        }} />
       {catalogState.status === "error" ? <ResourceFailureNotice failure={catalogState.failure} message={`Model catalog could not be loaded: ${catalogState.failure.message}`} retryLabel="Retry model catalog" onRetry={() => void loadCatalog()} /> : null}
       <Section title="Model configuration" detail="Provider credentials are write-only and never returned to the browser.">
         <div className="grid gap-px overflow-hidden rounded-md border border-border bg-border shadow-sm sm:grid-cols-2 lg:grid-cols-3">
@@ -137,8 +144,8 @@ function ModelDetail({ modelID }: { modelID: string }) {
   );
 }
 
-async function readModel(modelID: string): Promise<ModelProfile> {
-  const detail = await api.model(modelID);
+async function readModel(modelID: string, signal?: AbortSignal): Promise<ModelProfile> {
+  const detail = await api.model(modelID, signal);
   if (detail.model_profile_id !== modelID) {
     throw new APIError(404, "reference_not_found", "The model could not be found.");
   }

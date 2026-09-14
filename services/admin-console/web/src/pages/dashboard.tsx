@@ -17,6 +17,7 @@ import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Empty, ErrorNotice, Loading } from "../components/ui/feedback";
 import { api } from "../lib/api";
+import { agentFleetCounts, agentStatusPresentation } from "../lib/agent-fleet";
 import { dateTime } from "../lib/format";
 import { boundedSnapshot, overviewResourceSummary, overviewRefreshAllowed } from "../lib/overview";
 import { resourceFailure, type ResourceFailure } from "../lib/resource-failure";
@@ -92,10 +93,7 @@ export function DashboardPage() {
   const agents = data.agents.status === "available" ? data.agents.data.items : [];
   const agentsAvailable = data.agents.status === "available";
   const resources = overviewResourceSummary(data);
-  const available = agents.filter((agent) => agent.lifecycle_state === "available").length;
-  const disabled = agents.filter((agent) => agent.lifecycle_state === "disabled").length;
-  const failed = agents.filter((agent) => agent.lifecycle_state === "failed").length;
-  const changing = Math.max(0, agents.length - available - disabled - failed);
+  const { available, disabled, attention: failed, pending: changing } = agentFleetCounts(agents);
   const agentCursor = data.agents.status === "available" ? data.agents.data.next_cursor : null;
   const agentSnapshot = boundedSnapshot(agents.length, agentCursor);
   const setup = platformSetup(data);
@@ -219,7 +217,7 @@ export function DashboardPage() {
                         <span className="block truncate text-sm font-medium">{agent.name}</span>
                       </span>
                     </div>
-                    <Badge className="w-fit" value={agent.lifecycle_state} />
+                    <Badge className="w-fit" value={agentStatusPresentation(agent).lifecycle} />
                     <time className="text-xs text-muted-foreground">{dateTime(agent.updated_at)}</time>
                   </a>
                 ))}
@@ -259,9 +257,9 @@ export function DashboardPage() {
             {agentsAvailable ? (
               <div className="mt-5 grid gap-3 text-sm">
                 <FleetState icon={CircleCheck} label="Available" value={available} className="text-emerald-700" />
-                <FleetState icon={Clock3} label="Changing" value={changing} className="text-amber-700" />
+                <FleetState icon={Clock3} label="Pending" value={changing} className="text-amber-700" />
                 <FleetState icon={Server} label="Disabled" value={disabled} className="text-slate-600" />
-                <FleetState icon={CircleAlert} label="Failed" value={failed} className="text-red-700" />
+                <FleetState icon={CircleAlert} label="Needs attention" value={failed} className="text-red-700" />
               </div>
             ) : <p className="mt-5 text-sm text-muted-foreground">Lifecycle distribution is unavailable.</p>}
           </div>

@@ -7,9 +7,12 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 	"time"
 
+	"soft/antnest-platform/services/edge-gateway/internal/agentacp"
 	"soft/antnest-platform/services/edge-gateway/internal/agentcontroller"
 	"soft/antnest-platform/services/edge-gateway/internal/identity"
 	"soft/antnest-platform/services/edge-gateway/internal/server"
@@ -18,7 +21,9 @@ import (
 )
 
 func TestWorkspaceWatchStopsBeforeGatewayTelemetryShutdown(t *testing.T) {
-	testReceiveShutdown(t, "/api/app/agents/agent-1/state/watch")
+	for _, path := range []string{"/api/app/agents/agent-1/state/watch", "/api/app/agents/agent%2F1/state/watch"} {
+		t.Run(path, func(t *testing.T) { testReceiveShutdown(t, path) })
+	}
 }
 
 func TestHTTPReceiveStreamsStopBeforeGatewayTelemetryShutdown(t *testing.T) {
@@ -33,6 +38,11 @@ func TestHTTPReceiveStreamsStopBeforeGatewayTelemetryShutdown(t *testing.T) {
 
 func testReceiveShutdown(t *testing.T, path string) {
 	t.Helper()
+	parts := strings.Split(path, "/")
+	agentID, err := url.PathUnescape(parts[4])
+	if err != nil {
+		t.Fatal(err)
+	}
 	upstreamStopped := make(chan struct{})
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/rpc/identity/resolve-access-token" {
@@ -42,14 +52,14 @@ func testReceiveShutdown(t *testing.T, path string) {
 			return
 		}
 		if r.URL.Path == "/rpc/agent-controller/list-workspace-agents" {
-			if _, err := io.WriteString(w, `{"agents":[{"agent_id":"agent-1","name":"One","availability":"ready","agent_access_subject":"test-subject"}],"next_cursor":null}`); err != nil {
+			if _, err := io.WriteString(w, `{"agents":[{"agent_id":"agent-1","name":"One"}],"next_cursor":null}`); err != nil {
 				t.Error(err)
 			}
 			return
 		}
 		defer close(upstreamStopped)
 		w.Header().Set("Content-Type", "text/event-stream")
-		if _, err := io.WriteString(w, "event: workspace_state\ndata: {\"agent_id\":\"agent-1\",\"availability\":\"ready\",\"access_allowed\":true,\"agent_revision\":3,\"active_session_id\":null}\n\n"); err != nil {
+		if _, err := io.WriteString(w, strings.ReplaceAll("event: workspace_state\ndata: {\"agent_id\":\"agent-1\",\"availability\":\"ready\",\"access_allowed\":true,\"configuration_revision\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"unavailable_reason\":null,\"active_session_id\":null}\n\n", "agent-1", agentID)); err != nil {
 			return
 		}
 		if err := http.NewResponseController(w).Flush(); err != nil {
@@ -67,11 +77,15 @@ func testReceiveShutdown(t *testing.T, path string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	executionClient, err := agentacp.NewClient(upstream.URL, upstream.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
 	sessions, err := session.NewManager(session.Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	h, err := server.NewHandler(server.Config{AdminConsoleURL: upstream.URL, AgentUIURL: upstream.URL, AgentACPURL: upstream.URL, IdentityURL: upstream.URL}, server.Dependencies{Identity: identities, Agents: agents, Sessions: sessions, HTTPClient: upstream.Client(), Logger: logger})
+	h, err := server.NewHandler(server.Config{AdminConsoleURL: upstream.URL, AgentUIURL: upstream.URL, AgentACPURL: upstream.URL, IdentityURL: upstream.URL}, server.Dependencies{Identity: identities, Agents: agents, Execution: executionClient, Sessions: sessions, HTTPClient: upstream.Client(), Logger: logger})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,6 +147,6 @@ func testReceiveShutdown(t *testing.T, path string) {
 	select {
 	case <-upstreamStopped:
 	case <-time.After(time.Second):
-		t.Fatal("Controller receive not cancelled")
+		t.Fatal("ACP receive not cancelled")
 	}
 }

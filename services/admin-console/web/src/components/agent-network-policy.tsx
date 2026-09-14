@@ -24,8 +24,7 @@ type Problem = {
 export function AgentNetworkPolicy({ agent, scope, refreshRevision }: Props) {
   if (
     agent.desired_state === "deleted" ||
-    agent.lifecycle_state === "deleted" ||
-    agent.lifecycle_state === "deleting"
+    agent.lifecycle_state === "deleted"
   )
     return null;
   return (
@@ -119,6 +118,7 @@ function NetworkPolicyControl({ agent, scope, refreshRevision }: Props) {
   }, [
     refresh,
     agent.lifecycle_state,
+    agent.activation_state,
     agent.runtime?.runtime_revision,
     refreshRevision,
   ]);
@@ -281,7 +281,7 @@ function NetworkPolicyControl({ agent, scope, refreshRevision }: Props) {
       </div>
       <div className="mt-3 grid gap-3">
         {policy?.attachment.state === "closed" ||
-        agent.lifecycle_state === "disabled" ? (
+        agent.activation_state === "disabled" ? (
           <p className="text-sm text-muted-foreground">
             Agent network is paused.
           </p>

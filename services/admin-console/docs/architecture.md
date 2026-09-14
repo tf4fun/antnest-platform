@@ -23,7 +23,7 @@ server ID/command summaries. All responses are `no-store`. See
 ```text
 web/                 React application and shadcn UI components
 internal/principal/  trusted Edge Gateway principal parser
-internal/upstream/   traced Identity and Agent Controller clients
+internal/upstream/   traced Identity, Agent Controller and ACP clients
 internal/server/     BFF request shaping, scope checks, and static fallback
 internal/telemetry/  HTTP spans, correlated logs, and OTLP lifecycle
 cmd/admin-console/   composition and shutdown only
@@ -34,10 +34,18 @@ IDs and authority fields, then calls the existing language-neutral internal
 contracts. Browser JSON cannot select another organization or impersonate an
 actor.
 
+Execution audit is read directly from ACP, independently of Controller's current
+Agent projection. Configuration synchronization is a separate Controller read.
+See [execution audit](execution-audit.md) for routes, trusted identity forwarding,
+and the pending integration delivery boundary. [Catalog availability](catalog-availability.md)
+uses one Controller command per explicit change; the browser renders reference
+conflicts and configuration acknowledgement without becoming their authority.
+
 Internal RPC payloads are never raw-proxied on successful reads. The server
 projects explicit browser DTOs and omits Provider credential references, Agent
 access subjects/revisions, Runtime execution identities, MCP endpoints, and
-event data. This is an allowlist boundary: a new internal field remains private
+internal management event data. Execution-audit DTOs deliberately retain input,
+tool and permission content. This is an allowlist boundary: a new internal field remains private
 until the BFF deliberately exposes it.
 
 The overview is a non-persistent presentation aggregate. Four buffered reads

@@ -1,0 +1,177 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "anyOf": [
+    {
+      "type": "object",
+      "properties": {
+        "agent_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "access_allowed": {
+          "type": "boolean",
+          "const": true
+        },
+        "configuration_revision": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "availability": {
+          "type": "string",
+          "const": "ready"
+        },
+        "active_session_id": {
+          "type": "null"
+        },
+        "unavailable_reason": {
+          "type": "null"
+        }
+      },
+      "required": [
+        "agent_id",
+        "access_allowed",
+        "configuration_revision",
+        "availability",
+        "active_session_id",
+        "unavailable_reason"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "agent_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "access_allowed": {
+          "type": "boolean",
+          "const": true
+        },
+        "configuration_revision": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "availability": {
+          "type": "string",
+          "const": "busy"
+        },
+        "active_session_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "unavailable_reason": {
+          "anyOf": [
+            {
+              "type": "string",
+              "const": "agent_unavailable"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "agent_id",
+        "access_allowed",
+        "configuration_revision",
+        "availability",
+        "active_session_id",
+        "unavailable_reason"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "agent_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "access_allowed": {
+          "type": "boolean",
+          "const": true
+        },
+        "configuration_revision": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "availability": {
+          "type": "string",
+          "const": "offline"
+        },
+        "active_session_id": {
+          "type": "null"
+        },
+        "unavailable_reason": {
+          "type": "string",
+          "enum": [
+            "agent_unavailable",
+            "runtime_barrier_required"
+          ]
+        }
+      },
+      "required": [
+        "agent_id",
+        "access_allowed",
+        "configuration_revision",
+        "availability",
+        "active_session_id",
+        "unavailable_reason"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "agent_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "access_allowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "availability": {
+          "type": "string",
+          "const": "offline"
+        },
+        "active_session_id": {
+          "type": "null"
+        },
+        "configuration_revision": {
+          "type": "null"
+        },
+        "unavailable_reason": {
+          "type": "string",
+          "const": "access_denied"
+        }
+      },
+      "required": [
+        "agent_id",
+        "access_allowed",
+        "availability",
+        "active_session_id",
+        "configuration_revision",
+        "unavailable_reason"
+      ],
+      "additionalProperties": false
+    }
+  ],
+  "$id": "https://antnest.local/contracts/agent-acp/agent-execution-state.schema.json",
+  "title": "Workspace execution state",
+  "description": "Current view only, not an admission or execution result. Denied views disclose neither configuration nor Session identity."
+}

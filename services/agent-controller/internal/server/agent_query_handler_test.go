@@ -20,12 +20,11 @@ func TestAgentQueryHandlerListsWorkspaceAgentsWithoutBroadProjection(t *testing.
 	queries := &agentQueryServiceStub{workspacePage: application.WorkspaceAgentPage{
 		Items: []application.WorkspaceAgentView{{
 			AgentID: "agent-1", Name: "Research Agent",
-			Availability: application.WorkspaceAgentBusy, AccessSubject: "subject-private",
 		}},
 		NextCursor: "next-workspace",
 	}}
 	handler, err := NewHandler(
-		&catalogServiceStub{}, &lifecycleServiceStub{}, &runServiceStub{}, queries,
+		&catalogServiceStub{}, &lifecycleServiceStub{}, &agentConfigurationServiceStub{}, queries,
 		&agentEventServiceStub{}, &networkPolicyServiceStub{},
 		func(context.Context) error { return nil },
 	)
@@ -53,7 +52,7 @@ func TestAgentQueryHandlerListsWorkspaceAgentsWithoutBroadProjection(t *testing.
 		t.Fatalf("decode workspace Agents: %v", err)
 	}
 	if len(payload.Agents) != 1 || payload.Agents[0].AgentID != "agent-1" ||
-		payload.Agents[0].AgentAccessSubject != "subject-private" ||
+		payload.Agents[0].Name != "Research Agent" ||
 		payload.NextCursor == nil || *payload.NextCursor != "next-workspace" {
 		t.Fatalf("workspace payload = %+v", payload)
 	}
@@ -70,7 +69,7 @@ func TestAgentQueryHandlerGetsKnownDeletedProjection(t *testing.T) {
 		AggregateSequence: 12, CreatedAt: now.Add(-time.Hour), UpdatedAt: now,
 	}}
 	handler, err := NewHandler(
-		&catalogServiceStub{}, &lifecycleServiceStub{}, &runServiceStub{}, queries,
+		&catalogServiceStub{}, &lifecycleServiceStub{}, &agentConfigurationServiceStub{}, queries,
 		&agentEventServiceStub{}, &networkPolicyServiceStub{},
 		func(context.Context) error { return nil },
 	)
@@ -107,7 +106,7 @@ func TestAgentQueryHandlerReturnsSafeExecutableConfigurationLineage(t *testing.T
 	queries := &agentQueryServiceStub{agent: application.AgentView{
 		AgentID: "agent-1", OrganizationID: "org-1", OwnerUserID: "user-1",
 		Name: "Research Agent", DesiredState: domain.DesiredEnabled,
-		LifecycleState: domain.AgentAvailable, AccessRevision: "access-1",
+		LifecycleState: domain.AgentCreated, ActivationState: domain.ActivationEnabled, RuntimeState: domain.RuntimeAvailable, AccessRevision: "access-1",
 		AgentSpecRevisionID: "spec-3", ExecutionRevisionID: "execution-4",
 		Configuration: &application.AgentConfigurationView{
 			TemplateID: "template-1", TemplateRevision: 2, TemplateName: "Research",
@@ -128,7 +127,7 @@ func TestAgentQueryHandlerReturnsSafeExecutableConfigurationLineage(t *testing.T
 		AggregateSequence: 9, CreatedAt: now.Add(-time.Hour), UpdatedAt: now,
 	}}
 	handler, err := NewHandler(
-		&catalogServiceStub{}, &lifecycleServiceStub{}, &runServiceStub{}, queries,
+		&catalogServiceStub{}, &lifecycleServiceStub{}, &agentConfigurationServiceStub{}, queries,
 		&agentEventServiceStub{}, &networkPolicyServiceStub{},
 		func(context.Context) error { return nil },
 	)
@@ -155,18 +154,18 @@ func TestAgentQueryHandlerReturnsSafeExecutableConfigurationLineage(t *testing.T
 	}
 }
 
-func TestAgentQueryHandlerOmitsNonExecutableRuntimeRevision(t *testing.T) {
+func TestAgentQueryHandlerPreservesConfiguredTargetWithoutExecution(t *testing.T) {
 	t.Parallel()
 
 	queries := &agentQueryServiceStub{agent: application.AgentView{
 		AgentID: "agent-1", OrganizationID: "org-1", OwnerUserID: "user-1",
 		Name: "Disabled Agent", DesiredState: domain.DesiredDisabled,
-		LifecycleState: domain.AgentDisabled, AccessRevision: "access-1",
+		LifecycleState: domain.AgentCreated, ActivationState: domain.ActivationDisabled, RuntimeState: domain.RuntimeAbsent, AccessRevision: "access-1",
 		RuntimeRevision: "retained-runtime-revision", AggregateSequence: 5,
 		CreatedAt: time.Unix(1, 0).UTC(), UpdatedAt: time.Unix(2, 0).UTC(),
 	}}
 	handler, err := NewHandler(
-		&catalogServiceStub{}, &lifecycleServiceStub{}, &runServiceStub{}, queries,
+		&catalogServiceStub{}, &lifecycleServiceStub{}, &agentConfigurationServiceStub{}, queries,
 		&agentEventServiceStub{}, &networkPolicyServiceStub{},
 		func(context.Context) error { return nil },
 	)
@@ -184,8 +183,9 @@ func TestAgentQueryHandlerOmitsNonExecutableRuntimeRevision(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("decode Agent: %v", err)
 	}
-	if _, present := payload["runtime"]; present {
-		t.Fatalf("disabled Agent exposed a non-executable Runtime binding: %+v", payload["runtime"])
+	runtime, ok := payload["runtime"].(map[string]any)
+	if !ok || len(runtime) != 1 || runtime["runtime_revision"] != "retained-runtime-revision" {
+		t.Fatalf("configured target lost or fabricated execution: %+v", payload["runtime"])
 	}
 }
 
@@ -194,7 +194,7 @@ func TestAgentQueryHandlerRejectsQueryOnExactGet(t *testing.T) {
 
 	queries := &agentQueryServiceStub{}
 	handler, err := NewHandler(
-		&catalogServiceStub{}, &lifecycleServiceStub{}, &runServiceStub{}, queries,
+		&catalogServiceStub{}, &lifecycleServiceStub{}, &agentConfigurationServiceStub{}, queries,
 		&agentEventServiceStub{}, &networkPolicyServiceStub{},
 		func(context.Context) error { return nil },
 	)
@@ -218,13 +218,13 @@ func TestAgentQueryHandlerListsWithStrictFilters(t *testing.T) {
 		Items: []application.AgentView{{
 			AgentID: "agent-1", OrganizationID: "org-1", OwnerUserID: "user-1",
 			Name: "Agent", DesiredState: domain.DesiredEnabled,
-			LifecycleState: domain.AgentAvailable, AccessRevision: "access-1",
+			LifecycleState: domain.AgentCreated, ActivationState: domain.ActivationEnabled, RuntimeState: domain.RuntimeAvailable, AccessRevision: "access-1",
 			AggregateSequence: 4, CreatedAt: time.Unix(1, 0).UTC(), UpdatedAt: time.Unix(2, 0).UTC(),
 		}},
 		NextCursor: "next-cursor",
 	}}
 	handler, err := NewHandler(
-		&catalogServiceStub{}, &lifecycleServiceStub{}, &runServiceStub{}, queries,
+		&catalogServiceStub{}, &lifecycleServiceStub{}, &agentConfigurationServiceStub{}, queries,
 		&agentEventServiceStub{}, &networkPolicyServiceStub{},
 		func(context.Context) error { return nil },
 	)
@@ -234,7 +234,7 @@ func TestAgentQueryHandlerListsWithStrictFilters(t *testing.T) {
 	response := httptest.NewRecorder()
 	request := httptest.NewRequest(
 		http.MethodGet,
-		"/internal/agents?organization_id=org-1&owner_user_id=user-1&lifecycle_state=available&include_deleted=true&limit=25&cursor=cursor-1",
+		"/internal/agents?organization_id=org-1&owner_user_id=user-1&lifecycle_state=created&activation_state=enabled&runtime_state=available&include_deleted=true&limit=25&cursor=cursor-1",
 		nil,
 	)
 	handler.ServeHTTP(response, request)
@@ -244,7 +244,7 @@ func TestAgentQueryHandlerListsWithStrictFilters(t *testing.T) {
 	}
 	expected := application.ListAgentsInput{
 		OrganizationID: "org-1", OwnerUserID: "user-1",
-		LifecycleState: domain.AgentAvailable, IncludeDeleted: true,
+		LifecycleState: domain.AgentCreated, ActivationState: domain.ActivationEnabled, RuntimeState: domain.RuntimeAvailable, IncludeDeleted: true,
 		Limit: 25, Cursor: "cursor-1",
 	}
 	if queries.listInput != expected {
@@ -283,7 +283,7 @@ func TestAgentQueryHandlerRejectsAmbiguousOrUnknownQuery(t *testing.T) {
 			t.Parallel()
 			queries := &agentQueryServiceStub{}
 			handler, err := NewHandler(
-				&catalogServiceStub{}, &lifecycleServiceStub{}, &runServiceStub{}, queries,
+				&catalogServiceStub{}, &lifecycleServiceStub{}, &agentConfigurationServiceStub{}, queries,
 				&agentEventServiceStub{}, &networkPolicyServiceStub{},
 				func(context.Context) error { return nil },
 			)
@@ -304,7 +304,7 @@ func TestAgentQueryHandlerMapsServiceError(t *testing.T) {
 
 	queries := &agentQueryServiceStub{err: application.ErrAgentNotFound}
 	handler, err := NewHandler(
-		&catalogServiceStub{}, &lifecycleServiceStub{}, &runServiceStub{}, queries,
+		&catalogServiceStub{}, &lifecycleServiceStub{}, &agentConfigurationServiceStub{}, queries,
 		&agentEventServiceStub{}, &networkPolicyServiceStub{},
 		func(context.Context) error { return nil },
 	)
@@ -328,9 +328,6 @@ func TestAgentQueryHandlerMapsServiceError(t *testing.T) {
 }
 
 type agentQueryServiceStub struct {
-	state          application.WorkspaceAgentState
-	stateInput     application.WorkspaceStateInput
-	watchState     func(context.Context, application.WorkspaceStateEmitter) error
 	agent          application.AgentView
 	page           application.AgentPage
 	err            error
@@ -340,22 +337,6 @@ type agentQueryServiceStub struct {
 	listCalls      int
 	workspacePage  application.WorkspaceAgentPage
 	workspaceInput application.ListWorkspaceAgentsInput
-}
-
-func (service *agentQueryServiceStub) GetWorkspaceAgentState(_ context.Context, input application.WorkspaceStateInput) (application.WorkspaceAgentState, error) {
-	service.stateInput = input
-	return service.state, service.err
-}
-
-func (service *agentQueryServiceStub) WatchWorkspaceAgentState(ctx context.Context, input application.WorkspaceStateInput, emit application.WorkspaceStateEmitter) error {
-	service.stateInput = input
-	if service.watchState != nil {
-		return service.watchState(ctx, emit)
-	}
-	if service.err != nil {
-		return service.err
-	}
-	return emit(service.state)
 }
 
 func (service *agentQueryServiceStub) GetAgent(

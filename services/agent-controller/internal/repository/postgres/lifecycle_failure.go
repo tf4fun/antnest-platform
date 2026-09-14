@@ -23,7 +23,7 @@ func (repository *Repository) QuarantineLifecycleOperation(
 	}
 	defer func() { _ = transaction.Rollback(ctx) }()
 
-	operation, err := loadLifecycleOperation(ctx, transaction, input.RequestID, "FOR UPDATE")
+	operation, err := loadLifecycleExecutionMutation(ctx, transaction, input.RequestID)
 	if err != nil {
 		return err
 	}
@@ -53,7 +53,8 @@ FOR UPDATE`, operation.AgentID).Scan(&aggregateSequence, &activeOperationRequest
 	nextSequence := aggregateSequence + 1
 	result, err := transaction.Exec(ctx, `
 UPDATE agent_controller.agents
-SET lifecycle_state = 'unavailable', active_operation_request_id = '',
+SET runtime_state = 'unknown', runtime_reason = 'lifecycle_invariant_failed', active_operation_request_id = '',
+    executable_execution_revision_id = '', runtime_execution_id = '', runtime_mcp_endpoint = '',
     failure_stage = $2, failure_code = $3, failure_detail = $4,
     aggregate_sequence = $5, updated_at = $6
 WHERE id = $1 AND active_operation_request_id = $7 AND aggregate_sequence = $8`,
@@ -86,6 +87,9 @@ SET state = 'failed', child_request_id = '', error_code = $2,
     updated_at = $4
 WHERE request_id = $1`, input.RequestID, input.ErrorCode, input.ErrorDetail, now); err != nil {
 		return fmt.Errorf("quarantine Agent lifecycle operation: %w", err)
+	}
+	if err := repository.advanceAgentExecutionRevision(ctx, transaction, operation.AgentID); err != nil {
+		return err
 	}
 	if err := transaction.Commit(ctx); err != nil {
 		return fmt.Errorf("commit lifecycle quarantine: %w", err)

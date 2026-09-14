@@ -7,6 +7,10 @@ import { assertEventPage } from "./evidence.mjs";
 import { verifyLifecycleTrace } from "./trace.mjs";
 import { exerciseStartupFailure } from "./failure.mjs";
 import { withHeldRun } from "./drain.mjs";
+import {
+  waitForAgentReady,
+  assertAgentDisabled,
+} from "../verification/agent-state.mjs";
 
 async function firstEvent(client, agentID, after = 0) {
   const abort = new AbortController();
@@ -214,8 +218,10 @@ export async function runFlow(config, docker, signal, scenario) {
     return { containers, volumes };
   }
   async function ready(agentID) {
-    const agent = await json(`/api/admin/agents/${agentID}`);
-    assert.equal(agent.lifecycle_state, "available");
+    const agent = await waitForAgentReady(
+      () => json(`/api/admin/agents/${agentID}`),
+      signal,
+    );
     const physical = await resources(agentID);
     assert.equal(physical.containers.length, 1);
     const container = physical.containers[0];
@@ -344,10 +350,7 @@ export async function runFlow(config, docker, signal, scenario) {
   assert.equal((await ready(agentID)).container.Id, rebuilt.container.Id);
   await command("disable", agentID, {});
   const disabled = await resources(agentID);
-  assert.equal(
-    (await json(`/api/admin/agents/${agentID}`)).lifecycle_state,
-    "disabled",
-  );
+  assertAgentDisabled(await json(`/api/admin/agents/${agentID}`));
   assert.deepEqual(disabled.containers, []);
   assert.deepEqual(disabled.volumes, [initial.volume]);
   assert.equal(

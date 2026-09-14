@@ -162,10 +162,10 @@ func TestFailedOperationUsesStableSanitizedError(t *testing.T) {
 	}
 }
 
-func TestFailedInitializeReadinessHasActionableStableError(t *testing.T) {
+func TestFailedInitializePlatformHasActionableStableError(t *testing.T) {
 	service := &fakeService{operation: deployment.Operation{
 		RequestID: "request-1", State: deployment.OperationFailed,
-		Effect: deployment.EffectCompleted, ErrorCode: "runtime_not_ready",
+		Effect: deployment.EffectNotStarted, ErrorCode: "platform_unavailable",
 		ErrorDetail: "PRIVATE_PROCESS_ENV must not leak",
 	}}
 	handler := newTestHandler(t, service)
@@ -178,7 +178,7 @@ func TestFailedInitializeReadinessHasActionableStableError(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &failure); err != nil {
 		t.Fatal(err)
 	}
-	if response.Code != http.StatusInternalServerError || failure.Code != "runtime_not_ready" || failure.Retryable || !strings.Contains(failure.Message, "MCP") || strings.Contains(response.Body.String(), "PRIVATE_PROCESS_ENV") {
+	if response.Code != http.StatusServiceUnavailable || failure.Code != "platform_unavailable" || !failure.Retryable || !strings.Contains(failure.Message, "platform") || strings.Contains(response.Body.String(), "PRIVATE_PROCESS_ENV") {
 		t.Fatalf("readiness failure lost stable diagnosis: %d %+v", response.Code, failure)
 	}
 }

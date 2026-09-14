@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"soft/antnest-platform/services/agent-controller/internal/domain"
 	"soft/antnest-platform/services/agent-controller/internal/ports"
 )
 
@@ -26,7 +27,7 @@ func TestRuntimeObservationWorkerBootstrapsBeforeApplyingJournal(t *testing.T) {
 	}
 	store := &runtimeObservationStoreStub{}
 	worker := newRuntimeObservationWorkerForTest(t, source, store)
-	if err := worker.synchronize(context.Background()); err != nil {
+	if err := worker.RunOnce(context.Background()); err != nil {
 		t.Fatalf("synchronize: %v", err)
 	}
 	if store.initializeCalls != 1 || len(store.applied) != 1 || store.applied[0].Sequence != 7 {
@@ -49,7 +50,7 @@ func TestRuntimeObservationWorkerReconcilesExpiredCursor(t *testing.T) {
 		cursor: ports.RuntimeObservationCursor{Sequence: 10, Initialized: true},
 	}
 	worker := newRuntimeObservationWorkerForTest(t, source, store)
-	if err := worker.synchronize(context.Background()); err != nil {
+	if err := worker.RunOnce(context.Background()); err != nil {
 		t.Fatalf("synchronize: %v", err)
 	}
 	if store.resetSequence != 41 || len(source.after) != 2 || source.after[1] != 41 {
@@ -66,7 +67,7 @@ func TestRuntimeObservationWorkerDoesNotAdvanceAfterStoreFailure(t *testing.T) {
 		applyErr: errors.New("database unavailable"),
 	}
 	worker := newRuntimeObservationWorkerForTest(t, source, store)
-	if err := worker.synchronize(context.Background()); err == nil {
+	if err := worker.RunOnce(context.Background()); err == nil {
 		t.Fatal("store failure was ignored")
 	}
 	if len(store.applied) != 0 {
@@ -88,10 +89,12 @@ func newRuntimeObservationWorkerForTest(
 }
 
 type runtimeObservationSourceStub struct {
-	runtimes   []ports.RuntimeEnvironmentSnapshot
-	pages      []ports.RuntimeObservationPage
-	pageErrors []error
-	after      []uint64
+	inspection    ports.RuntimeInspection
+	inspectionErr error
+	runtimes      []ports.RuntimeEnvironmentSnapshot
+	pages         []ports.RuntimeObservationPage
+	pageErrors    []error
+	after         []uint64
 }
 
 func (source *runtimeObservationSourceStub) ListRuntimeObservations(
@@ -120,6 +123,8 @@ func (source *runtimeObservationSourceStub) ListRuntimes(
 }
 
 type runtimeObservationStoreStub struct {
+	pending         []ports.PendingRuntimeBinding
+	published       []ports.PublishRuntimeBinding
 	cursor          ports.RuntimeObservationCursor
 	initializeCalls int
 	resetSequence   uint64
@@ -158,4 +163,66 @@ func (store *runtimeObservationStoreStub) ApplyRuntimeObservation(
 	store.applied = append(store.applied, observation)
 	store.cursor.Sequence = observation.Sequence
 	return nil
+}
+
+func (source *runtimeObservationSourceStub) InspectRuntime(_ context.Context, agentID string) (ports.RuntimeInspection, error) {
+	if source.inspectionErr != nil {
+		return ports.RuntimeInspection{}, source.inspectionErr
+	}
+	if source.inspection.AgentID == "" {
+		return ports.RuntimeInspection{AgentID: agentID}, nil
+	}
+	return source.inspection, nil
+}
+
+func (store *runtimeObservationStoreStub) ListPendingRuntimeBindings(_ context.Context, after string, _ int) ([]ports.PendingRuntimeBinding, error) {
+	if after != "" {
+		return nil, nil
+	}
+	return store.pending, nil
+}
+
+func (store *runtimeObservationStoreStub) PublishRuntimeBinding(_ context.Context, input ports.PublishRuntimeBinding) (bool, error) {
+	store.published = append(store.published, input)
+	return true, nil
+}
+
+func (store *runtimeObservationStoreStub) RecordRuntimeCondition(_ context.Context, input ports.RecordRuntimeCondition) (int64, error) {
+	return input.ExpectedAggregateSequence, nil
+}
+
+func TestRuntimeReadinessReconcilesWithoutANewEvent(t *testing.T) {
+	for _, journalError := range []error{nil, errors.New("journal temporarily unavailable")} {
+		t.Run(fmtErrorName(journalError), func(t *testing.T) {
+			source := &runtimeObservationSourceStub{
+				inspection: ports.RuntimeInspection{AgentID: "agent-1", RuntimeRevision: "runtime-1",
+					LifecycleState: "provisioned", Phase: "running", Health: "healthy", RuntimeExecutionID: "process-1", MCPEndpoint: "http://runtime:8091/mcp", ObservedAt: time.Now().UTC()},
+				pageErrors: []error{journalError},
+			}
+			store := &runtimeObservationStoreStub{
+				cursor: ports.RuntimeObservationCursor{Initialized: true},
+				pending: []ports.PendingRuntimeBinding{{
+					Agent: ports.AgentRecord{AgentID: "agent-1", AgentSpecRevisionID: "spec-1", RuntimeRevision: "runtime-1",
+						DesiredState: domain.DesiredEnabled, LifecycleState: domain.AgentCreated, ActivationState: domain.ActivationEnabled, RuntimeState: domain.RuntimeUnknown, AggregateSequence: 2},
+					Spec:                  ports.AgentSpecRecord{ID: "spec-1", AgentID: "agent-1"},
+					Operation:             ports.LifecycleOperationRecord{RequestID: "create-1", AgentID: "agent-1", Kind: domain.OperationCreate},
+					NextExecutionRevision: 1,
+				}},
+			}
+			err := newRuntimeObservationWorkerForTest(t, source, store).RunOnce(context.Background())
+			if (err != nil) != (journalError != nil) || len(store.published) != 1 {
+				t.Fatalf("readiness must reconcile even after an early/lost event: error=%v publishes=%d", err, len(store.published))
+			}
+			if store.published[0].Execution.RuntimeExecutionID != "process-1" || store.published[0].ReadyEvent.EventType != ports.EventAgentReady {
+				t.Fatalf("bad observed binding: %+v", store.published[0])
+			}
+		})
+	}
+}
+
+func fmtErrorName(err error) string {
+	if err == nil {
+		return "empty_journal"
+	}
+	return "failed_journal"
 }

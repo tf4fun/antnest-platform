@@ -132,7 +132,8 @@ async function restoreScenario(
   ]);
   await command("disable", created.agentID, {});
   const offline = await json(`/api/admin/agents/${created.agentID}`);
-  assert.equal(offline.lifecycle_state, "disabled");
+  assert.equal(offline.lifecycle_state, "created");
+  assert.equal(offline.activation_state, "disabled");
   assert.deepEqual(await resources(created.agentID), {
     containers: [],
     volumes: [initial.volume],
@@ -213,7 +214,8 @@ async function restoreScenario(
     },
   });
   const restored = await json(`/api/admin/agents/${created.agentID}`);
-  assert.equal(restored.lifecycle_state, "disabled");
+  assert.equal(restored.lifecycle_state, "created");
+  assert.equal(restored.activation_state, "disabled");
   assert.deepEqual(restored.configuration, offline.configuration);
   assert.deepEqual(await json("/api/admin/model-profiles"), models);
   assert.deepEqual(await json("/api/admin/templates"), templates);

@@ -13,14 +13,14 @@ import type {
 } from "../../src/domain/types.js";
 
 const binding: ConnectionBinding = {
+  organizationId: "organization-1",
   connectionId: "connection-1",
-  agentAccessSubject: "subject-1",
   principalId: "principal-1",
   agentId: "agent-1",
-  accessRevision: "access-1",
 };
 
 const session: SessionRecord = {
+  organizationId: "organization-1",
   id: "session-1",
   principalId: "principal-1",
   agentId: "agent-1",
@@ -36,13 +36,16 @@ const session: SessionRecord = {
 };
 
 const snapshot: RunExecutionSnapshot = {
-  admissionId: "admission-1",
-  admissionDeadline: new Date("2026-08-30T00:10:00Z"),
+  organizationId: "organization-1",
+  providerConnectionId: "connection-1",
+  modelProfileId: "profile-1",
+  configurationRevision: 1,
+  accessRevision: "access-1",
+  deadlineAt: new Date("2026-08-30T00:10:00Z"),
   agentSpecRevision: "config-2",
   executionRevision: "execution-2",
   runtimeMcpSourceDigest: "a".repeat(64),
   agentExecutionSpecDigest: "b".repeat(64),
-  credentialVersion: "credential-version-1",
   runtime: {
     revision: "runtime-2",
     executionId: "runtime-execution-2",
@@ -60,7 +63,6 @@ const snapshot: RunExecutionSnapshot = {
       supportsImages: false,
     },
     maxModelRequests: 12,
-    credentialRef: "credential-1",
   },
   clientMcpRevisionId: "mcp-revision-1",
 };
@@ -81,6 +83,9 @@ describe("Session domain", () => {
       /principal/u,
     );
     expect(() => authorizeSession(session, { ...binding, agentId: "agent-2" })).toThrow(/Agent/u);
+    expect(() =>
+      authorizeSession(session, { ...binding, organizationId: "organization-2" }),
+    ).toThrow(/organization/u);
   });
 
   it("derives a bounded title from the first meaningful text block", () => {

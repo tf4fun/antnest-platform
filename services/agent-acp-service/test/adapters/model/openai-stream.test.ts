@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { OpenAICompatibleModel } from "../../../src/adapters/model/openai-compatible.js";
-import type { ModelDelta, ModelRequest } from "../../../src/ports/model.js";
+import type { ModelDelta, AuthenticatedModelRequest } from "../../../src/ports/model.js";
 import { snapshot } from "../../support/fixtures.js";
 
 function input(onDelta = vi.fn<(delta: ModelDelta) => Promise<void>>(() => Promise.resolve())) {
@@ -12,7 +12,7 @@ function input(onDelta = vi.fn<(delta: ModelDelta) => Promise<void>>(() => Promi
     tools: [],
     signal: new AbortController().signal,
     onDelta,
-  } satisfies ModelRequest;
+  } satisfies AuthenticatedModelRequest;
 }
 
 function stream() {

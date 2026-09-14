@@ -41,7 +41,7 @@ func TestAgentQueryRepositoryLoadsExecutableConfigurationLineage(t *testing.T) {
 	createdAt := time.Date(2026, time.September, 3, 10, 0, 0, 0, time.UTC)
 	insertQueryAgent(
 		t, ctx, repository, "agent-lineage", "org-integration", "user-1",
-		domain.DesiredEnabled, domain.AgentAvailable, createdAt,
+		domain.DesiredEnabled, domain.AgentCreated, createdAt,
 	)
 	spec, err := domain.MaterializeAgentSpec(template.Revision, model.Revision)
 	if err != nil {
@@ -112,11 +112,14 @@ func TestAgentQueryRepositoryFiltersDeletionAndKeysetOrder(t *testing.T) {
 
 	first := time.Date(2026, time.September, 1, 10, 0, 0, 0, time.UTC)
 	tied := first.Add(time.Second)
-	insertQueryAgent(t, ctx, repository, "agent-a", "org-a", "user-a", domain.DesiredEnabled, domain.AgentAvailable, first)
-	insertQueryAgent(t, ctx, repository, "agent-b", "org-a", "user-a", domain.DesiredEnabled, domain.AgentAvailable, tied)
-	insertQueryAgent(t, ctx, repository, "agent-c", "org-a", "user-a", domain.DesiredEnabled, domain.AgentAvailable, tied)
-	insertQueryAgent(t, ctx, repository, "agent-other-owner", "org-a", "user-b", domain.DesiredDisabled, domain.AgentDisabled, tied.Add(time.Second))
-	insertQueryAgent(t, ctx, repository, "agent-other-org", "org-b", "user-a", domain.DesiredEnabled, domain.AgentUnavailable, tied.Add(2*time.Second))
+	insertQueryAgent(t, ctx, repository, "agent-a", "org-a", "user-a", domain.DesiredEnabled, domain.AgentCreated, first)
+	insertQueryAgent(t, ctx, repository, "agent-b", "org-a", "user-a", domain.DesiredEnabled, domain.AgentCreated, tied)
+	insertQueryAgent(t, ctx, repository, "agent-c", "org-a", "user-a", domain.DesiredEnabled, domain.AgentCreated, tied)
+	insertQueryAgent(t, ctx, repository, "agent-other-owner", "org-a", "user-b", domain.DesiredDisabled, domain.AgentCreated, tied.Add(time.Second))
+	insertQueryAgent(t, ctx, repository, "agent-other-org", "org-b", "user-a", domain.DesiredEnabled, domain.AgentCreated, tied.Add(2*time.Second))
+	if _, err := repository.pool.Exec(ctx, "UPDATE agent_controller.agents SET runtime_state='unknown' WHERE id='agent-other-org'"); err != nil {
+		t.Fatal(err)
+	}
 	insertQueryAgent(t, ctx, repository, "agent-deleted", "org-a", "user-a", domain.DesiredDeleted, domain.AgentDeleted, tied.Add(3*time.Second))
 
 	page, err := repository.ListAgents(ctx, ports.AgentQuery{
@@ -145,7 +148,7 @@ func TestAgentQueryRepositoryFiltersDeletionAndKeysetOrder(t *testing.T) {
 	assertAgentIDs(t, page, "agent-other-owner")
 
 	page, err = repository.ListAgents(ctx, ports.AgentQuery{
-		OrganizationID: "org-b", LifecycleState: domain.AgentUnavailable, Limit: 10,
+		OrganizationID: "org-b", LifecycleState: domain.AgentCreated, ActivationState: domain.ActivationEnabled, RuntimeState: domain.RuntimeUnknown, Limit: 10,
 	})
 	if err != nil {
 		t.Fatalf("filter organization and state: %v", err)
@@ -192,13 +195,21 @@ func insertQueryAgent(
 	createdAt time.Time,
 ) {
 	t.Helper()
+	activation := domain.ActivationState("")
+	runtime := domain.RuntimeUnknown
+	if lifecycleState == domain.AgentCreated {
+		activation, runtime = domain.ActivationEnabled, domain.RuntimeAvailable
+		if desiredState == domain.DesiredDisabled {
+			activation, runtime = domain.ActivationDisabled, domain.RuntimeAbsent
+		}
+	}
 	_, err := repository.pool.Exec(ctx, `
 INSERT INTO agent_controller.agents (
     id, organization_id, owner_user_id, name, desired_state, lifecycle_state,
-    access_revision, aggregate_sequence, created_at, updated_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, 1, $8, $8)`,
+    access_revision, aggregate_sequence, created_at, updated_at, activation_state, runtime_state
+) VALUES ($1, $2, $3, $4, $5, $6, $7, 1, $8, $8, $9, $10)`,
 		agentID, organizationID, ownerUserID, agentID, desiredState, lifecycleState,
-		"access-"+agentID, createdAt,
+		"access-"+agentID, createdAt, activation, runtime,
 	)
 	if err != nil {
 		t.Fatalf("insert Agent %s: %v", agentID, err)

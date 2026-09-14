@@ -1,5 +1,6 @@
 CREATE TABLE acp_sessions (
     id text PRIMARY KEY,
+    organization_id text NOT NULL CHECK (organization_id <> ''),
     principal_id text NOT NULL,
     agent_id text NOT NULL,
     cwd text NOT NULL CHECK (cwd = '/workspace'),
@@ -15,7 +16,7 @@ CREATE TABLE acp_sessions (
 );
 
 CREATE INDEX acp_sessions_owner_updated_idx
-    ON acp_sessions (principal_id, agent_id, updated_at DESC, id DESC)
+    ON acp_sessions (organization_id, principal_id, agent_id, updated_at DESC, id DESC)
     WHERE state <> 'deleted';
 
 CREATE TABLE client_mcp_revisions (
@@ -40,8 +41,8 @@ CREATE TABLE runs (
     expected_access_revision text NOT NULL,
     state text NOT NULL CHECK (state IN ('admitting', 'running', 'completed', 'cancelled', 'failed', 'unresolved')),
     pending_user_message_id text,
-    pending_prompt jsonb,
-    admission_id text UNIQUE,
+    input_prompt jsonb NOT NULL,
+    deadline_at timestamptz,
     execution_snapshot jsonb,
     terminal_class text CHECK (terminal_class IS NULL OR terminal_class IN ('completed', 'cancelled', 'failed', 'unresolved')),
     executor_state text CHECK (executor_state IS NULL OR executor_state IN ('quiescent', 'cancellation_requested', 'unknown')),
@@ -49,17 +50,16 @@ CREATE TABLE runs (
     stop_reason text CHECK (stop_reason IS NULL OR stop_reason IN ('end_turn', 'max_tokens', 'max_turn_requests', 'refusal')),
     error_class text,
     cancel_requested_at timestamptz,
-    admission_finished_at timestamptz,
     created_at timestamptz NOT NULL,
     updated_at timestamptz NOT NULL,
     CHECK (
-        (state = 'admitting' AND pending_user_message_id IS NOT NULL AND pending_prompt IS NOT NULL)
+        (state = 'admitting' AND pending_user_message_id IS NOT NULL)
         OR
-        (state <> 'admitting' AND pending_user_message_id IS NULL AND pending_prompt IS NULL)
+        (state <> 'admitting' AND pending_user_message_id IS NULL)
     ),
-    CHECK ((admission_id IS NULL) = (execution_snapshot IS NULL)),
-    CHECK (state <> 'admitting' OR admission_id IS NULL),
-    CHECK (state <> 'running' OR admission_id IS NOT NULL),
+    CHECK ((deadline_at IS NULL) = (execution_snapshot IS NULL)),
+    CHECK (state <> 'admitting' OR execution_snapshot IS NULL),
+    CHECK (state <> 'running' OR execution_snapshot IS NOT NULL),
     CHECK (
         (terminal_class IS NULL AND executor_state IS NULL AND tool_effect_state IS NULL)
         OR
@@ -84,11 +84,7 @@ CREATE TABLE runs (
     CHECK (
         state IN ('admitting', 'running')
         OR terminal_class IS NOT NULL
-        OR (state = 'failed' AND admission_id IS NULL AND error_class IS NOT NULL)
-    ),
-    CHECK (
-        admission_finished_at IS NULL
-        OR (admission_id IS NOT NULL AND terminal_class IS NOT NULL)
+        OR (state = 'failed' AND execution_snapshot IS NULL AND error_class IS NOT NULL)
     )
 );
 
@@ -96,8 +92,7 @@ CREATE INDEX runs_session_created_idx ON runs (session_id, created_at DESC, id D
 CREATE INDEX runs_recovery_idx ON runs (state, created_at) WHERE state IN ('admitting', 'running');
 CREATE UNIQUE INDEX runs_session_nonterminal_unique
     ON runs (session_id)
-    WHERE state IN ('admitting', 'running')
-       OR (admission_id IS NOT NULL AND admission_finished_at IS NULL);
+    WHERE state IN ('admitting', 'running');
 
 CREATE TABLE session_messages (
     id text PRIMARY KEY,

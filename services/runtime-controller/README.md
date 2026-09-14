@@ -20,8 +20,10 @@ resources and reports a platform-neutral result.
 - Resolve an installed repository/tag to an immutable image identity through
   a read-only platform query; do not build or implicitly pull images.
 - Consume platform health plus List/Watch events.
-- Verify Runtime `/status` after lifecycle creation, Healthy events, and
-  explicit reads of a ready Environment.
+- Complete creation after confirmed platform create/start, without waiting for health.
+- Verify Runtime `/status` on Healthy observations and explicit reads of a
+  provisioned Environment; never rewrite completed commands from later health.
+  See [creation and observation](docs/creation-and-observation.md).
 - Normalize platform facts into a bounded, ordered Runtime observation journal.
 - Create and retain the Agent workspace as part of Runtime lifecycle commands;
   workspace operations are never exposed as a cross-service API.
@@ -50,7 +52,7 @@ separate Runtime Provider service in the target architecture.
 | ----------------- | -------------------------------------------------------------------------------------------------------------- |
 | Inbound           | Internal RPC for image resolution, Runtime Initialize, Update, Disable, Enable, Delete, Inspect, and observation List/Watch |
 | Platform outbound | Docker Engine API initially; Kubernetes API in a later adapter                                                 |
-| Runtime outbound  | Bounded `GET /status` verification for lifecycle, observation, and ready-state reads                           |
+| Runtime outbound  | Bounded `GET /status` verification for independent observation and provisioned-state reads                           |
 | Persistence       | Private Runtime Environment head, operation, internal generation-claim, and bounded observation-journal schema |
 
 Runtime Controller never calls Runtime Egress. Agent Controller obtains an

@@ -10,19 +10,35 @@ executable Agent by coordinating Runtime Controller and Runtime Egress.
 
 ## Status
 
+The Controller/ACP execution-boundary refactor was closed by the user's scoped
+acceptance decision on 2026-09-15. Configuration publication
+and lifecycle settlement are wired in the main process; the five old execution
+RPCs, their RunService injection, workspace execution queries and occupancy
+notifications, Run application/storage/schema and Session override merging have been removed.
+Service-local gates, including the management synchronization read follow-up,
+have passed. Gateway and Console have also switched locally. Agent UI is deferred
+and is not an integration gate; it will remain an ACP client, not a management
+authority. Nine Controller/ACP Docker and protocol-client scenarios and trace
+topology checks passed. Jaeger clock warnings are deferred as OBS-ACP-CLOCK;
+the strict script still reports failure and its result is not rewritten. See the
+[final results and explicit exception](../../docs/controller-acp-execution-boundary-plan.md#103-可执行的小步交付).
+
 The Stage 2B service surface is implemented. The runnable slices provide
 ModelProfile and Template Catalog RPC plus Agent create, rebuild, disable,
-enable, and delete. Create freezes an exact Template/Model graph and publishes only after
-validating the active owner binding through Identity Service and proving Runtime
-readiness. Rebuild replaces the Runtime behind a durable Egress attachment
-barrier. Disable closes the attachment and retains the workspace; Enable creates
-a new Execution revision and opens the attachment only after Runtime readiness.
+enable, and delete. Create validates the active owner through Identity Service
+and freezes an exact Template/Model graph. Create, rebuild and enable complete
+after platform creation and Egress attachment opening, without waiting for
+Runtime health. The Agent is `created/enabled` and cannot Run until independent
+healthy observation publishes its execution binding. Rebuild uses the existing
+attachment barrier; disable retains the workspace. Never-ready Agents still
+support rebuild, disable, enable and delete. See
+[creation versus availability](docs/runtime-availability.md).
 Desired network policy remains owned by Runtime Egress and is never rewritten by
 Agent lifecycle operations. Delete removes Runtime compute and workspace, releases
 the Egress attachment, deactivates owner access, and retains immutable audit
-facts. Agent-wide Run admission resolves access, freezes one immutable execution
-snapshot, scopes Provider credential access, and seals terminal Tool-effect
-facts. Current Agent projection queries and authoritative event replay/watch
+facts. Controller publishes current non-secret configuration and current Provider
+credentials to ACP. ACP owns Run admission, execution and terminal audit.
+Current Agent projection queries and authoritative event replay/watch
 routes are runnable. Lifecycle HTTP commands return `202` after durable admission.
 [All lifecycle operations use Temporal](docs/lifecycle-workflows.md), with an
 embedded SDK Worker and automatic workflow/activity tracing. Identity-triggered
@@ -44,20 +60,20 @@ and operational acceptance remains tracked in the
 - immutable Agent configuration and execution revisions;
 - the current opaque Runtime binding returned by Runtime Controller;
 - durable lifecycle operations for create, rebuild, disable, enable, and delete;
-- Agent-wide serialized Run admission freezing current model parameters, with independently resolved current connection credentials;
-- Agent default authorization and organization-scoped Session model selection;
-- Agent access-subject mappings and revisions;
+- current execution configuration publication and Agent-level lifecycle settlement;
+- Agent default authorization and the organization model catalog (Session selection belongs to ACP);
+- Agent ownership/access bindings and revisions published to ACP;
 - the ordered Agent domain-event journal.
 - the persisted Runtime-observation consumer cursor and its Agent-state
   projection.
 
 The `agents` record is the current global Agent status projection. Immutable
-revisions, operations, admissions, and events explain how it reached that
+revisions, operations and management events explain how it reached that
 state.
 
 ## Does Not Own
 
-- ACP Sessions, messages, context, Turns, model calls, or Tool attempts;
+- ACP Sessions, Runs, execution audit, messages, context, Turns, model calls, or Tool attempts;
 - Docker, Kubernetes, container, Pod, workspace, or physical generation IDs;
 - Tunnel allocation, Egress policy, packet flow, or conntrack;
 - Runtime MCP execution;
@@ -67,20 +83,19 @@ state.
 
 ## Internal Interfaces
 
-- scoped current workspace availability and active Session observation: see
-  [Workspace state](docs/workspace-state.md). Snapshots reuse Run admission data
-  and PostgreSQL notifications without adding normal-Run audit events. Gateway
-  and Agent UI subscription consumers remain a separate C4 delivery batch.
-- Session model directory and Agent authorization defaults: see
-  [Session configuration](docs/session-configuration.md). F05 configuration and
-  F06 permissions have passed ACP/UI and deployment integration. Native audio/PDF
-  authority and F09 delivery boundaries are documented in
-  [Multimodal input](docs/multimodal-input.md). Do not roll a changed producer into
-  an old strict ACP decoder.
+- authorized workspace Agent IDs/names: see [Workspace metadata](docs/workspace-state.md).
+  ACP owns execution state and active Session observation. Gateway migrated in B3;
+  Agent UI is deferred and does not block service-to-service acceptance.
+- Agent default authorization: see [Agent configuration](docs/agent-configuration.md).
+  Session model selection and per-Session authorization overrides belong to ACP.
+- current configuration publishing and lifecycle settlement: see
+  [Execution publication](docs/execution-publication.md).
+- stored configuration revision and ACP acknowledgement:
+  `GET /internal/execution-synchronization?organization_id=...` returns this
+  service's synchronization record, or null if none exists. It is not an ACP
+  health, Agent readiness or Run occupancy check.
 - lifecycle and management RPC: see
   [`../../contracts/agent-controller/control-api.md`](../../contracts/agent-controller/control-api.md);
-- ACP Run admission RPC: see
-  [`../../contracts/agent-controller/run-api.md`](../../contracts/agent-controller/run-api.md);
 - Runtime lifecycle dependency: Runtime Controller internal control API;
 - network lifecycle dependency: Runtime Egress control API.
 - organization-scoped network policy read/CAS commands: see
@@ -91,7 +106,8 @@ state.
 All interfaces are trusted internal JSON-over-HTTP RPC. Edge Gateway
 authenticates external requests through Identity Service. Organization
 ownership, owner-user binding, and Agent access are still enforced here as
-domain rules; Gateway authentication does not replace Run admission checks.
+domain rules; Gateway authentication does not replace management authorization.
+ACP independently checks synchronized resource authorization at its protocol boundary.
 
 ## Persistence
 
@@ -100,7 +116,7 @@ never reads or writes another service's tables and has no cross-service foreign
 keys, views, triggers, or transactions.
 
 Identity deactivation is consumed through the private revocation RPC. A durable
-owner fence prevents new Run admission and schedules the existing Disable saga.
+owner fence closes the published execution permission and schedules the existing Disable saga.
 Identity restoration never automatically enables an Agent. See
 [Identity offboarding](docs/identity-offboarding.md) for scope, races, recovery,
 and pending-runtime semantics.
@@ -118,6 +134,8 @@ Docker and Jaeger acceptance commands are documented in
 
 ## Further Reading
 
+- [Execution configuration publication: B2 in progress](docs/execution-publication.md)
+- [Owner-managed Agent default authorization](docs/agent-configuration.md)
 - [Observability guarantees and pending acceptance](docs/observability.md)
 - [Architecture](docs/architecture.md)
 - [Operations](docs/operations.md)

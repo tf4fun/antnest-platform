@@ -329,6 +329,7 @@ func TestCatalogReadsImmutableHistoricalRevisionsWithOrganizationFence(t *testin
 }
 
 type catalogStoreStub struct {
+	ports.CatalogAvailabilityStore
 	ports.ProviderStore
 	provider                 ports.ProviderConnectionRecord
 	modelRevision            domain.ModelProfileRevision

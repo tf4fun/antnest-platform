@@ -29,6 +29,12 @@ The reviewed Stage 2 Agent lifecycle and ACP target design is defined in
 older candidate/active Runtime rollout and transparent MCP-switching concepts
 in Agent Controller and Agent ACP Service.
 
+The proposed next execution boundary is documented in
+[`docs/controller-acp-execution-boundary-plan.md`](docs/controller-acp-execution-boundary-plan.md):
+Controller publishes Agent execution policy and configuration; ACP owns local
+admission, Sessions and execution audit behind Gateway. This is a design for
+staged implementation, not the current `RunAdmission`-based integration.
+
 The Stage 3A administrator control-plane contract and its browser-to-Jaeger
 acceptance path are defined in
 [`docs/stage-3-admin-control-plane.md`](docs/stage-3-admin-control-plane.md).

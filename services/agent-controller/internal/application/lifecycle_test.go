@@ -21,8 +21,8 @@ func TestCreateAgentAcceptsDurableIntentWithoutCallingRuntimeDependencies(t *tes
 		network: validLifecycleNetwork(),
 		runtime: ports.RuntimeOperation{
 			State: "completed", Effect: "completed", RuntimeRevision: "runtime-revision-1",
-			RuntimeExecutionID: "execution-identity-1", MCPEndpoint: "http://runtime-agent:8091/mcp",
-			LifecycleState: "ready", Health: "healthy",
+			RuntimeExecutionID: "", MCPEndpoint: "",
+			LifecycleState: "provisioned", Health: "unknown",
 		},
 	}
 	service := newLifecycleTestService(t, store, dependencies)
@@ -38,12 +38,12 @@ func TestCreateAgentAcceptsDurableIntentWithoutCallingRuntimeDependencies(t *tes
 	}
 	if result.Operation.State != domain.OperationRunning ||
 		result.Operation.Phase != domain.PhaseNetworkEnsure ||
-		result.Agent.LifecycleState != domain.AgentProvisioning {
+		result.Agent.LifecycleState != domain.AgentNotCreated || result.Agent.ActivationState != "" || result.Agent.RuntimeState != domain.RuntimeUnknown {
 		t.Fatalf("accepted lifecycle intent = %+v", result)
 	}
 }
 
-func TestCreateAgentMaterializesSpecAndPublishesOnlyAfterRuntimeReady(t *testing.T) {
+func TestCreateAgentMaterializesSpecAndCompletesWithoutRuntimeReadiness(t *testing.T) {
 	t.Parallel()
 
 	template := mustLifecycleTemplate(t)
@@ -59,9 +59,9 @@ func TestCreateAgentMaterializesSpecAndPublishesOnlyAfterRuntimeReady(t *testing
 		},
 		runtime: ports.RuntimeOperation{
 			State: "completed", Effect: "completed", RuntimeRevision: "runtime-revision-1",
-			RuntimeExecutionID: "execution-identity-1",
-			MCPEndpoint:        "http://runtime-agent:8091/mcp", LifecycleState: "ready",
-			Health: "healthy",
+			RuntimeExecutionID: "",
+			MCPEndpoint:        "", LifecycleState: "provisioned",
+			Health: "unknown",
 		},
 	}
 	service := NewLifecycleService(
@@ -71,6 +71,7 @@ func TestCreateAgentMaterializesSpecAndPublishesOnlyAfterRuntimeReady(t *testing
 		dependencies,
 		fixedClock{now: time.Unix(10, 0).UTC()},
 		WithIdentityDirectory(activeIdentityDirectory()),
+		WithLifecycleExecution(testExecutionForStore(store)),
 	)
 
 	result, err := executeCreateForTest(service, context.Background(), CreateAgentInput{
@@ -88,13 +89,13 @@ func TestCreateAgentMaterializesSpecAndPublishesOnlyAfterRuntimeReady(t *testing
 	) {
 		t.Fatalf("dependency order = %v", dependencies.calls)
 	}
-	if result.Agent.LifecycleState != domain.AgentAvailable || result.Operation.State != domain.OperationCompleted {
+	if (result.Agent.LifecycleState != domain.AgentCreated || result.Agent.ActivationState != domain.ActivationEnabled || result.Agent.RuntimeState != domain.RuntimeUnknown) || result.Operation.State != domain.OperationCompleted {
 		t.Fatalf("Agent was published before a completed Runtime: %+v", result)
 	}
-	if result.Agent.AgentSpecRevisionID == "" || result.Agent.ExecutionRevisionID == "" {
+	if result.Agent.AgentSpecRevisionID == "" || result.Agent.ExecutionRevisionID != "" {
 		t.Fatalf("published revision identities are missing: %+v", result.Agent)
 	}
-	if result.AgentAccessSubject == "" || result.Agent.OwnerUserID != "user-1" {
+	if result.Agent.OwnerUserID != "user-1" {
 		t.Fatalf("owner access binding is incomplete: %+v", result)
 	}
 	if store.initial.Spec.Snapshot.TemplateRevision != 1 ||
@@ -115,12 +116,9 @@ func TestCreateAgentMaterializesSpecAndPublishesOnlyAfterRuntimeReady(t *testing
 	if !reflect.DeepEqual(dependencies.runtimeConfiguration.MCPServers, template.Snapshot().Runtime.MCPServers) {
 		t.Fatal("create did not forward frozen MCP configuration")
 	}
-	if store.published.Execution.RuntimeRevision != "runtime-revision-1" ||
-		store.published.ReadyEvent.EventType != ports.EventAgentReady {
+	if store.beginState.Agent.RuntimeRevision != "runtime-revision-1" ||
+		store.published.CreatedEvent.EventType != ports.EventAgentCreated {
 		t.Fatalf("publish transaction is incomplete: %+v", store.published)
-	}
-	if !store.initial.Access.PromptCapabilities.EmbeddedContext {
-		t.Fatal("Agent creation disabled built-in embedded text")
 	}
 }
 
@@ -152,7 +150,7 @@ func TestCreateAgentCompletedRetryDoesNotRepeatDependencies(t *testing.T) {
 	if len(dependencies.calls) != 0 {
 		t.Fatalf("completed retry repeated external effects: %v", dependencies.calls)
 	}
-	if result.Agent.LifecycleState != domain.AgentAvailable || result.Operation.State != domain.OperationCompleted {
+	if (result.Agent.LifecycleState != domain.AgentCreated || result.Agent.ActivationState != domain.ActivationEnabled || result.Agent.RuntimeState != domain.RuntimeAvailable) || result.Operation.State != domain.OperationCompleted {
 		t.Fatalf("completed result was not replayed: %+v", result)
 	}
 }
@@ -168,7 +166,7 @@ func TestCreateAgentRunningRetryKeepsPersistedAuthorizationDecision(t *testing.T
 		t.Fatalf("fingerprint create intent: %v", err)
 	}
 	running := completedCreateState(t, template, model)
-	running.Agent.LifecycleState = domain.AgentProvisioning
+	running.Agent.LifecycleState, running.Agent.ActivationState, running.Agent.RuntimeState = domain.AgentCreated, domain.ActivationEnabled, domain.RuntimeUnknown
 	running.Agent.AgentSpecRevisionID = ""
 	running.Agent.ExecutionRevisionID = ""
 	running.Agent.LastSuccessfulExecutionRevisionID = ""
@@ -186,8 +184,8 @@ func TestCreateAgentRunningRetryKeepsPersistedAuthorizationDecision(t *testing.T
 		network: validLifecycleNetwork(),
 		runtime: ports.RuntimeOperation{
 			State: "completed", Effect: "completed", RuntimeRevision: "runtime-revision-1",
-			RuntimeExecutionID: "execution-identity-1", MCPEndpoint: "http://runtime-agent:8091/mcp",
-			LifecycleState: "ready", Health: "healthy",
+			RuntimeExecutionID: "", MCPEndpoint: "",
+			LifecycleState: "provisioned", Health: "unknown",
 		},
 	}
 	identities := &identityDirectoryStub{err: errors.New("identity unavailable")}
@@ -204,7 +202,7 @@ func TestCreateAgentRunningRetryKeepsPersistedAuthorizationDecision(t *testing.T
 	if identities.calls != 0 {
 		t.Fatalf("persisted create intent revalidated Identity %d times", identities.calls)
 	}
-	if result.Agent.LifecycleState != domain.AgentAvailable ||
+	if (result.Agent.LifecycleState != domain.AgentCreated || result.Agent.ActivationState != domain.ActivationEnabled || result.Agent.RuntimeState != domain.RuntimeUnknown) ||
 		result.Operation.State != domain.OperationCompleted {
 		t.Fatalf("persisted create intent did not converge: %+v", result)
 	}
@@ -290,7 +288,7 @@ func TestCreateAgentDoesNotStartRuntimeWithInactiveNetwork(t *testing.T) {
 	if !reflect.DeepEqual(dependencies.calls, []string{"egress.ensure"}) {
 		t.Fatalf("inactive network reached Runtime: %v", dependencies.calls)
 	}
-	if result.Agent.LifecycleState != domain.AgentUnavailable ||
+	if (result.Agent.LifecycleState != domain.AgentCreated || result.Agent.ActivationState != domain.ActivationEnabled || result.Agent.RuntimeState != domain.RuntimeUnknown) ||
 		result.Operation.State != domain.OperationFailed ||
 		result.Operation.ErrorCode != "invalid_network_attachment" {
 		t.Fatalf("inactive network result = %+v", result)
@@ -305,8 +303,8 @@ func TestCreateAgentRejectsRuntimeWithoutConfirmedEffect(t *testing.T) {
 		network: validLifecycleNetwork(),
 		runtime: ports.RuntimeOperation{
 			State: "completed", Effect: "unknown", RuntimeRevision: "runtime-revision-1",
-			RuntimeExecutionID: "execution-identity-1", MCPEndpoint: "http://runtime-agent:8091/mcp",
-			LifecycleState: "ready", Health: "healthy",
+			RuntimeExecutionID: "", MCPEndpoint: "",
+			LifecycleState: "provisioned", Health: "unknown",
 		},
 	}
 	service := newLifecycleTestService(t, store, dependencies)
@@ -320,7 +318,7 @@ func TestCreateAgentRejectsRuntimeWithoutConfirmedEffect(t *testing.T) {
 	if result.Operation.State != domain.OperationFailed || result.Operation.ErrorCode != "invalid_runtime_result" {
 		t.Fatalf("unconfirmed Runtime result = %+v", result)
 	}
-	if store.published.Execution.ID != "" {
+	if store.published.RequestID != "" {
 		t.Fatalf("unconfirmed Runtime was published: %+v", store.published)
 	}
 }
@@ -357,6 +355,7 @@ func TestCreateAgentFailsAsDependencyUnavailableWithoutIdentityDirectory(t *test
 	service := NewLifecycleService(
 		lifecycleSpecSourceStub{template: mustLifecycleTemplate(t), model: mustLifecycleModel(t)},
 		store, dependencies, dependencies, fixedClock{now: time.Unix(41, 0).UTC()},
+		WithLifecycleExecution(testExecutionForStore(store)),
 	)
 
 	_, err := service.CreateAgent(context.Background(), lifecycleCreateInput("request-missing-identity"))
@@ -380,8 +379,8 @@ func TestCreateAgentRejectsChangedNetworkAtPublicationBarrier(t *testing.T) {
 		networkResults: []ports.NetworkAttachment{first, second},
 		runtime: ports.RuntimeOperation{
 			State: "completed", Effect: "completed", RuntimeRevision: "runtime-revision-1",
-			RuntimeExecutionID: "execution-identity-1", MCPEndpoint: "http://runtime-agent:8091/mcp",
-			LifecycleState: "ready", Health: "healthy",
+			RuntimeExecutionID: "", MCPEndpoint: "",
+			LifecycleState: "provisioned", Health: "unknown",
 		},
 	}
 	service := newLifecycleTestService(t, store, dependencies)
@@ -395,7 +394,7 @@ func TestCreateAgentRejectsChangedNetworkAtPublicationBarrier(t *testing.T) {
 	if result.Operation.State != domain.OperationFailed || result.Operation.ErrorCode != "network_attachment_changed" {
 		t.Fatalf("changed network result = %+v", result)
 	}
-	if store.published.Execution.ID != "" {
+	if store.published.RequestID != "" {
 		t.Fatalf("stale Runtime binding was published: %+v", store.published)
 	}
 }
@@ -412,8 +411,8 @@ func TestCreateAgentConvergesAfterConcurrentExactReplay(t *testing.T) {
 				network: validLifecycleNetwork(),
 				runtime: ports.RuntimeOperation{
 					State: "completed", Effect: "completed", RuntimeRevision: "runtime-revision-1",
-					RuntimeExecutionID: "execution-identity-1", MCPEndpoint: "http://runtime-agent:8091/mcp",
-					LifecycleState: "ready", Health: "healthy",
+					RuntimeExecutionID: "", MCPEndpoint: "",
+					LifecycleState: "provisioned", Health: "unknown",
 				},
 			}
 			service := newLifecycleTestService(t, store, dependencies)
@@ -424,7 +423,7 @@ func TestCreateAgentConvergesAfterConcurrentExactReplay(t *testing.T) {
 			if err != nil {
 				t.Fatalf("converge exact replay: %v", err)
 			}
-			if result.Operation.State != domain.OperationCompleted || result.Agent.LifecycleState != domain.AgentAvailable {
+			if result.Operation.State != domain.OperationCompleted || (result.Agent.LifecycleState != domain.AgentCreated || result.Agent.ActivationState != domain.ActivationEnabled || result.Agent.RuntimeState != domain.RuntimeUnknown) {
 				t.Fatalf("converged result = %+v", result)
 			}
 		})
@@ -581,6 +580,10 @@ type lifecycleStoreStub struct {
 	concurrentReturned bool
 }
 
+func (store *lifecycleStoreStub) ConfirmLifecycleDrain(context.Context, ports.ConfirmLifecycleDrain) (ports.LifecycleOperationRecord, error) {
+	return ports.LifecycleOperationRecord{}, errors.New("unexpected Agent drain confirmation")
+}
+
 func (store *lifecycleStoreStub) GetLifecycleOperation(
 	_ context.Context, _ string,
 ) (ports.LifecycleOperationRecord, error) {
@@ -603,12 +606,6 @@ func (store *lifecycleStoreStub) BeginAgentRebuild(
 	context.Context, ports.BeginAgentRebuild,
 ) (ports.AgentRebuildState, bool, error) {
 	return ports.AgentRebuildState{}, false, errors.New("unexpected Agent rebuild begin")
-}
-
-func (store *lifecycleStoreStub) SettleAgentRebuildDrain(
-	context.Context, string, string, string, time.Time,
-) (ports.AgentRebuildState, error) {
-	return ports.AgentRebuildState{}, errors.New("unexpected Agent rebuild drain")
 }
 
 func (store *lifecycleStoreStub) AdvanceAgentRebuild(
@@ -639,12 +636,6 @@ func (store *lifecycleStoreStub) BeginAgentDisable(
 	context.Context, ports.BeginAgentDisable,
 ) (ports.AgentDisableState, bool, error) {
 	return ports.AgentDisableState{}, false, errors.New("unexpected Agent disable begin")
-}
-
-func (store *lifecycleStoreStub) SettleAgentDisableDrain(
-	context.Context, string, string, string, time.Time,
-) (ports.AgentDisableState, error) {
-	return ports.AgentDisableState{}, errors.New("unexpected Agent disable drain")
 }
 
 func (store *lifecycleStoreStub) AdvanceAgentDisable(
@@ -717,12 +708,6 @@ func (store *lifecycleStoreStub) BeginAgentDelete(
 	context.Context, ports.BeginAgentDelete,
 ) (ports.AgentDeleteState, bool, error) {
 	return ports.AgentDeleteState{}, false, errors.New("unexpected Agent delete begin")
-}
-
-func (store *lifecycleStoreStub) SettleAgentDeleteDrain(
-	context.Context, string, string, string, time.Time,
-) (ports.AgentDeleteState, error) {
-	return ports.AgentDeleteState{}, errors.New("unexpected Agent delete drain")
 }
 
 func (store *lifecycleStoreStub) AdvanceAgentDelete(
@@ -803,13 +788,12 @@ func (store *lifecycleStoreStub) PublishAgentCreate(
 ) (ports.AgentCreateState, error) {
 	store.published = input
 	state := store.beginState
-	state.Agent.LifecycleState = domain.AgentAvailable
+	state.Agent.LifecycleState, state.Agent.ActivationState, state.Agent.RuntimeState = domain.AgentCreated, domain.ActivationEnabled, domain.RuntimeUnknown
 	state.Agent.AgentSpecRevisionID = state.Spec.ID
-	state.Agent.ExecutionRevisionID = input.Execution.ID
-	state.Agent.LastSuccessfulExecutionRevisionID = input.Execution.ID
-	state.Agent.RuntimeRevision = input.Execution.RuntimeRevision
-	state.Agent.RuntimeExecutionID = input.Execution.RuntimeExecutionID
-	state.Agent.RuntimeMCPEndpoint = input.Execution.RuntimeMCPEndpoint
+	state.Agent.ExecutionRevisionID = ""
+	state.Agent.RuntimeRevision = state.Operation.RuntimeResult.RuntimeRevision
+	state.Agent.RuntimeExecutionID = ""
+	state.Agent.RuntimeMCPEndpoint = ""
 	state.Agent.ActiveOperationRequestID = ""
 	state.Agent.UpdatedAt = input.Now
 	state.Operation.Phase = domain.PhaseCompleted
@@ -844,7 +828,7 @@ func (store *lifecycleStoreStub) FailAgentCreate(
 			Operation: store.initial.Operation,
 		}
 	}
-	state.Agent.LifecycleState = domain.AgentUnavailable
+	state.Agent.LifecycleState, state.Agent.ActivationState, state.Agent.RuntimeState = domain.AgentCreated, domain.ActivationEnabled, domain.RuntimeUnknown
 	state.Agent.ActiveOperationRequestID = ""
 	state.Agent.FailureStage = string(input.Stage)
 	state.Agent.FailureCode = input.Code
@@ -889,6 +873,7 @@ func newLifecycleTestService(
 		lifecycleSpecSourceStub{template: mustLifecycleTemplate(t), model: mustLifecycleModel(t)},
 		store, dependencies, dependencies, fixedClock{now: time.Unix(50, 0).UTC()},
 		WithIdentityDirectory(activeIdentityDirectory()),
+		WithLifecycleExecution(testExecutionForStore(store)),
 	)
 }
 
@@ -949,13 +934,13 @@ func completedCreateState(
 		Agent: ports.AgentRecord{
 			AgentID: "agent-existing", OrganizationID: "org-1", OwnerUserID: "user-1",
 			Name: "Research Agent", DesiredState: domain.DesiredEnabled,
-			LifecycleState: domain.AgentAvailable, AccessRevision: "access-revision-1",
+			LifecycleState: domain.AgentCreated, ActivationState: domain.ActivationEnabled, RuntimeState: domain.RuntimeAvailable, AccessRevision: "access-revision-1",
 			AgentSpecRevisionID: "agentspec-existing", ExecutionRevisionID: "execution-existing",
 			LastSuccessfulExecutionRevisionID: "execution-existing",
 			RuntimeRevision:                   "runtime-existing", RuntimeExecutionID: "runtime-execution-existing",
 			RuntimeMCPEndpoint: "http://runtime/mcp", CreatedAt: now, UpdatedAt: now,
 		},
-		Access: ports.AgentAccessRecord{AccessSubject: "access-existing", AgentID: "agent-existing"},
+		Access: ports.AgentAccessRecord{AgentID: "agent-existing"},
 		Spec:   ports.AgentSpecRecord{ID: "agentspec-existing", AgentID: "agent-existing", Revision: 1, Snapshot: spec.Snapshot()},
 		Operation: ports.LifecycleOperationRecord{
 			RequestID: "request-create-agent", AgentID: "agent-existing",

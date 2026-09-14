@@ -33,7 +33,7 @@ func policyFlowHandler(t *testing.T, upstream http.HandlerFunc) (http.Handler, *
 	}
 	source := &policyFlowAgent{record: ports.AgentRecord{
 		AgentID: "agent-1", OrganizationID: "org-1", OwnerUserID: "user-1",
-		LifecycleState: domain.AgentDisabled, DesiredState: domain.DesiredDisabled,
+		LifecycleState: domain.AgentCreated, ActivationState: domain.ActivationDisabled, RuntimeState: domain.RuntimeAbsent, DesiredState: domain.DesiredDisabled,
 		AgentSpecRevisionID: "spec-1", RuntimeRevision: "runtime-1", AggregateSequence: 7,
 	}}
 	return networkHandler(t, application.NewNetworkPolicyService(source, client)), source

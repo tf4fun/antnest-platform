@@ -239,13 +239,16 @@ describe("ContextBuilder", () => {
 
 function snapshot(): RunExecutionSnapshot {
   return {
-    admissionId: "admission-1",
-    admissionDeadline: new Date("2026-08-30T00:10:00Z"),
+    organizationId: "organization-1",
+    providerConnectionId: "connection-1",
+    modelProfileId: "profile-1",
+    configurationRevision: 1,
+    accessRevision: "access-1",
+    deadlineAt: new Date("2026-08-30T00:10:00Z"),
     agentSpecRevision: "config-1",
     executionRevision: "execution-1",
     runtimeMcpSourceDigest: "a".repeat(64),
     agentExecutionSpecDigest: "b".repeat(64),
-    credentialVersion: "credential-version-1",
     runtime: {
       revision: "runtime-1",
       executionId: "runtime-execution-1",
@@ -265,7 +268,6 @@ function snapshot(): RunExecutionSnapshot {
         supportsImages: false,
       },
       maxModelRequests: 4,
-      credentialRef: "credential-1",
     },
     clientMcpRevisionId: "client-mcp-1",
   };

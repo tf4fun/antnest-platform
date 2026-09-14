@@ -1,0 +1,519 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "organization_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "revision": {
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991
+    },
+    "providers": {
+      "type": "array",
+      "items": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "connection_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "provider_key": {
+                "type": "string",
+                "const": "deepseek"
+              },
+              "request_protocol": {
+                "type": "string",
+                "const": "openai_chat_completions"
+              },
+              "base_url": {
+                "type": "string",
+                "format": "uri"
+              },
+              "enabled": {
+                "type": "boolean",
+                "const": true
+              },
+              "credential_revision": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "credential": {
+                "type": "object",
+                "properties": {
+                  "method": {
+                    "type": "string",
+                    "const": "api_key"
+                  },
+                  "secret": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "method",
+                  "secret"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "connection_id",
+              "provider_key",
+              "request_protocol",
+              "base_url",
+              "enabled",
+              "credential_revision",
+              "credential"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "connection_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "provider_key": {
+                "type": "string",
+                "const": "deepseek"
+              },
+              "request_protocol": {
+                "type": "string",
+                "const": "openai_chat_completions"
+              },
+              "base_url": {
+                "type": "string",
+                "format": "uri"
+              },
+              "enabled": {
+                "type": "boolean",
+                "const": false
+              },
+              "credential_revision": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "credential": {
+                "type": "object",
+                "properties": {
+                  "method": {
+                    "type": "string",
+                    "const": "api_key"
+                  },
+                  "secret": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "method",
+                  "secret"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "connection_id",
+              "provider_key",
+              "request_protocol",
+              "base_url",
+              "enabled",
+              "credential_revision",
+              "credential"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "connection_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "provider_key": {
+                "type": "string",
+                "const": "deepseek"
+              },
+              "request_protocol": {
+                "type": "string",
+                "const": "openai_chat_completions"
+              },
+              "base_url": {
+                "type": "string",
+                "format": "uri"
+              },
+              "enabled": {
+                "type": "boolean",
+                "const": false
+              }
+            },
+            "required": [
+              "connection_id",
+              "provider_key",
+              "request_protocol",
+              "base_url",
+              "enabled"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      }
+    },
+    "models": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "model_profile_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "connection_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "display_name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "model": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "context_window": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "max_output_tokens": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "temperature": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 2
+          },
+          "supports_images": {
+            "type": "boolean"
+          },
+          "supports_audio": {
+            "type": "boolean"
+          },
+          "supports_pdf": {
+            "type": "boolean"
+          },
+          "pricing": {
+            "type": "object",
+            "properties": {
+              "currency": {
+                "type": "string",
+                "const": "USD"
+              },
+              "input_per_million": {
+                "type": "number",
+                "minimum": 0
+              },
+              "output_per_million": {
+                "type": "number",
+                "minimum": 0
+              },
+              "cache_read_per_million": {
+                "type": "number",
+                "minimum": 0
+              },
+              "cache_write_per_million": {
+                "type": "number",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "currency",
+              "input_per_million",
+              "output_per_million"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "model_profile_id",
+          "connection_id",
+          "display_name",
+          "enabled",
+          "model",
+          "context_window",
+          "max_output_tokens",
+          "supports_images"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "agents": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "agent_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "principal_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          },
+          "access_revision": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "accepting_runs": {
+            "type": "boolean"
+          },
+          "unavailable_reason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "operation_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "default_model_profile_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "default_authorization": {
+            "type": "object",
+            "properties": {
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "auto",
+                  "approve",
+                  "smart_approve",
+                  "chat"
+                ]
+              },
+              "tool_rules": {
+                "maxItems": 128,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "source": {
+                      "type": "string",
+                      "enum": [
+                        "runtime",
+                        "agent"
+                      ]
+                    },
+                    "source_id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "tool_name": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "decision": {
+                      "type": "string",
+                      "enum": [
+                        "allow",
+                        "deny"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "source",
+                    "source_id",
+                    "tool_name",
+                    "decision"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "mode",
+              "tool_rules"
+            ],
+            "additionalProperties": false
+          },
+          "authorization_revision": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "agent_spec_revision": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "execution_revision": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "system_prompt": {
+            "type": "string"
+          },
+          "context_policy_version": {
+            "type": "string",
+            "const": "context-v1"
+          },
+          "skill_instructions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "skill_key": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "version": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "instructions": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "skill_key",
+                "version",
+                "instructions"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "max_model_requests": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "runtime": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "runtime_revision": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "runtime_execution_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "mcp_endpoint": {
+                    "type": "string",
+                    "format": "uri"
+                  }
+                },
+                "required": [
+                  "runtime_revision",
+                  "runtime_execution_id",
+                  "mcp_endpoint"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "agent_id",
+          "principal_ids",
+          "access_revision",
+          "accepting_runs",
+          "unavailable_reason",
+          "operation_id",
+          "default_model_profile_id",
+          "default_authorization",
+          "authorization_revision",
+          "agent_spec_revision",
+          "execution_revision",
+          "system_prompt",
+          "context_policy_version",
+          "skill_instructions",
+          "max_model_requests",
+          "runtime"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "organization_id",
+    "revision",
+    "providers",
+    "models",
+    "agents"
+  ],
+  "additionalProperties": false,
+  "$id": "https://antnest.local/contracts/agent-acp/execution-snapshot.schema.json",
+  "title": "Organization execution configuration",
+  "description": "Structural contract. Apply also validates unique identifiers, references and accepting-Agent readiness; see execution-api.md."
+}

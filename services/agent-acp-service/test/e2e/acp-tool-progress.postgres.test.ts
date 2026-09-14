@@ -10,7 +10,6 @@ import { migrate } from "../../src/adapters/postgres/migrate.js";
 import type { ModelResult } from "../../src/ports/model.js";
 import { startBoundaryApplication } from "../support/postgres-boundary-application.js";
 import { startProgressFixture } from "../support/mcp-progress-fixture.js";
-import { snapshot } from "../support/fixtures.js";
 import type { AcpWireClient, ProtocolVersion, WireFrame } from "../support/acp-wire-client.js";
 
 const databaseUrl = process.env.ANTNEST_ACP_TEST_DATABASE_URL;
@@ -27,15 +26,8 @@ describe.skipIf(databaseUrl === undefined)("ACP durable Tool progress", () => {
     await migrate(pool);
     fixture = await startProgressFixture();
     app = await startBoundaryApplication(pool);
-    app.controller.acquireRun.mockImplementation(() => {
-      const value = snapshot();
-      return Promise.resolve({
-        ...value,
-        admissionId: randomUUID(),
-        admissionDeadline: new Date(Date.now() + 60_000),
-        runtime: { ...value.runtime, mcpEndpoint: fixture.endpoint.href },
-      });
-    });
+    app.configuration.agents[0]!.runtime!.mcp_endpoint = fixture.endpoint.href;
+    await app.publishConfiguration();
     const tools = new McpToolCatalog({
       runtimeDialer: new OfficialMcpDialer({ trust: "runtime" }),
       revisions: { getClientMcpRevision: () => Promise.resolve([]) },
@@ -67,7 +59,7 @@ describe.skipIf(databaseUrl === undefined)("ACP durable Tool progress", () => {
         await vi.waitFor(() =>
           expect(JSON.stringify(toolUpdates(client.frames))).toContain("owner-only partial"),
         );
-        expect(app.controller.finishRun).not.toHaveBeenCalled();
+        expect(app.finish).not.toHaveBeenCalled();
         const before = toolUpdates(client.frames);
         expect(before.every((update) => update.status === "in_progress")).toBe(true);
         const id = before[0]?.toolCallId;
@@ -82,7 +74,7 @@ describe.skipIf(databaseUrl === undefined)("ACP durable Tool progress", () => {
         expect(JSON.stringify(toolUpdates(client.frames))).toContain("owner-only partial");
         await fixture.progress(2, "stderr: owner-only tail");
         fixture.finish();
-        await vi.waitFor(() => expect(app.controller.finishRun).toHaveBeenCalledOnce());
+        await vi.waitFor(() => expect(app.finish).toHaveBeenCalledOnce());
         await vi.waitFor(() => expect(toolUpdates(client.frames).at(-1)?.status).toBe("completed"));
         const updates = toolUpdates(client.frames);
         expect(new Set(updates.map((update) => update.toolCallId))).toEqual(new Set([id]));
@@ -104,7 +96,9 @@ describe.skipIf(databaseUrl === undefined)("ACP durable Tool progress", () => {
         expect(JSON.stringify(app.model.complete.mock.calls[1]?.[0].messages)).not.toContain(
           "owner-only partial",
         );
-        expect(fixture.executionIds).toEqual([snapshot().runtime.executionId]);
+        expect(fixture.executionIds).toEqual([
+          app.configuration.agents[0]!.runtime!.runtime_execution_id,
+        ]);
       } finally {
         fixture.finish();
         await observed;

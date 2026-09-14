@@ -36,7 +36,6 @@ export type RunTurnInput = {
   runId: string;
   sessionId: string;
   snapshot: RunExecutionSnapshot;
-  credential: string;
   context: ModelMessage[];
   signal: AbortSignal;
   authoritySignal: AbortSignal;
@@ -161,7 +160,6 @@ export class TurnRunner {
     try {
       const response = await this.dependencies.model.complete({
         snapshot: input.snapshot,
-        credential: input.credential,
         messages,
         tools: this.dependencies.catalog,
         signal: AbortSignal.any([input.signal, input.authoritySignal, output.signal]),
@@ -295,6 +293,7 @@ export class TurnRunner {
           input.signal.aborted ? "cancelled" : "failed",
           content,
           failedEffect,
+          { runtimeCallStopped: stoppingEvidenceFromError(error) },
         );
       } catch (auditError) {
         if (auditError instanceof RunEventPersistenceError) {
@@ -341,6 +340,7 @@ export class TurnRunner {
         content,
         result.toolEffectState,
         {
+          runtimeCallStopped: result.runtimeCallStopped === true,
           ...(rawOutput === undefined ? {} : { rawOutput }),
           ...(result.isError || result.toolEffectState !== "settled" || result.file === undefined
             ? {}
@@ -414,6 +414,15 @@ function effectFromError(error: unknown): ToolEffectState {
     return error.effectState;
   }
   return "none";
+}
+
+function stoppingEvidenceFromError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "runtimeCallStopped" in error &&
+    error.runtimeCallStopped === true
+  );
 }
 
 function failure(

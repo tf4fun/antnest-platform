@@ -24,7 +24,7 @@ func TestRuntimeLossTransportPreservesAbsenceAndObservationKind(t *testing.T) {
 					}}, NextSequence: 1}
 				case "/internal/runtimes":
 					payload = runtimeListDTO{Runtimes: []runtimeInspectionDTO{{
-						AgentID: "agent-1", RuntimeRevision: revision, LifecycleState: "ready", Health: "absent",
+						AgentID: "agent-1", RuntimeRevision: revision, LifecycleState: "provisioned", Health: "absent",
 					}}}
 				default:
 					t.Errorf("unexpected request: %s", request.URL.Path)
@@ -45,7 +45,7 @@ func TestRuntimeLossTransportPreservesAbsenceAndObservationKind(t *testing.T) {
 				t.Fatalf("loss fact dropped or rewritten: %+v error=%v", page, err)
 			}
 			runtimes, err := client.ListRuntimes(context.Background())
-			expected := ports.RuntimeEnvironmentSnapshot{AgentID: "agent-1", RuntimeRevision: revision, LifecycleState: "ready", Health: "absent"}
+			expected := ports.RuntimeEnvironmentSnapshot{AgentID: "agent-1", RuntimeRevision: revision, LifecycleState: "provisioned", Health: "absent"}
 			if err != nil || len(runtimes) != 1 || runtimes[0] != expected {
 				t.Fatalf("loss snapshot dropped or rewritten: %+v error=%v", runtimes, err)
 			}

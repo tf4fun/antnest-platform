@@ -53,7 +53,6 @@ describe.skipIf(databaseUrl === undefined)("usage receipts in private PostgreSQL
     });
     const admitted = snapshot();
     admitted.clientMcpRevisionId = revision;
-    admitted.admissionId = randomUUID();
     admitted.executionSpec.model.pricing = { ...pricing };
     await runs.acceptRun({
       runId: id,
@@ -102,8 +101,12 @@ describe.skipIf(databaseUrl === undefined)("usage receipts in private PostgreSQL
       cost: { amount: 0.03 },
       measurement: { inputTokens: 100, outputTokens: 10 },
     });
-    expect((await executions.listRecoveryWork()).find((r) => r.id === runId)).toMatchObject({
-      snapshot: { executionSpec: { model: { pricing } } },
+    const audited = await pool.query<{ execution_snapshot: unknown }>(
+      "SELECT execution_snapshot FROM runs WHERE id = $1",
+      [runId],
+    );
+    expect(audited.rows[0]?.execution_snapshot).toMatchObject({
+      executionSpec: { model: { pricing } },
     });
   });
   it("forks the saved known-cost baseline without changing the source or repricing it", async () => {

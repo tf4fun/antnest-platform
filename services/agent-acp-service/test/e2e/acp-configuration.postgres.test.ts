@@ -160,7 +160,8 @@ describe.skipIf(databaseUrl === undefined)("ACP configuration over protocol and 
       expect((await set(other, version, sessionId, "mode", "chat")).error?.data?.code).toBe(
         "session_access_denied",
       );
-      app.authorizations.get("principal-1:agent-1")!.active = false;
+      app.configuration.agents[0]!.principal_ids = ["principal-2"];
+      await app.publishConfiguration();
       expect((await set(client, version, sessionId, "mode", "chat")).error?.data?.code).toBe(
         "access_denied",
       );
@@ -227,7 +228,7 @@ describe.skipIf(databaseUrl === undefined)("ACP configuration over protocol and 
     ).toEqual({ count: 1 });
   }, 15000);
 
-  it("captures admission overrides under the Session lock and preserves them on recovery", async () => {
+  it("captures local acceptance overrides under the Session lock and preserves them in the audit snapshot", async () => {
     const client = await app.connect(1);
     const sessionId = String((await client.request("session/new", setup)).result?.sessionId);
     await set(client, 1, sessionId, "mode", "chat");
@@ -245,15 +246,16 @@ describe.skipIf(databaseUrl === undefined)("ACP configuration over protocol and 
     await set(client, 1, sessionId, "mode", "auto");
     expect(intent.sessionConfiguration).toEqual({ authorizationMode: "chat" });
     const executions = new PostgresExecutionRepository(kernel);
-    expect((await executions.listRecoveryWork())[0]).toMatchObject({
-      kind: "admitting",
-      sessionConfiguration: { authorizationMode: "chat" },
-    });
+    expect((await executions.listRecoveryWork())[0]).toEqual({ kind: "admitting", id: intent.id });
+    const stored = await pool.query<{ session_configuration: unknown }>(
+      "SELECT session_configuration FROM runs WHERE id = $1",
+      [intent.id],
+    );
+    expect(stored.rows[0]?.session_configuration).toEqual({ authorizationMode: "chat" });
     const frozen = snapshot();
     frozen.clientMcpRevisionId = intent.clientMcpRevisionId;
     frozen.executionSpec.configuration = {
       modelProfileId: "profile-1",
-      modelProfileRevisionId: "revision-1",
       authorization: { mode: "chat", toolRules: [] },
       authorizationRevision: 1,
       digest: "c".repeat(64),
@@ -264,60 +266,40 @@ describe.skipIf(databaseUrl === undefined)("ACP configuration over protocol and 
       environmentFact: null,
       acceptedAt: new Date(),
     });
-    expect((await executions.listRecoveryWork())[0]).toMatchObject({
-      kind: "running",
-      snapshot: { executionSpec: { configuration: frozen.executionSpec.configuration } },
+    expect((await executions.listRecoveryWork())[0]).toEqual({ kind: "running", id: intent.id });
+    const audited = await pool.query<{ execution_snapshot: unknown }>(
+      "SELECT execution_snapshot FROM runs WHERE id = $1",
+      [intent.id],
+    );
+    expect(audited.rows[0]?.execution_snapshot).toMatchObject({
+      executionSpec: { configuration: frozen.executionSpec.configuration },
     });
   });
 
   it("applies a model and mode change to the next Run, without replacing active credentials or Runtime", async () => {
-    const catalog = configurationCatalog();
-    catalog.models.push({
-      ...catalog.models[0]!,
-      modelProfileId: "profile-2",
-      revisionId: "revision-2",
+    const provider = app.configuration.providers[0]!;
+    if (!("credential" in provider)) throw new Error("Missing synthetic credential");
+    provider.credential.secret = "original-secret";
+    provider.credential_revision = "credential-2";
+    app.configuration.providers.push({
+      connection_id: "connection-2",
+      provider_key: "deepseek",
+      request_protocol: "openai_chat_completions",
+      base_url: "https://other-provider.test/v1",
+      enabled: true,
+      credential_revision: "other-version",
+      credential: { method: "api_key", secret: "other-secret" },
+    });
+    app.configuration.models.push({
+      ...app.configuration.models[0]!,
+      model_profile_id: "profile-2",
+      connection_id: "connection-2",
       model: "other-model",
-      displayName: "Other provider",
-      contextWindow: 96000,
-      supportsImages: true,
+      display_name: "Other provider",
+      context_window: 96000,
+      supports_images: true,
     });
-    app.controller.getSessionConfiguration.mockResolvedValue(catalog);
-    app.controller.acquireRun.mockImplementation((input) => {
-      const frozen = snapshot();
-      const alternate = input.sessionConfiguration?.modelProfileId === "profile-2";
-      frozen.admissionId = `admission-${input.requestId}`;
-      frozen.admissionDeadline = new Date(Date.now() + 60000);
-      if (alternate) {
-        frozen.executionSpec.model = {
-          ...frozen.executionSpec.model,
-          model: "other-model",
-          baseUrl: "https://other-provider.test/v1",
-          contextWindow: 96000,
-          supportsImages: true,
-        };
-        frozen.executionSpec.credentialRef = "other-credential";
-        frozen.credentialVersion = "other-version";
-      }
-      frozen.executionSpec.configuration = {
-        modelProfileId: alternate ? "profile-2" : "profile-1",
-        modelProfileRevisionId: alternate ? "revision-2" : "revision-1",
-        authorization: {
-          mode: input.sessionConfiguration?.authorizationMode ?? "auto",
-          toolRules: [],
-        },
-        authorizationRevision: 1,
-        digest: (alternate ? "d" : "c").repeat(64),
-      };
-      return Promise.resolve(frozen);
-    });
-    app.controller.resolveCredential.mockImplementation((input) =>
-      Promise.resolve({
-        secretType: "bearer",
-        secret: input.credentialRef === "other-credential" ? "other-secret" : "original-secret",
-        credentialVersion:
-          input.credentialRef === "other-credential" ? "other-version" : "credential-version-1",
-      }),
-    );
+    await app.publishConfiguration();
     const started = Promise.withResolvers<void>();
     const release = Promise.withResolvers<void>();
     const reply = {
@@ -367,14 +349,22 @@ describe.skipIf(databaseUrl === undefined)("ACP configuration over protocol and 
       credential: "other-secret",
       tools: [],
       snapshot: {
-        credentialVersion: "other-version",
+        providerConnectionId: "connection-2",
+        modelProfileId: "profile-2",
         executionSpec: {
-          credentialRef: "other-credential",
           model: { model: "other-model", contextWindow: 96000, supportsImages: true },
           configuration: { authorization: { mode: "chat" } },
         },
       },
     });
+    expect(JSON.stringify(second?.snapshot)).not.toMatch(
+      /other-secret|original-secret|credentialVersion|credentialRef/u,
+    );
+    const audited = await pool.query("SELECT execution_snapshot FROM runs ORDER BY created_at");
+    expect(audited.rows).toHaveLength(2);
+    expect(JSON.stringify(audited.rows)).not.toMatch(
+      /other-secret|original-secret|credentialVersion|credentialRef/u,
+    );
     expect(second?.snapshot.runtime).toEqual(
       app.model.complete.mock.calls[0]?.[0].snapshot.runtime,
     );

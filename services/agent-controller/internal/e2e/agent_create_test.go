@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -29,6 +30,7 @@ import (
 
 	"soft/antnest-platform/services/agent-controller/internal/application"
 	"soft/antnest-platform/services/agent-controller/internal/credentials"
+	"soft/antnest-platform/services/agent-controller/internal/domain"
 	"soft/antnest-platform/services/agent-controller/internal/egressclient"
 	"soft/antnest-platform/services/agent-controller/internal/orchestration"
 	"soft/antnest-platform/services/agent-controller/internal/ports"
@@ -216,13 +218,28 @@ func testAgentLifecycleAcrossHTTP(t *testing.T, runtimeLost bool, spanRecorder *
 	t.Cleanup(egressServer.Close)
 	runtimeServer := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		runtimeCalls.Add(1)
+		if request.URL.Path == "/internal/runtimes" {
+			_ = json.NewEncoder(response).Encode(map[string]any{"runtimes": []any{}})
+			return
+		}
+		if request.URL.Path == "/internal/runtime-observations" {
+			after, err := strconv.ParseUint(request.URL.Query().Get("after_sequence"), 10, 64)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(response).Encode(map[string]any{"observations": []any{}, "next_sequence": after})
+			return
+		}
 		path := strings.TrimPrefix(request.URL.Path, "/internal/runtimes/")
 		if request.Method == http.MethodGet && path != "" && !strings.Contains(path, "/") {
 			runtimeMu.Lock()
 			inspection := map[string]any{
 				"agent_id": path, "runtime_revision": currentRuntimeRevision,
 				"lifecycle_state": currentRuntimeLifecycle, "health": currentRuntimeHealth,
-				"restart_count": 0, "observed_at": "2026-09-01T00:00:00Z",
+				"phase": "running", "restart_count": 0, "observed_at": time.Now().UTC(),
+			}
+			if currentRuntimeHealth == "absent" {
+				inspection["phase"] = "absent"
 			}
 			if currentRuntimeExecutionID != "" {
 				inspection["runtime_execution_id"] = currentRuntimeExecutionID
@@ -314,7 +331,7 @@ func testAgentLifecycleAcrossHTTP(t *testing.T, runtimeLost bool, spanRecorder *
 		}
 		inspection := map[string]any{
 			"agent_id": agentID, "runtime_revision": revision,
-			"lifecycle_state": "ready", "health": "healthy",
+			"lifecycle_state": "provisioned", "health": "healthy",
 			"mcp_endpoint": endpoint, "runtime_execution_id": executionID,
 			"restart_count": 0, "observed_at": "2026-09-01T00:00:00Z",
 		}
@@ -369,6 +386,11 @@ func testAgentLifecycleAcrossHTTP(t *testing.T, runtimeLost bool, spanRecorder *
 			_ = connection.Close()
 			return
 		}
+		if action != "disable" && action != "delete" {
+			inspection["health"] = "unknown"
+			delete(inspection, "mcp_endpoint")
+			delete(inspection, "runtime_execution_id")
+		}
 		response.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(response).Encode(map[string]any{
 			"request_id": requestID, "kind": kind, "agent_id": agentID,
@@ -388,16 +410,17 @@ func testAgentLifecycleAcrossHTTP(t *testing.T, runtimeLost bool, spanRecorder *
 		t.Fatalf("create Runtime client: %v", err)
 	}
 	clock := wallClock{}
+	execution, snapshot := executionPublicationPeer(t, repository, secretBox)
 	lifecycle := application.NewLifecycleService(
 		repository, repository, egress, runtime, clock,
 		application.WithIdentityDirectory(e2eIdentityDirectory{}),
+		application.WithLifecycleExecution(execution),
 	)
 	handler, err := server.NewHandler(
 		application.NewCatalogService(repository, secretBox, clock),
 		lifecycle,
-		application.NewRunService(repository, secretBox, clock, 30*time.Minute,
-			application.WithRunIdentityDirectory(e2eIdentityDirectory{})),
-		application.NewAgentQueryService(repository, application.WithWorkspaceStateNotifier(eventNotifier)),
+		application.NewAgentConfigurationService(repository, e2eIdentityDirectory{}, clock),
+		application.NewAgentQueryService(repository),
 		application.NewEventService(repository, eventNotifier, repository),
 		application.NewNetworkPolicyService(repository, egress),
 		repository.Ping,
@@ -408,6 +431,7 @@ func testAgentLifecycleAcrossHTTP(t *testing.T, runtimeLost bool, spanRecorder *
 	handler = telemetry.HTTPHandler(handler, logger)
 	restartedLifecycle := application.NewLifecycleService(
 		repository, repository, egress, runtime, clock,
+		application.WithLifecycleExecution(execution),
 	)
 
 	recoverOperation := func(requestID string) {
@@ -429,6 +453,19 @@ func testAgentLifecycleAcrossHTTP(t *testing.T, runtimeLost bool, spanRecorder *
 			t.Fatal("missing HTTP admission parent")
 		}
 		executeLifecycleWorkflow(t, repository, restartedLifecycle, operation, parent)
+		if operation.Kind == domain.OperationCreate || operation.Kind == domain.OperationRebuild || operation.Kind == domain.OperationEnable {
+			pending, err := repository.GetAgent(ctx, operation.AgentID)
+			if err != nil || (pending.LifecycleState != domain.AgentCreated || pending.ActivationState != domain.ActivationEnabled || pending.RuntimeState != domain.RuntimeUnknown) || pending.ExecutionRevisionID != "" || pending.ActiveOperationRequestID != "" {
+				t.Fatalf("creation must finish before readiness: %+v error=%v", pending, err)
+			}
+			observer, err := application.NewRuntimeObservationWorker(runtime, repository, time.Second, logger)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := observer.RunOnce(ctx); err != nil {
+				t.Fatal(err)
+			}
+		}
 	}
 
 	provider := createTestProvider(t, handler, "agent-e2e-provider", "agent-e2e-org", "https://api.example.com/v1", "agent-e2e-secret")
@@ -458,7 +495,7 @@ func testAgentLifecycleAcrossHTTP(t *testing.T, runtimeLost bool, spanRecorder *
 	acceptedCreate := serveJSON(t, handler, http.MethodPost, "/internal/agents", createBody, http.StatusAccepted)
 	acceptedAgent := acceptedCreate["agent"].(map[string]any)
 	acceptedOperation := acceptedCreate["operation"].(map[string]any)
-	if acceptedAgent["lifecycle_state"] != "provisioning" ||
+	if acceptedAgent["lifecycle_state"] != "not_created" ||
 		acceptedOperation["state"] != "running" || acceptedOperation["phase"] != "network_ensure" ||
 		egressCalls.Load() != 0 || runtimeCalls.Load() != 0 {
 		t.Fatalf("accepted create crossed asynchronous boundary: response=%+v egress=%d runtime=%d",
@@ -468,7 +505,7 @@ func testAgentLifecycleAcrossHTTP(t *testing.T, runtimeLost bool, spanRecorder *
 	created := serveJSON(t, handler, http.MethodPost, "/internal/agents", createBody, http.StatusAccepted)
 	agent := created["agent"].(map[string]any)
 	operation := created["operation"].(map[string]any)
-	if agent["lifecycle_state"] != "available" || operation["state"] != "completed" ||
+	if agent["lifecycle_state"] != "created" || agent["activation_state"] != "enabled" || agent["runtime_state"] != "available" || operation["state"] != "completed" ||
 		agent["owner_user_id"] != "agent-e2e-user" {
 		t.Fatalf("created Agent = %+v operation=%+v", agent, operation)
 	}
@@ -477,8 +514,16 @@ func testAgentLifecycleAcrossHTTP(t *testing.T, runtimeLost bool, spanRecorder *
 		t, handler, http.MethodGet,
 		"/internal/agents/"+agentID+"?organization_id=agent-e2e-org", "", http.StatusOK,
 	)
-	if queried["owner_user_id"] != "agent-e2e-user" || queried["aggregate_sequence"] != float64(2) {
+	if queried["owner_user_id"] != "agent-e2e-user" ||
+		queried["aggregate_sequence"] != agent["aggregate_sequence"] ||
+		queried["aggregate_sequence"].(float64) <= acceptedAgent["aggregate_sequence"].(float64) {
 		t.Fatalf("queried Agent projection = %+v", queried)
+	}
+	events, err := repository.ListAgentEvents(ctx, ports.AgentEventQuery{AgentID: agentID, Limit: 100})
+	if err != nil || len(events) != 4 || events[1].EventType != ports.EventAgentCreated ||
+		events[2].EventType != ports.EventAgentRuntimeConditionChanged || events[3].EventType != ports.EventAgentReady ||
+		float64(events[3].AggregateSequence) != queried["aggregate_sequence"] {
+		t.Fatalf("creation/readiness journal differs from projection: %+v error=%v", events, err)
 	}
 	listed := serveJSON(
 		t, handler, http.MethodGet,
@@ -489,12 +534,15 @@ func testAgentLifecycleAcrossHTTP(t *testing.T, runtimeLost bool, spanRecorder *
 		t.Fatalf("owner Agent projection = %+v", listed)
 	}
 	createEgressCalls, createRuntimeCalls := egressCalls.Load(), runtimeCalls.Load()
-	assertSessionConfigurationHTTP(t, handler, agent, created["agent_access_subject"].(string), spanRecorder)
+	assertAgentConfigurationHTTP(t, handler, agent, execution, snapshot, spanRecorder)
 	if egressCalls.Load() != createEgressCalls || runtimeCalls.Load() != createRuntimeCalls {
-		t.Fatal("Session configuration changed Runtime or Egress")
+		t.Fatal("Agent defaults or credential publication changed Runtime or Egress")
 	}
 	replayed := serveJSON(t, handler, http.MethodPost, "/internal/agents", createBody, http.StatusAccepted)
-	if replayed["agent_access_subject"] != created["agent_access_subject"] ||
+	if _, exists := replayed["agent_access_subject"]; exists {
+		t.Fatal("create response retains an opaque execution subject")
+	}
+	if replayed["agent"].(map[string]any)["agent_id"] != agentID ||
 		egressCalls.Load() != createEgressCalls || runtimeCalls.Load() != createRuntimeCalls {
 		t.Fatalf("idempotent replay repeated effects: egress=%d runtime=%d replay=%+v",
 			egressCalls.Load(), runtimeCalls.Load(), replayed)
@@ -517,7 +565,7 @@ func testAgentLifecycleAcrossHTTP(t *testing.T, runtimeLost bool, spanRecorder *
 		}
 		unavailable := serveJSON(t, handler, http.MethodGet,
 			"/internal/agents/"+agentID+"?organization_id=agent-e2e-org", "", http.StatusOK)
-		if unavailable["lifecycle_state"] != "unavailable" {
+		if unavailable["lifecycle_state"] != "created" || unavailable["runtime_state"] == "available" {
 			t.Fatalf("HTTP projection remained runnable: %+v", unavailable)
 		}
 	}
@@ -548,7 +596,7 @@ func testAgentLifecycleAcrossHTTP(t *testing.T, runtimeLost bool, spanRecorder *
 	if err != nil {
 		t.Fatalf("load rebuilt Agent: %v", err)
 	}
-	if rebuiltBase.Agent.LifecycleState != "available" ||
+	if !rebuiltBase.Agent.Status().RuntimeReady() ||
 		rebuiltBase.Agent.AgentSpecRevisionID == agent["agent_spec_revision"] ||
 		rebuiltBase.Agent.RuntimeRevision != "rtv_33333333333333333333333333333333" {
 		t.Fatalf("rebuilt Agent = %+v", rebuiltBase.Agent)
@@ -587,7 +635,7 @@ func testAgentLifecycleAcrossHTTP(t *testing.T, runtimeLost bool, spanRecorder *
 		t.Fatalf("load disabled Agent: %v", err)
 	}
 	if disabledBase.Agent.DesiredState != "disabled" ||
-		disabledBase.Agent.LifecycleState != "disabled" ||
+		disabledBase.Agent.LifecycleState != domain.AgentCreated || disabledBase.Agent.ActivationState != domain.ActivationDisabled ||
 		disabledBase.Agent.ExecutionRevisionID != "" ||
 		disabledBase.Agent.LastSuccessfulExecutionRevisionID != rebuiltBase.Agent.ExecutionRevisionID ||
 		disabledBase.Agent.RuntimeRevision != "rtv_44444444444444444444444444444444" ||
@@ -628,7 +676,7 @@ func testAgentLifecycleAcrossHTTP(t *testing.T, runtimeLost bool, spanRecorder *
 		t.Fatalf("load enabled Agent: %v", err)
 	}
 	if enabledBase.Agent.DesiredState != "enabled" ||
-		enabledBase.Agent.LifecycleState != "available" ||
+		!enabledBase.Agent.Status().RuntimeReady() ||
 		enabledBase.Agent.ExecutionRevisionID == rebuiltBase.Agent.ExecutionRevisionID ||
 		enabledBase.Agent.LastSuccessfulExecutionRevisionID != enabledBase.Agent.ExecutionRevisionID ||
 		enabledBase.Agent.RuntimeRevision != "rtv_55555555555555555555555555555555" ||

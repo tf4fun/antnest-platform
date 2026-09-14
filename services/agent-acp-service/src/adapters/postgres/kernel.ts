@@ -1,5 +1,15 @@
-import type { Pool, PoolClient, QueryResult, QueryResultRow } from "pg";
+import type { Pool, PoolClient, PoolConfig, QueryResult, QueryResultRow } from "pg";
 import { NOOP_TELEMETRY, type TelemetryPort } from "../../ports/telemetry.js";
+
+export function postgresPoolOptions(connectionString: string, timeoutMs: number): PoolConfig {
+  return {
+    connectionString,
+    max: 10,
+    connectionTimeoutMillis: timeoutMs,
+    statement_timeout: timeoutMs,
+    query_timeout: timeoutMs,
+  };
+}
 
 export class PostgresKernel {
   public constructor(
@@ -18,6 +28,10 @@ export class PostgresKernel {
     return this.observe("transaction", async () => {
       const client = await this.pool.connect();
       let releaseError: Error | undefined;
+      const connectionFailed = (error: Error) => {
+        releaseError ??= error;
+      };
+      client.on("error", connectionFailed);
       try {
         await client.query("BEGIN");
         const result = await operation(client);
@@ -37,9 +51,18 @@ export class PostgresKernel {
         }
         throw error;
       } finally {
+        client.removeListener("error", connectionFailed);
         client.release(releaseError);
       }
     });
+  }
+
+  public read<Row extends QueryResultRow>(
+    text: string,
+    values: readonly unknown[] = [],
+    signal?: AbortSignal,
+  ): Promise<QueryResult<Row>> {
+    return this.observe(sqlOperation(text), () => readQuery<Row>(this.pool, text, values, signal));
   }
 
   private observe<Result>(operation: string, execute: () => Promise<Result>): Promise<Result> {
@@ -64,6 +87,56 @@ export class PostgresKernel {
           attributes,
         );
       });
+  }
+}
+
+// Cancelling a read discards its socket. This must not be used to infer whether
+// a write committed; a server statement timeout also bounds orphaned backend work.
+async function readQuery<Row extends QueryResultRow>(
+  pool: Pool,
+  text: string,
+  values: readonly unknown[],
+  signal?: AbortSignal,
+): Promise<QueryResult<Row>> {
+  signal?.throwIfAborted();
+  if (signal === undefined) return pool.query<Row>(text, [...values]);
+  const interrupted = Promise.withResolvers<never>();
+  let client: PoolClient | undefined;
+  let reusable = false;
+  const release = (destroy: boolean) => {
+    const acquired = client;
+    client = undefined;
+    acquired?.removeListener("error", fail);
+    acquired?.release(destroy);
+  };
+  const fail = (reason: unknown) => {
+    release(true);
+    interrupted.reject(reason);
+  };
+  const cancel = () => fail(signal.reason);
+  signal.addEventListener("abort", cancel, { once: true });
+  const acquisition = pool.connect().then((acquired) => {
+    if (signal.aborted) {
+      acquired.release();
+      signal.throwIfAborted();
+    }
+    client = acquired;
+    acquired.on("error", fail);
+    return acquired;
+  });
+  try {
+    const acquired = await Promise.race([acquisition, interrupted.promise]);
+    signal.throwIfAborted();
+    const result = await Promise.race([
+      acquired.query<Row>(text, [...values]),
+      interrupted.promise,
+    ]);
+    signal.throwIfAborted();
+    reusable = true;
+    return result;
+  } finally {
+    signal.removeEventListener("abort", cancel);
+    release(!reusable);
   }
 }
 

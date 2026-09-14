@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { OpenAICompatibleModel } from "../../../src/adapters/model/openai-compatible.js";
-import type { ModelRequest } from "../../../src/ports/model.js";
+import type { AuthenticatedModelRequest } from "../../../src/ports/model.js";
 import { snapshot } from "../../support/fixtures.js";
 
 const pricing = {
@@ -26,7 +26,7 @@ function response(usage: unknown, streaming: boolean) {
   );
 }
 async function complete(usage: unknown, streaming: boolean, withPrice = true) {
-  const request: ModelRequest = {
+  const request: AuthenticatedModelRequest = {
     snapshot: snapshot(),
     credential: "test",
     messages: [],
@@ -198,7 +198,7 @@ describe("stream usage snapshots", () => {
         chunks.map((c) => `data: ${JSON.stringify(c)}\n\n`).join("") + "data: [DONE]\n\n",
         { headers: { "content-type": "text/event-stream" } },
       );
-      const request: ModelRequest = {
+      const request: AuthenticatedModelRequest = {
         snapshot: snapshot(),
         credential: "test",
         messages: [],

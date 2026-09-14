@@ -14,27 +14,27 @@ import (
 	"testing"
 	"time"
 
-	"soft/antnest-platform/services/edge-gateway/internal/agentcontroller"
+	"soft/antnest-platform/services/edge-gateway/internal/agentacp"
 	"soft/antnest-platform/services/edge-gateway/internal/telemetry"
 )
 
-func readyState() agentcontroller.WorkspaceState {
-	return agentcontroller.WorkspaceState{AgentID: "agent-1", Availability: "ready", AccessAllowed: true, AgentRevision: 3}
+func readyState() agentacp.WorkspaceState {
+	return agentacp.WorkspaceState{AgentID: "agent-1", Availability: "ready", AccessAllowed: true, ConfigurationRevision: stateText(strings.Repeat("a", 64))}
 }
 func stateRequest(suffix string) *http.Request {
 	r := httptest.NewRequest(http.MethodGet, "/api/app/agents/agent-1/state"+suffix, nil)
 	addSessionCookies(r, "token-1", "csrf-1")
 	return r
 }
-func newStateHandler(t *testing.T, identity *identityServiceStub, agents *agentServiceStub, config Config) http.Handler {
+func newStateHandler(t *testing.T, identity *identityServiceStub, agents *executionServiceStub, config Config) http.Handler {
 	t.Helper()
-	return newTestHandlerWithAgents(t, identity, agents, http.NotFoundHandler(), time.Now(), config)
+	return newTestHandlerWithServices(t, identity, &agentServiceStub{listErr: context.DeadlineExceeded}, agents, http.NotFoundHandler(), time.Now(), config)
 }
 
 func TestWorkspaceStateUsesAuthenticatedScope(t *testing.T) {
 	t.Parallel()
 	for _, suffix := range []string{"", "/watch"} {
-		agents := &agentServiceStub{state: readyState()}
+		agents := &executionServiceStub{state: readyState()}
 		principal := ordinaryPrincipal()
 		h := newStateHandler(t, &identityServiceStub{resolvePrincipal: principal}, agents, Config{})
 		r := stateRequest(suffix)
@@ -42,7 +42,7 @@ func TestWorkspaceStateUsesAuthenticatedScope(t *testing.T) {
 		r.Header.Set(HeaderOrganizationID, "forged-org")
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, r)
-		if w.Code != 200 || agents.stateInput != (agentcontroller.WorkspaceStateInput{AgentID: "agent-1", OrganizationID: principal.OrganizationID, PrincipalID: principal.UserID}) {
+		if w.Code != 200 || agents.stateInput != (agentacp.WorkspaceStateInput{AgentID: "agent-1", OrganizationID: principal.OrganizationID, PrincipalID: principal.UserID}) {
 			t.Fatalf("status=%d scope=%+v body=%s", w.Code, agents.stateInput, w.Body)
 		}
 		payload := w.Body.String()
@@ -50,7 +50,7 @@ func TestWorkspaceStateUsesAuthenticatedScope(t *testing.T) {
 			payload = strings.TrimSuffix(strings.TrimPrefix(payload, "event: workspace_state\ndata: "), "\n\n")
 		}
 		var fields map[string]any
-		if err := json.Unmarshal([]byte(payload), &fields); err != nil || len(fields) != 5 {
+		if err := json.Unmarshal([]byte(payload), &fields); err != nil || len(fields) != 6 {
 			t.Fatalf("payload=%s error=%v", payload, err)
 		}
 	}
@@ -59,7 +59,7 @@ func TestWorkspaceStateUsesAuthenticatedScope(t *testing.T) {
 func TestWorkspaceStateRejectsBrowserScopeAndCrossOrigin(t *testing.T) {
 	t.Parallel()
 	for _, kind := range []string{"query", "origin", "cursor", "method"} {
-		agents := &agentServiceStub{}
+		agents := &executionServiceStub{}
 		r := stateRequest("/watch")
 		switch kind {
 		case "query":
@@ -81,9 +81,9 @@ func TestWorkspaceStateRejectsBrowserScopeAndCrossOrigin(t *testing.T) {
 
 func TestWorkspaceStateAdmissionErrorsDoNotOpenStream(t *testing.T) {
 	t.Parallel()
-	for _, kind := range []string{"missing cookie", "inactive", "identity outage", "missing agent", "controller outage"} {
+	for _, kind := range []string{"missing cookie", "inactive", "identity outage", "ACP outage"} {
 		id := &identityServiceStub{resolvePrincipal: ordinaryPrincipal()}
-		agents := &agentServiceStub{state: readyState()}
+		agents := &executionServiceStub{state: readyState()}
 		r := stateRequest("/watch")
 		status := http.StatusUnauthorized
 		switch kind {
@@ -94,10 +94,7 @@ func TestWorkspaceStateAdmissionErrorsDoNotOpenStream(t *testing.T) {
 		case "identity outage":
 			id.resolveErr = errors.New("private upstream detail")
 			status = 503
-		case "missing agent":
-			agents.stateErr = agentcontroller.ErrAgentNotFound
-			status = 404
-		case "controller outage":
+		case "ACP outage":
 			agents.stateErr = errors.New("private upstream detail")
 			status = 503
 		}
@@ -116,7 +113,7 @@ func TestWorkspaceStateRevalidatesIdentityBeforeForwardingUpdates(t *testing.T) 
 	t.Parallel()
 	for _, kind := range []string{"revoked", "different user", "different membership", "different organization", "outage"} {
 		id := &identityServiceStub{resolvePrincipal: ordinaryPrincipal()}
-		agents := &agentServiceStub{watchState: func(_ context.Context, emit agentcontroller.WorkspaceStateEmitter) error {
+		agents := &executionServiceStub{watchState: func(_ context.Context, emit agentacp.WorkspaceStateEmitter) error {
 			if err := emit(readyState()); err != nil {
 				return err
 			}
@@ -138,7 +135,7 @@ func TestWorkspaceStateRevalidatesIdentityBeforeForwardingUpdates(t *testing.T) 
 		}}
 		w := httptest.NewRecorder()
 		newStateHandler(t, id, agents, Config{}).ServeHTTP(w, stateRequest("/watch"))
-		if w.Code != 200 || strings.Count(w.Body.String(), "event: workspace_state") != 1 || strings.Contains(w.Body.String(), "unavailable") {
+		if w.Code != 200 || strings.Count(w.Body.String(), "event: workspace_state") != 1 || strings.Contains(w.Body.String(), `"availability":"busy"`) || strings.Contains(w.Body.String(), `"message":"unavailable"`) {
 			t.Fatalf("%s response=%d %s", kind, w.Code, w.Body)
 		}
 	}
@@ -147,7 +144,7 @@ func TestWorkspaceStateRevalidatesIdentityBeforeForwardingUpdates(t *testing.T) 
 func TestWorkspaceStateLeaseCancelsQuietUpstreamAndReleasesCapacity(t *testing.T) {
 	t.Parallel()
 	var deadline time.Time
-	agents := &agentServiceStub{watchState: func(ctx context.Context, emit agentcontroller.WorkspaceStateEmitter) error {
+	agents := &executionServiceStub{watchState: func(ctx context.Context, emit agentacp.WorkspaceStateEmitter) error {
 		deadline, _ = ctx.Deadline()
 		if err := emit(readyState()); err != nil {
 			return err
@@ -166,7 +163,7 @@ func TestWorkspaceStateLeaseCancelsQuietUpstreamAndReleasesCapacity(t *testing.T
 
 func TestWorkspaceStateInitialSnapshotTimeoutIsBounded(t *testing.T) {
 	t.Parallel()
-	agents := &agentServiceStub{watchState: func(ctx context.Context, _ agentcontroller.WorkspaceStateEmitter) error {
+	agents := &executionServiceStub{watchState: func(ctx context.Context, _ agentacp.WorkspaceStateEmitter) error {
 		<-ctx.Done()
 		return ctx.Err()
 	}}
@@ -182,7 +179,7 @@ func TestWorkspaceStateInitialSnapshotTimeoutIsBounded(t *testing.T) {
 
 func TestWorkspaceStateCapacityIsSeparateFromACP(t *testing.T) {
 	t.Parallel()
-	h := newStateHandler(t, &identityServiceStub{resolvePrincipal: ordinaryPrincipal()}, &agentServiceStub{}, Config{}).(*handler)
+	h := newStateHandler(t, &identityServiceStub{resolvePrincipal: ordinaryPrincipal()}, &executionServiceStub{}, Config{}).(*handler)
 	for range cap(h.stateConnections) {
 		h.stateConnections <- struct{}{}
 	}
@@ -200,7 +197,7 @@ func (*failedStateFlush) FlushError() error { return errors.New("socket flush fa
 func TestWorkspaceStateObservedWriterPropagatesFlushFailure(t *testing.T) {
 	t.Parallel()
 	returned := false
-	agents := &agentServiceStub{watchState: func(_ context.Context, emit agentcontroller.WorkspaceStateEmitter) error {
+	agents := &executionServiceStub{watchState: func(_ context.Context, emit agentacp.WorkspaceStateEmitter) error {
 		err := emit(readyState())
 		returned = true
 		if err == nil {
@@ -220,7 +217,7 @@ func TestWorkspaceStateRejectsSameHostDifferentScheme(t *testing.T) {
 	t.Parallel()
 	for _, suffix := range []string{"", "/watch"} {
 		for _, https := range []bool{false, true} {
-			agents := &agentServiceStub{state: readyState()}
+			agents := &executionServiceStub{state: readyState()}
 			r := stateRequest(suffix)
 			origin := "https://" + r.Host
 			if https {
@@ -255,18 +252,18 @@ func TestWorkspaceStateMachineContractMatchesPublicResponses(t *testing.T) {
 	if err := json.Unmarshal(payload, &contract); err != nil {
 		t.Fatal(err)
 	}
-	if contract.Version != 10 {
+	if contract.Version != 11 {
 		t.Fatalf("version=%d", contract.Version)
 	}
 	for _, name := range []string{"workspace_state", "workspace_state_watch"} {
 		route, ok := contract.Routes[name]
-		if !ok || route.Method != http.MethodGet || len(route.Required) != 5 {
+		if !ok || route.Method != http.MethodGet || len(route.Required) != 6 {
 			t.Fatalf("missing state contract: %+v", route)
 		}
 		r := httptest.NewRequest(route.Method, strings.ReplaceAll(route.Path, "{agent_id}", "agent-1"), nil)
 		addSessionCookies(r, "token-1", "csrf-1")
 		w := httptest.NewRecorder()
-		newStateHandler(t, &identityServiceStub{resolvePrincipal: ordinaryPrincipal()}, &agentServiceStub{state: readyState()}, Config{}).ServeHTTP(w, r)
+		newStateHandler(t, &identityServiceStub{resolvePrincipal: ordinaryPrincipal()}, &executionServiceStub{state: readyState()}, Config{}).ServeHTTP(w, r)
 		if w.Code != 200 {
 			t.Fatalf("contract response=%d %s", w.Code, w.Body)
 		}
@@ -291,3 +288,5 @@ func TestWorkspaceStateMachineContractMatchesPublicResponses(t *testing.T) {
 		}
 	}
 }
+
+func stateText(value string) *string { return &value }

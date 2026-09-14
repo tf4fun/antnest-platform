@@ -1,48 +1,53 @@
-import { describe, expect, it, vi } from "vitest";
-
+import { describe, expect, it } from "vitest";
 import { AccessService } from "../../src/application/access-service.js";
-import type { AgentControllerPort } from "../../src/ports/agent-controller.js";
 import { binding } from "../support/fixtures.js";
+import { executionConfiguration } from "../fixtures/execution-configuration.js";
+import { localExecution } from "../support/local-execution.js";
 
-describe("AccessService", () => {
-  it("accepts an unchanged Agent-scoped access binding", async () => {
-    const resolveAgentAccess = vi.fn<AgentControllerPort["resolveAgentAccess"]>(() =>
-      Promise.resolve({
-        principalId: "principal-1",
-        agentId: "agent-1",
-        accessRevision: "access-1",
-        promptCapabilities: { image: true, embeddedContext: true },
-      }),
-    );
-    const service = new AccessService({
-      agentController: { resolveAgentAccess },
-      id: () => "request-1",
+describe("local Agent access", () => {
+  it("requires a current-process configuration, not a stored connection permission", async () => {
+    const { directory } = await localExecution(false);
+    const service = new AccessService({ directory });
+    await expect(service.assert(binding())).rejects.toMatchObject({
+      code: "configuration_not_ready",
     });
-
+    await directory.apply(executionConfiguration());
     await expect(service.assert(binding())).resolves.toBeUndefined();
-    expect(resolveAgentAccess).toHaveBeenCalledWith({
-      requestId: "request-1",
-      agentAccessSubject: "subject-1",
-    });
   });
 
-  it("forces reconnect when access or Agent capabilities change", async () => {
-    const service = new AccessService({
-      agentController: {
-        resolveAgentAccess: vi.fn(() =>
-          Promise.resolve({
-            principalId: "principal-1",
-            agentId: "agent-1",
-            accessRevision: "access-2",
-            promptCapabilities: { image: false, embeddedContext: true },
-          }),
-        ),
-      },
-      id: () => "request-1",
-    });
+  it("permits authorized resource access while execution is disabled", async () => {
+    const { directory } = await localExecution();
+    const next = executionConfiguration();
+    next.revision = 2;
+    next.agents[0]!.accepting_runs = false;
+    next.agents[0]!.unavailable_reason = "Rebuilding";
+    await directory.apply(next);
+    await expect(new AccessService({ directory }).assert(binding())).resolves.toBeUndefined();
+  });
 
-    await expect(service.assert(binding())).rejects.toMatchObject({
-      code: "connection_binding_stale",
+  it("uses new permissions on an existing connection without a reconnect handshake", async () => {
+    const { directory } = await localExecution();
+    const service = new AccessService({ directory });
+    const next = executionConfiguration();
+    next.revision = 2;
+    next.agents[0]!.access_revision = "access-2";
+    await directory.apply(next);
+    await expect(service.assert(binding())).resolves.toBeUndefined();
+    next.revision = 3;
+    next.agents[0]!.principal_ids = [];
+    await directory.apply(next);
+    await expect(service.assert(binding())).rejects.toMatchObject({ code: "access_denied" });
+  });
+
+  it.each([
+    { principalId: "other-principal" },
+    { agentId: "other-agent" },
+    { organizationId: "other-organization" },
+  ])("does not cross the identity boundary %j", async (changed) => {
+    const { directory } = await localExecution();
+    const service = new AccessService({ directory });
+    await expect(service.assert({ ...binding(), ...changed })).rejects.toMatchObject({
+      code: "organizationId" in changed ? "configuration_not_ready" : "access_denied",
     });
   });
 });

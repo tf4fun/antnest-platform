@@ -18,8 +18,7 @@ func TestLifecycleMutationsRejectCrossOrganizationAgentBeforeAdmission(t *testin
 func TestLifecycleScopeIsCheckedBeforeSourceState(t *testing.T) {
 	t.Parallel()
 	for _, state := range []domain.AgentState{
-		domain.AgentProvisioning, domain.AgentAvailable, domain.AgentUnavailable,
-		domain.AgentDisabled, domain.AgentDeleting, domain.AgentDeleted,
+		domain.AgentNotCreated, domain.AgentCreated, domain.AgentDeleted,
 	} {
 		t.Run(string(state), func(t *testing.T) {
 			assertCrossOrganizationLifecycleDenied(t, func(agent *ports.AgentRecord) {
@@ -47,7 +46,9 @@ func assertCrossOrganizationLifecycleDenied(t *testing.T, mutate func(*ports.Age
 		service := NewLifecycleService(
 			lifecycleSpecSourceStub{}, store, dependencies, dependencies,
 			fixedClock{now: time.Unix(1, 0).UTC()},
+			WithLifecycleExecution(testExecutionForStore(store)),
 		)
+
 		_, err := service.RebuildAgent(context.Background(), RebuildAgentInput{
 			RequestID: "request-cross-org-rebuild", OrganizationID: "org-2",
 			ActorPrincipalID: "admin-2", AgentID: base.Agent.AgentID,
@@ -89,14 +90,16 @@ func assertCrossOrganizationLifecycleDenied(t *testing.T, mutate func(*ports.Age
 	})
 
 	t.Run("delete", func(t *testing.T) {
-		base := deleteAgentBase(domain.AgentAvailable)
+		base := deleteAgentBase(domain.RuntimeAvailable)
 		mutate(&base.Agent)
 		store := &deleteLifecycleStoreStub{base: base}
 		dependencies := newDeleteDependencies(base.Agent)
 		service := NewLifecycleService(
 			lifecycleSpecSourceStub{}, store, dependencies, dependencies,
 			fixedClock{now: time.Unix(1, 0).UTC()},
+			WithLifecycleExecution(testExecutionForStore(store)),
 		)
+
 		_, err := service.DeleteAgent(context.Background(), DeleteAgentInput{
 			RequestID: "request-cross-org-delete", OrganizationID: "org-2",
 			ActorPrincipalID: "admin-2", AgentID: base.Agent.AgentID,

@@ -29,14 +29,14 @@ func TestLifecycleRepositoryPersistsAndPublishesEnableSaga(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load Agent enable base: %v", err)
 	}
-	if base.Agent.LifecycleState != domain.AgentDisabled ||
-		base.Spec.ID != available.ExecutableSpec.ID ||
-		base.LastSuccessfulExecution.ID != available.ExecutableExecution.ID ||
-		base.NextExecutionRevision != available.ExecutableExecution.Revision+1 {
+	if (base.Agent.LifecycleState != domain.AgentCreated || base.Agent.ActivationState != domain.ActivationDisabled || base.Agent.RuntimeState != domain.RuntimeAbsent) ||
+		base.Spec.ID != available.ConfiguredSpec.ID ||
+		base.LastSuccessfulExecution.ID != available.SourceExecution.ID ||
+		base.NextExecutionRevision != available.SourceExecution.Revision+1 {
 		t.Fatalf("enable base = %+v", base)
 	}
 
-	now := time.Unix(700, 0).UTC()
+	now := time.Now().Add(-15 * time.Second).UTC().Truncate(time.Microsecond)
 	requestID := "request-enable-integration"
 	fingerprint := strings.Repeat("8", 64)
 	begin := ports.BeginAgentEnable{
@@ -69,7 +69,7 @@ func TestLifecycleRepositoryPersistsAndPublishesEnableSaga(t *testing.T) {
 		t.Fatalf("begin Agent enable: state=%+v replayed=%t err=%v", started, replayed, err)
 	}
 	if started.Agent.DesiredState != domain.DesiredEnabled ||
-		started.Agent.LifecycleState != domain.AgentDisabled {
+		(started.Agent.LifecycleState != domain.AgentCreated || started.Agent.ActivationState != domain.ActivationDisabled || started.Agent.RuntimeState != domain.RuntimeAbsent) {
 		t.Fatalf("started enable = %+v", started)
 	}
 
@@ -87,9 +87,9 @@ func TestLifecycleRepositoryPersistsAndPublishesEnableSaga(t *testing.T) {
 	runtime := ports.RuntimeOperation{
 		State: "completed", Effect: "completed",
 		RuntimeRevision:    "rtv_55555555555555555555555555555555",
-		RuntimeExecutionID: "runtime-execution-enabled",
-		MCPEndpoint:        "http://runtime-enabled:8091/mcp",
-		LifecycleState:     "ready", Health: "healthy",
+		RuntimeExecutionID: "",
+		MCPEndpoint:        "",
+		LifecycleState:     "provisioned", Health: "unknown",
 	}
 	withRuntime, err := repository.AdvanceAgentEnable(ctx, ports.AdvanceAgentEnable{
 		RequestID: requestID, Fingerprint: fingerprint,
@@ -113,18 +113,8 @@ func TestLifecycleRepositoryPersistsAndPublishesEnableSaga(t *testing.T) {
 		t.Fatalf("record attachment open: state=%+v err=%v", withAttachment, err)
 	}
 
-	execution := ports.ExecutionRecord{
-		ID: "execution-enable-integration", AgentID: base.Agent.AgentID,
-		Revision: base.NextExecutionRevision, AgentSpecRevisionID: base.Spec.ID,
-		RuntimeRevision:        runtime.RuntimeRevision,
-		RuntimeExecutionID:     runtime.RuntimeExecutionID,
-		RuntimeMCPEndpoint:     runtime.MCPEndpoint,
-		RuntimeMCPSourceDigest: strings.Repeat("9", 64),
-		ChangeSummary:          map[string]any{"kind": "enable"},
-		PublishedAt:            now.Add(4 * time.Second),
-	}
 	published, err := repository.PublishAgentEnable(ctx, ports.PublishAgentEnable{
-		RequestID: requestID, Fingerprint: fingerprint, Execution: execution,
+		RequestID: requestID, Fingerprint: fingerprint,
 		EnabledEvent: ports.AgentEventRecord{
 			EventID: "event-enabled-integration", AgentID: base.Agent.AgentID,
 			AggregateSequence: begin.RequestedEvent.AggregateSequence + 1,
@@ -138,13 +128,14 @@ func TestLifecycleRepositoryPersistsAndPublishesEnableSaga(t *testing.T) {
 		t.Fatalf("publish Agent enable: %v", err)
 	}
 	if published.Agent.DesiredState != domain.DesiredEnabled ||
-		published.Agent.LifecycleState != domain.AgentAvailable ||
-		published.Agent.ExecutionRevisionID != execution.ID ||
-		published.Agent.LastSuccessfulExecutionRevisionID != execution.ID ||
+		(published.Agent.LifecycleState != domain.AgentCreated || published.Agent.ActivationState != domain.ActivationEnabled || published.Agent.RuntimeState != domain.RuntimeUnknown) ||
+		published.Agent.ExecutionRevisionID != "" ||
+		published.Agent.LastSuccessfulExecutionRevisionID != base.Agent.LastSuccessfulExecutionRevisionID ||
 		published.Agent.RuntimeRevision != runtime.RuntimeRevision ||
 		published.Operation.State != domain.OperationCompleted {
 		t.Fatalf("published enable = %+v", published)
 	}
+	observeRuntimeForTest(t, ctx, repository, published.Agent, published.Operation, "execution-enable-integration", "runtime-execution-enabled", "http://runtime-enabled:8091/mcp")
 	replayedState, found, err := repository.ReplayAgentEnable(ctx, requestID, fingerprint)
 	if err != nil || !found || replayedState.Operation.State != domain.OperationCompleted {
 		t.Fatalf("replay Agent enable: state=%+v found=%t err=%v", replayedState, found, err)
@@ -158,17 +149,15 @@ func seedDisabledAgentForEnable(
 	base ports.AgentLifecycleBase,
 ) ports.AgentRecord {
 	t.Helper()
-	now := time.Unix(600, 0).UTC()
+	now := time.Now().Add(-15 * time.Second).UTC().Truncate(time.Microsecond)
 	requestID := "request-disable-before-enable"
 	fingerprint := strings.Repeat("7", 64)
 	begin := disableBegin(base, requestID, fingerprint, now)
 	if _, _, err := repository.BeginAgentDisable(ctx, begin); err != nil {
 		t.Fatalf("begin prerequisite Agent disable: %v", err)
 	}
-	if _, err := repository.SettleAgentDisableDrain(
-		ctx, requestID, fingerprint,
-		domain.ChildRequestID(requestID, domain.PhaseNetworkFence), now.Add(time.Second),
-	); err != nil {
+	if _, err := repository.ConfirmLifecycleDrain(
+		ctx, ports.ConfirmLifecycleDrain{RequestID: requestID, Fingerprint: fingerprint, Kind: domain.OperationDisable, Outcome: ports.ExecutionSettled, Now: now.Add(time.Second)}); err != nil {
 		t.Fatalf("settle prerequisite Agent disable: %v", err)
 	}
 	if _, err := repository.AdvanceAgentDisable(ctx, ports.AdvanceAgentDisable{
@@ -190,11 +179,7 @@ func seedDisabledAgentForEnable(
 		ExpectedPhase: domain.PhaseRuntimeDisable, NextPhase: domain.PhasePublish,
 		NextChildRequestID: domain.ChildRequestID(requestID, domain.PhasePublish),
 		RuntimeResult:      &runtime,
-		RunReleaseEvent: lifecycleRunReleaseEvent(
-			"event-run-release-disable-before-enable", "runtime_disabled",
-			base.Agent.RuntimeRevision, now.Add(4*time.Second),
-		),
-		Now: now.Add(4 * time.Second),
+		Now:                now.Add(4 * time.Second),
 	}); err != nil {
 		t.Fatalf("record prerequisite Runtime disable: %v", err)
 	}

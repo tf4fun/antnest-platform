@@ -8,7 +8,7 @@
 | `ANTNEST_IDENTITY_SERVICE_URL` | yes | trusted Identity Service base URL |
 | `ANTNEST_ADMIN_CONSOLE_URL` | yes | trusted Admin Console base URL |
 | `ANTNEST_AGENT_UI_URL` | yes | trusted Agent UI static-service base URL |
-| `ANTNEST_AGENT_CONTROLLER_URL` | yes | trusted Agent Controller base URL for workspace projection |
+| `ANTNEST_AGENT_CONTROLLER_URL` | yes | trusted Agent Controller base URL for ID/name discovery only |
 | `ANTNEST_AGENT_ACP_URL` | yes | trusted Agent ACP Service base URL |
 | `ANTNEST_EDGE_COOKIE_SECURE` | no | require HTTPS cookies, default `true` |
 | `ANTNEST_EDGE_REQUEST_TIMEOUT` | no | non-streaming dependency timeout |
@@ -116,8 +116,9 @@ SCIM clients use the Identity-issued Bearer credential at the Edge
 `/scim/v2` path. A SCIM upstream transport failure is a canonical SCIM `503`.
 
 Workspace WebSockets require a same-origin `Origin` and a valid browser session.
-Agent access subjects are injected server-side and must never appear in browser
-bootstrap JSON, logs, or traces.
+Trusted Organization/Principal/Agent headers are injected server-side.
+Browser-supplied identity and the retired access subject are discarded.
+ACP owns Agent/Session authorization; Controller is not a chat dependency.
 Each client data message performs a bounded Identity resolution before relay;
 server output and ping/pong do not create Identity requests. There is no idle
 polling or new configuration. A 1008 close requires fresh session/Agent access;
@@ -151,7 +152,7 @@ abort or an errored dependency is not accepted as normal stream cancellation.
 
 Workspace state GET/SSE uses the same browser identity boundary, with no caller
 scope parameters. Its stream is capped by `ANTNEST_EDGE_STREAM_LEASE`; every
-reconnect revalidates Identity and reads fresh Controller state. A quiet stream
+reconnect revalidates Identity and reads fresh ACP state. A quiet stream
 may therefore retain its last snapshot until lease expiry. On transport loss,
 the UI must close actionable state and reconnect with backoff, not poll or
 replay a prompt. See [Workspace state](workspace-state.md) for the consumer

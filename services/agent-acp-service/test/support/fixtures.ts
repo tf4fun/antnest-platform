@@ -1,4 +1,8 @@
-import type { ConnectionBinding, RunExecutionSnapshot } from "../../src/domain/types.js";
+import type {
+  ConnectionBinding,
+  RunExecutionSnapshot,
+  SessionRecord,
+} from "../../src/domain/types.js";
 import {
   configurationView,
   type ConfigurationCatalog,
@@ -7,7 +11,6 @@ import {
 export function configurationCatalog(): ConfigurationCatalog & { nextCursor: string } {
   const model = {
     modelProfileId: "profile-1",
-    revisionId: "profile-revision-1",
     displayName: "Example model",
     model: "example-model",
     contextWindow: 64000,
@@ -30,22 +33,34 @@ export function sessionConfigurationView() {
 export function binding(): ConnectionBinding {
   return {
     connectionId: "connection-1",
-    agentAccessSubject: "subject-1",
+    organizationId: "organization-1",
     principalId: "principal-1",
     agentId: "agent-1",
-    accessRevision: "access-1",
+  };
+}
+
+export function identityHeaders(
+  identity: Pick<ConnectionBinding, "organizationId" | "principalId" | "agentId"> = binding(),
+): Record<string, string> {
+  return {
+    "x-antnest-organization-id": identity.organizationId,
+    "x-antnest-principal-id": identity.principalId,
+    "x-antnest-agent-id": identity.agentId,
   };
 }
 
 export function snapshot(): RunExecutionSnapshot {
   return {
-    admissionId: "admission-1",
-    admissionDeadline: new Date("2026-08-30T00:10:00Z"),
+    organizationId: "organization-1",
+    providerConnectionId: "connection-1",
+    modelProfileId: "profile-1",
+    configurationRevision: 1,
+    accessRevision: "access-1",
+    deadlineAt: new Date("2026-08-30T00:10:00Z"),
     agentSpecRevision: "config-1",
     executionRevision: "execution-1",
     runtimeMcpSourceDigest: "a".repeat(64),
     agentExecutionSpecDigest: "b".repeat(64),
-    credentialVersion: "credential-version-1",
     runtime: {
       revision: "runtime-1",
       executionId: "runtime-execution-1",
@@ -63,8 +78,25 @@ export function snapshot(): RunExecutionSnapshot {
         supportsImages: false,
       },
       maxModelRequests: 4,
-      credentialRef: "credential-1",
     },
     clientMcpRevisionId: "client-mcp-1",
+  };
+}
+
+export function sessionRecord(): SessionRecord {
+  return {
+    id: "session-1",
+    organizationId: "organization-1",
+    principalId: "principal-1",
+    agentId: "agent-1",
+    cwd: "/workspace",
+    state: "active",
+    title: null,
+    forkedFromSessionId: null,
+    clientMcpRevisionId: "client-mcp-1",
+    lastExecutionRevision: null,
+    lastMessageSequence: 0,
+    createdAt: new Date(0),
+    updatedAt: new Date(0),
   };
 }

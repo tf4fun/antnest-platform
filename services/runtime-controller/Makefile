@@ -1,4 +1,4 @@
-.PHONY: fmt fmt-check lint test test-postgres e2e
+.PHONY: fmt fmt-check lint test test-postgres e2e e2e-observation
 
 GOCACHE := $(abspath ../../.cache/go-build)
 GOMODCACHE := $(abspath ../../.cache/go-mod)
@@ -24,3 +24,6 @@ test-postgres:
 
 e2e:
 	$(MAKE) -C ../.. e2e-runtime-controller
+
+e2e-observation:
+	node scripts/creation-observation-e2e.mjs

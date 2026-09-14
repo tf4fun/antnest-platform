@@ -91,9 +91,7 @@ describe.skipIf(databaseUrl === undefined)("Structured plans over ACP and Postgr
       );
       expect(app.tools.call).not.toHaveBeenCalled();
       expect((await pool.query("SELECT * FROM tool_attempts")).rowCount).toBe(0);
-      expect(
-        app.controller.finishRun.mock.calls.every(([value]) => value.toolEffectState === "none"),
-      ).toBe(true);
+      expect(app.finish.mock.calls.every(([value]) => value.toolEffectState === "none")).toBe(true);
       const forkId = String(
         (await client.request("session/fork", { ...setup, sessionId })).result?.sessionId,
       );

@@ -2,58 +2,22 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   InstrumentedAcpApplication,
-  InstrumentedAgentController,
   InstrumentedModel,
   InstrumentedRuntimeInformation,
   InstrumentedToolCatalog,
 } from "../../src/telemetry/instrumented-ports.js";
 import type { AcpApplicationPort } from "../../src/ports/acp-application.js";
-import type { ModelPort } from "../../src/ports/model.js";
+import type { AuthenticatedModelTransport } from "../../src/ports/model.js";
 import type { ToolCallResult, ToolCatalogPort } from "../../src/ports/tools.js";
 import type { TelemetryAttributes, TelemetryPort } from "../../src/ports/telemetry.js";
-import type { AgentControllerPort } from "../../src/ports/agent-controller.js";
-import { AgentControllerError } from "../../src/ports/agent-controller.js";
-import {
-  binding,
-  snapshot,
-  configurationCatalog,
-  sessionConfigurationView,
-} from "../support/fixtures.js";
+import { DomainError } from "../../src/domain/errors.js";
+import { binding, snapshot, sessionConfigurationView } from "../support/fixtures.js";
 import { runtimeInformation } from "../fixtures/runtime-information.js";
 
 describe("instrumented ports", () => {
-  it("traces Session configuration and its Controller catalog without exporting selections", async () => {
+  it("traces local Session configuration without exporting selections", async () => {
     const telemetry = recordingTelemetry();
-    const catalog = configurationCatalog();
-    catalog.models[0]!.displayName = "private-model-name";
-    const signal = new AbortController().signal;
-    const getSessionConfiguration = vi
-      .fn<AgentControllerPort["getSessionConfiguration"]>()
-      .mockResolvedValue(catalog);
-    const controller = new InstrumentedAgentController(
-      {
-        resolveAgentAccess: vi.fn(),
-        getSessionConfiguration,
-        acquireRun: vi.fn(),
-        resolveCredential: vi.fn(),
-        finishRun: vi.fn(),
-      },
-      telemetry.port,
-    );
     const delegate = acpApplication();
-    delegate.setSessionConfiguration = async () => {
-      await controller.getSessionConfiguration(
-        {
-          requestId: "request-1",
-          agentId: "agent-1",
-          principalId: "principal-1",
-          expectedAccessRevision: "access-1",
-          limit: 200,
-        },
-        signal,
-      );
-      return sessionConfigurationView();
-    };
     const application = new InstrumentedAcpApplication(delegate, telemetry.port);
     await application.getSessionConfiguration({ binding: binding(), sessionId: "session-1" });
     await application.setSessionConfiguration({
@@ -65,12 +29,7 @@ describe("instrumented ports", () => {
     expect(telemetry.spans.map(({ name }) => name)).toEqual([
       "acp.session.get_configuration",
       "acp.session.set_configuration",
-      "agent_controller.get_session_configuration",
     ]);
-    expect(getSessionConfiguration).toHaveBeenCalledWith(
-      expect.objectContaining({ agentId: "agent-1" }),
-      signal,
-    );
     expect(telemetry.counts).toContainEqual({
       name: "antnest.acp.session_methods",
       attributes: { method: "set_configuration", result: "ok" },
@@ -113,7 +72,7 @@ describe("instrumented ports", () => {
       name: "mcp.tools.call",
       attributes: {
         "run.id": "run-1",
-        "admission.id": "admission-1",
+        "organization.id": "organization-1",
         "tool.name": "write",
         "mcp.source_id": "runtime",
       },
@@ -130,7 +89,7 @@ describe("instrumented ports", () => {
     await reader.read(snapshot(), new AbortController().signal);
     expect(telemetry.spans).toContainEqual({
       name: "mcp.runtime.info",
-      attributes: { "admission.id": "admission-1", "execution.revision": "execution-1" },
+      attributes: { "organization.id": "organization-1", "execution.revision": "execution-1" },
     });
     expect(telemetry.counts).toContainEqual({
       name: "antnest.acp.mcp.requests",
@@ -140,44 +99,29 @@ describe("instrumented ports", () => {
     expect(JSON.stringify(telemetry)).not.toContain("company style guide");
     expect(JSON.stringify(telemetry)).not.toContain("documents/SKILL.md");
   });
-  it("records ACP admission and terminal Run outcomes with bounded metric labels", async () => {
+  it("records local Run submission without embedding execution in the protocol wrapper", async () => {
     const telemetry = recordingTelemetry();
-    const delegate = acpApplication();
-    const application = new InstrumentedAcpApplication(delegate, telemetry.port);
-
-    const accepted = await application.acceptPrompt({
+    const application = new InstrumentedAcpApplication(acpApplication(), telemetry.port);
+    const submitted = await application.acceptPrompt({
       binding: binding(),
       sessionId: "session-1",
       prompt: [{ type: "text", text: "secret prompt" }],
+      outputChanged: vi.fn(),
     });
-    await application.executeRun({
-      accepted,
-      publish: vi.fn(),
-      signal: new AbortController().signal,
-    });
-
+    await submitted.completion;
     expect(telemetry.counts).toContainEqual({
       name: "antnest.acp.run_admissions",
       attributes: { result: "accepted" },
       value: 1,
     });
-    expect(telemetry.counts).toContainEqual({
-      name: "antnest.acp.runs",
-      attributes: { terminal_class: "completed" },
-      value: 1,
-    });
-    const duration = telemetry.durations.find(
-      (candidate) => candidate.name === "antnest.acp.run.duration",
-    );
-    expect(duration?.attributes).toEqual({ terminal_class: "completed" });
-    expect(duration?.milliseconds).toBeGreaterThanOrEqual(0);
+    expect("executeRun" in application).toBe(false);
     expect(JSON.stringify(telemetry)).not.toContain("secret prompt");
   });
 
   it("records a bounded admission rejection class", async () => {
     const telemetry = recordingTelemetry();
     const acceptPrompt = vi.fn<AcpApplicationPort["acceptPrompt"]>(() =>
-      Promise.reject(new AgentControllerError("agent_rebuilding", "Agent is rebuilding", true)),
+      Promise.reject(new DomainError("agent_unavailable", "Agent is rebuilding")),
     );
     const delegate: AcpApplicationPort = { ...acpApplication(), acceptPrompt };
     const application = new InstrumentedAcpApplication(delegate, telemetry.port);
@@ -187,24 +131,20 @@ describe("instrumented ports", () => {
         binding: binding(),
         sessionId: "session-1",
         prompt: [{ type: "text", text: "secret prompt" }],
+        outputChanged: vi.fn(),
       }),
-    ).rejects.toMatchObject({ code: "agent_rebuilding" });
+    ).rejects.toMatchObject({ code: "agent_unavailable" });
 
     expect(telemetry.counts).toContainEqual({
       name: "antnest.acp.run_admissions",
-      attributes: { result: "rejected", rejection_class: "agent_rebuilding" },
+      attributes: { result: "rejected", rejection_class: "agent_unavailable" },
       value: 1,
     });
   });
 
-  it("collapses an unexpected Controller code before writing metric labels", async () => {
+  it("collapses an unregistered application code before writing metric labels", async () => {
     const telemetry = recordingTelemetry();
-    const failure = new AgentControllerError(
-      "agent_rebuilding",
-      "Agent Controller violated its contract",
-      true,
-    );
-    Object.defineProperty(failure, "code", { value: "unbounded_remote_code" });
+    const failure = new DomainError("unbounded_domain_code", "Unexpected application code");
     const delegate: AcpApplicationPort = {
       ...acpApplication(),
       acceptPrompt: vi.fn(() => Promise.reject(failure)),
@@ -216,18 +156,19 @@ describe("instrumented ports", () => {
         binding: binding(),
         sessionId: "session-1",
         prompt: [{ type: "text", text: "prompt" }],
+        outputChanged: vi.fn(),
       }),
     ).rejects.toBe(failure);
     expect(telemetry.counts).toContainEqual({
       name: "antnest.acp.run_admissions",
-      attributes: { result: "rejected", rejection_class: "dependency_unavailable" },
+      attributes: { result: "rejected", rejection_class: "internal_error" },
       value: 1,
     });
   });
 
   it("does not expose model credentials to telemetry", async () => {
     const telemetry = recordingTelemetry();
-    const complete = vi.fn<ModelPort["complete"]>(() =>
+    const complete = vi.fn<AuthenticatedModelTransport["complete"]>(() =>
       Promise.resolve({
         kind: "message",
         content: [{ type: "text", text: "done" }],
@@ -235,7 +176,7 @@ describe("instrumented ports", () => {
         usage: { inputTokens: 1, outputTokens: 1 },
       }),
     );
-    const delegate: ModelPort = {
+    const delegate: AuthenticatedModelTransport = {
       complete,
     };
     const model = new InstrumentedModel(delegate, telemetry.port);
@@ -250,42 +191,6 @@ describe("instrumented ports", () => {
 
     expect(complete).toHaveBeenCalledOnce();
     expect(JSON.stringify(telemetry)).not.toContain("provider-secret");
-  });
-
-  it("records unresolved Tool effect provenance on the Controller RPC span", async () => {
-    const telemetry = recordingTelemetry();
-    const finishRun = vi.fn<AgentControllerPort["finishRun"]>(() => Promise.resolve());
-    const controller = new InstrumentedAgentController(
-      {
-        resolveAgentAccess: vi.fn(),
-        getSessionConfiguration: vi.fn(),
-        acquireRun: vi.fn(),
-        resolveCredential: vi.fn(),
-        finishRun,
-      },
-      telemetry.port,
-    );
-
-    await controller.finishRun({
-      requestId: "request-1",
-      admissionId: "admission-1",
-      terminalClass: "unresolved",
-      executorState: "quiescent",
-      toolEffectState: "unknown",
-      unknownEffectSource: "client_mcp",
-      errorClass: "tool_effect_unknown",
-    });
-
-    expect(telemetry.spans).toContainEqual({
-      name: "agent_controller.finish_run",
-      attributes: {
-        "request.id": "request-1",
-        "admission.id": "admission-1",
-        "run.terminal_class": "unresolved",
-        "run.tool_effect_state": "unknown",
-        "run.unknown_effect_source": "client_mcp",
-      },
-    });
   });
 });
 
@@ -302,21 +207,20 @@ function acpApplication(): AcpApplicationPort {
     readSessionOutput: vi.fn(),
     closeSession: vi.fn(),
     cancelRun: vi.fn(),
-    acceptPrompt: vi.fn(() =>
+    acceptPrompt: vi.fn<AcpApplicationPort["acceptPrompt"]>(() =>
       Promise.resolve({
         runId: "run-1",
         requestId: "request-1",
         sessionId: "session-1",
         userMessageId: "message-1",
         snapshot: snapshot(),
-      }),
-    ),
-    executeRun: vi.fn<AcpApplicationPort["executeRun"]>(() =>
-      Promise.resolve({
-        terminalClass: "completed",
-        executorState: "quiescent",
-        toolEffectState: "settled",
-        stopReason: "end_turn",
+        outputSequence: 0,
+        completion: Promise.resolve({
+          terminalClass: "completed",
+          executorState: "quiescent",
+          toolEffectState: "none",
+          stopReason: "end_turn",
+        }),
       }),
     ),
   };

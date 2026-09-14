@@ -27,3 +27,27 @@ not be used as acceptance evidence. Check for leftover processes before retrying
 
 The script is a convenience wrapper, not an alternative gate: `make fmt-check`,
 `make lint`, applicable contract tests and deployment verification still apply.
+
+## Controller And ACP Deployment
+
+Before starting the refactored services, verify the rendered Compose configuration:
+
+```sh
+docker compose --env-file .env.example --profile stage2 config --format json | node scripts/verification/execution-deployment.mjs
+```
+
+The checker reads JSON from stdin without saving or printing environments. It
+verifies the Controller-to-ACP publication address, matching configuration size
+limits, ACP-owned execution timeout, shared network and independent startup.
+ACP must not have a Controller URL or Controller timeout; Controller must not
+retain the retired Run admission TTL. The example uses only public synthetic
+development values. This preflight does not contact services and is not E2E
+evidence; successful publication, execution and lifecycle coordination still
+require the real services, separate databases and Temporal.
+This is a wiring check, not a duplicate implementation of service configuration
+parsers: duration syntax, retry interval ordering and all other service-local
+settings remain validated by their owning service at startup and in its tests.
+A passing preflight does not mean either process has successfully started.
+
+Agent UI is deferred and is not a dependency of this integration profile. Use
+an official ACP SDK client to exercise protocol behavior, not a browser mock.

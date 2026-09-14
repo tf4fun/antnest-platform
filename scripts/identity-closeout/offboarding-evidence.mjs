@@ -7,7 +7,8 @@ export function assertDisabled(agent, runtime, agentID) {
   assert(
     agent.agent_id === agentID &&
       agent.desired_state === "disabled" &&
-      agent.lifecycle_state === "disabled",
+      agent.lifecycle_state === "created" &&
+      agent.activation_state === "disabled",
     "Agent did not finish Disable",
   );
   assert(

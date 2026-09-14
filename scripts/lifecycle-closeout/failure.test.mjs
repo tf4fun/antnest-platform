@@ -13,17 +13,16 @@ function fixture() {
     operation: {
       agent_id: "a",
       kind: "create",
-      state: "failed",
-      phase: "runtime_initialize",
-      error_code: "runtime_not_ready",
-      error_detail:
-        "Inspect the Runtime startup configuration and required MCP processes",
+      state: "completed",
+      phase: "completed",
     },
     agent: {
       agent_id: "a",
-      lifecycle_state: "unavailable",
-      failure_stage: "runtime_initialize",
-      failure_code: "runtime_not_ready",
+      lifecycle_state: "created",
+      activation_state: "enabled",
+      runtime_state: "exited",
+      runtime_reason: "runtime_exited",
+      runtime: { runtime_revision: "r1" },
     },
     physical: {
       containers: [
@@ -43,7 +42,7 @@ for (const [name, mutate] of [
   [
     "no diagnostic",
     (f) => {
-      delete f.operation.error_detail;
+      delete f.agent.runtime_reason;
     },
   ],
   [
@@ -140,7 +139,7 @@ for (const [name, change] of [
 
 const failureEvents = [
   "agent_create_requested",
-  "agent_build_failed",
+  "agent_created",
   "agent_delete_requested",
   "agent_deleted",
 ].map((event_type, index) => ({

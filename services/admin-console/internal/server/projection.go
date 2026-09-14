@@ -249,6 +249,11 @@ type agentProjectionSource struct {
 	Name                            string                    `json:"name"`
 	DesiredState                    string                    `json:"desired_state"`
 	LifecycleState                  string                    `json:"lifecycle_state"`
+	ActivationState                 string                    `json:"activation_state,omitempty"`
+	RuntimeState                    string                    `json:"runtime_state"`
+	RuntimeReason                   string                    `json:"runtime_reason,omitempty"`
+	RuntimeDetail                   string                    `json:"runtime_detail,omitempty"`
+	RuntimeObservedAt               string                    `json:"runtime_observed_at,omitempty"`
 	AgentSpecRevision               string                    `json:"agent_spec_revision,omitempty"`
 	LastSuccessfulExecutionRevision string                    `json:"last_successful_execution_revision,omitempty"`
 	ExecutableExecutionRevision     string                    `json:"executable_execution_revision,omitempty"`
@@ -292,7 +297,6 @@ type agentEventProjectionSource struct {
 	AgentID            string `json:"agent_id"`
 	EventType          string `json:"event_type"`
 	OperationRequestID string `json:"operation_request_id,omitempty"`
-	AdmissionID        string `json:"admission_id,omitempty"`
 	TraceID            string `json:"trace_id,omitempty"`
 	OccurredAt         string `json:"occurred_at"`
 }

@@ -112,6 +112,9 @@ func TestWebSocketDrainDeadlineAndRepeatedStop(t *testing.T) {
 func TestManagedReceiveRoutes(t *testing.T) {
 	for _, path := range []string{
 		"/api/app/agents/agent-1/state/watch",
+		"/api/app/agents/agent%2F1/state/watch",
+		"/%61pi/app/agents/agent%2F1/state/watch",
+		"/api/app/agents/agent%2F1/v1/acp",
 		"/api/app/agents/agent-1/v1/acp",
 		"/api/app/agents/agent-1/acp",
 		"/api/admin/agents/agent-1/events/watch",

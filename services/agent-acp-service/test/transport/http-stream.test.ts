@@ -1,20 +1,19 @@
 import { createServer } from "node:http";
-import { sessionConfigurationView } from "../support/fixtures.js";
+import { binding, identityHeaders, sessionConfigurationView } from "../support/fixtures.js";
 import { v1Configuration } from "../../src/transport/acp/configuration.js";
 import * as acp from "@agentclientprotocol/sdk";
 import { createHttpStream } from "@agentclientprotocol/sdk/experimental/http-client";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AgentAcpHttpServer } from "../../src/transport/http-server.js";
 import { AcpHttpTransport } from "../../src/transport/acp/http-transport.js";
 import { SessionOutputStreams } from "../../src/transport/acp/session-output.js";
 import type { AcpApplicationPort } from "../../src/ports/acp-application.js";
-import {
-  AgentControllerError,
-  type AgentControllerPort,
-} from "../../src/ports/agent-controller.js";
+import { DomainError } from "../../src/domain/errors.js";
 
-const subjectHeader = "x-antnest-agent-access-subject";
+function headers(principalId = "owner") {
+  return identityHeaders({ ...binding(), principalId });
+}
 const initialize = {
   jsonrpc: "2.0",
   id: 1,
@@ -48,9 +47,11 @@ describe("ACP v1 Streamable HTTP", () => {
       }),
     ),
     acceptPrompt: vi.fn(),
-    executeRun: vi.fn(),
   } satisfies AcpApplicationPort;
-  const resolve = vi.fn<AgentControllerPort["resolveAgentAccess"]>();
+  beforeEach(() => {
+    vi.clearAllMocks();
+    application.createSession.mockReset().mockResolvedValue({ sessionId: "session-1" });
+  });
 
   afterEach(async () => {
     for (const connection of connections.splice(0)) connection.close();
@@ -61,23 +62,8 @@ describe("ACP v1 Streamable HTTP", () => {
   });
 
   async function start(ready = true, limit = 4096) {
-    resolve.mockImplementation(({ agentAccessSubject }) =>
-      Promise.resolve({
-        principalId: agentAccessSubject,
-        agentId: "agent-1",
-        accessRevision: "revision-1",
-        promptCapabilities: { image: true, embeddedContext: true },
-      }),
-    );
     server = new AgentAcpHttpServer({
       application,
-      agentController: {
-        resolveAgentAccess: resolve,
-        getSessionConfiguration: vi.fn(),
-        acquireRun: vi.fn(),
-        finishRun: vi.fn(),
-        resolveCredential: vi.fn(),
-      },
       ready: () => Promise.resolve(ready),
       maxWebSocketPayloadBytes: limit,
     });
@@ -91,7 +77,7 @@ describe("ACP v1 Streamable HTTP", () => {
     return fetch(url, {
       method,
       headers: {
-        [subjectHeader]: subject,
+        ...headers(subject),
         "Content-Type": "application/json",
         Accept: "text/event-stream",
         ...(connectionId ? { "Acp-Connection-Id": connectionId } : {}),
@@ -115,13 +101,6 @@ describe("ACP v1 Streamable HTTP", () => {
     const transport = new AcpHttpTransport({
       application,
       outputs: new SessionOutputStreams(),
-      agentController: {
-        resolveAgentAccess: resolve,
-        getSessionConfiguration: vi.fn(),
-        acquireRun: vi.fn(),
-        finishRun: vi.fn(),
-        resolveCredential: vi.fn(),
-      },
       ready: () => Promise.resolve(true),
       maxWebSocketPayloadBytes: 4096,
       maxConnections: 1,
@@ -143,6 +122,26 @@ describe("ACP v1 Streamable HTTP", () => {
     url = `http://127.0.0.1:${address.port}/v1/acp`;
   }
 
+  it("preserves opaque identity through the official HTTP client", async () => {
+    await start();
+    const identity = {
+      organizationId: "org+division@example.org",
+      principalId: "owner+team@example.org",
+      agentId: "agent/department+1",
+    };
+    const connection = acp
+      .client()
+      .connect(createHttpStream(url, { headers: identityHeaders(identity) }));
+    connections.push(connection);
+    await connection.agent.request(acp.methods.agent.initialize, initialize.params);
+    await connection.agent.request(acp.methods.agent.session.new, {
+      cwd: "/workspace",
+      mcpServers: [],
+    });
+    expect(application.createSession).toHaveBeenCalledOnce();
+    expect(application.createSession.mock.calls[0]?.[0].binding).toMatchObject(identity);
+  });
+
   it("bounds retained connections and releases capacity after bad initialization or DELETE", async () => {
     await startBounded();
     const invalid = await request("POST", "owner", undefined, {});
@@ -159,7 +158,7 @@ describe("ACP v1 Streamable HTTP", () => {
     const id = await open();
     const abort = new AbortController();
     const stream = await fetch(url, {
-      headers: { [subjectHeader]: "owner", "Acp-Connection-Id": id, Accept: "text/event-stream" },
+      headers: { ...headers(), "Acp-Connection-Id": id, Accept: "text/event-stream" },
       signal: abort.signal,
     });
     expect(stream.status).toBe(200);
@@ -172,11 +171,26 @@ describe("ACP v1 Streamable HTTP", () => {
     await open();
   });
 
+  it("keeps an existing connection usable after a rejected oversized DELETE", async () => {
+    await start();
+    const id = await open();
+    const rejected = await request("DELETE", "owner", id, { data: "x".repeat(8192) });
+    expect(rejected.status).toBe(413);
+    await rejected.text();
+    const next = await request("POST", "owner", id, {
+      jsonrpc: "2.0",
+      id: 2,
+      method: "session/list",
+      params: {},
+    });
+    expect(next.status).toBe(202);
+    await next.text();
+    expect((await request("DELETE", "owner", id)).status).toBe(202);
+  });
+
   it("serves initialize/new/list/load through the official HTTP client", async () => {
     await start();
-    const connection = acp
-      .client()
-      .connect(createHttpStream(url, { headers: { [subjectHeader]: "owner" } }));
+    const connection = acp.client().connect(createHttpStream(url, { headers: headers() }));
     connections.push(connection);
     expect(
       await connection.agent.request(acp.methods.agent.initialize, initialize.params),
@@ -201,34 +215,52 @@ describe("ACP v1 Streamable HTTP", () => {
       principalId: "owner",
       agentId: "agent-1",
     });
-    expect(resolve.mock.calls.length).toBeGreaterThan(3);
+    expect(application.createSession).toHaveBeenCalledOnce();
   });
 
-  it.each(["POST", "GET", "DELETE"])("rejects a foreign connection ID for %s", async (method) => {
+  it.each(
+    ["POST", "GET", "DELETE"].flatMap((method) =>
+      ["organizationId", "principalId", "agentId"].map((field) => ({ method, field })),
+    ),
+  )("rejects a foreign $field connection ID for $method", async ({ method, field }) => {
     await start();
     const id = await open();
-    const response = await request(
+    const response = await fetch(url, {
       method,
-      "intruder",
-      id,
-      method === "POST" ? { jsonrpc: "2.0", id: 2, method: "session/list", params: {} } : undefined,
-    );
+      headers: {
+        ...identityHeaders({ ...binding(), principalId: "owner", [field]: "intruder" }),
+        "Content-Type": "application/json",
+        "Acp-Connection-Id": id,
+      },
+      ...(method === "POST"
+        ? { body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "session/list", params: {} }) }
+        : {}),
+    });
     expect(response.status).toBe(403);
     await response.text();
     expect((await request("DELETE", "owner", id)).status).toBe(202);
   });
 
-  it("rejects changed access revision and closes its stale connection", async () => {
+  it("returns revoked resource access as an ACP error on an existing connection", async () => {
     await start();
-    const id = await open();
-    resolve.mockResolvedValue({
-      principalId: "owner",
-      agentId: "agent-1",
-      accessRevision: "revision-2",
-      promptCapabilities: { image: true, embeddedContext: true },
+    const connection = acp.client().connect(createHttpStream(url, { headers: headers() }));
+    connections.push(connection);
+    await connection.agent.request(acp.methods.agent.initialize, initialize.params);
+    application.createSession.mockRejectedValueOnce(
+      new DomainError("access_denied", "Access revoked"),
+    );
+    await expect(
+      connection.agent.request(acp.methods.agent.session.new, {
+        cwd: "/workspace",
+        mcpServers: [],
+      }),
+    ).rejects.toMatchObject({
+      code: -32020,
+      data: { code: "access_denied" },
     });
-    expect((await request("GET", "owner", id)).status).toBe(403);
-    expect((await request("GET", "owner", id)).status).toBe(404);
+    expect(await connection.agent.request(acp.methods.agent.session.list, {})).toEqual({
+      sessions: [],
+    });
   });
 
   it("DELETE closes only the transport, not persisted sessions or runs", async () => {
@@ -241,15 +273,19 @@ describe("ACP v1 Streamable HTTP", () => {
     await open();
   });
 
-  it("checks readiness and subject before accepting HTTP", async () => {
+  it("checks process readiness and trusted identity before accepting HTTP", async () => {
     await start(false);
     expect((await request("POST", "owner", undefined, initialize)).status).toBe(503);
-    expect(resolve).not.toHaveBeenCalled();
+    expect(application.createSession).not.toHaveBeenCalled();
     await server?.close();
     await start();
     expect((await request("POST", "", undefined, initialize)).status).toBe(401);
-    resolve.mockRejectedValue(new AgentControllerError("access_denied", "denied", false));
-    expect((await request("POST", "owner", undefined, initialize)).status).toBe(403);
+    const legacy = await fetch(url, {
+      method: "POST",
+      headers: { "x-antnest-agent-access-subject": "owner", "Content-Type": "application/json" },
+      body: JSON.stringify(initialize),
+    });
+    expect(legacy.status).toBe(401);
   });
 
   it("bounds request bodies and delegates malformed messages to the SDK", async () => {
@@ -260,7 +296,7 @@ describe("ACP v1 Streamable HTTP", () => {
     ).toBe(413);
     const malformed = await fetch(url, {
       method: "POST",
-      headers: { [subjectHeader]: "owner", "Content-Type": "application/json" },
+      headers: { ...headers(), "Content-Type": "application/json" },
       body: "{",
     });
     expect(malformed.status).toBe(400);

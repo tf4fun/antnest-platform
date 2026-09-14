@@ -53,7 +53,6 @@ function fixture() {
         runId: "run",
         sessionId: "session",
         snapshot: snapshot(),
-        credential: "fixture",
         context: [],
         signal: signal.signal,
         authoritySignal: authority.signal,

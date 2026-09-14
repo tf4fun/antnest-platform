@@ -10,19 +10,24 @@ func TestLoadRequiresDatabaseAndCanonicalEncryptionKey(t *testing.T) {
 	t.Parallel()
 
 	values := map[string]string{
+		"ANTNEST_AGENT_ACP_SERVICE_URL":           "http://agent-acp-service:8090",
 		"ANTNEST_AGENT_CONTROLLER_DATABASE_URL":   "postgres://controller:secret@postgres/controller",
 		"ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY": base64.StdEncoding.EncodeToString(make([]byte, 32)),
 		"ANTNEST_RUNTIME_EGRESS_URL":              "http://runtime-egress:8081",
 		"ANTNEST_RUNTIME_CONTROLLER_URL":          "http://runtime-controller:8080",
 		"ANTNEST_IDENTITY_SERVICE_URL":            "http://identity-service:8080",
 	}
-	loaded, err := Load(func(key string) string { return values[key] })
+	loaded, err := Load(func(key string) string {
+		if key == "ANTNEST_AGENT_CONTROLLER_RUN_ADMISSION_TTL" {
+			t.Fatal("Controller must not configure execution admission")
+		}
+		return values[key]
+	})
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
 	if loaded.ListenAddress != ":8080" || loaded.ShutdownTimeout != 15*time.Second ||
 		loaded.DependencyTimeout != 150*time.Second || loaded.DrainTimeout != 5*time.Minute ||
-		loaded.RunAdmissionTTL != 30*time.Minute ||
 		loaded.ObservationPollInterval != 2*time.Second ||
 		loaded.IdentityRevocationPollInterval != 2*time.Second {
 		t.Fatalf("defaults = %+v", loaded)
@@ -46,6 +51,7 @@ func TestLoadRejectsInvalidEncryptionKeyAndDuration(t *testing.T) {
 	t.Parallel()
 
 	values := map[string]string{
+		"ANTNEST_AGENT_ACP_SERVICE_URL":           "http://agent-acp-service:8090",
 		"ANTNEST_AGENT_CONTROLLER_DATABASE_URL":   "postgres://controller:secret@postgres/controller",
 		"ANTNEST_AGENT_CONTROLLER_ENCRYPTION_KEY": "not-base64",
 		"ANTNEST_RUNTIME_EGRESS_URL":              "http://runtime-egress:8081",
@@ -66,11 +72,6 @@ func TestLoadRejectsInvalidEncryptionKeyAndDuration(t *testing.T) {
 		t.Fatal("invalid drain timeout was accepted")
 	}
 	delete(values, "ANTNEST_AGENT_CONTROLLER_DRAIN_TIMEOUT")
-	values["ANTNEST_AGENT_CONTROLLER_RUN_ADMISSION_TTL"] = "-1s"
-	if _, err := Load(func(key string) string { return values[key] }); err == nil {
-		t.Fatal("non-positive Run admission TTL was accepted")
-	}
-	delete(values, "ANTNEST_AGENT_CONTROLLER_RUN_ADMISSION_TTL")
 	values["ANTNEST_AGENT_CONTROLLER_RUNTIME_OBSERVATION_POLL_INTERVAL"] = "0s"
 	if _, err := Load(func(key string) string { return values[key] }); err == nil {
 		t.Fatal("non-positive Runtime observation poll interval was accepted")

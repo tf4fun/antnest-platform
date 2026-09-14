@@ -221,6 +221,11 @@ export type Agent = {
   name: string;
   desired_state: string;
   lifecycle_state: string;
+  activation_state?: string;
+  runtime_state: string;
+  runtime_reason?: string;
+  runtime_detail?: string;
+  runtime_observed_at?: string;
   agent_spec_revision?: string;
   last_successful_execution_revision?: string;
   executable_execution_revision?: string;
@@ -279,7 +284,6 @@ export type AgentEvent = {
   agent_id: string;
   event_type: string;
   operation_request_id?: string;
-  admission_id?: string;
   trace_id?: string;
   occurred_at: string;
 };
@@ -302,4 +306,6 @@ export type RemoteErrorBody = {
   code?: string;
   message?: string;
   retryable?: boolean;
+  references?: unknown;
+  references_truncated?: unknown;
 };

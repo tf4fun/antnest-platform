@@ -12,7 +12,8 @@ afterEach(() => {
 const timestamp = "2026-09-07T00:00:00Z";
 const baseAgent: Agent = {
   agent_id: "agent-1", owner_user_id: "user-1", name: "Support Agent",
-  desired_state: "enabled", lifecycle_state: "available", aggregate_sequence: 2,
+  desired_state: "enabled", lifecycle_state: "created", activation_state: "enabled", runtime_state: "available", aggregate_sequence: 2,
+  agent_spec_revision: "spec-1", runtime: { runtime_revision: "runtime-1" }, executable_execution_revision: "execution-1",
   created_at: timestamp, updated_at: timestamp,
 };
 const baseOperation: LifecycleOperation = {
@@ -117,7 +118,7 @@ describe("Agent operation presentation", () => {
 
   it("retains the distinct phase and diagnostic detail of a failed operation", async () => {
     mockDetail(
-      { ...baseAgent, lifecycle_state: "unavailable" },
+      { ...baseAgent, lifecycle_state: "created", activation_state: "enabled", runtime_state: "unknown" },
       { ...baseOperation, state: "failed", phase: "runtime_update", error_code: "runtime_update_failed", error_detail: "Runtime image unavailable" },
     );
     render(<AgentsPage agentID={baseAgent.agent_id} />);
@@ -125,22 +126,24 @@ describe("Agent operation presentation", () => {
     expect(screen.getByText("runtime update")).toBeTruthy();
     expect(screen.getByText("Runtime image unavailable")).toBeTruthy();
     expect(screen.getByText("runtime_update_failed", { exact: true })).toBeTruthy();
-    expect(screen.getByText("Requested state: enabled")).toBeTruthy();
+    expect(screen.getByText("created / enabled")).toBeTruthy();
     expect(screen.queryByText(/Transitioning toward/)).toBeNull();
     expect(screen.queryByText(/rebuild the Agent/i)).toBeNull();
     expect(screen.getByRole("button", { name: "Delete Agent" })).toBeTruthy();
-    for (const name of ["Rebuild", "Enable", "Disable"]) expect(screen.queryByRole("button", { name })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Enable" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Rebuild" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Disable" })).toBeTruthy();
   });
 
   it("transitions a live deletion to read-only retained detail without redirecting", async () => {
     const { state, streams } = mockDetail(
-      { ...baseAgent, desired_state: "deleted", lifecycle_state: "deleting", active_operation_request_id: baseOperation.request_id },
+      { ...baseAgent, desired_state: "deleted", lifecycle_state: "created", activation_state: "enabled", runtime_state: "unknown", active_operation_request_id: baseOperation.request_id },
       { ...baseOperation, kind: "delete", state: "running", phase: "runtime_delete" },
     );
     render(<AgentsPage agentID={baseAgent.agent_id} />);
     await screen.findByText("runtime delete");
     expect(screen.getByRole("heading", { name: "Current operation" })).toBeTruthy();
-    expect(screen.getByText("Removing", { exact: true })).toBeTruthy();
+    expect(screen.getByText("Transitioning toward deleted", { exact: true })).toBeTruthy();
     expect(screen.queryByText("Removed", { exact: true })).toBeNull();
     await waitFor(() => expect(streams.length).toBeGreaterThan(0));
     state.agent = { ...baseAgent, aggregate_sequence: 3, desired_state: "deleted", lifecycle_state: "deleted" };

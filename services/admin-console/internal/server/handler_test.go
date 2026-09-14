@@ -928,7 +928,7 @@ func TestBrowserProjectionsDoNotExposeControlPlaneFields(t *testing.T) {
 			"updated_at":"2026-09-02T00:00:00Z"}`},
 		{name: "agent", projector: projectAgent, payload: `{
 			"agent_id":"agent-1","organization_id":"org-1","owner_user_id":"user-1","name":"Agent",
-			"desired_state":"enabled","lifecycle_state":"available","access_revision":"access-1",
+			"desired_state":"enabled","lifecycle_state":"created","activation_state":"enabled","runtime_state":"available","access_revision":"access-1",
 			"configuration":{"template":{"template_id":"template-1","revision":2,"name":"Research"},
 			"model_profile":{"model_profile_id":"model-1","revision_id":"model-revision-4",
 			"revision":4,"name":"DeepSeek","model":{"base_url":"https://api.deepseek.com/v1",
@@ -942,7 +942,7 @@ func TestBrowserProjectionsDoNotExposeControlPlaneFields(t *testing.T) {
 			"created_at":"2026-09-02T00:00:00Z","updated_at":"2026-09-02T00:00:00Z"}`},
 		{name: "create", projector: projectCreateAgent, payload: `{
 			"agent":{"agent_id":"agent-1","organization_id":"org-1","owner_user_id":"user-1",
-			"name":"Agent","desired_state":"enabled","lifecycle_state":"provisioning",
+			"name":"Agent","desired_state":"enabled","lifecycle_state":"not_created","runtime_state":"unknown",
 			"access_revision":"access-1","aggregate_sequence":1,"created_at":"2026-09-02T00:00:00Z",
 			"updated_at":"2026-09-02T00:00:00Z"},"agent_access_subject":"subject-secret",
 			"operation":{"request_id":"request-1","agent_id":"agent-1","kind":"create",

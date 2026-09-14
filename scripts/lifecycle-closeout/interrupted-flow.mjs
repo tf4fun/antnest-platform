@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { waitForAgentReady } from "../verification/agent-state.mjs";
 import { randomUUID } from "node:crypto";
 import { GatewayClient } from "../identity-closeout/support.mjs";
 import {
@@ -226,8 +227,7 @@ export async function runInterruptedUpdate(config, docker, signal) {
   });
   const recovered = await final();
   assertRecovery(frozen, recovered);
-  const agent = await json(agentPath);
-  assert.equal(agent.lifecycle_state, "available");
+  const agent = await waitForAgentReady(() => json(agentPath), signal);
   assert.equal(agent.configuration.template.revision, 2);
   assert.equal(agent.runtime.runtime_revision, frozen.rc.runtime_revision);
   const runtimeStatus = JSON.parse(

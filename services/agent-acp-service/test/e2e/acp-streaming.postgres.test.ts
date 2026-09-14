@@ -60,7 +60,7 @@ describe.skipIf(databaseUrl === undefined)("ACP durable model streaming", () => 
         source.delta({ content: " world" });
         source.finish("stop");
         if (!reconnect) expect((await pending).result).toEqual({ stopReason: "end_turn" });
-        await vi.waitFor(() => expect(app.controller.finishRun).toHaveBeenCalledOnce());
+        await vi.waitFor(() => expect(app.finish).toHaveBeenCalledOnce());
         await vi.waitFor(() =>
           expect(text(client.frames, "agent_message_chunk")).toBe("hello world"),
         );
@@ -105,7 +105,7 @@ describe.skipIf(databaseUrl === undefined)("ACP durable model streaming", () => 
       await vi.waitFor(() => expect(text(client.frames, "agent_message_chunk")).toBe("hello"));
       source.delta({ content: " world" });
       source.finish("stop");
-      await vi.waitFor(() => expect(app.controller.finishRun).toHaveBeenCalledOnce());
+      await vi.waitFor(() => expect(app.finish).toHaveBeenCalledOnce());
       await vi.waitFor(() =>
         expect(text(client.frames, "agent_message_chunk")).toBe("hello world"),
       );

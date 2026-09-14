@@ -1,8 +1,45 @@
 {
   "contract": "antnest.admin-console.bff",
-  "version": 42,
+  "version": 44,
   "base_path": "/api/admin",
   "routes": {
+    "set_provider_availability": {
+      "method": "PUT",
+      "path": "/provider-connections/{connection_id}/availability"
+    },
+    "set_model_availability": {
+      "method": "PUT",
+      "path": "/model-profiles/{model_profile_id}/availability"
+    },
+    "set_template_availability": {
+      "method": "PUT",
+      "path": "/templates/{template_id}/availability"
+    },
+    "list_execution_audits": {
+      "method": "GET",
+      "path": "/execution-audits",
+      "query": {
+        "optional": ["agent_id", "session_id", "created_from", "created_until", "limit", "cursor"],
+        "cursor_response": "next_cursor"
+      }
+    },
+    "get_execution_audit": {
+      "method": "GET",
+      "path": "/execution-audits/{run_id}"
+    },
+    "list_execution_events": {
+      "method": "GET",
+      "path": "/execution-audits/{run_id}/events",
+      "query": {
+        "optional": ["stream", "limit", "cursor"],
+        "stream": ["execution", "permissions"],
+        "cursor_response": "next_cursor"
+      }
+    },
+    "get_execution_synchronization": {
+      "method": "GET",
+      "path": "/execution-synchronization"
+    },
     "overview": {
       "method": "GET",
       "path": "/overview"
@@ -207,6 +244,8 @@
       "revoke_scim_token"
     ],
     "agent_controller": [
+      "catalog_availability",
+      "execution_synchronization",
       "provider_connections",
       "model_profiles",
       "agent_templates",
@@ -214,9 +253,42 @@
       "agent_network_policy",
       "operations",
       "events"
-    ]
+    ],
+    "agent_acp": ["list_execution_audits", "get_execution_audit", "list_execution_events"]
   },
   "response_policy": {
+    "catalog_availability": {
+      "authority": "agent_controller",
+      "authorization": "verified_organization_scoped_administrator",
+      "request": ["expected_enabled", "enabled"],
+      "required_header": "Idempotency-Key",
+      "response": ["resource_id", "enabled", "updated_at"],
+      "references": "preserve_controller_conflict_metadata_without_inference_or_cascade",
+      "receipt": "historical_command_result_read_current_resource_after_success",
+      "cache_control": "no-store"
+    },
+    "execution_audit": {
+      "authority": "agent_acp_service",
+      "authorization": "verified_organization_scoped_administrator",
+      "identity": "same_five_management_headers_no_owner_impersonation",
+      "controller_preflight": false,
+      "read_side_effects": "none_no_session_load_or_activation",
+      "query_identity": "reject",
+      "default_limit": 50,
+      "maximum_limit": 100,
+      "timestamps": "preserve_postgresql_microseconds",
+      "event_streams": "independent_execution_and_permissions_cursors",
+      "projection": "explicit_browser_fields_with_input_snapshot_tool_and_permission_content",
+      "cache_control": "no-store"
+    },
+    "execution_synchronization": {
+      "authority": "agent_controller",
+      "organization": "verified_principal_only_not_exposed_in_response",
+      "query": "reject_all",
+      "missing_record": null,
+      "meaning": "historical_configuration_acknowledgement_not_live_health_or_execution_state",
+      "cache_control": "no-store"
+    },
     "runtime_recovery": {
       "historical_fields": [
         "agent_spec_revision",

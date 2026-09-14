@@ -13,6 +13,7 @@ import {
   Section,
 } from "../components/page";
 import { Badge } from "../components/ui/badge";
+import { CatalogAvailabilityControl } from "../components/catalog-availability";
 import { Button } from "../components/ui/button";
 import { Dialog } from "../components/ui/dialog";
 import { Empty, ErrorNotice, GuidanceNotice, Loading, SuccessNotice } from "../components/ui/feedback";
@@ -33,7 +34,7 @@ import { templateCreationGate } from "../lib/setup";
 import type { AgentTemplate, ModelProfile, TemplateDefaults } from "../lib/types";
 
 export function TemplatesPage({ templateID, revisionID }: { templateID?: string; revisionID?: string }) {
-  return templateID ? <TemplateDetail templateID={templateID} revisionID={revisionID} /> : <TemplateList />;
+  return templateID ? <TemplateDetail key={JSON.stringify([templateID, revisionID])} templateID={templateID} revisionID={revisionID} /> : <TemplateList />;
 }
 
 function TemplateList() {
@@ -390,6 +391,10 @@ function TemplateList() {
 
 function TemplateDetail({ templateID, revisionID }: { templateID: string; revisionID?: string }) {
   const [template, setTemplate] = useState<AgentTemplate>();
+  const [availabilityBusy, setAvailabilityBusy] = useState(false);
+  const [publishedReadFailure, setPublishedReadFailure] = useState("");
+  const publishedRead = useRef<AbortController | undefined>(undefined);
+  useEffect(() => () => publishedRead.current?.abort(), []);
   const templateRequest = useRef(0);
   const referencedModelRequest = useRef(0);
   const [referencedModelState, setReferencedModelState] = useState<ResourceState<ModelProfile>>({ status: "loading" });
@@ -454,6 +459,27 @@ function TemplateDetail({ templateID, revisionID }: { templateID: string; revisi
   const modelID = selectedModelID ?? template?.model_profile_id ?? "";
   const modelSelected = choices.some((model) => model.model_profile_id === modelID);
 
+  async function readCurrent(signal: AbortSignal) {
+    const current = await api.template(templateID, signal);
+    if (current.template_id !== templateID) throw new Error("The template response does not match this template.");
+    if (!signal.aborted) setTemplate(current);
+  }
+
+  async function refreshPublished() {
+    setPending(true);
+    publishedRead.current?.abort();
+    const controller = new AbortController();
+    publishedRead.current = controller;
+    try {
+      await readCurrent(controller.signal);
+      if (!controller.signal.aborted) setPublishedReadFailure("");
+    } catch (cause) {
+      if (!controller.signal.aborted) setPublishedReadFailure(errorMessage(cause));
+    } finally {
+      if (!controller.signal.aborted) setPending(false);
+    }
+  }
+
   async function revise(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!template || revisionID !== undefined || pending) return;
@@ -483,13 +509,9 @@ function TemplateDetail({ templateID, revisionID }: { templateID: string; revisi
           mcp_servers: managedMCPInput(data),
         },
       });
-      const selectedModel = models.find(
-        (model) => model.model_profile_id === revised.model_profile_id,
-      );
-      setTemplate(revised);
-      if (selectedModel) setReferencedModelState({ status: "ready", data: selectedModel });
       setOpen(false);
       setSuccessMessage(`Template revision ${revised.revision} published.`);
+      await refreshPublished();
     } catch (cause) {
       setFormError(errorMessage(cause));
     } finally {
@@ -537,10 +559,13 @@ function TemplateDetail({ templateID, revisionID }: { templateID: string; revisi
           : "The current immutable Agent configuration head used for new builds and explicit rebuilds."}
         actions={historical
           ? <><Badge value="historical" /><Button asChild variant="secondary"><a href={`#templates/${templateID}`}>View current revision</a></Button></>
-          : <><Badge value={template.enabled ? "enabled" : "disabled"} /><Button onClick={() => { setFormError(""); setSuccessMessage(""); setSelectedModelID(undefined); setOpen(true); }}><Pencil className="h-4 w-4" />Create revision</Button></>}
+          : <><Badge value={template.enabled ? "enabled" : "disabled"} /><Button disabled={availabilityBusy || pending || Boolean(publishedReadFailure)} onClick={() => { setFormError(""); setSuccessMessage(""); setSelectedModelID(undefined); setOpen(true); }}><Pencil className="h-4 w-4" />Create revision</Button></>}
       />
       {successMessage ? <SuccessNotice message={successMessage} onDismiss={() => setSuccessMessage("")} /> : null}
       {referencedModelState.status === "error" ? <ResourceFailureNotice failure={referencedModelState.failure} message={`Current model could not be loaded: ${referencedModelState.failure.message}`} retryLabel="Retry current model" onRetry={() => void loadReferencedModel(template.model_profile_id)} /> : null}
+      {publishedReadFailure ? <ErrorNotice message={`Published, but current template could not be refreshed. ${publishedReadFailure}`} action={<Button variant="secondary" disabled={pending} onClick={() => void refreshPublished()}>Refresh published template</Button>} /> : null}
+      {!historical ? <CatalogAvailabilityControl kind="templates" resourceID={templateID} enabled={template.enabled} disabled={open || pending || Boolean(publishedReadFailure)}
+        onBusyChange={setAvailabilityBusy} onReload={readCurrent} /> : null}
       {modelFailure ? <ResourceFailureNotice failure={modelFailure} message={`Model choices could not be loaded: ${modelFailure.message}`} retryLabel="Retry model choices" onRetry={retryModels} /> : null}
       <Section title="Configuration">
         <div className="grid gap-px overflow-hidden rounded-md border border-border bg-border shadow-sm sm:grid-cols-2 lg:grid-cols-3">

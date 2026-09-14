@@ -58,12 +58,15 @@
     "runtime_inspection": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["agent_id", "runtime_revision", "lifecycle_state", "health", "restart_count", "observed_at"],
+      "required": ["agent_id", "runtime_revision", "lifecycle_state", "phase", "health", "restart_count", "observed_at"],
       "properties": {
         "agent_id": {"$ref": "#/$defs/agent_id"},
         "runtime_revision": {"$ref": "#/$defs/runtime_revision"},
-        "lifecycle_state": {"enum": ["initializing", "ready", "updating", "disabling", "disabled", "enabling", "deleting", "deleted", "failed", "unknown"]},
+        "lifecycle_state": {"enum": ["initializing", "provisioned", "updating", "disabling", "disabled", "enabling", "deleting", "deleted", "failed", "unknown"]},
         "health": {"enum": ["absent", "starting", "healthy", "unhealthy", "unknown"]},
+        "phase": {"enum": ["absent", "created", "running", "exited", "unknown"]},
+        "reason": {"type": "string"},
+        "diagnostic_summary": {"type": "string"},
         "mcp_endpoint": {"type": "string", "format": "uri"},
         "runtime_execution_id": {"type": "string", "minLength": 1},
         "restart_count": {"type": "integer", "minimum": 0},
@@ -129,7 +132,7 @@
         "agent_id": {"$ref": "#/$defs/agent_id"},
         "runtime_revision": {"$ref": "#/$defs/runtime_revision"},
         "runtime_execution_id": {"type": "string", "minLength": 1},
-        "kind": {"enum": ["healthy", "unhealthy", "restarted", "exited", "runtime_deleted", "status_unverified", "runtime_missing"]},
+        "kind": {"enum": ["starting", "healthy", "unhealthy", "restarted", "exited", "runtime_deleted", "status_unverified", "runtime_missing"]},
         "diagnostic_summary": {"type": "string"},
         "observed_at": {"type": "string", "format": "date-time"}
       }

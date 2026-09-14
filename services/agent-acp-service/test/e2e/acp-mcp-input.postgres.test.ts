@@ -70,7 +70,7 @@ describe.skipIf(databaseUrl === undefined)("ACP MCP input persistence boundaries
           const offset = client.frames.length;
           const modelCalls = app.model.complete.mock.calls.length;
           const toolCalls = app.tools.call.mock.calls.length;
-          const admissions = app.controller.acquireRun.mock.calls.length;
+          const admissions = app.acceptRun.mock.calls.length;
           const mcpServers = [unsupportedServer(version, transport)];
           for (const method of setupMethods(version)) {
             const result = await client.request(method, {
@@ -87,7 +87,7 @@ describe.skipIf(databaseUrl === undefined)("ACP MCP input persistence boundaries
             expect(await boundaryState(pool)).toEqual(before);
           }
           expect(JSON.stringify(client.frames.slice(offset))).not.toContain("synthetic-mcp-secret");
-          expect(app.controller.acquireRun).toHaveBeenCalledTimes(admissions);
+          expect(app.acceptRun).toHaveBeenCalledTimes(admissions);
           expect(app.model.complete).toHaveBeenCalledTimes(modelCalls);
           expect(app.tools.call).toHaveBeenCalledTimes(toolCalls);
           expect(
@@ -127,7 +127,7 @@ describe.skipIf(databaseUrl === undefined)("ACP MCP input persistence boundaries
         data: { code: "client_mcp_not_allowed", retryable: false },
       });
       expect(await boundaryState(pool)).toEqual(before);
-      expect(app.controller.acquireRun).not.toHaveBeenCalled();
+      expect(app.acceptRun).not.toHaveBeenCalled();
       expect(app.model.complete).not.toHaveBeenCalled();
       expect(app.tools.call).not.toHaveBeenCalled();
       expect(JSON.stringify(client.frames)).not.toContain("synthetic-mcp-secret");
@@ -153,7 +153,7 @@ describe.skipIf(databaseUrl === undefined)("ACP MCP input persistence boundaries
       await expect
         .poll(async () => (await pool.query<{ state: string }>("SELECT state FROM runs")).rows)
         .toEqual([{ state: "completed" }]);
-      expect(app.controller.acquireRun).toHaveBeenCalledOnce();
+      expect(app.acceptRun).toHaveBeenCalledOnce();
       expect(app.model.complete).toHaveBeenCalledTimes(2);
       expect(app.tools.call).toHaveBeenCalledOnce();
       expect(app.tools.call.mock.calls[0]?.[0].tool).toMatchObject({
@@ -210,7 +210,7 @@ describe.skipIf(databaseUrl === undefined)("ACP MCP input persistence boundaries
       expect(await app.sessions.getClientMcpRevision(original.clientMcpRevisionId)).toEqual(
         originalSources,
       );
-      expect(app.controller.acquireRun).not.toHaveBeenCalled();
+      expect(app.acceptRun).not.toHaveBeenCalled();
       expect(app.model.complete).not.toHaveBeenCalled();
     });
   });

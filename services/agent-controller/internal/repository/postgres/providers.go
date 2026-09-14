@@ -81,8 +81,8 @@ FROM agent_controller.provider_connections WHERE id=$1`, receipt.resourceID))
 func (repository *Repository) PutProviderConnection(ctx context.Context, connection ports.ProviderConnectionRecord, models []ports.ModelProfileRecord) (ports.ProviderConnectionRecord, error) {
 	connection.CreatedAt = connection.CreatedAt.UTC().Truncate(time.Microsecond)
 	connection.UpdatedAt = connection.UpdatedAt.UTC().Truncate(time.Microsecond)
-	return repository.persistProvider(ctx, ports.CreateProviderConnectionRequest, connection, func(tx *databaseTransaction) error {
-		if err := insertProviderConnection(ctx, tx, connection); err != nil {
+	return repository.persistProvider(ctx, ports.CreateProviderConnectionRequest, connection, func(tx *databaseTransaction, current *ports.ProviderConnectionRecord) error {
+		if err := insertProviderConnection(ctx, tx, *current); err != nil {
 			return err
 		}
 		for _, model := range models {
@@ -97,25 +97,25 @@ func (repository *Repository) PutProviderConnection(ctx context.Context, connect
 func (repository *Repository) RotateProviderCredential(ctx context.Context, expectedVersion string, connection ports.ProviderConnectionRecord) (ports.ProviderConnectionRecord, error) {
 	connection.CreatedAt = connection.CreatedAt.UTC().Truncate(time.Microsecond)
 	connection.UpdatedAt = connection.UpdatedAt.UTC().Truncate(time.Microsecond)
-	return repository.persistProvider(ctx, ports.RotateProviderCredentialRequest, connection, func(tx *databaseTransaction) error {
-		result, err := tx.Exec(ctx, `UPDATE agent_controller.provider_connections
+	return repository.persistProvider(ctx, ports.RotateProviderCredentialRequest, connection, func(tx *databaseTransaction, current *ports.ProviderConnectionRecord) error {
+		err := tx.QueryRow(ctx, `UPDATE agent_controller.provider_connections
 SET current_credential_version=$3, credential_revision=credential_revision+1, updated_at=$4,
     ciphertext=$7, nonce=$8, key_version=$9
-WHERE id=$1 AND organization_id=$2 AND current_credential_version=$5 AND credential_revision=$6`,
+WHERE id=$1 AND organization_id=$2 AND current_credential_version=$5 AND credential_revision=$6 RETURNING enabled`,
 			connection.ConnectionID, connection.OrganizationID, connection.CredentialVersion, connection.UpdatedAt,
 			expectedVersion, connection.CredentialRevision-1,
-			connection.SealedCredential.Ciphertext, connection.SealedCredential.Nonce, connection.SealedCredential.KeyVersion)
+			connection.SealedCredential.Ciphertext, connection.SealedCredential.Nonce, connection.SealedCredential.KeyVersion).Scan(&current.Enabled)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ports.ErrConcurrentChange
+		}
 		if err != nil {
 			return fmt.Errorf("rotate Provider credential head: %w", err)
-		}
-		if result.RowsAffected() != 1 {
-			return ports.ErrConcurrentChange
 		}
 		return nil
 	})
 }
 
-func (repository *Repository) persistProvider(ctx context.Context, kind ports.CatalogRequestKind, connection ports.ProviderConnectionRecord, write func(*databaseTransaction) error) (ports.ProviderConnectionRecord, error) {
+func (repository *Repository) persistProvider(ctx context.Context, kind ports.CatalogRequestKind, connection ports.ProviderConnectionRecord, write func(*databaseTransaction, *ports.ProviderConnectionRecord) error) (ports.ProviderConnectionRecord, error) {
 	tx, err := repository.pool.Begin(ctx)
 	if err != nil {
 		return ports.ProviderConnectionRecord{}, fmt.Errorf("begin Provider transaction: %w", err)
@@ -128,11 +128,17 @@ func (repository *Repository) persistProvider(ctx context.Context, kind ports.Ca
 	if err != nil || found {
 		return replayed, err
 	}
-	if err := write(tx); err != nil {
+	if err := lockExecutionOrganization(ctx, tx, connection.OrganizationID); err != nil {
+		return ports.ProviderConnectionRecord{}, err
+	}
+	if err := write(tx, &connection); err != nil {
 		return ports.ProviderConnectionRecord{}, catalogConflict(err)
 	}
 	if err := insertCatalogRequest(ctx, tx, kind, connection.RequestID, connection.RequestFingerprint,
 		connection.ConnectionID, connection.CredentialVersion, connection.CredentialRevision, connection.UpdatedAt, nil); err != nil {
+		return ports.ProviderConnectionRecord{}, err
+	}
+	if err := repository.advanceExecutionRevision(ctx, tx, connection.OrganizationID); err != nil {
 		return ports.ProviderConnectionRecord{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {

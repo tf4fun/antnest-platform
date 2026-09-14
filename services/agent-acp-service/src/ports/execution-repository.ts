@@ -1,37 +1,9 @@
-import type { ContentBlock, RunOutcome, RunExecutionSnapshot, RunState } from "../domain/types.js";
-import type { SessionConfiguration } from "../domain/session-configuration.js";
+import type { RunOutcome, RunState } from "../domain/types.js";
 
-export type RecoveryWork =
-  | {
-      kind: "admitting";
-      sessionConfiguration?: SessionConfiguration;
-      id: string;
-      requestId: string;
-      sessionId: string;
-      clientMcpRevisionId: string;
-      expectedAccessRevision: string;
-      userMessageId: string;
-      prompt: ContentBlock[];
-    }
-  | {
-      kind: "running";
-      id: string;
-      requestId: string;
-      sessionId: string;
-      snapshot: RunExecutionSnapshot;
-    }
-  | ({
-      kind: "finish_admission";
-      id: string;
-      admissionId: string;
-    } & RunOutcome)
-  | {
-      kind: "invalid";
-      id: string;
-      previousState: RunState;
-      admissionId?: string;
-      errorClass: "invalid_recovery_record";
-    };
+export type RecoveryWork = {
+  kind: "admitting" | "running";
+  id: string;
+};
 
 export type FinishLocalRunInput = RunOutcome & {
   runId: string;
@@ -41,7 +13,15 @@ export type FinishLocalRunInput = RunOutcome & {
 export interface ExecutionRepository {
   getState(runId: string): Promise<RunState | null>;
   finish(input: FinishLocalRunInput): Promise<void>;
-  quarantine(runId: string, errorClass: string, finishedAt: Date): Promise<void>;
-  markAdmissionFinished(runId: string, finishedAt: Date): Promise<void>;
   listRecoveryWork(): Promise<RecoveryWork[]>;
+}
+
+export type RuntimeProtectionScope = {
+  organizationId: string;
+  agentId: string;
+  runtimeRevision: string | null;
+};
+
+export interface RuntimeProtectionRepository {
+  hasUnstoppedRuntimeCalls(scope: RuntimeProtectionScope, signal?: AbortSignal): Promise<boolean>;
 }

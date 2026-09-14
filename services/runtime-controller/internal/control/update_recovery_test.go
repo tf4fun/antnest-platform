@@ -134,7 +134,7 @@ func newUpdateRecoveryFixture(t *testing.T) *updateRecoveryFixture {
 
 func (f *updateRecoveryFixture) service(t *testing.T) *Service {
 	t.Helper()
-	service, err := NewService(f.repository, f.repository, lifecycleObservationReadiness{}, f.platform, f.verifier, time.Now, time.Second, 5*time.Millisecond, time.Millisecond)
+	service, err := NewService(f.repository, f.repository, lifecycleObservationReadiness{}, f.platform, f.verifier, time.Now, time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,11 +165,10 @@ func (f *updateRecoveryFixture) requireUnresolved(t *testing.T) deployment.Opera
 
 func TestUpdateRecoversCreatedTargetWithoutRepeatingPhysicalEffects(t *testing.T) {
 	t.Parallel()
-	for _, phase := range []string{"create-response", "readiness", "completion-write"} {
+	for _, phase := range []string{"create-response", "completion-write"} {
 		t.Run(phase, func(t *testing.T) {
 			f := newUpdateRecoveryFixture(t)
 			f.platform.lostCreate = phase == "create-response"
-			f.verifier.unavailable = phase == "readiness"
 			f.repository.loseCompletion = phase == "completion-write"
 			first, err := f.update(t)
 			if phase == "completion-write" {
@@ -265,7 +264,7 @@ func TestUpdateDefiniteSourceDeletionRejectionRetainsSource(t *testing.T) {
 	if err != nil || result.State != deployment.OperationFailed || result.Effect != deployment.EffectNotStarted {
 		t.Fatalf("definite pre-effect failure became ambiguous: %+v %v", result, err)
 	}
-	head := requireLifecycleEnvironment(t, f.repository.lifecycleRepository, "agent-1", deployment.LifecycleReady)
+	head := requireLifecycleEnvironment(t, f.repository.lifecycleRepository, "agent-1", deployment.LifecycleProvisioned)
 	if head.RuntimeRevision != f.source.RuntimeRevision || head.OperationID != "" || f.platform.containers["agent-1"] != physical || f.platform.removed != 0 || f.platform.created != 1 {
 		t.Fatalf("source not retained after definite rejection: %+v", head)
 	}
@@ -273,7 +272,7 @@ func TestUpdateDefiniteSourceDeletionRejectionRetainsSource(t *testing.T) {
 
 func TestUpdateCannotRestoreStoppedOrRacedSourceAfterRejectedDeletion(t *testing.T) {
 	t.Parallel()
-	for _, scenario := range []string{"stopped-on-earlier-attempt", "replaced-between-inspect-and-delete", "post-delete-inspect-fails", "status-unverified"} {
+	for _, scenario := range []string{"stopped-on-earlier-attempt", "replaced-between-inspect-and-delete", "post-delete-inspect-fails"} {
 		t.Run(scenario, func(t *testing.T) {
 			f := newUpdateRecoveryFixture(t)
 			f.platform.onDelete = func() {
@@ -286,8 +285,6 @@ func TestUpdateCannotRestoreStoppedOrRacedSourceAfterRejectedDeletion(t *testing
 					value.Generation++
 				case "post-delete-inspect-fails":
 					f.platform.inspectErr = errors.New("inspect failed")
-				case "status-unverified":
-					f.verifier.unavailable = true
 				}
 				f.platform.containers["agent-1"] = value
 			}
@@ -309,6 +306,25 @@ func TestUpdateCannotRestoreStoppedOrRacedSourceAfterRejectedDeletion(t *testing
 				t.Fatal("unproven source caused additional mutation")
 			}
 		})
+	}
+}
+
+func TestRejectedUpdateRetainsExactRunningSourceWithoutReadinessProof(t *testing.T) {
+	t.Parallel()
+	f := newUpdateRecoveryFixture(t)
+	f.verifier.unavailable = true
+	f.platform.deleteOutcome = deployment.EffectOutcome{State: deployment.EffectNotStarted, Code: "platform_unavailable"}
+	result, err := f.update(t)
+	if err != nil || result.State != deployment.OperationFailed || result.Effect != deployment.EffectNotStarted {
+		t.Fatalf("readiness changed a proven platform rejection: %+v %v", result, err)
+	}
+	head := requireLifecycleEnvironment(t, f.repository.lifecycleRepository, "agent-1", deployment.LifecycleProvisioned)
+	if head.RuntimeRevision != f.source.RuntimeRevision || head.OperationID != "" {
+		t.Fatalf("retained source: %+v", head)
+	}
+	inspection, err := f.service(t).InspectRuntime(context.Background(), "agent-1")
+	if err != nil || inspection.Health != deployment.HealthUnknown || inspection.RuntimeExecutionID != "" {
+		t.Fatalf("source incorrectly declared healthy: %+v %v", inspection, err)
 	}
 }
 
@@ -366,7 +382,7 @@ func TestUpdateRetainedSourceClearsEarlierUnknownTargetInspection(t *testing.T) 
 	if err != nil || retained.State != deployment.OperationFailed || retained.Inspection != nil {
 		t.Fatalf("retained source still reports an unknown target: %+v %v", retained, err)
 	}
-	head := requireLifecycleEnvironment(t, f.repository.lifecycleRepository, "agent-1", deployment.LifecycleReady)
+	head := requireLifecycleEnvironment(t, f.repository.lifecycleRepository, "agent-1", deployment.LifecycleProvisioned)
 	if head.RuntimeRevision != f.source.RuntimeRevision || head.OperationID != "" {
 		t.Fatalf("source not restored: %+v", head)
 	}

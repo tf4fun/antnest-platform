@@ -158,6 +158,8 @@ async function exercise(project, docker, signal) {
     "-e",
     "ANTNEST_AGENT_CONTROLLER_URL=http://upstream:8080",
     "-e",
+    "ANTNEST_AGENT_ACP_SERVICE_URL=http://upstream:8080",
+    "-e",
     "ANTNEST_ADMIN_SHUTDOWN_TIMEOUT=2s",
     "-e",
     "OTEL_SDK_DISABLED=true",

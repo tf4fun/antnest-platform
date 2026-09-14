@@ -14,9 +14,9 @@ func TestDeleteWorkflowFailureAndExplicitRetry(t *testing.T) {
 	deps := &deleteRetryDependencies{offboardingDependencies: &offboardingDependencies{
 		network: *closedNetworkAttachment(base.Agent.AgentID),
 		runtime: ports.RuntimeOperation{RuntimeRevision: base.Agent.RuntimeRevision, RuntimeExecutionID: base.Agent.RuntimeExecutionID,
-			MCPEndpoint: base.Agent.RuntimeMCPEndpoint, LifecycleState: "ready", Health: "healthy"},
+			MCPEndpoint: base.Agent.RuntimeMCPEndpoint, LifecycleState: "provisioned", Health: "healthy"},
 	}, reject: true, calls: make(map[string]int)}
-	service := application.NewLifecycleService(repository, repository, deps, deps, offboardingClock{})
+	service := application.NewLifecycleService(repository, repository, deps, deps, offboardingClock{}, application.WithLifecycleExecution(testLifecycleExecution(repository)))
 	ctx := context.Background()
 	input := application.DeleteAgentInput{RequestID: "delete-rejected", AgentID: base.Agent.AgentID}
 	if _, err := service.DeleteAgent(ctx, input); err != nil {
@@ -28,7 +28,7 @@ func TestDeleteWorkflowFailureAndExplicitRetry(t *testing.T) {
 		t.Fatalf("failure diagnostics: %+v %v", failed, err)
 	}
 	agent, err := repository.GetAgent(ctx, base.Agent.AgentID)
-	if err != nil || agent.DesiredState != domain.DesiredDeleted || agent.LifecycleState != domain.AgentUnavailable || agent.ActiveOperationRequestID != "" || deps.releases != 0 {
+	if err != nil || agent.DesiredState != domain.DesiredDeleted || (agent.LifecycleState != domain.AgentCreated || agent.ActivationState != domain.ActivationEnabled || agent.RuntimeState != domain.RuntimeUnknown) || agent.ActiveOperationRequestID != "" || deps.releases != 0 {
 		t.Fatalf("failure escaped isolation: %+v %v", agent, err)
 	}
 	visible, err := repository.ListAgents(ctx, ports.AgentQuery{OwnerUserID: base.Agent.OwnerUserID, Limit: 10})

@@ -8,11 +8,14 @@ never reads Identity tables. This is a narrow consumer, not a general event bus.
 
 - A global User deactivation stops that user's Agents in every organization.
   Membership deactivation/deletion stops only Agents in that organization.
-- Receipt durably fences new Run admission. An idle, available Agent enters the
-  existing Disable saga: drain admitted work, close network, disable Runtime,
-  then publish `disabled` only with the existing Runtime effect proof.
-- Work already admitted retains its frozen snapshot and completion/replay
-  contract. This is eventual offboarding, not emergency process cancellation.
+- Receipt durably fences the Agent configuration and schedules the existing Disable
+  workflow when no other lifecycle operation owns the Agent. Controller first
+  publishes closed access and obtains ACP acknowledgement, then requests Agent-level
+  cancellation/settlement before network and Runtime effects.
+- ACP owns in-flight cancellation, execution audit and protocol output. Controller
+  neither enumerates Runs nor promises replay. This is eventual offboarding, not
+  instantaneous revocation across services; Runtime is marked disabled only after
+  the corresponding platform effect is confirmed.
 - Busy lifecycle operations finish through their Temporal workflows.
   The offboarding intent survives them. Failed/unavailable or uncertain Runtime
   states remain fenced and pending; they are not reported as successfully stopped.
@@ -34,7 +37,7 @@ using Identity's atomic `resolve-owner-authorization` RPC. Its independent
 `identity_revocation_sequence` records the latest applicable consumed revocation.
 A larger revocation sequence forbids new admission until explicit Enable.
 
-Create/Enable and fresh admission take a shared lock on the receipt cursor before
+Create/Enable and owner-default management take a shared lock on the receipt cursor before
 locking an Agent. Receipt takes the exclusive lock. Thus a Create that passed
 Identity before deactivation either commits before receipt and is fenced by it,
 or observes the newer scope watermark and is rejected. An Agent explicitly
@@ -81,7 +84,7 @@ progress is not a claim that all Runtime shutdowns completed. Pending fences and
 failed lifecycle operations remain inspectable in Controller storage/events.
 
 Required service tests: scoped/global fencing, duplicate delivery, atomic cursor
-rollback, late Create, restored/new authorization, fresh admission versus replay,
+rollback, late Create, restored/new authorization, configuration publication and stale-default rejection,
 strict Disable failure, busy lifecycle convergence, source outage with local
 pending work, restart/retry, and no automatic Enable. Full Gateway/Identity/ACP/
 Runtime Docker and Jaeger acceptance is a separate integration batch.

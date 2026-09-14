@@ -361,7 +361,7 @@ type LifecycleState string
 const (
 	LifecycleUninitialized LifecycleState = "uninitialized"
 	LifecycleInitializing  LifecycleState = "initializing"
-	LifecycleReady         LifecycleState = "ready"
+	LifecycleProvisioned   LifecycleState = "provisioned"
 	LifecycleUpdating      LifecycleState = "updating"
 	LifecycleDisabling     LifecycleState = "disabling"
 	LifecycleDisabled      LifecycleState = "disabled"
@@ -376,22 +376,22 @@ func LifecycleTransition(kind OperationKind, from LifecycleState) (LifecycleStat
 	switch kind {
 	case OperationInitializeRuntime:
 		if from == LifecycleUninitialized {
-			return LifecycleInitializing, LifecycleReady, nil
+			return LifecycleInitializing, LifecycleProvisioned, nil
 		}
 	case OperationUpdateRuntime:
-		if from == LifecycleReady {
-			return LifecycleUpdating, LifecycleReady, nil
+		if from == LifecycleProvisioned {
+			return LifecycleUpdating, LifecycleProvisioned, nil
 		}
 	case OperationDisableRuntime:
-		if from == LifecycleReady {
+		if from == LifecycleProvisioned {
 			return LifecycleDisabling, LifecycleDisabled, nil
 		}
 	case OperationEnableRuntime:
 		if from == LifecycleDisabled {
-			return LifecycleEnabling, LifecycleReady, nil
+			return LifecycleEnabling, LifecycleProvisioned, nil
 		}
 	case OperationDeleteRuntime:
-		if from == LifecycleReady || from == LifecycleDisabled || from == LifecycleFailed {
+		if from == LifecycleProvisioned || from == LifecycleDisabled || from == LifecycleFailed {
 			return LifecycleDeleting, LifecycleDeleted, nil
 		}
 	}
@@ -399,6 +399,8 @@ func LifecycleTransition(kind OperationKind, from LifecycleState) (LifecycleStat
 }
 
 type Inspection struct {
+	Reason             string        `json:"-"`
+	DiagnosticSummary  string        `json:"-"`
 	AgentID            string        `json:"-"`
 	Generation         uint64        `json:"-"`
 	SpecDigest         string        `json:"-"`
@@ -417,6 +419,9 @@ func (i Inspection) RuntimeKey() Key {
 }
 
 type Environment struct {
+	Phase              PlatformPhase
+	Reason             string
+	DiagnosticSummary  string
 	AgentID            string
 	RuntimeRevision    RuntimeRevision
 	LifecycleState     LifecycleState
@@ -437,6 +442,8 @@ func (e Environment) RuntimeKey() (Key, bool) {
 }
 
 func (e Environment) WithInspection(value Inspection) Environment {
+	e.Phase = value.PlatformPhase
+	e.Reason, e.DiagnosticSummary = value.Reason, value.DiagnosticSummary
 	e.Health = value.Health
 	e.MCPEndpoint = value.MCPEndpoint
 	e.RuntimeExecutionID = value.RuntimeExecutionID
@@ -517,6 +524,7 @@ const (
 	ObservationDisabled         ObservationKind = "disabled"
 	ObservationEnabled          ObservationKind = "enabled"
 	ObservationHealthy          ObservationKind = "healthy"
+	ObservationStarting         ObservationKind = "starting"
 	ObservationUnhealthy        ObservationKind = "unhealthy"
 	ObservationRestarted        ObservationKind = "restarted"
 	ObservationExited           ObservationKind = "exited"
@@ -616,7 +624,7 @@ func observationScope(kind ObservationKind) observationIdentityScope {
 	case ObservationInitialized, ObservationUpdated, ObservationDisabled, ObservationEnabled,
 		ObservationDeleted, ObservationStorageMissing, ObservationStorageDrift:
 		return observationEnvironment
-	case ObservationHealthy, ObservationUnhealthy, ObservationRestarted, ObservationExited,
+	case ObservationHealthy, ObservationStarting, ObservationUnhealthy, ObservationRestarted, ObservationExited,
 		ObservationRuntimeDeleted, ObservationStatusUnverified, ObservationRuntimeMissing:
 		return observationRuntime
 	default:

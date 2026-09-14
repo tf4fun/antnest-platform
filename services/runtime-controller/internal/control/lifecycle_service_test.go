@@ -23,7 +23,7 @@ func TestRuntimeLifecycleCommandsHidePhysicalResourceSteps(t *testing.T) {
 	if err != nil || initialized.State != deployment.OperationCompleted {
 		t.Fatalf("initialize: operation=%+v err=%v", initialized, err)
 	}
-	ready := requireLifecycleEnvironment(t, repository, "agent-1", deployment.LifecycleReady)
+	ready := requireLifecycleEnvironment(t, repository, "agent-1", deployment.LifecycleProvisioned)
 	if ready.Generation != 1 || ready.RuntimeRevision == "" {
 		t.Fatalf("initialize did not allocate private identity: %+v", ready)
 	}
@@ -34,7 +34,7 @@ func TestRuntimeLifecycleCommandsHidePhysicalResourceSteps(t *testing.T) {
 	if err != nil || updated.State != deployment.OperationCompleted {
 		t.Fatalf("update: operation=%+v err=%v", updated, err)
 	}
-	ready = requireLifecycleEnvironment(t, repository, "agent-1", deployment.LifecycleReady)
+	ready = requireLifecycleEnvironment(t, repository, "agent-1", deployment.LifecycleProvisioned)
 	if ready.Generation != 2 || ready.RuntimeRevision == initialized.RuntimeRevision {
 		t.Fatalf("update did not replace private compute: %+v", ready)
 	}
@@ -56,8 +56,8 @@ func TestRuntimeLifecycleCommandsHidePhysicalResourceSteps(t *testing.T) {
 	if err != nil || enabled.State != deployment.OperationCompleted {
 		t.Fatalf("enable: operation=%+v err=%v", enabled, err)
 	}
-	ready = requireLifecycleEnvironment(t, repository, "agent-1", deployment.LifecycleReady)
-	if ready.Generation != 3 || platform.verifyStorageCalls != 1 {
+	ready = requireLifecycleEnvironment(t, repository, "agent-1", deployment.LifecycleProvisioned)
+	if ready.Generation != 3 || platform.verifyStorageCalls != 0 {
 		t.Fatalf("enable did not reuse workspace with a new private generation: env=%+v verify=%d",
 			ready, platform.verifyStorageCalls)
 	}
@@ -80,7 +80,7 @@ func TestLifecycleRejectsStaleRevisionBeforePlatformMutation(t *testing.T) {
 	repository := newLifecycleRepository()
 	repository.environments["agent-1"] = deployment.Environment{
 		AgentID: "agent-1", RuntimeRevision: deployment.RevisionFor("old", lifecycleDigest),
-		LifecycleState: deployment.LifecycleReady, Health: deployment.HealthHealthy,
+		LifecycleState: deployment.LifecycleProvisioned, Health: deployment.HealthHealthy,
 		Generation: 4, SpecDigest: lifecycleDigest, ObservedAt: lifecycleNow,
 	}
 	platform := newLifecyclePlatform()
@@ -128,7 +128,7 @@ func TestUpdateRetainsRecoverySlotAfterOldComputeWasRemoved(t *testing.T) {
 	currentRevision := deployment.RevisionFor("old", lifecycleDigest)
 	repository.environments["agent-1"] = deployment.Environment{
 		AgentID: "agent-1", RuntimeRevision: currentRevision,
-		LifecycleState: deployment.LifecycleReady, Health: deployment.HealthHealthy,
+		LifecycleState: deployment.LifecycleProvisioned, Health: deployment.HealthHealthy,
 		Generation: 4, SpecDigest: lifecycleDigest, ObservedAt: lifecycleNow,
 	}
 	platform := newLifecyclePlatform()
@@ -316,7 +316,7 @@ func TestReconcileExpectedRuntimeInventoryRecordsMissingReadyCompute(t *testing.
 	repository := newLifecycleRepository()
 	repository.environments["missing-agent"] = deployment.Environment{
 		AgentID: "missing-agent", RuntimeRevision: lifecycleRevision,
-		LifecycleState: deployment.LifecycleReady, Generation: 7, SpecDigest: lifecycleDigest,
+		LifecycleState: deployment.LifecycleProvisioned, Generation: 7, SpecDigest: lifecycleDigest,
 		ObservedAt: lifecycleNow,
 	}
 	repository.claims[deployment.Key{AgentID: "missing-agent", Generation: 7}] = repositoryport.GenerationClaim{
@@ -324,7 +324,7 @@ func TestReconcileExpectedRuntimeInventoryRecordsMissingReadyCompute(t *testing.
 	}
 	repository.environments["present-agent"] = deployment.Environment{
 		AgentID: "present-agent", RuntimeRevision: lifecycleRevision,
-		LifecycleState: deployment.LifecycleReady, Generation: 8, SpecDigest: lifecycleDigest,
+		LifecycleState: deployment.LifecycleProvisioned, Generation: 8, SpecDigest: lifecycleDigest,
 		ObservedAt: lifecycleNow,
 	}
 	service := newLifecycleService(t, repository, newLifecyclePlatform())
@@ -351,7 +351,7 @@ func TestReconcileRetainedStorageSkipsReadyAndFailsOnUnknownPlatformOutcome(t *t
 	repository := newLifecycleRepository()
 	repository.environments["ready-agent"] = deployment.Environment{
 		AgentID: "ready-agent", RuntimeRevision: lifecycleRevision,
-		LifecycleState: deployment.LifecycleReady, Generation: 7, SpecDigest: lifecycleDigest,
+		LifecycleState: deployment.LifecycleProvisioned, Generation: 7, SpecDigest: lifecycleDigest,
 	}
 	repository.environments["disabled-agent"] = disabledLifecycleEnvironment("disabled-agent")
 	platform := newLifecyclePlatform()
@@ -388,7 +388,7 @@ func newLifecycleService(t *testing.T, repository *lifecycleRepository, platform
 	t.Helper()
 	service, err := NewService(
 		repository, repository, lifecycleObservationReadiness{}, platform, lifecycleVerifier{},
-		func() time.Time { return lifecycleNow }, time.Minute, 5*time.Second, time.Millisecond,
+		func() time.Time { return lifecycleNow }, time.Minute,
 	)
 	if err != nil {
 		t.Fatalf("new service: %v", err)

@@ -68,11 +68,11 @@ reference text, never used to read a server file or choose an upload destination
 
 ## Delivery And Acceptance
 
-1. ACP service: domain validation, Controller contract decoder, v1/v2 audio
+1. ACP service: domain validation, execution snapshot decoder, v1/v2 audio
    negotiation, native model conversion, persisted replay and failure closure.
    Unit tests cover mixed ordering, MIME/encoding/size rejection, model mismatch,
    exact outgoing native bytes and no network calls on rejected content.
-2. Controller: admin-owned model flags, revision/admission propagation, real
+2. Controller: admin-owned model flags, current execution snapshot publication, real
    `embedded_context` and authorized-model audio capability declarations.
    Service batch verified; see [Controller authority and evidence](../../agent-controller/docs/multimodal-input.md).
    Do not enable a producer flag before the ACP consumer is deployed.

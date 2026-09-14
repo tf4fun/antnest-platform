@@ -24,6 +24,7 @@ func TestDisableAgentFencesRuntimeAndPublishesDisabledProjection(t *testing.T) {
 	service := NewLifecycleService(
 		lifecycleSpecSourceStub{}, store, dependencies, dependencies,
 		fixedClock{now: time.Unix(200, 0).UTC()},
+		WithLifecycleExecution(testExecutionForStore(store)),
 	)
 
 	result, err := executeDisableForTest(service, context.Background(), DisableAgentInput{
@@ -44,14 +45,9 @@ func TestDisableAgentFencesRuntimeAndPublishesDisabledProjection(t *testing.T) {
 		store.published.DisabledEvent.EventType != ports.EventAgentDisabled {
 		t.Fatalf("disable events: begin=%+v publish=%+v", store.begin, store.published)
 	}
-	if store.runReleaseEvent.EventType != ports.EventRunAdmissionReleased ||
-		store.runReleaseEvent.Data["release_reason"] != "runtime_disabled" ||
-		store.runReleaseEvent.Data["source_runtime_revision"] != base.Agent.RuntimeRevision {
-		t.Fatalf("disable Run release event = %+v", store.runReleaseEvent)
-	}
 	if result.Operation.State != domain.OperationCompleted ||
 		result.Agent.DesiredState != domain.DesiredDisabled ||
-		result.Agent.LifecycleState != domain.AgentDisabled ||
+		(result.Agent.LifecycleState != domain.AgentCreated || result.Agent.ActivationState != domain.ActivationDisabled || result.Agent.RuntimeState != domain.RuntimeAbsent) ||
 		result.Agent.AgentSpecRevisionID != base.Agent.AgentSpecRevisionID ||
 		result.Agent.ExecutionRevisionID != "" ||
 		result.Agent.LastSuccessfulExecutionRevisionID != base.Agent.ExecutionRevisionID ||
@@ -70,6 +66,7 @@ func TestDisableAgentWaitsForActiveRunWithoutExternalEffects(t *testing.T) {
 	service := NewLifecycleService(
 		lifecycleSpecSourceStub{}, store, dependencies, dependencies,
 		fixedClock{now: time.Unix(210, 0).UTC()},
+		WithLifecycleExecution(testExecutionForStore(store)),
 	)
 
 	result, err := executeDisableForTest(service, context.Background(), DisableAgentInput{
@@ -88,17 +85,18 @@ func TestDisableAgentWaitsForActiveRunWithoutExternalEffects(t *testing.T) {
 	}
 }
 
-func TestDisableAgentRechecksDrainBeforeApplyingTimeout(t *testing.T) {
+func TestDisableAgentExpiredDeadlineDoesNotQueryACPOrMutateRuntime(t *testing.T) {
 	t.Parallel()
 
 	base := disableLifecycleBase(t)
 	now := time.Unix(215, 0).UTC()
 	state := ports.AgentDisableState{
-		Agent: base.Agent, SourceSpec: base.ExecutableSpec,
-		SourceExecution: base.ExecutableExecution,
+		Agent: base.Agent, SourceSpec: base.ConfiguredSpec,
+		SourceExecution: base.SourceExecution,
 		Operation: ports.LifecycleOperationRecord{
 			RequestID: "request-disable-expired-drain", RequestFingerprint: "fingerprint",
-			AgentID: base.Agent.AgentID, Kind: domain.OperationDisable,
+			DrainDeadlineAt: testDrainDeadline(now.Add(-time.Minute)),
+			AgentID:         base.Agent.AgentID, Kind: domain.OperationDisable,
 			Phase: domain.PhaseDrain, State: domain.OperationRunning,
 			CreatedAt: now.Add(-2 * time.Minute), UpdatedAt: now.Add(-2 * time.Minute),
 		},
@@ -108,13 +106,14 @@ func TestDisableAgentRechecksDrainBeforeApplyingTimeout(t *testing.T) {
 	service := NewLifecycleServiceWithDrainTimeout(
 		lifecycleSpecSourceStub{}, store, dependencies, dependencies,
 		fixedClock{now: now}, time.Minute,
+		WithLifecycleExecution(testExecutionForStore(store)),
 	)
 
 	settled, err := service.settleDisableDrain(context.Background(), state)
 	if err != nil {
 		t.Fatalf("settle expired but empty disable drain: %v", err)
 	}
-	if settled.Operation.Phase != domain.PhaseNetworkFence || store.failed.Code != "" {
+	if settled.Operation.State != domain.OperationFailed || store.failed.Code != "run_drain_timeout" || len(dependencies.calls) != 0 {
 		t.Fatalf("settled disable phase = %q failed=%+v", settled.Operation.Phase, store.failed)
 	}
 }
@@ -130,6 +129,7 @@ func TestDisableAgentKnownRuntimeFailureRestoresPolicyAndExecutable(t *testing.T
 	service := NewLifecycleService(
 		lifecycleSpecSourceStub{}, store, dependencies, dependencies,
 		fixedClock{now: time.Unix(220, 0).UTC()},
+		WithLifecycleExecution(testExecutionForStore(store)),
 	)
 
 	result, err := executeDisableForTest(service, context.Background(), DisableAgentInput{
@@ -148,7 +148,7 @@ func TestDisableAgentKnownRuntimeFailureRestoresPolicyAndExecutable(t *testing.T
 	if result.Operation.State != domain.OperationFailed ||
 		result.Operation.ErrorCode != "platform_unavailable" ||
 		result.Agent.DesiredState != domain.DesiredEnabled ||
-		result.Agent.LifecycleState != domain.AgentAvailable ||
+		(result.Agent.LifecycleState != domain.AgentCreated || result.Agent.ActivationState != domain.ActivationEnabled || result.Agent.RuntimeState != domain.RuntimeAvailable) ||
 		result.Agent.ExecutionRevisionID != base.Agent.ExecutionRevisionID ||
 		result.Agent.RuntimeRevision != base.Agent.RuntimeRevision {
 		t.Fatalf("failed disable result = %+v", result)
@@ -167,6 +167,7 @@ func TestDisableAgentDoesNotRestoreUnverifiedRuntime(t *testing.T) {
 	service := NewLifecycleService(
 		lifecycleSpecSourceStub{}, store, dependencies, dependencies,
 		fixedClock{now: time.Unix(225, 0).UTC()},
+		WithLifecycleExecution(testExecutionForStore(store)),
 	)
 
 	result, err := executeDisableForTest(service, context.Background(), DisableAgentInput{
@@ -183,7 +184,7 @@ func TestDisableAgentDoesNotRestoreUnverifiedRuntime(t *testing.T) {
 	}
 	if store.failed.PreserveExecutable || result.Operation.State != domain.OperationFailed ||
 		result.Agent.DesiredState != domain.DesiredDisabled ||
-		result.Agent.LifecycleState != domain.AgentUnavailable ||
+		(result.Agent.LifecycleState != domain.AgentCreated || result.Agent.ActivationState != domain.ActivationEnabled || result.Agent.RuntimeState != domain.RuntimeUnknown) ||
 		result.Agent.AgentSpecRevisionID != "" || result.Agent.ExecutionRevisionID != "" ||
 		result.Agent.RuntimeRevision != "" {
 		t.Fatalf("unverified disable result = %+v, failure = %+v", result, store.failed)
@@ -204,6 +205,7 @@ func TestDisableAgentRuntimeNotFoundRemainsRunningAndFenced(t *testing.T) {
 	service := NewLifecycleService(
 		lifecycleSpecSourceStub{}, store, dependencies, dependencies,
 		fixedClock{now: time.Unix(227, 0).UTC()},
+		WithLifecycleExecution(testExecutionForStore(store)),
 	)
 
 	result, err := executeDisableForTest(service, context.Background(), DisableAgentInput{
@@ -240,6 +242,7 @@ func TestDisableAgentDeletedRuntimeInspectionFailsClosedAndReleasesBlockedRun(t 
 	service := NewLifecycleService(
 		lifecycleSpecSourceStub{}, store, dependencies, dependencies,
 		fixedClock{now: time.Unix(228, 0).UTC()},
+		WithLifecycleExecution(testExecutionForStore(store)),
 	)
 
 	result, err := executeDisableForTest(service, context.Background(), DisableAgentInput{
@@ -249,11 +252,10 @@ func TestDisableAgentDeletedRuntimeInspectionFailsClosedAndReleasesBlockedRun(t 
 		t.Fatalf("disable Agent after deleted Runtime inspection: %v", err)
 	}
 	if result.Operation.State != domain.OperationFailed ||
-		result.Agent.LifecycleState != domain.AgentUnavailable ||
+		(result.Agent.LifecycleState != domain.AgentCreated || result.Agent.ActivationState != domain.ActivationEnabled || result.Agent.RuntimeState != domain.RuntimeUnknown) ||
 		store.failed.RuntimeAbsenceProof == nil ||
 		store.failed.RuntimeAbsenceProof.Reason != "runtime_deleted" ||
-		store.failed.SourceRuntimeInspection != nil ||
-		store.failed.RunReleaseEvent.Data["release_reason"] != "runtime_deleted" {
+		store.failed.SourceRuntimeInspection != nil {
 		t.Fatalf("deleted-Runtime disable result=%+v failure=%+v", result, store.failed)
 	}
 	wantCalls := []string{
@@ -276,6 +278,7 @@ func TestDisableAgentAmbiguousRuntimeRemainsRunningAndFenced(t *testing.T) {
 	service := NewLifecycleService(
 		lifecycleSpecSourceStub{}, store, dependencies, dependencies,
 		fixedClock{now: time.Unix(230, 0).UTC()},
+		WithLifecycleExecution(testExecutionForStore(store)),
 	)
 
 	result, err := executeDisableForTest(service, context.Background(), DisableAgentInput{
@@ -325,9 +328,9 @@ func newDisableDependencies(
 		network: network, runtime: runtime,
 		inspection: ports.RuntimeInspection{
 			AgentID: base.Agent.AgentID, RuntimeRevision: base.Agent.RuntimeRevision,
-			RuntimeExecutionID: base.ExecutableExecution.RuntimeExecutionID,
-			MCPEndpoint:        base.ExecutableExecution.RuntimeMCPEndpoint,
-			LifecycleState:     "ready", Health: "healthy",
+			RuntimeExecutionID: base.SourceExecution.RuntimeExecutionID,
+			MCPEndpoint:        base.SourceExecution.RuntimeMCPEndpoint,
+			LifecycleState:     "provisioned", Health: "healthy",
 		},
 	}
 }
@@ -419,14 +422,13 @@ func (dependency *disableDependenciesStub) InspectRuntime(
 
 type disableLifecycleStoreStub struct {
 	lifecycleStoreStub
-	base            ports.AgentLifecycleBase
-	begin           ports.BeginAgentDisable
-	state           ports.AgentDisableState
-	replayed        bool
-	drainBlocked    bool
-	published       ports.PublishAgentDisable
-	failed          ports.FailAgentDisable
-	runReleaseEvent ports.RunAdmissionEvent
+	base         ports.AgentLifecycleBase
+	begin        ports.BeginAgentDisable
+	state        ports.AgentDisableState
+	replayed     bool
+	drainBlocked bool
+	published    ports.PublishAgentDisable
+	failed       ports.FailAgentDisable
 }
 
 func (store *disableLifecycleStoreStub) GetAgentLifecycleBase(
@@ -454,31 +456,16 @@ func (store *disableLifecycleStoreStub) BeginAgentDisable(
 	agent.AggregateSequence = input.RequestedEvent.AggregateSequence
 	agent.UpdatedAt = input.Now
 	store.state = ports.AgentDisableState{
-		Agent: agent, SourceSpec: store.base.ExecutableSpec,
-		SourceExecution: store.base.ExecutableExecution, Operation: input.Operation,
+		Agent: agent, SourceSpec: store.base.ConfiguredSpec,
+		SourceExecution: store.base.SourceExecution, Operation: input.Operation,
 	}
 	store.replayed = true
 	return store.state, false, nil
 }
 
-func (store *disableLifecycleStoreStub) SettleAgentDisableDrain(
-	_ context.Context, _ string, _ string, nextChildRequestID string, now time.Time,
-) (ports.AgentDisableState, error) {
-	if store.drainBlocked {
-		return store.state, nil
-	}
-	store.state.Operation.Phase = domain.PhaseNetworkFence
-	store.state.Operation.ChildRequestID = nextChildRequestID
-	store.state.Operation.UpdatedAt = now
-	return store.state, nil
-}
-
 func (store *disableLifecycleStoreStub) AdvanceAgentDisable(
 	_ context.Context, input ports.AdvanceAgentDisable,
 ) (ports.AgentDisableState, error) {
-	if input.RunReleaseEvent.EventID != "" {
-		store.runReleaseEvent = input.RunReleaseEvent
-	}
 	store.state.Operation.Phase = input.NextPhase
 	store.state.Operation.ChildRequestID = input.NextChildRequestID
 	store.state.Operation.UpdatedAt = input.Now
@@ -498,7 +485,7 @@ func (store *disableLifecycleStoreStub) PublishAgentDisable(
 ) (ports.AgentDisableState, error) {
 	store.published = input
 	store.state.Agent.DesiredState = domain.DesiredDisabled
-	store.state.Agent.LifecycleState = domain.AgentDisabled
+	store.state.Agent.LifecycleState, store.state.Agent.ActivationState, store.state.Agent.RuntimeState = domain.AgentCreated, domain.ActivationDisabled, domain.RuntimeAbsent
 	store.state.Agent.ExecutionRevisionID = ""
 	store.state.Agent.LastSuccessfulExecutionRevisionID = store.state.SourceExecution.ID
 	store.state.Agent.RuntimeRevision = store.state.Operation.RuntimeResult.RuntimeRevision
@@ -523,10 +510,10 @@ func (store *disableLifecycleStoreStub) FailAgentDisable(
 	store.state.Operation.SourceRuntimeAbsenceProof = input.RuntimeAbsenceProof
 	if input.PreserveExecutable {
 		store.state.Agent.DesiredState = domain.DesiredEnabled
-		store.state.Agent.LifecycleState = domain.AgentAvailable
+		store.state.Agent.LifecycleState, store.state.Agent.ActivationState, store.state.Agent.RuntimeState = domain.AgentCreated, domain.ActivationEnabled, domain.RuntimeAvailable
 	} else {
 		store.state.Agent.DesiredState = domain.DesiredDisabled
-		store.state.Agent.LifecycleState = domain.AgentUnavailable
+		store.state.Agent.LifecycleState, store.state.Agent.ActivationState, store.state.Agent.RuntimeState = domain.AgentCreated, domain.ActivationEnabled, domain.RuntimeUnknown
 		store.state.Agent.AgentSpecRevisionID = ""
 		store.state.Agent.ExecutionRevisionID = ""
 		store.state.Agent.RuntimeRevision = ""

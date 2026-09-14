@@ -36,6 +36,9 @@ export function requireDirectoryFilter(cwd: string): void {
 }
 
 export function authorizeSessionOwner(session: SessionRecord, binding: ConnectionBinding): void {
+  if (session.organizationId !== binding.organizationId) {
+    throw new DomainError("session_access_denied", "Session belongs to another organization");
+  }
   if (session.principalId !== binding.principalId) {
     throw new DomainError("session_access_denied", "Session belongs to another principal");
   }

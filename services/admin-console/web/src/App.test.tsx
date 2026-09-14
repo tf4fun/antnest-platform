@@ -63,6 +63,12 @@ async function signInAgain() {
   await screen.findByRole("heading", { name: "Directory" });
 }
 
+it("keeps the execution audit navigation reachable without an Agent lookup", async () => {
+  application(async () => new Response(null, { status: 204 }));
+  await screen.findByRole("heading", { name: "Directory" });
+  expect(screen.getByRole("link", { name: "Execution history" }).getAttribute("href")).toBe("#audits");
+});
+
 it.each(["invalid_current_password", "unauthenticated"])("handles password command %s through the real API and session owner", async (code) => {
   const logout = vi.fn(async () => new Response(null, { status: 204 }));
   const change = vi.fn(async () => Response.json({ code, message: "Password command rejected" }, { status: 401 }));

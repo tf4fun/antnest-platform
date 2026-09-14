@@ -93,7 +93,7 @@ func TestInspectFailedRuntimeRetainsNonExecutableOwnership(t *testing.T) {
 
 func TestDegradedRuntimeOwnershipIsInspectableButNotPublishable(t *testing.T) {
 	t.Parallel()
-	for _, lifecycle := range []string{"ready", "disabled"} {
+	for _, lifecycle := range []string{"provisioned", "disabled"} {
 		t.Run(lifecycle, func(t *testing.T) {
 			operation := failedRuntimeOperation("completed", "")
 			operation.State = "completed"

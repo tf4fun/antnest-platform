@@ -86,7 +86,23 @@ created=$(controller_request -X POST -H 'content-type: application/json' \
   -H "Idempotency-Key: initialize-${agent_id}" -d "$initialize_payload" \
   "$controller_url/internal/runtimes/${agent_id}/initialize")
 printf '%s' "$created" | grep -q '"state":"completed"'
-first_execution=$(printf '%s' "$created" | sed -n 's/.*"runtime_execution_id":"\([^"]*\)".*/\1/p')
+printf '%s' "$created" | grep -q '"lifecycle_state":"provisioned"'
+if printf '%s' "$created" | grep -q '"runtime_execution_id":'; then
+  echo "Creation incorrectly asserted an execution identity" >&2
+  exit 1
+fi
+# Readiness is a separate observation, not part of the creation response.
+attempt=0
+first_execution=""
+while [ "$attempt" -lt 60 ]; do
+  inspection=$(controller_request "$controller_url/internal/runtimes/${agent_id}")
+  first_execution=$(printf '%s' "$inspection" | sed -n 's/.*"runtime_execution_id":"\([^"]*\)".*/\1/p')
+  if [ -n "$first_execution" ]; then
+    break
+  fi
+  attempt=$((attempt + 1))
+  sleep 1
+done
 runtime_revision=$(printf '%s' "$created" | sed -n 's/.*"target_revision":"\([^"]*\)".*/\1/p')
 test -n "$first_execution"
 test -n "$runtime_revision"
@@ -163,7 +179,7 @@ enable_payload=$(printf '%s' "{\"expected_revision\":\"${runtime_revision}\",\"c
 enabled=$(controller_request -X POST -H 'content-type: application/json' \
   -H "Idempotency-Key: enable-${agent_id}" -d "$enable_payload" \
   "$controller_url/internal/runtimes/${agent_id}/enable")
-printf '%s' "$enabled" | grep -q '"lifecycle_state":"ready"'
+printf '%s' "$enabled" | grep -q '"lifecycle_state":"provisioned"'
 runtime_revision=$(printf '%s' "$enabled" | sed -n 's/.*"target_revision":"\([^"]*\)".*/\1/p')
 test -n "$runtime_revision"
 

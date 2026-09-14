@@ -27,30 +27,30 @@ func (repository *Repository) GetAgentLifecycleBase(
 	base := ports.AgentLifecycleBase{
 		Agent: agent, NextSpecRevision: nextSpec, NextExecutionRevision: nextExecution,
 	}
-	if agent.AgentSpecRevisionID == "" || agent.ExecutionRevisionID == "" {
-		if executionID := agent.RebuildSourceExecutionID(); executionID != "" {
-			execution, err := loadExecutionRevision(ctx, repository.pool, executionID)
-			if err != nil {
-				return ports.AgentLifecycleBase{}, err
-			}
-			spec, err := loadAgentSpec(ctx, repository.pool, execution.AgentSpecRevisionID)
-			if err != nil {
-				return ports.AgentLifecycleBase{}, err
-			}
-			base.RecoverySource = &ports.AgentExecutionSource{Spec: spec, Execution: execution}
-		}
+	if agent.AgentSpecRevisionID == "" {
 		return base, nil
 	}
-	spec, err := loadAgentSpec(ctx, repository.pool, agent.AgentSpecRevisionID)
+	base.ConfiguredSpec, err = loadAgentSpec(ctx, repository.pool, agent.AgentSpecRevisionID)
 	if err != nil {
 		return ports.AgentLifecycleBase{}, err
 	}
-	execution, err := loadExecutionRevision(ctx, repository.pool, agent.ExecutionRevisionID)
+	base.SourceExecution, err = loadOptionalExecutionRevision(ctx, repository.pool, agent.ExecutionRevisionID)
 	if err != nil {
 		return ports.AgentLifecycleBase{}, err
 	}
-	base.ExecutableSpec = spec
-	base.ExecutableExecution = execution
+	if agent.ExecutionRevisionID == "" && agent.LastSuccessfulExecutionRevisionID != "" {
+		history, err := loadExecutionRevision(ctx, repository.pool, agent.LastSuccessfulExecutionRevisionID)
+		if err != nil {
+			return ports.AgentLifecycleBase{}, err
+		}
+		if history.AgentID != agent.AgentID {
+			return ports.AgentLifecycleBase{}, ports.ErrConcurrentChange
+		}
+		if history.AgentSpecRevisionID == base.ConfiguredSpec.ID &&
+			history.RuntimeRevision == agent.RuntimeRevision {
+			base.SourceExecution = history
+		}
+	}
 	return base, nil
 }
 
@@ -107,6 +107,9 @@ func (repository *Repository) BeginAgentRebuild(
 	case !errors.Is(err, ports.ErrNotFound):
 		return ports.AgentRebuildState{}, false, err
 	}
+	if err := lockAgentExecutionConfiguration(ctx, transaction, input.AgentID); err != nil {
+		return ports.AgentRebuildState{}, false, err
+	}
 	agent, err := loadAgentRecordForUpdate(ctx, transaction, input.AgentID)
 	if err != nil {
 		return ports.AgentRebuildState{}, false, err
@@ -118,13 +121,13 @@ func (repository *Repository) BeginAgentRebuild(
 	if err != nil {
 		return ports.AgentRebuildState{}, false, err
 	}
-	sourceExecution, err := loadExecutionRevision(
+	sourceExecution, err := loadOptionalExecutionRevision(
 		ctx, transaction, input.ExpectedExecutionRevisionID,
 	)
 	if err != nil {
 		return ports.AgentRebuildState{}, false, err
 	}
-	if !(ports.AgentExecutionSource{Spec: sourceSpec, Execution: sourceExecution}).MatchesAgent(agent) {
+	if !(ports.AgentRuntimeSource{Spec: sourceSpec, Execution: sourceExecution}).MatchesAgent(agent) {
 		return ports.AgentRebuildState{}, false, ports.ErrConcurrentChange
 	}
 	nextSpec, _, err := loadNextLifecycleRevisions(ctx, transaction, input.AgentID)
@@ -138,6 +141,9 @@ func (repository *Repository) BeginAgentRebuild(
 		input.Operation.TargetSpecRevisionID != input.TargetSpec.ID ||
 		input.RequestedEvent.AggregateSequence != agent.AggregateSequence+1 {
 		return ports.AgentRebuildState{}, false, ports.ErrConcurrentChange
+	}
+	if err := requireEnabledTemplateSpec(ctx, transaction, agent.OrganizationID, input.TargetSpec.Snapshot); err != nil {
+		return ports.AgentRebuildState{}, false, err
 	}
 	if err := insertAgentSpec(ctx, transaction, input.TargetSpec); err != nil {
 		return ports.AgentRebuildState{}, false, err
@@ -174,68 +180,14 @@ WHERE id = $1 AND active_operation_request_id = '' AND aggregate_sequence = $5
 		Agent: agent, SourceSpec: sourceSpec, SourceExecution: sourceExecution,
 		TargetSpec: input.TargetSpec, Operation: input.Operation,
 	}
+	if err := repository.advanceExecutionRevision(ctx, transaction, agent.OrganizationID); err != nil {
+		return ports.AgentRebuildState{}, false, err
+	}
 	if err := transaction.Commit(ctx); err != nil {
 		return ports.AgentRebuildState{}, false, fmt.Errorf("commit Agent rebuild transaction: %w", err)
 	}
 	repository.recordEventAppend(ctx, input.RequestedEvent.EventType)
 	return state, false, nil
-}
-
-func (repository *Repository) SettleAgentRebuildDrain(
-	ctx context.Context,
-	requestID string,
-	fingerprint string,
-	nextChildRequestID string,
-	now time.Time,
-) (ports.AgentRebuildState, error) {
-	transaction, err := repository.pool.Begin(ctx)
-	if err != nil {
-		return ports.AgentRebuildState{}, fmt.Errorf("begin Agent rebuild drain transaction: %w", err)
-	}
-	defer func() { _ = transaction.Rollback(ctx) }()
-	operation, err := loadLifecycleOperation(ctx, transaction, requestID, "FOR UPDATE")
-	if err != nil {
-		return ports.AgentRebuildState{}, err
-	}
-	if operation.Kind != domain.OperationRebuild || operation.RequestFingerprint != fingerprint {
-		return ports.AgentRebuildState{}, ports.ErrRequestConflict
-	}
-	if operation.State != domain.OperationRunning || operation.Phase != domain.PhaseDrain {
-		return loadAgentRebuildState(ctx, transaction, operation)
-	}
-	var admissionState string
-	err = transaction.QueryRow(ctx, `
-SELECT state FROM agent_controller.run_admissions
-WHERE agent_id = $1 AND state IN ('active', 'blocked_unknown_effect')
-ORDER BY admission_id LIMIT 1 FOR UPDATE`, operation.AgentID).Scan(&admissionState)
-	switch {
-	case err == nil && admissionState == "active":
-		return loadAgentRebuildState(ctx, transaction, operation)
-	case err == nil && admissionState == "blocked_unknown_effect":
-	case errors.Is(err, pgx.ErrNoRows):
-	case err != nil:
-		return ports.AgentRebuildState{}, fmt.Errorf("inspect Agent rebuild occupancy: %w", err)
-	default:
-		return ports.AgentRebuildState{}, fmt.Errorf("unsupported Run admission state %q", admissionState)
-	}
-	if err := advanceLifecycleOperation(
-		ctx, transaction, operation, domain.PhaseDrain, domain.PhaseNetworkFence,
-		nextChildRequestID, nil, nil, now,
-	); err != nil {
-		return ports.AgentRebuildState{}, err
-	}
-	operation, err = loadLifecycleOperation(ctx, transaction, requestID, "")
-	if err != nil {
-		return ports.AgentRebuildState{}, err
-	}
-	state, err := loadAgentRebuildState(ctx, transaction, operation)
-	if err != nil {
-		return ports.AgentRebuildState{}, err
-	}
-	if err := transaction.Commit(ctx); err != nil {
-		return ports.AgentRebuildState{}, fmt.Errorf("commit Agent rebuild drain: %w", err)
-	}
-	return state, nil
 }
 
 func (repository *Repository) AdvanceAgentRebuild(
@@ -249,7 +201,7 @@ func (repository *Repository) AdvanceAgentRebuild(
 		return ports.LifecycleAdvanceResult{}, fmt.Errorf("begin Agent rebuild phase transaction: %w", err)
 	}
 	defer func() { _ = transaction.Rollback(ctx) }()
-	operation, err := loadLifecycleOperation(ctx, transaction, input.RequestID, "FOR UPDATE")
+	operation, err := loadLifecycleExecutionMutation(ctx, transaction, input.RequestID)
 	if err != nil {
 		return ports.LifecycleAdvanceResult{}, err
 	}
@@ -265,16 +217,9 @@ func (repository *Repository) AdvanceAgentRebuild(
 	); err != nil {
 		return ports.LifecycleAdvanceResult{}, err
 	}
-	releasedRun, retainedRun := false, false
-	if input.ExpectedPhase == domain.PhaseRuntimeUpdate {
-		releasedRun, retainedRun, err = repository.releaseBlockedRunAdmission(
-			ctx, transaction, operation,
-			runReleaseBarrier{runtimeResult: input.RuntimeResult},
-			input.RunReleaseEvent, input.Now,
-		)
-		if err != nil {
-			return ports.LifecycleAdvanceResult{}, err
-		}
+	if input.ExpectedPhase == domain.PhaseRuntimeUpdate &&
+		(!provisionedRuntimeResult(*input.RuntimeResult) || input.RuntimeResult.RuntimeRevision == operation.SourceRuntimeRevision) {
+		return ports.LifecycleAdvanceResult{}, fmt.Errorf("invalid rebuilt Runtime result")
 	}
 	operation, err = loadLifecycleOperation(ctx, transaction, input.RequestID, "")
 	if err != nil {
@@ -288,12 +233,6 @@ func (repository *Repository) AdvanceAgentRebuild(
 		return ports.LifecycleAdvanceResult{}, fmt.Errorf("commit Agent rebuild phase: %w", err)
 	}
 	state := ports.LifecycleAdvanceResult{Agent: agent, Operation: operation}
-	state.RunReleaseOutcome = runReleaseOutcome(
-		input.ExpectedPhase == domain.PhaseRuntimeUpdate, releasedRun, retainedRun,
-	)
-	if releasedRun {
-		repository.recordEventAppend(ctx, ports.EventRunAdmissionReleased)
-	}
 	return state, nil
 }
 
@@ -305,7 +244,7 @@ func (repository *Repository) PublishAgentRebuild(
 		return ports.AgentRebuildState{}, fmt.Errorf("begin Agent rebuild publish transaction: %w", err)
 	}
 	defer func() { _ = transaction.Rollback(ctx) }()
-	operation, err := loadLifecycleOperation(ctx, transaction, input.RequestID, "FOR UPDATE")
+	operation, err := loadLifecycleExecutionMutation(ctx, transaction, input.RequestID)
 	if err != nil {
 		return ports.AgentRebuildState{}, err
 	}
@@ -321,53 +260,28 @@ func (repository *Repository) PublishAgentRebuild(
 	if operation.State != domain.OperationRunning || operation.Phase != domain.PhasePublish ||
 		operation.RuntimeResult == nil || operation.NetworkAttachment == nil ||
 		operation.NetworkAttachment.AttachmentState != ports.NetworkAttachmentOpen ||
-		input.AccessRevision == "" ||
-		input.Execution.AgentID != operation.AgentID ||
-		input.Execution.AgentSpecRevisionID != operation.TargetSpecRevisionID ||
-		input.Execution.RuntimeRevision != operation.RuntimeResult.RuntimeRevision ||
-		input.Execution.RuntimeExecutionID != operation.RuntimeResult.RuntimeExecutionID ||
-		input.Execution.RuntimeMCPEndpoint != operation.RuntimeResult.MCPEndpoint {
+		input.AccessRevision == "" {
 		return ports.AgentRebuildState{}, ports.ErrConcurrentChange
 	}
 	state, err := loadAgentRebuildState(ctx, transaction, operation)
 	if err != nil {
 		return ports.AgentRebuildState{}, err
 	}
-	if input.Execution.Revision != state.SourceExecution.Revision+1 ||
-		input.RebuiltEvent.AggregateSequence != state.Agent.AggregateSequence+1 {
+	if input.RebuiltEvent.AggregateSequence != state.Agent.AggregateSequence+1 {
 		return ports.AgentRebuildState{}, ports.ErrConcurrentChange
 	}
-	if err := insertExecutionRevision(ctx, transaction, input.Execution); err != nil {
+	if err := publishRuntimeTarget(ctx, transaction, operation, input.RebuiltEvent, input.Now); err != nil {
 		return ports.AgentRebuildState{}, err
 	}
+	if _, err := transaction.Exec(ctx, `UPDATE agent_controller.agents SET access_revision = $2 WHERE id = $1`,
+		operation.AgentID, input.AccessRevision); err != nil {
+		return ports.AgentRebuildState{}, fmt.Errorf("update rebuilt Agent access revision: %w", err)
+	}
 	result, err := transaction.Exec(ctx, `
-UPDATE agent_controller.agents
-SET lifecycle_state = 'available', executable_spec_revision_id = $2,
-    executable_execution_revision_id = $3,
-    last_successful_execution_revision_id = $3,
-    runtime_revision = $4, runtime_execution_id = $5, runtime_mcp_endpoint = $6,
-    access_revision = $7,
-    active_operation_request_id = '', failure_stage = '', failure_code = '', failure_detail = '',
-    aggregate_sequence = $8, updated_at = $9
-WHERE id = $1 AND active_operation_request_id = $10 AND aggregate_sequence = $11`,
-		operation.AgentID, input.Execution.AgentSpecRevisionID, input.Execution.ID,
-		input.Execution.RuntimeRevision, input.Execution.RuntimeExecutionID,
-		input.Execution.RuntimeMCPEndpoint, input.AccessRevision,
-		input.RebuiltEvent.AggregateSequence, input.Now, input.RequestID,
-		input.RebuiltEvent.AggregateSequence-1,
-	)
-	if err != nil {
-		return ports.AgentRebuildState{}, fmt.Errorf("publish rebuilt Agent projection: %w", err)
-	}
-	if result.RowsAffected() != 1 {
-		return ports.AgentRebuildState{}, ports.ErrConcurrentChange
-	}
-	result, err = transaction.Exec(ctx, `
 UPDATE agent_controller.agent_access_bindings
-SET access_revision = $2, prompt_image = $3, prompt_embedded_context = $4,
-    updated_at = $5
+SET access_revision = $2, updated_at = $3
 WHERE agent_id = $1 AND active = TRUE`, operation.AgentID, input.AccessRevision,
-		input.PromptCapabilities.Image, input.PromptCapabilities.EmbeddedContext, input.Now,
+		input.Now,
 	)
 	if err != nil {
 		return ports.AgentRebuildState{}, fmt.Errorf("update rebuilt Agent access: %w", err)
@@ -394,6 +308,9 @@ WHERE request_id = $1`, input.RequestID, input.Now); err != nil {
 	if err != nil {
 		return ports.AgentRebuildState{}, err
 	}
+	if err := repository.advanceExecutionRevision(ctx, transaction, state.Agent.OrganizationID); err != nil {
+		return ports.AgentRebuildState{}, err
+	}
 	if err := transaction.Commit(ctx); err != nil {
 		return ports.AgentRebuildState{}, fmt.Errorf("commit Agent rebuild publish: %w", err)
 	}
@@ -417,7 +334,7 @@ func (repository *Repository) FailAgentRebuild(
 		return ports.AgentRebuildState{}, fmt.Errorf("begin Agent rebuild failure transaction: %w", err)
 	}
 	defer func() { _ = transaction.Rollback(ctx) }()
-	operation, err := loadLifecycleOperation(ctx, transaction, input.RequestID, "FOR UPDATE")
+	operation, err := loadLifecycleExecutionMutation(ctx, transaction, input.RequestID)
 	if err != nil {
 		return ports.AgentRebuildState{}, err
 	}
@@ -441,31 +358,16 @@ func (repository *Repository) FailAgentRebuild(
 		input.FailedEvent.AggregateSequence != 0 {
 		return ports.AgentRebuildState{}, ports.ErrConcurrentChange
 	}
-	releasedRun, retainedRun := false, false
-	switch {
-	case input.RuntimeAbsenceProof == nil && !emptyRunAdmissionEvent(input.RunReleaseEvent):
-		return ports.AgentRebuildState{}, fmt.Errorf("run release event requires Runtime absence proof")
-	case input.RuntimeAbsenceProof != nil:
-		if input.PreserveExecutable {
-			return ports.AgentRebuildState{}, fmt.Errorf("invalid rebuild Runtime absence failure")
-		}
-		releasedRun, retainedRun, err = repository.releaseBlockedRunAdmission(
-			ctx, transaction, operation,
-			runReleaseBarrier{absenceProof: input.RuntimeAbsenceProof},
-			input.RunReleaseEvent, input.Now,
-		)
-		if err != nil {
-			return ports.AgentRebuildState{}, err
-		}
-		if releasedRun {
-			agent.AggregateSequence++
-		}
+	if input.RuntimeAbsenceProof != nil &&
+		(input.PreserveExecutable || operation.Phase != domain.PhaseRuntimeUpdate ||
+			!validRuntimeRemovalProof(operation, input.RuntimeAbsenceProof, input.Now)) {
+		return ports.AgentRebuildState{}, fmt.Errorf("invalid rebuild Runtime absence failure")
 	}
 	failedEvent := input.FailedEvent
 	failedEvent.AggregateSequence = agent.AggregateSequence + 1
 	query := `
 UPDATE agent_controller.agents
-SET lifecycle_state = 'unavailable', executable_spec_revision_id = '',
+SET runtime_state = 'unknown', runtime_reason = 'rebuild_failed', runtime_detail = '', runtime_observed_at = NULL,
     executable_execution_revision_id = '', runtime_revision = '',
     runtime_execution_id = '', runtime_mcp_endpoint = '',
     active_operation_request_id = '', failure_stage = $2, failure_code = $3,
@@ -475,6 +377,7 @@ WHERE id = $1 AND active_operation_request_id = $7 AND aggregate_sequence = $8`
 		query = `
 UPDATE agent_controller.agents
 SET active_operation_request_id = '', failure_stage = $2, failure_code = $3,
+    runtime_state = 'unknown', runtime_reason = 'runtime_recheck_required', runtime_detail = '', runtime_observed_at = $6,
     failure_detail = $4, aggregate_sequence = $5, updated_at = $6
 WHERE id = $1 AND active_operation_request_id = $7 AND aggregate_sequence = $8`
 	}
@@ -509,14 +412,11 @@ WHERE request_id = $1`, input.RequestID, input.Code, input.Detail, input.Retryab
 	if err != nil {
 		return ports.AgentRebuildState{}, err
 	}
+	if err := repository.advanceExecutionRevision(ctx, transaction, state.Agent.OrganizationID); err != nil {
+		return ports.AgentRebuildState{}, err
+	}
 	if err := transaction.Commit(ctx); err != nil {
 		return ports.AgentRebuildState{}, fmt.Errorf("commit Agent rebuild failure: %w", err)
-	}
-	state.RunReleaseOutcome = runReleaseOutcome(
-		input.RuntimeAbsenceProof != nil, releasedRun, retainedRun,
-	)
-	if releasedRun {
-		repository.recordEventAppend(ctx, ports.EventRunAdmissionReleased)
 	}
 	repository.recordEventAppend(ctx, input.FailedEvent.EventType)
 	return state, nil
@@ -548,11 +448,16 @@ func advanceLifecycleOperation(
 		}
 	}
 	result, err := transaction.Exec(ctx, `
-UPDATE agent_controller.agent_lifecycle_operations
+UPDATE agent_controller.agent_lifecycle_operations AS operation
 SET phase = $2, child_request_id = $3,
     network_attachment = COALESCE($4, network_attachment),
     runtime_result = COALESCE($5, runtime_result), updated_at = $6
-WHERE request_id = $1 AND state = 'running' AND phase = $7`,
+WHERE request_id = $1 AND state = 'running' AND phase = $7
+  AND EXISTS (
+      SELECT 1 FROM agent_controller.agents AS agent
+      WHERE agent.id = operation.agent_id
+        AND agent.active_operation_request_id = operation.request_id
+  )`,
 		operation.RequestID, next, nextChildRequestID,
 		nullJSON(networkPayload), nullJSON(runtimePayload), now, expected,
 	)
@@ -569,14 +474,11 @@ func validateRebuildAdvance(input ports.AdvanceAgentRebuild) error {
 	valid := false
 	switch {
 	case input.ExpectedPhase == domain.PhaseNetworkFence && input.NextPhase == domain.PhaseRuntimeUpdate:
-		valid = input.NetworkAttachment != nil && input.RuntimeResult == nil &&
-			emptyRunAdmissionEvent(input.RunReleaseEvent)
+		valid = input.NetworkAttachment != nil && input.RuntimeResult == nil
 	case input.ExpectedPhase == domain.PhaseRuntimeUpdate && input.NextPhase == domain.PhaseNetworkEnsure:
-		valid = input.NetworkAttachment == nil && input.RuntimeResult != nil &&
-			validRunEvent(input.RunReleaseEvent, domain.AdmissionReleased)
+		valid = input.NetworkAttachment == nil && input.RuntimeResult != nil
 	case input.ExpectedPhase == domain.PhaseNetworkEnsure && input.NextPhase == domain.PhasePublish:
-		valid = input.NetworkAttachment != nil && input.RuntimeResult == nil &&
-			emptyRunAdmissionEvent(input.RunReleaseEvent)
+		valid = input.NetworkAttachment != nil && input.RuntimeResult == nil
 	}
 	if !valid || input.RequestID == "" || input.Fingerprint == "" ||
 		input.NextChildRequestID == "" || input.Now.IsZero() {
@@ -593,10 +495,12 @@ func nullJSON(payload []byte) any {
 }
 
 func matchesRebuildSource(agent ports.AgentRecord, input ports.BeginAgentRebuild) bool {
-	return agent.RebuildSourceExecutionID() != "" && agent.ActiveOperationRequestID == "" &&
+	return agent.DesiredState == domain.DesiredEnabled && !agent.IdentityRevoked() &&
+		agent.HasConfiguredRuntime() && agent.ActiveOperationRequestID == "" &&
 		agent.AggregateSequence == input.ExpectedAggregateSequence &&
 		agent.AgentSpecRevisionID == input.ExpectedSpecRevisionID &&
-		agent.RebuildSourceExecutionID() == input.ExpectedExecutionRevisionID &&
+		(input.ExpectedExecutionRevisionID == agent.ExecutionRevisionID ||
+			(agent.ExecutionRevisionID == "" && input.ExpectedExecutionRevisionID == agent.LastSuccessfulExecutionRevisionID)) &&
 		agent.RuntimeRevision == input.ExpectedRuntimeRevision
 }
 
@@ -611,7 +515,7 @@ func loadAgentRebuildState(
 	if err != nil {
 		return ports.AgentRebuildState{}, err
 	}
-	sourceExecution, err := loadExecutionRevision(
+	sourceExecution, err := loadOptionalExecutionRevision(
 		ctx, queryer, operation.SourceExecutionRevisionID,
 	)
 	if err != nil {
@@ -625,6 +529,15 @@ func loadAgentRebuildState(
 		Agent: agent, SourceSpec: sourceSpec, SourceExecution: sourceExecution,
 		TargetSpec: targetSpec, Operation: operation,
 	}, nil
+}
+
+func loadOptionalExecutionRevision(
+	ctx context.Context, queryer catalogQueryer, executionID string,
+) (ports.ExecutionRecord, error) {
+	if executionID == "" {
+		return ports.ExecutionRecord{}, nil
+	}
+	return loadExecutionRevision(ctx, queryer, executionID)
 }
 
 func loadExecutionRevision(

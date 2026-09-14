@@ -8,8 +8,9 @@ import (
 
 func TestLoadAppliesDefaultsAndAllowsEmptyRuntimePrefill(t *testing.T) {
 	values := map[string]string{
-		"ANTNEST_IDENTITY_SERVICE_URL": "http://identity-service:8080",
-		"ANTNEST_AGENT_CONTROLLER_URL": "http://agent-controller:8080",
+		"ANTNEST_IDENTITY_SERVICE_URL":  "http://identity-service:8080",
+		"ANTNEST_AGENT_CONTROLLER_URL":  "http://agent-controller:8080",
+		"ANTNEST_AGENT_ACP_SERVICE_URL": "http://agent-acp-service:8080",
 	}
 	config, err := Load(func(key string) string { return values[key] })
 	if err != nil {
@@ -33,6 +34,7 @@ func TestLoadPreservesRuntimeImagePrefill(t *testing.T) {
 			values := map[string]string{
 				"ANTNEST_IDENTITY_SERVICE_URL":            "http://identity-service:8080",
 				"ANTNEST_AGENT_CONTROLLER_URL":            "http://agent-controller:8080",
+				"ANTNEST_AGENT_ACP_SERVICE_URL":           "http://agent-acp-service:8080",
 				"ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF": "  " + image + "  ",
 			}
 			config, err := Load(func(key string) string { return values[key] })
@@ -48,8 +50,9 @@ func TestLoadPreservesRuntimeImagePrefill(t *testing.T) {
 
 func TestLoadRejectsInvalidDependencies(t *testing.T) {
 	base := map[string]string{
-		"ANTNEST_IDENTITY_SERVICE_URL": "http://identity-service:8080",
-		"ANTNEST_AGENT_CONTROLLER_URL": "http://agent-controller:8080",
+		"ANTNEST_IDENTITY_SERVICE_URL":  "http://identity-service:8080",
+		"ANTNEST_AGENT_CONTROLLER_URL":  "http://agent-controller:8080",
+		"ANTNEST_AGENT_ACP_SERVICE_URL": "http://agent-acp-service:8080",
 	}
 	for _, test := range []struct {
 		key, value string
@@ -57,6 +60,8 @@ func TestLoadRejectsInvalidDependencies(t *testing.T) {
 	}{
 		{key: "ANTNEST_IDENTITY_SERVICE_URL", remove: true},
 		{key: "ANTNEST_AGENT_CONTROLLER_URL", value: "agent-controller"},
+		{key: "ANTNEST_AGENT_ACP_SERVICE_URL", remove: true},
+		{key: "ANTNEST_AGENT_ACP_SERVICE_URL", value: "file:///tmp/acp"},
 	} {
 		values := make(map[string]string, len(base)+1)
 		for key, value := range base {

@@ -1,116 +1,175 @@
-import type { AcpApplicationPort } from "../ports/acp-application.js";
-import type { AcceptedAcpRun } from "../ports/acp-application.js";
+import type { AcceptedAcpRun, SubmittedAcpRun } from "../ports/acp-application.js";
+import type { ConnectionBinding } from "../domain/types.js";
 import { DomainError } from "../domain/errors.js";
+import {
+  isExecutionAccessRevoked,
+  type ExecutionAccessSnapshot,
+  type ExecutionIdentity,
+} from "../domain/execution-configuration.js";
 import type { RunExecutionPort } from "./run-executor.js";
+import { InvalidationListeners } from "./invalidation-listeners.js";
 
 type RunSlot = {
+  binding: ConnectionBinding;
+  sessionId: string;
   controller: AbortController;
-  current: Promise<unknown>;
-  accepted?: AcceptedAcpRun;
-  execution?: Promise<unknown>;
+  finished: PromiseWithResolvers<void>;
+  waiters: Set<() => void>;
 };
 
-export interface RunLifecyclePort extends RunExecutionPort {
-  admit(
-    sessionId: string,
-    operation: (signal: AbortSignal) => Promise<AcceptedAcpRun>,
-  ): Promise<AcceptedAcpRun>;
+type AgentScope = Pick<ConnectionBinding, "organizationId" | "agentId">;
+
+export type RunSubmission = {
+  binding: ConnectionBinding;
+  sessionId: string;
+  outputChanged: () => void;
+};
+
+export interface RunLifecyclePort {
+  submit(
+    input: RunSubmission,
+    accept: (signal: AbortSignal) => Promise<AcceptedAcpRun>,
+  ): Promise<SubmittedAcpRun>;
   cancel(sessionId: string): Promise<void>;
 }
 
 export class RunSupervisor implements RunLifecyclePort {
   private readonly stopping = new AbortController();
   private readonly active = new Map<string, RunSlot>();
+  private readonly changes = new InvalidationListeners();
 
   public constructor(private readonly delegate: RunExecutionPort) {}
 
-  public admit(
-    sessionId: string,
-    operation: (signal: AbortSignal) => Promise<AcceptedAcpRun>,
-  ): Promise<AcceptedAcpRun> {
-    if (this.stopping.signal.aborted) {
-      return Promise.reject(
-        new DomainError("service_stopping", "Agent ACP Service is not accepting new Runs"),
-      );
-    }
-    if (this.active.has(sessionId)) {
-      return Promise.reject(
-        new DomainError("session_busy", "Session already has a non-terminal Run"),
-      );
-    }
-    const controller = new AbortController();
-    const slot: RunSlot = { controller, current: Promise.resolve() };
-    const admission = Promise.resolve()
-      .then(() => operation(AbortSignal.any([controller.signal, this.stopping.signal])))
-      .then((accepted) => {
-        slot.accepted = accepted;
-        return accepted;
-      });
-    slot.current = admission;
-    this.active.set(sessionId, slot);
-    void admission.catch(() => this.remove(sessionId, slot));
-    return admission;
+  public get stopSignal(): AbortSignal {
+    return this.stopping.signal;
   }
 
-  public execute(
-    input: Parameters<AcpApplicationPort["executeRun"]>[0],
-  ): ReturnType<AcpApplicationPort["executeRun"]> {
-    if (this.stopping.signal.aborted) {
-      return Promise.reject(
-        new DomainError("service_stopping", "Agent ACP Service is not accepting new Runs"),
-      );
-    }
-    const sessionId = input.accepted.sessionId;
-    const slot = this.active.get(sessionId) ?? {
-      controller: new AbortController(),
-      current: Promise.resolve(),
+  public occupancy(identity: ExecutionIdentity): { busy: boolean; activeSessionId: string | null } {
+    const slot = this.active.get(agentKey(identity));
+    return {
+      busy: slot !== undefined,
+      activeSessionId: slot?.binding.principalId === identity.principalId ? slot.sessionId : null,
     };
-    if (slot.execution !== undefined) {
-      return Promise.reject(new DomainError("session_busy", "Session Run is already executing"));
+  }
+
+  public subscribe(scope: AgentScope, changed: () => void): () => void {
+    return this.changes.subscribe(agentKey(scope), changed);
+  }
+
+  public async submit(
+    input: RunSubmission,
+    accept: (signal: AbortSignal) => Promise<AcceptedAcpRun>,
+  ): Promise<SubmittedAcpRun> {
+    if (this.stopping.signal.aborted) {
+      throw new DomainError("service_stopping", "Agent ACP Service is not accepting new Runs");
     }
-    if (slot.accepted !== undefined && slot.accepted.runId !== input.accepted.runId) {
-      return Promise.reject(new DomainError("session_busy", "Session Run admission changed"));
+    const key = agentKey(input.binding);
+    if (this.active.has(key)) {
+      throw new DomainError("agent_busy", "Agent already has an active Run");
     }
-    slot.accepted = input.accepted;
-    this.active.set(sessionId, slot);
-    const execution = Promise.resolve().then(() =>
-      this.delegate.execute({
-        ...input,
-        signal: AbortSignal.any([input.signal, slot.controller.signal, this.stopping.signal]),
-      }),
-    );
-    slot.execution = execution;
-    slot.current = execution;
-    void execution.finally(() => this.remove(sessionId, slot)).catch(() => undefined);
-    return execution;
+    const slot: RunSlot = {
+      binding: { ...input.binding },
+      sessionId: input.sessionId,
+      controller: new AbortController(),
+      finished: Promise.withResolvers<void>(),
+      waiters: new Set(),
+    };
+    this.active.set(key, slot);
+    this.changes.invalidate(key);
+    try {
+      const accepted = await accept(slot.controller.signal);
+      const completion = Promise.resolve().then(() =>
+        this.delegate.execute({
+          accepted,
+          signal: slot.controller.signal,
+          publish: () => {
+            notify(input.outputChanged);
+            return Promise.resolve();
+          },
+        }),
+      );
+      const finish = () => {
+        this.remove(key, slot);
+        notify(input.outputChanged);
+      };
+      // Observe failures even if the protocol connection disappears. The
+      // original promise still carries the real result to surviving callers.
+      void completion.then(finish, finish);
+      return { ...accepted, completion };
+    } catch (error) {
+      this.remove(key, slot);
+      throw error;
+    }
   }
 
   public async cancel(sessionId: string): Promise<void> {
-    const slot = this.active.get(sessionId);
-    if (slot === undefined) {
-      return;
+    const slots = [...this.active.values()].filter((slot) => slot.sessionId === sessionId);
+    for (const slot of slots) slot.controller.abort(new Error("ACP Session cancelled"));
+    await Promise.all(slots.map((slot) => slot.finished.promise));
+  }
+
+  // Only local dispatch quiescence. Remote stopping evidence is a separate fact.
+  public quiesceAgent(
+    scope: AgentScope,
+    mode: "wait" | "cancel",
+    stopWaiting: AbortSignal,
+  ): Promise<boolean> {
+    if (stopWaiting.aborted) return Promise.resolve(false);
+    const slot = this.active.get(agentKey(scope));
+    if (slot === undefined) return Promise.resolve(true);
+    if (mode === "cancel")
+      slot.controller.abort(new Error("Agent lifecycle requested execution cancellation"));
+    return waitForSlot(slot, stopWaiting);
+  }
+
+  public revokeAccess(snapshot: ExecutionAccessSnapshot): void {
+    for (const slot of this.active.values()) {
+      if (isExecutionAccessRevoked(snapshot, slot.binding))
+        slot.controller.abort(new DomainError("access_denied", "Agent access was revoked"));
     }
-    slot.controller.abort(new Error("ACP Session cancelled"));
-    await Promise.allSettled([slot.current]);
   }
 
   public stop(reason: Error): void {
-    if (!this.stopping.signal.aborted) {
-      this.stopping.abort(reason);
-    }
-    for (const slot of this.active.values()) {
-      slot.controller.abort(reason);
-    }
+    this.stopping.abort(reason);
+    for (const slot of this.active.values()) slot.controller.abort(reason);
   }
 
   public async shutdown(): Promise<void> {
     this.stop(new Error("Agent ACP Service is shutting down"));
-    await Promise.allSettled([...this.active.values()].map((slot) => slot.current));
+    await Promise.all([...this.active.values()].map((slot) => slot.finished.promise));
   }
 
-  private remove(sessionId: string, slot: RunSlot): void {
-    if (this.active.get(sessionId) === slot) {
-      this.active.delete(sessionId);
-    }
+  private remove(key: string, slot: RunSlot): void {
+    if (this.active.get(key) === slot) this.active.delete(key);
+    slot.finished.resolve();
+    for (const finish of slot.waiters) finish();
+    this.changes.invalidate(key);
+  }
+}
+
+function agentKey(scope: AgentScope): string {
+  return JSON.stringify([scope.organizationId, scope.agentId]);
+}
+
+function waitForSlot(slot: RunSlot, signal: AbortSignal): Promise<boolean> {
+  if (signal.aborted) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    const finish = (quiescent: boolean) => {
+      slot.waiters.delete(onFinished);
+      signal.removeEventListener("abort", onAbort);
+      resolve(quiescent);
+    };
+    const onFinished = () => finish(true);
+    const onAbort = () => finish(false);
+    slot.waiters.add(onFinished);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+function notify(outputChanged: () => void): void {
+  try {
+    outputChanged();
+  } catch {
+    // Delivery is a hint; reconnect reads persisted output and terminal state.
   }
 }

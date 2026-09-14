@@ -27,9 +27,9 @@ var runtimeRevisionPattern = regexp.MustCompile(`^rtv_[0-9a-f]{32}$`)
 type completionKind string
 
 const (
-	completionReady    completionKind = "ready"
-	completionDisabled completionKind = "disabled"
-	completionDeleted  completionKind = "deleted"
+	completionProvisioned completionKind = "provisioned"
+	completionDisabled    completionKind = "disabled"
+	completionDeleted     completionKind = "deleted"
 )
 
 type Client struct {
@@ -64,7 +64,7 @@ func (client *Client) InitializeRuntime(
 		Configuration runtimeConfigurationDTO `json:"configuration"`
 	}{Configuration: runtimeConfigurationPayload(configuration)}
 	return client.callRuntimeOperation(
-		ctx, requestID, agentID, "initialize", "initialize_runtime", payload, completionReady,
+		ctx, requestID, agentID, "initialize", "initialize_runtime", payload, completionProvisioned,
 	)
 }
 
@@ -86,7 +86,7 @@ func (client *Client) UpdateRuntime(
 		Configuration:    runtimeConfigurationPayload(configuration),
 	}
 	return client.callRuntimeOperation(
-		ctx, requestID, agentID, "update", "update_runtime", payload, completionReady,
+		ctx, requestID, agentID, "update", "update_runtime", payload, completionProvisioned,
 	)
 }
 
@@ -122,7 +122,7 @@ func (client *Client) EnableRuntime(
 		Configuration:    runtimeConfigurationPayload(configuration),
 	}
 	return client.callRuntimeOperation(
-		ctx, requestID, agentID, "enable", "enable_runtime", payload, completionReady,
+		ctx, requestID, agentID, "enable", "enable_runtime", payload, completionProvisioned,
 	)
 }
 
@@ -173,6 +173,7 @@ func (client *Client) InspectRuntime(
 		return ports.RuntimeInspection{}, dependencyFailure("invalid_response", true)
 	}
 	return ports.RuntimeInspection{
+		Phase: inspection.Phase, Reason: inspection.Reason, DiagnosticSummary: inspection.DiagnosticSummary, ObservedAt: inspection.ObservedAt,
 		AgentID: inspection.AgentID, RuntimeRevision: inspection.RuntimeRevision,
 		RuntimeExecutionID: inspection.RuntimeExecutionID,
 		MCPEndpoint:        inspection.MCPEndpoint,
@@ -289,11 +290,11 @@ func validRuntimeOperation(operation runtimeOperationDTO, completion completionK
 		return false
 	}
 	switch completion {
-	case completionReady:
-		return operation.Inspection.LifecycleState == "ready" &&
-			operation.Inspection.Health == "healthy" &&
-			strings.TrimSpace(operation.Inspection.RuntimeExecutionID) != "" &&
-			validMCPEndpoint(operation.Inspection.MCPEndpoint)
+	case completionProvisioned:
+		return operation.Inspection.LifecycleState == "provisioned" &&
+			operation.Inspection.Health == "unknown" &&
+			operation.Inspection.RuntimeExecutionID == "" &&
+			operation.Inspection.MCPEndpoint == ""
 	case completionDisabled:
 		return operation.Inspection.LifecycleState == "disabled" &&
 			operation.Inspection.Health == "absent" &&
@@ -317,7 +318,7 @@ func validRuntimeInspection(inspection runtimeInspectionDTO) bool {
 	if !runtimeRevisionPattern.MatchString(inspection.RuntimeRevision) ||
 		!oneOf(
 			inspection.LifecycleState,
-			"initializing", "ready", "updating", "disabling", "disabled",
+			"initializing", "provisioned", "updating", "disabling", "disabled",
 			"enabling", "deleting", "deleted", "failed", "unknown",
 		) || !oneOf(inspection.Health, "absent", "starting", "healthy", "unhealthy", "unknown") {
 		return false
@@ -328,7 +329,7 @@ func validRuntimeInspection(inspection runtimeInspectionDTO) bool {
 	switch inspection.LifecycleState {
 	case "failed":
 		return inspection.Health == "unhealthy" && inspection.MCPEndpoint == ""
-	case "ready":
+	case "provisioned":
 		return inspection.Health != "healthy" ||
 			(strings.TrimSpace(inspection.RuntimeExecutionID) != "" && validMCPEndpoint(inspection.MCPEndpoint))
 	case "disabled":
@@ -343,7 +344,7 @@ func validRuntimeInspection(inspection runtimeInspectionDTO) bool {
 }
 
 func validMCPEndpoint(value string) bool {
-	if value != strings.TrimSpace(value) {
+	if len(value) > ports.MaximumExecutionEndpointBytes || value != strings.TrimSpace(value) {
 		return false
 	}
 	endpoint, err := url.ParseRequestURI(value)
@@ -407,12 +408,16 @@ type runtimeOperationDTO struct {
 }
 
 type runtimeInspectionDTO struct {
-	AgentID            string `json:"agent_id"`
-	RuntimeRevision    string `json:"runtime_revision"`
-	LifecycleState     string `json:"lifecycle_state"`
-	Health             string `json:"health"`
-	MCPEndpoint        string `json:"mcp_endpoint"`
-	RuntimeExecutionID string `json:"runtime_execution_id"`
+	Phase              string    `json:"phase"`
+	Reason             string    `json:"reason,omitempty"`
+	DiagnosticSummary  string    `json:"diagnostic_summary,omitempty"`
+	ObservedAt         time.Time `json:"observed_at"`
+	AgentID            string    `json:"agent_id"`
+	RuntimeRevision    string    `json:"runtime_revision"`
+	LifecycleState     string    `json:"lifecycle_state"`
+	Health             string    `json:"health"`
+	MCPEndpoint        string    `json:"mcp_endpoint"`
+	RuntimeExecutionID string    `json:"runtime_execution_id"`
 }
 
 func decodeFailure(payload []byte, status int) error {

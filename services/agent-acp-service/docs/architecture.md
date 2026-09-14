@@ -1,7 +1,12 @@
 # Agent ACP Service Architecture
 
-> Status: Stage 2 implementation contract<br>
-> Updated: 2026-09-09
+> Status: B1 execution-boundary implementation in progress<br>
+> Updated: 2026-09-14
+
+> Production composition uses [local execution configuration](execution-configuration.md).
+> Agent settlement, old Runtime protection and workspace-state queries are locally wired.
+> Administrative audit queries are locally wired; cross-service consumers/integration remain incomplete.
+> Source compilation is not deployment acceptance.
 
 ## Mission
 
@@ -45,26 +50,25 @@ model. Trust, size bounds and deployment evidence are specified in
 ```text
 ConnectionBinding
   connection_id
-  agent_access_subject
+  organization_id
   principal_id
   agent_id
-  access_revision
 ```
 
-It is immutable for one connection. The opaque Agent-scoped access subject is
-resolved before the WebSocket is accepted and re-resolved before ACP Session
-management operations. Prompt admission instead relies on Agent Controller
-`acquire_run`, which authoritatively validates the same binding and active
-Identity membership in one path. Any change to its principal, Agent, access revision, or
-prompt capabilities requires Agent Controller to advance `access_revision`;
-the old connection then fails closed and must reconnect. The subject is never
-supplied by ACP Session parameters and is not a reusable user identity token.
+Gateway supplies the trusted identity tuple after authentication. ACP does not
+query Controller to establish a connection. Each resource method authorizes
+against the current local organization configuration. Access revision is a fact
+of the published grant and the accepted Run, not a frozen connection credential.
+Revocation cancels affected execution, detaches approval connections and closes
+output subscriptions before configuration acknowledgement. New-Run admission
+can close while existing access remains valid.
 
 ### Session
 
 ```text
 Session
   session_id
+  organization_id
   principal_id
   agent_id
   cwd = /workspace
@@ -77,7 +81,7 @@ Session
 ```
 
 A Session survives connections and Agent rebuilds. Every operation checks the
-current ConnectionBinding against the stored principal and Agent. Resume may
+current ConnectionBinding against the stored organization, principal and Agent. Resume may
 install only an empty client MCP revision. Nonempty `mcpServers` is rejected
 before writing state or replaying messages. Prompt admission also checks the
 stored revision after Session ownership, before acquiring a Run slot. A retained
@@ -95,40 +99,30 @@ Run
   request_id
   session_id
   state = admitting | running | completed | cancelled | failed | unresolved
-  admission_id?
+  deadline_at
   execution_snapshot?
   terminal facts?
 ```
 
-`request_id` is generated before Agent Controller admission and is durable.
-Only Agent Controller decides cross-Session Agent exclusivity. This service
-also forbids a second non-terminal Run in one Session so one conversation
-cannot fork its own history. A durable `cancel_requested_at` latch covers the
-complete `admitting -> running -> terminal` lifecycle; cancellation is not an
-in-memory executor-only operation.
+ACP's RunSupervisor owns one slot per organization/Agent across Sessions.
+The slot spans acceptance, execution and terminal persistence. Cancellation
+aborts the same lifetime but cannot release the slot before execution finishes.
+A durable cancellation latch covers Session close/delete and active work.
 
 ### RunExecutionSnapshot
 
-Session model/mode overrides belong to ACP, while enabled organization models,
-Agent defaults and credentials belong to Controller. See
-[Session configuration](session-configuration.md). `acp_sessions.configuration`
-stores only overrides; `configuration_revision` protects concurrent writes.
-The configuration change and a visible ordered Session event commit together;
-configuration events never enter LLM context. New/load/resume/fork return fresh
-configuration, and fork copies overrides without changing the source Session.
+Session overrides belong to ACP; available organization models, Agent defaults
+and credentials are published by Controller. See
+[Session configuration](session-configuration.md). The current local directory
+resolves an accepted Run into one immutable non-secret snapshot containing its
+logical Provider/model, model parameters, authorization and Runtime identity.
+It does not contain a Controller admission ticket or fixed credential reference.
 
-Run intent creation captures `runs.session_configuration` under the Session
-lock. Admission recovery uses that captured value, even if a later configuration
-write has committed. New Controller admissions must return a validated frozen
-configuration; only historical intent replay may omit this newly added field.
-No configuration request mutates Runtime or an active Run.
-
-The snapshot is copied from one successful `acquire_run` response and augmented
-with the client MCP revision captured in the durable Run intent. It freezes the Runtime MCP
-source digest, Agent execution-spec digest, and non-secret Provider credential
-version. It is immutable for the complete Tool loop. Credential resolution
-must return the admitted version before the first model request. The snapshot
-contains Runtime endpoint identity, but never a Provider secret.
+Run intent creation captures Session overrides under the Session lock.
+The local deadline is fixed at acceptance from `ANTNEST_ACP_RUN_TIMEOUT`.
+Startup never replays intent. ProviderClients owns volatile authentication and
+injects its current value into each outgoing request; rotation is invisible to
+the model loop. Retiring clients reject new holders and drain actual holders.
 
 ### Message And ToolAttempt
 
@@ -138,38 +132,35 @@ stored with `visible=false`. ToolAttempt stores status, source identity,
 request digest, bounded result summary, and Tool effect state; it does not
 store model credentials or raw secret headers.
 
-## Prompt Acceptance Transaction
+## Prompt Acceptance
 
 ```text
 session/prompt
-  -> authorize Session against ConnectionBinding
-  -> insert durable Run intent(state=admitting, request_id,
-       expected_access_revision, client_mcp_revision_id, session_configuration)
-  -> Agent Controller acquire_run(same request_id, principal_id,
-       expected_access_revision)
+  -> verify Session ownership
+  -> reserve organization/Agent execution slot
+  -> enter short organization configuration/access boundary
+  -> persist Run intent with captured Session overrides
+  -> resolve non-secret snapshot and local deadline
   -> transaction:
-       store RunExecutionSnapshot
+       persist snapshot
        append environment-change fact when needed
        append accepted user message
        advance Session execution baseline
        state=running
-  -> protocol-specific completion:
-       v1: run Tool loop, stream persisted updates, return stopReason at terminal state
-       v2: return PromptResponse {} before any update, then run Tool loop and emit
-           persisted updates through running -> idle state_update
+  -> leave configuration boundary
+  -> owned executor starts independently of protocol delivery
+  -> v1 observes completion; v2 acknowledges then observes durable updates
 ```
 
-If admission fails, the user message is not accepted or persisted. Once either
-protocol acknowledges the accepted prompt, the user message is durable. ACP v1
-completion is the blocking Prompt response; ACP v2 completion is the later
-`idle` `state_update`.
+Acceptance returns the pre-submission output cursor, so fast execution cannot
+outrun its first observer. A failed/disconnected subscriber does not strand
+accepted work. Local output invalidation is a hint backed by the transcript.
 
-Prompt intent creation, Session close/delete, and cancellation serialize on
-the same Session row. Closing or deleting a Session atomically records
-cancellation for every non-terminal Run. When cancellation races an uncertain
-`acquire_run`, the service settles that request with its original durable
-request ID, records any returned admission as cancelled, and closes it without
-starting model or Tool work.
+Session close/delete and cancellation serialize with Run-intent creation.
+If cancellation races a committed acceptance, the owned executor receives its
+aborted lifetime and performs terminal cleanup without beginning model/Tool work.
+Configuration publication waits only for short local commits, never the model,
+Runtime, user approval or complete Run.
 
 ## Tool Loop
 
@@ -180,8 +171,8 @@ starting model or Tool work.
    with transient Runtime guidance/Skill summaries, the system prompt,
    compression checkpoint, durable messages and labelled Run-start plan snapshot.
    See [Runtime context](runtime-context.md) and [Structured plans](structured-plan.md).
-3. Resolve the Provider credential for the active admission and hold it only in
-   process memory.
+3. Use the logical Provider handle acquired before Runtime setup. The model
+   transport, not the Run or Tool loop, receives current volatile authentication.
 4. Check the complete model-input budget before each model request.
 5. Call the model and persist/emit text or thought output. Mixed text and Tool
    calls are retained as one assistant response. Before persistence, derive each
@@ -205,8 +196,8 @@ starting model or Tool work.
 8. Stop on model completion, refusal, output limit, cancellation, context budget, or
    `max_model_requests`. Recheck cancellation after final output persistence,
    before choosing a completed outcome.
-9. Persist the exact stop reason and terminal Run facts before calling `finish_run`; retry
-   `finish_run` idempotently after uncertain transport failure.
+9. Persist the exact stop reason and terminal Run facts locally. Release the
+   Agent slot after completion; no Controller finish receipt is involved.
 
 Tool calls are not replayed automatically after timeout or process crash.
 Runtime MCP calls may leave `tool_effect_state=unknown` after an unconfirmed
@@ -263,6 +254,7 @@ context_checkpoints
 runs
 tool_attempts
 tool_permissions
+execution_configurations
 ```
 
 There are no cross-service foreign keys, views, triggers, or SQL queries.
@@ -282,9 +274,8 @@ See [Tool permissions](tool-permissions.md) for cancellation and restart boundar
 ```text
 src/domain/               pure state and value rules
 src/application/          Session commands, prompt admission, Tool loop
-src/ports/                Agent Controller, repository, model, MCP, telemetry
+src/ports/                execution configuration, repository, model, MCP, telemetry
 src/adapters/postgres/    private migrations and repository
-src/adapters/controller/  narrow Run admission RPC client
 src/adapters/model/       OpenAI-compatible model adapter
 src/adapters/mcp/         platform Runtime MCP client and network helpers
 src/transport/acp/        scoped official HTTP transport, WebSocket stream and versioned SDK adapters
@@ -301,37 +292,29 @@ its existing `acp.permission.wait` operation is owned by the permission
 decorator, including persistence. Recovery still contains legacy telemetry
 counters and is a documented remaining coupling. See [observability](observability.md).
 
-Agent Controller owns the only cross-service business contract consumed here:
-[`../../../contracts/agent-controller/run-api.md`](../../../contracts/agent-controller/run-api.md)
-and its revisioned machine-readable catalog
-[`../../../contracts/agent-controller/run-contract.json`](../../../contracts/agent-controller/run-contract.json).
-This service adapts that contract at its outbound port and must not infer
-Controller state from additional endpoints or database reads. Additive optional
-responses are compatible; required-field or semantic changes require a
-coordinated contract revision.
+Controller publishes the
+[execution configuration contract](../../../contracts/agent-acp/execution-api.md)
+to this service. ACP validates and persists the non-secret current projection;
+there is no outbound access/admission/credential/finish client. Normal usage
+never queries Controller's tables or endpoints.
 
 ## Recovery
 
-- `admitting` Run: retry `acquire_run` with the same request ID. A trusted
-  Controller rejection terminates the local intent; an unavailable or invalid
-  response leaves it recoverable and fails startup.
+- `admitting` Run: fail it with `service_restarted_before_execution`, or
+  preserve an already requested cancellation. Do not call Controller or execute
+  its prompt.
 - `running` Run after service restart: do not replay model or Tool work. An
   in-progress Tool is closed with unknown effect and makes the Run unresolved;
   calls retained in the assistant response but not yet dispatched are closed
   as not executed. A Run with no unknown Tool effect terminates failed and
-  quiescent. The exact result is reported idempotently through `finish_run`.
-- `completed/cancelled/failed/unresolved`: terminal and immutable except for
-  recording successful admission closure.
-- An uncertain `acquire_run`, a failed local acceptance transaction after
-  admission, a failed durable Run-event write, a failed local terminal
-  transaction, or an uncertain `finish_run` is not left stranded behind a
-  healthy process. A Run-event write failure is not flattened into an ordinary
-  Run failure: the Run remains recoverable so startup can close undispatched or
-  ambiguous Tool calls without leaving a partial context batch. The application
-  records every fact it can prove, marks the service unavailable, and requests
-  process replacement. Startup recovery is then the single owner that retries
-  the same durable request IDs. This is deliberately simpler than a second
-  in-process workflow scheduler.
+  quiescent. Results are persisted locally without Controller notification.
+- `completed/cancelled/failed/unresolved`: excluded from startup cleanup and
+  left unchanged, even when a legacy admission receipt is absent.
+- A failed local acceptance transaction, durable Run-event write or terminal
+  transaction requests process replacement when persistence is uncertain.
+  It is not flattened into a normal Run failure: startup must close retained
+  but undispatched or ambiguous Tool calls without leaving partial context.
+  Startup records interruption, never retries the prompt.
 - A failure handed to startup recovery does not emit a speculative ACP
   `idle/_failed` projection. The failing v2 connection is closed; reconnect/replay
   exposes the recovered terminal result after service replacement.
@@ -341,10 +324,10 @@ coordinated contract revision.
   connection. V2 also projects the latest durable Run as `running` or `idle`,
   even when historical replay was not requested; v1 adds no private state update.
 - Cancellation: the process-level Run supervisor indexes active work by durable
-  Session identity from admission through terminal completion, not by WebSocket
+  organization/Agent identity from acceptance through terminal completion, not by WebSocket
   connection and not only after execution starts. A currently authorized
   reconnect can therefore cancel work started through an older connection.
-  The durable cancellation latch prevents a late admission response from
+  The durable cancellation latch prevents a late acceptance commit from
   starting model or Tool work. One AbortSignal reaches model and MCP requests.
   The service emits idle/cancelled only after local executors become quiescent
   or records unresolved if that cannot be proven.
@@ -355,9 +338,9 @@ holds it until shutdown. A second worker fails startup; lock-connection loss
 is detected by a same-session heartbeat, stops readiness, aborts startup
 recovery and local execution, and immediately fail-stops the process for
 platform replacement. Worker-ownership loss does not enter graceful shutdown:
-the stale worker must not persist a terminal result or close an admission after
+the stale worker must not persist a terminal result after
 another worker can acquire the lock. The lock-loss handler is installed before
-recovery can make an external call; startup recovery races that failure signal
+recovery can make a storage call; startup recovery races that failure signal
 through an ownership-loss channel that is independent from ordinary service
 failures. The same channel preempts startup, recovery, and graceful cleanup;
 an earlier database or component error cannot hide lock loss behind a slower
@@ -376,9 +359,9 @@ is no polling timer. Subscribe before catch-up, advance the cursor only after
 delivery, and re-read when invalidated during delivery. The existing single
 worker per database owns all live invalidations; this is not multi-worker fanout.
 
-Model/Tool execution and admission closure never wait for socket delivery.
+Model/Tool execution and terminal persistence never wait for socket delivery.
 An online v1 Prompt response separately waits for its preceding notifications;
-v2 emits idle only after transcript and admission closure are durable. Each
+v2 emits idle only after transcript and local terminal facts are durable. Each
 output operation has a 30-second bound. Disconnection, authorization failure,
 or stalled delivery closes/detaches the connection; it does not cancel durable
 execution. Reconnect/load repairs delivery from the retained transcript.
@@ -441,7 +424,7 @@ errors are not classified as network/provider availability failures.
 
 The same fail-stop rule applies when local Run persistence can no longer prove
 its terminal state. The service never removes an in-memory executor and keeps
-serving as though the Agent admission had been closed.
+serving as though execution had safely finished.
 
 Shutdown first clears readiness, then terminates ACP transports and cancels
 active execution. Server, supervisor, worker-lock, and PostgreSQL cleanup are
@@ -450,7 +433,7 @@ exits non-zero for platform replacement.
 
 ## Invariants
 
-1. One Session belongs to one principal and one Agent forever.
+1. One Session belongs to one organization, principal and Agent forever.
 2. One accepted prompt has one durable Run and one accepted user message.
 3. A Run reads one immutable execution snapshot for its entire lifetime.
 4. A Provider secret is never durable in this service.
@@ -472,3 +455,20 @@ exits non-zero for platform replacement.
     per call before normal termination, or repaired during restart recovery;
     context reconstruction never exposes a partial Tool batch to the next model
     request.
+
+### Trusted Identity Header Values
+
+The execution tuple uses opaque IDs, not an ACP-owned naming convention.
+The HTTP adapter accepts one header-safe value per Organization/Principal/Agent,
+up to 200 characters, preserving punctuation such as `+` and `@` exactly.
+Missing/duplicate, comma-joined, control-character and padded values are rejected
+before protocol/state handling. Protocol connection identity and local resource
+authorization remain separate; a well-formed tuple grants no Agent access.
+
+The same adapter check applies to management audit identity headers. Audit role
+checks and organization scoping remain in the application service. Configuration,
+audit and settlement JSON schemas preserve opaque identifiers without importing
+HTTP concerns into the domain. The Runtime MCP adapter rejects a binding whose
+execution ID cannot be represented unchanged in its outbound header before any
+connection or Tool dispatch. PostgreSQL representation errors fail configuration
+application without publishing or acknowledging the failed revision.

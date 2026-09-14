@@ -56,7 +56,7 @@ function phaseRPC(kind, name) {
   return route ? ["antnest-runtime-egress", ...route] : undefined;
 }
 
-function phaseDependencies(kind, name, failed) {
+function phaseDependencies(kind, name) {
   const primary = phaseRPC(kind, name);
   const dependencies = primary ? [primary] : [];
   const phase = name.replace("lifecycle.", "");
@@ -72,11 +72,6 @@ function phaseDependencies(kind, name, failed) {
       "GET",
       "/internal/agent-networks/{agent_id}",
     ]);
-  if (
-    !failed &&
-    ["runtime_initialize", "runtime_update", "runtime_enable"].includes(phase)
-  )
-    dependencies.push(["antnest-runtime", "GET", "/status"]);
   return dependencies;
 }
 
@@ -307,6 +302,7 @@ export function inspectWorkflow(
     kind = "create",
     outcome = "completed",
     agentID,
+    runtimeRevision,
     allowRetries = false,
   } = {},
 ) {
@@ -384,6 +380,7 @@ export function inspectWorkflow(
     ),
     "legacy executor is still involved",
   );
+  if (kind === "create") assertNoReadiness(tree, trace.spans);
   const stageName = (phase) =>
     kind === "create" ? phase : `lifecycle.${phase}`;
   const stages = failed
@@ -431,6 +428,14 @@ export function inspectWorkflow(
       );
     const children = (attempt) =>
       trace.spans.filter((span) => tree.chain(span).includes(attempt));
+    if (
+      [
+        "runtime_initialize",
+        "lifecycle.runtime_update",
+        "lifecycle.runtime_enable",
+      ].includes(name)
+    )
+      assertNoReadiness(tree, matches.flatMap(children));
     // Cross-attempt evidence is valid only after a business commit, followed by read-only replay.
     const committingAttempt = matches
       .filter((attempt) => hasProjection(tree, children(attempt)))
@@ -467,7 +472,7 @@ export function inspectWorkflow(
     const dependencies =
       settled || absentDelete || failureStage
         ? []
-        : phaseDependencies(kind, name, failed);
+        : phaseDependencies(kind, name);
     let previous;
     for (const dependency of dependencies) {
       const rpc = descendants
@@ -477,20 +482,18 @@ export function inspectWorkflow(
         .sort((left, right) => left.startTime - right.startTime)
         .find((span) => !previous || span.startTime >= previous.startTime);
       assert(rpc, `${name} missing successful RPC ${dependency.join(" ")}`);
-      assertRPCParent(
-        tree,
-        rpc,
-        dependency[0] === "antnest-runtime"
-          ? "runtime-controller"
-          : "agent-controller",
-      );
-      if (dependency[0] === "antnest-runtime")
-        assert(
-          tree.chain(rpc).includes(previous),
-          "Runtime status is not verified by the Runtime operation",
-        );
+      assertRPCParent(tree, rpc, "agent-controller");
       previous = rpc;
     }
+    if (!failureStage)
+      assertCreationCompletion(
+        tree,
+        descendants,
+        name,
+        agentID,
+        requestID,
+        runtimeRevision,
+      );
     runtimeAbsenceProven ||= runtimeAbsent(tree, descendants, agentID);
     return {
       name,
@@ -515,3 +518,112 @@ export function inspectWorkflow(
     warnings: 0,
   };
 }
+
+function assertCreationCompletion(
+  tree,
+  descendants,
+  name,
+  agentID,
+  requestID,
+  runtimeRevision,
+) {
+  const phase = name.replace("lifecycle.", "");
+  if (
+    !["runtime_initialize", "runtime_update", "runtime_enable"].includes(phase)
+  )
+    return;
+
+  const childID =
+    "acr_" +
+    createHash("sha256")
+      .update(requestID + "\0" + phase)
+      .digest("hex")
+      .slice(0, 32);
+  const command = descendants.find(
+    (span) =>
+      rpcMatches(tree, span, [
+        "runtime-controller",
+        "POST",
+        "/internal/runtimes/{agent_id}/" + phase.slice(8),
+      ]) &&
+      successful(span) &&
+      response(span)?.state === "completed",
+  );
+  assert(command, "completed Runtime RPC response missing");
+  assertRPCParent(tree, command, "agent-controller");
+  const client = tree.parent(command);
+  assert.equal(
+    tag(client, "antnest.operation.request_id"),
+    childID,
+    "Runtime CLIENT request mismatch",
+  );
+  assert.equal(
+    tag(client, "antnest.agent.id"),
+    agentID,
+    "Runtime CLIENT Agent mismatch",
+  );
+  const result = response(command);
+  assert.equal(
+    result.agent_id,
+    agentID,
+    "Runtime completion belongs to another Agent",
+  );
+  assert.equal(
+    result.request_id,
+    childID,
+    "Runtime completion belongs to another command",
+  );
+  assert.equal(
+    result.kind,
+    phase.slice(8) + "_runtime",
+    "Runtime command kind mismatch",
+  );
+  assert.equal(
+    result.effect,
+    "completed",
+    "Runtime creation effect is not complete",
+  );
+  assert(result.target_revision, "Runtime creation target missing");
+  if (runtimeRevision !== undefined)
+    assert.equal(
+      result.target_revision,
+      runtimeRevision,
+      "created target differs from observed target",
+    );
+  const current = result.inspection;
+  assert.equal(
+    current?.agent_id,
+    agentID,
+    "Runtime completion snapshot Agent mismatch",
+  );
+  assert.equal(
+    current?.runtime_revision,
+    result.target_revision,
+    "Runtime completion snapshot target mismatch",
+  );
+  assert.equal(
+    current?.lifecycle_state,
+    "provisioned",
+    "creation must not assert readiness",
+  );
+  assert.equal(current?.health, "unknown", "creation must not assert health");
+  assert(
+    !current?.runtime_execution_id && !current?.mcp_endpoint,
+    "creation must not fabricate an execution binding",
+  );
+}
+
+function assertNoReadiness(tree, descendants) {
+  assert(
+    !descendants.some(
+      (span) =>
+        span.operationName === "runtime.status.verify" ||
+        (tree.service(span) === "antnest-runtime" &&
+          tag(span, "http.route") === "/status") ||
+        (tree.service(span) === "runtime-controller" &&
+          tag(span, "peer.service") === "antnest-runtime"),
+    ),
+    "creation must not wait for Runtime /status in any attempt",
+  );
+}
+export { response as rpcPayload, assertRPCParent };

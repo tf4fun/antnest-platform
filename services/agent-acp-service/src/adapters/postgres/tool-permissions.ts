@@ -4,7 +4,13 @@ import { sessionConfigurationSchema } from "../../domain/session-configuration.j
 import type { PermissionRepository, PermissionRequest } from "../../ports/tool-permissions.js";
 import type { PostgresKernel } from "./kernel.js";
 
-type OwnerRow = { principal_id: string; agent_id: string; configuration: unknown; state: string };
+type OwnerRow = {
+  organization_id: string;
+  principal_id: string;
+  agent_id: string;
+  configuration: unknown;
+  state: string;
+};
 type RunRow = { expected_access_revision: string; usable: boolean };
 
 export class PostgresToolPermissions implements PermissionRepository {
@@ -19,6 +25,7 @@ export class PostgresToolPermissions implements PermissionRepository {
         [request.runId, request.call.id, encodedRequest(request)],
       );
       return {
+        organizationId: owner.organization_id,
         principalId: owner.principal_id,
         agentId: owner.agent_id,
         accessRevision: run.expected_access_revision,
@@ -79,7 +86,7 @@ async function lockRequest(client: PoolClient, request: PermissionRequest) {
   await client.query("SET LOCAL lock_timeout = '5s'");
   await client.query("SET LOCAL statement_timeout = '10s'");
   const sessions = await client.query<OwnerRow>(
-    "SELECT principal_id, agent_id, configuration, state FROM acp_sessions WHERE id = $1 FOR UPDATE",
+    "SELECT organization_id, principal_id, agent_id, configuration, state FROM acp_sessions WHERE id = $1 FOR UPDATE",
     [request.sessionId],
   );
   await client.query("SELECT id FROM runs WHERE id = $1 AND session_id = $2 FOR UPDATE", [
@@ -89,7 +96,7 @@ async function lockRequest(client: PoolClient, request: PermissionRequest) {
   // Check wall-clock time after both locks; transaction now() predates lock waits.
   const runs = await client.query<RunRow>(
     `SELECT expected_access_revision, (state = 'running' AND cancel_requested_at IS NULL AND
-     (execution_snapshot->>'admissionDeadline')::timestamptz > clock_timestamp()) AS usable
+     deadline_at > clock_timestamp()) AS usable
      FROM runs WHERE id = $1 AND session_id = $2`,
     [request.runId, request.sessionId],
   );

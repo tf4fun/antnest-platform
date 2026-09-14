@@ -34,7 +34,6 @@ export type ModelDelta = { kind: "message" | "thought"; text: string };
 export type ModelRequest = {
   purpose?: "permission_judge";
   snapshot: RunExecutionSnapshot;
-  credential: string;
   messages: ModelMessage[];
   tools: ModelToolDefinition[];
   signal: AbortSignal;
@@ -43,6 +42,12 @@ export type ModelRequest = {
 
 export interface ModelPort {
   complete(request: ModelRequest): Promise<ModelResult>;
+}
+
+export type AuthenticatedModelRequest = ModelRequest & { credential: string };
+
+export interface AuthenticatedModelTransport {
+  complete(request: AuthenticatedModelRequest): Promise<ModelResult>;
 }
 
 export class ModelError extends Error {

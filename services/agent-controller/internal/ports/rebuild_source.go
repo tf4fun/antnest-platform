@@ -2,25 +2,30 @@ package ports
 
 import "soft/antnest-platform/services/agent-controller/internal/domain"
 
-func (record AgentRecord) RebuildSourceExecutionID() string {
-	if record.DesiredState != domain.DesiredEnabled || record.IdentityRevoked() ||
-		record.AgentSpecRevisionID == "" || record.RuntimeRevision == "" {
-		return ""
+// A configured resource can be managed before any execution has become healthy.
+func (record AgentRecord) HasConfiguredRuntime() bool {
+	if record.AgentSpecRevisionID == "" || record.RuntimeRevision == "" ||
+		record.FailureCode == "lifecycle_invariant_failed" || record.LifecycleState != domain.AgentCreated ||
+		record.ActivationState != domain.ActivationEnabled {
+		return false
 	}
-	if record.LifecycleState == domain.AgentAvailable {
-		return record.ExecutionRevisionID
-	}
-	if record.LifecycleState == domain.AgentUnavailable && record.ExecutionRevisionID == "" &&
-		record.RuntimeExecutionID == "" && record.RuntimeMCPEndpoint == "" &&
-		record.FailureCode != "lifecycle_invariant_failed" {
-		return record.LastSuccessfulExecutionRevisionID
-	}
-	return ""
+	return (record.ExecutionRevisionID != "" && record.RuntimeExecutionID != "" && record.RuntimeMCPEndpoint != "") ||
+		(record.ExecutionRevisionID == "" && record.RuntimeExecutionID == "" && record.RuntimeMCPEndpoint == "")
 }
 
-func (source AgentExecutionSource) MatchesAgent(agent AgentRecord) bool {
-	return source.Execution.ID != "" && source.Execution.ID == agent.RebuildSourceExecutionID() &&
-		source.Spec.ID == agent.AgentSpecRevisionID && source.Spec.AgentID == agent.AgentID &&
-		source.Execution.AgentID == agent.AgentID && source.Execution.AgentSpecRevisionID == source.Spec.ID &&
+func (source AgentRuntimeSource) MatchesAgent(agent AgentRecord) bool {
+	if !agent.HasConfiguredRuntime() || source.Spec.ID != agent.AgentSpecRevisionID ||
+		source.Spec.AgentID != agent.AgentID {
+		return false
+	}
+	if source.Execution.ID == "" {
+		return agent.ExecutionRevisionID == ""
+	}
+	expected := agent.ExecutionRevisionID
+	if expected == "" {
+		expected = agent.LastSuccessfulExecutionRevisionID
+	}
+	return source.Execution.ID == expected && source.Execution.AgentID == agent.AgentID &&
+		source.Execution.AgentSpecRevisionID == source.Spec.ID &&
 		source.Execution.RuntimeRevision == agent.RuntimeRevision
 }

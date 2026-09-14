@@ -1,129 +1,71 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { PromptCoordinator } from "../../src/application/prompt-coordinator.js";
-import {
-  AgentControllerError,
-  type AgentControllerPort,
-  type AcquireRunResult,
-} from "../../src/ports/agent-controller.js";
-import type { AcceptRunInput, RunRepository } from "../../src/ports/run-repository.js";
-import type { ConnectionBinding, ContentBlock, SessionRecord } from "../../src/domain/types.js";
+import type { ContentBlock } from "../../src/domain/types.js";
+import type { RunIntent, RunRepository } from "../../src/ports/run-repository.js";
+import { executionConfiguration } from "../fixtures/execution-configuration.js";
+import { binding, sessionRecord } from "../support/fixtures.js";
+import { localExecution } from "../support/local-execution.js";
 
-const binding: ConnectionBinding = {
-  connectionId: "connection-1",
-  agentAccessSubject: "subject-1",
-  principalId: "principal-1",
-  agentId: "agent-1",
-  accessRevision: "access-1",
-};
+const now = new Date("2026-08-30T00:00:00Z");
 
-const session: SessionRecord = {
-  id: "session-1",
-  principalId: "principal-1",
-  agentId: "agent-1",
-  cwd: "/workspace",
-  state: "active",
-  title: null,
-  forkedFromSessionId: null,
-  clientMcpRevisionId: "client-mcp-1",
-  lastExecutionRevision: "execution-1",
-  lastMessageSequence: 1,
-  createdAt: new Date("2026-08-30T00:00:00Z"),
-  updatedAt: new Date("2026-08-30T00:00:00Z"),
-};
-
-const acquired: AcquireRunResult = {
-  admissionId: "admission-1",
-  admissionDeadline: new Date("2026-08-30T00:10:00Z"),
-  agentSpecRevision: "config-2",
-  executionRevision: "execution-2",
-  runtimeMcpSourceDigest: "a".repeat(64),
-  agentExecutionSpecDigest: "b".repeat(64),
-  credentialVersion: "credential-version-1",
-  runtime: {
-    revision: "runtime-2",
-    executionId: "runtime-execution-2",
-    mcpEndpoint: "http://runtime-2:8080/mcp",
-  },
-  executionSpec: {
-    systemPrompt: "You are useful.",
-    contextPolicyVersion: "context-v1",
-    skillInstructions: [],
-    model: {
-      baseUrl: "https://api.example.test/v1",
-      model: "example-model",
-      contextWindow: 64_000,
-      maxOutputTokens: 4_096,
-      supportsImages: false,
-    },
-    maxModelRequests: 12,
-    credentialRef: "credential-1",
-  },
-};
-
-function createRepository() {
-  const accepted: AcceptRunInput[] = [];
-  const createRunIntent = vi.fn<RunRepository["createRunIntent"]>((input) =>
-    Promise.resolve({
-      id: input.runId,
-      requestId: input.requestId,
-      sessionId: input.sessionId,
-      clientMcpRevisionId: session.clientMcpRevisionId,
-      expectedAccessRevision: input.expectedAccessRevision,
-      state: "admitting",
-      userMessageId: input.userMessageId,
-      prompt: input.prompt,
-    }),
-  );
-  const acceptRun = vi.fn<RunRepository["acceptRun"]>((input) =>
-    Promise.resolve().then(() => {
-      accepted.push(input);
-      return "accepted" as const;
-    }),
-  );
-  const requestCancellation = vi.fn<RunRepository["requestCancellation"]>(() => Promise.resolve());
-  const rejectRun = vi.fn<RunRepository["rejectRun"]>(() => Promise.resolve("failed"));
-  const repository: RunRepository = {
-    getSession: vi.fn(() => Promise.resolve(session)),
-    createRunIntent,
-    requestCancellation,
-    acceptRun,
-    rejectRun,
+async function setup(initialize = true) {
+  const local = await localExecution(false);
+  const configuration = executionConfiguration();
+  configuration.agents[0]!.execution_revision = "execution-2";
+  configuration.agents[0]!.runtime = {
+    runtime_revision: "runtime-2",
+    runtime_execution_id: "runtime-execution-2",
+    mcp_endpoint: "http://runtime-2:8080/mcp",
   };
-  return {
+  if (initialize) await local.directory.apply(configuration);
+  const session = {
+    ...sessionRecord(),
+    lastExecutionRevision: "execution-1",
+    lastMessageSequence: 1,
+  };
+  const repository = {
+    getSession: vi.fn<RunRepository["getSession"]>().mockResolvedValue(session),
+    createRunIntent: vi.fn<RunRepository["createRunIntent"]>((input) =>
+      Promise.resolve({
+        id: input.runId,
+        requestId: input.requestId,
+        sessionId: input.sessionId,
+        clientMcpRevisionId: session.clientMcpRevisionId,
+        expectedAccessRevision: input.expectedAccessRevision,
+        state: "admitting",
+        userMessageId: input.userMessageId,
+        prompt: input.prompt,
+      }),
+    ),
+    acceptRun: vi.fn<RunRepository["acceptRun"]>().mockResolvedValue("accepted"),
+    requestCancellation: vi.fn<RunRepository["requestCancellation"]>().mockResolvedValue(),
+    rejectRun: vi.fn<RunRepository["rejectRun"]>().mockResolvedValue("failed"),
+  };
+  const recoveryRequired = vi.fn();
+  let nextId = 0;
+  const coordinator = new PromptCoordinator({
     repository,
-    accepted,
-    createRunIntent,
-    requestCancellation,
-    acceptRun,
-    rejectRun,
+    directory: local.directory,
+    protection: { hasUnstoppedRuntimeCalls: () => Promise.resolve(false) },
+    runTimeoutMs: 600_000,
+    recoveryRequired,
+    id: () => `id-${++nextId}`,
+    now: () => now,
+  });
+  const input = {
+    binding: binding(),
+    sessionId: session.id,
+    prompt: [{ type: "text", text: "hello" }],
   };
-}
-
-function createController(acquireRun: AgentControllerPort["acquireRun"]): AgentControllerPort {
-  return {
-    resolveAgentAccess: vi.fn(),
-    getSessionConfiguration: vi.fn(),
-    acquireRun,
-    resolveCredential: vi.fn(),
-    finishRun: vi.fn(),
-  };
+  return { ...local, configuration, repository, recoveryRequired, coordinator, input };
 }
 
 describe("PromptCoordinator", () => {
   it.each(["/帮助", "ordinary request"])(
-    "classifies %s only after admission without changing the saved prompt",
+    "classifies %s after local acceptance without changing the saved prompt",
     async (text) => {
-      const { repository, accepted, createRunIntent } = createRepository();
-      const acquireRun = vi.fn<AgentControllerPort["acquireRun"]>(() => Promise.resolve(acquired));
-      const coordinator = new PromptCoordinator({
-        repository,
-        agentController: createController(acquireRun),
-        executions: { markAdmissionFinished: vi.fn() },
-        recoveryRequired: vi.fn(),
-        id: sequentialIds(),
-        now: () => new Date("2026-08-30T00:00:00Z"),
-      });
+      const test = await setup();
       const prompt: ContentBlock[] = [
         {
           type: "resource",
@@ -131,327 +73,191 @@ describe("PromptCoordinator", () => {
         },
         { type: "text", text },
       ];
-      const result = await coordinator.accept({ binding, sessionId: session.id, prompt });
+      const result = await test.coordinator.accept({ ...test.input, prompt });
       expect(result.command).toEqual(text === "/帮助" ? { name: "help", locale: "zh" } : undefined);
-      expect(acquireRun).toHaveBeenCalledOnce();
-      expect(accepted).toHaveLength(1);
-      expect(createRunIntent).toHaveBeenCalledWith(expect.objectContaining({ prompt }));
+      expect(test.repository.acceptRun).toHaveBeenCalledOnce();
+      expect(test.repository.createRunIntent).toHaveBeenCalledWith(
+        expect.objectContaining({ prompt }),
+      );
     },
   );
 
-  it("does not persist an accepted user message when admission is rejected", async () => {
-    const { repository, accepted, createRunIntent, rejectRun } = createRepository();
-    const recoveryRequired = vi.fn();
-    const acquireRun = vi.fn<AgentControllerPort["acquireRun"]>(() =>
-      Promise.reject(new AgentControllerError("agent_rebuilding", "Agent is rebuilding", true)),
-    );
-    const controller = createController(acquireRun);
-    const coordinator = new PromptCoordinator({
-      repository,
-      agentController: controller,
-      executions: { markAdmissionFinished: vi.fn() },
-      recoveryRequired,
-      id: sequentialIds(),
-      now: () => new Date("2026-08-30T00:00:00Z"),
+  it("rejects an unavailable Agent before creating an intent or accepting a message", async () => {
+    const test = await setup();
+    test.configuration.revision = 2;
+    test.configuration.agents[0]!.accepting_runs = false;
+    test.configuration.agents[0]!.unavailable_reason = "Agent is rebuilding";
+    await test.directory.apply(test.configuration);
+    await expect(test.coordinator.accept(test.input)).rejects.toMatchObject({
+      code: "agent_unavailable",
     });
-
-    await expect(
-      coordinator.accept({
-        binding,
-        sessionId: session.id,
-        prompt: [{ type: "text", text: "hello" }],
-      }),
-    ).rejects.toMatchObject({ code: "agent_rebuilding" });
-
-    expect(accepted).toEqual([]);
-    expect(createRunIntent).toHaveBeenCalledWith(
-      expect.objectContaining({
-        userMessageId: "id-3",
-        prompt: [{ type: "text", text: "hello" }],
-      }),
-    );
-    expect(rejectRun).toHaveBeenCalledOnce();
-    expect(recoveryRequired).not.toHaveBeenCalled();
+    expect(test.repository.createRunIntent).not.toHaveBeenCalled();
+    expect(test.repository.acceptRun).not.toHaveBeenCalled();
+    expect(test.repository.rejectRun).not.toHaveBeenCalled();
+    expect(test.recoveryRequired).not.toHaveBeenCalled();
   });
 
-  it("keeps an admitting intent recoverable when the Controller result is uncertain", async () => {
-    const { repository, accepted, rejectRun } = createRepository();
-    const recoveryRequired = vi.fn();
-    const acquireRun = vi.fn<AgentControllerPort["acquireRun"]>(() =>
-      Promise.reject(
-        new AgentControllerError(
-          "dependency_unavailable",
-          "Agent Controller response was not trusted",
-          true,
-        ),
-      ),
-    );
-    const coordinator = new PromptCoordinator({
-      repository,
-      agentController: createController(acquireRun),
-      executions: { markAdmissionFinished: vi.fn() },
-      recoveryRequired,
-      id: sequentialIds(),
-      now: () => new Date("2026-08-30T00:00:00Z"),
+  it("refuses cold-start execution without manufacturing an uncertain Controller admission", async () => {
+    const test = await setup(false);
+    await expect(test.coordinator.accept(test.input)).rejects.toMatchObject({
+      code: "configuration_not_ready",
     });
-
-    await expect(
-      coordinator.accept({
-        binding,
-        sessionId: session.id,
-        prompt: [{ type: "text", text: "hello" }],
-      }),
-    ).rejects.toMatchObject({ code: "dependency_unavailable" });
-
-    expect(accepted).toEqual([]);
-    expect(rejectRun).not.toHaveBeenCalled();
-    expect(recoveryRequired).toHaveBeenCalledOnce();
+    expect(test.repository.createRunIntent).not.toHaveBeenCalled();
+    expect(test.repository.acceptRun).not.toHaveBeenCalled();
+    expect(test.recoveryRequired).not.toHaveBeenCalled();
   });
 
-  it("treats an internal Controller error as an uncertain admission result", async () => {
-    const { repository, accepted, rejectRun } = createRepository();
-    const recoveryRequired = vi.fn();
-    const acquireRun = vi.fn<AgentControllerPort["acquireRun"]>(() =>
-      Promise.reject(new AgentControllerError("internal_error", "internal service error", true)),
-    );
-    const coordinator = new PromptCoordinator({
-      repository,
-      agentController: createController(acquireRun),
-      executions: { markAdmissionFinished: vi.fn() },
-      recoveryRequired,
-      id: sequentialIds(),
-      now: () => new Date("2026-08-30T00:00:00Z"),
+  it.each(["createRunIntent", "acceptRun"] as const)(
+    "leaves uncertain local %s commits for interruption cleanup without replay",
+    async (operation) => {
+      const test = await setup();
+      test.repository[operation].mockRejectedValueOnce(new Error("commit acknowledgement lost"));
+      await expect(test.coordinator.accept(test.input)).rejects.toThrow(
+        "commit acknowledgement lost",
+      );
+      expect(test.repository[operation]).toHaveBeenCalledOnce();
+      expect(test.repository.rejectRun).not.toHaveBeenCalled();
+      expect(test.recoveryRequired).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("rejects an invalid local model without persisting an accepted prompt", async () => {
+    const test = await setup();
+    test.configuration.revision = 2;
+    test.configuration.models[0]!.enabled = false;
+    await test.directory.apply(test.configuration);
+    await expect(test.coordinator.accept(test.input)).rejects.toMatchObject({
+      code: "model_unavailable",
     });
-
-    await expect(
-      coordinator.accept({
-        binding,
-        sessionId: session.id,
-        prompt: [{ type: "text", text: "hello" }],
-      }),
-    ).rejects.toMatchObject({ code: "internal_error" });
-
-    expect(accepted).toEqual([]);
-    expect(rejectRun).not.toHaveBeenCalled();
-    expect(recoveryRequired).toHaveBeenCalledOnce();
+    expect(test.repository.createRunIntent).toHaveBeenCalledOnce();
+    expect(test.repository.acceptRun).not.toHaveBeenCalled();
+    expect(test.repository.rejectRun).toHaveBeenCalledExactlyOnceWith(
+      "id-1",
+      "model_unavailable",
+      now,
+    );
+    expect(test.recoveryRequired).not.toHaveBeenCalled();
   });
 
-  it("keeps the admitted intent recoverable when local acceptance fails", async () => {
-    const { repository, acceptRun, rejectRun } = createRepository();
-    const recoveryRequired = vi.fn();
-    acceptRun.mockRejectedValueOnce(new Error("database unavailable"));
-    const acquireRun = vi.fn<AgentControllerPort["acquireRun"]>(() => Promise.resolve(acquired));
-    const finishRun = vi.fn<AgentControllerPort["finishRun"]>();
-    const controller = { ...createController(acquireRun), finishRun };
-    const coordinator = new PromptCoordinator({
-      repository,
-      agentController: controller,
-      executions: { markAdmissionFinished: vi.fn() },
-      recoveryRequired,
-      id: sequentialIds(),
-      now: () => new Date("2026-08-30T00:00:00Z"),
-    });
-
-    await expect(
-      coordinator.accept({
-        binding,
-        sessionId: session.id,
-        prompt: [{ type: "text", text: "hello" }],
-      }),
-    ).rejects.toThrow("database unavailable");
-
-    expect(rejectRun).not.toHaveBeenCalled();
-    expect(finishRun).not.toHaveBeenCalled();
-    expect(recoveryRequired).toHaveBeenCalledOnce();
+  it("requires interruption cleanup if persisting the rejected intent fails", async () => {
+    const test = await setup();
+    test.configuration.revision = 2;
+    test.configuration.models[0]!.enabled = false;
+    await test.directory.apply(test.configuration);
+    test.repository.rejectRun.mockRejectedValueOnce(new Error("rejection commit lost"));
+    await expect(test.coordinator.accept(test.input)).rejects.toThrow("rejection commit lost");
+    expect(test.repository.rejectRun).toHaveBeenCalledOnce();
+    expect(test.repository.acceptRun).not.toHaveBeenCalled();
+    expect(test.recoveryRequired).toHaveBeenCalledOnce();
   });
 
   it("atomically accepts the snapshot, environment fact, and user message", async () => {
-    const { repository, accepted, createRunIntent } = createRepository();
-    const recoveryRequired = vi.fn();
-    const acquireRun = vi.fn<AgentControllerPort["acquireRun"]>(() => Promise.resolve(acquired));
-    const controller = createController(acquireRun);
-    const coordinator = new PromptCoordinator({
-      repository,
-      agentController: controller,
-      executions: { markAdmissionFinished: vi.fn() },
-      recoveryRequired,
-      id: sequentialIds(),
-      now: () => new Date("2026-08-30T00:00:00Z"),
-    });
-
-    const cancellation = new AbortController();
-    const result = await coordinator.accept(
-      {
-        binding,
-        sessionId: session.id,
-        prompt: [{ type: "text", text: "hello" }],
-      },
-      cancellation.signal,
-    );
-
+    const test = await setup();
+    const result = await test.coordinator.accept(test.input);
     expect(result.snapshot.executionRevision).toBe("execution-2");
-    expect(result.sessionInfoUpdate).toEqual({
-      title: "hello",
-      updatedAt: "2026-08-30T00:00:00.000Z",
-    });
-    expect(accepted).toHaveLength(1);
-    expect(accepted[0]).toMatchObject({
+    expect(result.snapshot.deadlineAt).toEqual(new Date("2026-08-30T00:10:00Z"));
+    expect(result.outputSequence).toBe(1);
+    expect(result.sessionInfoUpdate).toEqual({ title: "hello", updatedAt: now.toISOString() });
+    expect(test.repository.acceptRun).toHaveBeenCalledOnce();
+    expect(test.repository.acceptRun.mock.calls[0]?.[0]).toMatchObject({
       runId: result.runId,
+      snapshot: result.snapshot,
       environmentFact: {
+        kind: "environment_change",
         visible: false,
         previousExecutionRevision: "execution-1",
         currentExecutionRevision: "execution-2",
       },
       sessionTitle: "hello",
     });
-    expect(createRunIntent).toHaveBeenCalledWith(
+    expect(test.repository.acceptRun.mock.calls[0]?.[0].environmentFact?.content).toContain("/tmp");
+    expect(test.repository.createRunIntent).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({
         userMessageId: result.userMessageId,
-        prompt: [{ type: "text", text: "hello" }],
+        expectedAccessRevision: "access-1",
+        prompt: test.input.prompt,
       }),
     );
-    expect(acquireRun).toHaveBeenCalledWith(
-      {
-        requestId: result.requestId,
-        agentId: "agent-1",
-        principalId: "principal-1",
-        expectedAccessRevision: "access-1",
-        sessionId: "session-1",
-      },
-      cancellation.signal,
-    );
-    expect(recoveryRequired).not.toHaveBeenCalled();
+    expect(test.recoveryRequired).not.toHaveBeenCalled();
   });
 
-  it("acquires a fresh immutable execution snapshot for every accepted prompt", async () => {
-    const { repository } = createRepository();
-    const acquireRun = vi
-      .fn<AgentControllerPort["acquireRun"]>()
-      .mockResolvedValueOnce(acquired)
-      .mockResolvedValueOnce({
-        ...acquired,
-        admissionId: "admission-2",
-        executionRevision: "execution-3",
-        runtime: {
-          revision: "runtime-3",
-          executionId: "runtime-execution-3",
-          mcpEndpoint: "http://runtime-3:8080/mcp",
-        },
-      });
-    const coordinator = new PromptCoordinator({
-      repository,
-      agentController: createController(acquireRun),
-      executions: { markAdmissionFinished: vi.fn() },
-      recoveryRequired: vi.fn(),
-      id: sequentialIds(),
-      now: () => new Date("2026-08-30T00:00:00Z"),
-    });
-
-    const first = await coordinator.accept({
-      binding,
-      sessionId: session.id,
-      prompt: [{ type: "text", text: "first" }],
-    });
-    const second = await coordinator.accept({
-      binding,
-      sessionId: session.id,
-      prompt: [{ type: "text", text: "second" }],
-    });
-
+  it("captures a fresh immutable local execution snapshot for every accepted prompt", async () => {
+    const test = await setup();
+    const first = await test.coordinator.accept(test.input);
+    const original = structuredClone(first.snapshot);
+    test.configuration.revision = 2;
+    test.configuration.agents[0]!.execution_revision = "execution-3";
+    test.configuration.agents[0]!.runtime = {
+      runtime_revision: "runtime-3",
+      runtime_execution_id: "runtime-execution-3",
+      mcp_endpoint: "http://runtime-3:8080/mcp",
+    };
+    await test.directory.apply(test.configuration);
+    const second = await test.coordinator.accept(test.input);
+    expect(first.snapshot).toEqual(original);
     expect(first.snapshot).toMatchObject({
       executionRevision: "execution-2",
       runtime: { revision: "runtime-2" },
     });
     expect(second.snapshot).toMatchObject({
+      configurationRevision: 2,
       executionRevision: "execution-3",
       runtime: { revision: "runtime-3" },
     });
-    expect(acquireRun).toHaveBeenCalledTimes(2);
+    expect(test.repository.acceptRun).toHaveBeenCalledTimes(2);
   });
 
-  it("closes a late admission without accepting the prompt when cancellation races acquire", async () => {
-    const { repository, acceptRun, requestCancellation } = createRepository();
-    const acquire = Promise.withResolvers<AcquireRunResult>();
-    const acquireRun = vi.fn<AgentControllerPort["acquireRun"]>(() => acquire.promise);
-    const finishRun = vi.fn<AgentControllerPort["finishRun"]>(() => Promise.resolve());
-    const markAdmissionFinished = vi.fn(() => Promise.resolve());
-    const coordinator = new PromptCoordinator({
-      repository,
-      agentController: { ...createController(acquireRun), finishRun },
-      executions: { markAdmissionFinished },
-      recoveryRequired: vi.fn(),
-      id: sequentialIds(),
-      now: () => new Date("2026-08-30T00:00:00Z"),
+  it("records cancellation during intent persistence locally before accepting the prompt", async () => {
+    const test = await setup();
+    const intent = Promise.withResolvers<RunIntent>();
+    const started = Promise.withResolvers<RunIntent>();
+    const original = test.repository.createRunIntent.getMockImplementation()!;
+    test.repository.createRunIntent.mockImplementationOnce(async (input) => {
+      started.resolve(await original(input));
+      return intent.promise;
     });
-    acceptRun.mockResolvedValueOnce("cancelled");
     const cancellation = new AbortController();
-    const admission = coordinator.accept(
-      {
-        binding,
-        sessionId: session.id,
-        prompt: [{ type: "text", text: "stop" }],
-      },
-      cancellation.signal,
+    const acceptance = test.coordinator.accept(test.input, cancellation.signal);
+    const record = await started.promise;
+    cancellation.abort();
+    intent.resolve(record);
+    await expect(acceptance).rejects.toMatchObject({ code: "run_cancelled" });
+    expect(test.repository.requestCancellation).toHaveBeenCalledExactlyOnceWith(record.id, now);
+    expect(test.repository.rejectRun).toHaveBeenCalledExactlyOnceWith(
+      record.id,
+      "run_cancelled",
+      now,
     );
-    await vi.waitFor(() => expect(acquireRun).toHaveBeenCalledOnce());
+    expect(test.repository.acceptRun).not.toHaveBeenCalled();
+    expect(test.recoveryRequired).not.toHaveBeenCalled();
+  });
 
-    cancellation.abort(new Error("cancelled"));
-    acquire.resolve(acquired);
-
-    await expect(admission).rejects.toMatchObject({ code: "run_cancelled" });
-    expect(requestCancellation).toHaveBeenCalledOnce();
-    expect(finishRun).toHaveBeenCalledWith(
-      expect.objectContaining({
-        admissionId: "admission-1",
-        terminalClass: "cancelled",
-        executorState: "quiescent",
-        toolEffectState: "none",
-      }),
-    );
-    expect(markAdmissionFinished).toHaveBeenCalledOnce();
+  it("does not expose an accepted result when the commit observes cancellation", async () => {
+    const test = await setup();
+    test.repository.acceptRun.mockResolvedValueOnce("cancelled");
+    await expect(test.coordinator.accept(test.input)).rejects.toMatchObject({
+      code: "run_cancelled",
+    });
+    expect(test.repository.acceptRun).toHaveBeenCalledOnce();
+    expect(test.repository.rejectRun).not.toHaveBeenCalled();
+    expect(test.recoveryRequired).not.toHaveBeenCalled();
   });
 
   it("does not create an intent when cancellation is already known", async () => {
-    const { repository, createRunIntent } = createRepository();
-    const coordinator = new PromptCoordinator({
-      repository,
-      agentController: createController(vi.fn()),
-      executions: { markAdmissionFinished: vi.fn() },
-      recoveryRequired: vi.fn(),
-      id: sequentialIds(),
-      now: () => new Date("2026-08-30T00:00:00Z"),
-    });
+    const test = await setup();
     const cancellation = new AbortController();
-    cancellation.abort(new Error("cancelled"));
-
-    await expect(
-      coordinator.accept(
-        {
-          binding,
-          sessionId: session.id,
-          prompt: [{ type: "text", text: "stop" }],
-        },
-        cancellation.signal,
-      ),
-    ).rejects.toMatchObject({ code: "run_cancelled" });
-    expect(createRunIntent).not.toHaveBeenCalled();
+    cancellation.abort();
+    await expect(test.coordinator.accept(test.input, cancellation.signal)).rejects.toMatchObject({
+      code: "run_cancelled",
+    });
+    expect(test.repository.createRunIntent).not.toHaveBeenCalled();
   });
 
-  it("rejects unsupported attachments before creating an intent or acquiring a Run", async () => {
-    const { repository, createRunIntent } = createRepository();
-    const acquireRun = vi.fn<AgentControllerPort["acquireRun"]>();
-    const coordinator = new PromptCoordinator({
-      repository,
-      agentController: createController(acquireRun),
-      executions: { markAdmissionFinished: vi.fn() },
-      recoveryRequired: vi.fn(),
-      id: sequentialIds(),
-      now: () => new Date(),
-    });
+  it("rejects unsupported attachments before creating an intent", async () => {
+    const test = await setup();
     await expect(
-      coordinator.accept({
-        binding,
-        sessionId: session.id,
+      test.coordinator.accept({
+        ...test.input,
         prompt: [
           {
             type: "resource",
@@ -464,12 +270,8 @@ describe("PromptCoordinator", () => {
         ],
       }),
     ).rejects.toMatchObject({ code: "unsupported_resource_content" });
-    expect(createRunIntent).not.toHaveBeenCalled();
-    expect(acquireRun).not.toHaveBeenCalled();
+    expect(test.repository.createRunIntent).not.toHaveBeenCalled();
+    expect(test.repository.acceptRun).not.toHaveBeenCalled();
+    expect(test.recoveryRequired).not.toHaveBeenCalled();
   });
 });
-
-function sequentialIds(): () => string {
-  let next = 0;
-  return () => `id-${++next}`;
-}

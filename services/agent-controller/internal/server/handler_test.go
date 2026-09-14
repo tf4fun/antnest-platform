@@ -26,7 +26,7 @@ func TestCatalogHandlerCreatesModelProfileFromProviderReference(t *testing.T) {
 	t.Parallel()
 
 	service := &catalogServiceStub{modelView: sampleModelProfileView()}
-	handler, err := NewHandler(service, &lifecycleServiceStub{}, &runServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil })
+	handler, err := NewHandler(service, &lifecycleServiceStub{}, &agentConfigurationServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil })
 	if err != nil {
 		t.Fatalf("new handler: %v", err)
 	}
@@ -66,7 +66,7 @@ func TestCatalogHandlerCreatesModelProfileFromProviderReference(t *testing.T) {
 }
 
 func TestBuiltinCatalogIsNotAControllerEndpoint(t *testing.T) {
-	handler, err := NewHandler(&catalogServiceStub{}, &lifecycleServiceStub{}, &runServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil })
+	handler, err := NewHandler(&catalogServiceStub{}, &lifecycleServiceStub{}, &agentConfigurationServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func TestCatalogHandlerKeepsOnlyTemplateHistory(t *testing.T) {
 	templateView.Revision = 3
 	templateView.SystemPrompt = "historical"
 	service := &catalogServiceStub{modelView: sampleModelProfileView(), templateView: templateView}
-	handler, err := NewHandler(service, &lifecycleServiceStub{}, &runServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil })
+	handler, err := NewHandler(service, &lifecycleServiceStub{}, &agentConfigurationServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil })
 	if err != nil {
 		t.Fatalf("new handler: %v", err)
 	}
@@ -138,7 +138,7 @@ func TestCatalogHandlerRejectsUnknownFieldsAndTrailingJSON(t *testing.T) {
 	t.Parallel()
 
 	service := &catalogServiceStub{}
-	handler, err := NewHandler(service, &lifecycleServiceStub{}, &runServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil })
+	handler, err := NewHandler(service, &lifecycleServiceStub{}, &agentConfigurationServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil })
 	if err != nil {
 		t.Fatalf("new handler: %v", err)
 	}
@@ -165,7 +165,7 @@ func TestCatalogHandlerListsCurrentTemplatesWithNullableCursor(t *testing.T) {
 	service := &catalogServiceStub{templatePage: application.TemplatePage{
 		Items: []application.TemplateView{sampleTemplateView()}, NextAfterID: "template-1",
 	}}
-	handler, err := NewHandler(service, &lifecycleServiceStub{}, &runServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil })
+	handler, err := NewHandler(service, &lifecycleServiceStub{}, &agentConfigurationServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil })
 	if err != nil {
 		t.Fatalf("new handler: %v", err)
 	}
@@ -207,6 +207,7 @@ func TestCatalogHandlerMapsStableErrors(t *testing.T) {
 		{name: "invalid", err: application.ErrInvalidInput, status: http.StatusBadRequest, code: "invalid_request"},
 		{name: "not found", err: ports.ErrNotFound, status: http.StatusNotFound, code: "reference_not_found"},
 		{name: "disabled", err: ports.ErrDisabledReference, status: http.StatusConflict, code: "reference_disabled"},
+		{name: "execution capacity", err: &ports.ExecutionCapacityError{RequiredBytes: 1025, LimitBytes: 1024}, status: http.StatusConflict, code: "execution_configuration_capacity_exceeded"},
 		{name: "request conflict", err: ports.ErrRequestConflict, status: http.StatusConflict, code: "request_id_conflict"},
 		{name: "concurrent", err: ports.ErrConcurrentChange, status: http.StatusConflict, code: "lifecycle_conflict"},
 		{name: "Agent missing", err: application.ErrAgentNotFound, status: http.StatusNotFound, code: "agent_not_found"},
@@ -217,7 +218,7 @@ func TestCatalogHandlerMapsStableErrors(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			service := &catalogServiceStub{getModelErr: test.err}
-			handler, err := NewHandler(service, &lifecycleServiceStub{}, &runServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil })
+			handler, err := NewHandler(service, &lifecycleServiceStub{}, &agentConfigurationServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil })
 			if err != nil {
 				t.Fatalf("new handler: %v", err)
 			}
@@ -246,20 +247,19 @@ func TestLifecycleHandlerCreatesAgentWithStableContract(t *testing.T) {
 		Agent: application.AgentView{
 			AgentID: "agent-1", OrganizationID: "org-1", OwnerUserID: "user-1",
 			Name: "Research Agent", DesiredState: domain.DesiredEnabled,
-			LifecycleState: domain.AgentAvailable, AccessRevision: "access-revision-1",
+			LifecycleState: domain.AgentCreated, ActivationState: domain.ActivationEnabled, RuntimeState: domain.RuntimeAvailable, AccessRevision: "access-revision-1",
 			AgentSpecRevisionID: "agentspec-1", ExecutionRevisionID: "execution-1",
 			LastSuccessfulExecutionRevisionID: "execution-1",
 			RuntimeRevision:                   "runtime-1", RuntimeExecutionID: "runtime-execution-1",
 			RuntimeMCPEndpoint: "http://runtime:8091/mcp", CreatedAt: now, UpdatedAt: now,
 		},
-		AgentAccessSubject: "access-1",
 		Operation: application.OperationView{
 			RequestID: "request-agent-1", AgentID: "agent-1", Kind: domain.OperationCreate,
 			Phase: domain.PhaseCompleted, State: domain.OperationCompleted,
 			CreatedAt: now, UpdatedAt: now,
 		},
 	}}
-	handler, err := NewHandler(&catalogServiceStub{}, lifecycle, &runServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil })
+	handler, err := NewHandler(&catalogServiceStub{}, lifecycle, &agentConfigurationServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil })
 	if err != nil {
 		t.Fatalf("new handler: %v", err)
 	}
@@ -291,8 +291,7 @@ func TestLifecycleHandlerCreatesAgentWithStableContract(t *testing.T) {
 				MCPEndpoint string `json:"mcp_endpoint"`
 			} `json:"runtime"`
 		} `json:"agent"`
-		AgentAccessSubject string `json:"agent_access_subject"`
-		Operation          struct {
+		Operation struct {
 			State string `json:"state"`
 		} `json:"operation"`
 	}
@@ -301,7 +300,7 @@ func TestLifecycleHandlerCreatesAgentWithStableContract(t *testing.T) {
 	}
 	if payload.Agent.AgentID != "agent-1" || payload.Agent.AgentSpecRevision != "agentspec-1" ||
 		payload.Agent.Runtime.MCPEndpoint != "http://runtime:8091/mcp" ||
-		payload.AgentAccessSubject != "access-1" || payload.Operation.State != "completed" {
+		payload.Operation.State != "completed" {
 		t.Fatalf("response = %+v", payload)
 	}
 }
@@ -315,7 +314,7 @@ func TestLifecycleHandlerGetsDurableOperation(t *testing.T) {
 		Phase: domain.PhaseRuntimeInitialize, State: domain.OperationRunning,
 		CreatedAt: now, UpdatedAt: now,
 	}}
-	handler, err := NewHandler(&catalogServiceStub{}, lifecycle, &runServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil })
+	handler, err := NewHandler(&catalogServiceStub{}, lifecycle, &agentConfigurationServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil })
 	if err != nil {
 		t.Fatalf("new handler: %v", err)
 	}
@@ -345,7 +344,7 @@ func TestLifecycleHandlerUsesOperationSpecificNotFoundError(t *testing.T) {
 
 	lifecycle := &lifecycleServiceStub{err: ports.ErrNotFound}
 	handler, err := NewHandler(
-		&catalogServiceStub{}, lifecycle, &runServiceStub{}, &agentQueryServiceStub{},
+		&catalogServiceStub{}, lifecycle, &agentConfigurationServiceStub{}, &agentQueryServiceStub{},
 		&agentEventServiceStub{}, &networkPolicyServiceStub{},
 		func(context.Context) error { return nil },
 	)
@@ -378,7 +377,7 @@ func TestLifecycleHandlerRequestsAgentRebuildWithStableContract(t *testing.T) {
 		Agent: application.AgentView{
 			AgentID: "agent-1", OrganizationID: "org-1", OwnerUserID: "user-1",
 			Name: "Research Agent", DesiredState: domain.DesiredEnabled,
-			LifecycleState: domain.AgentAvailable, AgentSpecRevisionID: "agentspec-2",
+			LifecycleState: domain.AgentCreated, ActivationState: domain.ActivationEnabled, RuntimeState: domain.RuntimeAvailable, AgentSpecRevisionID: "agentspec-2",
 			ExecutionRevisionID: "execution-2", RuntimeRevision: "runtime-2",
 			RuntimeExecutionID: "runtime-execution-2",
 			RuntimeMCPEndpoint: "http://runtime-2:8091/mcp", CreatedAt: now, UpdatedAt: now,
@@ -389,7 +388,7 @@ func TestLifecycleHandlerRequestsAgentRebuildWithStableContract(t *testing.T) {
 			State: domain.OperationCompleted, CreatedAt: now, UpdatedAt: now,
 		},
 	}}
-	handler, err := NewHandler(&catalogServiceStub{}, lifecycle, &runServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil })
+	handler, err := NewHandler(&catalogServiceStub{}, lifecycle, &agentConfigurationServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil })
 	if err != nil {
 		t.Fatalf("new handler: %v", err)
 	}
@@ -433,7 +432,7 @@ func TestLifecycleHandlerRequestsAgentDisableWithStableContract(t *testing.T) {
 	lifecycle := &lifecycleServiceStub{disableResult: application.DisableAgentResult{
 		Agent: application.AgentView{
 			AgentID: "agent-1", DesiredState: domain.DesiredDisabled,
-			LifecycleState: domain.AgentDisabled, RuntimeRevision: "runtime-disabled",
+			LifecycleState: domain.AgentCreated, ActivationState: domain.ActivationDisabled, RuntimeState: domain.RuntimeAbsent, RuntimeRevision: "runtime-disabled",
 		},
 		Operation: application.OperationView{
 			RequestID: "request-disable-1", AgentID: "agent-1",
@@ -442,7 +441,7 @@ func TestLifecycleHandlerRequestsAgentDisableWithStableContract(t *testing.T) {
 		},
 	}}
 	handler, err := NewHandler(
-		&catalogServiceStub{}, lifecycle, &runServiceStub{}, &agentQueryServiceStub{},
+		&catalogServiceStub{}, lifecycle, &agentConfigurationServiceStub{}, &agentQueryServiceStub{},
 		&agentEventServiceStub{}, &networkPolicyServiceStub{},
 		func(context.Context) error { return nil },
 	)
@@ -483,7 +482,7 @@ func TestLifecycleHandlerRequestsAgentEnableWithStableContract(t *testing.T) {
 	lifecycle := &lifecycleServiceStub{enableResult: application.EnableAgentResult{
 		Agent: application.AgentView{
 			AgentID: "agent-1", DesiredState: domain.DesiredEnabled,
-			LifecycleState: domain.AgentAvailable, RuntimeRevision: "runtime-enabled",
+			LifecycleState: domain.AgentCreated, ActivationState: domain.ActivationEnabled, RuntimeState: domain.RuntimeAvailable, RuntimeRevision: "runtime-enabled",
 		},
 		Operation: application.OperationView{
 			RequestID: "request-enable-1", AgentID: "agent-1",
@@ -492,7 +491,7 @@ func TestLifecycleHandlerRequestsAgentEnableWithStableContract(t *testing.T) {
 		},
 	}}
 	handler, err := NewHandler(
-		&catalogServiceStub{}, lifecycle, &runServiceStub{}, &agentQueryServiceStub{},
+		&catalogServiceStub{}, lifecycle, &agentConfigurationServiceStub{}, &agentQueryServiceStub{},
 		&agentEventServiceStub{}, &networkPolicyServiceStub{},
 		func(context.Context) error { return nil },
 	)
@@ -542,7 +541,7 @@ func TestLifecycleHandlerRequestsAgentDeleteWithStableContract(t *testing.T) {
 		},
 	}}
 	handler, err := NewHandler(
-		&catalogServiceStub{}, lifecycle, &runServiceStub{}, &agentQueryServiceStub{},
+		&catalogServiceStub{}, lifecycle, &agentConfigurationServiceStub{}, &agentQueryServiceStub{},
 		&agentEventServiceStub{}, &networkPolicyServiceStub{},
 		func(context.Context) error { return nil },
 	)
@@ -586,7 +585,7 @@ func TestLifecycleHandlerDoesNotWrapDurableIntentInPrivateTimeout(t *testing.T) 
 		},
 	}}
 	handler, err := NewHandler(
-		&catalogServiceStub{}, lifecycle, &runServiceStub{}, &agentQueryServiceStub{},
+		&catalogServiceStub{}, lifecycle, &agentConfigurationServiceStub{}, &agentQueryServiceStub{},
 		&agentEventServiceStub{}, &networkPolicyServiceStub{},
 		func(context.Context) error { return nil },
 	)

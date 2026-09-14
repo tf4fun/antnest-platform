@@ -18,7 +18,9 @@ func TestIdentityDisableFailureNeverReopensNetwork(t *testing.T) {
 			base.Agent.IdentityRevocationSequence = 7
 			store := &disableLifecycleStoreStub{base: base}
 			dependencies := newDisableDependencies(base, ports.RuntimeOperation{State: "failed", Effect: "not_started", ErrorCode: "platform_unavailable"})
-			service := NewLifecycleService(lifecycleSpecSourceStub{}, store, dependencies, dependencies, fixedClock{now: time.Unix(220, 0).UTC()})
+			service := NewLifecycleService(lifecycleSpecSourceStub{}, store, dependencies, dependencies, fixedClock{now: time.Unix(220, 0).UTC()},
+				WithLifecycleExecution(testExecutionForStore(store)),
+			)
 			input := DisableAgentInput{RequestID: "identity-disable", AgentID: base.Agent.AgentID}
 			if strict {
 				input.OwnerRevocationSequence = 7
@@ -136,7 +138,9 @@ func TestCompensationObservesRevocationDuringNetworkRead(t *testing.T) {
 	deps := newDisableDependencies(base, ports.RuntimeOperation{})
 	deps.attachmentClosed = true
 	egress := &revokingNetworkRead{disableDependenciesStub: deps, revoke: func() { store.base.Agent.IdentityRevocationSequence = 7 }}
-	service := NewLifecycleService(lifecycleSpecSourceStub{}, store, egress, deps, fixedClock{now: time.Now()})
+	service := NewLifecycleService(lifecycleSpecSourceStub{}, store, egress, deps, fixedClock{now: time.Now()},
+		WithLifecycleExecution(testExecutionForStore(store)),
+	)
 	if err := service.restoreNetworkUnlessRevoked(context.Background(), store.state.Operation, 0); err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +167,9 @@ func TestCompensationReclosesWhenRevocationCommitsDuringOpen(t *testing.T) {
 	deps := newDisableDependencies(base, ports.RuntimeOperation{})
 	deps.attachmentClosed = true
 	egress := &revokingNetworkOpen{disableDependenciesStub: deps, revoke: func() { store.base.Agent.IdentityRevocationSequence = 7 }}
-	service := NewLifecycleService(lifecycleSpecSourceStub{}, store, egress, deps, fixedClock{now: time.Now()})
+	service := NewLifecycleService(lifecycleSpecSourceStub{}, store, egress, deps, fixedClock{now: time.Now()},
+		WithLifecycleExecution(testExecutionForStore(store)),
+	)
 	if err := service.restoreNetworkUnlessRevoked(context.Background(), store.state.Operation, 0); err != nil {
 		t.Fatal(err)
 	}
@@ -183,11 +189,4 @@ func (deps *revokingNetworkOpen) SetAgentNetworkAttachment(ctx context.Context, 
 		deps.revoke()
 	}
 	return result, err
-}
-
-func TestWorkspaceMarksRevokedAgentOfflineBeforeRuntimeStops(t *testing.T) {
-	availability := workspaceAvailability(ports.WorkspaceAgentRecord{IdentityRevoked: true, LifecycleState: domain.AgentAvailable})
-	if availability != WorkspaceAgentOffline {
-		t.Fatalf("revoked Agent appeared ready: %s", availability)
-	}
 }

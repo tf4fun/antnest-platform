@@ -95,6 +95,10 @@ func NewHandler(config Config, dependencies Dependencies) (http.Handler, error) 
 func (h *handler) routes() {
 	h.mux.HandleFunc("GET /status", h.status)
 	h.mux.HandleFunc("GET /api/admin/overview", h.withPrincipal(h.overview))
+	h.mux.HandleFunc("GET /api/admin/execution-audits", h.withPrincipal(h.listExecutionAudits))
+	h.mux.HandleFunc("GET /api/admin/execution-audits/{run_id}", h.withPrincipal(h.getExecutionAudit))
+	h.mux.HandleFunc("GET /api/admin/execution-audits/{run_id}/events", h.withPrincipal(h.listExecutionAuditEvents))
+	h.mux.HandleFunc("GET /api/admin/execution-synchronization", h.withPrincipal(h.getExecutionSynchronization))
 	h.mux.HandleFunc("GET /api/admin/template-defaults", h.withPrincipal(h.templateDefaults))
 	h.mux.HandleFunc("GET /api/admin/account", h.withPrincipal(h.currentAccount))
 	h.mux.HandleFunc("POST /api/admin/account/password", h.withPrincipal(h.changeOwnPassword))
@@ -109,6 +113,7 @@ func (h *handler) routes() {
 	h.mux.HandleFunc("POST /api/admin/provisioning/scim-tokens", h.withPrincipal(h.issueSCIMToken))
 	h.mux.HandleFunc("POST /api/admin/provisioning/scim-tokens/{token_id}/revoke", h.withPrincipal(h.revokeSCIMToken))
 	h.registerProviderRoutes()
+	h.registerCatalogAvailabilityRoutes()
 	h.mux.HandleFunc("GET /api/admin/model-catalog", h.withPrincipal(h.modelCatalog))
 	h.mux.HandleFunc("GET /api/admin/model-profiles", h.withPrincipal(h.listModelProfiles))
 	h.mux.HandleFunc("POST /api/admin/model-profiles", h.withPrincipal(h.createModelProfile))
@@ -157,7 +162,7 @@ func (h *handler) withPrincipal(next adminHandler) http.HandlerFunc {
 			writeError(response, http.StatusForbidden, "forbidden", "Administrator access is required")
 			return
 		}
-		next(response, request, actor)
+		next(response, request.WithContext(principal.WithContext(request.Context(), actor)), actor)
 	}
 }
 

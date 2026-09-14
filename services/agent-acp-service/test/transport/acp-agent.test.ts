@@ -1,7 +1,7 @@
 import { sessionConfigurationView } from "../support/fixtures.js";
 import { v2Configuration } from "../../src/transport/acp/configuration.js";
 import { describe, expect, it, vi } from "vitest";
-import { withOutputHistory } from "../support/output-application.js";
+import { withOutputHistory, type OutputApplication } from "../support/output-application.js";
 import * as acp from "@agentclientprotocol/sdk/experimental/v2";
 
 import { createAcpV2Agent } from "../../src/transport/acp/v2/agent.js";
@@ -15,10 +15,9 @@ import { DomainError } from "../../src/domain/errors.js";
 
 const binding: ConnectionBinding = {
   connectionId: "connection-1",
-  agentAccessSubject: "subject-1",
+  organizationId: "organization-1",
   principalId: "principal-1",
   agentId: "agent-1",
-  accessRevision: "access-1",
 };
 
 describe("ACP v2 agent mapping", () => {
@@ -133,11 +132,64 @@ describe("ACP v2 agent mapping", () => {
     });
   });
 
+  it("delivers fast consecutive Runs from each accepted cursor without duplicate history", async () => {
+    const updates: acp.SessionUpdate[] = [];
+    const idle = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
+    let completed = 0;
+    let sequence = 0;
+    const application = createApplication({
+      execute: async ({ publish }) => {
+        sequence += 1;
+        await publish({
+          kind: "agent_message",
+          messageId: `answer-${sequence}`,
+          content: [{ type: "text", text: `answer-${sequence}` }],
+        });
+        return {
+          terminalClass: "completed",
+          executorState: "quiescent",
+          toolEffectState: "none",
+          stopReason: "end_turn",
+        };
+      },
+    });
+    const agent = createAcpV2Agent({
+      binding,
+      application,
+      promptCapabilities: { image: false, embeddedContext: false },
+    });
+    const client = acp.client().onNotification(acp.methods.client.session.update, ({ params }) => {
+      updates.push(params.update);
+      if (params.update.sessionUpdate === "state_update" && params.update.state === "idle")
+        idle[completed++]?.resolve();
+    });
+    await client.connectWith(agent, async (context) => {
+      await context.request(acp.methods.agent.initialize, {
+        protocolVersion: acp.PROTOCOL_VERSION,
+        info: { name: "test-client", version: "1.0.0" },
+        capabilities: {},
+      });
+      for (const [index, text] of ["first", "second"].entries()) {
+        await expect(
+          context.request(acp.methods.agent.session.prompt, {
+            sessionId: "session-1",
+            prompt: [{ type: "text", text }],
+          }),
+        ).resolves.toEqual({});
+        await idle[index]!.promise;
+      }
+    });
+    expect(updates.filter((update) => update.sessionUpdate === "agent_message")).toMatchObject([
+      { content: [{ type: "text", text: "answer-1" }] },
+      { content: [{ type: "text", text: "answer-2" }] },
+    ]);
+  });
+
   it("advertises only implemented surfaces and reports prompt completion through updates", async () => {
     const idle = Promise.withResolvers<void>();
     const order: string[] = [];
     const updates: acp.SessionUpdate[] = [];
-    const executeRun = vi.fn<AcpApplicationPort["executeRun"]>(async ({ publish }) => {
+    const execute = vi.fn<OutputApplication["execute"]>(async ({ publish }) => {
       await publish({
         kind: "agent_message",
         messageId: "assistant-1",
@@ -151,7 +203,7 @@ describe("ACP v2 agent mapping", () => {
       };
     });
     const application = createApplication({
-      executeRun,
+      execute,
     });
     const agent = createAcpV2Agent({
       binding,
@@ -320,7 +372,7 @@ describe("ACP v2 agent mapping", () => {
     const started = Promise.withResolvers<void>();
     const idle = Promise.withResolvers<void>();
     const cancelled = Promise.withResolvers<void>();
-    const executeRun = vi.fn<AcpApplicationPort["executeRun"]>(async () => {
+    const execute = vi.fn<OutputApplication["execute"]>(async () => {
       started.resolve();
       await cancelled.promise;
       return {
@@ -334,7 +386,7 @@ describe("ACP v2 agent mapping", () => {
       return Promise.resolve();
     });
     const application = createApplication({
-      executeRun,
+      execute,
       cancelRun,
     });
     const agent = createAcpV2Agent({
@@ -363,7 +415,7 @@ describe("ACP v2 agent mapping", () => {
       await idle.promise;
     });
 
-    expect(executeRun).toHaveBeenCalledOnce();
+    expect(execute).toHaveBeenCalledOnce();
     expect(cancelRun).toHaveBeenCalledOnce();
   });
 
@@ -373,11 +425,11 @@ describe("ACP v2 agent mapping", () => {
       "Run event persistence requires recovery",
       new Error("database unavailable"),
     );
-    const executeRun = vi.fn<AcpApplicationPort["executeRun"]>(() => Promise.reject(failure));
+    const execute = vi.fn<OutputApplication["execute"]>(() => Promise.reject(failure));
     const agent = createAcpV2Agent({
       binding,
       promptCapabilities: { image: false, embeddedContext: false },
-      application: createApplication({ executeRun }),
+      application: createApplication({ execute }),
     });
     const client = acp.client().onNotification(acp.methods.client.session.update, ({ params }) => {
       updates.push(params.update);
@@ -393,7 +445,7 @@ describe("ACP v2 agent mapping", () => {
           sessionId: "session-1",
           prompt: [{ type: "text", text: "recover" }],
         });
-        await vi.waitFor(() => expect(executeRun).toHaveBeenCalledOnce());
+        await vi.waitFor(() => expect(execute).toHaveBeenCalledOnce());
         await new Promise<void>((resolve) => setTimeout(resolve, 0));
       }),
     ).rejects.toBe(failure);
@@ -434,7 +486,7 @@ describe("ACP v2 agent mapping", () => {
   });
 
   it("rejects prompt content that was not advertised during initialization", async () => {
-    const acceptPrompt = vi.fn<AcpApplicationPort["acceptPrompt"]>(() =>
+    const acceptPrompt = vi.fn<OutputApplication["acceptPrompt"]>(() =>
       Promise.reject(new Error("unsupported prompt reached application")),
     );
     const application = createApplication({ acceptPrompt });
@@ -467,7 +519,7 @@ describe("ACP v2 agent mapping", () => {
         new DomainError("connection_binding_stale", "Agent access changed; reconnect"),
       ),
     );
-    const acceptPrompt = vi.fn<AcpApplicationPort["acceptPrompt"]>();
+    const acceptPrompt = vi.fn<OutputApplication["acceptPrompt"]>();
     const agent = createAcpV2Agent({
       binding,
       promptCapabilities: { image: false, embeddedContext: false },
@@ -605,8 +657,9 @@ describe("ACP v2 agent mapping", () => {
   });
 
   it("accepts baseline and advertised prompt blocks while rejecting undeclared audio", async () => {
-    const acceptPrompt = vi.fn<AcpApplicationPort["acceptPrompt"]>(() =>
+    const acceptPrompt = vi.fn<OutputApplication["acceptPrompt"]>(() =>
       Promise.resolve({
+        outputSequence: 0,
         runId: "run-1",
         requestId: "request-1",
         sessionId: "session-1",
@@ -665,7 +718,7 @@ describe("ACP v2 agent mapping", () => {
   it("serializes every v2 update variant emitted by the shared application", async () => {
     const updates: acp.SessionUpdate[] = [];
     const idle = Promise.withResolvers<void>();
-    const executeRun = vi.fn<AcpApplicationPort["executeRun"]>(async ({ publish }) => {
+    const execute = vi.fn<OutputApplication["execute"]>(async ({ publish }) => {
       await publish({
         kind: "agent_thought",
         messageId: "thought-1",
@@ -709,7 +762,7 @@ describe("ACP v2 agent mapping", () => {
     const agent = createAcpV2Agent({
       binding,
       promptCapabilities: { image: false, embeddedContext: false },
-      application: createApplication({ executeRun }),
+      application: createApplication({ execute }),
     });
     const client = acp.client().onNotification(acp.methods.client.session.update, ({ params }) => {
       updates.push(params.update);
@@ -780,7 +833,7 @@ describe("ACP v2 agent mapping", () => {
   });
 });
 
-function createApplication(overrides: Partial<AcpApplicationPort> = {}): AcpApplicationPort {
+function createApplication(overrides: Partial<OutputApplication> = {}): AcpApplicationPort {
   return withOutputHistory({
     assertAccess: vi.fn(() => Promise.resolve()),
     getSessionConfiguration: vi.fn(() => Promise.resolve(sessionConfigurationView())),
@@ -794,6 +847,7 @@ function createApplication(overrides: Partial<AcpApplicationPort> = {}): AcpAppl
     cancelRun: vi.fn(() => Promise.resolve()),
     acceptPrompt: vi.fn((): Promise<AcceptedAcpRun> =>
       Promise.resolve({
+        outputSequence: 0,
         runId: "run-1",
         requestId: "request-1",
         sessionId: "session-1",
@@ -805,7 +859,7 @@ function createApplication(overrides: Partial<AcpApplicationPort> = {}): AcpAppl
         snapshot: createApplicationSnapshot(),
       }),
     ),
-    executeRun: vi.fn<AcpApplicationPort["executeRun"]>(() =>
+    execute: vi.fn<OutputApplication["execute"]>(() =>
       Promise.resolve({
         terminalClass: "completed",
         executorState: "quiescent",
@@ -819,13 +873,16 @@ function createApplication(overrides: Partial<AcpApplicationPort> = {}): AcpAppl
 
 function createApplicationSnapshot(): AcceptedAcpRun["snapshot"] {
   return {
-    admissionId: "admission-1",
-    admissionDeadline: new Date("2026-08-30T00:10:00Z"),
+    organizationId: "organization-1",
+    providerConnectionId: "connection-1",
+    modelProfileId: "profile-1",
+    configurationRevision: 1,
+    accessRevision: "access-1",
+    deadlineAt: new Date("2026-08-30T00:10:00Z"),
     agentSpecRevision: "config-1",
     executionRevision: "execution-1",
     runtimeMcpSourceDigest: "a".repeat(64),
     agentExecutionSpecDigest: "b".repeat(64),
-    credentialVersion: "credential-version-1",
     runtime: {
       revision: "runtime-1",
       executionId: "runtime-execution-1",
@@ -843,7 +900,6 @@ function createApplicationSnapshot(): AcceptedAcpRun["snapshot"] {
         supportsImages: false,
       },
       maxModelRequests: 8,
-      credentialRef: "credential-1",
     },
     clientMcpRevisionId: "mcp-1",
   };

@@ -26,13 +26,13 @@ func testRepositoryUpdateRecovery(t *testing.T, state deployment.OperationState)
 		t.Fatal(err)
 	}
 	source.State, source.Effect = deployment.OperationCompleted, deployment.EffectCompleted
-	source.Inspection = integrationEnvironment(source, deployment.LifecycleReady, now)
+	source.Inspection = integrationEnvironment(source, deployment.LifecycleProvisioned, now)
 	if _, err := repository.CompleteOperation(ctx, source, nil); err != nil {
 		t.Fatal(err)
 	}
 
 	target := integrationOperation("recovery-update", deployment.OperationUpdateRuntime, now.Add(time.Second))
-	target.SourceState, target.SourceRevision = deployment.LifecycleReady, source.RuntimeRevision
+	target.SourceState, target.SourceRevision = deployment.LifecycleProvisioned, source.RuntimeRevision
 	target.ExpectedRevision = source.RuntimeRevision
 	target.SourceGeneration, target.SourceSpecDigest = source.Generation, source.SpecDigest
 	target.Generation, target.Transition = source.Generation+1, deployment.LifecycleUpdating
@@ -43,7 +43,7 @@ func testRepositoryUpdateRecovery(t *testing.T, state deployment.OperationState)
 	}
 	if state == deployment.OperationUnknown {
 		target.State, target.Effect = deployment.OperationUnknown, deployment.EffectCompleted
-		target.ErrorCode = "runtime_not_ready"
+		target.ErrorCode = "platform_unavailable"
 		target.Inspection = integrationEnvironment(target, deployment.LifecycleUnknown, now)
 		if _, err := repository.CompleteOperation(ctx, target, nil); err != nil {
 			t.Fatal(err)
@@ -73,7 +73,7 @@ func testRepositoryUpdateRecovery(t *testing.T, state deployment.OperationState)
 	}
 	recovered.State, recovered.Effect = deployment.OperationCompleted, deployment.EffectCompleted
 	recovered.ErrorCode, recovered.ErrorDetail = "", ""
-	recovered.Inspection = integrationEnvironment(recovered, deployment.LifecycleReady, now)
+	recovered.Inspection = integrationEnvironment(recovered, deployment.LifecycleProvisioned, now)
 	event := deployment.Observation{AgentID: target.AgentID, RuntimeRevision: target.RuntimeRevision, Kind: deployment.ObservationUpdated, Source: "lifecycle_operation", ObservedAt: now}
 	if _, err := repository.CompleteOperation(ctx, recovered, &event); err != nil {
 		t.Fatal(err)
@@ -82,7 +82,7 @@ func testRepositoryUpdateRecovery(t *testing.T, state deployment.OperationState)
 		t.Fatalf("duplicate completion not fenced: %v", err)
 	}
 	head, err = repository.GetEnvironment(ctx, target.AgentID)
-	if err != nil || head.RuntimeRevision != target.RuntimeRevision || head.LifecycleState != deployment.LifecycleReady || head.OperationID != "" {
+	if err != nil || head.RuntimeRevision != target.RuntimeRevision || head.LifecycleState != deployment.LifecycleProvisioned || head.OperationID != "" {
 		t.Fatalf("target publication not committed: %+v %v", head, err)
 	}
 	var claims, events int

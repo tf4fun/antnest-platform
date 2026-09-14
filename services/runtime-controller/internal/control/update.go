@@ -18,14 +18,14 @@ func (s *Service) updateRuntime(
 	if errors.Is(err, deployment.ErrIdentityConflict) {
 		// The Agent-named resource may already be this operation's target.
 		// Create reuses only an exact identity and verifies retained storage.
-		return s.createAndVerify(ctx, operation, physical, true)
+		return s.createRuntime(ctx, operation, physical, true)
 	}
 	if err != nil {
 		return s.unresolvedUpdate(ctx, operation, "platform_unavailable")
 	}
 	if inspection.RuntimeKey() == source && inspection.PlatformPhase == deployment.PhaseAbsent &&
 		inspection.Health == deployment.HealthAbsent && inspection.SpecDigest == "" {
-		return s.createAndVerify(ctx, operation, physical, true)
+		return s.createRuntime(ctx, operation, physical, true)
 	}
 	if !matchesUpdateSource(operation, inspection) {
 		return s.unresolvedUpdate(ctx, operation, "runtime_drift")
@@ -35,13 +35,13 @@ func (s *Service) updateRuntime(
 		// A substep's not_started result cannot erase effects of prior attempts
 		// or changes between Inspect and Delete. Re-prove the source after failure.
 		retained := outcome.State == deployment.EffectNotStarted && outcome.Code != "runtime_drift" &&
-			s.updateSourceStillReady(ctx, operation)
+			s.updateSourceStillPresent(ctx, operation)
 		if retained {
 			operation.Inspection = nil
 		}
 		return s.finishFromEffect(ctx, operation, outcome, !retained)
 	}
-	return s.createAndVerify(ctx, operation, physical, true)
+	return s.createRuntime(ctx, operation, physical, true)
 }
 
 func matchesUpdateSource(operation deployment.Operation, inspection deployment.Inspection) bool {
@@ -57,20 +57,13 @@ func matchesUpdateSource(operation deployment.Operation, inspection deployment.I
 	}
 }
 
-func (s *Service) updateSourceStillReady(ctx context.Context, operation deployment.Operation) bool {
+func (s *Service) updateSourceStillPresent(ctx context.Context, operation deployment.Operation) bool {
 	source, ok := operation.SourceKey()
 	if !ok {
 		return false
 	}
 	inspection, err := s.platform.Inspect(ctx, source)
-	if err != nil || !matchesUpdateSource(operation, inspection) ||
-		inspection.PlatformPhase != deployment.PhaseRunning || inspection.Health != deployment.HealthHealthy {
-		return false
-	}
-	verified, err := s.verifier.Verify(ctx, inspection)
-	return err == nil && matchesUpdateSource(operation, verified) &&
-		verified.PlatformPhase == deployment.PhaseRunning && verified.Health == deployment.HealthHealthy &&
-		verified.RuntimeExecutionID != ""
+	return err == nil && matchesUpdateSource(operation, inspection) && inspection.PlatformPhase == deployment.PhaseRunning
 }
 
 func (s *Service) unresolvedUpdate(

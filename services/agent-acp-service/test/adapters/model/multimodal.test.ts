@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { OpenAICompatibleModel } from "../../../src/adapters/model/openai-compatible.js";
-import type { ModelRequest } from "../../../src/ports/model.js";
+import type { AuthenticatedModelRequest } from "../../../src/ports/model.js";
 import { snapshot } from "../../support/fixtures.js";
 import { audio, audioData, pdf, pdfData } from "../../fixtures/multimodal.js";
 
@@ -12,7 +12,7 @@ function harness() {
       }),
     ),
   );
-  const request: ModelRequest = {
+  const request: AuthenticatedModelRequest = {
     snapshot: snapshot(),
     credential: "synthetic-secret",
     tools: [],

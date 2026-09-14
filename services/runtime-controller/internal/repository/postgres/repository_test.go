@@ -45,7 +45,7 @@ func TestScanOperationRestoresLogicalAndPrivateIdentity(t *testing.T) {
 	now := time.Date(2026, 8, 30, 1, 2, 3, 0, time.UTC)
 	environment := deployment.Environment{
 		AgentID: "agent-1", RuntimeRevision: testRevision,
-		LifecycleState: deployment.LifecycleReady, Health: deployment.HealthHealthy,
+		LifecycleState: deployment.LifecycleProvisioned, Health: deployment.HealthHealthy,
 		RuntimeExecutionID: "execution-1", Generation: 7,
 		SpecDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		ObservedAt: now,
@@ -54,7 +54,7 @@ func TestScanOperationRestoresLogicalAndPrivateIdentity(t *testing.T) {
 	row := valueScanner{values: []any{
 		"request-1", "sha256:request", string(deployment.OperationUpdateRuntime), "agent-1",
 		string(testRevision), "rtv_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		string(deployment.LifecycleReady), "rtv_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", uint64(6),
+		string(deployment.LifecycleProvisioned), "rtv_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", uint64(6),
 		"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 		uint64(7), "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		uint64(3), string(deployment.OperationCompleted), string(deployment.EffectCompleted),
@@ -119,7 +119,7 @@ func TestScanObservationRestoresRevisionAndPrivateKey(t *testing.T) {
 
 func TestOperationSourceMustMatchEnvironmentHead(t *testing.T) {
 	operation := deployment.Operation{
-		AgentID: "agent-1", SourceState: deployment.LifecycleReady,
+		AgentID: "agent-1", SourceState: deployment.LifecycleProvisioned,
 		SourceRevision: testRevision, SourceGeneration: 7,
 		SourceSpecDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 	}

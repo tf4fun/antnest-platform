@@ -10,7 +10,7 @@ import (
 	"soft/antnest-platform/services/agent-controller/internal/ports"
 )
 
-func TestEnableAgentPublishesNewExecutionAfterAttachmentOpen(t *testing.T) {
+func TestEnableAgentCompletesBeforeNewExecution(t *testing.T) {
 	t.Parallel()
 
 	base := enableLifecycleBase(t)
@@ -25,16 +25,15 @@ func TestEnableAgentPublishesNewExecutionAfterAttachmentOpen(t *testing.T) {
 		t.Fatalf("enable Agent: %v", err)
 	}
 	if result.Agent.DesiredState != domain.DesiredEnabled ||
-		result.Agent.LifecycleState != domain.AgentAvailable ||
-		result.Agent.ExecutionRevisionID == "" ||
-		result.Agent.ExecutionRevisionID == base.LastSuccessfulExecution.ID {
+		(result.Agent.LifecycleState != domain.AgentCreated || result.Agent.ActivationState != domain.ActivationEnabled || result.Agent.RuntimeState != domain.RuntimeUnknown) ||
+		result.Agent.ExecutionRevisionID != "" ||
+		result.Agent.LastSuccessfulExecutionRevisionID != base.LastSuccessfulExecution.ID {
 		t.Fatalf("enabled Agent = %+v", result.Agent)
 	}
 	if result.Operation.State != domain.OperationCompleted {
 		t.Fatalf("enable operation = %+v", result.Operation)
 	}
-	if store.published.Execution.Revision != base.NextExecutionRevision ||
-		store.published.Execution.AgentSpecRevisionID != base.Spec.ID ||
+	if store.state.Agent.AgentSpecRevisionID != base.Spec.ID ||
 		store.published.EnabledEvent.EventType != ports.EventAgentEnabled {
 		t.Fatalf("enable publish = %+v", store.published)
 	}
@@ -122,7 +121,7 @@ func TestEnableAgentKnownRuntimeFailurePreservesDisabledProjection(t *testing.T)
 		t.Fatalf("known failed enable: %v", err)
 	}
 	if result.Agent.DesiredState != domain.DesiredDisabled ||
-		result.Agent.LifecycleState != domain.AgentDisabled ||
+		(result.Agent.LifecycleState != domain.AgentCreated || result.Agent.ActivationState != domain.ActivationDisabled || result.Agent.RuntimeState != domain.RuntimeAbsent) ||
 		result.Operation.State != domain.OperationFailed {
 		t.Fatalf("failed enable = %+v failure=%+v", result, store.failed)
 	}
@@ -148,7 +147,7 @@ func TestEnableAgentRuntimeMismatchRemainsReplayableAndFenced(t *testing.T) {
 		RuntimeRevision:    "rtv_66666666666666666666666666666666",
 		RuntimeExecutionID: "unexpected-live-runtime",
 		MCPEndpoint:        "http://unexpected-runtime:8080/mcp",
-		LifecycleState:     "ready", Health: "healthy",
+		LifecycleState:     "provisioned", Health: "healthy",
 	}
 	service := newLifecycleTestService(t, store, dependencies)
 
@@ -214,7 +213,7 @@ func TestEnableAgentAttachmentOpenFailureAfterRuntimeReadyRemainsReplayable(t *t
 		t.Fatalf("attachment open error = %v", err)
 	}
 	if result.Operation.State != domain.OperationRunning ||
-		result.Operation.Phase != domain.PhaseNetworkRestore || store.published.Execution.ID != "" {
+		result.Operation.Phase != domain.PhaseNetworkRestore || store.published.RequestID != "" {
 		t.Fatalf("attachment conflict result = %+v publish=%+v", result, store.published)
 	}
 	if dependencies.calls[len(dependencies.calls)-1] != "egress.attachment.open" {
@@ -301,16 +300,16 @@ func enableLifecycleBase(t *testing.T) ports.AgentEnableBase {
 	disabled := disableLifecycleBase(t)
 	agent := disabled.Agent
 	agent.DesiredState = domain.DesiredDisabled
-	agent.LifecycleState = domain.AgentDisabled
+	agent.LifecycleState, agent.ActivationState, agent.RuntimeState = domain.AgentCreated, domain.ActivationDisabled, domain.RuntimeAbsent
 	agent.ExecutionRevisionID = ""
-	agent.LastSuccessfulExecutionRevisionID = disabled.ExecutableExecution.ID
+	agent.LastSuccessfulExecutionRevisionID = disabled.SourceExecution.ID
 	agent.RuntimeRevision = "rtv_44444444444444444444444444444444"
 	agent.RuntimeExecutionID = ""
 	agent.RuntimeMCPEndpoint = ""
 	return ports.AgentEnableBase{
-		Agent: agent, Spec: disabled.ExecutableSpec,
-		LastSuccessfulExecution: disabled.ExecutableExecution,
-		NextExecutionRevision:   disabled.ExecutableExecution.Revision + 1,
+		Agent: agent, Spec: disabled.ConfiguredSpec,
+		LastSuccessfulExecution: disabled.SourceExecution,
+		NextExecutionRevision:   disabled.SourceExecution.Revision + 1,
 	}
 }
 
@@ -318,9 +317,9 @@ func readyEnableRuntime() ports.RuntimeOperation {
 	return ports.RuntimeOperation{
 		State: "completed", Effect: "completed",
 		RuntimeRevision:    "rtv_55555555555555555555555555555555",
-		RuntimeExecutionID: "runtime-execution-enabled",
-		MCPEndpoint:        "http://runtime-enabled:8080/mcp",
-		LifecycleState:     "ready", Health: "healthy",
+		RuntimeExecutionID: "",
+		MCPEndpoint:        "",
+		LifecycleState:     "provisioned", Health: "unknown",
 	}
 }
 
@@ -507,13 +506,12 @@ func (store *enableLifecycleStoreStub) PublishAgentEnable(
 ) (ports.AgentEnableState, error) {
 	store.published = input
 	store.state.Agent.DesiredState = domain.DesiredEnabled
-	store.state.Agent.LifecycleState = domain.AgentAvailable
-	store.state.Agent.AgentSpecRevisionID = input.Execution.AgentSpecRevisionID
-	store.state.Agent.ExecutionRevisionID = input.Execution.ID
-	store.state.Agent.LastSuccessfulExecutionRevisionID = input.Execution.ID
-	store.state.Agent.RuntimeRevision = input.Execution.RuntimeRevision
-	store.state.Agent.RuntimeExecutionID = input.Execution.RuntimeExecutionID
-	store.state.Agent.RuntimeMCPEndpoint = input.Execution.RuntimeMCPEndpoint
+	store.state.Agent.LifecycleState, store.state.Agent.ActivationState, store.state.Agent.RuntimeState = domain.AgentCreated, domain.ActivationEnabled, domain.RuntimeUnknown
+	store.state.Agent.AgentSpecRevisionID = store.state.Spec.ID
+	store.state.Agent.ExecutionRevisionID = ""
+	store.state.Agent.RuntimeRevision = store.state.Operation.RuntimeResult.RuntimeRevision
+	store.state.Agent.RuntimeExecutionID = ""
+	store.state.Agent.RuntimeMCPEndpoint = ""
 	store.state.Agent.ActiveOperationRequestID = ""
 	store.state.Agent.AggregateSequence = input.EnabledEvent.AggregateSequence
 	store.state.Operation.Phase = domain.PhaseCompleted
@@ -531,7 +529,7 @@ func (store *enableLifecycleStoreStub) FailAgentEnable(
 	store.state.Agent.FailureStage = string(input.Stage)
 	store.state.Agent.FailureCode = input.Code
 	store.state.Agent.DesiredState = domain.DesiredDisabled
-	store.state.Agent.LifecycleState = domain.AgentDisabled
+	store.state.Agent.LifecycleState, store.state.Agent.ActivationState, store.state.Agent.RuntimeState = domain.AgentCreated, domain.ActivationDisabled, domain.RuntimeAbsent
 	store.state.Operation.State = domain.OperationFailed
 	store.state.Operation.ErrorCode = input.Code
 	store.state.Operation.ErrorDetail = input.Detail
@@ -550,7 +548,7 @@ func completedEnableState(base ports.AgentEnableBase) ports.AgentEnableState {
 		},
 	}
 	state.Agent.DesiredState = domain.DesiredEnabled
-	state.Agent.LifecycleState = domain.AgentAvailable
+	state.Agent.LifecycleState, state.Agent.ActivationState, state.Agent.RuntimeState = domain.AgentCreated, domain.ActivationEnabled, domain.RuntimeAvailable
 	return state
 }
 

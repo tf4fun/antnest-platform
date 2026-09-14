@@ -1,6 +1,6 @@
 {
   "contract": "antnest.agent-controller.lifecycle",
-  "revision": 22,
+  "revision": 28,
   "transport": "json-over-http",
   "trust": "internal-network",
   "media_types": {
@@ -16,7 +16,23 @@
     "success_status": 200
   },
   "resources": {
+    "execution_synchronization": {
+      "get": {
+        "method": "GET",
+        "path": "/internal/execution-synchronization",
+        "query": ["organization_id"],
+        "success_status": 200,
+        "response": "control-api.schema.json#/$defs/execution_synchronization"
+      }
+    },
     "provider_connections": {
+      "availability": {
+        "method": "PUT",
+        "path": "/internal/provider-connections/{connection_id}/availability",
+        "request": "control-api.schema.json#/$defs/catalog_availability_request",
+        "success_status": 200,
+        "response": "control-api.schema.json#/$defs/catalog_availability"
+      },
       "create": {
         "method": "POST",
         "path": "/internal/provider-connections",
@@ -46,24 +62,6 @@
         "response": "control-api.schema.json#/$defs/provider_connection_list"
       }
     },
-    "workspace_state": {
-      "get": {
-        "method": "GET",
-        "path": "/internal/workspace/agents/{agent_id}/state",
-        "query": ["organization_id", "principal_id"],
-        "success_status": 200,
-        "response": "control-api.schema.json#/$defs/workspace_agent_state"
-      },
-      "watch": {
-        "method": "GET",
-        "path": "/internal/workspace/agents/{agent_id}/state/watch",
-        "query": ["organization_id", "principal_id"],
-        "success_status": 200,
-        "content_type": "text/event-stream",
-        "event": "workspace_state",
-        "data": "control-api.schema.json#/$defs/workspace_agent_state"
-      }
-    },
     "agent_network_policy": {
       "get": {
         "method": "GET",
@@ -81,6 +79,13 @@
       }
     },
     "model_profiles": {
+      "availability": {
+        "method": "PUT",
+        "path": "/internal/model-profiles/{model_profile_id}/availability",
+        "request": "control-api.schema.json#/$defs/catalog_availability_request",
+        "success_status": 200,
+        "response": "control-api.schema.json#/$defs/catalog_availability"
+      },
       "create": {
         "method": "POST",
         "path": "/internal/model-profiles",
@@ -111,6 +116,13 @@
       }
     },
     "agent_templates": {
+      "availability": {
+        "method": "PUT",
+        "path": "/internal/agent-templates/{template_id}/availability",
+        "request": "control-api.schema.json#/$defs/catalog_availability_request",
+        "success_status": 200,
+        "response": "control-api.schema.json#/$defs/catalog_availability"
+      },
       "create": {
         "method": "POST",
         "path": "/internal/agent-templates",
@@ -169,6 +181,8 @@
           "organization_id",
           "owner_user_id",
           "lifecycle_state",
+          "activation_state",
+          "runtime_state",
           "include_deleted",
           "limit",
           "cursor"
@@ -251,22 +265,43 @@
         "event_id": "global_sequence",
         "data": "control-api.schema.json#/$defs/agent_event"
       }
+    },
+    "agent_authorization": {
+      "set": {
+        "method": "POST",
+        "path": "/rpc/agent-controller/set-agent-authorization",
+        "request": "control-api.schema.json#/$defs/set_agent_authorization_request",
+        "success_status": 200,
+        "response": "control-api.schema.json#/$defs/set_agent_authorization_response"
+      }
+    },
+    "workspace_agents": {
+      "list": {
+        "method": "POST",
+        "path": "/rpc/agent-controller/list-workspace-agents",
+        "request": "control-api.schema.json#/$defs/list_workspace_agents_request",
+        "success_status": 200,
+        "response": "control-api.schema.json#/$defs/list_workspace_agents_response"
+      }
     }
   },
   "enums": {
     "desired_state": ["enabled", "disabled", "deleted"],
-    "lifecycle_state": [
-      "provisioning",
+    "lifecycle_state": ["not_created", "created", "deleted"],
+    "activation_state": ["enabled", "disabled"],
+    "runtime_state": [
+      "waiting",
       "available",
-      "unavailable",
-      "disabled",
-      "deleting",
-      "deleted"
+      "unhealthy",
+      "exited",
+      "absent",
+      "unknown"
     ],
     "operation_kind": ["create", "rebuild", "disable", "enable", "delete"],
     "operation_state": ["running", "completed", "failed"],
     "event_type": [
       "agent_create_requested",
+      "agent_created",
       "agent_ready",
       "agent_rebuild_requested",
       "agent_rebuilt",
@@ -281,10 +316,10 @@
       "agent_lifecycle_quarantined",
       "agent_runtime_restarted",
       "agent_runtime_missing",
+      "agent_runtime_condition_changed",
       "agent_owner_revoked",
-      "agent_build_failed",
-      "run_admission_unresolved",
-      "run_admission_released"
+      "agent_authorization_updated",
+      "agent_build_failed"
     ]
   },
   "errors": {
@@ -302,13 +337,17 @@
       "request_id_conflict": 409,
       "reference_not_found": 404,
       "reference_disabled": 409,
+      "resource_in_use": 409,
+      "execution_configuration_capacity_exceeded": 409,
       "agent_not_found": 404,
       "agent_not_ready": 409,
       "lifecycle_conflict": 409,
       "operation_not_found": 404,
       "dependency_unavailable": 503,
       "lifecycle_timeout": 504,
-      "internal_error": 500
+      "internal_error": 500,
+      "access_denied": 403,
+      "configuration_conflict": 409
     },
     "retryable_by_code": {
       "resource_version_conflict": false,
@@ -322,13 +361,17 @@
       "request_id_conflict": false,
       "reference_not_found": false,
       "reference_disabled": false,
+      "resource_in_use": false,
+      "execution_configuration_capacity_exceeded": false,
       "agent_not_found": false,
       "agent_not_ready": true,
       "lifecycle_conflict": false,
       "operation_not_found": false,
       "dependency_unavailable": true,
       "lifecycle_timeout": true,
-      "internal_error": true
+      "internal_error": true,
+      "access_denied": false,
+      "configuration_conflict": false
     }
   },
   "compatibility": {

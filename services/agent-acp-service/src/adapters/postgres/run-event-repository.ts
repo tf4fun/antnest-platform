@@ -189,7 +189,7 @@ export class PostgresRunEventRepository implements RunEventRepository {
       const updated = await client.query(
         `UPDATE tool_attempts
             SET state = $3, result_summary = $4::jsonb, tool_effect_state = $5,
-                finished_at = $6, updated_at = $6
+                finished_at = $6, updated_at = $6, runtime_call_stopped = $7
           WHERE run_id = $1 AND tool_call_id = $2 AND state = 'in_progress'`,
         [
           input.runId,
@@ -198,6 +198,7 @@ export class PostgresRunEventRepository implements RunEventRepository {
           JSON.stringify(input.resultSummary),
           input.toolEffectState,
           input.createdAt,
+          input.runtimeCallStopped === true,
         ],
       );
       if (updated.rowCount !== 1) {

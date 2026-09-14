@@ -81,7 +81,7 @@ func TestMachineControlContractMatchesRegisteredBoundary(t *testing.T) {
 	readStrictContractJSON(t, filepath.Join(root, "contracts/agent-controller/control-contract.json"), &contract)
 	var schema machineControlSchema
 	readContractJSON(t, filepath.Join(root, "contracts/agent-controller/control-api.schema.json"), &schema)
-	if contract.Revision != 22 {
+	if contract.Revision != 28 {
 		t.Fatalf("control contract revision = %d", contract.Revision)
 	}
 	if contract.MediaTypes.Request != "application/json" ||
@@ -90,7 +90,7 @@ func TestMachineControlContractMatchesRegisteredBoundary(t *testing.T) {
 	}
 
 	endpoint, err := NewHandler(
-		&catalogServiceStub{}, &lifecycleServiceStub{}, &runServiceStub{},
+		&catalogServiceStub{}, &lifecycleServiceStub{}, &agentConfigurationServiceStub{},
 		&agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{},
 		func(context.Context) error { return nil },
 	)
@@ -104,7 +104,7 @@ func TestMachineControlContractMatchesRegisteredBoundary(t *testing.T) {
 
 	expected := make(map[string]struct{})
 	for _, route := range (&handler{}).routes() {
-		if strings.Contains(route.pattern, " /internal/") {
+		if strings.Contains(route.pattern, " /internal/") || strings.HasPrefix(route.pattern, "POST /rpc/agent-controller/") {
 			expected[route.pattern] = struct{}{}
 		}
 	}
@@ -132,7 +132,7 @@ func TestMachineControlContractMatchesRegisteredBoundary(t *testing.T) {
 			if pattern != key {
 				t.Fatalf("route %s is registered as %q", key, pattern)
 			}
-			assertControlSSEMetadata(t, resource, route)
+			assertControlSSEMetadata(t, route)
 		}
 	}
 	if len(seen) != len(expected) {
@@ -196,7 +196,7 @@ func TestMachineControlSchemaMatchesGoWireTypes(t *testing.T) {
 	}
 	agent := application.AgentView{
 		AgentID: "agent-1", OrganizationID: "org-1", OwnerUserID: "user-1", Name: "Agent",
-		DesiredState: domain.DesiredEnabled, LifecycleState: domain.AgentAvailable,
+		DesiredState: domain.DesiredEnabled, LifecycleState: domain.AgentCreated, ActivationState: domain.ActivationEnabled, RuntimeState: domain.RuntimeAvailable,
 		AccessRevision: "access-1", AgentSpecRevisionID: "spec-1",
 		ExecutionRevisionID: "execution-1", LastSuccessfulExecutionRevisionID: "execution-1",
 		RuntimeRevision:    "rtv_11111111111111111111111111111111",
@@ -219,14 +219,17 @@ func TestMachineControlSchemaMatchesGoWireTypes(t *testing.T) {
 	event := application.AgentEventView{
 		EventID: "event-1", GlobalSequence: 1, AggregateSequence: 2, SchemaVersion: 1,
 		AgentID: agent.AgentID, EventType: ports.EventAgentReady,
-		OperationRequestID: operation.RequestID, AdmissionID: "admission-1",
-		TraceID: strings.Repeat("a", 32), OccurredAt: now, Data: map[string]any{"kind": "ready"},
+		OperationRequestID: operation.RequestID, TraceID: strings.Repeat("a", 32), OccurredAt: now, Data: map[string]any{"kind": "ready"},
 	}
 
 	values := map[string]any{
 		"model_parameters":                   model.Parameters(),
 		"provider_credential_input":          application.ProviderCredentialInput{Method: "api_key", APIKey: "synthetic"},
 		"provider_model_input":               application.ProviderModelInput{ProfileKey: "model", DisplayName: "Model", Model: model.Parameters()},
+		"set_agent_authorization_request":    application.SetAgentAuthorizationInput{RequestID: "defaults", AgentID: "agent", PrincipalID: "owner", ExpectedAccessRevision: "access", ExpectedAuthorizationRevision: 1, Authorization: domain.Authorization{Mode: domain.AuthorizationAuto, ToolRules: []domain.ToolRule{}}},
+		"set_agent_authorization_response":   map[string]int64{"authorization_revision": 2},
+		"list_workspace_agents_request":      listWorkspaceAgentsRequest{RequestID: "list", OrganizationID: "org", PrincipalID: "owner"},
+		"list_workspace_agents_response":     workspaceAgentListResponse{Agents: []workspaceAgentResponse{{AgentID: "agent", Name: "Research"}}, NextCursor: nil},
 		"create_provider_connection_request": sampleCreateProviderRequest(),
 		"rotate_provider_credential_request": sampleRotateProviderRequest(),
 		"provider_connection":                sampleProviderConnection(),
@@ -281,7 +284,7 @@ func TestMachineControlSchemaMatchesGoWireTypes(t *testing.T) {
 		"agent_list": agentListResponse{Items: []agentResponse{agentPayload(agent)}},
 		"operation":  operationPayload(operation),
 		"create_agent_response": createAgentPayload(application.CreateAgentResult{
-			Agent: agent, AgentAccessSubject: "access-subject-1", Operation: operation,
+			Agent: agent, Operation: operation,
 		}),
 		"agent_event": agentEventPayload(event),
 		"event_list": agentEventListPayload(application.AgentEventPage{
@@ -315,7 +318,7 @@ func TestMachineControlContractValidatesSuccessfulHTTPBoundary(t *testing.T) {
 	}
 	lifecycle := &lifecycleServiceStub{
 		result: application.CreateAgentResult{
-			Agent: agent, AgentAccessSubject: "access-subject-1", Operation: operation,
+			Agent: agent, Operation: operation,
 		},
 		rebuildResult: application.RebuildAgentResult{Agent: agent, Operation: operation},
 		disableResult: application.DisableAgentResult{Agent: agent, Operation: operation},
@@ -325,13 +328,13 @@ func TestMachineControlContractValidatesSuccessfulHTTPBoundary(t *testing.T) {
 	}
 	queries := &agentQueryServiceStub{
 		agent: agent, page: application.AgentPage{Items: []application.AgentView{agent}},
-		state: application.WorkspaceAgentState{AgentID: agent.AgentID, Availability: application.WorkspaceAgentReady, AccessAllowed: true, AgentRevision: 2},
+		workspacePage: application.WorkspaceAgentPage{Items: []application.WorkspaceAgentView{{AgentID: agent.AgentID, Name: agent.Name}}},
 	}
 	events := &agentEventServiceStub{
 		page: application.AgentEventPage{Events: []application.AgentEventView{event}, NextSequence: 1},
 	}
 	boundary, err := NewHandler(
-		catalog, lifecycle, &runServiceStub{}, queries, events, &networkPolicyServiceStub{},
+		catalog, lifecycle, &agentConfigurationServiceStub{}, queries, events, &networkPolicyServiceStub{},
 		func(context.Context) error { return nil },
 	)
 	if err != nil {
@@ -339,6 +342,11 @@ func TestMachineControlContractValidatesSuccessfulHTTPBoundary(t *testing.T) {
 	}
 	runtimeInput := sampleTemplateView().Runtime
 	requestBodies := map[string]any{
+		"POST /rpc/agent-controller/set-agent-authorization":              application.SetAgentAuthorizationInput{RequestID: "set-defaults", AgentID: "agent-1", PrincipalID: "user-1", ExpectedAccessRevision: "access-1", ExpectedAuthorizationRevision: 1, Authorization: domain.Authorization{Mode: domain.AuthorizationApprove, ToolRules: []domain.ToolRule{}}},
+		"POST /rpc/agent-controller/list-workspace-agents":                listWorkspaceAgentsRequest{RequestID: "list-workspace", OrganizationID: "org-1", PrincipalID: "user-1"},
+		"PUT /internal/provider-connections/{connection_id}/availability": map[string]any{"request_id": "provider-disable", "organization_id": "org-1", "expected_enabled": true, "enabled": false},
+		"PUT /internal/model-profiles/{model_profile_id}/availability":    map[string]any{"request_id": "model-disable", "organization_id": "org-1", "expected_enabled": true, "enabled": false},
+		"PUT /internal/agent-templates/{template_id}/availability":        map[string]any{"request_id": "template-disable", "organization_id": "org-1", "expected_enabled": true, "enabled": false},
 		"POST /internal/provider-connections":                             sampleCreateProviderRequest(),
 		"POST /internal/provider-connections/{connection_id}/credentials": sampleRotateProviderRequest(),
 		"PUT /internal/agents/{agent_id}/network-policy": application.SetAgentNetworkPolicyInput{
@@ -397,6 +405,7 @@ func TestMachineControlContractValidatesSuccessfulHTTPBoundary(t *testing.T) {
 				if err != nil {
 					t.Fatalf("marshal %s request: %v", key, err)
 				}
+				assertControlResponseSchema(t, compiler, route.Request, payload)
 				body = bytes.NewReader(payload)
 			} else if route.Request != "" {
 				t.Fatalf("%s.%s has no executable request fixture", resource, operationName)
@@ -459,7 +468,11 @@ func TestMachineControlContractValidatesActualHTTPErrorBoundary(t *testing.T) {
 		{code: "request_id_conflict", err: ports.ErrRequestConflict},
 		{code: "reference_not_found", err: application.ErrInvalidReference},
 		{code: "reference_disabled", err: ports.ErrDisabledReference},
+		{code: "resource_in_use", err: &ports.CatalogReferenceConflict{References: []ports.CatalogReference{{Kind: "template", ResourceID: "template-1"}}}},
+		{code: "execution_configuration_capacity_exceeded", err: ports.ErrExecutionCapacityExceeded},
 		{code: "agent_not_found", err: application.ErrAgentNotFound},
+		{code: "access_denied", err: application.ErrAccessDenied},
+		{code: "configuration_conflict", err: ports.ErrConcurrentChange, method: http.MethodPost, path: "/rpc/agent-controller/set-agent-authorization", body: `{"request_id":"cas","agent_id":"agent","principal_id":"owner","expected_access_revision":"access","expected_authorization_revision":1,"authorization":{"mode":"auto","tool_rules":[]}}`},
 		{code: "agent_not_ready", err: application.ErrAgentNotReady},
 		{code: "lifecycle_conflict", err: application.ErrLifecycleConflict},
 		{
@@ -477,7 +490,7 @@ func TestMachineControlContractValidatesActualHTTPErrorBoundary(t *testing.T) {
 		t.Run(test.code, func(t *testing.T) {
 			lifecycle := &lifecycleServiceStub{err: test.err}
 			boundary, err := NewHandler(
-				&catalogServiceStub{}, lifecycle, &runServiceStub{}, &agentQueryServiceStub{},
+				&catalogServiceStub{}, lifecycle, &agentConfigurationServiceStub{err: test.err}, &agentQueryServiceStub{},
 				&agentEventServiceStub{}, &networkPolicyServiceStub{err: test.err},
 
 				func(context.Context) error { return nil })
@@ -573,7 +586,7 @@ func TestMachineControlContractValidatesActualSSEBoundary(t *testing.T) {
 			Events: []application.AgentEventView{event}, NextSequence: 1,
 		}}
 		boundary, err := NewHandler(
-			&catalogServiceStub{}, &lifecycleServiceStub{}, &runServiceStub{},
+			&catalogServiceStub{}, &lifecycleServiceStub{}, &agentConfigurationServiceStub{},
 			&agentQueryServiceStub{}, events, &networkPolicyServiceStub{},
 			func(context.Context) error { return nil },
 		)
@@ -624,6 +637,7 @@ func TestMachineEventTypesMatchProducerContract(t *testing.T) {
 	actual := schema.Defs["agent_event"].Properties["event_type"].Enum
 	expected := []string{
 		ports.EventAgentCreateRequested,
+		ports.EventAgentCreated,
 		ports.EventAgentReady,
 		ports.EventAgentBuildFailed,
 		ports.EventAgentRebuildRequested,
@@ -639,13 +653,20 @@ func TestMachineEventTypesMatchProducerContract(t *testing.T) {
 		ports.EventAgentLifecycleQuarantined,
 		ports.EventAgentRuntimeRestarted,
 		ports.EventAgentRuntimeMissing,
+		ports.EventAgentRuntimeConditionChanged,
 		ports.EventAgentOwnerRevoked,
 		ports.EventAgentAuthorizationUpdated,
-		ports.EventRunAdmissionReleased,
-		ports.EventRunAdmissionUnresolved,
 	}
 	if !slices.Equal(actual, expected) {
 		t.Fatalf("event type schema=%v producers=%v", actual, expected)
+	}
+	var contract machineControlContract
+	readStrictContractJSON(t, filepath.Join(root, "contracts/agent-controller/control-contract.json"), &contract)
+	declared := contract.Enums["event_type"]
+	slices.Sort(declared)
+	slices.Sort(expected)
+	if !slices.Equal(declared, expected) {
+		t.Fatalf("event type manifest=%v producers=%v", declared, expected)
 	}
 }
 
@@ -737,19 +758,13 @@ func assertControlWireType(
 const controlSchemaID = "https://antnest.local/agent-controller/control-api.schema.json"
 const draft202012Schema = "https://json-schema.org/draft/2020-12/schema"
 
-func assertControlSSEMetadata(t *testing.T, resource string, route controlContractRoute) {
+func assertControlSSEMetadata(t *testing.T, route controlContractRoute) {
 	t.Helper()
 	if route.ContentType != "text/event-stream" {
 		return
 	}
 	if route.Event == "" || route.Data == "" {
 		t.Fatalf("incomplete SSE contract: %+v", route)
-	}
-	if resource == "workspace_state" {
-		if route.Event != "workspace_state" || route.EventID != "" || len(route.Headers) != 0 {
-			t.Fatalf("workspace snapshot must not advertise journal replay: %+v", route)
-		}
-		return
 	}
 	if route.EventID == "" {
 		t.Fatalf("journal SSE requires an event ID: %+v", route)
@@ -815,7 +830,7 @@ func assertControlResponseSchema(
 func sampleControlAgent(now time.Time) application.AgentView {
 	return application.AgentView{
 		AgentID: "agent-1", OrganizationID: "org-1", OwnerUserID: "user-1", Name: "Agent",
-		DesiredState: domain.DesiredEnabled, LifecycleState: domain.AgentAvailable,
+		DesiredState: domain.DesiredEnabled, LifecycleState: domain.AgentCreated, ActivationState: domain.ActivationEnabled, RuntimeState: domain.RuntimeAvailable,
 		AccessRevision: "access-1", AgentSpecRevisionID: "spec-1",
 		ExecutionRevisionID: "execution-1", LastSuccessfulExecutionRevisionID: "execution-1",
 		RuntimeRevision:    "rtv_11111111111111111111111111111111",
@@ -839,19 +854,21 @@ func sampleControlEvent(
 	return application.AgentEventView{
 		EventID: "event-1", GlobalSequence: 1, AggregateSequence: 2, SchemaVersion: 1,
 		AgentID: agentID, EventType: ports.EventAgentReady,
-		OperationRequestID: operationRequestID, AdmissionID: "admission-1",
-		TraceID: strings.Repeat("a", 32), OccurredAt: now, Data: map[string]any{"kind": "ready"},
+		OperationRequestID: operationRequestID, TraceID: strings.Repeat("a", 32), OccurredAt: now, Data: map[string]any{"kind": "ready"},
 	}
 }
 
 func assertControlErrorContract(t *testing.T, contract machineControlContract) {
 	t.Helper()
 	behaviors := []error{
+		application.ErrAccessDenied,
 		application.ErrInvalidInput,
 		domain.ErrInvalidImageReference,
 		ports.ErrRequestConflict,
 		application.ErrInvalidReference,
 		ports.ErrDisabledReference,
+		&ports.CatalogReferenceConflict{References: []ports.CatalogReference{{Kind: "template", ResourceID: "template-1"}}},
+		ports.ErrExecutionCapacityExceeded,
 		application.ErrAgentNotFound,
 		application.ErrAgentNotReady,
 		application.ErrLifecycleConflict,
@@ -886,6 +903,16 @@ func assertControlErrorContract(t *testing.T, contract machineControlContract) {
 		}
 		seen[payload.Code] = struct{}{}
 	}
+	response := httptest.NewRecorder()
+	writeAgentConfigurationError(context.Background(), response, ports.ErrConcurrentChange)
+	var payload errorResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != contract.Errors.StatusByCode[payload.Code] || payload.Retryable != contract.Errors.RetryableByCode[payload.Code] {
+		t.Fatalf("configuration error differs from management contract: %d %+v", response.Code, payload)
+	}
+	seen[payload.Code] = struct{}{}
 	if len(seen) != len(contract.Errors.StatusByCode) {
 		missing := make([]string, 0)
 		for code := range contract.Errors.StatusByCode {

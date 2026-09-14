@@ -25,7 +25,7 @@ func TestRuntimeLossQueriesRepresentAbsenceWithoutLosingLogicalIdentity(t *testi
 	events := len(repository.observations)
 	absent, err := service.InspectRuntime(context.Background(), "agent-1")
 	if err != nil || absent.AgentID != before.AgentID || absent.RuntimeRevision != before.RuntimeRevision ||
-		absent.LifecycleState != deployment.LifecycleReady || absent.Health != deployment.HealthAbsent ||
+		absent.LifecycleState != deployment.LifecycleProvisioned || absent.Health != deployment.HealthAbsent ||
 		absent.MCPEndpoint != "" || absent.RuntimeExecutionID != "" {
 		t.Fatalf("absence mistaken for drift or stale endpoint retained: %+v error=%v", absent, err)
 	}
@@ -65,7 +65,7 @@ func TestRuntimeLossDoesNotTurnInspectionFailureIntoAbsence(t *testing.T) {
 			repository := newLifecycleRepository()
 			platform := &recoveryPlatform{lifecyclePlatform: newLifecyclePlatform()}
 			service, err := NewService(repository, repository, lifecycleObservationReadiness{}, platform, lifecycleVerifier{},
-				func() time.Time { return lifecycleNow }, time.Second, time.Millisecond, time.Millisecond)
+				func() time.Time { return lifecycleNow }, time.Second)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -108,7 +108,7 @@ func TestRuntimeLossRejectsContradictoryAbsentInspection(t *testing.T) {
 			repository := newLifecycleRepository()
 			platform := &recoveryPlatform{lifecyclePlatform: newLifecyclePlatform()}
 			service, err := NewService(repository, repository, lifecycleObservationReadiness{}, platform, lifecycleVerifier{},
-				func() time.Time { return lifecycleNow }, time.Second, time.Millisecond, time.Millisecond)
+				func() time.Time { return lifecycleNow }, time.Second)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -196,7 +196,7 @@ func TestRuntimeLossReinspectionIsBoundedReadOnlyAndCancellable(t *testing.T) {
 	repository := newLifecycleRepository()
 	platform := &runtimeLossProbe{lifecyclePlatform: newLifecyclePlatform()}
 	service, err := NewService(repository, repository, lifecycleObservationReadiness{}, platform, platform,
-		func() time.Time { return lifecycleNow }, time.Second, time.Millisecond, time.Millisecond)
+		func() time.Time { return lifecycleNow }, time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}

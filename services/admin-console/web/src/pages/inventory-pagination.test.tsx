@@ -20,7 +20,8 @@ const template = (id: string): AgentTemplate => ({
 });
 const agent = (id: string, view: string): Agent => ({
   ...timestamps, agent_id: id, name: id, owner_user_id: "owner", aggregate_sequence: 1,
-  desired_state: view === "deleted" ? "deleted" : "enabled", lifecycle_state: view === "deleted" ? "deleted" : "ready",
+  desired_state: view === "deleted" ? "deleted" : "enabled", lifecycle_state: view === "deleted" ? "deleted" : "created",
+  activation_state: view === "deleted" ? undefined : "enabled", runtime_state: view === "deleted" ? "absent" : "available",
 });
 const inventories = [
   { name: "Providers", component: <ModelsPage />, path: "/api/admin/provider-connections", cursor: "after_id", next: "next_after_id", row: provider, list: "Model providers", view: "" },

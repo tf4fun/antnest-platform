@@ -13,7 +13,7 @@ import (
 )
 
 func TestRuntimeLossAuditSurvivesRealEventListAndWatch(t *testing.T) {
-	ctx, repository, databaseURL := workspaceStateRepository(t)
+	ctx, repository, databaseURL := controllerTestConnection(t)
 	base, _ := seedAvailableAgentForRebuild(t, ctx, repository)
 	if err := repository.ApplyRuntimeObservation(ctx, ports.RuntimeObservation{
 		Sequence: 7, AgentID: base.Agent.AgentID, RuntimeRevision: base.Agent.RuntimeRevision,
@@ -30,17 +30,17 @@ func TestRuntimeLossAuditSurvivesRealEventListAndWatch(t *testing.T) {
 	page, err := service.ListAgentEvents(ctx, application.ListAgentEventsInput{
 		OrganizationID: base.Agent.OrganizationID, AgentID: base.Agent.AgentID, Limit: 100,
 	})
-	if err != nil || len(page.Events) != 3 {
+	if err != nil || len(page.Events) != 4 {
 		t.Fatalf("real event list=%+v error=%v", page, err)
 	}
-	loss := page.Events[2]
+	loss := page.Events[3]
 	if loss.EventType != "agent_runtime_missing" || loss.Data["reason"] != "runtime_missing" ||
 		loss.Data["runtime_revision"] != base.Agent.RuntimeRevision || loss.Data["observation_sequence"] != float64(7) ||
-		loss.OperationRequestID != "" || loss.AdmissionID != "" || loss.GlobalSequence != page.NextSequence {
+		loss.OperationRequestID != "" || loss.GlobalSequence != page.NextSequence {
 		t.Fatalf("incorrect loss attribution: %+v", loss)
 	}
 	finished := errors.New("watch evidence received")
-	err = service.WatchAgentEvents(ctx, base.Agent.OrganizationID, base.Agent.AgentID, page.Events[1].GlobalSequence,
+	err = service.WatchAgentEvents(ctx, base.Agent.OrganizationID, base.Agent.AgentID, page.Events[2].GlobalSequence,
 		func(event application.AgentEventView) error {
 			if !reflect.DeepEqual(event, loss) {
 				t.Fatalf("watch/list disagreement: %+v / %+v", event, loss)
@@ -55,18 +55,18 @@ func TestRuntimeLossAuditSurvivesRealEventListAndWatch(t *testing.T) {
 func TestRuntimeLossReconciliationRollsBackWholePage(t *testing.T) {
 	for _, reset := range []bool{false, true} {
 		t.Run(map[bool]string{false: "bootstrap", true: "reset"}[reset], func(t *testing.T) {
-			ctx, repository, databaseURL := workspaceStateRepository(t)
+			ctx, repository, databaseURL := controllerTestConnection(t)
 			base, _ := seedAvailableAgentForRebuild(t, ctx, repository)
 			insertQueryAgent(t, ctx, repository, "second-agent", "org-integration", "user-integration",
-				domain.DesiredEnabled, domain.AgentAvailable, time.Now().UTC())
+				domain.DesiredEnabled, domain.AgentCreated, time.Now().UTC())
 			if _, err := repository.pool.Exec(ctx, `UPDATE agent_controller.agents
-SET runtime_revision=$1, runtime_execution_id='second-execution', runtime_mcp_endpoint='http://second/mcp'
+SET runtime_revision=$1, executable_execution_revision_id='second-binding', runtime_execution_id='second-execution', runtime_mcp_endpoint='http://second/mcp'
 WHERE id='second-agent'`, base.Agent.RuntimeRevision); err != nil {
 				t.Fatal(err)
 			}
 			snapshots := []ports.RuntimeEnvironmentSnapshot{
-				{AgentID: base.Agent.AgentID, RuntimeRevision: base.Agent.RuntimeRevision, LifecycleState: "ready", Health: "absent"},
-				{AgentID: "second-agent", RuntimeRevision: base.Agent.RuntimeRevision, LifecycleState: "ready", Health: "absent"},
+				{AgentID: base.Agent.AgentID, RuntimeRevision: base.Agent.RuntimeRevision, LifecycleState: "provisioned", Health: "absent"},
+				{AgentID: "second-agent", RuntimeRevision: base.Agent.RuntimeRevision, LifecycleState: "provisioned", Health: "absent"},
 			}
 			collision := runtimeReconciliationEventID(snapshots[1])
 			if _, err := repository.pool.Exec(ctx, `UPDATE agent_controller.agent_events
@@ -97,7 +97,7 @@ SET event_id=$1 WHERE event_id='event-ready-for-rebuild'`, collision); err != ni
 			if !reflect.DeepEqual(before, after) {
 				t.Fatal("failed page changed an Agent, event journal or consumer cursor")
 			}
-			assertNoWorkspaceNotification(t, signal)
+			assertNoAgentNotification(t, signal)
 			if _, err := repository.pool.Exec(ctx, `UPDATE agent_controller.agent_events
 SET event_id='event-ready-for-rebuild' WHERE event_id=$1`, collision); err != nil {
 				t.Fatal(err)
@@ -105,10 +105,10 @@ SET event_id='event-ready-for-rebuild' WHERE event_id=$1`, collision); err != ni
 			if err := apply(); err != nil {
 				t.Fatal(err)
 			}
-			awaitWorkspaceNotification(t, ctx, signal)
+			awaitAgentNotification(t, ctx, signal)
 			for _, snapshot := range snapshots {
 				agent, err := repository.GetAgent(ctx, snapshot.AgentID)
-				if err != nil || agent.LifecycleState != domain.AgentUnavailable || agent.FailureCode != "runtime_missing" {
+				if err != nil || (agent.LifecycleState != domain.AgentCreated || agent.ActivationState != domain.ActivationEnabled || agent.RuntimeState != domain.RuntimeUnknown) || agent.FailureCode != "runtime_missing" {
 					t.Fatalf("retry did not invalidate Agent: %+v error=%v", agent, err)
 				}
 			}

@@ -39,7 +39,7 @@ children, or allow ACP clients to start processes on the ACP service host.
    usable execution only after the existing Runtime readiness barrier. Required
    MCP startup/discovery failure is an ordinary Runtime preparation failure.
 5. ACP receives the bound Runtime MCP endpoint and execution identity, never
-   the process command, arguments or environment through Run admission. It
+   the process command, arguments or environment through configuration publication. It
    discovers tools and reads Runtime information through that endpoint.
 
 This introduces no extra tables, lifecycle states, desired-state replicas or
@@ -54,7 +54,7 @@ with immutable revisions in Agent Controller's own database, not a new secret
 manager. Trusted internal administrative catalog/configuration RPCs return this
 configuration; they must not be exposed as public user APIs. Database access and
 backups therefore require the same protection as other sensitive configuration.
-Operational observations, lifecycle events, Run admission, prompts and telemetry
+Operational observations, lifecycle events, ACP Agent configuration and prompts
 must not copy this configuration. Diagnostic formatting displays server IDs only.
 Future credential references can replace inline values without changing process
 ownership. This batch does not add a Console MCP configuration editor.

@@ -7,17 +7,18 @@ import { record } from "./diagnostics.js";
 export function snapshotAttributes(snapshot: RunExecutionSnapshot): Attributes {
   const configuration = snapshot.executionSpec.configuration;
   return {
-    "antnest.admission.id": snapshot.admissionId,
+    "antnest.organization.id": snapshot.organizationId,
+    "antnest.provider.connection_id": snapshot.providerConnectionId,
+    "antnest.configuration.revision": snapshot.configurationRevision,
     "antnest.agent.revision": snapshot.agentSpecRevision,
     "antnest.execution.revision": snapshot.executionRevision,
     "antnest.runtime.revision": snapshot.runtime.revision,
     "antnest.runtime.execution_id": snapshot.runtime.executionId,
-    "antnest.deadline": snapshot.admissionDeadline.toISOString(),
+    "antnest.deadline": snapshot.deadlineAt.toISOString(),
     ...(configuration === undefined
       ? {}
       : {
           "antnest.model.profile_id": configuration.modelProfileId,
-          "antnest.model.revision": configuration.modelProfileRevisionId,
           "antnest.authorization.mode": configuration.authorization.mode,
         }),
   };

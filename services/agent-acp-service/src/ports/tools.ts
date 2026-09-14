@@ -23,6 +23,8 @@ export type ToolCallInput = {
 };
 
 export type ToolCallResult = {
+  // Absent evidence is unproven, never an implicit stopping acknowledgement.
+  runtimeCallStopped?: boolean;
   file?: ToolFileObservation;
   content: ContentBlock[];
   structuredContent?: unknown;

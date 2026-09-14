@@ -20,14 +20,10 @@ export type AgentOwnerView = {
   byUserID: Map<string, DirectoryMember>;
 };
 
-const convergedLifecycleByDesiredState: Record<string, string> = {
-  enabled: "available",
-  disabled: "disabled",
-  deleted: "deleted",
-};
-
 const eventLabels: Record<string, string> = {
   agent_create_requested: "Creation requested",
+  agent_created: "Creation completed",
+  agent_runtime_condition_changed: "Runtime status changed",
   agent_ready: "Agent available",
   agent_build_failed: "Build failed",
   agent_rebuild_requested: "Rebuild requested",
@@ -61,14 +57,32 @@ export function agentOwnerView(members: DirectoryMember[]): AgentOwnerView {
 }
 
 export function agentStatusPresentation(agent: Agent): AgentStatusPresentation {
-  const convergedLifecycle = convergedLifecycleByDesiredState[agent.desired_state];
-  if (convergedLifecycle === agent.lifecycle_state) {
-    return { lifecycle: agent.lifecycle_state };
-  }
+  const lifecycle = agentDisplayState(agent);
+  const confirmed = agent.lifecycle_state === "deleted" ? "deleted" : agent.activation_state;
+  if (confirmed === agent.desired_state) return { lifecycle };
   return {
-    lifecycle: agent.lifecycle_state,
+    lifecycle,
     target: humanize(agent.desired_state),
   };
+}
+
+function agentDisplayState(agent: Agent): string {
+  if (agent.lifecycle_state !== "created") return agent.lifecycle_state;
+  if (agent.activation_state === "disabled") return "disabled";
+  if (agent.runtime_state === "available" && !agent.executable_execution_revision) return "not_executable";
+  return agent.runtime_state;
+}
+
+export function agentFleetCounts(agents: Agent[]) {
+  const counts = { available: 0, disabled: 0, attention: 0, pending: 0 };
+  for (const agent of agentsForView(agents, "current")) {
+    if (agent.active_operation_request_id) counts.pending++;
+    else if (agent.activation_state === "disabled") counts.disabled++;
+    else if (agent.desired_state === "enabled" && agentDisplayState(agent) === "available") counts.available++;
+    else if (agent.failure_code || ["unhealthy", "exited", "absent", "not_executable"].includes(agentDisplayState(agent))) counts.attention++;
+    else counts.pending++;
+  }
+  return counts;
 }
 
 export function agentEventLabel(eventType: string): string {
@@ -76,9 +90,9 @@ export function agentEventLabel(eventType: string): string {
 }
 
 export function agentRecoveryAvailable(agent: Agent): boolean {
-  return agent.desired_state === "enabled" && agent.lifecycle_state === "unavailable" &&
-    Boolean(agent.agent_spec_revision && agent.last_successful_execution_revision) &&
-    !agent.executable_execution_revision && !agent.runtime &&
+  return agent.desired_state === "enabled" && agent.lifecycle_state === "created" && agent.activation_state === "enabled" &&
+    Boolean(agent.agent_spec_revision && agent.runtime?.runtime_revision) &&
+    !agent.executable_execution_revision &&
     agent.failure_code !== "lifecycle_invariant_failed";
 }
 
@@ -108,14 +122,16 @@ export function agentActionAvailability(
     };
   }
 
-  const available = agent.desired_state === "enabled" && agent.lifecycle_state === "available";
-  const disabled = agent.desired_state === "disabled" && agent.lifecycle_state === "disabled";
+  const created = agent.lifecycle_state === "created";
+  const configured = created && Boolean(agent.agent_spec_revision && agent.runtime?.runtime_revision) && agent.failure_code !== "lifecycle_invariant_failed";
+  const enabled = configured && agent.activation_state === "enabled";
+  const disabled = configured && agent.desired_state === "disabled" && agent.activation_state === "disabled";
   return {
     retained: false,
-    canRebuild: available || agentRecoveryAvailable(agent),
+    canRebuild: enabled && agent.desired_state === "enabled",
     canEnable: disabled,
-    canDisable: available,
-    canDelete: available || disabled || agent.lifecycle_state === "unavailable",
+    canDisable: enabled && agent.desired_state !== "deleted",
+    canDelete: created || agent.lifecycle_state === "not_created",
   };
 }
 

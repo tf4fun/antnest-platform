@@ -208,17 +208,17 @@ func validateOperationInput(input NewLifecycleOperationInput) error {
 			return fmt.Errorf("create operation requires only a target Agent spec revision")
 		}
 	case OperationRebuild:
-		if sourceSpec == "" || sourceExecution == "" || sourceRuntime == "" ||
+		if sourceSpec == "" || sourceRuntime == "" ||
 			targetSpec == "" || input.SourceRuntimeAbsent {
 			return fmt.Errorf("rebuild operation requires source Agent spec, source Runtime, and target Agent spec revisions")
 		}
 	case OperationDisable:
-		if sourceSpec == "" || sourceExecution == "" || sourceRuntime == "" ||
+		if sourceSpec == "" || sourceRuntime == "" ||
 			targetSpec != "" || input.SourceRuntimeAbsent {
 			return fmt.Errorf("disable operation requires only source Agent spec and Runtime revisions")
 		}
 	case OperationEnable:
-		if sourceSpec == "" || sourceExecution == "" || sourceRuntime == "" ||
+		if sourceSpec == "" || sourceRuntime == "" ||
 			targetSpec == "" || input.SourceRuntimeAbsent {
 			return fmt.Errorf("enable operation requires source Agent spec, source Runtime, and target Agent spec revisions")
 		}

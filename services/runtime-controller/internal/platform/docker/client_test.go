@@ -29,7 +29,7 @@ func TestHTTPClientMapsDockerResourcesAndHardening(t *testing.T) {
 		case "GET /v1.47/containers/container-1/json":
 			response = jsonResponse(http.StatusOK, map[string]any{
 				"Id": "container-1", "Name": "/antnest-runtime-agent-1", "RestartCount": 2,
-				"State": map[string]any{"Running": true, "Health": map[string]string{"Status": "healthy"}},
+				"State": map[string]any{"Running": true, "Status": "running", "ExitCode": 137, "OOMKilled": true, "Error": "startup error", "Health": map[string]string{"Status": "healthy"}},
 				"Config": map[string]any{"Labels": map[string]string{
 					labelManaged: "runtime", labelAgentID: "agent-1", labelGeneration: "7",
 				}},
@@ -104,6 +104,9 @@ func TestHTTPClientMapsDockerResourcesAndHardening(t *testing.T) {
 	containers, err := client.ListManagedContainers(ctx)
 	if err != nil || len(containers) != 1 || containers[0].RestartCount != 2 || containers[0].Health != "healthy" {
 		t.Fatalf("list managed containers: containers=%+v err=%v", containers, err)
+	}
+	if containers[0].Status != "running" || containers[0].ExitCode != 137 || !containers[0].OOMKilled || containers[0].Error != "startup error" {
+		t.Fatalf("Docker process facts were dropped: %+v", containers[0])
 	}
 	volume, err := client.InspectVolume(ctx, "antnest-workspace-agent-1")
 	if err != nil || volume.Labels[labelManaged] != "workspace" {

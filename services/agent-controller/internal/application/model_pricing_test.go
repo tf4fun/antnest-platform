@@ -5,10 +5,8 @@ import (
 	"errors"
 	"math"
 	"testing"
-	"time"
 
 	"soft/antnest-platform/services/agent-controller/internal/domain"
-	"soft/antnest-platform/services/agent-controller/internal/ports"
 )
 
 func usdPricing(input, output, cacheRead float64) *domain.ModelPricing {
@@ -62,32 +60,5 @@ func TestModelProfilePricingInvalidInputIsNotAnInternalFailure(t *testing.T) {
 		if !errors.Is(err, ErrInvalidInput) {
 			t.Fatalf("revise invalid price error=%v", err)
 		}
-	}
-}
-
-func TestAcquireRunPricingCannotMutateStoredSnapshot(t *testing.T) {
-	snapshot := validRunSnapshot()
-	snapshot.ExecutionSpec.Model.Pricing = usdPricing(2, 8, 0.5)
-	cacheWrite := 3.0
-	snapshot.ExecutionSpec.Model.Pricing.CacheWritePerMillion = &cacheWrite
-	record := ports.RunAdmissionRecord{
-		AdmissionID: "admission", AgentID: "agent", PrincipalID: "user", SessionID: "session",
-		AccessRevision: "access", RuntimeRevision: "runtime-1", State: domain.AdmissionActive,
-		Deadline: time.Unix(2000, 0), Snapshot: snapshot,
-	}
-	first, err := acquireRunResult(record, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	price := first.ExecutionSpec.Model.Pricing
-	*price.InputPerMillion, *price.OutputPerMillion = 99, 99
-	*price.CacheReadPerMillion, *price.CacheWritePerMillion = 99, 99
-	second, err := acquireRunResult(record, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := second.ExecutionSpec.Model.Pricing; *got.InputPerMillion != 2 || *got.OutputPerMillion != 8 ||
-		*got.CacheReadPerMillion != 0.5 || *got.CacheWritePerMillion != 3 {
-		t.Fatal("caller mutated replayable pricing")
 	}
 }

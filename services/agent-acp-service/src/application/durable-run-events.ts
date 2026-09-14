@@ -1,11 +1,11 @@
 import { createHash } from "node:crypto";
 
 import type { ContentBlock, ModelToolDefinition, ToolEffectState } from "../domain/types.js";
-import { describeTool, type ToolResultPresentation } from "../domain/tool-presentation.js";
+import { describeTool } from "../domain/tool-presentation.js";
 import type { SessionEvent, SessionEventPublisher } from "../ports/acp-application.js";
 import type { ModelUsage } from "../ports/model.js";
 import type { ModelToolCall } from "../ports/model.js";
-import type { RunEventPort } from "../ports/run-events.js";
+import type { RunEventPort, ToolCompletionDetails } from "../ports/run-events.js";
 import type { RunEventRepository } from "../ports/run-event-repository.js";
 import { planResult, planTool, type PlanEntry } from "../domain/plan.js";
 
@@ -118,7 +118,7 @@ export class DurableRunEvents implements RunEventPort {
     status: "completed" | "failed" | "cancelled",
     content: ContentBlock[],
     toolEffectState: ToolEffectState,
-    presentation?: ToolResultPresentation,
+    details?: ToolCompletionDetails,
   ): Promise<void> {
     const event = await this.persist("Tool finish", () =>
       this.dependencies.repository.finishToolAttempt({
@@ -129,7 +129,7 @@ export class DurableRunEvents implements RunEventPort {
         content,
         resultSummary: summarize(content),
         toolEffectState,
-        ...presentation,
+        ...details,
         createdAt: this.dependencies.now(),
       }),
     );

@@ -77,7 +77,8 @@ func (service *LifecycleService) DeleteAgent(
 		ExpectedLifecycleState:  base.Agent.LifecycleState,
 		ExpectedRuntimeRevision: base.Agent.RuntimeRevision,
 		Operation: ports.LifecycleOperationRecord{
-			RequestID: input.RequestID, RequestFingerprint: fingerprint,
+			DrainDeadlineAt: service.drainDeadline(now),
+			RequestID:       input.RequestID, RequestFingerprint: fingerprint,
 			AgentID: base.Agent.AgentID, Kind: domain.OperationDelete,
 			Phase: operation.Phase(), State: operation.State(),
 			SourceRuntimeRevision: sourceRuntime,
@@ -125,18 +126,19 @@ func (service *LifecycleService) stepAgentDelete(
 func (service *LifecycleService) settleDeleteDrain(
 	ctx context.Context, state ports.AgentDeleteState,
 ) (ports.AgentDeleteState, error) {
-	settled, err := service.store.SettleAgentDeleteDrain(
-		ctx, state.Operation.RequestID, state.Operation.RequestFingerprint,
-		domain.ChildRequestID(state.Operation.RequestID, domain.PhaseNetworkFence),
-		service.clock.Now(),
-	)
-	if err != nil || settled.Operation.Phase != domain.PhaseDrain {
-		return settled, err
+	outcome, err := service.settleLifecycleExecution(ctx, state.Agent, state.Operation)
+	if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil && !service.clock.Now().Before(*state.Operation.DrainDeadlineAt) {
+		return service.failAgentDelete(ctx, state, "drain_timeout", "Agent execution did not settle before deletion; retry after execution has stopped")
 	}
-	if !service.clock.Now().Before(state.Operation.CreatedAt.Add(service.drainTimeout)) {
-		return service.failAgentDelete(ctx, settled, "drain_timeout", "Active Run did not drain before Agent deletion; retry deletion after the Run has stopped")
+	if err != nil || outcome == ports.ExecutionNotSettled {
+		return state, err
 	}
-	return settled, nil
+	operation, err := service.confirmLifecycleDrain(ctx, state.Operation, outcome)
+	if err != nil {
+		return state, err
+	}
+	state.Operation = operation
+	return state, nil
 }
 
 func (service *LifecycleService) fenceDeleteNetwork(
@@ -303,30 +305,18 @@ func (service *LifecycleService) advanceAgentDelete(
 	networkReleaseOutcome string,
 ) (ports.AgentDeleteState, error) {
 	now := service.clock.Now()
-	input := deleteAdvanceInput(ctx, state, expected, next, now)
+	input := deleteAdvanceInput(state, expected, next, now)
 	input.NetworkAttachment, input.RuntimeResult = attachment, runtime
 	input.NetworkReleaseOutcome = networkReleaseOutcome
 	return service.store.AdvanceAgentDelete(ctx, input)
 }
 
-func deleteAdvanceInput(ctx context.Context, state ports.AgentDeleteState, expected, next domain.OperationPhase, now time.Time) ports.AdvanceAgentDelete {
-	releaseEvent := ports.RunAdmissionEvent{}
-	if expected == domain.PhaseRuntimeDelete ||
-		(expected == domain.PhaseNetworkFence && state.Operation.SourceRuntimeAbsent) {
-		reason := "runtime_deleted"
-		if state.Operation.SourceRuntimeAbsent {
-			reason = "runtime_absent"
-		}
-		releaseEvent = lifecycleRunReleaseEvent(
-			ctx, state.Operation.RequestID, reason,
-			state.Operation.SourceRuntimeRevision, now,
-		)
-	}
+func deleteAdvanceInput(state ports.AgentDeleteState, expected, next domain.OperationPhase, now time.Time) ports.AdvanceAgentDelete {
 	return ports.AdvanceAgentDelete{
 		RequestID: state.Operation.RequestID, Fingerprint: state.Operation.RequestFingerprint,
 		ExpectedPhase: expected, NextPhase: next,
 		NextChildRequestID: domain.ChildRequestID(state.Operation.RequestID, next),
-		RunReleaseEvent:    releaseEvent, Now: now,
+		Now:                now,
 	}
 }
 
@@ -370,20 +360,7 @@ func validateDeleteSource(agent ports.AgentRecord) error {
 	if agent.ActiveOperationRequestID != "" {
 		return fmt.Errorf("%w: Agent already has an active lifecycle operation", ErrLifecycleConflict)
 	}
-	switch agent.LifecycleState {
-	case domain.AgentAvailable:
-		if agent.DesiredState != domain.DesiredEnabled || agent.RuntimeRevision == "" ||
-			agent.RuntimeExecutionID == "" || agent.RuntimeMCPEndpoint == "" {
-			return fmt.Errorf("%w: Agent available projection is incomplete", ErrAgentNotReady)
-		}
-	case domain.AgentDisabled:
-		if agent.DesiredState != domain.DesiredDisabled || agent.RuntimeRevision == "" ||
-			agent.RuntimeExecutionID != "" || agent.RuntimeMCPEndpoint != "" {
-			return fmt.Errorf("%w: Agent disabled projection is incomplete", ErrAgentNotReady)
-		}
-	case domain.AgentUnavailable:
-		// Failed deletion retains its intent; an explicit new request may resume cleanup.
-	default:
+	if agent.LifecycleState != domain.AgentCreated && agent.LifecycleState != domain.AgentNotCreated {
 		return fmt.Errorf("%w: Agent cannot enter deletion from %s", ErrAgentNotReady, agent.LifecycleState)
 	}
 	return nil

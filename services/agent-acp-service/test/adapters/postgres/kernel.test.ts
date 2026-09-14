@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { EventEmitter } from "node:events";
 import type { Pool, PoolClient } from "pg";
 
 import { PostgresKernel } from "../../../src/adapters/postgres/kernel.js";
@@ -33,7 +34,7 @@ describe("PostgresKernel telemetry", () => {
   it("observes one transaction and rolls back the original failure", async () => {
     const query = vi.fn(() => Promise.resolve({ rows: [], rowCount: 0 }));
     const release = vi.fn();
-    const client = { query, release } as unknown as PoolClient;
+    const client = Object.assign(new EventEmitter(), { query, release }) as unknown as PoolClient;
     const telemetry = recordedTelemetry();
     const kernel = new PostgresKernel(
       { connect: () => Promise.resolve(client) } as unknown as Pool,
@@ -50,6 +51,7 @@ describe("PostgresKernel telemetry", () => {
     expect(query).toHaveBeenNthCalledWith(1, "BEGIN");
     expect(query).toHaveBeenNthCalledWith(2, "ROLLBACK");
     expect(release).toHaveBeenCalledOnce();
+    expect(client.listenerCount("error")).toBe(0);
     expect(telemetry.counts).toContainEqual({
       name: "antnest.acp.repository.requests",
       attributes: { operation: "transaction", result: "error" },
@@ -64,7 +66,7 @@ describe("PostgresKernel telemetry", () => {
       .mockResolvedValueOnce({ rows: [], rowCount: 0 })
       .mockRejectedValueOnce(rollbackFailure);
     const release = vi.fn();
-    const client = { query, release } as unknown as PoolClient;
+    const client = Object.assign(new EventEmitter(), { query, release }) as unknown as PoolClient;
     const telemetry = recordedTelemetry();
     const kernel = new PostgresKernel(
       { connect: () => Promise.resolve(client) } as unknown as Pool,
@@ -82,6 +84,7 @@ describe("PostgresKernel telemetry", () => {
     expect(query).toHaveBeenNthCalledWith(1, "BEGIN");
     expect(query).toHaveBeenNthCalledWith(2, "ROLLBACK");
     expect(release).toHaveBeenCalledWith(rollbackFailure);
+    expect(client.listenerCount("error")).toBe(0);
     expect(telemetry.counts).toContainEqual({
       name: "antnest.acp.repository.requests",
       attributes: { operation: "transaction", result: "error" },

@@ -17,6 +17,7 @@ export class PostgresRunRepository implements RunRepository {
   public async getSession(sessionId: string): Promise<SessionRecord | null> {
     const result = await this.kernel.query<{
       id: string;
+      organization_id: string;
       principal_id: string;
       agent_id: string;
       cwd: "/workspace";
@@ -29,7 +30,7 @@ export class PostgresRunRepository implements RunRepository {
       created_at: Date;
       updated_at: Date;
     }>(
-      `SELECT id, principal_id, agent_id, cwd, state, title, forked_from_session_id,
+      `SELECT id, organization_id, principal_id, agent_id, cwd, state, title, forked_from_session_id,
               client_mcp_revision_id,
               last_execution_revision, last_message_sequence, created_at, updated_at
          FROM acp_sessions WHERE id = $1`,
@@ -40,6 +41,7 @@ export class PostgresRunRepository implements RunRepository {
       ? null
       : {
           id: row.id,
+          organizationId: row.organization_id,
           principalId: row.principal_id,
           agentId: row.agent_id,
           cwd: row.cwd,
@@ -78,18 +80,18 @@ export class PostgresRunRepository implements RunRepository {
           expected_access_revision: string;
           state: RunIntent["state"];
           pending_user_message_id: string;
-          pending_prompt: unknown;
+          input_prompt: unknown;
           session_configuration: unknown;
         }>(
           `INSERT INTO runs(
              id, request_id, session_id, client_mcp_revision_id,
              expected_access_revision, state,
-             pending_user_message_id, pending_prompt,
+             pending_user_message_id, input_prompt,
              created_at, updated_at, session_configuration
            ) VALUES ($1, $2, $3, $4, $5, 'admitting', $6, $7::jsonb, $8, $8, $9::jsonb)
            RETURNING id, request_id, session_id, client_mcp_revision_id,
                      expected_access_revision, state,
-                     pending_user_message_id, pending_prompt, session_configuration`,
+                     pending_user_message_id, input_prompt, session_configuration`,
           [
             input.runId,
             input.requestId,
@@ -111,7 +113,7 @@ export class PostgresRunRepository implements RunRepository {
           expectedAccessRevision: row.expected_access_revision,
           state: row.state,
           userMessageId: row.pending_user_message_id,
-          prompt: row.pending_prompt as RunIntent["prompt"],
+          prompt: row.input_prompt as RunIntent["prompt"],
           sessionConfiguration: sessionConfigurationSchema.parse(row.session_configuration),
         };
       });
@@ -150,10 +152,10 @@ export class PostgresRunRepository implements RunRepository {
         state: string;
         cancel_requested_at: Date | null;
         pending_user_message_id: string | null;
-        pending_prompt: unknown;
+        input_prompt: unknown;
       }>(
         `SELECT session_id, client_mcp_revision_id, state,
-                cancel_requested_at, pending_user_message_id, pending_prompt
+                cancel_requested_at, pending_user_message_id, input_prompt
            FROM runs WHERE id = $1 FOR UPDATE`,
         [input.runId],
       );
@@ -164,7 +166,7 @@ export class PostgresRunRepository implements RunRepository {
       if (runRow.state !== "admitting") {
         throw new Error("Run intent is no longer admitting");
       }
-      if (runRow.pending_user_message_id === null || !Array.isArray(runRow.pending_prompt)) {
+      if (runRow.pending_user_message_id === null || !Array.isArray(runRow.input_prompt)) {
         throw new Error("Run intent has no recoverable prompt");
       }
       if (runRow.client_mcp_revision_id !== input.snapshot.clientMcpRevisionId) {
@@ -173,16 +175,16 @@ export class PostgresRunRepository implements RunRepository {
       if (runRow.cancel_requested_at !== null || sessionRow.state !== "active") {
         await client.query(
           `UPDATE runs
-              SET state = 'cancelled', admission_id = $2, execution_snapshot = $3::jsonb,
-                  pending_user_message_id = NULL, pending_prompt = NULL,
+              SET state = 'cancelled', execution_snapshot = $2::jsonb, deadline_at = $3,
+                  pending_user_message_id = NULL,
                   terminal_class = 'cancelled', executor_state = 'quiescent',
                   tool_effect_state = 'none', error_class = NULL,
                   cancel_requested_at = COALESCE(cancel_requested_at, $4), updated_at = $4
             WHERE id = $1`,
           [
             input.runId,
-            input.snapshot.admissionId,
             JSON.stringify(input.snapshot),
+            input.snapshot.deadlineAt,
             input.acceptedAt,
           ],
         );
@@ -207,17 +209,17 @@ export class PostgresRunRepository implements RunRepository {
           JSON.stringify({
             kind: "user_message",
             messageId: runRow.pending_user_message_id,
-            content: runRow.pending_prompt,
+            content: runRow.input_prompt,
           }),
           input.acceptedAt,
         ],
       );
       await client.query(
         `UPDATE runs
-            SET state = 'running', admission_id = $2, execution_snapshot = $3::jsonb,
-                pending_user_message_id = NULL, pending_prompt = NULL, updated_at = $4
+            SET state = 'running', execution_snapshot = $2::jsonb, deadline_at = $3,
+                pending_user_message_id = NULL, updated_at = $4
           WHERE id = $1`,
-        [input.runId, input.snapshot.admissionId, JSON.stringify(input.snapshot), input.acceptedAt],
+        [input.runId, JSON.stringify(input.snapshot), input.snapshot.deadlineAt, input.acceptedAt],
       );
       await client.query(
         `UPDATE acp_sessions
@@ -244,7 +246,7 @@ export class PostgresRunRepository implements RunRepository {
     const result = await this.kernel.query<{ state: "failed" | "cancelled" }>(
       `UPDATE runs
           SET state = CASE WHEN cancel_requested_at IS NULL THEN 'failed' ELSE 'cancelled' END,
-              pending_user_message_id = NULL, pending_prompt = NULL,
+              pending_user_message_id = NULL,
               terminal_class = CASE WHEN cancel_requested_at IS NULL THEN NULL ELSE 'cancelled' END,
               executor_state = CASE WHEN cancel_requested_at IS NULL THEN NULL ELSE 'quiescent' END,
               tool_effect_state = CASE WHEN cancel_requested_at IS NULL THEN NULL ELSE 'none' END,

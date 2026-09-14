@@ -525,6 +525,9 @@ func (r *Repository) ListObservations(
 }
 
 type environmentSnapshot struct {
+	Phase              deployment.PlatformPhase   `json:"phase"`
+	Reason             string                     `json:"reason,omitempty"`
+	DiagnosticSummary  string                     `json:"diagnostic_summary,omitempty"`
 	AgentID            string                     `json:"agent_id"`
 	RuntimeRevision    deployment.RuntimeRevision `json:"runtime_revision"`
 	LifecycleState     deployment.LifecycleState  `json:"lifecycle_state"`
@@ -537,6 +540,7 @@ type environmentSnapshot struct {
 
 func environmentSnapshotFromDomain(value deployment.Environment) environmentSnapshot {
 	return environmentSnapshot{
+		Phase: value.Phase, Reason: value.Reason, DiagnosticSummary: value.DiagnosticSummary,
 		AgentID: value.AgentID, RuntimeRevision: value.RuntimeRevision,
 		LifecycleState: value.LifecycleState, Health: value.Health,
 		MCPEndpoint: value.MCPEndpoint, RuntimeExecutionID: value.RuntimeExecutionID,
@@ -546,6 +550,7 @@ func environmentSnapshotFromDomain(value deployment.Environment) environmentSnap
 
 func (s environmentSnapshot) domain() deployment.Environment {
 	return deployment.Environment{
+		Phase: s.Phase, Reason: s.Reason, DiagnosticSummary: s.DiagnosticSummary,
 		AgentID: s.AgentID, RuntimeRevision: s.RuntimeRevision,
 		LifecycleState: s.LifecycleState, Health: s.Health,
 		MCPEndpoint: s.MCPEndpoint, RuntimeExecutionID: s.RuntimeExecutionID,

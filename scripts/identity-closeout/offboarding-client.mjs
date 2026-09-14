@@ -108,13 +108,13 @@ export async function explicitEnable(item) {
     { body: {}, status: 202 },
   );
   await waitOperation(item, body.request_id);
-  assert.equal((await agentDetail(item)).lifecycle_state, "available");
+  assert.equal((await agentDetail(item)).runtime_state, "available");
   await sentinel(item, "read");
 }
 
 export async function waitOffboarding(item, before, response, reason, secrets) {
   await until(
-    async () => (await agentDetail(item)).lifecycle_state === "disabled",
+    async () => (await agentDetail(item)).activation_state === "disabled",
     "automatic owner Disable",
   );
   assertDisabled(

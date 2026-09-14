@@ -34,8 +34,6 @@ identity or physical generation.
 | `ANTNEST_RUNTIME_SYSTEM_SKILLS_VOLUME` | no | Existing read-only system-Skill volume name; defaults to `antnest-system-skills` |
 | `ANTNEST_RUNTIME_STATUS_TIMEOUT` | no | Go duration; one `/status` bound; default `5s` |
 | `ANTNEST_RUNTIME_MUTATION_TIMEOUT` | no | Go duration; complete mutation bound including lock wait; default `2m` |
-| `ANTNEST_RUNTIME_READY_TIMEOUT` | no | Go duration; compute readiness bound; default `1m` |
-| `ANTNEST_RUNTIME_POLL_INTERVAL` | no | Go duration; compute readiness inspection interval; default `500ms` |
 | `ANTNEST_RUNTIME_RPC_TIMEOUT` | no | Go duration; finite internal RPC execution bound; default `3m` and must exceed mutation timeout |
 | `ANTNEST_RUNTIME_RECONCILIATION_TIMEOUT` | no | Go duration; complete physical/logical inventory reconciliation bound; default `2m` |
 | `ANTNEST_OBSERVATION_RETENTION` | no | Go duration; journal retention; default `168h` |
@@ -107,7 +105,8 @@ Platform inventory/Watch initialization still occurs at startup, but `/status`
 does not call Docker or Runtime `/status`, and a later Docker Watch outage does
 not make local readiness recursively depend on the deployment platform. The
 legacy `platform_ready` field denotes successful local adapter initialization.
-Network/volume/Runtime readiness failures surface on actual lifecycle calls.
+Network/volume failures surface on actual lifecycle calls. Runtime health and
+startup failures surface on Inspect/List and observations, not creation.
 
 One unhealthy Runtime does not make the Controller unready. Its state appears
 in `InspectRuntime` and Runtime observations. Readiness never inspects every
@@ -123,7 +122,8 @@ Managed Docker Runtimes use separate startup and steady-state health cadence:
 `Retries=3`. Startup stays responsive; an already healthy idle Runtime no longer
 forks a `curl` process every two seconds. Three consecutive failures are required
 in steady state, with a nominal thirty-second failure window plus probe time.
-The existing one-minute Runtime readiness budget remains independent.
+Creation has no Runtime readiness budget. Each independent `/status`
+verification is bounded by `ANTNEST_RUNTIME_STATUS_TIMEOUT`.
 
 This uses Docker's standard
 [startup health-check interval](https://docs.docker.com/reference/cli/docker/container/run/#options),
@@ -158,7 +158,7 @@ bounded `/status` verification and records the returned `execution_id`. A Watch
 disconnect triggers List/Inspect reconciliation followed by Watch resume.
 
 The Controller records a service-wide `observation_gap`, reconciles physical
-List/Inspect in both directions against logical ready Runtime heads, then
+List/Inspect in both directions against logical provisioned Runtime heads, then
 records service-wide `reconciled`. Missing expected compute is an explicit
 `runtime_missing` fact. This remains visible when no Runtime exists. A
 `/status` failure is `status_unverified`, not a fabricated platform `unhealthy`
@@ -206,21 +206,22 @@ re-inspected before exact resources are adopted. The Docker adapter owns:
 An interrupted Update may already have replaced the old compute. Retry the
 same request/body/key: the service observes the recorded source and converges
 only the target claimed by that operation. A target already present is reused,
-not deleted using the old generation. Retained workspace ownership and Runtime
-readiness are still checked. A stopped source, mismatched identity or unreadable
+not deleted using the old generation. Retained workspace ownership is checked;
+application readiness is independent from command completion. A stopped source, mismatched identity or unreadable
 platform cannot be restored as the executable old revision. Only a definitive
-source deletion rejection followed by successful reinspection/status verification
-can retain a ready source. No additional migration or operator-supplied phase is
+source deletion rejection followed by matching running-resource reinspection
+can retain a provisioned source. No additional migration or operator-supplied phase is
 required for this recovery behavior.
 
 Migration 4 adds `failed` to the owned Environment and operation source states;
 earlier migration checksums remain unchanged. Definitive Initialize failures
 retain revision/generation ownership instead of erasing the Environment while
 leaving a workspace behind. Inspect that failed revision and use Delete to
-clean it; do not retry with a new Initialize key. `runtime_not_ready` after the
-Initialize readiness deadline is terminal and points administrators to startup
-configuration/required MCP processes. Cancellation and unknown physical effects
-remain nonterminal and still require exact-request reconciliation.
+clean it; do not retry with a new Initialize key. Migration 6 separates creation
+from current health: confirmed create/start returns `provisioned` and releases
+the mutation slot. Later startup/status failures belong to observation, not
+creation failure. Unknown physical effects remain nonterminal and still require
+exact-request reconciliation.
 
 Migration 4 changes constraints, not historical ownership data. It does not
 reconstruct Environment heads erased by failed Initialize operations under

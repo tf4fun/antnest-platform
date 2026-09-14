@@ -10,10 +10,10 @@ import { binding, snapshot } from "../support/fixtures.js";
 import {
   InstrumentedModel,
   InstrumentedToolCatalog,
-  InstrumentedAcpApplication,
+  InstrumentedRunExecutor,
 } from "../../src/telemetry/instrumented-ports.js";
 import { ServiceTelemetry } from "../../src/telemetry/telemetry.js";
-import type { AcpApplicationPort } from "../../src/ports/acp-application.js";
+import type { ExecuteRunResult } from "../../src/ports/acp-application.js";
 import { ModelError } from "../../src/ports/model.js";
 import { OpenAICompatibleModel } from "../../src/adapters/model/openai-compatible.js";
 
@@ -435,37 +435,59 @@ describe("existing adapter and runner metadata", () => {
     expect(serializedSpans()).not.toContain("canary");
   });
 
-  it("uses a bounded Run root with an exact source Link and keeps failed terminal results", async () => {
-    const parent = tracer.startSpan("acp accepted");
-    const result = {
-      terminalClass: "failed" as const,
-      executorState: "quiescent" as const,
-      toolEffectState: "none" as const,
-      errorClass: "model_invalid_response",
-    };
-    const delegate = { executeRun: () => Promise.resolve(result) } as unknown as AcpApplicationPort;
-    const application = new InstrumentedAcpApplication(delegate, telemetry);
-    await context.with(trace.setSpan(context.active(), parent), () =>
-      application.executeRun({
-        accepted: {
-          runId: "run-1",
-          requestId: "request-1",
-          sessionId: "session-1",
-          userMessageId: "message-1",
-          snapshot: snapshot(),
-        },
-        publish: () => Promise.resolve(),
-        signal: new AbortController().signal,
-      }),
-    );
-    const run = exporter.getFinishedSpans().find((item) => item.name === "agent.run")!;
-    expect(run.parentSpanContext).toBeUndefined();
-    expect(run.links[0]?.context.spanId).toBe(parent.spanContext().spanId);
-    expect(run.links[0]?.context.traceId).toBe(parent.spanContext().traceId);
-    expect(run.status.code).toBe(SpanStatusCode.ERROR);
-    expect(run.attributes["antnest.run.id"]).toBe("run-1");
-    parent.end();
-  });
+  it.each(["failed", "unresolved"] as const)(
+    "uses a bounded Run root with an exact source Link and keeps %s terminal results",
+    async (terminalClass) => {
+      const parent = tracer.startSpan("acp accepted");
+      const result: ExecuteRunResult =
+        terminalClass === "failed"
+          ? {
+              terminalClass,
+              executorState: "quiescent",
+              toolEffectState: "none",
+              errorClass: "model_invalid_response",
+            }
+          : {
+              terminalClass,
+              executorState: "quiescent",
+              toolEffectState: "unknown",
+              unknownEffectSource: "runtime_mcp",
+              errorClass: "tool_effect_unknown",
+            };
+      const application = new InstrumentedRunExecutor(
+        { execute: () => Promise.resolve(result) },
+        telemetry,
+      );
+      await context.with(trace.setSpan(context.active(), parent), () =>
+        application.execute({
+          accepted: {
+            runId: "run-1",
+            requestId: "request-1",
+            sessionId: "session-1",
+            userMessageId: "message-1",
+            outputSequence: 0,
+            snapshot: snapshot(),
+          },
+          publish: () => Promise.resolve(),
+          signal: new AbortController().signal,
+        }),
+      );
+      const run = exporter.getFinishedSpans().find((item) => item.name === "agent.run")!;
+      expect(run.parentSpanContext).toBeUndefined();
+      expect(run.links[0]?.context.spanId).toBe(parent.spanContext().spanId);
+      expect(run.links[0]?.context.traceId).toBe(parent.spanContext().traceId);
+      expect(run.status.code).toBe(SpanStatusCode.ERROR);
+      expect(run.attributes["antnest.run.id"]).toBe("run-1");
+      expect(run.attributes).toMatchObject({
+        "run.terminal_class": terminalClass,
+        "run.executor_state": "quiescent",
+        "run.tool_effect_state": result.toolEffectState,
+      });
+      expect(run.attributes["run.unknown_effect_source"]).toBe(result.unknownEffectSource);
+      expect(JSON.stringify(run.attributes)).not.toMatch(/admission|credential/);
+      parent.end();
+    },
+  );
 });
 
 async function listen(target: Server): Promise<string> {

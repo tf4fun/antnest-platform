@@ -40,6 +40,10 @@ type CredentialSealer interface {
 	Seal(ctx context.Context, identity CredentialIdentity, plaintext string) (SealedSecret, error)
 }
 
+type CredentialOpener interface {
+	Open(context.Context, CredentialIdentity, SealedSecret) (string, error)
+}
+
 type ModelProfileRecord struct {
 	ProviderConnectionID string
 	RequestID            string
@@ -68,6 +72,7 @@ type TemplateRecord struct {
 }
 
 type CatalogStore interface {
+	CatalogAvailabilityStore
 	GetCurrentModelProfileRevision(context.Context, string) (domain.ModelProfileRevision, error)
 	ProviderStore
 	ReplayModelProfileRequest(ctx context.Context, kind CatalogRequestKind, requestID string, fingerprint string) (ModelProfileRecord, bool, error)

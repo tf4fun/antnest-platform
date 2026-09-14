@@ -10,19 +10,19 @@ import (
 // AgentQuery contains only projection predicates understood by the storage adapter.
 // Cursor encoding and page construction belong to the application layer.
 type AgentQuery struct {
-	OrganizationID string
-	OwnerUserID    string
-	LifecycleState domain.AgentState
-	IncludeDeleted bool
-	AfterCreatedAt time.Time
-	AfterAgentID   string
-	Limit          int
+	ActivationState domain.ActivationState
+	RuntimeState    domain.RuntimeState
+	OrganizationID  string
+	OwnerUserID     string
+	LifecycleState  domain.AgentState
+	IncludeDeleted  bool
+	AfterCreatedAt  time.Time
+	AfterAgentID    string
+	Limit           int
 }
 
-// WorkspaceAgentQuery selects the active access projection consumed by Edge Gateway.
-// The access subject remains an internal routing credential and must not reach a browser.
+// WorkspaceAgentQuery selects management metadata within the caller's active access scope.
 type WorkspaceAgentQuery struct {
-	AgentID        string
 	OrganizationID string
 	PrincipalID    string
 	AfterCreatedAt time.Time
@@ -31,18 +31,9 @@ type WorkspaceAgentQuery struct {
 }
 
 type WorkspaceAgentRecord struct {
-	DesiredState         domain.DesiredState
-	ActiveOperation      bool
-	AggregateSequence    int64
-	SessionID            string
-	AdmissionPrincipalID string
-	IdentityRevoked      bool
-	AgentID              string
-	Name                 string
-	LifecycleState       domain.AgentState
-	AccessSubject        string
-	AdmissionState       domain.AdmissionState
-	CreatedAt            time.Time
+	AgentID   string
+	Name      string
+	CreatedAt time.Time
 }
 
 // AgentConfigurationRecord is the immutable executable configuration selected

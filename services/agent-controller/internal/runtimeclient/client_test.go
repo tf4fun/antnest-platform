@@ -53,10 +53,10 @@ func TestInitializeRuntimeUsesRuntimeControllerContract(t *testing.T) {
 			"inspection":{
 				"agent_id":"agent-1",
 				"runtime_revision":"rtv_11111111111111111111111111111111",
-				"lifecycle_state":"ready",
-				"health":"healthy",
-				"mcp_endpoint":"http://runtime-agent:8091/mcp",
-				"runtime_execution_id":"execution-1",
+				"lifecycle_state":"provisioned",
+				"health":"unknown",
+				"mcp_endpoint":"",
+				"runtime_execution_id":"",
 				"restart_count":0,
 				"observed_at":"2026-09-01T00:00:00Z"
 			},
@@ -77,7 +77,7 @@ func TestInitializeRuntimeUsesRuntimeControllerContract(t *testing.T) {
 		t.Fatalf("initialize Runtime: %v", err)
 	}
 	if result.State != "completed" || result.RuntimeRevision != "rtv_11111111111111111111111111111111" ||
-		result.MCPEndpoint != "http://runtime-agent:8091/mcp" || result.Health != "healthy" {
+		result.MCPEndpoint != "" || result.Health != "unknown" {
 		t.Fatalf("Runtime operation = %+v", result)
 	}
 }
@@ -115,10 +115,10 @@ func TestUpdateRuntimeUsesExpectedRevisionAndCompleteConfiguration(t *testing.T)
 			"inspection":{
 				"agent_id":"agent-1",
 				"runtime_revision":"rtv_22222222222222222222222222222222",
-				"lifecycle_state":"ready",
-				"health":"healthy",
-				"mcp_endpoint":"http://runtime-rebuilt:8091/mcp",
-				"runtime_execution_id":"execution-rebuilt"
+				"lifecycle_state":"provisioned",
+				"health":"unknown",
+				"mcp_endpoint":"",
+				"runtime_execution_id":""
 			}
 		}`))
 	}))
@@ -136,7 +136,7 @@ func TestUpdateRuntimeUsesExpectedRevisionAndCompleteConfiguration(t *testing.T)
 		t.Fatalf("update Runtime: %v", err)
 	}
 	if result.RuntimeRevision != "rtv_22222222222222222222222222222222" ||
-		result.RuntimeExecutionID != "execution-rebuilt" {
+		result.RuntimeExecutionID != "" || result.Health != "unknown" {
 		t.Fatalf("Runtime operation = %+v", result)
 	}
 }
@@ -238,10 +238,10 @@ func TestEnableRuntimeUsesDisabledRevisionAndCompleteConfiguration(t *testing.T)
 			"inspection":{
 				"agent_id":"agent-1",
 				"runtime_revision":"rtv_44444444444444444444444444444444",
-				"lifecycle_state":"ready",
-				"health":"healthy",
-				"mcp_endpoint":"http://runtime-enabled:8091/mcp",
-				"runtime_execution_id":"execution-enabled"
+				"lifecycle_state":"provisioned",
+				"health":"unknown",
+				"mcp_endpoint":"",
+				"runtime_execution_id":""
 			}
 		}`))
 	}))
@@ -259,7 +259,7 @@ func TestEnableRuntimeUsesDisabledRevisionAndCompleteConfiguration(t *testing.T)
 		t.Fatalf("enable Runtime: %v", err)
 	}
 	if result.RuntimeRevision != "rtv_44444444444444444444444444444444" ||
-		result.RuntimeExecutionID != "execution-enabled" || result.LifecycleState != "ready" {
+		result.RuntimeExecutionID != "" || result.Health != "unknown" || result.LifecycleState != "provisioned" {
 		t.Fatalf("Runtime operation = %+v", result)
 	}
 }
@@ -330,7 +330,7 @@ func TestInspectRuntimeReturnsAuthoritativeReadyBinding(t *testing.T) {
 		_, _ = response.Write([]byte(`{
 			"agent_id":"agent-1",
 			"runtime_revision":"rtv_11111111111111111111111111111111",
-			"lifecycle_state":"ready",
+			"lifecycle_state":"provisioned",
 			"health":"healthy",
 			"mcp_endpoint":"http://runtime-agent:8091/mcp",
 			"runtime_execution_id":"execution-1",
@@ -352,7 +352,7 @@ func TestInspectRuntimeReturnsAuthoritativeReadyBinding(t *testing.T) {
 		inspection.RuntimeRevision != "rtv_11111111111111111111111111111111" ||
 		inspection.RuntimeExecutionID != "execution-1" ||
 		inspection.MCPEndpoint != "http://runtime-agent:8091/mcp" ||
-		inspection.LifecycleState != "ready" || inspection.Health != "healthy" {
+		inspection.LifecycleState != "provisioned" || inspection.Health != "healthy" {
 		t.Fatalf("Runtime inspection = %+v", inspection)
 	}
 }
@@ -365,7 +365,7 @@ func TestInspectRuntimeRejectsIncoherentReadyBinding(t *testing.T) {
 		_, _ = response.Write([]byte(`{
 			"agent_id":"agent-1",
 			"runtime_revision":"rtv_11111111111111111111111111111111",
-			"lifecycle_state":"ready",
+			"lifecycle_state":"provisioned",
 			"health":"healthy"
 		}`))
 	}))
@@ -426,10 +426,10 @@ func TestInitializeRuntimePropagatesTraceContext(t *testing.T) {
 			"inspection":{
 				"agent_id":"agent-1",
 				"runtime_revision":"rtv_11111111111111111111111111111111",
-				"lifecycle_state":"ready",
-				"health":"healthy",
-				"mcp_endpoint":"http://runtime-agent:8091/mcp",
-				"runtime_execution_id":"execution-1",
+				"lifecycle_state":"provisioned",
+				"health":"unknown",
+				"mcp_endpoint":"",
+				"runtime_execution_id":"",
 				"restart_count":0,
 				"observed_at":"2026-09-01T00:00:00Z"
 			},
@@ -466,10 +466,10 @@ func TestInitializeRuntimeRejectsContradictoryCompletedResponse(t *testing.T) {
 		"inspection":{
 			"agent_id":"agent-1",
 			"runtime_revision":"rtv_11111111111111111111111111111111",
-			"lifecycle_state":"ready",
-			"health":"healthy",
-			"mcp_endpoint":"http://runtime-agent:8091/mcp",
-			"runtime_execution_id":"execution-1"
+			"lifecycle_state":"provisioned",
+			"health":"unknown",
+			"mcp_endpoint":"",
+			"runtime_execution_id":""
 		}
 	}`
 	tests := []struct {
@@ -477,8 +477,8 @@ func TestInitializeRuntimeRejectsContradictoryCompletedResponse(t *testing.T) {
 		body string
 	}{
 		{name: "effect not confirmed", body: strings.Replace(valid, `"effect":"completed"`, `"effect":"unknown"`, 1)},
-		{name: "invalid endpoint", body: strings.Replace(valid, "http://runtime-agent:8091/mcp", "not-a-uri", 1)},
-		{name: "non canonical endpoint", body: strings.Replace(valid, "http://runtime-agent:8091/mcp", " http://runtime-agent:8091/mcp ", 1)},
+		{name: "invalid endpoint", body: strings.Replace(valid, `"mcp_endpoint":""`, `"mcp_endpoint":"not-a-uri"`, 1)},
+		{name: "non canonical endpoint", body: strings.Replace(valid, `"mcp_endpoint":""`, `"mcp_endpoint":" http://runtime-agent:8091/mcp "`, 1)},
 		{name: "invalid revision", body: strings.ReplaceAll(valid, "rtv_11111111111111111111111111111111", "runtime-revision")},
 		{name: "failed but effect completed", body: strings.Replace(valid, `"state":"completed"`, `"state":"failed"`, 1)},
 	}

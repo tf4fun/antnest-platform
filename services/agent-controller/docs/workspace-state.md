@@ -1,71 +1,40 @@
-# Workspace State
+# Workspace Metadata
 
-Agent Controller owns current Agent admission and lifecycle state. A browser
-must not infer availability from its own ACP request promise. Edge Gateway reads
-or subscribes using its authenticated principal. These are internal endpoints.
+Controller owns Agent management metadata, not execution availability or active Sessions.
 
 ## Contract
 
-- `GET /internal/workspace/agents/{agent_id}/state`
-- `GET /internal/workspace/agents/{agent_id}/state/watch`
+`POST /rpc/agent-controller/list-workspace-agents` accepts request_id, organization_id,
+principal_id and optional limit/cursor. It returns agents containing only agent_id
+and name, plus a nullable next_cursor. Empty results use an empty array.
 
-Both require exactly one nonempty `organization_id` and `principal_id` query
-value. Unknown or inaccessible Agents return the same 404 before streaming.
-The payload contains only `agent_id`, `availability` (`ready`, `busy`, `offline`),
-`access_allowed`, `agent_revision`, and nullable `active_session_id`.
+Queries require the requested organization and principal, an active access binding,
+and a non-revoked owner authorization watermark. Deleted desired state is excluded
+immediately, including pending or failed deletion. Disabled, starting and unavailable
+Agents remain discoverable while the caller retains access. The list is not permission
+to execute. Database pagination uses created_at and agent_id; opaque cursors preserve
+that ordering. HTTP responses carry Cache-Control: no-store.
 
-`agent_revision` is the Agent aggregate revision, not a stream cursor or a Run
-sequence. It changes on lifecycle/configuration transitions; consumers compare
-the entire state, including active Session, not just this revision. Session IDs
-are returned only for active admissions owned by the requesting principal.
-An unresolved terminal effect blocks admission but is not a running Session.
-An active lifecycle operation or disabled desired state closes admission even
-if the previous stable lifecycle state is still `available`. Existing work can
-still be identified for cancellation while an authorized lifecycle drain runs.
-Admission deadline expiry never implies that a Run has stopped.
+## Execution State Is Owned By ACP
 
-Watch emits `event: workspace_state` with a complete replacement snapshot. It
-has no event ID, replay journal, or Last-Event-ID contract. The application
-subscribes before reading, emits the initial snapshot, then re-reads after each
-wake-up. Identical snapshots are suppressed. On lost access, an already-open
-Watch emits `access_allowed: false`, `offline`, a null active Session and the
-last disclosed Agent revision, then closes. No newly read metadata is disclosed.
-A failed scoped read or subscription registration closes the stream, never
-inventing an available state. A disconnected-but-retrying shared listener is
-different: its freshness limitation is described below.
-Consumers recheck access and reload ACP after binding changes; this observation
-contract does not promise delivery of every intermediate lifecycle transition.
+The old Controller state and state/watch endpoints return 404. Availability,
+active Session, execution revision and cancellation observation come from ACP's
+[execution-state contract](../../../contracts/agent-acp/execution-api.md).
+No Controller Run table or notification is read to assemble this list, and no
+default ready value substitutes for missing ACP state.
 
-## Persistence And Wake-Ups
+Agent management journal get/watch and its shared PostgreSQL notifier remain.
+Only the Run occupancy notification function and triggers are removed; management
+commits must still wake their subscribers.
 
-Existing `agents`, `agent_access_bindings`, and `run_admissions` in the private
-`agent_controller` schema remain authoritative. No table or normal Run audit
-event is added. A transaction-scoped PostgreSQL notification on admission insert,
-state transition, or deletion shares the existing notification connection.
-Rollback and idempotent replay do not announce a transition. Lifecycle and
-identity events already wake this connection.
+## Delivery And Verification
 
-Notifications are coalescible hints, not state or delivery acknowledgements.
-SQL errors are not ignored. The shared listener broadcasts after reconnect to
-recover commits made during a LISTEN outage. This does not provide a bounded
-freshness guarantee during an ongoing outage: Edge must bound stream/authentication
-leases and clients must close actionable state on transport failure. Reconnect
-starts with a fresh scoped snapshot, never a prompt replay. No polling loop,
-per-browser database connection or cross-service database access is introduced.
+Revision 26 is the Controller producer contract. Gateway and Agent UI must adopt
+the metadata shape and ACP observation in B3/B4U before deployment. No fallback,
+per-Agent status fan-out or Controller execution proxy is provided.
 
-Reads use the normal traced query Port. HTTP spans retain incoming trace context;
-Watch metrics use bounded scope labels. Per-frame writes have a deadline and
-cancellation releases the waiter. Packet forwarding is outside this scope.
-
-## Delivery Boundary
-
-This producer batch implements Agent Controller only. Edge Gateway must next
-authenticate and relay this contract with bounded identity leases. Agent UI then
-uses it for input availability, current-session cancellation and access changes.
-ACP still owns Session history, prompt, cancellation, Tool updates and approval;
-state observation is not a replacement private conversation protocol.
-
-Acceptance covers subscribe/read races, duplicate hints, cancellation, scope
-isolation, lifecycle barriers, blocked effects, commit/rollback notifications,
-no normal-Run audit append, JSON/SSE contracts and trace context. Docker/browser/
-Jaeger full-stack acceptance follows the consumer batches.
+Controller regressions cover exact JSON fields, no-store, empty results, keyset
+pagination, organization/principal/binding/revocation scope, desired deletion,
+discovery after Runtime loss, retired routes and listing without the old Run table.
+Existing management event and default-authorization revocation tests remain.
+Cross-service cancellation, reconnect and Jaeger checks belong to B5.

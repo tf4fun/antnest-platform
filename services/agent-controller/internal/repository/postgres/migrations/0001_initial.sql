@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS agent_controller.catalog_requests (
     request_kind TEXT NOT NULL CHECK (request_kind IN (
         'create_model_profile', 'revise_model_profile',
         'create_template', 'revise_template',
-        'create_provider_connection', 'rotate_provider_credential'
+        'create_provider_connection', 'rotate_provider_credential', 'set_catalog_availability'
     )),
     request_fingerprint TEXT NOT NULL CHECK (request_fingerprint ~ '^[0-9a-f]{64}$'),
     resource_id TEXT NOT NULL,
@@ -168,13 +168,10 @@ CREATE TABLE IF NOT EXISTS agent_controller.execution_revisions (
 );
 
 CREATE TABLE IF NOT EXISTS agent_controller.agent_access_bindings (
-    access_subject TEXT PRIMARY KEY,
-    agent_id TEXT NOT NULL REFERENCES agent_controller.agents(id),
+    agent_id TEXT PRIMARY KEY REFERENCES agent_controller.agents(id),
     principal_id TEXT NOT NULL,
     access_revision TEXT NOT NULL,
     active BOOLEAN NOT NULL DEFAULT TRUE,
-    prompt_image BOOLEAN NOT NULL DEFAULT FALSE,
-    prompt_embedded_context BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL
 );
@@ -283,45 +280,6 @@ CREATE INDEX IF NOT EXISTS operations_recovery_claim_idx
     )
     WHERE state = 'running';
 
-CREATE TABLE IF NOT EXISTS agent_controller.run_admissions (
-    admission_id TEXT PRIMARY KEY,
-    request_id TEXT NOT NULL UNIQUE,
-    request_fingerprint TEXT NOT NULL CHECK (request_fingerprint ~ '^[0-9a-f]{64}$'),
-    agent_id TEXT NOT NULL REFERENCES agent_controller.agents(id),
-    session_id TEXT NOT NULL,
-    principal_id TEXT NOT NULL,
-    access_revision TEXT NOT NULL,
-    state TEXT NOT NULL CHECK (state IN ('active', 'released', 'blocked_unknown_effect')),
-    deadline TIMESTAMPTZ NOT NULL,
-    runtime_revision TEXT NOT NULL,
-    snapshot JSONB NOT NULL,
-    terminal_report JSONB,
-    finished_at TIMESTAMPTZ,
-    released_by_operation_request_id TEXT NOT NULL DEFAULT '',
-    released_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL,
-    CHECK (deadline > created_at),
-    CHECK (jsonb_typeof(snapshot) = 'object'),
-    CHECK (
-        snapshot #>> '{runtime,runtime_revision}' IS NOT NULL AND
-        snapshot #>> '{runtime,runtime_revision}' = runtime_revision
-    ),
-    CHECK (
-        (state = 'active' AND terminal_report IS NULL AND finished_at IS NULL
-            AND released_at IS NULL AND released_by_operation_request_id = '') OR
-        (state = 'blocked_unknown_effect' AND terminal_report IS NOT NULL
-            AND finished_at IS NOT NULL AND released_at IS NULL
-            AND released_by_operation_request_id = '') OR
-        (state = 'released' AND terminal_report IS NOT NULL
-            AND finished_at IS NOT NULL AND released_at IS NOT NULL)
-    )
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS admissions_agent_occupancy_unique
-    ON agent_controller.run_admissions (agent_id)
-    WHERE state IN ('active', 'blocked_unknown_effect');
-
 CREATE TABLE IF NOT EXISTS agent_controller.runtime_observation_cursor (
     singleton BOOLEAN PRIMARY KEY,
     last_sequence BIGINT NOT NULL CHECK (last_sequence >= 0),
@@ -352,7 +310,6 @@ CREATE TABLE IF NOT EXISTS agent_controller.agent_events (
     schema_version INTEGER NOT NULL CHECK (schema_version = 1),
     event_type TEXT NOT NULL,
     operation_request_id TEXT NOT NULL DEFAULT '',
-    admission_id TEXT NOT NULL DEFAULT '',
     trace_id TEXT NOT NULL DEFAULT '',
     data JSONB NOT NULL,
     occurred_at TIMESTAMPTZ NOT NULL,
@@ -362,8 +319,7 @@ CREATE TABLE IF NOT EXISTS agent_controller.agent_events (
         'agent_disable_requested', 'agent_disabled', 'agent_disable_failed',
         'agent_enable_requested', 'agent_enabled', 'agent_enable_failed',
 		'agent_delete_requested', 'agent_deleted',
-		'agent_lifecycle_quarantined', 'agent_runtime_restarted',
-        'run_admission_released', 'run_admission_unresolved'
+		'agent_lifecycle_quarantined', 'agent_runtime_restarted'
     ))
 );
 

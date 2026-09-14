@@ -1,0 +1,44 @@
+package main
+
+import (
+	"context"
+	"log/slog"
+
+	"soft/antnest-platform/services/agent-controller/internal/acpclient"
+	"soft/antnest-platform/services/agent-controller/internal/application"
+	"soft/antnest-platform/services/agent-controller/internal/config"
+	"soft/antnest-platform/services/agent-controller/internal/ports"
+	"soft/antnest-platform/services/agent-controller/internal/repository/postgres"
+)
+
+func configureExecutionPublication(repository *postgres.Repository, cfg config.Config, opener ports.CredentialOpener, logger *slog.Logger) (*application.ExecutionPublisher, *application.ExecutionPublicationWorker, error) {
+	client, err := acpclient.New(cfg.Execution.URL, cfg.DependencyTimeout, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	capacity, err := application.NewExecutionCapacity(opener, cfg.Execution.MaxBytes)
+	if err != nil {
+		return nil, nil, err
+	}
+	publisher := application.NewExecutionPublisher(repository, opener, client)
+	worker, err := application.NewExecutionPublicationWorker(repository, publisher, application.ExecutionPublicationSchedule{
+		ResyncInterval: cfg.Execution.ResyncInterval, RetryInterval: cfg.Execution.RetryInterval,
+		MaxRetryInterval: cfg.Execution.MaxRetryInterval, RequestTimeout: cfg.Execution.RequestTimeout,
+	}, logger)
+	if err != nil {
+		return nil, nil, err
+	}
+	// Composition finishes before any configuration writer or worker starts.
+	postgres.WithExecutionCapacityGuard(capacity)(repository)
+	postgres.WithExecutionChangeObserver(worker.Notify)(repository)
+	return publisher, worker, nil
+}
+
+func waitForExecutionPublication(ctx context.Context, stopped <-chan struct{}) error {
+	select {
+	case <-stopped:
+		return nil
+	case <-ctx.Done():
+		return classifyFailure("execution_publication_shutdown", ctx.Err())
+	}
+}

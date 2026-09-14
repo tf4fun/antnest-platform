@@ -7,16 +7,21 @@ import {
   environmentChangeFact,
   requireActiveSession,
 } from "../domain/session.js";
+import type {
+  AgentConfiguration,
+  PublicExecutionConfiguration,
+} from "../domain/execution-configuration.js";
+import { runSnapshot } from "../domain/run-snapshot.js";
 import type { ConnectionBinding, ContentBlock, RunExecutionSnapshot } from "../domain/types.js";
-import type { AgentControllerPort } from "../ports/agent-controller.js";
-import type { ExecutionRepository } from "../ports/execution-repository.js";
 import type { RunRepository } from "../ports/run-repository.js";
-import { admissionErrorClass, isDefinitiveAdmissionRejection } from "./run-admission.js";
+import type { RuntimeProtectionRepository } from "../ports/execution-repository.js";
+import type { ExecutionDirectory } from "./execution-directory.js";
 
 export type PromptCoordinatorDependencies = {
   repository: RunRepository;
-  agentController: AgentControllerPort;
-  executions: Pick<ExecutionRepository, "markAdmissionFinished">;
+  directory: ExecutionDirectory;
+  protection: RuntimeProtectionRepository;
+  runTimeoutMs: number;
   recoveryRequired: (error: Error) => void;
   id: () => string;
   now: () => Date;
@@ -29,174 +34,151 @@ export type AcceptPromptInput = {
 };
 
 export type AcceptedRun = {
+  outputSequence: number;
   command?: SessionCommand;
   runId: string;
   requestId: string;
   sessionId: string;
   userMessageId: string;
-  sessionInfoUpdate: {
-    title?: string;
-    updatedAt: string;
-  };
+  sessionInfoUpdate: { title?: string; updatedAt: string };
   snapshot: RunExecutionSnapshot;
 };
 
 export class PromptCoordinator {
-  public constructor(private readonly dependencies: PromptCoordinatorDependencies) {}
+  public constructor(private readonly dependencies: PromptCoordinatorDependencies) {
+    if (!Number.isSafeInteger(dependencies.runTimeoutMs) || dependencies.runTimeoutMs <= 0) {
+      throw new Error("Run timeout must be a positive safe integer");
+    }
+  }
 
-  public async accept(
+  public accept(
     input: AcceptPromptInput,
-    signal: AbortSignal = new AbortController().signal,
+    signal = new AbortController().signal,
+  ): Promise<AcceptedRun> {
+    return this.dependencies.directory.withAccess(input.binding, ({ agent, configuration }) =>
+      this.acceptConfigured(input, agent, configuration, signal),
+    );
+  }
+
+  private async acceptConfigured(
+    input: AcceptPromptInput,
+    agent: AgentConfiguration,
+    configuration: PublicExecutionConfiguration,
+    signal: AbortSignal,
   ): Promise<AcceptedRun> {
     const session = await this.dependencies.repository.getSession(input.sessionId);
-    if (session === null) {
-      throw new DomainError("session_not_found", "Session does not exist");
-    }
+    if (session === null) throw new DomainError("session_not_found", "Session does not exist");
     authorizeSession(session, input.binding);
     requireActiveSession(session);
     throwIfCancelled(signal);
-    const prompt = normalizePromptResources(input.prompt);
-
+    if (!agent.accepting_runs) {
+      throw new DomainError(
+        "agent_unavailable",
+        agent.unavailable_reason ?? "Agent is unavailable",
+      );
+    }
+    if (
+      await this.dependencies.protection.hasUnstoppedRuntimeCalls(
+        {
+          organizationId: input.binding.organizationId,
+          agentId: input.binding.agentId,
+          runtimeRevision: agent.runtime?.runtime_revision ?? null,
+        },
+        signal,
+      )
+    ) {
+      throw new DomainError(
+        "runtime_barrier_required",
+        "Previous Runtime execution may still be active; rebuild the Agent before starting new work",
+      );
+    }
+    throwIfCancelled(signal);
     const runId = this.dependencies.id();
     const requestId = this.dependencies.id();
     const userMessageId = this.dependencies.id();
     const now = this.dependencies.now();
-    const intent = await this.dependencies.repository.createRunIntent({
-      runId,
-      requestId,
-      sessionId: session.id,
-      expectedAccessRevision: input.binding.accessRevision,
-      userMessageId,
-      prompt,
-      createdAt: now,
-    });
-    if (signal.aborted) {
-      await this.cancelIntent(runId);
-      throw cancelledError();
-    }
+    const intent = await this.persist(() =>
+      this.dependencies.repository.createRunIntent({
+        runId,
+        requestId,
+        sessionId: session.id,
+        expectedAccessRevision: agent.access_revision,
+        userMessageId,
+        prompt: normalizePromptResources(input.prompt),
+        createdAt: now,
+      }),
+    );
 
-    let acquired;
+    let snapshot: RunExecutionSnapshot;
     try {
-      acquired = await this.dependencies.agentController.acquireRun(
-        {
-          requestId,
-          agentId: input.binding.agentId,
-          principalId: input.binding.principalId,
-          expectedAccessRevision: intent.expectedAccessRevision,
-          sessionId: session.id,
-          ...(intent.sessionConfiguration === undefined
-            ? {}
-            : { sessionConfiguration: intent.sessionConfiguration }),
-        },
-        signal,
-      );
+      throwIfCancelled(signal);
+      snapshot = runSnapshot({
+        configuration,
+        identity: input.binding,
+        overrides: intent.sessionConfiguration ?? {},
+        accessRevision: agent.access_revision,
+        clientMcpRevisionId: intent.clientMcpRevisionId,
+        deadlineAt: new Date(now.getTime() + this.dependencies.runTimeoutMs),
+      });
     } catch (error) {
-      if (isDefinitiveAdmissionRejection(error)) {
-        const disposition = await this.reject(runId, error, now);
-        if (disposition === "cancelled") {
-          throw cancelledError();
-        }
-      } else {
-        this.dependencies.recoveryRequired(
-          new Error("Run admission outcome requires startup recovery", { cause: error }),
+      await this.persist(async () => {
+        if (signal.aborted)
+          await this.dependencies.repository.requestCancellation(runId, this.dependencies.now());
+        return this.dependencies.repository.rejectRun(
+          runId,
+          error instanceof DomainError ? error.code : "invalid_execution_configuration",
+          this.dependencies.now(),
         );
-      }
+      });
       throw error;
     }
 
-    const snapshot: RunExecutionSnapshot = {
-      ...acquired,
-      clientMcpRevisionId: intent.clientMcpRevisionId,
-    };
-    if (isCancellationRequested(signal)) {
-      await this.dependencies.repository.requestCancellation(runId, this.dependencies.now());
-    }
-    // If local acceptance fails, the durable intent remains admitting so recovery
-    // can repeat acquire_run with the same request ID.
     const acceptedAt = this.dependencies.now();
     const title = session.title ?? defaultSessionTitle(input.prompt);
-    try {
-      const disposition = await this.dependencies.repository.acceptRun({
+    const disposition = await this.persist(() =>
+      this.dependencies.repository.acceptRun({
         runId,
         snapshot,
         environmentFact: environmentChangeFact(session, snapshot),
         ...(title === undefined ? {} : { sessionTitle: title }),
         acceptedAt,
-      });
-      if (disposition === "cancelled") {
-        await this.closeCancelledAdmission(runId, snapshot.admissionId);
-        throw cancelledError();
-      }
-    } catch (error) {
-      if (error instanceof DomainError && error.code === "run_cancelled") {
-        throw error;
-      }
-      this.dependencies.recoveryRequired(
-        new Error("Admitted Run could not be committed locally", { cause: error }),
-      );
-      throw error;
-    }
-
+      }),
+    );
+    if (disposition === "cancelled") throw cancelledError();
     const command = matchCommand(intent.prompt);
     return {
+      outputSequence: session.lastMessageSequence,
       ...(command === undefined ? {} : { command }),
       runId,
       requestId,
       sessionId: session.id,
       userMessageId,
+      snapshot,
       sessionInfoUpdate: {
         ...(title === undefined ? {} : { title }),
         updatedAt: acceptedAt.toISOString(),
       },
-      snapshot,
     };
   }
 
-  private async reject(runId: string, error: unknown, at: Date): Promise<"failed" | "cancelled"> {
-    return this.dependencies.repository.rejectRun(runId, admissionErrorClass(error), at);
-  }
-
-  private async cancelIntent(runId: string): Promise<void> {
-    const at = this.dependencies.now();
-    await this.dependencies.repository.requestCancellation(runId, at);
-    await this.dependencies.repository.rejectRun(runId, "run_cancelled", at);
-  }
-
-  private async closeCancelledAdmission(runId: string, admissionId: string): Promise<void> {
+  private async persist<T>(operation: () => Promise<T>): Promise<T> {
     try {
-      await this.dependencies.agentController.finishRun({
-        requestId: this.dependencies.id(),
-        admissionId,
-        terminalClass: "cancelled",
-        executorState: "quiescent",
-        toolEffectState: "none",
-      });
+      return await operation();
     } catch (error) {
-      this.dependencies.recoveryRequired(
-        new Error("Cancelled Run admission closure requires startup recovery", { cause: error }),
-      );
-      return;
-    }
-    try {
-      await this.dependencies.executions.markAdmissionFinished(runId, this.dependencies.now());
-    } catch (error) {
-      this.dependencies.recoveryRequired(
-        new Error("Cancelled Run closure marker requires startup recovery", { cause: error }),
-      );
+      if (!(error instanceof DomainError)) {
+        this.dependencies.recoveryRequired(
+          new Error("Run acceptance could not be persisted locally", { cause: error }),
+        );
+      }
+      throw error;
     }
   }
 }
 
 function throwIfCancelled(signal: AbortSignal): void {
-  if (signal.aborted) {
-    throw cancelledError();
-  }
-}
-
-function isCancellationRequested(signal: AbortSignal): boolean {
-  return signal.aborted;
+  if (signal.aborted) throw cancelledError();
 }
 
 function cancelledError(): DomainError {
-  return new DomainError("run_cancelled", "Run was cancelled during admission");
+  return new DomainError("run_cancelled", "Run was cancelled before execution");
 }

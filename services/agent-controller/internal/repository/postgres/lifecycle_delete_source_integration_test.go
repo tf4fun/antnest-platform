@@ -32,16 +32,16 @@ func testDeleteSourceTransaction(t *testing.T, source string) {
 	t.Cleanup(repository.Close)
 	base, _ := seedAvailableAgentForRebuild(t, ctx, repository)
 	now := time.Now().UTC()
-	if _, err := repository.pool.Exec(ctx, `UPDATE agent_controller.agents SET lifecycle_state='unavailable', runtime_revision='', runtime_execution_id='', runtime_mcp_endpoint='' WHERE id=$1`, base.Agent.AgentID); err != nil {
+	if _, err := repository.pool.Exec(ctx, `UPDATE agent_controller.agents SET runtime_state='unknown', runtime_revision='', runtime_execution_id='', runtime_mcp_endpoint='' WHERE id=$1`, base.Agent.AgentID); err != nil {
 		t.Fatal(err)
 	}
-	base.Agent.LifecycleState = domain.AgentUnavailable
+	base.Agent.LifecycleState, base.Agent.ActivationState, base.Agent.RuntimeState = domain.AgentCreated, domain.ActivationEnabled, domain.RuntimeUnknown
 	base.Agent.RuntimeRevision, base.Agent.RuntimeExecutionID, base.Agent.RuntimeMCPEndpoint = "", "", ""
 	requestID, fingerprint := "delete-unpublished", strings.Repeat("f", 64)
 	if _, _, err := repository.BeginAgentDelete(ctx, deleteBegin(base.Agent, requestID, fingerprint, now)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repository.SettleAgentDeleteDrain(ctx, requestID, fingerprint, domain.ChildRequestID(requestID, domain.PhaseNetworkFence), now); err != nil {
+	if _, err := repository.ConfirmLifecycleDrain(ctx, ports.ConfirmLifecycleDrain{RequestID: requestID, Fingerprint: fingerprint, Kind: domain.OperationDelete, Outcome: ports.ExecutionSettled, Now: now}); err != nil {
 		t.Fatal(err)
 	}
 	input := ports.AdvanceAgentDelete{RequestID: requestID, Fingerprint: fingerprint, ExpectedPhase: domain.PhaseNetworkFence,
@@ -56,7 +56,6 @@ func testDeleteSourceTransaction(t *testing.T, source string) {
 		if source == "runtime_deleted" {
 			input.SourceRuntimeAbsenceProof.RuntimeRevision = "rtv_deleted"
 		}
-		input.RunReleaseEvent = lifecycleRunReleaseEvent("source-release", "runtime_absent", "", now)
 	}
 	input.NextChildRequestID = domain.ChildRequestID(requestID, input.NextPhase)
 	state, err := repository.AdvanceAgentDelete(ctx, input)
@@ -85,8 +84,7 @@ func testDeleteSourceTransaction(t *testing.T, source string) {
 		state, err = repository.AdvanceAgentDelete(ctx, ports.AdvanceAgentDelete{RequestID: requestID, Fingerprint: fingerprint,
 			ExpectedPhase: domain.PhaseRuntimeDelete, NextPhase: domain.PhaseNetworkRelease,
 			NextChildRequestID: domain.ChildRequestID(requestID, domain.PhaseNetworkRelease), Now: now,
-			RuntimeResult:   &ports.RuntimeOperation{State: "completed", Effect: "completed", RuntimeRevision: "rtv_deleted", LifecycleState: "deleted", Health: "absent"},
-			RunReleaseEvent: lifecycleRunReleaseEvent("source-release", "runtime_deleted", "rtv_retained", now),
+			RuntimeResult: &ports.RuntimeOperation{State: "completed", Effect: "completed", RuntimeRevision: "rtv_deleted", LifecycleState: "deleted", Health: "absent"},
 		})
 		if err != nil {
 			t.Fatal(err)

@@ -7,13 +7,14 @@
 | `ANTNEST_ADMIN_CONSOLE_LISTEN` | no | HTTP listen address, default `:8080` |
 | `ANTNEST_IDENTITY_SERVICE_URL` | yes | trusted Identity Service base URL |
 | `ANTNEST_AGENT_CONTROLLER_URL` | yes | trusted Agent Controller base URL |
+| `ANTNEST_AGENT_ACP_SERVICE_URL` | yes | trusted ACP execution-audit base URL |
 | `ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF` | no | platform default image reference for Template creation; revisions retain their pinned value without a digest editor |
 | `ANTNEST_ADMIN_DEPENDENCY_TIMEOUT` | no | bounded non-streaming RPC timeout |
 | `ANTNEST_ADMIN_SHUTDOWN_TIMEOUT` | no | graceful HTTP drain budget, default `15s` |
 | `OTEL_*` | no | standard OTLP HTTP/protobuf signal configuration |
 
 `GET /status` checks local initialization and stopping state only. It never
-probes Identity or Agent Controller; downstream failures are reported by the
+probes Identity, Agent Controller or ACP; downstream failures are reported by the
 actual business request. The compiled React assets are embedded into the
 binary, so no writable web volume is required. See [observability](observability.md)
 for capture guarantees and pending acceptance.

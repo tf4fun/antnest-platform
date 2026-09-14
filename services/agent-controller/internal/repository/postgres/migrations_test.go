@@ -19,7 +19,6 @@ func TestInitialMigrationOwnsCompleteAgentControllerBoundary(t *testing.T) {
 		"agent_controller.execution_revisions",
 		"agent_controller.agent_access_bindings",
 		"agent_controller.agent_lifecycle_operations",
-		"agent_controller.run_admissions",
 		"agent_controller.runtime_observation_cursor",
 		"agent_controller.event_journal_cursor",
 		"agent_controller.agent_events",
@@ -41,10 +40,9 @@ func TestInitialMigrationOwnsCompleteAgentControllerBoundary(t *testing.T) {
 func TestSchemaMigrationsHaveFinalSerializationConstraints(t *testing.T) {
 	t.Parallel()
 
-	allMigrations := initialSchemaSQL + ownerAndEmptySkillsSQL
+	allMigrations := initialSchemaSQL + ownerBindingSQL
 	required := []string{
 		"operations_agent_nonterminal_unique",
-		"admissions_agent_occupancy_unique",
 		"agent_events_aggregate_sequence_unique",
 		"UNIQUE (provider_connection_id, profile_key)",
 		"UNIQUE (provider_connection_id, api_model_id)",
@@ -63,9 +61,7 @@ func TestSchemaMigrationsHaveFinalSerializationConstraints(t *testing.T) {
 		"runtime_observation_cursor_singleton",
 		"agent_events_type_known",
 		"agents_owner_access_revision_unique",
-		"access_bindings_agent_unique",
 		"access_bindings_owner_fk",
-		"run_admissions_empty_skills",
 	}
 	for _, constraint := range required {
 		if !strings.Contains(allMigrations, constraint) {

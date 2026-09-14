@@ -1,18 +1,41 @@
 import { vi } from "vitest";
+import { RunSupervisor } from "../../src/application/run-supervisor.js";
 import type {
   AcpApplicationPort,
   SessionEvent,
   SessionOutputSnapshot,
   ExecuteRunResult,
+  AcceptedAcpRun,
+  RunExecutionInput,
 } from "../../src/ports/acp-application.js";
+
+export type OutputApplication = Omit<AcpApplicationPort, "readSessionOutput" | "acceptPrompt"> & {
+  acceptPrompt(input: Parameters<AcpApplicationPort["acceptPrompt"]>[0]): Promise<AcceptedAcpRun>;
+  execute(input: RunExecutionInput): Promise<ExecuteRunResult>;
+};
 
 // Protocol mapping tests use a deterministic output store. PostgreSQL wire
 // tests exercise the actual atomic transcript snapshot separately.
-export function withOutputHistory(
-  application: Omit<AcpApplicationPort, "readSessionOutput">,
-): AcpApplicationPort {
+export function withOutputHistory(application: OutputApplication): AcpApplicationPort {
   const history = new Map<string, SessionEvent[]>();
   const states = new Map<string, SessionOutputSnapshot["state"]>();
+  const supervisor = new RunSupervisor({
+    execute: async (input) => {
+      const sessionId = input.accepted.sessionId;
+      const events = history.get(sessionId) ?? [];
+      history.set(sessionId, events);
+      const result = await application.execute({
+        ...input,
+        publish: async (event) => {
+          if (event.kind === "state") states.set(sessionId, event);
+          else events.push(structuredClone(event));
+          await input.publish(event);
+        },
+      });
+      states.set(sessionId, terminalState(result));
+      return result;
+    },
+  });
   return {
     ...application,
     readSessionOutput: vi.fn<AcpApplicationPort["readSessionOutput"]>(
@@ -31,21 +54,13 @@ export function withOutputHistory(
       if (state !== undefined) states.set(input.sessionId, state);
       return snapshot;
     }),
-    executeRun: vi.fn<AcpApplicationPort["executeRun"]>(async (input) => {
-      const sessionId = input.accepted.sessionId;
-      const events = history.get(sessionId) ?? [];
-      history.set(sessionId, events);
-      const result = await application.executeRun({
-        ...input,
-        publish: async (event) => {
-          if (event.kind === "state") states.set(sessionId, event);
-          else events.push(structuredClone(event));
-          await input.publish(event);
-        },
-      });
-      states.set(sessionId, terminalState(result));
-      return result;
-    }),
+    acceptPrompt: vi.fn<AcpApplicationPort["acceptPrompt"]>((input) =>
+      supervisor.submit(input, async () => {
+        const accepted = await application.acceptPrompt(input);
+        states.set(accepted.sessionId, { kind: "state", state: "running" });
+        return { ...accepted, outputSequence: history.get(accepted.sessionId)?.length ?? 0 };
+      }),
+    ),
   };
 }
 

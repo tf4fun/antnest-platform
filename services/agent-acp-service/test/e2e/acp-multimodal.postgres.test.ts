@@ -5,6 +5,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vites
 import { migrate } from "../../src/adapters/postgres/migrate.js";
 import { OpenAICompatibleModel } from "../../src/adapters/model/openai-compatible.js";
 import { startBoundaryApplication } from "../support/postgres-boundary-application.js";
+import { identityHeaders } from "../support/fixtures.js";
 import { audio, audioData, pdf, pdfData } from "../fixtures/multimodal.js";
 
 const databaseUrl = process.env.ANTNEST_ACP_TEST_DATABASE_URL;
@@ -18,18 +19,10 @@ describe.skipIf(databaseUrl === undefined)("ACP native input with PostgreSQL", (
   const fetchFn = vi.fn<(url: string, init: RequestInit) => Promise<Response>>();
   let nativeEnabled = true;
 
-  function configure() {
-    const owner = app.identities.get("owner");
-    if (owner === undefined) throw new Error("Missing test owner");
-    owner.promptCapabilities.audio = true;
-    const acquire = app.controller.acquireRun.getMockImplementation();
-    if (acquire === undefined) throw new Error("Missing admission fixture");
-    app.controller.acquireRun.mockImplementation(async (...args) => {
-      const result = await acquire(...args);
-      result.executionSpec.model.supportsAudio = nativeEnabled;
-      result.executionSpec.model.supportsPdf = nativeEnabled;
-      return result;
-    });
+  async function configure() {
+    app.configuration.models[0]!.supports_audio = nativeEnabled;
+    app.configuration.models[0]!.supports_pdf = nativeEnabled;
+    await app.publishConfiguration();
     const provider = new OpenAICompatibleModel({ fetchFn });
     app.model.complete.mockReset().mockImplementation((request) => provider.complete(request));
   }
@@ -50,7 +43,7 @@ describe.skipIf(databaseUrl === undefined)("ACP native input with PostgreSQL", (
       ),
     );
     app = await startBoundaryApplication(pool);
-    configure();
+    await configure();
   });
   afterEach(async () => {
     for (const connection of httpConnections.splice(0)) connection.close();
@@ -72,7 +65,7 @@ describe.skipIf(databaseUrl === undefined)("ACP native input with PostgreSQL", (
           ).rows[0]?.state,
       )
       .toBe(state);
-    await expect.poll(() => app.controller.finishRun.mock.calls.length).toBeGreaterThan(0);
+    await expect.poll(() => app.finish.mock.calls.length).toBeGreaterThan(0);
   }
 
   function expectNativeRequest() {
@@ -108,7 +101,7 @@ describe.skipIf(databaseUrl === undefined)("ACP native input with PostgreSQL", (
       });
       await app.close();
       app = await startBoundaryApplication(pool);
-      configure();
+      await configure();
       const restored = await app.connect(version);
       const result = await restored.request(version === 1 ? "session/load" : "session/resume", {
         ...setup,
@@ -144,21 +137,24 @@ describe.skipIf(databaseUrl === undefined)("ACP native input with PostgreSQL", (
     "v%s closes a model mismatch without a Provider request and permits a new Run",
     async (version) => {
       nativeEnabled = false;
+      await configure();
       const client = await app.connect(version);
       const created = await client.request("session/new", setup);
       const sessionId = String(created.result?.sessionId);
       await client.request("session/prompt", { sessionId, prompt });
       await waitState(sessionId, "failed");
       expect(fetchFn).not.toHaveBeenCalled();
-      expect(app.controller.finishRun).toHaveBeenCalledWith(
+      expect(app.finish).toHaveBeenCalledWith(
         expect.objectContaining({
           terminalClass: "failed",
           toolEffectState: "none",
           errorClass: "model_unsupported_content",
         }),
-        expect.any(AbortSignal),
       );
       nativeEnabled = true;
+      app.configuration.models[0]!.supports_audio = true;
+      app.configuration.models[0]!.supports_pdf = true;
+      await app.publishConfiguration();
       expect(
         (
           await client.request("session/prompt", {
@@ -176,7 +172,7 @@ describe.skipIf(databaseUrl === undefined)("ACP native input with PostgreSQL", (
   it("v1 HTTP negotiates audio and forwards it through the same durable execution path", async () => {
     const connection = acp.client().connect(
       createHttpStream(app.httpUrl, {
-        headers: { "x-antnest-agent-access-subject": "owner" },
+        headers: identityHeaders(),
       }),
     );
     httpConnections.push(connection);

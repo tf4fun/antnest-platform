@@ -49,7 +49,6 @@ describe("Admitted execution authorization", () => {
       const frozen = snapshot();
       frozen.executionSpec.configuration = {
         modelProfileId: "p1",
-        modelProfileRevisionId: "r1",
         authorization: { mode, toolRules: [] },
         authorizationRevision: 1,
         digest: "c".repeat(64),
@@ -74,7 +73,6 @@ describe("Admitted execution authorization", () => {
         runId: "run-1",
         sessionId: "session-1",
         snapshot: frozen,
-        credential: "synthetic",
         context: [],
         signal,
         authoritySignal: signal,
@@ -107,7 +105,6 @@ describe("Admitted execution authorization", () => {
     const frozen = snapshot();
     frozen.executionSpec.configuration = {
       modelProfileId: "p1",
-      modelProfileRevisionId: "r1",
       authorization: { mode: "chat", toolRules: [] } satisfies Authorization,
       authorizationRevision: 1,
       digest: "c".repeat(64),

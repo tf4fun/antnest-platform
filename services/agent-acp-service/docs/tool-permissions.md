@@ -37,20 +37,20 @@ missing handlers fail closed. No invented client capability flag is required.
   read-only, never merely low-risk. Arguments are untrusted data, not instructions.
   Explicit negative/conflicting hints are never overridden. Invalid, truncated,
   mismatched or failed judgments ask the user; positive judgments are not cached.
-  The judge uses the admitted model/credential, no tools or conversation history,
+  The judge uses the Run's model and logical Provider client, no tools or conversation history,
   a bounded output and timeout, and the same Run request budget (reserving one
   normal response). Usage is recorded; judgment text is not published to chat.
 
 ## Waits, Reconnects And Recovery
 
-Only an authorized connection attached to the same principal, Agent, access
-revision and Session can answer. The most recently attached connection receives
+Only an authorized connection attached to the same organization, principal,
+Agent and Session can answer. The most recently attached connection receives
 the request; replies from superseded connections cannot authorize execution.
 Live access is checked again before committing an answer. Resuming on a new
 connection can reissue a still-pending request with a fresh JSON-RPC ID.
 
 Disconnect does not cancel the Run: it waits for a matching connection within
-the existing admission deadline. There is no polling or deadline renewal.
+the existing ACP-owned execution deadline. There is no polling or deadline renewal.
 Session cancellation, shutdown or deadline expiry end the wait. The SDK sends
 cooperative cancellation; a short cleanup grace period closes a non-responsive
 logical connection so it cannot accumulate abandoned request promises.

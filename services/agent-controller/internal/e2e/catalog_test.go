@@ -44,10 +44,8 @@ func TestCatalogHappyPathThroughHTTPAndPostgres(t *testing.T) {
 	handler, err := server.NewHandler(
 		application.NewCatalogService(repository, secretBox, fixedClock{now: time.Unix(1, 0).UTC()}),
 		catalogOnlyLifecycle{},
-		application.NewRunService(
-			repository, secretBox, fixedClock{now: time.Unix(1, 0).UTC()}, 30*time.Minute,
-		),
-		application.NewAgentQueryService(repository, application.WithWorkspaceStateNotifier(eventNotifier)),
+		application.NewAgentConfigurationService(repository, e2eIdentityDirectory{}, fixedClock{now: time.Unix(1, 0).UTC()}),
+		application.NewAgentQueryService(repository),
 		application.NewEventService(repository, eventNotifier, repository),
 		catalogOnlyNetworkPolicy{},
 		repository.Ping,

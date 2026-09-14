@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { Pool } from "pg";
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Ajv2020 } from "ajv/dist/2020.js";
@@ -7,7 +6,7 @@ import v2Schema from "@agentclientprotocol/sdk/schema/v2/schema.unstable.json" w
 import { migrate } from "../../src/adapters/postgres/migrate.js";
 import { startBoundaryApplication } from "../support/postgres-boundary-application.js";
 import type { AcpWireClient } from "../support/acp-wire-client.js";
-import { snapshot } from "../support/fixtures.js";
+import { identityHeaders } from "../support/fixtures.js";
 import type { SessionConfiguration } from "../../src/domain/session-configuration.js";
 import * as acp from "@agentclientprotocol/sdk";
 import { createHttpStream } from "@agentclientprotocol/sdk/experimental/http-client";
@@ -37,27 +36,8 @@ describe.skipIf(databaseUrl === undefined)("ACP permission protocol with durable
     await pool.query("CREATE SCHEMA public");
     await migrate(pool);
     app = await startBoundaryApplication(pool);
-    app.controller.acquireRun.mockImplementation((input) => {
-      const spec = snapshot();
-      return Promise.resolve({
-        ...spec,
-        admissionId: randomUUID(),
-        admissionDeadline: new Date(Date.now() + 60_000),
-        executionSpec: {
-          ...spec.executionSpec,
-          configuration: {
-            modelProfileId: "profile-1",
-            modelProfileRevisionId: "revision-1",
-            authorizationRevision: 1,
-            digest: "a".repeat(64),
-            authorization: {
-              mode: input.sessionConfiguration?.authorizationMode ?? "approve",
-              toolRules: input.sessionConfiguration?.toolRules ?? [],
-            },
-          },
-        },
-      });
-    });
+    app.configuration.agents[0]!.default_authorization.mode = "approve";
+    await app.publishConfiguration();
   });
   afterEach(async () => {
     for (const connection of httpConnections.splice(0)) connection.close();
@@ -274,9 +254,7 @@ describe.skipIf(databaseUrl === undefined)("ACP permission protocol with durable
         requested.resolve(params);
         return answer.promise;
       })
-      .connect(
-        createHttpStream(app.httpUrl, { headers: { "x-antnest-agent-access-subject": "owner" } }),
-      );
+      .connect(createHttpStream(app.httpUrl, { headers: identityHeaders() }));
     httpConnections.push(connection);
     await connection.agent.request(acp.methods.agent.initialize, {
       protocolVersion: 1,
@@ -301,7 +279,7 @@ describe.skipIf(databaseUrl === undefined)("ACP permission protocol with durable
   it("HTTP clients without an approval handler fail closed without hanging the Run", async () => {
     const connection = acp.client().connect(
       createHttpStream(app.httpUrl, {
-        headers: { "x-antnest-agent-access-subject": "owner" },
+        headers: identityHeaders(),
       }),
     );
     httpConnections.push(connection);
@@ -323,12 +301,9 @@ describe.skipIf(databaseUrl === undefined)("ACP permission protocol with durable
     ]);
   });
 
-  it("expires a waiting approval at the admission deadline, with no Tool side effect", async () => {
-    const acquire = app.controller.acquireRun.getMockImplementation()!;
-    app.controller.acquireRun.mockImplementation(async (input, signal) => ({
-      ...(await acquire(input, signal)),
-      admissionDeadline: new Date(Date.now() + 1000),
-    }));
+  it("expires a waiting approval at the local Run deadline, with no Tool side effect", async () => {
+    await app.close();
+    app = await startBoundaryApplication(pool, undefined, { runTimeoutMs: 1000 });
     const client = await app.connect(2);
     const sessionId = String((await client.request("session/new", setup)).result?.sessionId);
     await client.request("session/prompt", { sessionId, prompt: [{ type: "text", text: "read" }] });
@@ -349,7 +324,9 @@ describe.skipIf(databaseUrl === undefined)("ACP permission protocol with durable
     const sessionId = String((await client.request("session/new", setup)).result?.sessionId);
     await client.request("session/prompt", { sessionId, prompt: [{ type: "text", text: "read" }] });
     const frame = await pending(client);
-    app.authorizations.set("principal-1:agent-1", { active: false, accessRevision: "access-2" });
+    app.configuration.agents[0]!.principal_ids = ["principal-2"];
+    app.configuration.agents[0]!.access_revision = "access-2";
+    await app.publishConfiguration();
     respond(client, frame.id!, "allow_always");
     await waitDone();
     expect(app.tools.call).not.toHaveBeenCalled();

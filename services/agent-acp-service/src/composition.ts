@@ -7,13 +7,21 @@ import { randomUUID } from "node:crypto";
 
 import { Pool } from "pg";
 
-import { AgentControllerClient } from "./adapters/controller/client.js";
+import { PostgresExecutionConfiguration } from "./adapters/postgres/execution-configuration.js";
+import { ExecutionDirectory } from "./application/execution-directory.js";
+import { ProviderClients } from "./application/provider-clients.js";
+import { AgentSettlement } from "./application/agent-settlement.js";
+import { AgentExecutionState } from "./application/agent-execution-state.js";
+import { ExecutionAudits } from "./application/execution-audit.js";
+import { PostgresExecutionAudits } from "./adapters/postgres/execution-audit.js";
+import type { ExecutionAccessSnapshot } from "./domain/execution-configuration.js";
+import { SessionOutputStreams } from "./transport/acp/session-output.js";
 import { OfficialMcpDialer } from "./adapters/mcp/official-client.js";
 import { McpToolCatalog } from "./adapters/mcp/tool-catalog.js";
 import { OpenAICompatibleModel } from "./adapters/model/openai-compatible.js";
 import { PostgresContextRepository } from "./adapters/postgres/context-repository.js";
 import { PostgresExecutionRepository } from "./adapters/postgres/execution-repository.js";
-import { PostgresKernel } from "./adapters/postgres/kernel.js";
+import { PostgresKernel, postgresPoolOptions } from "./adapters/postgres/kernel.js";
 import { migrate } from "./adapters/postgres/migrate.js";
 import { PostgresRunEventRepository } from "./adapters/postgres/run-event-repository.js";
 import { PostgresRunRepository } from "./adapters/postgres/run-repository.js";
@@ -32,7 +40,7 @@ import type { AgentAcpConfig } from "./config.js";
 import type { TelemetryPort } from "./ports/telemetry.js";
 import {
   InstrumentedAcpApplication,
-  InstrumentedAgentController,
+  InstrumentedRunExecutor,
   InstrumentedModel,
   InstrumentedToolCatalog,
   InstrumentedRuntimeInformation,
@@ -42,6 +50,7 @@ import { InstrumentedToolPermissions } from "./telemetry/instrumented-permission
 
 export type RunningAgentAcpService = {
   failure: Promise<Error>;
+  address(): ReturnType<AgentAcpHttpServer["address"]>;
   shutdown(): Promise<void>;
 };
 
@@ -50,7 +59,7 @@ export async function startAgentAcpService(
   telemetry: TelemetryPort,
   reportOwnershipLoss: (error: WorkerOwnershipLostError) => void,
 ): Promise<RunningAgentAcpService> {
-  const pool = new Pool({ connectionString: config.databaseUrl, max: 10 });
+  const pool = new Pool(postgresPoolOptions(config.databaseUrl, config.databaseTimeoutMs));
   pool.on("error", (error) => telemetry.log("error", "postgres_pool_error", {}, error));
   let workerLock: PostgresWorkerLock | undefined;
   const failure = Promise.withResolvers<Error>();
@@ -105,10 +114,16 @@ export async function startAgentAcpService(
     }
 
     const server = new AgentAcpHttpServer({
-      agentController: built.agentController,
+      executionConfiguration: built.directory,
+      settlement: built.settlement,
+      executionState: built.executionState,
+      executionAudits: built.executionAudits,
+      stateDeliveryTimeoutMs: config.stateDeliveryTimeoutMs,
+      outputs: built.outputs,
       application: built.application,
       permissions: built.permissionConnections,
       maxWebSocketPayloadBytes: config.maxWebSocketPayloadBytes,
+      maxConfigurationBytes: config.maxConfigurationBytes,
       telemetry,
       ready: async () =>
         serving && acquiredWorkerLock.isHeld() && (await dependenciesReady(pool, telemetry)),
@@ -136,7 +151,7 @@ export async function startAgentAcpService(
       })();
       return shutdownPromise;
     };
-    return { failure: failure.promise, shutdown };
+    return { failure: failure.promise, shutdown, address: () => server.address() };
   } catch (error) {
     const startupError = asError(error);
     if (startupError instanceof WorkerOwnershipLostError) {
@@ -157,7 +172,7 @@ export async function waitForStartupRecovery(
   await Promise.race([recovery, failure.then((error) => Promise.reject(error))]);
 }
 
-function buildComponents(
+export function buildComponents(
   pool: Pool,
   config: AgentAcpConfig,
   telemetry: TelemetryPort,
@@ -171,12 +186,25 @@ function buildComponents(
   const executions = new PostgresExecutionRepository(kernel);
   const events = new PostgresRunEventRepository(kernel);
 
-  const rawAgentController = new AgentControllerClient({
-    baseUrl: new URL("rpc/agent-controller/", config.agentControllerUrl),
-    timeoutMs: config.controllerTimeoutMs,
-  });
-  const agentController = new InstrumentedAgentController(rawAgentController, telemetry);
   const model = new InstrumentedModel(new OpenAICompatibleModel(), telemetry);
+  const providers = new ProviderClients(model);
+  const permissionConnections = new PermissionConnections();
+  const outputs = new SessionOutputStreams();
+  const revokeAccess = (snapshot: ExecutionAccessSnapshot): void => {
+    supervisor.revokeAccess(snapshot);
+    permissionConnections.revokeAccess(snapshot);
+    outputs.revokeAccess(snapshot);
+  };
+  const directory = new ExecutionDirectory({
+    repository: new PostgresExecutionConfiguration(kernel),
+    clients: providers,
+    onApplied: (snapshot) => {
+      revokeAccess(snapshot);
+      return Promise.resolve();
+    },
+    onUnavailable: (organizationId) =>
+      revokeAccess({ organization_id: organizationId, agents: [] }),
+  });
   const rawTools = new McpToolCatalog({
     runtimeDialer: new OfficialMcpDialer({ trust: "runtime" }),
     revisions: sessions,
@@ -192,8 +220,7 @@ function buildComponents(
   });
   const tools = new InstrumentedToolCatalog(rawTools, telemetry);
   const information = new InstrumentedRuntimeInformation(rawTools, telemetry);
-  const access = new AccessService({ agentController, id: randomUUID });
-  const permissionConnections = new PermissionConnections();
+  const access = new AccessService({ directory });
   const permissionRepository = new PostgresToolPermissions(kernel);
   const permissions = new InstrumentedToolPermissions(
     new ToolPermissions(permissionRepository, permissionConnections, access),
@@ -209,8 +236,7 @@ function buildComponents(
       id: randomUUID,
       now,
     }),
-    agentController,
-    model,
+    providers,
     tools,
     events,
     ownershipSignal,
@@ -218,23 +244,23 @@ function buildComponents(
     id: randomUUID,
     now,
   });
-  const supervisor = new RunSupervisor(executor);
+  const supervisor = new RunSupervisor(new InstrumentedRunExecutor(executor, telemetry));
   const sessionService = new SessionService({ repository: sessions, id: randomUUID, now });
   const application = new InstrumentedAcpApplication(
     new AcpApplication({
       configuration: new SessionConfigurationService({
         sessions: sessionService,
         repository: new PostgresSessionConfiguration(kernel),
-        controller: agentController,
-        id: randomUUID,
+        directory,
         now,
       }),
       access,
       sessions: sessionService,
       prompts: new PromptCoordinator({
         repository: runs,
-        agentController,
-        executions,
+        directory,
+        protection: executions,
+        runTimeoutMs: config.runTimeoutMs,
         recoveryRequired,
         id: randomUUID,
         now,
@@ -246,15 +272,16 @@ function buildComponents(
   const recovery = new RunRecovery({
     executions,
     runs,
-    agentController,
-    runExecutor: supervisor,
     events,
     telemetry,
-    id: randomUUID,
     now,
   });
   return {
-    agentController,
+    directory,
+    settlement: new AgentSettlement({ directory, supervisor, protection: executions, now }),
+    executionState: new AgentExecutionState({ directory, supervisor, protection: executions }),
+    executionAudits: new ExecutionAudits(new PostgresExecutionAudits(kernel)),
+    outputs,
     application,
     recovery,
     supervisor,

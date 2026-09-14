@@ -11,10 +11,7 @@ import (
 func recoverableRebuildBase(t *testing.T) ports.AgentLifecycleBase {
 	t.Helper()
 	base := rebuildLifecycleBase(t, mustLifecycleTemplate(t), mustLifecycleModel(t))
-	base.RecoverySource = &ports.AgentExecutionSource{Spec: base.ExecutableSpec, Execution: base.ExecutableExecution}
-	base.ExecutableSpec = ports.AgentSpecRecord{}
-	base.ExecutableExecution = ports.ExecutionRecord{}
-	base.Agent.LifecycleState = domain.AgentUnavailable
+	base.Agent.LifecycleState, base.Agent.ActivationState, base.Agent.RuntimeState = domain.AgentCreated, domain.ActivationEnabled, domain.RuntimeUnknown
 	base.Agent.ExecutionRevisionID = ""
 	base.Agent.RuntimeExecutionID = ""
 	base.Agent.RuntimeMCPEndpoint = ""
@@ -28,12 +25,12 @@ func TestRecoverySourceRequiresExactRetainedLineage(t *testing.T) {
 		name   string
 		change func(*ports.AgentLifecycleBase)
 	}{
-		{"no_history", func(b *ports.AgentLifecycleBase) { b.RecoverySource = nil }},
+		{"no_spec", func(b *ports.AgentLifecycleBase) { b.ConfiguredSpec = ports.AgentSpecRecord{} }},
 		{"wrong_execution_pointer", func(b *ports.AgentLifecycleBase) { b.Agent.LastSuccessfulExecutionRevisionID = "another" }},
-		{"foreign_execution", func(b *ports.AgentLifecycleBase) { b.RecoverySource.Execution.AgentID = "foreign" }},
-		{"foreign_spec", func(b *ports.AgentLifecycleBase) { b.RecoverySource.Spec.AgentID = "foreign" }},
+		{"foreign_execution", func(b *ports.AgentLifecycleBase) { b.SourceExecution.AgentID = "foreign" }},
+		{"foreign_spec", func(b *ports.AgentLifecycleBase) { b.ConfiguredSpec.AgentID = "foreign" }},
 		{"wrong_spec_pointer", func(b *ports.AgentLifecycleBase) { b.Agent.AgentSpecRevisionID = "another" }},
-		{"wrong_spec_lineage", func(b *ports.AgentLifecycleBase) { b.RecoverySource.Execution.AgentSpecRevisionID = "another" }},
+		{"wrong_spec_lineage", func(b *ports.AgentLifecycleBase) { b.SourceExecution.AgentSpecRevisionID = "another" }},
 		{"wrong_runtime", func(b *ports.AgentLifecycleBase) { b.Agent.RuntimeRevision = "another" }},
 		{"quarantined", func(b *ports.AgentLifecycleBase) { b.Agent.FailureCode = "lifecycle_invariant_failed" }},
 		{"disabled", func(b *ports.AgentLifecycleBase) { b.Agent.DesiredState = domain.DesiredDisabled }},
@@ -43,7 +40,7 @@ func TestRecoverySourceRequiresExactRetainedLineage(t *testing.T) {
 		}},
 		{"stale_endpoint", func(b *ports.AgentLifecycleBase) { b.Agent.RuntimeMCPEndpoint = "http://old/mcp" }},
 		{"stale_process", func(b *ports.AgentLifecycleBase) { b.Agent.RuntimeExecutionID = "old-process" }},
-		{"nonincreasing_revision", func(b *ports.AgentLifecycleBase) { b.NextSpecRevision = b.RecoverySource.Spec.Revision }},
+		{"nonincreasing_revision", func(b *ports.AgentLifecycleBase) { b.NextSpecRevision = b.ConfiguredSpec.Revision }},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
@@ -61,7 +58,7 @@ func TestRecoverySourcePreservesUnavailableStateAndRejectsConcurrentLifecycle(t 
 	base := recoverableRebuildBase(t)
 	source, err := resolveRebuildSource(base)
 	if err != nil || source.Execution.ID != base.Agent.LastSuccessfulExecutionRevisionID ||
-		base.Agent.ExecutionRevisionID != "" || base.ExecutableExecution.ID != "" {
+		base.Agent.ExecutionRevisionID != "" || base.SourceExecution.ID == "" {
 		t.Fatalf("source=%+v error=%v", source, err)
 	}
 	base.Agent.ActiveOperationRequestID = "other-operation"

@@ -24,7 +24,7 @@ func (service *LifecycleService) advanceDeleteFence(ctx context.Context, state p
 		}
 		next = domain.PhaseNetworkRelease
 	}
-	input := deleteAdvanceInput(ctx, state, domain.PhaseNetworkFence, next, service.clock.Now())
+	input := deleteAdvanceInput(state, domain.PhaseNetworkFence, next, service.clock.Now())
 	input.NetworkAttachment = attachment
 	if unresolved {
 		input.SourceRuntimeInspection = state.Operation.SourceRuntimeInspection
@@ -51,7 +51,7 @@ func (service *LifecycleService) resolveDeleteRuntime(ctx context.Context, state
 		return state, true, nil
 	}
 	switch inspection.LifecycleState {
-	case "ready", "disabled", "failed":
+	case "provisioned", "disabled", "failed":
 		state.Operation.SourceRuntimeRevision = inspection.RuntimeRevision
 		state.Operation.SourceRuntimeInspection = &inspection
 		return state, true, nil

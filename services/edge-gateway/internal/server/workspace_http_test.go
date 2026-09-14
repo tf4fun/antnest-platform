@@ -23,10 +23,10 @@ func TestWorkspaceHTTPForwardsOfficialTransportWithoutCredentials(t *testing.T) 
 					if r.URL.Path != "/v1/acp" || r.URL.RawQuery != "" || r.Method != method {
 						t.Errorf("upstream = %s %s", r.Method, r.URL)
 					}
-					if r.Header.Get(HeaderAgentAccessSubject) != "subject-authoritative" {
-						t.Error("missing authoritative subject")
+					if r.Header.Get("X-Antnest-Agent-Id") != "agent-1" || r.Header.Get("X-Antnest-Principal-Id") != "user-admin" || r.Header.Get(HeaderOrganizationID) != "org-1" {
+						t.Error("missing trusted identity")
 					}
-					for _, name := range []string{"Cookie", "Authorization", session.CSRFHeaderName, HeaderUserID, "X-Forged-Extra"} {
+					for _, name := range []string{"Cookie", "Authorization", session.CSRFHeaderName, HeaderUserID, HeaderAgentAccessSubject, "X-Forged-Extra"} {
 						if r.Header.Get(name) != "" {
 							t.Errorf("forwarded private header %s", name)
 						}
@@ -69,7 +69,6 @@ func TestWorkspaceHTTPRejectsRequestsBeforeForwarding(t *testing.T) {
 		{"missing csrf", "POST", "v1/acp", func(r *http.Request) { r.Header.Del(session.CSRFHeaderName) }, 403},
 		{"delete csrf", "DELETE", "v1/acp", func(r *http.Request) { r.Header.Del(session.CSRFHeaderName) }, 403},
 		{"cross origin", "GET", "v1/acp", func(r *http.Request) { r.Header.Set("Origin", "https://evil.test") }, 403},
-		{"other agent", "GET", "v1/acp", func(r *http.Request) { r.URL.Path = "/api/app/agents/other/v1/acp" }, 404},
 		{"v2 HTTP", "POST", "v2/acp", func(*http.Request) {}, 404},
 		{"oversized body", "POST", "v1/acp", func(r *http.Request) { r.ContentLength = maximumACPMessageBytes + 1 }, 413},
 	} {
@@ -102,7 +101,7 @@ func TestWorkspaceHTTPRevalidatesIdentityOnEveryRequest(t *testing.T) {
 	identityService := &identityServiceStub{resolvePrincipal: ordinaryPrincipal()}
 	calls := 0
 	h := newTestHandlerWithAgents(t, identityService,
-		&agentServiceStub{agents: []agentcontroller.WorkspaceAgent{{AgentID: "agent-1", AgentAccessSubject: "subject-authoritative"}}},
+		&agentServiceStub{agents: []agentcontroller.WorkspaceAgent{{AgentID: "agent-1"}}},
 		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { calls++; w.WriteHeader(202) }), time.Now(), Config{})
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, workspaceHTTPRequest("POST", "/api/app/agents/agent-1/v1/acp"))
@@ -176,7 +175,7 @@ func TestWorkspaceHTTPSSEFlushesBeforeUpstreamCloses(t *testing.T) {
 func newWorkspaceHTTPHandler(t *testing.T, upstream http.Handler) http.Handler {
 	t.Helper()
 	return newTestHandlerWithAgents(t, &identityServiceStub{resolvePrincipal: ordinaryPrincipal()},
-		&agentServiceStub{agents: []agentcontroller.WorkspaceAgent{{AgentID: "agent-1", AgentAccessSubject: "subject-authoritative"}}}, upstream, time.Now(), Config{})
+		&agentServiceStub{agents: []agentcontroller.WorkspaceAgent{{AgentID: "agent-1"}}}, upstream, time.Now(), Config{})
 }
 
 func workspaceHTTPRequest(method, path string) *http.Request {

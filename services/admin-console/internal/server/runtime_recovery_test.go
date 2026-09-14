@@ -13,7 +13,7 @@ func TestUnavailableAgentHistoryProjection(t *testing.T) {
 		t.Run("history="+history, func(t *testing.T) {
 			backend := newBackendStub()
 			source := map[string]any{
-				"agent_id": "agent-1", "desired_state": "enabled", "lifecycle_state": "unavailable",
+				"agent_id": "agent-1", "desired_state": "enabled", "lifecycle_state": "created", "activation_state": "enabled", "runtime_state": "absent",
 				"agent_spec_revision": "spec-previous", "last_successful_execution_revision": history,
 				"failure_code": "runtime_deleted", "failure_stage": "runtime_observation",
 				"access_revision": "access-private", "runtime_execution_id": "process-private",

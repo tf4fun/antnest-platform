@@ -17,9 +17,10 @@ type databasePool struct{ *pgxpool.Pool }
 
 // Transactions own their trace context; callers keep using their original deadlines.
 type databaseTransaction struct {
-	inner pgx.Tx
-	span  trace.Span
-	ended sync.Once
+	inner       pgx.Tx
+	span        trace.Span
+	ended       sync.Once
+	afterCommit []func()
 }
 
 func (p *databasePool) Begin(ctx context.Context) (*databaseTransaction, error) {
@@ -64,11 +65,19 @@ func (t *databaseTransaction) QueryRow(ctx context.Context, sql string, args ...
 func (t *databaseTransaction) Commit(ctx context.Context) error {
 	err := t.inner.Commit(t.context(ctx))
 	t.finish("committed", err)
+	callbacks := t.afterCommit
+	t.afterCommit = nil
+	if err == nil {
+		for _, callback := range callbacks {
+			callback()
+		}
+	}
 	return err
 }
 
 func (t *databaseTransaction) Rollback(ctx context.Context) error {
 	err := t.inner.Rollback(t.context(ctx))
+	t.afterCommit = nil
 	t.finish("rolled_back", err)
 	return err
 }

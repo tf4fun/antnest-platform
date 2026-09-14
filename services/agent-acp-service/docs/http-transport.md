@@ -13,10 +13,11 @@ GET SSE delivery and DELETE connection closure belong to the official SDK.
 Antnest supplies the existing v1 Agent handler, bound to authorized platform
 identity. There is no second application API or stdio subprocess bridge.
 
-Every HTTP request requires the trusted `x-antnest-agent-access-subject` header
-and current Agent Controller resolution. A transport connection is bound to
-subject, principal, Agent and access revision. `Acp-Connection-Id` is not a
-credential; another binding cannot read, write or close that connection.
+Every HTTP request requires trusted organization, principal and Agent identity
+headers supplied by Gateway. A transport connection is bound to that immutable
+tuple; ACP checks current access locally using the Controller-published execution
+projection. There is no per-request Controller resolution. `Acp-Connection-Id`
+is not a credential; another binding cannot read, write or close that connection.
 `Acp-Session-Id` routes messages inside an already authorized connection and
 does not replace application-level Session ownership checks.
 
@@ -27,14 +28,22 @@ connection alive. DELETE, failed initialization and shutdown release transport
 resources. Closing or expiring a transport never deletes a persisted Session
 or cancels a durable Run. Reconnect uses initialize followed by session/load
 or session/resume; SDK transport queues are not a durable replay journal.
+The SDK may close its connection before returning DELETE's 202 response. The
+outer transport waits for that HTTP response to finish or disconnect before
+releasing it; closure must not destroy its own acknowledgement.
+A rejected DELETE (for example, an oversized body) does not close the SDK
+connection and must leave it usable.
 
-HTTP bodies use the existing ACP payload limit. Traces record request method,
-protocol and outcome, never subjects or raw messages. Registered parsed ACP
-requests/responses can emit bounded safe diagnostic projections as described in
+HTTP bodies use the existing ACP payload limit. Stream spans record metadata,
+not frames. Registered parsed ACP requests/responses follow the content switch in
 [observability](observability.md); the SDK continues to own HTTP/SSE parsing,
 queues and streaming. HTTP SERVER lifetime ends at response completion or close,
-not when headers become available. Follow-on POST-to-SSE request correlation
-without protocol `_meta` is an explicit SDK integration gap.
+not when headers become available. A telemetry-only adapter forwards the current
+POST's actual SERVER context through standard ACP metadata across the SDK queue;
+clients do not need to inject metadata or understand this internal handoff.
+Null metadata is supported, unrelated metadata is preserved, and an old
+traceparent/tracestate pair is replaced together rather than mixed with the
+receiving HTTP context.
 
 ## Delivery batches
 

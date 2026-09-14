@@ -111,7 +111,8 @@ test("offboarding requires disabled Agent and independently absent Runtime", () 
   const agent = {
     agent_id: "agent-a",
     desired_state: "disabled",
-    lifecycle_state: "disabled",
+    lifecycle_state: "created",
+    activation_state: "disabled",
   };
   const runtime = {
     agent_id: "agent-a",

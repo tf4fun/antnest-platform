@@ -8,6 +8,7 @@ import (
 )
 
 type Config struct {
+	Execution                      ExecutionConfiguration
 	ListenAddress                  string
 	TemporalAddress                string
 	DatabaseURL                    string
@@ -17,7 +18,6 @@ type Config struct {
 	IdentityServiceURL             string
 	DependencyTimeout              time.Duration
 	DrainTimeout                   time.Duration
-	RunAdmissionTTL                time.Duration
 	ObservationPollInterval        time.Duration
 	IdentityRevocationPollInterval time.Duration
 	ShutdownTimeout                time.Duration
@@ -26,6 +26,10 @@ type Config struct {
 func Load(lookup func(string) string) (Config, error) {
 	if lookup == nil {
 		return Config{}, fmt.Errorf("environment lookup is required")
+	}
+	execution, err := loadExecutionConfiguration(lookup)
+	if err != nil {
+		return Config{}, err
 	}
 	shutdownTimeout, err := positiveDuration(
 		lookup("ANTNEST_AGENT_CONTROLLER_SHUTDOWN_TIMEOUT"),
@@ -51,14 +55,6 @@ func Load(lookup func(string) string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	runAdmissionTTL, err := positiveDuration(
-		lookup("ANTNEST_AGENT_CONTROLLER_RUN_ADMISSION_TTL"),
-		"ANTNEST_AGENT_CONTROLLER_RUN_ADMISSION_TTL",
-		30*time.Minute,
-	)
-	if err != nil {
-		return Config{}, err
-	}
 	observationPollInterval, err := positiveDuration(
 		lookup("ANTNEST_AGENT_CONTROLLER_RUNTIME_OBSERVATION_POLL_INTERVAL"),
 		"ANTNEST_AGENT_CONTROLLER_RUNTIME_OBSERVATION_POLL_INTERVAL",
@@ -75,6 +71,7 @@ func Load(lookup func(string) string) (Config, error) {
 		return Config{}, err
 	}
 	config := Config{
+		Execution:                      execution,
 		TemporalAddress:                strings.TrimSpace(lookup("ANTNEST_TEMPORAL_ADDRESS")),
 		ListenAddress:                  strings.TrimSpace(lookup("ANTNEST_AGENT_CONTROLLER_LISTEN")),
 		DatabaseURL:                    strings.TrimSpace(lookup("ANTNEST_AGENT_CONTROLLER_DATABASE_URL")),
@@ -83,7 +80,6 @@ func Load(lookup func(string) string) (Config, error) {
 		IdentityServiceURL:             strings.TrimSpace(lookup("ANTNEST_IDENTITY_SERVICE_URL")),
 		DependencyTimeout:              dependencyTimeout,
 		DrainTimeout:                   drainTimeout,
-		RunAdmissionTTL:                runAdmissionTTL,
 		ObservationPollInterval:        observationPollInterval,
 		IdentityRevocationPollInterval: identityRevocationPollInterval,
 		ShutdownTimeout:                shutdownTimeout,

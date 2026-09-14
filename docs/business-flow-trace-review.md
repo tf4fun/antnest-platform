@@ -1,7 +1,7 @@
 # Docker 管控主流程：基于 Trace 的时序与技术评审
 
 > 核对日期：2026-09-12；实例：`antnest-dev-20260911`。
-> 最新逐场景复验进度见 §18；§1–17 是优化前后的历史分析与代码验证，不代表新镜像全部重新验收。
+> §18 保留此前逐场景复验；创建/就绪分离及分层状态改造后的最新进度见 [状态模型集成记录](agent-lifecycle-state-model.md#progress)。§1–17 是历史分析与代码验证，不代表新镜像全部重新验收。
 > 用途：人类技术评审底稿，不是全部业务或异常路径已经验收的声明。
 > 范围：部署、管理员本地登录、Provider 配置、模板创建、Agent 创建/重建/停用/启用/删除；补充本轮 Egress 数据库观测复验。
 > 独立自查：已由三名只读审查者分别检查完整性、简洁性、职责隔离，并由主审交叉复核；结论与修正优先级见 §16。此次自查未执行测试、重新采集 Trace 或修改业务代码。
@@ -683,6 +683,8 @@ R4 最新 Provider 写入 Trace、R6 部署入口配置统一、Provider 按连�
 不是再次空白部署。逐场景执行真实入口请求、等待 6 秒后读取 Jaeger、以实际父子关系绘图，
 再交给只读子 agent 审查完整性、简洁性和职责边界。未完成场景不沿用历史通过状态。
 
+**9 月 13 日创建/就绪分离更新：** 两个 Controller 已重新构建部署。最新 BF-AGENT-04 证据以[创建场景](business-flow-agent-create.md)为准；下文第四项 181 Span 及四项生命周期仍为旧等待就绪版本的历史结果，不代表新合同已全量复验。
+
 **9 月 13 日 Provider 复验更新：** Controller 与 Console 已重新构建为当前工作树版本，
 仅重置 Controller 自有 schema，保留 Identity、其他服务数据、Temporal、Jaeger。
 下表 Provider 状态与本节末尾结果已更新，其余场景不借此宣称重新通过。
@@ -697,11 +699,11 @@ R4 最新 Provider 写入 Trace、R6 部署入口配置统一、Provider 按连�
 | 2 | BF-AUTH-01 管理员登录并进入 Console | 真实表单登录 → 账号/概览完整显示 → 刷新后继续使用；8 条业务接口 Trace 与页面结果核对通过，[实际时序与证据](business-flow-local-admin-login.md)，用户已确认 |
 | 模板前置 | BF-CAT-02 Provider 连接与模型 | 9 月 13 日新镜像：真实表单创建 → 三模型展示 → 刷新后核对；11 条请求 Trace、5 INSERT、持久化与模型参数一致，[时序与遗留](business-flow-provider-connection.md)，用户已确认；合成凭证、未调用外部模型 |
 | 3 | BF-CAT-06 模板创建 | 浏览器创建 → 列表 → 详情 → 整页刷新；15 条请求 Trace 完整，创建 18 Span、3 INSERT，镜像标签和模型稳定引用正确，[场景记录](business-flow-template-create.md)，用户已确认 |
-| 4 | BF-AGENT-04 Agent 创建 | 浏览器提交 → available → 整页刷新；Runtime 健康，主 Trace 181 Span / 7 服务，[场景记录及待改项](business-flow-agent-create.md)，正常创建场景已获用户确认；SSE 观测未全部通过 |
-| 5 | BF-AGENT-05 Agent 重建 | 未执行；待对比 R1 的实际查询变化 |
-| 6 | BF-AGENT-06 Agent 停用 | 未执行；上一轮清理验收 Agent 的停用不混作本轮证据 |
-| 7 | BF-AGENT-07 Agent 启用 | 未执行 |
-| 8 | BF-AGENT-08 Agent 删除 | 未执行 |
+| 4 | BF-AGENT-04 Agent 创建 | 9 月 13 日创建/就绪分离新镜像：Gateway API 创建 164 Span + 独立观测 40 Span，持久化/容器一致；[最新时序](business-flow-agent-create.md)待人工验收，未重新进行浏览器/SSE 验收 |
+| 5 | BF-AGENT-05 Agent 重建 | 9 月 13 日真实 Console 操作，231 Span；新容器、原工作文件保留，技术验收通过，待用户审阅 |
+| 6 | BF-AGENT-06 Agent 停用 | 164 Span；容器回收、工作卷保留、入口清空，技术验收通过，待用户审阅 |
+| 7 | BF-AGENT-07 Agent 启用 | 196 Span；Owner 复核、沿用 Spec、恢复原卷并发布新执行修订，技术验收通过，待用户审阅 |
+| 8 | BF-AGENT-08 Agent 删除 | 173 Span；容器/独占卷回收、地址隔离、审计保留，技术验收通过，待用户审阅 |
 
 第一项：[Gateway 自身就绪](http://127.0.0.1:16686/trace/a1a843bf002cffcc07dc359e1cc8aa25)，1 Span；
 [首页代理](http://127.0.0.1:16686/trace/8774cde179262f76418e2b662de7151b)，3 Span。
@@ -747,10 +749,22 @@ ACP、Egress、Temporal 或外部模型调用，原始 image_ref 和稳定 model
 主 Trace 无缺父、重复 ID 或 warning。两条 Docker 404 为创建前存在性探测，不是构建失败。
 Agent `agent_116c8b47b1e9e5edc2c654cdd8cd0edf` 实际 available，operation completed，
 Runtime running/healthy；模板/模型配置快照、执行绑定、真实镜像 ID 与 OTEL Resource 元数据一致。
-23 个有限页面业务请求已核对；创建事件与完成事件关联同一主 Trace。Agent 和独占卷保留。
+23 个有限页面业务请求已核对；创建事件与完成事件关联同一主 Trace。当时保留 Agent 和独占卷供后续验收，
+本节末尾的删除流程已回收运行资源。
 
 本项不能宣称所有 Trace 均通过：刷新取消及五分钟 StreamLease 到期的 SSE 被标错；后者出现约
 247 µs 的父子结束偏差 warning，严格检查失败已保留，没有修改门槛。源码只读审查另发现
 发布前失效事件可能被游标消费的竞态候选（未动态复现）、阶段重复读取完整快照、旧 closeout runner
 合同漂移，均记录在场景文档。没有扩大到故障注入或修改服务。用户已确认本次正常创建 Trace，
-上述待改项不因此关闭；重建及 ACP/模型调用尚未推进。
+上述待改项不因此关闭；ACP/模型调用尚未推进。
+
+第五至第八项已按用户要求连续完成：[四项生命周期 Trace 列表](business-flow-agent-lifecycle-traces.md)。
+以 `017c105` 为基线，无服务实现改动，使用创建步骤的同一 Agent，真实 Console 操作均自动呈现终态。
+四条主 Trace 均以 Gateway 为根，各 Activity 一次完成，缺父/重复 ID/warning 为零；
+重建和启用各有一次预期 Docker 存在性检查 404。交叉断言确认请求身份、Runtime 修订、
+网络 CAS、执行发布与事件关联一致；合成工作文件在重建和停启期间保持相同 SHA-256。
+删除后计算容器与独占卷已回收，共享 Skill 卷、两份 Spec、三份执行修订和十条事件保留。
+
+只读审查提醒现有 Trace 检查器不独立证明业务后置条件，本轮已用实际数据库、资源和页面补证。
+Controller 重建/停用/启用/删除仍分别有 109/87/87/75 次 SQL（含事务控制语句），完整快照重复装载仍待精简。
+本轮不重复故障、在途 Run、同键重放或所有 SSE/页面请求专项验收，也不关闭第四项的竞态和观测噪声。

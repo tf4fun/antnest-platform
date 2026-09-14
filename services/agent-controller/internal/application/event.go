@@ -52,7 +52,6 @@ type AgentEventView struct {
 	AgentID            string
 	EventType          string
 	OperationRequestID string
-	AdmissionID        string
 	TraceID            string
 	OccurredAt         time.Time
 	Data               map[string]any
@@ -209,7 +208,6 @@ func validateEventRecords(records []ports.AgentEventRecord, query ports.AgentEve
 			record.OccurredAt.IsZero() || record.Data == nil ||
 			(query.AgentID != "" && record.AgentID != query.AgentID) ||
 			(record.OperationRequestID != "" && !validIdentifier(record.OperationRequestID)) ||
-			(record.AdmissionID != "" && !validIdentifier(record.AdmissionID)) ||
 			(record.TraceID != "" && !traceIDPattern.MatchString(record.TraceID)) {
 			return fmt.Errorf("%w: invalid Agent event envelope", ErrQueryContract)
 		}
@@ -221,6 +219,7 @@ func validateEventRecords(records []ports.AgentEventRecord, query ports.AgentEve
 func validAgentEventType(eventType string) bool {
 	switch eventType {
 	case ports.EventAgentCreateRequested,
+		ports.EventAgentCreated,
 		ports.EventAgentReady,
 		ports.EventAgentBuildFailed,
 		ports.EventAgentRebuildRequested,
@@ -236,10 +235,9 @@ func validAgentEventType(eventType string) bool {
 		ports.EventAgentLifecycleQuarantined,
 		ports.EventAgentRuntimeRestarted,
 		ports.EventAgentRuntimeMissing,
+		ports.EventAgentRuntimeConditionChanged,
 		ports.EventAgentOwnerRevoked,
-		ports.EventAgentAuthorizationUpdated,
-		ports.EventRunAdmissionReleased,
-		ports.EventRunAdmissionUnresolved:
+		ports.EventAgentAuthorizationUpdated:
 		return true
 	default:
 		return false
@@ -251,7 +249,7 @@ func agentEventView(record ports.AgentEventRecord) AgentEventView {
 		EventID: record.EventID, GlobalSequence: record.GlobalSequence,
 		AggregateSequence: record.AggregateSequence, SchemaVersion: record.SchemaVersion,
 		AgentID: record.AgentID, EventType: record.EventType,
-		OperationRequestID: record.OperationRequestID, AdmissionID: record.AdmissionID,
-		TraceID: record.TraceID, OccurredAt: record.OccurredAt, Data: record.Data,
+		OperationRequestID: record.OperationRequestID,
+		TraceID:            record.TraceID, OccurredAt: record.OccurredAt, Data: record.Data,
 	}
 }

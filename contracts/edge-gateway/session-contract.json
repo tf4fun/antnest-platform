@@ -1,6 +1,6 @@
 {
   "contract": "antnest.edge-gateway.session",
-  "version": 10,
+  "version": 11,
   "session_validation": {
     "invalid_or_expired": "401 unauthenticated; clear browser cookies",
     "identity_unavailable": "503 identity_unavailable; preserve cookies; never admit upstream requests",
@@ -70,16 +70,32 @@
       "forbidden_response_fields": [
         "agent_access_subject",
         "runtime_endpoint",
-        "provider_credential"
-      ]
+        "provider_credential",
+        "availability",
+        "active_session_id"
+      ],
+      "agent_required": ["agent_id", "name"]
     },
     "workspace_state": {
       "method": "GET",
       "path": "/api/app/agents/{agent_id}/state",
-      "authentication": "browser_session_and_controller_agent_access",
+      "authentication": "browser_session; ACP authorizes trusted organization/principal/agent",
       "scope": "original authenticated organization and principal only; no query fields",
       "success_status": 200,
-      "response_required": ["agent_id", "availability", "access_allowed", "agent_revision", "active_session_id"]
+      "response_required": [
+        "agent_id",
+        "availability",
+        "access_allowed",
+        "configuration_revision",
+        "active_session_id",
+        "unavailable_reason"
+      ],
+      "upstream": {
+        "method": "POST",
+        "path": "/rpc/agent-acp/get-agent-execution-state",
+        "body": {}
+      },
+      "denied": "200 sanitized offline state; no session or configuration revision disclosure"
     },
     "workspace_state_watch": {
       "method": "GET",
@@ -91,14 +107,27 @@
       "replay": "none; reject query fields and Last-Event-ID",
       "lease": "ANTNEST_EDGE_STREAM_LEASE; no automatic Gateway renewal",
       "disconnect": "cancel upstream observation only; never cancel or replay ACP work",
-      "response_required": ["agent_id", "availability", "access_allowed", "agent_revision", "active_session_id"]
+      "response_required": [
+        "agent_id",
+        "availability",
+        "access_allowed",
+        "configuration_revision",
+        "active_session_id",
+        "unavailable_reason"
+      ],
+      "upstream": {
+        "method": "POST",
+        "path": "/rpc/agent-acp/watch-agent-execution-state",
+        "body": {}
+      },
+      "source_failure": "503 before first snapshot; after streaming close without inventing state"
     },
     "workspace_acp_http": {
       "method": "POST|GET|DELETE",
       "path": "/api/app/agents/{agent_id}/v1/acp",
       "alias": "/api/app/agents/{agent_id}/acp",
       "transport": "official experimental ACP Streamable HTTP",
-      "authentication": "browser_session_and_agent_access_on_every_request",
+      "authentication": "browser_session; direct ACP routing without Controller lookup; ACP owns Agent/Session authorization",
       "csrf": "POST and DELETE require X-Antnest-CSRF-Token matching the cookie",
       "origin": "when supplied must match Gateway; not required for non-browser HTTP clients",
       "forwarded_headers": [
@@ -116,7 +145,7 @@
       "method": "GET",
       "path": "/api/app/agents/{agent_id}/acp",
       "transport": "websocket",
-      "authentication": "browser_session_and_agent_access",
+      "authentication": "browser_session; direct ACP routing without Controller lookup; ACP owns Agent/Session authorization",
       "upstream_protocol": "ACP v1",
       "versioned_paths": [
         "/api/app/agents/{agent_id}/v1/acp",
@@ -128,8 +157,8 @@
       "invalid_session_close": 1008,
       "identity_unavailable_close": 1013,
       "maximum_message_bytes": 67108864,
-      "already_forwarded_work": "not retroactively revoked; ACP owns Run and disconnect semantics",
-      "idle_connection": "no background polling; server output for admitted work may continue until another client message or disconnect"
+      "already_forwarded_work": "ACP owns authorization, Run, cancellation and disconnect semantics",
+      "idle_connection": "no Gateway background polling; ACP owns local access updates and output subscriptions"
     },
     "oidc_callback": {
       "method": "GET",
@@ -168,10 +197,17 @@
     "X-Antnest-Organization-ID",
     "X-Antnest-Membership-ID",
     "X-Antnest-System-Role",
-    "X-Antnest-Organization-Role"
+    "X-Antnest-Organization-Role",
+    "X-Antnest-Principal-ID",
+    "X-Antnest-Agent-ID",
+    "X-Antnest-Agent-Access-Subject"
   ],
   "response_headers": ["X-Antnest-Trace-ID"],
-  "upstream_injected_headers": ["X-Antnest-Agent-Access-Subject"],
+  "upstream_injected_headers": [
+    "X-Antnest-Organization-ID",
+    "X-Antnest-Principal-ID",
+    "X-Antnest-Agent-ID"
+  ],
   "error": {
     "required": ["code", "message"],
     "codes": [

@@ -64,8 +64,8 @@ func (service *LifecycleService) DisableAgent(
 	operation, err := domain.NewLifecycleOperation(domain.NewLifecycleOperationInput{
 		RequestID: input.RequestID, RequestFingerprint: fingerprint,
 		AgentID: input.AgentID, Kind: domain.OperationDisable,
-		SourceSpecRevision:      base.ExecutableSpec.ID,
-		SourceExecutionRevision: base.ExecutableExecution.ID,
+		SourceSpecRevision:      base.ConfiguredSpec.ID,
+		SourceExecutionRevision: base.SourceExecution.ID,
 		SourceRuntimeRevision:   base.Agent.RuntimeRevision,
 		Now:                     now,
 	})
@@ -75,16 +75,17 @@ func (service *LifecycleService) DisableAgent(
 	state, _, err = service.store.BeginAgentDisable(ctx, ports.BeginAgentDisable{
 		AgentID:                     input.AgentID,
 		ExpectedAggregateSequence:   base.Agent.AggregateSequence,
-		ExpectedSpecRevisionID:      base.ExecutableSpec.ID,
-		ExpectedExecutionRevisionID: base.ExecutableExecution.ID,
+		ExpectedSpecRevisionID:      base.ConfiguredSpec.ID,
+		ExpectedExecutionRevisionID: base.SourceExecution.ID,
 		ExpectedRuntimeRevision:     base.Agent.RuntimeRevision,
 		Operation: ports.LifecycleOperationRecord{
+			DrainDeadlineAt:         service.drainDeadline(now),
 			OwnerRevocationSequence: input.OwnerRevocationSequence,
 			RequestID:               input.RequestID, RequestFingerprint: fingerprint,
 			AgentID: input.AgentID, Kind: domain.OperationDisable,
 			Phase: operation.Phase(), State: operation.State(),
-			SourceSpecRevisionID:      base.ExecutableSpec.ID,
-			SourceExecutionRevisionID: base.ExecutableExecution.ID,
+			SourceSpecRevisionID:      base.ConfiguredSpec.ID,
+			SourceExecutionRevisionID: base.SourceExecution.ID,
 			SourceRuntimeRevision:     base.Agent.RuntimeRevision,
 			ChildRequestID:            operation.ChildRequestID(),
 			CreatedAt:                 now, UpdatedAt: now,
@@ -97,8 +98,8 @@ func (service *LifecycleService) DisableAgent(
 			Data: map[string]any{
 				"owner_revocation_sequence":     input.OwnerRevocationSequence,
 				"actor_principal_id":            input.ActorPrincipalID,
-				"source_agent_spec_revision_id": base.ExecutableSpec.ID,
-				"source_execution_revision_id":  base.ExecutableExecution.ID,
+				"source_agent_spec_revision_id": base.ConfiguredSpec.ID,
+				"source_execution_revision_id":  base.SourceExecution.ID,
 				"source_runtime_revision":       base.Agent.RuntimeRevision,
 			},
 			OccurredAt: now,
@@ -131,21 +132,22 @@ func (service *LifecycleService) stepAgentDisable(
 func (service *LifecycleService) settleDisableDrain(
 	ctx context.Context, state ports.AgentDisableState,
 ) (ports.AgentDisableState, error) {
-	settled, err := service.store.SettleAgentDisableDrain(
-		ctx, state.Operation.RequestID, state.Operation.RequestFingerprint,
-		domain.ChildRequestID(state.Operation.RequestID, domain.PhaseNetworkFence),
-		service.clock.Now(),
-	)
-	if err != nil || settled.Operation.Phase != domain.PhaseDrain {
-		return settled, err
-	}
-	if !service.clock.Now().Before(state.Operation.CreatedAt.Add(service.drainTimeout)) {
+	outcome, err := service.settleLifecycleExecution(ctx, state.Agent, state.Operation)
+	if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil && !service.clock.Now().Before(*state.Operation.DrainDeadlineAt) {
 		return service.failAgentDisable(
-			ctx, settled, "run_drain_timeout",
-			"active Run did not drain before the deadline", true, nil, nil,
+			ctx, state, "run_drain_timeout",
+			"Agent execution did not settle before the deadline", true, nil, nil,
 		)
 	}
-	return settled, nil
+	if err != nil || outcome == ports.ExecutionNotSettled {
+		return state, err
+	}
+	operation, err := service.confirmLifecycleDrain(ctx, state.Operation, outcome)
+	if err != nil {
+		return state, err
+	}
+	state.Operation = operation
+	return state, nil
 }
 
 func (service *LifecycleService) fenceDisableNetwork(
@@ -215,11 +217,7 @@ func (service *LifecycleService) disableRuntime(
 		ExpectedPhase: domain.PhaseRuntimeDisable, NextPhase: domain.PhasePublish,
 		NextChildRequestID: domain.ChildRequestID(state.Operation.RequestID, domain.PhasePublish),
 		RuntimeResult:      &result,
-		RunReleaseEvent: lifecycleRunReleaseEvent(
-			ctx, state.Operation.RequestID, "runtime_disabled",
-			state.Operation.SourceRuntimeRevision, now,
-		),
-		Now: now,
+		Now:                now,
 	})
 }
 
@@ -240,7 +238,7 @@ func (service *LifecycleService) publishAgentDisable(
 			OperationRequestID: state.Operation.RequestID, TraceID: currentTraceID(ctx),
 			Data: map[string]any{
 				"agent_spec_revision_id":                state.SourceSpec.ID,
-				"last_successful_execution_revision_id": state.SourceExecution.ID,
+				"last_successful_execution_revision_id": state.Agent.LastSuccessfulExecutionRevisionID,
 				"runtime_revision":                      state.Operation.RuntimeResult.RuntimeRevision,
 			},
 			OccurredAt: now,
@@ -281,19 +279,12 @@ func (service *LifecycleService) failAgentDisable(
 		}
 	}
 	now := service.clock.Now()
-	releaseEvent := ports.RunAdmissionEvent{}
-	if absenceProof != nil {
-		releaseEvent = lifecycleRunReleaseEvent(
-			ctx, state.Operation.RequestID, absenceProof.Reason,
-			state.Operation.SourceRuntimeRevision, now,
-		)
-	}
 	return service.store.FailAgentDisable(ctx, ports.FailAgentDisable{
 		RequestID: state.Operation.RequestID, Fingerprint: state.Operation.RequestFingerprint,
 		ExpectedAggregateSequence: state.Agent.AggregateSequence,
 		Stage:                     state.Operation.Phase, Code: code, Detail: detail,
 		PreserveExecutable: preserveExecutable, SourceRuntimeInspection: inspection,
-		RuntimeAbsenceProof: absenceProof, RunReleaseEvent: releaseEvent,
+		RuntimeAbsenceProof: absenceProof,
 		FailedEvent: ports.AgentEventRecord{
 			EventID:       derivedID("event-disable-failed", state.Operation.RequestID),
 			AgentID:       state.Agent.AgentID,
@@ -336,7 +327,7 @@ func (service *LifecycleService) failDisableAfterRuntimeRejection(
 func exactDisableSourceRuntime(
 	state ports.AgentDisableState, inspection ports.RuntimeInspection,
 ) bool {
-	return exactReadyRuntime(
+	return exactRuntimeSource(
 		state.Agent.AgentID, state.Operation.SourceRuntimeRevision,
 		state.SourceExecution.RuntimeExecutionID,
 		state.SourceExecution.RuntimeMCPEndpoint, inspection,
@@ -362,15 +353,9 @@ func validateDisableSource(base ports.AgentLifecycleBase) error {
 	if agent.ActiveOperationRequestID != "" {
 		return fmt.Errorf("%w: Agent already has an active lifecycle operation", ErrLifecycleConflict)
 	}
-	if !agent.AllowsDisableRequest() || agent.LifecycleState != domain.AgentAvailable ||
-		agent.AgentSpecRevisionID == "" || agent.ExecutionRevisionID == "" ||
-		agent.LastSuccessfulExecutionRevisionID != agent.ExecutionRevisionID ||
-		agent.RuntimeRevision == "" || agent.RuntimeExecutionID == "" ||
-		agent.RuntimeMCPEndpoint == "" || base.ExecutableSpec.ID != agent.AgentSpecRevisionID ||
-		base.ExecutableExecution.ID != agent.ExecutionRevisionID ||
-		base.ExecutableExecution.AgentSpecRevisionID != base.ExecutableSpec.ID ||
-		base.ExecutableExecution.RuntimeRevision != agent.RuntimeRevision {
-		return fmt.Errorf("%w: Agent is not a complete available disable source", ErrAgentNotReady)
+	source := ports.AgentRuntimeSource{Spec: base.ConfiguredSpec, Execution: base.SourceExecution}
+	if !agent.AllowsDisableRequest() || !source.MatchesAgent(agent) {
+		return fmt.Errorf("%w: Agent has no configured disable source", ErrAgentNotReady)
 	}
 	return nil
 }

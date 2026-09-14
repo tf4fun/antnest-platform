@@ -1,5 +1,4 @@
 import { SpanStatusCode, type Attributes, type Span, type SpanContext } from "@opentelemetry/api";
-import { AGENT_CONTROLLER_ERROR_CODES } from "../ports/agent-controller.js";
 
 export type BoundaryConfig = { captureRpcContent: boolean; disabled: boolean };
 let configuration: BoundaryConfig = { captureRpcContent: false, disabled: false };
@@ -70,7 +69,6 @@ const errorTypes = new Set([
   "TimeoutError",
   "ZodError",
   "DomainError",
-  "AgentControllerError",
   "ModelError",
   "McpError",
   "McpToolCallError",
@@ -79,7 +77,14 @@ const errorTypes = new Set([
   "WorkerOwnershipLostError",
 ]);
 const errorCodes = new Set<string>([
-  ...AGENT_CONTROLLER_ERROR_CODES,
+  "access_denied",
+  "audit_not_found",
+  "invalid_cursor",
+  "execution_audit_unavailable",
+  "agent_busy",
+  "agent_unavailable",
+  "dependency_unavailable",
+  "internal_error",
   "ECONNRESET",
   "ECONNREFUSED",
   "ENOTFOUND",
@@ -98,6 +103,17 @@ const errorCodes = new Set<string>([
   "session_closed",
   "service_stopping",
   "invalid_configuration",
+  "invalid_execution_configuration",
+  "configuration_conflict",
+  "configuration_not_ready",
+  "agent_operation_conflict",
+  "invalid_agent_settlement",
+  "runtime_barrier_required",
+  "request_too_large",
+  "invalid_json",
+  "configuration_too_large",
+  "method_not_allowed",
+  "unsupported_media_type",
   "client_mcp_not_allowed",
   "permission_unavailable",
   "invalid_request",

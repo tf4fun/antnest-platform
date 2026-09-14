@@ -53,6 +53,7 @@ export class SessionService implements Pick<
       requireDirectoryFilter(input.cwd);
     }
     const result = await this.dependencies.repository.list({
+      organizationId: input.binding.organizationId,
       principalId: input.binding.principalId,
       agentId: input.binding.agentId,
       cwd: input.cwd,

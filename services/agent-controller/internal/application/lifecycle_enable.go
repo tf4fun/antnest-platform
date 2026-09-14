@@ -202,9 +202,9 @@ func (service *LifecycleService) enableRuntime(
 		}
 		return service.failEnableAfterRuntimeRejection(ctx, state, code, result.ErrorDetail)
 	case "completed":
-		if !completedReadyRuntime(result) {
+		if !completedProvisionedRuntime(result) {
 			return state, fmt.Errorf(
-				"%w: runtime-controller returned an unprovable ready effect",
+				"%w: runtime-controller returned an unprovable provisioned effect",
 				ErrDependencyUnavailable,
 			)
 		}
@@ -271,28 +271,13 @@ func (service *LifecycleService) fenceIncompleteEnable(
 func (service *LifecycleService) publishAgentEnable(
 	ctx context.Context, state ports.AgentEnableState,
 ) (ports.AgentEnableState, error) {
-	if state.Operation.RuntimeResult == nil || !completedReadyRuntime(*state.Operation.RuntimeResult) {
+	if state.Operation.RuntimeResult == nil || !completedProvisionedRuntime(*state.Operation.RuntimeResult) {
 		return ports.AgentEnableState{}, fmt.Errorf("enable operation has no proven Runtime result")
 	}
 	runtime := *state.Operation.RuntimeResult
 	now := service.clock.Now()
-	executionID := derivedID("execution-enable", state.Operation.RequestID)
 	return service.store.PublishAgentEnable(ctx, ports.PublishAgentEnable{
 		RequestID: state.Operation.RequestID, Fingerprint: state.Operation.RequestFingerprint,
-		Execution: ports.ExecutionRecord{
-			ID: executionID, AgentID: state.Agent.AgentID,
-			Revision:               state.LastSuccessfulExecution.Revision + 1,
-			AgentSpecRevisionID:    state.Spec.ID,
-			RuntimeRevision:        runtime.RuntimeRevision,
-			RuntimeExecutionID:     runtime.RuntimeExecutionID,
-			RuntimeMCPEndpoint:     runtime.MCPEndpoint,
-			RuntimeMCPSourceDigest: digestString(runtime.MCPEndpoint),
-			ChangeSummary: map[string]any{
-				"kind":                         "enable",
-				"source_execution_revision_id": state.LastSuccessfulExecution.ID,
-			},
-			PublishedAt: now,
-		},
 		EnabledEvent: ports.AgentEventRecord{
 			EventID:           derivedID("event-enabled", state.Operation.RequestID),
 			AgentID:           state.Agent.AgentID,
@@ -301,7 +286,6 @@ func (service *LifecycleService) publishAgentEnable(
 			OperationRequestID: state.Operation.RequestID, TraceID: currentTraceID(ctx),
 			Data: map[string]any{
 				"agent_spec_revision_id": state.Spec.ID,
-				"execution_revision_id":  executionID,
 				"runtime_revision":       runtime.RuntimeRevision,
 			},
 			OccurredAt: now,
@@ -382,7 +366,8 @@ func (service *LifecycleService) failAgentEnable(
 				"failure_code":             code,
 				"source_preserved":         true,
 				"terminal_desired_state":   domain.DesiredDisabled,
-				"terminal_lifecycle_state": domain.AgentDisabled,
+				"terminal_lifecycle_state": domain.AgentCreated,
+				"activation_state":         domain.ActivationDisabled,
 			},
 			OccurredAt: now,
 		},
@@ -412,14 +397,13 @@ func validateEnableSource(base ports.AgentEnableBase) error {
 	if agent.ActiveOperationRequestID != "" {
 		return fmt.Errorf("%w: Agent already has an active lifecycle operation", ErrLifecycleConflict)
 	}
-	if agent.DesiredState != domain.DesiredDisabled || agent.LifecycleState != domain.AgentDisabled ||
+	if agent.DesiredState != domain.DesiredDisabled || agent.LifecycleState != domain.AgentCreated || agent.ActivationState != domain.ActivationDisabled ||
 		agent.AgentSpecRevisionID == "" || agent.ExecutionRevisionID != "" ||
-		agent.LastSuccessfulExecutionRevisionID == "" || agent.RuntimeRevision == "" ||
+		agent.RuntimeRevision == "" ||
 		agent.RuntimeExecutionID != "" || agent.RuntimeMCPEndpoint != "" ||
 		base.Spec.ID != agent.AgentSpecRevisionID || base.Spec.AgentID != agent.AgentID ||
 		base.LastSuccessfulExecution.ID != agent.LastSuccessfulExecutionRevisionID ||
-		base.LastSuccessfulExecution.AgentID != agent.AgentID ||
-		base.LastSuccessfulExecution.AgentSpecRevisionID != base.Spec.ID ||
+		(base.LastSuccessfulExecution.ID != "" && base.LastSuccessfulExecution.AgentID != agent.AgentID) ||
 		base.NextExecutionRevision <= base.LastSuccessfulExecution.Revision {
 		return fmt.Errorf("%w: Agent is not a complete disabled enable source", ErrAgentNotReady)
 	}

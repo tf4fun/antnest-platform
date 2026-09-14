@@ -9,7 +9,12 @@ export type PermissionRequest = {
   call: ModelToolCall;
   tool: ModelToolDefinition;
 };
-export type PermissionOwner = Pick<ConnectionBinding, "principalId" | "agentId" | "accessRevision">;
+export type PermissionOwner = Pick<
+  ConnectionBinding,
+  "organizationId" | "principalId" | "agentId"
+> & {
+  accessRevision: string;
+};
 export type PermissionResult = { decision: PermissionDecision; reason: string };
 
 export interface ToolPermissionPort {

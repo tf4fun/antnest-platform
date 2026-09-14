@@ -25,7 +25,7 @@ func TestModelProfileNativeInputFlagsAtHTTPBoundary(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			catalog := &catalogServiceStub{modelView: sampleModelProfileView()}
-			boundary, err := NewHandler(catalog, &lifecycleServiceStub{}, &runServiceStub{},
+			boundary, err := NewHandler(catalog, &lifecycleServiceStub{}, &agentConfigurationServiceStub{},
 				&agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{},
 				func(context.Context) error { return nil })
 

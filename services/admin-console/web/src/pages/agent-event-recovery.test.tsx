@@ -20,7 +20,8 @@ afterEach(() => {
 const timestamp = "2026-09-10T00:00:00Z";
 const agent: Agent = {
   agent_id: "agent-1", owner_user_id: "user-1", name: "Support Agent",
-  desired_state: "enabled", lifecycle_state: "provisioning", aggregate_sequence: 1,
+  desired_state: "enabled", lifecycle_state: "created", activation_state: "enabled", runtime_state: "unknown", aggregate_sequence: 1,
+  agent_spec_revision: "spec-1", runtime: { runtime_revision: "runtime-1" }, executable_execution_revision: "execution-1",
   active_operation_request_id: "create-1", created_at: timestamp, updated_at: timestamp,
 };
 const operation: LifecycleOperation = {
@@ -79,6 +80,8 @@ async function workflow(networkFailure = false) {
   vi.stubGlobal("fetch", fetch);
   const page = render(<AgentsPage agentID={agent.agent_id} networkScope={networkScope} />);
   await screen.findByText("runtime initialize");
+  expect(screen.getByRole("link", { name: "Execution history" }).getAttribute("href"))
+    .toBe("#audits?agent_id=agent-1");
   await waitFor(() => expect(streams).toHaveLength(1));
   act(() => streams[0]!.onopen?.());
   const calls = (path: string) => fetch.mock.calls.filter(([url]) => url.split("?")[0] === path);
@@ -89,13 +92,35 @@ const eventsPath = "/api/admin/agents/agent-1/events";
 const agentPath = "/api/admin/agents/agent-1";
 
 describe("Agent event recovery", () => {
+  it("refreshes Runtime conditions independently of a completed creation", async () => {
+    const { state, streams } = await workflow();
+    state.operation = { ...operation, state: "completed", phase: "completed" };
+    state.agent = { ...agent, active_operation_request_id: undefined, executable_execution_revision: undefined };
+    const conditions = [
+      ["waiting", "runtime_starting", "Runtime has not completed initialization"],
+      ["unhealthy", "runtime_unhealthy", "Health check failed"],
+      ["exited", "runtime_exited", "Process exited with code 1"],
+    ];
+    for (const [index, [runtime_state, runtime_reason, runtime_detail]] of conditions.entries()) {
+      state.agent = { ...state.agent, aggregate_sequence: index + 2, runtime_state: runtime_state!, runtime_reason, runtime_detail, runtime_observed_at: timestamp };
+      await act(async () => streams[0]!.dispatchEvent(new MessageEvent("agent_event", {
+        data: JSON.stringify({ ...event(110 + index, index + 2, "agent_runtime_condition_changed"), operation_request_id: undefined }),
+      })));
+      expect(await screen.findByText(runtime_detail!)).toBeTruthy();
+      expect(screen.getAllByText(runtime_state!, { exact: true }).length).toBeGreaterThan(0);
+      expect(screen.getByRole("heading", { name: "Last operation" })).toBeTruthy();
+      expect(screen.getByText("completed", { exact: true })).toBeTruthy();
+      expect((screen.getByRole("button", { name: "Disable" }) as HTMLButtonElement).disabled).toBe(false);
+    }
+  });
+
   it.each(["live", "reconnect"])("refreshes %s runtime loss without mistaking old completed creation for recovery", async (source) => {
     const { state, streams, calls } = await workflow();
-    state.agent = { ...agent, aggregate_sequence: 3, lifecycle_state: "available", active_operation_request_id: undefined };
+    state.agent = { ...agent, aggregate_sequence: 3, lifecycle_state: "created", activation_state: "enabled", runtime_state: "available", active_operation_request_id: undefined };
     state.operation = { ...operation, state: "completed", phase: "completed" };
     await act(async () => streams[0]!.dispatchEvent(new MessageEvent("agent_event", { data: JSON.stringify(event(110, 3, "agent_ready")) })));
     await screen.findByRole("button", { name: "Disable" });
-    state.agent = { ...state.agent, aggregate_sequence: 4, lifecycle_state: "unavailable", failure_code: "runtime_missing", agent_spec_revision: "spec-old", last_successful_execution_revision: "execution-old" };
+    state.agent = { ...state.agent, aggregate_sequence: 4, runtime_state: "absent", executable_execution_revision: undefined, failure_code: "runtime_missing", agent_spec_revision: "spec-old", last_successful_execution_revision: "execution-old" };
     const lost = { ...event(111, 4, "agent_runtime_missing"), operation_request_id: undefined };
     if (source === "live") {
       await act(async () => streams[0]!.dispatchEvent(new MessageEvent("agent_event", { data: JSON.stringify(lost) })));
@@ -107,7 +132,7 @@ describe("Agent event recovery", () => {
     expect(screen.getByRole("alert").textContent).toContain("The runtime is missing");
     expect(screen.getByRole("heading", { name: "Last operation" })).toBeTruthy();
     expect(screen.getByText("completed", { exact: true })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Disable" })).toBeNull();
+    expect((screen.getByRole("button", { name: "Disable" }) as HTMLButtonElement).disabled).toBe(false);
     expect(screen.queryByRole("button", { name: "Enable" })).toBeNull();
     // No templates are returned by this fixture: eligibility alone cannot submit.
     expect((screen.getByRole("button", { name: "Rebuild" }) as HTMLButtonElement).disabled).toBe(true);
@@ -120,7 +145,7 @@ describe("Agent event recovery", () => {
     await act(async () => streams[0]!.onerror?.());
     expect(calls(agentPath)).toHaveLength(2);
     expect(screen.getByText("running", { exact: true })).toBeTruthy();
-    state.agent = { ...agent, aggregate_sequence: 3, lifecycle_state: "available", active_operation_request_id: undefined };
+    state.agent = { ...agent, aggregate_sequence: 3, lifecycle_state: "created", activation_state: "enabled", runtime_state: "available", active_operation_request_id: undefined };
     state.operation = { ...operation, state: "completed", phase: "completed" };
     await act(async () => replay.resolve(Response.json({ events: [event(113, 3, "agent_ready")], next_sequence: 113 })));
     expect(await screen.findByText("completed", { exact: true })).toBeTruthy();
@@ -200,7 +225,7 @@ describe("Agent event recovery", () => {
     await act(async () => streams[0]!.dispatchEvent(new MessageEvent("agent_event", { data: JSON.stringify(progress) })));
     expect(screen.getAllByText("Event 2")).toHaveLength(1);
     expect(screen.queryByText("completed", { exact: true })).toBeNull();
-    state.agent = { ...agent, aggregate_sequence: 3, lifecycle_state: "failed", active_operation_request_id: undefined };
+    state.agent = { ...agent, aggregate_sequence: 3, lifecycle_state: "not_created", activation_state: undefined, runtime: undefined, agent_spec_revision: undefined, executable_execution_revision: undefined, active_operation_request_id: undefined };
     state.operation = { ...operation, state: "failed", error_code: "runtime_initialize_failed", error_detail: "Runtime image unavailable" };
     // The overlap models at-least-once delivery; global and per-Agent cursors differ.
     state.replay = async () => Response.json({ events: [progress, event(113, 3, "agent_build_failed")], next_sequence: 113 });

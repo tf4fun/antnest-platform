@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { inspectInterruptedTrace } from "./interruption-trace.mjs";
+import { createHash } from "node:crypto";
+const child =
+  "acr_" +
+  createHash("sha256")
+    .update("request-test\0runtime_update")
+    .digest("hex")
+    .slice(0, 32);
 import { workflowFixture } from "../observability/workflow-fixtures.mjs";
 function fixture() {
   const admission = workflowFixture("rebuild");
@@ -9,7 +16,7 @@ function fixture() {
   );
   rpc.tags.push(
     { key: "rpc.method", value: "update" },
-    { key: "antnest.operation.request_id", value: "child" },
+    { key: "antnest.operation.request_id", value: child },
     { key: "http.response.status_code", value: 200 },
   );
   return {
@@ -20,14 +27,14 @@ function fixture() {
       request_id: "request-test",
       agent_id: "agent-test",
       phase: "runtime_update",
-      child_request_id: "child",
+      child_request_id: child,
     },
   };
 }
 test("recovery uses SDK ancestry and the original downstream request", () => {
   assert.equal(
     inspectInterruptedTrace(fixture()).recovered_child_request,
-    "child",
+    child,
   );
 });
 for (const [name, mutate] of [

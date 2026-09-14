@@ -1,5 +1,6 @@
 import { requireNoClientMcpServers, runtimeToolCatalog } from "../../domain/mcp.js";
 import { parseFileObservation } from "./file-observation.js";
+import { runtimeCallStopped } from "./runtime-stop-evidence.js";
 import type { RuntimeInformationPort } from "../../ports/runtime-information.js";
 import { parseRuntimeInformation, RUNTIME_INFORMATION_URI } from "./runtime-information.js";
 import type {
@@ -57,13 +58,16 @@ export type McpToolCatalogDependencies = {
 };
 
 export class McpToolCallError extends Error {
+  public readonly runtimeCallStopped: boolean;
+
   public constructor(
     message: string,
     public readonly effectState: ToolEffectState,
-    options?: ErrorOptions,
+    options?: ErrorOptions & { runtimeCallStopped?: boolean },
   ) {
     super(message, options);
     this.name = "McpToolCallError";
+    this.runtimeCallStopped = options?.runtimeCallStopped === true;
   }
 }
 
@@ -100,7 +104,9 @@ export class McpToolCatalog implements ToolCatalogPort, RuntimeInformationPort {
 
   public async call(input: ToolCallInput): Promise<ToolCallResult> {
     if (input.tool.source !== "runtime") {
-      throw new McpToolCallError("Client MCP injection is not supported", "none");
+      throw new McpToolCallError("Client MCP injection is not supported", "none", {
+        runtimeCallStopped: true,
+      });
     }
     return this.callRuntime(input);
   }
@@ -153,12 +159,20 @@ export class McpToolCatalog implements ToolCatalogPort, RuntimeInformationPort {
   ): Promise<ToolCallResult> {
     let connection: McpConnection;
     try {
+      input.signal.throwIfAborted();
       connection = await dialer.connect(connectInput());
     } catch (error) {
-      throw new McpToolCallError("MCP Tool failed before dispatch", "none", { cause: error });
+      throw new McpToolCallError("MCP Tool failed before dispatch", "none", {
+        cause: error,
+        runtimeCallStopped: true,
+      });
     }
 
     try {
+      if (input.signal.aborted)
+        throw new McpToolCallError("MCP Tool cancelled before dispatch", "none", {
+          runtimeCallStopped: true,
+        });
       let result: Awaited<ReturnType<McpConnection["callTool"]>>;
       try {
         result = await connection.callTool(
@@ -172,6 +186,7 @@ export class McpToolCatalog implements ToolCatalogPort, RuntimeInformationPort {
       const toolEffectState = receivedEffectState(result, source);
       const file = parseFileObservation(input.tool, { ...result, toolEffectState });
       return {
+        runtimeCallStopped: runtimeCallStopped(input.tool.name, result),
         content: result.content,
         ...(file === undefined ? {} : { file }),
         isError: result.isError,
@@ -247,5 +262,10 @@ function isJsonObject(value: unknown): value is Record<string, unknown> {
 }
 
 function runtimeHeaders(executionId: string): Record<string, string> {
-  return { "x-antnest-expected-execution-id": executionId };
+  const headers = { "x-antnest-expected-execution-id": executionId };
+  if (new Headers(headers).get("x-antnest-expected-execution-id") !== executionId)
+    throw new TypeError(
+      "Runtime execution identity cannot be represented unchanged as an HTTP header",
+    );
+  return headers;
 }

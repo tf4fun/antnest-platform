@@ -29,19 +29,20 @@ type schemaMigration struct {
 }
 
 var (
-	initialSchemaSQL       = mustMigration("migrations/0001_initial.sql")
-	ownerAndEmptySkillsSQL = mustMigration("migrations/0002_enforce_owner_and_empty_skills.sql")
-	unknownEffectSourceSQL = mustMigration("migrations/0003_backfill_unknown_effect_source.sql")
-	schemaMigrations       = []schemaMigration{
+	initialSchemaSQL = mustMigration("migrations/0001_initial.sql")
+	ownerBindingSQL  = mustMigration("migrations/0002_enforce_owner_binding.sql")
+	schemaMigrations = []schemaMigration{
 		{version: 1, name: "initial_agent_controller_schema", sql: initialSchemaSQL},
-		{version: 2, name: "enforce_owner_and_empty_skills", sql: ownerAndEmptySkillsSQL},
-		{version: 3, name: "backfill_unknown_effect_source", sql: unknownEffectSourceSQL},
+		{version: 2, name: "enforce_owner_binding", sql: ownerBindingSQL},
 		{version: 4, name: "identity_revocations", sql: mustMigration("migrations/0004_identity_revocations.sql")},
 		{version: 5, name: "agent_authorization", sql: mustMigration("migrations/0005_agent_authorization.sql")},
 		{version: 6, name: "resolve_delete_runtime_source", sql: mustMigration("migrations/0006_resolve_delete_runtime_source.sql")},
-		{version: 7, name: "run_availability_notifications", sql: mustMigration("migrations/0007_run_availability_notifications.sql")},
 		{version: 8, name: "runtime_missing_event", sql: mustMigration("migrations/0008_runtime_missing_event.sql")},
 		{version: 9, name: "temporal_lifecycles", sql: mustMigration("migrations/0009_temporal_lifecycles.sql")},
+		{version: 10, name: "runtime_availability", sql: mustMigration("migrations/0010_runtime_availability.sql")},
+		{version: 11, name: "agent_state_hierarchy", sql: mustMigration("migrations/0011_agent_state_hierarchy.sql")},
+		{version: 12, name: "execution_configuration_sync", sql: mustMigration("migrations/0012_execution_configuration_sync.sql")},
+		{version: 13, name: "lifecycle_settlement", sql: mustMigration("migrations/0013_lifecycle_settlement.sql")},
 	}
 )
 

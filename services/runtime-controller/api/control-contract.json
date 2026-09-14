@@ -1,5 +1,5 @@
 {
-  "revision": 7,
+  "revision": 8,
   "transport": "json-over-http",
   "trust_boundary": "internal-network",
   "schemas": {
@@ -58,7 +58,7 @@
         "200": {"content_type": "application/json", "body": "control-api.schema.json#/$defs/operation"},
         "202": {"content_type": "application/json", "body": "control-api.schema.json#/$defs/operation"}
       },
-      "errors": ["invalid_request", "idempotency_key_required", "request_id_conflict", "agent_mutation_in_progress", "mutation_lock_lost", "runtime_lifecycle_conflict", "runtime_drift", "runtime_not_ready", "storage_not_found", "storage_ownership_conflict", "platform_unavailable", "deadline_exceeded", "operation_failed", "internal_error"]
+      "errors": ["invalid_request", "idempotency_key_required", "request_id_conflict", "agent_mutation_in_progress", "mutation_lock_lost", "runtime_lifecycle_conflict", "runtime_drift", "storage_not_found", "storage_ownership_conflict", "platform_unavailable", "deadline_exceeded", "operation_failed", "runtime_not_ready", "internal_error"]
     },
     {
       "operation_id": "updateRuntime",
@@ -155,7 +155,7 @@
     }
   ],
   "errors": {
-    "runtime_not_ready": {"status": 500, "retryable": false, "body": "control-api.schema.json#/$defs/error"},
+    "runtime_not_ready": {"status": 500, "retryable": false, "body": "control-api.schema.json#/$defs/error", "historical_only": true},
     "image_not_found": {"status": 404, "retryable": false, "body": "control-api.schema.json#/$defs/error"},
     "invalid_request": {"status": 400, "retryable": false, "body": "control-api.schema.json#/$defs/error"},
     "idempotency_key_required": {"status": 400, "retryable": false, "body": "control-api.schema.json#/$defs/error"},
@@ -180,6 +180,7 @@
   },
   "operation_error_codes": {
     "runtime_not_ready": {
+      "historical_only": true,
       "operation_states": ["failed", "unknown"],
       "effects": ["completed"],
       "http_statuses": [500, 202],

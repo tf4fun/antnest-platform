@@ -11,10 +11,9 @@ import type { ClientMcpInput } from "../../../domain/mcp.js";
 import type { ConnectionBinding, ContentBlock } from "../../../domain/types.js";
 import type {
   AcpApplicationPort,
-  AcceptedAcpRun,
+  SubmittedAcpRun,
   SessionEvent,
 } from "../../../ports/acp-application.js";
-import { AgentControllerError } from "../../../ports/agent-controller.js";
 import { SessionOutputStreams, sessionOutputKey } from "../session-output.js";
 
 export type CreateAcpAgentInput = {
@@ -68,6 +67,7 @@ export function createAcpV2Agent({
     const output = await mapError(() => application.readSessionOutput({ binding, sessionId }));
     await outputs.attach({
       keepExisting: true,
+      identity: binding,
       afterSequence: output.sequence,
       initialState: output.state,
       key: sessionOutputKey(binding, sessionId),
@@ -205,6 +205,7 @@ export function createAcpV2Agent({
         const initialState = result.replay.find((event) => event.kind === "state");
         await outputs.attach({
           key: sessionOutputKey(binding, params.sessionId),
+          identity: binding,
           connectionId: binding.connectionId,
           afterSequence: result.sequence,
           ...(initialState === undefined ? {} : { initialState }),
@@ -262,16 +263,21 @@ export function createAcpV2Agent({
           await mapError(() => application.assertAccess({ binding }));
           assertPromptSupported(params.prompt, promptCapabilities);
         }
+        const key = sessionOutputKey(binding, params.sessionId);
+        let observing = false;
         const accepted = await mapError(() =>
           application.acceptPrompt({
             binding,
             sessionId: params.sessionId,
             prompt: toDomainContent(params.prompt),
+            outputChanged: () => {
+              if (observing) outputs.invalidate(key);
+            },
           }),
         );
         attachPermission(params.sessionId);
         setImmediate(() => {
-          void startRun({
+          void observeRun({
             application,
             accepted,
             sessionId: params.sessionId,
@@ -279,6 +285,10 @@ export function createAcpV2Agent({
             connection,
             outputs,
             binding,
+            onAttached: () => {
+              observing = true;
+              outputs.invalidate(key);
+            },
           });
         });
         return {};
@@ -291,7 +301,7 @@ export function createAcpV2Agent({
     );
 }
 
-async function startRun({
+async function observeRun({
   application,
   accepted,
   sessionId,
@@ -299,20 +309,25 @@ async function startRun({
   connection,
   outputs,
   binding,
+  onAttached,
 }: {
   application: AcpApplicationPort;
-  accepted: AcceptedAcpRun;
+  accepted: SubmittedAcpRun;
   sessionId: string;
   prompt: acp.ContentBlock[];
   connection: acp.AgentConnection;
   outputs: SessionOutputStreams;
   binding: ConnectionBinding;
+  onAttached: () => void;
 }): Promise<void> {
   const key = sessionOutputKey(binding, sessionId);
   const client = connection.client;
   try {
     await outputs.attach({
       key,
+      afterSequence: accepted.outputSequence,
+      identity: binding,
+      initialState: { kind: "state", state: "running" },
       connectionId: binding.connectionId,
       signal: connection.signal,
       onFailure: (error) => connection.close(error),
@@ -343,19 +358,18 @@ async function startRun({
             sessionId,
             update: { sessionUpdate: "session_info_update", ...accepted.sessionInfoUpdate },
           });
+        await client.notify(acp.methods.client.session.update, {
+          sessionId,
+          update: toAcpUpdate({ kind: "state", state: "running" }),
+        });
       },
     });
-    await application.executeRun({
-      accepted,
-      publish: () => {
-        outputs.invalidate(key);
-        return Promise.resolve();
-      },
-      signal: new AbortController().signal,
-    });
+    onAttached();
+    await accepted.completion;
   } catch (error) {
     connection.close(error);
   } finally {
+    onAttached();
     outputs.invalidate(key);
     await outputs.flush(key, binding.connectionId);
   }
@@ -496,15 +510,6 @@ async function mapError<T>(operation: () => Promise<T>): Promise<T> {
         new acp.RequestError(-32020, error.message, {
           code: error.code,
           retryable: false,
-        }),
-        { cause: error },
-      );
-    }
-    if (error instanceof AgentControllerError) {
-      throw Object.assign(
-        new acp.RequestError(-32021, error.message, {
-          code: error.code,
-          retryable: error.retryable,
         }),
         { cause: error },
       );

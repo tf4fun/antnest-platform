@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "run_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "stream": {
+      "default": "execution",
+      "type": "string",
+      "enum": [
+        "execution",
+        "permissions"
+      ]
+    },
+    "limit": {
+      "default": 50,
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100
+    },
+    "cursor": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "required": [
+    "run_id"
+  ],
+  "additionalProperties": false,
+  "$id": "https://antnest.local/contracts/agent-acp/list-execution-events-request.schema.json",
+  "title": "Administrative audit event request",
+  "description": "Execution messages and permission records use separate cursors and ordering."
+}

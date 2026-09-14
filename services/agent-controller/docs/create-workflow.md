@@ -78,7 +78,9 @@ sequenceDiagram
   attempt budget. Worker shutdown cancels the dependency-call context. This is
   execution liveness, not a custom business queue or distributed lease.
 - A definitive invalid input is returned before HTTP 202. A definitive build
-  failure becomes the existing unavailable Agent and failed operation/event.
+  failure retains `not_created` for initial creation, with a failed operation/event.
+  If creation already completed, later Runtime health is an independent condition
+  under `created/enabled` and must never rewrite the completed operation.
 - Do not blindly compensate by deleting workspaces or allocated resources.
   Diagnostic retention and explicit deletion remain the product policy.
 - Workflow history stores request identifiers and activity results, not model

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { lifecyclePlans } from "./lifecycle-workflow.mjs";
 export function workflowFixture(kind = "create") {
   const trace = { traceID: "a".repeat(32), spans: [], processes: {} };
@@ -159,20 +160,37 @@ export function workflowFixture(kind = "create") {
     }
     if (
       ["runtime_initialize", "runtime_update", "runtime_enable"].includes(name)
-    )
-      add(
-        `status-${phase}`,
-        "antnest-runtime",
-        "GET /status",
-        primary.spanID,
-        start + 3,
+    ) {
+      primary.logs = [
         {
-          "span.kind": "server",
-          "http.request.method": "GET",
-          "http.route": "/status",
-          "http.response.status_code": 200,
+          fields: [
+            { key: "event", value: "antnest.response" },
+            {
+              key: "antnest.payload.json",
+              value: JSON.stringify({
+                agent_id: "agent-test",
+                request_id:
+                  "acr_" +
+                  createHash("sha256")
+                    .update("request-test\0" + name)
+                    .digest("hex")
+                    .slice(0, 32),
+                kind: name.slice(8) + "_runtime",
+                target_revision: "runtime-test",
+                state: "completed",
+                effect: "completed",
+                inspection: {
+                  agent_id: "agent-test",
+                  runtime_revision: "runtime-test",
+                  lifecycle_state: "provisioned",
+                  health: "unknown",
+                },
+              }),
+            },
+          ],
         },
-      );
+      ];
+    }
   }
   for (const server of [...trace.spans].filter(
     (span) =>
@@ -192,6 +210,18 @@ export function workflowFixture(kind = "create") {
         (field) => field.key === "http.request.method",
       ).value,
     });
+    if (server.processID === "runtime-controller" && server.logs?.length) {
+      const body = JSON.parse(
+        server.logs[0].fields.find((f) => f.key === "antnest.payload.json")
+          .value,
+      );
+      trace.spans
+        .at(-1)
+        .tags.push(
+          { key: "antnest.operation.request_id", value: body.request_id },
+          { key: "antnest.agent.id", value: body.agent_id },
+        );
+    }
     server.references[0].spanID = clientID;
   }
   return trace;

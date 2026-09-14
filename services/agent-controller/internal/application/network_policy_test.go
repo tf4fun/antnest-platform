@@ -64,7 +64,7 @@ func networkPolicyFixture() (*networkAgentLookup, *networkPolicyClientStub) {
 	ref := ports.NetworkPolicyReference{PolicyID: "called-allow", Revision: 2}
 	return &networkAgentLookup{record: ports.AgentRecord{
 		AgentID: "agent-1", OrganizationID: "org-1", OwnerUserID: "user-1",
-		LifecycleState: domain.AgentDisabled, DesiredState: domain.DesiredDisabled,
+		LifecycleState: domain.AgentCreated, ActivationState: domain.ActivationDisabled, RuntimeState: domain.RuntimeAbsent, DesiredState: domain.DesiredDisabled,
 		AgentSpecRevisionID: "spec-1", RuntimeRevision: "runtime-1", AggregateSequence: 7,
 	}}, &networkPolicyClientStub{
 		assignment: ports.NetworkPolicyAssignment{AgentID: "agent-1", NetworkPolicyReference: ref, ResourceVersion: 3},
@@ -84,7 +84,7 @@ func TestNetworkPolicyScopePrecedesEveryEgressCall(t *testing.T) {
 		{"missing scope", "", func(*networkAgentLookup) {}, ErrInvalidInput},
 		{"cross organization", "org-2", func(*networkAgentLookup) {}, ErrAgentNotFound},
 		{"missing agent", "org-1", func(s *networkAgentLookup) { s.err = ports.ErrNotFound }, ErrAgentNotFound},
-		{"deleting", "org-1", func(s *networkAgentLookup) { s.record.LifecycleState = domain.AgentDeleting }, ErrAgentNotFound},
+		{"deleting", "org-1", func(s *networkAgentLookup) { s.record.DesiredState = domain.DesiredDeleted }, ErrAgentNotFound},
 		{"deleted", "org-1", func(s *networkAgentLookup) { s.record.LifecycleState = domain.AgentDeleted }, ErrAgentNotFound},
 		{"deleted intent", "org-1", func(s *networkAgentLookup) { s.record.DesiredState = domain.DesiredDeleted }, ErrAgentNotFound},
 		{"wrong record", "org-1", func(s *networkAgentLookup) { s.record.AgentID = "agent-other" }, ErrQueryContract},

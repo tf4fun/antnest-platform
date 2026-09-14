@@ -660,6 +660,7 @@ func writeOperationError(response http.ResponseWriter, operation deployment.Oper
 	retryable := false
 	switch code {
 	case "runtime_not_ready":
+		// Retain the diagnosis when replaying operations from before creation/readiness separation.
 		message = "Runtime did not become ready; check its startup configuration and required MCP processes"
 		status = http.StatusInternalServerError
 	case "runtime_drift":

@@ -463,6 +463,28 @@ func TestWatchRejectsMalformedManagedRuntimeEvent(t *testing.T) {
 	}
 }
 
+func TestWatchPublishesStartupFactsWithRuntimeIdentity(t *testing.T) {
+	for _, action := range []string{"start", "health_status: starting"} {
+		t.Run(action, func(t *testing.T) {
+			engine := newFakeEngine()
+			engine.events = []ContainerEvent{{ID: "container-1", Action: action, Attributes: map[string]string{
+				labelManaged: "runtime", labelScope: "test-controller", labelAgentID: "agent-1",
+				labelGeneration: "7", labelSpecDigest: testDigest,
+			}}}
+			var observations []deployment.Observation
+			err := newTestDriver(t, engine).Watch(context.Background(), time.Time{}, func(context.Context) error { return nil },
+				func(_ context.Context, value deployment.Observation) error {
+					observations = append(observations, value)
+					return nil
+				})
+			if err != nil || len(observations) != 1 || observations[0].Kind != deployment.ObservationStarting ||
+				observations[0].AgentID != "agent-1" || observations[0].Generation != 7 || observations[0].SpecDigest != testDigest {
+				t.Fatalf("startup fact omitted or lost identity: %+v %v", observations, err)
+			}
+		})
+	}
+}
+
 var testDigest = func() string {
 	driver, err := NewDriver(newFakeEngine(), testDriverConfig())
 	if err != nil {
@@ -494,7 +516,7 @@ func testDeployment() deployment.Deployment {
 
 func exactContainer() *Container {
 	return &Container{
-		ID: "container-1", Name: "antnest-runtime-agent-1", Running: true, Health: "healthy",
+		ID: "container-1", Name: "antnest-runtime-agent-1", Running: true, Status: "running", Health: "healthy",
 		Labels: map[string]string{
 			labelManaged: "runtime", labelScope: "test-controller",
 			labelAgentID: "agent-1", labelGeneration: "7",
@@ -647,6 +669,7 @@ func (e *fakeEngine) StartContainer(context.Context, string) error {
 	e.startCalls++
 	if e.container != nil {
 		e.container.Running = true
+		e.container.Status = "running"
 		e.container.Health = "starting"
 	}
 	return nil
@@ -656,6 +679,7 @@ func (e *fakeEngine) StopContainer(context.Context, string) error {
 	e.stopCalls++
 	if e.container != nil {
 		e.container.Running = false
+		e.container.Status = "exited"
 	}
 	return nil
 }

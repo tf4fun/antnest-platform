@@ -178,15 +178,16 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 		return classifyFailure("service_composition", err)
 	}
 	catalog := application.NewCatalogService(repository, secretBox, systemClock{})
+	execution, executionWorker, err := configureExecutionPublication(repository, cfg, secretBox, logger)
+	if err != nil {
+		return classifyFailure("service_composition", err)
+	}
 	lifecycle := application.NewLifecycleServiceWithDrainTimeout(
 		repository, repository, egress, runtime, systemClock{}, cfg.DrainTimeout,
 		application.WithIdentityDirectory(identity),
+		application.WithLifecycleExecution(execution),
 	)
-	runs := application.NewRunService(
-		repository, secretBox, systemClock{}, cfg.RunAdmissionTTL,
-		application.WithRunIdentityDirectory(identity),
-	)
-	queries := application.NewAgentQueryService(repository, application.WithWorkspaceStateNotifier(eventNotifier))
+	queries := application.NewAgentQueryService(repository)
 	events := application.NewEventService(repository, eventNotifier, repository)
 	workflowClient, err := orchestration.Open(ctx, cfg.TemporalAddress, logger)
 	if err != nil {
@@ -204,7 +205,7 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 		return classifyFailure("service_composition", err)
 	}
 	handler, err := server.NewHandler(
-		catalog, commands, runs, queries, events,
+		catalog, commands, application.NewAgentConfigurationService(repository, identity, systemClock{}), queries, events,
 		application.NewNetworkPolicyService(repository, egress), repository.Ping,
 	)
 	if err != nil {
@@ -234,6 +235,11 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 		defer close(identityStopped)
 		identityWorker.Run(observationCtx)
 	}()
+	executionStopped := make(chan struct{})
+	go func() {
+		defer close(executionStopped)
+		executionWorker.Run(observationCtx)
+	}()
 	select {
 	case <-ctx.Done():
 	case serveErr := <-serverErrors:
@@ -249,6 +255,7 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 		shutdownHTTP(shutdownCtx, httpServer),
 		waitForRuntimeObservationWorker(shutdownCtx, observationStopped),
 		waitForIdentityWorker(shutdownCtx, identityStopped),
+		waitForExecutionPublication(shutdownCtx, executionStopped),
 	)
 	return resultErr
 }

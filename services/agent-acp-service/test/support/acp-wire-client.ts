@@ -2,6 +2,8 @@ import * as v1 from "@agentclientprotocol/sdk";
 import * as v2 from "@agentclientprotocol/sdk/experimental/v2";
 import { expect } from "vitest";
 import WebSocket from "ws";
+import type { ExecutionIdentity } from "../../src/domain/execution-configuration.js";
+import { identityHeaders } from "./fixtures.js";
 
 export type ProtocolVersion = 1 | 2;
 export type WireFrame = {
@@ -36,9 +38,9 @@ export class AcpWireClient {
     socket.on("error", (error) => this.failures.push(error));
   }
 
-  public static async connect(url: string, subject: string): Promise<AcpWireClient> {
+  public static async connect(url: string, identity: ExecutionIdentity): Promise<AcpWireClient> {
     const socket = new WebSocket(url, {
-      headers: { "x-antnest-agent-access-subject": subject },
+      headers: identityHeaders(identity),
     });
     const client = new AcpWireClient(socket);
     try {

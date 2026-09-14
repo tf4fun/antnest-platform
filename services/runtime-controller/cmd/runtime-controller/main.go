@@ -133,7 +133,7 @@ func run(ctx context.Context) (resultErr error) {
 	}
 	service, err := control.NewService(
 		repository, baseRepository, observationHealth, observedPlatform, verifier, time.Now,
-		configuration.MutationTimeout, configuration.RuntimeReadyTimeout, configuration.RuntimePollInterval,
+		configuration.MutationTimeout,
 	)
 	if err != nil {
 		return classified("control", "control_service_initialization_failed", err)

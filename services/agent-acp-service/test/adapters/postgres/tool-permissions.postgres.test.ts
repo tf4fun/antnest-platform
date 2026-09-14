@@ -36,17 +36,18 @@ describe.skipIf(databaseUrl === undefined)("Postgres permission decisions", () =
     await pool.query("DROP SCHEMA public CASCADE");
     await pool.query("CREATE SCHEMA public");
     await migrate(pool);
-    await pool.query(`INSERT INTO acp_sessions(id,principal_id,agent_id,cwd,state,created_at,updated_at)
-      VALUES ('s','p','a','/workspace','active',now(),now());
+    await pool.query(`INSERT INTO acp_sessions(id,organization_id,principal_id,agent_id,cwd,state,created_at,updated_at)
+      VALUES ('s','organization-1','p','a','/workspace','active',now(),now());
       INSERT INTO client_mcp_revisions(id,session_id,revision,encrypted_sources,nonce,created_at)
       VALUES ('m','s',1,'\\x00','\\x00',now());
       UPDATE acp_sessions SET client_mcp_revision_id='m' WHERE id='s'`);
-    const snap = { ...snapshot(), admissionDeadline: new Date(Date.now() + 60_000) };
+    const snap = { ...snapshot(), deadlineAt: new Date(Date.now() + 60_000) };
     await pool.query(
       `INSERT INTO runs(id,request_id,session_id,client_mcp_revision_id,expected_access_revision,
-      state,admission_id,execution_snapshot,created_at,updated_at)
-      VALUES ('r','req','s','m','access-1','running','adm',$1::jsonb,now(),now())`,
-      [JSON.stringify(snap)],
+      state,execution_snapshot,deadline_at,created_at,updated_at,input_prompt)
+      VALUES ('r','req','s','m','access-1','running',$1::jsonb,$2,now(),now(),
+        '[{"type":"text","text":"permission trigger"}]'::jsonb)`,
+      [JSON.stringify(snap), snap.deadlineAt],
     );
   });
   afterAll(async () => {
@@ -55,6 +56,7 @@ describe.skipIf(databaseUrl === undefined)("Postgres permission decisions", () =
 
   it("binds exact arguments and merges rules without losing concurrent model/mode changes", async () => {
     expect(await permissions.open(request)).toEqual({
+      organizationId: "organization-1",
       principalId: "p",
       agentId: "a",
       accessRevision: "access-1",
@@ -135,8 +137,9 @@ describe.skipIf(databaseUrl === undefined)("Postgres permission decisions", () =
     try {
       await holder.query("BEGIN");
       await holder.query("SELECT id FROM acp_sessions WHERE id='s' FOR UPDATE");
-      await pool.query(`UPDATE runs SET execution_snapshot=jsonb_set(execution_snapshot,
-        '{admissionDeadline}', to_jsonb(clock_timestamp()+interval '150 milliseconds')) WHERE id='r'`);
+      await pool.query(
+        "UPDATE runs SET deadline_at = clock_timestamp() + interval '150 milliseconds' WHERE id = 'r'",
+      );
       const query = delayed.query(`BEGIN; SELECT id FROM acp_sessions WHERE id='s' FOR UPDATE`);
       // Use the repository transaction while another backend demonstrably holds the Session lock.
       const decision = permissions.decide(allow);
@@ -187,7 +190,7 @@ describe.skipIf(databaseUrl === undefined)("Postgres permission decisions", () =
           async () =>
             (
               await pool.query<{ n: number }>(
-                "SELECT count(*)::int AS n FROM pg_stat_activity WHERE wait_event_type='Lock' AND query LIKE 'SELECT principal_id%'",
+                "SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'",
               )
             ).rows[0]?.n,
         )

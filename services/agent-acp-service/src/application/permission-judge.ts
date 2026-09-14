@@ -74,7 +74,6 @@ export class PermissionJudge {
     try {
       result = await this.model.complete({
         snapshot,
-        credential: input.credential,
         messages,
         tools: [],
         signal,

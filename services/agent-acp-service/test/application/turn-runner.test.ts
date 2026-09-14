@@ -13,13 +13,16 @@ import type {
 } from "../../src/domain/types.js";
 
 const snapshot: RunExecutionSnapshot = {
-  admissionId: "admission-1",
-  admissionDeadline: new Date("2026-08-30T00:10:00Z"),
+  organizationId: "organization-1",
+  providerConnectionId: "connection-1",
+  modelProfileId: "profile-1",
+  configurationRevision: 1,
+  accessRevision: "access-1",
+  deadlineAt: new Date("2026-08-30T00:10:00Z"),
   agentSpecRevision: "config-1",
   executionRevision: "execution-1",
   runtimeMcpSourceDigest: "a".repeat(64),
   agentExecutionSpecDigest: "b".repeat(64),
-  credentialVersion: "credential-version-1",
   runtime: {
     revision: "runtime-1",
     executionId: "runtime-execution-1",
@@ -37,12 +40,64 @@ const snapshot: RunExecutionSnapshot = {
       supportsImages: false,
     },
     maxModelRequests: 4,
-    credentialRef: "credential-1",
   },
   clientMcpRevisionId: "client-mcp-1",
 };
 
 describe("TurnRunner", () => {
+  it.each([
+    [true, "result"],
+    [false, "result"],
+    [true, "error"],
+    [false, "error"],
+  ] as const)(
+    "persists independent Runtime stopping evidence %s from a Tool %s",
+    async (runtimeCallStopped, source) => {
+      const complete = vi.fn<ModelPort["complete"]>().mockResolvedValue({
+        kind: "tool_calls",
+        content: [],
+        calls: [{ id: "call-1", name: "write", arguments: {} }],
+        usage: { inputTokens: 1, outputTokens: 1 },
+      });
+      const call = vi.fn<ToolCatalogPort["call"]>(() =>
+        source === "error"
+          ? Promise.reject(
+              Object.assign(new Error("effect unknown"), {
+                effectState: "unknown",
+                runtimeCallStopped,
+              }),
+            )
+          : Promise.resolve({
+              content: [],
+              isError: true,
+              toolEffectState: "unknown",
+              runtimeCallStopped,
+            }),
+      );
+      const events = createEvents();
+      const runner = new TurnRunner({
+        model: { complete },
+        tools: { call },
+        events: events.port,
+        catalog: [
+          {
+            source: "runtime",
+            sourceId: "runtime",
+            name: "write",
+            modelName: "write",
+            description: "Write",
+          },
+        ],
+      });
+      await expect(run(runner)).resolves.toMatchObject({
+        terminalClass: "unresolved",
+        toolEffectState: "unknown",
+      });
+      expect(events.toolFinished.mock.calls[0]?.[5]?.runtimeCallStopped).toBe(runtimeCallStopped);
+      expect(call).toHaveBeenCalledOnce();
+    },
+  );
+
   it("records known failed-call cost once without executing tools", async () => {
     const error = new ModelError("model_invalid_response", "invalid", false);
     error.usage = { cost: { amount: 0.01, currency: "USD", source: "provider_reported" } };
@@ -115,7 +170,6 @@ describe("TurnRunner", () => {
     const snap = structuredClone(snapshot);
     snap.executionSpec.configuration = {
       modelProfileId: "p",
-      modelProfileRevisionId: "r",
       authorizationRevision: 1,
       authorization: { mode: "smart_approve", toolRules: [] },
       digest: "a".repeat(64),
@@ -157,7 +211,6 @@ describe("TurnRunner", () => {
         runId: "r",
         sessionId: "s",
         snapshot: snap,
-        credential: "test",
         context: [],
         signal,
         authoritySignal: signal,
@@ -210,7 +263,6 @@ describe("TurnRunner", () => {
         runId: "run-1",
         sessionId: "session-1",
         snapshot,
-        credential: "synthetic",
         context: [],
         signal: cancelled.signal,
         authoritySignal: authority.signal,
@@ -302,7 +354,6 @@ describe("TurnRunner", () => {
         runId: "run-1",
         sessionId: "session-1",
         snapshot,
-        credential: "synthetic",
         context: [],
         signal: controller.signal,
         authoritySignal: new AbortController().signal,
@@ -403,7 +454,6 @@ describe("TurnRunner", () => {
           runId: "run-1",
           sessionId: "session-1",
           snapshot,
-          credential: "synthetic",
           context: [],
           signal: controller.signal,
           authoritySignal: new AbortController().signal,
@@ -459,7 +509,6 @@ describe("TurnRunner", () => {
           runId,
           sessionId: "session-1",
           snapshot,
-          credential: "synthetic",
           context: [],
           signal: new AbortController().signal,
           authoritySignal: new AbortController().signal,
@@ -511,7 +560,6 @@ describe("TurnRunner", () => {
           runId: "run-1",
           sessionId: "session-1",
           snapshot,
-          credential: "synthetic",
           context: [],
           signal: controller.signal,
           authoritySignal: new AbortController().signal,
@@ -598,7 +646,6 @@ describe("TurnRunner", () => {
         runId: "run-budget",
         sessionId: "session",
         snapshot: small,
-        credential: "secret",
         context: [{ role: "user", content: [{ type: "text", text: "read" }] }],
         signal: new AbortController().signal,
         authoritySignal: new AbortController().signal,
@@ -657,7 +704,6 @@ describe("TurnRunner", () => {
       runId: "run-1",
       sessionId: "session-1",
       snapshot,
-      credential: "secret",
       context: [{ role: "user", content: [{ type: "text", text: "read it" }] }],
       signal: new AbortController().signal,
       authoritySignal: new AbortController().signal,
@@ -740,7 +786,6 @@ describe("TurnRunner", () => {
         runId: "run-1",
         sessionId: "session-1",
         snapshot,
-        credential: "secret",
         context: [{ role: "user", content: [{ type: "text", text: "run" }] }],
         signal: new AbortController().signal,
         authoritySignal: new AbortController().signal,
@@ -801,7 +846,6 @@ describe("TurnRunner", () => {
         runId: "run-client",
         sessionId: "session-1",
         snapshot,
-        credential: "secret",
         context: [{ role: "user", content: [{ type: "text", text: "read" }] }],
         signal: new AbortController().signal,
         authoritySignal: new AbortController().signal,
@@ -856,7 +900,6 @@ describe("TurnRunner", () => {
         runId: "run-1",
         sessionId: "session-1",
         snapshot,
-        credential: "secret",
         context: [{ role: "user", content: [{ type: "text", text: "run" }] }],
         signal: new AbortController().signal,
         authoritySignal: new AbortController().signal,
@@ -913,7 +956,6 @@ describe("TurnRunner", () => {
         runId: "run-1",
         sessionId: "session-1",
         snapshot,
-        credential: "secret",
         context: [{ role: "user", content: [{ type: "text", text: "write" }] }],
         signal: cancellation.signal,
         authoritySignal: new AbortController().signal,
@@ -1123,7 +1165,6 @@ function run(runner: TurnRunner) {
     runId: "run-1",
     sessionId: "session-1",
     snapshot,
-    credential: "secret",
     context: [{ role: "user", content: [{ type: "text", text: "run" }] }],
     signal: new AbortController().signal,
     authoritySignal: new AbortController().signal,

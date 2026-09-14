@@ -27,7 +27,8 @@ func TestLifecycleRepositoryPersistsAndPublishesRebuildSaga(t *testing.T) {
 	t.Cleanup(repository.Close)
 	base, template := seedAvailableAgentForRebuild(t, ctx, repository)
 
-	now := time.Unix(100, 0).UTC()
+	now := time.Now().Add(-15 * time.Second).UTC().Truncate(time.Microsecond)
+	deadline := now.Add(time.Minute)
 	targetSpec, err := domain.MaterializeAgentSpec(template.Revision, template.Model.Revision)
 	if err != nil {
 		t.Fatalf("materialize target Agent spec: %v", err)
@@ -40,8 +41,8 @@ func TestLifecycleRepositoryPersistsAndPublishesRebuildSaga(t *testing.T) {
 	begin := ports.BeginAgentRebuild{
 		AgentID:                     base.Agent.AgentID,
 		ExpectedAggregateSequence:   base.Agent.AggregateSequence,
-		ExpectedSpecRevisionID:      base.ExecutableSpec.ID,
-		ExpectedExecutionRevisionID: base.ExecutableExecution.ID,
+		ExpectedSpecRevisionID:      base.ConfiguredSpec.ID,
+		ExpectedExecutionRevisionID: base.SourceExecution.ID,
 		ExpectedRuntimeRevision:     base.Agent.RuntimeRevision,
 		TargetSpec: ports.AgentSpecRecord{
 			ID: "agentspec-rebuild-integration", AgentID: base.Agent.AgentID,
@@ -52,10 +53,11 @@ func TestLifecycleRepositoryPersistsAndPublishesRebuildSaga(t *testing.T) {
 			RequestID: "request-rebuild-integration", RequestFingerprint: fingerprint,
 			AgentID: base.Agent.AgentID, Kind: domain.OperationRebuild,
 			Phase: domain.PhaseDrain, State: domain.OperationRunning,
-			SourceSpecRevisionID:      base.ExecutableSpec.ID,
-			SourceExecutionRevisionID: base.ExecutableExecution.ID,
+			SourceSpecRevisionID:      base.ConfiguredSpec.ID,
+			SourceExecutionRevisionID: base.SourceExecution.ID,
 			SourceRuntimeRevision:     base.Agent.RuntimeRevision,
 			TargetSpecRevisionID:      "agentspec-rebuild-integration",
+			DrainDeadlineAt:           &deadline,
 			ChildRequestID:            domain.ChildRequestID("request-rebuild-integration", domain.PhaseDrain),
 			CreatedAt:                 now, UpdatedAt: now,
 		},
@@ -74,50 +76,16 @@ func TestLifecycleRepositoryPersistsAndPublishesRebuildSaga(t *testing.T) {
 	if err != nil || replayed {
 		t.Fatalf("begin Agent rebuild: state=%+v replayed=%t err=%v", started, replayed, err)
 	}
-	if started.Agent.LifecycleState != domain.AgentAvailable ||
+	if (started.Agent.LifecycleState != domain.AgentCreated || started.Agent.ActivationState != domain.ActivationEnabled || started.Agent.RuntimeState != domain.RuntimeAvailable) ||
 		started.Agent.ActiveOperationRequestID != begin.Operation.RequestID ||
 		started.Operation.SourceRuntimeRevision != base.Agent.RuntimeRevision {
 		t.Fatalf("started rebuild = %+v", started)
 	}
-	if _, err := repository.pool.Exec(ctx, `
-INSERT INTO agent_controller.run_admissions (
-    admission_id, request_id, request_fingerprint, agent_id, session_id,
-    principal_id, access_revision, state, deadline, runtime_revision,
-    snapshot, created_at, updated_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, 'active', $8, $9,
-          jsonb_build_object(
-              'runtime', jsonb_build_object('runtime_revision', $9::text),
-              'execution_spec', jsonb_build_object('skill_instructions', '[]'::jsonb)
-          ), $10, $10)`,
-		"admission-rebuild-integration", "request-run-rebuild-integration",
-		strings.Repeat("e", 64), base.Agent.AgentID, "session-rebuild-integration",
-		base.Agent.OwnerUserID, base.Agent.AccessRevision, now.Add(time.Hour),
-		base.Agent.RuntimeRevision, now,
-	); err != nil {
-		t.Fatalf("insert active Run admission: %v", err)
-	}
-	blocked, err := repository.SettleAgentRebuildDrain(
-		ctx, begin.Operation.RequestID, fingerprint,
-		domain.ChildRequestID(begin.Operation.RequestID, domain.PhaseNetworkFence), now.Add(time.Second),
-	)
-	if err != nil || blocked.Operation.Phase != domain.PhaseDrain {
-		t.Fatalf("active Run did not block rebuild: state=%+v err=%v", blocked, err)
-	}
-	if _, err := repository.pool.Exec(ctx, `
-UPDATE agent_controller.run_admissions
-SET state = 'blocked_unknown_effect',
-    terminal_report = '{"terminal_class":"unresolved","tool_effect_state":"unknown","unknown_effect_source":"runtime_mcp","stop_reason":"","error_class":"tool_outcome_unknown"}'::jsonb,
-    finished_at = $2,
-    updated_at = $2
-WHERE admission_id = $1`, "admission-rebuild-integration", now.Add(time.Second)); err != nil {
-		t.Fatalf("mark Run effect unresolved: %v", err)
-	}
-
-	drained, err := repository.SettleAgentRebuildDrain(
-		ctx, begin.Operation.RequestID, fingerprint,
-		domain.ChildRequestID(begin.Operation.RequestID, domain.PhaseNetworkFence), now.Add(time.Second),
-	)
-	if err != nil || drained.Operation.Phase != domain.PhaseNetworkFence {
+	drained, err := repository.ConfirmLifecycleDrain(ctx, ports.ConfirmLifecycleDrain{
+		RequestID: begin.Operation.RequestID, Fingerprint: fingerprint, Kind: domain.OperationRebuild,
+		Outcome: ports.ExecutionRuntimeBarrierRequired, Now: now.Add(time.Second),
+	})
+	if err != nil || drained.Phase != domain.PhaseNetworkFence {
 		t.Fatalf("settle rebuild drain: state=%+v err=%v", drained, err)
 	}
 	attachment := ports.NetworkAttachment{
@@ -154,83 +122,27 @@ WHERE admission_id = $1`, "admission-rebuild-integration", now.Add(time.Second))
 	runtime := ports.RuntimeOperation{
 		State: "completed", Effect: "completed",
 		RuntimeRevision:    "rtv_22222222222222222222222222222222",
-		RuntimeExecutionID: "runtime-execution-rebuilt",
-		MCPEndpoint:        "http://runtime-rebuilt:8091/mcp",
-		LifecycleState:     "ready", Health: "healthy",
-	}
-	if _, err := repository.pool.Exec(ctx, `
-UPDATE agent_controller.run_admissions
-SET runtime_revision = $2,
-    snapshot = jsonb_set(snapshot, '{runtime,runtime_revision}', to_jsonb($2::text))
-WHERE admission_id = $1`,
-		"admission-rebuild-integration", "rtv_wrong_runtime",
-	); err != nil {
-		t.Fatalf("set mismatched unresolved Run revision: %v", err)
+		RuntimeExecutionID: "",
+		MCPEndpoint:        "",
+		LifecycleState:     "provisioned", Health: "unknown",
 	}
 	runtimeAdvance := ports.AdvanceAgentRebuild{
 		RequestID: begin.Operation.RequestID, Fingerprint: fingerprint,
 		ExpectedPhase: domain.PhaseRuntimeUpdate, NextPhase: domain.PhaseNetworkEnsure,
 		NextChildRequestID: domain.ChildRequestID(begin.Operation.RequestID, domain.PhaseNetworkEnsure),
 		RuntimeResult:      &runtime,
-		RunReleaseEvent: lifecycleRunReleaseEvent(
-			"event-run-release-rebuild-integration", "runtime_replaced",
-			base.Agent.RuntimeRevision, now.Add(5*time.Second),
-		),
-		Now: now.Add(5 * time.Second),
+		Now:                now.Add(5 * time.Second),
 	}
-	if _, err := repository.AdvanceAgentRebuild(ctx, runtimeAdvance); err == nil {
-		t.Fatal("Runtime replacement released an unresolved Run from another Runtime revision")
-	}
-	if _, err := repository.pool.Exec(ctx, `
-UPDATE agent_controller.run_admissions
-SET runtime_revision = $2,
-    snapshot = jsonb_set(snapshot, '{runtime,runtime_revision}', to_jsonb($2::text))
-WHERE admission_id = $1`,
-		"admission-rebuild-integration", base.Agent.RuntimeRevision,
-	); err != nil {
-		t.Fatalf("restore unresolved Run revision: %v", err)
-	}
-	forgedBarrier := runtimeAdvance
-	forgedBarrier.RunReleaseEvent = lifecycleRunReleaseEvent(
-		"event-forged-run-release-rebuild", "runtime_deleted",
-		base.Agent.RuntimeRevision, now.Add(5*time.Second),
-	)
-	if _, err := repository.AdvanceAgentRebuild(ctx, forgedBarrier); err == nil {
-		t.Fatal("Runtime replacement accepted a forged Run release reason")
+	unchangedRuntime := runtime
+	unchangedRuntime.RuntimeRevision = base.Agent.RuntimeRevision
+	invalid := runtimeAdvance
+	invalid.RuntimeResult = &unchangedRuntime
+	if _, err := repository.AdvanceAgentRebuild(ctx, invalid); err == nil {
+		t.Fatal("rebuild accepted the old Runtime as a replacement")
 	}
 	withRuntime, err := repository.AdvanceAgentRebuild(ctx, runtimeAdvance)
 	if err != nil || withRuntime.Operation.Phase != domain.PhaseNetworkEnsure {
 		t.Fatalf("record Runtime update: state=%+v err=%v", withRuntime, err)
-	}
-	var admissionState, releasedBy string
-	if err := repository.pool.QueryRow(ctx, `
-SELECT state, released_by_operation_request_id
-FROM agent_controller.run_admissions WHERE admission_id = $1`,
-		"admission-rebuild-integration",
-	).Scan(&admissionState, &releasedBy); err != nil {
-		t.Fatalf("load released Run admission: %v", err)
-	}
-	if admissionState != "released" || releasedBy != begin.Operation.RequestID {
-		t.Fatalf("released Run admission state=%q operation=%q", admissionState, releasedBy)
-	}
-	assertLifecycleRunRelease(
-		t, ctx, repository, "event-run-release-rebuild-integration", base.Agent.AgentID,
-		"admission-rebuild-integration", begin.Operation.RequestID,
-		begin.RequestedEvent.AggregateSequence+1,
-	)
-	replayedFinish, err := repository.FinishRun(ctx, finishRunCommand(
-		ports.RunAdmissionRecord{AdmissionID: "admission-rebuild-integration"},
-		"request-finish-rebuild-replay",
-		domain.TerminalReport{
-			Class: domain.TerminalUnresolved, ToolEffectState: domain.ToolEffectUnknown,
-			UnknownEffectSource: domain.UnknownEffectRuntimeMCP,
-			ErrorClass:          "tool_outcome_unknown",
-		},
-		now.Add(6*time.Second),
-	))
-	if err != nil || replayedFinish.Status != "already_finished" ||
-		replayedFinish.AdmissionState != domain.AdmissionReleased {
-		t.Fatalf("replay unresolved FinishRun after barrier: result=%+v err=%v", replayedFinish, err)
 	}
 	reopenedAttachment := attachment
 	reopenedAttachment.AttachmentState = ports.NetworkAttachmentOpen
@@ -248,20 +160,6 @@ FROM agent_controller.run_admissions WHERE admission_id = $1`,
 	publishInput := ports.PublishAgentRebuild{
 		RequestID: begin.Operation.RequestID, Fingerprint: fingerprint,
 		AccessRevision: "access-rebuild-integration",
-		PromptCapabilities: ports.PromptCapabilities{
-			Image: targetSpec.Snapshot().Model.SupportsImages,
-		},
-		Execution: ports.ExecutionRecord{
-			ID: "execution-rebuild-integration", AgentID: base.Agent.AgentID,
-			Revision:               base.NextExecutionRevision,
-			AgentSpecRevisionID:    begin.TargetSpec.ID,
-			RuntimeRevision:        runtime.RuntimeRevision,
-			RuntimeExecutionID:     runtime.RuntimeExecutionID,
-			RuntimeMCPEndpoint:     runtime.MCPEndpoint,
-			RuntimeMCPSourceDigest: strings.Repeat("d", 64),
-			ChangeSummary:          map[string]any{"kind": "rebuild"},
-			PublishedAt:            now.Add(7 * time.Second),
-		},
 		RebuiltEvent: ports.AgentEventRecord{
 			EventID: "event-rebuilt-integration", AgentID: base.Agent.AgentID,
 			AggregateSequence: withNetwork.Agent.AggregateSequence + 1,
@@ -273,21 +171,22 @@ FROM agent_controller.run_admissions WHERE admission_id = $1`,
 		Now: now.Add(7 * time.Second),
 	}
 	invalidPublication := publishInput
-	invalidPublication.Execution.RuntimeExecutionID = "unverified-runtime-execution"
+	invalidPublication.RebuiltEvent.AggregateSequence++
 	if _, err := repository.PublishAgentRebuild(ctx, invalidPublication); err == nil {
-		t.Fatal("publication accepted a Runtime binding different from the verified result")
+		t.Fatal("publication accepted a stale Agent sequence")
 	}
 	published, err := repository.PublishAgentRebuild(ctx, publishInput)
 	if err != nil {
 		t.Fatalf("publish Agent rebuild: %v", err)
 	}
 	if published.Agent.AgentSpecRevisionID != begin.TargetSpec.ID ||
-		published.Agent.ExecutionRevisionID != "execution-rebuild-integration" ||
+		published.Agent.ExecutionRevisionID != "" || (published.Agent.LifecycleState != domain.AgentCreated || published.Agent.ActivationState != domain.ActivationEnabled || published.Agent.RuntimeState != domain.RuntimeUnknown) ||
 		published.Agent.RuntimeRevision != runtime.RuntimeRevision ||
 		published.Operation.State != domain.OperationCompleted {
 		t.Fatalf("published rebuild = %+v", published)
 	}
 
+	observeRuntimeForTest(t, ctx, repository, published.Agent, published.Operation, "execution-rebuild-integration", "runtime-execution-rebuilt", "http://runtime-rebuilt:8091/mcp")
 	retryBase, err := repository.GetAgentLifecycleBase(ctx, base.Agent.AgentID)
 	if err != nil {
 		t.Fatalf("load Agent for pre-barrier failure: %v", err)
@@ -297,20 +196,20 @@ FROM agent_controller.run_admissions WHERE admission_id = $1`,
 	failureBegin := ports.BeginAgentRebuild{
 		AgentID:                     retryBase.Agent.AgentID,
 		ExpectedAggregateSequence:   retryBase.Agent.AggregateSequence,
-		ExpectedSpecRevisionID:      retryBase.ExecutableSpec.ID,
-		ExpectedExecutionRevisionID: retryBase.ExecutableExecution.ID,
+		ExpectedSpecRevisionID:      retryBase.ConfiguredSpec.ID,
+		ExpectedExecutionRevisionID: retryBase.SourceExecution.ID,
 		ExpectedRuntimeRevision:     retryBase.Agent.RuntimeRevision,
 		TargetSpec: ports.AgentSpecRecord{
 			ID: "agentspec-pre-barrier-failure", AgentID: retryBase.Agent.AgentID,
-			Revision: retryBase.NextSpecRevision, Snapshot: retryBase.ExecutableSpec.Snapshot,
-			CanonicalDigest: retryBase.ExecutableSpec.CanonicalDigest, CreatedAt: now.Add(8 * time.Second),
+			Revision: retryBase.NextSpecRevision, Snapshot: retryBase.ConfiguredSpec.Snapshot,
+			CanonicalDigest: retryBase.ConfiguredSpec.CanonicalDigest, CreatedAt: now.Add(8 * time.Second),
 		},
 		Operation: ports.LifecycleOperationRecord{
 			RequestID: failureRequestID, RequestFingerprint: failureFingerprint,
 			AgentID: retryBase.Agent.AgentID, Kind: domain.OperationRebuild,
 			Phase: domain.PhaseDrain, State: domain.OperationRunning,
-			SourceSpecRevisionID:      retryBase.ExecutableSpec.ID,
-			SourceExecutionRevisionID: retryBase.ExecutableExecution.ID,
+			SourceSpecRevisionID:      retryBase.ConfiguredSpec.ID,
+			SourceExecutionRevisionID: retryBase.SourceExecution.ID,
 			SourceRuntimeRevision:     retryBase.Agent.RuntimeRevision,
 			TargetSpecRevisionID:      "agentspec-pre-barrier-failure",
 			ChildRequestID:            domain.ChildRequestID(failureRequestID, domain.PhaseDrain),
@@ -343,12 +242,13 @@ FROM agent_controller.run_admissions WHERE admission_id = $1`,
 	if err != nil {
 		t.Fatalf("fail pre-barrier rebuild: %v", err)
 	}
-	if failed.Agent.LifecycleState != domain.AgentAvailable ||
+	if (failed.Agent.LifecycleState != domain.AgentCreated || failed.Agent.ActivationState != domain.ActivationEnabled || failed.Agent.RuntimeState != domain.RuntimeUnknown) ||
 		failed.Agent.ExecutionRevisionID != retryBase.Agent.ExecutionRevisionID ||
 		failed.Agent.RuntimeRevision != retryBase.Agent.RuntimeRevision ||
 		failed.Operation.State != domain.OperationFailed {
 		t.Fatalf("pre-barrier failure did not preserve executable source: %+v", failed)
 	}
+	assertPreservedSourceRequiresFreshObservation(t, ctx, repository, failed.Agent)
 }
 
 type rebuildSeed struct {
@@ -359,6 +259,10 @@ type rebuildSeed struct {
 func seedAvailableAgentForRebuild(
 	t *testing.T, ctx context.Context, repository *Repository,
 ) (ports.AgentLifecycleBase, rebuildSeed) {
+	return seedConfiguredAgentForTest(t, ctx, repository, true)
+}
+
+func seedConfiguredAgentForTest(t *testing.T, ctx context.Context, repository *Repository, observe bool) (ports.AgentLifecycleBase, rebuildSeed) {
 	t.Helper()
 	resetCatalogSchema(t, ctx, repository)
 	if err := repository.Migrate(ctx); err != nil {
@@ -387,13 +291,13 @@ func seedAvailableAgentForRebuild(
 		Agent: ports.AgentRecord{
 			AgentID: "agent-rebuild-integration", OrganizationID: "org-integration",
 			OwnerUserID: "user-integration", Name: "Rebuild Agent",
-			DesiredState: domain.DesiredEnabled, LifecycleState: domain.AgentProvisioning,
+			DesiredState: domain.DesiredEnabled, LifecycleState: domain.AgentCreated, ActivationState: domain.ActivationEnabled, RuntimeState: domain.RuntimeUnknown,
 			AccessRevision:           "access-rebuild-integration",
 			ActiveOperationRequestID: "request-create-for-rebuild", AggregateSequence: 1,
 			CreatedAt: now, UpdatedAt: now,
 		},
 		Access: ports.AgentAccessRecord{
-			AccessSubject: "access-rebuild-integration", AgentID: "agent-rebuild-integration",
+			AgentID:     "agent-rebuild-integration",
 			PrincipalID: "user-integration", AccessRevision: "access-rebuild-integration",
 			Active: true, CreatedAt: now, UpdatedAt: now,
 		},
@@ -429,8 +333,8 @@ func seedAvailableAgentForRebuild(
 	runtime := ports.RuntimeOperation{
 		State: "completed", Effect: "completed",
 		RuntimeRevision:    "rtv_11111111111111111111111111111111",
-		RuntimeExecutionID: "runtime-execution-seed", MCPEndpoint: "http://runtime-seed:8091/mcp",
-		LifecycleState: "ready", Health: "healthy",
+		RuntimeExecutionID: "", MCPEndpoint: "",
+		LifecycleState: "provisioned", Health: "unknown",
 	}
 	if _, err := repository.RecordCreateRuntime(
 		mutationCtx, begin.Operation.RequestID, fingerprint, runtime,
@@ -444,22 +348,26 @@ func seedAvailableAgentForRebuild(
 	if _, err := repository.PublishAgentCreate(mutationCtx, ports.PublishAgentCreate{
 		RequestID: begin.Operation.RequestID, Fingerprint: fingerprint,
 		NetworkAttachment: openedAttachment,
-		Execution: ports.ExecutionRecord{
-			ID: "execution-create-for-rebuild", AgentID: begin.Agent.AgentID, Revision: 1,
-			AgentSpecRevisionID: begin.Spec.ID, RuntimeRevision: runtime.RuntimeRevision,
-			RuntimeExecutionID: runtime.RuntimeExecutionID, RuntimeMCPEndpoint: runtime.MCPEndpoint,
-			RuntimeMCPSourceDigest: strings.Repeat("b", 64),
-			ChangeSummary:          map[string]any{"kind": "create"}, PublishedAt: now.Add(3 * time.Second),
-		},
-		ReadyEvent: ports.AgentEventRecord{
+		CreatedEvent: ports.AgentEventRecord{
 			EventID: "event-ready-for-rebuild", AgentID: begin.Agent.AgentID,
-			AggregateSequence: 2, SchemaVersion: 1, EventType: ports.EventAgentReady,
+			AggregateSequence: 2, SchemaVersion: 1, EventType: ports.EventAgentCreated,
 			OperationRequestID: begin.Operation.RequestID, Data: map[string]any{},
 			OccurredAt: now.Add(3 * time.Second),
 		},
 		Now: now.Add(3 * time.Second),
 	}); err != nil {
 		t.Fatalf("publish seed Agent: %v", err)
+	}
+	if observe {
+		agent, err := loadAgentRecord(ctx, repository.pool, begin.Agent.AgentID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		op, err := repository.GetLifecycleOperation(ctx, begin.Operation.RequestID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		observeRuntimeForTest(t, ctx, repository, agent, op, "execution-create-for-rebuild", "runtime-execution-seed", "http://runtime-seed:8091/mcp")
 	}
 	base, err := repository.GetAgentLifecycleBase(ctx, begin.Agent.AgentID)
 	if err != nil {

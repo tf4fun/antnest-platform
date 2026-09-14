@@ -1,5 +1,9 @@
 import { EventEmitter } from "node:events";
 import { DomainError } from "../domain/errors.js";
+import {
+  isExecutionAccessRevoked,
+  type ExecutionAccessSnapshot,
+} from "../domain/execution-configuration.js";
 import type {
   PermissionConnection,
   PermissionConnectionsPort,
@@ -15,6 +19,12 @@ export class PermissionConnections implements PermissionConnectionsPort {
 
   public detach(sessionId: string): void {
     this.sessions.get(sessionId)?.detach();
+  }
+
+  public revokeAccess(snapshot: ExecutionAccessSnapshot): void {
+    for (const attached of this.sessions.values()) {
+      if (isExecutionAccessRevoked(snapshot, attached.connection.binding)) attached.detach();
+    }
   }
 
   public attach(connection: PermissionConnection): void {
@@ -77,7 +87,7 @@ export class PermissionConnections implements PermissionConnectionsPort {
       if (
         binding?.agentId === owner.agentId &&
         binding.principalId === owner.principalId &&
-        binding.accessRevision === owner.accessRevision
+        binding.organizationId === owner.organizationId
       )
         return current!;
       await new Promise<void>((resolve, reject) => {

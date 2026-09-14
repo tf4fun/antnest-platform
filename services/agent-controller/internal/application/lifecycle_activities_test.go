@@ -13,9 +13,9 @@ func readyActivityRuntime(suffix string) ports.RuntimeOperation {
 	return ports.RuntimeOperation{
 		State: "completed", Effect: "completed",
 		RuntimeRevision:    "rtv_22222222222222222222222222222222",
-		RuntimeExecutionID: "runtime-execution-" + suffix,
-		MCPEndpoint:        "http://runtime-" + suffix + ":8091/mcp",
-		LifecycleState:     "ready", Health: "healthy",
+		RuntimeExecutionID: "",
+		MCPEndpoint:        "",
+		LifecycleState:     "provisioned", Health: "unknown",
 	}
 }
 func TestCreateLifecycleActivitiesAdvancesOneDurablePhasePerActivity(t *testing.T) {
@@ -65,6 +65,7 @@ func TestRebuildLifecycleActivitiesAdvancesOneDurablePhasePerActivity(t *testing
 	service := NewLifecycleService(
 		lifecycleSpecSourceStub{template: template, model: model},
 		store, dependencies, dependencies, fixedClock{now: time.Unix(100, 0).UTC()},
+		WithLifecycleExecution(testExecutionForStore(store)),
 	)
 
 	result, err := service.RebuildAgent(
@@ -188,13 +189,14 @@ func TestEnableLifecycleActivitiesAdvancesOneDurablePhasePerActivity(t *testing.
 func TestDeleteLifecycleActivitiesAdvancesOneDurablePhasePerActivity(t *testing.T) {
 	t.Parallel()
 
-	base := deleteAgentBase(domain.AgentAvailable)
+	base := deleteAgentBase(domain.RuntimeAvailable)
 	store := &deleteLifecycleStoreStub{base: base, drainBlocked: true}
 	dependencies := newDeleteDependencies(base.Agent)
 	dependencies.runtime = ports.RuntimeOperation{State: "running"}
 	service := NewLifecycleService(
 		lifecycleSpecSourceStub{}, store, dependencies, dependencies,
 		fixedClock{now: time.Unix(700, 0).UTC()},
+		WithLifecycleExecution(testExecutionForStore(store)),
 	)
 
 	result, err := service.DeleteAgent(

@@ -3,16 +3,22 @@ set -eu
 
 repository_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$repository_root"
-
 port_base=$((40000 + ($$ % 10000)))
 network_octet=$((1 + ($$ % 200)))
 export COMPOSE_PROJECT_NAME="antnest-stage2-e2e-$$"
+export COMPOSE_FILE="compose.yaml:scripts/stage2.compose.yaml"
+export COMPOSE_ENV_FILES=.env.example
 export ANTNEST_POSTGRES_HOST_PORT=$port_base
 export ANTNEST_RUNTIME_CONTROLLER_HOST_PORT=$((port_base + 1))
 export ANTNEST_ACP_HOST_PORT=$((port_base + 2))
 export ANTNEST_AGENT_CONTROLLER_HOST_PORT=$((port_base + 3))
 export ANTNEST_JAEGER_UI_HOST_PORT=$((port_base + 4))
 export ANTNEST_IDENTITY_HOST_PORT=$((port_base + 5))
+export ANTNEST_STAGE2_MODEL_HOST_PORT=$((port_base + 6))
+export ANTNEST_STAGE2_OTLP_HOST_PORT=$((port_base + 7))
+export ANTNEST_TEMPORAL_HOST_PORT=$((port_base + 8))
+export ANTNEST_EDGE_HOST_PORT=$((port_base + 9))
+export ANTNEST_STAGE2_OTLP_URL="http://127.0.0.1:${ANTNEST_STAGE2_OTLP_HOST_PORT}/v1/traces"
 export ANTNEST_RUNTIME_CONTROLLER_SCOPE="$COMPOSE_PROJECT_NAME"
 export ANTNEST_RUNTIME_MANAGEMENT_NETWORK="${COMPOSE_PROJECT_NAME}-runtime-management"
 export ANTNEST_RUNTIME_SYSTEM_SKILLS_VOLUME="${COMPOSE_PROJECT_NAME}-system-skills"
@@ -32,331 +38,55 @@ export ANTNEST_BOOTSTRAP_ORGANIZATION_SLUG=stage2
 export ANTNEST_BOOTSTRAP_ORGANIZATION_NAME="Stage 2"
 export ANTNEST_BOOTSTRAP_ADMIN_EMAIL=stage2-admin@example.com
 export ANTNEST_BOOTSTRAP_ADMIN_PASSWORD=stage2-admin-password
+export ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT=true
 
-controller_url="http://127.0.0.1:${ANTNEST_AGENT_CONTROLLER_HOST_PORT}"
-identity_url="http://127.0.0.1:${ANTNEST_IDENTITY_HOST_PORT}"
-acp_url="ws://agent-acp-service:8080/v2/acp"
-jaeger_url="http://jaeger:16686"
-lifecycle_trace_id=4bf92f3577b34da6a3ce929d0e0e4736
-execution_trace_id=5bf92f3577b34da6a3ce929d0e0e4736
-temporary_root=$(mktemp -d "${TMPDIR:-/tmp}/antnest-stage2-e2e.XXXXXX")
-agent_id=""
-
+compose() { docker compose --profile stage2 --profile stage2-e2e --profile stage3 --profile observability "$@"; }
 cleanup() {
   status=$?
   trap - EXIT INT TERM
+  set +e
+  cleanup_status=0
   if [ "$status" -ne 0 ]; then
-    docker compose --profile stage2 --profile stage2-e2e --profile observability ps >&2 || true
-    docker compose --profile stage2 --profile stage2-e2e --profile observability logs \
-      --no-color --tail=200 identity-service agent-controller agent-acp-service \
-      runtime-controller stage2-model jaeger \
-      >&2 || true
-    if [ -n "$agent_id" ]; then
-      docker logs --tail=200 "antnest-runtime-${agent_id}" >&2 || true
-    fi
+    compose ps >&2 || true
+    compose logs --no-color --tail=60 agent-controller agent-acp-service runtime-controller >&2 || true
   fi
-  if [ -n "$agent_id" ]; then
-    docker rm -f "antnest-runtime-${agent_id}" >/dev/null 2>&1 || true
-    docker volume rm -f "antnest-workspace-${agent_id}" >/dev/null 2>&1 || true
+  containers=$(docker ps -aq --filter "label=io.antnest.runtime-controller-scope=$COMPOSE_PROJECT_NAME") || cleanup_status=1
+  for id in $containers; do docker rm -f "$id" >/dev/null || cleanup_status=1; done
+  volumes=$(docker volume ls -q --filter "label=io.antnest.runtime-controller-scope=$COMPOSE_PROJECT_NAME") || cleanup_status=1
+  for id in $volumes; do docker volume rm -f "$id" >/dev/null || cleanup_status=1; done
+  compose down --volumes --remove-orphans >/dev/null 2>&1 || cleanup_status=1
+  remaining_containers=$(docker ps -aq --filter "label=com.docker.compose.project=$COMPOSE_PROJECT_NAME") || cleanup_status=1
+  remaining_volumes=$(docker volume ls -q --filter "label=com.docker.compose.project=$COMPOSE_PROJECT_NAME") || cleanup_status=1
+  test -z "$remaining_containers$remaining_volumes" || cleanup_status=1
+  if [ "$cleanup_status" -ne 0 ]; then
+    printf 'Stage 2 cleanup failed for %s\n' "$COMPOSE_PROJECT_NAME" >&2
+    status=1
   fi
-  docker ps -aq \
-    --filter "label=io.antnest.runtime-controller-scope=$COMPOSE_PROJECT_NAME" 2>/dev/null |
-    while IFS= read -r runtime_container; do
-      [ -z "$runtime_container" ] || docker rm -f "$runtime_container" >/dev/null 2>&1 || true
-    done
-  docker volume ls -q \
-    --filter "label=io.antnest.runtime-controller-scope=$COMPOSE_PROJECT_NAME" 2>/dev/null |
-    while IFS= read -r runtime_volume; do
-      [ -z "$runtime_volume" ] || docker volume rm -f "$runtime_volume" >/dev/null 2>&1 || true
-    done
-  docker compose --profile stage2 --profile stage2-e2e --profile observability \
-    down --volumes --remove-orphans >/dev/null 2>&1 || true
-  rm -rf -- "${temporary_root:?}"
   exit "$status"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
-request_json() (
-  method=$1
-  url=$2
-  body_file=$3
-  response_file=$4
-  expected_status=$5
-  trace_id=${6:-}
-  trace_header=""
-  if [ -n "$trace_id" ]; then
-    trace_header="00-${trace_id}-0123456789abcdef-01"
-  fi
-  set -- -sS --connect-timeout 5 --max-time 15 -o "$response_file" -w '%{http_code}' \
-    -X "$method" -H 'accept: application/json' -H 'content-type: application/json'
-  if [ -n "$trace_header" ]; then set -- "$@" -H "traceparent: $trace_header"; fi
-  if [ -n "$body_file" ]; then set -- "$@" --data-binary "@$body_file"; fi
-  status=$(curl "$@" "$url")
-  if [ "$status" != "$expected_status" ]; then
-    printf '%s %s returned HTTP %s, want %s: ' "$method" "$url" "$status" "$expected_status" >&2
-    cat "$response_file" >&2
-    printf '\n' >&2
-    return 1
-  fi
-)
-
-json_field() {
-  node -e '
-    const fs = require("node:fs");
-    let value = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-    for (const segment of process.argv[2].split(".")) value = value?.[segment];
-    if (value === undefined) process.exit(2);
-    process.stdout.write(typeof value === "object" ? JSON.stringify(value) : String(value));
-  ' "$1" "$2"
-}
-
-assert_json_field() {
-  actual=$(json_field "$1" "$2")
-  if [ "$actual" != "$3" ]; then
-    printf '%s field %s = %s, want %s\n' "$1" "$2" "$actual" "$3" >&2
-    return 1
-  fi
-}
-
-wait_operation() (
-  operation_id=$1
-  deadline=$(($(date +%s) + 180))
-  while [ "$(date +%s)" -lt "$deadline" ]; do
-    request_json GET "$controller_url/internal/agent-operations/$operation_id?organization_id=$organization_id" \
-      "" "$temporary_root/operation.json" 200
-    assert_json_field "$temporary_root/operation.json" request_id "$operation_id"
-    case "$(json_field "$temporary_root/operation.json" state)" in
-      completed) return 0 ;;
-      running) sleep 1 ;;
-      *) printf 'Lifecycle operation %s did not complete successfully\n' "$operation_id" >&2; return 1 ;;
-    esac
-  done
-  printf 'Lifecycle operation %s timed out\n' "$operation_id" >&2
-  return 1
-)
-
-read_agent() {
-  request_json GET "$controller_url/internal/agents/$agent_id?organization_id=$organization_id" \
-    "" "$temporary_root/agent-current.json" 200
-}
-
-wait_disabled() (
-  deadline=$(($(date +%s) + 180))
-  while [ "$(date +%s)" -lt "$deadline" ]; do
-    read_agent
-    active=$(node -e 'const f=require("node:fs"); process.stdout.write(JSON.parse(f.readFileSync(process.argv[1])).active_operation_request_id ?? "")' "$temporary_root/agent-current.json")
-    if [ -n "$active" ]; then
-      wait_operation "$active"
-    elif [ "$(json_field "$temporary_root/agent-current.json" lifecycle_state)" = disabled ]; then
-      assert_json_field "$temporary_root/agent-current.json" desired_state disabled
-      return 0
-    fi
-    sleep 1
-  done
-  printf 'Owner revocation did not disable Agent\n' >&2
-  return 1
-)
-
-docker compose --profile stage2 --profile stage2-e2e --profile observability up -d --wait \
-  postgres stage2-model jaeger
-docker compose --profile stage2 --profile stage2-e2e --profile observability up -d --wait \
-  runtime-egress runtime-controller
-docker compose --profile stage2 --profile stage2-e2e --profile observability up -d --wait \
-  identity-service agent-controller
-docker compose --profile stage2 --profile stage2-e2e --profile observability up -d --wait \
-  agent-acp-service
-
-runtime_image=$(docker image inspect --format '{{.Id}}' antnest/antnest-runtime:local)
-if ! printf '%s' "$runtime_image" | grep -Eq '^sha256:[a-f0-9]{64}$'; then
-  printf 'Runtime image is not immutable: %s\n' "$runtime_image" >&2
-  exit 1
-fi
-
-cat >"$temporary_root/login.json" <<EOF
-{
-  "request_id": "stage2-login",
-  "organization_slug": "stage2",
-  "email": "stage2-admin@example.com",
-  "password": "stage2-admin-password"
-}
-EOF
-request_json POST "$identity_url/rpc/identity/local-login" \
-  "$temporary_root/login.json" "$temporary_root/login-response.json" 200
-organization_id=$(json_field "$temporary_root/login-response.json" principal.organization_id)
-actor_principal_id=$(json_field "$temporary_root/login-response.json" principal.user_id)
-
-cat >"$temporary_root/owner.json" <<EOF
-{
-  "request_id": "stage2-owner",
-  "actor_principal_id": "$actor_principal_id",
-  "organization_id": "$organization_id",
-  "email": "stage2-owner@example.com",
-  "display_name": "Stage 2 Owner",
-  "password": "stage2-owner-password",
-  "role": "member"
-}
-EOF
-request_json POST "$identity_url/rpc/identity/create-local-user" \
-  "$temporary_root/owner.json" "$temporary_root/owner-response.json" 200
-owner_user_id=$(json_field "$temporary_root/owner-response.json" user.id)
-owner_membership_id=$(json_field "$temporary_root/owner-response.json" membership.id)
-
-cat >"$temporary_root/model.json" <<EOF
-{
-  "request_id": "stage2-model",
-  "organization_id": "$organization_id",
-  "profile_key": "stage2-model",
-  "display_name": "Stage 2 deterministic model",
-  "model": {
-    "base_url": "http://stage2-model:8080/v1",
-    "model": "stage2-deterministic",
-    "context_window": 8192,
-    "max_output_tokens": 1024,
-    "supports_images": false
-  },
-  "credential": { "secret_type": "bearer", "secret": "stage2-model-secret" }
-}
-EOF
-request_json POST "$controller_url/internal/model-profiles" \
-  "$temporary_root/model.json" "$temporary_root/model-response.json" 201
-model_revision_id=$(json_field "$temporary_root/model-response.json" revision_id)
-
-cat >"$temporary_root/template.json" <<EOF
-{
-  "request_id": "stage2-template",
-  "organization_id": "$organization_id",
-  "template_key": "stage2-template",
-  "name": "Stage 2 Template",
-  "model_profile_revision_id": "$model_revision_id",
-  "system_prompt": "Use the available Runtime Tools to complete the request.",
-  "max_model_requests": 4,
-  "context_policy_version": "context-v1",
-  "runtime": {
-    "image_ref": "$runtime_image",
-    "resources": {
-      "memory_bytes": 536870912,
-      "pids_limit": 256,
-      "tmpfs_bytes": 67108864
-    }
-  }
-}
-EOF
-request_json POST "$controller_url/internal/agent-templates" \
-  "$temporary_root/template.json" "$temporary_root/template-response.json" 201
-template_id=$(json_field "$temporary_root/template-response.json" template_id)
-assert_json_field "$temporary_root/template-response.json" skill_refs '[]'
-
-cat >"$temporary_root/agent.json" <<EOF
-{
-  "request_id": "stage2-agent-create",
-  "organization_id": "$organization_id",
-  "actor_principal_id": "$actor_principal_id",
-  "owner_user_id": "$owner_user_id",
-  "name": "Stage 2 Agent",
-  "template_id": "$template_id",
-  "template_revision": 1
-}
-EOF
-request_json POST "$controller_url/internal/agents" \
-  "$temporary_root/agent.json" "$temporary_root/agent-response.json" 202 "$lifecycle_trace_id"
-agent_id=$(json_field "$temporary_root/agent-response.json" agent.agent_id)
-agent_access_subject=$(json_field "$temporary_root/agent-response.json" agent_access_subject)
-wait_operation stage2-agent-create
-read_agent
-assert_json_field "$temporary_root/agent-current.json" lifecycle_state available
-
-ANTNEST_STAGE2_ACP_URL="$acp_url" \
-ANTNEST_STAGE2_AGENT_ACCESS_SUBJECT="$agent_access_subject" \
-ANTNEST_STAGE2_TRACEPARENT="00-${execution_trace_id}-fedcba9876543210-01" \
-ANTNEST_STAGE2_IDENTITY_URL="http://identity-service:8080" \
-ANTNEST_STAGE2_ORGANIZATION_ID="$organization_id" \
-ANTNEST_STAGE2_ACTOR_PRINCIPAL_ID="$actor_principal_id" \
-ANTNEST_STAGE2_OWNER_USER_ID="$owner_user_id" \
-ANTNEST_STAGE2_OWNER_MEMBERSHIP_ID="$owner_membership_id" \
-  docker compose --profile stage2-e2e run --rm --no-deps \
-  -e ANTNEST_STAGE2_ACP_URL \
-  -e ANTNEST_STAGE2_AGENT_ACCESS_SUBJECT \
-  -e ANTNEST_STAGE2_TRACEPARENT \
-  -e ANTNEST_STAGE2_IDENTITY_URL \
-  -e ANTNEST_STAGE2_ORGANIZATION_ID \
-  -e ANTNEST_STAGE2_ACTOR_PRINCIPAL_ID \
-  -e ANTNEST_STAGE2_OWNER_USER_ID \
-  -e ANTNEST_STAGE2_OWNER_MEMBERSHIP_ID \
-  stage2-client node /app/scripts/stage2-acp-client.mjs \
-  >"$temporary_root/acp-evidence.json"
-assert_json_field "$temporary_root/acp-evidence.json" message \
-  'Stage 2 Runtime Tool execution completed.'
-assert_json_field "$temporary_root/acp-evidence.json" access_revalidation_code access_denied
-
-wait_disabled
-workspace="antnest-workspace-${agent_id}"
-workspace_scope=$(docker volume inspect --format '{{index .Labels "io.antnest.runtime-controller-scope"}}' "$workspace")
-workspace_owner=$(docker volume inspect --format '{{index .Labels "io.antnest.agent-id"}}' "$workspace")
-test "$workspace_scope" = "$COMPOSE_PROJECT_NAME"
-test "$workspace_owner" = "$agent_id"
-workspace_evidence=$(docker run --rm --name "${COMPOSE_PROJECT_NAME}-workspace-reader" \
-  --label "io.antnest.runtime-controller-scope=$COMPOSE_PROJECT_NAME" \
-  --network none --read-only --user 1000:1000 --cap-drop ALL \
-  --security-opt no-new-privileges \
-  --mount "type=volume,src=$workspace,dst=/workspace,readonly" \
-  --entrypoint cat "$runtime_image" /workspace/stage2-evidence.txt)
-if [ "$workspace_evidence" != "stage2-runtime-tool-ok" ]; then
-  printf 'Runtime workspace evidence = %s\n' "$workspace_evidence" >&2
-  exit 1
-fi
-
-docker compose --profile stage2-e2e run --rm --no-deps stage2-client \
-  node /app/scripts/stage2-trace-assert.mjs "$jaeger_url" "$lifecycle_trace_id" lifecycle stage2-agent-create "$agent_id"
-docker compose --profile stage2-e2e run --rm --no-deps stage2-client \
-  node /app/scripts/stage2-trace-assert.mjs "$jaeger_url" "$execution_trace_id" execution
-
-request_json POST "$controller_url/internal/agents" \
-  "$temporary_root/agent.json" "$temporary_root/agent-replay-response.json" 202
-assert_json_field "$temporary_root/agent-replay-response.json" agent.agent_id "$agent_id"
-assert_json_field "$temporary_root/agent-replay-response.json" operation.state completed
-assert_json_field "$temporary_root/agent-replay-response.json" agent_access_subject "$agent_access_subject"
-
-cat >"$temporary_root/rejected-agent.json" <<EOF
-{
-  "request_id": "stage2-agent-create-inactive-owner",
-  "organization_id": "$organization_id",
-  "actor_principal_id": "$actor_principal_id",
-  "owner_user_id": "$owner_user_id",
-  "name": "Rejected Stage 2 Agent",
-  "template_id": "$template_id",
-  "template_revision": 1
-}
-EOF
-request_json POST "$controller_url/internal/agents" \
-	"$temporary_root/rejected-agent.json" "$temporary_root/rejected-agent-response.json" 404
-assert_json_field "$temporary_root/rejected-agent-response.json" code reference_not_found
-
-ANTNEST_STAGE2_ACP_URL="$acp_url" \
-ANTNEST_STAGE2_AGENT_ACCESS_SUBJECT="$agent_access_subject" \
-ANTNEST_STAGE2_EXPECTED_UPGRADE_STATUS=403 \
-  docker compose --profile stage2-e2e run --rm --no-deps \
-  -e ANTNEST_STAGE2_ACP_URL \
-  -e ANTNEST_STAGE2_AGENT_ACCESS_SUBJECT \
-  -e ANTNEST_STAGE2_EXPECTED_UPGRADE_STATUS \
-  stage2-client node /app/scripts/stage2-acp-upgrade-status.mjs \
-  >"$temporary_root/acp-rejection-evidence.json"
-assert_json_field "$temporary_root/acp-rejection-evidence.json" upgrade_status 403
-
-cat >"$temporary_root/delete.json" <<EOF
-{"request_id":"stage2-agent-delete","organization_id":"$organization_id","actor_principal_id":"$actor_principal_id"}
-EOF
-request_json POST "$controller_url/internal/agents/${agent_id}/delete" \
-  "$temporary_root/delete.json" "$temporary_root/delete-response.json" 202
-wait_operation stage2-agent-delete
-read_agent
-assert_json_field "$temporary_root/agent-current.json" lifecycle_state deleted
-if docker inspect "antnest-runtime-${agent_id}" >/dev/null 2>&1; then
-  echo "deleted Agent retained its Runtime container" >&2
-  exit 1
-fi
-if docker volume inspect "antnest-workspace-${agent_id}" >/dev/null 2>&1; then
-  echo "deleted Agent retained its workspace volume" >&2
-  exit 1
-fi
-
-echo "Stage 2 Agent lifecycle, ACP Runtime Tool, and Jaeger E2E passed"
+export ANTNEST_STAGE2_RUNTIME_IMAGE
+ANTNEST_STAGE2_RUNTIME_IMAGE=$(docker image inspect --format '{{.Id}}' antnest/antnest-runtime:local)
+compose config --format json | node scripts/verification/execution-deployment.mjs
+compose up -d --wait postgres stage2-model jaeger
+# Reserve fixed management addresses before starting dynamically addressed peers.
+compose up -d --wait runtime-egress
+compose up -d --wait runtime-controller identity-service agent-acp-service
+compose up -d --wait agent-controller
+compose up -d --no-deps --wait admin-console edge-gateway
+# Worker recovery uses an isolated database on this fixture's PostgreSQL instance.
+compose exec -T postgres createdb -U antnest_test_admin -O antnest_agent_controller stage2_workflow_test
+ANTNEST_TEMPORAL_TEST_ADDRESS="127.0.0.1:$ANTNEST_TEMPORAL_HOST_PORT" \
+ANTNEST_AGENT_CONTROLLER_TEST_DATABASE_URL="postgres://antnest_agent_controller:${ANTNEST_AGENT_CONTROLLER_POSTGRES_PASSWORD:-antnest-agent-controller-dev}@127.0.0.1:$ANTNEST_POSTGRES_HOST_PORT/stage2_workflow_test" \
+GOCACHE="$repository_root/.cache/go-build" GOMODCACHE="$repository_root/.cache/go-mod" \
+go test -p=1 -count=1 -timeout=5m ./services/agent-controller/internal/orchestration ./services/agent-controller/internal/repository/postgres \
+  -run '^TestTemporal(CreationSurvivesWorkerReplacement|LifecycleWorkerReplacement|ResumesAfterBusinessCommitBeforeActivityAcknowledgement)$' -v
+compose exec -T postgres dropdb -U antnest_test_admin stage2_workflow_test
+compose exec -T postgres createdb -U antnest_test_admin -O antnest_agent_acp stage2_acp_test
+ANTNEST_ACP_TEST_DATABASE_URL="postgres://antnest_agent_acp:${ANTNEST_AGENT_ACP_POSTGRES_PASSWORD:-antnest-agent-acp-dev}@127.0.0.1:$ANTNEST_POSTGRES_HOST_PORT/stage2_acp_test" \
+npm --prefix services/agent-acp-service run test:postgres
+compose exec -T postgres dropdb -U antnest_test_admin stage2_acp_test
+node services/agent-acp-service/scripts/stage2-boundary-flow.mjs

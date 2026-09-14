@@ -1,5 +1,9 @@
 # ACP 接口与 Goose 差异审查
 
+> 执行边界更新（2026-09-15）：本文件记录此前协议补齐基线，不作为本轮重构验收结果。
+> Controller 逐 Run admission/凭证/finish 已清退；ACP 按本地发布投影执行，最新责任与联调状态以
+> [执行边界方案](../../../docs/controller-acp-execution-boundary-plan.md) 为准；Agent UI 暂缓。
+
 > 日期：2026-09-08
 > 基线：Antnest Platform `9cdd411`；Goose `5e90925`
 > 范围：以稳定 ACP v1 为主线，单列草稿 v2；排除所有客户端 MCP 注入

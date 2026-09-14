@@ -38,6 +38,126 @@ const saveLabel = (workflow: Workflow) => workflow.name === "Model" ? "Save chan
 const savedMessage = (workflow: Workflow) => workflow.name === "Model" ? "Model settings saved." : "Template revision 7 published.";
 type Request = { method: string; path: string; body: string; key: string | null };
 
+it.each(workflows)("supports $name availability separately from configuration revisions", async (workflow) => {
+  let enabled = true;
+  const requests = mockCatalog((request) => {
+    if (request.path === `${workflow.path}/availability` && request.method === "PUT") {
+      expect(JSON.parse(request.body)).toEqual({ expected_enabled: true, enabled: false });
+      enabled = false;
+      return Response.json({ resource_id: workflow.name === "Model" ? model.model_profile_id : template.template_id, enabled, updated_at: model.updated_at });
+    }
+    if (request.path === workflow.path) return Response.json({ ...(workflow.name === "Model" ? model : template), enabled });
+    return undefined;
+  });
+  render(workflow.component);
+  const toggle = await screen.findByRole("switch", { name: `${workflow.name} enabled` });
+  fireEvent.click(toggle);
+  await screen.findByText("Availability change saved.");
+  expect(toggle.getAttribute("aria-checked")).toBe("false");
+  expect(requests.filter((request) => request.method !== "GET").map((request) => request.path)).toEqual([`${workflow.path}/availability`]);
+  expect(requests.filter((request) => request.method === "GET" && request.path === workflow.path)).toHaveLength(2);
+});
+
+it("does not expose availability changes on a historical Template", async () => {
+  mockCatalog(() => undefined);
+  render(workflows[1]!.historical);
+  await screen.findByRole("heading", { name: template.name });
+  expect(screen.queryByRole("switch", { name: "Template enabled" })).toBeNull();
+});
+
+it.each(workflows)("blocks $name editing while an availability refresh is pending", async (workflow) => {
+  let finish!: (response: Response) => void;
+  let reads = 0;
+  mockCatalog((request) => {
+    if (request.path !== workflow.path) return undefined;
+    if (++reads === 1) return Response.json(workflow.name === "Model" ? model : template);
+    return new Promise<Response>((resolve) => { finish = resolve; });
+  });
+  render(workflow.component);
+  fireEvent.click(await screen.findByRole("button", { name: "Refresh current state" }));
+  const edit = screen.getByRole("button", { name: editLabel(workflow) }) as HTMLButtonElement;
+  expect(edit.disabled).toBe(true);
+  await act(async () => finish(Response.json(workflow.result)));
+  await waitFor(() => expect(edit.disabled).toBe(false));
+});
+
+it("retains disabled state after replaying an older successful Template publication", async () => {
+  let current = template;
+  const oldReceipt = { ...template, revision: 2, system_prompt: "Revised instructions" };
+  let first = true;
+  mockCatalog((request) => {
+    if (request.path === "/api/admin/templates/template-1" && request.method === "GET") return Response.json(current);
+    if (request.method === "POST") {
+      if (first) { first = false; current = oldReceipt; throw new Error("Publication response lost"); }
+      return Response.json(oldReceipt, { status: 201 });
+    }
+    if (request.method === "PUT") {
+      current = { ...current, enabled: false };
+      return Response.json({ resource_id: template.template_id, enabled: false, updated_at: template.updated_at });
+    }
+    return undefined;
+  });
+  let dialog = await openRevision(workflows[1]!);
+  fireEvent.click(dialog.getByRole("button", { name: "Publish revision" }));
+  await dialog.findByText("Publication response lost");
+  fireEvent.click(dialog.getByRole("button", { name: "Cancel" }));
+  fireEvent.click(screen.getByRole("switch", { name: "Template enabled" }));
+  await screen.findByText("Availability change saved.");
+  fireEvent.click(screen.getByRole("button", { name: "Create revision" }));
+  dialog = within(await screen.findByRole("dialog"));
+  fireEvent.click(dialog.getByRole("button", { name: "Publish revision" }));
+  await screen.findByText("Template revision 2 published.");
+  await waitFor(() => expect(screen.getByRole("switch", { name: "Template enabled" }).getAttribute("aria-checked")).toBe("false"));
+});
+
+it.each(["Refresh current state", "Refresh connection"])("ignores a Provider %s read completed after collapsing and re-opening its detail", async (refreshLabel) => {
+  let old!: (response: Response) => void;
+  let reads = 0;
+  const connection = { connection_id: "connection-1", provider_key: "support", display_name: "Support provider", base_url: model.model.base_url,
+    credential_method: "api_key", credential_version: "credential-1", credential_revision: 1, enabled: true };
+  mockCatalog((request) => {
+    if (request.path === "/api/admin/provider-connections") return Response.json({ items: [connection] });
+    if (request.path === "/api/admin/provider-connections/connection-1") {
+      if (++reads === 1) return new Promise<Response>((resolve) => { old = resolve; });
+      return Response.json({ ...connection, enabled: false });
+    }
+    return undefined;
+  });
+  render(<ModelsPage />);
+  const expand = await screen.findByRole("button", { name: /Support provider/ });
+  fireEvent.click(expand);
+  fireEvent.click(await screen.findByRole("button", { name: refreshLabel }));
+  fireEvent.click(expand);
+  fireEvent.click(expand);
+  fireEvent.click(await screen.findByRole("button", { name: refreshLabel }));
+  await waitFor(() => expect(screen.getByRole("switch").getAttribute("aria-checked")).toBe("false"));
+  await act(async () => old(Response.json(connection)));
+  expect(screen.getByRole("switch").getAttribute("aria-checked")).toBe("false");
+});
+
+it("changes Provider availability without cascading to its models", async () => {
+  let enabled = true;
+  const connection = () => ({ connection_id: "connection-1", provider_key: "support", display_name: "Support provider", base_url: model.model.base_url,
+    credential_method: "api_key", credential_version: "credential-1", credential_revision: 1, enabled, created_at: model.created_at, updated_at: model.updated_at });
+  const requests = mockCatalog((request) => {
+    if (request.path === "/api/admin/provider-connections") return Response.json({ items: [connection()] });
+    if (request.path === "/api/admin/provider-connections/connection-1") return Response.json(connection());
+    if (request.path === "/api/admin/provider-connections/connection-1/availability") {
+      expect(JSON.parse(request.body)).toEqual({ expected_enabled: true, enabled: false });
+      enabled = false;
+      return Response.json({ resource_id: "connection-1", enabled, updated_at: model.updated_at });
+    }
+    return undefined;
+  });
+  render(<ModelsPage />);
+  fireEvent.click(await screen.findByRole("button", { name: /Support provider/ }));
+  const toggle = await screen.findByRole("switch", { name: "Provider enabled" });
+  fireEvent.click(toggle);
+  await screen.findByText("Availability change saved.");
+  expect(toggle.getAttribute("aria-checked")).toBe("false");
+  expect(requests.filter((request) => request.method !== "GET").map((request) => request.path)).toEqual(["/api/admin/provider-connections/connection-1/availability"]);
+});
+
 it("preserves a stale model draft until an explicit successful reload", async () => {
   let reads = 0;
   const latest: ModelProfile = { ...model, revision: 2, model: { ...model.model, max_output_tokens: 4096,
@@ -265,7 +385,12 @@ describe.each(workflows)("$name revision workflow", (workflow) => {
   it("holds the dialog during publication and presents the returned revision with dismissible feedback", async () => {
     let complete!: (response: Response) => void;
     const publication = new Promise<Response>((resolve) => { complete = resolve; });
-    const requests = mockCatalog((request) => request.method === "POST" ? publication : undefined);
+    let published = false;
+    const requests = mockCatalog((request) => {
+      if (request.method === "POST") return publication;
+      if (published && request.path === workflow.path) return Response.json(workflow.result);
+      return undefined;
+    });
     const dialog = await openRevision(workflow);
     const submit = dialog.getByRole("button", { name: saveLabel(workflow) }) as HTMLButtonElement;
     fireEvent.click(submit);
@@ -276,7 +401,7 @@ describe.each(workflows)("$name revision workflow", (workflow) => {
     fireEvent.click(submit);
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
     expect(screen.getByRole("dialog")).toBeTruthy();
-    await act(async () => { complete(Response.json(workflow.result, { status: 201 })); });
+    await act(async () => { published = true; complete(Response.json(workflow.result, { status: 201 })); });
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(screen.getByText(savedMessage(workflow))).toBeTruthy();
     if (workflow.name === "Template") expect(screen.getByText("7")).toBeTruthy();
@@ -320,6 +445,7 @@ it("keeps a published Template and its acknowledgement when its referenced Model
       published = true;
       return Response.json({ ...template, revision: 2, model_profile_id: revisedModel.model_profile_id, system_prompt: "Revised instructions" }, { status: 201 });
     }
+    if (published && request.path === "/api/admin/templates/template-1") return Response.json({ ...template, revision: 2, system_prompt: "Revised instructions" });
     if (request.path === "/api/admin/model-profiles") return Response.json({ items: [revisedModel] });
     if (request.path === "/api/admin/model-profiles/model-1" && published) {
       return ++attempts === 1 ? Response.json({ message: "Model revision unavailable" }, { status: 503 }) : Response.json(revisedModel);
@@ -337,8 +463,32 @@ it("keeps a published Template and its acknowledgement when its referenced Model
   expect((await screen.findByRole("link", { name: "Support model · support · revision 2" })).getAttribute("href"))
     .toBe("#models/model-1");
   expect(requests.filter((request) => request.method === "POST")).toHaveLength(1);
-  expect(requests.filter((request) => request.path === "/api/admin/templates/template-1")).toHaveLength(1);
+  expect(requests.filter((request) => request.path === "/api/admin/templates/template-1")).toHaveLength(2);
   expect(screen.getByText("Template revision 2 published.")).toBeTruthy();
+});
+
+it("keeps publication success when current head refresh fails and retries only GET", async () => {
+  let published = false;
+  let retry = false;
+  const requests = mockCatalog((request) => {
+    if (request.method === "POST") { published = true; return Response.json({ ...template, revision: 2 }, { status: 201 }); }
+    if (published && request.path === "/api/admin/templates/template-1") {
+      return retry ? Response.json({ ...template, revision: 2, enabled: false }) : Response.json({ message: "Head unavailable" }, { status: 503 });
+    }
+    return undefined;
+  });
+  const dialog = await openRevision(workflows[1]!);
+  fireEvent.click(dialog.getByRole("button", { name: "Publish revision" }));
+  await screen.findByText(/Published, but current template could not be refreshed/);
+  expect(screen.getByText("Template revision 2 published.")).toBeTruthy();
+  expect((screen.getByRole("switch") as HTMLButtonElement).disabled).toBe(true);
+  expect((screen.getByRole("button", { name: "Create revision" }) as HTMLButtonElement).disabled).toBe(true);
+  retry = true;
+  fireEvent.click(screen.getByRole("button", { name: "Refresh published template" }));
+  await waitFor(() => expect((screen.getByRole("switch") as HTMLButtonElement).disabled).toBe(false));
+  expect(screen.getByRole("switch").getAttribute("aria-checked")).toBe("false");
+  expect(requests.filter((request) => request.method === "POST")).toHaveLength(1);
+  expect(requests.filter((request) => request.path === "/api/admin/templates/template-1")).toHaveLength(3);
 });
 
 it("reads a current model without querying historical revisions", async () => {

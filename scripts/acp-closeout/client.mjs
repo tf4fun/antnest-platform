@@ -190,7 +190,7 @@ async function isolation(version, agent, session, ownerClient) {
     await until(
       async () =>
         (await admin.request(`/api/admin/agents/${ownedAgent}`))
-          .lifecycle_state === "disabled",
+          .activation_state === "disabled",
       "owner offboarding settled",
       120000,
     );

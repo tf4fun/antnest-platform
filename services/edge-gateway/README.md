@@ -14,11 +14,11 @@ Implemented for Stage 3A. The canonical cross-service behavior is
 - public HTTP listener and route policy;
 - browser cookie and CSRF policy;
 - access-token resolution and administrator admission;
-- browser-safe Agent workspace bootstrap and per-Agent access admission;
+- metadata-only Agent workspace discovery; ACP owns per-Agent access decisions;
 - authenticated workspace state snapshots/subscriptions with bounded leases;
 - same-origin Agent UI and ACP v1/v2 WebSocket routing with per-message browser
   session revalidation;
-- ACP v1 Streamable HTTP routing with per-request session and Agent admission;
+- ACP v1 Streamable HTTP routing with per-request browser authentication;
 - trusted principal headers, security headers, request limits, and tracing;
 - browser OIDC discovery/start/callback and transparent SCIM protocol ingress;
 - proxy availability and external error projection.
@@ -35,9 +35,9 @@ Implemented for Stage 3A. The canonical cross-service behavior is
 
 - Identity Service for login, token resolution, and token revocation;
 - Admin Console for the application and `/api/admin/*` BFF;
-- Agent Controller for the principal-scoped workspace Agent projection;
+- Agent Controller for the principal-scoped ID/name discovery list only;
 - Agent UI for `/workspace/*` static application routes;
-- Agent ACP Service for admitted `/api/app/agents/{agent_id}/v1/acp` (stable)
+- Agent ACP Service for execution-state reads/watches and authenticated `/api/app/agents/{agent_id}/v1/acp` (stable)
   and `/api/app/agents/{agent_id}/v2/acp` (draft) WebSockets; the Workspace
   `/api/app/agents/{agent_id}/acp` alias retains v1 behavior;
 - OTLP collector when observability is enabled.
@@ -45,9 +45,9 @@ Implemented for Stage 3A. The canonical cross-service behavior is
 ## Interfaces
 
 Current availability and active Session observation are documented in
-[Workspace state](docs/workspace-state.md). Gateway consumes Controller state;
-Agent UI consumption and Docker integration are implemented; complete C4
-interactive acceptance remains open. State observation
+[Workspace state](docs/workspace-state.md). Gateway consumes ACP state.
+This execution-boundary change still requires B4/B4U consumers and B5 integration;
+see [delivery boundary](docs/execution-boundary.md). State observation
 does not introduce another conversation API or replace ACP Session operations.
 
 See [`../../contracts/edge-gateway/session-contract.json`](../../contracts/edge-gateway/session-contract.json).
@@ -94,14 +94,14 @@ CSRF for writes. WebSocket continues to require Origin. No new login or bearer
 API is introduced by this transport change.
 
 Only Content-Type, Accept, Acp-Connection-Id and Acp-Session-Id are forwarded
-from the client. Gateway injects the authoritative Agent access subject and
+from the client. Gateway injects trusted Organization/Principal/Agent identity and
 trace context; cookies, authorization and forged internal headers never reach
 ACP Service. Responses preserve ACP routing headers and SSE is flushed without
 buffering. POST/DELETE admission uses the message limit, separate from long-lived
 GET/WebSocket connections, so an open receive stream does not block cancel.
 
-Each new HTTP request revalidates the original identity and current Agent
-access. As with WebSocket, already admitted work can finish and deliver output
-on an existing receiver; there is no idle authorization polling or automatic
-Run cancellation. Closing the receiver cancels its upstream HTTP request, not
+Each new HTTP request revalidates browser identity; ACP authorizes the Agent
+and Session locally. Controller discovery is not a protocol prerequisite.
+Gateway does not poll idle connections or translate disconnect into Run
+cancellation. ACP owns access updates and output subscription revocation. Closing the receiver cancels its upstream HTTP request, not
 the durable Run. ACP Service owns reconnect/load and connection expiry.

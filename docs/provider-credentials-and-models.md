@@ -1,5 +1,12 @@
 # Provider 凭证与模型分离
 
+> 2026-09-14 后续设计以 [Controller 与 ACP 执行边界重构方案](controller-acp-execution-boundary-plan.md) 为准。
+> Controller 同步执行配置和当前凭证；ACP 本地准入、保存 Session 与执行审计，不再反查 Controller 申请/结束 Run。
+> Run 不绑定认证版本；不保证旧 Run 续跑；当前模板/现役 Agent 引用解除前不得禁用 Provider/model。
+> [Provider 客户端旧候选](provider-client-lifecycle-plan.md)已经被替代。
+> 下文保留已实现管理端与旧执行消费的基线，涉及 Controller 准入、凭证回查和补报的内容均待新方案替换，
+> 不代表新消费链路已经实现或验收。Console builtin 目录与 Controller 管理数据的所有权保持不变。
+
 > 日期：2026-09-11。
 > 状态：P0/P1、P2 Controller 执行消费、Console 连接管理与模板引用已实现。
 > 创建连接及初始模型的 Console 浏览器与跨服务复验已获人工确认；模板创建复验待确认，ACP 消费未完成。

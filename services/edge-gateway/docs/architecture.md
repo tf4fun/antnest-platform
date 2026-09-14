@@ -56,21 +56,22 @@ HTTP limits/security headers
   -> cookie token resolution (protected routes)
   -> route-specific admission
        -> administrator + CSRF -> Admin Console
-       -> Agent access -> Agent ACP Service
-      -> authenticated bootstrap -> browser-safe JSON
-       -> scoped state observation -> Agent Controller snapshot/watch
+       -> trusted identity -> Agent ACP Service local authorization
+       -> authenticated bootstrap -> Controller ID/name metadata
+       -> scoped state observation -> Agent ACP snapshot/watch
   -> Admin Console or Agent UI application proxy
 ```
 
 Login and logout call Identity Service directly because the Gateway owns the
 browser credential boundary. Every administrative command goes to Admin
-Console. Workspace bootstrap and ACP admission call Agent Controller's narrow
-principal-scoped projection; Gateway never calls Runtime Controller or reads a
+Console. Only workspace discovery calls Agent Controller's principal-scoped
+ID/name list. ACP protocol and execution-state traffic goes directly to ACP,
+without Controller lookups. Gateway never calls Runtime Controller or reads a
 service database.
 
 [Workspace state observation](workspace-state.md) is a separate leased GET/SSE
-projection of that same authority. Scope comes from the original browser
-principal, never from URL query fields. Typed Controller frames are bounded and
+projection of ACP execution authority. Scope comes from the original browser
+principal, never from URL query fields. Typed ACP frames are bounded and
 re-encoded, with Identity revalidation before subsequent frames. Access loss,
 transport failure or lease expiry ends observation without replaying or
 cancelling ACP work. No private Run protocol or state cache is added. The
@@ -92,18 +93,20 @@ browser cookies and untrusted principal headers. Identity continues to own
 token verification, scopes, SCIM semantics, and canonical error envelopes.
 
 `GET /api/app/bootstrap` returns principal display facts and accessible Agent
-IDs, names, and availability only. During a same-origin WebSocket upgrade at
+IDs and names only. During a same-origin WebSocket upgrade at
 `/api/app/agents/{agent_id}/v1/acp` (stable) or
-`/api/app/agents/{agent_id}/v2/acp` (draft), Edge resolves the selected Agent again and
-injects its opaque access subject into the upstream request. Incoming cookies,
-authorization, and forged access-subject headers are not forwarded. The Agent
+`/api/app/agents/{agent_id}/v2/acp` (draft), Edge injects authenticated
+Organization/Principal and the route Agent ID. ACP owns Agent and Session
+authorization, including unavailable targets and protocol errors. Incoming
+cookies, authorization and forged internal identity headers are not forwarded.
+The Agent
 UI application is served under `/workspace/` with that prefix stripped before
 the internal static-service request.
 
 The existing `/api/app/agents/{agent_id}/acp` Workspace route remains a v1
 alias. Versions are an explicit route allowlist, not arbitrary upstream paths;
 unknown versions return `404`. Both versions use identical upgrade admission,
-Origin checks and subject injection. Edge does not translate ACP messages or
+Origin checks and trusted identity injection. Edge does not translate ACP messages or
 infer the version from their content.
 
 After upgrade, a message relay replaces blind byte copying. Each complete
@@ -136,11 +139,11 @@ ACP retains responsibility for Agent access revision, Session ownership and
 durable Run behavior; it does not receive browser credentials.
 
 The v1 route and its alias also accept POST/GET/DELETE Streamable HTTP through
-an opaque reverse proxy. Each request repeats cookie and Agent admission;
+an opaque reverse proxy. Each request repeats browser authentication; ACP owns resource authorization;
 POST/DELETE also enforce the existing CSRF policy. A supplied Origin must match;
 HTTP clients without Origin are allowed only with the same authentication and
 CSRF requirements. Only the four documented ACP/content headers are forwarded,
-with authoritative subject and trace context injected by Edge.
+with trusted identity and trace context injected by Edge.
 
 GET SSE responses are flushed immediately and live until disconnect or upstream
 closure, not an ordinary short request timeout. They consume receive-connection

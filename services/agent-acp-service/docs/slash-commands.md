@@ -27,15 +27,15 @@ existing controls. This service batch does not change the UI or other services.
    task text or files. Content capability and resource validation still apply.
 4. Commands use normal Session authorization, admission, active-Run exclusion,
    cancellation, worker ownership, deadline and terminalization. `/help` is not
-   an unauthenticated or disabled-Agent escape hatch. Controller admission is
-   still required; help is not a diagnostic fallback for unavailable Controller.
+   an unauthenticated or disabled-Agent escape hatch. ACP checks the locally
+   applied execution projection; no Controller Run admission is requested.
 5. Carry the recognized command in the in-process accepted Run only. Its source
    of truth is the persisted prompt; no extra durable command discriminator is
    necessary. Existing interrupted-Run recovery never silently reruns commands.
 6. Before model context preparation, execute the deterministic help handler.
    Do not resolve Provider credentials, read Runtime information, discover/call
    MCP tools, invoke a model or fabricate token usage. Persist its answer through
-   the normal message event path, then finish locally and close admission.
+   the normal message event path, then finish and release ACP's local execution ownership.
    Event persistence failures retain existing recovery semantics.
 
 ## Notifications And Recovery

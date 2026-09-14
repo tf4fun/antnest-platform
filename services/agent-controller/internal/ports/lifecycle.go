@@ -2,7 +2,6 @@ package ports
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
@@ -19,30 +18,26 @@ const (
 	NetworkReleaseQuarantined       = "quarantined"
 	NetworkReleaseAuthoritativeNone = "authoritative_absent"
 
-	RunReleaseOutcomeReleased   = "released"
-	RunReleaseOutcomeNotBlocked = "not_blocked"
-	RunReleaseOutcomeRetained   = "retained_source_not_runtime_mcp"
-
-	EventAgentCreateRequested      = "agent_create_requested"
-	EventAgentReady                = "agent_ready"
-	EventAgentBuildFailed          = "agent_build_failed"
-	EventAgentRebuildRequested     = "agent_rebuild_requested"
-	EventAgentRebuilt              = "agent_rebuilt"
-	EventAgentDisableRequested     = "agent_disable_requested"
-	EventAgentDisabled             = "agent_disabled"
-	EventAgentDisableFailed        = "agent_disable_failed"
-	EventAgentEnableRequested      = "agent_enable_requested"
-	EventAgentEnabled              = "agent_enabled"
-	EventAgentEnableFailed         = "agent_enable_failed"
-	EventAgentDeleteRequested      = "agent_delete_requested"
-	EventAgentDeleted              = "agent_deleted"
-	EventAgentLifecycleQuarantined = "agent_lifecycle_quarantined"
-	EventAgentRuntimeRestarted     = "agent_runtime_restarted"
-	EventAgentRuntimeMissing       = "agent_runtime_missing"
-	EventAgentOwnerRevoked         = "agent_owner_revoked"
+	EventAgentCreateRequested         = "agent_create_requested"
+	EventAgentReady                   = "agent_ready"
+	EventAgentCreated                 = "agent_created"
+	EventAgentBuildFailed             = "agent_build_failed"
+	EventAgentRebuildRequested        = "agent_rebuild_requested"
+	EventAgentRebuilt                 = "agent_rebuilt"
+	EventAgentDisableRequested        = "agent_disable_requested"
+	EventAgentDisabled                = "agent_disabled"
+	EventAgentDisableFailed           = "agent_disable_failed"
+	EventAgentEnableRequested         = "agent_enable_requested"
+	EventAgentEnabled                 = "agent_enabled"
+	EventAgentEnableFailed            = "agent_enable_failed"
+	EventAgentDeleteRequested         = "agent_delete_requested"
+	EventAgentDeleted                 = "agent_deleted"
+	EventAgentLifecycleQuarantined    = "agent_lifecycle_quarantined"
+	EventAgentRuntimeRestarted        = "agent_runtime_restarted"
+	EventAgentRuntimeMissing          = "agent_runtime_missing"
+	EventAgentRuntimeConditionChanged = "agent_runtime_condition_changed"
+	EventAgentOwnerRevoked            = "agent_owner_revoked"
 )
-
-var ErrRunAdmissionRuntimeMismatch = errors.New("run admission Runtime does not match lifecycle barrier")
 
 type AgentSpecSource interface {
 	GetTemplateRevision(context.Context, string, int64) (domain.TemplateRevision, error)
@@ -82,12 +77,16 @@ type RuntimeOperation struct {
 }
 
 type RuntimeInspection struct {
-	AgentID            string `json:"agent_id"`
-	RuntimeRevision    string `json:"runtime_revision"`
-	RuntimeExecutionID string `json:"runtime_execution_id,omitempty"`
-	MCPEndpoint        string `json:"mcp_endpoint,omitempty"`
-	LifecycleState     string `json:"lifecycle_state"`
-	Health             string `json:"health"`
+	Phase              string    `json:"phase"`
+	Reason             string    `json:"reason,omitempty"`
+	DiagnosticSummary  string    `json:"diagnostic_summary,omitempty"`
+	ObservedAt         time.Time `json:"observed_at"`
+	AgentID            string    `json:"agent_id"`
+	RuntimeRevision    string    `json:"runtime_revision"`
+	RuntimeExecutionID string    `json:"runtime_execution_id,omitempty"`
+	MCPEndpoint        string    `json:"mcp_endpoint,omitempty"`
+	LifecycleState     string    `json:"lifecycle_state"`
+	Health             string    `json:"health"`
 }
 
 type RuntimeAbsenceProof struct {
@@ -126,6 +125,11 @@ func (failure *DependencyError) Error() string {
 }
 
 type AgentRecord struct {
+	ActivationState                   domain.ActivationState
+	RuntimeState                      domain.RuntimeState
+	RuntimeReason                     string
+	RuntimeDetail                     string
+	RuntimeObservedAt                 *time.Time
 	AgentID                           string
 	OrganizationID                    string
 	OwnerUserID                       string
@@ -154,20 +158,30 @@ func (record AgentRecord) IdentityRevoked() bool {
 	return record.IdentityRevocationSequence > record.OwnerAuthorizationSequence
 }
 
+func (record AgentRecord) Status() domain.AgentStatus {
+	return domain.AgentStatus{Lifecycle: record.LifecycleState, Activation: record.ActivationState, Runtime: record.RuntimeState}
+}
+
+// ExecutionReady is the Agent-local prerequisite; model availability is separate.
+func (record AgentRecord) ExecutionReady() bool {
+	return record.Status().RuntimeReady() && record.DesiredState == domain.DesiredEnabled &&
+		!record.IdentityRevoked() && record.OwnerUserID != "" && record.ActiveOperationRequestID == "" &&
+		record.AgentSpecRevisionID != "" && record.ExecutionRevisionID != "" &&
+		record.RuntimeRevision != "" && record.RuntimeExecutionID != "" && record.RuntimeMCPEndpoint != ""
+}
+
 func (record AgentRecord) AllowsDisableRequest() bool {
 	return record.DesiredState == domain.DesiredEnabled ||
 		(record.DesiredState == domain.DesiredDisabled && record.IdentityRevoked())
 }
 
 type AgentAccessRecord struct {
-	AccessSubject      string
-	AgentID            string
-	PrincipalID        string
-	AccessRevision     string
-	PromptCapabilities PromptCapabilities
-	Active             bool
-	CreatedAt          time.Time
-	UpdatedAt          time.Time
+	AgentID        string
+	PrincipalID    string
+	AccessRevision string
+	Active         bool
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 }
 
 type AgentSpecRecord struct {
@@ -180,6 +194,8 @@ type AgentSpecRecord struct {
 }
 
 type LifecycleOperationRecord struct {
+	DrainDeadlineAt           *time.Time
+	SettlementOutcome         string
 	OwnerRevocationSequence   int64
 	RequestID                 string
 	RequestFingerprint        string
@@ -213,7 +229,6 @@ type AgentEventRecord struct {
 	SchemaVersion      int
 	EventType          string
 	OperationRequestID string
-	AdmissionID        string
 	TraceID            string
 	Data               map[string]any
 	OccurredAt         time.Time
@@ -241,34 +256,31 @@ type AgentCreateState struct {
 
 type AgentLifecycleBase struct {
 	Agent                 AgentRecord
-	ExecutableSpec        AgentSpecRecord
-	ExecutableExecution   ExecutionRecord
-	RecoverySource        *AgentExecutionSource
+	ConfiguredSpec        AgentSpecRecord
+	SourceExecution       ExecutionRecord
 	NextSpecRevision      int64
 	NextExecutionRevision int64
 }
 
-// AgentExecutionSource is immutable lineage, not permission to execute a Run.
-type AgentExecutionSource struct {
+// AgentRuntimeSource is immutable lineage, not permission to execute a Run.
+type AgentRuntimeSource struct {
 	Spec      AgentSpecRecord
 	Execution ExecutionRecord
 }
 
 type AgentRebuildState struct {
-	Agent             AgentRecord
-	SourceSpec        AgentSpecRecord
-	SourceExecution   ExecutionRecord
-	TargetSpec        AgentSpecRecord
-	Operation         LifecycleOperationRecord
-	RunReleaseOutcome string
+	Agent           AgentRecord
+	SourceSpec      AgentSpecRecord
+	SourceExecution ExecutionRecord
+	TargetSpec      AgentSpecRecord
+	Operation       LifecycleOperationRecord
 }
 
 type AgentDisableState struct {
-	Agent             AgentRecord
-	SourceSpec        AgentSpecRecord
-	SourceExecution   ExecutionRecord
-	Operation         LifecycleOperationRecord
-	RunReleaseOutcome string
+	Agent           AgentRecord
+	SourceSpec      AgentSpecRecord
+	SourceExecution ExecutionRecord
+	Operation       LifecycleOperationRecord
 }
 
 type AgentEnableBase struct {
@@ -290,9 +302,8 @@ type AgentDeleteBase struct {
 }
 
 type AgentDeleteState struct {
-	Agent             AgentRecord
-	Operation         LifecycleOperationRecord
-	RunReleaseOutcome string
+	Agent     AgentRecord
+	Operation LifecycleOperationRecord
 }
 
 type BeginAgentCreate struct {
@@ -307,8 +318,7 @@ type PublishAgentCreate struct {
 	RequestID         string
 	Fingerprint       string
 	NetworkAttachment NetworkAttachment
-	Execution         ExecutionRecord
-	ReadyEvent        AgentEventRecord
+	CreatedEvent      AgentEventRecord
 	Now               time.Time
 }
 
@@ -343,25 +353,21 @@ type AdvanceAgentRebuild struct {
 	NextChildRequestID string
 	NetworkAttachment  *NetworkAttachment
 	RuntimeResult      *RuntimeOperation
-	RunReleaseEvent    RunAdmissionEvent
 	Now                time.Time
 }
 
 // LifecycleAdvanceResult contains mutable projections only, not execution snapshots.
 type LifecycleAdvanceResult struct {
-	Agent             AgentRecord
-	Operation         LifecycleOperationRecord
-	RunReleaseOutcome string
+	Agent     AgentRecord
+	Operation LifecycleOperationRecord
 }
 
 type PublishAgentRebuild struct {
-	RequestID          string
-	Fingerprint        string
-	AccessRevision     string
-	PromptCapabilities PromptCapabilities
-	Execution          ExecutionRecord
-	RebuiltEvent       AgentEventRecord
-	Now                time.Time
+	RequestID      string
+	Fingerprint    string
+	AccessRevision string
+	RebuiltEvent   AgentEventRecord
+	Now            time.Time
 }
 
 type FailAgentRebuild struct {
@@ -374,7 +380,6 @@ type FailAgentRebuild struct {
 	Retryable                 bool
 	PreserveExecutable        bool
 	RuntimeAbsenceProof       *RuntimeAbsenceProof
-	RunReleaseEvent           RunAdmissionEvent
 	FailedEvent               AgentEventRecord
 	Now                       time.Time
 }
@@ -398,7 +403,6 @@ type AdvanceAgentDisable struct {
 	NextChildRequestID string
 	NetworkAttachment  *NetworkAttachment
 	RuntimeResult      *RuntimeOperation
-	RunReleaseEvent    RunAdmissionEvent
 	Now                time.Time
 }
 
@@ -419,7 +423,6 @@ type FailAgentDisable struct {
 	PreserveExecutable        bool
 	SourceRuntimeInspection   *RuntimeInspection
 	RuntimeAbsenceProof       *RuntimeAbsenceProof
-	RunReleaseEvent           RunAdmissionEvent
 	FailedEvent               AgentEventRecord
 	Now                       time.Time
 }
@@ -450,7 +453,6 @@ type AdvanceAgentEnable struct {
 type PublishAgentEnable struct {
 	RequestID    string
 	Fingerprint  string
-	Execution    ExecutionRecord
 	EnabledEvent AgentEventRecord
 	Now          time.Time
 }
@@ -487,7 +489,6 @@ type AdvanceAgentDelete struct {
 	NextChildRequestID        string
 	NetworkAttachment         *NetworkAttachment
 	RuntimeResult             *RuntimeOperation
-	RunReleaseEvent           RunAdmissionEvent
 	NetworkReleaseOutcome     string
 	Now                       time.Time
 }
@@ -500,6 +501,7 @@ type PublishAgentDelete struct {
 }
 
 type LifecycleStore interface {
+	ConfirmLifecycleDrain(context.Context, ConfirmLifecycleDrain) (LifecycleOperationRecord, error)
 	QuarantineLifecycleOperation(context.Context, QuarantineLifecycleOperation) error
 	GetLifecycleOperation(context.Context, string) (LifecycleOperationRecord, error)
 	GetAgentLifecycleBase(context.Context, string) (AgentLifecycleBase, error)
@@ -511,13 +513,11 @@ type LifecycleStore interface {
 	FailAgentCreate(context.Context, FailAgentCreate) (AgentCreateState, error)
 	ReplayAgentRebuild(context.Context, string, string) (AgentRebuildState, bool, error)
 	BeginAgentRebuild(context.Context, BeginAgentRebuild) (AgentRebuildState, bool, error)
-	SettleAgentRebuildDrain(context.Context, string, string, string, time.Time) (AgentRebuildState, error)
 	AdvanceAgentRebuild(context.Context, AdvanceAgentRebuild) (LifecycleAdvanceResult, error)
 	PublishAgentRebuild(context.Context, PublishAgentRebuild) (AgentRebuildState, error)
 	FailAgentRebuild(context.Context, FailAgentRebuild) (AgentRebuildState, error)
 	ReplayAgentDisable(context.Context, string, string) (AgentDisableState, bool, error)
 	BeginAgentDisable(context.Context, BeginAgentDisable) (AgentDisableState, bool, error)
-	SettleAgentDisableDrain(context.Context, string, string, string, time.Time) (AgentDisableState, error)
 	AdvanceAgentDisable(context.Context, AdvanceAgentDisable) (AgentDisableState, error)
 	PublishAgentDisable(context.Context, PublishAgentDisable) (AgentDisableState, error)
 	FailAgentDisable(context.Context, FailAgentDisable) (AgentDisableState, error)
@@ -530,7 +530,6 @@ type LifecycleStore interface {
 	GetAgentDeleteBase(context.Context, string) (AgentDeleteBase, error)
 	ReplayAgentDelete(context.Context, string, string) (AgentDeleteState, bool, error)
 	BeginAgentDelete(context.Context, BeginAgentDelete) (AgentDeleteState, bool, error)
-	SettleAgentDeleteDrain(context.Context, string, string, string, time.Time) (AgentDeleteState, error)
 	AdvanceAgentDelete(context.Context, AdvanceAgentDelete) (AgentDeleteState, error)
 	PublishAgentDelete(context.Context, PublishAgentDelete) (AgentDeleteState, error)
 }

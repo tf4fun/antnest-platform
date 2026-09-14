@@ -18,6 +18,18 @@ second source of truth.
 
 ## Status
 
+The execution-boundary B4 batch adds direct ACP audit reads, an independent
+Execution history page and a separate Controller synchronization read. See
+[Execution audit](docs/execution-audit.md). Original input, execution snapshots,
+Tool events and permission records remain accessible for deleted Agents without
+a Controller detail lookup. The history page has independent pagination and
+refresh for execution and permission records, plus desktop/mobile browser tests.
+Provider, Model and current Template details now expose availability controls and
+Controller reference conflicts. Configuration pages separately show delivery
+pending, acknowledged or unknown; an acknowledgement is not Agent readiness.
+See [Catalog availability](docs/catalog-availability.md). The service-local
+implementation still requires the combined Gateway/Controller/ACP B5 acceptance.
+
 Implemented for Stage 3A, including Directory administration, enterprise
 OIDC/SCIM provisioning, release-managed model provider presets, and
 organization-scoped Model Profile and Template detail/revision management.
@@ -251,6 +263,7 @@ leftover containers or volumes.
   and local-credential capability reads, and self-service local password
   changes;
 - Agent Controller for catalog, Agent lifecycle, projections, and events;
+- ACP for organization-scoped execution audit, independently of live Agent projections;
 - OTLP collector when observability is enabled.
 
 ## Interfaces

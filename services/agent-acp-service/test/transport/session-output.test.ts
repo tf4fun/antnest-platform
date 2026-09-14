@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { binding } from "../support/fixtures.js";
 import { SessionOutputStreams } from "../../src/transport/acp/session-output.js";
 import type { SessionEvent, SessionOutputSnapshot } from "../../src/ports/acp-application.js";
 
@@ -23,6 +24,7 @@ describe("Session output delivery", () => {
         Promise.resolve({ sequence: rows.length, events: rows.slice(cursor), state: idle }),
       );
     const input = {
+      identity: binding(),
       key: "s",
       connectionId: "c",
       read,
@@ -59,6 +61,7 @@ describe("Session output delivery", () => {
         Promise.resolve({ sequence: rows.length, events: rows.slice(cursor), state: idle }),
       );
     const input = {
+      identity: binding(),
       key: "s",
       connectionId: "c",
       read,
@@ -91,6 +94,7 @@ describe("Session output delivery", () => {
       Promise.resolve({ sequence: 2, events: rows.slice(cursor), state: idle }),
     );
     const input = {
+      identity: binding(),
       key: "s",
       connectionId: "c",
       read,
@@ -126,6 +130,7 @@ describe("Session output delivery", () => {
       .mockImplementationOnce(() => blocked.promise)
       .mockResolvedValue({ sequence: 2, events: [], state: idle });
     const input = {
+      identity: binding(),
       key: "s",
       connectionId: "c",
       read,
@@ -154,6 +159,7 @@ describe("Session output delivery", () => {
     const rows: SessionEvent[] = [];
     const send = vi.fn<(event: SessionEvent) => Promise<void>>(() => Promise.resolve());
     await streams.attach({
+      identity: binding(),
       key: "s",
       connectionId: "c",
       afterSequence: 0,
@@ -199,6 +205,7 @@ describe("Session output delivery", () => {
     const send = vi.fn<(event: SessionEvent) => Promise<void>>(() => Promise.resolve());
     const failed = vi.fn();
     await streams.attach({
+      identity: binding(),
       key: "principal-a/session",
       connectionId: "a",
       read,
@@ -227,6 +234,7 @@ describe("Session output delivery", () => {
     const streams = new SessionOutputStreams();
     try {
       const attached = streams.attach({
+        identity: binding(),
         key: "s",
         connectionId: "slow",
         afterSequence: 0,
@@ -257,6 +265,7 @@ describe("Session output delivery", () => {
     let snapshot: SessionOutputSnapshot = { sequence: 0, events: [], state: idle };
     const order: string[] = [];
     await streams.attach({
+      identity: binding(),
       key: "owner/session",
       connectionId: "c1",
       afterSequence: 0,
@@ -298,6 +307,7 @@ describe("Session output delivery", () => {
       }),
     );
     await streams.attach({
+      identity: binding(),
       key: "s",
       connectionId: "new",
       afterSequence: 1,
@@ -323,6 +333,7 @@ describe("Session output delivery", () => {
       .mockResolvedValue({ sequence: 2, events: [message("done")], state: idle });
     const send = vi.fn<(event: SessionEvent) => Promise<void>>(() => Promise.resolve());
     const attaching = streams.attach({
+      identity: binding(),
       key: "s",
       connectionId: "c",
       afterSequence: 0,
@@ -352,6 +363,7 @@ describe("Session output delivery", () => {
     const controller = new AbortController();
     const entered = Promise.withResolvers<void>();
     const attaching = streams.attach({
+      identity: binding(),
       key: "s",
       connectionId: "old",
       afterSequence: 0,
@@ -369,6 +381,7 @@ describe("Session output delivery", () => {
     await streams.flush("s");
     const send = vi.fn();
     await streams.attach({
+      identity: binding(),
       key: "s",
       connectionId: "new",
       afterSequence: 0,

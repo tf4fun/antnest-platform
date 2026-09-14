@@ -1,13 +1,16 @@
 const DEFAULT_MAX_PAYLOAD_BYTES = 16 * 1024 * 1024;
 const MAX_PAYLOAD_BYTES = 64 * 1024 * 1024;
+export const DEFAULT_STATE_DELIVERY_TIMEOUT_MS = 10_000;
 
 export type AgentAcpConfig = {
   listen: { host: string; port: number };
   databaseUrl: string;
-  agentControllerUrl: URL;
+  databaseTimeoutMs: number;
+  stateDeliveryTimeoutMs: number;
   clientMcpKey: Buffer;
-  controllerTimeoutMs: number;
+  runTimeoutMs: number;
   maxWebSocketPayloadBytes: number;
+  maxConfigurationBytes: number;
   shutdownTimeoutMs: number;
   telemetry: {
     captureRpcContent?: boolean;
@@ -33,18 +36,28 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AgentA
   return {
     listen: parseListen(environment.ANTNEST_ACP_LISTEN ?? ":8080"),
     databaseUrl,
-    agentControllerUrl: normalizedHttpUrl(
-      required(environment, "ANTNEST_AGENT_CONTROLLER_URL"),
-      "ANTNEST_AGENT_CONTROLLER_URL",
+    databaseTimeoutMs: parseDuration(
+      environment.ANTNEST_ACP_DATABASE_TIMEOUT ?? "10s",
+      "ANTNEST_ACP_DATABASE_TIMEOUT",
+    ),
+    stateDeliveryTimeoutMs: parseDuration(
+      environment.ANTNEST_ACP_STATE_DELIVERY_TIMEOUT ?? `${DEFAULT_STATE_DELIVERY_TIMEOUT_MS}ms`,
+      "ANTNEST_ACP_STATE_DELIVERY_TIMEOUT",
     ),
     clientMcpKey: parseEncryptionKey(required(environment, "ANTNEST_ACP_CLIENT_MCP_KEY")),
-    controllerTimeoutMs: parseDuration(
-      environment.ANTNEST_ACP_CONTROLLER_TIMEOUT ?? "5s",
-      "ANTNEST_ACP_CONTROLLER_TIMEOUT",
+    runTimeoutMs: parseDuration(
+      environment.ANTNEST_ACP_RUN_TIMEOUT ?? "30m",
+      "ANTNEST_ACP_RUN_TIMEOUT",
     ),
     maxWebSocketPayloadBytes: parseInteger(
       environment.ANTNEST_ACP_MAX_PROMPT_BYTES ?? String(DEFAULT_MAX_PAYLOAD_BYTES),
       "ANTNEST_ACP_MAX_PROMPT_BYTES",
+      1_024,
+      MAX_PAYLOAD_BYTES,
+    ),
+    maxConfigurationBytes: parseInteger(
+      environment.ANTNEST_ACP_MAX_CONFIGURATION_BYTES ?? String(DEFAULT_MAX_PAYLOAD_BYTES),
+      "ANTNEST_ACP_MAX_CONFIGURATION_BYTES",
       1_024,
       MAX_PAYLOAD_BYTES,
     ),

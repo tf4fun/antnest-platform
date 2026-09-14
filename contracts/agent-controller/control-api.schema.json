@@ -3,6 +3,39 @@
   "$id": "https://antnest.local/agent-controller/control-api.schema.json",
   "title": "Antnest Agent Controller lifecycle messages",
   "$defs": {
+    "execution_synchronization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["organization_id", "synchronization"],
+      "properties": {
+        "organization_id": { "$ref": "#/$defs/id" },
+        "synchronization": {
+          "anyOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/execution_synchronization_record" }
+          ]
+        }
+      }
+    },
+    "execution_synchronization_record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["revision", "applied_revision", "updated_at", "applied_at"],
+      "properties": {
+        "revision": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+        "applied_revision": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "updated_at": { "$ref": "#/$defs/timestamp" },
+        "applied_at": {
+          "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/timestamp" }]
+        }
+      },
+      "allOf": [{
+        "if": { "properties": { "applied_revision": { "const": 0 } } },
+        "then": { "properties": { "applied_at": { "type": "null" } } },
+        "else": { "properties": { "applied_at": { "$ref": "#/$defs/timestamp" } } }
+      }],
+      "description": "Persisted configuration synchronization, not live execution state. The application additionally enforces applied_revision <= revision."
+    },
     "model_parameters": {
       "type": "object",
       "additionalProperties": false,
@@ -49,10 +82,7 @@
     "provider_credential_input": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "method",
-        "api_key"
-      ],
+      "required": ["method", "api_key"],
       "properties": {
         "method": {
           "const": "api_key"
@@ -73,11 +103,7 @@
     "provider_model_input": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "profile_key",
-        "display_name",
-        "model"
-      ],
+      "required": ["profile_key", "display_name", "model"],
       "properties": {
         "profile_key": {
           "$ref": "#/$defs/id"
@@ -218,9 +244,7 @@
     "provider_connection_list": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "items"
-      ],
+      "required": ["items"],
       "properties": {
         "items": {
           "type": "array",
@@ -233,65 +257,6 @@
         }
       }
     },
-    "workspace_agent_state": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "agent_id",
-        "availability",
-        "access_allowed",
-        "agent_revision",
-        "active_session_id"
-      ],
-      "properties": {
-        "agent_id": {
-          "type": "string",
-          "minLength": 1
-        },
-        "availability": {
-          "enum": [
-            "ready",
-            "busy",
-            "offline"
-          ]
-        },
-        "access_allowed": {
-          "type": "boolean"
-        },
-        "agent_revision": {
-          "type": "integer",
-          "minimum": 1
-        },
-        "active_session_id": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "minLength": 1
-        }
-      },
-      "allOf": [
-        {
-          "if": {
-            "properties": {
-              "access_allowed": {
-                "const": false
-              }
-            }
-          },
-          "then": {
-            "properties": {
-              "availability": {
-                "const": "offline"
-              },
-              "active_session_id": {
-                "const": null
-              }
-            }
-          }
-        }
-      ]
-    },
     "network_policy_id": {
       "type": "string",
       "minLength": 1,
@@ -301,19 +266,13 @@
     "network_policy_spec": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "schema_version",
-        "action"
-      ],
+      "required": ["schema_version", "action"],
       "properties": {
         "schema_version": {
           "const": 1
         },
         "action": {
-          "enum": [
-            "allow_all",
-            "deny_all"
-          ]
+          "enum": ["allow_all", "deny_all"]
         }
       }
     },
@@ -354,12 +313,7 @@
     "network_policy_assignment": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "agent_id",
-        "policy_id",
-        "revision",
-        "resource_version"
-      ],
+      "required": ["agent_id", "policy_id", "revision", "resource_version"],
       "properties": {
         "agent_id": {
           "$ref": "#/$defs/id"
@@ -380,11 +334,7 @@
     "agent_network_policy": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "agent_id",
-        "policy",
-        "attachment"
-      ],
+      "required": ["agent_id", "policy", "attachment"],
       "properties": {
         "agent_id": {
           "$ref": "#/$defs/id"
@@ -423,16 +373,10 @@
         "attachment": {
           "type": "object",
           "additionalProperties": false,
-          "required": [
-            "state",
-            "resource_version"
-          ],
+          "required": ["state", "resource_version"],
           "properties": {
             "state": {
-              "enum": [
-                "open",
-                "closed"
-              ]
+              "enum": ["open", "closed"]
             },
             "resource_version": {
               "type": "integer",
@@ -457,30 +401,28 @@
       "pattern": "^[a-f0-9]{64}$"
     },
     "desired_state": {
-      "enum": [
-        "enabled",
-        "disabled",
-        "deleted"
-      ]
+      "enum": ["enabled", "disabled", "deleted"]
     },
     "lifecycle_state": {
+      "enum": ["not_created", "created", "deleted"]
+    },
+    "activation_state": {
+      "enum": ["enabled", "disabled"]
+    },
+    "runtime_state": {
       "enum": [
-        "provisioning",
+        "waiting",
         "available",
-        "unavailable",
-        "disabled",
-        "deleting",
-        "deleted"
+        "unhealthy",
+        "exited",
+        "absent",
+        "unknown"
       ]
     },
     "runtime_resources": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "memory_bytes",
-        "pids_limit",
-        "tmpfs_bytes"
-      ],
+      "required": ["memory_bytes", "pids_limit", "tmpfs_bytes"],
       "properties": {
         "memory_bytes": {
           "type": "integer",
@@ -500,10 +442,7 @@
     "runtime_draft": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "image_ref",
-        "resources"
-      ],
+      "required": ["image_ref", "resources"],
       "properties": {
         "image_ref": {
           "type": "string",
@@ -525,14 +464,11 @@
     "model_pricing": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "currency",
-        "input_per_million",
-        "output_per_million"
-      ],
+      "required": ["currency", "input_per_million", "output_per_million"],
       "properties": {
         "currency": {
-          "const": "USD"
+          "const": "USD",
+          "type": "string"
         },
         "input_per_million": {
           "type": "number",
@@ -717,10 +653,7 @@
     "model_profile_list": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "items",
-        "next_after_id"
-      ],
+      "required": ["items", "next_after_id"],
       "properties": {
         "items": {
           "type": "array",
@@ -729,10 +662,7 @@
           }
         },
         "next_after_id": {
-          "type": [
-            "string",
-            "null"
-          ]
+          "type": ["string", "null"]
         }
       }
     },
@@ -898,10 +828,7 @@
     "agent_template_list": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "items",
-        "next_after_id"
-      ],
+      "required": ["items", "next_after_id"],
       "properties": {
         "items": {
           "type": "array",
@@ -910,10 +837,7 @@
           }
         },
         "next_after_id": {
-          "type": [
-            "string",
-            "null"
-          ]
+          "type": ["string", "null"]
         }
       }
     },
@@ -988,11 +912,7 @@
     "lifecycle_request": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "request_id",
-        "organization_id",
-        "actor_principal_id"
-      ],
+      "required": ["request_id", "organization_id", "actor_principal_id"],
       "properties": {
         "request_id": {
           "$ref": "#/$defs/id"
@@ -1008,11 +928,11 @@
     "runtime_binding": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "runtime_revision",
-        "runtime_execution_id",
-        "mcp_endpoint"
-      ],
+      "required": ["runtime_revision"],
+      "dependentRequired": {
+        "runtime_execution_id": ["mcp_endpoint"],
+        "mcp_endpoint": ["runtime_execution_id"]
+      },
       "properties": {
         "runtime_revision": {
           "$ref": "#/$defs/id"
@@ -1029,11 +949,7 @@
     "agent_template_lineage": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "template_id",
-        "revision",
-        "name"
-      ],
+      "required": ["template_id", "revision", "name"],
       "properties": {
         "template_id": {
           "$ref": "#/$defs/id"
@@ -1111,6 +1027,22 @@
     "agent": {
       "type": "object",
       "additionalProperties": false,
+      "if": {
+        "properties": {
+          "lifecycle_state": {
+            "const": "created"
+          }
+        },
+        "required": ["lifecycle_state"]
+      },
+      "then": {
+        "required": ["activation_state"]
+      },
+      "else": {
+        "not": {
+          "required": ["activation_state"]
+        }
+      },
       "required": [
         "agent_id",
         "organization_id",
@@ -1118,6 +1050,7 @@
         "name",
         "desired_state",
         "lifecycle_state",
+        "runtime_state",
         "access_revision",
         "aggregate_sequence",
         "created_at",
@@ -1141,6 +1074,21 @@
         },
         "lifecycle_state": {
           "$ref": "#/$defs/lifecycle_state"
+        },
+        "activation_state": {
+          "$ref": "#/$defs/activation_state"
+        },
+        "runtime_state": {
+          "$ref": "#/$defs/runtime_state"
+        },
+        "runtime_reason": {
+          "type": "string"
+        },
+        "runtime_detail": {
+          "type": "string"
+        },
+        "runtime_observed_at": {
+          "$ref": "#/$defs/timestamp"
         },
         "access_revision": {
           "$ref": "#/$defs/id"
@@ -1184,10 +1132,7 @@
     "agent_list": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "items",
-        "next_cursor"
-      ],
+      "required": ["items", "next_cursor"],
       "properties": {
         "items": {
           "type": "array",
@@ -1196,10 +1141,7 @@
           }
         },
         "next_cursor": {
-          "type": [
-            "string",
-            "null"
-          ],
+          "type": ["string", "null"],
           "minLength": 1,
           "maxLength": 2048
         }
@@ -1225,13 +1167,7 @@
           "$ref": "#/$defs/id"
         },
         "kind": {
-          "enum": [
-            "create",
-            "rebuild",
-            "disable",
-            "enable",
-            "delete"
-          ]
+          "enum": ["create", "rebuild", "disable", "enable", "delete"]
         },
         "phase": {
           "enum": [
@@ -1250,11 +1186,7 @@
           ]
         },
         "state": {
-          "enum": [
-            "running",
-            "completed",
-            "failed"
-          ]
+          "enum": ["running", "completed", "failed"]
         },
         "error_code": {
           "type": "string"
@@ -1273,17 +1205,10 @@
     "create_agent_response": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "agent",
-        "agent_access_subject",
-        "operation"
-      ],
+      "required": ["agent", "operation"],
       "properties": {
         "agent": {
           "$ref": "#/$defs/agent"
-        },
-        "agent_access_subject": {
-          "$ref": "#/$defs/id"
         },
         "operation": {
           "$ref": "#/$defs/operation"
@@ -1325,6 +1250,7 @@
         "event_type": {
           "enum": [
             "agent_create_requested",
+            "agent_created",
             "agent_ready",
             "agent_build_failed",
             "agent_rebuild_requested",
@@ -1340,16 +1266,12 @@
             "agent_lifecycle_quarantined",
             "agent_runtime_restarted",
             "agent_runtime_missing",
+            "agent_runtime_condition_changed",
             "agent_owner_revoked",
-            "agent_authorization_updated",
-            "run_admission_released",
-            "run_admission_unresolved"
+            "agent_authorization_updated"
           ]
         },
         "operation_request_id": {
-          "$ref": "#/$defs/id"
-        },
-        "admission_id": {
           "$ref": "#/$defs/id"
         },
         "trace_id": {
@@ -1367,10 +1289,7 @@
     "event_list": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "events",
-        "next_sequence"
-      ],
+      "required": ["events", "next_sequence"],
       "properties": {
         "events": {
           "type": "array",
@@ -1384,14 +1303,70 @@
         }
       }
     },
-    "error": {
+    "catalog_availability_request": {
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "code",
-        "message",
-        "retryable"
+        "request_id",
+        "organization_id",
+        "expected_enabled",
+        "enabled"
       ],
+      "properties": {
+        "request_id": {
+          "$ref": "#/$defs/id"
+        },
+        "organization_id": {
+          "$ref": "#/$defs/id"
+        },
+        "expected_enabled": {
+          "type": "boolean"
+        },
+        "enabled": {
+          "type": "boolean"
+        }
+      }
+    },
+    "catalog_availability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["resource_id", "enabled", "updated_at"],
+      "properties": {
+        "resource_id": {
+          "$ref": "#/$defs/id"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "updated_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "catalog_reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "resource_id"],
+      "properties": {
+        "kind": {
+          "enum": ["template", "agent", "lifecycle_operation"]
+        },
+        "resource_id": {
+          "$ref": "#/$defs/id"
+        },
+        "agent_id": {
+          "$ref": "#/$defs/id"
+        },
+        "operation_id": {
+          "$ref": "#/$defs/id"
+        }
+      }
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message", "retryable"],
       "properties": {
         "code": {
           "enum": [
@@ -1406,13 +1381,17 @@
             "request_id_conflict",
             "reference_not_found",
             "reference_disabled",
+            "resource_in_use",
+            "execution_configuration_capacity_exceeded",
             "agent_not_found",
             "agent_not_ready",
             "lifecycle_conflict",
             "operation_not_found",
             "dependency_unavailable",
             "lifecycle_timeout",
-            "internal_error"
+            "internal_error",
+            "access_denied",
+            "configuration_conflict"
           ]
         },
         "message": {
@@ -1421,8 +1400,162 @@
         },
         "retryable": {
           "type": "boolean"
+        },
+        "references": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 100,
+          "items": {
+            "$ref": "#/$defs/catalog_reference"
+          }
+        },
+        "references_truncated": {
+          "type": "boolean"
         }
       }
+    },
+    "set_agent_authorization_request": {
+      "type": "object",
+      "required": [
+        "request_id",
+        "agent_id",
+        "principal_id",
+        "expected_access_revision",
+        "expected_authorization_revision",
+        "authorization"
+      ],
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "agent_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "principal_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "expected_access_revision": {
+          "type": "string",
+          "minLength": 1
+        },
+        "expected_authorization_revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "authorization": {
+          "type": "object",
+          "required": ["mode", "tool_rules"],
+          "properties": {
+            "mode": {
+              "enum": ["auto", "approve", "smart_approve", "chat"]
+            },
+            "tool_rules": {
+              "type": "array",
+              "maxItems": 128,
+              "items": {
+                "type": "object",
+                "required": ["source", "source_id", "tool_name", "decision"],
+                "properties": {
+                  "source": {
+                    "enum": ["runtime", "agent"]
+                  },
+                  "source_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200,
+                    "pattern": "^[a-zA-Z0-9_./:-]{1,200}$"
+                  },
+                  "tool_name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200,
+                    "pattern": "^[a-zA-Z0-9_./:-]{1,200}$"
+                  },
+                  "decision": {
+                    "enum": ["allow", "deny"]
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "set_agent_authorization_response": {
+      "type": "object",
+      "required": ["authorization_revision"],
+      "properties": {
+        "authorization_revision": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "list_workspace_agents_request": {
+      "type": "object",
+      "required": ["request_id", "organization_id", "principal_id"],
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "organization_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "principal_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200
+        },
+        "cursor": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        }
+      },
+      "additionalProperties": false
+    },
+    "list_workspace_agents_response": {
+      "type": "object",
+      "required": ["agents", "next_cursor"],
+      "properties": {
+        "agents": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["agent_id", "name"],
+            "properties": {
+              "agent_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "next_cursor": {
+          "type": ["string", "null"],
+          "minLength": 1,
+          "maxLength": 2048
+        }
+      },
+      "additionalProperties": false
     }
   }
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"soft/antnest-platform/services/agent-controller/internal/domain"
 	"soft/antnest-platform/services/agent-controller/internal/ports"
 )
 
@@ -57,6 +58,9 @@ func (repository *Repository) ApplyIdentityRevocation(
 	if cursor != expected {
 		return ports.ErrConcurrentChange
 	}
+	if err := lockRevocationOrganizations(ctx, tx, event); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(ctx, `INSERT INTO agent_controller.owner_revocations
 (user_id, organization_id, sequence, reason, occurred_at, trace_parent) VALUES ($1,$2,$3,$4,$5,$6)
 ON CONFLICT (user_id, organization_id) DO UPDATE SET sequence=EXCLUDED.sequence,
@@ -68,13 +72,20 @@ reason=EXCLUDED.reason, occurred_at=EXCLUDED.occurred_at, trace_parent=EXCLUDED.
 	if err != nil {
 		return err
 	}
+	organizations := make([]string, 0, len(agents))
 	for _, agent := range agents {
 		if err := repository.fenceRevokedAgent(ctx, tx, agent, event, traceID); err != nil {
 			return err
 		}
+		if agent.removesExecutionAccess {
+			organizations = append(organizations, agent.organization)
+		}
 	}
 	if _, err := tx.Exec(ctx, `UPDATE agent_controller.identity_revocation_cursor SET last_sequence=$1 WHERE singleton`, event.Sequence); err != nil {
 		return fmt.Errorf("advance Identity cursor: %w", err)
+	}
+	if err := repository.advanceExecutionOrganizations(ctx, tx, organizations); err != nil {
+		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit Identity revocation: %w", err)
@@ -86,12 +97,29 @@ reason=EXCLUDED.reason, occurred_at=EXCLUDED.occurred_at, trace_parent=EXCLUDED.
 }
 
 type revokedAgent struct {
-	id        string
-	aggregate int64
+	id                     string
+	organization           string
+	aggregate              int64
+	removesExecutionAccess bool
+}
+
+func lockRevocationOrganizations(ctx context.Context, tx *databaseTransaction, event ports.PrincipalRevocation) error {
+	rows, err := tx.Query(ctx, `SELECT DISTINCT organization_id FROM agent_controller.agents
+WHERE owner_user_id=$1 AND ($2='' OR organization_id=$2) AND lifecycle_state<>'deleted'
+AND owner_authorization_sequence<$3 AND identity_revocation_sequence<$3`, event.UserID, event.OrganizationID, event.Sequence)
+	if err != nil {
+		return err
+	}
+	organizations, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return err
+	}
+	return lockExecutionOrganizations(ctx, tx, organizations)
 }
 
 func lockRevokedAgents(ctx context.Context, tx *databaseTransaction, event ports.PrincipalRevocation) ([]revokedAgent, error) {
-	rows, err := tx.Query(ctx, `SELECT id, aggregate_sequence FROM agent_controller.agents
+	rows, err := tx.Query(ctx, `SELECT id, organization_id, aggregate_sequence,
+owner_authorization_sequence, identity_revocation_sequence, desired_state FROM agent_controller.agents
 WHERE owner_user_id=$1 AND ($2='' OR organization_id=$2) AND lifecycle_state <> 'deleted'
 AND owner_authorization_sequence < $3 AND identity_revocation_sequence < $3 ORDER BY id FOR UPDATE`,
 		event.UserID, event.OrganizationID, event.Sequence)
@@ -101,7 +129,11 @@ AND owner_authorization_sequence < $3 AND identity_revocation_sequence < $3 ORDE
 	defer rows.Close()
 	agents, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (revokedAgent, error) {
 		var agent revokedAgent
-		err := row.Scan(&agent.id, &agent.aggregate)
+		var before ports.AgentRecord
+		err := row.Scan(&agent.id, &agent.organization, &agent.aggregate,
+			&before.OwnerAuthorizationSequence, &before.IdentityRevocationSequence, &before.DesiredState)
+		// Revocation advances internal watermarks even when projected access was already closed.
+		agent.removesExecutionAccess = !before.IdentityRevoked() && before.DesiredState != domain.DesiredDeleted
 		return agent, err
 	})
 	if err != nil {
@@ -131,7 +163,7 @@ func (repository *Repository) ListPendingOwnerRevocations(ctx context.Context, a
 	}
 	rows, err := repository.pool.Query(ctx, `SELECT a.id, a.identity_revocation_sequence, a.aggregate_sequence, r.trace_parent
 FROM agent_controller.agents a JOIN agent_controller.owner_revocations r ON r.sequence=a.identity_revocation_sequence
-WHERE a.identity_revocation_sequence>a.owner_authorization_sequence AND a.lifecycle_state NOT IN ('deleted','disabled')
+WHERE a.identity_revocation_sequence>a.owner_authorization_sequence AND a.lifecycle_state <> 'deleted' AND a.activation_state <> 'disabled'
 AND NOT EXISTS (SELECT 1 FROM agent_controller.agent_lifecycle_operations o WHERE o.agent_id=a.id
     AND o.kind='disable' AND o.state='failed' AND o.owner_revocation_sequence=a.identity_revocation_sequence
     AND o.updated_at > clock_timestamp() - interval '30 seconds')

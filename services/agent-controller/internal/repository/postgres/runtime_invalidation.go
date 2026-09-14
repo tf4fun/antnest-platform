@@ -24,14 +24,21 @@ func runtimeObservationInvalidation(kind string) (runtimeInvalidation, bool) {
 			code: kind, eventType: ports.EventAgentRuntimeMissing,
 			detail: "Runtime container is missing; the prior execution binding is unavailable and explicit lifecycle recovery is required",
 		}, true
+	case "exited":
+		return runtimeInvalidation{code: "runtime_exited", eventType: ports.EventAgentRuntimeMissing,
+			detail: "Runtime process exited; explicit lifecycle recovery is required"}, true
 	default:
 		return runtimeInvalidation{}, false
 	}
 }
 
 func runtimeSnapshotInvalidation(runtime ports.RuntimeEnvironmentSnapshot) (runtimeInvalidation, string, bool) {
-	if runtime.LifecycleState != "ready" {
+	if runtime.LifecycleState != "provisioned" {
 		return runtimeInvalidation{}, "", false
+	}
+	if runtime.Phase == "exited" {
+		invalidation, ok := runtimeObservationInvalidation("exited")
+		return invalidation, "", ok
 	}
 	if runtime.Health == "absent" {
 		invalidation, ok := runtimeObservationInvalidation(ports.RuntimeObservationMissing)
@@ -42,4 +49,11 @@ func runtimeSnapshotInvalidation(runtime ports.RuntimeEnvironmentSnapshot) (runt
 		return invalidation, runtime.RuntimeExecutionID, ok
 	}
 	return runtimeInvalidation{}, "", false
+}
+
+func currentRuntimeInvalidation(current ports.RuntimeInspection) (runtimeInvalidation, string, bool) {
+	return runtimeSnapshotInvalidation(ports.RuntimeEnvironmentSnapshot{
+		AgentID: current.AgentID, RuntimeRevision: current.RuntimeRevision, RuntimeExecutionID: current.RuntimeExecutionID,
+		LifecycleState: current.LifecycleState, Phase: current.Phase, Health: current.Health,
+	})
 }

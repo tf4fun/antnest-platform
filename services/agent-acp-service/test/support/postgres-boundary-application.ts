@@ -3,7 +3,6 @@ import { PostgresToolPermissions } from "../../src/adapters/postgres/tool-permis
 import { ToolPermissions } from "../../src/application/tool-permissions.js";
 import { PermissionConnections } from "../../src/application/permission-connections.js";
 import { PostgresSessionConfiguration } from "../../src/adapters/postgres/session-configuration.js";
-import { configurationCatalog } from "./fixtures.js";
 import { randomBytes, randomUUID } from "node:crypto";
 
 import type { Pool } from "pg";
@@ -22,73 +21,44 @@ import { ContextBuilder } from "../../src/application/context-builder.js";
 import { PromptCoordinator } from "../../src/application/prompt-coordinator.js";
 import { RunExecutor } from "../../src/application/run-executor.js";
 import { RunSupervisor } from "../../src/application/run-supervisor.js";
+import { AgentExecutionState } from "../../src/application/agent-execution-state.js";
 import { SessionService } from "../../src/application/session-service.js";
-import {
-  AgentControllerError,
-  type AgentControllerPort,
-  type ResolveAgentAccessResult,
-} from "../../src/ports/agent-controller.js";
-import type { ModelPort } from "../../src/ports/model.js";
+import { ExecutionDirectory } from "../../src/application/execution-directory.js";
+import { ProviderClients } from "../../src/application/provider-clients.js";
+import { PostgresExecutionConfiguration } from "../../src/adapters/postgres/execution-configuration.js";
+import type {
+  ExecutionConfiguration,
+  ExecutionIdentity,
+  ExecutionAccessSnapshot,
+} from "../../src/domain/execution-configuration.js";
+import { SessionOutputStreams } from "../../src/transport/acp/session-output.js";
+import { executionConfiguration } from "../fixtures/execution-configuration.js";
+import type { AuthenticatedModelTransport } from "../../src/ports/model.js";
 import type { ToolCatalogPort } from "../../src/ports/tools.js";
 import { AgentAcpHttpServer } from "../../src/transport/http-server.js";
 import { runtimeInformation } from "../fixtures/runtime-information.js";
 import { AcpWireClient, type ProtocolVersion } from "./acp-wire-client.js";
-import { snapshot } from "./fixtures.js";
 
-export async function startBoundaryApplication(pool: Pool, information = runtimeInformation()) {
+export async function startBoundaryApplication(
+  pool: Pool,
+  information = runtimeInformation(),
+  options: { runTimeoutMs?: number } = {},
+) {
   const kernel = new PostgresKernel(pool);
   const sessions = new PostgresSessionRepository(kernel, new SecretBox(randomBytes(32)));
   const executions = new PostgresExecutionRepository(kernel);
+  const persistRun = executions.finish.bind(executions);
+  const finish = vi.spyOn(executions, "finish");
   const runs = new PostgresRunRepository(kernel);
-  const identities = new Map<string, ResolveAgentAccessResult>([
+  const createIntent = vi.spyOn(runs, "createRunIntent");
+  const acceptRun = vi.spyOn(runs, "acceptRun");
+  const identities = new Map<string, ExecutionIdentity>([
     ["owner", identity("principal-1", "agent-1")],
     ["other-user", identity("principal-2", "agent-1")],
     ["other-agent", identity("principal-1", "agent-2")],
   ]);
-  const authorizations = new Map(
-    [...identities.values()].map((value) => [
-      `${value.principalId}:${value.agentId}`,
-      { active: true, accessRevision: value.accessRevision },
-    ]),
-  );
-  const resolveAgentAccess = vi.fn<AgentControllerPort["resolveAgentAccess"]>((input) => {
-    const current = identities.get(input.agentAccessSubject);
-    const permission =
-      current === undefined
-        ? undefined
-        : authorizations.get(`${current.principalId}:${current.agentId}`);
-    return current === undefined || permission?.active !== true
-      ? Promise.reject(accessDenied())
-      : Promise.resolve({ ...structuredClone(current), accessRevision: permission.accessRevision });
-  });
-  const acquireRun = vi.fn<AgentControllerPort["acquireRun"]>((input) => {
-    const current = authorizations.get(`${input.principalId}:${input.agentId}`);
-    if (current?.active !== true || current.accessRevision !== input.expectedAccessRevision) {
-      return Promise.reject(accessDenied());
-    }
-    return Promise.resolve({
-      ...snapshot(),
-      admissionId: randomUUID(),
-      admissionDeadline: new Date(Date.now() + 60_000),
-    });
-  });
-  const controller = {
-    getSessionConfiguration: vi.fn<AgentControllerPort["getSessionConfiguration"]>(() =>
-      Promise.resolve(configurationCatalog()),
-    ),
-    resolveAgentAccess,
-    acquireRun,
-    resolveCredential: vi.fn<AgentControllerPort["resolveCredential"]>(() =>
-      Promise.resolve({
-        secretType: "bearer" as const,
-        secret: "synthetic-provider-secret",
-        credentialVersion: "credential-version-1",
-      }),
-    ),
-    finishRun: vi.fn<AgentControllerPort["finishRun"]>(() => Promise.resolve()),
-  } satisfies AgentControllerPort;
   const model = {
-    complete: vi.fn<ModelPort["complete"]>(() =>
+    complete: vi.fn<AuthenticatedModelTransport["complete"]>(() =>
       Promise.resolve({
         kind: "message",
         content: [{ type: "text", text: "owner-only-response" }],
@@ -121,13 +91,44 @@ export async function startBoundaryApplication(pool: Pool, information = runtime
         content: [{ type: "text", text: "owner-only-tool-output" }],
         isError: false,
         toolEffectState: "settled",
+        runtimeCallStopped: true,
       }),
     ),
   };
   const recoveryRequired = vi.fn();
   const events = new PostgresRunEventRepository(kernel);
-  const access = new AccessService({ agentController: controller, id: randomUUID });
+  const providers = new ProviderClients(model);
+  const acquireClient = vi.spyOn(providers, "acquire");
   const permissions = new PermissionConnections();
+  const outputs = new SessionOutputStreams();
+  const configurations = new PostgresExecutionConfiguration(kernel);
+  const revoke = (snapshot: ExecutionAccessSnapshot) => {
+    supervisor.revokeAccess(snapshot);
+    permissions.revokeAccess(snapshot);
+    outputs.revokeAccess(snapshot);
+  };
+  const directory = new ExecutionDirectory({
+    repository: configurations,
+    clients: providers,
+    onApplied: (snapshot) => {
+      revoke(snapshot);
+      return Promise.resolve();
+    },
+    onUnavailable: (organizationId) => revoke({ organization_id: organizationId, agents: [] }),
+  });
+  const stored = await configurations.load("organization-1");
+  const configuration: ExecutionConfiguration =
+    stored === null
+      ? boundaryConfiguration()
+      : {
+          ...stored,
+          providers: stored.providers.map((provider) => ({
+            ...provider,
+            credential_revision: provider.credential_revision ?? "credential-1",
+            credential: { method: "api_key" as const, secret: "synthetic-provider-secret" },
+          })),
+        };
+  const access = new AccessService({ directory });
   const permissionRepository = new PostgresToolPermissions(kernel);
   const supervisor = new RunSupervisor(
     new RunExecutor({
@@ -140,8 +141,7 @@ export async function startBoundaryApplication(pool: Pool, information = runtime
         id: randomUUID,
         now: () => new Date(),
       }),
-      agentController: controller,
-      model,
+      providers,
       tools,
       events,
       ownershipSignal: new AbortController().signal,
@@ -154,16 +154,16 @@ export async function startBoundaryApplication(pool: Pool, information = runtime
     configuration: new SessionConfigurationService({
       sessions: new SessionService({ repository: sessions, id: randomUUID, now: () => new Date() }),
       repository: new PostgresSessionConfiguration(kernel),
-      controller,
-      id: randomUUID,
+      directory,
       now: () => new Date(),
     }),
     access,
     sessions: new SessionService({ repository: sessions, id: randomUUID, now: () => new Date() }),
     prompts: new PromptCoordinator({
       repository: runs,
-      agentController: controller,
-      executions,
+      directory,
+      protection: executions,
+      runTimeoutMs: options.runTimeoutMs ?? 60_000,
       recoveryRequired,
       id: randomUUID,
       now: () => new Date(),
@@ -171,8 +171,11 @@ export async function startBoundaryApplication(pool: Pool, information = runtime
     runs: supervisor,
   });
   const cancel = vi.spyOn(application, "cancelRun");
+  const readOutput = vi.spyOn(application, "readSessionOutput");
   const server = new AgentAcpHttpServer({
-    agentController: controller,
+    executionConfiguration: directory,
+    executionState: new AgentExecutionState({ directory, supervisor, protection: executions }),
+    outputs,
     application,
     permissions,
     ready: () => Promise.resolve(true),
@@ -185,25 +188,44 @@ export async function startBoundaryApplication(pool: Pool, information = runtime
     await supervisor.shutdown();
   }
   try {
+    await directory.apply(configuration);
     await server.listen("127.0.0.1", 0);
     const address = server.address();
     if (address === null || typeof address === "string") throw new Error("Missing TCP address");
     const url = `ws://127.0.0.1:${address.port}`;
     return {
+      url,
+      readOutput,
       httpUrl: `http://127.0.0.1:${address.port}/v1/acp`,
       sessions,
+      finish,
+      persistRun,
       permissionRepository,
       events,
-      controller,
+      createIntent,
+      acceptRun,
+      acquireClient,
+      configuration,
+      directory,
       identities,
-      authorizations,
+      identity(alias = "owner") {
+        const value = identities.get(alias);
+        if (value === undefined) throw new Error(`Missing fixture identity: ${alias}`);
+        return { ...value };
+      },
+      async publishConfiguration() {
+        configuration.revision += 1;
+        return directory.apply(structuredClone(configuration));
+      },
       model,
       tools,
       cancel,
       recoveryRequired,
       close,
-      async connect(version: ProtocolVersion, subject = "owner") {
-        const client = await AcpWireClient.connect(`${url}/v${version}/acp`, subject);
+      async connect(version: ProtocolVersion, alias = "owner") {
+        const value = identities.get(alias);
+        if (value === undefined) throw new Error(`Missing fixture identity: ${alias}`);
+        const client = await AcpWireClient.connect(`${url}/v${version}/acp`, value);
         clients.push(client);
         await client.initialize(version);
         return client;
@@ -215,17 +237,34 @@ export async function startBoundaryApplication(pool: Pool, information = runtime
   }
 }
 
-function identity(principalId: string, agentId: string): ResolveAgentAccessResult {
-  return {
-    principalId,
-    agentId,
-    accessRevision: "access-1",
-    promptCapabilities: { image: false, embeddedContext: true },
-  };
+function identity(principalId: string, agentId: string): ExecutionIdentity {
+  return { organizationId: "organization-1", principalId, agentId };
 }
 
-function accessDenied(): AgentControllerError {
-  return new AgentControllerError("access_denied", "Agent access denied", false);
+function boundaryConfiguration(): ExecutionConfiguration {
+  const configuration = executionConfiguration();
+  const provider = configuration.providers[0]!;
+  provider.connection_id = "connection-1";
+  provider.base_url = "https://api.example.test/v1";
+  provider.credential.secret = "synthetic-provider-secret";
+  const model = configuration.models[0]!;
+  model.model_profile_id = "profile-1";
+  model.connection_id = provider.connection_id;
+  model.model = "example-model";
+  model.display_name = "Example model";
+  const agent = configuration.agents[0]!;
+  agent.default_model_profile_id = model.model_profile_id;
+  agent.default_authorization.mode = "auto";
+  agent.principal_ids = ["principal-1", "principal-2"];
+  agent.agent_spec_revision = "config-1";
+  agent.system_prompt = "system";
+  agent.max_model_requests = 4;
+  configuration.agents.push({
+    ...structuredClone(agent),
+    agent_id: "agent-2",
+    principal_ids: ["principal-1"],
+  });
+  return configuration;
 }
 
 export async function boundaryState(pool: Pool) {

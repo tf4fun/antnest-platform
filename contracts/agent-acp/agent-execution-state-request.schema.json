@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {},
+  "additionalProperties": false,
+  "$id": "https://antnest.local/contracts/agent-acp/agent-execution-state-request.schema.json",
+  "title": "Workspace execution state request",
+  "description": "The trusted transport tuple selects the Agent and caller; the request has no identity parameters."
+}

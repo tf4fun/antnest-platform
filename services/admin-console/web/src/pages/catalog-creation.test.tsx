@@ -80,7 +80,7 @@ describe.each(workflows)("$name creation retry", (workflow) => {
     time += 60_000;
     fireEvent.click(dialog.getByRole("button", {name: workflow.submit}));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(screen.getByRole("status").textContent).toMatch(/connected\.|created\./);
+    await waitFor(() => expect(screen.getAllByRole("status").filter((status) => /connected\.|created\./.test(status.textContent ?? ""))).toHaveLength(1));
     expect(sent).toHaveLength(2);
     expect(sent[1]).toEqual(sent[0]);
     expect(JSON.parse(sent[0]!.body)).not.toHaveProperty(workflow.key);

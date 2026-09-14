@@ -100,6 +100,7 @@ func (client *Client) ListRuntimes(
 			return nil, dependencyFailure("invalid_response", true)
 		}
 		result = append(result, ports.RuntimeEnvironmentSnapshot{
+			Phase: runtime.Phase, Reason: runtime.Reason, DiagnosticSummary: runtime.DiagnosticSummary, ObservedAt: runtime.ObservedAt,
 			AgentID: runtime.AgentID, RuntimeRevision: runtime.RuntimeRevision,
 			RuntimeExecutionID: runtime.RuntimeExecutionID,
 			LifecycleState:     runtime.LifecycleState, Health: runtime.Health,

@@ -1,33 +1,23 @@
-import { DomainError } from "../domain/errors.js";
-import type { ConnectionBinding } from "../domain/types.js";
-import type { AgentControllerPort, ResolveAgentAccessResult } from "../ports/agent-controller.js";
+import type { ExecutionIdentity } from "../domain/execution-configuration.js";
+import type { ExecutionDirectory } from "./execution-directory.js";
 
 export type AccessServiceDependencies = {
-  agentController: Pick<AgentControllerPort, "resolveAgentAccess">;
-  id: () => string;
+  directory: ExecutionDirectory;
 };
 
 export class AccessService {
   public constructor(private readonly dependencies: AccessServiceDependencies) {}
 
-  public async assert(binding: ConnectionBinding): Promise<void> {
-    const current = await this.dependencies.agentController.resolveAgentAccess({
-      requestId: this.dependencies.id(),
-      agentAccessSubject: binding.agentAccessSubject,
-    });
-    if (!matchesBinding(current, binding)) {
-      throw new DomainError(
-        "connection_binding_stale",
-        "Agent access changed; reconnect before issuing another request",
-      );
-    }
+  public async assert(binding: ExecutionIdentity): Promise<void> {
+    await this.dependencies.directory.withAccess(binding, () => Promise.resolve());
   }
-}
 
-function matchesBinding(current: ResolveAgentAccessResult, binding: ConnectionBinding): boolean {
-  return (
-    current.principalId === binding.principalId &&
-    current.agentId === binding.agentId &&
-    current.accessRevision === binding.accessRevision
-  );
+  public withAccess<T>(
+    identity: ExecutionIdentity,
+    commit: (accessRevision: string) => Promise<T>,
+  ): Promise<T> {
+    return this.dependencies.directory.withAccess(identity, ({ agent }) =>
+      commit(agent.access_revision),
+    );
+  }
 }

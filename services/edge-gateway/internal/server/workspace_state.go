@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"time"
 
-	"soft/antnest-platform/services/edge-gateway/internal/agentcontroller"
+	"soft/antnest-platform/services/edge-gateway/internal/agentacp"
 	"soft/antnest-platform/services/edge-gateway/internal/identity"
 )
 
@@ -34,8 +34,8 @@ func validStateRequest(response http.ResponseWriter, request *http.Request) bool
 	return true
 }
 
-func workspaceStateInput(request *http.Request, principal identity.Principal) agentcontroller.WorkspaceStateInput {
-	return agentcontroller.WorkspaceStateInput{AgentID: request.PathValue("agent_id"), OrganizationID: principal.OrganizationID, PrincipalID: principal.UserID}
+func workspaceStateInput(request *http.Request, principal identity.Principal) agentacp.WorkspaceStateInput {
+	return agentacp.WorkspaceStateInput{AgentID: request.PathValue("agent_id"), OrganizationID: principal.OrganizationID, PrincipalID: principal.UserID}
 }
 
 func (h *handler) getWorkspaceState(response http.ResponseWriter, request *http.Request) error {
@@ -48,7 +48,7 @@ func (h *handler) getWorkspaceState(response http.ResponseWriter, request *http.
 	}
 	ctx, cancel := context.WithTimeout(request.Context(), h.requestTimeout)
 	defer cancel()
-	state, err := h.agents.GetWorkspaceState(ctx, workspaceStateInput(request, principal))
+	state, err := h.execution.GetWorkspaceState(ctx, workspaceStateInput(request, principal))
 	if err != nil {
 		workspaceStateError(response, err)
 		return err
@@ -77,7 +77,7 @@ func (h *handler) watchWorkspaceState(response http.ResponseWriter, request *htt
 	firstSnapshot := time.AfterFunc(h.requestTimeout, cancel)
 	defer firstSnapshot.Stop()
 	stream := workspaceStateStream{response: response, controller: http.NewResponseController(response)}
-	err = h.agents.WatchWorkspaceState(ctx, workspaceStateInput(request, principal), func(state agentcontroller.WorkspaceState) error {
+	err = h.execution.WatchWorkspaceState(ctx, workspaceStateInput(request, principal), func(state agentacp.WorkspaceState) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -122,9 +122,7 @@ func (h *handler) validateStateIdentity(ctx context.Context, token string, origi
 
 func workspaceStateError(response http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, agentcontroller.ErrAgentNotFound):
-		writeError(response, 404, "agent_not_found", "Agent was not found")
-	case errors.Is(err, agentcontroller.ErrInvalidWorkspaceScope):
+	case errors.Is(err, agentacp.ErrInvalidWorkspaceScope):
 		writeError(response, 400, "invalid_request", "Workspace scope is invalid")
 	default:
 		writeError(response, 503, "workspace_unavailable", "Workspace state is unavailable")
@@ -137,7 +135,7 @@ type workspaceStateStream struct {
 	started    bool
 }
 
-func (stream *workspaceStateStream) emit(ctx context.Context, state agentcontroller.WorkspaceState) error {
+func (stream *workspaceStateStream) emit(ctx context.Context, state agentacp.WorkspaceState) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}

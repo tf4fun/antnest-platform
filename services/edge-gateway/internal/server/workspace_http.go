@@ -5,11 +5,13 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httputil"
+
+	"soft/antnest-platform/services/edge-gateway/internal/identity"
 )
 
 // HTTP/SSE is an opaque ACP transport. Session IDs, queues and connection
 // ownership stay in ACP Service, not in a second Gateway session registry.
-func (h *handler) relayWorkspaceHTTP(response http.ResponseWriter, request *http.Request, subject string) {
+func (h *handler) relayWorkspaceHTTP(response http.ResponseWriter, request *http.Request, principal identity.Principal) {
 	if request.ContentLength > maximumACPMessageBytes {
 		writeError(response, http.StatusRequestEntityTooLarge, "invalid_request", "ACP request exceeds the payload limit")
 		return
@@ -34,7 +36,7 @@ func (h *handler) relayWorkspaceHTTP(response http.ResponseWriter, request *http
 					headers.Add(name, value)
 				}
 			}
-			headers.Set(HeaderAgentAccessSubject, subject)
+			setACPIdentity(headers, principal, request.PathValue("agent_id"))
 			proxyRequest.Out.Header = headers
 		},
 		ModifyResponse: func(upstream *http.Response) error {

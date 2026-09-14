@@ -5,6 +5,7 @@ import {
   ArrowRight,
   Bot,
   CircleDot,
+  ClipboardList,
   LoaderCircle,
   Pause,
   Play,
@@ -917,7 +918,7 @@ function AgentDetail({ agentID, networkScope }: { agentID: string; networkScope?
   const configurationLinks = agentConfigurationLinks(agent);
   return (
     <div className="grid gap-6">
-      <div className="-mb-2">
+      <div className="-mb-2 flex flex-wrap items-center justify-between gap-2">
         <Button
           variant="ghost"
           size="sm"
@@ -927,6 +928,9 @@ function AgentDetail({ agentID, networkScope }: { agentID: string; networkScope?
         >
           <ArrowLeft className="h-4 w-4" />
           Back to Agents
+        </Button>
+        <Button asChild size="sm" variant="ghost">
+          <a href={`#audits?agent_id=${encodeURIComponent(agentID)}`}><ClipboardList className="h-4 w-4" />Execution history</a>
         </Button>
       </div>
       <PageHeader
@@ -1019,18 +1023,24 @@ function AgentDetail({ agentID, networkScope }: { agentID: string; networkScope?
       ) : null}
       <div className="flex flex-col gap-4 rounded-md border border-border bg-white p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-3">
-          <span className={`grid h-10 w-10 place-items-center rounded-md ${agent.lifecycle_state === "available" ? "bg-emerald-50 text-emerald-700" : agent.lifecycle_state === "deleted" ? "bg-slate-100 text-slate-600" : agent.lifecycle_state === "unavailable" ? "bg-red-50 text-red-700" : "bg-amber-50 text-amber-700"}`}>
+          <span className="grid h-10 w-10 place-items-center rounded-md bg-muted text-muted-foreground">
             <Bot className="h-[18px] w-[18px]" aria-hidden="true" />
           </span>
           <div>
-            <p className="text-sm font-medium">Lifecycle status</p>
+            <p className="text-sm font-medium capitalize">{agent.lifecycle_state.replaceAll("_", " ")}{agent.activation_state ? ` / ${agent.activation_state}` : ""}</p>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              {status.target ? `${operationRunning ? "Transitioning toward" : "Requested state:"} ${status.target.toLowerCase()}` : "Current state matches the requested state"}
+              {status.target ? `${operationRunning ? "Transitioning toward" : "Requested state:"} ${status.target.toLowerCase()}` : agent.runtime_state === "waiting" ? "Waiting for the Runtime to become ready" : agent.runtime_observed_at ? `Last observed ${dateTime(agent.runtime_observed_at)}` : "Runtime status has not been observed yet"}
             </p>
           </div>
         </div>
-        <Badge className="w-fit" value={agent.lifecycle_state} />
+        <Badge className="w-fit" value={status.lifecycle} />
       </div>
+      {agent.activation_state === "enabled" && (agent.runtime_reason || agent.runtime_detail) ? (
+        <div role="status" className="border-l-2 border-amber-400 px-4 py-2 text-sm">
+          <p className="font-medium">{agent.runtime_reason?.replaceAll("_", " ") ?? "Runtime status"}</p>
+          {agent.runtime_detail ? <p className="mt-1 whitespace-pre-wrap break-words text-muted-foreground">{agent.runtime_detail}</p> : null}
+        </div>
+      ) : null}
       <Section
         title="Build configuration"
       >
@@ -1071,12 +1081,12 @@ function AgentDetail({ agentID, networkScope }: { agentID: string; networkScope?
           </div>
         ) : (
           <Empty
-            title="No executable configuration"
+            title="No build configuration"
             detail={
               agent.lifecycle_state === "deleted"
                 ? "No active executable configuration remains after deletion."
-                : agent.lifecycle_state === "provisioning"
-                ? "Configuration appears after the first execution revision is published."
+                : agent.lifecycle_state === "not_created"
+                ? "Configuration appears after Runtime creation completes."
                 : operationRunning
                 ? "Configuration becomes available when the lifecycle change completes."
                 : agentRecoveryAvailable(agent)
@@ -1100,7 +1110,7 @@ function AgentDetail({ agentID, networkScope }: { agentID: string; networkScope?
         />
         <Fact
           label="Runtime environment"
-          value={agent.lifecycle_state === "deleted" ? "Removed" : agent.desired_state === "deleted" ? "Removing" : agent.runtime ? "Assigned" : "Not assigned"}
+          value={agent.lifecycle_state === "deleted" ? "Removed" : agent.activation_state === "disabled" ? "Stopped" : agent.runtime ? <Badge value={agent.runtime_state} /> : "Not created"}
         />
         <Fact
           label="Executable configuration"

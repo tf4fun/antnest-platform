@@ -68,7 +68,9 @@ const initial = () => ({
   agent: {
     agent_id: "a",
     desired_state: "enabled",
-    lifecycle_state: "available",
+    lifecycle_state: "created",
+    activation_state: "enabled",
+    runtime_state: "available",
     agent_spec_revision: "s1",
     last_successful_execution_revision: "e1",
     executable_execution_revision: "e1",
@@ -81,8 +83,7 @@ const initial = () => ({
 function lost() {
   return {
     ...initial().agent,
-    lifecycle_state: "unavailable",
-    runtime: undefined,
+    runtime_state: "absent",
     executable_execution_revision: undefined,
     failure_stage: "runtime_observation",
     failure_code: "runtime_missing",
@@ -116,11 +117,11 @@ test("loss evidence requires absent executable binding and exact prior lineage/a
     }),
   );
   for (const change of [
-    { lifecycle_state: "available" },
+    { lifecycle_state: "not_created" },
     { desired_state: "disabled" },
     { agent_spec_revision: "other" },
     { executable_execution_revision: "e1" },
-    { runtime: { runtime_revision: "r1" } },
+    { runtime: { runtime_revision: "other" } },
     { last_successful_execution_revision: "other" },
     { active_operation_request_id: "op" },
     { failure_code: "dependency_unavailable" },
@@ -165,7 +166,7 @@ test("replacement cannot pass with old compute, stale binding or a new workspace
     { volume: "new-volume" },
     { agent: { ...replacement().agent, runtime: initial().agent.runtime } },
     { agent: { ...replacement().agent, executable_execution_revision: "e1" } },
-    { agent: { ...replacement().agent, lifecycle_state: "unavailable" } },
+    { agent: { ...replacement().agent, runtime_state: "unknown" } },
   ])
     assert.throws(() =>
       assertReplacement(initial(), { ...replacement(), ...change }),

@@ -21,7 +21,8 @@ function agent(overrides: Partial<Agent> = {}): Agent {
     owner_user_id: "user-1",
     name: "Operations Agent",
     desired_state: "enabled",
-    lifecycle_state: "available",
+    lifecycle_state: "created", activation_state: "enabled", runtime_state: "available",
+    agent_spec_revision: "spec-1", runtime: { runtime_revision: "runtime-1" }, executable_execution_revision: "execution-1",
     aggregate_sequence: 1,
     created_at: "2026-09-03T00:00:00Z",
     updated_at: "2026-09-03T00:00:00Z",
@@ -79,7 +80,7 @@ test("Agent actions follow lifecycle preconditions instead of optimistic UI gues
   });
   assert.deepEqual(
     agentActionAvailability(
-      agent({ desired_state: "disabled", lifecycle_state: "disabled" }),
+      agent({ desired_state: "disabled", lifecycle_state: "created", activation_state: "disabled", runtime_state: "absent" }),
       false,
     ),
     {
@@ -106,13 +107,13 @@ test("Agent actions follow lifecycle preconditions instead of optimistic UI gues
   assert.equal(agentActionAvailability(agent(), true).canDelete, false);
   assert.equal(
     agentActionAvailability(
-      agent({ desired_state: "deleted", lifecycle_state: "deleting" }),
+      agent({ desired_state: "deleted", lifecycle_state: "created", activation_state: "enabled", runtime_state: "unknown" }),
       false,
     ).retained,
     false,
   );
   assert.equal(
-    agentActionAvailability(agent({ lifecycle_state: "unavailable" }), false).canRebuild,
+    agentActionAvailability(agent({ lifecycle_state: "not_created", activation_state: undefined, runtime_state: "unknown" }), false).canRebuild,
     false,
   );
 });
@@ -129,18 +130,16 @@ test("resynchronization follows the newest operation-bearing lifecycle event", (
   assert.equal(latestOperationRequestID([event({})]), undefined);
 });
 
-test("unavailable historical Agents can request Rebuild without enabling other recovery commands", () => {
+test("configured recovery is independent of execution history and permits stop", () => {
   for (const failure_code of ["runtime_missing", "runtime_deleted", "runtime_restarted", "runtime_update_failed"]) {
-    const source = agent({ lifecycle_state: "unavailable", agent_spec_revision: "spec-old", last_successful_execution_revision: "execution-old", failure_code });
+    const source = agent({ lifecycle_state: "created", activation_state: "enabled", runtime_state: "unknown", agent_spec_revision: "spec-old", last_successful_execution_revision: "execution-old", failure_code });
     assert.deepEqual(agentActionAvailability(source, false), {
-      retained: false, canRebuild: true, canEnable: false, canDisable: false, canDelete: true,
+      retained: false, canRebuild: true, canEnable: false, canDisable: true, canDelete: true,
     });
     assert.equal(agentActionAvailability(source, true).canRebuild, false);
     for (const invalid of [
       { agent_spec_revision: undefined },
-      { last_successful_execution_revision: undefined },
-      { executable_execution_revision: "still-bound" },
-      { runtime: { runtime_revision: "still-bound" } },
+      { runtime: undefined },
       { desired_state: "disabled" },
       { desired_state: "deleted" },
       { lifecycle_state: "rebuilding" },
@@ -158,7 +157,7 @@ test("missing Runtime events have a distinct operator label", () => {
 
 test("failed/unavailable construction permits owned-resource cleanup, never an unsupported rebuild", () => {
   for (const desired_state of ["enabled", "disabled"]) {
-    const unavailable = agent({ desired_state, lifecycle_state: "unavailable", failure_code: "runtime_start_failed" });
+    const unavailable = agent({ desired_state, lifecycle_state: "not_created", activation_state: undefined, runtime_state: "unknown", agent_spec_revision: undefined, runtime: undefined, executable_execution_revision: undefined, failure_code: "runtime_start_failed" });
     assert.deepEqual(agentActionAvailability(unavailable, false), {
       retained: false, canRebuild: false, canEnable: false, canDisable: false, canDelete: true,
     });
@@ -171,7 +170,7 @@ test("failed/unavailable construction permits owned-resource cleanup, never an u
 
 test("failed deletions remain current and expose only explicit cleanup retry", () => {
   for (const failure_code of ["drain_timeout", "docker_denied"]) {
-    const failed = agent({desired_state:"deleted", lifecycle_state:"unavailable", failure_code});
+    const failed = agent({desired_state:"deleted", lifecycle_state: "created", activation_state: "enabled", runtime_state: "unknown", failure_code});
     assert.deepEqual(agentsForView([failed], "current"), [failed]);
     assert.deepEqual(agentsForView([failed], "deleted"), []);
     assert.deepEqual(agentActionAvailability(failed, false), {
@@ -245,7 +244,7 @@ test("Agent status suppresses a desired state that already matches lifecycle", (
   });
   assert.deepEqual(
     agentStatusPresentation(
-      agent({ desired_state: "disabled", lifecycle_state: "disabled" }),
+      agent({ desired_state: "disabled", lifecycle_state: "created", activation_state: "disabled", runtime_state: "absent" }),
     ),
     { lifecycle: "disabled" },
   );
@@ -258,9 +257,9 @@ test("Agent status suppresses a desired state that already matches lifecycle", (
 });
 
 test("Agent snapshot selection accepts progress and rejects out-of-order regressions", () => {
-  const current = agent({ aggregate_sequence: 5, lifecycle_state: "available" });
-  const stale = agent({ aggregate_sequence: 4, lifecycle_state: "provisioning" });
-  const next = agent({ aggregate_sequence: 6, lifecycle_state: "disabled" });
+  const current = agent({ aggregate_sequence: 5, lifecycle_state: "created", activation_state: "enabled", runtime_state: "available" });
+  const stale = agent({ aggregate_sequence: 4, lifecycle_state: "created", activation_state: "enabled", runtime_state: "unknown" });
+  const next = agent({ aggregate_sequence: 6, lifecycle_state: "created", activation_state: "disabled", runtime_state: "absent" });
 
   assert.equal(selectAgentSnapshot(current, stale), current);
   assert.equal(selectAgentSnapshot(current, next), next);
@@ -269,15 +268,15 @@ test("Agent snapshot selection accepts progress and rejects out-of-order regress
 test("Agent status exposes the target only while lifecycle has not converged", () => {
   assert.deepEqual(
     agentStatusPresentation(
-      agent({ desired_state: "disabled", lifecycle_state: "available" }),
+      agent({ desired_state: "disabled", lifecycle_state: "created", activation_state: "enabled", runtime_state: "available" }),
     ),
     { lifecycle: "available", target: "Disabled" },
   );
   assert.deepEqual(
     agentStatusPresentation(
-      agent({ desired_state: "deleted", lifecycle_state: "deleting" }),
+      agent({ desired_state: "deleted", lifecycle_state: "created", activation_state: "enabled", runtime_state: "unknown" }),
     ),
-    { lifecycle: "deleting", target: "Deleted" },
+    { lifecycle: "unknown", target: "Deleted" },
   );
 });
 

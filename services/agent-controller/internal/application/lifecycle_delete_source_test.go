@@ -12,14 +12,16 @@ import (
 
 func TestDeleteFreezesFailedRuntimeBeforeEffectsAndSurvivesWorkerRestart(t *testing.T) {
 	t.Parallel()
-	base := deleteAgentBase(domain.AgentUnavailable)
+	base := deleteAgentBase(domain.RuntimeUnknown)
 	base.Agent.RuntimeRevision, base.Agent.RuntimeExecutionID, base.Agent.RuntimeMCPEndpoint = "", "", ""
 	store := &deleteLifecycleStoreStub{base: base}
 	dependencies := newDeleteDependencies(base.Agent)
 	dependencies.inspection = ports.RuntimeInspection{AgentID: base.Agent.AgentID,
 		RuntimeRevision: "rtv_failed_owned", LifecycleState: "failed", Health: "unhealthy"}
 	clock := fixedClock{now: time.Unix(716, 0).UTC()}
-	service := NewLifecycleService(lifecycleSpecSourceStub{}, store, dependencies, dependencies, clock)
+	service := NewLifecycleService(lifecycleSpecSourceStub{}, store, dependencies, dependencies, clock,
+		WithLifecycleExecution(testExecutionForStore(store)),
+	)
 	ctx := context.Background()
 	if _, err := service.DeleteAgent(ctx, DeleteAgentInput{RequestID: "request-delete-failed", AgentID: base.Agent.AgentID}); err != nil {
 		t.Fatal(err)
@@ -42,7 +44,9 @@ func TestDeleteFreezesFailedRuntimeBeforeEffectsAndSurvivesWorkerRestart(t *test
 	}
 	dependencies.inspection.RuntimeRevision = "rtv_replacement_must_not_be_adopted"
 	dependencies.calls = nil
-	restarted := NewLifecycleService(lifecycleSpecSourceStub{}, store, dependencies, dependencies, clock)
+	restarted := NewLifecycleService(lifecycleSpecSourceStub{}, store, dependencies, dependencies, clock,
+		WithLifecycleExecution(testExecutionForStore(store)),
+	)
 	if _, err := restarted.stepAgentDelete(ctx, store.state); err != nil {
 		t.Fatal(err)
 	}
@@ -55,12 +59,14 @@ func TestDeleteWaitsForUnresolvedRuntimeOwnership(t *testing.T) {
 	t.Parallel()
 	for _, lifecycle := range []string{"initializing", "unknown", "deleting"} {
 		t.Run(lifecycle, func(t *testing.T) {
-			base := deleteAgentBase(domain.AgentUnavailable)
+			base := deleteAgentBase(domain.RuntimeUnknown)
 			base.Agent.RuntimeRevision, base.Agent.RuntimeExecutionID, base.Agent.RuntimeMCPEndpoint = "", "", ""
 			store := &deleteLifecycleStoreStub{base: base}
 			dependencies := newDeleteDependencies(base.Agent)
 			dependencies.inspection = ports.RuntimeInspection{AgentID: base.Agent.AgentID, RuntimeRevision: "rtv_unresolved", LifecycleState: lifecycle, Health: "unknown"}
-			service := NewLifecycleService(lifecycleSpecSourceStub{}, store, dependencies, dependencies, fixedClock{now: time.Unix(717, 0).UTC()})
+			service := NewLifecycleService(lifecycleSpecSourceStub{}, store, dependencies, dependencies, fixedClock{now: time.Unix(717, 0).UTC()},
+				WithLifecycleExecution(testExecutionForStore(store)),
+			)
 			_, err := executeDeleteForTest(service, context.Background(), DeleteAgentInput{RequestID: "request-delete-unresolved", AgentID: base.Agent.AgentID})
 			if err != nil || store.state.Operation.Phase != domain.PhaseNetworkFence || store.state.Operation.SourceRuntimeAbsent || store.state.Operation.SourceRuntimeRevision != "" {
 				t.Fatalf("unresolved ownership advanced or failed: %+v %v", store.state.Operation, err)

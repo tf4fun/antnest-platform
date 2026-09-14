@@ -166,7 +166,7 @@ func TestMachineContractCoversRegisteredHTTPBoundary(t *testing.T) {
 		assertKnownSchemaReference(t, schema, definition.Body)
 	}
 	for _, code := range []string{
-		"runtime_not_ready", "runtime_drift", "storage_in_use", "storage_not_found",
+		"runtime_drift", "storage_in_use", "storage_not_found",
 		"storage_ownership_conflict", "platform_unavailable",
 	} {
 		definition, ok := contract.OperationErrorCodes[code]
@@ -217,7 +217,7 @@ func TestMachineSchemaMatchesGoWireTypes(t *testing.T) {
 	now := time.Date(2026, 8, 30, 0, 0, 0, 0, time.UTC)
 	inspection := deployment.Environment{
 		AgentID: "agent-1", RuntimeRevision: testRuntimeRevision,
-		LifecycleState: deployment.LifecycleReady,
+		LifecycleState: deployment.LifecycleProvisioned,
 		Health:         deployment.HealthHealthy, RestartCount: 0, ObservedAt: now,
 	}
 	assertRequiredFields(t, schema, "initialize_request", initializeRequest{Configuration: configurationDTO{}})
@@ -265,7 +265,7 @@ func TestLogicalWireTypesHidePhysicalRuntimeIdentity(t *testing.T) {
 	now := time.Date(2026, 8, 31, 0, 0, 0, 0, time.UTC)
 	environment := deployment.Environment{
 		AgentID: "agent-1", RuntimeRevision: testRuntimeRevision,
-		LifecycleState: deployment.LifecycleReady, Health: deployment.HealthHealthy,
+		LifecycleState: deployment.LifecycleProvisioned, Health: deployment.HealthHealthy,
 		Generation:  9,
 		SpecDigest:  "sha256:" + strings.Repeat("a", 64),
 		OperationID: "private-operation", ObservedAt: now,

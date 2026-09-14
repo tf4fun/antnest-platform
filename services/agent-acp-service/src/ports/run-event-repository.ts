@@ -46,6 +46,7 @@ export type AppendRejectedToolCallInput = {
 };
 
 export type FinishToolAttemptInput = {
+  runtimeCallStopped?: boolean;
   file?: ToolFileObservation;
   rawOutput?: JsonValue;
   id: string;

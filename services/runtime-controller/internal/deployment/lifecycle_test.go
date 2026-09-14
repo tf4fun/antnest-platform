@@ -12,15 +12,15 @@ func TestLifecycleCommandsHaveExplicitTransitions(t *testing.T) {
 		to         LifecycleState
 		allowed    bool
 	}{
-		{"initialize new Environment", OperationInitializeRuntime, LifecycleUninitialized, LifecycleInitializing, LifecycleReady, true},
-		{"initialize existing Environment", OperationInitializeRuntime, LifecycleReady, "", "", false},
-		{"update ready Environment", OperationUpdateRuntime, LifecycleReady, LifecycleUpdating, LifecycleReady, true},
+		{"initialize new Environment", OperationInitializeRuntime, LifecycleUninitialized, LifecycleInitializing, LifecycleProvisioned, true},
+		{"initialize existing Environment", OperationInitializeRuntime, LifecycleProvisioned, "", "", false},
+		{"update ready Environment", OperationUpdateRuntime, LifecycleProvisioned, LifecycleUpdating, LifecycleProvisioned, true},
 		{"update disabled Environment", OperationUpdateRuntime, LifecycleDisabled, "", "", false},
-		{"disable ready Environment", OperationDisableRuntime, LifecycleReady, LifecycleDisabling, LifecycleDisabled, true},
+		{"disable ready Environment", OperationDisableRuntime, LifecycleProvisioned, LifecycleDisabling, LifecycleDisabled, true},
 		{"disable disabled Environment", OperationDisableRuntime, LifecycleDisabled, "", "", false},
-		{"enable disabled Environment", OperationEnableRuntime, LifecycleDisabled, LifecycleEnabling, LifecycleReady, true},
-		{"enable ready Environment", OperationEnableRuntime, LifecycleReady, "", "", false},
-		{"delete ready Environment", OperationDeleteRuntime, LifecycleReady, LifecycleDeleting, LifecycleDeleted, true},
+		{"enable disabled Environment", OperationEnableRuntime, LifecycleDisabled, LifecycleEnabling, LifecycleProvisioned, true},
+		{"enable ready Environment", OperationEnableRuntime, LifecycleProvisioned, "", "", false},
+		{"delete ready Environment", OperationDeleteRuntime, LifecycleProvisioned, LifecycleDeleting, LifecycleDeleted, true},
 		{"delete disabled Environment", OperationDeleteRuntime, LifecycleDisabled, LifecycleDeleting, LifecycleDeleted, true},
 		{"delete deleted Environment", OperationDeleteRuntime, LifecycleDeleted, "", "", false},
 	}

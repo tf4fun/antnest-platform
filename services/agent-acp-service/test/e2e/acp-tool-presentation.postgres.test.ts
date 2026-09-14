@@ -122,6 +122,7 @@ describe.skipIf(databaseUrl === undefined)("ACP durable Tool presentation", () =
         structuredContent: rawOutput,
         isError: true,
         toolEffectState: "none",
+        runtimeCallStopped: true,
         file: { path: "/workspace/not-written", change: { before: null, after: "must-not-claim" } },
       });
       const client = await app.connect(version);
@@ -143,6 +144,12 @@ describe.skipIf(databaseUrl === undefined)("ACP durable Tool presentation", () =
       const terminal = toolUpdates(client.frames.slice(offset)).at(-1);
       expect(terminal?.status).toBe("failed");
       expect(terminal).not.toHaveProperty("rawOutput");
+      expect(app.tools.call).toHaveBeenCalledTimes(2);
+      const protectedResponse = await client.request("session/prompt", {
+        sessionId,
+        prompt: [{ type: "text", text: "unsafe retry" }],
+      });
+      expect(protectedResponse.error?.data).toMatchObject({ code: "runtime_barrier_required" });
       expect(app.tools.call).toHaveBeenCalledTimes(2);
     },
   );

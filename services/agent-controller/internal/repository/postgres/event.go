@@ -17,7 +17,7 @@ func (repository *Repository) ListAgentEvents(
 	statement := `
 	SELECT event.global_sequence, event.event_id, event.agent_id,
 	       event.aggregate_sequence, event.schema_version, event.event_type,
-	       event.operation_request_id, event.admission_id, event.trace_id,
+	       event.operation_request_id, event.trace_id,
 	       event.data, event.occurred_at
 	FROM agent_controller.agent_events AS event
 	JOIN agent_controller.agents AS agent ON agent.id = event.agent_id
@@ -58,7 +58,7 @@ func scanAgentEvent(scanner lifecycleRowScanner) (ports.AgentEventRecord, error)
 	if err := scanner.Scan(
 		&record.GlobalSequence, &record.EventID, &record.AgentID, &record.AggregateSequence,
 		&record.SchemaVersion, &record.EventType, &record.OperationRequestID,
-		&record.AdmissionID, &record.TraceID, &payload, &record.OccurredAt,
+		&record.TraceID, &payload, &record.OccurredAt,
 	); err != nil {
 		return ports.AgentEventRecord{}, fmt.Errorf("scan Agent event: %w", err)
 	}

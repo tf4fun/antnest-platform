@@ -39,28 +39,24 @@ function upstream() {
       });
       return;
     }
-    if (path === "/rpc/agent-controller/list-workspace-agents") {
-      json({
-        agents: [
-          {
-            agent_id: "agent-1",
-            name: "One",
-            availability: "ready",
-            agent_access_subject: "fixture-subject",
-          },
-        ],
-        next_cursor: null,
-      });
-      return;
-    }
-    const statePath = "/internal/workspace/agents/agent-1/state/watch";
+    const statePath = "/rpc/agent-acp/watch-agent-execution-state";
     if (
-      request.method !== "GET" ||
+      request.method !== (path === statePath ? "POST" : "GET") ||
       ![statePath, "/v1/acp", routes[3]].includes(path)
     ) {
       unexpected.push({ method: request.method, path });
       response.writeHead(404).end();
       return;
+    }
+    if ([statePath, "/v1/acp"].includes(path)) {
+      assert.equal(request.headers["x-antnest-organization-id"], "org-1");
+      assert.equal(request.headers["x-antnest-principal-id"], "user-admin");
+      assert.equal(request.headers["x-antnest-agent-id"], "agent-1");
+      assert.equal(
+        request.headers["x-antnest-agent-access-subject"],
+        undefined,
+      );
+      assert.equal(request.headers.cookie, undefined);
     }
     opened++;
     watches.add(response);
@@ -76,7 +72,8 @@ function upstream() {
           agent_id: "agent-1",
           availability: "ready",
           access_allowed: true,
-          agent_revision: 3,
+          configuration_revision: "a".repeat(64),
+          unavailable_reason: null,
           active_session_id: null,
         })}\n\n`,
       );
@@ -218,6 +215,7 @@ async function exercise(project, docker, signal) {
   ]);
   assert.equal(image, expectedImage);
   const backendURL = await containerURL(docker, backend);
+  await ready(backendURL, signal);
   for (const [index, stopSignal] of ["SIGTERM", "SIGINT"].entries()) {
     if (index) await docker(["start", gateway]);
     const gatewayURL = await containerURL(docker, gateway);
@@ -232,7 +230,14 @@ async function exercise(project, docker, signal) {
           "Acp-Connection-Id": "fixture-connection",
         },
       });
-      assert.equal(response.status, 200, `stream did not open: ${path}`);
+      if (response.status !== 200) {
+        const body = await response.text();
+        const diagnostic = await fetch(`${backendURL}/test/state`, { signal });
+        const state = await diagnostic.text();
+        throw new Error(
+          `stream did not open: ${path} status=${response.status} response=${body} upstream=${state}`,
+        );
+      }
       receives.push(
         response.text().then(
           () => true,

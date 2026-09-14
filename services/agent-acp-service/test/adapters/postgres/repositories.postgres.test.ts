@@ -35,6 +35,56 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP private PostgreSQL reposit
     await pool.end();
   });
 
+  it.each(["failed", "cancelled_before_accept", "cancelled_before_reject"])(
+    "retains original audit input for a Run %s without publishing it as conversation",
+    async (outcome) => {
+      const sessionId = randomUUID();
+      const revisionId = randomUUID();
+      const runId = randomUUID();
+      const prompt = [{ type: "text", text: "Retain this failed trigger for audit" }];
+      await sessions.create({
+        sessionId,
+        binding: {
+          connectionId: "connection-1",
+          organizationId: "organization-1",
+          principalId: "principal-1",
+          agentId: "agent-1",
+        },
+        cwd: "/workspace",
+        mcpRevisionId: revisionId,
+        mcpSources: [],
+      });
+      await runs.createRunIntent({
+        runId,
+        requestId: randomUUID(),
+        sessionId,
+        expectedAccessRevision: "access-1",
+        userMessageId: randomUUID(),
+        prompt,
+        createdAt: new Date(),
+      });
+      if (outcome !== "failed") await runs.requestCancellation(runId, new Date());
+      if (outcome === "cancelled_before_accept") {
+        await expect(
+          runs.acceptRun({
+            runId,
+            snapshot: snapshot(revisionId),
+            environmentFact: null,
+            acceptedAt: new Date(),
+          }),
+        ).resolves.toBe("cancelled");
+      } else {
+        await runs.rejectRun(runId, "provider_unavailable", new Date());
+      }
+      const result = await pool.query<{ input_prompt: unknown }>(
+        "SELECT input_prompt FROM runs WHERE id = $1",
+        [runId],
+      );
+      expect(result.rows[0]?.input_prompt).toEqual(prompt);
+      expect(await sessions.replay(sessionId)).toEqual([]);
+    },
+  );
+
   it("round-trips encrypted client MCP and never stores the header plaintext", async () => {
     const sessionId = randomUUID();
     const revisionId = randomUUID();
@@ -42,10 +92,9 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP private PostgreSQL reposit
       sessionId,
       binding: {
         connectionId: "connection-1",
-        agentAccessSubject: "subject-1",
+        organizationId: "organization-1",
         principalId: "principal-1",
         agentId: "agent-1",
-        accessRevision: "access-1",
       },
       cwd: "/workspace",
       mcpRevisionId: revisionId,
@@ -75,7 +124,7 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP private PostgreSQL reposit
   });
 
   it.each([true, false, undefined])(
-    "atomically stores and recovers a Run snapshot with native input flags=%s",
+    "atomically stores a Run snapshot with native input flags=%s",
     async (enabled) => {
       const sessionId = randomUUID();
       const revisionId = randomUUID();
@@ -84,10 +133,9 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP private PostgreSQL reposit
         sessionId,
         binding: {
           connectionId: "connection-1",
-          agentAccessSubject: "subject-1",
+          organizationId: "organization-1",
           principalId: "principal-1",
           agentId: "agent-1",
-          accessRevision: "access-1",
         },
         cwd: "/workspace",
         mcpRevisionId: revisionId,
@@ -137,9 +185,11 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP private PostgreSQL reposit
         executionRevision: "execution-2",
       });
       const recovered = (await executions.listRecoveryWork()).find((work) => work.id === runId);
-      expect(recovered).toEqual(
-        expect.objectContaining({ kind: "running", snapshot: acceptedSnapshot }),
-      );
+      expect(recovered).toEqual({ kind: "running", id: runId });
+      expect(persistedRun.rows[0]?.execution_snapshot).toEqual({
+        ...acceptedSnapshot,
+        deadlineAt: acceptedSnapshot.deadlineAt.toISOString(),
+      });
       const messages = await pool.query<{ kind: string; visible: boolean; sequence: string }>(
         "SELECT kind, visible, sequence FROM session_messages WHERE session_id = $1 ORDER BY sequence",
         [sessionId],
@@ -168,10 +218,9 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP private PostgreSQL reposit
       sessionId: sourceSessionId,
       binding: {
         connectionId: "connection-fork",
-        agentAccessSubject: "subject-fork",
+        organizationId: "organization-1",
         principalId: "principal-fork",
         agentId: "agent-fork",
-        accessRevision: "access-fork",
       },
       cwd: "/workspace",
       mcpRevisionId: sourceMcpRevisionId,
@@ -216,7 +265,6 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP private PostgreSQL reposit
       stopReason: "end_turn",
       finishedAt: new Date("2026-08-30T00:20:03Z"),
     });
-    await executions.markAdmissionFinished(runId, new Date("2026-08-30T00:20:04Z"));
 
     const forkSessionId = randomUUID();
     const forkMcpRevisionId = randomUUID();
@@ -255,10 +303,9 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP private PostgreSQL reposit
       sessionId,
       binding: {
         connectionId: "connection-2",
-        agentAccessSubject: "subject-2",
+        organizationId: "organization-1",
         principalId: "principal-2",
         agentId: "agent-2",
-        accessRevision: "access-2",
       },
       cwd: "/workspace",
       mcpRevisionId: revisionId,
@@ -441,7 +488,6 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP private PostgreSQL reposit
         finishedAt: new Date("2026-08-30T01:00:06Z"),
       }),
     ).rejects.toThrow("Run cannot enter the requested terminal state");
-    await executions.markAdmissionFinished(runId, new Date("2026-08-30T01:00:07Z"));
 
     await expect(executions.getState(runId)).resolves.toBe("completed");
     await expect(sessions.getCurrentRunState(sessionId)).resolves.toEqual({
@@ -473,10 +519,9 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP private PostgreSQL reposit
       sessionId,
       binding: {
         connectionId: "connection-cancel",
-        agentAccessSubject: "subject-cancel",
+        organizationId: "organization-1",
         principalId: "principal-cancel",
         agentId: "agent-cancel",
-        accessRevision: "access-cancel",
       },
       cwd: "/workspace",
       mcpRevisionId: revisionId,
@@ -505,13 +550,17 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP private PostgreSQL reposit
     const persisted = await pool.query<{
       state: string;
       cancel_requested_at: Date | null;
-      admission_id: string | null;
+      execution_snapshot: unknown;
       error_class: string | null;
-    }>("SELECT state, cancel_requested_at, admission_id, error_class FROM runs WHERE id = $1", [
-      runId,
-    ]);
+    }>(
+      "SELECT state, cancel_requested_at, execution_snapshot, error_class FROM runs WHERE id = $1",
+      [runId],
+    );
     expect(persisted.rows[0]?.state).toBe("cancelled");
-    expect(persisted.rows[0]?.admission_id).not.toBeNull();
+    expect(persisted.rows[0]?.execution_snapshot).toEqual({
+      ...snapshot(revisionId),
+      deadlineAt: snapshot(revisionId).deadlineAt.toISOString(),
+    });
     expect(persisted.rows[0]?.cancel_requested_at).not.toBeNull();
     expect(persisted.rows[0]?.error_class).toBeNull();
     const messages = await pool.query("SELECT id FROM session_messages WHERE run_id = $1", [runId]);
@@ -526,10 +575,9 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP private PostgreSQL reposit
       sessionId,
       binding: {
         connectionId: "connection-unresolved",
-        agentAccessSubject: "subject-unresolved",
+        organizationId: "organization-1",
         principalId: "principal-unresolved",
         agentId: "agent-unresolved",
-        accessRevision: "access-unresolved",
       },
       cwd: "/workspace",
       mcpRevisionId: revisionId,
@@ -583,7 +631,7 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP private PostgreSQL reposit
     });
   });
 
-  it("uses Session-before-Run lock ordering during admission acceptance", async () => {
+  it("uses Session-before-Run lock ordering during local Run acceptance", async () => {
     const sessionId = randomUUID();
     const revisionId = randomUUID();
     const runId = randomUUID();
@@ -591,10 +639,9 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP private PostgreSQL reposit
       sessionId,
       binding: {
         connectionId: "connection-lock-order",
-        agentAccessSubject: "subject-lock-order",
+        organizationId: "organization-1",
         principalId: "principal-lock-order",
         agentId: "agent-lock-order",
-        accessRevision: "access-lock-order",
       },
       cwd: "/workspace",
       mcpRevisionId: revisionId,
@@ -645,10 +692,9 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP private PostgreSQL reposit
       sessionId,
       binding: {
         connectionId: "connection-unique",
-        agentAccessSubject: "subject-unique",
+        organizationId: "organization-1",
         principalId: "principal-unique",
         agentId: "agent-unique",
-        accessRevision: "access-unique",
       },
       cwd: "/workspace",
       mcpRevisionId: revisionId,
@@ -672,13 +718,16 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP private PostgreSQL reposit
 
 function snapshot(clientMcpRevisionId: string): RunExecutionSnapshot {
   return {
-    admissionId: randomUUID(),
-    admissionDeadline: new Date("2026-08-30T00:10:00Z"),
+    organizationId: "organization-1",
+    providerConnectionId: "provider-1",
+    modelProfileId: "model-1",
+    configurationRevision: 1,
+    accessRevision: "access-1",
+    deadlineAt: new Date("2026-08-30T00:10:00Z"),
     agentSpecRevision: "config-2",
     executionRevision: "execution-2",
     runtimeMcpSourceDigest: "a".repeat(64),
     agentExecutionSpecDigest: "b".repeat(64),
-    credentialVersion: "credential-version-1",
     runtime: {
       revision: "runtime-2",
       executionId: "runtime-execution-2",
@@ -696,7 +745,6 @@ function snapshot(clientMcpRevisionId: string): RunExecutionSnapshot {
         supportsImages: false,
       },
       maxModelRequests: 8,
-      credentialRef: "credential-1",
     },
     clientMcpRevisionId,
   };

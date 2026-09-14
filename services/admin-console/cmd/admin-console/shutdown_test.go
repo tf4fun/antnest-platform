@@ -238,6 +238,7 @@ func startConsole(t *testing.T, upstreamURL string, budget time.Duration) runnin
 		"ANTNEST_ADMIN_CONSOLE_LISTEN":   address,
 		"ANTNEST_IDENTITY_SERVICE_URL":   upstreamURL,
 		"ANTNEST_AGENT_CONTROLLER_URL":   upstreamURL,
+		"ANTNEST_AGENT_ACP_SERVICE_URL":  upstreamURL,
 		"ANTNEST_ADMIN_SHUTDOWN_TIMEOUT": budget.String(),
 	}
 	ctx, cancel := context.WithCancel(context.Background())

@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 
@@ -94,7 +95,14 @@ func managedStream(request *http.Request) bool {
 	if request.Method != http.MethodGet {
 		return false
 	}
-	parts := strings.Split(strings.TrimPrefix(request.URL.Path, "/"), "/")
+	parts := strings.Split(strings.TrimPrefix(request.URL.EscapedPath(), "/"), "/")
+	for i, part := range parts {
+		decoded, err := url.PathUnescape(part)
+		if err != nil {
+			return false
+		}
+		parts[i] = decoded
+	}
 	if len(parts) < 5 || parts[0] != "api" || parts[2] != "agents" || parts[3] == "" {
 		return false
 	}

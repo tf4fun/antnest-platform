@@ -36,11 +36,11 @@ labels, but never appears in this API.
 The stable lifecycle is:
 
 ```text
-uninitialized --Initialize--> ready
-ready         --Update-----> ready
-ready         --Disable----> disabled
-disabled      --Enable-----> ready
-ready         --Delete-----> deleted
+uninitialized --Initialize--> provisioned
+provisioned   --Update-----> provisioned
+provisioned   --Disable----> disabled
+disabled      --Enable-----> provisioned
+provisioned   --Delete-----> deleted
 disabled      --Delete-----> deleted
 failed        --Delete-----> deleted
 ```
@@ -53,10 +53,9 @@ reconcile it.
 
 Initialize failure does not erase resource ownership. A definitive platform
 failure retains a `failed` Environment with its target revision and private
-deployment identity, even if only workspace creation completed. A bounded
-readiness failure after confirmed compute creation also ends Initialize as
-`failed` (unless execution was cancelled or identity/effect remains uncertain).
-The operation is terminal and releases its mutation slot. Exact retries return
+deployment identity, even if only workspace creation completed. Confirmed
+compute create/start completes the operation independently of application
+readiness. The operation is terminal and releases its mutation slot. Exact retries return
 that failed result; a new Initialize cannot overwrite the retained Environment.
 The caller may Delete using its current revision. Delete checks and removes
 owned compute if present, then removes owned workspace. A failed Environment
@@ -142,8 +141,8 @@ means unknown, not an inferred image. The resolved ID never replaces the configu
 input to a later rebuild. The same Template
 using a moved tag can therefore build different images. Local image installation
 and remote pull policy are separate concerns; no automatic pull or running
-container update is introduced. Lifecycle operations retain the Runtime readiness
-checks. HTTP and platform-operation spans use the normal request trace; image
+container update is introduced. Runtime readiness belongs to independent observation and explicit reads,
+not lifecycle command completion. HTTP and platform-operation spans use the normal request trace; image
 references are not metric labels or recorded request bodies.
 
 Docker reference parsing uses the standard
@@ -159,9 +158,14 @@ Initialize requires no existing Runtime Environment. It:
 
 1. creates or adopts the owned Agent workspace;
 2. allocates the first private compute generation;
-3. creates the compute resource;
-4. waits for platform health and matching Runtime `/status`;
-5. returns `ready`, an opaque revision, MCP endpoint, and execution ID.
+3. creates and starts the compute resource;
+4. commits `completed` with lifecycle state `provisioned` and releases the mutation slot;
+5. returns the target revision and image metadata, without asserting health or execution identity.
+
+See [creation and observation](../docs/creation-and-observation.md). Current
+health, MCP endpoint and verified execution ID are obtained through Inspect/List
+and the independent observation flow. Startup failure never rewrites a completed
+creation command.
 
 A workspace created before compute failure is retained. Retrying the same
 nonterminal request reconciles it; a terminal failed request replays its result
@@ -175,29 +179,28 @@ Initializing an existing or deleted Agent identity returns
 `POST /internal/runtimes/{agent_id}/update`
 
 The request carries `expected_revision` and a complete new configuration.
-Update is valid only from `ready`. It removes the current compute resource,
-retains the workspace, allocates a new private generation, creates and verifies
-the replacement, and returns a new opaque revision. Agent Controller blocks new
+Update is valid from `provisioned`, including starting or unhealthy resources.
+It removes the current compute resource, retains the workspace, allocates a new
+private generation, creates/starts the replacement and returns a new revision. Agent Controller blocks new
 Runs around this command.
 
-If replacement readiness cannot be confirmed after the old compute resource
-was removed, the operation is `unknown`; the Agent remains unavailable and the
-same request must be reconciled. Runtime Controller does not perform implicit
+If platform create/start effects cannot be confirmed after removing the old
+compute, the operation is `unknown` and the same request must be reconciled.
+Application readiness has no effect on that command result. Runtime Controller does not perform implicit
 rollback.
 
 Retrying an interrupted Update reconciles its original target, including when
-the replacement already exists but readiness or the completion response was
-lost. It does not delete a new target using the old source identity, allocate
+the replacement already exists but the platform/completion response was lost. It does not delete a new target using the old source identity, allocate
 another generation, or restore the destroyed source. Foreign identity and
 unavailable platform observations remain nonterminal; only an exact existing
-target can be adopted and it must pass the ordinary readiness checks. These
+target can be adopted after platform identity and retained storage checks. These
 are corrections to the existing retry contract, not additional caller fields.
 
 ## Disable
 
 `POST /internal/runtimes/{agent_id}/disable`
 
-Disable is valid only from `ready`. It removes the compute resource and retains
+Disable is valid from `provisioned`, regardless of current health. It removes the compute resource and retains
 the workspace. Success returns lifecycle state `disabled` and a new revision.
 The service does not retain a stopped Docker container because that would not
 have a portable Kubernetes equivalent and would not release compute resources.
@@ -216,7 +219,7 @@ storage.
 
 `POST /internal/runtimes/{agent_id}/delete`
 
-Delete is valid from `ready`, `disabled`, or `failed`. It removes compute when present,
+Delete is valid from `provisioned`, `disabled`, or `failed`. It removes compute when present,
 then removes the owned workspace and records the Agent identity as `deleted`.
 Deleted Agent identifiers cannot be initialized again. Partial deletion is
 reconciled with the same request ID.
@@ -224,8 +227,9 @@ reconciled with the same request ID.
 ## Inspect And List
 
 `GET /internal/runtimes/{agent_id}` returns the logical lifecycle state and
-opaque revision. When state is `ready`, it reads current platform state and
-performs one bounded Runtime status check. The response may contain MCP
+opaque revision. When state is `provisioned`, it reads current platform state
+and performs one bounded Runtime status check for a platform-healthy process.
+Unverified status returns unknown health without inventing an execution ID. The response may contain MCP
 endpoint, execution ID, health, restart count, and observation time. It never
 contains physical generation, digest, container/Pod ID, volume ID, or platform
 phase.
@@ -234,7 +238,7 @@ phase.
 identities remain private tombstones and can still be inspected directly by
 Agent ID. The list is the authoritative recovery companion to a service-wide
 observation gap. Every
-`ready` Environment is checked against the private platform identity; drift
+`provisioned` Environment is checked against the private platform identity; drift
 fails the request instead of being silently omitted.
 
 ## Operations
@@ -270,10 +274,10 @@ service facts without Agent identity. Lifecycle and workspace facts are
 Environment facts carrying Agent ID plus opaque revision. Platform process
 facts are Runtime-generation facts projected as Agent ID, revision, event kind,
 execution ID when known, diagnostic summary, and time; generation, digest, and
-platform resource ID remain private. `runtime_missing` means a logical ready
+platform resource ID remain private. `runtime_missing` means a logical provisioned
 Environment had no matching resource in the inventory and a subsequent exact-key
 platform inspection confirmed absence. Agent Controller decides each fact's
-business meaning. Logical Inspect/List return that ready Environment with
+business meaning. Logical Inspect/List return that provisioned Environment with
 `health=absent`, an empty MCP endpoint and empty execution ID. An inspection
 failure or identity conflict is an error, never proof of deletion.
 
@@ -298,9 +302,13 @@ Watch outages are diagnostic conditions, not local readiness failures.
 | Stale expected revision | failed / not_started | Reload Runtime and decide again |
 | Definite platform rejection before mutation | failed / not_started | Correct input or platform state |
 | Lost response after possible mutation | unknown / unknown | Retry the same request ID |
-| Initialize compute created, bounded readiness deadline expired | failed / completed, retained failed Environment | Inspect startup configuration; Delete retained revision before recreating the Agent |
-| Readiness interrupted, identity uncertain, or Update/Enable not status-ready | unknown / completed | Inspect and retry the same request ID |
+| Platform effect cannot be determined | unknown / unknown | Inspect and retry the same request ID |
+| Runtime starting/unhealthy after successful create/start | completed / completed | Observe current state; do not retry the completed command |
 | Confirmed complete deletion | completed / completed | Agent deletion may finish |
+
+Historical operations recorded before creation/readiness separation retain
+their original `runtime_not_ready` diagnosis when queried or replayed. New
+creation commands never emit this error.
 
 `not_started` describes the rejected platform substep, not an assertion that
 Initialize allocated nothing. Its workspace may already exist; retained

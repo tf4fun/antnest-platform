@@ -21,7 +21,7 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP migration history", () => 
     await pool.end();
   });
 
-  it("upgrades a version-two database with existing terminal Runs", async () => {
+  it("applies the remaining schema steps without rewriting existing terminal Runs", async () => {
     const initialSql = await readFile(
       fileURLToPath(new URL("../../../migrations/0001_initial.sql", import.meta.url)),
       "utf8",
@@ -55,10 +55,10 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP migration history", () => 
 
     await pool.query(`
       INSERT INTO acp_sessions(
-        id, principal_id, agent_id, cwd, state, created_at, updated_at
-      ) VALUES ('session-migration', 'user-migration', 'agent-migration', '/workspace',
+        id, organization_id, principal_id, agent_id, cwd, state, created_at, updated_at
+      ) VALUES ('session-migration', 'organization-1', 'user-migration', 'agent-migration', '/workspace',
                 'active', now(), now()),
-               ('session-running', 'user-migration', 'agent-migration', '/workspace',
+               ('session-running', 'organization-1', 'user-migration', 'agent-migration', '/workspace',
                 'active', now(), now());
       INSERT INTO client_mcp_revisions(
         id, session_id, revision, encrypted_sources, nonce, created_at
@@ -72,17 +72,18 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP migration history", () => 
       WHERE id IN ('session-migration', 'session-running');
       INSERT INTO runs(
         id, request_id, session_id, client_mcp_revision_id, expected_access_revision,
-        state, admission_id, execution_snapshot, terminal_class, executor_state,
-        tool_effect_state, stop_reason, error_class, admission_finished_at, created_at, updated_at
+        state, deadline_at, execution_snapshot, terminal_class, executor_state,
+        tool_effect_state, stop_reason, error_class, created_at, updated_at, input_prompt
       ) VALUES
         ('run-running', 'request-running', 'session-running', 'mcp-running', 'access-1',
-         'running', 'admission-running', '{}'::jsonb, NULL, NULL, NULL, NULL, NULL, NULL, now(), now()),
+         'running', now() + interval '1 hour', '{}'::jsonb, NULL, NULL, NULL, NULL, NULL, now(), now(),
+         '[{"type":"text","text":"running trigger"}]'::jsonb),
         ('run-completed', 'request-completed', 'session-migration', 'mcp-migration', 'access-1',
-         'completed', 'admission-completed', '{}'::jsonb, 'completed', 'quiescent', 'settled',
-         'end_turn', NULL, now(), now(), now()),
+         'completed', now() + interval '1 hour', '{}'::jsonb, 'completed', 'quiescent', 'settled',
+         'end_turn', NULL, now(), now(), '[{"type":"text","text":"completed trigger"}]'::jsonb),
         ('run-unresolved', 'request-unresolved', 'session-migration', 'mcp-migration', 'access-1',
-         'unresolved', 'admission-unresolved', '{}'::jsonb, 'unresolved', 'quiescent', 'unknown',
-         NULL, 'tool_effect_unknown', NULL, now(), now())
+         'unresolved', now() + interval '1 hour', '{}'::jsonb, 'unresolved', 'quiescent', 'unknown',
+         NULL, 'tool_effect_unknown', now(), now(), '[{"type":"text","text":"unresolved trigger"}]'::jsonb)
     `);
 
     await expect(migrate(pool)).resolves.toBeUndefined();
@@ -95,6 +96,8 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP migration history", () => 
       "0003_track_unknown_effect_source.sql",
       "0004_session_configuration.sql",
       "0005_tool_permissions.sql",
+      "0006_execution_configurations.sql",
+      "0007_runtime_stopping_evidence.sql",
     ]);
     const sources = await pool.query<{ id: string; unknown_effect_source: string | null }>(
       "SELECT id, unknown_effect_source FROM runs ORDER BY id",

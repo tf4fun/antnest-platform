@@ -57,7 +57,7 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 	logger := telemetryRuntime.Logger()
 	httpClient := &http.Client{Transport: http.DefaultTransport}
 	backend, err := upstream.NewClient(upstream.Config{
-		IdentityURL: cfg.IdentityURL, AgentControllerURL: cfg.AgentControllerURL,
+		IdentityURL: cfg.IdentityURL, AgentControllerURL: cfg.AgentControllerURL, AgentACPURL: cfg.AgentACPURL,
 		HTTPClient: httpClient,
 	})
 	if err != nil {

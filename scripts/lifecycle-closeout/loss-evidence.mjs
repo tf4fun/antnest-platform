@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { scopeLabel } from "./docker.mjs";
+import { assertAgentReady } from "../verification/agent-state.mjs";
 
 export function assertOwnedRuntime(container, initial, project) {
   assert.match(project, /^antnest-lifecycle-[a-f0-9]{8}$/);
@@ -15,9 +16,15 @@ export function assertOwnedRuntime(container, initial, project) {
 export function assertLoss(initial, agent, events, recorded) {
   assert.equal(agent.agent_id, initial.agent.agent_id);
   assert.equal(agent.desired_state, "enabled");
-  assert.equal(agent.lifecycle_state, "unavailable");
+  assert.equal(agent.lifecycle_state, "created");
+  assert.equal(agent.activation_state, "enabled");
+  assert.equal(agent.runtime_state, "absent");
   assert(!agent.active_operation_request_id);
-  assert(!agent.executable_execution_revision && !agent.runtime);
+  assert(!agent.executable_execution_revision && !agent.runtime?.mcp_endpoint);
+  assert.equal(
+    agent.runtime?.runtime_revision,
+    initial.agent.runtime.runtime_revision,
+  );
   assert.equal(agent.agent_spec_revision, initial.agent.agent_spec_revision);
   assert.equal(
     agent.last_successful_execution_revision,
@@ -61,7 +68,7 @@ export function assertLoss(initial, agent, events, recorded) {
 export function assertReplacement(initial, replacement) {
   const agent = replacement.agent;
   assert.equal(agent.agent_id, initial.agent.agent_id);
-  assert.equal(agent.lifecycle_state, "available");
+  assertAgentReady(agent);
   assert.equal(agent.desired_state, "enabled");
   assert(!agent.failure_code && !agent.active_operation_request_id);
   assert(agent.aggregate_sequence > initial.agent.aggregate_sequence);

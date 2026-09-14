@@ -17,6 +17,5 @@ ALTER TABLE agent_controller.agent_events ADD CONSTRAINT agent_events_type_known
     'agent_enable_requested', 'agent_enabled', 'agent_enable_failed',
     'agent_delete_requested', 'agent_deleted',
     'agent_lifecycle_quarantined', 'agent_runtime_restarted', 'agent_owner_revoked',
-    'run_admission_released', 'run_admission_unresolved',
     'agent_authorization_updated'
 ));

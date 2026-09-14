@@ -20,8 +20,10 @@ func WithEventAppendObserver(observer EventAppendObserver) Option {
 }
 
 type Repository struct {
-	pool          *databasePool
-	eventAppended EventAppendObserver
+	pool              *databasePool
+	eventAppended     EventAppendObserver
+	executionCapacity ports.ExecutionCapacityGuard
+	executionChanged  func(context.Context, string)
 }
 
 const catalogRequestLockNamespace int32 = 0x414e544e
@@ -106,10 +108,14 @@ func (repository *Repository) persistModelProfile(
 	if found {
 		return replayed, nil
 	}
+	if err := lockExecutionOrganization(ctx, transaction, record.OrganizationID); err != nil {
+		return ports.ModelProfileRecord{}, err
+	}
+	executionChanged := true
 	if kind == ports.CreateModelProfileRequest {
 		err = insertModelProfile(ctx, transaction, record)
 	} else {
-		err = reviseModelProfile(ctx, transaction, expectedRevision, record)
+		executionChanged, err = reviseModelProfile(ctx, transaction, expectedRevision, &record)
 	}
 	if err != nil {
 		return ports.ModelProfileRecord{}, catalogConflict(err)
@@ -123,6 +129,11 @@ func (repository *Repository) persistModelProfile(
 		record.ModelProfileID, record.Revision.ID(), record.Revision.Revision(), record.UpdatedAt, response,
 	); err != nil {
 		return ports.ModelProfileRecord{}, err
+	}
+	if executionChanged {
+		if err := repository.advanceExecutionRevision(ctx, transaction, record.OrganizationID); err != nil {
+			return ports.ModelProfileRecord{}, err
+		}
 	}
 	if err := transaction.Commit(ctx); err != nil {
 		return ports.ModelProfileRecord{}, fmt.Errorf("commit ModelProfile transaction: %w", err)
@@ -221,10 +232,16 @@ func (repository *Repository) persistTemplate(
 	if found {
 		return replayed, nil
 	}
+	if err := lockExecutionOrganization(ctx, transaction, record.OrganizationID); err != nil {
+		return ports.TemplateRecord{}, err
+	}
+	if err := requireEnabledModel(ctx, transaction, record.OrganizationID, record.Revision.Snapshot().ModelProfileID); err != nil {
+		return ports.TemplateRecord{}, err
+	}
 	if kind == ports.CreateTemplateRequest {
 		err = insertTemplate(ctx, transaction, record)
 	} else {
-		err = reviseTemplate(ctx, transaction, expectedRevision, record)
+		err = reviseTemplate(ctx, transaction, expectedRevision, &record)
 	}
 	if err != nil {
 		return ports.TemplateRecord{}, err
@@ -264,9 +281,6 @@ func (repository *Repository) GetTemplateRevision(
 	record, err := loadTemplateRecord(ctx, repository.pool, id, revision)
 	if err != nil {
 		return domain.TemplateRevision{}, err
-	}
-	if !record.Enabled {
-		return domain.TemplateRevision{}, ports.ErrDisabledReference
 	}
 	return record.Revision, nil
 }

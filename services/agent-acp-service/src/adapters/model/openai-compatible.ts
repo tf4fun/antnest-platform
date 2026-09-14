@@ -3,7 +3,12 @@ import { z } from "zod";
 
 import type { ContentBlock, JsonValue } from "../../domain/types.js";
 import { toOpenAIMessages } from "./openai-content.js";
-import type { ModelPort, ModelRequest, ModelResult } from "../../ports/model.js";
+import type {
+  AuthenticatedModelTransport,
+  AuthenticatedModelRequest,
+  ModelRequest,
+  ModelResult,
+} from "../../ports/model.js";
 import { OpenAICompatibleModelError, invalidResponse } from "./errors.js";
 import { readStream } from "./openai-stream.js";
 import { extractUsage, modelUsage } from "./openai-usage.js";
@@ -43,7 +48,7 @@ const responseSchema = z.object({
     .min(1),
 });
 
-export class OpenAICompatibleModel implements ModelPort {
+export class OpenAICompatibleModel implements AuthenticatedModelTransport {
   private readonly fetchFn: FetchFn;
 
   public constructor(options: OpenAICompatibleModelOptions = {}) {
@@ -53,7 +58,7 @@ export class OpenAICompatibleModel implements ModelPort {
     );
   }
 
-  public async complete(request: ModelRequest): Promise<ModelResult> {
+  public async complete(request: AuthenticatedModelRequest): Promise<ModelResult> {
     const headers: Record<string, string> = {
       authorization: `Bearer ${request.credential}`,
       "content-type": "application/json",

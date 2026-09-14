@@ -81,9 +81,8 @@ describe.skipIf(databaseUrl === undefined)("ACP durable output delivery", () => 
         ])
       ).rows,
     ).toEqual([{ state: "cancelled" }]);
-    expect(app.controller.finishRun).toHaveBeenCalledWith(
+    expect(app.finish).toHaveBeenCalledWith(
       expect.objectContaining({ terminalClass: "cancelled", toolEffectState: "none" }),
-      expect.any(AbortSignal),
     );
     expect(client.frames.at(-1)?.result).toEqual({ stopReason: "cancelled" });
   });
@@ -109,7 +108,7 @@ describe.skipIf(databaseUrl === undefined)("ACP durable output delivery", () => 
     expect(
       (await pool.query<{ count: string }>("SELECT count(*) AS count FROM runs")).rows[0]?.count,
     ).toBe("0");
-    expect(app.controller.acquireRun).not.toHaveBeenCalled();
+    expect(app.acceptRun).not.toHaveBeenCalled();
     const plain = "A reusable work instruction";
     const text = await client.request("session/prompt", {
       sessionId,
@@ -144,7 +143,7 @@ describe.skipIf(databaseUrl === undefined)("ACP durable output delivery", () => 
     expect((await client.request("session/list", { cwd: "relative" })).error?.data?.code).toBe(
       "invalid_directory_filter",
     );
-    expect(app.controller.acquireRun).not.toHaveBeenCalled();
+    expect(app.acceptRun).not.toHaveBeenCalled();
   });
 
   it("sends multi-block output before v1 completion and never emits late chunks", async () => {
@@ -183,7 +182,10 @@ describe.skipIf(databaseUrl === undefined)("ACP durable output delivery", () => 
       releaseModel = () => model.resolve(answer);
       releaseFinish = () => finish.resolve();
       app.model.complete.mockReturnValue(model.promise);
-      app.controller.finishRun.mockReturnValue(finish.promise);
+      app.finish.mockImplementation(async (input) => {
+        await finish.promise;
+        await app.persistRun(input);
+      });
       const original = await app.connect(2);
       const created = await original.request("session/new", setup);
       const sessionId = String(created.result?.sessionId);
@@ -213,7 +215,7 @@ describe.skipIf(databaseUrl === undefined)("ACP durable output delivery", () => 
       );
       const offset = replacement.frames.length;
       releaseModel();
-      await expect.poll(() => app.controller.finishRun.mock.calls.length).toBe(1);
+      await expect.poll(() => app.finish.mock.calls.length).toBe(1);
       await expect
         .poll(() => JSON.stringify(replacement.frames.slice(offset)))
         .toContain("second-block");

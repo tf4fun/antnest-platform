@@ -255,7 +255,11 @@ async function lossCase(
     for (let attempt = 0; attempt < 120; attempt++) {
       signal.throwIfAborted();
       lost = await json(`/api/admin/agents/${agentID}`);
-      if (lost.lifecycle_state === "unavailable") break;
+      if (
+        lost.runtime_state === "absent" &&
+        !lost.executable_execution_revision
+      )
+        break;
       await delay(500, undefined, { signal });
     }
     const page = await json(eventsPath);

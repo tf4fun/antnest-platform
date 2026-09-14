@@ -14,7 +14,6 @@ import type {
   ExecuteRunResult,
   SessionEvent,
 } from "../../../ports/acp-application.js";
-import { AgentControllerError } from "../../../ports/agent-controller.js";
 import { SessionOutputStreams, sessionOutputKey } from "../session-output.js";
 
 export type CreateAcpV1AgentInput = {
@@ -45,6 +44,7 @@ export function createAcpV1Agent({
   ) => {
     await outputs.attach({
       keepExisting,
+      identity: binding,
       key: sessionOutputKey(binding, sessionId),
       connectionId: binding.connectionId,
       ...(afterSequence === undefined ? {} : { afterSequence }),
@@ -255,39 +255,39 @@ export function createAcpV1Agent({
           await mapError(() => application.assertAccess({ binding }));
           assertPromptSupported(params.prompt, promptCapabilities);
         }
+        const key = sessionOutputKey(binding, params.sessionId);
+        let observing = false;
         const accepted = await mapError(() =>
           application.acceptPrompt({
             binding,
             sessionId: params.sessionId,
             prompt: toDomainContent(params.prompt),
+            outputChanged: () => {
+              if (observing) outputs.invalidate(key);
+            },
           }),
         );
-        const key = sessionOutputKey(binding, params.sessionId);
-        await attach(
-          params.sessionId,
-          undefined,
-          async () => {
-            if (accepted.sessionInfoUpdate !== undefined)
-              await client.notify(acp.methods.client.session.update, {
-                sessionId: params.sessionId,
-                update: { sessionUpdate: "session_info_update", ...accepted.sessionInfoUpdate },
-              });
-          },
-          false,
-          false,
-          accepted.userMessageId,
-        );
         try {
-          const result = await application.executeRun({
-            accepted,
-            publish: () => {
-              outputs.invalidate(key);
-              return Promise.resolve();
+          await attach(
+            params.sessionId,
+            accepted.outputSequence,
+            async () => {
+              if (accepted.sessionInfoUpdate !== undefined)
+                await client.notify(acp.methods.client.session.update, {
+                  sessionId: params.sessionId,
+                  update: { sessionUpdate: "session_info_update", ...accepted.sessionInfoUpdate },
+                });
             },
-            signal: new AbortController().signal,
-          });
+            false,
+            false,
+            accepted.userMessageId,
+          );
+          observing = true;
+          outputs.invalidate(key);
+          const result = await accepted.completion;
           return promptResponse(result);
         } finally {
+          observing = true;
           outputs.invalidate(key);
           await outputs.flush(key, binding.connectionId);
         }
@@ -510,15 +510,6 @@ async function mapError<Result>(operation: () => Promise<Result>): Promise<Resul
         new acp.RequestError(-32020, error.message, {
           code: error.code,
           retryable: false,
-        }),
-        { cause: error },
-      );
-    }
-    if (error instanceof AgentControllerError) {
-      throw Object.assign(
-        new acp.RequestError(-32021, error.message, {
-          code: error.code,
-          retryable: error.retryable,
         }),
         { cause: error },
       );

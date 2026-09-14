@@ -7,6 +7,23 @@ Tools. It does not construct Agents or Runtimes.
 
 ## Status
 
+The [execution-boundary refactor](docs/execution-configuration.md) was closed by
+the user's scoped acceptance decision on 2026-09-15.
+Production composition now uses local access/configuration, logical Provider
+clients and execution ownership; the old outbound Controller RPC client is removed.
+Agent-level settlement, durable old Runtime protection, and workspace state
+read/subscription routes are now locally wired. Administrative audit queries
+read retained input, execution and permission records from ACP's own storage.
+Gateway and Console consumers have completed their service-local migrations.
+Nine Controller/ACP integration scenarios and trace topology checks passed.
+Jaeger clock warnings are deferred as OBS-ACP-CLOCK; the strict script still exits
+with failure, and no raw trace, warning or gate was modified. See the
+[final results and explicit exception](../../docs/controller-acp-execution-boundary-plan.md#103-可执行的小步交付).
+Agent UI is explicitly deferred; an official ACP SDK client, not that page,
+exercises this refactor's protocol acceptance.
+The acceptance history below describes the earlier
+deployed baseline, not acceptance of this refactor.
+
 The declared platform-only ACP profile is accepted in C1 of the Docker
 single-node closeout. ACP v1 is the compatibility baseline; ACP v2 is an
 explicitly draft, side-by-side adapter. Client editor delegation, authentication,
@@ -115,20 +132,20 @@ this directory is the only implementation authority for Agent ACP Service.
 | ACP v1 Streamable HTTP `/v1/acp` | inbound   | Official experimental POST/GET/DELETE transport                      |
 | ACP v2 over WebSocket `/v2/acp`  | inbound   | Draft ACP Session and prompt protocol                                |
 | `GET /status`                    | inbound   | Liveness/readiness without business mutation                         |
-| Agent Controller Run RPC         | outbound  | Resolve access, acquire/finish Run, resolve credential               |
+| Execution snapshot RPC           | inbound   | Apply current organization configuration and volatile credentials    |
+| Agent settlement RPC             | inbound   | Close execution for Controller lifecycle operations                  |
+| Execution state get/watch RPC    | inbound   | Current workspace state without Controller Run state                 |
+| Administrative audit RPCs        | inbound   | Organization-scoped retained Run/input/event queries                 |
 | MCP `2026-07-28` HTTP            | outbound  | Platform Runtime Tool execution                                      |
 | ACP `session/request_permission` | outbound  | User confirmation on the existing ACP connection                     |
 | OpenAI-compatible model API      | outbound  | Stage 2 model adapter                                                |
 | Private PostgreSQL               | owned     | Sessions, messages, checkpoints, Runs, Tool attempts and permissions |
 
-The Agent Controller dependency surface is owned by Agent Controller. Its
-current normative status, method, request,
-response, error, and
-compatibility rules are [`../../contracts/agent-controller/run-api.md`](../../contracts/agent-controller/run-api.md),
-with machine-readable shapes in
-[`../../contracts/agent-controller/run-contract.json`](../../contracts/agent-controller/run-contract.json).
-New optional response fields are compatible; required fields and existing
-semantics cannot change without a coordinated contract revision.
+The [execution configuration contract](../../contracts/agent-acp/execution-api.md)
+defines Controller publication into ACP. Normal ACP usage has no reverse
+Controller access/admission/credential/finish requests.
+See [execution audit](docs/execution-audit.md) for management identity, retained
+original input, independent message/permission cursors and tracing behavior.
 
 Both versions retain WebSocket; `/v1/acp` additionally supports the official
 experimental Streamable HTTP transport (POST/GET/DELETE). See the
@@ -169,27 +186,22 @@ use them; unsupported surfaces are not stubbed with false success responses.
 
 ## Runtime Rebuild Integration
 
-Agent ACP Service intentionally has no inbound `update_runtime` RPC. Agent
-Controller calls Runtime Controller's `UpdateRuntime`, waits for readiness, and
-atomically publishes a new ExecutionRevision. Every accepted ACP prompt calls
-Agent Controller `acquire_run`; that response contains the current Runtime MCP
-endpoint and execution identity and is copied into one immutable Run snapshot.
-An in-flight Run therefore cannot drift, while the first Run admitted after a
-rebuild automatically uses the replacement Runtime.
+Controller owns Runtime lifecycle and publishes only its confirmed current
+binding through execution configuration. ACP fixes the Runtime identity in each
+accepted Run; it never changes a running Tool loop's endpoint. Configuration
+application is distinct from Runtime readiness or Agent settlement.
+`POST /rpc/agent-acp/settle-agent` checks the closed lifecycle operation, waits
+outside configuration publication and reports local quiescence plus durable
+stopping evidence. New prompts cannot reuse a protected Runtime revision.
+Controller lifecycle calls and confirmed replacement remain B2/B5 integration.
 
 ## Connection Identity
 
-The deployment's Edge Gateway authenticates external users and
-forwards an opaque Agent-scoped access subject during WebSocket upgrade and
-each HTTP transport request. During
-internal development, a trusted client supplies the same value directly.
-Agent ACP Service resolves it through Agent Controller before accepting the
-connection and before Session-management operations. Prompt admission goes
-directly through authoritative `acquire_run`, which validates the same frozen
-principal, Agent, and access revision without a duplicate Identity lookup. A changed access revision,
-principal, Agent, or prompt capability invalidates the binding and requires a
-new connection. It advertises no ACP `authMethods` because authentication has
-already completed at the transport boundary.
+Gateway supplies a trusted organization/principal/Agent tuple in internal headers.
+It authenticates external users and must strip spoofed identity headers. ACP
+authorizes resource methods against the locally applied current organization
+snapshot; no opaque subject or outbound identity lookup remains. It advertises no
+ACP `authMethods` because authentication completed at the transport boundary.
 
 ## Local Commands
 
@@ -198,9 +210,16 @@ npm ci
 npm run format:check
 npm run lint
 npm run typecheck
+node --import tsx scripts/execution-contract.mjs --check
 npm test
 npm run test:postgres
 ```
+
+Run these commands from this service directory. If execution contract definitions
+change, regenerate the shared schemas with
+`node --import tsx scripts/execution-contract.mjs --write`, then review the diff
+and run the check plus contract tests. Schema generation does not replace runtime
+authorization or semantic reference validation.
 
 Build the production image from the repository root:
 
@@ -208,11 +227,11 @@ Build the production image from the repository root:
 docker compose --profile stage2 build agent-acp-service
 ```
 
-The Compose service participates in both `stage2` and `stage3`. It requires Agent
-Controller at `ANTNEST_AGENT_CONTROLLER_URL`; that dependency is not silently
-replaced by a local database or an embedded fake. Unit and PostgreSQL
-integration tests remain independently runnable without starting the complete
-Stage 2 stack.
+The Compose service participates in both `stage2` and `stage3`. The new execution
+boundary requires coordinated consumer/configuration-publisher updates before
+deployment; the existing Compose stack is not yet this refactor's acceptance.
+ACP has no outbound Controller URL. Service-local component tests use synthetic
+configuration publication; complete platform evidence follows the later batches.
 
 See [`docs/architecture.md`](docs/architecture.md) for the domain and module
 map, and [`docs/operations.md`](docs/operations.md) for configuration,

@@ -1,106 +1,61 @@
 package postgres
 
 import (
-	"context"
-	"reflect"
-	"testing"
-	"time"
-
+	"github.com/stretchr/testify/require"
 	"soft/antnest-platform/services/agent-controller/internal/domain"
 	"soft/antnest-platform/services/agent-controller/internal/ports"
+	"testing"
+	"time"
 )
 
-func TestPromptCapabilitiesUseOnlyCurrentlySelectableModelRevisions(t *testing.T) {
-	repository, base, seed := sessionConfigurationRepository(t)
-	ctx := context.Background()
-	assertPromptCapabilities(t, repository, false, false)
-	foreign := seedConfigurationProfile(t, repository, "foreign-native", "foreign-organization")
-	setNativeModelCapabilities(t, repository, foreign.Revision.ID(), true)
-	assertPromptCapabilities(t, repository, false, false)
-
+func TestModelCapabilitiesAreCurrentAndOrganizationScoped(t *testing.T) {
+	repository, base, seed := executionConfigurationRepository(t)
 	other := seedConfigurationProfile(t, repository, "native", base.Agent.OrganizationID)
-	setNativeModelCapabilities(t, repository, other.Revision.ID(), true)
-	assertPromptCapabilities(t, repository, true, true)
-	if _, err := repository.pool.Exec(ctx, `UPDATE agent_controller.model_profiles SET enabled = false WHERE id = $1`, other.ModelProfileID); err != nil {
-		t.Fatal(err)
+	foreign := seedConfigurationProfile(t, repository, "foreign-native", "foreign-organization")
+	_, err := repository.ReviseModelProfile(t.Context(), 1, revisedNativeProfile(t, foreign, true))
+	require.NoError(t, err)
+	revised := revisedNativeProfile(t, other, true)
+	_, err = repository.ReviseModelProfile(t.Context(), 1, revised)
+	require.NoError(t, err)
+	snapshot := currentExecutionSnapshot(t, repository, base.Agent.OrganizationID)
+	require.Len(t, snapshot.Models, 2)
+	current := publishedModel(t, snapshot, other.ModelProfileID)
+	require.True(t, current.SupportsImages)
+	require.True(t, current.SupportsAudio)
+	require.True(t, current.SupportsPDF)
+	require.False(t, publishedModel(t, snapshot, seed.Model.ModelProfileID).SupportsAudio)
+	for _, model := range snapshot.Models {
+		require.NotEqual(t, foreign.ModelProfileID, model.ModelProfileID)
 	}
-	assertPromptCapabilities(t, repository, false, false)
-	if _, err := repository.pool.Exec(ctx, `UPDATE agent_controller.model_profiles SET enabled = true WHERE id = $1`, other.ModelProfileID); err != nil {
-		t.Fatal(err)
+	for _, provider := range snapshot.Providers {
+		require.NotEqual(t, foreign.ProviderConnectionID, provider.ConnectionID)
 	}
-	revised := revisedNativeProfile(t, other, false)
-	if _, err := repository.ReviseModelProfile(ctx, 1, revised); err != nil {
-		t.Fatal(err)
-	}
-	// An old non-default revision cannot advertise capabilities for the current head.
-	assertPromptCapabilities(t, repository, false, false)
-	setNativeModelCapabilities(t, repository, seed.Model.Revision.ID(), true)
-	revised = revisedNativeProfile(t, seed.Model, false)
-	if _, err := repository.ReviseModelProfile(ctx, 1, revised); err != nil {
-		t.Fatal(err)
-	}
-	// Default and selected models both use their current revision.
-	assertPromptCapabilities(t, repository, false, false)
-	if _, err := repository.pool.Exec(ctx, `UPDATE agent_controller.model_profiles SET enabled = false WHERE id = $1`, seed.Model.ModelProfileID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := repository.pool.Exec(ctx, `UPDATE agent_controller.agent_access_bindings SET prompt_image = true, prompt_embedded_context = false WHERE agent_id = $1`, base.Agent.AgentID); err != nil {
-		t.Fatal(err)
-	}
-	assertPromptCapabilities(t, repository, false, false)
+
+	_, err = repository.SetCatalogAvailability(t.Context(), availabilityChange(ports.CatalogModel, other.ModelProfileID, other.OrganizationID, "disable-native", true, false))
+	require.NoError(t, err)
+	disabled := publishedModel(t, currentExecutionSnapshot(t, repository, base.Agent.OrganizationID), other.ModelProfileID)
+	require.False(t, disabled.Enabled)
+	require.True(t, disabled.SupportsAudio, "availability must not erase capability metadata")
 }
 
-func TestNativeModelCapabilitiesPersistInAdmissionAcrossRevisionAndReopen(t *testing.T) {
-	repository, base, seed := sessionConfigurationRepository(t)
-	ctx := context.Background()
+func TestCurrentNativeModelCapabilitiesPersistAcrossRevisionAndReopen(t *testing.T) {
+	repository, base, seed := executionConfigurationRepository(t)
 	revised := revisedNativeProfile(t, seed.Model, true)
-	snapshot := revised.Revision.Snapshot()
-	if _, err := repository.ReviseModelProfile(ctx, 1, revised); err != nil {
-		t.Fatal(err)
-	}
-	now := time.Unix(1900, 0).UTC()
-	command := acquireRunCommand(base.Agent, "native-run", "native-admission", now)
-	command.SessionConfiguration.ModelProfileID = &seed.Model.ModelProfileID
-	admission, _, err := repository.AcquireRun(ctx, command)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if admission.Snapshot.ExecutionSpec.Model != snapshot.Model {
-		t.Fatalf("admitted model=%+v want=%+v", admission.Snapshot.ExecutionSpec.Model, snapshot.Model)
-	}
-
-	// Reopen the adapter, not the database: recovery must read the frozen JSON snapshot.
-	reopened, err := Open(ctx, repository.pool.Config().ConnString())
-	if err != nil {
-		t.Fatal(err)
-	}
+	stored, err := repository.ReviseModelProfile(t.Context(), 1, revised)
+	require.NoError(t, err)
+	before := currentExecutionSnapshot(t, repository, base.Agent.OrganizationID)
+	require.Equal(t, revised.Revision.Snapshot().Model.Parameters(), publishedModel(t, before, seed.Model.ModelProfileID).ModelParameters)
+	reopened, err := Open(t.Context(), repository.pool.Config().ConnString())
+	require.NoError(t, err)
 	defer reopened.Close()
-	if _, err := repository.pool.Exec(ctx, `UPDATE agent_controller.model_profiles SET enabled = false WHERE id = $1`, seed.Model.ModelProfileID); err != nil {
-		t.Fatal(err)
-	}
-	replay, found, err := reopened.ReplayRunAdmission(ctx, command.RequestID, command.RequestFingerprint)
-	if err != nil || !found || !reflect.DeepEqual(replay.Snapshot, admission.Snapshot) {
-		t.Fatalf("frozen admission changed on reopen: found=%t err=%v", found, err)
-	}
-	releaseConfigurationAdmission(t, reopened, replay, now)
-}
-
-func setNativeModelCapabilities(t *testing.T, repository *Repository, revision string, enabled bool) {
-	t.Helper()
-	if _, err := repository.pool.Exec(context.Background(), `UPDATE agent_controller.model_profiles
-SET model = model || jsonb_build_object('supports_images', $2::boolean, 'supports_audio', $2::boolean, 'supports_pdf', $2::boolean)
-WHERE configuration_id = $1`, revision, enabled); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func assertPromptCapabilities(t *testing.T, repository *Repository, image, audio bool) {
-	t.Helper()
-	access, err := repository.ResolveAgentAccess(context.Background(), "access-rebuild-integration")
-	want := ports.PromptCapabilities{Image: image, Audio: audio, EmbeddedContext: true}
-	if err != nil || access.PromptCapabilities != want {
-		t.Fatalf("capabilities=%+v want=%+v err=%v", access.PromptCapabilities, want, err)
-	}
+	require.Equal(t, before, currentExecutionSnapshot(t, reopened, base.Agent.OrganizationID))
+	next := revisedNativeProfile(t, stored, false)
+	_, err = reopened.ReviseModelProfile(t.Context(), 2, next)
+	require.NoError(t, err)
+	after := currentExecutionSnapshot(t, reopened, base.Agent.OrganizationID)
+	require.Equal(t, before.Revision+1, after.Revision)
+	require.Equal(t, next.Revision.Snapshot().Model.Parameters(), publishedModel(t, after, seed.Model.ModelProfileID).ModelParameters)
+	require.Equal(t, before.Agents, after.Agents)
 }
 
 func revisedNativeProfile(t *testing.T, current ports.ModelProfileRecord, enabled bool) ports.ModelProfileRecord {

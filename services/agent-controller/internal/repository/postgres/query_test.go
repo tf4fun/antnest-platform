@@ -13,7 +13,7 @@ func TestBuildAgentQueryStatementUsesDirectParameterizedPredicates(t *testing.T)
 	t.Parallel()
 
 	statement, arguments, err := buildAgentQueryStatement(ports.AgentQuery{
-		OrganizationID: "org-1", LifecycleState: domain.AgentAvailable,
+		OrganizationID: "org-1", LifecycleState: domain.AgentCreated, ActivationState: domain.ActivationEnabled, RuntimeState: domain.RuntimeAvailable,
 		AfterCreatedAt: time.Unix(1, 0).UTC(), AfterAgentID: "agent-1", Limit: 25,
 	})
 	if err != nil {
@@ -21,7 +21,7 @@ func TestBuildAgentQueryStatementUsesDirectParameterizedPredicates(t *testing.T)
 	}
 	for _, fragment := range []string{
 		"organization_id = $1", "lifecycle_state = $2", "lifecycle_state <> 'deleted'",
-		"(created_at, id) > ($3, $4)", "LIMIT $5",
+		"activation_state = $3", "runtime_state = $4", "(created_at, id) > ($5, $6)", "LIMIT $7",
 	} {
 		if !strings.Contains(statement, fragment) {
 			t.Fatalf("statement lacks %q: %s", fragment, statement)
@@ -30,8 +30,8 @@ func TestBuildAgentQueryStatementUsesDirectParameterizedPredicates(t *testing.T)
 	if strings.Contains(statement, " OR ") || strings.Contains(statement, "owner_user_id =") {
 		t.Fatalf("statement contains an inactive or generic predicate: %s", statement)
 	}
-	if len(arguments) != 5 || arguments[0] != "org-1" || arguments[1] != domain.AgentAvailable ||
-		arguments[3] != "agent-1" || arguments[4] != 25 {
+	if len(arguments) != 7 || arguments[0] != "org-1" || arguments[1] != domain.AgentCreated ||
+		arguments[2] != domain.ActivationEnabled || arguments[3] != domain.RuntimeAvailable || arguments[5] != "agent-1" || arguments[6] != 25 {
 		t.Fatalf("arguments = %#v", arguments)
 	}
 }
@@ -57,7 +57,7 @@ func TestBuildAgentQueryStatementRejectsIncompleteCursor(t *testing.T) {
 	}
 }
 
-func TestBuildWorkspaceAgentQueryScopesAccessAndDerivesOccupancy(t *testing.T) {
+func TestBuildWorkspaceAgentQueryScopesManagementMetadata(t *testing.T) {
 	t.Parallel()
 
 	createdAt := time.Unix(2, 0).UTC()
@@ -70,11 +70,16 @@ func TestBuildWorkspaceAgentQueryScopesAccessAndDerivesOccupancy(t *testing.T) {
 	}
 	for _, fragment := range []string{
 		"access.principal_id = $2", "access.active", "agent.organization_id = $1",
-		"candidate.state IN ('active', 'blocked_unknown_effect')",
+		"agent.desired_state <> 'deleted'",
 		"(agent.created_at, agent.id) > ($3, $4)", "LIMIT $5",
 	} {
 		if !strings.Contains(statement, fragment) {
 			t.Fatalf("statement lacks %q: %s", fragment, statement)
+		}
+	}
+	for _, forbidden := range []string{"run_admissions", "access_subject", "session_id", "runtime_state", "LATERAL"} {
+		if strings.Contains(statement, forbidden) {
+			t.Fatalf("execution detail %q leaked into metadata query: %s", forbidden, statement)
 		}
 	}
 	if len(arguments) != 5 || arguments[0] != "org-1" || arguments[1] != "user-1" ||

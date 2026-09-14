@@ -13,8 +13,12 @@ The process starts accepting ACP connections only after:
 `GET /status` returns `ready` only after those gates and while the worker lock
 is held and shutdown has not started. Each probe checks only private PostgreSQL.
 Agent Controller, model APIs and Runtime MCP are business dependencies and are
-not recursively probed for readiness. Startup recovery may need actual Controller
-RPCs to settle durable work; this is not a Controller health probe.
+not recursively probed for readiness. Startup interruption cleanup uses only
+this service's storage, never Controller RPCs or model/Tool execution.
+Serving the protocol is not permission to execute: the current-process organization
+snapshot and volatile credentials must also have been applied. Production composition
+wires that directory to access, execution and revocation; see
+[batch status and remaining integration](execution-configuration.md).
 
 The migration journal must be an exact prefix of the ordered migration catalog
 embedded in the running release. A changed checksum, gap, or unknown future
@@ -23,25 +27,26 @@ service binary back requires restoring a database backup whose migration
 journal matches that older release.
 
 Migration `0004_session_configuration.sql` adds Session overrides/revision and
-the configuration captured in each Run intent. Historical intents retain NULL
-so admission recovery sends their original request shape. F05 introduced the
-Controller configuration methods and frozen admission configuration; current
-deployments must use the complete Run contract linked below, which also
-includes subsequent capability and pricing fields. Roll out compatible owner
-and consumer binaries before admitting user traffic.
-No new deployment variables or Runtime rebuilds are required. An unavailable
+the configuration captured in each Run intent. Historical intents may retain
+NULL, but startup does not replay any intent. The current configuration is supplied by Controller's inbound snapshot publication,
+not by per-Run outbound RPC. Snapshot publication and the remaining management
+operations require coordinated Controller/Gateway deployment after B1 is complete.
+An unavailable
 selected model rejects admission; it does not silently fall back to a default.
 
 Migration `0005_tool_permissions.sql` adds this service's permission ledger,
 keyed by Run and tool-call ID. Exact request payloads use JSON text inside JSONB
-to preserve escaped bytes; they are audit data and never exported to OTLP.
+to preserve escaped bytes. Normal approval/execution tracing does not export
+these payloads. Administrative audit RPC responses follow the global RPC content
+capture setting and can therefore expose retained input and tool data to OTLP;
+see [execution audit](execution-audit.md) before enabling capture.
 After acquiring the exclusive worker lock, startup cancels pending approvals
 before classifying interrupted Runs. Run completion also cancels orphan waits.
 This does not replay approved tools or resume an interrupted Tool loop.
 
 Approve modes need a client handler for standard `session/request_permission`.
 Clients can reconnect and load/resume the same Session to answer a still-live
-request. The original admission deadline bounds the wait. Cancellation sends
+request. The local accepted Run deadline bounds the wait. Cancellation sends
 the SDK cancellation notification; a client ignoring it for one second loses
 that logical connection, while the Run's cancellation completes independently.
 No extra approval HTTP endpoint, broker, provider credential or environment
@@ -55,24 +60,39 @@ before a Provider reports usage cannot be given invented token counts.
 
 ## Configuration
 
-| Variable                                | Required | Meaning                                                                               |
-| --------------------------------------- | -------- | ------------------------------------------------------------------------------------- |
-| `ANTNEST_ACP_LISTEN`                    | no       | HTTP/WebSocket listen address, default `:8080`                                        |
-| `ANTNEST_ACP_DATABASE_URL`              | yes      | Private `postgres://` or `postgresql://` database URL                                 |
-| `ANTNEST_AGENT_CONTROLLER_URL`          | yes      | Trusted internal `http://` or `https://` Run RPC base URL                             |
-| `ANTNEST_ACP_CLIENT_MCP_KEY`            | yes      | Base64-encoded 32-byte key for retained Session MCP revisions                         |
-| `ANTNEST_ACP_CONTROLLER_TIMEOUT`        | no       | Agent Controller request deadline, default `5s`                                       |
-| `ANTNEST_ACP_MAX_PROMPT_BYTES`          | no       | ACP WebSocket message bound, default `16777216` bytes                                 |
-| `ANTNEST_ACP_SHUTDOWN_TIMEOUT`          | no       | Graceful shutdown deadline, default `15s`                                             |
-| `OTEL_SDK_DISABLED`                     | no       | `true` disables OTLP even when an endpoint is present                                 |
-| `OTEL_EXPORTER_OTLP_ENDPOINT`           | no       | OTLP base endpoint; empty disables export                                             |
-| `OTEL_SERVICE_NAME`                     | no       | Defaults to `agent-acp-service`                                                       |
-| `ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT` | no       | `false` by default; `true` captures full discrete RPC JSON, which may include secrets |
+| Variable                                | Required | Meaning                                                                                                                     |
+| --------------------------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `ANTNEST_ACP_LISTEN`                    | no       | HTTP/WebSocket listen address, default `:8080`                                                                              |
+| `ANTNEST_ACP_DATABASE_URL`              | yes      | Private `postgres://` or `postgresql://` database URL                                                                       |
+| `ANTNEST_ACP_DATABASE_TIMEOUT`          | no       | Connection acquisition, PostgreSQL statement and client read timeout, default `10s`; accepts `ms`, `s`, or `m`              |
+| `ANTNEST_ACP_STATE_DELIVERY_TIMEOUT`    | no       | Workspace state write/terminal flush deadline, default `10s`; does not expire idle subscriptions; accepts `ms`, `s`, or `m` |
+| `ANTNEST_ACP_CLIENT_MCP_KEY`            | yes      | Base64-encoded 32-byte key for retained Session MCP revisions                                                               |
+| `ANTNEST_ACP_RUN_TIMEOUT`               | no       | Local Run deadline, default `30m`; fixed at acceptance and independent of lifecycle settlement                              |
+| `ANTNEST_ACP_MAX_PROMPT_BYTES`          | no       | ACP WebSocket message bound, default `16777216` bytes                                                                       |
+| `ANTNEST_ACP_MAX_CONFIGURATION_BYTES`   | no       | Internal execution snapshot body bound, default `16777216` bytes; independent of prompt size, range 1024-67108864           |
+| `ANTNEST_ACP_SHUTDOWN_TIMEOUT`          | no       | Graceful shutdown deadline, default `15s`                                                                                   |
+| `OTEL_SDK_DISABLED`                     | no       | `true` disables OTLP even when an endpoint is present                                                                       |
+| `OTEL_EXPORTER_OTLP_ENDPOINT`           | no       | OTLP base endpoint; empty disables export                                                                                   |
+| `OTEL_SERVICE_NAME`                     | no       | Defaults to `agent-acp-service`                                                                                             |
+| `ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT` | no       | `false` by default; `true` captures full discrete RPC JSON, which may include secrets                                       |
 
 Durations accept a positive integer followed by `ms`, `s`, or `m`. Invalid,
 empty required, unsupported-scheme, and out-of-range values fail startup before
 the database or network is touched. The listen address accepts `:port`,
 `host:port`, or `[ipv6]:port`.
+
+The database timeout uses the driver's standard connection, statement and read
+limits. A shorter lifecycle deadline cancels its read immediately: borrowed
+connections are discarded rather than returned with a pending query, and late
+connection acquisitions are released without executing SQL. PostgreSQL's
+statement timeout also bounds backend work if it does not immediately observe
+the closed connection. No write result or remote tool result is inferred from
+a timeout. Evidence reads occur outside the configuration publication queue;
+service shutdown aborts settlement instead of reporting success.
+Borrowed read and transaction connections retain their own error listener until
+release. An unexpected socket failure rejects the operation and discards the
+connection rather than becoming an unhandled process error. A lost transaction
+connection does not prove rollback; the original/rollback errors remain visible.
 
 The encryption key is a service bootstrap secret, not a Provider credential.
 Rotation requires decrypt-with-old/encrypt-with-new maintenance and is not
@@ -82,32 +102,23 @@ The all-zero key in the repository's `.env.example` is for disposable local
 data only. Production deployment must inject a random key and retain it for the
 lifetime of the service-owned database.
 
-`ANTNEST_AGENT_CONTROLLER_URL` names the service root. Business calls use
-`/rpc/agent-controller/*` beneath that root. Readiness never calls its `/status`.
-The complete current dependency contract is
-[`../../../contracts/agent-controller/run-api.md`](../../../contracts/agent-controller/run-api.md),
-with machine-readable shapes in
-[`../../../contracts/agent-controller/run-contract.json`](../../../contracts/agent-controller/run-contract.json).
-Stage 2 deploys this internal contract revision as one coordinated service
-upgrade; rolling mixed-revision operation is not supported.
+There is no outbound Controller URL or per-request Controller timeout.
+Controller calls `POST /rpc/agent-acp/apply-execution-snapshot`; its
+[contract](../../../contracts/agent-acp/execution-api.md) defines complete
+organization snapshots, applied revision and failure semantics. A stored snapshot
+alone cannot initialize a restarted process's credentials.
 
 ## ACP Endpoint
 
 Both `/v1/acp` and `/v2/acp` accept WebSocket upgrades. `/v1/acp` additionally
 accepts SDK Streamable HTTP POST/GET SSE/DELETE; `/v2/acp` does not accept that
 HTTP transport. See the [HTTP transport contract](http-transport.md).
-The caller supplies an opaque,
-Agent-scoped access subject in `X-Antnest-Agent-Access-Subject`. This header is
-trusted only because the service is not externally routable; Edge Gateway must
-remove any external value and inject the value issued for the selected Agent.
-
-The service validates the subject through Agent Controller before accepting
-the upgrade and revalidates it before Session-management operations. Prompt
-admission uses authoritative `acquire_run` rather than a duplicate access RPC.
-Each HTTP transport request also revalidates its binding. Agent
-Controller must advance `access_revision` when authorization, Agent mapping, or
-prompt capabilities change. A stale connection receives a stable ACP error and
-must reconnect. The service never logs the raw header.
+The trusted caller supplies `X-Antnest-Organization-ID`,
+`X-Antnest-Principal-ID` and `X-Antnest-Agent-ID`. Edge Gateway must strip any
+external values and derive the tuple from authentication and the selected Agent.
+The old opaque subject is not a fallback. Both transports bind the same tuple;
+resource operations check the current local grant, not a Controller RPC or a
+cached connection grant. Missing current configuration returns an ACP error.
 
 The endpoint fixes the protocol version for the complete connection. Stable v1
 and draft v2 are separate adapters over the same application core. The
@@ -116,8 +127,7 @@ unversioned `/acp` returns not found and never negotiates a default version.
 ## Telemetry
 
 W3C `traceparent`/`tracestate` is accepted at WebSocket upgrade and from ACP
-request `_meta` where present. Trace context propagates to Agent Controller,
-model and Runtime MCP requests.
+request `_meta` where present. Trace context propagates to model and Runtime MCP requests.
 
 HTTP requests and upgrades have a SERVER boundary, including successful health
 requests with upstream context. A shared fetch boundary creates CLIENT before
@@ -126,7 +136,7 @@ strings, authorization and cookies are not exported. See the service
 [observability implementation and remaining SDK limits](observability.md).
 
 Spans include low-risk identifiers such as Agent ID, Session ID, Run ID,
-admission ID, configuration revision, execution revision, MCP source class,
+organization ID, configuration revision, execution revision, MCP source class,
 and terminal class. High-cardinality identifiers are span attributes, never
 metric labels.
 
@@ -138,7 +148,7 @@ Required low-cardinality metrics:
 - Run duration and terminal class;
 - model request duration and result;
 - MCP request duration by source class and bounded Tool policy;
-- recovery-classified Runs and unresolved admissions.
+- recovery-classified Runs and unresolved Runs.
 
 Repository queries and transactions emit spans and request/duration metrics
 using only the bounded SQL operation class (`select`, `insert`, `update`,
@@ -147,7 +157,7 @@ credentials are never telemetry attributes.
 
 The implemented metric namespace is `antnest.acp.*`. Request counters and
 duration histograms use only bounded labels such as method, result, terminal
-class, MCP source class, and model protocol. Agent, Session, Run, admission, and
+class, MCP source class, and model protocol. Agent, Session, Run, organization, and
 revision identifiers are trace attributes only.
 
 Prompts, model output, Tool arguments/results, full paths, secret MCP headers,
@@ -162,18 +172,13 @@ Collector retention. This service adds no retention service.
 
 ## Failure Handling
 
-- Agent Controller timeout: retry only idempotent RPC with the same request ID;
-  do not acknowledge a prompt with unknown admission state. Keep its durable
-  `admitting` intent, fail readiness, and request process replacement so startup
-  recovery repeats `acquire_run` with that exact request ID. Only an explicit
-  Controller business rejection terminates it.
-- Local acceptance failure after a successful admission, durable Run-event or
-  terminal-state persistence failure, or an uncertain `finish_run`: fail
-  readiness and request process replacement. A Run-event write failure is not
-  converted into a normal terminal Run because that could strand a partial Tool
-  exchange. The service does not remain healthy with a stranded admission;
-  startup recovery resumes the same durable work. No speculative ACP idle state
-  is emitted before that recovery establishes the terminal facts.
+- Configuration validation/storage failure retains the old live projection.
+  Failure during publication after persistence closes the affected organization,
+  aborts its execution and detaches approval/output consumers; retry the same or
+  newer snapshot. Neither the request nor raw error text is telemetry content.
+- Local acceptance, Run-event or terminal persistence uncertainty fails readiness
+  and requests process replacement. Startup records interruption without model or
+  Tool replay. No Controller admission or completion receipt is involved.
 - Model timeout: cancel the request and terminate the Run as failed unless the
   client cancellation path applies.
 - Runtime MCP timeout after dispatch: report Tool effect unknown and
@@ -196,7 +201,7 @@ Collector retention. This service adds no retention service.
   execution, emits its structured stdout event, gives OTLP trace/metrics at
   most 500ms to flush, and then exits non-zero for platform replacement. This is
   a hard fail-stop, not graceful shutdown: the stale worker must not persist
-  terminal Run state or close an admission after ownership is lost.
+  terminal Run state after ownership is lost.
   A dedicated ownership-loss channel races startup, recovery, serving, and
   graceful cleanup, so an earlier ordinary component or database failure
   cannot mask lock loss. External and durable operations, including context
@@ -204,8 +209,8 @@ Collector retention. This service adds no retention service.
   any next transition. The same fail-stop path therefore cannot be delayed by
   a pending operation or ordinary component cleanup before the process exits.
 - Session cancellation, close, or delete: persist a cancellation latch before
-  waiting for in-memory execution. A late admission response is recorded and
-  closed without starting model or Tool work.
+  waiting for in-memory execution. A late acceptance commit reaches an already
+  aborted executor and is closed without starting model or Tool work.
 - SIGTERM: stop accepting connections, cancel active work, wait up to the
   shutdown timeout, terminate open ACP transports, persist terminal or
   unresolved facts where the executor can prove them, release the worker lock
@@ -227,5 +232,5 @@ Compose or Kubernetes network policy permits:
 
 - inbound only from Edge Gateway, Agent UI bridge, Channel Gateway, and trusted
   development clients;
-- outbound to its private PostgreSQL, Agent Controller, configured model APIs,
+- outbound to its private PostgreSQL, configured model APIs,
   and the Runtime MCP endpoint in a Run snapshot.

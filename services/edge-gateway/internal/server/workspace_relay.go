@@ -18,9 +18,9 @@ const maximumACPMessageBytes = 64 << 20
 
 func (h *handler) relayWorkspaceACP(
 	response http.ResponseWriter, request *http.Request,
-	token string, principal identity.Principal, subject string,
+	token string, principal identity.Principal,
 ) {
-	upstream, status, err := h.dialWorkspaceACP(request, subject)
+	upstream, status, err := h.dialWorkspaceACP(request, principal)
 	if err != nil {
 		h.logger.ErrorContext(request.Context(), "ACP connection failed", "error_class", "upstream_unavailable")
 		writeError(response, status, "agent_unavailable", "Agent connection is unavailable")
@@ -42,7 +42,7 @@ func (h *handler) relayWorkspaceACP(
 		"close_code", result.code, "reason", result.reason)
 }
 
-func (h *handler) dialWorkspaceACP(request *http.Request, subject string) (*websocket.Conn, int, error) {
+func (h *handler) dialWorkspaceACP(request *http.Request, principal identity.Principal) (*websocket.Conn, int, error) {
 	transport := telemetry.BaseHTTPTransport(h.httpClient.Transport)
 	configured, ok := transport.(*http.Transport)
 	if !ok {
@@ -60,7 +60,7 @@ func (h *handler) dialWorkspaceACP(request *http.Request, subject string) (*webs
 	}
 	target.Path, target.RawPath, target.RawQuery = "/"+request.PathValue("acp_version")+"/acp", "", ""
 	headers := make(http.Header)
-	headers.Set(HeaderAgentAccessSubject, subject)
+	setACPIdentity(headers, principal, request.PathValue("agent_id"))
 	connection, response, err := telemetry.DialWebSocket(request.Context(), &dialer, target.String(), headers)
 	status := http.StatusServiceUnavailable
 	if response != nil && response.StatusCode >= 400 && response.StatusCode < 500 {
@@ -199,4 +199,10 @@ func peerRelayEnd(err error) relayEnd {
 		}
 	}
 	return relayEnd{websocket.CloseInternalServerErr, "connection_failed"}
+}
+
+func setACPIdentity(headers http.Header, principal identity.Principal, agentID string) {
+	headers.Set(HeaderOrganizationID, principal.OrganizationID)
+	headers.Set(HeaderPrincipalID, principal.UserID)
+	headers.Set(HeaderAgentID, agentID)
 }

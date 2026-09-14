@@ -1,23 +1,24 @@
 # Session Cost (F10)
 
-Status: ACP, Controller and Console/BFF batches verified (2026-09-09);
-Agent UI presentation and deployed integration verified (2026-09-10).
+The earlier F10 delivery was verified in September 2026. The current
+Controller/ACP boundary follows [execution configuration](execution-configuration.md);
+its integration status is tracked separately and Agent UI is deferred.
 
 ## Ownership And Contract
 
 Controller remains the model/configuration authority. Its optional
-`execution_spec.model.pricing` is `{currency: "USD", input_per_million,
+published model `pricing` is `{currency: "USD", input_per_million,
 output_per_million, cache_read_per_million?, cache_write_per_million?}`. Rates are
 finite, nonnegative numbers. Both ordinary rates are required; zero is an
-explicit free rate, not a missing value. Controller resolves administrator
-overrides first and known catalog data second. A Session model switch freezes
-the selected rates in its next admission. ACP neither reads a pricing file nor
+explicit free rate, not a missing value. Console supplies builtin draft defaults;
+Controller preserves the submitted current prices. ACP freezes selected rates
+in its local Run configuration. ACP neither reads a pricing file nor
 accepts prices from ACP clients. Old/unknown model snapshots may omit pricing.
 
 The ACP domain uses the same shape in camelCase. Prices travel with the immutable
-model snapshot and survive restart recovery. The producer supplies the field
-under shared Run contract revision 12; Controller model-profile management
-supports prices, and Console editing projects and submits this contract. No separate price
+model snapshot and remain in execution history after restart, without resuming
+the old Run. Prices arrive through the current execution snapshot publication;
+Controller model-profile management supports prices, and Console submits this contract. No separate price
 revision or billing service is introduced.
 
 ## Measurement And Projection
@@ -67,8 +68,8 @@ cache_read_rate + cache_write * cache_write_rate) / 1_000_000`. Missing cache
    absent/invalid/zero/non-USD/cache cases; saved per-call receipts; PostgreSQL
    concurrency/idempotency, recovery and fork independence; standard v1/v2
    notification and replay schema checks. Include permission-judge model calls.
-2. Controller: validated optional pricing, admin authority, known catalog
-   fallback, immutable revisions and execution snapshot propagation; update
+2. Controller: validated optional pricing, admin authority, preservation of
+   submitted current values and execution snapshot propagation; update
    the shared producer contract and prove the existing ACP consumer accepts it.
 3. Console/BFF: bounded price inputs, clear per-million-token units, unknown vs
    explicit zero, response projections and immutable revision inspection.

@@ -19,7 +19,6 @@ func TestLoadUsesThinDockerAdapterDefaults(t *testing.T) {
 		t.Fatalf("unexpected platform defaults: %+v", config)
 	}
 	if config.RuntimeStatusTimeout != 5*time.Second || config.MutationTimeout != 2*time.Minute ||
-		config.RuntimeReadyTimeout != time.Minute ||
 		config.ObservationRetention != 7*24*time.Hour || config.RPCRequestTimeout != 3*time.Minute ||
 		config.ReconciliationTimeout != 2*time.Minute {
 		t.Fatalf("unexpected bounded-operation defaults: %+v", config)
@@ -72,11 +71,6 @@ func TestLoadRejectsInvalidDeploymentBoundary(t *testing.T) {
 			"ANTNEST_RUNTIME_CONTROLLER_DATABASE_URL": "postgres://runtime:runtime@postgres/runtime",
 			"ANTNEST_RUNTIME_MANAGEMENT_NETWORK":      "antnest-runtime-management",
 			"ANTNEST_RUNTIME_STATUS_TIMEOUT":          "zero",
-		}},
-		{name: "mutation shorter than readiness", values: map[string]string{
-			"ANTNEST_RUNTIME_CONTROLLER_DATABASE_URL": "postgres://runtime:runtime@postgres/runtime",
-			"ANTNEST_RUNTIME_MANAGEMENT_NETWORK":      "antnest-runtime-management",
-			"ANTNEST_RUNTIME_MUTATION_TIMEOUT":        "30s",
 		}},
 		{name: "RPC shorter than mutation", values: map[string]string{
 			"ANTNEST_RUNTIME_CONTROLLER_DATABASE_URL": "postgres://runtime:runtime@postgres/runtime",

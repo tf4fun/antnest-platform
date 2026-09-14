@@ -26,7 +26,6 @@ export type SessionConfiguration = z.infer<typeof sessionConfigurationSchema>;
 export const admittedConfigurationSchema = z
   .object({
     modelProfileId: z.string().min(1),
-    modelProfileRevisionId: z.string().min(1),
     authorization: authorizationSchema,
     authorizationRevision: z.number().int().positive(),
     digest: z.string().regex(/^[a-f0-9]{64}$/u),
@@ -35,7 +34,6 @@ export const admittedConfigurationSchema = z
 export type AdmittedConfiguration = z.infer<typeof admittedConfigurationSchema>;
 export type SessionModel = {
   modelProfileId: string;
-  revisionId: string;
   displayName: string;
   model: string;
   contextWindow: number;

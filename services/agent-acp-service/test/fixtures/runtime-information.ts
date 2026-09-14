@@ -25,13 +25,16 @@ export function runtimeInformation(): RuntimeInformation {
 
 export function runtimeSnapshot(): RunExecutionSnapshot {
   return {
-    admissionId: "admission-1",
-    admissionDeadline: new Date(Date.now() + 60000),
+    organizationId: "organization-1",
+    providerConnectionId: "connection-1",
+    modelProfileId: "profile-1",
+    configurationRevision: 1,
+    accessRevision: "access-1",
+    deadlineAt: new Date(Date.now() + 60000),
     agentSpecRevision: "spec-1",
     executionRevision: "execution-1",
     runtimeMcpSourceDigest: "a".repeat(64),
     agentExecutionSpecDigest: "b".repeat(64),
-    credentialVersion: "credential-version-1",
     runtime: {
       revision: "runtime-1",
       executionId: "runtime-execution-1",
@@ -42,7 +45,6 @@ export function runtimeSnapshot(): RunExecutionSnapshot {
       contextPolicyVersion: "context-v1",
       skillInstructions: [],
       maxModelRequests: 4,
-      credentialRef: "credential-1",
       model: {
         baseUrl: "http://model:8080/v1",
         model: "example",

@@ -83,6 +83,9 @@ func (repository *Repository) BeginAgentEnable(
 	if err := lockIdentityAdmission(ctx, transaction); err != nil {
 		return ports.AgentEnableState{}, false, err
 	}
+	if err := lockAgentExecutionConfiguration(ctx, transaction, input.AgentID); err != nil {
+		return ports.AgentEnableState{}, false, err
+	}
 	agent, err := loadAgentRecordForUpdate(ctx, transaction, input.AgentID)
 	if err != nil {
 		return ports.AgentEnableState{}, false, err
@@ -103,6 +106,9 @@ func (repository *Repository) BeginAgentEnable(
 	if !validEnableBegin(input, base) {
 		return ports.AgentEnableState{}, false, ports.ErrConcurrentChange
 	}
+	if err := requireEnabledModel(ctx, transaction, agent.OrganizationID, base.Spec.Snapshot.ModelProfileID); err != nil {
+		return ports.AgentEnableState{}, false, err
+	}
 	if err := insertLifecycleOperation(ctx, transaction, input.Operation); err != nil {
 		return ports.AgentEnableState{}, false, err
 	}
@@ -110,7 +116,7 @@ func (repository *Repository) BeginAgentEnable(
 UPDATE agent_controller.agents
 SET desired_state = 'enabled', active_operation_request_id = $2,
     aggregate_sequence = $3, updated_at = $4, owner_authorization_sequence = $9
-WHERE id = $1 AND desired_state = 'disabled' AND lifecycle_state = 'disabled'
+WHERE id = $1 AND desired_state = 'disabled' AND lifecycle_state = 'created' AND activation_state = 'disabled'
   AND active_operation_request_id = '' AND aggregate_sequence = $5
   AND executable_spec_revision_id = $6 AND executable_execution_revision_id = ''
   AND last_successful_execution_revision_id = $7 AND runtime_revision = $8
@@ -139,6 +145,9 @@ WHERE id = $1 AND desired_state = 'disabled' AND lifecycle_state = 'disabled'
 		LastSuccessfulExecution: base.LastSuccessfulExecution,
 		Operation:               input.Operation,
 	}
+	if err := repository.advanceExecutionRevision(ctx, transaction, agent.OrganizationID); err != nil {
+		return ports.AgentEnableState{}, false, err
+	}
 	if err := transaction.Commit(ctx); err != nil {
 		return ports.AgentEnableState{}, false, fmt.Errorf("commit Agent enable transaction: %w", err)
 	}
@@ -157,7 +166,7 @@ func (repository *Repository) AdvanceAgentEnable(
 		return ports.AgentEnableState{}, fmt.Errorf("begin Agent enable phase transaction: %w", err)
 	}
 	defer func() { _ = transaction.Rollback(ctx) }()
-	operation, err := loadLifecycleOperation(ctx, transaction, input.RequestID, "FOR UPDATE")
+	operation, err := loadLifecycleExecutionMutation(ctx, transaction, input.RequestID)
 	if err != nil {
 		return ports.AgentEnableState{}, err
 	}
@@ -201,7 +210,7 @@ func (repository *Repository) PublishAgentEnable(
 		return ports.AgentEnableState{}, fmt.Errorf("begin Agent enable publish transaction: %w", err)
 	}
 	defer func() { _ = transaction.Rollback(ctx) }()
-	operation, err := loadLifecycleOperation(ctx, transaction, input.RequestID, "FOR UPDATE")
+	operation, err := loadLifecycleExecutionMutation(ctx, transaction, input.RequestID)
 	if err != nil {
 		return ports.AgentEnableState{}, err
 	}
@@ -217,52 +226,21 @@ func (repository *Repository) PublishAgentEnable(
 	if operation.State != domain.OperationRunning || operation.Phase != domain.PhasePublish ||
 		operation.RuntimeResult == nil || operation.NetworkAttachment == nil ||
 		operation.NetworkAttachment.AttachmentState != ports.NetworkAttachmentOpen ||
-		!readyRuntimeResult(*operation.RuntimeResult) ||
-		input.Execution.AgentID != operation.AgentID ||
-		input.Execution.AgentSpecRevisionID != operation.TargetSpecRevisionID ||
-		input.Execution.RuntimeRevision != operation.RuntimeResult.RuntimeRevision ||
-		input.Execution.RuntimeExecutionID != operation.RuntimeResult.RuntimeExecutionID ||
-		input.Execution.RuntimeMCPEndpoint != operation.RuntimeResult.MCPEndpoint {
+		!provisionedRuntimeResult(*operation.RuntimeResult) {
 		return ports.AgentEnableState{}, ports.ErrConcurrentChange
 	}
 	state, err := loadAgentEnableState(ctx, transaction, operation)
 	if err != nil {
 		return ports.AgentEnableState{}, err
 	}
-	if input.Execution.Revision != state.LastSuccessfulExecution.Revision+1 ||
-		!validEnableEvent(
-			input.EnabledEvent, operation, ports.EventAgentEnabled,
-			state.Agent.AggregateSequence+1,
-		) {
+	if !validEnableEvent(
+		input.EnabledEvent, operation, ports.EventAgentEnabled,
+		state.Agent.AggregateSequence+1,
+	) {
 		return ports.AgentEnableState{}, ports.ErrConcurrentChange
 	}
-	if err := insertExecutionRevision(ctx, transaction, input.Execution); err != nil {
+	if err := publishRuntimeTarget(ctx, transaction, operation, input.EnabledEvent, input.Now); err != nil {
 		return ports.AgentEnableState{}, err
-	}
-	result, err := transaction.Exec(ctx, `
-UPDATE agent_controller.agents
-SET desired_state = 'enabled', lifecycle_state = 'available',
-    executable_spec_revision_id = $2, executable_execution_revision_id = $3,
-    last_successful_execution_revision_id = $3,
-    runtime_revision = $4, runtime_execution_id = $5, runtime_mcp_endpoint = $6,
-    active_operation_request_id = '', failure_stage = '', failure_code = '', failure_detail = '',
-    aggregate_sequence = $7, updated_at = $8
-WHERE id = $1 AND desired_state = 'enabled' AND lifecycle_state = 'disabled'
-  AND active_operation_request_id = $9 AND aggregate_sequence = $10
-  AND executable_spec_revision_id = $2 AND executable_execution_revision_id = ''
-  AND last_successful_execution_revision_id = $11 AND runtime_revision = $12
-  AND runtime_execution_id = '' AND runtime_mcp_endpoint = ''`,
-		operation.AgentID, input.Execution.AgentSpecRevisionID, input.Execution.ID,
-		input.Execution.RuntimeRevision, input.Execution.RuntimeExecutionID,
-		input.Execution.RuntimeMCPEndpoint, input.EnabledEvent.AggregateSequence,
-		input.Now, input.RequestID, input.EnabledEvent.AggregateSequence-1,
-		operation.SourceExecutionRevisionID, operation.SourceRuntimeRevision,
-	)
-	if err != nil {
-		return ports.AgentEnableState{}, fmt.Errorf("publish enabled Agent projection: %w", err)
-	}
-	if result.RowsAffected() != 1 {
-		return ports.AgentEnableState{}, ports.ErrConcurrentChange
 	}
 	if err := repository.insertAgentEvent(ctx, transaction, input.EnabledEvent); err != nil {
 		return ports.AgentEnableState{}, err
@@ -281,6 +259,9 @@ WHERE request_id = $1`, input.RequestID, input.Now); err != nil {
 	}
 	state, err = loadAgentEnableState(ctx, transaction, operation)
 	if err != nil {
+		return ports.AgentEnableState{}, err
+	}
+	if err := repository.advanceExecutionRevision(ctx, transaction, state.Agent.OrganizationID); err != nil {
 		return ports.AgentEnableState{}, err
 	}
 	if err := transaction.Commit(ctx); err != nil {
@@ -306,7 +287,7 @@ func (repository *Repository) FailAgentEnable(
 		return ports.AgentEnableState{}, fmt.Errorf("begin Agent enable failure transaction: %w", err)
 	}
 	defer func() { _ = transaction.Rollback(ctx) }()
-	operation, err := loadLifecycleOperation(ctx, transaction, input.RequestID, "FOR UPDATE")
+	operation, err := loadLifecycleExecutionMutation(ctx, transaction, input.RequestID)
 	if err != nil {
 		return ports.AgentEnableState{}, err
 	}
@@ -337,10 +318,10 @@ func (repository *Repository) FailAgentEnable(
 	}
 	query := `
 UPDATE agent_controller.agents
-SET desired_state = 'disabled', lifecycle_state = 'disabled',
+SET desired_state = 'disabled', activation_state = 'disabled', runtime_state = 'absent',
     active_operation_request_id = '', failure_stage = $2, failure_code = $3,
     failure_detail = $4, aggregate_sequence = $5, updated_at = $6
-WHERE id = $1 AND desired_state = 'enabled' AND lifecycle_state = 'disabled'
+WHERE id = $1 AND desired_state = 'enabled' AND lifecycle_state = 'created' AND activation_state = 'disabled'
   AND active_operation_request_id = $7 AND aggregate_sequence = $8
   AND executable_spec_revision_id = $9 AND executable_execution_revision_id = ''
   AND last_successful_execution_revision_id = $10 AND runtime_revision = $11`
@@ -376,6 +357,9 @@ WHERE request_id = $1`, input.RequestID, input.Code, input.Detail,
 	if err != nil {
 		return ports.AgentEnableState{}, err
 	}
+	if err := repository.advanceExecutionRevision(ctx, transaction, state.Agent.OrganizationID); err != nil {
+		return ports.AgentEnableState{}, err
+	}
 	if err := transaction.Commit(ctx); err != nil {
 		return ports.AgentEnableState{}, fmt.Errorf("commit Agent enable failure: %w", err)
 	}
@@ -386,7 +370,7 @@ WHERE request_id = $1`, input.RequestID, input.Code, input.Detail,
 func loadAgentEnableBase(
 	ctx context.Context, queryer catalogQueryer, agent ports.AgentRecord,
 ) (ports.AgentEnableBase, error) {
-	if agent.AgentSpecRevisionID == "" || agent.LastSuccessfulExecutionRevisionID == "" ||
+	if agent.AgentSpecRevisionID == "" ||
 		agent.RuntimeRevision == "" {
 		return ports.AgentEnableBase{Agent: agent}, nil
 	}
@@ -394,7 +378,7 @@ func loadAgentEnableBase(
 	if err != nil {
 		return ports.AgentEnableBase{}, err
 	}
-	execution, err := loadExecutionRevision(ctx, queryer, agent.LastSuccessfulExecutionRevisionID)
+	execution, err := loadOptionalExecutionRevision(ctx, queryer, agent.LastSuccessfulExecutionRevisionID)
 	if err != nil {
 		return ports.AgentEnableBase{}, err
 	}
@@ -419,7 +403,7 @@ func loadAgentEnableState(
 	if err != nil {
 		return ports.AgentEnableState{}, err
 	}
-	execution, err := loadExecutionRevision(ctx, queryer, operation.SourceExecutionRevisionID)
+	execution, err := loadOptionalExecutionRevision(ctx, queryer, operation.SourceExecutionRevisionID)
 	if err != nil {
 		return ports.AgentEnableState{}, err
 	}
@@ -430,7 +414,7 @@ func loadAgentEnableState(
 
 func matchesEnableSource(agent ports.AgentRecord, input ports.BeginAgentEnable) bool {
 	return agent.DesiredState == domain.DesiredDisabled &&
-		agent.LifecycleState == domain.AgentDisabled && agent.ActiveOperationRequestID == "" &&
+		agent.LifecycleState == domain.AgentCreated && agent.ActivationState == domain.ActivationDisabled && agent.ActiveOperationRequestID == "" &&
 		agent.AggregateSequence == input.ExpectedAggregateSequence &&
 		agent.AgentSpecRevisionID == input.ExpectedSpecRevisionID &&
 		agent.ExecutionRevisionID == "" &&
@@ -456,9 +440,7 @@ func validEnableBegin(input ports.BeginAgentEnable, base ports.AgentEnableBase) 
 			base.Agent.AggregateSequence+1,
 		) &&
 		base.Spec.AgentID == input.AgentID &&
-		base.LastSuccessfulExecution.AgentID == input.AgentID &&
-		base.LastSuccessfulExecution.AgentSpecRevisionID == base.Spec.ID &&
-		base.NextExecutionRevision == base.LastSuccessfulExecution.Revision+1
+		(base.LastSuccessfulExecution.ID == "" || base.LastSuccessfulExecution.AgentID == input.AgentID)
 }
 
 func validEnableEvent(
@@ -499,7 +481,7 @@ func validateEnableAdvance(input ports.AdvanceAgentEnable) error {
 	case input.ExpectedPhase == domain.PhaseRuntimeEnable &&
 		input.NextPhase == domain.PhaseNetworkRestore:
 		valid = input.NetworkAttachment == nil && input.RuntimeResult != nil &&
-			readyRuntimeResult(*input.RuntimeResult)
+			provisionedRuntimeResult(*input.RuntimeResult)
 	case input.ExpectedPhase == domain.PhaseNetworkRestore &&
 		input.NextPhase == domain.PhasePublish:
 		valid = input.NetworkAttachment != nil && input.RuntimeResult == nil
@@ -511,8 +493,8 @@ func validateEnableAdvance(input ports.AdvanceAgentEnable) error {
 	return nil
 }
 
-func readyRuntimeResult(result ports.RuntimeOperation) bool {
+func provisionedRuntimeResult(result ports.RuntimeOperation) bool {
 	return result.State == "completed" && result.Effect == "completed" &&
-		result.LifecycleState == "ready" && result.Health == "healthy" &&
-		result.RuntimeRevision != "" && result.RuntimeExecutionID != "" && result.MCPEndpoint != ""
+		result.LifecycleState == "provisioned" && result.Health == "unknown" &&
+		result.RuntimeRevision != "" && result.RuntimeExecutionID == "" && result.MCPEndpoint == ""
 }

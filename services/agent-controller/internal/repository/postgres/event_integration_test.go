@@ -27,8 +27,8 @@ func TestAgentEventRepositoryReplaysGlobalAndPerAgentOrder(t *testing.T) {
 	}
 
 	now := time.Date(2026, time.September, 1, 12, 0, 0, 0, time.UTC)
-	insertQueryAgent(t, ctx, repository, "agent-a", "org-a", "user-a", domain.DesiredEnabled, domain.AgentAvailable, now)
-	insertQueryAgent(t, ctx, repository, "agent-b", "org-a", "user-b", domain.DesiredEnabled, domain.AgentAvailable, now)
+	insertQueryAgent(t, ctx, repository, "agent-a", "org-a", "user-a", domain.DesiredEnabled, domain.AgentCreated, now)
+	insertQueryAgent(t, ctx, repository, "agent-b", "org-a", "user-b", domain.DesiredEnabled, domain.AgentCreated, now)
 	sequence1 := insertTestAgentEvent(t, ctx, repository, testRepositoryEvent("event-a-1", "agent-a", 1, now))
 	sequence2 := insertTestAgentEvent(t, ctx, repository, testRepositoryEvent("event-b-1", "agent-b", 1, now.Add(time.Second)))
 	sequence3 := insertTestAgentEvent(t, ctx, repository, testRepositoryEvent("event-a-2", "agent-a", 2, now.Add(2*time.Second)))
@@ -84,7 +84,7 @@ func TestAgentEventNotifierFansOutCommitWithoutUsingBusinessPool(t *testing.T) {
 	t.Cleanup(notifier.Close)
 
 	now := time.Date(2026, time.September, 1, 12, 0, 0, 0, time.UTC)
-	insertQueryAgent(t, ctx, repository, "agent-a", "org-a", "user-a", domain.DesiredEnabled, domain.AgentAvailable, now)
+	insertQueryAgent(t, ctx, repository, "agent-a", "org-a", "user-a", domain.DesiredEnabled, domain.AgentCreated, now)
 	first, err := notifier.SubscribeAgentEvents()
 	if err != nil {
 		t.Fatalf("subscribe first watcher: %v", err)
@@ -127,8 +127,8 @@ func TestAgentEventSequenceSerializesCommitVisibility(t *testing.T) {
 		t.Fatalf("migrate repository: %v", err)
 	}
 	now := time.Date(2026, time.September, 1, 12, 0, 0, 0, time.UTC)
-	insertQueryAgent(t, ctx, repository, "agent-a", "org-a", "user-a", domain.DesiredEnabled, domain.AgentAvailable, now)
-	insertQueryAgent(t, ctx, repository, "agent-b", "org-a", "user-b", domain.DesiredEnabled, domain.AgentAvailable, now)
+	insertQueryAgent(t, ctx, repository, "agent-a", "org-a", "user-a", domain.DesiredEnabled, domain.AgentCreated, now)
+	insertQueryAgent(t, ctx, repository, "agent-b", "org-a", "user-b", domain.DesiredEnabled, domain.AgentCreated, now)
 
 	first, err := repository.pool.Begin(ctx)
 	if err != nil {

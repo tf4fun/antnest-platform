@@ -11,6 +11,7 @@ type Config struct {
 	ListenAddress          string
 	IdentityURL            string
 	AgentControllerURL     string
+	AgentACPURL            string
 	DefaultRuntimeImageRef string
 	DependencyTimeout      time.Duration
 	ShutdownTimeout        time.Duration
@@ -32,6 +33,7 @@ func Load(lookup func(string) string) (Config, error) {
 		ListenAddress:          valueOr(lookup, "ANTNEST_ADMIN_CONSOLE_LISTEN", ":8080"),
 		IdentityURL:            strings.TrimSpace(lookup("ANTNEST_IDENTITY_SERVICE_URL")),
 		AgentControllerURL:     strings.TrimSpace(lookup("ANTNEST_AGENT_CONTROLLER_URL")),
+		AgentACPURL:            strings.TrimSpace(lookup("ANTNEST_AGENT_ACP_SERVICE_URL")),
 		DefaultRuntimeImageRef: strings.TrimSpace(lookup("ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF")),
 		DependencyTimeout:      dependencyTimeout,
 		ShutdownTimeout:        shutdownTimeout,
@@ -40,6 +42,9 @@ func Load(lookup func(string) string) (Config, error) {
 		return Config{}, err
 	}
 	if err := serviceURL("ANTNEST_AGENT_CONTROLLER_URL", config.AgentControllerURL); err != nil {
+		return Config{}, err
+	}
+	if err := serviceURL("ANTNEST_AGENT_ACP_SERVICE_URL", config.AgentACPURL); err != nil {
 		return Config{}, err
 	}
 	return config, nil

@@ -15,7 +15,6 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"soft/antnest-platform/services/edge-gateway/internal/agentcontroller"
 	"soft/antnest-platform/services/edge-gateway/internal/identity"
 	"soft/antnest-platform/services/edge-gateway/internal/session"
 	"soft/antnest-platform/services/edge-gateway/internal/telemetry"
@@ -62,13 +61,18 @@ type relayFixture struct {
 
 func newRelayFixture(t *testing.T, version string, configure ...func(*handler)) *relayFixture {
 	t.Helper()
+	return newRelayFixtureWithExchange(t, version, nil, configure...)
+}
+
+func newRelayFixtureWithExchange(t *testing.T, version string, exchange func(*websocket.Conn), configure ...func(*handler)) *relayFixture {
+	t.Helper()
 	fixture := &relayFixture{
 		identity: &relayIdentity{principal: ordinaryPrincipal()},
 		received: make(chan []byte, 8), closed: make(chan struct{}), upstreamClose: make(chan int, 1),
 	}
 	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
 	acp := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if request.URL.Path != "/"+version+"/acp" || request.Header.Get(HeaderAgentAccessSubject) != "subject-authoritative" ||
+		if request.URL.Path != "/"+version+"/acp" || request.Header.Get("X-Antnest-Agent-Id") != "agent-1" || request.Header.Get("X-Antnest-Principal-Id") != "user-admin" || request.Header.Get(HeaderOrganizationID) != "org-1" || request.Header.Get(HeaderAgentAccessSubject) != "" ||
 			request.Header.Get("Cookie") != "" || request.Header.Get("Authorization") != "" {
 			t.Error("incorrect upstream route or credential boundary")
 		}
@@ -78,6 +82,10 @@ func newRelayFixture(t *testing.T, version string, configure ...func(*handler)) 
 		}
 		defer close(fixture.closed)
 		defer func() { _ = connection.Close() }()
+		if exchange != nil {
+			exchange(connection)
+			return
+		}
 		for {
 			kind, message, readErr := connection.ReadMessage()
 			if readErr != nil {
@@ -104,9 +112,7 @@ func newRelayFixture(t *testing.T, version string, configure ...func(*handler)) 
 		AdminConsoleURL: acp.URL, AgentUIURL: acp.URL, AgentACPURL: acp.URL, IdentityURL: acp.URL,
 		RequestTimeout: 200 * time.Millisecond,
 	}, Dependencies{
-		Identity: fixture.identity, Agents: &agentServiceStub{agents: []agentcontroller.WorkspaceAgent{{
-			AgentID: "agent-1", AgentAccessSubject: "subject-authoritative",
-		}}}, Sessions: sessions, HTTPClient: &http.Client{Transport: telemetry.NewHTTPTransport(acp.Client().Transport)}, Logger: logger,
+		Execution: &executionServiceStub{}, Identity: fixture.identity, Agents: &agentServiceStub{listErr: context.DeadlineExceeded}, Sessions: sessions, HTTPClient: &http.Client{Transport: telemetry.NewHTTPTransport(acp.Client().Transport)}, Logger: logger,
 	})
 	if err != nil {
 		t.Fatal(err)

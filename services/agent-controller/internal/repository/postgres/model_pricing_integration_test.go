@@ -4,66 +4,13 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"reflect"
+	"github.com/stretchr/testify/require"
 	"testing"
 	"time"
 
 	"soft/antnest-platform/services/agent-controller/internal/domain"
 	"soft/antnest-platform/services/agent-controller/internal/ports"
 )
-
-func TestModelPricingAdmissionPinsSelectionAndSurvivesReopen(t *testing.T) {
-	repository, base, seed := sessionConfigurationRepository(t)
-	ctx := context.Background()
-	priced := reviseProfilePricing(t, repository, seed.Model, 2, 8)
-	now := time.Unix(2000, 0).UTC()
-	command := acquireRunCommand(base.Agent, "pricing-inherited", "pricing-inherited", now)
-	inherited, _, err := repository.AcquireRun(ctx, command)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(inherited.Snapshot.ExecutionSpec.Model.Pricing, priced.Revision.Snapshot().Model.Pricing) {
-		t.Fatal("default Run did not resolve current pricing")
-	}
-	releaseConfigurationAdmission(t, repository, inherited, now)
-	command.RequestID, command.AdmissionID = "pricing-selected", "pricing-selected"
-	command.SessionConfiguration.ModelProfileID = &seed.Model.ModelProfileID
-	admitted, _, err := repository.AcquireRun(ctx, command)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(admitted.Snapshot.ExecutionSpec.Model.Pricing, priced.Revision.Snapshot().Model.Pricing) {
-		t.Fatal("selected revision pricing not frozen")
-	}
-	free := reviseProfilePricing(t, repository, priced, 0, 0)
-	reopened, err := Open(ctx, repository.pool.Config().ConnString())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer reopened.Close()
-	replayed, found, err := reopened.ReplayRunAdmission(ctx, command.RequestID, command.RequestFingerprint)
-	if err != nil || !found || !reflect.DeepEqual(replayed.Snapshot, admitted.Snapshot) {
-		t.Fatal("price replay changed after revision/reopen")
-	}
-	receipt, found, err := reopened.ReplayModelProfileRequest(ctx, ports.ReviseModelProfileRequest, priced.RequestID, priced.RequestFingerprint)
-	if err != nil || !found || !reflect.DeepEqual(receipt.Revision.Snapshot().Model.Pricing, priced.Revision.Snapshot().Model.Pricing) {
-		t.Fatal("old model command response price changed")
-	}
-	releaseConfigurationAdmission(t, reopened, replayed, now)
-	command.RequestID, command.AdmissionID = "pricing-free", "pricing-free"
-	next, _, err := reopened.AcquireRun(ctx, command)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(next.Snapshot.ExecutionSpec.Model.Pricing, free.Revision.Snapshot().Model.Pricing) ||
-		next.Snapshot.ExecutionSpec.Configuration.Digest == admitted.Snapshot.ExecutionSpec.Configuration.Digest {
-		t.Fatal("new selection lost explicit free rates or configuration change")
-	}
-	if next.Snapshot.Runtime != admitted.Snapshot.Runtime {
-		t.Fatal("price revision rebuilt Runtime")
-	}
-	releaseConfigurationAdmission(t, reopened, next, now)
-}
 
 func reviseProfilePricing(t *testing.T, repository *Repository, current ports.ModelProfileRecord, input, output float64) ports.ModelProfileRecord {
 	t.Helper()
@@ -87,4 +34,37 @@ func reviseProfilePricing(t *testing.T, repository *Repository, current ports.Mo
 		t.Fatal(err)
 	}
 	return result
+}
+
+func TestCurrentModelPricingPublicationSurvivesReopenWithoutChangingAgent(t *testing.T) {
+	repository, base, seed := executionConfigurationRepository(t)
+	before := currentExecutionSnapshot(t, repository, base.Agent.OrganizationID)
+	priced := reviseProfilePricing(t, repository, seed.Model, 2, 8)
+	after := currentExecutionSnapshot(t, repository, base.Agent.OrganizationID)
+	require.Equal(t, before.Revision+1, after.Revision)
+	require.Equal(t, priced.Revision.Snapshot().Model.Pricing, publishedModel(t, after, seed.Model.ModelProfileID).Pricing)
+	require.Equal(t, before.Agents, after.Agents)
+
+	free := reviseProfilePricing(t, repository, priced, 0, 0)
+	reopened, err := Open(t.Context(), repository.pool.Config().ConnString())
+	require.NoError(t, err)
+	defer reopened.Close()
+	current := currentExecutionSnapshot(t, reopened, base.Agent.OrganizationID)
+	require.Equal(t, after.Revision+1, current.Revision)
+	pricing := publishedModel(t, current, seed.Model.ModelProfileID).Pricing
+	require.Equal(t, free.Revision.Snapshot().Model.Pricing, pricing)
+	require.NotNil(t, pricing.InputPerMillion)
+	require.Zero(t, *pricing.InputPerMillion)
+	require.NotNil(t, pricing.CacheReadPerMillion)
+	require.Zero(t, *pricing.CacheReadPerMillion)
+	require.Equal(t, float64(3), *pricing.CacheWritePerMillion)
+
+	receipt, found, err := reopened.ReplayModelProfileRequest(t.Context(), ports.ReviseModelProfileRequest, priced.RequestID, priced.RequestFingerprint)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, priced.Revision.Snapshot().Model.Pricing, receipt.Revision.Snapshot().Model.Pricing)
+	require.Equal(t, current, currentExecutionSnapshot(t, reopened, base.Agent.OrganizationID), "receipt replay cannot overwrite current pricing")
+	unchanged, err := reopened.GetAgentLifecycleBase(t.Context(), base.Agent.AgentID)
+	require.NoError(t, err)
+	require.Equal(t, base, unchanged, "pricing does not rebuild Agent or Runtime")
 }

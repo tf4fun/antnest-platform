@@ -39,11 +39,37 @@ it does not call the application admission function directly.
    SQL and RPC instrumentation supplies descendants. Business stages do not start
    spans. Worker shutdown cancels Activities; the engine resumes retryable work.
 
+### Creation does not wait for readiness
+
+Create, Rebuild and Enable complete after platform resource creation and network
+configuration. They publish the Agent as `created/enabled`, Runtime `unknown`, without an
+execution binding. The existing observation worker publishes `agent_ready` only
+after a fresh matching healthy inspection. There is no readiness-waiting Activity
+or second Temporal workflow. Pending readiness does not hold a lifecycle operation
+slot; rebuilding, disabling or deleting an unhealthy configured Runtime remains
+possible. See [Runtime availability](runtime-availability.md).
+
+### ACP owns execution settlement
+
+Drain publishes the current closed Agent configuration and confirms ACP applied
+it before calling the Agent-level settlement RPC. Rebuild and ordinary disable
+wait; deletion and identity revocation request cancellation. The original
+persisted deadline bounds publication, settlement and the confirmation write.
+Only a confirmed `settled` or `runtime_barrier_required` result advances the
+management operation. ACP owns the execution details and any remaining stop
+protection. Controller never releases Runs or interprets Tool effects.
+
+The publication gate is not held during settlement. Runtime effects remain
+ordinary lifecycle stages, not calls back into ACP's Run state. Management
+failure may preserve the old configuration, but cannot reopen its attachment
+when ACP required a Runtime barrier or the owner was revoked. New Runtime
+creation is still separate from readiness and successful configuration delivery.
+
 ### Failed deletion and explicit retry
 
 A Delete drain deadline or a Runtime `failed / not_started` result ends that
-attempt with its original diagnostic. The Agent remains `unavailable` with
-`desired_state=deleted`; neither its network nor an unresolved Run is released,
+attempt with its original diagnostic. The confirmed lifecycle is retained with
+`desired_state=deleted`; network allocation is not released,
 and it is not returned to service. The operation is terminal and the active
 operation slot is cleared. Unknown effects still require authoritative inspection.
 The administrator's current fleet retains this failed cleanup; only a completed
@@ -59,8 +85,11 @@ terminal operation, including when the original HTTP response was lost.
 ### Rebuild stage persistence boundary
 
 `AdvanceAgentRebuild` returns only the committed Agent/Operation projections and
-Run-release outcome. The application retains the already-loaded immutable source
-and target snapshots. Phase CAS and lock-local validation are unchanged. This
+no Run completion or release result. The application retains the already-loaded immutable source
+and target snapshots. Each phase write must match the running operation's phase
+and the Agent's active operation identity in the same transaction. A detached or
+replaced operation cannot persist a Runtime result, even if its own phase still
+matches. This is management aggregate ownership, not Run admission. This
 removes three snapshot SELECTs from each of the three advance calls; initial
 stage recovery and final publication still load their required snapshots.
 
@@ -84,6 +113,10 @@ business and audit records are retained; a forward migration removes obsolete
 scheduler columns and indexes.
 
 ## Acceptance: 2026-09-12
+
+The evidence below predates creation/readiness separation. It verifies the
+Temporal migration, not the subsequent observation-based availability contract;
+that contract still needs fresh Docker and Gateway-rooted traces.
 
 The development Controller was rebuilt and replaced without recreating the other
 services or deleting existing Agents. Before replacement, there were no running

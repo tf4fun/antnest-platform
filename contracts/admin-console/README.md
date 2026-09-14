@@ -1,5 +1,25 @@
 # Admin Console Contracts
 
+Revision 44 adds explicit Provider, Model and current Template availability PUTs.
+Both boolean flags are required; identity and command IDs remain server-derived.
+One Controller command returns a historical receipt. The browser refreshes the
+current resource after success; failed refreshes never retry the write. Structured
+reference conflicts link to Controller-owned resources without automatic edits.
+See [catalog availability and delivery](../../services/admin-console/docs/catalog-availability.md).
+
+Revision 43 adds read-only ACP execution audit list/detail/events and the separate
+Controller configuration synchronization read. Console forwards the verified
+administrator's five management identity headers to ACP, never an Agent owner
+identity. Historical reads have no Controller preflight or Session activation.
+See [the service contract](../../services/admin-console/docs/execution-audit.md).
+
+The Console `#audits` navigation and Agent-detail history links consume these
+reads directly; they do not depend on current Agent inventory. Detail, execution
+events and permission records refresh independently, without reloading another
+stream or merging their cursors. Lifecycle DTOs no longer expose `admission_id`.
+The BFF routes and audit pages are implemented; combined Gateway/ACP acceptance
+remains B5 work, not implied by this route inventory.
+
 Revision 42 requires positive integer `expected_version` on model edits, copied
 from the model's `revision` when the form is opened. The BFF forwards it unchanged;
 it never reads or substitutes the latest version before saving. Controller 409

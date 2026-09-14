@@ -14,7 +14,7 @@ import (
 func TestRuntimeLossRebuildUsesHistoryWithoutReadmittingOldExecution(t *testing.T) {
 	for _, kind := range []string{"runtime_missing", "runtime_deleted", "restarted"} {
 		t.Run(kind, func(t *testing.T) {
-			ctx, repository, _ := workspaceStateRepository(t)
+			ctx, repository, _ := controllerTestConnection(t)
 			base, seed := seedAvailableAgentForRebuild(t, ctx, repository)
 			if err := repository.ApplyRuntimeObservation(ctx, ports.RuntimeObservation{
 				Sequence: 1, AgentID: base.Agent.AgentID, RuntimeRevision: base.Agent.RuntimeRevision,
@@ -34,16 +34,16 @@ func TestRuntimeLossRebuildUsesHistoryWithoutReadmittingOldExecution(t *testing.
 				t.Fatalf("Runtime loss has no explicit rebuild path: %v", err)
 			}
 			if accepted.Operation.State != domain.OperationRunning || accepted.Agent.ExecutionRevisionID != "" ||
-				accepted.Agent.LifecycleState != domain.AgentUnavailable || deps.updateCalls != 0 {
+				(accepted.Agent.LifecycleState != domain.AgentCreated || accepted.Agent.ActivationState != domain.ActivationEnabled || accepted.Agent.RuntimeState != domain.RuntimeUnknown) || deps.updateCalls != 0 {
 				t.Fatalf("recovery admission reactivated old execution or ran effects: %+v", accepted)
 			}
-			_, _, err = repository.AcquireRun(ctx, acquireRunCommand(base.Agent, "before-recovery-publish", "before-recovery-publish", time.Now().UTC()))
-			if !errors.Is(err, ports.ErrAgentRebuilding) {
-				t.Fatalf("Run entered rebuilding Agent: %v", err)
+			closed := publishedAgentForTest(t, repository, base.Agent)
+			if closed.AcceptingRuns {
+				t.Fatal("rebuilding Agent was published as executable")
 			}
 			finishOffboardingOperation(t, repository, worker, input.RequestID, domain.OperationCompleted)
 			agent, err := repository.GetAgent(ctx, base.Agent.AgentID)
-			if err != nil || agent.LifecycleState != domain.AgentAvailable || agent.ExecutionRevisionID == base.Agent.ExecutionRevisionID ||
+			if err != nil || (agent.LifecycleState != domain.AgentCreated || agent.ActivationState != domain.ActivationEnabled || agent.RuntimeState != domain.RuntimeUnknown) || agent.ExecutionRevisionID != "" ||
 				agent.RuntimeRevision != deps.runtime.RuntimeRevision || agent.FailureCode != "" || deps.updateCalls != 1 {
 				t.Fatalf("rebuild publication=%+v updates=%d error=%v", agent, deps.updateCalls, err)
 			}
@@ -56,16 +56,25 @@ func TestRuntimeLossRebuildUsesHistoryWithoutReadmittingOldExecution(t *testing.
 			}); err != nil {
 				t.Fatal(err)
 			}
-			admission, _, err := repository.AcquireRun(ctx, acquireRunCommand(agent, "after-recovery", "after-recovery", time.Now().UTC()))
-			if err != nil || admission.Snapshot.Runtime.RuntimeRevision != agent.RuntimeRevision {
-				t.Fatalf("new binding unavailable after late old observation: %+v error=%v", admission, err)
+			operation, err := repository.GetLifecycleOperation(ctx, input.RequestID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			observeRuntimeForTest(t, ctx, repository, agent, operation, "recovered-execution", "recovered-process", "http://recovered:8091/mcp")
+			agent, err = repository.GetAgent(ctx, agent.AgentID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			published := publishedAgentForTest(t, repository, agent)
+			if !published.AcceptingRuns || published.Runtime == nil || published.Runtime.RuntimeRevision != agent.RuntimeRevision {
+				t.Fatalf("new binding unavailable after late old observation: %+v", published)
 			}
 		})
 	}
 }
 
 func TestRuntimeLossRebuildEarlyFailureRemainsUnavailableAndRetryable(t *testing.T) {
-	ctx, repository, _ := workspaceStateRepository(t)
+	ctx, repository, _ := controllerTestConnection(t)
 	base, seed := seedAvailableAgentForRebuild(t, ctx, repository)
 	if err := repository.ApplyRuntimeObservation(ctx, ports.RuntimeObservation{
 		Sequence: 1, AgentID: base.Agent.AgentID, RuntimeRevision: base.Agent.RuntimeRevision,
@@ -95,18 +104,8 @@ func TestRuntimeLossRebuildEarlyFailureRemainsUnavailableAndRetryable(t *testing
 }
 
 func TestRuntimeLossRebuildNotStartedFailureKeepsHistoryAndFence(t *testing.T) {
-	ctx, repository, _ := workspaceStateRepository(t)
+	ctx, repository, _ := controllerTestConnection(t)
 	base, seed := seedAvailableAgentForRebuild(t, ctx, repository)
-	admission, _, err := repository.AcquireRun(ctx, acquireRunCommand(base.Agent, "uncertain-run", "uncertain-run", time.Now().UTC()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := repository.FinishRun(ctx, finishRunCommand(admission, "uncertain-finish", domain.TerminalReport{
-		Class: domain.TerminalUnresolved, ToolEffectState: domain.ToolEffectUnknown,
-		UnknownEffectSource: domain.UnknownEffectRuntimeMCP, ErrorClass: "tool_outcome_unknown",
-	}, time.Now().UTC())); err != nil {
-		t.Fatal(err)
-	}
 	if err := repository.ApplyRuntimeObservation(ctx, ports.RuntimeObservation{
 		Sequence: 1, AgentID: base.Agent.AgentID, RuntimeRevision: base.Agent.RuntimeRevision,
 		Kind: "runtime_missing", ObservedAt: time.Now().UTC(),
@@ -126,27 +125,23 @@ func TestRuntimeLossRebuildNotStartedFailureKeepsHistoryAndFence(t *testing.T) {
 	if deps.network.AttachmentState != ports.NetworkAttachmentClosed || deps.updateCalls != 1 {
 		t.Fatal("failed recovery reopened network or repeated effects")
 	}
-	replayed, found, err := repository.ReplayRunAdmission(ctx, admission.RequestID, admission.RequestFingerprint)
-	if err != nil || !found || replayed.State != domain.AdmissionBlockedUnknownEffect {
-		t.Fatalf("recovery failure released unknown effect: %+v found=%t error=%v", replayed, found, err)
-	}
 	deps.runtime = newRuntimeRebuildDependencies(base.Agent).runtime
 	input.RequestID = "recovery-after-correction"
 	if _, err := service.RebuildAgent(ctx, input); err != nil {
 		t.Fatal(err)
 	}
 	finishOffboardingOperation(t, repository, worker, input.RequestID, domain.OperationCompleted)
-	replayed, _, err = repository.ReplayRunAdmission(ctx, admission.RequestID, admission.RequestFingerprint)
-	if err != nil || replayed.State != domain.AdmissionReleased {
-		t.Fatalf("verified replacement did not release exact old Runtime fence: %+v error=%v", replayed, err)
+	agent, err := repository.GetAgent(ctx, base.Agent.AgentID)
+	if err != nil || agent.RuntimeRevision != deps.runtime.RuntimeRevision || agent.ActiveOperationRequestID != "" {
+		t.Fatalf("corrected rebuild did not publish the new Runtime: %+v %v", agent, err)
 	}
 }
 
 func assertNoExecutableRecoveryBase(t *testing.T, ctx context.Context, repository *Repository, agentID string) {
 	t.Helper()
 	base, err := repository.GetAgentLifecycleBase(ctx, agentID)
-	if err != nil || base.Agent.LifecycleState != domain.AgentUnavailable || base.Agent.ExecutionRevisionID != "" ||
-		base.ExecutableExecution.ID != "" || base.ExecutableSpec.ID != "" {
+	if err != nil || (base.Agent.LifecycleState != domain.AgentCreated || base.Agent.ActivationState != domain.ActivationEnabled || base.Agent.RuntimeState != domain.RuntimeUnknown) || base.Agent.ExecutionRevisionID != "" ||
+		base.SourceExecution.ID == "" || base.ConfiguredSpec.ID == "" {
 		t.Fatalf("history was exposed as executable source: %+v error=%v", base, err)
 	}
 }
@@ -163,8 +158,8 @@ type runtimeRebuildDependencies struct {
 func newRuntimeRebuildDependencies(agent ports.AgentRecord) *runtimeRebuildDependencies {
 	return &runtimeRebuildDependencies{expectedRevision: agent.RuntimeRevision, offboardingDependencies: offboardingDependencies{
 		network: *closedNetworkAttachment(agent.AgentID),
-		runtime: ports.RuntimeOperation{State: "completed", Effect: "completed", LifecycleState: "ready", Health: "healthy",
-			RuntimeRevision: "rtv_22222222222222222222222222222222", RuntimeExecutionID: "runtime-recovered", MCPEndpoint: "http://recovered:8091/mcp"},
+		runtime: ports.RuntimeOperation{State: "completed", Effect: "completed", LifecycleState: "provisioned", Health: "unknown",
+			RuntimeRevision: "rtv_22222222222222222222222222222222", RuntimeExecutionID: "", MCPEndpoint: ""},
 	}}
 }
 
@@ -196,7 +191,7 @@ func (deps *runtimeRebuildDependencies) InspectRuntime(ctx context.Context, agen
 func TestRuntimeLossRebuildRejectedUpdateDoesNotWaitForDeadExecution(t *testing.T) {
 	for _, health := range []string{"absent", "healthy"} {
 		t.Run(health, func(t *testing.T) {
-			ctx, repository, _ := workspaceStateRepository(t)
+			ctx, repository, _ := controllerTestConnection(t)
 			base, seed := seedAvailableAgentForRebuild(t, ctx, repository)
 			if err := repository.ApplyRuntimeObservation(ctx, ports.RuntimeObservation{
 				Sequence: 1, AgentID: base.Agent.AgentID, RuntimeRevision: base.Agent.RuntimeRevision,
@@ -207,7 +202,7 @@ func TestRuntimeLossRebuildRejectedUpdateDoesNotWaitForDeadExecution(t *testing.
 			deps := newRuntimeRebuildDependencies(base.Agent)
 			deps.updateError = &ports.DependencyError{Service: "runtime-controller", Code: "image_not_found"}
 			deps.inspection = &ports.RuntimeInspection{AgentID: base.Agent.AgentID, RuntimeRevision: base.Agent.RuntimeRevision,
-				LifecycleState: "ready", Health: health}
+				LifecycleState: "provisioned", Health: health}
 			if health == "healthy" {
 				deps.inspection.RuntimeExecutionID = "unexpectedly-restarted-process"
 				deps.inspection.MCPEndpoint = "http://restarted:8091/mcp"
@@ -229,6 +224,6 @@ func TestRuntimeLossRebuildRejectedUpdateDoesNotWaitForDeadExecution(t *testing.
 
 func runtimeRebuildServices(t *testing.T, repository *Repository, deps *runtimeRebuildDependencies) (*application.LifecycleService, *application.LifecycleService) {
 	t.Helper()
-	service := application.NewLifecycleService(repository, repository, deps, deps, offboardingClock{})
+	service := application.NewLifecycleService(repository, repository, deps, deps, offboardingClock{}, application.WithLifecycleExecution(testLifecycleExecution(repository)))
 	return service, service
 }

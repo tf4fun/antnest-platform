@@ -4,6 +4,23 @@ export const tag = (span, key) =>
   span?.tags?.find((field) => field.key === key)?.value;
 
 export function traceTree(trace) {
+  const tree = traceTopology(trace);
+  assert.equal(
+    trace.warnings?.length ?? 0,
+    0,
+    "Jaeger trace warnings require review",
+  );
+  for (const span of trace.spans)
+    assert.equal(
+      span.warnings?.length ?? 0,
+      0,
+      "Jaeger span warnings require review",
+    );
+  return tree;
+}
+
+// Topology can be diagnosed independently; traceTree remains the strict gate.
+export function traceTopology(trace) {
   assert(trace?.traceID && trace.spans?.length, "trace is missing");
   const spans = new Map(trace.spans.map((span) => [span.spanID, span]));
   assert.equal(spans.size, trace.spans.length, "duplicate span ID");
@@ -27,11 +44,6 @@ export function traceTree(trace) {
     }
     return result;
   };
-  assert.equal(
-    trace.warnings?.length ?? 0,
-    0,
-    "Jaeger trace warnings require review",
-  );
   for (const span of trace.spans) {
     assert.equal(span.traceID, trace.traceID, "foreign span trace");
     assert(service(span), "unknown span service");
@@ -40,11 +52,6 @@ export function traceTree(trace) {
         span.operationName,
       ) && tag(span, "antnest.repository.operation") === undefined,
       "removed Repository wrapper remains in trace",
-    );
-    assert.equal(
-      span.warnings?.length ?? 0,
-      0,
-      "Jaeger span warnings require review",
     );
     chain(span);
   }

@@ -1,8 +1,4 @@
-import type {
-  AcpApplicationPort,
-  AcceptedAcpRun,
-  ExecuteRunResult,
-} from "../ports/acp-application.js";
+import type { AcpApplicationPort, SubmittedAcpRun } from "../ports/acp-application.js";
 import type { AccessService } from "./access-service.js";
 import type { PromptCoordinator } from "./prompt-coordinator.js";
 import type { RunLifecyclePort } from "./run-supervisor.js";
@@ -11,9 +7,20 @@ import type { SessionConfigurationService } from "./session-configuration.js";
 
 export type AcpApplicationDependencies = {
   configuration: Pick<SessionConfigurationService, "get" | "set">;
-  access: AccessService;
-  sessions: SessionService;
-  prompts: PromptCoordinator;
+  access: Pick<AccessService, "assert">;
+  sessions: Pick<
+    SessionService,
+    | "createSession"
+    | "listSessions"
+    | "deleteSession"
+    | "forkSession"
+    | "resumeSession"
+    | "closeSession"
+    | "requestCancellation"
+    | "requirePromptSession"
+    | "readOutput"
+  >;
+  prompts: Pick<PromptCoordinator, "accept">;
   runs: RunLifecyclePort;
 };
 
@@ -95,16 +102,10 @@ export class AcpApplication implements AcpApplicationPort {
 
   public async acceptPrompt(
     input: Parameters<AcpApplicationPort["acceptPrompt"]>[0],
-  ): Promise<AcceptedAcpRun> {
+  ): Promise<SubmittedAcpRun> {
     await this.dependencies.sessions.requirePromptSession(input.sessionId, input.binding);
-    return this.dependencies.runs.admit(input.sessionId, (signal) =>
+    return this.dependencies.runs.submit(input, (signal) =>
       this.dependencies.prompts.accept(input, signal),
     );
-  }
-
-  public executeRun(
-    input: Parameters<AcpApplicationPort["executeRun"]>[0],
-  ): Promise<ExecuteRunResult> {
-    return this.dependencies.runs.execute(input);
   }
 }

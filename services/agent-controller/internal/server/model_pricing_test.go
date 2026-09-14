@@ -10,7 +10,7 @@ import (
 	"soft/antnest-platform/services/agent-controller/internal/domain"
 )
 
-func TestControlAndRunPricingSchemasAgree(t *testing.T) {
+func TestControlAndExecutionPricingSchemasAgree(t *testing.T) {
 	payload, err := os.ReadFile(filepath.Join(repositoryRoot(t), "contracts/agent-controller/control-api.schema.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -21,14 +21,22 @@ func TestControlAndRunPricingSchemasAgree(t *testing.T) {
 	if err := json.Unmarshal(payload, &control); err != nil {
 		t.Fatal(err)
 	}
-	run := readMachineRunContract(t)
-	var response map[string]any
-	if err := json.Unmarshal(run.Methods["acquire_run"].Response, &response); err != nil {
+	payload, err = os.ReadFile(filepath.Join(repositoryRoot(t), "contracts/agent-acp/execution-snapshot.schema.json"))
+	if err != nil {
 		t.Fatal(err)
 	}
-	pricing := schemaProperty(t, schemaProperty(t, schemaProperty(t, response, "execution_spec"), "model"), "pricing")
+	var execution map[string]any
+	if err := json.Unmarshal(payload, &execution); err != nil {
+		t.Fatal(err)
+	}
+	models := schemaProperty(t, execution, "models")
+	item, ok := models["items"].(map[string]any)
+	if !ok {
+		t.Fatal("missing execution model schema")
+	}
+	pricing := schemaProperty(t, item, "pricing")
 	if !reflect.DeepEqual(pricing, control.Definitions["model_pricing"]) {
-		t.Fatal("control and run price contracts drifted")
+		t.Fatal("control and execution price contracts drifted")
 	}
 }
 

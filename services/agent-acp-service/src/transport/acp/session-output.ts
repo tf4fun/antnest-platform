@@ -1,7 +1,13 @@
 import type { ConnectionBinding } from "../../domain/types.js";
+import {
+  isExecutionAccessRevoked,
+  type ExecutionAccessSnapshot,
+  type ExecutionIdentity,
+} from "../../domain/execution-configuration.js";
 import type { SessionEvent, SessionOutputSnapshot } from "../../ports/acp-application.js";
 
 type OutputInput = {
+  identity: ExecutionIdentity;
   keepExisting?: boolean;
   key: string;
   connectionId: string;
@@ -16,7 +22,7 @@ type OutputInput = {
 };
 
 export function sessionOutputKey(binding: ConnectionBinding, sessionId: string): string {
-  return JSON.stringify([binding.principalId, binding.agentId, binding.accessRevision, sessionId]);
+  return JSON.stringify([binding.organizationId, binding.principalId, binding.agentId, sessionId]);
 }
 
 // Invalidation is only a hint. A single database snapshot owns the transcript
@@ -71,6 +77,12 @@ export class SessionOutputStreams {
   public disconnect(connectionId: string): void {
     for (const subscription of this.subscriptions) {
       if (subscription.input.connectionId === connectionId) subscription.close();
+    }
+  }
+
+  public revokeAccess(snapshot: ExecutionAccessSnapshot): void {
+    for (const subscription of this.subscriptions) {
+      if (isExecutionAccessRevoked(snapshot, subscription.input.identity)) subscription.close();
     }
   }
 }

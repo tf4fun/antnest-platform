@@ -33,7 +33,7 @@ function fixture(failFirst = false) {
       return { state: "completed" };
     return {
       ...agents.find((agent) => path.endsWith(agent.agent_id)),
-      lifecycle_state: "available",
+      lifecycle_state: "created",
     };
   };
   return {

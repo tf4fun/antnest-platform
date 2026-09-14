@@ -26,7 +26,7 @@ const agent: Agent = {
   name: "Support Agent",
   owner_user_id: "owner-1",
   desired_state: "enabled",
-  lifecycle_state: "available",
+  lifecycle_state: "created", activation_state: "enabled", runtime_state: "available",
   aggregate_sequence: 1,
   created_at: "2026-09-10",
   updated_at: "2026-09-10",
@@ -111,7 +111,7 @@ it.each(["deleting", "deleted"] as const)(
   async (state) => {
     const fetch = vi.fn();
     vi.stubGlobal("fetch", fetch);
-    show({ ...agent, lifecycle_state: state });
+    show({ ...agent, desired_state: "deleted", lifecycle_state: state === "deleted" ? "deleted" : "created" });
     expect(screen.queryByRole("switch")).toBeNull();
     expect(fetch).not.toHaveBeenCalled();
   },
@@ -291,7 +291,7 @@ it("disabled Agents can save policy without claiming traffic resumed", async () 
       ),
     ),
   );
-  show({ ...agent, lifecycle_state: "disabled", desired_state: "disabled" });
+  show({ ...agent, lifecycle_state: "created", activation_state: "disabled", runtime_state: "absent", desired_state: "disabled" });
   await waitFor(() =>
     expect(screen.getByRole("switch").hasAttribute("disabled")).toBe(false),
   );
@@ -369,7 +369,7 @@ it("coalesces lifecycle invalidations during writes into a separate read", async
   );
   const page = show({
     ...agent,
-    lifecycle_state: "disabled",
+    lifecycle_state: "created", activation_state: "disabled", runtime_state: "absent",
     desired_state: "disabled",
   });
   await waitFor(() =>

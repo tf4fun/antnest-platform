@@ -93,7 +93,7 @@ func (service *NetworkPolicyService) checkAgent(ctx context.Context, organizatio
 		return ErrQueryContract
 	}
 	if agent.OrganizationID != organizationID || agent.DesiredState == domain.DesiredDeleted ||
-		agent.LifecycleState == domain.AgentDeleting || agent.LifecycleState == domain.AgentDeleted {
+		agent.LifecycleState == domain.AgentDeleted {
 		return ErrAgentNotFound
 	}
 	return nil

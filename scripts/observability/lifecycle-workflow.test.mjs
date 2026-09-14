@@ -277,14 +277,88 @@ test("successful Activity redelivery is accepted only for the same SDK activity 
   );
 });
 
-test("new Runtime requires its status verification", () => {
-  const trace = workflowFixture();
-  const status = trace.spans.find(
-    (span) => tag(span, "http.route") === "/status",
-  );
-  if (status) removeSubtree(trace, status);
-  assert.throws(() => inspectWorkflow(trace, "request-test"));
-});
+for (const kind of ["create", "rebuild", "enable"]) {
+  const phase =
+    kind === "create"
+      ? "runtime_initialize"
+      : "lifecycle.runtime_" + (kind === "rebuild" ? "update" : "enable");
+  test(`${kind} completes without waiting for Runtime status`, () => {
+    inspectWorkflow(workflowFixture(kind), "request-test", { kind });
+  });
+  for (const [name, mutate] of [
+    [
+      "missing response",
+      (rpc) => {
+        rpc.logs = [];
+      },
+    ],
+    ...[
+      ["wrong agent", { agent_id: "other" }],
+      ["wrong request", { request_id: "other" }],
+      ["incomplete effect", { effect: "unknown" }],
+      [
+        "ready completion",
+        {
+          inspection: {
+            agent_id: "agent-test",
+            runtime_revision: "runtime-test",
+            lifecycle_state: "ready",
+            health: "healthy",
+          },
+        },
+      ],
+      [
+        "fabricated binding",
+        {
+          inspection: {
+            agent_id: "agent-test",
+            runtime_revision: "runtime-test",
+            lifecycle_state: "provisioned",
+            health: "unknown",
+            runtime_execution_id: "fake",
+          },
+        },
+      ],
+      ["wrong target", { target_revision: "other" }],
+    ].map(([name, changes]) => [
+      name,
+      (rpc) => {
+        const field = rpc.logs[0].fields.find(
+          (item) => item.key === "antnest.payload.json",
+        );
+        field.value = JSON.stringify({
+          ...JSON.parse(field.value),
+          ...changes,
+        });
+      },
+    ]),
+  ]) {
+    test(`${kind} rejects ${name} as creation evidence`, () => {
+      const trace = workflowFixture(kind);
+      mutate(trace.spans.find((span) => span.spanID === "rpc-" + phase));
+      assert.throws(() => inspectWorkflow(trace, "request-test", { kind }));
+    });
+  }
+  test(`${kind} rejects inline Runtime status verification`, () => {
+    const trace = workflowFixture(kind);
+    const rpc = trace.spans.find((span) => span.spanID === "rpc-" + phase);
+    trace.processes.runtime = { serviceName: "antnest-runtime" };
+    trace.spans.push({
+      ...structuredClone(rpc),
+      spanID: "inline-status",
+      processID: "runtime",
+      operationName: "GET /status",
+      references: [
+        { refType: "CHILD_OF", traceID: trace.traceID, spanID: rpc.spanID },
+      ],
+      tags: [{ key: "http.route", value: "/status" }],
+    });
+    assert.throws(
+      () => inspectWorkflow(trace, "request-test", { kind }),
+      /status/,
+    );
+  });
+}
 
 test("an uncommitted attempt's closed network cannot excuse the completing attempt's missing fence", () => {
   const trace = workflowFixture("delete");
@@ -352,3 +426,62 @@ for (const kind of ["create", "rebuild", "disable", "enable", "delete"]) {
     });
   }
 }
+
+test("creation target must match the final observed revision even when its response is internally consistent", () => {
+  const trace = workflowFixture();
+  assert.throws(() =>
+    inspectWorkflow(trace, "request-test", {
+      runtimeRevision: "another-revision",
+    }),
+  );
+});
+test("an unsuccessful attempt may not hide a readiness wait", () => {
+  const trace = workflowFixture();
+  const original = trace.spans.find((s) => s.spanID === "runtime_initialize");
+  const old = structuredClone(original);
+  old.spanID = "failed-attempt";
+  old.startTime -= 5;
+  old.duration = 1;
+  old.tags.push({ key: "error", value: true });
+  trace.spans.push(old, {
+    ...structuredClone(old),
+    spanID: "hidden-status",
+    operationName: "runtime.status.verify",
+    processID: "runtime-controller",
+    references: [
+      { refType: "CHILD_OF", traceID: trace.traceID, spanID: old.spanID },
+    ],
+    tags: [],
+  });
+  assert.throws(
+    () => inspectWorkflow(trace, "request-test", { allowRetries: true }),
+    /status/,
+  );
+});
+test("completed Runtime response cannot use an unrelated client identity", () => {
+  const trace = workflowFixture();
+  const client = trace.spans.find(
+    (s) => s.spanID === "client-rpc-runtime_initialize",
+  );
+  client.tags = client.tags.filter(
+    (t) => t.key !== "antnest.operation.request_id",
+  );
+  client.tags.push({ key: "antnest.operation.request_id", value: "unrelated" });
+  assert.throws(() => inspectWorkflow(trace, "request-test"));
+});
+
+test("creation cannot hide a readiness wait in publication", () => {
+  const trace = workflowFixture();
+  const publish = trace.spans.find((s) => s.spanID === "publish");
+  trace.spans.push({
+    ...structuredClone(publish),
+    spanID: "hidden-publish-status",
+    operationName: "runtime.status.verify",
+    processID: "runtime-controller",
+    references: [
+      { refType: "CHILD_OF", traceID: trace.traceID, spanID: publish.spanID },
+    ],
+    tags: [],
+  });
+  assert.throws(() => inspectWorkflow(trace, "request-test"), /status/);
+});

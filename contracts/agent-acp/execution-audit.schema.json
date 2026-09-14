@@ -1,0 +1,169 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "run_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "session_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "agent_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "principal_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "admitting",
+        "running",
+        "completed",
+        "cancelled",
+        "failed",
+        "unresolved"
+      ]
+    },
+    "created_at": {
+      "type": "string",
+      "allOf": [
+        {
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+        },
+        {
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?Z$"
+        }
+      ]
+    },
+    "updated_at": {
+      "type": "string",
+      "allOf": [
+        {
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+        },
+        {
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?Z$"
+        }
+      ]
+    },
+    "input": {},
+    "execution_snapshot": {},
+    "terminal_class": {
+      "anyOf": [
+        {
+          "type": "string",
+          "enum": [
+            "completed",
+            "cancelled",
+            "failed",
+            "unresolved"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "executor_state": {
+      "anyOf": [
+        {
+          "type": "string",
+          "enum": [
+            "quiescent",
+            "cancellation_requested",
+            "unknown"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "tool_effect_state": {
+      "anyOf": [
+        {
+          "type": "string",
+          "enum": [
+            "none",
+            "settled",
+            "unknown"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "stop_reason": {
+      "anyOf": [
+        {
+          "type": "string",
+          "enum": [
+            "end_turn",
+            "max_tokens",
+            "max_turn_requests",
+            "refusal"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "error_class": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "unknown_effect_source": {
+      "anyOf": [
+        {
+          "type": "string",
+          "enum": [
+            "runtime_mcp",
+            "client_mcp",
+            "unclassified"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "usage_measurements": {
+      "type": "array",
+      "items": {}
+    }
+  },
+  "required": [
+    "run_id",
+    "session_id",
+    "agent_id",
+    "principal_id",
+    "state",
+    "created_at",
+    "updated_at",
+    "input",
+    "execution_snapshot",
+    "terminal_class",
+    "executor_state",
+    "tool_effect_state",
+    "stop_reason",
+    "error_class",
+    "usage_measurements"
+  ],
+  "additionalProperties": false,
+  "$id": "https://antnest.local/contracts/agent-acp/execution-audit.schema.json",
+  "title": "Administrative execution audit",
+  "description": "Original input and non-secret execution facts. Usage measurements are per model request, not cumulative Session cost."
+}

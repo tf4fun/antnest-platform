@@ -94,13 +94,7 @@ func (repository *Repository) ListWorkspaceAgents(
 	records := make([]ports.WorkspaceAgentRecord, 0, query.Limit)
 	for rows.Next() {
 		var record ports.WorkspaceAgentRecord
-		if err := rows.Scan(
-			&record.AgentID, &record.Name, &record.LifecycleState, &record.AccessSubject,
-			&record.AdmissionState, &record.CreatedAt,
-			&record.IdentityRevoked,
-			&record.DesiredState, &record.ActiveOperation, &record.AggregateSequence,
-			&record.SessionID, &record.AdmissionPrincipalID,
-		); err != nil {
+		if err := rows.Scan(&record.AgentID, &record.Name, &record.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan workspace Agent projection: %w", err)
 		}
 		records = append(records, record)
@@ -124,30 +118,16 @@ func buildWorkspaceAgentQueryStatement(query ports.WorkspaceAgentQuery) (string,
 		arguments = append(arguments, query.AfterCreatedAt, query.AfterAgentID)
 		cursor = "\n  AND (agent.created_at, agent.id) > ($3, $4)"
 	}
-	if query.AgentID != "" {
-		arguments = append(arguments, query.AgentID)
-		cursor += fmt.Sprintf("\n  AND agent.id = $%d", len(arguments))
-	}
 	arguments = append(arguments, query.Limit)
 	statement := fmt.Sprintf(`
-SELECT agent.id, agent.name, agent.lifecycle_state, access.access_subject,
-       COALESCE(admission.state, ''), agent.created_at,
-       agent.identity_revocation_sequence > agent.owner_authorization_sequence,
-       agent.desired_state, agent.active_operation_request_id <> '', agent.aggregate_sequence,
-       COALESCE(admission.session_id, ''), COALESCE(admission.principal_id, '')
+SELECT agent.id, agent.name, agent.created_at
 FROM agent_controller.agents AS agent
 JOIN agent_controller.agent_access_bindings AS access
   ON access.agent_id = agent.id
  AND access.principal_id = $2
  AND access.active
-LEFT JOIN LATERAL (
-  SELECT candidate.state, candidate.session_id, candidate.principal_id
-  FROM agent_controller.run_admissions AS candidate
-  WHERE candidate.agent_id = agent.id
-    AND candidate.state IN ('active', 'blocked_unknown_effect')
-  LIMIT 1
-) AS admission ON TRUE
 WHERE agent.organization_id = $1
+  AND agent.identity_revocation_sequence <= agent.owner_authorization_sequence
   AND agent.desired_state <> 'deleted'%s
 ORDER BY agent.created_at, agent.id
 LIMIT $%d`, cursor, len(arguments))
@@ -176,6 +156,12 @@ func buildAgentQueryStatement(query ports.AgentQuery) (string, []any, error) {
 	if query.LifecycleState != "" {
 		addEquality("lifecycle_state", query.LifecycleState)
 	}
+	if query.ActivationState != "" {
+		addEquality("activation_state", query.ActivationState)
+	}
+	if query.RuntimeState != "" {
+		addEquality("runtime_state", query.RuntimeState)
+	}
 	if !query.IncludeDeleted {
 		conditions = append(conditions, "lifecycle_state <> 'deleted'")
 	}
@@ -191,7 +177,8 @@ SELECT id, organization_id, owner_user_id, name, desired_state, lifecycle_state,
        last_successful_execution_revision_id, runtime_revision, runtime_execution_id,
        runtime_mcp_endpoint, active_operation_request_id, failure_stage, failure_code,
        failure_detail, aggregate_sequence, created_at, updated_at,
-       owner_authorization_sequence, identity_revocation_sequence
+       owner_authorization_sequence, identity_revocation_sequence,
+       activation_state, runtime_state, runtime_reason, runtime_detail, runtime_observed_at
 FROM agent_controller.agents`
 	if len(conditions) != 0 {
 		statement += "\nWHERE " + strings.Join(conditions, "\n  AND ")

@@ -24,7 +24,7 @@ func TestLifecycleRepositoryPersistsAndPublishesDisableSaga(t *testing.T) {
 	t.Cleanup(repository.Close)
 	base, _ := seedAvailableAgentForRebuild(t, ctx, repository)
 
-	now := time.Unix(300, 0).UTC()
+	now := time.Now().Add(-15 * time.Second).UTC().Truncate(time.Microsecond)
 	requestID := "request-disable-integration"
 	fingerprint := strings.Repeat("4", 64)
 	begin := disableBegin(base, requestID, fingerprint, now)
@@ -33,54 +33,18 @@ func TestLifecycleRepositoryPersistsAndPublishesDisableSaga(t *testing.T) {
 		t.Fatalf("begin Agent disable: state=%+v replayed=%t err=%v", started, replayed, err)
 	}
 	if started.Agent.DesiredState != domain.DesiredDisabled ||
-		started.Agent.LifecycleState != domain.AgentAvailable ||
+		(started.Agent.LifecycleState != domain.AgentCreated || started.Agent.ActivationState != domain.ActivationEnabled || started.Agent.RuntimeState != domain.RuntimeAvailable) ||
 		started.Agent.ActiveOperationRequestID != requestID {
 		t.Fatalf("started disable = %+v", started)
 	}
 
-	if _, err := repository.pool.Exec(ctx, `
-INSERT INTO agent_controller.run_admissions (
-    admission_id, request_id, request_fingerprint, agent_id, session_id,
-    principal_id, access_revision, state, deadline, runtime_revision,
-    snapshot, created_at, updated_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, 'active', $8, $9,
-          jsonb_build_object(
-              'runtime', jsonb_build_object('runtime_revision', $9::text),
-              'execution_spec', jsonb_build_object('skill_instructions', '[]'::jsonb)
-          ), $10, $10)`,
-		"admission-disable-integration", "request-run-disable-integration",
-		strings.Repeat("5", 64), base.Agent.AgentID, "session-disable-integration",
-		base.Agent.OwnerUserID, base.Agent.AccessRevision, now.Add(time.Hour),
-		base.Agent.RuntimeRevision, now,
-	); err != nil {
-		t.Fatalf("insert active Run admission: %v", err)
-	}
-	blocked, err := repository.SettleAgentDisableDrain(
-		ctx, requestID, fingerprint, domain.ChildRequestID(requestID, domain.PhaseNetworkFence),
-		now.Add(time.Second),
-	)
-	if err != nil || blocked.Operation.Phase != domain.PhaseDrain {
-		t.Fatalf("active Run did not block disable: state=%+v err=%v", blocked, err)
-	}
-	if _, err := repository.pool.Exec(ctx, `
-UPDATE agent_controller.run_admissions
-SET state = 'blocked_unknown_effect',
-    terminal_report = '{"terminal_class":"unresolved","tool_effect_state":"unknown","unknown_effect_source":"runtime_mcp","stop_reason":"","error_class":"tool_outcome_unknown"}'::jsonb,
-    finished_at = $2,
-    updated_at = $2
-WHERE admission_id = $1`,
-		"admission-disable-integration", now.Add(time.Second),
-	); err != nil {
-		t.Fatalf("mark Run effect unresolved: %v", err)
-	}
-	drained, err := repository.SettleAgentDisableDrain(
-		ctx, requestID, fingerprint, domain.ChildRequestID(requestID, domain.PhaseNetworkFence),
-		now.Add(2*time.Second),
-	)
-	if err != nil || drained.Operation.Phase != domain.PhaseNetworkFence {
+	drained, err := repository.ConfirmLifecycleDrain(ctx, ports.ConfirmLifecycleDrain{
+		RequestID: requestID, Fingerprint: fingerprint, Kind: domain.OperationDisable,
+		Outcome: ports.ExecutionRuntimeBarrierRequired, Now: now.Add(time.Second),
+	})
+	if err != nil || drained.Phase != domain.PhaseNetworkFence {
 		t.Fatalf("settle disable drain: state=%+v err=%v", drained, err)
 	}
-
 	withFence, err := repository.AdvanceAgentDisable(ctx, ports.AdvanceAgentDisable{
 		RequestID: requestID, Fingerprint: fingerprint,
 		ExpectedPhase: domain.PhaseNetworkFence, NextPhase: domain.PhaseRuntimeDisable,
@@ -102,54 +66,19 @@ WHERE admission_id = $1`,
 		ExpectedPhase: domain.PhaseRuntimeDisable, NextPhase: domain.PhasePublish,
 		NextChildRequestID: domain.ChildRequestID(requestID, domain.PhasePublish),
 		RuntimeResult:      &runtime,
-		RunReleaseEvent: lifecycleRunReleaseEvent(
-			"event-run-release-disable-integration", "runtime_disabled",
-			base.Agent.RuntimeRevision, now.Add(5*time.Second),
-		),
-		Now: now.Add(5 * time.Second),
+		Now:                now.Add(5 * time.Second),
 	}
-	if _, err := repository.pool.Exec(ctx, `
-UPDATE agent_controller.run_admissions
-SET runtime_revision = $2,
-    snapshot = jsonb_set(snapshot, '{runtime,runtime_revision}', to_jsonb($2::text))
-WHERE admission_id = $1`,
-		"admission-disable-integration", "rtv_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-	); err != nil {
-		t.Fatalf("set mismatched unresolved Run revision: %v", err)
-	}
-	if _, err := repository.AdvanceAgentDisable(ctx, advanceRuntime); err == nil {
-		t.Fatal("Runtime disable released an unresolved Run from another Runtime revision")
-	}
-	if _, err := repository.pool.Exec(ctx, `
-UPDATE agent_controller.run_admissions
-SET runtime_revision = $2,
-    snapshot = jsonb_set(snapshot, '{runtime,runtime_revision}', to_jsonb($2::text))
-WHERE admission_id = $1`,
-		"admission-disable-integration", base.Agent.RuntimeRevision,
-	); err != nil {
-		t.Fatalf("restore unresolved Run revision: %v", err)
+	invalidRuntime := runtime
+	invalidRuntime.Health = "healthy"
+	invalid := advanceRuntime
+	invalid.RuntimeResult = &invalidRuntime
+	if _, err := repository.AdvanceAgentDisable(ctx, invalid); err == nil {
+		t.Fatal("disable accepted a Runtime that is still healthy")
 	}
 	withRuntime, err := repository.AdvanceAgentDisable(ctx, advanceRuntime)
 	if err != nil || withRuntime.Operation.Phase != domain.PhasePublish {
 		t.Fatalf("record Runtime disable: state=%+v err=%v", withRuntime, err)
 	}
-	var admissionState, releasedBy string
-	if err := repository.pool.QueryRow(ctx, `
-SELECT state, released_by_operation_request_id
-FROM agent_controller.run_admissions WHERE admission_id = $1`,
-		"admission-disable-integration",
-	).Scan(&admissionState, &releasedBy); err != nil {
-		t.Fatalf("load released Run admission: %v", err)
-	}
-	if admissionState != "released" || releasedBy != requestID {
-		t.Fatalf("released Run state=%q operation=%q", admissionState, releasedBy)
-	}
-	assertLifecycleRunRelease(
-		t, ctx, repository, "event-run-release-disable-integration", base.Agent.AgentID,
-		"admission-disable-integration", requestID,
-		begin.RequestedEvent.AggregateSequence+1,
-	)
-
 	published, err := repository.PublishAgentDisable(ctx, ports.PublishAgentDisable{
 		RequestID: requestID, Fingerprint: fingerprint,
 		DisabledEvent: ports.AgentEventRecord{
@@ -165,7 +94,7 @@ FROM agent_controller.run_admissions WHERE admission_id = $1`,
 		t.Fatalf("publish Agent disable: %v", err)
 	}
 	if published.Agent.DesiredState != domain.DesiredDisabled ||
-		published.Agent.LifecycleState != domain.AgentDisabled ||
+		(published.Agent.LifecycleState != domain.AgentCreated || published.Agent.ActivationState != domain.ActivationDisabled || published.Agent.RuntimeState != domain.RuntimeAbsent) ||
 		published.Agent.AgentSpecRevisionID != base.Agent.AgentSpecRevisionID ||
 		published.Agent.ExecutionRevisionID != "" ||
 		published.Agent.LastSuccessfulExecutionRevisionID != base.Agent.ExecutionRevisionID ||
@@ -193,7 +122,7 @@ func TestLifecycleRepositoryDisableFailureRestoresExecutableSource(t *testing.T)
 	t.Cleanup(repository.Close)
 	base, _ := seedAvailableAgentForRebuild(t, ctx, repository)
 
-	now := time.Unix(400, 0).UTC()
+	now := time.Now().Add(-15 * time.Second).UTC().Truncate(time.Microsecond)
 	requestID := "request-disable-failure-integration"
 	fingerprint := strings.Repeat("6", 64)
 	begin := disableBegin(base, requestID, fingerprint, now)
@@ -209,10 +138,6 @@ func TestLifecycleRepositoryDisableFailureRestoresExecutableSource(t *testing.T)
 			Reason: "runtime_deleted", RuntimeRevision: base.Agent.RuntimeRevision,
 			ObservedAt: now.Add(time.Second),
 		},
-		RunReleaseEvent: lifecycleRunReleaseEvent(
-			"event-invalid-early-disable-release", "runtime_deleted",
-			base.Agent.RuntimeRevision, now.Add(time.Second),
-		),
 		FailedEvent: ports.AgentEventRecord{
 			EventID: "event-invalid-early-disable-failure", AgentID: base.Agent.AgentID,
 			SchemaVersion: 1, EventType: ports.EventAgentDisableFailed,
@@ -244,12 +169,13 @@ func TestLifecycleRepositoryDisableFailureRestoresExecutableSource(t *testing.T)
 		t.Fatalf("fail Agent disable: %v", err)
 	}
 	if failed.Agent.DesiredState != domain.DesiredEnabled ||
-		failed.Agent.LifecycleState != domain.AgentAvailable ||
+		(failed.Agent.LifecycleState != domain.AgentCreated || failed.Agent.ActivationState != domain.ActivationEnabled || failed.Agent.RuntimeState != domain.RuntimeUnknown) ||
 		failed.Agent.ExecutionRevisionID != base.Agent.ExecutionRevisionID ||
 		failed.Agent.RuntimeRevision != base.Agent.RuntimeRevision ||
 		failed.Operation.State != domain.OperationFailed {
 		t.Fatalf("disable failure did not restore source: %+v", failed)
 	}
+	assertPreservedSourceRequiresFreshObservation(t, ctx, repository, failed.Agent)
 }
 
 func TestLifecycleRepositoryDisableFailureWithoutSourceProofFailsClosed(t *testing.T) {
@@ -265,7 +191,7 @@ func TestLifecycleRepositoryDisableFailureWithoutSourceProofFailsClosed(t *testi
 	t.Cleanup(repository.Close)
 	base, _ := seedAvailableAgentForRebuild(t, ctx, repository)
 
-	now := time.Unix(500, 0).UTC()
+	now := time.Now().Add(-15 * time.Second).UTC().Truncate(time.Microsecond)
 	requestID := "request-disable-unverified-integration"
 	fingerprint := strings.Repeat("7", 64)
 	started, _, err := repository.BeginAgentDisable(
@@ -274,10 +200,8 @@ func TestLifecycleRepositoryDisableFailureWithoutSourceProofFailsClosed(t *testi
 	if err != nil {
 		t.Fatalf("begin Agent disable: %v", err)
 	}
-	if _, err := repository.SettleAgentDisableDrain(
-		ctx, requestID, fingerprint,
-		domain.ChildRequestID(requestID, domain.PhaseNetworkFence), now.Add(time.Second),
-	); err != nil {
+	if _, err := repository.ConfirmLifecycleDrain(
+		ctx, ports.ConfirmLifecycleDrain{RequestID: requestID, Fingerprint: fingerprint, Kind: domain.OperationDisable, Outcome: ports.ExecutionSettled, Now: now.Add(time.Second)}); err != nil {
 		t.Fatalf("settle Agent disable drain: %v", err)
 	}
 	if _, err := repository.AdvanceAgentDisable(ctx, ports.AdvanceAgentDisable{
@@ -292,7 +216,7 @@ func TestLifecycleRepositoryDisableFailureWithoutSourceProofFailsClosed(t *testi
 	inspection := ports.RuntimeInspection{
 		AgentID: base.Agent.AgentID, RuntimeRevision: base.Agent.RuntimeRevision,
 		RuntimeExecutionID: "different-execution", MCPEndpoint: base.Agent.RuntimeMCPEndpoint,
-		LifecycleState: "ready", Health: "healthy",
+		LifecycleState: "provisioned", Health: "healthy",
 	}
 	failed, err := repository.FailAgentDisable(ctx, ports.FailAgentDisable{
 		RequestID: requestID, Fingerprint: fingerprint,
@@ -311,18 +235,19 @@ func TestLifecycleRepositoryDisableFailureWithoutSourceProofFailsClosed(t *testi
 		t.Fatalf("fail unverified Agent disable: %v", err)
 	}
 	if failed.Agent.DesiredState != domain.DesiredDisabled ||
-		failed.Agent.LifecycleState != domain.AgentUnavailable ||
-		failed.Agent.AgentSpecRevisionID != "" || failed.Agent.ExecutionRevisionID != "" ||
+		(failed.Agent.LifecycleState != domain.AgentCreated || failed.Agent.ActivationState != domain.ActivationEnabled || failed.Agent.RuntimeState != domain.RuntimeUnknown) ||
+		failed.Agent.AgentSpecRevisionID != base.ConfiguredSpec.ID || failed.Agent.ExecutionRevisionID != "" ||
 		failed.Agent.RuntimeRevision != "" ||
 		failed.Agent.LastSuccessfulExecutionRevisionID != base.Agent.ExecutionRevisionID ||
-		failed.Operation.SourceExecutionRevisionID != base.ExecutableExecution.ID ||
+		failed.Operation.SourceExecutionRevisionID != base.SourceExecution.ID ||
 		failed.Operation.SourceRuntimeInspection == nil ||
 		*failed.Operation.SourceRuntimeInspection != inspection {
 		t.Fatalf("unverified disable did not fail closed: %+v", failed)
 	}
+	assertRetainedExecutionConfiguration(t, repository, base)
 }
 
-func TestLifecycleRepositoryRuntimeAbsenceFailureReleasesRunExactlyOnce(t *testing.T) {
+func TestLifecycleRepositoryRuntimeAbsenceFailureRecordsManagementEventExactlyOnce(t *testing.T) {
 	databaseURL := os.Getenv("ANTNEST_AGENT_CONTROLLER_TEST_DATABASE_URL")
 	if databaseURL == "" {
 		t.Skip("ANTNEST_AGENT_CONTROLLER_TEST_DATABASE_URL is not set")
@@ -335,11 +260,11 @@ func TestLifecycleRepositoryRuntimeAbsenceFailureReleasesRunExactlyOnce(t *testi
 	t.Cleanup(repository.Close)
 	base, _ := seedAvailableAgentForRebuild(t, ctx, repository)
 
-	now := time.Unix(600, 0).UTC()
+	now := time.Now().Add(-15 * time.Second).UTC().Truncate(time.Microsecond)
 	requestID := "request-disable-runtime-absent"
 	fingerprint := strings.Repeat("8", 64)
-	started, admissionID, ctx := prepareDisableRuntimeFailure(
-		t, ctx, repository, base, requestID, fingerprint, now, true,
+	started, ctx := prepareDisableRuntimeFailure(
+		t, ctx, repository, base, requestID, fingerprint, now,
 	)
 	input := ports.FailAgentDisable{
 		RequestID: requestID, Fingerprint: fingerprint,
@@ -350,10 +275,6 @@ func TestLifecycleRepositoryRuntimeAbsenceFailureReleasesRunExactlyOnce(t *testi
 			Reason: "runtime_deleted", RuntimeRevision: base.Agent.RuntimeRevision,
 			ObservedAt: now.Add(4 * time.Second),
 		},
-		RunReleaseEvent: lifecycleRunReleaseEvent(
-			"event-run-release-disable-absent", "runtime_deleted",
-			base.Agent.RuntimeRevision, now.Add(4*time.Second),
-		),
 		FailedEvent: ports.AgentEventRecord{
 			EventID: "event-disable-runtime-absent", AgentID: base.Agent.AgentID,
 			SchemaVersion: 1, EventType: ports.EventAgentDisableFailed,
@@ -367,17 +288,13 @@ func TestLifecycleRepositoryRuntimeAbsenceFailureReleasesRunExactlyOnce(t *testi
 	if err != nil {
 		t.Fatalf("fail disable after Runtime absence: %v", err)
 	}
-	if failed.Agent.LifecycleState != domain.AgentUnavailable ||
+	if (failed.Agent.LifecycleState != domain.AgentCreated || failed.Agent.ActivationState != domain.ActivationEnabled || failed.Agent.RuntimeState != domain.RuntimeUnknown) ||
 		failed.Operation.State != domain.OperationFailed ||
 		failed.Operation.SourceRuntimeAbsenceProof == nil ||
 		failed.Operation.SourceRuntimeAbsenceProof.Reason != "runtime_deleted" ||
-		failed.Agent.AggregateSequence != started.Agent.AggregateSequence+2 {
+		failed.Agent.AggregateSequence != started.Agent.AggregateSequence+1 {
 		t.Fatalf("Runtime-absence failure = %+v", failed)
 	}
-	assertLifecycleRunRelease(
-		t, ctx, repository, "event-run-release-disable-absent", base.Agent.AgentID,
-		admissionID, requestID, started.Agent.AggregateSequence+1,
-	)
 	var failureSequence int64
 	if err := repository.pool.QueryRow(ctx, `
 SELECT aggregate_sequence FROM agent_controller.agent_events WHERE event_id = $1`,
@@ -385,7 +302,7 @@ SELECT aggregate_sequence FROM agent_controller.agent_events WHERE event_id = $1
 	).Scan(&failureSequence); err != nil {
 		t.Fatalf("load disable failure event: %v", err)
 	}
-	if failureSequence != started.Agent.AggregateSequence+2 {
+	if failureSequence != started.Agent.AggregateSequence+1 {
 		t.Fatalf("disable failure sequence = %d", failureSequence)
 	}
 
@@ -396,14 +313,14 @@ SELECT aggregate_sequence FROM agent_controller.agent_events WHERE event_id = $1
 	var eventCount int
 	if err := repository.pool.QueryRow(ctx, `
 SELECT count(*) FROM agent_controller.agent_events
-WHERE operation_request_id = $1 AND event_type IN ('run_admission_released', 'agent_disable_failed')`,
+WHERE operation_request_id = $1 AND event_type = 'agent_disable_failed'`,
 		requestID,
-	).Scan(&eventCount); err != nil || eventCount != 2 {
+	).Scan(&eventCount); err != nil || eventCount != 1 {
 		t.Fatalf("terminal event count = %d err=%v", eventCount, err)
 	}
 }
 
-func TestLifecycleRepositoryRuntimeAbsenceFailureRollsBackReleaseWithEventConflict(t *testing.T) {
+func TestLifecycleRepositoryRuntimeAbsenceFailureRollsBackWithEventConflict(t *testing.T) {
 	databaseURL := os.Getenv("ANTNEST_AGENT_CONTROLLER_TEST_DATABASE_URL")
 	if databaseURL == "" {
 		t.Skip("ANTNEST_AGENT_CONTROLLER_TEST_DATABASE_URL is not set")
@@ -416,11 +333,11 @@ func TestLifecycleRepositoryRuntimeAbsenceFailureRollsBackReleaseWithEventConfli
 	t.Cleanup(repository.Close)
 	base, _ := seedAvailableAgentForRebuild(t, ctx, repository)
 
-	now := time.Unix(700, 0).UTC()
+	now := time.Now().Add(-15 * time.Second).UTC().Truncate(time.Microsecond)
 	requestID := "request-disable-runtime-absence-rollback"
 	fingerprint := strings.Repeat("9", 64)
-	started, admissionID, ctx := prepareDisableRuntimeFailure(
-		t, ctx, repository, base, requestID, fingerprint, now, true,
+	started, ctx := prepareDisableRuntimeFailure(
+		t, ctx, repository, base, requestID, fingerprint, now,
 	)
 	var cursorBefore int64
 	var eventCountBefore int
@@ -443,10 +360,6 @@ SELECT count(*) FROM agent_controller.agent_events`,
 			Reason: "runtime_deleted", RuntimeRevision: base.Agent.RuntimeRevision,
 			ObservedAt: now.Add(4 * time.Second),
 		},
-		RunReleaseEvent: lifecycleRunReleaseEvent(
-			"event-run-release-disable-rollback", "runtime_deleted",
-			base.Agent.RuntimeRevision, now.Add(4*time.Second),
-		),
 		FailedEvent: ports.AgentEventRecord{
 			EventID: "event-disable-requested-" + requestID, AgentID: base.Agent.AgentID,
 			SchemaVersion: 1, EventType: ports.EventAgentDisableFailed,
@@ -463,12 +376,6 @@ SELECT count(*) FROM agent_controller.agent_events`,
 	if err != nil || operation.State != domain.OperationRunning ||
 		operation.Phase != domain.PhaseRuntimeDisable || operation.SourceRuntimeAbsenceProof != nil {
 		t.Fatalf("operation changed after rollback: operation=%+v err=%v", operation, err)
-	}
-	var admissionState string
-	if err := repository.pool.QueryRow(ctx, `
-SELECT state FROM agent_controller.run_admissions WHERE admission_id = $1`, admissionID,
-	).Scan(&admissionState); err != nil || admissionState != "blocked_unknown_effect" {
-		t.Fatalf("admission state after rollback = %q err=%v", admissionState, err)
 	}
 	agent, err := repository.GetAgent(ctx, base.Agent.AgentID)
 	if err != nil || agent.AggregateSequence != started.Agent.AggregateSequence ||
@@ -495,7 +402,7 @@ SELECT count(*) FROM agent_controller.agent_events`,
 	}
 }
 
-func TestLifecycleRepositoryRuntimeAbsenceFailureWithoutBlockedRunAddsNoReleaseEvent(t *testing.T) {
+func TestLifecycleRepositoryRuntimeAbsenceFailureAddsNoExecutionEvent(t *testing.T) {
 	databaseURL := os.Getenv("ANTNEST_AGENT_CONTROLLER_TEST_DATABASE_URL")
 	if databaseURL == "" {
 		t.Skip("ANTNEST_AGENT_CONTROLLER_TEST_DATABASE_URL is not set")
@@ -508,11 +415,11 @@ func TestLifecycleRepositoryRuntimeAbsenceFailureWithoutBlockedRunAddsNoReleaseE
 	t.Cleanup(repository.Close)
 	base, _ := seedAvailableAgentForRebuild(t, ctx, repository)
 
-	now := time.Unix(800, 0).UTC()
+	now := time.Now().Add(-15 * time.Second).UTC().Truncate(time.Microsecond)
 	requestID := "request-disable-runtime-absent-no-run"
 	fingerprint := strings.Repeat("b", 64)
-	started, _, ctx := prepareDisableRuntimeFailure(
-		t, ctx, repository, base, requestID, fingerprint, now, false,
+	started, ctx := prepareDisableRuntimeFailure(
+		t, ctx, repository, base, requestID, fingerprint, now,
 	)
 	failed, err := repository.FailAgentDisable(ctx, ports.FailAgentDisable{
 		RequestID: requestID, Fingerprint: fingerprint,
@@ -523,10 +430,6 @@ func TestLifecycleRepositoryRuntimeAbsenceFailureWithoutBlockedRunAddsNoReleaseE
 			Reason: "runtime_deleted", RuntimeRevision: base.Agent.RuntimeRevision,
 			ObservedAt: now.Add(4 * time.Second),
 		},
-		RunReleaseEvent: lifecycleRunReleaseEvent(
-			"event-unused-run-release", "runtime_deleted",
-			base.Agent.RuntimeRevision, now.Add(4*time.Second),
-		),
 		FailedEvent: ports.AgentEventRecord{
 			EventID: "event-disable-runtime-absent-no-run", AgentID: base.Agent.AgentID,
 			SchemaVersion: 1, EventType: ports.EventAgentDisableFailed,
@@ -541,13 +444,7 @@ func TestLifecycleRepositoryRuntimeAbsenceFailureWithoutBlockedRunAddsNoReleaseE
 	if failed.Agent.AggregateSequence != started.Agent.AggregateSequence+1 {
 		t.Fatalf("failure sequence = %d", failed.Agent.AggregateSequence)
 	}
-	var releaseCount int
-	if err := repository.pool.QueryRow(ctx, `
-SELECT count(*) FROM agent_controller.agent_events
-WHERE operation_request_id = $1 AND event_type = 'run_admission_released'`, requestID,
-	).Scan(&releaseCount); err != nil || releaseCount != 0 {
-		t.Fatalf("synthetic release event count = %d err=%v", releaseCount, err)
-	}
+	assertManagementOnlySchema(t, repository)
 }
 
 func prepareDisableRuntimeFailure(
@@ -558,8 +455,7 @@ func prepareDisableRuntimeFailure(
 	requestID string,
 	fingerprint string,
 	now time.Time,
-	withBlockedRun bool,
-) (ports.AgentDisableState, string, context.Context) {
+) (ports.AgentDisableState, context.Context) {
 	t.Helper()
 	_, _, err := repository.BeginAgentDisable(
 		ctx, disableBegin(base, requestID, fingerprint, now),
@@ -567,32 +463,8 @@ func prepareDisableRuntimeFailure(
 	if err != nil {
 		t.Fatalf("begin Agent disable: %v", err)
 	}
-	admissionID := ""
-	if withBlockedRun {
-		admissionID = "admission-" + requestID
-		if _, err := repository.pool.Exec(ctx, `
-INSERT INTO agent_controller.run_admissions (
-    admission_id, request_id, request_fingerprint, agent_id, session_id,
-    principal_id, access_revision, state, deadline, runtime_revision,
-    snapshot, terminal_report, finished_at, created_at, updated_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, 'blocked_unknown_effect', $8, $9,
-          jsonb_build_object(
-              'runtime', jsonb_build_object('runtime_revision', $9::text),
-              'execution_spec', jsonb_build_object('skill_instructions', '[]'::jsonb)
-          ),
-          '{"terminal_class":"unresolved","tool_effect_state":"unknown","unknown_effect_source":"runtime_mcp","stop_reason":"","error_class":"tool_outcome_unknown"}'::jsonb,
-          $10, $10, $10)`,
-			admissionID, "run-"+requestID, strings.Repeat("d", 64), base.Agent.AgentID,
-			"session-"+requestID, base.Agent.OwnerUserID, base.Agent.AccessRevision,
-			now.Add(time.Hour), base.Agent.RuntimeRevision, now,
-		); err != nil {
-			t.Fatalf("insert blocked Run admission: %v", err)
-		}
-	}
-	if _, err := repository.SettleAgentDisableDrain(
-		ctx, requestID, fingerprint,
-		domain.ChildRequestID(requestID, domain.PhaseNetworkFence), now.Add(time.Second),
-	); err != nil {
+	if _, err := repository.ConfirmLifecycleDrain(
+		ctx, ports.ConfirmLifecycleDrain{RequestID: requestID, Fingerprint: fingerprint, Kind: domain.OperationDisable, Outcome: ports.ExecutionSettled, Now: now.Add(time.Second)}); err != nil {
 		t.Fatalf("settle Agent disable drain: %v", err)
 	}
 	state, err := repository.AdvanceAgentDisable(ctx, ports.AdvanceAgentDisable{
@@ -605,24 +477,26 @@ INSERT INTO agent_controller.run_admissions (
 	if err != nil {
 		t.Fatalf("advance Agent disable to Runtime: %v", err)
 	}
-	return state, admissionID, ctx
+	return state, ctx
 }
 
 func disableBegin(
 	base ports.AgentLifecycleBase, requestID string, fingerprint string, now time.Time,
 ) ports.BeginAgentDisable {
+	deadline := now.Add(time.Minute)
 	return ports.BeginAgentDisable{
 		AgentID:                     base.Agent.AgentID,
 		ExpectedAggregateSequence:   base.Agent.AggregateSequence,
-		ExpectedSpecRevisionID:      base.ExecutableSpec.ID,
-		ExpectedExecutionRevisionID: base.ExecutableExecution.ID,
+		ExpectedSpecRevisionID:      base.ConfiguredSpec.ID,
+		ExpectedExecutionRevisionID: base.SourceExecution.ID,
 		ExpectedRuntimeRevision:     base.Agent.RuntimeRevision,
 		Operation: ports.LifecycleOperationRecord{
 			RequestID: requestID, RequestFingerprint: fingerprint,
 			AgentID: base.Agent.AgentID, Kind: domain.OperationDisable,
-			Phase: domain.PhaseDrain, State: domain.OperationRunning,
-			SourceSpecRevisionID:      base.ExecutableSpec.ID,
-			SourceExecutionRevisionID: base.ExecutableExecution.ID,
+			DrainDeadlineAt: &deadline,
+			Phase:           domain.PhaseDrain, State: domain.OperationRunning,
+			SourceSpecRevisionID:      base.ConfiguredSpec.ID,
+			SourceExecutionRevisionID: base.SourceExecution.ID,
 			SourceRuntimeRevision:     base.Agent.RuntimeRevision,
 			ChildRequestID:            domain.ChildRequestID(requestID, domain.PhaseDrain),
 			CreatedAt:                 now, UpdatedAt: now,

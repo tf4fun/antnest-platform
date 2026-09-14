@@ -67,13 +67,13 @@ func TestClientCollectsWorkspacePagesWithoutChangingPrincipalScope(t *testing.T)
 		}
 		response.Header().Set("Content-Type", "application/json")
 		if requests == 1 {
-			_, _ = response.Write([]byte(`{"agents":[{"agent_id":"agent-1","name":"One","availability":"ready","agent_access_subject":"subject-1"}],"next_cursor":"cursor-1"}`))
+			_, _ = response.Write([]byte(`{"agents":[{"agent_id":"agent-1","name":"One"}],"next_cursor":"cursor-1"}`))
 			return
 		}
 		if payload["cursor"] != "cursor-1" {
 			t.Fatalf("cursor = %+v", payload["cursor"])
 		}
-		_, _ = response.Write([]byte(`{"agents":[{"agent_id":"agent-2","name":"Two","availability":"busy","agent_access_subject":"subject-2"}],"next_cursor":null}`))
+		_, _ = response.Write([]byte(`{"agents":[{"agent_id":"agent-2","name":"Two"}],"next_cursor":null}`))
 	}))
 	defer server.Close()
 	client, err := NewClient(server.URL, server.Client())
@@ -87,7 +87,7 @@ func TestClientCollectsWorkspacePagesWithoutChangingPrincipalScope(t *testing.T)
 	if err != nil {
 		t.Fatalf("ListWorkspaceAgents: %v", err)
 	}
-	if len(agents) != 2 || agents[0].AgentID != "agent-1" || agents[1].Availability != "busy" {
+	if len(agents) != 2 || agents[0].AgentID != "agent-1" || agents[1].Name != "Two" {
 		t.Fatalf("agents = %+v", agents)
 	}
 }
@@ -96,7 +96,9 @@ func TestClientRejectsInvalidOrRepeatedWorkspaceProjection(t *testing.T) {
 	t.Parallel()
 
 	for _, body := range []string{
+		`{}`, `{"agents":null,"next_cursor":null}`,
 		`{"agents":[{"agent_id":"agent-1","name":"One","availability":"unknown","agent_access_subject":"subject-1"}],"next_cursor":null}`,
+		`{"agents":[{"agent_id":"agent-1","name":""}],"next_cursor":null}`,
 		`{"agents":[],"next_cursor":"same"}`,
 	} {
 		t.Run(body, func(t *testing.T) {

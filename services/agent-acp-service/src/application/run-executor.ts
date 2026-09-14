@@ -1,16 +1,14 @@
 import { DurableRunEvents, RunEventPersistenceError } from "./durable-run-events.js";
 import { TurnRunner } from "./turn-runner.js";
 import type { ContextBuilder } from "./context-builder.js";
-import { DomainError } from "../domain/errors.js";
 import { commandReply, type SessionCommand } from "../domain/slash-commands.js";
 import {
   RunRecoveryRequiredError,
-  type AcpApplicationPort,
+  type RunExecutionInput,
   type ExecuteRunResult,
 } from "../ports/acp-application.js";
-import { finishRunInput, type AgentControllerPort } from "../ports/agent-controller.js";
+import type { ProviderClients, ProviderClientHandle } from "./provider-clients.js";
 import type { ExecutionRepository } from "../ports/execution-repository.js";
-import type { ModelPort } from "../ports/model.js";
 import type { RunEventRepository } from "../ports/run-event-repository.js";
 import type { ToolCatalogPort } from "../ports/tools.js";
 import { assertWorkerOwnership, withWorkerOwnership } from "./worker-ownership.js";
@@ -19,9 +17,8 @@ import type { ToolPermissionPort } from "../ports/tool-permissions.js";
 export type RunExecutorDependencies = {
   permissions?: ToolPermissionPort;
   executions: ExecutionRepository;
-  contextBuilder: ContextBuilder;
-  agentController: AgentControllerPort;
-  model: ModelPort;
+  contextBuilder: Pick<ContextBuilder, "build">;
+  providers: Pick<ProviderClients, "acquire">;
   tools: ToolCatalogPort;
   events: RunEventRepository;
   ownershipSignal: AbortSignal;
@@ -31,17 +28,15 @@ export type RunExecutorDependencies = {
 };
 
 export interface RunExecutionPort {
-  execute(input: Parameters<AcpApplicationPort["executeRun"]>[0]): Promise<ExecuteRunResult>;
+  execute(input: RunExecutionInput): Promise<ExecuteRunResult>;
 }
 
 export class RunExecutor implements RunExecutionPort {
   public constructor(private readonly dependencies: RunExecutorDependencies) {}
 
-  public async execute(
-    input: Parameters<AcpApplicationPort["executeRun"]>[0],
-  ): Promise<ExecuteRunResult> {
+  public async execute(input: RunExecutionInput): Promise<ExecuteRunResult> {
     assertWorkerOwnership(this.dependencies.ownershipSignal);
-    const result = await this.runWithinAdmission({
+    const result = await this.runWithinDeadline({
       ...input,
       signal: AbortSignal.any([input.signal, this.dependencies.ownershipSignal]),
     });
@@ -63,15 +58,12 @@ export class RunExecutor implements RunExecutionPort {
       throw new RunRecoveryRequiredError("Run terminal state requires recovery", error);
     }
     assertWorkerOwnership(this.dependencies.ownershipSignal);
-    await this.closeAdmission(input.accepted.runId, input.accepted.snapshot.admissionId, result);
     return result;
   }
 
-  private async runWithinAdmission(
-    input: Parameters<AcpApplicationPort["executeRun"]>[0],
-  ): Promise<ExecuteRunResult> {
+  private async runWithinDeadline(input: RunExecutionInput): Promise<ExecuteRunResult> {
     const remaining =
-      input.accepted.snapshot.admissionDeadline.getTime() - this.dependencies.now().getTime();
+      input.accepted.snapshot.deadlineAt.getTime() - this.dependencies.now().getTime();
     if (remaining <= 0) {
       return deadlineResult("none");
     }
@@ -111,33 +103,30 @@ export class RunExecutor implements RunExecutionPort {
     }
   }
 
-  private async run(
-    input: Parameters<AcpApplicationPort["executeRun"]>[0],
-  ): Promise<ExecuteRunResult> {
+  private async run(input: RunExecutionInput): Promise<ExecuteRunResult> {
     assertWorkerOwnership(this.dependencies.ownershipSignal);
     input.signal.throwIfAborted();
     if (input.accepted.command !== undefined) return this.runCommand(input, input.accepted.command);
+    const client = this.dependencies.providers.acquire(
+      input.accepted.snapshot.organizationId,
+      input.accepted.snapshot.providerConnectionId,
+    );
+    try {
+      return await this.runWithClient(input, client);
+    } finally {
+      client.release();
+    }
+  }
+
+  private async runWithClient(
+    input: RunExecutionInput,
+    client: ProviderClientHandle,
+  ): Promise<ExecuteRunResult> {
     const context = await this.dependencies.contextBuilder.build(
       input.accepted.sessionId,
       input.accepted.snapshot,
       input.signal,
     );
-    const credential = await withWorkerOwnership(this.dependencies.ownershipSignal, () =>
-      this.dependencies.agentController.resolveCredential(
-        {
-          requestId: this.dependencies.id(),
-          admissionId: input.accepted.snapshot.admissionId,
-          credentialRef: input.accepted.snapshot.executionSpec.credentialRef,
-        },
-        input.signal,
-      ),
-    );
-    if (credential.credentialVersion !== input.accepted.snapshot.credentialVersion) {
-      throw new DomainError(
-        "credential_version_mismatch",
-        "Resolved credential does not match the admitted execution snapshot",
-      );
-    }
     const events = new DurableRunEvents({
       repository: this.dependencies.events,
       publish: input.publish,
@@ -150,7 +139,7 @@ export class RunExecutor implements RunExecutionPort {
       ...(this.dependencies.permissions === undefined
         ? {}
         : { permissions: this.dependencies.permissions }),
-      model: this.dependencies.model,
+      model: client,
       tools: this.dependencies.tools,
       catalog: context.tools,
       events,
@@ -160,7 +149,6 @@ export class RunExecutor implements RunExecutionPort {
         runId: input.accepted.runId,
         sessionId: input.accepted.sessionId,
         snapshot: input.accepted.snapshot,
-        credential: credential.secret,
         context: context.messages,
         signal: input.signal,
         authoritySignal: this.dependencies.ownershipSignal,
@@ -169,7 +157,7 @@ export class RunExecutor implements RunExecutionPort {
   }
 
   private async runCommand(
-    input: Parameters<AcpApplicationPort["executeRun"]>[0],
+    input: RunExecutionInput,
     command: SessionCommand,
   ): Promise<ExecuteRunResult> {
     const events = new DurableRunEvents({
@@ -189,39 +177,6 @@ export class RunExecutor implements RunExecutionPort {
       toolEffectState: "none",
       stopReason: "end_turn",
     };
-  }
-
-  private async closeAdmission(
-    runId: string,
-    admissionId: string,
-    result: ExecuteRunResult,
-  ): Promise<void> {
-    assertWorkerOwnership(this.dependencies.ownershipSignal);
-    try {
-      await withWorkerOwnership(this.dependencies.ownershipSignal, () =>
-        this.dependencies.agentController.finishRun(
-          finishRunInput(this.dependencies.id(), admissionId, result),
-          this.dependencies.ownershipSignal,
-        ),
-      );
-    } catch (error) {
-      assertWorkerOwnership(this.dependencies.ownershipSignal);
-      this.dependencies.recoveryRequired(
-        new Error("Run admission closure requires startup recovery", { cause: error }),
-      );
-      return;
-    }
-    assertWorkerOwnership(this.dependencies.ownershipSignal);
-    try {
-      await withWorkerOwnership(this.dependencies.ownershipSignal, () =>
-        this.dependencies.executions.markAdmissionFinished(runId, this.dependencies.now()),
-      );
-    } catch (error) {
-      assertWorkerOwnership(this.dependencies.ownershipSignal);
-      this.dependencies.recoveryRequired(
-        new Error("Run admission closure marker requires startup recovery", { cause: error }),
-      );
-    }
   }
 }
 

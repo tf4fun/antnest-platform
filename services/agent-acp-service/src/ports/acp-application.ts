@@ -91,6 +91,7 @@ export type SessionOutputSnapshot = {
 };
 
 export type AcceptedAcpRun = {
+  outputSequence: number;
   command?: SessionCommand;
   runId: string;
   requestId: string;
@@ -104,6 +105,16 @@ export type AcceptedAcpRun = {
 };
 
 export type ExecuteRunResult = RunOutcome;
+
+export type SubmittedAcpRun = AcceptedAcpRun & {
+  completion: Promise<ExecuteRunResult>;
+};
+
+export type RunExecutionInput = {
+  accepted: AcceptedAcpRun;
+  publish: SessionEventPublisher["publish"];
+  signal: AbortSignal;
+};
 
 export class RunRecoveryRequiredError extends Error {
   public constructor(message: string, cause: unknown) {
@@ -162,10 +173,6 @@ export interface AcpApplicationPort {
     binding: ConnectionBinding;
     sessionId: string;
     prompt: ContentBlock[];
-  }): Promise<AcceptedAcpRun>;
-  executeRun(input: {
-    accepted: AcceptedAcpRun;
-    publish: SessionEventPublisher["publish"];
-    signal: AbortSignal;
-  }): Promise<ExecuteRunResult>;
+    outputChanged: () => void;
+  }): Promise<SubmittedAcpRun>;
 }

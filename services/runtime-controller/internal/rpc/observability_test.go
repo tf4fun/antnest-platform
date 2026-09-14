@@ -102,7 +102,7 @@ func TestRPCContentSwitchAndProtocolOutcome(t *testing.T) {
 
 	t.Setenv("ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT", "true")
 	operation.State = deployment.OperationFailed
-	operation.ErrorCode = "runtime_not_ready"
+	operation.ErrorCode = "platform_unavailable"
 	handler := telemetry.HTTPHandler(newTestHandler(t, &fakeService{operation: operation}))
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/internal/runtime-operations/operation-42", nil))

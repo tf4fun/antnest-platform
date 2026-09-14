@@ -1,4 +1,4 @@
-import { sessionConfigurationView } from "../support/fixtures.js";
+import { identityHeaders, snapshot, sessionConfigurationView } from "../support/fixtures.js";
 import { v1Configuration, v2Configuration } from "../../src/transport/acp/configuration.js";
 import * as acpV1 from "@agentclientprotocol/sdk";
 import * as acpV2 from "@agentclientprotocol/sdk/experimental/v2";
@@ -7,12 +7,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import WebSocket, { type RawData } from "ws";
 
 import { AgentAcpHttpServer } from "../../src/transport/http-server.js";
-import { withOutputHistory } from "../support/output-application.js";
+import { withOutputHistory, type OutputApplication } from "../support/output-application.js";
 import type { AcpApplicationPort, AcceptedAcpRun } from "../../src/ports/acp-application.js";
-import {
-  AgentControllerError,
-  type AgentControllerPort,
-} from "../../src/ports/agent-controller.js";
+import { DomainError } from "../../src/domain/errors.js";
 
 describe("AgentAcpHttpServer", () => {
   let server: AgentAcpHttpServer | undefined;
@@ -23,9 +20,52 @@ describe("AgentAcpHttpServer", () => {
     });
   });
 
+  it.each([1, 2] as const)(
+    "preserves opaque identity through ACP v%s WebSocket",
+    async (version) => {
+      const application = applicationPort();
+      server = new AgentAcpHttpServer({
+        application,
+        ready: () => Promise.resolve(true),
+        maxWebSocketPayloadBytes: 64 * 1024,
+      });
+      await server.listen("127.0.0.1", 0);
+      const identity = {
+        organizationId: "org+division@example.org",
+        principalId: "owner+team@example.org",
+        agentId: "agent/department+1",
+      };
+      const socket = await openRawWebSocket(server, `/v${version}/acp`, identityHeaders(identity));
+      try {
+        await initializeRaw(socket, version);
+        const frames: Array<Record<string, unknown>> = [];
+        socket.on("message", (data) =>
+          frames.push(JSON.parse(rawDataText(data)) as Record<string, unknown>),
+        );
+        socket.send(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: 2,
+            method: "session/new",
+            params: { cwd: "/workspace", mcpServers: [] },
+          }),
+        );
+        await vi.waitFor(() =>
+          expect(frames.find((frame) => frame.id === 2)).toMatchObject({
+            id: 2,
+            result: { sessionId: "session-1" },
+          }),
+        );
+        expect(application.createSession).toHaveBeenCalledOnce();
+        expect(application.createSession.mock.calls[0]?.[0].binding).toMatchObject(identity);
+      } finally {
+        socket.close();
+      }
+    },
+  );
+
   it("closes idempotently when startup never reached listen", async () => {
     server = new AgentAcpHttpServer({
-      agentController: controllerPort().port,
       application: applicationPort(),
       ready: vi.fn(() => Promise.resolve(true)),
       maxWebSocketPayloadBytes: 64 * 1024,
@@ -37,11 +77,10 @@ describe("AgentAcpHttpServer", () => {
   });
 
   it("authenticates before upgrading and serves the official ACP v2 stream", async () => {
-    const controller = controllerPort();
+    const application = applicationPort();
     const errors: Array<{ error: unknown; operation: string }> = [];
     server = new AgentAcpHttpServer({
-      agentController: controller.port,
-      application: applicationPort(),
+      application,
       ready: vi.fn(() => Promise.resolve(true)),
       id: sequentialIds(),
       maxWebSocketPayloadBytes: 64 * 1024,
@@ -56,7 +95,7 @@ describe("AgentAcpHttpServer", () => {
     const connection = client.connect(
       createWebSocketStream<acpV2.AnyWireMessage>(`ws://127.0.0.1:${address.port}/v2/acp`, {
         WebSocket,
-        headers: { "x-antnest-agent-access-subject": "subject-1" },
+        headers: identityHeaders(),
       }),
     );
 
@@ -103,10 +142,16 @@ describe("AgentAcpHttpServer", () => {
       sessionId: "session-1",
       ...v2Configuration(sessionConfigurationView()),
     });
-    expect(controller.resolveAgentAccess).toHaveBeenCalledWith({
-      requestId: "id-1",
-      agentAccessSubject: "subject-1",
-    });
+    expect(application.createSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        binding: {
+          connectionId: "id-1",
+          organizationId: "organization-1",
+          principalId: "principal-1",
+          agentId: "agent-1",
+        },
+      }),
+    );
     connection.close();
     await connection.closed.catch((error: unknown) => {
       throw new Error("client connection close failed", { cause: error });
@@ -114,10 +159,9 @@ describe("AgentAcpHttpServer", () => {
   });
 
   it("serves the official stable ACP v1 stream on its explicit endpoint", async () => {
-    const controller = controllerPort();
+    const application = applicationPort();
     server = new AgentAcpHttpServer({
-      agentController: controller.port,
-      application: applicationPort(),
+      application,
       ready: vi.fn(() => Promise.resolve(true)),
       id: sequentialIds(),
       maxWebSocketPayloadBytes: 64 * 1024,
@@ -130,7 +174,7 @@ describe("AgentAcpHttpServer", () => {
     const connection = acpV1.client().connect(
       createWebSocketStream<acpV1.AnyMessage>(`ws://127.0.0.1:${address.port}/v1/acp`, {
         WebSocket,
-        headers: { "x-antnest-agent-access-subject": "subject-1" },
+        headers: identityHeaders(),
       }),
     );
 
@@ -148,18 +192,22 @@ describe("AgentAcpHttpServer", () => {
       sessionId: "session-1",
       ...v1Configuration(sessionConfigurationView()),
     });
-    expect(controller.resolveAgentAccess).toHaveBeenCalledWith({
-      requestId: "id-1",
-      agentAccessSubject: "subject-1",
-    });
+    expect(application.createSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        binding: {
+          connectionId: "id-1",
+          organizationId: "organization-1",
+          principalId: "principal-1",
+          agentId: "agent-1",
+        },
+      }),
+    );
     connection.close();
     await connection.closed;
   });
 
   it("rejects new WebSocket connections while the service is not ready", async () => {
-    const controller = controllerPort();
     server = new AgentAcpHttpServer({
-      agentController: controller.port,
       application: applicationPort(),
       ready: vi.fn(() => Promise.resolve(false)),
       maxWebSocketPayloadBytes: 64 * 1024,
@@ -172,7 +220,7 @@ describe("AgentAcpHttpServer", () => {
 
     const status = await new Promise<number>((resolve, reject) => {
       const socket = new WebSocket(`ws://127.0.0.1:${address.port}/v2/acp`, {
-        headers: { "x-antnest-agent-access-subject": "subject-1" },
+        headers: identityHeaders(),
       });
       socket.once("unexpected-response", (_request, response) => {
         resolve(response.statusCode ?? 0);
@@ -183,15 +231,12 @@ describe("AgentAcpHttpServer", () => {
     });
 
     expect(status).toBe(503);
-    expect(controller.resolveAgentAccess).not.toHaveBeenCalled();
   });
 
   it.each(["/acp", "/v1/acp/", "/v2/acp?debug=true"])(
     "does not expose an unspecified ACP route at %s",
     async (path) => {
-      const controller = controllerPort();
       server = new AgentAcpHttpServer({
-        agentController: controller.port,
         application: applicationPort(),
         ready: vi.fn(() => Promise.resolve(true)),
         maxWebSocketPayloadBytes: 64 * 1024,
@@ -204,7 +249,7 @@ describe("AgentAcpHttpServer", () => {
 
       const status = await new Promise<number>((resolve, reject) => {
         const socket = new WebSocket(`ws://127.0.0.1:${address.port}${path}`, {
-          headers: { "x-antnest-agent-access-subject": "subject-1" },
+          headers: identityHeaders(),
         });
         socket.once("unexpected-response", (_request, response) => {
           resolve(response.statusCode ?? 0);
@@ -215,7 +260,6 @@ describe("AgentAcpHttpServer", () => {
       });
 
       expect(status).toBe(404);
-      expect(controller.resolveAgentAccess).not.toHaveBeenCalled();
       await server.close();
       server = undefined;
     },
@@ -223,7 +267,6 @@ describe("AgentAcpHttpServer", () => {
 
   it("terminates an open ACP connection during deterministic shutdown", async () => {
     server = new AgentAcpHttpServer({
-      agentController: controllerPort().port,
       application: applicationPort(),
       ready: vi.fn(() => Promise.resolve(true)),
       maxWebSocketPayloadBytes: 64 * 1024,
@@ -234,7 +277,7 @@ describe("AgentAcpHttpServer", () => {
       throw new Error("server has no TCP address");
     }
     const socket = new WebSocket(`ws://127.0.0.1:${address.port}/v2/acp`, {
-      headers: { "x-antnest-agent-access-subject": "subject-1" },
+      headers: identityHeaders(),
     });
     await new Promise<void>((resolve, reject) => {
       socket.once("open", resolve);
@@ -247,92 +290,83 @@ describe("AgentAcpHttpServer", () => {
     server = undefined;
   });
 
-  it.each(["/v1/acp", "/v2/acp"])(
-    "requires an access subject before upgrading %s",
-    async (path) => {
-      const controller = controllerPort();
+  it.each(["/v1/acp", "/v2/acp"])("requires trusted identity before upgrading %s", async (path) => {
+    server = new AgentAcpHttpServer({
+      application: applicationPort(),
+      ready: vi.fn(() => Promise.resolve(true)),
+      maxWebSocketPayloadBytes: 64 * 1024,
+    });
+    await server.listen("127.0.0.1", 0);
+
+    await expect(upgradeStatus(server, path)).resolves.toBe(401);
+  });
+
+  it.each([
+    ["/v1/acp", 1, "access_denied"],
+    ["/v2/acp", 2, "access_denied"],
+    ["/v1/acp", 1, "configuration_not_ready"],
+    ["/v2/acp", 2, "configuration_not_ready"],
+    ["/v1/acp", 1, "agent_unavailable"],
+    ["/v2/acp", 2, "agent_unavailable"],
+  ] as const)(
+    "returns local %s/%s %s through ACP rather than denying the handshake",
+    async (path, version, code) => {
+      const application = applicationPort();
+      application.createSession = vi
+        .fn<AcpApplicationPort["createSession"]>()
+        .mockRejectedValue(new DomainError(code, "Cannot access Agent"));
       server = new AgentAcpHttpServer({
-        agentController: controller.port,
-        application: applicationPort(),
-        ready: vi.fn(() => Promise.resolve(true)),
+        application,
+        ready: () => Promise.resolve(true),
         maxWebSocketPayloadBytes: 64 * 1024,
       });
       await server.listen("127.0.0.1", 0);
-
-      await expect(upgradeStatus(server, path)).resolves.toBe(401);
-      expect(controller.resolveAgentAccess).not.toHaveBeenCalled();
+      const socket = await openRawWebSocket(server, path);
+      try {
+        await initializeRaw(socket, version);
+        await expect(
+          sendJsonAndRead(socket, {
+            jsonrpc: "2.0",
+            id: 2,
+            method: "session/new",
+            params: { cwd: "/workspace", mcpServers: [] },
+          }),
+        ).resolves.toMatchObject({
+          id: 2,
+          error: { code: -32020, data: { code } },
+        });
+        expect(socket.readyState).toBe(WebSocket.OPEN);
+      } finally {
+        socket.close();
+      }
     },
   );
 
-  it.each(["/v1/acp", "/v2/acp"])(
-    "rejects an access subject denied by Agent Controller on %s",
-    async (path) => {
-      const controller = controllerPort();
-      controller.resolveAgentAccess.mockRejectedValue(
-        new AgentControllerError("access_denied", "access denied", false),
-      );
-      server = new AgentAcpHttpServer({
-        agentController: controller.port,
-        application: applicationPort(),
-        ready: vi.fn(() => Promise.resolve(true)),
-        maxWebSocketPayloadBytes: 64 * 1024,
-      });
-      await server.listen("127.0.0.1", 0);
-
-      await expect(
-        upgradeStatus(server, path, { "x-antnest-agent-access-subject": "subject-1" }),
-      ).resolves.toBe(403);
-    },
-  );
-
-  it.each(["/v1/acp", "/v2/acp"])(
-    "returns service unavailable when Agent access cannot be resolved on %s",
-    async (path) => {
-      const controller = controllerPort();
-      controller.resolveAgentAccess.mockRejectedValue(
-        new AgentControllerError("dependency_unavailable", "Identity unavailable", true),
-      );
-      server = new AgentAcpHttpServer({
-        agentController: controller.port,
-        application: applicationPort(),
-        ready: vi.fn(() => Promise.resolve(true)),
-        maxWebSocketPayloadBytes: 64 * 1024,
-      });
-      await server.listen("127.0.0.1", 0);
-
-      await expect(
-        upgradeStatus(server, path, { "x-antnest-agent-access-subject": "subject-1" }),
-      ).resolves.toBe(503);
-    },
-  );
-
-  it.each(["/v1/acp", "/v2/acp"])(
-    "returns bad request for an invalid access subject on %s",
-    async (path) => {
-      const controller = controllerPort();
-      controller.resolveAgentAccess.mockRejectedValue(
-        new AgentControllerError("invalid_request", "invalid access subject", false),
-      );
-      server = new AgentAcpHttpServer({
-        agentController: controller.port,
-        application: applicationPort(),
-        ready: vi.fn(() => Promise.resolve(true)),
-        maxWebSocketPayloadBytes: 64 * 1024,
-      });
-      await server.listen("127.0.0.1", 0);
-
-      await expect(
-        upgradeStatus(server, path, { "x-antnest-agent-access-subject": "invalid subject" }),
-      ).resolves.toBe(400);
-    },
-  );
+  it.each(["/v1/acp", "/v2/acp"])("rejects malformed trusted identity on %s", async (path) => {
+    server = new AgentAcpHttpServer({
+      application: applicationPort(),
+      ready: () => Promise.resolve(true),
+      maxWebSocketPayloadBytes: 64 * 1024,
+    });
+    await server.listen("127.0.0.1", 0);
+    await expect(
+      upgradeStatus(server, path, {
+        ...identityHeaders(),
+        "x-antnest-principal-id": "first,second",
+      }),
+    ).resolves.toBe(401);
+    await expect(
+      upgradeStatus(server, path, {
+        "x-antnest-agent-access-subject": "subject-1",
+      }),
+    ).resolves.toBe(401);
+  });
 
   it.each([
     ["/v1/acp", 1],
     ["/v2/acp", 2],
   ] as const)("returns a parse error and keeps %s usable", async (path, version) => {
     server = new AgentAcpHttpServer({
-      agentController: controllerPort().port,
       application: applicationPort(),
       ready: vi.fn(() => Promise.resolve(true)),
       maxWebSocketPayloadBytes: 64 * 1024,
@@ -353,7 +387,6 @@ describe("AgentAcpHttpServer", () => {
 
   it.each(["/v1/acp", "/v2/acp"])("closes %s when it sends a binary frame", async (path) => {
     server = new AgentAcpHttpServer({
-      agentController: controllerPort().port,
       application: applicationPort(),
       ready: vi.fn(() => Promise.resolve(true)),
       maxWebSocketPayloadBytes: 64 * 1024,
@@ -373,7 +406,6 @@ describe("AgentAcpHttpServer", () => {
     "closes %s when its message exceeds the configured bound",
     async (path) => {
       server = new AgentAcpHttpServer({
-        agentController: controllerPort().port,
         application: applicationPort(),
         ready: vi.fn(() => Promise.resolve(true)),
         maxWebSocketPayloadBytes: 32,
@@ -393,7 +425,6 @@ describe("AgentAcpHttpServer", () => {
   it("rejects every v2 Session request before initialize without entering application code", async () => {
     const application = applicationPort();
     server = new AgentAcpHttpServer({
-      agentController: controllerPort().port,
       application,
       ready: vi.fn(() => Promise.resolve(true)),
       maxWebSocketPayloadBytes: 64 * 1024,
@@ -440,7 +471,6 @@ describe("AgentAcpHttpServer", () => {
     "returns method-not-found on %s without closing the connection",
     async (path, version) => {
       server = new AgentAcpHttpServer({
-        agentController: controllerPort().port,
         application: applicationPort(),
         ready: vi.fn(() => Promise.resolve(true)),
         maxWebSocketPayloadBytes: 64 * 1024,
@@ -481,7 +511,6 @@ describe("AgentAcpHttpServer", () => {
     const cancelRun = vi.fn<AcpApplicationPort["cancelRun"]>(() => Promise.resolve());
     application.cancelRun = cancelRun;
     server = new AgentAcpHttpServer({
-      agentController: controllerPort().port,
       application,
       ready: vi.fn(() => Promise.resolve(true)),
       maxWebSocketPayloadBytes: 64 * 1024,
@@ -519,7 +548,6 @@ describe("AgentAcpHttpServer", () => {
 
   it("rejects v2 initialize when it is mixed into a batch", async () => {
     server = new AgentAcpHttpServer({
-      agentController: controllerPort().port,
       application: applicationPort(),
       ready: vi.fn(() => Promise.resolve(true)),
       maxWebSocketPayloadBytes: 64 * 1024,
@@ -569,23 +597,24 @@ describe("AgentAcpHttpServer", () => {
   });
 
   it("sends the v2 Prompt acknowledgement before every Run update on the wire", async () => {
-    const application = applicationPort();
-    application.acceptPrompt = vi.fn(() => Promise.resolve(acceptedRun()));
-    application.executeRun = vi.fn<AcpApplicationPort["executeRun"]>(async ({ publish }) => {
-      await publish({
-        kind: "agent_message",
-        messageId: "assistant-1",
-        content: [{ type: "text", text: "hello" }],
-      });
-      return {
-        terminalClass: "completed",
-        executorState: "quiescent",
-        toolEffectState: "none",
-        stopReason: "end_turn",
-      };
-    });
+    const application: OutputApplication = {
+      ...applicationPort(),
+      acceptPrompt: vi.fn(() => Promise.resolve(acceptedRun())),
+      execute: vi.fn<OutputApplication["execute"]>(async ({ publish }) => {
+        await publish({
+          kind: "agent_message",
+          messageId: "assistant-1",
+          content: [{ type: "text", text: "hello" }],
+        });
+        return {
+          terminalClass: "completed",
+          executorState: "quiescent",
+          toolEffectState: "none",
+          stopReason: "end_turn",
+        };
+      }),
+    };
     server = new AgentAcpHttpServer({
-      agentController: controllerPort().port,
       application: withOutputHistory(application),
       ready: vi.fn(() => Promise.resolve(true)),
       maxWebSocketPayloadBytes: 64 * 1024,
@@ -654,43 +683,33 @@ describe("AgentAcpHttpServer", () => {
   });
 });
 
-function controllerPort() {
-  const resolveAgentAccess = vi.fn<AgentControllerPort["resolveAgentAccess"]>(() =>
-    Promise.resolve({
-      principalId: "principal-1",
-      agentId: "agent-1",
-      accessRevision: "access-1",
-      promptCapabilities: { image: true, embeddedContext: true },
-    }),
-  );
-  const port: AgentControllerPort = {
-    getSessionConfiguration: vi.fn(),
-    resolveAgentAccess,
-    acquireRun: vi.fn(),
-    resolveCredential: vi.fn(),
-    finishRun: vi.fn(),
-  };
-  return { port, resolveAgentAccess };
-}
-
-function applicationPort(): AcpApplicationPort {
+function applicationPort() {
   return {
-    assertAccess: vi.fn(() => Promise.resolve()),
-    getSessionConfiguration: vi.fn(() => Promise.resolve(sessionConfigurationView())),
-    setSessionConfiguration: vi.fn(() => Promise.resolve(sessionConfigurationView())),
-    createSession: vi.fn(() => Promise.resolve({ sessionId: "session-1" })),
-    listSessions: vi.fn(() => Promise.resolve({ sessions: [] })),
-    deleteSession: vi.fn(),
-    forkSession: vi.fn(),
-    resumeSession: vi.fn(() => Promise.resolve({ replay: [], sequence: 0 })),
+    assertAccess: vi.fn<AcpApplicationPort["assertAccess"]>(() => Promise.resolve()),
+    getSessionConfiguration: vi.fn<AcpApplicationPort["getSessionConfiguration"]>(() =>
+      Promise.resolve(sessionConfigurationView()),
+    ),
+    setSessionConfiguration: vi.fn<AcpApplicationPort["setSessionConfiguration"]>(() =>
+      Promise.resolve(sessionConfigurationView()),
+    ),
+    createSession: vi.fn<AcpApplicationPort["createSession"]>(() =>
+      Promise.resolve({ sessionId: "session-1" }),
+    ),
+    listSessions: vi.fn<AcpApplicationPort["listSessions"]>(() =>
+      Promise.resolve({ sessions: [] }),
+    ),
+    deleteSession: vi.fn<AcpApplicationPort["deleteSession"]>(),
+    forkSession: vi.fn<AcpApplicationPort["forkSession"]>(),
+    resumeSession: vi.fn<AcpApplicationPort["resumeSession"]>(() =>
+      Promise.resolve({ replay: [], sequence: 0 }),
+    ),
     readSessionOutput: vi.fn<AcpApplicationPort["readSessionOutput"]>(() =>
       Promise.resolve({ sequence: 0, events: [], state: { kind: "state", state: "idle" } }),
     ),
-    closeSession: vi.fn(),
-    cancelRun: vi.fn(),
-    acceptPrompt: vi.fn(),
-    executeRun: vi.fn(),
-  };
+    closeSession: vi.fn<AcpApplicationPort["closeSession"]>(),
+    cancelRun: vi.fn<AcpApplicationPort["cancelRun"]>(),
+    acceptPrompt: vi.fn<AcpApplicationPort["acceptPrompt"]>(),
+  } satisfies AcpApplicationPort;
 }
 
 function sequentialIds(): () => string {
@@ -722,10 +741,14 @@ function upgradeStatus(
   });
 }
 
-function openRawWebSocket(server: AgentAcpHttpServer, path: string): Promise<WebSocket> {
+function openRawWebSocket(
+  server: AgentAcpHttpServer,
+  path: string,
+  headers: Record<string, string> = identityHeaders(),
+): Promise<WebSocket> {
   return new Promise((resolve, reject) => {
     const socket = new WebSocket(serverUrl(server, path), {
-      headers: { "x-antnest-agent-access-subject": "subject-1" },
+      headers,
     });
     socket.once("open", () => resolve(socket));
     socket.once("error", reject);
@@ -788,42 +811,12 @@ async function initializeRaw(socket: WebSocket, version: 1 | 2): Promise<void> {
 
 function acceptedRun(): AcceptedAcpRun {
   return {
+    outputSequence: 0,
     runId: "run-1",
     requestId: "request-1",
     sessionId: "session-1",
     userMessageId: "user-message-1",
-    sessionInfoUpdate: {
-      title: "hi",
-      updatedAt: "2026-08-30T00:00:01.000Z",
-    },
-    snapshot: {
-      admissionId: "admission-1",
-      admissionDeadline: new Date("2026-08-30T00:10:00Z"),
-      agentSpecRevision: "config-1",
-      executionRevision: "execution-1",
-      runtimeMcpSourceDigest: "a".repeat(64),
-      agentExecutionSpecDigest: "b".repeat(64),
-      credentialVersion: "credential-version-1",
-      runtime: {
-        revision: "runtime-1",
-        executionId: "runtime-execution-1",
-        mcpEndpoint: "http://runtime-1:8080/mcp",
-      },
-      executionSpec: {
-        systemPrompt: "system",
-        contextPolicyVersion: "context-v1",
-        skillInstructions: [],
-        model: {
-          baseUrl: "https://api.example.test/v1",
-          model: "model",
-          contextWindow: 32_000,
-          maxOutputTokens: 2_048,
-          supportsImages: false,
-        },
-        maxModelRequests: 8,
-        credentialRef: "credential-1",
-      },
-      clientMcpRevisionId: "mcp-1",
-    },
+    sessionInfoUpdate: { title: "hi", updatedAt: "2026-08-30T00:00:01.000Z" },
+    snapshot: snapshot(),
   };
 }

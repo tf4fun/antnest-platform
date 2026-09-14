@@ -10,6 +10,146 @@ import type { ClientMcpRevisionPort } from "../../../src/ports/tools.js";
 import type { RunExecutionSnapshot } from "../../../src/domain/types.js";
 
 describe("McpToolCatalog", () => {
+  it.each(["execution+agent@example.org", "execution/department:1"])(
+    "preserves opaque Runtime identity %s before discovery and dispatch",
+    async (executionId) => {
+      const runtime = fakeDialer([{ name: "read", description: "Read" }]);
+      const catalog = new McpToolCatalog({ runtimeDialer: runtime.dialer, revisions: revisions() });
+      const input = snapshot();
+      input.runtime.executionId = executionId;
+      const signal = new AbortController().signal;
+      await catalog.list(input, signal);
+      await catalog.call({
+        runId: "run-1",
+        snapshot: input,
+        tool: runtimeTool("read"),
+        arguments: {},
+        signal,
+      });
+      expect(runtime.connect).toHaveBeenCalledTimes(2);
+      for (const [connection] of runtime.connect.mock.calls) {
+        expect(connection).toMatchObject({
+          headers: { "x-antnest-expected-execution-id": executionId },
+        });
+      }
+    },
+  );
+
+  it.each([" padded", "padded ", "line\nbreak", "execution\u0100"])(
+    "rejects lossy or unrepresentable Runtime identity %j before any request",
+    async (executionId) => {
+      const runtime = fakeDialer([{ name: "write", description: "Write" }]);
+      const catalog = new McpToolCatalog({ runtimeDialer: runtime.dialer, revisions: revisions() });
+      const input = snapshot();
+      input.runtime.executionId = executionId;
+      const signal = new AbortController().signal;
+      await expect(catalog.read(input, signal)).rejects.toThrow();
+      await expect(catalog.list(input, signal)).rejects.toThrow();
+      await expect(
+        catalog.call({
+          runId: "run-1",
+          snapshot: input,
+          tool: runtimeTool("write"),
+          arguments: {},
+          signal,
+        }),
+      ).rejects.toMatchObject({
+        effectState: "none",
+        runtimeCallStopped: true,
+      });
+      expect(runtime.connect).not.toHaveBeenCalled();
+      expect(runtime.callTool).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ["write", "outcome_unknown", "unknown", true],
+    ["edit", "outcome_unknown", "unknown", true],
+    ["bash", "outcome_unknown", "unknown", false],
+    ["read", "runtime_failed", "none", false],
+    ["bash", "child_process_containment_unproven", "none", false],
+    ["read", "child_process_containment_unproven", "unknown", false],
+    ["write", "invalid_path", "none", true],
+    ["read", "read_failed", "none", true],
+    ["edit", "old_string_not_found", "none", true],
+    ["bash", "runtime_busy", "none", true],
+    ["bash", "spawn_failed", "none", true],
+    ["bash", "timeout", "none", true],
+    ["bash", "encode_result_failed", "settled", true],
+    ["read", "future_unclassified_error", "none", false],
+    ["mcp__documents__search", "outcome_unknown", "unknown", false],
+    ["mcp__documents__search", "child_process_containment_unproven", "none", false],
+    ["mcp__documents__search", "runtime_failed", "none", false],
+  ] as const)(
+    "separates stopping evidence for %s / %s from effects",
+    async (name, code, effect, stopped) => {
+      const runtime = fakeDialer([{ name, description: name }], {
+        content: [{ type: "text", text: "This text does not determine stopping evidence" }],
+        isError: true,
+        structuredContent: {
+          error_code: code,
+          effect_state: effect,
+          effect_source: effect === "unknown" ? "runtime_mcp" : null,
+        },
+      });
+      const catalog = new McpToolCatalog({ runtimeDialer: runtime.dialer, revisions: revisions() });
+      const result = await catalog.call({
+        runId: "run-1",
+        snapshot: snapshot(),
+        tool: runtimeTool(name),
+        arguments: {},
+        signal: new AbortController().signal,
+      });
+      expect(result.runtimeCallStopped).toBe(stopped);
+      expect(result.toolEffectState).toBe(effect);
+    },
+  );
+
+  it.each(["read", "write", "edit", "bash"])(
+    "recognizes %s completion without requiring successful external side effects",
+    async (name) => {
+      const runtime = fakeDialer([{ name, description: name }], {
+        content: [],
+        isError: false,
+        structuredContent: { exit_code: 1, effect_state: "settled", effect_source: null },
+      });
+      const catalog = new McpToolCatalog({ runtimeDialer: runtime.dialer, revisions: revisions() });
+      const result = await catalog.call({
+        runId: "run-1",
+        snapshot: snapshot(),
+        tool: runtimeTool(name),
+        arguments: {},
+        signal: new AbortController().signal,
+      });
+      expect(result.runtimeCallStopped).toBe(true);
+    },
+  );
+
+  it.each([
+    undefined,
+    { effect_state: "unknown", effect_source: "runtime_mcp" },
+    { effect_state: "settled", effect_source: "client_mcp" },
+    { effect_state: "none", effect_source: null },
+  ])(
+    "does not invent stopping evidence from incomplete builtin success: %j",
+    async (structuredContent) => {
+      const runtime = fakeDialer([{ name: "write", description: "Write" }], {
+        content: [],
+        isError: false,
+        ...(structuredContent === undefined ? {} : { structuredContent }),
+      });
+      const catalog = new McpToolCatalog({ runtimeDialer: runtime.dialer, revisions: revisions() });
+      const result = await catalog.call({
+        runId: "run-1",
+        snapshot: snapshot(),
+        tool: runtimeTool("write"),
+        arguments: {},
+        signal: new AbortController().signal,
+      });
+      expect(result.runtimeCallStopped).toBe(false);
+    },
+  );
+
   it("lists only platform Runtime Tools", async () => {
     const runtime = fakeDialer([
       {
@@ -110,7 +250,7 @@ describe("McpToolCatalog", () => {
       .catch((caught: unknown) => caught);
 
     expect(error).toBeInstanceOf(McpToolCallError);
-    expect(error).toMatchObject({ effectState: "unknown" });
+    expect(error).toMatchObject({ effectState: "unknown", runtimeCallStopped: false });
     expect(runtime.callTool).toHaveBeenCalledTimes(1);
   });
 
@@ -134,7 +274,7 @@ describe("McpToolCatalog", () => {
       .catch((caught: unknown) => caught);
 
     expect(error).toBeInstanceOf(McpToolCallError);
-    expect(error).toMatchObject({ effectState: "none" });
+    expect(error).toMatchObject({ effectState: "none", runtimeCallStopped: true });
     expect(runtime.callTool).not.toHaveBeenCalled();
   });
 
@@ -187,6 +327,7 @@ describe("McpToolCatalog", () => {
     ).resolves.toMatchObject({
       isError: true,
       toolEffectState: "settled",
+      runtimeCallStopped: true,
       structuredContent: { error_code: "write_failed" },
     });
   });
@@ -264,13 +405,16 @@ function revisions(): ClientMcpRevisionPort {
 
 function snapshot(): RunExecutionSnapshot {
   return {
-    admissionId: "admission-1",
-    admissionDeadline: new Date("2026-08-30T00:10:00Z"),
+    organizationId: "organization-1",
+    providerConnectionId: "provider-1",
+    modelProfileId: "model-1",
+    configurationRevision: 1,
+    accessRevision: "access-1",
+    deadlineAt: new Date("2026-08-30T00:10:00Z"),
     agentSpecRevision: "config-1",
     executionRevision: "execution-1",
     runtimeMcpSourceDigest: "a".repeat(64),
     agentExecutionSpecDigest: "b".repeat(64),
-    credentialVersion: "credential-version-1",
     runtime: {
       revision: "runtime-1",
       executionId: "runtime-execution-1",
@@ -288,7 +432,6 @@ function snapshot(): RunExecutionSnapshot {
         supportsImages: false,
       },
       maxModelRequests: 4,
-      credentialRef: "credential-1",
     },
     clientMcpRevisionId: "client-mcp-1",
   };

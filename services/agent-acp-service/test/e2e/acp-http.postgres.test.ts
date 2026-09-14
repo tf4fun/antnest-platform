@@ -1,5 +1,5 @@
 import { v1Configuration } from "../../src/transport/acp/configuration.js";
-import { sessionConfigurationView } from "../support/fixtures.js";
+import { identityHeaders, sessionConfigurationView } from "../support/fixtures.js";
 import * as acp from "@agentclientprotocol/sdk";
 import { createHttpStream } from "@agentclientprotocol/sdk/experimental/http-client";
 import { Pool } from "pg";
@@ -48,7 +48,7 @@ describe.skipIf(databaseUrl === undefined)("ACP official HTTP client with Postgr
       updates.push(params.update);
     });
     const connection = client.connect(
-      createHttpStream(app.httpUrl, { headers: { "x-antnest-agent-access-subject": subject } }),
+      createHttpStream(app.httpUrl, { headers: identityHeaders(app.identity(subject)) }),
     );
     connections.push(connection);
     await connection.agent.request(acp.methods.agent.initialize, {
@@ -87,7 +87,7 @@ describe.skipIf(databaseUrl === undefined)("ACP official HTTP client with Postgr
     expect((await ws.request("session/load", { sessionId, ...setup })).result).toEqual(
       v1Configuration(sessionConfigurationView()),
     );
-    expect(app.controller.acquireRun).toHaveBeenCalledOnce();
+    expect(app.acceptRun).toHaveBeenCalledOnce();
     expect(app.model.complete).toHaveBeenCalledTimes(2);
   });
 
@@ -116,8 +116,8 @@ describe.skipIf(databaseUrl === undefined)("ACP official HTTP client with Postgr
     });
     expect(JSON.stringify(client.updates.at(-1))).toContain("Available commands");
     expect((await app.sessions.readOutput(sessionId, 0)).events).toHaveLength(2);
-    expect(app.controller.finishRun).toHaveBeenCalledOnce();
-    expect(app.controller.resolveCredential).not.toHaveBeenCalled();
+    expect(app.finish).toHaveBeenCalledOnce();
+    expect(app.acquireClient).not.toHaveBeenCalled();
     expect(app.model.complete).not.toHaveBeenCalled();
     expect(app.tools.list).not.toHaveBeenCalled();
     expect(app.tools.call).not.toHaveBeenCalled();
@@ -134,7 +134,7 @@ describe.skipIf(databaseUrl === undefined)("ACP official HTTP client with Postgr
       other.agent.request(acp.methods.agent.session.load, { sessionId, ...setup }),
     ).rejects.toThrow();
     expect(other.updates).toEqual([]);
-    expect(app.controller.acquireRun).not.toHaveBeenCalled();
+    expect(app.acceptRun).not.toHaveBeenCalled();
   });
 
   it("cancels via HTTP notification and settles the original prompt", async () => {
@@ -207,7 +207,7 @@ describe.skipIf(databaseUrl === undefined)("ACP official HTTP client with Postgr
       )
       .toHaveLength(2);
     expect((await app.sessions.readOutput(sessionId, 0)).state).toMatchObject({ state: "idle" });
-    expect(app.controller.acquireRun).toHaveBeenCalledOnce();
+    expect(app.acceptRun).toHaveBeenCalledOnce();
     expect(app.model.complete).toHaveBeenCalledOnce();
   });
 });

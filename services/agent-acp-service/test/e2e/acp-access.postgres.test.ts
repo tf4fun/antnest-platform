@@ -52,7 +52,7 @@ describe.skipIf(databaseUrl === undefined)("ACP wire and PostgreSQL access bound
           expect.objectContaining({ sessionId: foreignSessionId }),
         ]);
         const before = await boundaryState(pool);
-        const acquireCount = app.controller.acquireRun.mock.calls.length;
+        const acceptedCount = app.acceptRun.mock.calls.length;
         const modelCount = app.model.complete.mock.calls.length;
         const toolCount = app.tools.call.mock.calls.length;
 
@@ -62,7 +62,7 @@ describe.skipIf(databaseUrl === undefined)("ACP wire and PostgreSQL access bound
         await rejectedCancellation(app, foreign, sessionId, "session_access_denied");
 
         expect(await boundaryState(pool)).toEqual(before);
-        expect(app.controller.acquireRun).toHaveBeenCalledTimes(acquireCount);
+        expect(app.acceptRun).toHaveBeenCalledTimes(acceptedCount);
         expect(app.model.complete).toHaveBeenCalledTimes(modelCount);
         expect(app.tools.call).toHaveBeenCalledTimes(toolCount);
         expect(app.recoveryRequired).not.toHaveBeenCalled();
@@ -74,177 +74,174 @@ describe.skipIf(databaseUrl === undefined)("ACP wire and PostgreSQL access bound
         await assertReplay(owner, sessionId, version);
         expect(app.model.complete).toHaveBeenCalledTimes(modelCount);
         expect(app.tools.call).toHaveBeenCalledTimes(toolCount);
-        expect(app.controller.acquireRun).toHaveBeenCalledTimes(acquireCount);
+        expect(app.acceptRun).toHaveBeenCalledTimes(acceptedCount);
       },
     );
 
-    it.each(["revision", "principal deactivation"])(
-      "rechecks %s on an existing connection without accepting rejected work",
-      async (change) => {
+    it("applies revocation to existing connections before recording any new intent", async () => {
+      const owner = await app.connect(version);
+      const sessionId = await createSession(owner);
+      await completePrompt(owner, sessionId, version);
+      app.configuration.agents[0]!.principal_ids = ["principal-2"];
+      app.configuration.agents[0]!.access_revision = "access-2";
+      await app.publishConfiguration();
+      const before = await boundaryState(pool);
+      const offset = owner.frames.length;
+      const modelCount = app.model.complete.mock.calls.length;
+      const toolCount = app.tools.call.mock.calls.length;
+      for (const [method, params] of [
+        ["session/new", { cwd: "/workspace", mcpServers: [] }],
+        ["session/list", {}],
+        ...sessionCommands(version, sessionId),
+      ] as Array<[string, Record<string, unknown>]>) {
+        expectDenied(await owner.request(method, params), "access_denied", -32020);
+      }
+      await rejectedCancellation(app, owner, sessionId, "access_denied");
+      expect(await boundaryState(pool)).toEqual(before);
+      expect(app.createIntent).toHaveBeenCalledOnce();
+      expect(app.acceptRun).toHaveBeenCalledOnce();
+      expect(app.model.complete).toHaveBeenCalledTimes(modelCount);
+      expect(app.tools.call).toHaveBeenCalledTimes(toolCount);
+      expect(app.finish).toHaveBeenCalledOnce();
+      expect(app.recoveryRequired).not.toHaveBeenCalled();
+      expect(
+        owner.frames.slice(offset).filter((frame) => frame.method === "session/update"),
+      ).toEqual([]);
+
+      app.configuration.agents[0]!.principal_ids = ["principal-1", "principal-2"];
+      app.configuration.agents[0]!.access_revision = "access-3";
+      await app.publishConfiguration();
+      await assertReplay(owner, sessionId, version);
+      await completePrompt(owner, sessionId, version);
+      expect(app.acceptRun.mock.lastCall?.[0].snapshot.accessRevision).toBe("access-3");
+      expect(app.model.complete).toHaveBeenCalledTimes(modelCount + 1);
+    });
+
+    it("uses a new access revision without replacing an authorized connection", async () => {
+      const owner = await app.connect(version);
+      const sessionId = await createSession(owner);
+      await completePrompt(owner, sessionId, version);
+      app.configuration.agents[0]!.access_revision = "access-2";
+      await app.publishConfiguration();
+      await assertReplay(owner, sessionId, version);
+      await completePrompt(owner, sessionId, version);
+      expect(app.acceptRun.mock.lastCall?.[0].snapshot.accessRevision).toBe("access-2");
+      expect(app.recoveryRequired).not.toHaveBeenCalled();
+    });
+
+    it.each(["other-user", "other-agent"])(
+      "protects an active Run from %s without cancelling the owner",
+      async (alias) => {
         const owner = await app.connect(version);
         const sessionId = await createSession(owner);
-        await completePrompt(owner, sessionId, version);
-        const original = app.identities.get("owner");
-        if (original === undefined) throw new Error("Missing fixture identity");
-        app.identities.set("owner-alias", { ...original });
-        app.authorizations.set("principal-1:agent-1", {
-          active: change === "revision",
-          accessRevision: change === "revision" ? "access-2" : "access-1",
-        });
-        const expectedCode = change === "revision" ? "connection_binding_stale" : "access_denied";
-        const expectedWireCode = change === "revision" ? -32020 : -32021;
-        const before = await boundaryState(pool);
-        const frameOffset = owner.frames.length;
-        const modelCount = app.model.complete.mock.calls.length;
-        const toolCount = app.tools.call.mock.calls.length;
-
-        for (const [method, params] of [
-          ["session/new", { cwd: "/workspace", mcpServers: [] }],
-          ["session/list", {}],
-          ...sessionCommands(version, sessionId).filter(([method]) => method !== "session/prompt"),
-        ] as Array<[string, Record<string, unknown>]>) {
-          expectDenied(await owner.request(method, params), expectedCode, expectedWireCode);
-        }
-        await rejectedCancellation(app, owner, sessionId, expectedCode);
-        expect(await boundaryState(pool)).toEqual(before);
-
-        expectDenied(
-          await owner.request("session/prompt", {
-            sessionId,
-            prompt: [{ type: "text", text: "rejected-private-prompt" }],
-          }),
-          "access_denied",
-          -32021,
-        );
-        const after = await boundaryState(pool);
-        expect(after.acp_sessions).toEqual(before.acp_sessions);
-        expect(after.client_mcp_revisions).toEqual(before.client_mcp_revisions);
-        expect(after.session_messages).toEqual(before.session_messages);
-        expect(after.tool_attempts).toEqual(before.tool_attempts);
-        const rejected = await pool.query(
-          "SELECT state, execution_snapshot, admission_id, pending_prompt FROM runs WHERE state <> 'completed'",
-        );
-        expect(rejected.rows).toEqual([
-          { state: "failed", execution_snapshot: null, admission_id: null, pending_prompt: null },
-        ]);
-        expect(app.model.complete).toHaveBeenCalledTimes(modelCount);
-        expect(app.tools.call).toHaveBeenCalledTimes(toolCount);
-        expect(app.controller.finishRun).toHaveBeenCalledTimes(1);
-        expect(app.recoveryRequired).not.toHaveBeenCalled();
-        expect(
-          owner.frames.slice(frameOffset).filter((frame) => frame.method === "session/update"),
-        ).toEqual([]);
-
-        app.authorizations.set("principal-1:agent-1", { active: true, accessRevision: "access-2" });
-        const fresh = await app.connect(version);
-        await assertReplay(fresh, sessionId, version);
-        expect(JSON.stringify(fresh.frames)).not.toContain("rejected-private-prompt");
-        expect(app.model.complete).toHaveBeenCalledTimes(modelCount);
-        expect(app.tools.call).toHaveBeenCalledTimes(toolCount);
-        await completePrompt(fresh, sessionId, version);
-        expect(app.controller.acquireRun).toHaveBeenLastCalledWith(
-          expect.objectContaining({
-            agentId: "agent-1",
-            principalId: "principal-1",
-            expectedAccessRevision: "access-2",
-          }),
-          expect.any(AbortSignal),
-        );
-        expect(app.model.complete).toHaveBeenCalledTimes(modelCount + 1);
-      },
-    );
-
-    it.each(["other-user", "other-agent", "revision", "principal deactivation"])(
-      "protects an active Run from %s",
-      async (change) => {
-        const owner = await app.connect(version);
-        const sessionId = await createSession(owner);
-        const foreign = await app.connect(version, change.startsWith("other-") ? change : "owner");
-        const release = Promise.withResolvers<void>();
-        let executionSignal: AbortSignal | undefined;
-        app.model.complete.mockReset().mockImplementation(async ({ signal }) => {
-          executionSignal = signal;
-          const abort = () => release.resolve();
-          signal.addEventListener("abort", abort, { once: true });
-          try {
-            await release.promise;
-          } finally {
-            signal.removeEventListener("abort", abort);
-          }
-          return {
-            kind: "message",
-            content: [{ type: "text", text: "completed by owner" }],
-            stopReason: "end_turn",
-            usage: { inputTokens: 1, outputTokens: 1 },
-          };
-        });
-        const prompt = owner
-          .request("session/prompt", {
-            sessionId,
-            prompt: [{ type: "text", text: "Wait for the controlled fixture" }],
-          })
-          .then(
-            (response) => ({ response }),
-            (error: unknown) => ({ error }),
-          );
+        const foreign = await app.connect(version, alias);
+        const running = await startControlledRun(app, owner, sessionId);
         try {
-          await expect.poll(() => executionSignal).toBeDefined();
-          if (change === "revision" || change === "principal deactivation") {
-            app.authorizations.set("principal-1:agent-1", {
-              active: change === "revision",
-              accessRevision: "access-2",
-            });
-          } else {
-            expectDenied(
-              await foreign.request("session/prompt", {
-                sessionId,
-                prompt: [{ type: "text", text: "foreign prompt while owner runs" }],
-              }),
-              "session_access_denied",
-              -32020,
-            );
-          }
-          const before = await boundaryState(pool);
-          await rejectedCancellation(
-            app,
-            foreign,
-            sessionId,
-            change === "revision"
-              ? "connection_binding_stale"
-              : change === "principal deactivation"
-                ? "access_denied"
-                : "session_access_denied",
+          expectDenied(
+            await foreign.request("session/prompt", {
+              sessionId,
+              prompt: [{ type: "text", text: "foreign prompt while owner runs" }],
+            }),
+            "session_access_denied",
+            -32020,
           );
-          expect(executionSignal?.aborted).toBe(false);
+          const before = await boundaryState(pool);
+          await rejectedCancellation(app, foreign, sessionId, "session_access_denied");
+          expect(running.signal.aborted).toBe(false);
           expect(await boundaryState(pool)).toEqual(before);
-          expect(app.model.complete).toHaveBeenCalledTimes(1);
-          expect(app.controller.acquireRun).toHaveBeenCalledTimes(1);
-          const current = await pool.query("SELECT state, cancel_requested_at FROM runs");
-          expect(current.rows).toEqual([{ state: "running", cancel_requested_at: null }]);
+          expect(app.model.complete).toHaveBeenCalledOnce();
+          expect(app.acceptRun).toHaveBeenCalledOnce();
+          expect((await pool.query("SELECT state,cancel_requested_at FROM runs")).rows).toEqual([
+            { state: "running", cancel_requested_at: null },
+          ]);
         } finally {
-          release.resolve();
-          const settled = await prompt;
-          if (version === 1 && (change === "revision" || change === "principal deactivation")) {
-            expect(settled).toHaveProperty("error");
-            expect(JSON.stringify(owner.frames)).not.toContain("completed by owner");
-          } else {
-            expect(settled).toHaveProperty("response");
-            if ("response" in settled) expect(settled.response.error).toBeUndefined();
-          }
+          running.release();
+          await running.prompt;
         }
         await expect
           .poll(async () => (await pool.query<{ state: string }>("SELECT state FROM runs")).rows)
           .toEqual([{ state: "completed" }]);
-        expect(app.controller.finishRun).toHaveBeenCalledWith(
-          expect.objectContaining({
-            terminalClass: "completed",
-          }),
-          expect.any(AbortSignal),
+        expect(app.finish).toHaveBeenCalledWith(
+          expect.objectContaining({ terminalClass: "completed" }),
         );
       },
     );
+
+    it("lets a still-authorized connection cancel after the access revision changes", async () => {
+      const owner = await app.connect(version);
+      const sessionId = await createSession(owner);
+      const running = await startControlledRun(app, owner, sessionId);
+      try {
+        app.configuration.agents[0]!.access_revision = "access-2";
+        await app.publishConfiguration();
+        expect(running.signal.aborted).toBe(false);
+        owner.notify("session/cancel", { sessionId });
+        await expect.poll(() => running.signal.aborted).toBe(true);
+        await expect
+          .poll(async () => (await pool.query<{ state: string }>("SELECT state FROM runs")).rows)
+          .toEqual([{ state: "cancelled" }]);
+        expect(app.acceptRun).toHaveBeenCalledOnce();
+      } finally {
+        running.release();
+        await running.prompt;
+      }
+    });
+
+    it("revokes an in-flight Run and prevents its buffered output from leaking", async () => {
+      const owner = await app.connect(version);
+      const sessionId = await createSession(owner);
+      const running = await startControlledRun(app, owner, sessionId);
+      try {
+        app.configuration.agents[0]!.principal_ids = ["principal-2"];
+        app.configuration.agents[0]!.access_revision = "access-2";
+        await app.publishConfiguration();
+        expect(running.signal.aborted).toBe(true);
+        await expect
+          .poll(async () => (await pool.query<{ state: string }>("SELECT state FROM runs")).rows)
+          .toEqual([{ state: "cancelled" }]);
+        expect(JSON.stringify(owner.frames)).not.toContain("completed by owner");
+        expect(app.tools.call).not.toHaveBeenCalled();
+        expect(app.acceptRun).toHaveBeenCalledOnce();
+        expect(app.recoveryRequired).not.toHaveBeenCalled();
+      } finally {
+        running.release();
+        await running.prompt;
+      }
+    });
   });
 });
+
+async function startControlledRun(app: Application, owner: AcpWireClient, sessionId: string) {
+  const started = Promise.withResolvers<AbortSignal>();
+  const release = Promise.withResolvers<void>();
+  app.model.complete.mockReset().mockImplementation(async ({ signal }) => {
+    started.resolve(signal);
+    const abort = () => release.resolve();
+    signal.addEventListener("abort", abort, { once: true });
+    try {
+      await release.promise;
+    } finally {
+      signal.removeEventListener("abort", abort);
+    }
+    return {
+      kind: "message",
+      content: [{ type: "text", text: "completed by owner" }],
+      stopReason: "end_turn",
+      usage: { inputTokens: 1, outputTokens: 1 },
+    };
+  });
+  const prompt = owner
+    .request("session/prompt", {
+      sessionId,
+      prompt: [{ type: "text", text: "Wait for the controlled fixture" }],
+    })
+    .then(
+      (response) => ({ response }),
+      (error: unknown) => ({ error }),
+    );
+  const signal = await started.promise;
+  return { signal, prompt, release: () => release.resolve() };
+}
 
 async function createSession(client: AcpWireClient): Promise<string> {
   const response = await client.request("session/new", { cwd: "/workspace", mcpServers: [] });

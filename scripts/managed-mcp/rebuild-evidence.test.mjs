@@ -68,7 +68,9 @@ const fixture = () => ({
   agent: {
     agent_id: "agent-1",
     desired_state: "enabled",
-    lifecycle_state: "available",
+    lifecycle_state: "created",
+    activation_state: "enabled",
+    runtime_state: "available",
     executable_execution_revision: "execution-1",
     runtime: { runtime_revision: "runtime-1" },
     configuration: { template: { template_id: "template-1", revision: 1 } },
@@ -78,7 +80,7 @@ const fixture = () => ({
     runtime_revision: "runtime-1",
     runtime_execution_id: "process-1",
     mcp_endpoint: "http://runtime/mcp",
-    lifecycle_state: "ready",
+    lifecycle_state: "provisioned",
     health: "healthy",
   },
 });

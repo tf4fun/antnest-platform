@@ -84,6 +84,9 @@ func readinessFromDomain(status string, value control.Readiness) readinessRespon
 }
 
 type runtimeInspectionDTO struct {
+	Phase              deployment.PlatformPhase   `json:"phase"`
+	Reason             string                     `json:"reason,omitempty"`
+	DiagnosticSummary  string                     `json:"diagnostic_summary,omitempty"`
 	AgentID            string                     `json:"agent_id"`
 	RuntimeRevision    deployment.RuntimeRevision `json:"runtime_revision"`
 	LifecycleState     deployment.LifecycleState  `json:"lifecycle_state"`
@@ -95,7 +98,11 @@ type runtimeInspectionDTO struct {
 }
 
 func runtimeInspectionFromDomain(value deployment.Environment) runtimeInspectionDTO {
+	if value.Phase == "" {
+		value.Phase = deployment.PhaseUnknown
+	}
 	return runtimeInspectionDTO{
+		Phase: value.Phase, Reason: value.Reason, DiagnosticSummary: value.DiagnosticSummary,
 		AgentID: value.AgentID, RuntimeRevision: value.RuntimeRevision,
 		LifecycleState: value.LifecycleState, Health: value.Health,
 		MCPEndpoint: value.MCPEndpoint, RuntimeExecutionID: value.RuntimeExecutionID,
@@ -137,7 +144,8 @@ func operationFromDomain(value deployment.Operation) operationDTO {
 		RequestID: value.RequestID, Kind: value.Kind, AgentID: value.AgentID,
 		TargetRevision: value.RuntimeRevision, State: value.State, Effect: value.Effect,
 		ErrorCode: value.ErrorCode, ErrorDetail: value.ErrorDetail,
-		CreatedAt: value.CreatedAt, UpdatedAt: value.UpdatedAt,
+		// Match persisted timestamp precision so replay does not change the wire result.
+		CreatedAt: value.CreatedAt.Truncate(time.Microsecond), UpdatedAt: value.UpdatedAt.Truncate(time.Microsecond),
 	}
 	if value.Inspection != nil {
 		inspection := runtimeInspectionFromDomain(*value.Inspection)

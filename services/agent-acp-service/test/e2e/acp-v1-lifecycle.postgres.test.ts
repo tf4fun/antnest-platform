@@ -1,9 +1,10 @@
+import { OpenAICompatibleModel } from "../../src/adapters/model/openai-compatible.js";
 import { v1Configuration } from "../../src/transport/acp/configuration.js";
 import { sessionConfigurationView } from "../support/fixtures.js";
 import { randomUUID } from "node:crypto";
 
 import { Pool } from "pg";
-import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { migrate } from "../../src/adapters/postgres/migrate.js";
 import type { AcpWireClient, WireFrame } from "../support/acp-wire-client.js";
@@ -41,7 +42,7 @@ describe.skipIf(databaseUrl === undefined)("ACP v1 interface lifecycle", () => {
     const response = await prompt(client, sessionId);
     expect(response.result).toEqual({ stopReason: "end_turn" });
     expect(client.frames.at(-1)).toEqual(response);
-    expect(app.controller.finishRun).toHaveBeenCalledOnce();
+    expect(app.finish).toHaveBeenCalledOnce();
     expect(await transcript(pool, sessionId)).toHaveLength(6);
 
     const offset = client.frames.length;
@@ -74,7 +75,7 @@ describe.skipIf(databaseUrl === undefined)("ACP v1 interface lifecycle", () => {
     expect(history[5]).toMatchObject({ content: { type: "text", text: "owner-only-response" } });
     expect(app.model.complete).toHaveBeenCalledTimes(2);
     expect(app.tools.call).toHaveBeenCalledOnce();
-    expect(app.controller.acquireRun).toHaveBeenCalledOnce();
+    expect(app.acceptRun).toHaveBeenCalledOnce();
   });
 
   it.each(["session/load", "session/resume"])(
@@ -130,7 +131,7 @@ describe.skipIf(databaseUrl === undefined)("ACP v1 interface lifecycle", () => {
     expect((await prompt(client, forkId)).result).toEqual({ stopReason: "end_turn" });
     expect(await transcript(pool, sessionId)).toEqual(source);
     expect(await transcript(pool, forkId)).toHaveLength(copied.length + 3);
-    expect(app.controller.acquireRun).toHaveBeenCalledTimes(2);
+    expect(app.acceptRun).toHaveBeenCalledTimes(2);
   });
 
   it.each([1, 2] as const)(
@@ -225,7 +226,7 @@ describe.skipIf(databaseUrl === undefined)("ACP v1 interface lifecycle", () => {
       expect((await running).result).toEqual({ stopReason: "cancelled" });
       expect(signal?.aborted).toBe(true);
       expect((await pool.query("SELECT state FROM runs")).rows).toEqual([{ state: "cancelled" }]);
-      expect(app.controller.finishRun).toHaveBeenCalledOnce();
+      expect(app.finish).toHaveBeenCalledOnce();
       expect(
         client.frames.filter((frame) => frame.id === undefined && frame.method === undefined),
       ).toEqual([]);
@@ -275,7 +276,7 @@ describe.skipIf(databaseUrl === undefined)("ACP v1 interface lifecycle", () => {
     expect(app.model.complete).not.toHaveBeenCalled();
   });
 
-  it("rejects unsupported workspace/content without partial Session or Prompt state", async () => {
+  it("rejects unsupported workspaces and malformed attachments before recording a Prompt", async () => {
     const client = await app.connect(1);
     const sessionId = await createSession(client);
     const before = await boundaryState(pool);
@@ -289,18 +290,65 @@ describe.skipIf(databaseUrl === undefined)("ACP v1 interface lifecycle", () => {
         );
       }
     }
-    for (const content of [
-      { type: "audio", data: "YQ==", mimeType: "audio/wav" },
-      { type: "image", data: "YQ==", mimeType: "image/png" },
-    ]) {
+    const malformed = [
+      {
+        content: { type: "audio", data: "invalid base64!", mimeType: "audio/wav" },
+        code: "unsupported_audio_content",
+      },
+      {
+        content: {
+          type: "resource",
+          resource: { uri: "attachment:///bad.pdf", mimeType: "application/pdf", blob: "YQ==" },
+        },
+        code: "unsupported_resource_content",
+      },
+    ];
+    for (const { content, code } of malformed) {
       expect(
-        (await client.request("session/prompt", { sessionId, prompt: [content] })).error?.code,
-      ).toBe(-32602);
+        (await client.request("session/prompt", { sessionId, prompt: [content] })).error,
+      ).toMatchObject({ code: -32020, data: { code } });
     }
     expect(await boundaryState(pool)).toEqual(before);
-    expect(app.controller.acquireRun).not.toHaveBeenCalled();
+    expect(app.acceptRun).not.toHaveBeenCalled();
     expect(app.model.complete).not.toHaveBeenCalled();
   });
+
+  it.each([
+    { type: "audio", data: "YQ==", mimeType: "audio/wav" },
+    { type: "image", data: "YQ==", mimeType: "image/png" },
+  ])(
+    "records a model capability mismatch for $type without an external request",
+    async (content) => {
+      const fetchFn = vi.fn(() => Promise.reject(new Error("Unexpected Provider request")));
+      const model = new OpenAICompatibleModel({ fetchFn });
+      app.model.complete.mockReset().mockImplementation((request) => model.complete(request));
+      const client = await app.connect(1);
+      const sessionId = await createSession(client);
+      const result = await client.request("session/prompt", { sessionId, prompt: [content] });
+      expect(result.error).toMatchObject({
+        code: -32022,
+        data: { code: "model_unsupported_content" },
+      });
+      expect(fetchFn).not.toHaveBeenCalled();
+      expect(app.tools.call).not.toHaveBeenCalled();
+      expect(app.acceptRun).toHaveBeenCalledOnce();
+      expect(
+        (await pool.query("SELECT state,error_class,executor_state,tool_effect_state FROM runs"))
+          .rows,
+      ).toEqual([
+        {
+          state: "failed",
+          error_class: "model_unsupported_content",
+          executor_state: "quiescent",
+          tool_effect_state: "none",
+        },
+      ]);
+      const history = await app.sessions.readOutput(sessionId, 0);
+      expect(history.events).toContainEqual(
+        expect.objectContaining({ kind: "user_message", content: [content] }),
+      );
+    },
+  );
 });
 
 async function createSession(client: AcpWireClient): Promise<string> {
