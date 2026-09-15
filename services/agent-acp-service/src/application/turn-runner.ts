@@ -102,6 +102,7 @@ export class TurnRunner {
           role: "assistant",
           content: response.content,
           toolCalls: calls,
+          ...(response.thought === undefined ? {} : { thought: response.thought }),
         });
         if (inspected.kind === "rejected") {
           for (const rejected of inspected.calls) {

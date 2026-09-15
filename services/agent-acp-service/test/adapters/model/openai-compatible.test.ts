@@ -12,6 +12,83 @@ function bodyText(init: RequestInit | undefined): string {
 }
 
 describe("OpenAICompatibleModel", () => {
+  it.each(["", null, undefined])("preserves the presence of reasoning %s", async (reasoning) => {
+    const fetchFn = vi.fn<(url: string, init: RequestInit) => Promise<Response>>(() =>
+      Promise.resolve(
+        Response.json({
+          choices: [
+            {
+              finish_reason: "tool_calls",
+              message: {
+                role: "assistant",
+                content: null,
+                ...(reasoning === undefined ? {} : { reasoning_content: reasoning }),
+                tool_calls: [
+                  { id: "read", type: "function", function: { name: "read", arguments: "{}" } },
+                ],
+              },
+            },
+          ],
+        }),
+      ),
+    );
+    const model = new OpenAICompatibleModel({ fetchFn });
+    const result = await model.complete(request());
+    expect(result.thought).toEqual(
+      reasoning === undefined ? undefined : [{ type: "text", text: "" }],
+    );
+    if (result.kind !== "tool_calls") throw new Error("Expected tools");
+    const next = request();
+    next.messages = [
+      {
+        role: "assistant",
+        content: [],
+        toolCalls: result.calls,
+        ...(result.thought === undefined ? {} : { thought: result.thought }),
+      },
+    ];
+    await model.complete(next);
+    const body = JSON.parse(bodyText(fetchFn.mock.calls[1]?.[1])) as {
+      messages: Record<string, unknown>[];
+    };
+    expect(body.messages[0]?.reasoning_content).toBe(reasoning === undefined ? undefined : "");
+  });
+  it("returns retained assistant reasoning with both tool and final-answer history", async () => {
+    const fetchFn = vi.fn<(url: string, init: RequestInit) => Promise<Response>>(() =>
+      Promise.resolve(
+        Response.json({
+          choices: [{ finish_reason: "stop", message: { role: "assistant", content: "done" } }],
+        }),
+      ),
+    );
+    const input = request();
+    input.messages = [
+      {
+        role: "assistant",
+        content: [],
+        thought: [{ type: "text", text: "inspect first" }],
+        toolCalls: [{ id: "a", name: "read", arguments: {} }],
+      },
+      { role: "tool", toolCallId: "a", content: [{ type: "text", text: "file" }] },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "done" }],
+        thought: [{ type: "text", text: "verified" }],
+      },
+      { role: "user", content: [{ type: "text", text: "continue" }] },
+    ];
+    await new OpenAICompatibleModel({ fetchFn }).complete(input);
+    const payload = JSON.parse(bodyText(fetchFn.mock.calls[0]?.[1])) as {
+      messages: Record<string, unknown>[];
+    };
+    expect(payload.messages[0]).toMatchObject({
+      reasoning_content: "inspect first",
+      content: null,
+    });
+    expect(payload.messages[2]).toMatchObject({ reasoning_content: "verified", content: "done" });
+    expect(payload.messages[3]).not.toHaveProperty("reasoning_content");
+  });
+
   it("places Tool images after all replies in a multi-Tool batch", async () => {
     const fetchFn = vi.fn<(url: string, init: RequestInit) => Promise<Response>>(() =>
       Promise.resolve(

@@ -116,6 +116,7 @@ describe("ContextBuilder", () => {
               kind: "tool_exchange" as const,
               assistant: {
                 content: [{ type: "text", text: "I will read the file." }],
+                thought: [{ type: "text", text: "Need evidence" }],
                 toolCalls: [{ id: "call-1", name: "read", arguments: { path: "README.md" } }],
               },
               results: [
@@ -149,6 +150,7 @@ describe("ContextBuilder", () => {
       {
         role: "assistant",
         content: [{ type: "text", text: "I will read the file." }],
+        thought: [{ type: "text", text: "Need evidence" }],
         toolCalls: [{ id: "call-1", name: "read", arguments: { path: "README.md" } }],
       },
       { role: "tool", toolCallId: "call-1", content: [{ type: "text", text: "contents" }] },

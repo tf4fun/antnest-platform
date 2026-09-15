@@ -6,8 +6,15 @@ export type StoredContextMessage =
   | {
       sequence: number;
       endSequence?: number;
-      kind: "user_message" | "agent_message" | "environment_change";
+      kind: "user_message" | "environment_change";
       content: ContentBlock[];
+    }
+  | {
+      sequence: number;
+      endSequence?: number;
+      kind: "agent_message";
+      content: ContentBlock[];
+      thought?: ContentBlock[];
     }
   | {
       sequence: number;
@@ -15,6 +22,7 @@ export type StoredContextMessage =
       kind: "tool_exchange";
       assistant: {
         content: ContentBlock[];
+        thought?: ContentBlock[];
         toolCalls: ModelToolCall[];
       };
       results: Array<{ toolCallId: string; content: ContentBlock[] }>;

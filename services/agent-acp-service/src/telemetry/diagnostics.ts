@@ -161,19 +161,30 @@ export function safeError(error: unknown): {
 
 export function recordBoundaryError(span: Span, error: unknown, phase: string): void {
   const identity = safeError(error);
+  if (identity.type === "AbortError" || identity.code === "ABORT_ERR") {
+    span.setAttributes({
+      "antnest.operation.phase": phase,
+      "antnest.outcome": "cancelled",
+      "antnest.cancellation.type": identity.type,
+    });
+    diagnosticEvent(span, "antnest.cancelled", {
+      "antnest.cancellation.phase": phase,
+      "antnest.cancellation.type": identity.type,
+    });
+    return;
+  }
   const rejected =
     identity.type === "DomainError" ||
     (typeof identity.code === "number" && [-32600, -32601, -32602, -32020].includes(identity.code));
-  const cancelled = identity.type === "AbortError" || identity.code === "ABORT_ERR";
   span.setAttributes({
     "error.type": identity.type,
     "antnest.operation.phase": phase,
-    "antnest.outcome": cancelled ? "cancelled" : rejected ? "rejected" : "error",
+    "antnest.outcome": rejected ? "rejected" : "error",
     ...(identity.code === undefined ? {} : { "antnest.error.code": String(identity.code) }),
     ...(identity.code === undefined ? {} : { "error.code": String(identity.code) }),
     ...(typeof identity.code === "number" ? { "rpc.response.status_code": identity.code } : {}),
   });
-  if (!rejected && !cancelled) span.setStatus({ code: SpanStatusCode.ERROR });
+  if (!rejected) span.setStatus({ code: SpanStatusCode.ERROR });
   const causes: ReturnType<typeof safeError>[] = [];
   const seen = new Set<unknown>();
   let current: unknown = error;

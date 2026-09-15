@@ -4,7 +4,7 @@ import { contentView } from "./content-view.ts";
 import { projectUsage } from "./usage.ts";
 
 export function resetConversationReplay(conversation: Conversation): Conversation {
-  const { usage: _usage, usageStale: _stale, ...rest } = conversation;
+  const { usage: _usage, usageStale: _stale, plan: _plan, ...rest } = conversation;
   return { ...rest, messages: [] };
 }
 
@@ -55,10 +55,14 @@ export function applySessionUpdate(
       return { ...conversation, configOptions: update.configOptions, configurationSequence: (conversation.configurationSequence ?? 0) + 1 };
     case "current_mode_update":
       return { ...conversation, currentModeId: update.currentModeId };
+    case "plan":
+      return { ...conversation, plan: update.entries };
+    case "agent_thought_chunk":
+      return appendMessageContent(conversation, chunkID(conversation, update.messageId, "assistant", "thought"), "assistant", update.content, observedAt, "thought");
     case "user_message_chunk":
-      return appendMessageContent(conversation, update.messageId ?? "user-message", "user", update.content, observedAt);
+      return appendMessageContent(conversation, chunkID(conversation, update.messageId, "user"), "user", update.content, observedAt);
     case "agent_message_chunk":
-      return appendMessageContent(conversation, update.messageId ?? "agent-message", "assistant", update.content, observedAt);
+      return appendMessageContent(conversation, chunkID(conversation, update.messageId, "assistant"), "assistant", update.content, observedAt);
     case "tool_call":
     case "tool_call_update":
       return upsertToolActivity(conversation, update, observedAt);
@@ -73,18 +77,26 @@ export function applySessionUpdate(
   }
 }
 
+function chunkID(conversation: Conversation, id: string | null | undefined, role: Message["role"], presentation?: "thought"): string {
+  if (id) return presentation ? `thought-${id}` : id;
+  const previous = conversation.messages.at(-1);
+  return previous?.role === role && previous.presentation === presentation && !previous.activities?.length && previous.id.startsWith("chunk-")
+    ? previous.id : `chunk-${crypto.randomUUID()}`;
+}
+
 function appendMessageContent(
   conversation: Conversation,
   messageID: string,
   role: Message["role"],
   block: unknown,
   now: string | undefined,
+  presentation?: "thought",
 ): Conversation {
   const existing = conversation.messages.find((message) => message.id === messageID);
   const { text, attachment } = contentView(block, `${messageID}-attachment-${existing?.attachments?.length ?? 0}`);
   if (text === "" && !attachment) return conversation;
   const message: Message = {
-    ...(existing ?? { id: messageID, role, content: "", createdAt: now }),
+    ...(existing ?? { id: messageID, role, content: "", createdAt: now, ...(presentation ? { presentation } : {}) }),
     content: (existing?.content ?? "") + text,
     ...(attachment ? { attachments: [...(existing?.attachments ?? []), attachment] } : {}),
   };
@@ -133,6 +145,8 @@ function mergeToolActivity(
     tool,
     status,
     summary: status[0].toUpperCase() + status.slice(1),
+    input: update.rawInput === undefined || update.rawInput === null ? current?.input : printable(update.rawInput),
+    output: update.rawOutput === undefined || update.rawOutput === null ? current?.output : printable(update.rawOutput),
     ...(detail === undefined ? {} : { detail }),
   };
 }

@@ -47,6 +47,7 @@ function toOpenAIMessage(message: ModelMessage, model: ModelSpec): Record<string
     return {
       role: "assistant",
       content: message.content.length === 0 ? null : textContent(message.content),
+      ...(message.thought === undefined ? {} : { reasoning_content: textContent(message.thought) }),
       ...(message.toolCalls === undefined
         ? {}
         : {

@@ -6,9 +6,15 @@ execution or exposing internal service credentials to the browser.
 
 ## Status
 
-Implemented for the Stage 3 Agent workspace. Edge Gateway serves the application
-at `/workspace/`, returns an authoritative browser-safe Agent bootstrap, and
-admits same-origin ACP v1 WebSockets without exposing internal credentials.
+Session-first workspace behind Edge Gateway at `/workspace/`. The entry selects
+an Agent explicitly; Console may deep-link to `/workspace/?agent=<id>`. A Session
+is selected with `&session=<id>`. There is no project hierarchy and ACP always
+uses `/workspace` as cwd. See the [refactor contract](docs/session-workspace-refactor.md).
+
+The browser is an in-memory presentation layer. Global discovery/connection
+state and each Session's history, draft and interaction phase are separate.
+No business state is written to localStorage, sessionStorage or IndexedDB.
+Reload restores Agent/Session selection from the URL and content from ACP.
 
 ## Owns
 
@@ -35,10 +41,10 @@ admits same-origin ACP v1 WebSockets without exposing internal credentials.
 The browser talks only to Edge Gateway on the same origin. Edge Gateway must:
 
 1. resolve the browser session through Identity Service;
-2. return only Agents the principal may use;
-3. proxy ACP WebSockets while injecting the opaque Agent access subject on the
-   server side;
-4. never return that subject or an internal Runtime endpoint to JavaScript.
+2. return principal-scoped Agent discovery metadata, not execution state;
+3. proxy ACP WebSockets while injecting trusted organization/principal/Agent
+   identity on the server side; ACP performs execution admission;
+4. never return credentials or an internal Runtime endpoint to JavaScript.
 
 The browser contract is
 [`../../contracts/edge-gateway/session-contract.json`](../../contracts/edge-gateway/session-contract.json).
@@ -55,9 +61,9 @@ active Session even when another conversation is selected. Completion obtains
 a fresh state subscription; Refresh workspace reloads access and reconnects
 without resending a prompt. See [Workspace state](docs/workspace-state.md) and the
 [recovery contract](docs/architecture.md#conversation-recovery-and-cancellation)
-for the service boundaries. Cross-connection Docker integration has passed;
-remaining interactive browser work is tracked in
-[C4 closeout](../../docs/docker-single-node-closeout.md).
+for the service boundaries. Earlier cross-connection Docker evidence is tracked
+in [C4 closeout](../../docs/docker-single-node-closeout.md). This refactor's browser
+checks use wire fixtures; deployed-stack acceptance must be repeated separately.
 Native WAV/MP3, PDF and UTF-8 documents follow the negotiated ACP input contract;
 images and audio have bounded inline history presentation. See
 [multimodal input](docs/multimodal-input.md) for file limits, lifecycle and
@@ -84,13 +90,19 @@ production adapter and requires Edge Gateway.
 npm run typecheck
 npm test
 npm run build
+npm run test:browser
 ```
 
 See [architecture](docs/architecture.md) and the platform
 [design language](../../docs/design-language.md).
 
+`test:browser` runs Chromium and the production ACP SDK with deterministic
+Gateway/ACP wire fixtures. It checks selection, reload, streamed output, tool
+details, cross-Agent isolation, mobile navigation and browser storage. It closes
+its server/browser afterward. It is not a live Provider or deployed-stack test.
+
 F06 uses the [deployed permission profile](../../scripts/acp-permissions/README.md).
 Pure tests cover approval inbox cleanup, stale replies, configuration response
-ordering and disabled submission during configuration. Browser acceptance through
-Gateway verifies allow once, reject once, Chat mode, completion unlocking, default
+ordering and disabled submission during configuration. The deployed browser profile
+covers allow once, reject once, Chat mode, completion unlocking, default
 collapsed Tool details and mobile wrapping; it supplements, not replaces, tests.

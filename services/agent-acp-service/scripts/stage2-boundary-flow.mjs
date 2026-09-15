@@ -22,7 +22,7 @@ import { verifyAdministrativeAudit } from "./stage2-audit-flow.mjs";
 import { waitForTraceParents } from "./stage2-trace-read.mjs";
 import { gatewayLogin, gatewayCommand } from "./stage2-gateway.mjs";
 import { firstGatewayState, openGatewayHttpClient } from "./stage2-protocol.mjs";
-import { traceTree } from "../../../scripts/observability/trace-tree.mjs";
+import { traceTree, traceTopology } from "../../../scripts/observability/trace-tree.mjs";
 
 const env = (name) => {
   assert(process.env[name], `${name} is required`);
@@ -725,18 +725,18 @@ try {
     if (id === evidence.interrupted?.trace_id) continue;
     await checkTrace(`run:${id}`, async () => {
       const run = await readTrace(id);
-      const root = run.spans.find((span) => span.operationName === "agent.run");
-      const sourceLink = root?.references?.find((ref) => ref.refType === "FOLLOWS_FROM");
-      assert(sourceLink?.traceID, "Run source missing");
-      const source = await readTrace(sourceLink.traceID);
+      const source = run;
       const inspected = inspectExecutionBoundary({ source, run });
       evidence.execution.push(inspected);
       const prompt = source.spans.find((span) => span.spanID === inspected.prompt_span_id);
-      const connectionLink = prompt?.references?.find((ref) => ref.refType === "FOLLOWS_FROM");
+      const linked = traceTopology(source)
+        .chain(prompt)
+        .find((span) => span.references?.some((ref) => ref.refType === "FOLLOWS_FROM"));
+      const connectionLink = linked?.references?.find((ref) => ref.refType === "FOLLOWS_FROM");
       if (connectionLink)
         evidence.connections.push(
           inspectGatewayConnection({
-            prompt,
+            prompt: linked,
             connection: await readTrace(connectionLink.traceID),
           }),
         );

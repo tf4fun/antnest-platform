@@ -71,6 +71,7 @@ describe.skipIf(databaseUrl === undefined)("ACP durable model streaming", () => 
         expect(assistant).toHaveLength(1);
         expect(assistant[0]).toMatchObject({
           content: [{ type: "text", text: "hello world" }],
+          thought: [{ type: "text", text: "think" }],
         });
         expect(typeof assistant[0]?.endSequence).toBe("number");
         const messageIds = client.frames
@@ -131,59 +132,69 @@ describe.skipIf(databaseUrl === undefined)("ACP durable model streaming", () => 
     }
   });
 
-  it("combines streamed preamble with its complete Tool exchange for the next context", async () => {
-    const source = controlledResponse();
-    const model = new OpenAICompatibleModel({ fetchFn: () => Promise.resolve(source.response) });
-    app.model.complete
-      .mockReset()
-      .mockImplementationOnce((request) => model.complete(request))
-      .mockResolvedValue({
-        kind: "message",
-        content: [{ type: "text", text: "done" }],
-        stopReason: "end_turn",
-        usage: { inputTokens: 1, outputTokens: 1 },
+  it.each(["Inspect the file before answering.", ""])(
+    "combines streamed preamble and reasoning %s with its complete Tool exchange",
+    async (reasoning) => {
+      const source = controlledResponse();
+      const model = new OpenAICompatibleModel({ fetchFn: () => Promise.resolve(source.response) });
+      app.model.complete
+        .mockReset()
+        .mockImplementationOnce((request) => model.complete(request))
+        .mockResolvedValue({
+          kind: "message",
+          content: [{ type: "text", text: "done" }],
+          stopReason: "end_turn",
+          usage: { inputTokens: 1, outputTokens: 1 },
+        });
+      const client = await app.connect(1);
+      const created = await client.request("session/new", setup);
+      const sessionId = String(created.result?.sessionId);
+      const pending = client.request("session/prompt", {
+        sessionId,
+        prompt: [{ type: "text", text: "inspect" }],
       });
-    const client = await app.connect(1);
-    const created = await client.request("session/new", setup);
-    const sessionId = String(created.result?.sessionId);
-    const pending = client.request("session/prompt", {
-      sessionId,
-      prompt: [{ type: "text", text: "inspect" }],
-    });
-    const observed = pending.catch(() => undefined);
-    try {
-      source.delta({ content: "I will " });
-      source.delta({
-        content: "read.",
-        tool_calls: [
-          { index: 0, id: "call", function: { name: "read", arguments: '{"path":"a"}' } },
-        ],
-      });
-      source.finish("tool_calls");
-      expect((await pending).result).toEqual({ stopReason: "end_turn" });
-      expect(text(client.frames, "agent_message_chunk")).toBe("I will read.done");
-      const context = await new PostgresContextRepository(new PostgresKernel(pool)).load(sessionId);
-      expect(context.messages.filter((message) => message.kind === "agent_message")).toHaveLength(
-        1,
-      );
-      expect(context.messages.find((message) => message.kind === "tool_exchange")).toMatchObject({
-        assistant: { content: [{ type: "text", text: "I will read." }] },
-      });
-      expect(
-        app.model.complete.mock.calls[1]?.[0].messages.filter(
-          (message) => message.role === "assistant",
-        ),
-      ).toEqual([
-        expect.objectContaining({
-          content: [{ type: "text", text: "I will read." }],
-          toolCalls: [expect.objectContaining({ name: "read" })],
-        }),
-      ]);
-    } finally {
-      source.abort();
-      await observed;
-    }
-  });
+      const observed = pending.catch(() => undefined);
+      try {
+        source.delta({ reasoning_content: reasoning });
+        source.delta({ content: "I will " });
+        source.delta({
+          content: "read.",
+          tool_calls: [
+            { index: 0, id: "call", function: { name: "read", arguments: '{"path":"a"}' } },
+          ],
+        });
+        source.finish("tool_calls");
+        expect((await pending).result).toEqual({ stopReason: "end_turn" });
+        expect(text(client.frames, "agent_message_chunk")).toBe("I will read.done");
+        const context = await new PostgresContextRepository(new PostgresKernel(pool)).load(
+          sessionId,
+        );
+        expect(context.messages.filter((message) => message.kind === "agent_message")).toHaveLength(
+          1,
+        );
+        expect(context.messages.find((message) => message.kind === "tool_exchange")).toMatchObject({
+          assistant: {
+            content: [{ type: "text", text: "I will read." }],
+            thought: [{ type: "text", text: reasoning }],
+          },
+        });
+        expect(
+          app.model.complete.mock.calls[1]?.[0].messages.filter(
+            (message) => message.role === "assistant",
+          ),
+        ).toEqual([
+          expect.objectContaining({
+            content: [{ type: "text", text: "I will read." }],
+            thought: [{ type: "text", text: reasoning }],
+            toolCalls: [expect.objectContaining({ name: "read" })],
+          }),
+        ]);
+      } finally {
+        source.abort();
+        await observed;
+      }
+    },
+  );
 
   it.each(["cancel", "failure"])(
     "retains partial output on %s without executing unfinished Tools",

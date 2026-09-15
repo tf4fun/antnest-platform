@@ -16,6 +16,7 @@ import { ServiceTelemetry } from "../../src/telemetry/telemetry.js";
 import type { ExecuteRunResult } from "../../src/ports/acp-application.js";
 import { ModelError } from "../../src/ports/model.js";
 import { OpenAICompatibleModel } from "../../src/adapters/model/openai-compatible.js";
+import { RunSupervisor } from "../../src/application/run-supervisor.js";
 
 const exporter = new tracing.InMemorySpanExporter();
 const provider = new node.NodeTracerProvider({
@@ -48,6 +49,34 @@ afterAll(async () => {
 });
 
 describe("HTTP boundary contract", () => {
+  it.each(["AbortError", "TimeoutError"] as const)(
+    "classifies %s without hiding a failed HTTP response",
+    async (name) => {
+      const signal = new AbortController();
+      const response = await tracedFetch(
+        () => Promise.resolve(new Response(new ReadableStream(), { status: 200 })),
+        "antnest-runtime",
+      )("http://runtime.test/mcp", { signal: signal.signal });
+      signal.abort(new DOMException("private-canary", name));
+      await response.body!.cancel();
+      const span = exporter.getFinishedSpans()[0]!;
+      expect(exporter.getFinishedSpans()).toHaveLength(1);
+      expect(span.events.map((event) => event.name)).toEqual([
+        name === "AbortError" ? "antnest.cancelled" : "antnest.error",
+      ]);
+      expect(span.status.code).toBe(
+        name === "AbortError" ? SpanStatusCode.UNSET : SpanStatusCode.ERROR,
+      );
+      expect(serializedSpans()).not.toContain("private-canary");
+      exporter.reset();
+      const rejected = await tracedFetch(
+        () => Promise.resolve(new Response(new ReadableStream(), { status: 503 })),
+        "antnest-runtime",
+      )("http://runtime.test/mcp", {});
+      await rejected.body!.cancel();
+      expect(exporter.getFinishedSpans()[0]!.status.code).toBe(SpanStatusCode.ERROR);
+    },
+  );
   it("injects the actual CLIENT and retains a successful health SERVER parent", async () => {
     server = createServer((request, response) => {
       void observeHttpRequest(request, response, () => {
@@ -172,6 +201,73 @@ describe("HTTP boundary contract", () => {
 });
 
 describe("ACP dispatcher contract", () => {
+  it.each(["v1", "v2"] as const)(
+    "preserves %s message ancestry through asynchronous Run and outgoing HTTP",
+    async (version) => {
+      configureBoundaries({ captureRpcContent: false, disabled: false });
+      const upstream = tracer.startSpan("Gateway forward", { kind: SpanKind.CLIENT });
+      const metadata: Record<string, string> = {};
+      propagation.inject(trace.setSpan(context.active(), upstream), metadata);
+      upstream.end();
+      const supervisor = new RunSupervisor(
+        new InstrumentedRunExecutor(
+          {
+            execute: async () => {
+              await new Promise<void>((resolve) => setTimeout(resolve, 0));
+              for (const peer of ["model", "antnest-runtime"]) {
+                const response = await tracedFetch((_url, init) => {
+                  const headers = new Headers(init.headers);
+                  const parent = propagation.extract(context.active(), Object.fromEntries(headers));
+                  const received = tracer.startSpan(peer, { kind: SpanKind.SERVER }, parent);
+                  received.end();
+                  return Promise.resolve(new Response("ok"));
+                }, peer)(`http://${peer}.test`, { method: "POST" });
+                await response.text();
+              }
+              return {
+                terminalClass: "completed",
+                executorState: "quiescent",
+                toolEffectState: "none",
+                stopReason: "end_turn",
+              };
+            },
+          },
+          new ServiceTelemetry("agent-acp-service"),
+        ),
+      );
+      const dispatch = createAcpDispatcher(version, binding());
+      await dispatch("session/prompt", { sessionId: "s", _meta: metadata }, 1, async () => {
+        const accepted = await supervisor.submit(
+          { binding: binding(), sessionId: "s", outputChanged: vi.fn() },
+          () =>
+            Promise.resolve({
+              runId: "r",
+              sessionId: "s",
+              requestId: "q",
+              userMessageId: "m",
+              outputSequence: 0,
+              snapshot: snapshot(),
+            }),
+        );
+        await accepted.completion;
+      });
+      const spans = exporter.getFinishedSpans();
+      const prompt = spans.find((span) => span.name === "acp session/prompt")!;
+      const run = spans.find((span) => span.name === "agent.run")!;
+      expect(prompt.parentSpanContext?.spanId).toBe(upstream.spanContext().spanId);
+      expect(run.parentSpanContext?.spanId).toBe(prompt.spanContext().spanId);
+      expect(new Set(spans.map((span) => span.spanContext().traceId))).toEqual(
+        new Set([upstream.spanContext().traceId]),
+      );
+      for (const peer of ["model", "antnest-runtime"]) {
+        const client = spans.find((span) => span.name === `HTTP POST ${peer}`)!;
+        const received = spans.find((span) => span.name === peer)!;
+        expect(client.parentSpanContext?.spanId).toBe(run.spanContext().spanId);
+        expect(received.parentSpanContext?.spanId).toBe(client.spanContext().spanId);
+      }
+      expect(spans.flatMap((span) => span.events)).toEqual([]);
+    },
+  );
   it.each(["v1", "v2"] as const)(
     "keeps concurrent %s parents and complete actual RPC values",
     async (version) => {
@@ -436,7 +532,7 @@ describe("existing adapter and runner metadata", () => {
   });
 
   it.each(["failed", "unresolved"] as const)(
-    "uses a bounded Run root with an exact source Link and keeps %s terminal results",
+    "keeps Run under its submitting request and retains %s terminal results",
     async (terminalClass) => {
       const parent = tracer.startSpan("acp accepted");
       const result: ExecuteRunResult =
@@ -473,9 +569,9 @@ describe("existing adapter and runner metadata", () => {
         }),
       );
       const run = exporter.getFinishedSpans().find((item) => item.name === "agent.run")!;
-      expect(run.parentSpanContext).toBeUndefined();
-      expect(run.links[0]?.context.spanId).toBe(parent.spanContext().spanId);
-      expect(run.links[0]?.context.traceId).toBe(parent.spanContext().traceId);
+      expect(run.parentSpanContext?.spanId).toBe(parent.spanContext().spanId);
+      expect(run.spanContext().traceId).toBe(parent.spanContext().traceId);
+      expect(run.links).toHaveLength(0);
       expect(run.status.code).toBe(SpanStatusCode.ERROR);
       expect(run.attributes["antnest.run.id"]).toBe("run-1");
       expect(run.attributes).toMatchObject({

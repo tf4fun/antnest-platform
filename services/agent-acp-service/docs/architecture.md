@@ -164,6 +164,9 @@ Runtime, user approval or complete Run.
 
 ## Tool Loop
 
+Provider reasoning stays attached to assistant messages across Tool turns and
+stored context reconstruction; see [Model reasoning history](model-reasoning-history.md).
+
 1. Read fresh Runtime information and list platform Runtime MCP
    Tools once for the admitted Run. Managed stdio tools are Runtime-owned.
 2. Retain Runtime names and add the ACP-owned `update_plan` tool; reject collisions.

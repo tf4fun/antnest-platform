@@ -17,7 +17,7 @@ class FixtureStateSource extends EventTarget {
   constructor(readonly url: string) {
     super(); stateSources.push(this);
     const id = url.split("/")[4]!;
-    queueMicrotask(() => this.state({ agent_id: id, availability: "ready", access_allowed: true, agent_revision: 1, active_session_id: null }));
+    queueMicrotask(() => this.state({ agent_id: id, availability: "ready", access_allowed: true, configuration_revision: "a".repeat(64), unavailable_reason: null, active_session_id: null }));
   }
   close() { this.closed = true; }
   state(value: WorkspaceState) { if (!this.closed) this.dispatchEvent(new MessageEvent("workspace_state", { data: JSON.stringify(value) })); }
@@ -56,6 +56,7 @@ class FixtureSocket extends EventTarget {
 }
 
 beforeEach(() => {
+  window.history.replaceState(null, "", "/workspace/?agent=a1&session=s1");
   sockets.length = 0; updates.clear(); clients.length = 0;
   stateSources.length = 0;
   vi.stubGlobal("WebSocket", FixtureSocket);
@@ -76,7 +77,7 @@ async function connect(agent = "agent-1") {
 
 test("official SDK delivers cost snapshots and duplicate replay never accumulates them", async () => {
   const test = await connect();
-  expect(test.socket.url).toContain("/api/app/agents/agent-1/acp");
+  expect(test.socket.url).toContain("/api/app/agents/agent-1/v1/acp");
   updates.set("s1", [priced(0.01), priced(0.03), priced(0.03)]);
   await test.connection.loadConversation("s1");
   expect(test.current().usage?.cost?.amount).toBe(0.03);
@@ -231,6 +232,7 @@ test("App displays per-session usage, new/unknown states, and disconnect freshne
   expect(await screen.findByText("Last received")).toBeTruthy();
   updates.set("s1", [priced(0.05)]);
   fireEvent.click(screen.getByRole("button", { name: /Agent Two/ }));
+  fireEvent.click(await screen.findByRole("button", { name: /Chat s1/ }));
   expect(await screen.findByText("USD 0.05")).toBeTruthy();
   expect(screen.queryByText("USD 0")).toBeNull();
   fireEvent.click(screen.getAllByRole("button", { name: "New conversation" })[0]!);
@@ -274,6 +276,7 @@ test("Agent switching disposes pending replay before late same-ID callbacks arri
   render(<App />);
   await waitFor(() => expect(sockets[0]?.requests.some(r => r.method === "session/load")).toBe(true));
   fireEvent.click(screen.getByRole("button", { name: /Agent Two/ }));
+  fireEvent.click(await screen.findByRole("button", { name: /Chat s1/ }));
   await screen.findByText("USD 0.05");
   await act(async () => { release(); await pending; });
   expect(screen.queryByText("USD 99")).toBeNull();
@@ -444,13 +447,13 @@ test("reopened workspace Stop sends standard ACP cancellation for the owned acti
   appBootstrap();
   render(<App />);
   await waitFor(() => expect((screen.getByRole("textbox", { name: "Message" }) as HTMLTextAreaElement).disabled).toBe(false));
-  await act(async () => stateSources[0]!.state({ agent_id: "a1", availability: "busy", access_allowed: true, agent_revision: 1, active_session_id: "s1" }));
+  await act(async () => stateSources[0]!.state({ agent_id: "a1", availability: "busy", access_allowed: true, configuration_revision: "a".repeat(64), unavailable_reason: null, active_session_id: "s1" }));
   fireEvent.click(screen.getByRole("button", { name: /Chat s2/ }));
   fireEvent.click(screen.getByRole("button", { name: "Stop operation" }));
   await waitFor(() => expect(sockets[0]!.requests.filter(r => r.method === "session/cancel").map(r => r.params.sessionId)).toEqual(["s1"]));
   expect((screen.getByRole("textbox", { name: "Message" }) as HTMLTextAreaElement).disabled).toBe(true);
   updates.set("s2", [message("Final history")]);
-  await act(async () => stateSources[0]!.state({ agent_id: "a1", availability: "ready", access_allowed: true, agent_revision: 1, active_session_id: null }));
+  await act(async () => stateSources[0]!.state({ agent_id: "a1", availability: "ready", access_allowed: true, configuration_revision: "a".repeat(64), unavailable_reason: null, active_session_id: null }));
   await screen.findByText("Final history");
   expect(sockets.flatMap(s => s.requests).filter(r => r.method === "session/prompt")).toHaveLength(0);
 });
@@ -461,7 +464,7 @@ test("snapshot recovery reloads history and configuration without replaying a pr
   render(<App />);
   await screen.findByText("Old history");
   updates.set("s1", [message("New history")]);
-  await act(async () => stateSources[0]!.state({ agent_id: "a1", availability: "ready", access_allowed: true, agent_revision: 2, active_session_id: null }));
+  await act(async () => stateSources[0]!.state({ agent_id: "a1", availability: "ready", access_allowed: true, configuration_revision: "b".repeat(64), unavailable_reason: null, active_session_id: null }));
   await screen.findByText("New history");
   expect(screen.queryByText("Old history")).toBeNull();
   expect(sockets).toHaveLength(2);

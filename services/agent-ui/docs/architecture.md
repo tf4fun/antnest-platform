@@ -10,7 +10,9 @@ browser-hosted Agent Core.
 
 ```text
 App
-  -> presentation state and routing
+  -> useWorkspace (global connection, scope and asynchronous interaction coordination)
+  -> workspace-projection (pure global discovery/catalog/history transitions)
+  -> useSessionPresentation (per-Agent/Session draft, error and interaction state)
   -> components (navigation, conversation, activity, composer)
   -> AgentUIClient port
        -> GatewayClient (production bootstrap)
@@ -47,12 +49,20 @@ Session and receives a fresh approval request from the server; browser storage
 never persists approval authority. Requests remain visible when switching chats.
 
 ```text
-bootstrap: loading -> ready | unavailable
-connection: connecting -> ready | offline
-conversation: idle -> submitting -> streaming -> idle | failed
+global: loading -> chooser -> selected Agent
+connection: offline -> connecting -> ready -> offline
+selected history: loading -> ready | failed -> retry
+local interaction: idle -> running | configuring -> idle
 ```
 
-Agent Controller remains authoritative for Run admission. A busy Agent disables
+These are independent dimensions, not one combined enum. Bootstrap failure is a
+global error; a failed Session load does not discard Agent discovery or other
+Sessions. A prompt error is Session-scoped, and Stop remains an outstanding
+request until authoritative execution state clears it. Navigation epochs reject
+late selection changes while connection epochs reject callbacks from a replaced
+Agent connection. Selecting another Session never cancels an accepted prompt.
+
+ACP Service remains authoritative for Run admission. A busy Agent disables
 new submission across all of its conversations. Closing or reopening the page
 must eventually recover that state from the Gateway rather than trusting local
 state.
@@ -64,6 +74,21 @@ durable because they appeared in browser memory.
 User and Organization IDs from bootstrap are retained only as the in-memory
 identity boundary for cached history. A change discards private presentation
 state and replaces ACP; overlapping Agent IDs cannot retain the old identity.
+
+`session-presentation.ts` owns the local `idle -> running -> idle` interaction
+transition and the mutually exclusive `configuring` phase. These describe client
+requests, not durable Runs. The Agent-wide busy observation can block a different
+Session without changing that Session's draft. Errors and failed-prompt retry
+drafts belong to the originating Session, not whichever view is currently open.
+History synchronization remains separately scoped to connection plus Session:
+an ACP socket being ready does not mean a replay has completed. Permission
+requests live in the connection's Session-tagged inbox and are never persisted.
+
+The URL is navigation only: no default Agent connection, no default first Session,
+and no fallback from an invalid Session to another conversation. In-memory
+projections are replaced from successful ACP replay, with the old readable
+transcript retained on failed replay. No browser database or attyd private
+business API is copied into this service.
 
 Historical message updates do not carry a standard original message timestamp
 in the supported ACP profile. Replay therefore leaves that timestamp unknown

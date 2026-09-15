@@ -3,6 +3,7 @@ import { createWebSocketStream } from "@agentclientprotocol/sdk/experimental/ws-
 import { appendLocalUserPrompt, applySessionUpdate, applyConfigurationResponse, resetConversationReplay, restoreFailedReplayUsage } from "./acp-state";
 import { workspaceFromBootstrap } from "./bootstrap";
 import { previewWorkspace } from "./preview";
+import { readWorkspaceRoute, selectWorkspaceRoute, workspacePath } from "./navigation";
 import { buildPromptBlocks } from "./prompt";
 import { csrfFromCookie } from "./session";
 import { PermissionInbox, type PendingPermission } from "./permissions";
@@ -54,7 +55,7 @@ class GatewayClient implements AgentUIClient {
       signal,
     });
     if (response.status === 401) {
-      window.location.assign("/?return_to=%2Fworkspace%2F");
+      window.location.assign(`/?${new URLSearchParams({ return_to: workspacePath(readWorkspaceRoute(window.location.search)) })}`);
       throw new WorkspaceUnavailableError("Your session has expired.", response.status);
     }
     if (!response.ok) {
@@ -65,7 +66,7 @@ class GatewayClient implements AgentUIClient {
         response.status,
       );
     }
-    return workspaceFromBootstrap(await response.json());
+    return selectWorkspaceRoute(workspaceFromBootstrap(await response.json()), readWorkspaceRoute(window.location.search));
   }
 
   connectAgent(agentID: string, listener: AgentConnectionListener, signal?: AbortSignal): Promise<ConnectedAgent> {
@@ -298,7 +299,7 @@ class GatewayAgentConnection implements ConnectedAgent {
 class PreviewClient implements AgentUIClient {
   watchState(): () => void { return () => {}; }
   async loadWorkspace(): Promise<WorkspaceSnapshot> {
-    return previewWorkspace();
+    return selectWorkspaceRoute(previewWorkspace(), readWorkspaceRoute(window.location.search));
   }
 
   async connectAgent(): Promise<ConnectedAgent> {
@@ -319,7 +320,7 @@ function emptyConversation(sessionID: string, agentID: string): Conversation {
 }
 
 function agentWebSocketURL(agentID: string): string {
-  const target = new URL(`/api/app/agents/${encodeURIComponent(agentID)}/acp`, window.location.href);
+  const target = new URL(`/api/app/agents/${encodeURIComponent(agentID)}/v1/acp`, window.location.href);
   target.protocol = target.protocol === "https:" ? "wss:" : "ws:";
   return target.toString();
 }

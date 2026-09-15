@@ -4,7 +4,8 @@ const schema = z.object({
   agent_id: z.string().min(1),
   availability: z.enum(["ready", "busy", "offline"]),
   access_allowed: z.boolean(),
-  agent_revision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  configuration_revision: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
+  unavailable_reason: z.enum(["access_denied", "agent_unavailable", "runtime_barrier_required"]).nullable(),
   active_session_id: z.string().trim().min(1).max(200).nullable(),
 }).strict();
 
@@ -14,9 +15,20 @@ export type StateListener = { onState: (state: WorkspaceState) => void; onDiscon
 export function parseWorkspaceState(data: string, agentID: string): WorkspaceState {
   if (data.length > 65536) throw new Error("Workspace state is too large.");
   const state = schema.parse(JSON.parse(data));
-  if (state.agent_id !== agentID || (!state.access_allowed && (state.availability !== "offline" || state.active_session_id !== null)) ||
-    (state.availability === "ready" && state.active_session_id !== null)) throw new Error("Invalid workspace state.");
+  if (state.agent_id !== agentID || !validState(state)) throw new Error("Invalid workspace state.");
   return state;
+}
+
+function validState(state: WorkspaceState): boolean {
+  if (!state.access_allowed) return state.availability === "offline" && state.active_session_id === null &&
+    state.configuration_revision === null && state.unavailable_reason === "access_denied";
+  if (!state.configuration_revision) return false;
+  switch (state.availability) {
+    case "ready": return state.active_session_id === null && state.unavailable_reason === null;
+    case "busy": return state.unavailable_reason === null || state.unavailable_reason === "agent_unavailable";
+    case "offline": return state.active_session_id === null &&
+      (state.unavailable_reason === "agent_unavailable" || state.unavailable_reason === "runtime_barrier_required");
+  }
 }
 
 // Own one stream only. Recovery belongs to the observer, not EventSource's implicit retry.

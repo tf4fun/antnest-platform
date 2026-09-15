@@ -147,7 +147,10 @@ function toModelResult(response: z.infer<typeof responseSchema>, usage: ModelUsa
   if (choice === undefined) {
     throw invalidResponse("Model API returned no completion choice");
   }
-  const thought = textBlock(choice.message.reasoning_content);
+  const thought =
+    choice.message.reasoning_content === undefined
+      ? undefined
+      : [{ type: "text" as const, text: choice.message.reasoning_content ?? "" }];
   const toolCalls = choice.message.tool_calls ?? [];
   if (choice.finish_reason === "length") {
     return {

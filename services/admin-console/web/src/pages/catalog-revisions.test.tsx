@@ -103,6 +103,7 @@ it("retains disabled state after replaying an older successful Template publicat
   fireEvent.click(dialog.getByRole("button", { name: "Cancel" }));
   fireEvent.click(screen.getByRole("switch", { name: "Template enabled" }));
   await screen.findByText("Availability change saved.");
+  await waitFor(() => expect((screen.getByRole("button", { name: "Create revision" }) as HTMLButtonElement).disabled).toBe(false));
   fireEvent.click(screen.getByRole("button", { name: "Create revision" }));
   dialog = within(await screen.findByRole("dialog"));
   fireEvent.click(dialog.getByRole("button", { name: "Publish revision" }));

@@ -153,7 +153,13 @@ function toModelMessages(message: StoredContextMessage): ModelMessage[] {
     case "user_message":
       return [{ role: "user", content: message.content }];
     case "agent_message":
-      return [{ role: "assistant", content: message.content }];
+      return [
+        {
+          role: "assistant",
+          content: message.content,
+          ...(message.thought === undefined ? {} : { thought: message.thought }),
+        },
+      ];
     case "environment_change":
       return [{ role: "system", content: message.content }];
     case "tool_exchange":
@@ -162,6 +168,9 @@ function toModelMessages(message: StoredContextMessage): ModelMessage[] {
           role: "assistant",
           content: message.assistant.content,
           toolCalls: message.assistant.toolCalls,
+          ...(message.assistant.thought === undefined
+            ? {}
+            : { thought: message.assistant.thought }),
         },
         ...message.results.map((result) => ({
           role: "tool" as const,

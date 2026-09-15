@@ -38,6 +38,22 @@ function chunk(delta: unknown, finish: string | null = null) {
 }
 
 describe("OpenAI streaming completions", () => {
+  it.each(["", null, undefined])(
+    "keeps empty reasoning %s distinct from an absent field",
+    async (reasoning) => {
+      const payload = `data: ${JSON.stringify(chunk({ ...(reasoning === undefined ? {} : { reasoning_content: reasoning }), tool_calls: [{ index: 0, id: "read", function: { name: "read", arguments: "{}" } }] }, "tool_calls"))}\n\ndata: [DONE]\n\n`;
+      const model = new OpenAICompatibleModel({
+        fetchFn: () =>
+          Promise.resolve(
+            new Response(payload, { headers: { "content-type": "text/event-stream" } }),
+          ),
+      });
+      const result = await model.complete(input());
+      expect(result.thought).toEqual(
+        reasoning === undefined ? undefined : [{ type: "text", text: "" }],
+      );
+    },
+  );
   it("delivers thought and text before completion, then consumes trailing usage without duplicates", async () => {
     const source = stream();
     const request = input();

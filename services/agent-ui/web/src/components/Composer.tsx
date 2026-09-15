@@ -1,5 +1,5 @@
 import { ArrowUp, FilePlus2, FileText, Image as ImageIcon, AudioLines, LoaderCircle, Square, X } from "lucide-react";
-import { useRef } from "react";
+import { useLayoutEffect, useRef } from "react";
 import type { AgentStatus, Attachment } from "../lib/types";
 import { canSubmit } from "../lib/presentation";
 
@@ -27,11 +27,17 @@ function statusCopy(agentStatus: AgentStatus, connected: boolean, sending: boole
   if (agentStatus === "offline") return "Agent is offline";
   if (sending) return "Agent is working · stop when needed";
   if (agentStatus === "busy") return "Agent is finishing another operation";
-  return "Enter to send · Shift + Enter for a new line";
+  return "";
 }
 
 export function Composer(props: Props) {
   const fileInput = useRef<HTMLInputElement>(null);
+  const textarea = useRef<HTMLTextAreaElement>(null);
+  useLayoutEffect(() => {
+    if (!textarea.current) return;
+    textarea.current.style.height = "auto";
+    textarea.current.style.height = `${Math.min(200, Math.max(72, textarea.current.scrollHeight))}px`;
+  }, [props.value]);
   const submitEnabled = canSubmit({
     text: props.value,
     attachments: props.attachments,
@@ -60,6 +66,7 @@ export function Composer(props: Props) {
           </div>
         ) : null}
         <textarea
+          ref={textarea}
           aria-label="Message"
           disabled={!props.connected || !props.historyReady || props.agentStatus !== "ready" || props.sending || props.configuring}
           onChange={(event) => props.onChange(event.target.value)}

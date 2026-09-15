@@ -34,7 +34,7 @@ export class PostgresContextRepository implements ContextRepository {
          FROM session_messages
         WHERE session_id = $1
           AND sequence > $2
-          AND kind IN ('user_message', 'agent_message', 'environment_change', 'tool_call')
+          AND kind IN ('user_message', 'agent_message', 'agent_thought', 'environment_change', 'tool_call')
         ORDER BY sequence`,
       [sessionId, checkpoint?.throughSequence ?? 0],
     );
@@ -94,7 +94,7 @@ function mapContextMessages(
 ): StoredContextMessage[] {
   const messages: StoredContextMessage[] = [];
   let pending: PendingToolExchange | null = null;
-  for (const row of combineAssistantChunks(rows)) {
+  for (const row of combineAssistantChunks(attachThoughts(rows))) {
     if (row.kind === "agent_message") {
       if (pending !== null) {
         throw new Error("Assistant Tool exchange is incomplete");
@@ -106,6 +106,7 @@ function mapContextMessages(
           ...(message.endSequence === undefined ? {} : { endSequence: message.endSequence }),
           kind: "agent_message",
           content: message.content,
+          ...(message.thought === undefined ? {} : { thought: message.thought }),
         });
       } else {
         pending = { ...message, results: new Map() };
@@ -141,6 +142,7 @@ function mapContextMessages(
         kind: "tool_exchange",
         assistant: {
           content: completed.content,
+          ...(completed.thought === undefined ? {} : { thought: completed.thought }),
           toolCalls: completed.toolCalls,
         },
         results: completed.toolCalls.map((call) => ({
@@ -161,6 +163,7 @@ type PendingToolExchange = {
   sequence: number;
   endSequence?: number;
   content: ContentBlock[];
+  thought?: ContentBlock[];
   toolCalls: Extract<StoredContextMessage, { kind: "tool_exchange" }>["assistant"]["toolCalls"];
   results: Map<string, ContentBlock[]>;
 };
@@ -175,11 +178,39 @@ function mapAgentMessage(row: {
     sequence: Number(row.sequence),
     ...(row.endSequence === undefined ? {} : { endSequence: row.endSequence }),
     content: asContent(payload.content),
+    ...(payload.thought === undefined ? {} : { thought: asContent(payload.thought) }),
     toolCalls: mapToolCalls(payload.toolCalls),
   };
 }
 
 type ContextRow = { sequence: string; kind: string; payload: unknown; endSequence?: number };
+
+// Reasoning belongs to its assistant response, never to a later user or Tool result.
+function attachThoughts(rows: ContextRow[]): ContextRow[] {
+  const result: ContextRow[] = [];
+  let thoughts: ContentBlock[] = [];
+  let firstSequence: string | undefined;
+  for (const row of rows) {
+    if (row.kind === "agent_thought") {
+      const payload = asRecord(row.payload, "Agent thought payload is invalid");
+      firstSequence ??= row.sequence;
+      thoughts.push(...asContent(payload.content));
+      continue;
+    }
+    if (row.kind === "agent_message" && thoughts.length > 0) {
+      const payload = asRecord(row.payload, "Agent message payload is invalid");
+      result.push({
+        ...row,
+        sequence: firstSequence ?? row.sequence,
+        endSequence: Number(row.sequence),
+        payload: { ...payload, thought: joinTextBlocks(thoughts) },
+      });
+    } else result.push(row);
+    thoughts = [];
+    firstSequence = undefined;
+  }
+  return result;
+}
 
 // Durable delivery is chunked; the model and compaction see a whole assistant response.
 function combineAssistantChunks(rows: ContextRow[]): ContextRow[] {
@@ -198,7 +229,9 @@ function combineAssistantChunks(rows: ContextRow[]): ContextRow[] {
       activeId = responseId;
       result.push({
         ...row,
-        ...(responseId === undefined ? {} : { endSequence: Number(row.sequence) }),
+        ...(responseId === undefined
+          ? {}
+          : { endSequence: row.endSequence ?? Number(row.sequence) }),
       });
       continue;
     }
@@ -207,8 +240,16 @@ function combineAssistantChunks(rows: ContextRow[]): ContextRow[] {
       ...prior,
       ...payload,
       content: joinTextBlocks([...asContent(prior.content), ...asContent(payload.content)]),
+      ...(prior.thought === undefined && payload.thought === undefined
+        ? {}
+        : {
+            thought: joinTextBlocks([
+              ...asContent(prior.thought ?? []),
+              ...asContent(payload.thought ?? []),
+            ]),
+          }),
     };
-    previous.endSequence = Number(row.sequence);
+    previous.endSequence = row.endSequence ?? Number(row.sequence);
   }
   return result;
 }

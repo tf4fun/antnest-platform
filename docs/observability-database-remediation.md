@@ -130,7 +130,9 @@ Jaeger 查询仍在请求完成后等待六秒，再查询一次；不吞掉 war
 
 Runtime Controller/Egress 的真实上游业务 Trace 随后续 Agent 场景核对；本轮没有为制造 Span 发起额外生命周期操作。
 四个服务的数据库回归不代表被冻结的 ACP 端或所有跨服务产品场景已经重新验收。
-异步 Run 的独立 Trace + Links 仍须按实际模型核对，不能强行要求它与初始 Gateway 请求共用 Trace ID。
+当前聊天链路以 Gateway 收到的单条 ACP 消息为业务 Trace 起点；异步 Run 继承该消息的 Trace，
+不另起执行 Trace。长期 WebSocket 握手仅通过 Link 关联，不作为整段会话的父 Span。
+这一区分以消息和连接的生命周期为依据，不能因异步执行而割断同一业务请求的父子关系。
 
 ## 7. Egress SQL 语义对齐复验（2026-09-12）
 

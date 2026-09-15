@@ -43,6 +43,55 @@ SDK dispatch and existing application/adapter boundaries. Acceptance is coordina
   business decision code returns its existing result. Run execution retains
   its existing interface and terminal facts; no telemetry business hooks.
 
+### PostgreSQL Boundary
+
+- The official `@opentelemetry/instrumentation-pg` instruments the driver before
+  application composition loads `pg`. It covers pool queries, transaction-client
+  queries, readiness, migrations and worker ownership without repository hooks.
+- Each actual SQL execution creates one CLIENT span. Its title is the driver's
+  operation (for example `SELECT`), not a repository action. Native
+  `db.query.text`, `db.namespace`, `server.address` and `server.port` describe the
+  operation; SQL retains placeholders. Parameters and returned rows are never
+  captured. No custom SQL parser or table-name extraction is added.
+- The pinned pg instrumentation 0.74.0 emits operation/error attributes on
+  metrics but omits them from spans. One presentation processor strips only
+  the SDK title's fixed `pg.query:` prefix/database suffix and copies native
+  exception type; the SDK response hook uses pg's structured `command` for
+  successful executions. Neither inspects SQL or changes query execution.
+- Connect/pool-acquire spans are disabled. The kernel does not add a second
+  query span. Repository request/duration metrics remain separate from tracing.
+- `postgresql transaction` is one INTERNAL span wrapping BEGIN, all statements
+  and the actual COMMIT or ROLLBACK. `antnest.transaction.outcome` is `committed`,
+  `rolled_back` or `failed`; a failed COMMIT never becomes a successful commit
+  because a subsequent cleanup ROLLBACK returned. Original and rollback errors
+  retain their existing propagation and broken clients are still discarded.
+  PostgreSQL can also answer COMMIT with a structured `ROLLBACK` command after
+  an earlier statement aborted the transaction; that actual outcome is recorded,
+  rather than inferring success from the submitted SQL text.
+- Tests must use a real PostgreSQL driver to assert parent IDs, query counts,
+  transaction outcomes, SQL metadata, failures and absence of bind/result data.
+  In-memory kernel mocks alone cannot establish driver instrumentation coverage.
+
+### Database Alignment Verification (2026-09-15)
+
+- 931 unit tests and 216 PostgreSQL integration tests passed, including nine
+  driver tracing contracts. ACP lint, typecheck, formatting and container build
+  passed. Only the ACP service image was replaced; business data was retained.
+- Three real Gateway chat traces passed the database contract: native SQL
+  metadata, transaction children, no nested duplicate SQL spans, no bind values
+  or result rows. The old `postgres.query` / `postgres.transaction` spans are gone.
+- [Real tool execution with database spans](http://127.0.0.1:16686/trace/7ea9aee5daa8bbc0390cd6e504aee620)
+  contains 34 transactions and 327 SQL executions, with no errors or Jaeger
+  warnings. These are observed execution counts, not newly added SQL calls.
+- The complete browser profile is not declared strictly passed: another trace,
+  `970c510b1b22df1e4da962c4c32c0d30`, retains a Runtime `/mcp`
+  `client_disconnected` event and clock-skew warnings (up to 1.659 ms). Its ACP
+  database contract passed; Runtime classification is outside this service-owned
+  change. Original strict failures and timestamps remain unchanged.
+- Dependency audit still reports the existing AJV 8.17.1 `$data` ReDoS advisory
+  (GHSA-2g4f-4pwh-qvx6, moderate). AJV was not changed by this instrumentation
+  update; dependency remediation remains separate from these passing code gates.
+
 ## Verification And Remaining Limits
 
 Service-owned tests specify exact parent IDs, concurrent request isolation,
@@ -76,6 +125,12 @@ this change adds no trace fields to business storage. Exporter failure, queue
 saturation, shutdown pressure and deployed Jaeger acceptance remain coordinator
 profiles, not inferred from unit-test span counts.
 
+Explicit `AbortError`/`ABORT_ERR` cancellation is an `antnest.cancelled` event
+with a phase and cancellation type, not an `antnest.error` event. This includes
+MCP SDK response-stream cleanup. The outcome remains visible as `cancelled`;
+it does not erase an earlier HTTP error. Timeouts, send/read failures and invalid
+model responses still retain error status and typed error events.
+
 ## Coordinator Integration
 
 - Removed operations: `acp.http` (replaced by the actual HTTP SERVER lifetime)
@@ -83,10 +138,15 @@ profiles, not inferred from unit-test span counts.
 - Existing meaningful INTERNAL names remain, including `agent.run`,
   `acp.session.*`, `model.complete`, `mcp.tools.*`,
   `mcp.runtime.info`, `acp.permission.wait` and `postgres.ready`.
-- `acp.permission.wait` now includes the existing permission request's
-  persistence boundary. `agent.run` is a bounded root with a source Link, not
-  a long-lived child of the accepted ACP request. Root trace scripts expecting
-  the old ancestry must follow Links and retained Run/Session IDs.
+- `acp.permission.wait` includes the permission request's persistence boundary.
+  `agent.run` inherits the submitting ACP request context, including asynchronous
+  execution owned by RunSupervisor. Ending a request span does not cancel the Run
+  or prevent later child spans. No business-name special case may reset context.
+  WebSocket messages receive W3C context through ACP `params._meta` from Gateway;
+  each Gateway message is a bounded root linked to the long-lived connection.
+  Thus a prompt, its model calls and Runtime tools form one trace without waiting
+  for the browser connection to close. Direct clients without message context
+  still create an ACP message root linked to their connection.
 - HTTP names are `HTTP METHOD /status`, `HTTP METHOD /v1/acp`, `HTTP METHOD /v2/acp`,
   `HTTP METHOD unmatched`; CLIENT names are `HTTP METHOD model`,
   `HTTP METHOD antnest-runtime`, `HTTP METHOD mcp`. ACP dispatcher names are
@@ -100,10 +160,12 @@ profiles, not inferred from unit-test span counts.
   the string `antnest.error.code`.
 - Readiness assertions must expect private PostgreSQL only, zero Controller
   status calls and a SERVER span even for a successful traced health request.
-- No package/dependency/lock changes are needed; tests use existing SDK exports.
+- PostgreSQL tracing adds the pinned official `@opentelemetry/instrumentation-pg`
+  dependency and its lockfile entries; other boundaries use existing SDK exports.
 - Stage 2 assertions reject Controller/Identity calls in execution traces and
   require model requests, Runtime MCP calls and ACP-owned persistence under the
-  linked `agent.run`. Configuration publication and lifecycle settlement flow
+  descendant `agent.run`. Identity validation may precede ACP at Gateway; it must
+  never be a dependency beneath Run execution. Configuration publication and lifecycle settlement flow
   from Controller to ACP, separately from the prompt execution path. The client
   exports actual source spans; fabricated parent IDs are not accepted.
 - The [integration scenarios](execution-boundary-e2e.md) use the development RPC

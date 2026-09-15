@@ -45,6 +45,37 @@ const snapshot: RunExecutionSnapshot = {
 };
 
 describe("TurnRunner", () => {
+  it("keeps model reasoning when retrying a rejected tool call", async () => {
+    const thought = [{ type: "text", text: "inspect before executing" }];
+    const complete = vi
+      .fn<ModelPort["complete"]>()
+      .mockResolvedValueOnce({
+        kind: "tool_calls",
+        content: [],
+        thought,
+        calls: [{ id: "bad-call", name: "missing", arguments: {} }],
+        usage: {},
+      })
+      .mockResolvedValueOnce({
+        kind: "message",
+        content: [{ type: "text", text: "done" }],
+        stopReason: "end_turn",
+        usage: {},
+      });
+    const call = vi.fn();
+    const runner = new TurnRunner({
+      model: { complete },
+      tools: { call },
+      catalog: [],
+      events: createEvents().port,
+    });
+    await expect(run(runner)).resolves.toMatchObject({ terminalClass: "completed" });
+    expect(complete.mock.calls[1]?.[0].messages).toContainEqual(
+      expect.objectContaining({ role: "assistant", thought }),
+    );
+    expect(call).not.toHaveBeenCalled();
+  });
+
   it.each([
     [true, "result"],
     [false, "result"],

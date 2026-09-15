@@ -10,8 +10,7 @@ const bootstrapSchema = z.object({
   agents: z.array(z.object({
     agent_id: z.string().min(1),
     name: z.string().min(1),
-    availability: z.enum(["ready", "busy", "offline"]),
-  })),
+  })).refine(agents => new Set(agents.map(agent => agent.agent_id)).size === agents.length, "Duplicate Agent identifiers"),
 });
 
 export function workspaceFromBootstrap(payload: unknown): WorkspaceSnapshot {
@@ -24,16 +23,16 @@ export function workspaceFromBootstrap(payload: unknown): WorkspaceSnapshot {
       organizationName: "Organization workspace",
       administrator: bootstrap.principal.administrator,
     },
-    connection: "connecting",
+    connection: "offline",
     agents: bootstrap.agents.map((agent) => ({
       id: agent.agent_id,
       name: agent.name,
       description: "Managed by your organization",
       modelLabel: "Platform managed",
-      status: agent.availability,
+      status: "unknown",
     })),
     conversations: [],
-    activeAgentId: bootstrap.agents[0]?.agent_id ?? "",
+    activeAgentId: "",
     activeConversationId: null,
     preview: false,
   };

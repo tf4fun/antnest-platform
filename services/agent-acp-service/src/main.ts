@@ -1,4 +1,3 @@
-import { startAgentAcpService } from "./composition.js";
 import { loadConfig } from "./config.js";
 import { WorkerOwnershipLostError } from "./adapters/postgres/worker-lock.js";
 import { startTelemetry } from "./telemetry/telemetry.js";
@@ -20,6 +19,8 @@ async function main(): Promise<void> {
     return forceExit();
   };
   try {
+    // The driver must load after its standard instrumentation is registered.
+    const { startAgentAcpService } = await import("./composition.js");
     const service = await raceWithOwnershipLoss(
       startAgentAcpService(config, telemetryRuntime.telemetry, (error) => {
         ownershipLoss.resolve(error);

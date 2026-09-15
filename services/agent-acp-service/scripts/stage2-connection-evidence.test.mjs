@@ -33,8 +33,13 @@ function fixture() {
 test("ACP request links to the authenticated Gateway WebSocket connection", () => {
   assert.equal(inspectGatewayConnection(fixture()).trace_id, "socket");
 });
+test("Gateway message links directly to its receiving WebSocket connection", () => {
+  const value = fixture();
+  value.prompt.references[0].spanID = "gateway";
+  assert.equal(inspectGatewayConnection(value).trace_id, "socket");
+});
 for (const [name, change] of [
-  ["wrong connection", (value) => (value.prompt.references[0].spanID = "gateway")],
+  ["wrong connection", (value) => (value.prompt.references[0].spanID = "dial")],
   [
     "non-Gateway upstream",
     (value) => (value.connection.processes.gateway.serviceName = "agent-controller"),

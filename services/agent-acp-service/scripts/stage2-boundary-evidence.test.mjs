@@ -80,7 +80,7 @@ function fixture() {
     trace.spans.push(span);
     return span;
   };
-  const source = make("source");
+  const source = make("run");
   add(source, "client", "prompt scenario", "antnest-stage2-client");
   add(source, "prompt", "acp session/prompt", "agent-acp-service", "client", {
     "antnest.session.id": "session-id",
@@ -88,11 +88,10 @@ function fixture() {
   });
   add(source, "submission", "acp.session.prompt", "agent-acp-service", "prompt");
   const run = make("run");
-  const root = add(run, "run", "agent.run", "agent-acp-service", null, {
+  add(run, "run", "agent.run", "agent-acp-service", "submission", {
     "antnest.run.id": "run-id",
     "antnest.session.id": "session-id",
   });
-  root.references = [{ refType: "FOLLOWS_FROM", traceID: "source", spanID: "submission" }];
   add(run, "model", "HTTP POST model", "agent-acp-service", "run", { "span.kind": "client" });
   add(run, "mcp", "HTTP POST antnest-runtime", "agent-acp-service", "run", {
     "span.kind": "client",
@@ -105,14 +104,16 @@ function fixture() {
     "db.system.name": "postgresql",
     "db.operation.name": "insert",
   });
-  return { source, run };
+  run.spans.push(...source.spans);
+  Object.assign(run.processes, source.processes);
+  return { source: run, run };
 }
-test("execution proves a linked Run, model call, Runtime request and ACP persistence without Controller", () => {
+test("execution proves a descendant Run, model call, Runtime request and ACP persistence without Controller", () => {
   assert.equal(inspectExecutionBoundary(fixture()).run_id, "run-id");
 });
 test("HTTP and WebSocket prompts use the RPC method and exact ancestry, not a hardcoded span title", () => {
   const value = fixture();
-  value.source.spans[1].operationName = "HTTP POST /v1/acp";
+  value.source.spans.find((span) => span.spanID === "prompt").operationName = "HTTP POST /v1/acp";
   assert.equal(inspectExecutionBoundary(value).prompt_span_id, "prompt");
 });
 test("topology diagnostics do not remove the strict warning failure or alter the original trace", () => {
@@ -146,7 +147,7 @@ for (const [name, change] of [
   [
     "valid prompt from another Session",
     ({ source }) => {
-      source.spans[1].tags[0].value = "another-session";
+      source.spans.find((span) => span.spanID === "prompt").tags[0].value = "another-session";
     },
   ],
   [
@@ -171,13 +172,13 @@ for (const [name, change] of [
   [
     "missing persistence",
     ({ run }) => {
-      run.spans.pop();
+      run.spans.splice(4, 1);
     },
   ],
   [
     "database read alone instead of execution persistence",
     ({ run }) => {
-      run.spans.at(-1).tags[1].value = "select";
+      run.spans[4].tags[1].value = "select";
     },
   ],
   [

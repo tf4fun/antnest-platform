@@ -27,7 +27,9 @@ export function ToolActivity({ activity }: { activity: ToolActivityModel }) {
       </summary>
       <div className="tool-detail">
         <p>{activity.summary}</p>
-        {activity.detail ? <pre><code>{activity.detail}</code></pre> : null}
+        {activity.input ? <><h4>Input</h4><pre><code>{activity.input}</code></pre></> : null}
+        {activity.output ? <><h4>Output</h4><pre><code>{activity.output}</code></pre></> : null}
+        {!activity.output && activity.detail && activity.detail !== activity.input ? <pre><code>{activity.detail}</code></pre> : null}
       </div>
     </details>
   );

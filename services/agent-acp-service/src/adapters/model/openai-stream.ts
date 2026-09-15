@@ -36,7 +36,7 @@ const chunkSchema = z.object({
 
 class CompletionAssembly {
   private content = "";
-  private thought = "";
+  private thought: string | undefined;
   private refusal = false;
   private size = 0;
   private finishReason: string | undefined;
@@ -67,9 +67,10 @@ class CompletionAssembly {
     if (this.finishReason !== undefined)
       throw invalidResponse("Model stream continued after its finish reason");
     const updates: ModelDelta[] = [];
-    if (choice.delta.reasoning_content) {
-      this.thought += choice.delta.reasoning_content;
-      updates.push({ kind: "thought", text: choice.delta.reasoning_content });
+    if (choice.delta.reasoning_content !== undefined) {
+      this.thought = (this.thought ?? "") + (choice.delta.reasoning_content ?? "");
+      if (choice.delta.reasoning_content)
+        updates.push({ kind: "thought", text: choice.delta.reasoning_content });
     }
     const text = (choice.delta.content ?? "") + (choice.delta.refusal ?? "");
     this.refusal ||= Boolean(choice.delta.refusal);
@@ -96,7 +97,7 @@ class CompletionAssembly {
           message: {
             role: "assistant",
             content: this.content,
-            reasoning_content: this.thought,
+            ...(this.thought === undefined ? {} : { reasoning_content: this.thought }),
             ...(this.refusal ? { refusal: this.content } : {}),
             // A length/refusal finish must not promote partial arguments into executable calls.
             tool_calls:

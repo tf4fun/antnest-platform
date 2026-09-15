@@ -1,4 +1,5 @@
-import { Bot, Check, LogOut, MessageSquareText, PanelLeftClose, Plus, Settings, X } from "lucide-react";
+import { Bot, Check, ChevronLeft, LogOut, MessageSquareText, PanelLeftClose, Plus, Search, Settings, X } from "lucide-react";
+import { useState } from "react";
 import type { AgentSummary, Conversation, Principal } from "../lib/types";
 import { conversationsForAgent, relativeTime } from "../lib/presentation";
 import { Brand } from "./Brand";
@@ -18,6 +19,7 @@ type Props = {
   onSelectConversation: (id: string) => void;
   onNewConversation: () => void;
   onLogout: () => void;
+  onChooseAgent: () => void;
 };
 
 const statusLabel: Record<AgentSummary["status"], string> = {
@@ -28,8 +30,10 @@ const statusLabel: Record<AgentSummary["status"], string> = {
 };
 
 export function Sidebar(props: Props) {
+  const [query, setQuery] = useState("");
   const activeAgent = props.agents.find(({ id }) => id === props.activeAgentId) ?? props.agents[0];
-  const conversations = activeAgent ? conversationsForAgent(props.conversations, activeAgent.id) : [];
+  const conversations = (activeAgent ? conversationsForAgent(props.conversations, activeAgent.id) : [])
+    .filter(session => session.title.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
   const initials = props.principal.displayName.split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase();
 
   return (
@@ -42,7 +46,7 @@ export function Sidebar(props: Props) {
       </div>
 
       <section className="sidebar-section agent-section">
-        <span className="section-label">Agent</span>
+        <button className="back-to-agents" type="button" onClick={props.onChooseAgent}><ChevronLeft size={14} />All agents</button>
         <div className="agent-list">
           {props.agents.map((agent) => (
             <button
@@ -55,7 +59,7 @@ export function Sidebar(props: Props) {
               <span className="agent-option-icon"><Bot size={15} aria-hidden="true" /></span>
               <span className="agent-option-copy">
                 <strong>{agent.name}</strong>
-                <small>{statusLabel[agent.status]} · {agent.modelLabel}</small>
+                <small>{agent.id === props.activeAgentId ? statusLabel[agent.status] : agent.id}</small>
               </span>
               {agent.id === props.activeAgentId ? <Check size={14} aria-hidden="true" /> : <span className={`status-dot status-${agent.status}`} />}
             </button>
@@ -70,18 +74,20 @@ export function Sidebar(props: Props) {
             <Plus size={16} aria-hidden="true" />
           </button>
         </div>
+        <label className="search-field session-search"><Search size={14} aria-hidden="true" /><input type="search" placeholder="Search conversations" aria-label="Search conversations" value={query} onChange={event => setQuery(event.target.value)} /></label>
         <div className="conversation-list">
           {conversations.length ? conversations.map((conversation) => (
             <button
               className={`conversation-option ${conversation.id === props.activeConversationId ? "active" : ""}`}
               key={conversation.id}
               type="button"
+              aria-current={conversation.id === props.activeConversationId ? "page" : undefined}
               onClick={() => props.onSelectConversation(conversation.id)}
             >
               <MessageSquareText size={14} aria-hidden="true" />
               <span><strong>{conversation.title}</strong><small>{relativeTime(conversation.updatedAt)}</small></span>
             </button>
-          )) : <p className="sidebar-empty">No conversations yet</p>}
+          )) : <p className="sidebar-empty">{query ? "No matching conversations" : "No conversations yet"}</p>}
         </div>
       </section>
 

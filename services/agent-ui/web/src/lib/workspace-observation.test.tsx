@@ -6,7 +6,7 @@ import type { AgentUIClient } from "./client";
 import { previewWorkspace } from "./preview";
 
 afterEach(() => { cleanup(); vi.useRealTimers(); });
-const ready: WorkspaceState = { agent_id: "a1", availability: "ready", access_allowed: true, agent_revision: 1, active_session_id: null };
+const ready: WorkspaceState = { agent_id: "a1", availability: "ready", access_allowed: true, configuration_revision: "a".repeat(64), unavailable_reason: null, active_session_id: null };
 
 function fixture() {
   const listeners: StateListener[] = [];
@@ -110,7 +110,7 @@ test("observation without an Agent is inert and access-loss snapshot does not re
   expect(view.result.current.state).toBeUndefined();
   expect(client.watchState).not.toHaveBeenCalled();
   const f = fixture();
-  act(() => f.listeners[0]!.onState({ ...ready, access_allowed: false, availability: "offline" }));
+  act(() => f.listeners[0]!.onState({ ...ready, access_allowed: false, availability: "offline", configuration_revision: null, unavailable_reason: "access_denied" }));
   await act(async () => { await vi.advanceTimersByTimeAsync(60000); });
   expect(f.result.current.state?.access_allowed).toBe(false);
   expect(f.client.loadWorkspace).not.toHaveBeenCalled();

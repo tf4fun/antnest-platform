@@ -12,7 +12,8 @@
     "typecheck": "tsc -b --pretty false",
     "test": "npm run test:unit && npm run test:components",
     "test:unit": "node --test --experimental-strip-types src/lib/*.test.ts",
-    "test:components": "vitest run --config vitest.config.ts"
+    "test:components": "vitest run --config vitest.config.ts",
+    "test:browser": "node ../tests/workspace-browser.mjs"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^1.4.0",
@@ -24,6 +25,7 @@
     "zod": "^4.5.4"
   },
   "devDependencies": {
+    "playwright": "1.62.1",
     "@testing-library/react": "^16.3.3",
     "jsdom": "^30.0.1",
     "vitest": "^4.1.11",

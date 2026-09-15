@@ -7,6 +7,7 @@ import {
   CircleDot,
   ClipboardList,
   LoaderCircle,
+  MessageSquareText,
   Pause,
   Play,
   Plus,
@@ -35,6 +36,7 @@ import {
   Section,
 } from "../components/page";
 import { Badge } from "../components/ui/badge";
+import { agentWorkspacePath } from "../lib/session-destination";
 import { ManagedMCPSummary } from "../components/managed-mcp";
 import { ModelRates } from "../components/model-pricing";
 import { Button } from "../components/ui/button";
@@ -929,9 +931,18 @@ function AgentDetail({ agentID, networkScope }: { agentID: string; networkScope?
           <ArrowLeft className="h-4 w-4" />
           Back to Agents
         </Button>
-        <Button asChild size="sm" variant="ghost">
-          <a href={`#audits?agent_id=${encodeURIComponent(agentID)}`}><ClipboardList className="h-4 w-4" />Execution history</a>
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          {!actions.retained && (
+            <Button asChild size="sm" variant="secondary">
+              <a href={agentWorkspacePath(agentID)} target="_blank" rel="noopener noreferrer">
+                <MessageSquareText className="h-4 w-4" />Open chat
+              </a>
+            </Button>
+          )}
+          <Button asChild size="sm" variant="ghost">
+            <a href={`#audits?agent_id=${encodeURIComponent(agentID)}`}><ClipboardList className="h-4 w-4" />Execution history</a>
+          </Button>
+        </div>
       </div>
       <PageHeader
         eyebrow="Agent"

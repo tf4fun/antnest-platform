@@ -58,3 +58,55 @@ files are required. Use the browser's normal login and attachment picker.
    uploads. EOF, interruption or the 30-minute deadline also trigger cleanup,
    but are not passing acceptance. Browser observations are recorded separately;
    the runner does not assert screenshots or a complete C4 milestone.
+
+## Real Provider Development Acceptance
+
+The real-browser profile also queries Jaeger after a six-second export wait.
+`chat-trace.mjs` checks each prompt's Gateway SERVER -> Gateway CLIENT -> ACP
+SERVER -> Run -> model/Runtime ancestry, rejects duplicate/missing parents,
+warnings and error spans, and verifies that content capture and credentials are
+absent. Two tool prompts must contain actual Runtime `tools/call` SERVER spans.
+Run `node --test scripts/workspace-closeout/chat-trace.test.mjs` for the reusable
+positive and negative trace fixtures. This profile requires RPC capture disabled;
+the `--jaeger` option defaults to `http://127.0.0.1:16686`.
+
+`development-browser.mjs` exercises an already-running, disposable development
+instance through the real Console and Agent UI. It does not mock ACP, the model,
+or the Runtime, and deliberately retains the created data for human review.
+
+From the platform repository root:
+
+```sh
+node scripts/workspace-closeout/development-browser.mjs --confirm-development
+```
+
+Prerequisites: the Stage 3 stack at `http://127.0.0.1:8090`, a locally available
+`antnest/antnest-runtime:local` image, bootstrap credentials in `.env`, and
+`DEEPSEEK_API_KEY` in `../.secret`. Install the Agent UI web dependencies and
+Playwright Chromium first. The script accepts `--gateway`, `--env-file` and
+`--secret-file`; the target must be localhost. Real model calls incur usage.
+
+The default flow requires empty provider, model, template and Agent inventories.
+It logs in, connects the built-in DeepSeek Flash model, creates a template and
+Agent, waits for actual Runtime availability, follows Console's Open chat link,
+sends a greeting, writes/reads `/workspace/acceptance-note.txt`, reloads the
+conversation, and calls the read tool again. It also checks collapsed tool
+activity, mobile overflow and the explicit Agent chooser.
+
+To retry only chat acceptance without duplicating resources:
+
+```sh
+node scripts/workspace-closeout/development-browser.mjs --confirm-development --agent agent_REPLACE_ME
+```
+
+This mode creates a new Session on the existing Agent. It overwrites only the
+synthetic `/workspace/acceptance-note.txt` file. It does not prove blank-instance
+initialization again. Never run it against business data.
+
+Final metrics and credential-free chat screenshots replace the previous files
+under `.cache/development-acceptance/`. Scripts themselves live here, not in the
+cache. Browser processes close on success or failure. The stack and acceptance
+data remain; use the Agent lifecycle API for their eventual removal.
+
+The deterministic fixture suites and `browser-run.mjs` have separate scopes.
+Passing those fixtures alone is not evidence of a real external model response.

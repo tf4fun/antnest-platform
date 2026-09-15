@@ -6,19 +6,14 @@ import { PostgresKernel } from "../../../src/adapters/postgres/kernel.js";
 import type { TelemetryAttributes, TelemetryPort } from "../../../src/ports/telemetry.js";
 
 describe("PostgresKernel telemetry", () => {
-  it("observes a query without recording SQL text or bind values", async () => {
+  it("counts a query without duplicating driver spans or recording bind values", async () => {
     const query = vi.fn(() => Promise.resolve({ rows: [], rowCount: 0 }));
     const telemetry = recordedTelemetry();
     const kernel = new PostgresKernel({ query } as unknown as Pool, telemetry.port);
 
     await kernel.query("SELECT secret FROM private_table WHERE token = $1", ["hidden"]);
 
-    expect(telemetry.spans).toEqual([
-      {
-        name: "postgres.query",
-        attributes: { "db.system.name": "postgresql", "db.operation.name": "select" },
-      },
-    ]);
+    expect(telemetry.spans).toEqual([]);
     expect(telemetry.counts).toContainEqual({
       name: "antnest.acp.repository.requests",
       attributes: { operation: "select", result: "ok" },

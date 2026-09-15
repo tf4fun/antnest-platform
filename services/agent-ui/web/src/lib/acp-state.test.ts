@@ -83,6 +83,8 @@ test("ACP Tool updates merge into one collapsed audit item", () => {
     status: "completed",
     summary: "Completed",
     detail: "Read 42 lines",
+    input: '{\n  "path": "README.md"\n}',
+    output: "Read 42 lines",
   });
 });
 

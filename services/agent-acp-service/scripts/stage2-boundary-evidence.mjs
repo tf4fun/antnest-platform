@@ -54,40 +54,34 @@ export function inspectTemporalHistory(history, agentId) {
 
 export function inspectExecutionBoundary({ source, run }) {
   const tree = traceTopology(run);
-  const sourceTree = traceTopology(source);
+  traceTopology(source);
   assertNoCredentials(run);
   assertNoCredentials(source);
-  assert(
-    run.spans.every(
-      (span) => !["agent-controller", "identity-service"].includes(tree.service(span)),
-    ),
-    "execution must not depend on Controller or Identity",
-  );
   const roots = run.spans.filter((span) => span.operationName === "agent.run");
-  assert.equal(roots.length, 1, "exactly one Run root required");
+  assert.equal(roots.length, 1, "exactly one Run required");
   const [root] = roots;
-  assert.equal(tree.parent(root), undefined);
+  assert.equal(source.traceID, run.traceID, "execution must retain its submitting trace");
   assert(
     tag(root, "antnest.run.id") && tag(root, "antnest.session.id"),
     "Run and Session correlation required",
   );
-  const sourceLink = root.references?.find(
-    (ref) => ref.refType === "FOLLOWS_FROM" && ref.traceID === source.traceID,
-  );
-  const submitted = sourceTree.spans.get(sourceLink?.spanID);
-  assert(submitted, "Run submission link missing");
-  const prompt = sourceTree
-    .chain(submitted)
+  const prompt = tree
+    .chain(root)
     .find(
       (span) =>
-        tag(span, "rpc.method") === "session/prompt" &&
-        sourceTree.service(span) === "agent-acp-service",
+        tag(span, "rpc.method") === "session/prompt" && tree.service(span) === "agent-acp-service",
     );
   assert(
     prompt && tag(prompt, "antnest.session.id") === tag(root, "antnest.session.id"),
-    "Run must link to exact ACP prompt",
+    "Run must descend from exact ACP prompt",
   );
   const withinRun = run.spans.filter((span) => tree.chain(span).includes(root));
+  assert(
+    withinRun.every(
+      (span) => !["agent-controller", "identity-service"].includes(tree.service(span)),
+    ),
+    "execution must not depend on Controller or Identity",
+  );
   assert(
     withinRun.some(
       (span) => span.operationName === "HTTP POST model" && tag(span, "span.kind") === "client",
@@ -211,8 +205,11 @@ export function inspectGatewayConnection({ connection, prompt }) {
     (ref) => ref.refType === "FOLLOWS_FROM" && ref.traceID === connection.traceID,
   );
   assert(link, "ACP message has no connection link");
-  const receiver = tree.spans.get(link.spanID);
-  assert.equal(tree.service(receiver), "agent-acp-service");
+  const receivers = connection.spans.filter(
+    (span) => tree.service(span) === "agent-acp-service" && tag(span, "span.kind") === "server",
+  );
+  assert.equal(receivers.length, 1, "one ACP connection receiver required");
+  const receiver = receivers[0];
   assert.equal(tag(receiver, "span.kind"), "server");
   assert.equal(tag(receiver, "http.response.status_code"), 101);
   const client = tree.parent(receiver);
@@ -221,5 +218,9 @@ export function inspectGatewayConnection({ connection, prompt }) {
   const gateway = tree.chain(client).find((span) => tag(span, "span.kind") === "server");
   assert.equal(tree.service(gateway), "edge-gateway");
   assert.equal(tag(gateway, "http.response.status_code"), 101);
+  assert(
+    [receiver.spanID, gateway.spanID].includes(link.spanID),
+    "message must link to a receiving connection span",
+  );
   return { trace_id: connection.traceID, spans: connection.spans.length };
 }

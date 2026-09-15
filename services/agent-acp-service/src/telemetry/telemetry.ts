@@ -2,14 +2,13 @@ import {
   context,
   isSpanContextValid,
   metrics,
-  ROOT_CONTEXT,
   trace,
   type Counter,
   type Histogram,
 } from "@opentelemetry/api";
 import { OTLPMetricExporter } from "@opentelemetry/exporter-metrics-otlp-http";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
-import { core, node, NodeSDK, resources } from "@opentelemetry/sdk-node";
+import { core, node, NodeSDK, resources, tracing } from "@opentelemetry/sdk-node";
 import { hostname } from "node:os";
 import {
   boundaryConfig,
@@ -18,6 +17,7 @@ import {
   safeError,
 } from "./diagnostics.js";
 import { PeriodicExportingMetricReader } from "@opentelemetry/sdk-metrics";
+import { createPostgresInstrumentation, PostgresSpanNames } from "./postgres.js";
 
 import type { AgentAcpConfig } from "../config.js";
 import type { LogLevel, TelemetryAttributes, TelemetryPort } from "../ports/telemetry.js";
@@ -49,16 +49,10 @@ export class ServiceTelemetry implements TelemetryPort {
     operation: () => Promise<Result>,
   ): Promise<Result> {
     if (boundaryConfig().disabled) return operation();
-    const source = trace.getSpan(context.active())?.spanContext();
     return this.tracer.startActiveSpan(
       name,
-      {
-        attributes: cleanAttributes(attributes),
-        ...(name === "agent.run" && source !== undefined && isSpanContextValid(source)
-          ? { links: [{ context: source }] }
-          : {}),
-      },
-      name === "agent.run" ? ROOT_CONTEXT : context.active(),
+      { attributes: cleanAttributes(attributes) },
+      context.active(),
       async (span) => {
         try {
           const result = await operation();
@@ -142,6 +136,7 @@ export function startTelemetry(config: AgentAcpConfig["telemetry"]): Promise<Tel
 
   const sdk = new NodeSDK({
     serviceName: config.serviceName,
+    instrumentations: [createPostgresInstrumentation()],
     textMapPropagator: new core.W3CTraceContextPropagator(),
     resource: resources.resourceFromAttributes({
       "service.namespace": "antnest",
@@ -152,9 +147,14 @@ export function startTelemetry(config: AgentAcpConfig["telemetry"]): Promise<Tel
     ...(config.metricsEnabled ? {} : { metricReaders: [] }),
     ...(config.tracesEnabled
       ? {
-          traceExporter: new OTLPTraceExporter({
-            url: signalUrl(config.endpoint, "traces").href,
-          }),
+          spanProcessors: [
+            new PostgresSpanNames(),
+            new tracing.BatchSpanProcessor(
+              new OTLPTraceExporter({
+                url: signalUrl(config.endpoint, "traces").href,
+              }),
+            ),
+          ],
         }
       : {}),
     ...(config.metricsEnabled

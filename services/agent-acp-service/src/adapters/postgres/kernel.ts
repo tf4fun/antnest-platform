@@ -1,5 +1,6 @@
 import type { Pool, PoolClient, PoolConfig, QueryResult, QueryResultRow } from "pg";
 import { NOOP_TELEMETRY, type TelemetryPort } from "../../ports/telemetry.js";
+import { observePostgresTransaction } from "../../telemetry/postgres.js";
 
 export function postgresPoolOptions(connectionString: string, timeoutMs: number): PoolConfig {
   return {
@@ -25,36 +26,43 @@ export class PostgresKernel {
   }
 
   public transaction<T>(operation: (client: PoolClient) => Promise<T>): Promise<T> {
-    return this.observe("transaction", async () => {
-      const client = await this.pool.connect();
-      let releaseError: Error | undefined;
-      const connectionFailed = (error: Error) => {
-        releaseError ??= error;
-      };
-      client.on("error", connectionFailed);
-      try {
-        await client.query("BEGIN");
-        const result = await operation(client);
-        await client.query("COMMIT");
-        return result;
-      } catch (error) {
+    return this.observe("transaction", () =>
+      observePostgresTransaction(async (finish) => {
+        const client = await this.pool.connect();
+        let releaseError: Error | undefined;
+        let executing = false;
+        const connectionFailed = (error: Error) => {
+          releaseError ??= error;
+        };
+        client.on("error", connectionFailed);
         try {
-          await client.query("ROLLBACK");
-        } catch (rollbackError) {
-          const rollbackFailure = asError(rollbackError);
-          releaseError = rollbackFailure;
-          throw new AggregateError(
-            [asError(error), rollbackFailure],
-            "PostgreSQL transaction and rollback both failed",
-            { cause: rollbackError },
-          );
+          await client.query("BEGIN");
+          executing = true;
+          const result = await operation(client);
+          executing = false;
+          const committed = await client.query("COMMIT");
+          finish(committed.command === "ROLLBACK" ? "rolled_back" : "committed");
+          return result;
+        } catch (error) {
+          try {
+            await client.query("ROLLBACK");
+            if (executing) finish("rolled_back");
+          } catch (rollbackError) {
+            const rollbackFailure = asError(rollbackError);
+            releaseError = rollbackFailure;
+            throw new AggregateError(
+              [asError(error), rollbackFailure],
+              "PostgreSQL transaction and rollback both failed",
+              { cause: rollbackError },
+            );
+          }
+          throw error;
+        } finally {
+          client.removeListener("error", connectionFailed);
+          client.release(releaseError);
         }
-        throw error;
-      } finally {
-        client.removeListener("error", connectionFailed);
-        client.release(releaseError);
-      }
-    });
+      }),
+    );
   }
 
   public read<Row extends QueryResultRow>(
@@ -65,28 +73,25 @@ export class PostgresKernel {
     return this.observe(sqlOperation(text), () => readQuery<Row>(this.pool, text, values, signal));
   }
 
-  private observe<Result>(operation: string, execute: () => Promise<Result>): Promise<Result> {
+  private async observe<Result>(
+    operation: string,
+    execute: () => Promise<Result>,
+  ): Promise<Result> {
     const started = performance.now();
     let result = "error";
-    return this.telemetry
-      .span(
-        operation === "transaction" ? "postgres.transaction" : "postgres.query",
-        { "db.system.name": "postgresql", "db.operation.name": operation },
-        async () => {
-          const value = await execute();
-          result = "ok";
-          return value;
-        },
-      )
-      .finally(() => {
-        const attributes = { operation, result };
-        this.telemetry.count("antnest.acp.repository.requests", attributes);
-        this.telemetry.duration(
-          "antnest.acp.repository.duration",
-          performance.now() - started,
-          attributes,
-        );
-      });
+    try {
+      const value = await execute();
+      result = "ok";
+      return value;
+    } finally {
+      const attributes = { operation, result };
+      this.telemetry.count("antnest.acp.repository.requests", attributes);
+      this.telemetry.duration(
+        "antnest.acp.repository.duration",
+        performance.now() - started,
+        attributes,
+      );
+    }
   }
 }
 

@@ -91,6 +91,8 @@ type relayEnd struct {
 	reason string
 }
 
+func (end *relayEnd) Error() string { return end.reason }
+
 func relayMessages(
 	ctx context.Context, client, upstream *websocket.Conn, timeout time.Duration, limit int64,
 	permits chan struct{},
@@ -165,18 +167,30 @@ func relayMessage(
 	if err := source.SetReadDeadline(time.Time{}); err != nil {
 		return relayFailure(err)
 	}
-	if admit != nil {
-		if rejection := admit(ctx); rejection != nil {
-			return rejection
-		}
-	}
 	if ctx.Err() != nil {
 		return &relayEnd{websocket.CloseGoingAway, "connection_closed"}
 	}
-	if err := destination.SetWriteDeadline(time.Now().Add(timeout)); err != nil {
-		return relayFailure(err)
+	send := func(payload []byte) error {
+		if err := destination.SetWriteDeadline(time.Now().Add(timeout)); err != nil {
+			return err
+		}
+		return destination.WriteMessage(kind, payload)
 	}
-	if err := destination.WriteMessage(kind, message); err != nil {
+	if admit == nil {
+		err = send(message)
+	} else {
+		err = telemetry.RelayACPMessage(ctx, kind, message, func(ctx context.Context) error {
+			if rejection := admit(ctx); rejection != nil {
+				return rejection
+			}
+			return ctx.Err()
+		}, send)
+	}
+	if err != nil {
+		var rejection *relayEnd
+		if errors.As(err, &rejection) {
+			return rejection
+		}
 		return relayFailure(err)
 	}
 	return nil

@@ -16,10 +16,11 @@ let current: Conversation;
 let createdURLs: string[];
 let revoke: ReturnType<typeof vi.fn>;
 let stateListener: StateListener;
-const readyState: WorkspaceState = { agent_id: "native", availability: "ready", access_allowed: true, agent_revision: 1, active_session_id: null };
+const readyState: WorkspaceState = { agent_id: "native", availability: "ready", access_allowed: true, configuration_revision: "a".repeat(64), unavailable_reason: null, active_session_id: null };
 const native = { image: true, audio: true, embeddedContext: true };
 
 beforeEach(() => {
+  window.history.replaceState(null, "", "/workspace/?agent=native");
   const previewPrefix = crypto.randomUUID();
   createdURLs = [];
   revoke = vi.fn();
@@ -56,6 +57,84 @@ beforeEach(() => {
 });
 
 afterEach(() => { cleanup(); });
+
+test("the entry is an Agent chooser and opens no connection until selection", async () => {
+  const initial = await client.loadWorkspace();
+  client.loadWorkspace.mockResolvedValue({ ...initial, activeAgentId: "" });
+  window.history.replaceState(null, "", "/workspace/");
+  render(<App />);
+  await screen.findByRole("heading", { name: "Your agents" });
+  expect(client.connectAgent).not.toHaveBeenCalled();
+  expect(client.watchState).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: /text Agent/ }));
+  await waitFor(() => expect(client.connectAgent).toHaveBeenCalledTimes(1));
+  expect(new URLSearchParams(window.location.search).get("agent")).toBe("text");
+  expect(connection.createConversation).not.toHaveBeenCalled();
+});
+
+test("Session deep links survive catalog absence and never open a different conversation", async () => {
+  const initial = await client.loadWorkspace();
+  client.loadWorkspace.mockResolvedValue({ ...initial, activeConversationId: "missing-session" });
+  window.history.replaceState(null, "", "/workspace/?agent=native&session=missing-session");
+  render(<App />);
+  await waitFor(() => expect(connection.loadConversation).toHaveBeenCalledWith("missing-session"));
+  expect(new URLSearchParams(window.location.search).get("session")).toBe("missing-session");
+  expect(connection.createConversation).not.toHaveBeenCalled();
+});
+
+test("drafts remain separate in each Agent and Session memory projection", async () => {
+  await openWorkspace();
+  fireEvent.change(screen.getByRole("textbox", { name: "Message" }), { target: { value: "Native draft" } });
+  fireEvent.click(screen.getByRole("button", { name: /text Agent/ }));
+  await waitFor(() => expect(client.connectAgent).toHaveBeenCalledTimes(2));
+  expect((screen.getByRole("textbox", { name: "Message" }) as HTMLTextAreaElement).value).toBe("");
+  fireEvent.change(screen.getByRole("textbox", { name: "Message" }), { target: { value: "Text draft" } });
+  fireEvent.click(screen.getByRole("button", { name: /native Agent/ }));
+  await waitFor(() => expect(client.connectAgent).toHaveBeenCalledTimes(3));
+  expect((screen.getByRole("textbox", { name: "Message" }) as HTMLTextAreaElement).value).toBe("Native draft");
+  await act(async () => listener.onConversation(current));
+  fireEvent.click(screen.getByRole("button", { name: /Media review/ }));
+  expect((screen.getByRole("textbox", { name: "Message" }) as HTMLTextAreaElement).value).toBe("");
+});
+
+test("Back navigation returns to Agent selection without sending or cancelling work", async () => {
+  await openWorkspace();
+  const previous = connection;
+  await act(async () => {
+    window.history.replaceState(null, "", "/workspace/");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  });
+  await screen.findByRole("heading", { name: "Your agents" });
+  expect(previous.close).toHaveBeenCalled();
+  expect(previous.cancel).not.toHaveBeenCalled();
+  expect(previous.prompt).not.toHaveBeenCalled();
+});
+
+test("a pending new-Session prompt cannot take over a later Session selection", async () => {
+  await openWorkspace();
+  const other = { ...current, id: "other", title: "Another conversation" };
+  await act(async () => listener.onConversation(other));
+  let complete!: (session: Conversation) => void;
+  vi.mocked(connection.createConversation).mockImplementation(() => new Promise(resolve => { complete = resolve; }));
+  fireEvent.change(screen.getByRole("textbox", { name: "Message" }), { target: { value: "Initial request" } });
+  fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(connection.createConversation).toHaveBeenCalledTimes(1));
+  fireEvent.click(screen.getByRole("button", { name: /Another conversation/ }));
+  await act(async () => { listener.onConversation(current); complete(current); });
+  await waitFor(() => expect(connection.prompt).toHaveBeenCalledTimes(1));
+  expect(new URLSearchParams(window.location.search).get("session")).toBe("other");
+  await act(async () => finishPrompt());
+  expect(new URLSearchParams(window.location.search).get("session")).toBe("other");
+});
+
+test("copy failure is local feedback when Clipboard API is unavailable", async () => {
+  await openWorkspace();
+  Object.defineProperty(navigator, "clipboard", { configurable: true, value: undefined });
+  await act(async () => listener.onConversation(current));
+  fireEvent.click(screen.getByRole("button", { name: /Media review/ }));
+  fireEvent.click(await screen.findByRole("button", { name: "Copy message" }));
+  expect(await screen.findByRole("button", { name: "Copy failed. Try again" })).toBeTruthy();
+});
 
 async function openWorkspace() {
   const view = render(<App />);
@@ -103,11 +182,11 @@ test("selecting the current Agent keeps its connection and draft usable", async 
 
 test("changing Agent updates negotiated formats rather than retaining old capabilities", async () => {
   const { container } = await openWorkspace();
-  expect(container.querySelector("input")!.accept).toContain(".wav");
+  expect(container.querySelector('input[type="file"]')!.accept).toContain(".wav");
   fireEvent.click(screen.getByRole("button", { name: /text Agent/ }));
   await waitFor(() => expect(client.connectAgent).toHaveBeenCalledTimes(2));
-  expect(container.querySelector("input")!.accept).not.toContain(".wav");
-  expect(container.querySelector("input")!.accept).not.toContain(".pdf");
+  expect(container.querySelector('input[type="file"]')!.accept).not.toContain(".wav");
+  expect(container.querySelector('input[type="file"]')!.accept).not.toContain(".pdf");
   selectFile(container);
   expect(screen.getByRole("alert").textContent).toMatch(/does not accept audio/);
   expect(createdURLs).toEqual([]);
@@ -323,7 +402,7 @@ test("terminal access loss removes cached history, closes ACP and ignores stale 
   const stale = listener;
   await act(async () => listener.onConversation({ ...current, messages: [{ id: "private", role: "assistant", content: "Private answer", createdAt: "2026-01-01" }] }));
   fireEvent.click(screen.getByRole("button", { name: /Media review/ }));
-  await act(async () => stateListener.onState({ ...readyState, availability: "offline", access_allowed: false }));
+  await act(async () => stateListener.onState({ ...readyState, availability: "offline", access_allowed: false, configuration_revision: null, unavailable_reason: "access_denied" }));
   await waitFor(() => expect(previous.close).toHaveBeenCalled());
   expect(screen.queryByRole("button", { name: /native Agent/ })).toBeNull();
   await act(async () => stale.onConversation({ ...current, title: "Stale private chat" }));
@@ -340,6 +419,7 @@ test("bootstrap identity switch discards old history even when the Agent ID rema
   client.loadWorkspace.mockResolvedValue({ ...initial, principal: { ...initial.principal, userId: "new-user" } });
   fireEvent.click(screen.getByRole("button", { name: "Refresh workspace" }));
   await waitFor(() => expect(previous.close).toHaveBeenCalled());
+  fireEvent.click(await screen.findByRole("button", { name: /native Agent/ }));
   await waitFor(() => expect(client.connectAgent).toHaveBeenCalledTimes(2));
   await act(async () => stale.onConversation({ ...current, title: "Private old chat" }));
   expect(screen.queryByText("Private old chat")).toBeNull();
@@ -352,7 +432,7 @@ test("revision recovery waits for the current prompt and never resubmits it", as
   fireEvent.click(screen.getByRole("button", { name: "Send message" }));
   await waitFor(() => expect(connection.prompt).toHaveBeenCalledTimes(1));
   const previous = connection;
-  await act(async () => stateListener.onState({ ...readyState, agent_revision: 2 }));
+  await act(async () => stateListener.onState({ ...readyState, configuration_revision: "b".repeat(64), unavailable_reason: null }));
   expect(previous.close).not.toHaveBeenCalled();
   await act(async () => finishPrompt());
   await waitFor(() => expect(client.connectAgent).toHaveBeenCalledTimes(2));
@@ -367,9 +447,11 @@ test("revocation during prompt does not restore its private draft after a late f
   fireEvent.change(screen.getByRole("textbox", { name: "Message" }), { target: { value: "Private prompt" } });
   fireEvent.click(screen.getByRole("button", { name: "Send message" }));
   await waitFor(() => expect(connection.prompt).toHaveBeenCalledTimes(1));
-  await act(async () => stateListener.onState({ ...readyState, access_allowed: false, availability: "offline" }));
+  await act(async () => stateListener.onState({ ...readyState, access_allowed: false, availability: "offline", configuration_revision: null, unavailable_reason: "access_denied" }));
   await act(async () => reject(new Error("Old private failure")));
   expect(screen.queryByText("Old private failure")).toBeNull();
+  expect(screen.queryByRole("textbox", { name: "Message" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: /text Agent/ }));
   expect((screen.getByRole("textbox", { name: "Message" }) as HTMLTextAreaElement).value).toBe("");
 });
 

@@ -97,6 +97,15 @@ function postCalls(fetch: ReturnType<typeof vi.fn>) {
 }
 
 describe("Agent lifecycle command boundaries", () => {
+  it("opens the independent Agent workspace without issuing a lifecycle command", async () => {
+    const { fetch } = mockWorkflow("disable", async () => Response.json(operation("disable")));
+    render(<AgentsPage agentID="agent-1" />);
+    const link = await screen.findByRole("link", { name: "Open chat" });
+    expect(link.getAttribute("href")).toBe("/workspace/?agent=agent-1");
+    expect(link.getAttribute("target")).toBe("_blank");
+    expect(link.getAttribute("rel")).toContain("noopener");
+    expect(postCalls(fetch)).toHaveLength(0);
+  });
   it("starts a new deletion after recovering a terminal failure whose admission response was lost", async () => {
     let sent = 0;
     const next = { ...operation("delete", "running"), request_id: "request-next" };

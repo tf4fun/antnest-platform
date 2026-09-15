@@ -1,4 +1,5 @@
-import { AudioLines, Bot, FileText, Image as ImageIcon } from "lucide-react";
+import { AudioLines, Bot, Brain, Check, Copy, FileText, Image as ImageIcon, ListChecks } from "lucide-react";
+import { useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { AgentSummary, Attachment, Conversation as ConversationModel } from "../lib/types";
@@ -18,19 +19,30 @@ function AttachmentView({ attachment }: { attachment: Attachment }) {
   );
 }
 
+function CopyMessage({ text }: { text: string }) {
+  const [result, setResult] = useState<"idle" | "copied" | "failed">("idle");
+  return <button className="icon-button message-copy" type="button" title={result === "failed" ? "Copy failed. Try again" : result === "copied" ? "Copied" : "Copy message"}
+    aria-label={result === "failed" ? "Copy failed. Try again" : result === "copied" ? "Copied" : "Copy message"}
+    onClick={async () => {
+      try { await navigator.clipboard.writeText(text); setResult("copied"); }
+      catch { setResult("failed"); }
+    }}>
+    {result === "copied" ? <Check size={14} /> : <Copy size={14} />}
+  </button>;
+}
+
 export function Conversation({ conversation, agent }: { conversation: ConversationModel | undefined; agent: AgentSummary }) {
   if (!conversation || conversation.messages.length === 0) {
     return (
       <div className="empty-thread">
         <span className="empty-thread-mark"><Bot size={22} aria-hidden="true" /></span>
         <h2>Start with {agent.name}</h2>
-        <p>Ask a question, share a file, or continue work from another conversation.</p>
       </div>
     );
   }
 
   return (
-    <div className="conversation" aria-live="polite">
+    <div className="conversation">
       {conversation.messages.map((message) => (
         <article className={`message message-${message.role}`} key={message.id}>
           {message.role === "assistant" ? (
@@ -54,13 +66,22 @@ export function Conversation({ conversation, agent }: { conversation: Conversati
               </div>
             ) : null}
             {message.content ? (
-              <div className="message-content">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
-              </div>
+              message.presentation === "thought" ? <details className="thought-process"><summary><Brain size={14} />Thinking</summary>
+                <div className="message-content"><ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown></div>
+              </details> : <>
+                <div className="message-content"><ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown></div>
+                <CopyMessage text={message.content} />
+              </>
             ) : null}
           </div>
         </article>
       ))}
+      {conversation.plan?.length ? <details className="session-plan"><summary><ListChecks size={16} />Plan <span>{conversation.plan.filter(entry => entry.status === "completed").length}/{conversation.plan.length}</span></summary>
+        <ol>{conversation.plan.map((entry, index) => <li key={`${index}-${entry.content}`} data-status={entry.status}>
+          {entry.status === "completed" ? <Check size={14} aria-label="Completed" /> : <span className="plan-status" aria-label={entry.status === "in_progress" ? "In progress" : "Pending"} />}
+          <span>{entry.content}</span>
+        </li>)}</ol>
+      </details> : null}
     </div>
   );
 }

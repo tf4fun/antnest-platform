@@ -4,13 +4,14 @@
 
 Agent UI subscribes to the selected Agent through the authenticated Gateway
 `GET /api/app/agents/{agent_id}/state/watch`. The full snapshot contains only
-`agent_id`, `availability`, `access_allowed`, `agent_revision` and the current
-principal's nullable `active_session_id`. See the
+`agent_id`, `availability`, `access_allowed`, `configuration_revision`,
+`unavailable_reason` and the current principal's nullable `active_session_id`.
+ACP is the authority; Gateway only authenticates and relays observation. See the
 [Gateway contract](../../edge-gateway/docs/workspace-state.md).
 
 ACP remains the conversation protocol. The state subscription is read-only
 admission feedback, not a Run journal, permission source or message transport.
-Agent revision is not a Run sequence or replay cursor. There is no browser
+Configuration revision is an opaque hash, not a Run sequence or replay cursor. There is no browser
 database, storage of credentials, polling loop or prompt resubmission.
 
 ## Consumer Lifecycle

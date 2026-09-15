@@ -206,7 +206,10 @@ describe.skipIf(databaseUrl === undefined)("ACP official HTTP client with Postgr
         recovered.updates.filter((event) => event.sessionUpdate === "agent_message_chunk"),
       )
       .toHaveLength(2);
-    expect((await app.sessions.readOutput(sessionId, 0)).state).toMatchObject({ state: "idle" });
+    // Reply chunks precede the separate terminal-state commit.
+    await expect
+      .poll(async () => (await app.sessions.readOutput(sessionId, 0)).state)
+      .toMatchObject({ state: "idle" });
     expect(app.acceptRun).toHaveBeenCalledOnce();
     expect(app.model.complete).toHaveBeenCalledOnce();
   });

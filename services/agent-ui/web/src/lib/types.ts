@@ -27,10 +27,13 @@ export type ToolActivity = {
   status: ActivityStatus;
   summary: string;
   detail?: string;
+  input?: string;
+  output?: string;
   durationMs?: number;
 };
 
 export type Message = {
+  presentation?: "thought";
   id: string;
   role: "user" | "assistant" | "system";
   content: string;
@@ -40,6 +43,7 @@ export type Message = {
 };
 
 export type Conversation = {
+  plan?: { content: string; status: "pending" | "in_progress" | "completed"; priority: "low" | "medium" | "high" }[];
   historyState?: "loading" | "failed";
   usage?: SessionUsage;
   usageStale?: boolean;

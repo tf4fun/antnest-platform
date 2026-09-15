@@ -37,7 +37,18 @@ timeout.
 The public response carries `X-Antnest-Trace-ID`. In Jaeger, expect Gateway
 SERVER -> shared HTTP CLIENT -> downstream SERVER. Identity/Controller RPC
 clients no longer create a second CLIENT span. Reverse proxies share the same
-Transport; the WebSocket dial wrapper traces only its handshake, not frames.
+Transport; the WebSocket dial wrapper traces its handshake separately from messages.
+
+Each client ACP request or notification starts a bounded Gateway message trace,
+linked to the connection trace rather than parented by its long-lived HTTP span.
+The message SERVER includes session revalidation; its CLIENT covers forwarding
+to ACP, not waiting for the eventual protocol response. W3C context is injected
+into standard ACP `params._meta`; caller-supplied trace context is replaced.
+ACP dispatch, Run execution, model and Runtime calls inherit this context.
+Message spans record method and byte count only, never prompt or response content.
+Responses, binary frames and malformed envelopes remain unchanged; validation
+and execution semantics remain ACP responsibilities. No per-chunk spans or
+Gateway Run state is introduced.
 The HTTP CLIENT span ends when its response body reaches EOF, fails, or closes,
 not when response headers arrive. SSE is not pre-read or buffered for tracing.
 

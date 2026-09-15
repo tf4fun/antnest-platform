@@ -144,6 +144,7 @@ export type ModelMessage =
   | {
       role: "assistant";
       content: ContentBlock[];
+      thought?: ContentBlock[];
       toolCalls?: Array<{
         id: string;
         name: string;
