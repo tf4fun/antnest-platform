@@ -1,5 +1,16 @@
 # Provider Management
 
+Model discovery belongs entirely to Console. The internal, organization-scoped
+`GET /internal/provider-connections/{connection_id}/access?organization_id=...`
+returns the enabled connection and its current credential to a trusted service.
+It performs no writes, caching, or provider HTTP calls. This route is metadata-only
+for tracing and returns `Cache-Control: no-store`; it is never a browser API.
+The dedicated `ProviderAccessReader` reads the credential version and ciphertext
+in one database snapshot. Normal connection reads continue selecting metadata
+only. Integration tests cover initial decryption and post-rotation reads.
+Console owns discovery, candidate merging and explicit user selection. See
+[discovery flow](../../../docs/model-discovery.md).
+
 Provider creation and credential rotation are metadata-only HTTP boundaries,
 including validation and dependency failures. Even when development RPC content
 capture is enabled, their request and response DTOs are not serialized to spans.
@@ -14,7 +25,7 @@ names, context limits, prices, or defaults.
 
 ## Management Contract
 
-- `POST /internal/provider-connections`: create a DeepSeek connection, one API key,
+- `POST /internal/provider-connections`: create a DeepSeek or OpenRouter connection, one API key,
   and the explicitly submitted initial models in a single transaction.
 - `GET /internal/provider-connections?organization_id=...`: paginated connections.
 - `GET /internal/provider-connections/{id}?organization_id=...`: connection metadata.
@@ -32,7 +43,7 @@ edit returns the existing 409 `lifecycle_conflict` without a write; replay of a 
 still returns its original response. All model creation paths and updates validate
 nonblank display names of at most 200 Unicode code points.
 
-Connections currently support `provider_key=deepseek`, `credential.method=api_key`,
+Connections currently support `provider_key=deepseek|openrouter`, `credential.method=api_key`,
 and the OpenAI Chat Completions request protocol. Other providers and OAuth are
 rejected, not silently interpreted as API keys. A connection endpoint is immutable
 in this batch; moving to another endpoint means creating another connection.
@@ -40,7 +51,7 @@ in this batch; moving to another endpoint means creating another connection.
 Model commands reference `provider_connection_id`, never authentication material.
 The model's API ID is immutable; another API ID is a new model. It is unique inside
 its connection, not globally. Parameters have no endpoint: the connection owns it.
-Credentials are write-only, sealed with organization/connection/version as AEAD
+Credentials are write-only to browser clients, sealed with organization/connection/version as AEAD
 context. Rotation writes no model, template, Agent, or Runtime revision.
 
 Request IDs and fingerprints provide command replay; a reused ID with different
@@ -58,7 +69,13 @@ must be explicit. A successful response contains `resource_id`, `enabled` and
 model-parameter and template-revision counters. Metadata edits and credential
 rotation preserve the stored availability, including in the returned result.
 
-Disabling a Provider or Model returns 409 `resource_in_use` while referenced by:
+Provider disable is immediate operational intent and is permitted with references.
+It preserves Templates, Agents and Model enabled flags; ACP revokes that client's
+execution and resolves subsequent Runs using the configured fallback order.
+No Agent lifecycle operation or Runtime rebuild is initiated by this toggle.
+
+Disabling a Model still returns 409 `resource_in_use` while referenced by any
+default or fallback candidate in:
 
 - an enabled template's current head;
 - a non-deleted Agent's current configuration, even if execution is unavailable;
@@ -76,9 +93,10 @@ existing history GET requests remain available to the owning organization; read
 methods do not decide whether a template can be used for new derivation. Already
 registered targets can finish, but new create/rebuild targets cannot use a disabled
 template, including its historical revisions. Enabling an existing Agent reuses
-its configuration and checks Model/Provider availability without requiring the
+its configuration and checks Model validity without requiring the Provider or
 source template to be enabled. Editing a disabled template never enables it;
-explicit enablement checks its current Model and Provider again.
+explicit enablement checks its current Model again. A temporarily disabled
+Provider is a valid persisted dependency, not a missing reference.
 
 Failed rebuild/disable clears execution and Runtime bindings, not the committed
 current spec. Selecting last-successful or first-version history after such a
@@ -113,12 +131,22 @@ Agent configuration reads its own build-time snapshot; new Runs freeze current
 model parameters independently. Model edits that were never consumed do not have
 a history browsing or rollback API.
 
-Templates reference stable `model_profile_id`. Agent build snapshots retain that
+Templates reference stable `model_profile_id` and ordered
+`fallback_model_profile_ids` (at most 31 additional candidates). Every candidate
+must belong to the same organization and a different Provider connection. Their
+order survives persistence and is copied into the Agent's configuration; the
+Controller does not choose a fallback for an individual Session or Run.
+Agent build snapshots retain that
 identity plus the build-time revision/parameters for audit, without credentials.
 The new [execution publication boundary](execution-publication.md) sends current
 organization configuration to ACP. ACP owns Session model selection, local Run
 admission and logical Provider clients; credential rotation is not a per-Run
 Controller call. No secret is copied into an Agent build spec or Run audit snapshot.
+
+`accepting_runs` publishes lifecycle readiness, not default-model availability.
+ACP owns effective model selection and the no-available-model error. This permits
+session configuration/history access even when every Provider is disabled.
+See [the cross-service delivery contract](../../../docs/provider-failover.md).
 
 Delivery status: B1 ACP is locally implemented. B2 Controller publication and
 catalog components are wired into production composition and covered by

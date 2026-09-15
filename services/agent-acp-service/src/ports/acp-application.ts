@@ -85,6 +85,7 @@ export interface SessionEventPublisher {
 }
 
 export type SessionOutputSnapshot = {
+  configuration?: SessionConfigurationView;
   sequence: number;
   events: SessionEvent[];
   state: Extract<SessionEvent, { kind: "state" }>;

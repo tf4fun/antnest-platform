@@ -20,7 +20,9 @@ Reload restores Agent/Session selection from the URL and content from ACP.
 
 - page-local navigation, selection, composer, attachment, and disclosure state;
 - end-user presentation of ACP messages, attachments, and tool activity;
-- server-advertised Session model/mode selection and configuration notifications;
+- server-advertised provider-grouped model, thinking effort and mode selection;
+  settings appear automatically before the first message without an activation button;
+  configuration responses/notifications remain the only option authority;
 - current context usage and cumulative known Session cost from ACP notifications;
 - exact Tool approval requests, once/Session decisions, cancellation and reissued
   requests after reconnect; no approval is stored as a user message;
@@ -41,7 +43,8 @@ Reload restores Agent/Session selection from the URL and content from ACP.
 The browser talks only to Edge Gateway on the same origin. Edge Gateway must:
 
 1. resolve the browser session through Identity Service;
-2. return principal-scoped Agent discovery metadata, not execution state;
+2. return principal-scoped Agent discovery with Controller lifecycle, activation
+   and Runtime state, not ACP execution state;
 3. proxy ACP WebSockets while injecting trusted organization/principal/Agent
    identity on the server side; ACP performs execution admission;
 4. never return credentials or an internal Runtime endpoint to JavaScript.
@@ -95,10 +98,15 @@ npm run test:browser
 
 See [architecture](docs/architecture.md) and the platform
 [design language](../../docs/design-language.md).
+The service's [UI design rules](docs/ui-design.md) define shared controls,
+disclosures, responsive navigation, accessibility, and visual regression checks.
 
 `test:browser` runs Chromium and the production ACP SDK with deterministic
 Gateway/ACP wire fixtures. It checks selection, reload, streamed output, tool
-details, cross-Agent isolation, mobile navigation and browser storage. It closes
+details, cross-Agent isolation, mobile navigation and browser storage.
+Keyboard modality, touch targets, text contrast, approval rendering, long labels,
+and reduced-motion behavior are also asserted across desktop/mobile widths.
+The suite closes
 its server/browser afterward. It is not a live Provider or deployed-stack test.
 
 F06 uses the [deployed permission profile](../../scripts/acp-permissions/README.md).

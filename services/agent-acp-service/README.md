@@ -76,7 +76,9 @@ LLM read-only judge for unannotated platform Tools. Uncertain judgments ask the
 user; judgments share the Run budget and are never published as chat messages.
 The deployed profile passed 26 v1/v2 scenarios with actual Runtime effects and
 causal Jaeger validation. Agent UI supports the standard approval interaction
-and Session model/mode selection.
+and Session model/mode selection. [Session model selection](docs/session-model-selection.md)
+adds provider-grouped choices and capability-driven thinking effort, persisted
+per Session and applied to the actual model request.
 See [Tool permissions](docs/tool-permissions.md). F07 is deferred pending official
 MCP SDK support. F08 provides a registry-backed `/help` command (`/帮助` alias),
 standard command notifications and durable replies without calling a model or

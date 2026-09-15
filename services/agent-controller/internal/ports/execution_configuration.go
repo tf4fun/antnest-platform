@@ -69,22 +69,23 @@ type ExecutionRuntime struct {
 }
 
 type ExecutionAgent struct {
-	AgentID               string               `json:"agent_id"`
-	PrincipalIDs          []string             `json:"principal_ids"`
-	AccessRevision        string               `json:"access_revision"`
-	AcceptingRuns         bool                 `json:"accepting_runs"`
-	UnavailableReason     *string              `json:"unavailable_reason"`
-	OperationID           *string              `json:"operation_id"`
-	DefaultModelProfileID string               `json:"default_model_profile_id"`
-	DefaultAuthorization  domain.Authorization `json:"default_authorization"`
-	AuthorizationRevision int64                `json:"authorization_revision"`
-	AgentSpecRevision     *string              `json:"agent_spec_revision"`
-	ExecutionRevision     *string              `json:"execution_revision"`
-	SystemPrompt          string               `json:"system_prompt"`
-	ContextPolicyVersion  string               `json:"context_policy_version"`
-	SkillInstructions     []ExecutionSkill     `json:"skill_instructions"`
-	MaxModelRequests      int                  `json:"max_model_requests"`
-	Runtime               *ExecutionRuntime    `json:"runtime"`
+	AgentID                 string               `json:"agent_id"`
+	PrincipalIDs            []string             `json:"principal_ids"`
+	AccessRevision          string               `json:"access_revision"`
+	AcceptingRuns           bool                 `json:"accepting_runs"`
+	UnavailableReason       *string              `json:"unavailable_reason"`
+	OperationID             *string              `json:"operation_id"`
+	DefaultModelProfileID   string               `json:"default_model_profile_id"`
+	FallbackModelProfileIDs []string             `json:"fallback_model_profile_ids,omitempty"`
+	DefaultAuthorization    domain.Authorization `json:"default_authorization"`
+	AuthorizationRevision   int64                `json:"authorization_revision"`
+	AgentSpecRevision       *string              `json:"agent_spec_revision"`
+	ExecutionRevision       *string              `json:"execution_revision"`
+	SystemPrompt            string               `json:"system_prompt"`
+	ContextPolicyVersion    string               `json:"context_policy_version"`
+	SkillInstructions       []ExecutionSkill     `json:"skill_instructions"`
+	MaxModelRequests        int                  `json:"max_model_requests"`
+	Runtime                 *ExecutionRuntime    `json:"runtime"`
 }
 
 type ExecutionSkill struct {

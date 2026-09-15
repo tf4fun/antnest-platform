@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { DomainError } from "../domain/errors.js";
+import { executionConfigurationCatalog } from "../domain/execution-configuration.js";
 import type {
   AgentConfiguration,
   ExecutionIdentity,
@@ -175,7 +176,9 @@ function stateView(
   slot: { busy: boolean; activeSessionId: string | null },
   protectedRuntime: boolean,
 ): AgentExecutionStateView {
-  const unavailable = !current.agent.accepting_runs;
+  const unavailable =
+    !current.agent.accepting_runs ||
+    executionConfigurationCatalog(current.configuration, current.agent).models.length === 0;
   const shared = {
     agent_id: current.agent.agent_id,
     access_allowed: true as const,

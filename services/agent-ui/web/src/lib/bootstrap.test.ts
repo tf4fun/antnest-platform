@@ -2,20 +2,96 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { workspaceFromBootstrap } from "./bootstrap.ts";
 
-const principal = { user_id: "user-1", organization_id: "org-1", administrator: false };
+const principal = {
+  user_id: "user-1",
+  organization_id: "org-1",
+  administrator: false,
+};
 
-test("accepts metadata-only discovery without inventing availability or selecting an Agent", () => {
-  const workspace = workspaceFromBootstrap({ principal, agents: [{ agent_id: "agent-1", name: "Research" }] });
+const management = {
+  lifecycle_state: "created",
+  activation_state: "enabled",
+  runtime_state: "available",
+};
+
+test("preserves management state without inventing execution availability or selecting an Agent", () => {
+  const workspace = workspaceFromBootstrap({
+    principal,
+    agents: [{ agent_id: "agent-1", name: "Research", ...management }],
+  });
   assert.equal(workspace.activeAgentId, "");
   assert.equal(workspace.activeConversationId, null);
   assert.equal(workspace.agents[0]?.status, "unknown");
+  assert.deepEqual(workspace.agents[0]?.managementState, {
+    lifecycle: "created",
+    activation: "enabled",
+    runtime: "available",
+  });
   assert.equal(workspace.principal.userId, "user-1");
   assert.equal("agent_access_subject" in workspace.agents[0]!, false);
 });
 
 test("rejects malformed and duplicate Agent discovery entries", () => {
-  for (const agents of [[{ agent_id: "", name: "Research" }], [{ agent_id: "a1", name: "" }],
-    [{ agent_id: "a1", name: "One" }, { agent_id: "a1", name: "Two" }]]) {
+  for (const agents of [
+    [{ agent_id: "", name: "Research", ...management }],
+    [{ agent_id: "a1", name: "", ...management }],
+    [
+      { agent_id: "a1", name: "One", ...management },
+      { agent_id: "a1", name: "Two", ...management },
+    ],
+  ]) {
     assert.throws(() => workspaceFromBootstrap({ principal, agents }));
+  }
+});
+
+test("keeps every authorized management state in discovery, including uncreated and disabled", () => {
+  for (const runtime of [
+    "unknown",
+    "waiting",
+    "available",
+    "unhealthy",
+    "exited",
+    "absent",
+  ]) {
+    const workspace = workspaceFromBootstrap({
+      principal,
+      agents: [
+        {
+          agent_id: "a1",
+          name: "Agent",
+          ...management,
+          activation_state: "disabled",
+          runtime_state: runtime,
+        },
+        {
+          agent_id: "a2",
+          name: "Pending",
+          lifecycle_state: "not_created",
+          runtime_state: "unknown",
+        },
+      ],
+    });
+    assert.equal(workspace.agents.length, 2);
+    assert.equal(workspace.agents[0]?.managementState.runtime, runtime);
+    assert.equal(workspace.agents[0]?.managementState.activation, "disabled");
+    assert.equal(workspace.agents[1]?.managementState.activation, undefined);
+  }
+});
+
+test("rejects missing, inconsistent and execution-only management state", () => {
+  for (const state of [
+    {},
+    { ...management, runtime_state: "busy" },
+    { ...management, lifecycle_state: "ready" },
+    { ...management, activation_state: undefined },
+    { ...management, activation_state: null },
+    { ...management, lifecycle_state: "not_created" },
+  ]) {
+    assert.throws(() =>
+      workspaceFromBootstrap({
+        principal,
+        agents: [{ agent_id: "a1", name: "Agent", ...state }],
+      }),
+    );
   }
 });

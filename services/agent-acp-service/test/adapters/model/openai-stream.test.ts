@@ -38,6 +38,29 @@ function chunk(delta: unknown, finish: string | null = null) {
 }
 
 describe("OpenAI streaming completions", () => {
+  it.each([
+    chunk({ content: "late" }, "stop"),
+    chunk(
+      { tool_calls: [{ index: 0, id: "late", function: { name: "bash", arguments: "{}" } }] },
+      "stop",
+    ),
+    chunk({}, "length"),
+  ])("rejects changed output or finish reasons in a usage tail: %j", async (tail) => {
+    const payload =
+      [
+        chunk({ content: "done" }, "stop"),
+        { ...tail, usage: { prompt_tokens: 7, completion_tokens: 3 } },
+      ]
+        .map((part) => `data: ${JSON.stringify(part)}\n\n`)
+        .join("") + "data: [DONE]\n\n";
+    const model = new OpenAICompatibleModel({
+      fetchFn: () =>
+        Promise.resolve(
+          new Response(payload, { headers: { "content-type": "text/event-stream" } }),
+        ),
+    });
+    await expect(model.complete(input())).rejects.toMatchObject({ code: "model_invalid_response" });
+  });
   it.each(["", null, undefined])(
     "keeps empty reasoning %s distinct from an absent field",
     async (reasoning) => {

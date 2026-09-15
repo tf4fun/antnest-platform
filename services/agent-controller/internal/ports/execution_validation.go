@@ -38,6 +38,14 @@ func (snapshot ExecutionSnapshot) Validate() error {
 		if agents[agent.AgentID] || !models[agent.DefaultModelProfileID] || !agent.valid() {
 			return ErrInvalidExecutionConfiguration
 		}
+		if domain.ValidateModelFallback(agent.DefaultModelProfileID, agent.FallbackModelProfileIDs) != nil {
+			return ErrInvalidExecutionConfiguration
+		}
+		for _, id := range agent.FallbackModelProfileIDs {
+			if !models[id] {
+				return ErrInvalidExecutionConfiguration
+			}
+		}
 		agents[agent.AgentID] = true
 	}
 	return nil

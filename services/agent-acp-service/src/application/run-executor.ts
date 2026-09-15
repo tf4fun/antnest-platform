@@ -112,7 +112,19 @@ export class RunExecutor implements RunExecutionPort {
       input.accepted.snapshot.providerConnectionId,
     );
     try {
-      return await this.runWithClient(input, client);
+      const result = await this.runWithClient(
+        { ...input, signal: AbortSignal.any([input.signal, client.signal]) },
+        client,
+      );
+      if (!client.signal.aborted) return result;
+      return result.toolEffectState === "unknown"
+        ? { ...result, errorClass: "provider_unavailable" }
+        : {
+            terminalClass: "failed",
+            executorState: "quiescent",
+            toolEffectState: result.toolEffectState,
+            errorClass: "provider_unavailable",
+          };
     } finally {
       client.release();
     }

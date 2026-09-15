@@ -12,6 +12,7 @@ export function configurationCatalog(): ConfigurationCatalog & { nextCursor: str
   const model = {
     modelProfileId: "profile-1",
     displayName: "Example model",
+    providerName: "DeepSeek",
     model: "example-model",
     contextWindow: 64000,
     maxOutputTokens: 4096,

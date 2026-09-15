@@ -2,6 +2,7 @@ package server
 
 import (
 	"net/http"
+	"reflect"
 	"testing"
 )
 
@@ -9,9 +10,10 @@ func TestTemplateCommandsForwardStableModelIdentity(t *testing.T) {
 	for _, path := range []string{"/api/admin/templates", "/api/admin/templates/template-1/revisions"} {
 		t.Run(path, func(t *testing.T) {
 			backend := newBackendStub()
-			backend.enqueue(http.StatusCreated, `{"template_id":"template-1","revision":2,"model_profile_id":"model-1"}`)
+			backend.enqueue(http.StatusCreated, `{"template_id":"template-1","revision":2,"model_profile_id":"model-1","fallback_model_profile_ids":["backup-2","backup-1"]}`)
 			response := requestAdmin(t, newTestHandler(t, backend), http.MethodPost, path, `{
 				"name":"Support","model_profile_id":"model-1","max_model_requests":32,
+				"fallback_model_profile_ids":["backup-2","backup-1"],
 				"runtime":{"image_ref":"runtime:local","resources":{"memory_bytes":1024,"pids_limit":128,"tmpfs_bytes":1024}}
 			}`)
 			if response.Code != http.StatusCreated {
@@ -21,6 +23,9 @@ func TestTemplateCommandsForwardStableModelIdentity(t *testing.T) {
 			decodeBytes(t, backend.singleCall(t).Body, &command)
 			decodeBytes(t, response.Body.Bytes(), &projection)
 			for _, payload := range []map[string]any{command, projection} {
+				if !reflect.DeepEqual(payload["fallback_model_profile_ids"], []any{"backup-2", "backup-1"}) {
+					t.Fatalf("fallback order lost: %v", payload)
+				}
 				if payload["model_profile_id"] != "model-1" {
 					t.Fatalf("stable reference lost: %v", payload)
 				}

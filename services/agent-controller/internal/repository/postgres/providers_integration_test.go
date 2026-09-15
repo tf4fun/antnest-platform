@@ -75,6 +75,39 @@ func TestProviderModelAndCredentialLifecyclesAreIndependent(t *testing.T) {
 	assertProviderModelIsolation(t, service, connection, selected)
 }
 
+func TestProviderAccessDecryptsCurrentStoredCredential(t *testing.T) {
+	repository := providerTestRepository(t)
+	box, err := credentials.NewSecretBox(make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := application.NewCatalogService(repository, box, providerTestClock{}, application.WithProviderCredentialReader(repository, box))
+	connection, err := service.CreateProviderConnection(t.Context(), providerTestInput("access-create", "org"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	access, err := service.ResolveProviderAccess(t.Context(), "org", connection.ConnectionID)
+	if err != nil || access.Credential.APIKey != "initial-secret" {
+		t.Fatalf("read stored access: %v", err)
+	}
+	rotated, err := service.RotateProviderCredential(t.Context(), application.RotateProviderCredentialInput{
+		RequestID: "access-rotate", OrganizationID: "org", ConnectionID: connection.ConnectionID,
+		ExpectedVersion: connection.CredentialVersion, Credential: application.ProviderCredentialInput{Method: "api_key", APIKey: "rotated-secret"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	access, err = service.ResolveProviderAccess(t.Context(), "org", connection.ConnectionID)
+	if err != nil || access.Credential.APIKey != "rotated-secret" || access.Connection.CredentialVersion != rotated.CredentialVersion {
+		t.Fatalf("read rotated access: %v", err)
+	}
+	public, err := repository.GetProviderConnection(t.Context(), "org", connection.ConnectionID)
+	if err != nil || len(public.SealedCredential.Ciphertext) > 0 {
+		t.Fatal("metadata read loaded a credential")
+	}
+	assertProviderCounts(t, repository, 1, 2)
+}
+
 func assertProviderModelIsolation(t *testing.T, service *application.CatalogService, connection application.ProviderConnectionView, model ports.ModelProfileRecord) {
 	t.Helper()
 	ctx := context.Background()

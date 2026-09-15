@@ -94,7 +94,8 @@ func (repository *Repository) ListWorkspaceAgents(
 	records := make([]ports.WorkspaceAgentRecord, 0, query.Limit)
 	for rows.Next() {
 		var record ports.WorkspaceAgentRecord
-		if err := rows.Scan(&record.AgentID, &record.Name, &record.CreatedAt); err != nil {
+		if err := rows.Scan(&record.AgentID, &record.Name, &record.CreatedAt,
+			&record.LifecycleState, &record.ActivationState, &record.RuntimeState); err != nil {
 			return nil, fmt.Errorf("scan workspace Agent projection: %w", err)
 		}
 		records = append(records, record)
@@ -120,7 +121,8 @@ func buildWorkspaceAgentQueryStatement(query ports.WorkspaceAgentQuery) (string,
 	}
 	arguments = append(arguments, query.Limit)
 	statement := fmt.Sprintf(`
-SELECT agent.id, agent.name, agent.created_at
+SELECT agent.id, agent.name, agent.created_at,
+       agent.lifecycle_state, agent.activation_state, agent.runtime_state
 FROM agent_controller.agents AS agent
 JOIN agent_controller.agent_access_bindings AS access
   ON access.agent_id = agent.id

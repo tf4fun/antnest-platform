@@ -7,7 +7,7 @@ type ProviderSupport struct {
 
 func SupportedProvider(key string) (ProviderSupport, bool) {
 	switch key {
-	case "deepseek":
+	case "deepseek", "openrouter":
 		return ProviderSupport{CredentialMethod: "api_key", RequestProtocol: "openai_chat_completions"}, true
 	default:
 		return ProviderSupport{}, false

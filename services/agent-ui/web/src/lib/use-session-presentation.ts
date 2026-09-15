@@ -22,6 +22,7 @@ export function useSessionPresentation(agentId: string, sessionId: string | null
     setSending: (value: boolean) => phase(value ? "running" : "idle", running?.[0] ?? key),
     setConfiguring: (value: boolean) => phase(value ? "configuring" : "idle"),
     restore: (sessionId: string | null, text: string, attachments: Attachment[], error?: string) => dispatch({ type: "restore", key: sessionKey(agentId, sessionId), text, attachments, error }),
+    move: (sessionId: string) => dispatch({ type: "move", key, target: sessionKey(agentId, sessionId) }),
     setError: (error?: string) => dispatch({ type: "error", key, error }),
     clear: () => dispatch({ type: "clear" }),
     disconnect: (agentId: string) => dispatch({ type: "disconnected", agentId }),

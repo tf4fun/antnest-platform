@@ -407,7 +407,7 @@ describe("execution directory", () => {
     },
   );
 
-  it("cannot reuse a draining connection identity for a different target after it was omitted", async () => {
+  it("revokes an omitted connection before accepting a fresh target with the same identifier", async () => {
     const { directory, clients, repository } = setup();
     await directory.apply(executionConfiguration());
     const held = clients.acquire("organization-1", "provider-1");
@@ -424,13 +424,10 @@ describe("execution directory", () => {
       changed.providers[0]!.base_url = "https://other-provider.example";
       changed.providers[0]!.credential_revision = "credential-3";
       changed.providers[0]!.credential.secret = "other-target-key";
-      await expect(directory.apply(changed)).rejects.toMatchObject({
-        code: "configuration_conflict",
-      });
-      expect(repository.records.get("organization-1")?.revision).toBe(2);
-      await expect(
-        directory.apply({ ...executionConfiguration(), revision: 3 }),
-      ).resolves.toHaveProperty("applied_revision", 3);
+      expect(held.signal.aborted).toBe(true);
+      await expect(directory.apply(changed)).resolves.toHaveProperty("applied_revision", 3);
+      expect(repository.records.get("organization-1")?.revision).toBe(3);
+      expect(held.signal.aborted).toBe(true);
     } finally {
       held.release();
     }

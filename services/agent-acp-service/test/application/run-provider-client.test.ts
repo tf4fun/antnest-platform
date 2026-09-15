@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { ProviderClients } from "../../src/application/provider-clients.js";
 import { RunExecutor, type RunExecutorDependencies } from "../../src/application/run-executor.js";
+import { OpenAICompatibleModel } from "../../src/adapters/model/openai-compatible.js";
 import type { RunExecutionInput } from "../../src/ports/acp-application.js";
 import {
   publicExecutionConfiguration,
@@ -46,7 +47,7 @@ function setup() {
     tools: [tool],
     runtimeWorkspace: "/workspace",
   });
-  const events: RunEventRepository = {
+  const events = {
     appendAgentMessage: vi.fn<RunEventRepository["appendAgentMessage"]>((input) =>
       Promise.resolve({ kind: "agent_message", messageId: input.id, content: input.content }),
     ),
@@ -76,7 +77,7 @@ function setup() {
     appendToolProgress: vi.fn(),
     appendRejectedToolCall: vi.fn(),
     interruptToolAttempts: vi.fn(),
-  };
+  } satisfies RunEventRepository;
   const finish = vi.fn<ExecutionRepository["finish"]>().mockResolvedValue();
   let sequence = 0;
   const executor = new RunExecutor({
@@ -109,10 +110,114 @@ function setup() {
     publish: vi.fn().mockResolvedValue(undefined),
     signal: new AbortController().signal,
   };
-  return { configuration, executor, providers, complete, build, call, finish, input };
+  return { configuration, executor, providers, complete, build, call, finish, input, events };
 }
 
 describe("Run logical Provider client", () => {
+  it.each(["disable", "cancel"])(
+    "retains already streamed usage exactly once on %s without replaying the request",
+    async (action) => {
+      const { configuration, executor, providers, complete, input, events, finish } = setup();
+      const source = new TransformStream<Uint8Array, Uint8Array>();
+      const writer = source.writable.getWriter();
+      const transport = new OpenAICompatibleModel({
+        fetchFn: () =>
+          Promise.resolve(
+            new Response(source.readable, {
+              headers: { "content-type": "text/event-stream" },
+            }),
+          ),
+      });
+      complete.mockImplementation((request) => transport.complete(request));
+      const stop = new AbortController();
+      input.signal = stop.signal;
+      const entered = Promise.withResolvers<void>();
+      vi.mocked(events.appendAgentMessage).mockImplementationOnce((event) => {
+        entered.resolve();
+        return Promise.resolve({
+          kind: "agent_message",
+          messageId: event.id,
+          content: event.content,
+        });
+      });
+      const running = executor.execute(input);
+      try {
+        await writer.write(
+          new TextEncoder().encode(
+            `data: ${JSON.stringify({
+              choices: [{ index: 0, delta: { content: "partial" }, finish_reason: null }],
+              usage: { prompt_tokens: 7, completion_tokens: 3, cost: 0.00001 },
+            })}\n\n`,
+          ),
+        );
+        await entered.promise;
+        if (action === "disable") {
+          configuration.providers[0] = { ...configuration.providers[0]!, enabled: false };
+          providers.apply(configuration);
+        } else {
+          stop.abort();
+        }
+        await expect(running).resolves.toMatchObject(
+          action === "disable"
+            ? { terminalClass: "failed", errorClass: "provider_unavailable" }
+            : { terminalClass: "cancelled" },
+        );
+        expect(events.appendUsage).toHaveBeenCalledOnce();
+        expect(events.appendUsage.mock.calls[0]?.[0]).toMatchObject({
+          runId: "run-1",
+          usage: {
+            inputTokens: 7,
+            outputTokens: 3,
+            cost: { amount: 0.00001, currency: "USD" },
+          },
+        });
+        expect(complete).toHaveBeenCalledOnce();
+        expect(finish).toHaveBeenCalledOnce();
+      } finally {
+        stop.abort();
+        await writer.abort().catch(() => undefined);
+        await running;
+      }
+    },
+  );
+  it("cancels a pending Tool on Provider disable without claiming its side effects were undone", async () => {
+    const { configuration, executor, providers, complete, call, input, finish } = setup();
+    complete.mockResolvedValueOnce({
+      kind: "tool_calls",
+      content: [],
+      calls: [{ id: "call-1", name: "read", arguments: {} }],
+      usage: { inputTokens: 2, outputTokens: 1 },
+    });
+    const entered = Promise.withResolvers<void>();
+    call.mockImplementationOnce(
+      (request) =>
+        new Promise((resolve) => {
+          entered.resolve();
+          request.signal.addEventListener(
+            "abort",
+            () =>
+              resolve({
+                content: [{ type: "text", text: "Tool interrupted; outcome unknown" }],
+                isError: true,
+                toolEffectState: "unknown",
+                runtimeCallStopped: true,
+              }),
+            { once: true },
+          );
+        }),
+    );
+    const running = executor.execute(input);
+    await entered.promise;
+    configuration.providers[0] = { ...configuration.providers[0]!, enabled: false };
+    providers.apply(configuration);
+    await expect(running).resolves.toMatchObject({
+      terminalClass: "unresolved",
+      toolEffectState: "unknown",
+      errorClass: "provider_unavailable",
+    });
+    expect(complete).toHaveBeenCalledTimes(1);
+    expect(finish).toHaveBeenCalledOnce();
+  });
   it("uses rotated authentication on the next model request of the same Run", async () => {
     const { configuration, executor, providers, complete, call, input, finish } = setup();
     complete.mockResolvedValueOnce({
@@ -147,7 +252,7 @@ describe("Run logical Provider client", () => {
     expect(JSON.stringify(finish.mock.calls)).not.toContain("rotated-test-key");
   });
 
-  it("retires after an actual holder finishes, without permitting new acquisition", async () => {
+  it("fails an actual holder immediately without permitting new acquisition", async () => {
     const { configuration, executor, providers, complete, build, input } = setup();
     build.mockImplementationOnce(() => {
       const next = structuredClone(configuration);
@@ -161,8 +266,11 @@ describe("Run logical Provider client", () => {
         runtimeWorkspace: "/workspace",
       });
     });
-    await expect(executor.execute(input)).resolves.toMatchObject({ terminalClass: "completed" });
-    expect(complete).toHaveBeenCalledOnce();
+    await expect(executor.execute(input)).resolves.toMatchObject({
+      terminalClass: "failed",
+      errorClass: "provider_unavailable",
+    });
+    expect(complete).not.toHaveBeenCalled();
     expect(() => providers.acquire("organization-1", "provider-1")).toThrow("unavailable");
   });
 

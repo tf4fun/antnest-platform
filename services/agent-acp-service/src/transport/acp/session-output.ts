@@ -13,6 +13,8 @@ type OutputInput = {
   connectionId: string;
   afterSequence?: number;
   initialState?: SessionOutputSnapshot["state"];
+  configurationInResponse?: boolean;
+  previousConfiguration?: string;
   read: (afterSequence: number | undefined) => Promise<SessionOutputSnapshot>;
   send: (event: SessionEvent) => Promise<void>;
   signal: AbortSignal;
@@ -42,6 +44,8 @@ export class SessionOutputStreams {
         current.useSender(input.send);
         await current.flush();
         const cursor = current.cursor;
+        const previousConfiguration = current.configurationFingerprint;
+        if (previousConfiguration !== undefined) input = { ...input, previousConfiguration };
         if (cursor !== undefined)
           input = { ...input, afterSequence: Math.max(input.afterSequence ?? 0, cursor) };
         current.close();
@@ -59,6 +63,12 @@ export class SessionOutputStreams {
   public invalidate(key: string): void {
     for (const subscription of this.subscriptions) {
       if (subscription.input.key === key) subscription.refresh();
+    }
+  }
+
+  public invalidateOrganization(organizationId: string): void {
+    for (const subscription of this.subscriptions) {
+      if (subscription.input.identity.organizationId === organizationId) subscription.refresh();
     }
   }
 
@@ -88,6 +98,9 @@ export class SessionOutputStreams {
 }
 
 class OutputSubscription {
+  public get configurationFingerprint(): string | undefined {
+    return this.configuration;
+  }
   public readonly prepared = Promise.withResolvers<void>();
   public get cursor(): number | undefined {
     return this.sequence;
@@ -96,6 +109,7 @@ class OutputSubscription {
   private readonly parentAborted = () => this.close();
   private sequence: number | undefined;
   private state: string | undefined;
+  private configuration: string | undefined;
   private dirty = false;
   private pending: Promise<void> | undefined;
   private first = true;
@@ -106,6 +120,7 @@ class OutputSubscription {
     private readonly remove: () => void,
   ) {
     this.send = input.send;
+    this.configuration = input.previousConfiguration;
     this.sequence = input.afterSequence;
     this.state = input.initialState === undefined ? undefined : JSON.stringify(input.initialState);
   }
@@ -158,8 +173,23 @@ class OutputSubscription {
       this.prepared.resolve();
       if (this.first && this.input.beforeFirst !== undefined)
         await this.bounded(this.input.beforeFirst);
+      const configurationInResponse = this.first && this.input.configurationInResponse === true;
       this.first = false;
-      for (const event of snapshot.events) await this.bounded(() => this.send(event));
+      for (const event of snapshot.events) {
+        if (event.kind === "configuration" && snapshot.configuration !== undefined) continue;
+        await this.bounded(() => this.send(event));
+      }
+      const configuration = JSON.stringify(snapshot.configuration);
+      if (
+        snapshot.configuration !== undefined &&
+        configuration !== this.configuration &&
+        !configurationInResponse
+      ) {
+        await this.bounded(() =>
+          this.send({ kind: "configuration", configuration: snapshot.configuration! }),
+        );
+      }
+      this.configuration = configuration;
       const state = JSON.stringify(snapshot.state);
       if (state !== this.state) await this.bounded(() => this.send(snapshot.state));
       this.sequence = snapshot.sequence;

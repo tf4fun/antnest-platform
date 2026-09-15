@@ -50,30 +50,16 @@ func (repository *Repository) advanceRuntimeExecutionChanges(ctx context.Context
 		if err != nil {
 			return err
 		}
-		changed, err := runtimeExecutionChanged(ctx, tx, previous, current)
-		if err != nil {
-			return err
-		}
-		if changed {
+		if runtimeExecutionChanged(previous, current) {
 			organizations = append(organizations, current.OrganizationID)
 		}
 	}
 	return repository.advanceExecutionOrganizations(ctx, tx, organizations)
 }
 
-func runtimeExecutionChanged(ctx context.Context, tx *databaseTransaction, before, after ports.AgentRecord) (bool, error) {
-	if before.ExecutionRevisionID != after.ExecutionRevisionID || before.RuntimeExecutionID != after.RuntimeExecutionID || before.RuntimeMCPEndpoint != after.RuntimeMCPEndpoint {
-		return true, nil
-	}
-	if before.ExecutionReady() == after.ExecutionReady() {
-		return false, nil
-	}
-	var modelAvailable bool
-	err := tx.QueryRow(ctx, `SELECT EXISTS (
-SELECT 1 FROM agent_controller.agent_spec_revisions s
-JOIN agent_controller.model_profiles m ON m.id=s.snapshot->>'model_profile_id' AND m.organization_id=$3
-JOIN agent_controller.provider_connections p ON p.id=m.provider_connection_id AND p.organization_id=m.organization_id
-WHERE s.id=$1 AND s.agent_id=$2 AND m.enabled AND p.enabled)`,
-		after.AgentSpecRevisionID, after.AgentID, after.OrganizationID).Scan(&modelAvailable)
-	return modelAvailable, err
+func runtimeExecutionChanged(before, after ports.AgentRecord) bool {
+	return before.ExecutionRevisionID != after.ExecutionRevisionID ||
+		before.RuntimeExecutionID != after.RuntimeExecutionID ||
+		before.RuntimeMCPEndpoint != after.RuntimeMCPEndpoint ||
+		before.ExecutionReady() != after.ExecutionReady()
 }

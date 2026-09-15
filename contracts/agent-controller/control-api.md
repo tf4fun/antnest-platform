@@ -1,7 +1,7 @@
 # Agent Controller Lifecycle And Management Contract
 
 > Status: Stage 2B implementation contract<br>
-> Revision: 28<br>
+> Revision: 29<br>
 > Transport: trusted internal JSON over HTTP<br>
 > Owner: Agent Controller
 
@@ -23,9 +23,9 @@ Controller no longer exposes `resolve-agent-access`, `get-session-configuration`
 configuration publisher and owns protocol authorization, execution and audit.
 These removed routes return 404; there is no compatibility switch or proxy.
 
-Workspace items now contain only agent_id/name. The Controller state get/watch
-endpoints are removed. Gateway and Console migration remains B3/B4; do not deploy
-this intermediate producer independently.
+Workspace items contain agent_id/name and management lifecycle_state,
+activation_state and runtime_state. Controller's former execution state get/watch
+endpoints remain removed; these management facts do not replace ACP observation.
 
 Agent lifecycle is `not_created | created | deleted`. A created Agent has
 confirmed `activation_state=enabled|disabled`; its `runtime_state` independently
@@ -84,8 +84,10 @@ Failures never become a successful null/zero/synchronized view.
 
 ## Workspace Metadata
 
-`POST /rpc/agent-controller/list-workspace-agents` returns agent_id/name items with
-a nullable next_cursor. It is scoped by organization, principal, active binding
+`POST /rpc/agent-controller/list-workspace-agents` returns agent_id/name and
+lifecycle_state/activation_state/runtime_state items with a nullable next_cursor.
+These fields come from the same Agent row; listing makes no ACP or Runtime calls.
+It is scoped by organization, principal, active binding
 and owner revocation watermark. Deleted desired state is excluded; ordinary
 disablement and Runtime unavailability do not remove authorized metadata.
 It contains no execution availability, active Session or opaque access subject.
@@ -93,7 +95,7 @@ It contains no execution availability, active Session or opaque access subject.
 Controller's former state get/watch endpoints return 404. ACP owns execution
 state and subscriptions; Controller's management event journal remains independent.
 See the [metadata boundary](../../services/agent-controller/docs/workspace-state.md).
-Consumers migrate in B3/B4U before full-stack deployment.
+Gateway and Agent UI consume revision 29 together; chat admission remains ACP-owned.
 
 ## Agent Network Policy
 
@@ -108,11 +110,13 @@ does not implement another transport authentication scheme.
 {
   "agent_id": "agent-1",
   "policy": {
-    "policy_id": "builtin/allow-all", "revision": 1, "resource_version": 3,
-    "spec": {"schema_version": 1, "action": "allow_all"},
+    "policy_id": "builtin/allow-all",
+    "revision": 1,
+    "resource_version": 3,
+    "spec": { "schema_version": 1, "action": "allow_all" },
     "digest": "sha256:..."
   },
-  "attachment": {"state": "open", "resource_version": 2}
+  "attachment": { "state": "open", "resource_version": 2 }
 }
 ```
 
@@ -127,16 +131,24 @@ baseline; it is not permission to access deployment control networks.
 
 ```json
 {
-  "request_id": "request-network-1", "organization_id": "org-1",
-  "actor_principal_id": "admin-1", "policy_id": "builtin/deny-all",
-  "revision": 1, "expected_resource_version": 3
+  "request_id": "request-network-1",
+  "organization_id": "org-1",
+  "actor_principal_id": "admin-1",
+  "policy_id": "builtin/deny-all",
+  "revision": 1,
+  "expected_resource_version": 3
 }
 ```
 
 Returns the Egress-confirmed assignment with HTTP 200:
 
 ```json
-{"agent_id":"agent-1","policy_id":"builtin/deny-all","revision":1,"resource_version":4}
+{
+  "agent_id": "agent-1",
+  "policy_id": "builtin/deny-all",
+  "revision": 1,
+  "resource_version": 4
+}
 ```
 
 The caller supplies a positive observed assignment version. `request_id`
@@ -175,7 +187,7 @@ Provider credential/model lifecycle separation is tracked in
 ## Provider Connections
 
 `POST /internal/provider-connections` accepts `request_id`, `organization_id`,
-`provider_key: "deepseek"`, `display_name`, `base_url`, a typed
+`provider_key: "deepseek" | "openrouter"`, `display_name`, `base_url`, a typed
 `credential: {method: "api_key", api_key: "..."}`, and `models` (an explicit
 array, possibly empty). Each initial model supplies `profile_key`,
 `display_name` and complete `model` parameters without `base_url`. The entire
@@ -235,7 +247,11 @@ An identical committed request replays its saved response, even after a later
 opposite transition. A no-op records its receipt without updating timestamps or
 execution revision. An uncommitted conflict records no receipt.
 
-Disabling a Provider or Model with live references returns 409 `resource_in_use`
+Provider disable is allowed with references and is synchronized to ACP for
+immediate client revocation. It preserves Agent/Template references; the next
+prompt follows the Agent's ordered fallback configuration. No Run replay occurs.
+
+Disabling a Model with live references returns 409 `resource_in_use`
 and `references`: ordered `{kind, resource_id, agent_id?, operation_id?}` entries
 for enabled Template heads, current non-deleted Agents and running lifecycle
 targets. At most 100 references are returned, with `references_truncated=true`
@@ -246,13 +262,19 @@ Model before registering a new target; prior application reads are insufficient.
 
 Disabling a Template only prevents new derivations. Existing Agents and already
 registered targets are unchanged. Revising a disabled Template does not re-enable
-it. Enabling a Template requires its current Model and Provider to be enabled in
+it. Enabling a Template requires its current Model to be enabled in
 the same organization; enabling a Model requires its Provider. A disabled
 Provider does not rewrite each Model's own flag. Template changes do not create
 an execution revision unless an actual Agent execution input changes.
 
 These are Controller-local management operations, not ACP Session controls or
-Provider workflows. Gateway/Console consumption is the later B3/B4 batch.
+Provider workflows. Gateway/Console forward them without owning fallback policy.
+
+Template create/revise accepts optional `fallback_model_profile_ids` (up to 31)
+in priority order after `model_profile_id`. References must belong to the same
+organization and use distinct Provider connections. Model records must be enabled;
+Provider availability is an independent operational state. The list is copied
+into Agent configuration during create/rebuild and published to ACP.
 
 `GET /internal/model-profiles/{model_profile_id}` returns the current head and
 requires its owning `organization_id`. Revision commands carry the same

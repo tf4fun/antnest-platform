@@ -2,12 +2,19 @@ export type AgentStatus = "ready" | "busy" | "offline" | "unknown";
 export type ConnectionStatus = "ready" | "connecting" | "offline";
 export type ActivityStatus = "running" | "completed" | "failed";
 
+export type AgentManagementState = {
+  lifecycle: "not_created" | "created" | "deleted";
+  activation?: "enabled" | "disabled";
+  runtime: "unknown" | "waiting" | "available" | "unhealthy" | "exited" | "absent";
+};
+
 export type AgentSummary = {
   id: string;
   name: string;
   description: string;
   modelLabel: string;
   status: AgentStatus;
+  managementState: AgentManagementState;
 };
 
 export type Attachment = {

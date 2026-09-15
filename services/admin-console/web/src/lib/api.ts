@@ -255,6 +255,9 @@ export const api = {
   rotateProviderCredential: (id: string, input: { expected_version: string; credential: ProviderCredential }) =>
     idempotentRequest<ProviderConnection>(`provider-credential:${id}`, `/api/admin/provider-connections/${encodeURIComponent(id)}/credentials`, input),
   modelCatalog: () => request<ModelCatalog>("/api/admin/model-catalog"),
+  discoverProviderModels: (id: string, signal?: AbortSignal) => request<import("./types").ModelDiscovery>(`/api/admin/provider-connections/${encodeURIComponent(id)}/models/discovery`, { signal }),
+  discoverDraftModels: (draft: import("./types").ProviderDiscoveryDraft, signal?: AbortSignal) =>
+    request<import("./types").ModelDiscovery>("/api/admin/provider-models/discovery", {method: "POST", body: JSON.stringify(draft), signal}),
   models: (options: CatalogPageOptions = {}) =>
     request<ModelProfileList>(catalogPagePath("/api/admin/model-profiles", options)),
   model: (modelProfileID: string, signal?: AbortSignal) =>
@@ -283,6 +286,7 @@ export const api = {
       `/api/admin/templates/${encodeURIComponent(templateID)}/revisions/${encodeURIComponent(String(revision))}`,
     ),
   createTemplate: (input: {
+    fallback_model_profile_ids?: string[];
     name: string;
     model_profile_id: string;
     system_prompt: string;
@@ -290,6 +294,7 @@ export const api = {
     runtime?: { image_ref?: string; mcp_servers?: ManagedMCPServer[] };
   }) => idempotentRequest<AgentTemplate>("create-template", "/api/admin/templates", input),
   reviseTemplate: (templateID: string, input: {
+    fallback_model_profile_ids?: string[];
     name: string;
     model_profile_id: string;
     system_prompt: string;

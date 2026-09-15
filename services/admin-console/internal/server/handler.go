@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"soft/antnest-platform/services/admin-console/internal/principal"
+	"soft/antnest-platform/services/admin-console/internal/providerdiscovery"
 	"soft/antnest-platform/services/admin-console/internal/telemetry"
 	"soft/antnest-platform/services/admin-console/internal/upstream"
 )
@@ -57,6 +58,7 @@ type Dependencies struct {
 }
 
 type handler struct {
+	modelLister            providerdiscovery.Lister
 	backend                Backend
 	assets                 fs.FS
 	fileServer             http.Handler
@@ -81,7 +83,8 @@ func NewHandler(config Config, dependencies Dependencies) (http.Handler, error) 
 		dependencies.StreamContext = context.Background()
 	}
 	h := &handler{
-		backend: dependencies.Backend, assets: dependencies.Assets,
+		modelLister: providerdiscovery.New(config.RequestTimeout, nil),
+		backend:     dependencies.Backend, assets: dependencies.Assets,
 		fileServer: http.FileServer(http.FS(dependencies.Assets)), logger: dependencies.Logger,
 		defaultRuntimeImageRef: strings.TrimSpace(config.DefaultRuntimeImageRef),
 		requestTimeout:         config.RequestTimeout,
@@ -561,11 +564,12 @@ func (h *handler) listTemplates(response http.ResponseWriter, request *http.Requ
 }
 
 type createTemplateInput struct {
-	Name             string       `json:"name"`
-	ModelProfileID   string       `json:"model_profile_id"`
-	SystemPrompt     string       `json:"system_prompt"`
-	MaxModelRequests int          `json:"max_model_requests,omitempty"`
-	Runtime          runtimeInput `json:"runtime,omitempty"`
+	FallbackModelProfileIDs []string     `json:"fallback_model_profile_ids,omitempty"`
+	Name                    string       `json:"name"`
+	ModelProfileID          string       `json:"model_profile_id"`
+	SystemPrompt            string       `json:"system_prompt"`
+	MaxModelRequests        int          `json:"max_model_requests,omitempty"`
+	Runtime                 runtimeInput `json:"runtime,omitempty"`
 }
 
 type runtimeInput struct {
@@ -607,8 +611,9 @@ func (h *handler) createTemplate(response http.ResponseWriter, request *http.Req
 	payload := map[string]any{
 		"request_id": requestID, "organization_id": actor.OrganizationID,
 		"template_key": requestID, "name": input.Name,
-		"model_profile_id": input.ModelProfileID,
-		"system_prompt":    input.SystemPrompt, "max_model_requests": input.MaxModelRequests,
+		"fallback_model_profile_ids": append([]string{}, input.FallbackModelProfileIDs...),
+		"model_profile_id":           input.ModelProfileID,
+		"system_prompt":              input.SystemPrompt, "max_model_requests": input.MaxModelRequests,
 		"context_policy_version": "context-v1", "runtime": input.Runtime,
 	}
 	h.forwardProjectedJSON(response, request, upstream.AgentController, http.MethodPost,
@@ -631,11 +636,12 @@ func (h *handler) getTemplateRevision(
 }
 
 type reviseTemplateInput struct {
-	Name             string       `json:"name"`
-	ModelProfileID   string       `json:"model_profile_id"`
-	SystemPrompt     string       `json:"system_prompt"`
-	MaxModelRequests int          `json:"max_model_requests"`
-	Runtime          runtimeInput `json:"runtime"`
+	FallbackModelProfileIDs []string     `json:"fallback_model_profile_ids,omitempty"`
+	Name                    string       `json:"name"`
+	ModelProfileID          string       `json:"model_profile_id"`
+	SystemPrompt            string       `json:"system_prompt"`
+	MaxModelRequests        int          `json:"max_model_requests"`
+	Runtime                 runtimeInput `json:"runtime"`
 }
 
 func (h *handler) reviseTemplate(response http.ResponseWriter, request *http.Request, actor principal.Principal) {
@@ -662,7 +668,8 @@ func (h *handler) reviseTemplate(response http.ResponseWriter, request *http.Req
 	payload := map[string]any{
 		"request_id": requestID, "organization_id": actor.OrganizationID,
 		"name": input.Name, "model_profile_id": input.ModelProfileID,
-		"system_prompt": input.SystemPrompt, "max_model_requests": input.MaxModelRequests,
+		"fallback_model_profile_ids": append([]string{}, input.FallbackModelProfileIDs...),
+		"system_prompt":              input.SystemPrompt, "max_model_requests": input.MaxModelRequests,
 		"context_policy_version": "context-v1", "runtime": input.Runtime,
 	}
 	h.forwardProjectedJSON(response, request, upstream.AgentController, http.MethodPost,

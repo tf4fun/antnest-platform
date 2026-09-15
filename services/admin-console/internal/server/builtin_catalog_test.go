@@ -16,8 +16,12 @@ func TestBuiltinCatalogIsConsoleOwned(t *testing.T) {
 	}
 	var catalog modelCatalogSource
 	decodeBytes(t, response.Body.Bytes(), &catalog)
-	if catalog.Revision == "" || len(catalog.Providers) != 1 || catalog.Providers[0].ProviderKey != "deepseek" {
-		t.Fatalf("expected DeepSeek-only defaults: %+v", catalog)
+	if catalog.Revision == "" || len(catalog.Providers) != 2 || catalog.Providers[0].ProviderKey != "deepseek" {
+		t.Fatalf("expected DeepSeek and OpenRouter defaults: %+v", catalog)
+	}
+	router := catalog.Providers[1]
+	if router.ProviderKey != "openrouter" || router.BaseURL != "https://openrouter.ai/api/v1" || len(router.Models) != 2 || router.Models[0].ModelID != "openai/gpt-4o-mini" {
+		t.Fatalf("incomplete OpenRouter preset: %+v", router)
 	}
 	provider := catalog.Providers[0]
 	if provider.Custom || provider.BaseURL != "https://api.deepseek.com" || len(provider.Models) == 0 {

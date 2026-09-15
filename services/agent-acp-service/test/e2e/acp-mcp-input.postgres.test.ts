@@ -132,6 +132,11 @@ describe.skipIf(databaseUrl === undefined)("ACP MCP input persistence boundaries
       expect(app.tools.call).not.toHaveBeenCalled();
       expect(JSON.stringify(client.frames)).not.toContain("synthetic-mcp-secret");
 
+      const previousModification = new Date("2026-09-01T00:00:00Z");
+      await pool.query("UPDATE acp_sessions SET updated_at = $2 WHERE id = $1", [
+        sessionId,
+        previousModification,
+      ]);
       const resumed = await client.request(version === 1 ? "session/load" : "session/resume", {
         sessionId,
         cwd: "/workspace",
@@ -140,6 +145,7 @@ describe.skipIf(databaseUrl === undefined)("ACP MCP input persistence boundaries
       expect(resumed.error).toBeUndefined();
       const session = await app.sessions.get(sessionId);
       if (session === null) throw new Error("Missing Session");
+      expect(session.updatedAt.getTime()).toBeGreaterThan(previousModification.getTime());
       expect(await app.sessions.getClientMcpRevision(session.clientMcpRevisionId)).toEqual([]);
       expect(await app.sessions.getClientMcpRevision(revisionId)).toEqual(retainedSources);
       expect(
@@ -192,10 +198,10 @@ describe.skipIf(databaseUrl === undefined)("ACP MCP input persistence boundaries
         if (typeof target !== "string") throw new Error("Missing target Session ID");
         const session = await app.sessions.get(target);
         if (session === null) throw new Error("Missing target Session");
-        expect(session.clientMcpRevisionId).not.toBe(before.clientMcpRevisionId);
         const nextCount = (await pool.query<{ count: string }>("SELECT count(*) FROM acp_sessions"))
           .rows[0]?.count;
         if (method === "session/fork") {
+          expect(session.clientMcpRevisionId).not.toBe(before.clientMcpRevisionId);
           expect(target).not.toBe(sessionId);
           expect(session.forkedFromSessionId).toBe(sessionId);
           expect(session.principalId).toBe(before.principalId);
@@ -203,6 +209,7 @@ describe.skipIf(databaseUrl === undefined)("ACP MCP input persistence boundaries
           expect(await app.sessions.get(sessionId)).toEqual(before);
           expect(Number(nextCount)).toBe(Number(count) + 1);
         } else {
+          expect(session).toEqual(before);
           expect(nextCount).toBe(count);
         }
         expect(await app.sessions.getClientMcpRevision(session.clientMcpRevisionId)).toEqual([]);

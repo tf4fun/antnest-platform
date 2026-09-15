@@ -12,7 +12,8 @@ test("routes encode Agent and Session identifiers, not a project or cwd", () => 
 
 test("selection is explicit, scoped and never falls back from an unknown Agent", () => {
   const snapshot = workspaceFromBootstrap({ principal: { user_id: "u", organization_id: "o", administrator: true },
-    agents: [{ agent_id: "a1", name: "One" }, { agent_id: "a2", name: "Two" }] });
+    agents: [{ agent_id: "a1", name: "One", lifecycle_state: "created", activation_state: "enabled", runtime_state: "available" },
+      { agent_id: "a2", name: "Two", lifecycle_state: "created", activation_state: "disabled", runtime_state: "exited" }] });
   assert.equal(selectWorkspaceRoute(snapshot, { agentId: "", sessionId: null }).activeAgentId, "");
   assert.equal(selectWorkspaceRoute(snapshot, { agentId: "unknown", sessionId: "s" }).activeAgentId, "");
   const selected = selectWorkspaceRoute(snapshot, { agentId: "a2", sessionId: "s2" });

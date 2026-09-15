@@ -81,7 +81,7 @@ func TestMachineControlContractMatchesRegisteredBoundary(t *testing.T) {
 	readStrictContractJSON(t, filepath.Join(root, "contracts/agent-controller/control-contract.json"), &contract)
 	var schema machineControlSchema
 	readContractJSON(t, filepath.Join(root, "contracts/agent-controller/control-api.schema.json"), &schema)
-	if contract.Revision != 28 {
+	if contract.Revision != 30 {
 		t.Fatalf("control contract revision = %d", contract.Revision)
 	}
 	if contract.MediaTypes.Request != "application/json" ||
@@ -229,7 +229,7 @@ func TestMachineControlSchemaMatchesGoWireTypes(t *testing.T) {
 		"set_agent_authorization_request":    application.SetAgentAuthorizationInput{RequestID: "defaults", AgentID: "agent", PrincipalID: "owner", ExpectedAccessRevision: "access", ExpectedAuthorizationRevision: 1, Authorization: domain.Authorization{Mode: domain.AuthorizationAuto, ToolRules: []domain.ToolRule{}}},
 		"set_agent_authorization_response":   map[string]int64{"authorization_revision": 2},
 		"list_workspace_agents_request":      listWorkspaceAgentsRequest{RequestID: "list", OrganizationID: "org", PrincipalID: "owner"},
-		"list_workspace_agents_response":     workspaceAgentListResponse{Agents: []workspaceAgentResponse{{AgentID: "agent", Name: "Research"}}, NextCursor: nil},
+		"list_workspace_agents_response":     workspaceAgentListResponse{Agents: []workspaceAgentResponse{{AgentID: "agent", Name: "Research", LifecycleState: domain.AgentCreated, ActivationState: domain.ActivationEnabled, RuntimeState: domain.RuntimeAvailable}}, NextCursor: nil},
 		"create_provider_connection_request": sampleCreateProviderRequest(),
 		"rotate_provider_credential_request": sampleRotateProviderRequest(),
 		"provider_connection":                sampleProviderConnection(),
@@ -328,7 +328,7 @@ func TestMachineControlContractValidatesSuccessfulHTTPBoundary(t *testing.T) {
 	}
 	queries := &agentQueryServiceStub{
 		agent: agent, page: application.AgentPage{Items: []application.AgentView{agent}},
-		workspacePage: application.WorkspaceAgentPage{Items: []application.WorkspaceAgentView{{AgentID: agent.AgentID, Name: agent.Name}}},
+		workspacePage: application.WorkspaceAgentPage{Items: []application.WorkspaceAgentView{{AgentID: agent.AgentID, Name: agent.Name, LifecycleState: domain.AgentCreated, ActivationState: domain.ActivationEnabled, RuntimeState: domain.RuntimeAvailable}}},
 	}
 	events := &agentEventServiceStub{
 		page: application.AgentEventPage{Events: []application.AgentEventView{event}, NextSequence: 1},

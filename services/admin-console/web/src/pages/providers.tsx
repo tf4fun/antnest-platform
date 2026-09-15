@@ -31,14 +31,9 @@ import {
   Loading,
   SuccessNotice,
 } from "../components/ui/feedback";
-import { CheckboxField, Field, Input, Select } from "../components/ui/input";
+import { Field, Input } from "../components/ui/input";
 import { APIError, api, errorMessage } from "../lib/api";
-import {
-  modelCatalogGate,
-  modelInputLabel,
-  presetParameters,
-  validateModelDisplayName,
-} from "../lib/model-catalog";
+import { modelCatalogGate, modelInputLabel } from "../lib/model-catalog";
 import { mergePage } from "../lib/pagination";
 import { resourceFailure, type ResourceFailure } from "../lib/resource-failure";
 import { captureResource, type ResourceState } from "../lib/resource-state";
@@ -46,9 +41,9 @@ import type {
   ModelCatalog,
   ModelProfile,
   ProviderConnection,
-  ProviderModelInput,
 } from "../lib/types";
-import { ModelEditor } from "./model-editor";
+import { ConnectProvider } from "./connect-provider";
+import { ProviderModelDiscovery } from "./provider-model-discovery";
 
 export function ProviderList() {
   const [items, setItems] = useState<ProviderConnection[]>();
@@ -260,7 +255,9 @@ export function ProviderList() {
             catalog={catalog.data}
             onCancel={() => setOpen(false)}
             onCreated={(value) => {
-              setItems((current) => [...(current ?? []), value]);
+              setItems((current) =>
+                mergePage(current ?? [], [value], (item) => item.connection_id),
+              );
               setOpen(false);
               setSuccess(`${value.display_name} connected.`);
               setExpanded(value.connection_id);
@@ -269,144 +266,6 @@ export function ProviderList() {
         ) : null}
       </Dialog>
     </div>
-  );
-}
-
-function ConnectProvider({
-  catalog,
-  onCancel,
-  onCreated,
-  onBusy,
-}: {
-  onBusy: (busy: boolean) => void;
-  catalog: ModelCatalog;
-  onCancel: () => void;
-  onCreated: (value: ProviderConnection) => void;
-}) {
-  const providers = catalog.providers.filter((item) => !item.custom);
-  const [key, setKey] = useState(providers[0]?.provider_key ?? "");
-  const provider = providers.find((item) => item.provider_key === key);
-  const [endpoint, setEndpoint] = useState(provider?.base_url ?? "");
-  const [selected, setSelected] = useState(
-    provider?.models.map((item) => item.model_id) ?? [],
-  );
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState("");
-  const submitting = useRef(false);
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!provider || submitting.current) return;
-    const apiKey = String(
-      new FormData(event.currentTarget).get("api_key") ?? "",
-    ).trim();
-    if (!apiKey) {
-      setError("Enter the provider API key.");
-      return;
-    }
-    submitting.current = true;
-    setPending(true);
-    onBusy(true);
-    setError("");
-    try {
-      const value = await api.createProvider({
-        provider_key: key,
-        display_name: provider.display_name,
-        base_url: endpoint.trim(),
-        credential: { method: "api_key", api_key: apiKey },
-        models: provider.models
-          .filter((item) => selected.includes(item.model_id))
-          .map((item) => ({
-            display_name: validateModelDisplayName(item.display_name),
-            model: presetParameters(item),
-          })),
-      });
-      onCreated(value);
-    } catch (cause) {
-      setError(errorMessage(cause));
-    } finally {
-      submitting.current = false;
-      setPending(false);
-      onBusy(false);
-    }
-  }
-  return (
-    <form className="grid gap-5" onSubmit={submit}>
-      {error ? <ErrorNotice message={error} /> : null}
-      <fieldset disabled={pending} className="grid gap-4">
-        <Field label="Provider">
-          <Select
-            value={key}
-            onChange={(event) => {
-              const next = providers.find(
-                (item) => item.provider_key === event.target.value,
-              );
-              setKey(event.target.value);
-              setEndpoint(next?.base_url ?? "");
-              setSelected(next?.models.map((item) => item.model_id) ?? []);
-            }}
-          >
-            {providers.map((item) => (
-              <option key={item.provider_key} value={item.provider_key}>
-                {item.display_name}
-              </option>
-            ))}
-          </Select>
-        </Field>
-        <Field label="API key">
-          <Input name="api_key" type="password" autoComplete="off" required />
-        </Field>
-        <details>
-          <summary className="cursor-pointer text-sm font-medium">
-            Connection settings
-          </summary>
-          <div className="mt-3">
-            <Field label="API endpoint">
-              <Input
-                type="url"
-                required
-                value={endpoint}
-                onChange={(event) => setEndpoint(event.target.value)}
-              />
-            </Field>
-          </div>
-        </details>
-        <fieldset className="grid gap-3">
-          <legend className="mb-3 text-sm font-medium">Models</legend>
-          {provider?.models.map((item) => (
-            <CheckboxField
-              key={item.model_id}
-              label={item.display_name}
-              checked={selected.includes(item.model_id)}
-              onChange={(event) =>
-                setSelected((current) =>
-                  event.target.checked
-                    ? [...current, item.model_id]
-                    : current.filter((id) => id !== item.model_id),
-                )
-              }
-            />
-          ))}
-        </fieldset>
-      </fieldset>
-      <div className="flex justify-end gap-2">
-        <Button
-          type="button"
-          variant="secondary"
-          disabled={pending}
-          onClick={onCancel}
-        >
-          Cancel
-        </Button>
-        <Button type="submit" disabled={pending || !provider}>
-          {pending ? (
-            <LoaderCircle className="h-4 w-4 animate-spin" />
-          ) : (
-            <Plus className="h-4 w-4" />
-          )}
-          Connect provider
-        </Button>
-      </div>
-    </form>
   );
 }
 
@@ -435,8 +294,14 @@ function ProviderDetail({
     setRefreshing(true);
     setFailure(undefined);
     try {
-      const current = await api.provider(connection.connection_id, controller.signal);
-      if (current.connection_id !== connection.connection_id) throw new Error("The provider response does not match this connection.");
+      const current = await api.provider(
+        connection.connection_id,
+        controller.signal,
+      );
+      if (current.connection_id !== connection.connection_id)
+        throw new Error(
+          "The provider response does not match this connection.",
+        );
       if (!controller.signal.aborted) onChange(current);
     } catch (cause) {
       if (!controller.signal.aborted) setFailure(resourceFailure(cause));
@@ -488,12 +353,21 @@ function ProviderDetail({
       {success ? (
         <SuccessNotice message={success} onDismiss={() => setSuccess("")} />
       ) : null}
-      <CatalogAvailabilityControl kind="provider-connections" resourceID={connection.connection_id} enabled={connection.enabled}
-        disabled={open || refreshing || Boolean(failure)} onBusyChange={setAvailabilityBusy} onReload={async (signal) => {
+      <CatalogAvailabilityControl
+        kind="provider-connections"
+        resourceID={connection.connection_id}
+        enabled={connection.enabled}
+        disabled={open || refreshing || Boolean(failure)}
+        onBusyChange={setAvailabilityBusy}
+        onReload={async (signal) => {
           const current = await api.provider(connection.connection_id, signal);
-          if (current.connection_id !== connection.connection_id) throw new Error("The provider response does not match this connection.");
+          if (current.connection_id !== connection.connection_id)
+            throw new Error(
+              "The provider response does not match this connection.",
+            );
           if (!signal.aborted) onChange(current);
-        }} />
+        }}
+      />
       <ConnectionModels connection={connection} catalog={catalog} />
       <Dialog
         open={open}
@@ -645,21 +519,11 @@ function ConnectionModels({
   const provider = catalog?.providers.find(
     (item) => item.provider_key === connection.provider_key,
   );
-  async function add(value: ProviderModelInput) {
-    setPending(true);
-    try {
-      const model = await api.createModel({
-        ...value,
-        provider_connection_id: connection.connection_id,
-      });
-      setItems((current) =>
-        mergePage(current ?? [], [model], (item) => item.model_profile_id),
-      );
-      setOpen(false);
-      setSuccess(`${model.display_name} added.`);
-    } finally {
-      setPending(false);
-    }
+  function added(model: ModelProfile) {
+    setItems((current) =>
+      mergePage(current ?? [], [model], (item) => item.model_profile_id),
+    );
+    setSuccess("Models added.");
   }
   return (
     <div className="grid min-w-0 gap-3">
@@ -733,13 +597,12 @@ function ConnectionModels({
         title="Add model"
       >
         {catalog && provider ? (
-          <ModelEditor
+          <ProviderModelDiscovery
+            connection={connection}
             catalog={catalog}
-            provider={provider}
-            pending={pending}
-            submitLabel="Add model"
-            onCancel={() => setOpen(false)}
-            onSubmit={add}
+            onBusy={setPending}
+            onClose={() => setOpen(false)}
+            onSaved={added}
           />
         ) : null}
       </Dialog>

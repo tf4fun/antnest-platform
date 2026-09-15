@@ -51,9 +51,11 @@ func TestModelAndBuildSnapshotsContainNoCredentialConfiguration(t *testing.T) {
 
 func TestSupportedProviderDefinesCurrentCompatibility(t *testing.T) {
 	t.Parallel()
-	support, ok := SupportedProvider("deepseek")
-	if !ok || support.CredentialMethod != "api_key" || support.RequestProtocol != "openai_chat_completions" {
-		t.Fatalf("unexpected support: %+v %t", support, ok)
+	for _, key := range []string{"deepseek", "openrouter"} {
+		support, ok := SupportedProvider(key)
+		if !ok || support.CredentialMethod != "api_key" || support.RequestProtocol != "openai_chat_completions" {
+			t.Fatalf("unexpected support: %+v %t", support, ok)
+		}
 	}
 	for _, key := range []string{"", "custom", " deepseek"} {
 		if _, ok := SupportedProvider(key); ok {

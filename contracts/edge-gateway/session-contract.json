@@ -1,6 +1,6 @@
 {
   "contract": "antnest.edge-gateway.session",
-  "version": 11,
+  "version": 12,
   "session_validation": {
     "invalid_or_expired": "401 unauthenticated; clear browser cookies",
     "identity_unavailable": "503 identity_unavailable; preserve cookies; never admit upstream requests",
@@ -74,7 +74,14 @@
         "availability",
         "active_session_id"
       ],
-      "agent_required": ["agent_id", "name"]
+      "agent_required": [
+        "agent_id",
+        "name",
+        "lifecycle_state",
+        "runtime_state"
+      ],
+      "agent_activation_state": "enabled or disabled, present exactly when lifecycle_state is created",
+      "state_source": "Controller management projection in the existing paginated list; no ACP or Runtime lookup"
     },
     "workspace_state": {
       "method": "GET",

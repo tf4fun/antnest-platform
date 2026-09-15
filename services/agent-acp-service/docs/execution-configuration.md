@@ -1,5 +1,19 @@
 # Local Execution Configuration
 
+## Ordered Provider Fallback
+
+The [shared availability contract](../../../docs/provider-failover.md) adds ordered
+Agent `fallback_model_profile_ids` after `default_model_profile_id`. ACP owns
+effective Session/Run selection; Controller readiness does not decide model
+availability. Manual selection remains organization-scoped. A missing available
+candidate rejects prompting, not Session history or configuration access.
+
+Provider disable/revocation fails existing holders without graceful draining or
+Run replay. Re-enable creates new holders; credential rotation alone does not
+cancel execution. Platform publications refresh current ACP configuration options
+without adding synthetic model replies to the transcript. OpenRouter uses the
+OpenAI-compatible transport without DeepSeek-specific thinking parameters.
+
 The owning cross-service design is the
 [Controller/ACP boundary plan](../../../docs/controller-acp-execution-boundary-plan.md).
 The [internal contract](../../../contracts/agent-acp/execution-api.md) is not an
@@ -37,14 +51,14 @@ the service or reverse a newer revocation.
 Publication failure after storage leaves the affected organization closed until
 same/newer configuration completes publication. Connection routing is immutable;
 authentication rotation changes its credential revision without binding it to
-a Run. Actual client holders drain when a Provider retires.
+a Run. Disabling or removing a Provider immediately revokes its clients, aborting
+current requests and rejecting later use of existing handles.
 
 Every synchronization reads the stored current revision before CAS. Losing a
 commit acknowledgement must not trap retries behind an older cached revision.
 The in-memory directory contains only successfully published configurations;
-stored state and retained client material are separate facts. Retiring clients
-keep immutable routing and credential revision until their last holder/request
-finishes, including while absent from the current snapshot.
+stored state and volatile client material are separate facts. Revoked handles
+remain unusable after re-enabling a Provider; re-enabling creates a fresh client.
 
 ## Local Identity And Session Configuration
 

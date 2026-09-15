@@ -428,8 +428,11 @@ type workspacePrincipalResponse struct {
 }
 
 type workspaceAgentResponse struct {
-	AgentID string `json:"agent_id"`
-	Name    string `json:"name"`
+	AgentID         string `json:"agent_id"`
+	Name            string `json:"name"`
+	LifecycleState  string `json:"lifecycle_state"`
+	ActivationState string `json:"activation_state,omitempty"`
+	RuntimeState    string `json:"runtime_state"`
 }
 
 type workspaceBootstrapResponse struct {
@@ -452,6 +455,7 @@ func (h *handler) workspaceBootstrap(response http.ResponseWriter, request *http
 	for _, agent := range agents {
 		items = append(items, workspaceAgentResponse{
 			AgentID: agent.AgentID, Name: agent.Name,
+			LifecycleState: agent.LifecycleState, ActivationState: agent.ActivationState, RuntimeState: agent.RuntimeState,
 		})
 	}
 	writeJSON(response, http.StatusOK, workspaceBootstrapResponse{

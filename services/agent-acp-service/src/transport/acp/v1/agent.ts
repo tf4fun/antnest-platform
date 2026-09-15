@@ -41,9 +41,11 @@ export function createAcpV1Agent({
     waitForDelivery = true,
     keepExisting = false,
     skipMessageId?: string,
+    configurationInResponse = true,
   ) => {
     await outputs.attach({
       keepExisting,
+      configurationInResponse,
       identity: binding,
       key: sessionOutputKey(binding, sessionId),
       connectionId: binding.connectionId,
@@ -281,6 +283,7 @@ export function createAcpV1Agent({
             false,
             false,
             accepted.userMessageId,
+            false,
           );
           observing = true;
           outputs.invalidate(key);

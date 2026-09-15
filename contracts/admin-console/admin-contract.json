@@ -19,7 +19,14 @@
       "method": "GET",
       "path": "/execution-audits",
       "query": {
-        "optional": ["agent_id", "session_id", "created_from", "created_until", "limit", "cursor"],
+        "optional": [
+          "agent_id",
+          "session_id",
+          "created_from",
+          "created_until",
+          "limit",
+          "cursor"
+        ],
         "cursor_response": "next_cursor"
       }
     },
@@ -208,6 +215,14 @@
         "cursor_response": "next_after_id"
       }
     },
+    "discover_draft_models": {
+      "method": "POST",
+      "path": "/provider-models/discovery"
+    },
+    "discover_provider_models": {
+      "method": "GET",
+      "path": "/provider-connections/{connection_id}/models/discovery"
+    },
     "create_provider_connection": {
       "method": "POST",
       "path": "/provider-connections"
@@ -254,7 +269,11 @@
       "operations",
       "events"
     ],
-    "agent_acp": ["list_execution_audits", "get_execution_audit", "list_execution_events"]
+    "agent_acp": [
+      "list_execution_audits",
+      "get_execution_audit",
+      "list_execution_events"
+    ]
   },
   "response_policy": {
     "catalog_availability": {
@@ -540,7 +559,7 @@
       "profile_keys": "bff_scoped_request_id_plus_model_position",
       "rotation": "expected_version_cas_no_model_revision",
       "model_edit": "no_endpoint_or_credential_api_model_id_immutable",
-      "supported": "deepseek_api_key_only",
+      "supported": "deepseek_and_openrouter_api_key",
       "catalogue_owner": "admin_console"
     }
   }

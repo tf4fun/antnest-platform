@@ -107,7 +107,7 @@ func capacityAgentCandidate(snapshot ports.ExecutionSnapshot, source ports.Execu
 	}
 	source.Spec = spec
 	source.Agent.AgentSpecRevisionID = spec.ID
-	candidate := projectExecutionAgent(source, false)
+	candidate := projectExecutionAgent(source)
 	check := snapshot
 	check.Agents = []ports.ExecutionAgent{candidate}
 	if err := check.Validate(); err != nil {

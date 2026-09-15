@@ -14,15 +14,31 @@ Template history is unchanged. The model-history API and route are removed.
 Command receipts preserve submitted results on retry but are not model history.
 
 Console owns the builtin catalogue; Controller owns saved organization data.
-Only DeepSeek API-key connections are currently supported. Custom providers,
-subscription login and remote catalogue discovery are not exposed as working
+DeepSeek and OpenRouter API-key connections are supported. Custom providers,
+and subscription login are not exposed as working
 features. Add future catalogue entries and credential flows explicitly.
 
 ## Workflows
 
+Discovery happens in Console, never Controller. The provider adapter makes a
+bounded GET /models without redirects; its HTTP spans record metadata, not keys
+or payloads. Existing connections resolve their current credential through an
+internal, organization-scoped read. Draft connections use the entered key without
+creating a connection or model. Candidate state exists only in the open dialog.
+
+Candidates merge remote results, builtin defaults, and all saved model pages by
+API model ID within the selected connection. Remote values enrich new drafts;
+saved values win and remain marked Added, including disabled models. An empty
+remote result retains builtin/saved candidates. Provider failure reports an error
+and offers those candidates; authorization or inaccessible connections fail
+closed. Refresh cannot modify persisted models. Missing required parameters must
+be completed explicitly. Partial batch save retains successful additions and
+retries only the remaining selection.
+
 1. Open Model providers. List connections, not model revisions disguised as
-   providers. Connect DeepSeek with an API key and an editable endpoint. Select
-   initial models from Console defaults (including selecting none).
+   providers. Connect DeepSeek or OpenRouter with an API key and an editable endpoint. Select
+   models after Console discovers candidates using the draft key, without saving
+   the connection first. No model is selected automatically; choosing none is valid.
 2. Expand a connection to inspect its models. Add a listed or unlisted model,
    editing limits, capabilities and rates only when necessary. Adding models
    never asks for credentials. Model detail shows current saved parameters.
@@ -38,7 +54,14 @@ features. Add future catalogue entries and credential flows explicitly.
    it as Current model. Agent detail separately shows its build snapshot's model
    limits, endpoint, input formats, temperature and rates; its model link opens
    current settings. There is no independent model history page.
-   ACP execution changes remain a separate delivery batch.
+   Templates also retain ordered `fallback_model_profile_ids`, one model per
+   additional connection. Add/remove/reorder backups explicitly; existing saved
+   references survive disabled Providers and partial catalogue reads. Rebuild
+   existing Agents to apply a new Template candidate list. ACP selects the first
+   available candidate when the preferred connection is disabled, and publishes
+   standard configuration notifications. Disabling a referenced Provider is
+   permitted and aborts active requests; it does not replay an interrupted Run.
+   Model disable still requires removing references. No delete API is exposed.
 
 ## BFF contract
 
@@ -55,6 +78,8 @@ accessed by Console. Calls use the existing instrumented upstream client.
 | Browser route | Controller route | Purpose |
 | --- | --- | --- |
 | GET/POST `/api/admin/provider-connections` | GET/POST `/internal/provider-connections` | List or create connection with initial models |
+| POST `/api/admin/provider-models/discovery` | None | Discover using an unsaved connection draft |
+| GET `/api/admin/provider-connections/{id}/models/discovery` | GET `/internal/provider-connections/{id}/access` | Resolve current credential internally, then discover in Console |
 | GET `/api/admin/provider-connections/{id}` | GET `/internal/provider-connections/{id}` | Refresh connection and credential version |
 | POST `/api/admin/provider-connections/{id}/credentials` | POST `/internal/provider-connections/{id}/credentials` | CAS credential rotation |
 | POST `/api/admin/model-profiles` | POST `/internal/model-profiles` | Add a model to a connection |
@@ -89,3 +114,16 @@ CAS conflicts, and cursor handling. Component tests cover creation, independent
 rotation/model edits, saved metadata, immutable identity, loading/failure states
 and responsive presentation. Run Go tests, frontend tests/build and admission
 gates serially. Browser inspection supplements these reusable tests.
+
+The opt-in real discovery acceptance runs against the local development Gateway:
+
+```sh
+node services/admin-console/tests/model-discovery-browser.mjs --confirm-development
+```
+
+Run from the platform root with the development `.env` and parent `.secret`
+available. It discovers OpenRouter models, checks the unsaved-connection flow,
+adds one explicitly selected model to an existing enabled OpenRouter connection,
+and verifies merged/saved/fallback views on desktop and mobile. It never calls a
+completion endpoint or changes credentials. Only final screenshots and a compact
+summary are written to ignored `.cache/model-discovery-acceptance/`.

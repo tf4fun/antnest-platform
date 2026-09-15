@@ -34,3 +34,7 @@ type ProviderStore interface {
 	GetProviderConnection(context.Context, string, string) (ProviderConnectionRecord, error)
 	ListProviderConnections(context.Context, string, string, int) ([]ProviderConnectionRecord, string, error)
 }
+
+type ProviderAccessReader interface {
+	GetProviderAccess(context.Context, string, string) (ProviderConnectionRecord, error)
+}

@@ -122,7 +122,8 @@ Run intent creation captures Session overrides under the Session lock.
 The local deadline is fixed at acceptance from `ANTNEST_ACP_RUN_TIMEOUT`.
 Startup never replays intent. ProviderClients owns volatile authentication and
 injects its current value into each outgoing request; rotation is invisible to
-the model loop. Retiring clients reject new holders and drain actual holders.
+the model loop. Provider disable revokes existing holders and aborts active requests;
+credential rotation alone does not cancel a Run. Re-enabling creates a fresh client.
 
 ### Message And ToolAttempt
 

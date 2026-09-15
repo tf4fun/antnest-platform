@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"slices"
 	"strings"
 
 	"github.com/distribution/reference"
@@ -102,36 +103,39 @@ func (revision ModelProfileRevision) Snapshot() ModelProfileRevisionSnapshot {
 }
 
 type TemplateRevisionInput struct {
-	TemplateID           string
-	OrganizationID       string
-	Revision             int64
-	ModelProfileID       string
-	SystemPrompt         string
-	MaxModelRequests     int
-	Runtime              RuntimeSpecInput
-	ContextPolicyVersion string
+	TemplateID              string
+	OrganizationID          string
+	Revision                int64
+	ModelProfileID          string
+	FallbackModelProfileIDs []string
+	SystemPrompt            string
+	MaxModelRequests        int
+	Runtime                 RuntimeSpecInput
+	ContextPolicyVersion    string
 }
 
 type TemplateRevision struct {
-	templateID           string
-	organizationID       string
-	revision             int64
-	modelProfileID       string
-	systemPrompt         string
-	maxModelRequests     int
-	runtime              RuntimeSpecInput
-	contextPolicyVersion string
+	templateID              string
+	organizationID          string
+	revision                int64
+	modelProfileID          string
+	fallbackModelProfileIDs []string
+	systemPrompt            string
+	maxModelRequests        int
+	runtime                 RuntimeSpecInput
+	contextPolicyVersion    string
 }
 
 type TemplateRevisionSnapshot struct {
-	TemplateID           string           `json:"template_id"`
-	OrganizationID       string           `json:"organization_id"`
-	Revision             int64            `json:"revision"`
-	ModelProfileID       string           `json:"model_profile_id"`
-	SystemPrompt         string           `json:"system_prompt"`
-	MaxModelRequests     int              `json:"max_model_requests"`
-	Runtime              RuntimeSpecInput `json:"runtime"`
-	ContextPolicyVersion string           `json:"context_policy_version"`
+	TemplateID              string           `json:"template_id"`
+	OrganizationID          string           `json:"organization_id"`
+	Revision                int64            `json:"revision"`
+	ModelProfileID          string           `json:"model_profile_id"`
+	FallbackModelProfileIDs []string         `json:"fallback_model_profile_ids,omitempty"`
+	SystemPrompt            string           `json:"system_prompt"`
+	MaxModelRequests        int              `json:"max_model_requests"`
+	Runtime                 RuntimeSpecInput `json:"runtime"`
+	ContextPolicyVersion    string           `json:"context_policy_version"`
 }
 
 func NewTemplateRevision(input TemplateRevisionInput) (TemplateRevision, error) {
@@ -140,6 +144,9 @@ func NewTemplateRevision(input TemplateRevisionInput) (TemplateRevision, error) 
 	}
 	if strings.TrimSpace(input.ModelProfileID) == "" {
 		return TemplateRevision{}, fmt.Errorf("model profile is required")
+	}
+	if err := ValidateModelFallback(input.ModelProfileID, input.FallbackModelProfileIDs); err != nil {
+		return TemplateRevision{}, err
 	}
 	if input.MaxModelRequests < 1 || input.MaxModelRequests > maximumModelRequests {
 		return TemplateRevision{}, fmt.Errorf("max model requests must be between 1 and %d", maximumModelRequests)
@@ -153,7 +160,8 @@ func NewTemplateRevision(input TemplateRevisionInput) (TemplateRevision, error) 
 	return TemplateRevision{
 		templateID: input.TemplateID, organizationID: input.OrganizationID,
 		revision: input.Revision, modelProfileID: input.ModelProfileID,
-		systemPrompt: input.SystemPrompt, maxModelRequests: input.MaxModelRequests,
+		fallbackModelProfileIDs: append([]string(nil), input.FallbackModelProfileIDs...),
+		systemPrompt:            input.SystemPrompt, maxModelRequests: input.MaxModelRequests,
 		runtime: cloneRuntime(input.Runtime), contextPolicyVersion: input.ContextPolicyVersion,
 	}, nil
 }
@@ -172,22 +180,24 @@ func (revision TemplateRevision) Snapshot() TemplateRevisionSnapshot {
 	return TemplateRevisionSnapshot{
 		TemplateID: revision.templateID, OrganizationID: revision.organizationID,
 		Revision: revision.revision, ModelProfileID: revision.modelProfileID,
-		SystemPrompt: revision.systemPrompt, MaxModelRequests: revision.maxModelRequests,
+		FallbackModelProfileIDs: slices.Clone(revision.fallbackModelProfileIDs),
+		SystemPrompt:            revision.systemPrompt, MaxModelRequests: revision.maxModelRequests,
 		Runtime: cloneRuntime(revision.runtime), ContextPolicyVersion: revision.contextPolicyVersion,
 	}
 }
 
 type AgentSpecSnapshot struct {
-	ModelProfileID         string           `json:"model_profile_id"`
-	ModelProfileVersion    int64            `json:"model_profile_version"`
-	TemplateID             string           `json:"template_id"`
-	TemplateRevision       int64            `json:"template_revision"`
-	ModelProfileRevisionID string           `json:"model_profile_revision_id"`
-	SystemPrompt           string           `json:"system_prompt"`
-	MaxModelRequests       int              `json:"max_model_requests"`
-	ContextPolicyVersion   string           `json:"context_policy_version"`
-	Model                  ModelSpec        `json:"model"`
-	Runtime                RuntimeSpecInput `json:"runtime"`
+	ModelProfileID          string           `json:"model_profile_id"`
+	FallbackModelProfileIDs []string         `json:"fallback_model_profile_ids,omitempty"`
+	ModelProfileVersion     int64            `json:"model_profile_version"`
+	TemplateID              string           `json:"template_id"`
+	TemplateRevision        int64            `json:"template_revision"`
+	ModelProfileRevisionID  string           `json:"model_profile_revision_id"`
+	SystemPrompt            string           `json:"system_prompt"`
+	MaxModelRequests        int              `json:"max_model_requests"`
+	ContextPolicyVersion    string           `json:"context_policy_version"`
+	Model                   ModelSpec        `json:"model"`
+	Runtime                 RuntimeSpecInput `json:"runtime"`
 }
 
 type AgentSpec struct{ snapshot AgentSpecSnapshot }
@@ -202,13 +212,15 @@ func MaterializeAgentSpec(template TemplateRevision, model ModelProfileRevision)
 	return AgentSpec{snapshot: AgentSpecSnapshot{
 		TemplateID: template.templateID, TemplateRevision: template.revision,
 		ModelProfileID: model.modelProfileID, ModelProfileVersion: model.revision, ModelProfileRevisionID: model.id, SystemPrompt: template.systemPrompt,
-		MaxModelRequests: template.maxModelRequests, ContextPolicyVersion: template.contextPolicyVersion,
+		FallbackModelProfileIDs: slices.Clone(template.fallbackModelProfileIDs),
+		MaxModelRequests:        template.maxModelRequests, ContextPolicyVersion: template.contextPolicyVersion,
 		Model: model.model.Clone(), Runtime: cloneRuntime(template.runtime),
 	}}, nil
 }
 
 func (spec AgentSpec) Snapshot() AgentSpecSnapshot {
 	snapshot := spec.snapshot
+	snapshot.FallbackModelProfileIDs = slices.Clone(snapshot.FallbackModelProfileIDs)
 	snapshot.Model = snapshot.Model.Clone()
 	snapshot.Runtime = cloneRuntime(snapshot.Runtime)
 	return snapshot

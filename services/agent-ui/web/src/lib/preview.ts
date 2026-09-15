@@ -20,6 +20,7 @@ export function previewWorkspace(): WorkspaceSnapshot {
         description: "Synthesizes sources and turns evidence into decisions.",
         modelLabel: "DeepSeek V3.2",
         status: "ready",
+        managementState: { lifecycle: "created", activation: "enabled", runtime: "available" },
       },
       {
         id: "agent-operations",
@@ -27,6 +28,7 @@ export function previewWorkspace(): WorkspaceSnapshot {
         description: "Maintains recurring workflows and operational records.",
         modelLabel: "Claude Sonnet 4.6",
         status: "busy",
+        managementState: { lifecycle: "created", activation: "enabled", runtime: "available" },
       },
       {
         id: "agent-finance",
@@ -34,6 +36,7 @@ export function previewWorkspace(): WorkspaceSnapshot {
         description: "Reviews models, assumptions, and reporting inputs.",
         modelLabel: "GPT-5.4",
         status: "offline",
+        managementState: { lifecycle: "created", activation: "disabled", runtime: "exited" },
       },
     ],
     conversations: [

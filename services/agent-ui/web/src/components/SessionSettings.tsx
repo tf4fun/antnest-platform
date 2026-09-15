@@ -1,20 +1,40 @@
 import type { SessionConfigOption } from "@agentclientprotocol/sdk";
+import { ConfigPicker } from "./ConfigPicker";
 
-export function SessionSettings({ options, disabled, onChange }: {
+export function SessionSettings({
+  options,
+  disabled,
+  onChange,
+}: {
   options: SessionConfigOption[];
   disabled: boolean;
   onChange: (id: string, value: string) => void;
 }) {
-  return <div className="session-settings">{options.map((option) => {
-    if (option.type !== "select") return null;
-    return <label key={option.id}><span>{option.name}</span>
-      <select aria-label={option.name} value={option.currentValue} disabled={disabled}
-        onChange={(event) => onChange(option.id, event.target.value)}>
-        {option.options.map((item) => "options" in item
-          ? <optgroup key={item.group} label={item.name}>{item.options.map((choice) =>
-            <option key={choice.value} value={choice.value}>{choice.name}</option>)}</optgroup>
-          : <option key={item.value} value={item.value}>{item.name}</option>)}
-      </select>
-    </label>;
-  })}</div>;
+  if (!options.length) return null;
+  const notice = options.find(
+    (option) => option.category === "model",
+  )?.description;
+  return (
+    <div
+      className="session-settings"
+      role="group"
+      aria-label="Session settings"
+    >
+      {notice ? (
+        <p className="session-settings-notice" role="status">
+          {notice}
+        </p>
+      ) : null}
+      {options.map((option) =>
+        option.type === "select" ? (
+          <ConfigPicker
+            key={option.id}
+            option={option}
+            disabled={disabled}
+            onChange={(value) => onChange(option.id, value)}
+          />
+        ) : null,
+      )}
+    </div>
+  );
 }

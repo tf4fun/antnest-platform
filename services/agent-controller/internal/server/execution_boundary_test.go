@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"soft/antnest-platform/services/agent-controller/internal/application"
+	"soft/antnest-platform/services/agent-controller/internal/domain"
 )
 
 func TestControllerDoesNotExposeRunExecutionRPC(t *testing.T) {
@@ -88,9 +89,13 @@ func TestWorkspaceListPublishesOnlyManagementMetadata(t *testing.T) {
 		page     application.WorkspaceAgentPage
 		expected string
 	}{
-		{"page", application.WorkspaceAgentPage{Items: []application.WorkspaceAgentView{{AgentID: "agent-1", Name: "Research"}}, NextCursor: "next"},
-			`{"agents":[{"agent_id":"agent-1","name":"Research"}],"next_cursor":"next"}`},
+		{"page", application.WorkspaceAgentPage{Items: []application.WorkspaceAgentView{{AgentID: "agent-1", Name: "Research",
+			LifecycleState: domain.AgentCreated, ActivationState: domain.ActivationDisabled, RuntimeState: domain.RuntimeExited}}, NextCursor: "next"},
+			`{"agents":[{"agent_id":"agent-1","name":"Research","lifecycle_state":"created","activation_state":"disabled","runtime_state":"exited"}],"next_cursor":"next"}`},
 		{"empty", application.WorkspaceAgentPage{}, `{"agents":[],"next_cursor":null}`},
+		{"not created", application.WorkspaceAgentPage{Items: []application.WorkspaceAgentView{{AgentID: "agent-2", Name: "Pending",
+			LifecycleState: domain.AgentNotCreated, RuntimeState: domain.RuntimeUnknown}}},
+			`{"agents":[{"agent_id":"agent-2","name":"Pending","lifecycle_state":"not_created","runtime_state":"unknown"}],"next_cursor":null}`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			queries := &agentQueryServiceStub{workspacePage: test.page}

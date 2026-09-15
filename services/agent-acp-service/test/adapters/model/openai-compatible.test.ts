@@ -12,6 +12,85 @@ function bodyText(init: RequestInit | undefined): string {
 }
 
 describe("OpenAICompatibleModel", () => {
+  it("uses OpenRouter's authenticated endpoint and preserves streamed tool calls and usage", async () => {
+    const packets = [
+      { choices: [{ index: 0, delta: { content: "Checking" }, finish_reason: null }] },
+      {
+        choices: [
+          {
+            index: 0,
+            delta: {
+              tool_calls: [
+                {
+                  index: 0,
+                  id: "call-1",
+                  type: "function",
+                  function: { name: "read", arguments: "{}" },
+                },
+              ],
+            },
+            finish_reason: null,
+          },
+        ],
+      },
+      { choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] },
+      {
+        choices: [
+          { index: 0, delta: { role: "assistant", content: "" }, finish_reason: "tool_calls" },
+        ],
+        usage: { prompt_tokens: 7, completion_tokens: 3, total_tokens: 10 },
+      },
+    ];
+    const fetchFn = vi
+      .fn<(url: string, init: RequestInit) => Promise<Response>>()
+      .mockResolvedValue(
+        new Response(
+          packets.map((packet) => `data: ${JSON.stringify(packet)}\n\n`).join("") +
+            "data: [DONE]\n\n",
+          { headers: { "content-type": "text/event-stream" } },
+        ),
+      );
+    const input = request();
+    input.snapshot.executionSpec.model.baseUrl = "https://openrouter.ai/api/v1";
+    input.snapshot.executionSpec.model.model = "openai/gpt-4o-mini";
+    const result = await new OpenAICompatibleModel({ fetchFn }).complete(input);
+    expect(fetchFn.mock.calls[0]?.[0]).toBe("https://openrouter.ai/api/v1/chat/completions");
+    expect(new Headers(fetchFn.mock.calls[0]?.[1].headers).get("authorization")).toBe(
+      `Bearer ${input.credential}`,
+    );
+    expect(JSON.parse(bodyText(fetchFn.mock.calls[0]?.[1]))).not.toHaveProperty("thinking");
+    expect(result).toMatchObject({
+      kind: "tool_calls",
+      calls: [{ id: "call-1", name: "read", arguments: {} }],
+      usage: { inputTokens: 7, outputTokens: 3 },
+    });
+  });
+  it.each([undefined, "off", "low", "high", "max"] as const)(
+    "sends the actual DeepSeek thinking selection %s",
+    async (effort) => {
+      const fetchFn = vi.fn<(url: string, init: RequestInit) => Promise<Response>>(() =>
+        Promise.resolve(
+          Response.json({
+            choices: [{ finish_reason: "stop", message: { role: "assistant", content: "done" } }],
+          }),
+        ),
+      );
+      const input = request();
+      input.snapshot.executionSpec.model.temperature = 0.7;
+      if (effort !== undefined)
+        input.snapshot.executionSpec.model.thinking = { protocol: "deepseek", effort };
+      await new OpenAICompatibleModel({ fetchFn }).complete(input);
+      const payload = JSON.parse(bodyText(fetchFn.mock.calls[0]?.[1])) as Record<string, unknown>;
+      expect(payload.thinking).toEqual(
+        effort === undefined ? undefined : { type: effort === "off" ? "disabled" : "enabled" },
+      );
+      expect(payload.reasoning_effort).toBe(
+        effort === undefined || effort === "off" ? undefined : effort,
+      );
+      expect(payload.temperature).toBe(effort === undefined || effort === "off" ? 0.7 : undefined);
+      expect(payload).not.toHaveProperty("thinking_effort");
+    },
+  );
   it.each(["", null, undefined])("preserves the presence of reasoning %s", async (reasoning) => {
     const fetchFn = vi.fn<(url: string, init: RequestInit) => Promise<Response>>(() =>
       Promise.resolve(

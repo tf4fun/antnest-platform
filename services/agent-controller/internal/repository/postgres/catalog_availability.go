@@ -86,7 +86,7 @@ func (repository *Repository) changeCatalogAvailability(ctx context.Context, tx 
 		if err := validateCatalogEnable(ctx, tx, input); err != nil {
 			return ports.CatalogAvailability{}, err
 		}
-	} else if input.Kind != ports.CatalogTemplate {
+	} else if input.Kind == ports.CatalogModel {
 		if err := requireUnreferencedCatalogResource(ctx, tx, input); err != nil {
 			return ports.CatalogAvailability{}, err
 		}
@@ -144,7 +144,7 @@ func requireEnabledCatalogDependency(enabled bool, err error) error {
 
 func requireEnabledModel(ctx context.Context, tx *databaseTransaction, organization, model string) error {
 	var enabled bool
-	err := tx.QueryRow(ctx, `SELECT m.enabled AND c.enabled FROM agent_controller.model_profiles m
+	err := tx.QueryRow(ctx, `SELECT m.enabled FROM agent_controller.model_profiles m
 JOIN agent_controller.provider_connections c ON c.id=m.provider_connection_id AND c.organization_id=m.organization_id
 WHERE m.id=$1 AND m.organization_id=$2`, model, organization).Scan(&enabled)
 	return requireEnabledCatalogDependency(enabled, err)
@@ -154,7 +154,7 @@ WHERE m.id=$1 AND m.organization_id=$2`, model, organization).Scan(&enabled)
 // Historical template revisions may be used only while their template is enabled.
 func requireEnabledTemplateSpec(ctx context.Context, tx *databaseTransaction, organization string, spec domain.AgentSpecSnapshot) error {
 	var enabled bool
-	err := tx.QueryRow(ctx, `SELECT t.enabled AND m.enabled AND c.enabled
+	err := tx.QueryRow(ctx, `SELECT t.enabled AND m.enabled
 FROM agent_controller.agent_templates t
 JOIN agent_controller.agent_template_revisions r ON r.template_id=t.id AND r.organization_id=t.organization_id AND r.revision=$3
 JOIN agent_controller.model_profiles m ON m.id=r.model_profile_id AND m.organization_id=t.organization_id
@@ -196,12 +196,15 @@ const catalogReferencesQuery = `WITH selected_models AS (
 SELECT 'template' AS kind, t.id AS resource_id, '' AS agent_id, '' AS operation_id
 FROM agent_controller.agent_templates t JOIN agent_controller.agent_template_revisions r
 ON r.template_id=t.id AND r.organization_id=t.organization_id AND r.revision=t.current_revision
-WHERE t.organization_id=$1 AND t.enabled AND r.model_profile_id IN (SELECT id FROM selected_models)
+WHERE t.organization_id=$1 AND t.enabled AND (r.model_profile_id IN (SELECT id FROM selected_models)
+ OR r.fallback_model_profile_ids && ARRAY(SELECT id FROM selected_models))
 UNION ALL
 SELECT 'agent', agent_id, agent_id, '' FROM current_agent_specs WHERE snapshot->>'model_profile_id' IN (SELECT id FROM selected_models)
+ OR snapshot->'fallback_model_profile_ids' ?| ARRAY(SELECT id FROM selected_models)
 UNION ALL
 SELECT 'lifecycle_operation', o.request_id, a.id, o.request_id
 FROM agent_controller.agents a JOIN agent_controller.agent_lifecycle_operations o ON o.agent_id=a.id AND o.request_id=a.active_operation_request_id
 JOIN agent_controller.agent_spec_revisions s ON s.agent_id=a.id AND s.id=o.target_spec_revision_id
-WHERE a.organization_id=$1 AND a.lifecycle_state<>'deleted' AND o.state='running' AND s.snapshot->>'model_profile_id' IN (SELECT id FROM selected_models)
+WHERE a.organization_id=$1 AND a.lifecycle_state<>'deleted' AND o.state='running' AND (s.snapshot->>'model_profile_id' IN (SELECT id FROM selected_models)
+ OR s.snapshot->'fallback_model_profile_ids' ?| ARRAY(SELECT id FROM selected_models))
 ORDER BY kind, resource_id LIMIT 101`

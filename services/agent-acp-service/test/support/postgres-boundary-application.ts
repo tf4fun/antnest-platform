@@ -39,13 +39,16 @@ import { AgentAcpHttpServer } from "../../src/transport/http-server.js";
 import { runtimeInformation } from "../fixtures/runtime-information.js";
 import { AcpWireClient, type ProtocolVersion } from "./acp-wire-client.js";
 
+// Application recreation preserves the deployment's encryption key.
+const encryptionKey = randomBytes(32);
+
 export async function startBoundaryApplication(
   pool: Pool,
   information = runtimeInformation(),
   options: { runTimeoutMs?: number } = {},
 ) {
   const kernel = new PostgresKernel(pool);
-  const sessions = new PostgresSessionRepository(kernel, new SecretBox(randomBytes(32)));
+  const sessions = new PostgresSessionRepository(kernel, new SecretBox(encryptionKey));
   const executions = new PostgresExecutionRepository(kernel);
   const persistRun = executions.finish.bind(executions);
   const finish = vi.spyOn(executions, "finish");
@@ -115,6 +118,7 @@ export async function startBoundaryApplication(
       return Promise.resolve();
     },
     onUnavailable: (organizationId) => revoke({ organization_id: organizationId, agents: [] }),
+    onPublished: (organizationId) => outputs.invalidateOrganization(organizationId),
   });
   const stored = await configurations.load("organization-1");
   const configuration: ExecutionConfiguration =

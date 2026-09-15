@@ -11,6 +11,55 @@ const message = (text: string): SessionEvent => ({
 });
 
 describe("Session output delivery", () => {
+  it("publishes current configuration on organization changes without replaying historical settings", async () => {
+    const streams = new SessionOutputStreams();
+    const stop = new AbortController();
+    const configuration = {
+      modelId: "agent_default",
+      modeId: "auto",
+      modeValue: "agent_default",
+      defaultModeId: "auto",
+      models: [],
+    } as const;
+    let current = {
+      ...configuration,
+      models: [] as { id: string; name: string }[],
+      notice: "Primary unavailable; using Backup",
+    };
+    const send = vi.fn<(event: SessionEvent) => Promise<void>>().mockResolvedValue();
+    const read = vi.fn<() => Promise<SessionOutputSnapshot>>(() =>
+      Promise.resolve({
+        sequence: 7,
+        state: idle,
+        events: [{ kind: "configuration", configuration: { ...current, notice: "obsolete" } }],
+        configuration: current,
+      }),
+    );
+    try {
+      await streams.attach({
+        identity: binding(),
+        key: "s",
+        connectionId: "c",
+        read,
+        send,
+        signal: stop.signal,
+        onFailure: vi.fn(),
+      });
+      expect(send.mock.calls.flat().filter((e) => e.kind === "configuration")).toEqual([
+        { kind: "configuration", configuration: current },
+      ]);
+      streams.invalidateOrganization(binding().organizationId);
+      await streams.flush("s");
+      expect(send.mock.calls.flat().filter((e) => e.kind === "configuration")).toHaveLength(1);
+      current = { ...current, notice: "No Provider available" };
+      streams.invalidateOrganization(binding().organizationId);
+      await streams.flush("s");
+      expect(send.mock.calls.flat().filter((e) => e.kind === "configuration")).toHaveLength(2);
+    } finally {
+      stop.abort();
+      streams.disconnect("c");
+    }
+  });
   it("keeps one subscription when two replacements overlap an in-flight read", async () => {
     const streams = new SessionOutputStreams();
     const blocked = Promise.withResolvers<SessionOutputSnapshot>();

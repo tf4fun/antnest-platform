@@ -53,6 +53,33 @@ func TestExecutionRevisionIgnoresRepeatedRuntimeCondition(t *testing.T) {
 	require.Equal(t, before.Revision, after.Revision)
 }
 
+func TestExecutionRevisionPublishesHealthChangesWithDisabledPrimaryProvider(t *testing.T) {
+	repository, base, seed := executionConfigurationRepository(t)
+	backup := seedConfigurationProfile(t, repository, "backup", base.Agent.OrganizationID)
+	_, err := repository.SetCatalogAvailability(t.Context(), availabilityChange(
+		ports.CatalogProvider, seed.Model.ProviderConnectionID, base.Agent.OrganizationID, "disable-primary", true, false))
+	require.NoError(t, err)
+	before := currentExecutionSnapshot(t, repository, base.Agent.OrganizationID)
+	require.True(t, before.Agents[0].AcceptingRuns)
+	require.True(t, publishedModel(t, before, backup.ModelProfileID).Enabled)
+	for _, health := range []string{"unhealthy", "healthy"} {
+		agent, err := repository.GetAgent(t.Context(), base.Agent.AgentID)
+		require.NoError(t, err)
+		_, err = repository.RecordRuntimeCondition(t.Context(), ports.RecordRuntimeCondition{
+			ExpectedAggregateSequence: agent.AggregateSequence,
+			Inspection: ports.RuntimeInspection{AgentID: agent.AgentID, RuntimeRevision: agent.RuntimeRevision,
+				RuntimeExecutionID: agent.RuntimeExecutionID, MCPEndpoint: agent.RuntimeMCPEndpoint,
+				LifecycleState: "provisioned", Phase: "running", Health: health, ObservedAt: agent.RuntimeObservedAt.Add(time.Minute)},
+		})
+		require.NoError(t, err)
+		after := currentExecutionSnapshot(t, repository, agent.OrganizationID)
+		require.Equal(t, before.Revision+1, after.Revision, "health must be published independently of model selection")
+		require.Equal(t, health == "healthy", after.Agents[0].AcceptingRuns)
+		require.Equal(t, before.Agents[0].Runtime, after.Agents[0].Runtime)
+		before = after
+	}
+}
+
 func TestExecutionRevisionRuntimeLossAndObservationReplay(t *testing.T) {
 	repository := providerTestRepository(t)
 	base, _ := seedAvailableAgentForRebuild(t, t.Context(), repository)

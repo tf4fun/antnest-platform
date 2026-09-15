@@ -38,6 +38,12 @@ a Template does not disable its existing Agents; disabling a Provider does not
 rewrite each Model flag. These rules remain Controller-owned, not inferred from
 loaded browser lists.
 
+Provider disable is allowed while referenced. When ACP applies the update,
+active requests fail immediately; the next prompt can use the Template's ordered
+backup connections. Re-enabling restores availability without changing references.
+No physical deletion action is exposed. Referenced Model disable still returns
+`resource_in_use`.
+
 The browser sends no optimistic flag change. After a committed receipt it reads
 the current resource, because replayed receipts may precede a later opposite
 change. A failed read after a successful write is displayed as saved but not

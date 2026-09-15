@@ -43,18 +43,30 @@ func TestWorkspaceMetadataDoesNotDependOnRunStorage(t *testing.T) {
 	require.NoError(t, err)
 	assertManagementOnlySchema(t, repository)
 	queries := application.NewAgentQueryService(repository)
+	_, err = repository.pool.Exec(ctx, `UPDATE agent_controller.agents SET
+ activation_state=CASE WHEN lifecycle_state<>'created' THEN '' WHEN id='b-disabled' THEN 'disabled' ELSE 'enabled' END,
+ runtime_state=CASE WHEN id='a-ready' THEN 'available' WHEN id='b-disabled' THEN 'exited' ELSE 'waiting' END`)
+	require.NoError(t, err)
 	input := application.ListWorkspaceAgentsInput{RequestID: "list", OrganizationID: "org", PrincipalID: "owner", Limit: 2}
 	page, err := queries.ListWorkspaceAgents(ctx, input)
 	require.NoError(t, err)
 	require.Len(t, page.Items, 2)
 	require.Equal(t, "a-ready", page.Items[0].AgentID)
 	require.Equal(t, "b-disabled", page.Items[1].AgentID)
+	require.Equal(t, domain.AgentCreated, page.Items[0].LifecycleState)
+	require.Equal(t, domain.ActivationEnabled, page.Items[0].ActivationState)
+	require.Equal(t, domain.RuntimeAvailable, page.Items[0].RuntimeState)
+	require.Equal(t, domain.ActivationDisabled, page.Items[1].ActivationState)
+	require.Equal(t, domain.RuntimeExited, page.Items[1].RuntimeState)
 	require.NotEmpty(t, page.NextCursor)
 	input.Cursor = page.NextCursor
 	page, err = queries.ListWorkspaceAgents(ctx, input)
 	require.NoError(t, err)
 	require.Len(t, page.Items, 1)
 	require.Equal(t, "c-waiting", page.Items[0].AgentID)
+	require.Equal(t, domain.AgentNotCreated, page.Items[0].LifecycleState)
+	require.Empty(t, page.Items[0].ActivationState)
+	require.Equal(t, domain.RuntimeWaiting, page.Items[0].RuntimeState)
 	require.Empty(t, page.NextCursor)
 	input.Cursor, input.OrganizationID, input.PrincipalID = "", "other-org", "owner"
 	page, err = queries.ListWorkspaceAgents(ctx, input)

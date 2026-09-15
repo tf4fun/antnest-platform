@@ -7,10 +7,35 @@ const bootstrapSchema = z.object({
     organization_id: z.string().min(1),
     administrator: z.boolean(),
   }),
-  agents: z.array(z.object({
-    agent_id: z.string().min(1),
-    name: z.string().min(1),
-  })).refine(agents => new Set(agents.map(agent => agent.agent_id)).size === agents.length, "Duplicate Agent identifiers"),
+  agents: z
+    .array(
+      z
+        .object({
+          agent_id: z.string().min(1),
+          name: z.string().min(1),
+          lifecycle_state: z.enum(["not_created", "created", "deleted"]),
+          activation_state: z.enum(["enabled", "disabled"]).optional(),
+          runtime_state: z.enum([
+            "unknown",
+            "waiting",
+            "available",
+            "unhealthy",
+            "exited",
+            "absent",
+          ]),
+        })
+        .refine(
+          (agent) =>
+            (agent.lifecycle_state === "created") ===
+            (agent.activation_state !== undefined),
+          "Activation state belongs to a created Agent",
+        ),
+    )
+    .refine(
+      (agents) =>
+        new Set(agents.map((agent) => agent.agent_id)).size === agents.length,
+      "Duplicate Agent identifiers",
+    ),
 });
 
 export function workspaceFromBootstrap(payload: unknown): WorkspaceSnapshot {
@@ -19,7 +44,9 @@ export function workspaceFromBootstrap(payload: unknown): WorkspaceSnapshot {
     principal: {
       userId: bootstrap.principal.user_id,
       organizationId: bootstrap.principal.organization_id,
-      displayName: bootstrap.principal.administrator ? "Administrator" : "Signed in",
+      displayName: bootstrap.principal.administrator
+        ? "Administrator"
+        : "Signed in",
       organizationName: "Organization workspace",
       administrator: bootstrap.principal.administrator,
     },
@@ -30,6 +57,11 @@ export function workspaceFromBootstrap(payload: unknown): WorkspaceSnapshot {
       description: "Managed by your organization",
       modelLabel: "Platform managed",
       status: "unknown",
+      managementState: {
+        lifecycle: agent.lifecycle_state,
+        activation: agent.activation_state,
+        runtime: agent.runtime_state,
+      },
     })),
     conversations: [],
     activeAgentId: "",

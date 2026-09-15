@@ -50,6 +50,8 @@ func (h *handler) registerProviderRoutes() {
 	h.mux.HandleFunc("GET /api/admin/provider-connections", h.withPrincipal(h.listProviderConnections))
 	h.mux.HandleFunc("POST /api/admin/provider-connections", h.withPrincipal(h.createProviderConnection))
 	h.mux.HandleFunc("GET /api/admin/provider-connections/{connection_id}", h.withPrincipal(h.getProviderConnection))
+	h.mux.HandleFunc("GET /api/admin/provider-connections/{connection_id}/models/discovery", h.withPrincipal(h.discoverProviderModels))
+	h.mux.HandleFunc("POST /api/admin/provider-models/discovery", h.withPrincipal(h.discoverDraftModels))
 	h.mux.HandleFunc("POST /api/admin/provider-connections/{connection_id}/credentials", h.withPrincipal(h.rotateProviderCredential))
 }
 

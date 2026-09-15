@@ -81,7 +81,7 @@ describe("logical Provider clients", () => {
     handle.release();
   });
 
-  it("rotates a disabled provider for existing holders without accepting new ones", async () => {
+  it("discards authentication updates for disabled clients and revokes existing holders", async () => {
     const { clients, calls } = setup();
     const held = clients.acquire("organization-1", "provider-1");
     const fixture = executionConfiguration();
@@ -97,8 +97,8 @@ describe("logical Provider clients", () => {
     });
     clients.apply(disabled);
     expect(() => clients.acquire("organization-1", "provider-1")).toThrow("unavailable");
-    await held.complete(request());
-    expect(calls.mock.calls[0]?.[0].credential).toBe("rotated-retired-key");
+    await expect(held.complete(request())).rejects.toMatchObject({ code: "provider_unavailable" });
+    expect(calls).not.toHaveBeenCalled();
     const conflict = parseExecutionConfiguration({
       ...disabled,
       revision: 3,
@@ -107,9 +107,9 @@ describe("logical Provider clients", () => {
         credential: { method: "api_key", secret: "conflicting-retired-key" },
       })),
     });
-    expect(() => clients.apply(conflict)).toThrow("revision");
-    await held.complete(request());
-    expect(calls.mock.calls[1]?.[0].credential).toBe("rotated-retired-key");
+    clients.apply(conflict);
+    await expect(held.complete(request())).rejects.toMatchObject({ code: "provider_unavailable" });
+    expect(calls).not.toHaveBeenCalled();
     held.release();
     await expect(held.complete(request())).rejects.toThrow("released");
   });
@@ -135,7 +135,7 @@ describe("logical Provider clients", () => {
     held.release();
   });
 
-  it("retires missing providers for new acquisition while existing holders can finish", async () => {
+  it("revokes missing providers including existing holders", async () => {
     const { clients } = setup();
     const handle = clients.acquire("organization-1", "provider-1");
     clients.apply({
@@ -146,7 +146,9 @@ describe("logical Provider clients", () => {
       providers: [],
     });
     expect(() => clients.acquire("organization-1", "provider-1")).toThrow("unavailable");
-    expect(await handle.complete(request())).toEqual(result());
+    await expect(handle.complete(request())).rejects.toMatchObject({
+      code: "provider_unavailable",
+    });
     handle.release();
     handle.release();
     await expect(handle.complete(request())).rejects.toThrow("released");
@@ -164,7 +166,7 @@ describe("logical Provider clients", () => {
     expect(() => clients.acquire("organization-1", "provider-1")).toThrow("unavailable");
   });
 
-  it("can re-enable a draining client with fresh authentication", async () => {
+  it("re-enables only fresh handles without reviving old ones", async () => {
     const { clients, calls } = setup();
     const old = clients.acquire("organization-1", "provider-1");
     clients.apply({
@@ -183,10 +185,10 @@ describe("logical Provider clients", () => {
     }));
     clients.apply(parseExecutionConfiguration(changed));
     const fresh = clients.acquire("organization-1", "provider-1");
-    await old.complete(request());
+    await expect(old.complete(request())).rejects.toMatchObject({ code: "provider_unavailable" });
     old.release();
     await fresh.complete(request());
-    expect(calls.mock.calls.map(([call]) => call.credential)).toEqual(["restored", "restored"]);
+    expect(calls.mock.calls.map(([call]) => call.credential)).toEqual(["restored"]);
     fresh.release();
   });
 
@@ -208,24 +210,24 @@ describe("logical Provider clients", () => {
     const current = executionConfiguration();
     current.revision = 3;
     clients.apply(parseExecutionConfiguration(current));
-    pending.resolve(result());
-    await running;
+    pending.resolve({ ...result(), usage: { inputTokens: 4, outputTokens: 1 } });
+    await expect(running).rejects.toMatchObject({
+      code: "model_unavailable",
+      usage: { inputTokens: 4, outputTokens: 1 },
+      cause: { code: "provider_unavailable" },
+    });
     const fresh = clients.acquire("organization-1", "provider-1");
-    expect(await fresh.complete(request())).toEqual(result());
+    expect(await fresh.complete(request())).toMatchObject({
+      kind: "message",
+      stopReason: "end_turn",
+    });
     fresh.release();
   });
 
-  it("rejects a new target or conflicting credential on a draining connection without mutating its holders", async () => {
+  it("rejects a new target or conflicting credential on an active connection without mutating holders", async () => {
     const { clients, calls } = setup();
     const held = clients.acquire("organization-1", "provider-1");
     try {
-      clients.apply({
-        organization_id: "organization-1",
-        revision: 2,
-        agents: [],
-        models: [],
-        providers: [],
-      });
       const changed = executionConfiguration();
       changed.revision = 3;
       changed.providers[0]!.base_url = "https://other-provider.example";
@@ -238,7 +240,7 @@ describe("logical Provider clients", () => {
       expect(() => clients.apply(parseExecutionConfiguration(conflicting))).toThrow("revision");
       await held.complete(request());
       expect(calls.mock.calls[0]?.[0].credential).toBe("synthetic-provider-key");
-      expect(() => clients.acquire("organization-1", "provider-1")).toThrow("unavailable");
+      clients.acquire("organization-1", "provider-1").release();
     } finally {
       held.release();
     }

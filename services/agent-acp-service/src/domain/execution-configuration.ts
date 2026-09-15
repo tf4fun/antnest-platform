@@ -4,12 +4,14 @@ import { DomainError } from "./errors.js";
 import {
   authorizationModeSchema,
   sessionConfigurationSchema,
+  selectSessionModel,
   type Authorization,
   type ConfigurationCatalog,
   type SessionModel,
   type SessionConfiguration,
 } from "./session-configuration.js";
 import type { ModelSpec, RuntimeBinding } from "./types.js";
+import { resolveThinking, thinkingEfforts } from "./model-thinking.js";
 
 const identifier = z.string().min(1).max(200);
 const revision = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
@@ -25,7 +27,7 @@ const endpoint = z.url().refine((value) => {
 
 const providerFields = {
   connection_id: identifier,
-  provider_key: z.literal("deepseek"),
+  provider_key: z.enum(["deepseek", "openrouter"]),
   request_protocol: z.literal("openai_chat_completions"),
   base_url: endpoint,
 };
@@ -83,6 +85,7 @@ export const agentConfigurationSchema = z.strictObject({
   unavailable_reason: z.string().min(1).max(200).nullable(),
   operation_id: identifier.nullable(),
   default_model_profile_id: identifier,
+  fallback_model_profile_ids: z.array(identifier).max(31).optional(),
   default_authorization: z.strictObject({
     mode: authorizationModeSchema,
     tool_rules: z.array(toolRuleSchema).max(128),
@@ -202,6 +205,16 @@ function validateConfiguration<T extends PublicExecutionConfiguration>(snapshot:
   }
   for (const agent of snapshot.agents) {
     requireReference(models.has(agent.default_model_profile_id));
+    const candidates = [
+      agent.default_model_profile_id,
+      ...(agent.fallback_model_profile_ids ?? []),
+    ];
+    const connections = candidates.map((id) => {
+      const model = models.get(id);
+      requireReference(model !== undefined);
+      return model!.connection_id;
+    });
+    indexUnique(connections, (id) => id);
     validateAgent(agent);
   }
   return snapshot;
@@ -266,9 +279,9 @@ export function resolveExecutionConfiguration(
     throw new DomainError("agent_unavailable", agent.unavailable_reason ?? "Agent is unavailable");
   }
   const selection = sessionConfigurationSchema.parse(overrides);
+  const effective = selectSessionModel(selection, executionConfigurationCatalog(snapshot, agent));
   const model = snapshot.models.find(
-    (candidate) =>
-      candidate.model_profile_id === (selection.modelProfileId ?? agent.default_model_profile_id),
+    (candidate) => candidate.model_profile_id === effective?.modelProfileId,
   );
   const provider = snapshot.providers.find(
     (candidate) => candidate.connection_id === model?.connection_id,
@@ -283,6 +296,13 @@ export function resolveExecutionConfiguration(
   ) {
     throw new DomainError("agent_unavailable", "Agent execution configuration is not ready");
   }
+  const fallback =
+    model.model_profile_id !== (selection.modelProfileId ?? agent.default_model_profile_id);
+  const effort =
+    fallback && !effective?.thinkingEfforts?.includes(selection.thinkingEffort!)
+      ? undefined
+      : selection.thinkingEffort;
+  const thinking = resolveThinking(provider.provider_key, model.model, effort);
   return {
     organizationId: snapshot.organization_id,
     agentId: agent.agent_id,
@@ -291,7 +311,10 @@ export function resolveExecutionConfiguration(
     executionRevision: agent.execution_revision,
     providerConnectionId: provider.connection_id,
     modelProfileId: model.model_profile_id,
-    model: modelSpec(model, provider.base_url),
+    model: {
+      ...modelSpec(model, provider.base_url),
+      ...(thinking === undefined ? {} : { thinking }),
+    },
     authorization: resolveAuthorization(agent, selection),
     authorizationRevision: agent.authorization_revision,
     runtime: {
@@ -327,15 +350,28 @@ export function executionConfigurationCatalog(
   );
   if (model === undefined)
     throw new DomainError("invalid_execution_configuration", "Default model is missing");
+  const describeModel = (model: ExecutionModel) =>
+    sessionModel(
+      model,
+      snapshot.providers.find((provider) => provider.connection_id === model.connection_id)
+        ?.provider_key ?? "",
+    );
   return {
-    models: snapshot.models.filter(available).map(sessionModel),
-    defaultModel: { ...sessionModel(model), available: available(model) },
+    models: snapshot.models.filter(available).map(describeModel),
+    unavailableModelProfileIds: snapshot.models
+      .filter((model) => !available(model))
+      .map((model) => model.model_profile_id),
+    fallbackModels: (agent.fallback_model_profile_ids ?? []).flatMap((id) => {
+      const candidate = snapshot.models.find((item) => item.model_profile_id === id);
+      return candidate !== undefined && available(candidate) ? [describeModel(candidate)] : [];
+    }),
+    defaultModel: { ...describeModel(model), available: available(model) },
     defaultAuthorization: resolveAuthorization(agent, {}),
     authorizationRevision: agent.authorization_revision,
   };
 }
 
-function sessionModel(model: ExecutionModel): SessionModel {
+function sessionModel(model: ExecutionModel, provider: string): SessionModel {
   return {
     modelProfileId: model.model_profile_id,
     displayName: model.display_name,
@@ -343,6 +379,9 @@ function sessionModel(model: ExecutionModel): SessionModel {
     contextWindow: model.context_window,
     maxOutputTokens: model.max_output_tokens,
     supportsImages: model.supports_images,
+    providerName:
+      provider === "deepseek" ? "DeepSeek" : provider === "openrouter" ? "OpenRouter" : provider,
+    thinkingEfforts: thinkingEfforts(provider, model.model),
   };
 }
 

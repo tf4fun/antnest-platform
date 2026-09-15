@@ -252,7 +252,7 @@ func loadTemplateRecord(
 SELECT t.id, t.organization_id, t.template_key, t.name,
        t.enabled, t.created_at, t.updated_at,
        r.revision, r.model_profile_id, r.system_prompt,
-       r.max_model_requests, r.context_policy_version, r.runtime_input
+       r.max_model_requests, r.context_policy_version, r.runtime_input, r.fallback_model_profile_ids
 FROM agent_controller.agent_templates t
 JOIN agent_controller.agent_template_revisions r
   ON r.template_id = t.id
@@ -270,7 +270,7 @@ func scanTemplateRecord(scanner catalogRowScanner) (ports.TemplateRecord, error)
 		&record.TemplateID, &record.OrganizationID, &record.TemplateKey, &record.Name,
 		&record.Enabled, &record.CreatedAt, &record.UpdatedAt,
 		&snapshot.Revision, &snapshot.ModelProfileID, &snapshot.SystemPrompt,
-		&snapshot.MaxModelRequests, &snapshot.ContextPolicyVersion, &runtimePayload,
+		&snapshot.MaxModelRequests, &snapshot.ContextPolicyVersion, &runtimePayload, &snapshot.FallbackModelProfileIDs,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ports.TemplateRecord{}, ports.ErrNotFound
@@ -301,11 +301,11 @@ func insertTemplateRevision(
 	if _, err := transaction.Exec(ctx, `
 INSERT INTO agent_controller.agent_template_revisions (
     template_id, organization_id, revision, model_profile_id,
-    system_prompt, max_model_requests, context_policy_version, runtime_input, created_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+    system_prompt, max_model_requests, context_policy_version, runtime_input, created_at, fallback_model_profile_ids
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
 		record.TemplateID, record.OrganizationID, snapshot.Revision,
 		snapshot.ModelProfileID, snapshot.SystemPrompt, snapshot.MaxModelRequests,
-		snapshot.ContextPolicyVersion, runtimePayload, record.UpdatedAt,
+		snapshot.ContextPolicyVersion, runtimePayload, record.UpdatedAt, append([]string{}, snapshot.FallbackModelProfileIDs...),
 	); err != nil {
 		return fmt.Errorf("insert Template revision: %w", err)
 	}

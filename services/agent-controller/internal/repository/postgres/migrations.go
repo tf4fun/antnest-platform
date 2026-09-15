@@ -43,6 +43,7 @@ var (
 		{version: 11, name: "agent_state_hierarchy", sql: mustMigration("migrations/0011_agent_state_hierarchy.sql")},
 		{version: 12, name: "execution_configuration_sync", sql: mustMigration("migrations/0012_execution_configuration_sync.sql")},
 		{version: 13, name: "lifecycle_settlement", sql: mustMigration("migrations/0013_lifecycle_settlement.sql")},
+		{version: 14, name: "provider_fallback", sql: mustMigration("migrations/0014_provider_fallback.sql")},
 	}
 )
 

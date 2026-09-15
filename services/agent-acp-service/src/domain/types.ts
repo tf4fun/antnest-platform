@@ -1,5 +1,6 @@
 import type { AdmittedConfiguration } from "./session-configuration.js";
 import type { ModelPricing } from "./usage.js";
+import type { ModelThinking } from "./model-thinking.js";
 
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonObject = { [key: string]: JsonValue };
@@ -41,6 +42,7 @@ export type ModelSpec = {
   contextWindow: number;
   maxOutputTokens: number;
   temperature?: number;
+  thinking?: ModelThinking;
   supportsImages: boolean;
   supportsAudio?: boolean;
   supportsPdf?: boolean;

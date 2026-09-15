@@ -43,7 +43,9 @@ export class AcpApplication implements AcpApplicationPort {
 
   public async readSessionOutput(input: Parameters<AcpApplicationPort["readSessionOutput"]>[0]) {
     await this.assertAccess(input);
-    return this.dependencies.sessions.readOutput(input);
+    const snapshot = await this.dependencies.sessions.readOutput(input);
+    const configuration = await this.dependencies.configuration.get(input);
+    return { ...snapshot, configuration };
   }
 
   public assertAccess(input: Parameters<AcpApplicationPort["assertAccess"]>[0]): Promise<void> {

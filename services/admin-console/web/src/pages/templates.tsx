@@ -14,6 +14,7 @@ import {
 } from "../components/page";
 import { Badge } from "../components/ui/badge";
 import { CatalogAvailabilityControl } from "../components/catalog-availability";
+import { FallbackModels, fallbackModelInput } from "../components/fallback-models";
 import { Button } from "../components/ui/button";
 import { Dialog } from "../components/ui/dialog";
 import { Empty, ErrorNotice, GuidanceNotice, Loading, SuccessNotice } from "../components/ui/feedback";
@@ -38,6 +39,7 @@ export function TemplatesPage({ templateID, revisionID }: { templateID?: string;
 }
 
 function TemplateList() {
+  const [primaryID, setPrimaryID] = useState("");
   const [items, setItems] = useState<AgentTemplate[]>();
   const {
     items: models,
@@ -116,6 +118,7 @@ function TemplateList() {
     try {
       const servers = managedMCPInput(data);
       await api.createTemplate({
+        fallback_model_profile_ids: fallbackModelInput(data, primaryID, models),
         name,
         model_profile_id: String(
           data.get("model_profile_id") ?? "",
@@ -329,7 +332,7 @@ function TemplateList() {
             <Input name="name" placeholder="General assistant" required />
           </Field>
           <Field label="Model">
-            <Select name="model_profile_id" required defaultValue="">
+            <Select name="model_profile_id" required defaultValue="" onChange={event => setPrimaryID(event.target.value)}>
               <option value="" disabled>
                 Select a model
               </option>
@@ -340,6 +343,7 @@ function TemplateList() {
               ))}
             </Select>
           </Field>
+          <FallbackModels primaryID={primaryID} models={models} disabled={pending} />
           <ListPagination
             failure={modelFailure}
             hasMore={modelsHaveMore}
@@ -499,6 +503,7 @@ function TemplateDetail({ templateID, revisionID }: { templateID: string; revisi
     setSuccessMessage("");
     try {
       const revised = await api.reviseTemplate(template.template_id, {
+        fallback_model_profile_ids: fallbackModelInput(data, modelID, choices),
         name: String(data.get("name") ?? "").trim(),
         model_profile_id: modelID,
         system_prompt: String(data.get("system_prompt") ?? ""),
@@ -575,6 +580,10 @@ function TemplateDetail({ templateID, revisionID }: { templateID: string; revisi
       <Section title="System prompt">
         <pre className="whitespace-pre-wrap rounded-md border border-border bg-white p-4 font-sans text-sm leading-6 shadow-sm">{template.system_prompt || "No system prompt."}</pre>
       </Section>
+      <Section title="Backup Providers">
+        <ol className="grid gap-2 text-sm">{(template.fallback_model_profile_ids ?? []).map((id, index) => <li key={id} className="flex gap-3"><span className="text-muted-foreground">{index + 1}</span><a className="break-all text-primary hover:underline" href={`#models/${encodeURIComponent(id)}`}>{models.find(model => model.model_profile_id === id)?.display_name ?? id}</a></li>)}</ol>
+        {!template.fallback_model_profile_ids?.length ? <p className="text-sm text-muted-foreground">None</p> : null}
+      </Section>
       <Section title="Runtime image">
         <p className="break-all text-sm font-medium">{runtimeImageLabel(template.runtime.image_ref, template.runtime.image_source)}</p>
       </Section>
@@ -589,6 +598,7 @@ function TemplateDetail({ templateID, revisionID }: { templateID: string; revisi
               {choices.map((model) => <option value={model.model_profile_id} key={model.model_profile_id}>{model.display_name} · {model.model.model}</option>)}
             </Select>
           </Field>
+          <FallbackModels primaryID={modelID} models={choices} initial={template.fallback_model_profile_ids} disabled={pending} />
           <ListPagination
             failure={modelFailure}
             hasMore={modelsHaveMore}

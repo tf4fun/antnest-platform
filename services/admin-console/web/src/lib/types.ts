@@ -150,6 +150,14 @@ export type ModelCatalogEntry = {
   supports_pdf?: boolean;
 };
 
+export type DiscoveredModel = Pick<ModelCatalogEntry, "model_id" | "display_name"> & Partial<ModelCatalogEntry>;
+export type ModelDiscovery = { models: DiscoveredModel[] };
+export type ProviderDiscoveryDraft = {
+  provider_key: string;
+  base_url: string;
+  credential: ProviderCredential;
+};
+
 export type ModelProviderPreset = {
   provider_key: string;
   display_name: string;
@@ -192,6 +200,7 @@ export type RuntimeSpec = {
 };
 
 export type AgentTemplate = {
+	 fallback_model_profile_ids?: string[];
   template_id: string;
   name: string;
   revision: number;

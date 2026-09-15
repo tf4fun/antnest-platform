@@ -76,6 +76,105 @@ describe.skipIf(databaseUrl === undefined)("ACP configuration over protocol and 
   });
 
   for (const version of [1, 2] as const) {
+    it(`v${version}: Provider disable publishes fallback configuration while idle and changes the next execution`, async () => {
+      const provider = app.configuration.providers[0]!;
+      if (!provider.enabled) throw new Error("Fixture Provider must be enabled");
+      app.configuration.providers.push({
+        ...provider,
+        connection_id: "router",
+        provider_key: "openrouter",
+        base_url: "https://openrouter.ai/api/v1",
+      });
+      app.configuration.models.push({
+        ...app.configuration.models[0]!,
+        model_profile_id: "backup",
+        connection_id: "router",
+        model: "openai/gpt-4o-mini",
+        display_name: "GPT-4o mini",
+      });
+      app.configuration.agents[0]!.fallback_model_profile_ids = ["backup"];
+      await app.publishConfiguration();
+      const client = await app.connect(version);
+      const created = await client.request("session/new", setup);
+      const sessionId = String(created.result?.sessionId);
+      const start = client.frames.length;
+      app.configuration.providers[0] = { ...provider, enabled: false };
+      await app.publishConfiguration();
+      await expect
+        .poll(() => JSON.stringify(client.frames.slice(start)))
+        .toContain("Switched to OpenRouter GPT-4o mini");
+      expect(app.model.complete).not.toHaveBeenCalled();
+      const prompted = await client.request("session/prompt", {
+        sessionId,
+        prompt: [{ type: "text", text: "hello" }],
+      });
+      expect(prompted.error).toBeUndefined();
+      await expect.poll(() => app.model.complete.mock.calls.length).toBe(1);
+      expect(app.model.complete.mock.calls[0]?.[0].snapshot.providerConnectionId).toBe("router");
+      await expect.poll(() => app.finish.mock.calls.length).toBe(1);
+      const loaded = await client.request(version === 1 ? "session/load" : "session/resume", {
+        ...setup,
+        sessionId,
+      });
+      expect(JSON.stringify(loaded.result?.configOptions)).toContain(
+        "Switched to OpenRouter GPT-4o mini",
+      );
+      app.configuration.providers[1] = { ...app.configuration.providers[1]!, enabled: false };
+      await app.publishConfiguration();
+      const rejected = await client.request("session/prompt", {
+        sessionId,
+        prompt: [{ type: "text", text: "blocked" }],
+      });
+      expect(rejected.error).toBeDefined();
+      expect(app.model.complete).toHaveBeenCalledTimes(1);
+    });
+    it(`v${version}: thinking config broadcasts, survives load/fork and reaches the next model request`, async () => {
+      app.configuration.models[0]!.model = "deepseek-v4-flash";
+      await app.publishConfiguration();
+      const client = await app.connect(version);
+      const created = await client.request("session/new", setup);
+      validate(version, "NewSessionResponse", created.result);
+      const sessionId = String(created.result?.sessionId);
+      expect(selected(created.result, "thinking_effort")).toBe("default");
+      const observer = await app.connect(version);
+      await observer.request("session/resume", { ...setup, sessionId });
+      const changed = await set(client, version, sessionId, "thinking_effort", "max");
+      expect(changed.error).toBeUndefined();
+      validate(version, "SetSessionConfigOptionResponse", changed.result);
+      await expect
+        .poll(
+          () =>
+            observer.frames.filter(
+              (frame) => frame.params?.update?.sessionUpdate === "config_option_update",
+            ).length,
+        )
+        .toBe(1);
+      await client.close();
+      const loadedClient = await app.connect(version);
+      const loaded = await loadedClient.request(version === 1 ? "session/load" : "session/resume", {
+        ...setup,
+        sessionId,
+      });
+      expect(loaded.error).toBeUndefined();
+      expect(selected(loaded.result, "thinking_effort")).toBe("max");
+      const fork = await loadedClient.request("session/fork", { ...setup, sessionId });
+      expect(selected(fork.result, "thinking_effort")).toBe("max");
+      const prompted = await loadedClient.request("session/prompt", {
+        sessionId,
+        prompt: [{ type: "text", text: "hello" }],
+      });
+      expect(prompted.error).toBeUndefined();
+      await expect.poll(() => app.model.complete.mock.calls.length).toBeGreaterThan(0);
+      expect(
+        app.model.complete.mock.calls.at(-1)?.[0].snapshot.executionSpec.model.thinking,
+      ).toEqual({ protocol: "deepseek", effort: "max" });
+      const repository = new PostgresSessionConfiguration(new PostgresKernel(pool));
+      expect((await repository.get(sessionId)).configuration.thinkingEffort).toBe("max");
+      const reset = await set(loadedClient, version, sessionId, "thinking_effort", "default");
+      expect(selected(reset.result, "thinking_effort")).toBe("default");
+      expect((await repository.get(sessionId)).configuration.thinkingEffort).toBeUndefined();
+    });
+
     it(`v${version}: config writes, broadcasts, reconnects, forks and inherit resets use official shapes`, async () => {
       const client = await app.connect(version);
       const created = await client.request("session/new", setup);

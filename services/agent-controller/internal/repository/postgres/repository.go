@@ -235,7 +235,7 @@ func (repository *Repository) persistTemplate(
 	if err := lockExecutionOrganization(ctx, transaction, record.OrganizationID); err != nil {
 		return ports.TemplateRecord{}, err
 	}
-	if err := requireEnabledModel(ctx, transaction, record.OrganizationID, record.Revision.Snapshot().ModelProfileID); err != nil {
+	if err := validateTemplateModelCandidates(ctx, transaction, record.OrganizationID, record.Revision.Snapshot()); err != nil {
 		return ports.TemplateRecord{}, err
 	}
 	if kind == ports.CreateTemplateRequest {
@@ -265,7 +265,7 @@ func (repository *Repository) GetTemplate(
 SELECT t.id, t.organization_id, t.template_key, t.name,
        t.enabled, t.created_at, t.updated_at,
        r.revision, r.model_profile_id, r.system_prompt,
-       r.max_model_requests, r.context_policy_version, r.runtime_input
+       r.max_model_requests, r.context_policy_version, r.runtime_input, r.fallback_model_profile_ids
 FROM agent_controller.agent_templates t
 JOIN agent_controller.agent_template_revisions r
   ON r.template_id = t.id
@@ -295,7 +295,7 @@ func (repository *Repository) ListTemplates(
 SELECT t.id, t.organization_id, t.template_key, t.name,
        t.enabled, t.created_at, t.updated_at,
        r.revision, r.model_profile_id, r.system_prompt,
-       r.max_model_requests, r.context_policy_version, r.runtime_input
+       r.max_model_requests, r.context_policy_version, r.runtime_input, r.fallback_model_profile_ids
 FROM agent_controller.agent_templates t
 JOIN agent_controller.agent_template_revisions r
   ON r.template_id = t.id

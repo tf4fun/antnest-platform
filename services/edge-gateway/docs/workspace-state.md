@@ -2,6 +2,13 @@
 
 ## Boundary
 
+`GET /api/app/bootstrap` lists every authorized, non-deleting Agent via the
+Controller's scoped paginated list. Items contain agent_id/name and management
+lifecycle_state/runtime_state, with activation_state only when created. Gateway
+validates and relays these facts without new ACP/Runtime calls. They are deployment
+observations, not execution availability; starting, disabled and unhealthy Agents
+remain listed. No credentials, endpoints or Session data are included.
+
 `GET /api/app/agents/{agent_id}/state` and `/state/watch` authenticate the
 browser session. They accept no query fields, replay cursor or supplied
 principal. Origin must match both scheme and host when present. This direct
@@ -64,7 +71,7 @@ expiry, browser disconnect, shutdown, trace parenting and capacity release.
 Tests use controlled HTTP dependencies, not another service's database.
 Identity and ACP client spans must be children of the Gateway HTTP span.
 
-This B3 implementation changes the browser contract to revision 11. Agent UI
+Bootstrap management state is browser contract revision 12. Agent UI
 bootstrap/state migration is the separate B4U batch; Console audit consumption
 is B4. Docker/Temporal/Jaeger acceptance is B5. Previous stack evidence does
 not establish acceptance of this producer/consumer change.

@@ -34,6 +34,23 @@ func (repository *Repository) GetProviderConnection(ctx context.Context, organiz
 FROM agent_controller.provider_connections WHERE organization_id=$1 AND id=$2`, organizationID, connectionID))
 }
 
+func (repository *Repository) GetProviderAccess(ctx context.Context, organizationID, connectionID string) (ports.ProviderConnectionRecord, error) {
+	var record ports.ProviderConnectionRecord
+	err := repository.pool.QueryRow(ctx, `SELECT `+providerColumns+`, ciphertext, nonce, key_version
+FROM agent_controller.provider_connections WHERE organization_id=$1 AND id=$2`, organizationID, connectionID).Scan(
+		&record.ConnectionID, &record.OrganizationID, &record.ProviderKey, &record.DisplayName, &record.BaseURL,
+		&record.CredentialMethod, &record.CredentialVersion, &record.CredentialRevision, &record.Enabled, &record.CreatedAt, &record.UpdatedAt,
+		&record.SealedCredential.Ciphertext, &record.SealedCredential.Nonce, &record.SealedCredential.KeyVersion)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return record, ports.ErrNotFound
+	}
+	if err != nil {
+		return record, fmt.Errorf("read Provider access: %w", err)
+	}
+	record.CreatedAt, record.UpdatedAt = record.CreatedAt.UTC(), record.UpdatedAt.UTC()
+	return record, nil
+}
+
 func (repository *Repository) ListProviderConnections(ctx context.Context, organizationID, afterID string, limit int) ([]ports.ProviderConnectionRecord, string, error) {
 	rows, err := repository.pool.Query(ctx, `SELECT `+providerColumns+`
 FROM agent_controller.provider_connections WHERE organization_id=$1 AND ($2='' OR id>$2) ORDER BY id LIMIT $3`, organizationID, afterID, limit+1)

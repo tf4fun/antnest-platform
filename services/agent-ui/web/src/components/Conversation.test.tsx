@@ -13,7 +13,8 @@ test("unknown historical message time is omitted while a known local time remain
       { id: "local", role: "user", content: "Local question", createdAt: "2026-09-10T12:00:00Z" },
     ],
   };
-  const agent: AgentSummary = { id: "agent", name: "Agent", status: "ready", description: "Test", modelLabel: "Test model" };
+  const agent: AgentSummary = { id: "agent", name: "Agent", status: "ready", description: "Test", modelLabel: "Test model",
+    managementState: { lifecycle: "created", activation: "enabled", runtime: "available" } };
   const { container } = render(<Conversation conversation={conversation} agent={agent} />);
   expect(container.querySelectorAll("article")).toHaveLength(2);
   expect(container.querySelector("article")?.querySelector("time")).toBeNull();

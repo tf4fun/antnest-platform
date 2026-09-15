@@ -47,6 +47,7 @@ export interface ModelPort {
 export type AuthenticatedModelRequest = ModelRequest & { credential: string };
 
 export interface AuthenticatedModelTransport {
+  // Abort pending I/O promptly; preserve known usage in ModelError when interrupted.
   complete(request: AuthenticatedModelRequest): Promise<ModelResult>;
 }
 

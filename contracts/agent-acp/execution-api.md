@@ -83,7 +83,7 @@ ACP rejects malformed, unsupported, duplicate, or dangling configuration as a
 whole. It must never interpret validation or transport failure as an empty
 snapshot. Provider absence stops new acquisition for that connection; model
 absence removes that model from new selections, not other models sharing its
-connection. Already held client references may drain. Agent absence denies ordinary access, while
+connection. Existing client references are revoked immediately, not drained. Agent absence denies ordinary access, while
 historical organization ownership remains in Sessions.
 
 The successful result contains `organization_id` and `applied_revision`. It
@@ -266,12 +266,12 @@ not grounds to retain Controller Run state or skip this behavior.
 
 The Controller Agent list and Gateway workspace bootstrap contain authorized
 management metadata, not `AgentAccessSubject` or Controller-derived execution
-availability. B0 freezes that list/bootstrap contract along with this state
-view; B2/B3 update the producer and Gateway DTO/validators, and B4U updates the
-Agent UI schema and initial state. Before ACP state arrives, the consumer shows
-unknown/connecting, not ready or a fabricated disabled state. Gateway does not
-fan out per-Agent ACP queries just to populate the old bootstrap fields. First
-load and reconnect must parse the metadata-only response successfully.
+availability. Controller revision 29 / Gateway revision 12 include lifecycle,
+activation and Runtime state for the chooser. These are deployment observations,
+not ACP admission. Before ACP state arrives, execution remains unknown/connecting;
+management state cannot unlock input. Gateway does not fan out per-Agent ACP
+queries for bootstrap. First load and reconnect parse these management facts
+independently of the selected Agent's execution observation.
 
 ## Read-only Execution Audit
 

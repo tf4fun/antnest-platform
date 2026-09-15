@@ -67,6 +67,7 @@ export function createAcpV2Agent({
     const output = await mapError(() => application.readSessionOutput({ binding, sessionId }));
     await outputs.attach({
       keepExisting: true,
+      configurationInResponse: true,
       identity: binding,
       afterSequence: output.sequence,
       initialState: output.state,
@@ -208,6 +209,7 @@ export function createAcpV2Agent({
           identity: binding,
           connectionId: binding.connectionId,
           afterSequence: result.sequence,
+          configurationInResponse: true,
           ...(initialState === undefined ? {} : { initialState }),
           signal: connection.signal,
           onFailure: (error) => connection.close(error),

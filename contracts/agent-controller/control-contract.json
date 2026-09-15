@@ -1,6 +1,6 @@
 {
   "contract": "antnest.agent-controller.lifecycle",
-  "revision": 28,
+  "revision": 30,
   "transport": "json-over-http",
   "trust": "internal-network",
   "media_types": {
@@ -26,6 +26,13 @@
       }
     },
     "provider_connections": {
+      "resolve_access": {
+        "method": "GET",
+        "path": "/internal/provider-connections/{connection_id}/access",
+        "query": ["organization_id"],
+        "success_status": 200,
+        "response": "control-api.schema.json#/$defs/provider_access"
+      },
       "availability": {
         "method": "PUT",
         "path": "/internal/provider-connections/{connection_id}/availability",

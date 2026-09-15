@@ -166,6 +166,7 @@ func (h *handler) routes() []routeDefinition {
 		{pattern: "PUT /internal/agent-templates/{template_id}/availability", handler: h.setTemplateAvailability},
 		{pattern: "GET /internal/provider-connections", handler: h.listProviderConnections},
 		{pattern: "GET /internal/provider-connections/{connection_id}", handler: h.getProviderConnection},
+		{pattern: "GET /internal/provider-connections/{connection_id}/access", handler: h.resolveProviderAccess, metadataOnly: true},
 		{pattern: "POST /internal/provider-connections/{connection_id}/credentials", handler: h.rotateProviderCredential, metadataOnly: true},
 		{pattern: "POST /internal/model-profiles", handler: h.createModelProfile},
 		{pattern: "GET /internal/model-profiles", handler: h.listModelProfiles},
@@ -211,26 +212,28 @@ type reviseModelProfileRequest struct {
 }
 
 type createTemplateRequest struct {
-	RequestID            string                  `json:"request_id"`
-	OrganizationID       string                  `json:"organization_id"`
-	TemplateKey          string                  `json:"template_key"`
-	Name                 string                  `json:"name"`
-	ModelProfileID       string                  `json:"model_profile_id"`
-	SystemPrompt         string                  `json:"system_prompt"`
-	MaxModelRequests     int                     `json:"max_model_requests"`
-	ContextPolicyVersion string                  `json:"context_policy_version"`
-	Runtime              domain.RuntimeSpecInput `json:"runtime"`
+	RequestID               string                  `json:"request_id"`
+	OrganizationID          string                  `json:"organization_id"`
+	TemplateKey             string                  `json:"template_key"`
+	Name                    string                  `json:"name"`
+	ModelProfileID          string                  `json:"model_profile_id"`
+	FallbackModelProfileIDs []string                `json:"fallback_model_profile_ids,omitempty"`
+	SystemPrompt            string                  `json:"system_prompt"`
+	MaxModelRequests        int                     `json:"max_model_requests"`
+	ContextPolicyVersion    string                  `json:"context_policy_version"`
+	Runtime                 domain.RuntimeSpecInput `json:"runtime"`
 }
 
 type reviseTemplateRequest struct {
-	RequestID            string                  `json:"request_id"`
-	OrganizationID       string                  `json:"organization_id"`
-	Name                 string                  `json:"name"`
-	ModelProfileID       string                  `json:"model_profile_id"`
-	SystemPrompt         string                  `json:"system_prompt"`
-	MaxModelRequests     int                     `json:"max_model_requests"`
-	ContextPolicyVersion string                  `json:"context_policy_version"`
-	Runtime              domain.RuntimeSpecInput `json:"runtime"`
+	RequestID               string                  `json:"request_id"`
+	OrganizationID          string                  `json:"organization_id"`
+	Name                    string                  `json:"name"`
+	ModelProfileID          string                  `json:"model_profile_id"`
+	FallbackModelProfileIDs []string                `json:"fallback_model_profile_ids,omitempty"`
+	SystemPrompt            string                  `json:"system_prompt"`
+	MaxModelRequests        int                     `json:"max_model_requests"`
+	ContextPolicyVersion    string                  `json:"context_policy_version"`
+	Runtime                 domain.RuntimeSpecInput `json:"runtime"`
 }
 
 type createAgentRequest struct {
@@ -280,20 +283,21 @@ type modelProfileResponse struct {
 }
 
 type templateResponse struct {
-	TemplateID           string                  `json:"template_id"`
-	OrganizationID       string                  `json:"organization_id"`
-	TemplateKey          string                  `json:"template_key"`
-	Name                 string                  `json:"name"`
-	Revision             int64                   `json:"revision"`
-	ModelProfileID       string                  `json:"model_profile_id"`
-	SystemPrompt         string                  `json:"system_prompt"`
-	MaxModelRequests     int                     `json:"max_model_requests"`
-	ContextPolicyVersion string                  `json:"context_policy_version"`
-	Runtime              domain.RuntimeSpecInput `json:"runtime"`
-	SkillRefs            []string                `json:"skill_refs"`
-	Enabled              bool                    `json:"enabled"`
-	CreatedAt            time.Time               `json:"created_at"`
-	UpdatedAt            time.Time               `json:"updated_at"`
+	TemplateID              string                  `json:"template_id"`
+	OrganizationID          string                  `json:"organization_id"`
+	TemplateKey             string                  `json:"template_key"`
+	Name                    string                  `json:"name"`
+	Revision                int64                   `json:"revision"`
+	ModelProfileID          string                  `json:"model_profile_id"`
+	FallbackModelProfileIDs []string                `json:"fallback_model_profile_ids,omitempty"`
+	SystemPrompt            string                  `json:"system_prompt"`
+	MaxModelRequests        int                     `json:"max_model_requests"`
+	ContextPolicyVersion    string                  `json:"context_policy_version"`
+	Runtime                 domain.RuntimeSpecInput `json:"runtime"`
+	SkillRefs               []string                `json:"skill_refs"`
+	Enabled                 bool                    `json:"enabled"`
+	CreatedAt               time.Time               `json:"created_at"`
+	UpdatedAt               time.Time               `json:"updated_at"`
 }
 
 type modelProfileListResponse struct {
@@ -401,8 +405,11 @@ type createAgentResponse struct {
 }
 
 type workspaceAgentResponse struct {
-	AgentID string `json:"agent_id"`
-	Name    string `json:"name"`
+	AgentID         string                 `json:"agent_id"`
+	Name            string                 `json:"name"`
+	LifecycleState  domain.AgentState      `json:"lifecycle_state"`
+	ActivationState domain.ActivationState `json:"activation_state,omitempty"`
+	RuntimeState    domain.RuntimeState    `json:"runtime_state"`
 }
 
 type workspaceAgentListResponse struct {
@@ -447,6 +454,7 @@ func (h *handler) listWorkspaceAgents(response http.ResponseWriter, request *htt
 	for _, item := range page.Items {
 		agents = append(agents, workspaceAgentResponse{
 			AgentID: item.AgentID, Name: item.Name,
+			LifecycleState: item.LifecycleState, ActivationState: item.ActivationState, RuntimeState: item.RuntimeState,
 		})
 	}
 	writeJSON(response, http.StatusOK, workspaceAgentListResponse{
@@ -531,8 +539,9 @@ func (h *handler) createTemplate(response http.ResponseWriter, request *http.Req
 	view, err := h.catalog.CreateTemplate(request.Context(), application.CreateTemplateInput{
 		RequestID: payload.RequestID, OrganizationID: payload.OrganizationID,
 		TemplateKey: payload.TemplateKey, Name: payload.Name,
-		ModelProfileID: payload.ModelProfileID,
-		SystemPrompt:   payload.SystemPrompt, MaxModelRequests: payload.MaxModelRequests,
+		ModelProfileID:          payload.ModelProfileID,
+		FallbackModelProfileIDs: payload.FallbackModelProfileIDs,
+		SystemPrompt:            payload.SystemPrompt, MaxModelRequests: payload.MaxModelRequests,
 		ContextPolicyVersion: payload.ContextPolicyVersion, Runtime: payload.Runtime,
 	})
 	if err != nil {
@@ -549,9 +558,10 @@ func (h *handler) reviseTemplate(response http.ResponseWriter, request *http.Req
 	}
 	view, err := h.catalog.ReviseTemplate(request.Context(), application.ReviseTemplateInput{
 		RequestID: payload.RequestID, TemplateID: request.PathValue("template_id"), Name: payload.Name,
-		OrganizationID: payload.OrganizationID,
-		ModelProfileID: payload.ModelProfileID,
-		SystemPrompt:   payload.SystemPrompt, MaxModelRequests: payload.MaxModelRequests,
+		OrganizationID:          payload.OrganizationID,
+		ModelProfileID:          payload.ModelProfileID,
+		FallbackModelProfileIDs: payload.FallbackModelProfileIDs,
+		SystemPrompt:            payload.SystemPrompt, MaxModelRequests: payload.MaxModelRequests,
 		ContextPolicyVersion: payload.ContextPolicyVersion, Runtime: payload.Runtime,
 	})
 	if err != nil {
@@ -1127,7 +1137,8 @@ func templatePayload(view application.TemplateView) templateResponse {
 		TemplateID: view.TemplateID, OrganizationID: view.OrganizationID,
 		TemplateKey: view.TemplateKey, Name: view.Name, Revision: view.Revision,
 		ModelProfileID: view.ModelProfileID, SystemPrompt: view.SystemPrompt,
-		MaxModelRequests: view.MaxModelRequests, ContextPolicyVersion: view.ContextPolicyVersion,
+		FallbackModelProfileIDs: view.FallbackModelProfileIDs,
+		MaxModelRequests:        view.MaxModelRequests, ContextPolicyVersion: view.ContextPolicyVersion,
 		Runtime: view.Runtime, SkillRefs: []string{}, Enabled: view.Enabled,
 		CreatedAt: view.CreatedAt, UpdatedAt: view.UpdatedAt,
 	}
@@ -1245,7 +1256,7 @@ func publicError(err error) (int, errorResponse) {
 		return http.StatusBadRequest, errorResponse{
 			Code: "runtime_image_invalid", Message: "Enter a valid image name, tag, or digest reference.",
 		}
-	case errors.Is(err, application.ErrInvalidInput):
+	case errors.Is(err, application.ErrInvalidInput), errors.Is(err, ports.ErrInvalidModelCandidates):
 		return http.StatusBadRequest, errorResponse{Code: "invalid_request", Message: "request is invalid"}
 	case errors.Is(err, application.ErrInvalidReference), errors.Is(err, ports.ErrNotFound):
 		return http.StatusNotFound, errorResponse{Code: "reference_not_found", Message: "referenced resource was not found"}

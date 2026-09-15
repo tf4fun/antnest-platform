@@ -26,7 +26,10 @@
               },
               "provider_key": {
                 "type": "string",
-                "const": "deepseek"
+                "enum": [
+                  "deepseek",
+                  "openrouter"
+                ]
               },
               "request_protocol": {
                 "type": "string",
@@ -85,7 +88,10 @@
               },
               "provider_key": {
                 "type": "string",
-                "const": "deepseek"
+                "enum": [
+                  "deepseek",
+                  "openrouter"
+                ]
               },
               "request_protocol": {
                 "type": "string",
@@ -144,7 +150,10 @@
               },
               "provider_key": {
                 "type": "string",
-                "const": "deepseek"
+                "enum": [
+                  "deepseek",
+                  "openrouter"
+                ]
               },
               "request_protocol": {
                 "type": "string",
@@ -322,6 +331,15 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 200
+          },
+          "fallback_model_profile_ids": {
+            "maxItems": 31,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           },
           "default_authorization": {
             "type": "object",

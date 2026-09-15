@@ -33,7 +33,7 @@ func TestAdminContractRegistersAuditAndSynchronizationReads(t *testing.T) {
 	require.Contains(t, contract.Dependencies["agent_controller"], "catalog_availability")
 	boundary, ok := newTestHandler(t, newBackendStub()).(*handler)
 	require.True(t, ok)
-	for _, name := range []string{"list_execution_audits", "get_execution_audit", "list_execution_events", "get_execution_synchronization", "set_provider_availability", "set_model_availability", "set_template_availability"} {
+	for _, name := range []string{"list_execution_audits", "get_execution_audit", "list_execution_events", "get_execution_synchronization", "set_provider_availability", "set_model_availability", "set_template_availability", "discover_provider_models", "discover_draft_models"} {
 		route, exists := contract.Routes[name]
 		require.True(t, exists, name)
 		request := httptest.NewRequest(route.Method, contract.BasePath+route.Path, nil)

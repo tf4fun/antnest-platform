@@ -28,6 +28,7 @@ func TestWorkspaceBootstrapReturnsOnlyBrowserSafeAgentFacts(t *testing.T) {
 
 	agents := &agentServiceStub{agents: []agentcontroller.WorkspaceAgent{{
 		AgentID: "agent-1", Name: "Research Agent",
+		LifecycleState: "created", ActivationState: "enabled", RuntimeState: "waiting",
 	}}}
 	handler := newTestHandlerWithAgents(
 		t, &identityServiceStub{resolvePrincipal: ordinaryPrincipal()}, agents,
@@ -45,7 +46,10 @@ func TestWorkspaceBootstrapReturnsOnlyBrowserSafeAgentFacts(t *testing.T) {
 		t.Fatalf("Agent access subject leaked to browser: %s", response.Body.String())
 	}
 	if !strings.Contains(response.Body.String(), `"agent_id":"agent-1"`) ||
-		!strings.Contains(response.Body.String(), `"name":"Research Agent"`) {
+		!strings.Contains(response.Body.String(), `"name":"Research Agent"`) ||
+		!strings.Contains(response.Body.String(), `"lifecycle_state":"created"`) ||
+		!strings.Contains(response.Body.String(), `"activation_state":"enabled"`) ||
+		!strings.Contains(response.Body.String(), `"runtime_state":"waiting"`) {
 		t.Fatalf("bootstrap body=%s", response.Body.String())
 	}
 	if agents.input.OrganizationID != "org-1" || agents.input.PrincipalID != "user-admin" {

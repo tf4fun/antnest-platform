@@ -198,6 +198,7 @@ export function buildComponents(
   const directory = new ExecutionDirectory({
     repository: new PostgresExecutionConfiguration(kernel),
     clients: providers,
+    onPublished: (organizationId) => outputs.invalidateOrganization(organizationId),
     onApplied: (snapshot) => {
       revokeAccess(snapshot);
       return Promise.resolve();

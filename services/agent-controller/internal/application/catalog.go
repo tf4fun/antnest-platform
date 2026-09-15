@@ -33,13 +33,19 @@ const (
 var identifierPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,199}$`)
 
 type CatalogService struct {
-	store  ports.CatalogStore
-	sealer ports.CredentialSealer
-	clock  ports.Clock
+	store        ports.CatalogStore
+	sealer       ports.CredentialSealer
+	clock        ports.Clock
+	opener       ports.CredentialOpener
+	accessReader ports.ProviderAccessReader
 }
 
-func NewCatalogService(store ports.CatalogStore, sealer ports.CredentialSealer, clock ports.Clock) *CatalogService {
-	return &CatalogService{store: store, sealer: sealer, clock: clock}
+func NewCatalogService(store ports.CatalogStore, sealer ports.CredentialSealer, clock ports.Clock, options ...CatalogOption) *CatalogService {
+	service := &CatalogService{store: store, sealer: sealer, clock: clock}
+	for _, option := range options {
+		option(service)
+	}
+	return service
 }
 
 type CreateModelProfileInput struct {
@@ -164,31 +170,33 @@ func (service *CatalogService) ReviseModelProfile(
 }
 
 type CreateTemplateInput struct {
-	RequestID            string
-	OrganizationID       string
-	TemplateKey          string
-	Name                 string
-	ModelProfileID       string
-	SystemPrompt         string
-	MaxModelRequests     int
-	ContextPolicyVersion string
-	Runtime              domain.RuntimeSpecInput
+	RequestID               string
+	OrganizationID          string
+	TemplateKey             string
+	Name                    string
+	ModelProfileID          string
+	FallbackModelProfileIDs []string
+	SystemPrompt            string
+	MaxModelRequests        int
+	ContextPolicyVersion    string
+	Runtime                 domain.RuntimeSpecInput
 }
 
 type TemplateView struct {
-	TemplateID           string
-	OrganizationID       string
-	TemplateKey          string
-	Name                 string
-	Revision             int64
-	ModelProfileID       string
-	SystemPrompt         string
-	MaxModelRequests     int
-	ContextPolicyVersion string
-	Runtime              domain.RuntimeSpecInput
-	Enabled              bool
-	CreatedAt            time.Time
-	UpdatedAt            time.Time
+	TemplateID              string
+	OrganizationID          string
+	TemplateKey             string
+	Name                    string
+	Revision                int64
+	ModelProfileID          string
+	FallbackModelProfileIDs []string
+	SystemPrompt            string
+	MaxModelRequests        int
+	ContextPolicyVersion    string
+	Runtime                 domain.RuntimeSpecInput
+	Enabled                 bool
+	CreatedAt               time.Time
+	UpdatedAt               time.Time
 }
 
 func (service *CatalogService) CreateTemplate(ctx context.Context, input CreateTemplateInput) (TemplateView, error) {
@@ -221,8 +229,9 @@ func (service *CatalogService) CreateTemplate(ctx context.Context, input CreateT
 	templateID := derivedID("template", input.RequestID)
 	revision, err := domain.NewTemplateRevision(domain.TemplateRevisionInput{
 		TemplateID: templateID, OrganizationID: input.OrganizationID, Revision: 1,
-		ModelProfileID: input.ModelProfileID,
-		SystemPrompt:   input.SystemPrompt, MaxModelRequests: input.MaxModelRequests,
+		ModelProfileID:          input.ModelProfileID,
+		FallbackModelProfileIDs: input.FallbackModelProfileIDs,
+		SystemPrompt:            input.SystemPrompt, MaxModelRequests: input.MaxModelRequests,
 		Runtime: input.Runtime, ContextPolicyVersion: input.ContextPolicyVersion,
 	})
 	if err != nil {
@@ -242,15 +251,16 @@ func (service *CatalogService) CreateTemplate(ctx context.Context, input CreateT
 }
 
 type ReviseTemplateInput struct {
-	RequestID            string
-	OrganizationID       string
-	TemplateID           string
-	Name                 string
-	ModelProfileID       string
-	SystemPrompt         string
-	MaxModelRequests     int
-	ContextPolicyVersion string
-	Runtime              domain.RuntimeSpecInput
+	RequestID               string
+	OrganizationID          string
+	TemplateID              string
+	Name                    string
+	ModelProfileID          string
+	FallbackModelProfileIDs []string
+	SystemPrompt            string
+	MaxModelRequests        int
+	ContextPolicyVersion    string
+	Runtime                 domain.RuntimeSpecInput
 }
 
 func (service *CatalogService) ReviseTemplate(
@@ -291,7 +301,8 @@ func (service *CatalogService) ReviseTemplate(
 	revision, err := domain.NewTemplateRevision(domain.TemplateRevisionInput{
 		TemplateID: current.TemplateID, OrganizationID: current.OrganizationID,
 		Revision: current.Revision.Revision() + 1, ModelProfileID: input.ModelProfileID,
-		SystemPrompt: input.SystemPrompt, MaxModelRequests: input.MaxModelRequests,
+		FallbackModelProfileIDs: input.FallbackModelProfileIDs,
+		SystemPrompt:            input.SystemPrompt, MaxModelRequests: input.MaxModelRequests,
 		ContextPolicyVersion: input.ContextPolicyVersion, Runtime: input.Runtime,
 	})
 	if err != nil {
@@ -492,14 +503,15 @@ func templateView(record ports.TemplateRecord) TemplateView {
 	return TemplateView{
 		TemplateID: record.TemplateID, OrganizationID: record.OrganizationID,
 		TemplateKey: record.TemplateKey, Name: record.Name,
-		Revision:             record.Revision.Revision(),
-		ModelProfileID:       record.Revision.ModelProfileID(),
-		SystemPrompt:         snapshot.SystemPrompt,
-		MaxModelRequests:     snapshot.MaxModelRequests,
-		ContextPolicyVersion: record.Revision.ContextPolicyVersion(),
-		Runtime:              snapshot.Runtime,
-		Enabled:              record.Enabled,
-		CreatedAt:            record.CreatedAt,
-		UpdatedAt:            record.UpdatedAt,
+		Revision:                record.Revision.Revision(),
+		ModelProfileID:          record.Revision.ModelProfileID(),
+		FallbackModelProfileIDs: record.Revision.Snapshot().FallbackModelProfileIDs,
+		SystemPrompt:            snapshot.SystemPrompt,
+		MaxModelRequests:        snapshot.MaxModelRequests,
+		ContextPolicyVersion:    record.Revision.ContextPolicyVersion(),
+		Runtime:                 snapshot.Runtime,
+		Enabled:                 record.Enabled,
+		CreatedAt:               record.CreatedAt,
+		UpdatedAt:               record.UpdatedAt,
 	}
 }

@@ -71,6 +71,26 @@ func TestProviderReadRetainsNonSecretRPCDiagnostics(t *testing.T) {
 	t.Fatal("non-secret RPC positive capture control missing")
 }
 
+func TestProviderAccessIsMetadataOnlyEvenWithContentCaptureEnabled(t *testing.T) {
+	t.Setenv("ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT", "true")
+	recorder := networkPolicyTraceRecorder(t)
+	handler, err := NewHandler(&catalogServiceStub{}, &lifecycleServiceStub{}, &agentConfigurationServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := httptest.NewRecorder()
+	telemetry.HTTPHandler(handler, slog.New(slog.NewTextHandler(io.Discard, nil))).ServeHTTP(response,
+		httptest.NewRequest(http.MethodGet, "/internal/provider-connections/provider-1/access?organization_id=org-1", nil))
+	if response.Code != http.StatusOK || response.Header().Get("Cache-Control") != "no-store" || !strings.Contains(response.Body.String(), "synthetic") {
+		t.Fatalf("access contract not satisfied: status %d", response.Code)
+	}
+	spans := recorder.Ended()
+	if len(spans) != 1 {
+		t.Fatalf("boundary spans = %d", len(spans))
+	}
+	assertProviderMetadataOnly(t, spans[0])
+}
+
 func assertProviderMetadataOnly(t *testing.T, span sdktrace.ReadOnlySpan) {
 	t.Helper()
 	for _, event := range span.Events() {

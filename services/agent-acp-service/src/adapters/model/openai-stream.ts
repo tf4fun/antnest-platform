@@ -64,8 +64,19 @@ class CompletionAssembly {
     const chunk = parsed.data;
     const choice = chunk.choices[0];
     if (choice === undefined) return [];
-    if (this.finishReason !== undefined)
+    if (this.finishReason !== undefined) {
+      // Some providers repeat the final choice alongside usage, without adding output.
+      if (
+        usage !== undefined &&
+        choice.finish_reason === this.finishReason &&
+        !choice.delta.content &&
+        !choice.delta.reasoning_content &&
+        !choice.delta.refusal &&
+        !choice.delta.tool_calls?.length
+      )
+        return [];
       throw invalidResponse("Model stream continued after its finish reason");
+    }
     const updates: ModelDelta[] = [];
     if (choice.delta.reasoning_content !== undefined) {
       this.thought = (this.thought ?? "") + (choice.delta.reasoning_content ?? "");

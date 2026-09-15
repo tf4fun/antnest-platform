@@ -13,7 +13,7 @@ Controller unchanged. Its contract is USD per million tokens: required
 and `cache_write_per_million`, finite and nonnegative. Omitted prices are unknown, including for builtin models. Explicit zero is free.
 Builtin defaults live in Console's `internal/server/builtin_catalog.go` and are
 served locally by `GET /api/admin/model-catalog`; no downstream call or database
-is involved. Only DeepSeek is listed in the current release. Organization model
+is involved. DeepSeek and OpenRouter are listed in the current release. Organization model
 configuration and encrypted credentials remain Controller-owned.
 
 BFF projects only these price fields on Model Profile list/current/
@@ -22,6 +22,12 @@ invalid upstream prices must not become a zero quote. Organization and
 administrator checks are unchanged; Provider credentials, private rate metadata
 and internal IDs remain excluded. Controller owns request validation, current-model updates and the immutable
 admission snapshot. Console defaults are not runtime authority.
+
+OpenRouter defaults were checked against its public [model catalogue](https://openrouter.ai/api/v1/models)
+on 2026-09-15. `openai/gpt-4o-mini` uses a 128,000-token context, 16,384 output limit,
+and USD 0.15/0.60 per million input/output tokens (cache read 0.075).
+`qwen/qwen3-coder` uses 262,144/65,536 tokens and USD 0.30/1.00 (cache read 0.10).
+These are editable estimates, not guarantees of routed-provider pricing.
 
 ## Editing And Reading
 

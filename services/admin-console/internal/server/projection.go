@@ -152,18 +152,19 @@ type modelProfileListSource struct {
 }
 
 type templateSource struct {
-	TemplateID           string                             `json:"template_id"`
-	Name                 string                             `json:"name"`
-	Revision             int64                              `json:"revision"`
-	ModelProfileID       string                             `json:"model_profile_id"`
-	SystemPrompt         string                             `json:"system_prompt"`
-	MaxModelRequests     int                                `json:"max_model_requests"`
-	ContextPolicyVersion string                             `json:"context_policy_version"`
-	Runtime              templateRuntimeConfigurationSource `json:"runtime"`
-	SkillRefs            []string                           `json:"skill_refs"`
-	Enabled              bool                               `json:"enabled"`
-	CreatedAt            string                             `json:"created_at"`
-	UpdatedAt            string                             `json:"updated_at"`
+	FallbackModelProfileIDs []string                           `json:"fallback_model_profile_ids,omitempty"`
+	TemplateID              string                             `json:"template_id"`
+	Name                    string                             `json:"name"`
+	Revision                int64                              `json:"revision"`
+	ModelProfileID          string                             `json:"model_profile_id"`
+	SystemPrompt            string                             `json:"system_prompt"`
+	MaxModelRequests        int                                `json:"max_model_requests"`
+	ContextPolicyVersion    string                             `json:"context_policy_version"`
+	Runtime                 templateRuntimeConfigurationSource `json:"runtime"`
+	SkillRefs               []string                           `json:"skill_refs"`
+	Enabled                 bool                               `json:"enabled"`
+	CreatedAt               string                             `json:"created_at"`
+	UpdatedAt               string                             `json:"updated_at"`
 }
 
 type templateListSource struct {

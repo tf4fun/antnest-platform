@@ -435,20 +435,22 @@ describe("ACP v2 agent mapping", () => {
       updates.push(params.update);
     });
 
-    await expect(
-      client.connectWith(agent, async (context) => {
-        await context.request(acp.methods.agent.initialize, {
-          protocolVersion: acp.PROTOCOL_VERSION,
-          info: { name: "test-client", version: "1.0.0" },
-        });
-        await context.request(acp.methods.agent.session.prompt, {
-          sessionId: "session-1",
-          prompt: [{ type: "text", text: "recover" }],
-        });
-        await vi.waitFor(() => expect(execute).toHaveBeenCalledOnce());
-        await new Promise<void>((resolve) => setTimeout(resolve, 0));
-      }),
-    ).rejects.toBe(failure);
+    const connection = client.connect(agent);
+    try {
+      await connection.agent.request(acp.methods.agent.initialize, {
+        protocolVersion: acp.PROTOCOL_VERSION,
+        info: { name: "test-client", version: "1.0.0" },
+      });
+      await connection.agent.request(acp.methods.agent.session.prompt, {
+        sessionId: "session-1",
+        prompt: [{ type: "text", text: "recover" }],
+      });
+      await connection.closed;
+      expect(connection.signal.reason).toBe(failure);
+      expect(execute).toHaveBeenCalledOnce();
+    } finally {
+      connection.close();
+    }
 
     expect(
       updates.some((update) => update.sessionUpdate === "state_update" && update.state === "idle"),

@@ -5,8 +5,18 @@ Controller owns Agent management metadata, not execution availability or active 
 ## Contract
 
 `POST /rpc/agent-controller/list-workspace-agents` accepts request_id, organization_id,
-principal_id and optional limit/cursor. It returns agents containing only agent_id
-and name, plus a nullable next_cursor. Empty results use an empty array.
+principal_id and optional limit/cursor. Each Agent contains agent_id, name,
+lifecycle_state, activation_state and runtime_state, plus a nullable page
+next_cursor. Empty results use an empty array.
+
+activation_state is present only for lifecycle_state=created, matching the
+existing management Agent contract; an uncreated Agent has no confirmed activation.
+These are the existing management facts from the Agent row, returned by the
+same scoped list query. Lifecycle is not_created/created/deleted; activation is
+enabled/disabled; Runtime is unknown/waiting/available/unhealthy/exited/absent.
+They describe the last observed deployment state, not ACP busy/idle, transport
+connectivity or permission to submit a prompt. No Runtime or ACP request is made
+to populate the list. Runtime available must never unlock chat input by itself.
 
 Queries require the requested organization and principal, an active access binding,
 and a non-revoked owner authorization watermark. Deleted desired state is excluded
@@ -29,9 +39,9 @@ commits must still wake their subscribers.
 
 ## Delivery And Verification
 
-Revision 26 is the Controller producer contract. Gateway and Agent UI must adopt
-the metadata shape and ACP observation in B3/B4U before deployment. No fallback,
-per-Agent status fan-out or Controller execution proxy is provided.
+Revision 29 adds management state to the existing discovery projection. Gateway
+and Agent UI must consume these fields before the coordinated deployment. No
+fallback, per-Agent status fan-out or Controller execution proxy is provided.
 
 Controller regressions cover exact JSON fields, no-store, empty results, keyset
 pagination, organization/principal/binding/revocation scope, desired deletion,

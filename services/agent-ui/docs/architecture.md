@@ -6,6 +6,13 @@ Agent UI converts an authenticated principal's accessible Agents and ACP
 Sessions into one conversation workspace. It is a presentation service, not a
 browser-hosted Agent Core.
 
+Provider fallback is ACP-owned. The UI renders the effective model and its
+standard `config_option_update` description as an inline status notice, including
+when a configuration changes while the conversation is idle. It does not poll
+Controller, calculate fallback priority, or replay a failed prompt. Manual model
+selection remains the same ACP configuration action. Reconnect reads current
+configuration rather than retaining a browser-only Provider override.
+
 ## Module Map
 
 ```text
@@ -13,6 +20,8 @@ App
   -> useWorkspace (global connection, scope and asynchronous interaction coordination)
   -> workspace-projection (pure global discovery/catalog/history transitions)
   -> useSessionPresentation (per-Agent/Session draft, error and interaction state)
+  -> useSessionCatalog (connection-owned directory loading, pagination and retry)
+  -> useConversationHistory (selected Session readiness)
   -> components (navigation, conversation, activity, composer)
   -> AgentUIClient port
        -> GatewayClient (production bootstrap)
@@ -22,7 +31,7 @@ App
 ```
 
 The presentation model uses browser-safe IDs, labels, statuses, messages, and
-tool summaries. ACP wire conversion and bounded Session pagination live in the
+tool summaries. ACP wire conversion and cursor-based Session pagination live in the
 production transport adapter. Components do not fetch or open WebSockets
 directly.
 
@@ -51,6 +60,7 @@ never persists approval authority. Requests remain visible when switching chats.
 ```text
 global: loading -> chooser -> selected Agent
 connection: offline -> connecting -> ready -> offline
+catalog: loading -> page | failed -> retry; page -> load more -> page
 selected history: loading -> ready | failed -> retry
 local interaction: idle -> running | configuring -> idle
 ```
@@ -61,6 +71,16 @@ Sessions. A prompt error is Session-scoped, and Stop remains an outstanding
 request until authoritative execution state clears it. Navigation epochs reject
 late selection changes while connection epochs reject callbacks from a replaced
 Agent connection. Selecting another Session never cancels an accepted prompt.
+Directory failures stay in the sidebar; ACP initialization and selected Session
+loading do not wait for the directory. Pages load on demand without a total-page
+cutoff, and repeated cursors fail that page without losing earlier results.
+Search covers loaded conversations. Partial pages cannot prove that an already
+observed Session was deleted, so they never remove its in-memory transcript.
+
+History replay uses a private message-ID index and buffer with the same update
+semantics as live projection. Historical notifications do not publish per-record
+UI snapshots. The matching successful load response installs the candidate;
+failure retains readable history and the existing usage freshness rules.
 
 ACP Service remains authoritative for Run admission. A busy Agent disables
 new submission across all of its conversations. Closing or reopening the page
@@ -122,8 +142,9 @@ timestamp remains authoritative, during both replay and live delivery.
    browser files to 4 MiB. Unknown binary formats are rejected. See
    [multimodal input](multimodal-input.md) for exact capability and replay rules.
 8. A submitted user prompt appears locally before the blocking ACP request
-   settles; a failed request triggers authoritative Session replay instead of
-   leaving a guessed message behind.
+   settles; a failed request triggers authoritative Session replay while the
+   transport is open. A closed transport retains received content until a new
+   connection can recover history; it never receives new replay requests.
 9. A principal with no accessible Agent retains account exit and, for an
    administrator, a path back to Control Center.
 

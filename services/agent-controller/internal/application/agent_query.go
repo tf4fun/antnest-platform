@@ -56,8 +56,11 @@ type ListWorkspaceAgentsInput struct {
 }
 
 type WorkspaceAgentView struct {
-	AgentID string
-	Name    string
+	AgentID         string
+	Name            string
+	LifecycleState  domain.AgentState
+	ActivationState domain.ActivationState
+	RuntimeState    domain.RuntimeState
 }
 
 type WorkspaceAgentPage struct {
@@ -213,6 +216,7 @@ func (service *AgentQueryService) ListWorkspaceAgents(
 	for _, record := range records {
 		page.Items = append(page.Items, WorkspaceAgentView{
 			AgentID: record.AgentID, Name: record.Name,
+			LifecycleState: record.LifecycleState, ActivationState: record.ActivationState, RuntimeState: record.RuntimeState,
 		})
 	}
 	if hasNext {

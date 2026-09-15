@@ -82,7 +82,7 @@ describe.skipIf(url === undefined)("PostgreSQL driver trace contract", () => {
       expect(span.attributes).toMatchObject({
         "db.system.name": "postgresql",
         "db.operation.name": "SELECT",
-        "db.namespace": "antnest_agent_acp_test",
+        "db.namespace": decodeURIComponent(new URL(url!).pathname.slice(1)),
         "server.address": "127.0.0.1",
       });
       expect(span.attributes["server.port"]).toEqual(expect.any(Number));

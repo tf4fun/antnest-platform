@@ -61,7 +61,7 @@ func TestExecutionProjectionDisabledProviderStillCarriesCurrentCredential(t *tes
 	require.NoError(t, err)
 	require.False(t, value.Providers[0].Enabled)
 	require.Equal(t, "credential-current", value.Providers[0].CredentialRevision)
-	require.False(t, value.Agents[0].AcceptingRuns)
+	require.True(t, value.Agents[0].AcceptingRuns, "ACP owns model selection independently of lifecycle readiness")
 	require.Equal(t, []string{"owner-1"}, value.Agents[0].PrincipalIDs)
 }
 

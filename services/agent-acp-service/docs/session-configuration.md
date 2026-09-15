@@ -12,7 +12,7 @@ as a complete platform deployment.
    organization models from the complete local directory; never expose
    credentials or provider endpoints. Model option IDs are `profile:<id>`;
    `agent_default` means inherit the Agent's configured default, not the catalog head.
-2. `session/set_config_option` changes model or authorization mode. The v1
+2. `session/set_config_option` changes model, thinking effort or authorization mode. The v1
    `session/set_mode` adapter uses the same application command. There is no
    standard `session/set_model` method in SDK 1.4.0. `agent_default` clears that
    override through set_config_option. Actual modes remain `auto`,
@@ -42,7 +42,11 @@ as a complete platform deployment.
    Approve/SmartApprove honor exact-source allow/deny rules. F06 now supplies
    [permission interaction](tool-permissions.md); missing clients never imply
    approval. Smart Approve conservatively trusts non-conflicting read-only hints.
-   Session-only always rules are not copied by Fork; model/mode overrides are.
+   Session-only always rules are not copied by Fork; model/mode/thinking overrides are.
+
+Provider-grouped model options and capability-driven `thinking_effort` are defined
+in [Session model selection](session-model-selection.md). Their values are
+Session-scoped, not Agent template or credential changes.
 
 ## Verification
 

@@ -2,6 +2,21 @@
 
 ## Contract And Ownership
 
+The chooser obtains the full authorized Agent list from `/api/app/bootstrap`.
+Each entry carries Controller lifecycle_state/runtime_state and, when created,
+activation_state. Store these as `managementState`, separate from ACP execution
+`status`. Show the last observed management condition without creating ACP
+connections or per-card subscriptions. Refresh rereads the same list. Disabled,
+not-created and unhealthy Agents remain visible and can be opened for their
+existing conversations; ACP still decides execution admission.
+
+Created/disabled displays Disabled; not_created displays Not created. For an
+enabled created Agent, Runtime waiting/available/unhealthy/exited/absent/unknown
+displays Waiting for startup/Available/Unhealthy/Stopped/Runtime missing/Runtime
+status unknown. These labels do not promise model or network availability.
+Unknown Runtime state is a reported observation; malformed or missing required
+fields fail bootstrap instead of inventing an available Agent.
+
 Agent UI subscribes to the selected Agent through the authenticated Gateway
 `GET /api/app/agents/{agent_id}/state/watch`. The full snapshot contains only
 `agent_id`, `availability`, `access_allowed`, `configuration_revision`,

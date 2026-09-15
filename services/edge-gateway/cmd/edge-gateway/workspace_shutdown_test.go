@@ -52,7 +52,7 @@ func testReceiveShutdown(t *testing.T, path string) {
 			return
 		}
 		if r.URL.Path == "/rpc/agent-controller/list-workspace-agents" {
-			if _, err := io.WriteString(w, `{"agents":[{"agent_id":"agent-1","name":"One"}],"next_cursor":null}`); err != nil {
+			if _, err := io.WriteString(w, `{"agents":[{"agent_id":"agent-1","name":"One","lifecycle_state":"created","activation_state":"enabled","runtime_state":"available"}],"next_cursor":null}`); err != nil {
 				t.Error(err)
 			}
 			return

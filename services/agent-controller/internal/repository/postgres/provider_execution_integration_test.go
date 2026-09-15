@@ -20,7 +20,7 @@ func TestDisabledProviderIsPublishedUnavailableWithoutChangingModelPreference(t 
 	require.NotNil(t, after.Providers[0].Credential, "internal publication retains the credential independently of availability")
 	require.True(t, publishedModel(t, after, model.ModelProfileID).Enabled, "ACP combines Model and Provider availability")
 	_, err = repository.GetCurrentModelProfileRevision(t.Context(), model.ModelProfileID)
-	require.ErrorIs(t, err, ports.ErrDisabledReference)
+	require.NoError(t, err, "disabled Provider does not erase a valid model reference")
 	stored, err := repository.GetModelProfile(t.Context(), model.ModelProfileID)
 	require.NoError(t, err)
 	require.True(t, stored.Enabled, "Provider availability does not overwrite Model preference")

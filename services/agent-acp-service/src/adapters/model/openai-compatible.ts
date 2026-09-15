@@ -126,7 +126,7 @@ function toRequestBody(request: ModelRequest): Record<string, unknown> {
       ? { modalities: ["text"] }
       : {}),
     max_tokens: model.maxOutputTokens,
-    ...(model.temperature === undefined ? {} : { temperature: model.temperature }),
+    ...thinkingParameters(model),
     ...(request.tools.length === 0
       ? {}
       : {
@@ -140,6 +140,15 @@ function toRequestBody(request: ModelRequest): Record<string, unknown> {
           })),
         }),
   };
+}
+
+function thinkingParameters(
+  model: ModelRequest["snapshot"]["executionSpec"]["model"],
+): Record<string, unknown> {
+  const temperature = model.temperature === undefined ? {} : { temperature: model.temperature };
+  if (model.thinking === undefined) return temperature;
+  if (model.thinking.effort === "off") return { ...temperature, thinking: { type: "disabled" } };
+  return { thinking: { type: "enabled" }, reasoning_effort: model.thinking.effort };
 }
 
 function toModelResult(response: z.infer<typeof responseSchema>, usage: ModelUsage): ModelResult {

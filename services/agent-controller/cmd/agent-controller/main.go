@@ -177,7 +177,8 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 	if err != nil {
 		return classifyFailure("service_composition", err)
 	}
-	catalog := application.NewCatalogService(repository, secretBox, systemClock{})
+	catalog := application.NewCatalogService(repository, secretBox, systemClock{},
+		application.WithProviderCredentialReader(repository, secretBox))
 	execution, executionWorker, err := configureExecutionPublication(repository, cfg, secretBox, logger)
 	if err != nil {
 		return classifyFailure("service_composition", err)

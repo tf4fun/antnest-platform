@@ -39,6 +39,8 @@ function backend(empty = false, conflict = false) {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (path: string, init: RequestInit) => {
+      if (path.endsWith("/discovery"))
+        return Response.json({ models: [preset] });
       if (init.method === "POST") {
         writes.push({ path, body: JSON.parse(String(init.body)) });
         if (conflict)
@@ -106,12 +108,14 @@ it("connects a provider with selected catalogue models and no model secrets or e
   fireEvent.click(screen.getAllByRole("button", { name: "Add provider" })[0]!);
   const form = within(await screen.findByRole("dialog"));
   expect(form.queryByLabelText("Provider name")).toBeNull();
-  expect(
-    form.getByRole("checkbox", { name: "Flash" }).matches(":checked"),
-  ).toBe(true);
   fireEvent.change(form.getByLabelText("API key"), {
     target: { value: "synthetic-secret" },
   });
+  fireEvent.click(form.getByRole("button", { name: "Select models" }));
+  const choice = await form.findByRole("checkbox", { name: "Flash" });
+  expect(choice.matches(":checked")).toBe(false);
+  expect(writes).toHaveLength(0);
+  fireEvent.click(choice);
   fireEvent.click(form.getByRole("button", { name: "Connect provider" }));
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(writes[0]?.path).toBe("/api/admin/provider-connections");
@@ -201,10 +205,11 @@ it("allows a credential connection without initial models", async () => {
     ).toBe(false),
   );
   fireEvent.click(screen.getAllByRole("button", { name: "Add provider" })[0]!);
-  fireEvent.click(screen.getByRole("checkbox", { name: "Flash" }));
   fireEvent.change(screen.getByLabelText("API key"), {
     target: { value: "key" },
   });
+  fireEvent.click(screen.getByRole("button", { name: "Select models" }));
+  await screen.findByRole("checkbox", { name: "Flash" });
   fireEvent.click(screen.getByRole("button", { name: "Connect provider" }));
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(writes[0]?.body.models).toEqual([]);
@@ -222,7 +227,8 @@ it("adds a model to the selected connection without asking for credentials", asy
   fireEvent.click(screen.getByRole("button", { name: "Add model" }));
   const form = within(await screen.findByRole("dialog"));
   expect(form.queryByLabelText("API key")).toBeNull();
-  fireEvent.click(form.getByRole("button", { name: "Add model" }));
+  fireEvent.click(await form.findByRole("checkbox", { name: "Flash" }));
+  fireEvent.click(form.getByRole("button", { name: "Add selected models" }));
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(writes[0]?.body.provider_connection_id).toBe("c1");
   expect(JSON.stringify(writes[0]?.body)).not.toMatch(

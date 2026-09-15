@@ -67,13 +67,13 @@ func TestClientCollectsWorkspacePagesWithoutChangingPrincipalScope(t *testing.T)
 		}
 		response.Header().Set("Content-Type", "application/json")
 		if requests == 1 {
-			_, _ = response.Write([]byte(`{"agents":[{"agent_id":"agent-1","name":"One"}],"next_cursor":"cursor-1"}`))
+			_, _ = response.Write([]byte(`{"agents":[{"agent_id":"agent-1","name":"One","lifecycle_state":"created","activation_state":"disabled","runtime_state":"exited"}],"next_cursor":"cursor-1"}`))
 			return
 		}
 		if payload["cursor"] != "cursor-1" {
 			t.Fatalf("cursor = %+v", payload["cursor"])
 		}
-		_, _ = response.Write([]byte(`{"agents":[{"agent_id":"agent-2","name":"Two"}],"next_cursor":null}`))
+		_, _ = response.Write([]byte(`{"agents":[{"agent_id":"agent-2","name":"Two","lifecycle_state":"not_created","runtime_state":"unknown"}],"next_cursor":null}`))
 	}))
 	defer server.Close()
 	client, err := NewClient(server.URL, server.Client())
@@ -90,6 +90,10 @@ func TestClientCollectsWorkspacePagesWithoutChangingPrincipalScope(t *testing.T)
 	if len(agents) != 2 || agents[0].AgentID != "agent-1" || agents[1].Name != "Two" {
 		t.Fatalf("agents = %+v", agents)
 	}
+	if agents[0].LifecycleState != "created" || agents[0].ActivationState != "disabled" || agents[0].RuntimeState != "exited" ||
+		agents[1].LifecycleState != "not_created" || agents[1].ActivationState != "" || agents[1].RuntimeState != "unknown" {
+		t.Fatalf("management state lost in pagination: %+v", agents)
+	}
 }
 
 func TestClientRejectsInvalidOrRepeatedWorkspaceProjection(t *testing.T) {
@@ -99,6 +103,10 @@ func TestClientRejectsInvalidOrRepeatedWorkspaceProjection(t *testing.T) {
 		`{}`, `{"agents":null,"next_cursor":null}`,
 		`{"agents":[{"agent_id":"agent-1","name":"One","availability":"unknown","agent_access_subject":"subject-1"}],"next_cursor":null}`,
 		`{"agents":[{"agent_id":"agent-1","name":""}],"next_cursor":null}`,
+		`{"agents":[{"agent_id":"agent-1","name":"One"}],"next_cursor":null}`,
+		`{"agents":[{"agent_id":"agent-1","name":"One","lifecycle_state":"created","activation_state":"enabled","runtime_state":"busy"}],"next_cursor":null}`,
+		`{"agents":[{"agent_id":"agent-1","name":"One","lifecycle_state":"created","runtime_state":"available"}],"next_cursor":null}`,
+		`{"agents":[{"agent_id":"agent-1","name":"One","lifecycle_state":"not_created","activation_state":"enabled","runtime_state":"unknown"}],"next_cursor":null}`,
 		`{"agents":[],"next_cursor":"same"}`,
 	} {
 		t.Run(body, func(t *testing.T) {

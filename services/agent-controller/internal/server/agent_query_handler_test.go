@@ -20,6 +20,7 @@ func TestAgentQueryHandlerListsWorkspaceAgentsWithoutBroadProjection(t *testing.
 	queries := &agentQueryServiceStub{workspacePage: application.WorkspaceAgentPage{
 		Items: []application.WorkspaceAgentView{{
 			AgentID: "agent-1", Name: "Research Agent",
+			LifecycleState: domain.AgentCreated, ActivationState: domain.ActivationEnabled, RuntimeState: domain.RuntimeWaiting,
 		}},
 		NextCursor: "next-workspace",
 	}}
@@ -53,6 +54,9 @@ func TestAgentQueryHandlerListsWorkspaceAgentsWithoutBroadProjection(t *testing.
 	}
 	if len(payload.Agents) != 1 || payload.Agents[0].AgentID != "agent-1" ||
 		payload.Agents[0].Name != "Research Agent" ||
+		payload.Agents[0].LifecycleState != domain.AgentCreated ||
+		payload.Agents[0].ActivationState != domain.ActivationEnabled ||
+		payload.Agents[0].RuntimeState != domain.RuntimeWaiting ||
 		payload.NextCursor == nil || *payload.NextCursor != "next-workspace" {
 		t.Fatalf("workspace payload = %+v", payload)
 	}

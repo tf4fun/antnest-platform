@@ -70,6 +70,7 @@ func TestBuildWorkspaceAgentQueryScopesManagementMetadata(t *testing.T) {
 	}
 	for _, fragment := range []string{
 		"access.principal_id = $2", "access.active", "agent.organization_id = $1",
+		"agent.lifecycle_state", "agent.activation_state", "agent.runtime_state",
 		"agent.desired_state <> 'deleted'",
 		"(agent.created_at, agent.id) > ($3, $4)", "LIMIT $5",
 	} {
@@ -77,7 +78,7 @@ func TestBuildWorkspaceAgentQueryScopesManagementMetadata(t *testing.T) {
 			t.Fatalf("statement lacks %q: %s", fragment, statement)
 		}
 	}
-	for _, forbidden := range []string{"run_admissions", "access_subject", "session_id", "runtime_state", "LATERAL"} {
+	for _, forbidden := range []string{"run_admissions", "access_subject", "session_id", "LATERAL"} {
 		if strings.Contains(statement, forbidden) {
 			t.Fatalf("execution detail %q leaked into metadata query: %s", forbidden, statement)
 		}

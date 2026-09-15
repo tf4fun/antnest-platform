@@ -1,4 +1,5 @@
-import type { PoolClient } from "pg";
+import type { PoolClient, QueryResult, QueryResultRow } from "pg";
+import { isDeepStrictEqual } from "node:util";
 
 import { DomainError } from "../../domain/errors.js";
 import type { NormalizedClientMcpSource } from "../../domain/mcp.js";
@@ -238,6 +239,15 @@ export class PostgresSessionRepository implements SessionRepository {
       if (session.state === "deleted") {
         throw new Error("Session does not exist");
       }
+      const sources = await this.readMcpSources(session.client_mcp_revision_id, client);
+      if (isDeepStrictEqual(sources, input.mcpSources)) {
+        if (session.state !== "active") {
+          await client.query("UPDATE acp_sessions SET state = 'active' WHERE id = $1", [
+            input.sessionId,
+          ]);
+        }
+        return mapSession({ ...session, state: "active" });
+      }
       const revision = await client.query<{ next_revision: string }>(
         "SELECT COALESCE(max(revision), 0) + 1 AS next_revision FROM client_mcp_revisions WHERE session_id = $1",
         [input.sessionId],
@@ -334,7 +344,16 @@ export class PostgresSessionRepository implements SessionRepository {
   }
 
   public async getClientMcpRevision(revisionId: string): Promise<NormalizedClientMcpSource[]> {
-    const result = await this.kernel.query<{ encrypted_sources: Buffer; nonce: Buffer }>(
+    return this.readMcpSources(revisionId, this.kernel);
+  }
+
+  private async readMcpSources(
+    revisionId: string,
+    connection: {
+      query<Row extends QueryResultRow>(text: string, values: unknown[]): Promise<QueryResult<Row>>;
+    },
+  ): Promise<NormalizedClientMcpSource[]> {
+    const result = await connection.query<{ encrypted_sources: Buffer; nonce: Buffer }>(
       "SELECT encrypted_sources, nonce FROM client_mcp_revisions WHERE id = $1",
       [revisionId],
     );

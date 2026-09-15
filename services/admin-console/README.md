@@ -34,7 +34,7 @@ Implemented for Stage 3A, including Directory administration, enterprise
 OIDC/SCIM provisioning, release-managed model provider presets, and
 organization-scoped Model Profile and Template detail/revision management.
 Builtin model capabilities come from Console; Controller persists the selected
-configuration. Only DeepSeek connections are currently enabled. Unlisted models
+configuration. DeepSeek and OpenRouter connections are supported. Unlisted models
 under an existing connection expose explicit limit and Image/Audio/PDF fields. Native
 capabilities are preserved across BFF projections, creation and current-model
 editing; builtin presets prefill editable drafts, while saved values take precedence. See [Native model inputs](docs/multimodal-models.md)

@@ -219,8 +219,8 @@ func TestListWorkspaceAgentsReturnsMetadataAndOpaqueCursor(t *testing.T) {
 	first := time.Date(2026, time.September, 3, 8, 0, 0, 0, time.UTC)
 	second := first.Add(time.Second)
 	store := &agentQueryStoreStub{workspaceRecords: []ports.WorkspaceAgentRecord{
-		{AgentID: "agent-ready", Name: "Ready", CreatedAt: first},
-		{AgentID: "agent-busy", Name: "Busy", CreatedAt: second},
+		{AgentID: "agent-ready", Name: "Ready", CreatedAt: first, LifecycleState: domain.AgentCreated, ActivationState: domain.ActivationEnabled, RuntimeState: domain.RuntimeAvailable},
+		{AgentID: "agent-busy", Name: "Disabled", CreatedAt: second, LifecycleState: domain.AgentCreated, ActivationState: domain.ActivationDisabled, RuntimeState: domain.RuntimeExited},
 		{AgentID: "agent-offline", Name: "Offline", CreatedAt: second.Add(time.Second)},
 	}}
 	service := NewAgentQueryService(store)
@@ -232,8 +232,8 @@ func TestListWorkspaceAgentsReturnsMetadataAndOpaqueCursor(t *testing.T) {
 		t.Fatalf("list workspace Agents: %v", err)
 	}
 	if len(page.Items) != 2 || page.NextCursor == "" ||
-		page.Items[0] != (WorkspaceAgentView{AgentID: "agent-ready", Name: "Ready"}) ||
-		page.Items[1] != (WorkspaceAgentView{AgentID: "agent-busy", Name: "Busy"}) {
+		page.Items[0] != (WorkspaceAgentView{AgentID: "agent-ready", Name: "Ready", LifecycleState: domain.AgentCreated, ActivationState: domain.ActivationEnabled, RuntimeState: domain.RuntimeAvailable}) ||
+		page.Items[1] != (WorkspaceAgentView{AgentID: "agent-busy", Name: "Disabled", LifecycleState: domain.AgentCreated, ActivationState: domain.ActivationDisabled, RuntimeState: domain.RuntimeExited}) {
 		t.Fatalf("workspace page = %+v", page)
 	}
 	if store.workspaceQuery.OrganizationID != "org-1" ||

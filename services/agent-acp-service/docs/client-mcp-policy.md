@@ -30,6 +30,12 @@ silently promote client Session input to platform Runtime configuration.
 - A retained client revision cannot be reused for a new Prompt or tool
   discovery/dispatch. Loading/resuming with `[]` clears the Session's active
   source reference without rewriting historical revisions or Run records.
+- Loading/resuming an unchanged source list reuses its revision and preserves
+  the Session's `updated_at`, including reactivation after close. Opening history
+  is not a modification. A changed source list creates a revision and updates
+  modification time; new messages and explicit configuration changes retain
+  their existing timestamp updates. Session list ordering reflects modifications,
+  not the most recent view.
 - No client MCP capability or administrator enable switch is advertised.
 - No HTTP-specific policy field, private RPC extension or transport proxy is
   introduced. Controller, Console and Runtime contracts remain unchanged.

@@ -7,6 +7,10 @@ import (
 	"soft/antnest-platform/services/agent-controller/internal/application"
 )
 
+func (service *catalogServiceStub) ResolveProviderAccess(context.Context, string, string) (application.ProviderAccess, error) {
+	return application.ProviderAccess{Connection: sampleProviderConnection(), Credential: application.ProviderCredentialInput{Method: "api_key", APIKey: "synthetic"}}, service.getModelErr
+}
+
 func sampleProviderConnection() application.ProviderConnectionView {
 	return application.ProviderConnectionView{
 		RequestProtocol: "openai_chat_completions", ConnectionID: "provider-1", OrganizationID: "org-1", ProviderKey: "deepseek", DisplayName: "DeepSeek",

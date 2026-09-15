@@ -19,6 +19,7 @@ export type ExecutionDirectoryDependencies = {
   clients: ProviderClients;
   onApplied: (configuration: PublicExecutionConfiguration) => Promise<void>;
   onUnavailable: (organizationId: string) => void;
+  onPublished?: (organizationId: string) => void;
 };
 
 export type ClosedAgentOperation = {
@@ -120,6 +121,7 @@ export class ExecutionDirectory {
       await this.dependencies.onApplied(structuredClone(next));
       this.configurations.set(organizationId, next);
       this.changes.invalidate(organizationId);
+      this.dependencies.onPublished?.(organizationId);
     } catch (error) {
       try {
         this.dependencies.onUnavailable(organizationId);

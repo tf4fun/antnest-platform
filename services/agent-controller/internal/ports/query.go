@@ -31,9 +31,12 @@ type WorkspaceAgentQuery struct {
 }
 
 type WorkspaceAgentRecord struct {
-	AgentID   string
-	Name      string
-	CreatedAt time.Time
+	AgentID         string
+	Name            string
+	CreatedAt       time.Time
+	LifecycleState  domain.AgentState
+	ActivationState domain.ActivationState
+	RuntimeState    domain.RuntimeState
 }
 
 // AgentConfigurationRecord is the immutable executable configuration selected

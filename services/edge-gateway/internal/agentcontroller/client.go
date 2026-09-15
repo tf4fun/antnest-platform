@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 )
 
@@ -18,8 +19,11 @@ const (
 )
 
 type WorkspaceAgent struct {
-	AgentID string `json:"agent_id"`
-	Name    string `json:"name"`
+	AgentID         string `json:"agent_id"`
+	Name            string `json:"name"`
+	LifecycleState  string `json:"lifecycle_state"`
+	ActivationState string `json:"activation_state,omitempty"`
+	RuntimeState    string `json:"runtime_state"`
 }
 
 type ListWorkspaceAgentsInput struct {
@@ -147,7 +151,15 @@ func (client *Client) doJSON(
 }
 
 func validWorkspaceAgent(agent WorkspaceAgent) bool {
-	return strings.TrimSpace(agent.AgentID) != "" && strings.TrimSpace(agent.Name) != ""
+	if strings.TrimSpace(agent.AgentID) == "" || strings.TrimSpace(agent.Name) == "" ||
+		!slices.Contains([]string{"not_created", "created", "deleted"}, agent.LifecycleState) ||
+		!slices.Contains([]string{"unknown", "waiting", "available", "unhealthy", "exited", "absent"}, agent.RuntimeState) {
+		return false
+	}
+	if agent.LifecycleState == "created" {
+		return agent.ActivationState == "enabled" || agent.ActivationState == "disabled"
+	}
+	return agent.ActivationState == ""
 }
 
 var _ Service = (*Client)(nil)
