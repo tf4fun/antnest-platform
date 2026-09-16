@@ -79,7 +79,9 @@ tests exercise all three controls, historical read-only detail, reference links,
 conflict/uncertain retry, saved-but-refresh-failed and late callbacks. Verify null,
 pending, old/current ACK and read failure separately; a successful write must not
 wait for or retry due to failed synchronization reads. Real Controller/ACP delivery
-and Gateway-rooted traces remain B5, not synthetic UI acceptance.
+and Gateway-rooted traces were verified separately in B5; later real Provider
+disable/fallback checks are recorded in [current status](../../../docs/current-status.md).
+Synthetic UI acceptance alone does not establish those results.
 
 Owner contract: [Controller catalog availability](../../../contracts/agent-controller/control-api.md#catalog-availability).
 

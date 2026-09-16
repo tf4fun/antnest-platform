@@ -94,6 +94,13 @@ replay. Desktop and 390/320px layouts are inspected. In-flight revocation and
 accounting are deterministic service tests, not claimed as real-provider fault
 injection.
 
+The recorded browser run passed on 2026-09-15 at 23:12 +08:00. Its local result,
+`.cache/provider-failover-acceptance/result.json`, records three real responses,
+ordered backups, referenced Provider disable, live configuration updates,
+reload/manual selection, no available candidate, no prompt replay and layout
+checks. See [current status](current-status.md) for the evidence boundary; this
+does not make the separate development-browser strict Trace profile pass.
+
 Run the reusable acceptance script from the repository root:
 
 ```sh

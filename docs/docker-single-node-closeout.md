@@ -6,6 +6,11 @@
 >
 > Inspection baseline: `c989f20`
 
+This is the historical closeout and its dated evidence. The original 25 accepted
+and five deferred items remain unchanged. Subsequent Controller/ACP, workspace
+and model-management delivery is indexed in [current status](current-status.md);
+old Run admission paths below are not current service interfaces.
+
 ## 1. Stage Boundary
 
 The next delivery is a complete single-node product, not another service split.
@@ -2018,11 +2023,13 @@ SCIM reprovisioning also needs an explicit choice between stable-User continuity
 and a new manual reauthorization requirement. Current semantics use continuity
 with a fresh login after a tombstone; same email alone never transfers identity.
 
-Reusable [Controller regression cases](../services/agent-controller/internal/application/run_identity_test.go)
-cover active -> inactive/absent/unavailable -> restored resolution without
+The then-current Controller regression cases in
+`services/agent-controller/internal/application/run_identity_test.go`
+(removed with the later RunAdmission implementation) covered
+active -> inactive/absent/unavailable -> restored resolution without
 replacing an otherwise valid Agent binding, retained independent Agent denial,
 and the distinction between committed admission retry, fresh admission and
-terminal settlement. They test current contract semantics, not delivery or
+terminal settlement. They tested that historical contract, not delivery or
 automatic offboarding. C2-01/04 retain their previously recorded Gateway/E2E
 evidence; no new Docker or live-provider result is asserted by this assessment.
 

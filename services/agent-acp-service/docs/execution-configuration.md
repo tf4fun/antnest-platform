@@ -17,8 +17,10 @@ OpenAI-compatible transport without DeepSeek-specific thinking parameters.
 The owning cross-service design is the
 [Controller/ACP boundary plan](../../../docs/controller-acp-execution-boundary-plan.md).
 The [internal contract](../../../contracts/agent-acp/execution-api.md) is not an
-ACP extension. This tracks the service-owned implementation batch; Controller
-production and platform integration are not complete.
+ACP extension. Controller production publication and Gateway/Console integration
+are complete within the [B5 acceptance scope](../../../docs/current-status.md).
+The service-local evidence below retains its original scope; strict clock-warning
+failures remain separately recorded.
 
 ## Configuration Authority
 
@@ -301,14 +303,9 @@ Session organization ownership and the local `deadline_at` are explicit in SQL
 fixtures, including lock-wait/expiry tests. Application recreation uses current
 synthetic configuration to rehydrate volatile credentials, never a Run snapshot.
 
-- Verify Controller-driven close, settlement and confirmed replacement in B2/B5
-  before claiming configuration/lifecycle integration complete.
-- Switch existing workspace state consumers to the locally wired query and subscription.
-- Migrate management consumers to the locally wired [execution-audit routes](execution-audit.md).
-  Historical queries use immutable Session organization ownership, not live
-  execution grants, and remain available after a cold service restart.
-- Switch Controller, Gateway and Console in their batches, then verify Docker
-  and Jaeger across the complete workflow.
-
-Normal execution is now locally assembled without Controller calls. Source build,
-component tests and local interruption cleanup are not complete platform migration.
+Subsequent B5 integration verified Controller-driven close, settlement and confirmed
+replacement, Gateway state consumption, and Console execution-audit reads after
+deletion/restart. Historical queries use immutable Session organization ownership,
+not live execution grants. Normal execution is locally assembled without Controller
+calls. The [final integration record](../../../docs/controller-acp-execution-boundary-plan.md#103-可执行的小步交付)
+distinguishes the passed business/topology scope from strict clock-warning failures.

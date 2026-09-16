@@ -8,13 +8,15 @@ and its [internal RPC contract](../../../contracts/agent-acp/execution-api.md).
 
 ## Service-Owned Delivery
 
-B2 is in progress. Projection, the outbound client, the PostgreSQL source,
+B2 and the scoped B5 integration are complete. Projection, the outbound client, the PostgreSQL source,
 mutation hooks, commit hints, the publication worker and catalog availability are implemented.
 The main process now wires the shared publisher into the worker and lifecycle
 service. Legacy execution applications, repository methods and storage are now
 removed. Whole-service format/lint/build and PostgreSQL/race gates have passed.
-Real Temporal recovery and consumer/integration acceptance remain pending;
-this is not yet a deployable producer/consumer combination. Delivery order:
+Three real Temporal recovery tests and nine Docker business scenarios passed in
+the final integration batch. Gateway and Console consumers are switched; strict
+clock-warning failures remain separately recorded in [current status](../../../docs/current-status.md).
+The service was delivered in this order:
 
 1. Typed current-configuration projection and an outbound ACP client. Use
    organization-scoped source records, not Run/admission snapshots or public
@@ -30,9 +32,9 @@ this is not yet a deployable producer/consumer combination. Delivery order:
    readiness; remove old RunAdmissions and reverse ACP business RPCs.
 
 The new client and source are not a compatibility mode or a second permanent
-execution path. Production composition switches after the producer and all
-its mutation sites are covered. A locally passing client test is not evidence
-that lifecycle or Gateway integration is complete.
+execution path. Production composition uses this publisher and its mutation
+hooks. Service-local tests and the subsequent lifecycle/Gateway integration
+provide separate evidence.
 
 ## Management Synchronization Read
 
@@ -149,9 +151,10 @@ does not spawn an independent publication task.
 - Include all current Providers and Models in the organization, including
   disabled records required by retained configurations. Model parameters are
   current catalog values, not a model revision embedded in a past Agent build.
-- Keep Provider routing independent from credentials. Both enabled and disabled
-  connections can publish current authentication to existing ACP client holders.
-  This never permits new use of a disabled connection.
+- Keep Provider routing independent from credentials. The wire schema permits
+  authentication material on disabled connections, but ACP revokes disabled
+  clients and aborts existing holders; it does not drain or revive them.
+  Credential rotation on an enabled connection preserves that client's lifetime.
 - Publish the Agent's committed executable configuration, or its known build
   configuration with execution closed before the first successful build. Never
   substitute a pending rebuild target for a still-running configuration.
@@ -317,9 +320,10 @@ read-only review confirmed both fixes. See the
 for final metrics rather than relying on historical counts.
 
 Workspace metadata no longer reads Run state; the old state endpoints and Run
-notification triggers are removed. Remaining B2 work removes legacy Run
-application/store/schema and execution event fields. Gateway/Console and real Temporal/Docker/Jaeger tests
-are not yet switched; production wiring alone is not an accepted deployment.
+notification triggers are removed. Legacy Run application/store/schema and
+execution event fields are also removed. Gateway/Console consumption and real
+Temporal/Docker integration passed their B5 scope; trace topology passed while
+the strict clock-warning failures remain recorded.
 
 Owner default authorization now belongs to an independent
 [Agent configuration service](agent-configuration.md), with a narrow storage port

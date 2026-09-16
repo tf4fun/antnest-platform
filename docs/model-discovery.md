@@ -58,6 +58,16 @@ UI reference: local Cherry Studio's provider model management and explicit add f
 
 ## Verification
 
+Recorded browser acceptance passed on 2026-09-16 at 00:40 +08:00, using
+[`model-discovery-browser.mjs`](../services/admin-console/tests/model-discovery-browser.mjs).
+It covered real read-only discovery without secret exposure, unsaved/unselected
+drafts, explicit subset persistence without overwriting existing settings,
+saved-model preservation through refresh and a browser-injected discovery 502,
+duplicate prevention and mobile
+layout. The local result is `.cache/model-discovery-acceptance/summary.json`;
+see [current status](current-status.md) for candidate/evidence limits. This is not
+a model-completion or full-platform acceptance result.
+
 - Controller: organization scope, current credential, disabled references,
   read-only access, absence of provider discovery responsibilities.
 - Console provider adapter: list normalization, duplicate IDs, optional metadata,

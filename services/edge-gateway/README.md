@@ -35,7 +35,7 @@ Implemented for Stage 3A. The canonical cross-service behavior is
 
 - Identity Service for login, token resolution, and token revocation;
 - Admin Console for the application and `/api/admin/*` BFF;
-- Agent Controller for the principal-scoped ID/name discovery list only;
+- Agent Controller for principal-scoped discovery and lifecycle/activation/Runtime metadata;
 - Agent UI for `/workspace/*` static application routes;
 - Agent ACP Service for execution-state reads/watches and authenticated `/api/app/agents/{agent_id}/v1/acp` (stable)
   and `/api/app/agents/{agent_id}/v2/acp` (draft) WebSockets; the Workspace
@@ -46,8 +46,10 @@ Implemented for Stage 3A. The canonical cross-service behavior is
 
 Current availability and active Session observation are documented in
 [Workspace state](docs/workspace-state.md). Gateway consumes ACP state.
-This execution-boundary change still requires B4/B4U consumers and B5 integration;
-see [delivery boundary](docs/execution-boundary.md). State observation
+Gateway/Console consumers and the scoped B5 integration have completed;
+later Agent UI browser evidence is tracked separately in
+[current status](../../docs/current-status.md). See
+[delivery boundary](docs/execution-boundary.md). State observation
 does not introduce another conversation API or replace ACP Session operations.
 
 See [`../../contracts/edge-gateway/session-contract.json`](../../contracts/edge-gateway/session-contract.json).

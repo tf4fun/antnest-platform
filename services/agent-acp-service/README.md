@@ -19,8 +19,9 @@ Nine Controller/ACP integration scenarios and trace topology checks passed.
 Jaeger clock warnings are deferred as OBS-ACP-CLOCK; the strict script still exits
 with failure, and no raw trace, warning or gate was modified. See the
 [final results and explicit exception](../../docs/controller-acp-execution-boundary-plan.md#103-可执行的小步交付).
-Agent UI is explicitly deferred; an official ACP SDK client, not that page,
-exercises this refactor's protocol acceptance.
+Agent UI was excluded from that refactor's protocol acceptance, which used the
+official ACP SDK. Subsequent workspace/model-selection browser evidence is
+tracked separately in [current status](../../docs/current-status.md).
 The acceptance history below describes the earlier
 deployed baseline, not acceptance of this refactor.
 

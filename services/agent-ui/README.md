@@ -65,8 +65,11 @@ a fresh state subscription; Refresh workspace reloads access and reconnects
 without resending a prompt. See [Workspace state](docs/workspace-state.md) and the
 [recovery contract](docs/architecture.md#conversation-recovery-and-cancellation)
 for the service boundaries. Earlier cross-connection Docker evidence is tracked
-in [C4 closeout](../../docs/docker-single-node-closeout.md). This refactor's browser
-checks use wire fixtures; deployed-stack acceptance must be repeated separately.
+in [C4 closeout](../../docs/docker-single-node-closeout.md). Wire-fixture browser
+checks and later real-stack model-selection/fallback checks have distinct scopes;
+their recorded results are in [current status](../../docs/current-status.md).
+The full development-browser profile still reports its strict Trace failure;
+targeted passes do not close all historical C4 browser items.
 Native WAV/MP3, PDF and UTF-8 documents follow the negotiated ACP input contract;
 images and audio have bounded inline history presentation. See
 [multimodal input](docs/multimodal-input.md) for file limits, lifecycle and

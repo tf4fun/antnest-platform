@@ -1,5 +1,9 @@
 # Docker Single-Node Verification Report
 
+> Historical acceptance for the candidate described below. Subsequent execution,
+> workspace and model-management results are in [current status](current-status.md).
+> The original 25 accepted / five deferred accounting is unchanged.
+
 Date: 2026-09-11. Status: **Docker single-node closeout accepted within the
 agreed scope; Agent Web UI client acceptance remains deferred**.
 The [closeout checklist](docker-single-node-closeout.md) remains authoritative.

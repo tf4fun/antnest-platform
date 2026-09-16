@@ -105,5 +105,7 @@ Console-only UI test, not proof of real Gateway/ACP integration.
 
 The owner contracts are [ACP audit](../../agent-acp-service/docs/execution-audit.md)
 and [Controller synchronization](../../../contracts/agent-controller/control-api.md#execution-configuration-synchronization).
-Docker configuration, actual Gateway login, deleted-Agent/ACP restart reads and
-Jaeger acceptance remain the cross-service B5 batch; no mock claims those results.
+The subsequent [B5 batch](../../../docs/controller-acp-execution-boundary-plan.md#103-可执行的小步交付)
+passed actual Gateway login, deleted-Agent/ACP restart audit reads and authorization
+rejections. Trace structure passed; strict clock-warning failures remain recorded.
+These are separate deployed results, not claims made by the synthetic browser test.

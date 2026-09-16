@@ -1,8 +1,8 @@
 # Product Surfaces And Feature Convergence
 
-> Status: current Console scope implemented and verified; deferred services tracked separately
+> Status: current product ownership; acceptance recorded per batch, not a full current-HEAD pass
 >
-> Updated: 2026-09-07
+> Updated: 2026-09-16
 
 This document separates four situations that otherwise look identical in the
 browser: a feature intentionally moved to another application, a feature whose
@@ -14,8 +14,10 @@ The pre-split monolith is a feature inventory, not the target navigation model.
 The new platform restores useful workflows without recreating its service
 coupling or presenting unavailable controls.
 
-The current delivery boundary is [Docker single-node closeout](docker-single-node-closeout.md).
-ACP and identity workflow closure take priority over adding new product areas.
+Current delivery and recorded evidence are indexed in [current status](current-status.md).
+The [Docker single-node closeout](docker-single-node-closeout.md) retains the
+2026-09-11 baseline and five explicitly deferred browser checks; later workspace,
+model-selection, fallback and discovery checks have their own scope.
 Skill Registry and Channel Gateway remain unstarted. Scheduled-Agent usage has
 a planned Scheduler owner, but no implementation or navigation in this stage.
 Cross-service audit-service ownership remains undecided; the required Jaeger
@@ -52,8 +54,8 @@ These workflows left Admin Console intentionally:
 
 | Previous surface | Target | Current state | Integration rule |
 | --- | --- | --- | --- |
-| Chat | Agent UI | implemented through the production Edge-to-ACP v1 bridge | Console links to `/workspace/` |
-| User-facing Agent selection | Agent UI | implemented through the authoritative principal-scoped bootstrap | Agent access subjects and internal ACP endpoints remain server-side |
+| Chat | Agent UI | Session-first workspace through the production Edge-to-ACP bridge | Console may deep-link to `/workspace/?agent=<id>` |
+| User-facing Agent selection | Agent UI | explicit chooser and principal-scoped bootstrap with management metadata | ACP owns execution availability and resource authorization; no opaque access subject |
 | Session and conversation activity | Agent UI | implemented through ACP list/load/new/prompt/cancel | ACP remains the state authority |
 | User-facing Run and Tool progress | Agent UI | implemented from ACP message and Tool updates | no second Console-owned Run model |
 
@@ -75,16 +77,17 @@ exist.
 Neither page may read another service's tables or temporarily store its domain
 records in the Console.
 
-### C. Implemented capability missing from Console
+### C. Delivered Console Workflows
 
-These are product defects. Their owner services and core commands already
-exist, but the Stage 3A BFF or browser workflow exposes only part of them.
+These workflows close gaps from the original Stage 3A split. The table describes
+current ownership; the historical browser/test counts below retain their dates.
 
-| Capability | Existing authority | Missing product closure |
+| Capability | Existing authority | Current product surface |
 | --- | --- | --- |
-| Model capability catalog | Agent Controller owns the model adapter compatibility boundary and built-in metadata | implemented: safe BFF catalog projection, provider/model selection, authoritative limits for known models, and explicit custom-API fields only for unknown models |
-| Model Profile revisions | Agent Controller supports organization-scoped get and revise | implemented: detail page, revise form, revision outcome, and BFF get/revise routes |
-| Template revisions | Agent Controller supports organization-scoped get and revise | implemented: detail page, revise form, explicit model revision selection, and BFF get/revise routes |
+| Model discovery and defaults | Console owns builtin defaults and remote discovery; Controller owns saved organization models | merged candidates, explicit selection, editable limits/capabilities/pricing, existing values preserved |
+| Current Model Profiles | Controller stores current configuration; no separate model-history API | current detail/edit, model enable/disable with reference protection; credentials managed on connections |
+| Provider availability and fallback | Controller owns connection/configuration; ACP owns effective selection and client revocation | referenced Provider disable, ordered Template backup models, live ACP configuration and fallback notices |
+| Template revisions | Controller owns immutable revisions referencing stable model identities | revision detail/publication, default and ordered backup model selection, separate current-template enablement |
 | Organization Groups | Identity `list_directory` already returns Groups | implemented: searchable read-only Groups view with source and status |
 | Local user administration | Identity supports create user, update membership, and activate/deactivate user | implemented: BFF commands, local create/edit, organization access, and system-admin global activation workflows |
 | Current administrator account | Identity owns organization-scoped profile, Organization presentation, and credential facts | implemented: trusted-principal-only account summary, human-readable account and Organization context, section-local retry, and BFF removal of internal identity IDs |
@@ -92,7 +95,8 @@ exist, but the Stage 3A BFF or browser workflow exposes only part of them.
 | OIDC administration | Identity supports safe listing, upsert, and enable/disable | implemented: system-admin Provider list/create/edit/enable/disable, secret-free BFF projections, and immutable issuer guidance |
 | SCIM credentials | Identity supports safe listing, issue, and revoke | implemented: organization-admin token list, one-time no-store credential issuance, and revocation UI |
 | Enterprise login ingress | Identity supports login-method discovery, OIDC start/callback, and SCIM protocol resources | implemented: organization-aware SSO choices on login, server-side callback-to-cookie exchange, and Edge SCIM pass-through |
-| Agent executable lineage | Agent Controller retains immutable AgentSpec and Execution revisions | implemented: detail-only safe projection, immutable Catalog revision reads, and revision-qualified Console links that remain exact after catalog heads advance |
+| Agent executable lineage | Controller retains immutable AgentSpec and Execution revisions | frozen build details and exact Template revision links; model links open current settings without changing the build snapshot |
+| Execution history and synchronization | ACP owns execution audit; Controller owns configuration synchronization receipts | independent audit page, deleted-Agent history and separate stored publication acknowledgement |
 | Runtime image presentation | Runtime Controller resolves installed images; Agent Controller freezes executable configuration | implemented: default/current image or explicit repository/tag selection, server-derived readable labels, immutable publication, and refreshed container acceptance |
 
 OIDC and SCIM are not implemented as write-only forms. Identity Service exposes
@@ -115,8 +119,8 @@ start while another Provider change is pending. SCIM issuance keeps its
 one-time credential accessible even when refreshing the token inventory fails.
 
 Independent resource reads retain structured failure semantics through the
-browser state container. Model Catalog, Runtime defaults, referenced Model
-revisions, account profile, OIDC/SCIM inventories, and paged Model/Template
+browser state container. Model Catalog, Runtime defaults, referenced current
+Models, account profile, OIDC/SCIM inventories, and paged Model/Template
 selectors offer a local retry only for transient failures. Explicit
 permission, missing-resource, and retention-terminal responses remain visible
 without a button that would simply repeat an impossible request. Previously
@@ -235,15 +239,13 @@ discard the only valid initial snapshot.
 Agent detail also renders the executable configuration frozen by the latest
 published lifecycle operation. It does not infer lineage from current catalog
 heads, and it does not expose Provider credentials or Runtime routing facts.
-Template and Model links carry the immutable revision identity. Historical
-detail is read-only and continues to resolve after newer Catalog revisions are
-published; current names remain presentation labels rather than revision
-authority.
-Revision-qualified Model and Template routes read the requested immutable
-revision directly and do not make current-head availability a prerequisite.
-The Model revision referenced by a Template is an independent presentation
-dependency: lookup failure cannot erase the Template's prompt, Runtime policy,
-or revision facts, and is recovered through a section-local retry.
+Template links carry the immutable revision identity; historical Template detail
+is read-only and remains available after later publication. Model links open
+current settings. The Agent's immutable build snapshot preserves the model
+parameters used for that build; it does not require a Model history API.
+A Template's referenced current Model is an independent presentation dependency:
+lookup failure cannot erase the Template's prompt, Runtime policy or revision
+facts, and is recovered through a section-local retry.
 Runtime image selection is a product-level choice, not a digest editing task.
 Normal Template creation uses the platform default; revision keeps that
 Template's pinned image instead of adopting a changed deployment default.
@@ -411,7 +413,7 @@ failure semantics are explicit.
 
 No page or API is added yet. A separate Scheduler is now the planned initiator
 of scheduled Agent usage. It will own schedules and trigger records, while
-Agent Controller retains admission/lifecycle and ACP Service retains execution.
+Agent Controller retains configuration/lifecycle and ACP Service retains admission/execution.
 Execution identity, Session reuse, overlap, and missed-fire policy remain future
 design decisions. See the planning-only boundary in
 [single-node closeout](docker-single-node-closeout.md#6-scheduler-planning-only).
@@ -433,7 +435,9 @@ The platform-wide audit surface requires a separate decision between:
 
 Until that decision is made, the Console may display domain-local evidence on
 the owning resource page, but it must not label Agent events as a complete
-system audit trail. A generic System/Audit/Event page is therefore deferred.
+system audit trail. Console's implemented Execution history page reads only
+ACP-owned execution audit; it is not a generic cross-service audit service.
+A unified System/Audit/Event surface remains deferred.
 
 ## Delivery Order
 
@@ -442,9 +446,9 @@ the old sidebar position.
 
 1. **Catalog closure (implemented)**: authoritative model presets, Model
    Profile and Template get/revise BFF contracts, details, edit flows, and
-   contract/browser tests. Known model limits are maintained by Agent
-   Controller; only custom OpenAI-compatible APIs ask administrators for
-   endpoint and capability metadata.
+   contract/browser tests. Console maintains builtin defaults and discovers
+   remote candidates; Controller persists explicitly selected model settings.
+   DeepSeek and OpenRouter connections expose editable limits and capabilities.
 2. **Directory closure (implemented)**: Groups display, local-user creation,
    membership role/profile updates, organization access, and system-admin User
    activation controls.
@@ -460,8 +464,8 @@ the old sidebar position.
 6. **First-run convergence (implemented)**: one stateless setup projection over
    Model, Template, Directory, and Agent authority, with actionable empty,
    blocked, unavailable, and retry states.
-7. **Agent lineage convergence (implemented)**: exact executable Template and
-   Model revisions, revision-qualified historical Catalog deep links, frozen
+7. **Agent lineage convergence (implemented)**: exact executable Template revision,
+   frozen model parameters, historical Template and current-model links, frozen
    policy, and Runtime input on Agent detail, projected without credentials or
    internal endpoints.
 8. **Inventory traversal (implemented)**: bounded cursor traversal for Model,
@@ -492,7 +496,11 @@ A migrated surface is complete only when:
    prove the workflow;
 6. this matrix and the affected business sequence are updated.
 
-## Current Acceptance Follow-up
+## Historical Stage 3A Acceptance Follow-up
+
+The results and counts below describe the original convergence batches. Model
+history and catalog ownership have since changed as specified above; latest
+workspace, execution-audit and model-management evidence is in [current status](current-status.md).
 
 Overview failure recovery and Catalog creation retries (BFF contract 31) have
 service HTTP and browser-component coverage. Inventory traversal now has

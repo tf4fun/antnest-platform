@@ -22,6 +22,9 @@ generated application models, persistence records, or reusable business code.
 | [`agent-controller/control-contract.json`](agent-controller/control-contract.json) | Agent Controller | Identity Service and administrative clients | Internal Agent management clients | Machine-readable ModelProfile, Template, Agent lifecycle, projection-query, operation, and event route catalog |
 | [`agent-controller/control-api.schema.json`](agent-controller/control-api.schema.json) | Agent Controller | Identity Service and administrative clients | Internal Agent management clients and contract tests | Agent Controller management request and response schema |
 | [`agent-controller/control-api.md`](agent-controller/control-api.md) | Agent Controller | Identity Service and administrative clients | Internal Agent management clients and maintainers | Agent lifecycle, projection-query, ownership, and event semantics |
+| [`agent-acp/execution-api.md`](agent-acp/execution-api.md) | Agent ACP Service | Agent Controller, Edge Gateway, Admin Console | Controller publication/settlement, Gateway state, Console audit | Internal execution configuration, settlement, state and retained audit; no Controller Run ticket |
+| [`agent-acp/execution-snapshot.schema.json`](agent-acp/execution-snapshot.schema.json) | Agent ACP Service | Agent Controller | Controller and ACP | Organization execution snapshot with current Providers, models, access and ordered fallback |
+| [`agent-acp/agent-execution-state.schema.json`](agent-acp/agent-execution-state.schema.json) | Agent ACP Service | Edge Gateway | Gateway state consumers | ACP-owned availability and active Session observation |
 | [`identity/identity-contract.json`](identity/identity-contract.json) | Identity Service | Agent Controller, Edge Gateway, and administrative clients | Agent Controller and internal identity clients | Organizations, principals, local authentication, OIDC configuration, and SCIM credential administration |
 | [`edge-gateway/session-contract.json`](edge-gateway/session-contract.json) | Edge Gateway | Identity Service and Admin Console | Browser clients and Admin Console | Browser session, administrator admission, and trusted principal projection |
 | [`admin-console/admin-contract.json`](admin-console/admin-contract.json) | Admin Console | Edge Gateway, Identity Service, and Agent Controller | Administrator web application | Stage 3A thin-BFF route and authority-field inventory |
@@ -39,7 +42,8 @@ do not remain as an implied compatibility layer.
 4. Generated code, if introduced, must be reproducible and must not become a
    second manually maintained schema.
 5. The current system rewrite carries no legacy wire compatibility layer.
-   Source changes update every active peer in one repository change. Deployment
+   Define shared contracts first, deliver each owning service in its own batch,
+   then run an explicit integration batch before deploying the combination. Deployment
    does not assume atomic replacement: each contract documents whether rollout
    is fail-fast or follows expand, migrate, contract.
 6. Internal APIs trust their deployment network. Business preconditions,

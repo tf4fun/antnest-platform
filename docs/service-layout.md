@@ -1,15 +1,16 @@
 # Service Layout And Ownership
 
-> Status: target service boundaries<br>
-> Updated: 2026-09-07
+> Status: current service boundaries; unstarted services explicitly marked<br>
+> Updated: 2026-09-16
 
 This document defines how Antnest Platform services are separated. Its goal is
 not to create more directories. Its goal is to let a maintainer understand and
 change one service without reconstructing the whole platform in their head.
 
 Cross-service behavior must also remain understandable from its entrypoint.
-The implemented call chains and persistence boundaries are indexed in
-[`business-sequences.md`](business-sequences.md); a service-boundary change is
+Current flows are indexed in [business-flow-entrypoints.md](business-flow-entrypoints.md);
+[business-sequences.md](business-sequences.md) retains earlier sequences and links
+to their replacements. A service-boundary change is
 incomplete until the affected sequence is updated.
 Browser workflow ownership and feature-convergence status are maintained in
 [`product-surfaces.md`](product-surfaces.md); an intentionally split or pending
@@ -18,6 +19,7 @@ surface must not be reported as an implemented Console feature.
 Antnest Runtime, Runtime Egress, Runtime Controller, Agent ACP Service,
 Identity Service, Agent Controller, Edge Gateway, and Admin Console are
 implemented. Agent UI and its production Gateway-to-ACP v1 path are implemented.
+Current acceptance is summarized in [current-status.md](current-status.md).
 Channel Gateway and Skill Registry remain pending until their delivery stage
 says otherwise.
 The current [single-node closeout](docker-single-node-closeout.md) defers both
@@ -63,11 +65,11 @@ under `contracts/`.
 | Admin Console      | Administrator UI and thin BFF                            | Page-local presentation state only                                                                                                                             | Business records, direct database access, domain workflows                         |
 | Agent UI           | End-user Agent conversation experience                   | Page-local presentation state only                                                                                                                             | Agent Core implementation, Runtime endpoints, lifecycle state                      |
 | Channel Gateway    | Adapt external IM protocols to ACP semantics             | Connectors, bindings, external conversation mapping, inbound receipts, deliveries                                                                              | Agent lifecycle, Runs, platform resources                                          |
-| Agent Controller   | Agent aggregate and lifecycle authority                  | AgentSpec, immutable configuration/execution revisions, Provider/Model profiles, current Runtime binding, Run admission, rebuild workflow, Agent event journal | Runs, MCP execution, platform SDKs, packets, Skill package bytes                   |
+| Agent Controller   | Agent aggregate and lifecycle authority | AgentSpec, immutable build/execution revisions, current Provider/model configuration and credentials, Runtime binding, execution publication, lifecycle workflows, management events | Run admission and execution audit, MCP execution, platform SDKs, packets, Skill package bytes |
 | Runtime Controller | Realize and observe one logical Runtime Environment per Agent | Environment lifecycle head, opaque Runtime revisions, private compute generations, deployment operations, platform associations, bounded Runtime observation journal, platform credentials | Agent desired state, Agent rebuild policy, Agent admission, Tool dispatch, Egress policy |
 | Runtime Egress     | Own Agent network identity and outbound packet decisions | Tunnel IPv4 allocation, address quarantine, policy revisions and assignments, packet flows and conntrack                                                       | Runtime lifecycle, Agent generations, Runs, Tools                                  |
 | Antnest Runtime    | Expose one isolated Agent workspace through MCP          | Process-local execution state, TUN, four built-in tools, managed stdio MCP children and bounded Runtime information                                                                                                             | Durable control state, containers, policy decisions, Agent loop                    |
-| Agent ACP Service  | Execute ACP v1/v2 Sessions and Agent Runs                | Sessions, Runs, Turns, context, compression checkpoints, empty client-MCP revision envelopes and input validation, Tool attempts                                | Agent construction, Runtime rebuild, platform APIs, Channel objects                |
+| Agent ACP Service  | Execute ACP v1/v2 Sessions and Agent Runs | Local authorization/admission, Sessions, Runs, Turns, context, checkpoints, Tool attempts, approvals, execution state/audit, volatile Provider clients | Agent construction, Runtime rebuild, Provider administration, platform APIs, Channel objects |
 | Skill Registry     | Govern reusable organization Skill packages              | Skill identity, immutable versions, package, review, distribution manifest                                                                                     | Skill execution, Runtime construction, Agent lifecycle                             |
 | Scheduler (planned only) | Initiate scheduled Agent usage | Schedules and trigger records; details deferred until its stage | Agent lifecycle, ACP Sessions/Runs, Tool execution, another service's database |
 | Edge Gateway       | Be the sole external application entry                    | Browser sessions, trusted principal projection, external routing, admission, request limits, security headers, and trace propagation                           | Business databases and domain state machines                                       |
@@ -89,10 +91,12 @@ runtime_generation     private Runtime Controller compute revision
 runtime_execution_id   fresh random identity generated on every Runtime PID 1 start
 ```
 
-Runtime Controller observes platform facts. Agent Controller explicitly
-rebuilds and publishes one current ExecutionRevision. Agent ACP Service acquires
-one immutable Run snapshot and never caches its Runtime endpoint beyond that
-Run.
+Runtime Controller observes platform facts. Agent Controller explicitly rebuilds
+and publishes the current execution binding. ACP creates an immutable local Run
+snapshot from the applied configuration and Session overrides; a Run cannot move
+to a replacement Runtime. Organization configuration publication revisions are
+separate from immutable build/execution revisions. Current Provider credentials
+are updated in volatile clients and are not pinned into Run snapshots.
 
 ```text
 RuntimeObservation             ExecutionRevision              AgentEvent
@@ -111,31 +115,33 @@ platform logs.
 
 ## Dependency Direction
 
-The target dependency graph is intentionally acyclic:
+The implemented management and execution paths are separate:
 
 ```text
-Management -> Agent Controller -> Runtime Controller -> Docker/Kubernetes
-                     |
-                     `-> Runtime Egress control -> Egress PostgreSQL
+Browser -> Edge Gateway -> Console BFF -> Identity / Agent Controller / ACP audit
+Console BFF -> Provider model discovery (current credentials from Controller)
+Agent Controller -> Runtime Controller -> Docker (Kubernetes planned)
+Agent Controller -> Runtime Egress control -> Egress PostgreSQL
+Agent Controller -> ACP configuration publication / Agent settlement
 
-ACP Service -> Agent Controller Acquire/Finish Run admission
-ACP Service -> Runtime MCP named by the immutable Run snapshot
+Agent UI / ACP client -> Edge Gateway -> ACP local admission and execution
+ACP Service -> Provider model API / Runtime MCP from its local Run snapshot
 Antnest Runtime -> Runtime Egress UDP/TUN -> destination network
 
-Channel Gateway -> ACP Service
-Admin Console / Agent UI -> owning internal services
-Edge Gateway -> internal service entrypoints
+Edge Gateway -> Identity authentication / Controller discovery / ACP state
+Channel Gateway -> ACP Service (planned)
 ```
 
 Runtime never calls PostgreSQL or Docker. Runtime Controller owns platform
 credentials but no Agent or Egress database. Runtime Egress owns its private
 schema and network privilege. Agent Controller coordinates internal RPCs but
-does not read another service's tables. ACP calls only the Runtime execution
-named by an Agent Controller Run snapshot.
+does not read another service's tables. Ordinary ACP execution does not call
+Controller; it uses the locally applied execution configuration and owns its
+terminal audit without a cross-service finish receipt.
 
-Docker and Kubernetes adapters live inside Runtime Controller. They are not
-separate services. A new deployment platform adds an adapter behind the same
-domain contract instead of another network hop.
+The Docker adapter lives inside Runtime Controller. Kubernetes remains planned;
+its future implementation belongs behind the same domain contract rather than
+in a separate deployment service.
 
 ## Data Ownership Rules
 
@@ -151,9 +157,11 @@ domain contract instead of another network hop.
 4. No service reads another service's volume or bootstrap secret.
 5. Cross-service deletion is a recoverable workflow of idempotent steps, not a
    distributed transaction.
-6. Provider API keys are resolved through Agent Controller's `CredentialStore`
-   port and never enter AgentSpec, RuntimeSpec, events, logs, traces, or durable
-   Runs.
+6. Controller persists encrypted Provider credentials and publishes current
+   authentication to ACP's volatile clients. Console may resolve current
+   credentials internally for model discovery. These secret-bearing boundaries
+   use metadata-only telemetry; credentials never enter browser responses,
+   AgentSpec, RuntimeSpec, audit, Temporal history or durable Runs.
 
 ## Trust Rules
 

@@ -9,7 +9,9 @@ authorization and protocol errors. Neither an administrator role nor an Agent
 appearing in a discovery list authorizes a Session operation.
 
 Controller supplies metadata for first-load discovery only. The list/bootstrap
-contains Agent ID and name, without an opaque subject or execution availability.
+contains Agent ID, name and Controller lifecycle/activation/Runtime metadata,
+without an opaque subject or ACP execution availability. Management state never
+unlocks input; execution availability comes from ACP.
 Gateway must not query that list to route ACP or synthesize ACP readiness errors.
 Once discovery has completed, Controller unavailability must not prevent later
 protocol requests or execution-state reconnection.
@@ -51,7 +53,10 @@ during protocol/state flows. Gateway owns no execution database or protocol stat
 Gateway production routing and execution-state consumption are switched to this
 contract. The local race suite and isolated Docker shutdown fixture passed;
 the latter uses synthetic upstream services, not the complete platform.
-B4/B4U consumers and B5 real-stack acceptance remain outstanding.
+The subsequent B5 batch completed real Controller/ACP/Gateway/Console integration.
+Later Agent UI batches consume ACP state independently from management metadata;
+[current status](../../../docs/current-status.md) records their separate evidence
+and the strict Trace failure retained for clock warnings.
 
 Readonly review found encoded-separator IDs escaping shutdown tracking; route
 classification now preserves escaped segment boundaries and real HTTP tests
@@ -59,4 +64,4 @@ verify cancellation. State IDs use header-safety and length checks rather than
 a Gateway-owned namespace grammar. The subsequent ACP-owned batch aligned its
 trusted identity, configuration and audit schemas, with HTTP, WebSocket, local
 authorization and PostgreSQL regression coverage. This closes that producer-side
-contract mismatch, not the remaining B4/B4U consumer or B5 integration work.
+contract mismatch; it is service-local evidence, separate from the later B5 results.

@@ -1,12 +1,13 @@
 # Agent ACP Service Architecture
 
-> Status: B1 execution-boundary implementation in progress<br>
-> Updated: 2026-09-14
+> Status: execution boundary implemented; scoped B5 integration completed<br>
+> Updated: 2026-09-16
 
 > Production composition uses [local execution configuration](execution-configuration.md).
 > Agent settlement, old Runtime protection and workspace-state queries are locally wired.
-> Administrative audit queries are locally wired; cross-service consumers/integration remain incomplete.
-> Source compilation is not deployment acceptance.
+> Gateway/Console consumers and nine Docker business scenarios passed the B5 scope.
+> Strict clock-warning failures and later workspace/model evidence remain separately
+> recorded in [current status](../../../docs/current-status.md).
 
 ## Mission
 

@@ -88,6 +88,15 @@ SDK dispatch and existing application/adapter boundaries. Acceptance is coordina
   `client_disconnected` event and clock-skew warnings (up to 1.659 ms). Its ACP
   database contract passed; Runtime classification is outside this service-owned
   change. Original strict failures and timestamps remain unchanged.
+- The separate [2026-09-16 Runtime follow-up](../../../runtimes/antnest-runtime/docs/observability.md#mcp-response-close-classification)
+  fixes error diagnostics for successful MCP handlers followed by response close,
+  with controlled HTTP and isolated Docker evidence. The old trace now returns
+  404; this does not retrospectively reclassify it. Deployment and full browser
+  revalidation remain separate from that Runtime source change.
+- The [2026-09-16 maintenance decision](../../../docs/controller-acp-execution-boundary-plan.md#obs-acp-clock)
+  defers dedicated SDK/clock work for inspected, recorded timing warnings while
+  preserving strict results. It does not waive the Runtime event above or any
+  unexplained warning, and does not make the complete browser profile pass.
 - Dependency audit still reports the existing AJV 8.17.1 `$data` ReDoS advisory
   (GHSA-2g4f-4pwh-qvx6, moderate). AJV was not changed by this instrumentation
   update; dependency remediation remains separate from these passing code gates.

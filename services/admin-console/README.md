@@ -27,14 +27,18 @@ refresh for execution and permission records, plus desktop/mobile browser tests.
 Provider, Model and current Template details now expose availability controls and
 Controller reference conflicts. Configuration pages separately show delivery
 pending, acknowledged or unknown; an acknowledgement is not Agent readiness.
-See [Catalog availability](docs/catalog-availability.md). The service-local
-implementation still requires the combined Gateway/Controller/ACP B5 acceptance.
+See [Catalog availability](docs/catalog-availability.md). Combined B5 acceptance
+now covers real Gateway login and ACP audit authorization, including reads after
+Agent deletion and ACP restart. [Current status](../../docs/current-status.md)
+records the separate business/topology result and strict clock-warning failure.
 
 Implemented for Stage 3A, including Directory administration, enterprise
 OIDC/SCIM provisioning, release-managed model provider presets, and
-organization-scoped Model Profile and Template detail/revision management.
+organization-scoped current Model Profile management and immutable Template revisions.
 Builtin model capabilities come from Console; Controller persists the selected
 configuration. DeepSeek and OpenRouter connections are supported. Unlisted models
+can be added explicitly; [model discovery](../../docs/model-discovery.md) merges
+remote, builtin and saved candidates without changing existing records. Models
 under an existing connection expose explicit limit and Image/Audio/PDF fields. Native
 capabilities are preserved across BFF projections, creation and current-model
 editing; builtin presets prefill editable drafts, while saved values take precedence. See [Native model inputs](docs/multimodal-models.md)

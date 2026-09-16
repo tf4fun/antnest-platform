@@ -1,14 +1,18 @@
 # 业务流程入口总索引
 
-> 更新日期：2026-09-14
+> 更新日期：2026-09-16
 > 状态：基于当前实现的入口盘点，供后续逐流程展开与 Jaeger 核对。
 > 范围：`antnest-platform` 已开发服务，Docker 单节点。
 
 本文以用户或运维人员的实际目标列举业务流程，不将 API 目录当作业务场景目录。
 各流程文档再展开经过的服务、接口、数据交换和时序。
 编号用于后续关联流程文档，不代表该流程已完成新一轮链路验收。
-现有时序见 [business-sequences.md](business-sequences.md)，此前验收见
+历史时序及其当前替代入口见 [business-sequences.md](business-sequences.md)，此前验收见
 [单节点验证报告](docker-single-node-verification-report.md)。
+
+当前完成情况以 [实现与验收索引](current-status.md) 为准：Controller/ACP B5 的九个业务场景和
+Trace 结构检查已完成；Agent UI 后续会话工作台、真实模型切换、跨 Provider 备用选择和模型发现已有专项证据。
+完整浏览器脚本的严格 Trace 失败仍保留，已登记时钟告警按维护裁决延期；不把专项通过扩展为旧 C4 全部通过。
 
 部署、登录、Provider、模板及五类 Agent 生命周期的最新集中评审见
 [基于 Trace 的主流程时序与技术评审](business-flow-trace-review.md)。该文档区分
@@ -25,9 +29,13 @@
 - **入口服务**是首次接收该操作的服务，不等于业务数据所有者。浏览器和外部身份协议的入口均为 `edge-gateway`；Console 页面发起不代表绕过 Gateway。
 - 内部 RPC、后台续办和运维入口单独标明，不暗示已经有公开 API 或管理页面。
 - ACP v1/v2、HTTP/WebSocket 是同一业务的协议变体，不重复编号；后续接口核对需要分别覆盖适用变体。
-- 暂缓 Web UI 的页面交互验收，但保留它消费的 Gateway/ACP 服务端业务入口。未启动的 Skill Registry、Channel Gateway、Scheduler，以及 K8s、HA/横向扩展不纳入。
+- Web UI 与协议客户端的验收分别记录；历史重构批次暂缓 UI，后续页面专项已独立推进。
+  未启动的 Skill Registry、Channel Gateway、Scheduler，以及 K8s、HA/横向扩展不纳入。
 
-### 当前优先核对顺序
+### 2026-09-12 至 09-14 逐场景复验记录（历史）
+
+本节保留当时的镜像、资源和人工确认进度；其中“当前实例”“待检查”“暂不修改 ACP”均为当时状态，
+不描述现在的开发实例或后续交付。最新业务验收见上方索引。
 
 默认按场景独立执行，每完成一项提供 Jaeger 地址并等待用户检查。
 9 月 13 日按用户“其余 Agent 生命周期验收并汇总 Trace 列表”的要求，重建、停用、启用、删除连续完成后统一提交审阅。
@@ -154,9 +162,16 @@ OIDC 登录本身归入 BF-AUTH-04，不重复列为配置操作。
 | BF-CAT-06 | 创建 Agent 模板                         |
 | BF-CAT-07 | 查看模板列表、详情及历史修订            |
 | BF-CAT-08 | 发布模板新修订                          |
+| BF-CAT-09 | 轮换 Provider 连接凭证                   |
+| BF-CAT-10 | 启用或停用 Provider 连接                 |
+| BF-CAT-11 | 启用或停用模型                           |
+| BF-CAT-12 | 启用或停用模板                           |
+| BF-CAT-13 | 发现候选模型并显式选择添加               |
 
-Model Profile 停用/删除不属于当前已开放的管理流程；模板发布不等于派生 Agent 自动更新。
-应用新模板修订使用 BF-AGENT-05。
+Provider 停用保留引用，配置发布到 ACP 后撤销客户端；Model 停用仍检查引用。当前未开放物理删除。
+模板支持有序备用模型；模板发布不等于派生 Agent 自动更新，应用新修订使用 BF-AGENT-05。
+模型发现由 Console 合并远端、内置及已保存候选，只保存显式选择，刷新不会覆盖已有配置。
+见 [发现流程](model-discovery.md) 和 [备用选择](provider-failover.md)。
 原 BF-CAT-05（获取默认值）归入打开模板创建表单的步骤；模板创建从打开页面、选择模型与填写配置，
 到保存后可见的模板结果结束，不止于 POST 请求成功。
 
@@ -185,7 +200,7 @@ Model Profile 停用/删除不属于当前已开放的管理流程；模板发�
 
 ## 7. Agent 使用与 ACP 会话
 
-发起方：受控客户端。入口服务：`edge-gateway`，不要求由 Web UI 页面执行。
+发起方：Agent UI 或受控 ACP 客户端。入口服务：`edge-gateway`；页面与协议证据分别记录。
 内部可信 ACP 客户端可从 `agent-acp-service` 接入，但不能用内部直连证据替代 Gateway 链路验证。
 本节只盘点已实现的协议范围，不宣称通用 ACP 完全符合性。
 
@@ -242,10 +257,14 @@ BF-EXEC-08 不要求逐包 Jaeger 链路。网络策略 RPC 与工具请求可�
 | BF-SYS-04 | 续办已持久化但未完成的 Agent 生命周期操作 | `agent-controller` Temporal SDK Worker 接收引擎分派/重试                        |
 | BF-SYS-05 | Runtime 状态变化的观测与 Agent 状态同步   | `runtime-controller` 平台观测，供 `agent-controller` 消费                |
 | BF-SYS-06 | ACP 服务恢复后处理未完成 Run 和待审批记录 | `agent-acp-service` 启动恢复，不代表重放工具副作用                       |
+| BF-SYS-07 | 发布及重同步组织当前执行配置 | `agent-controller` 向 ACP 推送；ACP 冷启动在当前配置同步前不开放执行 |
+| BF-SYS-08 | 生命周期变更前收束 Agent 执行 | Controller 调用 ACP Agent 级收束，不查询或结束逐 Run 记录 |
+| BF-SYS-09 | 查询配置同步回执 | Console 读取 Controller 已存修订与应用确认，不代表实时就绪 |
 
 身份恢复不会自动启用 Agent，后续显式启用仍使用 BF-AGENT-07。
-Runtime 初始化/更新/启停/删除、隧道地址分配/回收、Run 准入/结束等内部 RPC，
-是上述 Agent 生命周期与执行流程的组成部分，后续在调用链中展开，不重复当作用户业务。
+Runtime 初始化/更新/启停/删除、隧道地址分配/回收及配置/收束 RPC，
+是上述 Agent 生命周期与执行流程的组成部分，不重复当作用户业务。
+Run 准入与终态由 ACP 本地管理，旧 Controller acquire/finish RPC 已删除。
 
 ## 10. 部署与运维入口
 

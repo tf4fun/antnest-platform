@@ -109,8 +109,9 @@ Rejected commands leave no receipt and may be retried after references are remov
 Provider disable preserves each model's own enabled flag. Only effective Provider
 or Model changes advance execution configuration; template-only toggles do not.
 There is no physical deletion, new retirement table, automatic template rewriting
-or Provider lifecycle workflow. Console/Gateway availability consumers are pending
-their separate B3/B4 batches.
+or Provider lifecycle workflow. Console availability controls and Gateway/ACP
+consumers are implemented; [current status](../../../docs/current-status.md)
+records the B5 and later real Provider fallback acceptance boundaries.
 
 ## Persistence And Execution Boundary
 

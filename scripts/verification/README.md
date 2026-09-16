@@ -49,5 +49,6 @@ parsers: duration syntax, retry interval ordering and all other service-local
 settings remain validated by their owning service at startup and in its tests.
 A passing preflight does not mean either process has successfully started.
 
-Agent UI is deferred and is not a dependency of this integration profile. Use
-an official ACP SDK client to exercise protocol behavior, not a browser mock.
+Agent UI was outside the Controller/ACP integration profile and is not its
+dependency. That profile uses an official ACP SDK client; later workspace browser
+acceptance is recorded separately in [current status](../../docs/current-status.md).

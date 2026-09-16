@@ -2,7 +2,9 @@
 
 The earlier F10 delivery was verified in September 2026. The current
 Controller/ACP boundary follows [execution configuration](execution-configuration.md);
-its integration status is tracked separately and Agent UI is deferred.
+its B5 integration and subsequent Agent UI evidence are tracked separately in
+[current status](../../../docs/current-status.md). The earlier F10 result is not
+a fresh full-browser acceptance of the latest workspace.
 
 ## Ownership And Contract
 

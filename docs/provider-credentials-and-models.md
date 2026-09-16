@@ -1,8 +1,13 @@
 # Provider 凭证与模型分离
 
+> 2026-09-16 现状说明：本文是管理迁移与旧候选的历史记录。配置发布、ACP 本地执行及 B5 联调已完成，
+> 见 [当前状态](current-status.md)；后续已支持 OpenRouter、[有序备用模型](provider-failover.md)
+> 和 [Console 远端模型发现](model-discovery.md)。Provider 可带引用停用并撤销客户端，Model 停用仍受引用保护。
+> 下文“ACP 消费未完成”“仅 DeepSeek”“不得禁用有引用 Provider”等表述仅适用于当时批次，不能作为当前合同。
+
 > 2026-09-14 后续设计以 [Controller 与 ACP 执行边界重构方案](controller-acp-execution-boundary-plan.md) 为准。
 > Controller 同步执行配置和当前凭证；ACP 本地准入、保存 Session 与执行审计，不再反查 Controller 申请/结束 Run。
-> Run 不绑定认证版本；不保证旧 Run 续跑；当前模板/现役 Agent 引用解除前不得禁用 Provider/model。
+> Run 不绑定认证版本；不保证旧 Run 续跑。该版 Provider 禁用引用限制已由后续有序备用模型合同替代。
 > [Provider 客户端旧候选](provider-client-lifecycle-plan.md)已经被替代。
 > 下文保留已实现管理端与旧执行消费的基线，涉及 Controller 准入、凭证回查和补报的内容均待新方案替换，
 > 不代表新消费链路已经实现或验收。Console builtin 目录与 Controller 管理数据的所有权保持不变。

@@ -4,6 +4,10 @@ Antnest Platform is the Docker-first service architecture for Antnest. This
 repository is organized around independently understandable services rather
 than around one shared application package.
 
+The [current implementation and acceptance index](docs/current-status.md)
+distinguishes the latest service boundaries, recorded verification and remaining
+scope. Updated 2026-09-16; historical stage reports retain their original scope.
+
 ## Service Map
 
 | Component          | Target role                                                                                                                       | Status                                 |
@@ -11,12 +15,12 @@ than around one shared application package.
 | Antnest Runtime    | Executes one Agent's process and filesystem operations and transports Agent packets                                               | Implemented and aligned with Egress    |
 | Runtime Egress     | Rust service owning Agent addresses, network policy, UDP/TUN forwarding, rejection, and address reuse                             | Implemented and accepted with Runtime  |
 | Runtime Controller | Logical Runtime Environment lifecycle, private deployment realization, and platform observation with an in-process Docker adapter | Implemented and accepted for Docker    |
-| Agent Controller   | Owns Agent lifecycle, immutable configuration/execution revisions, explicit Runtime rebuild, Run admission, and Agent events      | Implemented and accepted in Stage 3A   |
-| Agent ACP Service  | Owns ACP v1/v2 Sessions, Runs, context, model/Tool loop, and per-Run Runtime MCP calls                                            | Declared profile and scoped Docker closeout accepted |
+| Agent Controller   | Owns Agent lifecycle, configuration, Provider credentials, execution publication, Runtime rebuild, and management events | Execution-boundary integration accepted within B5 scope |
+| Agent ACP Service  | Owns local admission, ACP v1/v2 Sessions, Runs, model/Tool execution, Runtime MCP calls, and execution audit | Declared profile and scoped Docker integration accepted |
 | Identity Service   | Owns Organizations, Users, local login, OIDC, SCIM, credentials, and the directory journal                                        | Identity and owner-offboarding profile accepted |
 | Edge Gateway       | Sole browser ingress, Identity-backed sessions, administrator/Agent admission, trusted routing, and trace propagation              | Implemented for Stage 3                |
 | Admin Console      | React administrator application and thin BFF for Identity and Agent lifecycle management                                           | Implemented for Stage 3A               |
-| Agent UI           | React end-user conversation workspace for Agents, ACP Sessions, tool activity, and attachments                                    | Implemented; client acceptance explicitly deferred |
+| Agent UI           | React end-user conversation workspace for Agents, ACP Sessions, tool activity, attachments, and model settings | Implemented; targeted real-browser checks passed; full strict profile remains open |
 | Contracts          | Language-neutral Runtime, Egress, Agent Controller, ACP, and Identity contracts                                                   | Evolving with each rewritten component |
 
 The repository layout and ownership rules are defined in
@@ -24,16 +28,13 @@ The repository layout and ownership rules are defined in
 Runtime/Egress design is canonical in
 [`docs/stage-1-runtime.md`](docs/stage-1-runtime.md).
 
-The reviewed Stage 2 Agent lifecycle and ACP target design is defined in
-[`docs/stage-2-agent-and-acp.md`](docs/stage-2-agent-and-acp.md). It replaces
-older candidate/active Runtime rollout and transparent MCP-switching concepts
-in Agent Controller and Agent ACP Service.
-
-The proposed next execution boundary is documented in
+The earlier Stage 2 baseline is retained in
+[`docs/stage-2-agent-and-acp.md`](docs/stage-2-agent-and-acp.md).
+The implemented execution boundary and its staged acceptance are documented in
 [`docs/controller-acp-execution-boundary-plan.md`](docs/controller-acp-execution-boundary-plan.md):
 Controller publishes Agent execution policy and configuration; ACP owns local
-admission, Sessions and execution audit behind Gateway. This is a design for
-staged implementation, not the current `RunAdmission`-based integration.
+admission, Sessions and execution audit behind Gateway. Controller Run admission,
+credential callbacks and finish receipts have been removed.
 
 The Stage 3A administrator control-plane contract and its browser-to-Jaeger
 acceptance path are defined in
@@ -45,16 +46,21 @@ in [`docs/product-surfaces.md`](docs/product-surfaces.md).
 
 Start with the [business-flow entrypoint index](docs/business-flow-entrypoints.md)
 for the current user, protocol, background and operational flow inventory.
-The implemented entry-to-storage call chains, data exchanges, commit points,
-and architecture simplification findings are maintained in
+Earlier entry-to-storage sequences and architecture findings are retained in
 [`docs/business-sequences.md`](docs/business-sequences.md).
+Its current-flow links identify the contracts that supersede retired paths.
 
-The proposed cross-service [observability contract](docs/observability-contract.md)
-defines span boundaries, request/response diagnostics, error reporting, payload
-budgets and local-only readiness. It is a target for staged implementation,
-not a claim that the current services already conform.
-The [service-owned rollout](docs/observability-rollout.md) tracks the bounded
-parallel implementation batches and coordinator-only serial acceptance.
+The cross-service [observability contract](docs/observability-contract.md)
+defines span boundaries, optional RPC content capture, stream non-capture,
+database tracing and local-only readiness. Implementation evidence is tracked in
+the [RPC capture record](docs/observability-simplification.md),
+[database rollout](docs/observability-database-remediation.md) and
+[ACP database report](services/agent-acp-service/docs/observability.md).
+The earlier [service-owned rollout](docs/observability-rollout.md) is historical.
+The [clock-skew maintenance decision](docs/controller-acp-execution-boundary-plan.md#obs-acp-clock)
+defers dedicated timing work for inspected, recorded warnings while retaining
+strict Trace failures and separate business/structure results; it does not waive
+new unexplained warnings or other verification failures.
 
 The agreed closeout scope and ordered acceptance checklist are maintained in
 [`docs/docker-single-node-closeout.md`](docs/docker-single-node-closeout.md).
@@ -74,22 +80,29 @@ The reproducible Docker acceptance profile is documented in
 
 ## Current Integration Status
 
-The Rust Runtime, Runtime Egress, and thin Go Runtime Controller are implemented
-and accepted together. Stage 2 adds independently deployable Agent ACP,
-Identity, and Agent Controller services. Stage 3A now connects an administrator
-browser session through Edge Gateway, Identity, Admin Console, Agent UI, Agent
-ACP Service, Agent Controller, and Runtime Controller. The disposable
-acceptance covers Model Profile,
-Template, and Agent creation plus disable, enable, rebuild, delete, lifecycle
-events, end-user ACP Session/Tool execution, port isolation, and Jaeger trace
-continuity.
+Runtime, Egress and Runtime Controller have scoped Docker acceptance. Identity,
+Gateway and Console support browser login, directory/provisioning and Agent
+lifecycle management. The 2026-09-15 Controller/ACP integration passed nine
+business scenarios, including credential rotation, Controller outage, active-Run
+rebuild, disable/enable, crash interruption without replay, revocation and retained
+audit after deletion/restart. Trace structure checks passed; strict clock-warning
+failures remain recorded under the maintenance decision above.
+
+Agent UI now provides a Session-first workspace. Targeted real-browser model
+selection and Provider fallback checks passed on 2026-09-15; model discovery
+checks passed on 2026-09-16. Console owns builtin/remote model discovery, Controller
+persists selected models, and ACP owns effective model selection. See
+[ordered fallback](docs/provider-failover.md) and [model discovery](docs/model-discovery.md).
 
 This is scenario-specific acceptance, not unrestricted ACP conformance or a
 generic Identity event bus. ACP stable v1 and draft v2 are accepted for the
 declared platform-owned MCP profile; client-injected MCP remains explicitly
 rejected. Identity's narrow principal-revocation feed now drives Agent
-offboarding. C1-C3 are accepted in the checklist; final Agent UI browser,
-operations and combined Jaeger/regression acceptance remain in C4-C6.
+offboarding. The 2026-09-11 checklist closed its in-scope operations/regression
+items and deferred five C4 client checks. Later targeted browser results do not
+retroactively close those checks or make the full development-browser Trace
+profile pass. Exact dates, evidence and limits are in the
+[current status index](docs/current-status.md).
 
 ## Stage 3 Local Applications
 

@@ -1,5 +1,12 @@
 # Workspace State Integration
 
+Current results and implementation boundaries are indexed in
+[current status](../../docs/current-status.md). The disposable C4 scenarios below
+describe the earlier closeout profile; their old admission-fence/Controller trace
+terminology is historical and is not acceptance of the refactored execution path.
+The later real-browser profiles have separate results; none retroactively closes
+all five deferred C4 checks.
+
 This disposable C4 profile uses the real Docker services behind Edge Gateway,
 the official ACP SDK and a deterministic OpenAI-compatible model peer. The model
 is the only synthetic business dependency; it requests real Runtime tools.
@@ -69,6 +76,14 @@ absent. Two tool prompts must contain actual Runtime `tools/call` SERVER spans.
 Run `node --test scripts/workspace-closeout/chat-trace.test.mjs` for the reusable
 positive and negative trace fixtures. This profile requires RPC capture disabled;
 the `--jaeger` option defaults to `http://127.0.0.1:16686`.
+
+The [2026-09-16 clock-skew maintenance decision](../../docs/controller-acp-execution-boundary-plan.md#obs-acp-clock)
+defers dedicated timing work for inspected, recorded clock warnings. Keep the
+strict script failure and report business, topology and timing results separately;
+the decision does not mark this browser profile passed. New or unexplained
+warnings, structural defects, credential leaks and business errors retain their
+existing checks. A small duration alone is not an exemption. Revisit the known
+timing issue during an SDK upgrade or if its magnitude or diagnostic impact grows.
 
 `development-browser.mjs` exercises an already-running, disposable development
 instance through the real Console and Agent UI. It does not mock ACP, the model,

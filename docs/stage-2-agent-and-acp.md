@@ -7,8 +7,8 @@
 > are maintained in that plan. Runtime/MCP and protocol decisions not superseded
 > there retain their original scope.
 
-> Status: implemented; declared platform-only ACP profile accepted (C1); final platform closeout remains open<br>
-> Updated: 2026-09-10<br>
+> Status: historical Stage 2 baseline; declared platform-only ACP profile accepted (C1)<br>
+> Baseline: 2026-09-10; status links updated 2026-09-16<br>
 > Compatibility: greenfield service rewrite; no prototype wire or database
 > compatibility is retained<br>
 > Protocol baseline: stable ACP v1, side-by-side ACP v2 Draft, and MCP
@@ -26,7 +26,9 @@ retains one process identity check solely to reject a stale MCP request after a
 Runtime process restart. It does not change the implemented Runtime/Egress
 packet and policy contracts.
 
-Remaining work and acceptance are tracked in
+The 2026-09-11 closeout accepted 25 items and explicitly deferred five browser
+items; later execution-boundary and workspace evidence is indexed in
+[current status](current-status.md). The original accounting remains in
 [`docker-single-node-closeout.md`](docker-single-node-closeout.md). Earlier
 Stage 2 and Stage 3 checks do not close every protocol/persistence/recovery
 case in the ACP service's conformance matrix. Kubernetes and horizontal scaling

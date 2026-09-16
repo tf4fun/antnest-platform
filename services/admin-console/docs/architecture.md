@@ -37,7 +37,7 @@ actor.
 Execution audit is read directly from ACP, independently of Controller's current
 Agent projection. Configuration synchronization is a separate Controller read.
 See [execution audit](execution-audit.md) for routes, trusted identity forwarding,
-and the pending integration delivery boundary. [Catalog availability](catalog-availability.md)
+and the completed B5 integration scope. [Catalog availability](catalog-availability.md)
 uses one Controller command per explicit change; the browser renders reference
 conflicts and configuration acknowledgement without becoming their authority.
 

@@ -16,9 +16,10 @@ and lifecycle settlement are wired in the main process; the five old execution
 RPCs, their RunService injection, workspace execution queries and occupancy
 notifications, Run application/storage/schema and Session override merging have been removed.
 Service-local gates, including the management synchronization read follow-up,
-have passed. Gateway and Console have also switched locally. Agent UI is deferred
-and is not an integration gate; it will remain an ACP client, not a management
-authority. Nine Controller/ACP Docker and protocol-client scenarios and trace
+have passed. Gateway and Console have switched and passed the scoped integration.
+Agent UI was excluded from that refactor's gate; its subsequent workspace and
+browser batches are tracked in [current status](../../docs/current-status.md).
+It remains an ACP client, not a management authority. Nine Controller/ACP Docker and protocol-client scenarios and trace
 topology checks passed. Jaeger clock warnings are deferred as OBS-ACP-CLOCK;
 the strict script still reports failure and its result is not rewritten. See the
 [final results and explicit exception](../../docs/controller-acp-execution-boundary-plan.md#103-可执行的小步交付).
@@ -83,9 +84,9 @@ state.
 
 ## Internal Interfaces
 
-- authorized workspace Agent IDs/names: see [Workspace metadata](docs/workspace-state.md).
-  ACP owns execution state and active Session observation. Gateway migrated in B3;
-  Agent UI is deferred and does not block service-to-service acceptance.
+- authorized workspace Agent IDs/names and lifecycle/activation/Runtime metadata:
+  see [Workspace metadata](docs/workspace-state.md). ACP owns execution state and
+  active Session observation; these management fields never grant admission.
 - Agent default authorization: see [Agent configuration](docs/agent-configuration.md).
   Session model selection and per-Session authorization overrides belong to ACP.
 - current configuration publishing and lifecycle settlement: see

@@ -12,7 +12,8 @@ See [Runtime availability](runtime-availability.md) for the two-stage contract.
 It depends on language-neutral HTTP contracts. It does not import another
 service implementation or inspect another service database.
 
-The current execution-boundary refactor is not yet a whole-platform deployment.
+The execution-boundary refactor completed its scoped B5 integration on 2026-09-15;
+strict clock-warning failures remain recorded separately in [current status](../../../docs/current-status.md).
 Controller owns ModelProfile/Template Catalog, management projections and the five
 Agent lifecycle workflows. Configuration publication and lifecycle settlement
 are wired; the five old execution RPCs and RunService injection are removed.
@@ -21,7 +22,7 @@ not worker leases. Execution state and audit belong to ACP.
 
 The [workspace metadata reader](workspace-state.md) no longer reads execution state.
 Legacy Run application and persistence code have been removed; no second execution
-authority remains in Controller. Gateway/Console consumers switch in B3/B4. See the
+authority remains in Controller. Gateway/Console consumers have switched. See the
 [current implementation state](../../../docs/controller-acp-execution-boundary-plan.md#102-当前实施进度).
 
 A small Runtime-observation consumer is intentionally not a general event bus.
@@ -78,22 +79,24 @@ and lifecycle attachment are independent observations, not a packet-health probe
 
 A Provider connection belongs to one organization and owns its endpoint and
 independently versioned encrypted credential. It can contain multiple ModelProfiles.
-A model revision stores model name, context/output limits, multimodal capabilities,
+A current model record stores model name, context/output limits, multimodal capabilities,
 optional temperature/pricing and display name; it does not store credential versions
 or copy the endpoint. See [Provider management](provider-management.md).
 
 Controller publishes current Model parameters and independently versioned Provider
 credentials to ACP. ACP selects execution configuration locally. Templates retain
 stable model identity; credentials are never resolved from a build snapshot. Credential plaintext is absent from
-management responses, specs and events. Development RPC content capture can include
-submitted secrets in Jaeger; see [observability](observability.md).
+browser-facing responses, specs and events. Provider writes, credential access
+and execution publication use metadata-only telemetry even when RPC content
+capture is enabled; see [observability](observability.md). Console resolves
+credentials only through the scoped internal access endpoint for discovery.
 
 ### AgentTemplate
 
 A Template head belongs to one organization and points to one immutable
 TemplateRevision. A revision contains:
 
-- one stable ModelProfile identity;
+- one default stable ModelProfile identity and optional ordered fallback identities;
 - system prompt and maximum model requests;
 - caller-selected Runtime image reference, resource limits, and optional managed stdio
   MCP startup configuration. See [Managed MCP](managed-mcp.md) for bounds and
@@ -121,10 +124,10 @@ Agent configuration has an empty Skill set.
 
 Updating a Template creates a revision. It does not silently mutate existing
 Agents. Applying that revision to an Agent is an explicit rebuild operation.
-ModelProfile and Template heads use optimistic revision comparison inside the
-repository transaction. The application never asks PostgreSQL to infer or
-reshape business intent; it submits one complete immutable next revision and
-the expected current revision.
+Model updates use an expected current version and replace the current record;
+there is no independent model-history table or API. Template updates use
+optimistic revision comparison and persist one complete immutable next revision.
+Both operations preserve explicit business intent inside the repository transaction.
 
 ### Agent
 
@@ -201,7 +204,7 @@ binding.
 ### AgentSpecRevision
 
 An AgentSpecRevision is a complete immutable non-secret snapshot derived
-from a specific Template revision and ModelProfile revision. It freezes the
+from a specific Template revision and the selected current model configuration. It freezes the
 system prompt, model request policy, context-policy version, model metadata,
 Runtime image/resources/managed MCP configuration and canonical digest. Model
 metadata here records build lineage only; ACP selects current synchronized Model
@@ -305,12 +308,13 @@ candidate Runtime.
 
 ### Define Model And Template
 
-1. Persist a Provider connection, one encrypted credential and initial model revisions atomically.
-2. Validate a Template against an enabled model identity and its enabled Provider connection.
+1. Persist a Provider connection, its encrypted credential and explicitly selected initial models atomically.
+2. Validate a Template's default and ordered fallback models under the organization lock;
+   disabled Providers remain valid references, while model validity follows the catalog contract.
 3. Persist the Template head and immutable revision atomically.
-4. The immutable revisions and idempotency ledger provide the current Catalog
-   history. A queryable management-audit stream is added with the event slice;
-   no secret may enter it.
+4. Template revisions and immutable Agent snapshots retain lineage; current models
+   have no separate history API. The command ledger preserves replay receipts,
+   and management events never contain credentials.
 
 ### Create Agent
 

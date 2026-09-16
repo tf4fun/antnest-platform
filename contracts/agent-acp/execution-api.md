@@ -1,9 +1,11 @@
 # ACP Execution Configuration RPC
 
-Status: draft for the reviewed design; production consumers are not switched.
+Status: implemented; Controller publication and Gateway/Console consumers are switched.
 This is an internal control API, not an ACP extension. External ACP versions and
-payloads are unchanged. Existing foundation code is not integration acceptance.
-The owning design is [the execution boundary plan](../../docs/controller-acp-execution-boundary-plan.md).
+payloads are unchanged. B5 integration passed its business and topology scope;
+strict clock-warning results remain recorded separately. See
+[current acceptance](../../docs/current-status.md) and
+[the execution boundary plan](../../docs/controller-acp-execution-boundary-plan.md).
 
 ## Transport And Identity
 
@@ -58,19 +60,19 @@ current access and new execution; it does not purge history.
 
 - Provider: `connection_id`, `provider_key`, `request_protocol`, `base_url`,
   `enabled`, and `credential_revision` plus typed `credential` when enabled.
-  Initially only `deepseek`, `openai_chat_completions`, and `api_key` are supported.
-  The credential contains `method` and `secret`. A disabled provider may also
-  carry the revision/credential pair to rotate authentication of existing
-  holders; Controller sends available current material. ACP never creates a
-  disabled client solely for this payload and never permits new acquisition.
-  Absence of updated material does not promise that a retained credential still
-  works at the Provider. Secrets remain volatile and disappear after final release.
+  Supported provider keys are `deepseek` and `openrouter`; both use
+  `openai_chat_completions` and `api_key`. The credential contains `method` and
+  `secret`. The schema also permits the pair on a disabled Provider, but that
+  material does not keep its holders usable: applying disable revokes existing
+  clients and aborts their requests. Re-enable creates fresh clients, never
+  revives revoked handles. Secrets remain volatile and are not stored in Runs.
 - Model: `model_profile_id`, `connection_id`, `display_name`, `enabled`, model API
   ID, token limits, content capabilities, optional temperature and USD pricing.
   The model has no separate historical revision and carries no credentials.
 - Agent: `agent_id`, allowed `principal_ids`, `access_revision`, `accepting_runs`,
   nullable `unavailable_reason`, nullable lifecycle `operation_id`,
-  `default_model_profile_id`, default authorization, Agent execution settings,
+  `default_model_profile_id`, optional ordered `fallback_model_profile_ids`
+  (at most 31), default authorization, Agent execution settings,
   nullable `agent_spec_revision`, `execution_revision`, and `runtime` binding.
   An accepting Agent requires a current Runtime and execution revisions. A
   disabled/not-yet-built Agent can carry a null binding and revisions.
@@ -241,8 +243,8 @@ credential revisions. It is a comparison token, not an increasing sequence or
 execution permission. It survives identical publication and process restart;
 unrelated Agent changes and credential rotation do not reset Session settings.
 Catalog changes remain relevant because Sessions may select any organization
-model. Gateway/Agent UI migrate the old numeric `agent_revision` consumer in
-B3/B4U; no Controller execution-state fallback is retained.
+model. Gateway and Agent UI consume `configuration_revision` rather than the old
+numeric `agent_revision`; no Controller execution-state fallback is retained.
 
 Gateway authenticates and forwards the trusted organization/principal/Agent
 tuple. The view derives locally from current access/configuration and Agent

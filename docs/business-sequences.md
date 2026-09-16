@@ -1,4 +1,25 @@
-# Implemented Business Sequences
+# Business Sequence Baseline And Current Flow Index
+
+> Status: historical 2026-09-10 sequence/review baseline, with current-flow links updated 2026-09-16.
+> The numbered sequences below retain the earlier implementation, not current API
+> authority. Controller Run admission/finish, per-Run credential callbacks, model
+> history and the PostgreSQL lifecycle worker have been superseded. Use the current
+> contracts and service documents linked below when implementing or operating the system.
+
+## Current Flow References
+
+| Flow | Current ownership and reference |
+| --- | --- |
+| Provider/model configuration | Console discovers candidates; Controller persists selected current models and encrypted connection credentials. [Model discovery](model-discovery.md), [Provider management](../services/agent-controller/docs/provider-management.md) |
+| Template and model selection | Templates retain immutable revisions referencing stable current model identities and ordered fallback candidates. [Console workflow](../services/admin-console/docs/provider-management.md), [fallback](provider-failover.md) |
+| Agent lifecycle | Controller commits management intent; Temporal executes lifecycle work. Configuration close and ACP Agent-level settlement precede Runtime replacement. [Lifecycle](../services/agent-controller/docs/lifecycle-workflows.md), [publication](../services/agent-controller/docs/execution-publication.md) |
+| Workspace discovery/state | Gateway authenticates; Controller supplies management metadata, ACP supplies execution state. [Gateway boundary](../services/edge-gateway/docs/execution-boundary.md) |
+| Session/Run execution | Client → Gateway → ACP local authorization/admission → Provider/Runtime MCP → ACP terminal audit. No Controller acquire/finish/credential callback. [ACP configuration](../services/agent-acp-service/docs/execution-configuration.md) |
+| Administrative execution history | Gateway → Console → ACP organization-scoped retained audit, including deleted Agents. [Audit](../services/admin-console/docs/execution-audit.md) |
+
+The [current status index](current-status.md) separates recorded acceptance from
+remaining work. Earlier diagrams and findings below remain historical evidence;
+they do not reopen retired APIs or override those current contracts.
 
 > Lifecycle execution update (2026-09-12): all five commands now use Temporal
 > workflows and SDK Activities. The PostgreSQL worker, claim/lease scheduler and
@@ -6,18 +27,18 @@
 > by [the current lifecycle contract](../services/agent-controller/docs/lifecycle-workflows.md).
 > The business ordering and domain transactions remain; there is no dual executor.
 
-> Status: implemented-flow baseline and architecture review aid
+> Historical status: implemented-flow baseline and architecture review aid
 > Updated: 2026-09-10
-> Scope: Stage 1, Stage 2, and Stage 3 services currently implemented in this repository
+> Scope: Stage 1, Stage 2, and Stage 3 implementation at the historical baseline
 
 The [business-flow entrypoint index](business-flow-entrypoints.md) catalogs the
 current entries for subsequent per-flow expansion and Jaeger reconciliation;
 the grouped scenarios below are not the complete entrypoint inventory.
 
-The [Provider credential/model separation plan](provider-credentials-and-models.md)
-defines the next DeepSeek-focused change and subscription-auth extension boundary.
-It is not implemented yet; B04 and the current wire contracts below remain the
-implementation baseline until their service-owned batches are delivered.
+The [Provider credential/model separation record](provider-credentials-and-models.md)
+explains the subsequent management migration. Its execution path was later
+replaced by Controller publication and ACP-local admission; current discovery
+and availability behavior is linked in the table above.
 
 This document follows Antnest operations from their real entrypoints through
 service calls, durable commits, deployment side effects, and user-visible
@@ -31,9 +52,8 @@ the cost and ownership of each business flow visible enough to challenge:
 - accidental coupling through another service's database or deployment facts.
 
 The machine contracts under [`../contracts`](../contracts/README.md) remain the
-wire authority. The Stage documents remain the domain-invariant authority.
-When this document disagrees with code, the disagreement is a defect to resolve;
-it is not permission to treat the sequence as an aspirational design.
+current wire authority. This historical baseline does not override them or the
+service-owned implementation documents.
 
 ## 1. Reading Rules
 
