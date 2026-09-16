@@ -139,8 +139,12 @@ Verification on 2026-09-16 for this service-owned follow-up:
 
 Ignored local logs are `.cache/runtime-http-close-build.log` and
 `.cache/runtime-http-close-e2e.log`; they are not guaranteed in a fresh clone.
-The tests are tracked. Deployment followed by a fresh full conversation Trace
-remains an integration check; historical strict failures remain unchanged.
+The tests are tracked. The subsequent
+[2026-09-16 deployment and integration](../../../docs/runtime-http-close-integration.md)
+replaced the development Runtime and verified real conversations, retained
+workspace and a deliberate tool failure. Chat behavior and topology passed;
+strict clock-warning failures remain unchanged. The earlier non-deployment
+statement above describes the service-gate batch only.
 
 Tool and Executor spans record tool name, outcome, stable error code,
 duration, child PID, numeric exit status, deadline, Agent ID, and generation.

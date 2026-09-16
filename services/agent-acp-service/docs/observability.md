@@ -91,8 +91,10 @@ SDK dispatch and existing application/adapter boundaries. Acceptance is coordina
 - The separate [2026-09-16 Runtime follow-up](../../../runtimes/antnest-runtime/docs/observability.md#mcp-response-close-classification)
   fixes error diagnostics for successful MCP handlers followed by response close,
   with controlled HTTP and isolated Docker evidence. The old trace now returns
-  404; this does not retrospectively reclassify it. Deployment and full browser
-  revalidation remain separate from that Runtime source change.
+  404; this does not retrospectively reclassify it. The separate
+  [deployment integration](../../../docs/runtime-http-close-integration.md)
+  subsequently verified three real chat traces without error spans/events and
+  retained the deliberate Runtime failure. Strict clock-warning failures remain.
 - The [2026-09-16 maintenance decision](../../../docs/controller-acp-execution-boundary-plan.md#obs-acp-clock)
   defers dedicated SDK/clock work for inspected, recorded timing warnings while
   preserving strict results. It does not waive the Runtime event above or any
