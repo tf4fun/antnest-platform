@@ -82,4 +82,50 @@ describe("ToolPreflight", () => {
       ),
     ).toThrow("duplicate Tool call ID");
   });
+
+  it("validates static patterns without mutating Tool arguments", () => {
+    const preflight = new ToolPreflight();
+    const patterned: ModelToolDefinition[] = [
+      {
+        ...tools[0]!,
+        inputSchema: {
+          type: "object",
+          properties: { path: { type: "string", pattern: "^[a-z]+\\.txt$" } },
+          required: ["path"],
+          additionalProperties: false,
+        },
+      },
+    ];
+    for (const [path, expected] of [
+      ["notes.txt", "ready"],
+      ["../notes.txt", "rejected"],
+    ] as const) {
+      const args = { path };
+      expect(
+        preflight.inspect([{ id: path, name: "write", arguments: args }], patterned).kind,
+      ).toBe(expected);
+      expect(args).toEqual({ path });
+    }
+  });
+
+  it("rejects data-supplied patterns before compiling or validating Tool arguments", () => {
+    const dynamic: ModelToolDefinition[] = [
+      {
+        ...tools[0]!,
+        inputSchema: {
+          type: "object",
+          properties: {
+            pattern: { type: "string" },
+            text: { type: "string", pattern: { $data: "1/pattern" } },
+          },
+        },
+      },
+    ];
+    expect(() =>
+      new ToolPreflight().inspect(
+        [{ id: "dynamic", name: "write", arguments: { pattern: "^ok$", text: "ok" } }],
+        dynamic,
+      ),
+    ).toThrow(expect.objectContaining({ code: "invalid_tool_schema" }));
+  });
 });

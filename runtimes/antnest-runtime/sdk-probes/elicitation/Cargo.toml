@@ -1,0 +1,12 @@
+[package]
+name = "antnest-elicitation-sdk-probe"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# Keep upstream compatibility checks independent of the production Runtime lock.
+[workspace]
+
+[dev-dependencies]
+rmcp = { version = "=3.4.0", default-features = false, features = ["client"] }
+serde_json = "1.0"

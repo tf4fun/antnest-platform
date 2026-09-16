@@ -3,7 +3,7 @@ FROM node:24-bookworm-slim AS build
 WORKDIR /workspace/services/agent-acp-service
 
 COPY services/agent-acp-service/package.json services/agent-acp-service/package-lock.json ./
-RUN npm ci --ignore-scripts
+RUN npm ci --ignore-scripts --no-audit
 
 COPY services/agent-acp-service/tsconfig.json services/agent-acp-service/tsconfig.build.json ./
 COPY services/agent-acp-service/src ./src
@@ -19,7 +19,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY services/agent-acp-service/package.json services/agent-acp-service/package-lock.json ./
-RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
+RUN npm ci --omit=dev --ignore-scripts --no-audit && npm cache clean --force
 
 COPY --from=build --chown=node:node /workspace/services/agent-acp-service/dist ./dist
 COPY --chown=node:node services/agent-acp-service/migrations ./migrations

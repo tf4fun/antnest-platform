@@ -99,9 +99,10 @@ SDK dispatch and existing application/adapter boundaries. Acceptance is coordina
   defers dedicated SDK/clock work for inspected, recorded timing warnings while
   preserving strict results. It does not waive the Runtime event above or any
   unexplained warning, and does not make the complete browser profile pass.
-- Dependency audit still reports the existing AJV 8.17.1 `$data` ReDoS advisory
-  (GHSA-2g4f-4pwh-qvx6, moderate). AJV was not changed by this instrumentation
-  update; dependency remediation remains separate from these passing code gates.
+- The instrumentation batch's dependency audit reported the AJV 8.17.1 `$data`
+  ReDoS advisory (GHSA-2g4f-4pwh-qvx6, moderate). AJV was unchanged in that batch.
+  The separate [2026-09-17 dependency remediation](ajv-remediation.md) updates
+  the package and records its own exposure analysis and verification boundary.
 
 ## Verification And Remaining Limits
 

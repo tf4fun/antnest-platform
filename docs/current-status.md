@@ -61,6 +61,8 @@ details in the owning service READMEs.
 | ACP SDK audit and metadata, 2026-09-16 | Three audit failures and observer/recovery metadata gap fixed; 959 unit/component, 245 PostgreSQL and 9 SDK audit tests passed; four production-image Docker scenarios passed with cleanup | [SDK report](../services/agent-acp-service/docs/acp-v1-sdk-audit.md); controlled model/MCP and configuration publisher, including ACP process restart; service-owned batch |
 | Combined ACP/Runtime/UI integration, 2026-09-16 | 11 real Gateway browser checks and 40 fixture tests passed, including two-page metadata/list/reload consistency; nine successful chat topologies passed with zero error spans/events | [Combined candidate report](acp-platform-integration.md); strict Trace failed on four recorded clock deltas of 165.102–458.393 µs; cleanup verified, retained development stack unchanged |
 | Tool progress revalidation, 2026-09-17 | Updated retired fixture contracts; 12 real Runtime business paths, 20 model requests, 12 trace topologies and 26 local fixture/collector tests passed | [Progress report](tool-progress-revalidation.md); strict Trace failed on six timing-warning traces, including explicit-cancel server spans ending after their clients; no production change |
+| ACP AJV remediation, 2026-09-17 | AJV 8.20.0; 961 unit/component, 245 PostgreSQL, 9 SDK audit tests and four rebuilt production-image Docker scenarios passed | [Dependency report](../services/agent-acp-service/docs/ajv-remediation.md); official advisory/local lockfile comparison, not a full online dependency audit; retained deployment unchanged |
+| F07 latest SDK recheck, 2026-09-17 | Three independent official rmcp 3.4.0 codec probes passed, reproducing the missing-legacy-ID URL failure | [SDK boundary](../runtimes/antnest-runtime/docs/elicitation.md#latest-sdk-recheck-2026-09-17); F07 remains deferred, production Runtime stays on locked 3.2.0; no new F07 implementation or deployment acceptance |
 
 The model-selection, Provider-fallback and discovery results were read from
 the ignored local artifacts
@@ -98,7 +100,12 @@ historical trace returned 404, so its prior failure is not retrospectively chang
   Runtime progress/cancellation integration evidence. Other historical Stage 3
   and managed-MCP deployment profiles were not comprehensively migrated or rerun;
   their recorded historical results do not imply current-candidate acceptance.
+  Migration or retirement of those old assets remains postponed until the
+  current changes have stabilized.
 
+- F07 remains deferred: the latest official rmcp 3.4.0 still rejects standard
+  URL input without a legacy `elicitationId`. The independent SDK recheck is
+  complete; Runtime, ACP, UI and deployment batches await upstream support.
 - [OBS-ACP-CLOCK](controller-acp-execution-boundary-plan.md#obs-acp-clock) is an
   accepted maintenance deferral for inspected, recorded timing warnings. Strict
   results remain unchanged; unrelated errors and unexplained warnings are not waived.
@@ -107,8 +114,9 @@ historical trace returned 404, so its prior failure is not retrospectively chang
   and the later [combined integration](acp-platform-integration.md);
   automatic reuse after canceling an unconfirmed Tool effect remains outside
   that scope, and the strict clock-warning failure remains.
-- Runtime deployment and C4 revalidation are separate recorded batches. The
-  separate AJV dependency advisory remains outside both scopes.
+- Runtime deployment, C4 revalidation and AJV remediation are separate recorded
+  batches. AJV is fixed in the candidate; the retained development deployment
+  has not been updated with this dependency batch.
 - Skill Registry and Channel Gateway are not started. Scheduler and Kubernetes
   remain planning-only; horizontal scaling and high availability are deferred.
 - The declared ACP profile does not imply universal conformance or client MCP

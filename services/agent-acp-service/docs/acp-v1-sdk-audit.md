@@ -133,8 +133,10 @@ terminal authentication 是新的认证方法形式，仍受 A2 和客户端 `au
   当前所有非空客户端 MCP 列表均返回 `client_mcp_not_allowed`；现有反例测试证明拒绝有效，
   不证明标准支持。远程 Runtime 的托管 stdio 子进程是不同接口。
 - **F07**：现有 [延期决定](protocol-completion-plan.md#f07-官方-sdk-验证与延期决定)
-  基于 2026-09-09 的 Runtime rmcp 验证。本次只核查最新 ACP SDK，没有重新核验今天最新 MCP SDK
-  是否已解决当时的 URL 追问问题，因此不把历史上游阻塞描述为本次重新确认的现状。
+  起于 2026-09-09 的 Runtime rmcp 验证；本次 ACP 审计没有重新核验 MCP SDK。
+  后续 [2026-09-17 独立复核](../../../runtimes/antnest-runtime/docs/elicitation.md#latest-sdk-recheck-2026-09-17)
+  已在最新官方 rmcp 3.4.0 复现标准 URL 输入缺少旧 `elicitationId` 时的解析失败，继续延期。
+  该探针不改变本次 ACP 审计范围，也不提供 ACP 追问的正向业务证据。
 - **A2/A3**：身份由 Identity/Gateway 管理，文件与执行归属 Runtime；这两类排除遵循既定架构，
   不因 SDK 提供类型就新增第二套身份或客户端执行权威。
 
