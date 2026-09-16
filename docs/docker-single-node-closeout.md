@@ -605,6 +605,11 @@ for the later client iteration and are not current stage blockers. Existing
 component and server-side integration evidence remains valid within its scope;
 none of it is promoted to browser acceptance by this deferral.
 
+**2026-09-16 follow-up:** [current C4 revalidation](c4-browser-revalidation.md)
+records 10 real Docker browser checks and an Agent UI attachment-error repair.
+It preserves this historical checklist, the strict clock-warning failure, and
+the separate policy question for cancellation with unconfirmed Tool effects.
+
 - [ ] **C4-01** Verify member login -> accessible Agent -> new/load Session ->
   prompt -> assistant/Tool updates -> completion through Edge and ACP.
 - [ ] **C4-02** Cover supported file/image inputs and Tool result presentation,

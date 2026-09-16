@@ -26,6 +26,7 @@ import {
   type WorkspaceRoute,
 } from "./navigation";
 import { useSessionPresentation } from "./use-session-presentation";
+import { errorMessage } from "./request-error";
 
 function freshID(prefix: string): string {
   return `${prefix}-${crypto.randomUUID()}`;
@@ -49,12 +50,6 @@ function previewResponse(): Message {
       },
     ],
   };
-}
-
-function errorMessage(cause: unknown, fallback: string): string {
-  return cause instanceof Error && cause.message.trim()
-    ? cause.message
-    : fallback;
 }
 
 export function useWorkspace() {

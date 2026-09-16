@@ -48,9 +48,12 @@ export function decide(payload) {
   if (tail.length) {
     assert.equal(tail.length, 2, "expected one issued Tool call and result");
     assert.equal(tail[0].role, "assistant");
+    // ACP scopes Provider call IDs to a Run before executing/persisting them.
+    const callID = tail[0].tool_calls?.[0]?.id;
+    assert.match(callID ?? "", /^[a-f0-9]{64}$/);
     assert.deepEqual(tail[0].tool_calls, [
       {
-        id: `${phase}-tool`,
+        id: callID,
         type: "function",
         function: {
           name: call.name,
@@ -59,7 +62,7 @@ export function decide(payload) {
       },
     ]);
     assert.equal(tail[1].role, "tool");
-    assert.equal(tail[1].tool_call_id, `${phase}-tool`);
+    assert.equal(tail[1].tool_call_id, callID);
     const output = JSON.parse(tail[1].content);
     assert.equal(output.effect_state, "settled");
     assert.equal(output.truncated, false);

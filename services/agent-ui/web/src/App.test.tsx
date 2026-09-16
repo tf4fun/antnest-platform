@@ -737,14 +737,19 @@ test("rejected drafts allocate no preview and removing the last reference releas
 test("failed submission restores the draft without revoking its preview", async () => {
   const { container } = await openWorkspace();
   vi.mocked(connection.prompt).mockRejectedValueOnce(
-    new Error("Model does not accept audio"),
+    Object.assign(new Error("Agent Run failed"), {
+      code: -32022,
+      data: { code: "model_unsupported_content", retryable: false },
+    }),
   );
   selectFile(container);
   fireEvent.change(screen.getByRole("textbox", { name: "Message" }), {
     target: { value: "Listen" },
   });
   fireEvent.click(screen.getByRole("button", { name: "Send message" }));
-  await screen.findByRole("alert");
+  expect((await screen.findByRole("alert")).textContent).toContain(
+    "The selected model does not support this attachment type",
+  );
   expect(
     (screen.getByRole("textbox", { name: "Message" }) as HTMLTextAreaElement)
       .value,

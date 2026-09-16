@@ -24,6 +24,11 @@ upload service, model catalog or conversion backend.
 4. A failed submission keeps the draft available. Input is disabled while
    reading files, configuring the Session or submitting. No file upload occurs
    before the standard Prompt request. Rejected files create no object URLs.
+   ACP's `-32022` failure with `data.code=model_unsupported_content` has explicit
+   model-capability feedback: use a compatible model or start a conversation
+   without the unsupported attachment. The UI retains the draft and preview,
+   never retries automatically, and does not display remote error details.
+   This consumer mapping uses the existing ACP contract (2026-09-16 C4 repair).
 5. Live messages and load/fork replay present image/audio/resource blocks as
    attachments belonging to their message ID, not raw Base64. File-backed
    browser previews remain valid while referenced by a draft, in-flight submission
@@ -52,6 +57,13 @@ entry. Client MCP injection remains out of scope.
   model requests, durable replay, rejected-content recovery and Jaeger ancestry.
 
 ## Final Service Evidence
+
+The later [2026-09-16 C4 repair and revalidation](../../../docs/c4-browser-revalidation.md)
+passed 69 current unit tests, 127 component tests, production build and real SDK
+browser regression. Real Docker acceptance verified explicit unsupported-model
+feedback, retained draft/preview and no Provider request for rejected audio.
+Its strict Trace clock-warning failure is recorded separately. The table below
+retains the original F09 service-batch counts.
 
 | Check                                    | Result                                                                                                                            |
 | ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |

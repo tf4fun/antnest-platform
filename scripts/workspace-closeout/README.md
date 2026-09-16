@@ -7,6 +7,35 @@ terminology is historical and is not acceptance of the refactored execution path
 The later real-browser profiles have separate results; none retroactively closes
 all five deferred C4 checks.
 
+## Current C4 Browser Revalidation
+
+`c4-run.mjs` is the current-contract automated browser profile. It creates a
+disposable project and synthetic member through Provider/Model/Template APIs,
+uses real Gateway/ACP/Runtime services, and controls only the external model.
+It covers uploads, model-capability rejection, tool approval, cross-Session
+cancel during a held model request, offline completion, close/reopen, Rebuild,
+member revocation, private-data boundaries and desktop/mobile layout.
+
+After the service-owned tests/build and current Docker images are ready, run:
+
+```sh
+node --test --test-concurrency=1 scripts/workspace-closeout/*.test.mjs
+node scripts/workspace-closeout/c4-run.mjs
+```
+
+`ANTNEST_C4_AGENT_UI_IMAGE` optionally selects a separately built UI candidate.
+The Runtime image is resolved from `antnest/antnest-runtime:local`. The runner
+uses isolated subnets with separate fixed/dynamic address ranges and no host
+Temporal port, so the retained development stack can remain running. It removes
+its labeled containers, volumes and networks on completion/failure/interruption.
+Reports, traces and screenshots are written to `.cache/c4-browser-<timestamp>/`.
+Strict trace warnings retain a failing exit code even when browser checks pass.
+See the [current evidence and limits](../../docs/c4-browser-revalidation.md).
+
+This cancellation scenario has no in-flight tool effect. Automatic recovery
+after an unconfirmed tool effect remains a separate product-policy question;
+the historical C4 milestone is not silently broadened or retroactively closed.
+
 This disposable C4 profile uses the real Docker services behind Edge Gateway,
 the official ACP SDK and a deterministic OpenAI-compatible model peer. The model
 is the only synthetic business dependency; it requests real Runtime tools.
@@ -45,6 +74,10 @@ effects, as documented in the earlier F02 acceptance. This profile must not
 declare all of C4 accepted while that usability decision remains unresolved.
 
 ## Interactive Browser Acceptance
+
+Historical fixture: `browser-run.mjs` and the older protocol `run.mjs` still
+seed retired ModelProfile revision APIs. Use `c4-run.mjs` above for current
+acceptance; the instructions below describe the earlier manual evidence flow.
 
 `node scripts/workspace-closeout/browser-run.mjs` creates a separate disposable
 stack and prints its Gateway URL and synthetic member login. It generates only

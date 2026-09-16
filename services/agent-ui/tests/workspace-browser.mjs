@@ -246,7 +246,11 @@ try {
             protocolVersion: 1,
             agentCapabilities: {
               loadSession: true,
-              promptCapabilities: { image: true, embeddedContext: true },
+              promptCapabilities: {
+                image: true,
+                audio: true,
+                embeddedContext: true,
+              },
               sessionCapabilities: { list: {} },
             },
           });
@@ -318,6 +322,20 @@ try {
         }
         case "session/prompt": {
           assert(current);
+          if (params.prompt.some((block) => block.type === "audio")) {
+            socket.send(
+              JSON.stringify({
+                jsonrpc: "2.0",
+                id,
+                error: {
+                  code: -32022,
+                  message: "Agent Run failed",
+                  data: { code: "model_unsupported_content", retryable: false },
+                },
+              }),
+            );
+            break;
+          }
           publishState(agent, {
             ...ready(agent),
             availability: "busy",
@@ -942,6 +960,41 @@ try {
   bootstrapUnavailable = false;
   await page.getByRole("button", { name: "Retry", exact: true }).click();
   await page.getByRole("heading", { name: "Your agents" }).waitFor();
+  await page.getByRole("link", { name: /跨部门知识整理/ }).click();
+  await page
+    .getByRole("textbox", { name: "Message", exact: true })
+    .fill("Review this audio");
+  await page.getByLabel("File attachments", { exact: true }).setInputFiles({
+    name: "voice.wav",
+    mimeType: "audio/wav",
+    buffer: Buffer.from("synthetic-audio"),
+  });
+  await page.getByRole("button", { name: "Send message", exact: true }).click();
+  await page
+    .getByRole("alert")
+    .filter({
+      hasText: "The selected model does not support this attachment type",
+    })
+    .waitFor();
+  assert.equal(
+    await page
+      .getByRole("textbox", { name: "Message", exact: true })
+      .inputValue(),
+    "Review this audio",
+  );
+  assert.equal(
+    await page
+      .getByRole("button", { name: "Remove voice.wav", exact: true })
+      .count(),
+    1,
+  );
+  assert.equal(
+    requests.filter((request) => request.method === "session/prompt").length,
+    2,
+  );
+  await page.screenshot({
+    path: `${output}/unsupported-attachment-mobile.png`,
+  });
   agents.splice(0);
   await page.reload();
   await page.getByRole("heading", { name: "No Agent available" }).waitFor();
@@ -966,7 +1019,8 @@ try {
       scope: "browser + production ACP SDK against Gateway/ACP wire fixtures",
       viewportWidths: [320, 375, 390, 768, 1024, 1440],
       shortViewportHeight: 480,
-      prompts: 1,
+      prompts: 2,
+      capabilityRejection: "passed; draft retained, no automatic retry",
       reloadResends: 0,
       browserErrors: 0,
       catalogRetryReconnects: 0,

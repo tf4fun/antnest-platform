@@ -1,12 +1,15 @@
 # Current Implementation And Acceptance
 
-Updated: 2026-09-16. This is the current status index for the implementation
-committed through `f8e9acf` (platform baseline `4169443` plus the Runtime
-response-close fix). Results below are recorded evidence from their
-respective batches, not a fresh full-suite run against that commit. Historical
+Updated: 2026-09-16. This index tracks platform baseline `4169443`, Runtime
+response-close fix `f8e9acf`, and the later Agent UI C4 repair described below.
+Results are recorded evidence from their respective batches, not a fresh
+full-suite run against one combined candidate. Historical
 reports retain their original candidate, date and scope.
-The Runtime response-close follow-up below has passed its service-owned gates;
-deployment to the running development system remains pending.
+The Runtime response-close follow-up passed its service-owned gates and was
+deployed to the development Agent; its integration results are recorded below.
+The later C4 revalidation includes an Agent UI capability-error
+message fix, verified in a separate Docker candidate rather than deployed to
+the retained development stack.
 
 ## Implemented Boundaries
 
@@ -48,13 +51,17 @@ details in the owning service READMEs.
 | Workspace model selection, 2026-09-15 | Two real model responses, selection retained after reload, no prompt replay, desktop/mobile menus passed | [Script](../scripts/workspace-closeout/model-selection-browser.mjs); local result recorded at 20:38 +08:00 |
 | Ordered Provider fallback, 2026-09-15 | Three real responses, referenced Provider disable, fallback/reload, manual cross-provider selection, no-candidate and layout checks passed | [Feature and verification](provider-failover.md); local result recorded at 23:12 +08:00 |
 | Model discovery, 2026-09-16 | Real read-only discovery, draft non-persistence, explicit subset save, saved-model preservation and mobile checks passed | [Feature and verification](model-discovery.md); local result recorded at 00:40 +08:00 |
+| Runtime response-close deployment, 2026-09-16 | Rebuild and workspace retention verified; three real chats passed behavior/topology checks with zero error spans/events; a separate real tool error stayed visible | [Integration record](runtime-http-close-integration.md); strict browser/lifecycle scripts still failed on clock warnings |
+| C4 browser revalidation, 2026-09-16 | 10 Docker browser checks, 69 UI unit tests, 127 component tests, 40 fixture checks and browser-route regression passed; unsupported-attachment feedback repaired | [Current scoped report](c4-browser-revalidation.md); nine successful chat topologies passed, strict Trace failed on a 353.713 µs clock warning; interrupted cleanup verified |
 
-The last three results were read from the ignored local artifacts
+The model-selection, Provider-fallback and discovery results were read from
+the ignored local artifacts
 `.cache/model-selection-acceptance/result.json`,
 `.cache/provider-failover-acceptance/result.json` and
 `.cache/model-discovery-acceptance/summary.json`. This index preserves their
 scoped summaries; artifacts and screenshots are not guaranteed in a fresh clone.
-Reusable acceptance scripts are tracked, and none was rerun for this documentation update.
+Those three profiles were not rerun for the index refresh. The Runtime and C4
+rows record their separate later executions with reusable acceptance scripts.
 The discovery outage check injects a 502 in the browser; it is not evidence of
 an actual Provider outage or a deployed service fault injection.
 
@@ -69,20 +76,25 @@ The [2026-09-16 Runtime follow-up](../runtimes/antnest-runtime/docs/observabilit
 corrects error diagnostics when a successful MCP handler is followed by an HTTP
 response close. Linux formatting/Clippy, 143 unit/contract/component tests, one
 CLI test, one SDK fixture test and 10 isolated Docker E2E scenarios passed.
-A controlled HTTP test forces close before EOF; the real JavaScript SDK run
-observed ordinary EOF and retained the deliberate tool failure. Development
-containers were not replaced. The original historical trace returned 404, so
-the prior complete-browser failure is not retrospectively changed.
+A controlled HTTP test forces close before EOF; the isolated JavaScript SDK run
+observed ordinary EOF and retained the deliberate tool failure. The subsequent
+[development deployment and integration](runtime-http-close-integration.md)
+replaced the Runtime through Rebuild, retained the workspace, and verified three
+real chats plus a direct failure probe. The Agent is ready on generation 3.
+The current strict browser profile still fails on clock warnings; the original
+historical trace returned 404, so its prior failure is not retrospectively changed.
 
 ## Remaining Scope
 
 - [OBS-ACP-CLOCK](controller-acp-execution-boundary-plan.md#obs-acp-clock) is an
   accepted maintenance deferral for inspected, recorded timing warnings. Strict
   results remain unchanged; unrelated errors and unexplained warnings are not waived.
-- The original five C4 browser items are not retroactively marked passed by
-  later targeted scripts. Full browser/recovery acceptance retains its own scope.
-- Deploying the Runtime follow-up and checking a fresh full conversation Trace
-  remain pending integration work; its source and isolated service gates passed.
+- The original five C4 items retain their historical deferral. Current scoped
+  browser evidence is recorded in [C4 revalidation](c4-browser-revalidation.md);
+  automatic reuse after canceling an unconfirmed Tool effect remains outside
+  that scope, and the strict clock-warning failure remains.
+- Runtime deployment and C4 revalidation are separate recorded batches. The
+  separate AJV dependency advisory remains outside both scopes.
 - Skill Registry and Channel Gateway are not started. Scheduler and Kubernetes
   remain planning-only; horizontal scaling and high availability are deferred.
 - The declared ACP profile does not imply universal conformance or client MCP

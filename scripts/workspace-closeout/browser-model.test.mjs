@@ -16,7 +16,7 @@ const completed = (phase, result) => {
       content: null,
       tool_calls: [
         {
-          id: `${phase}-tool`,
+          id: "a".repeat(64),
           type: "function",
           function: {
             name: call.name,
@@ -27,7 +27,7 @@ const completed = (phase, result) => {
     },
     {
       role: "tool",
-      tool_call_id: `${phase}-tool`,
+      tool_call_id: "a".repeat(64),
       content: JSON.stringify({
         effect_state: "settled",
         truncated: false,
