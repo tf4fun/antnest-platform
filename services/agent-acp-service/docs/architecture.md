@@ -233,6 +233,20 @@ permission subscriptions across connections; delete also detaches them. Pending
 output attachments cannot resurrect a detached subscription. Other Sessions on
 the transport remain usable, and load/resume may establish a new subscription.
 
+### Session metadata delivery
+
+Session title and last-activity time come from the same PostgreSQL snapshot as
+the output cursor and transcript. Every authorized connection observing that
+Session receives the current values through standard `session_info_update`,
+including initial new/load/resume/fork setup and later persisted changes.
+An absent title is sent as `null` to clear a client's previous value. Timestamps
+match `session/list`; opening a connection does not itself change activity time.
+Metadata is current state, not transcript history or model context. A subscription
+suppresses unchanged values and retains that comparison when Prompt observation
+replaces its output reader. Fresh connections receive the current state again.
+Session authorization, access revocation and close/delete subscription cleanup
+also govern metadata delivery; listing a Session alone does not subscribe to it.
+
 ## Platform-Owned MCP
 
 ### Platform Runtime MCP

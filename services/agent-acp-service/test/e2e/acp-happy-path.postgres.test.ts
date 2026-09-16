@@ -56,7 +56,8 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP happy path", () => {
   }
 
   it("persists one ACP prompt, Runtime Tool call, response, and terminal Run", async () => {
-    const { url, model, tools, readOutput, acceptRun, acquireClient } = await startApplication();
+    const { url, model, tools, readOutput, acceptRun, acquireClient, sessions } =
+      await startApplication();
 
     const updates: acp.SessionUpdate[] = [];
     const idle = Promise.withResolvers<void>();
@@ -90,10 +91,21 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP happy path", () => {
     connection.close();
     await connection.closed;
 
-    expect(updates.map((update) => update.sessionUpdate)).toEqual([
+    const infos = updates.filter((update) => update.sessionUpdate === "session_info_update");
+    const stored = (await sessions.get(created.sessionId))!;
+    expect(infos[0]).toMatchObject({ title: null });
+    expect(infos.at(-1)).toEqual({
+      sessionUpdate: "session_info_update",
+      title: stored.title,
+      updatedAt: stored.updatedAt.toISOString(),
+    });
+    expect(
+      updates
+        .filter((update) => update.sessionUpdate !== "session_info_update")
+        .map((update) => update.sessionUpdate),
+    ).toEqual([
       "available_commands_update",
       "user_message",
-      "session_info_update",
       "state_update",
       "usage_update",
       "tool_call_update",
@@ -239,7 +251,17 @@ describe.skipIf(databaseUrl === undefined)("Agent ACP happy path", () => {
         });
         expect(JSON.stringify(completedTools)).toContain("# Antnest");
 
-        const replay = structuredClone(updates);
+        expect(updates.filter((update) => update.sessionUpdate === "session_info_update")).toEqual([
+          {
+            sessionUpdate: "session_info_update",
+            title: prompt,
+            updatedAt: listed.sessions.find((session) => session.sessionId === created.sessionId)!
+              .updatedAt,
+          },
+        ]);
+        const replay = structuredClone(
+          updates.filter((update) => update.sessionUpdate !== "session_info_update"),
+        );
         updates.length = 0;
         await connection.agent.request(acpV1.methods.agent.session.load, load, options);
         expect(updates).toEqual(replay);

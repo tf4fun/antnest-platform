@@ -11,6 +11,46 @@ const message = (text: string): SessionEvent => ({
 });
 
 describe("Session output delivery", () => {
+  it("delivers current metadata once per change, including same-sequence changes and a cleared title", async () => {
+    const streams = new SessionOutputStreams();
+    const stop = new AbortController();
+    let info = { title: "first" as string | null, updatedAt: "2026-09-16T00:00:00.000Z" };
+    const send = vi.fn<(event: SessionEvent) => Promise<void>>().mockResolvedValue(undefined);
+    const read = vi.fn(() => Promise.resolve({ sequence: 0, events: [], state: idle, info }));
+    const input = {
+      identity: binding(),
+      key: "s",
+      connectionId: "c",
+      read,
+      send,
+      signal: stop.signal,
+      onFailure: vi.fn(),
+    };
+    try {
+      await streams.attach(input);
+      expect(send).toHaveBeenCalledWith({ kind: "session_info", ...info });
+      send.mockClear();
+      streams.invalidate("s");
+      await streams.flush("s");
+      expect(send).not.toHaveBeenCalled();
+      // Prompt observation replaces a subscription. Its remembered metadata
+      // must survive that replacement, as the output cursor already does.
+      await streams.attach(input);
+      expect(send.mock.calls.filter(([event]) => event.kind === "session_info")).toEqual([]);
+      info = { title: null, updatedAt: "2026-09-16T00:00:01.000Z" };
+      send.mockClear();
+      streams.invalidate("s");
+      await streams.flush("s");
+      expect(send).toHaveBeenCalledExactlyOnceWith({ kind: "session_info", ...info });
+      streams.detach("s");
+      send.mockClear();
+      await streams.attach(input);
+      expect(send).toHaveBeenCalledWith({ kind: "session_info", ...info });
+    } finally {
+      stop.abort();
+    }
+  });
+
   it("detaches every connection for one Session without removing another Session", async () => {
     const streams = new SessionOutputStreams();
     const stop = new AbortController();

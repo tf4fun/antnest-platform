@@ -247,7 +247,8 @@
         "test/audit/acp-v1-sdk.audit.ts",
         "test/e2e/acp-sdk-regressions.postgres.test.ts",
         "test/adapters/postgres/migrate.postgres.test.ts",
-        "test/adapters/postgres/local-run.postgres.test.ts"
+        "test/adapters/postgres/local-run.postgres.test.ts",
+        "test/e2e/acp-session-info.postgres.test.ts"
       ],
       "findings": []
     },
@@ -439,7 +440,8 @@
       "tests": [
         "test/e2e/acp-v1-lifecycle.postgres.test.ts",
         "test/e2e/acp-output.postgres.test.ts",
-        "test/audit/acp-v1-sdk.audit.ts"
+        "test/audit/acp-v1-sdk.audit.ts",
+        "test/e2e/acp-session-info.postgres.test.ts"
       ],
       "findings": []
     },
@@ -458,7 +460,8 @@
         "test/e2e/acp-v1-lifecycle.postgres.test.ts",
         "test/e2e/acp-output.postgres.test.ts",
         "test/audit/acp-v1-sdk.audit.ts",
-        "test/e2e/acp-sdk-regressions.postgres.test.ts"
+        "test/e2e/acp-sdk-regressions.postgres.test.ts",
+        "test/e2e/acp-session-info.postgres.test.ts"
       ],
       "findings": ["PROFILE-01"]
     },
@@ -480,7 +483,8 @@
       "tests": [
         "test/e2e/acp-v1-lifecycle.postgres.test.ts",
         "test/e2e/acp-mcp-input.postgres.test.ts",
-        "test/audit/acp-v1-sdk.audit.ts"
+        "test/audit/acp-v1-sdk.audit.ts",
+        "test/e2e/acp-session-info.postgres.test.ts"
       ],
       "findings": ["PROFILE-01"]
     },
@@ -531,7 +535,8 @@
         "test/e2e/acp-v1-lifecycle.postgres.test.ts",
         "test/e2e/acp-mcp-input.postgres.test.ts",
         "test/audit/acp-v1-sdk.audit.ts",
-        "test/e2e/acp-sdk-regressions.postgres.test.ts"
+        "test/e2e/acp-sdk-regressions.postgres.test.ts",
+        "test/e2e/acp-session-info.postgres.test.ts"
       ],
       "findings": ["PROFILE-01"]
     },
@@ -667,8 +672,12 @@
       },
       "stability": "non-experimental",
       "requirement": "基线反向通知；11 类非实验更新的格式、顺序、回放及业务数据",
-      "coverage": "partially-tested",
-      "implementation": ["src/transport/acp/v1/agent.ts", "src/transport/acp/session-output.ts"],
+      "coverage": "service-tested",
+      "implementation": [
+        "src/transport/acp/v1/agent.ts",
+        "src/transport/acp/session-output.ts",
+        "src/adapters/postgres/session-repository.ts"
+      ],
       "tests": [
         "test/e2e/acp-streaming.postgres.test.ts",
         "test/e2e/acp-tool-progress.postgres.test.ts",
@@ -677,9 +686,13 @@
         "test/e2e/acp-commands.postgres.test.ts",
         "test/e2e/acp-cost.postgres.test.ts",
         "test/e2e/acp-configuration.postgres.test.ts",
-        "test/audit/acp-v1-sdk.audit.ts"
+        "test/audit/acp-v1-sdk.audit.ts",
+        "test/e2e/acp-session-info.postgres.test.ts",
+        "test/transport/session-output.test.ts",
+        "scripts/sdk-regressions-docker.mjs"
       ],
-      "findings": ["COVERAGE-02"]
+      "findings": [],
+      "resolvedFindings": ["COVERAGE-02"]
     },
     {
       "method": "terminal/create",
@@ -772,6 +785,55 @@
   "verification": {
     "unit": {
       "filesPassed": 83,
+      "testsPassed": 959
+    },
+    "postgres": {
+      "filesPassed": 33,
+      "testsPassed": 245,
+      "testsSkipped": 0
+    },
+    "sdkAudit": {
+      "testsPassed": 9,
+      "testsFailed": 0,
+      "exitCode": 0,
+      "failedProbeIds": []
+    },
+    "docker": {
+      "scenariosPassed": 4,
+      "modelRequests": 4,
+      "toolCalls": 1,
+      "cleanup": "completed",
+      "driver": "scripts/sdk-regressions-docker.mjs",
+      "includes": [
+        "metadata across observers, list and fork",
+        "process restart with same-revision configuration republication",
+        "the three GAP-01/02/03 regressions"
+      ]
+    },
+    "scope": "ACP production image, private PostgreSQL and SDK HTTP clients with controlled model/MCP dependencies; restart uses same-revision publisher fixture, full-platform deployment E2E not rerun",
+    "staticChecks": ["typecheck", "lint", "build", "format:check", "git diff --check"]
+  },
+  "initialVerification": {
+    "unit": {
+      "filesPassed": 83,
+      "testsPassed": 956
+    },
+    "postgres": {
+      "filesPassed": 31,
+      "testsPassed": 224,
+      "testsSkipped": 0
+    },
+    "sdkAudit": {
+      "testsPassed": 6,
+      "testsFailed": 3,
+      "exitCode": 1,
+      "failedProbeIds": ["GAP-01", "GAP-02", "GAP-03"]
+    },
+    "scope": "Service-owned wire/application/PostgreSQL with deterministic model/Tool ports; no fresh full-platform deployment E2E"
+  },
+  "gapFixVerification": {
+    "unit": {
+      "filesPassed": 83,
       "testsPassed": 958
     },
     "postgres": {
@@ -799,22 +861,5 @@
       "testsFailed": 0
     }
   },
-  "initialVerification": {
-    "unit": {
-      "filesPassed": 83,
-      "testsPassed": 956
-    },
-    "postgres": {
-      "filesPassed": 31,
-      "testsPassed": 224,
-      "testsSkipped": 0
-    },
-    "sdkAudit": {
-      "testsPassed": 6,
-      "testsFailed": 3,
-      "exitCode": 1,
-      "failedProbeIds": ["GAP-01", "GAP-02", "GAP-03"]
-    },
-    "scope": "Service-owned wire/application/PostgreSQL with deterministic model/Tool ports; no fresh full-platform deployment E2E"
-  }
+  "metadataBaselineCommit": "fa80267"
 }

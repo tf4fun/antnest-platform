@@ -157,7 +157,6 @@ describe("PromptCoordinator", () => {
     expect(result.snapshot.executionRevision).toBe("execution-2");
     expect(result.snapshot.deadlineAt).toEqual(new Date("2026-08-30T00:10:00Z"));
     expect(result.outputSequence).toBe(1);
-    expect(result.sessionInfoUpdate).toEqual({ title: "hello", updatedAt: now.toISOString() });
     expect(test.repository.acceptRun).toHaveBeenCalledOnce();
     expect(test.repository.acceptRun.mock.calls[0]?.[0]).toMatchObject({
       runId: result.runId,

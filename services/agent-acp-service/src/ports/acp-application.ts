@@ -21,6 +21,7 @@ export type AcpSessionInfo = {
 };
 
 export type SessionEvent =
+  | { kind: "session_info"; title: string | null; updatedAt: string }
   | { kind: "configuration"; configuration: SessionConfigurationView }
   | { kind: "plan"; entries: PlanEntry[] }
   | {
@@ -85,6 +86,7 @@ export interface SessionEventPublisher {
 }
 
 export type SessionOutputSnapshot = {
+  info?: { title: string | null; updatedAt: string };
   configuration?: SessionConfigurationView;
   sequence: number;
   events: SessionEvent[];
@@ -98,10 +100,6 @@ export type AcceptedAcpRun = {
   requestId: string;
   sessionId: string;
   userMessageId: string;
-  sessionInfoUpdate?: {
-    title?: string;
-    updatedAt: string;
-  };
   snapshot: RunExecutionSnapshot;
 };
 

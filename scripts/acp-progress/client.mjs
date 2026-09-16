@@ -1,9 +1,12 @@
+import { seedProgress } from "./setup.mjs";
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
 import { runtimeGate } from "./gate.mjs";
 import { GatewayClient } from "../identity-closeout/support.mjs";
 import { connectACP, gateway } from "../identity-closeout/acp-connection.mjs";
 import { verifyTraces } from "../managed-mcp/trace.mjs";
+import { inspectTrace } from "./trace.mjs";
+import { waitForAgentReady } from "../verification/agent-state.mjs";
 import {
   assertEarly,
   assertTerminal,
@@ -187,42 +190,7 @@ const user = await api("/api/admin/directory/users", {
   role: "member",
 });
 await login(member, "progress-member@example.com", "progress-member-password");
-const model = await api(
-  "/api/admin/model-profiles",
-  {
-    display_name: "Progress SSE model",
-    api_key: "progress-model-test",
-    model: {
-      base_url: "http://progress-model:8080/v1",
-      model: "progress-model",
-      context_window: 64000,
-      max_output_tokens: 4096,
-      supports_images: false,
-    },
-  },
-  201,
-);
-const template = await api(
-  "/api/admin/templates",
-  {
-    name: "Progress acceptance",
-    model_profile_revision_id: model.revision_id,
-    system_prompt: "Use the requested tool.",
-    max_model_requests: 4,
-    runtime: {
-      image_ref: image,
-      mcp_servers: [
-        {
-          id: "fixture",
-          command: "/usr/local/bin/managed-mcp-fixture",
-          args: [],
-          env: {},
-        },
-      ],
-    },
-  },
-  201,
-);
+const template = await seedProgress(api, image);
 for (const version of [1, 2]) {
   for (const source of ["bash", "managed"]) {
     const created = await api(
@@ -231,7 +199,7 @@ for (const version of [1, 2]) {
         owner_user_id: user.user.id,
         name: `Progress v${version} ${source}`,
         template_id: template.template_id,
-        template_revision: 1,
+        template_revision: template.revision,
       },
       202,
     );
@@ -239,6 +207,7 @@ for (const version of [1, 2]) {
     let gate;
     try {
       await operation(created.operation.request_id);
+      await waitForAgentReady(() => api(`/api/admin/agents/${agent}`));
       gate = await runtimeGate(agent);
       for (const ending of ["success", "failure", "cancel"])
         await scenario(version, source, ending, agent, gate);
@@ -264,23 +233,33 @@ for (const { phase } of outcomes) {
     phase.endsWith("cancel") ? ["tool"] : ["tool", "final"],
   );
 }
-const traces = await verifyTraces("http://jaeger:16686", observed.requests, [
-  "progress-payload-canary",
-  "progress-model-test",
-  ...admin.cookies.values(),
-  ...member.cookies.values(),
-]);
+const traces = await verifyTraces(
+  "http://jaeger:16686",
+  observed.requests,
+  [
+    "progress-payload-canary",
+    "progress-model-test",
+    ...admin.cookies.values(),
+    ...member.cookies.values(),
+  ],
+  inspectTrace,
+);
 assert.equal(traces.length, 12);
 for (const trace of traces) {
   assert.equal(trace.phases.length, 1);
   assert.equal(trace.tool_calls, 1, "duplicate ACP dispatch");
   assert.equal(trace.runtime_tool_calls, 1, "duplicate Runtime invocation");
 }
+const strictTrace = traces.some((trace) => trace.strict_trace === "failed")
+  ? "failed"
+  : "passed";
 console.log(
   JSON.stringify({
-    status: "passed",
+    status: "business_passed",
     scenarios: outcomes.length,
     model_requests: observed.requests.length,
     traces,
+    strict_trace: strictTrace,
   }),
 );
+if (strictTrace === "failed") process.exitCode = 1;

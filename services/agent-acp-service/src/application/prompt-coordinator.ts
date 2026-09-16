@@ -40,7 +40,6 @@ export type AcceptedRun = {
   requestId: string;
   sessionId: string;
   userMessageId: string;
-  sessionInfoUpdate: { title?: string; updatedAt: string };
   snapshot: RunExecutionSnapshot;
 };
 
@@ -154,10 +153,6 @@ export class PromptCoordinator {
       sessionId: session.id,
       userMessageId,
       snapshot,
-      sessionInfoUpdate: {
-        ...(title === undefined ? {} : { title }),
-        updatedAt: acceptedAt.toISOString(),
-      },
     };
   }
 

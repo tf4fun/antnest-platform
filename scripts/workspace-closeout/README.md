@@ -15,6 +15,9 @@ uses real Gateway/ACP/Runtime services, and controls only the external model.
 It covers uploads, model-capability rejection, tool approval, cross-Session
 cancel during a held model request, offline completion, close/reopen, Rebuild,
 member revocation, private-data boundaries and desktop/mobile layout.
+Two real browser connections also observe the same Session: its activity time
+must change after a new prompt, both pages must display the received title/time,
+and a fresh list/load after reload must preserve those exact values.
 
 After the service-owned tests/build and current Docker images are ready, run:
 
@@ -31,6 +34,8 @@ its labeled containers, volumes and networks on completion/failure/interruption.
 Reports, traces and screenshots are written to `.cache/c4-browser-<timestamp>/`.
 Strict trace warnings retain a failing exit code even when browser checks pass.
 See the [current evidence and limits](../../docs/c4-browser-revalidation.md).
+The later [ACP/Runtime/UI integration batch](../../docs/acp-platform-integration.md)
+records the combined candidate after the SDK and Session metadata fixes.
 
 This cancellation scenario has no in-flight tool effect. Automatic recovery
 after an unconfirmed tool effect remains a separate product-policy question;

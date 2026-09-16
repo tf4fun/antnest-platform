@@ -9,7 +9,8 @@
 项目已经锁定、安装此版本，无需升级依赖。协商的协议版本仍是 `1`。
 
 **最初复现的 3 个失败均已修复，独立 SDK 审计 9/9 通过。**
-修复限定在 ACP 服务；既定的客户端 stdio MCP 偏离、F07 追问延期及其他覆盖缺口继续披露。
+修复限定在 ACP 服务；会话元数据一致性覆盖缺口已在后续批次复现并修复，见 COVERAGE-02。
+既定的客户端 stdio MCP 偏离、F07 追问延期及实验通知覆盖范围继续披露。
 本结论不等于实现了 SDK 的所有可选、实验或架构排除能力。
 
 机器清单：[acp-v1-sdk-audit.json](acp-v1-sdk-audit.json)。它逐一记录 **42 个方法**的
@@ -65,6 +66,26 @@ SDK schema 共 265 个定义，SHA-256：
   缺少停止证据时，下一次 Prompt 仍拒绝 `runtime_barrier_required`，工具调用数保持 1。
   生产 Docker 的真实 MCP HTTP 取消也验证了该响应及保护。
 
+### COVERAGE-02：会话元数据跨连接与恢复一致性
+
+- **确认的问题**：原路径只向提交 Prompt 的连接发送接受时的标题/时间；其他观察连接没有
+  `session_info_update`，load/resume/fork 也没有当前信息，最终回复后的更新时间与列表可能不一致。
+- **修复**：`PostgresSessionRepository.readOutput` 在同一 SQL 快照内读取标题、活动时间、
+  transcript 与 cursor；所有已授权且已订阅该 Session 的连接走共享输出流发送当前信息。
+  不再从接受请求的临时结果发送第二份通知，不需要新表、迁移或新协议字段。
+- **行为**：首次建立订阅发送当前值，后续只发送变化值；替换 Prompt 输出订阅保留比较结果。
+  新连接恢复时重新发送当前值；空标题明确为 `null`。load/resume 不改活动时间，fork 使用
+  自己持久化的时间和继承标题。字段与 `session/list` 一致，不将历史元数据混入模型上下文。
+- **回归**：[acp-session-info.postgres.test.ts](../test/e2e/acp-session-info.postgres.test.ts)
+  的 8 条场景覆盖 v1/v2 混合观察者、在途及完成、配置/close、跨用户/Agent 拒绝、
+  load/resume（含 v2 replay）与应用重启、new/fork；使用 SDK schema 校验。
+  输出订阅单元回归覆盖无消息序号变化时的更新、相同值去重、清空标题及重新订阅。
+- **部署边界**：Docker 探针新增官方 v1 HTTP 客户端的双观察者、列表、fork 和实际 ACP
+  容器重启恢复场景；依赖仍为独立 PostgreSQL、受控模型/MCP。
+  后续独立的[平台集成批次](../../../docs/acp-platform-integration.md)已通过真实 Gateway/Runtime/UI
+  的 11 项浏览器检查，包含双页面标题/时间与列表、刷新一致性；严格 Trace 仍因已记录时钟告警失败。
+  浏览器采用 v1，不将服务级 v2、fork、进程重启场景扩大为浏览器覆盖。
+
 ## 25 个非实验接口逐项核对
 
 方向按 SDK 的 `x-side` 解读：`agent` 是客户端调用 Agent；`client` 是 Agent 调用客户端。
@@ -86,7 +107,7 @@ SDK schema 共 265 个定义，SHA-256：
 | `session/set_config_option`  | 使用已提供配置；响应完整配置列表                          | model/mode/thinking、非法值、冲突、跨连接通知、恢复和下轮实际效果通过                            |
 | `session/prompt`             | 基线；内容门控、更新和终态                                | 基本执行、5 类内容、拒绝上下文及未知效果取消回归通过                                             |
 | `session/cancel`             | 基线通知；取消后返回 cancelled                            | 模型/审批/持久化竞态及未知工具效果取消通过；恢复保护保留                                         |
-| `session/update`             | 基线反向通知                                              | 11 类非实验更新均有真实业务路径及 schema 断言；全量元数据跨观察者一致性仍有覆盖缺口              |
+| `session/update`             | 基线反向通知                                              | 11 类非实验更新均有业务路径及 schema 断言；元数据跨观察者/恢复一致性回归通过                     |
 | `session/request_permission` | 需要授权时反向请求；有效选项/取消结果                     | once/always 的允许与拒绝、实际工具派发、撤权、超时、HTTP 反向请求通过；不是 elicitation          |
 | `fs/write_text_file`         | 客户端 `fs.writeTextFile` 为真才可调用                    | A3 架构排除；不调用，无正向实现/测试；Runtime 写文件不算实现本接口                               |
 | `fs/read_text_file`          | 客户端 `fs.readTextFile` 为真才可调用                     | A3 架构排除；不调用，无正向实现/测试                                                             |
@@ -172,7 +193,7 @@ terminal authentication 是新的认证方法形式，仍受 A2 和客户端 `au
 | `available_commands_update` | new/load/resume/fork 后的实际命令目录；commands                            |
 | `current_mode_update`       | 模式变更后通知；configuration                                              |
 | `config_option_update`      | 选择、回退及配置发布通知；configuration                                    |
-| `session_info_update`       | 发起 Prompt 的连接获得标题/时间；所有观察者及重连的一致性组合仍未证明      |
+| `session_info_update`       | 当前标题/时间来自持久快照；v1/v2 观察者、恢复、fork 及列表一致性回归通过   |
 | `usage_update`              | 上下文用量及已知累计费用；cost、usage repository                           |
 
 ## 验证、复现与剩余门禁
@@ -181,18 +202,20 @@ terminal authentication 是新的认证方法形式，仍受 A2 和客户端 `au
 
 | 验证                | 结果                                              |
 | ------------------- | ------------------------------------------------- |
-| 单元/组件           | 958 项、83 文件通过                               |
-| PostgreSQL/协议     | 237 项、32 文件通过，无跳过                       |
+| 单元/组件           | 959 项、83 文件通过                               |
+| PostgreSQL/协议     | 245 项、33 文件通过，无跳过                       |
 | 独立 SDK 审计       | 9 项通过、0 失败，退出码 0；最初为 6 通过、3 失败 |
-| ACP 生产 Docker E2E | 3 场景通过，4 次模型请求、1 次工具调用            |
+| ACP 生产 Docker E2E | 4 场景通过，4 次模型请求、1 次工具调用            |
 
 Docker 场景使用正式生产镜像、启动迁移、独立 PostgreSQL 和官方 SDK HTTP 客户端，
 模型与 MCP 服务为受控 HTTP 替身。验证拒绝内容排除且回放保留、关闭所有观察者并重新加载、
-未知工具取消响应与 Runtime 保护。专用容器、卷、网络已清理，保留开发栈未变更。
+未知工具取消响应与 Runtime 保护，以及跨观察者/列表/fork 元数据与实际进程重启恢复。
+重启后由发布器替身重发同版配置恢复就绪；会话时间保持不变，模型/工具不重放。
+专用容器、卷、网络已清理，保留开发栈未变更。
 这属于 ACP 所属批次的部署证据，不等于真实 Gateway/Identity/Runtime/UI 的完整业务 E2E。
 
 服务级 `typecheck`、`lint`、`build`、`format:check` 及 `git diff --check` 通过；
-集成探针的 8 项 fixture 测试通过。
+集成探针的 8 项 fixture 测试为前一修复批次的通过证据，本次元数据批次未重跑该探针。
 
 新增审计入口不混入通常测试，无 `it.fails`、skip 或反向断言。
 `SDK-00` 校验每个 SDK 方法恰有一个清单条目并固定 schema 校验值，升级 SDK 后必须重新审计。
@@ -213,10 +236,11 @@ node services/agent-acp-service/scripts/sdk-regressions-docker.mjs
 [生产 Docker 场景](../scripts/sdk-regressions-docker.mjs)。
 日志与标准 JSON 在 `.cache/acp-v1-release-audit-20260916/fix-*`，它们是本机证据；
 正式可复现内容为源码、清单、固定 SDK 依赖及本报告。
+元数据批次的对应日志/JSON 使用相同目录下的 `metadata-*` 前缀。
 
 服务批次通过后，同步修订 `scripts/acp-progress` 集成探针对 v1 取消结果的旧断言。
 本次未重跑该历史全平台部署套件，不将探针修订算作全平台联调完成。
 
-剩余组合证据包括元数据向所有观察者及恢复连接的一致性、SDK 升级后的实验通知兼容性。
+剩余组合证据包括尚未支持的实验通知兼容性，随 SDK 升级重新评估；本轮 COVERAGE-02 已关闭。
 PROFILE-01、F07 和 A2/A3 边界保持原有决定。F07 恢复时仍按 Runtime、ACP、UI
 及显式部署集成批次推进；本批修复不自动扩大为这些功能的实施。

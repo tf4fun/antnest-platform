@@ -1,12 +1,17 @@
 # Current Implementation And Acceptance
 
-Updated: 2026-09-16. This index tracks platform baseline `4169443`, Runtime
+Updated: 2026-09-17. This index tracks platform baseline `4169443`, Runtime
 response-close fix `f8e9acf`, and the later Agent UI C4 repair described below.
 Results are recorded evidence from their respective batches, not a fresh
 full-suite run against one combined candidate. Historical
 reports retain their original candidate, date and scope.
 The Runtime response-close follow-up passed its service-owned gates and was
 deployed to the development Agent; its integration results are recorded below.
+The later ACP SDK audit fixed three semantic failures; its subsequent metadata
+batch fixed Session title/time delivery across observers and restart. The
+subsequent [combined integration](acp-platform-integration.md) passed 11 real
+Gateway/Runtime/UI browser checks; strict Trace still failed on recorded clock
+warnings. It is scoped integration evidence, not a fresh full-platform suite.
 The later C4 revalidation includes an Agent UI capability-error
 message fix, verified in a separate Docker candidate rather than deployed to
 the retained development stack.
@@ -53,6 +58,9 @@ details in the owning service READMEs.
 | Model discovery, 2026-09-16 | Real read-only discovery, draft non-persistence, explicit subset save, saved-model preservation and mobile checks passed | [Feature and verification](model-discovery.md); local result recorded at 00:40 +08:00 |
 | Runtime response-close deployment, 2026-09-16 | Rebuild and workspace retention verified; three real chats passed behavior/topology checks with zero error spans/events; a separate real tool error stayed visible | [Integration record](runtime-http-close-integration.md); strict browser/lifecycle scripts still failed on clock warnings |
 | C4 browser revalidation, 2026-09-16 | 10 Docker browser checks, 69 UI unit tests, 127 component tests, 40 fixture checks and browser-route regression passed; unsupported-attachment feedback repaired | [Current scoped report](c4-browser-revalidation.md); nine successful chat topologies passed, strict Trace failed on a 353.713 µs clock warning; interrupted cleanup verified |
+| ACP SDK audit and metadata, 2026-09-16 | Three audit failures and observer/recovery metadata gap fixed; 959 unit/component, 245 PostgreSQL and 9 SDK audit tests passed; four production-image Docker scenarios passed with cleanup | [SDK report](../services/agent-acp-service/docs/acp-v1-sdk-audit.md); controlled model/MCP and configuration publisher, including ACP process restart; service-owned batch |
+| Combined ACP/Runtime/UI integration, 2026-09-16 | 11 real Gateway browser checks and 40 fixture tests passed, including two-page metadata/list/reload consistency; nine successful chat topologies passed with zero error spans/events | [Combined candidate report](acp-platform-integration.md); strict Trace failed on four recorded clock deltas of 165.102–458.393 µs; cleanup verified, retained development stack unchanged |
+| Tool progress revalidation, 2026-09-17 | Updated retired fixture contracts; 12 real Runtime business paths, 20 model requests, 12 trace topologies and 26 local fixture/collector tests passed | [Progress report](tool-progress-revalidation.md); strict Trace failed on six timing-warning traces, including explicit-cancel server spans ending after their clients; no production change |
 
 The model-selection, Provider-fallback and discovery results were read from
 the ignored local artifacts
@@ -86,11 +94,17 @@ historical trace returned 404, so its prior failure is not retrospectively chang
 
 ## Remaining Scope
 
+- The latest ACP SDK/metadata combination now has scoped browser and 12-path
+  Runtime progress/cancellation integration evidence. Other historical Stage 3
+  and managed-MCP deployment profiles were not comprehensively migrated or rerun;
+  their recorded historical results do not imply current-candidate acceptance.
+
 - [OBS-ACP-CLOCK](controller-acp-execution-boundary-plan.md#obs-acp-clock) is an
   accepted maintenance deferral for inspected, recorded timing warnings. Strict
   results remain unchanged; unrelated errors and unexplained warnings are not waived.
 - The original five C4 items retain their historical deferral. Current scoped
-  browser evidence is recorded in [C4 revalidation](c4-browser-revalidation.md);
+  browser evidence is recorded in [C4 revalidation](c4-browser-revalidation.md)
+  and the later [combined integration](acp-platform-integration.md);
   automatic reuse after canceling an unconfirmed Tool effect remains outside
   that scope, and the strict clock-warning failure remains.
 - Runtime deployment and C4 revalidation are separate recorded batches. The

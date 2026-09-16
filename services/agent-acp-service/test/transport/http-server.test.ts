@@ -615,7 +615,10 @@ describe("AgentAcpHttpServer", () => {
       }),
     };
     server = new AgentAcpHttpServer({
-      application: withOutputHistory(application),
+      application: withOutputHistory(application, {
+        title: "hi",
+        updatedAt: "2026-08-30T00:00:01.000Z",
+      }),
       ready: vi.fn(() => Promise.resolve(true)),
       maxWebSocketPayloadBytes: 64 * 1024,
     });
@@ -674,8 +677,8 @@ describe("AgentAcpHttpServer", () => {
         ),
     ).toEqual([
       "user_message",
-      "session_info_update",
       "state_update",
+      "session_info_update",
       "agent_message",
       "state_update",
     ]);
@@ -816,7 +819,6 @@ function acceptedRun(): AcceptedAcpRun {
     requestId: "request-1",
     sessionId: "session-1",
     userMessageId: "user-message-1",
-    sessionInfoUpdate: { title: "hi", updatedAt: "2026-08-30T00:00:01.000Z" },
     snapshot: snapshot(),
   };
 }

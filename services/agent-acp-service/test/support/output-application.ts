@@ -16,8 +16,12 @@ export type OutputApplication = Omit<AcpApplicationPort, "readSessionOutput" | "
 
 // Protocol mapping tests use a deterministic output store. PostgreSQL wire
 // tests exercise the actual atomic transcript snapshot separately.
-export function withOutputHistory(application: OutputApplication): AcpApplicationPort {
+export function withOutputHistory(
+  application: OutputApplication,
+  infoAfterAccept?: SessionOutputSnapshot["info"],
+): AcpApplicationPort {
   const history = new Map<string, SessionEvent[]>();
+  const infos = new Map<string, SessionOutputSnapshot["info"]>();
   const states = new Map<string, SessionOutputSnapshot["state"]>();
   const supervisor = new RunSupervisor({
     execute: async (input) => {
@@ -41,7 +45,9 @@ export function withOutputHistory(application: OutputApplication): AcpApplicatio
     readSessionOutput: vi.fn<AcpApplicationPort["readSessionOutput"]>(
       ({ sessionId, afterSequence }) => {
         const events = history.get(sessionId) ?? [];
+        const info = infos.get(sessionId);
         return Promise.resolve({
+          ...(info === undefined ? {} : { info }),
           sequence: events.length,
           events: afterSequence === undefined ? [] : events.slice(afterSequence),
           state: states.get(sessionId) ?? { kind: "state", state: "running" },
@@ -57,6 +63,7 @@ export function withOutputHistory(application: OutputApplication): AcpApplicatio
     acceptPrompt: vi.fn<AcpApplicationPort["acceptPrompt"]>((input) =>
       supervisor.submit(input, async () => {
         const accepted = await application.acceptPrompt(input);
+        if (infoAfterAccept !== undefined) infos.set(accepted.sessionId, infoAfterAccept);
         states.set(accepted.sessionId, { kind: "state", state: "running" });
         return { ...accepted, outputSequence: history.get(accepted.sessionId)?.length ?? 0 };
       }),

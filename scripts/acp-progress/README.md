@@ -5,7 +5,7 @@ It is a disposable deployment test, not another service or a public protocol.
 
 ## Scope
 
-Login -> Gateway / Console BFF -> create model profile, template and Agent ->
+Login -> Gateway / Console BFF -> create Provider connection, Model, Template and Agent ->
 ACP v1/v2 through Gateway -> real Rust Runtime Bash or managed stdio MCP ->
 durable Tool updates -> reconnect/replay. The only fake business dependency is
 a deterministic OpenAI-compatible SSE model. No external Provider or `.secret`.
@@ -35,13 +35,23 @@ without Runtime stopping evidence remains blocked with `runtime_barrier_required
 verifies that execution was alive before cancellation and stopped afterwards.
 
 Jaeger evidence must show actual Gateway ancestry and Runtime child spans for
-ACP Tool calls, correlated with the model request's admission. Preview payloads
+ACP Tool calls, correlated through the model HTTP CLIENT span to the owning
+`agent.run` and `antnest.run.id`. Retired admission tags are not required. Preview payloads
 must not appear in traces. Packet forwarding is not traced. Save only compact
 final counts and verdicts, not complete event/trace dumps or credentials.
 Collect after Agent deletion / Runtime telemetry shutdown, then require three
 identical span-ID sets sampled one second apart before counting calls. This is
 a bounded convergence check, not a claim that eventual-consistency storage can
 prove the absence of arbitrarily delayed spans.
+
+The current trace oracle checks complete parent topology, one Run, preparation
+before every model request, exactly one ACP dispatch and one Runtime invocation.
+Deliberate managed Tool failure permits errors only inside that Tool call;
+cancellation additionally permits the owning Run error. Bash exit 7 and successful
+paths permit no error spans. Clock warnings remain visible and cause exit 1 even
+when all business/topology checks pass; the parent `make` command reports exit 2.
+Compact warning evidence includes the original cross-service timing differences,
+without rewriting timestamps or introducing a small-duration exemption.
 
 ## Run
 
@@ -64,14 +74,27 @@ the production Runtime image. The fresh Compose project shares one PostgreSQL
 instance across service-owned databases. Its parent trap removes all owned
 containers, volumes and networks on success/failure. Retained acceptance stacks
 are never targeted. Do not run this alongside another test/build profile.
+The progress-only Compose override disables the unnecessary host Temporal port,
+allocates dynamic endpoints outside fixed Egress/Jaeger addresses, and uses
+`--env-file /dev/null`. It does not change the other Stage 3 profiles.
 
-## Evidence Status
+## Current Revalidation
+
+The [2026-09-17 revalidation](../../docs/tool-progress-revalidation.md) updates
+Provider/Model/Template setup and current Run/HTTP-span correlation. All 12
+deployed business paths, 20 model requests and 12 trace topologies passed. Six
+traces failed strict timing warnings; the script retains exit 1 rather than
+claiming a whole-profile pass. Sixteen progress tests and ten shared collector/
+model tests passed. No production implementation changed.
+Real SIGTERM cleanup and independent resource/process scans passed for all three
+disposable projects; the retained development stack remained healthy.
+
+## Historical Evidence
 
 The 2026-09-16 ACP SDK fix changes v1's cancellation acknowledgment while retaining
-unknown-effect protection. This probe's response/admission assertions follow the
-current ACP boundary. Its fixture tests and the ACP production-image SDK regression
-pass; the full 12-path deployment below was not rerun for this fix and remains
-historical evidence.
+unknown-effect protection. The 2026-09-08 results below predate that fix and the
+Controller/ACP boundary refactor; their old preparation correlation and strict
+Trace coverage are not current-candidate evidence.
 
 Deployment passed on 2026-09-08: 12 scenarios, 20 validated model requests,
 12 Jaeger traces. Each trace has one preparation, one ACP Tool dispatch and one
@@ -86,7 +109,7 @@ injects delayed duplicate spans before the sampling window converges.
 A green fixture suite alone is not deployment acceptance. A read-only review
 also drove stricter replay-prefix, execution-alive and cleanup assertions.
 
-Final gates: root `make fmt-check`, `make lint` (Go: zero issues; both Rust
+Historical gates: root `make fmt-check`, `make lint` (Go: zero issues; both Rust
 Clippy targets; Node lint/typechecks), and `make test-node` (583 cases) passed.
 Two read-only reviewers were closed after their reports. Test instrumentation
 findings were fixed without changing product admission or cancellation semantics.

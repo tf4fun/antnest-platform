@@ -16,6 +16,7 @@ type OutputInput = {
   initialState?: SessionOutputSnapshot["state"];
   configurationInResponse?: boolean;
   previousConfiguration?: string;
+  previousInfo?: string;
   read: (afterSequence: number | undefined) => Promise<SessionOutputSnapshot>;
   send: (event: SessionEvent) => Promise<void>;
   signal: AbortSignal;
@@ -59,6 +60,8 @@ export class SessionOutputStreams {
         const cursor = current.cursor;
         const previousConfiguration = current.configurationFingerprint;
         if (previousConfiguration !== undefined) input = { ...input, previousConfiguration };
+        const previousInfo = current.infoFingerprint;
+        if (previousInfo !== undefined) input = { ...input, previousInfo };
         if (cursor !== undefined)
           input = { ...input, afterSequence: Math.max(input.afterSequence ?? 0, cursor) };
         current.close();
@@ -129,6 +132,9 @@ export class SessionOutputStreams {
 }
 
 class OutputSubscription {
+  public get infoFingerprint(): string | undefined {
+    return this.info;
+  }
   public get closed(): boolean {
     return this.stop.signal.aborted;
   }
@@ -144,6 +150,7 @@ class OutputSubscription {
   private sequence: number | undefined;
   private state: string | undefined;
   private configuration: string | undefined;
+  private info: string | undefined;
   private dirty = false;
   private pending: Promise<void> | undefined;
   private first = true;
@@ -155,6 +162,7 @@ class OutputSubscription {
   ) {
     this.send = input.send;
     this.configuration = input.previousConfiguration;
+    this.info = input.previousInfo;
     this.sequence = input.afterSequence;
     this.state = input.initialState === undefined ? undefined : JSON.stringify(input.initialState);
   }
@@ -211,6 +219,10 @@ class OutputSubscription {
         await this.bounded(this.input.beforeFirst);
       const configurationInResponse = this.first && this.input.configurationInResponse === true;
       this.first = false;
+      const info = JSON.stringify(snapshot.info);
+      if (snapshot.info !== undefined && info !== this.info)
+        await this.bounded(() => this.send({ kind: "session_info", ...snapshot.info! }));
+      this.info = info;
       for (const event of snapshot.events) {
         if (event.kind === "configuration" && snapshot.configuration !== undefined) continue;
         await this.bounded(() => this.send(event));

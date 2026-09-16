@@ -256,7 +256,7 @@ export function createAcpV1Agent({
         return {};
       });
     })
-    .onRequest(acp.methods.agent.session.prompt, ({ params, client, requestId }) => {
+    .onRequest(acp.methods.agent.session.prompt, ({ params, requestId }) => {
       return dispatch("session/prompt", params, requestId, async () => {
         requireInitialized(initialized, "session/prompt");
         if (!isPromptSupported(params.prompt, promptCapabilities)) {
@@ -279,13 +279,7 @@ export function createAcpV1Agent({
           await attach(
             params.sessionId,
             accepted.outputSequence,
-            async () => {
-              if (accepted.sessionInfoUpdate !== undefined)
-                await client.notify(acp.methods.client.session.update, {
-                  sessionId: params.sessionId,
-                  update: { sessionUpdate: "session_info_update", ...accepted.sessionInfoUpdate },
-                });
-            },
+            undefined,
             false,
             false,
             accepted.userMessageId,
@@ -381,6 +375,10 @@ function promptResponse(result: ExecuteRunResult): acp.PromptResponse {
 
 function toAcpUpdates(event: SessionEvent): acp.SessionUpdate[] {
   switch (event.kind) {
+    case "session_info":
+      return [
+        { sessionUpdate: "session_info_update", title: event.title, updatedAt: event.updatedAt },
+      ];
     case "configuration":
       return [
         {

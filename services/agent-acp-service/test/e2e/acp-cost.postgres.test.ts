@@ -58,6 +58,22 @@ describe.skipIf(databaseUrl === undefined)(
       expect(result.error).toBeUndefined();
       await vi.waitFor(() => expect(app.finish).toHaveBeenCalledTimes(finished + 1));
       await vi.waitFor(() => expect(updates(client, offset)).toHaveLength(1));
+      // v2 acknowledges admission before execution. Entering finish() is not
+      // its commit or slot release; wait for the actual terminal notification.
+      if (result.result?.stopReason === undefined)
+        await expect
+          .poll(() =>
+            client.frames
+              .slice(offset)
+              .some(
+                (frame) =>
+                  frame.params?.sessionId === sessionId &&
+                  frame.params.update?.sessionUpdate === "state_update" &&
+                  frame.params.update.state === "idle" &&
+                  frame.params.update.stopReason === "end_turn",
+              ),
+          )
+          .toBe(true);
       return updates(client, offset)[0];
     }
     function updates(client: AcpWireClient, offset = 0) {

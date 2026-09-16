@@ -41,11 +41,13 @@ export class PostgresSessionRepository implements SessionRepository {
   public async readOutput(sessionId: string, afterSequence?: number) {
     const result = await this.kernel.query<{
       sequence: string;
+      title: string | null;
+      updated_at: Date;
       events: StoredSessionEvent[];
       state: "admitting" | "running" | "completed" | "cancelled" | "failed" | "unresolved" | null;
       stop_reason: "end_turn" | "max_tokens" | "max_turn_requests" | "refusal" | null;
     }>(
-      `SELECT s.last_message_sequence AS sequence,
+      `SELECT s.last_message_sequence AS sequence, s.title, s.updated_at,
               COALESCE((SELECT jsonb_agg(m.payload ORDER BY m.sequence)
                 FROM session_messages m WHERE m.session_id = s.id AND m.visible
                   AND m.sequence > COALESCE($2::bigint, s.last_message_sequence)), '[]'::jsonb) AS events,
@@ -60,6 +62,7 @@ export class PostgresSessionRepository implements SessionRepository {
     const row = requireRow(result.rows[0], "Session does not exist");
     return {
       sequence: Number(row.sequence),
+      info: { title: row.title, updatedAt: row.updated_at.toISOString() },
       events: row.events.map(decodeSessionEvent),
       state: outputState(row.state, row.stop_reason),
     };

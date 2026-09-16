@@ -360,11 +360,6 @@ async function observeRun({
             content: toDomainContent(prompt),
           }),
         });
-        if (accepted.sessionInfoUpdate !== undefined)
-          await client.notify(acp.methods.client.session.update, {
-            sessionId,
-            update: { sessionUpdate: "session_info_update", ...accepted.sessionInfoUpdate },
-          });
         await client.notify(acp.methods.client.session.update, {
           sessionId,
           update: toAcpUpdate({ kind: "state", state: "running" }),
@@ -405,6 +400,12 @@ async function sendEvent(
 
 function toAcpUpdate(event: SessionEvent): acp.SessionUpdate {
   switch (event.kind) {
+    case "session_info":
+      return {
+        sessionUpdate: "session_info_update",
+        title: event.title,
+        updatedAt: event.updatedAt,
+      };
     case "configuration":
       return { sessionUpdate: "config_option_update", ...v2Configuration(event.configuration) };
     case "plan":

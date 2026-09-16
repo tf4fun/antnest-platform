@@ -4,8 +4,9 @@
 > SDK `1.4.0`, including its schema and capability stability annotations.
 > The [42-method audit](acp-v1-sdk-audit.md) reproduced and then fixed refusal
 > context isolation, closed Session output subscriptions, and unknown-effect
-> cancellation responses. Current evidence: 958 unit/component, 237 PostgreSQL,
-> 9 SDK audit tests and 3 production-image Docker scenarios pass. Conservative
+> cancellation responses. The later metadata fix closes observer/recovery consistency (COVERAGE-02).
+> Current evidence: 959 unit/component, 245 PostgreSQL,
+> 9 SDK audit tests and 4 production-image Docker scenarios pass. Conservative
 > unknown-effect facts and Runtime admission protection remain in place.
 > This service evidence does not close the disclosed profile/F07/coverage gaps.
 
@@ -382,7 +383,7 @@ They are ordinary assertions, with no expected-failure or skipped audit tests:
 | V1-PLAN-01      | Standard full-list `plan` replaces, clears, replays and forks the saved plan                                                                 | `acp-plan.postgres.test.ts`; F04 deployment                                                                                         | Service-covered           |
 | V1-COMMAND-01   | Setup emits `available_commands_update`; `/help` and `/帮助` run through ordinary Prompt without model/Runtime calls                         | `acp-commands.postgres.test.ts`; F08 deployment                                                                                     | Service-covered           |
 | V1-COST-01      | Standard `usage_update.cost` carries saved cumulative known amounts, excluding private receipts                                              | `acp-cost.postgres.test.ts`; F10 deployment                                                                                         | Service-covered           |
-| V1-INFO-01      | `session_info_update` maps title/updatedAt; full live/observer/reload consistency combination remains unverified                             | `acp-v1-agent.test.ts`, list persistence tests                                                                                      | Layer-covered             |
+| V1-INFO-01      | `session_info_update` shares persisted title/time across observers, setup/recovery and list                                                  | `acp-session-info.postgres.test.ts`, session-output unit and Docker regressions                                                     | Service-covered           |
 | V1-ERROR-01     | Invalid initialization/params, failed/non-cancellation unresolved Runs and unknown methods retain distinct errors                            | adapter + raw-wire + lifecycle tests                                                                                                | Covered                   |
 | V1-MCP-01       | Nonempty HTTP/stdio/SSE/MCP-over-ACP input is rejected at every setup method, with no partial writes or replay                               | `acp-mcp-input.postgres.test.ts`                                                                                                    | Service-covered           |
 | V1-MCP-STDIO-01 | Generic v1 Agents must support client stdio MCP                                                                                              | Explicit platform-only profile above                                                                                                | **Intentional deviation** |
@@ -426,7 +427,7 @@ do not exclude Provider/mode/editor/NES as one group.
 | V2-PLAN-01    | `plan_update` with current plan identity replaces/clears complete entries and survives replay/fork                                           | `acp-plan.postgres.test.ts`; F04 deployment                                                         | Service-covered |
 | V2-COMMAND-01 | Setup command catalog and ordinary Prompt execution use official shapes                                                                      | `acp-commands.postgres.test.ts`; F08 deployment                                                     | Service-covered |
 | V2-COST-01    | Reported/estimated known cost persists and replays without private receipts or double counting                                               | `acp-cost.postgres.test.ts`; F10 deployment                                                         | Service-covered |
-| V2-INFO-01    | Session metadata mapping/live delivery; observer/reload consistency combination remains unverified                                           | `acp-agent.test.ts`, `acp-happy-path.postgres.test.ts`                                              | Layer-covered   |
+| V2-INFO-01    | Session metadata uses persisted current values for live observers, restart/resume and fork                                                   | `acp-session-info.postgres.test.ts`, session-output unit tests                                      | Service-covered |
 | V2-MCP-01     | No client MCP capability advertised; nonempty inputs reject across new/resume/fork                                                           | adapter + PostgreSQL MCP input tests                                                                | Service-covered |
 | V2-BATCH-01   | WireStream accepts valid batches and preserves per-entry JSON-RPC responses.                                                                 | mixed request/notification raw-wire test                                                            | Covered         |
 
@@ -484,9 +485,10 @@ do not require an invented initialize capability. Current exclusions are:
 request return `-32601` on both raw-wire versions. Additional optional request
 negatives are present in v1 only. That is not exhaustive per-version evidence,
 and notifications must not be described as requests returning errors.
-Remaining test combinations are tracked explicitly: method/direction-specific
-unsupported messages (including pre-initialize notifications), protocol-level
-`$/cancel_request`, and cross-connection/restored Session metadata consistency.
+Remaining test combinations include method/direction-specific unsupported
+messages (including pre-initialize notifications). The 2026-09-16 SDK audit
+covered v1 `$/cancel_request`; the subsequent metadata batch covers live
+observers, connection/application recovery and list consistency in both versions.
 Existing lower-layer or sibling-version coverage is not a substitute for these
 combinations. None is grounds for silently weakening the product target.
 
@@ -496,8 +498,9 @@ and v2 PostgreSQL pagination. All 538 unit/component tests (59 files) and all
 160 PostgreSQL tests (21 files) passed. Request rejection proves that no
 application method was entered; paging excludes another owner and returns
 every owned Session exactly once. The dedicated test database/container/volume
-were removed. Notification direction, request cancellation and metadata
-observer/reload combinations remain a subsequent batch. This is not a claim
+were removed. At that checkpoint, notification direction, request cancellation
+and metadata observer/reload combinations remained for a subsequent batch; see
+the current SDK audit above for later evidence. This is not a claim
 that all of C1 or the final Docker/browser acceptance is complete.
 
 The corresponding fresh Docker recovery regression also passed on 2026-09-10:

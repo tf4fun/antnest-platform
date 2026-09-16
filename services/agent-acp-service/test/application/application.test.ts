@@ -28,7 +28,6 @@ function setup() {
     userMessageId: "message-1",
     snapshot: snapshot(),
     outputSequence: 0,
-    sessionInfoUpdate: { updatedAt: "2026-09-14T00:00:00Z" },
   });
   const execute = vi.fn<RunExecutionPort["execute"]>().mockResolvedValue({
     terminalClass: "completed",

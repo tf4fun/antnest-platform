@@ -80,7 +80,10 @@ describe.skipIf(databaseUrl === undefined)("ACP official HTTP client with Postgr
     await client.connection.closed;
     const recovered = await connect();
     await recovered.agent.request(acp.methods.agent.session.load, { sessionId, ...setup });
-    expect(recovered.updates).toHaveLength(7);
+    expect(recovered.updates).toHaveLength(8);
+    expect(
+      recovered.updates.filter((event) => event.sessionUpdate === "session_info_update"),
+    ).toEqual([{ sessionUpdate: "session_info_update", ...history.info }]);
     expect(recovered.updates.at(-1)).toMatchObject({ sessionUpdate: "available_commands_update" });
     expect(JSON.stringify(recovered.updates)).toContain("owner-only-tool-output");
     const ws = await app.connect(1);
@@ -98,8 +101,13 @@ describe.skipIf(databaseUrl === undefined)("ACP official HTTP client with Postgr
       setup,
     );
     // HTTP setup responses and the notification SSE stream are separate deliveries.
-    await expect.poll(() => client.updates.length).toBe(1);
+    await expect.poll(() => client.updates.length).toBe(2);
     expect(client.updates).toMatchObject([
+      {
+        sessionUpdate: "session_info_update",
+        title: null,
+        updatedAt: (await app.sessions.get(sessionId))!.updatedAt.toISOString(),
+      },
       {
         sessionUpdate: "available_commands_update",
         availableCommands: [{ name: "help" }],

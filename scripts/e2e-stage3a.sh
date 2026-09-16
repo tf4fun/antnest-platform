@@ -37,6 +37,11 @@ identity_access=${ANTNEST_E2E_IDENTITY_ACCESS:-false}
 acp_session=${ANTNEST_E2E_ACP_SESSION:-false}
 agent_access=${ANTNEST_E2E_AGENT_ACCESS:-false}
 tool_progress=${ANTNEST_E2E_TOOL_PROGRESS:-false}
+if [ "$tool_progress" = true ]; then
+  export ANTNEST_PROGRESS_CONTROL_DYNAMIC_RANGE="10.242.${network_octet}.128/25"
+  export ANTNEST_PROGRESS_RUNTIME_DYNAMIC_RANGE="10.243.${network_octet}.128/25"
+  export ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT=false
+fi
 file_observations=${ANTNEST_E2E_FILE_OBSERVATIONS:-false}
 structured_plan=${ANTNEST_E2E_STRUCTURED_PLAN:-false}
 slash_commands=${ANTNEST_E2E_SLASH_COMMANDS:-false}
@@ -157,6 +162,14 @@ workspace_cookie_jar="$temporary_root/workspace-cookies.txt"
 agent_id=""
 
 compose() {
+  if [ "$tool_progress" = true ]; then
+    if [ "$1" = up ]; then
+      docker --lifecycle compose --env-file /dev/null -f compose.yaml -f compose.stage3.yaml -f scripts/acp-progress/compose.yaml --profile stage3 --profile observability "$@"
+    else
+      docker compose --env-file /dev/null -f compose.yaml -f compose.stage3.yaml -f scripts/acp-progress/compose.yaml --profile stage3 --profile observability "$@"
+    fi
+    return
+  fi
   if [ "$rpc_response_loss" = true ]; then
     if [ "$1" = up ]; then
       docker --lifecycle compose -f compose.yaml -f compose.stage3.yaml -f scripts/acp-closeout/rpc-compose.yaml --profile stage3 --profile observability "$@"

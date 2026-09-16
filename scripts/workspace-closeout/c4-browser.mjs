@@ -33,11 +33,21 @@ export async function runBrowser(
   const errors = [];
   const paths = [];
   const pageTasks = [];
+  const pageFrames = new WeakMap();
   const track = (page) => {
+    const received = [];
+    pageFrames.set(page, received);
     page.setDefaultTimeout(25000);
     page.on("pageerror", () => errors.push("page error"));
     page.on("websocket", (socket) =>
-      socket.on("framereceived", ({ payload }) => frames.push(String(payload))),
+      socket.on("framereceived", ({ payload }) => {
+        frames.push(String(payload));
+        try {
+          received.push(JSON.parse(String(payload)));
+        } catch {
+          errors.push("invalid ACP JSON frame");
+        }
+      }),
     );
     page.on("response", (response) => {
       const url = new URL(response.url());
@@ -114,6 +124,27 @@ export async function runBrowser(
     console.error(`C4 passed: ${name}`);
     await checkpoint();
   }
+  const sessionInfo = (target, sessionId) =>
+    pageFrames
+      .get(target)
+      .findLast(
+        (frame) =>
+          frame.method === "session/update" &&
+          frame.params?.sessionId === sessionId &&
+          frame.params.update.sessionUpdate === "session_info_update",
+      )?.params.update;
+  async function visibleInfo(target, expected) {
+    const row = target.locator(".conversation-option.active");
+    await until(
+      async () =>
+        (await row.locator("strong").textContent()) === expected.title &&
+        (await row.locator("time").getAttribute("datetime")) ===
+          expected.updatedAt,
+      "visible authoritative session metadata",
+      signal,
+      10000,
+    );
+  }
   try {
     await page.goto(`${config.gateway}/workspace/`);
     for (const [name, value] of Object.entries(member))
@@ -145,8 +176,49 @@ export async function runBrowser(
     const firstURL = page.url();
     await page.reload();
     await enabled();
+    const observer = track(await context.newPage());
+    await observer.goto(firstURL);
+    await enabled(observer);
+    const firstSession = new URL(firstURL).searchParams.get("session");
+    const previousMetadata = sessionInfo(observer, firstSession);
+    assert(previousMetadata, "observer must receive current Session metadata");
     await prompt("c4-browser-read", "Workspace note: alpha-beta.");
     await check("member_login_new_load_session_real_tools");
+    await until(
+      () =>
+        sessionInfo(page, firstSession)?.updatedAt &&
+        sessionInfo(page, firstSession).updatedAt !==
+          previousMetadata.updatedAt &&
+        sessionInfo(page, firstSession)?.updatedAt ===
+          sessionInfo(observer, firstSession)?.updatedAt,
+      "cross-page session metadata",
+      signal,
+    );
+    const metadata = sessionInfo(page, firstSession);
+    assert.equal(metadata.title, "c4-browser-write");
+    await visibleInfo(page, metadata);
+    await visibleInfo(observer, metadata);
+    pageFrames.get(observer).length = 0;
+    await observer.reload();
+    await enabled(observer);
+    const listed = pageFrames
+      .get(observer)
+      .flatMap((frame) => frame.result?.sessions ?? [])
+      .find((session) => session.sessionId === firstSession);
+    assert(listed, "fresh page must list the existing Session");
+    assert.equal(listed.title, metadata.title);
+    assert.equal(listed.updatedAt, metadata.updatedAt);
+    assert.deepEqual(sessionInfo(observer, firstSession), metadata);
+    await visibleInfo(observer, metadata);
+    report.session_metadata = {
+      title: metadata.title,
+      before: previousMetadata.updatedAt,
+      after: metadata.updatedAt,
+      observers: 2,
+      list_and_reload: "matched without changing activity time",
+    };
+    await observer.close();
+    await check("cross_page_metadata_matches_list_and_reload");
 
     await page.getByLabel("File attachments", { exact: true }).setInputFiles([
       {

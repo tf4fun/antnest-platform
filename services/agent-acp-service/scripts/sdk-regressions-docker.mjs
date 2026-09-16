@@ -216,7 +216,7 @@ try {
     "OTEL_SDK_DISABLED=true",
     image,
   ]);
-  const origin = `http://127.0.0.1:${await hostPort(service, 8080)}`;
+  let origin = `http://127.0.0.1:${await hostPort(service, 8080)}`;
   await waitFor(async () => {
     try {
       return (await fetch(`${origin}/status`, { signal: stop.signal })).ok;
@@ -257,26 +257,89 @@ try {
     connections.push(connection);
     return {
       updates,
+      close: () => {
+        connection.close();
+        return connection.closed;
+      },
       request: (method, params) =>
         bounded(connection.agent.request(method, params, { cancellationSignal: stop.signal })),
       notify: (method, params) => bounded(connection.agent.notify(method, params)),
     };
   }
-  const client = connect();
-  const observer = connect();
+  let client = connect();
+  let observer = connect();
   for (const current of [client, observer])
     await current.request("initialize", { protocolVersion: 1, clientCapabilities: {} });
   const setup = { cwd: "/workspace", mcpServers: [] };
   const { sessionId } = await client.request("session/new", setup);
+  async function metadata(id, peers = [client, observer]) {
+    const {
+      rows: [stored],
+    } = await pool.query("SELECT title, updated_at FROM acp_sessions WHERE id = $1", [id]);
+    const expected = {
+      sessionUpdate: "session_info_update",
+      title: stored.title,
+      updatedAt: stored.updated_at.toISOString(),
+    };
+    for (const peer of peers) {
+      await waitFor(() => {
+        const actual = peer.updates
+          .filter(
+            (item) => item.sessionId === id && item.update.sessionUpdate === "session_info_update",
+          )
+          .at(-1)?.update;
+        return actual?.title === expected.title && actual?.updatedAt === expected.updatedAt;
+      });
+    }
+    const listed = (await client.request("session/list", {})).sessions.find(
+      (item) => item.sessionId === id,
+    );
+    assert.equal(listed.title ?? null, expected.title);
+    assert.equal(listed.updatedAt, expected.updatedAt);
+    return expected;
+  }
+  assert.equal((await metadata(sessionId, [client])).title, null);
+  await observer.request("session/load", { ...setup, sessionId });
   const prompt = (id, text) =>
     client.request("session/prompt", { sessionId: id, prompt: [{ type: "text", text }] });
   assert.deepEqual(await prompt(sessionId, "safe-earlier"), { stopReason: "end_turn" });
+  assert.equal((await metadata(sessionId)).title, "safe-earlier");
   assert.deepEqual(await prompt(sessionId, "refused-user-marker"), { stopReason: "refusal" });
   assert.deepEqual(await prompt(sessionId, "safe-next"), { stopReason: "end_turn" });
+  const savedInfo = await metadata(sessionId);
   assert(!JSON.stringify(modelRequests.at(-1)).includes("refused-"));
   assert(JSON.stringify(modelRequests.at(-1)).includes("safe-earlier"));
   await observer.request("session/load", { ...setup, sessionId });
   assert(JSON.stringify(observer.updates).includes("refused-user-marker"));
+  // Restore current metadata through the production process boundary. Merely
+  // recreating a protocol connection must not change the stored activity time.
+  const requestsBeforeRestart = modelRequests.length;
+  await client.close();
+  await observer.close();
+  await docker(["restart", service]);
+  // Docker may allocate a different ephemeral published port on restart.
+  origin = `http://127.0.0.1:${await hostPort(service, 8080)}`;
+  await waitFor(async () => {
+    try {
+      return (await fetch(`${origin}/status`, { signal: stop.signal })).ok;
+    } catch {
+      return false;
+    }
+  });
+  // Credentials are republished by Controller after a cold ACP start. The
+  // same revision must restore readiness without changing Session activity.
+  await publish();
+  client = connect();
+  observer = connect();
+  for (const current of [client, observer])
+    await current.request("initialize", { protocolVersion: 1, clientCapabilities: {} });
+  await client.request("session/resume", { ...setup, sessionId });
+  await observer.request("session/load", { ...setup, sessionId });
+  assert.deepEqual(await metadata(sessionId), savedInfo);
+  assert.equal(modelRequests.length, requestsBeforeRestart);
+  const fork = await client.request("session/fork", { ...setup, sessionId });
+  assert.equal((await metadata(fork.sessionId, [client])).title, savedInfo.title);
+  await client.request("session/close", { sessionId: fork.sessionId });
   const other = await client.request("session/new", setup);
   await client.request("session/close", { sessionId });
   const offsets = [client.updates.length, observer.updates.length];
@@ -322,6 +385,7 @@ try {
     status: "passed",
     image,
     scenarios: [
+      "session-metadata-observers-list-fork-and-process-restart",
       "refusal-context-with-retained-transcript",
       "close-all-observers-and-reload",
       "cancel-unknown-tool-with-runtime-protection",

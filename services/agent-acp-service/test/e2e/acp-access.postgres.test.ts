@@ -41,8 +41,16 @@ describe.skipIf(databaseUrl === undefined)("ACP wire and PostgreSQL access bound
         const foreign = await app.connect(version, subject);
         const foreignSessionId = await createSession(foreign);
         const setupUpdates = foreign.frames.filter((frame) => frame.method === "session/update");
-        expect(setupUpdates).toHaveLength(1);
+        expect(setupUpdates).toHaveLength(2);
         expect(setupUpdates[0]?.params).toMatchObject({
+          sessionId: foreignSessionId,
+          update: {
+            sessionUpdate: "session_info_update",
+            title: null,
+            updatedAt: (await app.sessions.get(foreignSessionId))!.updatedAt.toISOString(),
+          },
+        });
+        expect(setupUpdates[1]?.params).toMatchObject({
           sessionId: foreignSessionId,
           update: { sessionUpdate: "available_commands_update" },
         });

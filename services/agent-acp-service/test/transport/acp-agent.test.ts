@@ -262,12 +262,12 @@ describe("ACP v2 agent mapping", () => {
         messageId: "user-message-1",
         content: [{ type: "text", text: "hi" }],
       },
+      { sessionUpdate: "state_update", state: "running" },
       {
         sessionUpdate: "session_info_update",
         title: "hi",
         updatedAt: "2026-08-30T00:00:01.000Z",
       },
-      { sessionUpdate: "state_update", state: "running" },
       {
         sessionUpdate: "agent_message",
         messageId: "assistant-1",
@@ -787,8 +787,8 @@ describe("ACP v2 agent mapping", () => {
 
     expect(updates.map((update) => update.sessionUpdate)).toEqual([
       "user_message",
-      "session_info_update",
       "state_update",
+      "session_info_update",
       "agent_thought",
       "usage_update",
       "tool_call_update",
@@ -836,41 +836,40 @@ describe("ACP v2 agent mapping", () => {
 });
 
 function createApplication(overrides: Partial<OutputApplication> = {}): AcpApplicationPort {
-  return withOutputHistory({
-    assertAccess: vi.fn(() => Promise.resolve()),
-    getSessionConfiguration: vi.fn(() => Promise.resolve(sessionConfigurationView())),
-    setSessionConfiguration: vi.fn(() => Promise.resolve(sessionConfigurationView())),
-    createSession: vi.fn(() => Promise.resolve({ sessionId: "session-1" })),
-    listSessions: vi.fn(() => Promise.resolve({ sessions: [] })),
-    deleteSession: vi.fn(() => Promise.resolve()),
-    forkSession: vi.fn(() => Promise.resolve({ sessionId: "session-fork" })),
-    resumeSession: vi.fn(() => Promise.resolve({ replay: [], sequence: 0 })),
-    closeSession: vi.fn(() => Promise.resolve()),
-    cancelRun: vi.fn(() => Promise.resolve()),
-    acceptPrompt: vi.fn((): Promise<AcceptedAcpRun> =>
-      Promise.resolve({
-        outputSequence: 0,
-        runId: "run-1",
-        requestId: "request-1",
-        sessionId: "session-1",
-        userMessageId: "user-message-1",
-        sessionInfoUpdate: {
-          title: "hi",
-          updatedAt: "2026-08-30T00:00:01.000Z",
-        },
-        snapshot: createApplicationSnapshot(),
-      }),
-    ),
-    execute: vi.fn<OutputApplication["execute"]>(() =>
-      Promise.resolve({
-        terminalClass: "completed",
-        executorState: "quiescent",
-        toolEffectState: "none",
-        stopReason: "end_turn",
-      }),
-    ),
-    ...overrides,
-  });
+  return withOutputHistory(
+    {
+      assertAccess: vi.fn(() => Promise.resolve()),
+      getSessionConfiguration: vi.fn(() => Promise.resolve(sessionConfigurationView())),
+      setSessionConfiguration: vi.fn(() => Promise.resolve(sessionConfigurationView())),
+      createSession: vi.fn(() => Promise.resolve({ sessionId: "session-1" })),
+      listSessions: vi.fn(() => Promise.resolve({ sessions: [] })),
+      deleteSession: vi.fn(() => Promise.resolve()),
+      forkSession: vi.fn(() => Promise.resolve({ sessionId: "session-fork" })),
+      resumeSession: vi.fn(() => Promise.resolve({ replay: [], sequence: 0 })),
+      closeSession: vi.fn(() => Promise.resolve()),
+      cancelRun: vi.fn(() => Promise.resolve()),
+      acceptPrompt: vi.fn((): Promise<AcceptedAcpRun> =>
+        Promise.resolve({
+          outputSequence: 0,
+          runId: "run-1",
+          requestId: "request-1",
+          sessionId: "session-1",
+          userMessageId: "user-message-1",
+          snapshot: createApplicationSnapshot(),
+        }),
+      ),
+      execute: vi.fn<OutputApplication["execute"]>(() =>
+        Promise.resolve({
+          terminalClass: "completed",
+          executorState: "quiescent",
+          toolEffectState: "none",
+          stopReason: "end_turn",
+        }),
+      ),
+      ...overrides,
+    },
+    { title: "hi", updatedAt: "2026-08-30T00:00:01.000Z" },
+  );
 }
 
 function createApplicationSnapshot(): AcceptedAcpRun["snapshot"] {

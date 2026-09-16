@@ -3,6 +3,9 @@
 Recorded: 2026-09-16. Browser/business acceptance passed; the strict Trace gate
 still failed. This is a new current-candidate acceptance batch. The
 2026-09-11 five-item deferral and its historical accounting remain unchanged.
+The later [ACP/Runtime/UI integration batch](acp-platform-integration.md) reruns
+this profile against the SDK/metadata candidate and adds a two-page metadata
+check. The results below retain this earlier candidate and its ten-check scope.
 
 ## Scope And Evidence Contract
 

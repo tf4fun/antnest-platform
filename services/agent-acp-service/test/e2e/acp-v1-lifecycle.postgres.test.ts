@@ -99,7 +99,16 @@ describe.skipIf(databaseUrl === undefined)("ACP v1 interface lifecycle", () => {
         v1Configuration(sessionConfigurationView()),
       );
       const restoredUpdates = updates(client.frames.slice(offset));
-      expect(restoredUpdates).toHaveLength(method === "session/load" ? 7 : 1);
+      expect(restoredUpdates).toHaveLength(method === "session/load" ? 8 : 2);
+      expect(
+        restoredUpdates.filter((update) => update.sessionUpdate === "session_info_update"),
+      ).toEqual([
+        {
+          sessionUpdate: "session_info_update",
+          title: "inspect workspace",
+          updatedAt: (await app.sessions.get(sessionId))!.updatedAt.toISOString(),
+        },
+      ]);
       expect(restoredUpdates.at(-1)).toMatchObject({ sessionUpdate: "available_commands_update" });
       expect(await app.sessions.get(sessionId)).toMatchObject({ state: "active" });
       expect(app.model.complete).toHaveBeenCalledTimes(2);
