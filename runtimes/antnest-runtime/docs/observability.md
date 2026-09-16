@@ -86,6 +86,62 @@ uses a normalized route, method, status code, outcome, and bounded error type.
 It is present when OTLP is disabled, so stderr logs remain a complete
 request-level diagnostic channel.
 
+### MCP Response Close Classification
+
+An MCP handler finishing successfully and an HTTP stream reaching EOF are
+different observations. The ACP official SDK client closes its connection after
+receiving the result; that can drop the SSE response before Runtime observes EOF.
+For a successful HTTP status **and an observed successful MCP handler result**,
+this drop records `antnest.cancelled`, `http.transport.outcome=canceled` and
+`http.transport.error.type=client_disconnected`. It does not add `antnest.error`
+or a span-level `error.type`. HTTP completion logs and cancellation metrics remain.
+The handler observation does not prove that the client received the result;
+transport completion is never rewritten as success.
+
+A drop without observed MCP success retains its disconnect error diagnostic.
+Body errors and non-success HTTP responses retain error diagnostics; HTTP 5xx
+remains an error even when its body is dropped. MCP protocol failures retain
+their original error type and failed HTTP SERVER span, rather than being
+overwritten by a later `client_disconnected`. No body parsing, response buffering,
+retry, execution policy or strict Trace gate change is involved.
+
+The regression in `mcp_observability_tests.rs` exercises successful EOF/early
+close, unfinished early close, body failure, HTTP 400/500 and protocol failure.
+Its Linux HTTP component test uses the real SDK handler and middleware, holds
+the response open after its first SSE frame, receives the successful result,
+and closes the client before EOF. This deterministically checks the cancellation
+event and successful protocol observation without an error event or error status.
+The isolated Docker suite additionally uses ACP's pinned official JavaScript SDK
+against a real Runtime and exports success/failure traces to an isolated Jaeger.
+This service-owned evidence does not replace full Gateway/ACP/browser acceptance.
+
+The historical trace `970c510b1b22df1e4da962c4c32c0d30` returned HTTP 404 from
+the development Jaeger on 2026-09-16. The earlier recorded diagnostic is retained;
+it cannot be retrospectively reclassified from the expired trace. The current
+fix addresses the reproducible successful-handler/response-close case, not every
+disconnect and not the separately deferred clock-skew warnings.
+
+Verification on 2026-09-16 for this service-owned follow-up:
+
+- The seven-case regression first failed on the existing successful-disconnect
+  error classification, then passed after the fix.
+- Linux formatting, Clippy with warnings denied, 143 unit/contract/component
+  tests, one CLI test, one official SDK fixture test and release build passed.
+- All 10 isolated Docker E2E scenarios passed. The JavaScript SDK check observed
+  nine successful MCP operations with no error spans/events; the deliberate
+  missing-file call retained both failed operation and HTTP spans. Those live
+  successful responses all reached EOF; the controlled HTTP component test above
+  supplies the before-EOF close evidence, not the live SDK run.
+- The final build and E2E image Runtime binaries have identical SHA-256
+  `149fc758262cf0c811bac604ca33df67c8f883c995d50f421b55918445675834`.
+  Test containers/networks were removed. Existing development containers were
+  not replaced, and the full browser profile was not rerun.
+
+Ignored local logs are `.cache/runtime-http-close-build.log` and
+`.cache/runtime-http-close-e2e.log`; they are not guaranteed in a fresh clone.
+The tests are tracked. Deployment followed by a fresh full conversation Trace
+remains an integration check; historical strict failures remain unchanged.
+
 Tool and Executor spans record tool name, outcome, stable error code,
 duration, child PID, numeric exit status, deadline, Agent ID, and generation.
 HTTP, Executor, managed stdio CLIENT spans and completion logs are metadata-only.

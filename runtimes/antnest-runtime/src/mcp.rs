@@ -304,6 +304,7 @@ struct HttpObservation {
     span: tracing::Span,
     request_bytes: Arc<AtomicU64>,
     protocol_failed: Arc<AtomicBool>,
+    protocol_succeeded: Arc<AtomicBool>,
 }
 impl HttpObservation {
     fn new(span: tracing::Span) -> Self {
@@ -311,6 +312,7 @@ impl HttpObservation {
             span,
             request_bytes: Arc::new(AtomicU64::new(0)),
             protocol_failed: Arc::new(AtomicBool::new(false)),
+            protocol_succeeded: Arc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -437,9 +439,19 @@ impl HttpCompletion {
             .observation
             .as_ref()
             .is_some_and(|observation| observation.protocol_failed.load(Ordering::Relaxed));
+        // A completed MCP handler can be followed by an SDK closing its SSE
+        // connection before HTTP EOF. This proves handler completion, not client
+        // receipt; retain cancellation evidence without inventing an RPC error.
+        let completed_mcp_disconnect = termination == BodyTermination::ClientDisconnected
+            && self.status.is_success()
+            && !protocol_failed
+            && self
+                .observation
+                .as_ref()
+                .is_some_and(|observation| observation.protocol_succeeded.load(Ordering::Relaxed));
         self.span.record(
             "otel.status_code",
-            if outcome == "error" || protocol_failed {
+            if outcome == "error" || protocol_failed || self.status.is_server_error() {
                 "ERROR"
             } else {
                 "UNSET"
@@ -457,12 +469,29 @@ impl HttpCompletion {
             );
         }
         if !error_type.is_empty() {
-            self.span.record("error.type", error_type);
-            if !protocol_failed {
+            self.span
+                .set_attribute("http.transport.error.type", error_type);
+            if completed_mcp_disconnect {
+                self.span.add_event(
+                    "antnest.cancelled",
+                    vec![
+                        opentelemetry::KeyValue::new("antnest.phase", "http"),
+                        opentelemetry::KeyValue::new("antnest.cancellation.type", error_type),
+                        opentelemetry::KeyValue::new("antnest.protocol.outcome", "success"),
+                    ],
+                );
+            } else if !protocol_failed {
+                let diagnostic_type = if termination == BodyTermination::ClientDisconnected
+                    && !self.status.is_success()
+                {
+                    status_outcome(self.status).1
+                } else {
+                    error_type
+                };
                 diagnostics::error_summary(
                     &self.span,
                     "http",
-                    error_type,
+                    diagnostic_type,
                     match termination {
                         BodyTermination::BodyError => "HTTP response body failed while streaming",
                         BodyTermination::ClientDisconnected => "HTTP response closed before EOF",
@@ -1314,6 +1343,8 @@ where
         if outcome == "error" {
             http.protocol_failed.store(true, Ordering::Relaxed);
             http.span.set_attribute("error.type", error_type);
+        } else {
+            http.protocol_succeeded.store(true, Ordering::Relaxed);
         }
     }
     match &result {

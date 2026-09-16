@@ -1,10 +1,262 @@
 use super::*;
 #[cfg(target_os = "linux")]
-use opentelemetry::trace::{TraceContextExt as _, TracerProvider as _};
-#[cfg(target_os = "linux")]
+use opentelemetry::trace::TraceContextExt as _;
+use opentelemetry::trace::TracerProvider as _;
 use opentelemetry_sdk::trace::{InMemorySpanExporter, SdkTracerProvider};
-#[cfg(target_os = "linux")]
 use tracing_subscriber::prelude::*;
+
+#[test]
+fn http_disconnect_diagnostics_require_successful_protocol_completion() {
+    let exporter = InMemorySpanExporter::default();
+    let provider = SdkTracerProvider::builder()
+        .with_simple_exporter(exporter.clone())
+        .build();
+    let subscriber = tracing_subscriber::registry()
+        .with(tracing_opentelemetry::layer().with_tracer(provider.tracer("http-completion-test")));
+    let _guard = tracing::subscriber::set_default(subscriber);
+    for (status, succeeded, failed, termination, expected_error, expected_cancel) in [
+        (
+            200,
+            true,
+            false,
+            BodyTermination::ClientDisconnected,
+            None,
+            true,
+        ),
+        (
+            200,
+            false,
+            false,
+            BodyTermination::ClientDisconnected,
+            Some("client_disconnected"),
+            false,
+        ),
+        (200, true, false, BodyTermination::EndOfStream, None, false),
+        (
+            200,
+            true,
+            false,
+            BodyTermination::BodyError,
+            Some("http_body_error"),
+            false,
+        ),
+        (
+            500,
+            true,
+            false,
+            BodyTermination::ClientDisconnected,
+            Some("http_server_error"),
+            false,
+        ),
+        (
+            400,
+            true,
+            false,
+            BodyTermination::ClientDisconnected,
+            Some("http_client_error"),
+            false,
+        ),
+        (
+            200,
+            false,
+            true,
+            BodyTermination::ClientDisconnected,
+            Some("tool_failed"),
+            false,
+        ),
+    ] {
+        exporter.reset();
+        let span = tracing::info_span!(
+            "runtime.http",
+            otel.status_code = tracing::field::Empty,
+            "http.transport.outcome" = tracing::field::Empty,
+            "error.type" = tracing::field::Empty
+        );
+        let observation = HttpObservation::new(span.clone());
+        observation
+            .protocol_succeeded
+            .store(succeeded, Ordering::Relaxed);
+        observation.protocol_failed.store(failed, Ordering::Relaxed);
+        if failed {
+            observation.span.set_attribute("error.type", "tool_failed");
+        }
+        let mut completion = HttpCompletion::new(
+            span,
+            RuntimeIdentity::new("test", 1).unwrap(),
+            Method::POST,
+            "/mcp",
+            StatusCode::from_u16(status).unwrap(),
+            RuntimeMetrics::default(),
+            Instant::now(),
+        );
+        completion.observation = Some(observation);
+        completion.finish(termination);
+        provider.force_flush().unwrap();
+        let spans = exporter.get_finished_spans().unwrap();
+        let span = &spans[0];
+        let error_type = span
+            .attributes
+            .iter()
+            .find(|a| a.key.as_str() == "error.type")
+            .map(|a| a.value.as_str().into_owned());
+        assert_eq!(
+            error_type.as_deref(),
+            expected_error,
+            "{status} {termination:?}"
+        );
+        assert_eq!(
+            span.events
+                .iter()
+                .any(|event| event.name == "antnest.cancelled"),
+            expected_cancel
+        );
+        assert_eq!(
+            span.events
+                .iter()
+                .any(|event| event.name == "antnest.error"),
+            expected_error.is_some() && !failed
+        );
+        assert_eq!(
+            matches!(span.status, opentelemetry::trace::Status::Error { .. }),
+            failed || status >= 500 || termination == BodyTermination::BodyError
+        );
+    }
+    provider.shutdown().unwrap();
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "current_thread")]
+async fn successful_mcp_result_then_client_close_before_eof_is_not_an_error() {
+    // Hold the response open after its first SSE frame so EOF cannot win the
+    // race against the client's close. The real SDK handler and HTTP observer
+    // still own dispatch, result classification and body-drop observation.
+    struct HoldAfterFirstFrame {
+        body: Pin<Box<Body>>,
+        sent: bool,
+    }
+    impl HttpBody for HoldAfterFirstFrame {
+        type Data = Bytes;
+        type Error = axum::Error;
+        fn poll_frame(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+        ) -> Poll<Option<Result<Frame<Bytes>, axum::Error>>> {
+            if self.sent {
+                return Poll::Pending;
+            }
+            let frame = self.body.as_mut().poll_frame(cx);
+            if matches!(frame, Poll::Ready(Some(Ok(_)))) {
+                self.sent = true;
+            }
+            frame
+        }
+    }
+    let exporter = InMemorySpanExporter::default();
+    let provider = SdkTracerProvider::builder()
+        .with_simple_exporter(exporter.clone())
+        .build();
+    let subscriber = tracing_subscriber::registry()
+        .with(tracing_opentelemetry::layer().with_tracer(provider.tracer("mcp-close-component")));
+    let _guard = tracing::subscriber::set_default(subscriber);
+    let workspace = tempfile::tempdir().unwrap();
+    let skills = tempfile::tempdir().unwrap();
+    let roots = Arc::new(NamedRoots::open(workspace.path(), skills.path()).unwrap());
+    let status =
+        RuntimeStatus::with_execution_id(RuntimeIdentity::new("test", 1).unwrap(), "execution-1");
+    let state = HttpState {
+        status: status.clone(),
+        metrics: RuntimeMetrics::default(),
+        managed: Catalog::default(),
+    };
+    let tools = RuntimeToolServer::new(
+        ToolBackend::InProcess(ToolEngine::new(roots)),
+        status,
+        state.metrics.clone(),
+        state.managed.clone(),
+    );
+    let shutdown = CancellationToken::new();
+    let service: StreamableHttpService<ObservedRuntime, LocalSessionManager> =
+        StreamableHttpService::new(
+            move || Ok(ObservedRuntime(tools.clone())),
+            Default::default(),
+            StreamableHttpServerConfig::default()
+                .disable_allowed_hosts()
+                .with_legacy_session_mode(false)
+                .with_stateless_protocol_metadata_required(true)
+                .with_cancellation_token(shutdown.child_token()),
+        );
+    let router = Router::new()
+        .nest_service(MCP_PATH, service)
+        .layer(middleware::from_fn_with_state(state, trace_http_request))
+        .layer(middleware::from_fn(
+            |request: Request, next: Next| async move {
+                next.run(request).await.map(|body| {
+                    Body::new(HoldAfterFirstFrame {
+                        body: Box::pin(body),
+                        sent: false,
+                    })
+                })
+            },
+        ));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let stopped = shutdown.clone();
+    let task = tokio::spawn(async move {
+        axum::serve(listener, router)
+            .with_graceful_shutdown(stopped.cancelled_owned())
+            .await
+    });
+    let client = reqwest::Client::new();
+    let mut response = client.post(format!("http://{address}/mcp"))
+        .header("accept", "application/json, text/event-stream")
+        .header("mcp-protocol-version", "2026-07-28")
+        .header("mcp-method", "tools/list")
+        .header(EXPECTED_EXECUTION_HEADER, "execution-1")
+        .json(&json!({"jsonrpc":"2.0", "id":1, "method":"tools/list", "params":{"_meta":{
+            "io.modelcontextprotocol/protocolVersion":"2026-07-28", "io.modelcontextprotocol/clientCapabilities":{}}}}))
+        .send().await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let frame = response.chunk().await.unwrap().unwrap();
+    let frame = std::str::from_utf8(&frame).unwrap();
+    assert!(frame.contains("\"tools\""), "{frame}");
+    drop(response);
+    drop(client);
+    let closed = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            if let Some(http) = exporter
+                .get_finished_spans()
+                .unwrap()
+                .into_iter()
+                .find(|s| s.name == "HTTP POST /mcp")
+            {
+                break http;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await;
+    shutdown.cancel();
+    task.abort();
+    let _ = task.await;
+    let http = closed.expect("HTTP response dropped after client close");
+    assert!(http.events.iter().any(|e| e.name == "antnest.cancelled"));
+    assert!(!http.events.iter().any(|e| e.name == "antnest.error"));
+    assert!(!matches!(
+        http.status,
+        opentelemetry::trace::Status::Error { .. }
+    ));
+    assert!(
+        http.attributes
+            .iter()
+            .any(|a| a.key.as_str() == "antnest.protocol.outcome" && a.value.as_str() == "success")
+    );
+    assert!(
+        http.attributes
+            .iter()
+            .any(|a| a.key.as_str() == "http.transport.outcome" && a.value.as_str() == "canceled")
+    );
+    provider.shutdown().unwrap();
+}
 
 #[cfg(target_os = "linux")]
 #[tokio::test(flavor = "current_thread")]

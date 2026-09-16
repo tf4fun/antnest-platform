@@ -78,7 +78,7 @@ class ManagedMcpE2E(unittest.TestCase):
         self.workspace.chmod(0o777)
         self.requests = itertools.count(1)
 
-    def start(self, servers=None):
+    def start(self, servers=None, telemetry=None):
         if servers is None:
             servers = [{"id": name, "command": "/opt/mcp-fixture", "env": {"FIXTURE_SECRET": "config-canary"}} for name in ["a", "b"]]
         spec = {
@@ -91,7 +91,9 @@ class ManagedMcpE2E(unittest.TestCase):
                 "--cap-drop", "ALL", "--device", "/dev/net/tun", "--dns", "100.64.0.1", "--dns-option", "use-vc",
                 "--mount", f"type=bind,src={self.workspace},dst=/workspace",
                 "--mount", f"type=bind,src={self.directory / 'mcp-fixture'},dst=/opt/mcp-fixture,readonly",
-                "-p", "127.0.0.1::8093", "-e", "OTEL_SDK_DISABLED=true", "-e", "ANTNEST_RUNTIME_SPEC=" + json.dumps(spec)]
+                "-p", "127.0.0.1::8093", "-e", "ANTNEST_RUNTIME_SPEC=" + json.dumps(spec)]
+        for key, value in (telemetry or {"OTEL_SDK_DISABLED": "true"}).items():
+            args.extend(["-e", f"{key}={value}"])
         for cap in ["CHOWN", "DAC_OVERRIDE", "KILL", "NET_ADMIN", "SETGID", "SETPCAP", "SETUID"]:
             args.extend(["--cap-add", cap])
         docker(*args, self.runtime_image)
@@ -149,6 +151,63 @@ class ManagedMcpE2E(unittest.TestCase):
 
     def bash(self, command, timeout=3000):
         return self.tool("bash", {"command": command, "working_dir": {"root": "workspace", "path": "."}, "env": [], "timeout_ms": timeout})
+
+    def test_official_js_client_close_keeps_success_and_failure_trace_evidence(self):
+        collector = self.name + "-jaeger"
+        self.addCleanup(lambda: docker("rm", "-f", collector, check=False))
+        docker("run", "-d", "--name", collector, "--network", self.network,
+               "-p", "127.0.0.1::16686", "cr.jaegertracing.io/jaegertracing/jaeger:2.20.0")
+        inspection = json.loads(docker("inspect", collector))[0]
+        address = inspection["NetworkSettings"]["Networks"][self.network]["IPAddress"]
+        port = inspection["NetworkSettings"]["Ports"]["16686/tcp"][0]["HostPort"]
+        self.start(telemetry={"OTEL_TRACES_EXPORTER": "otlp", "OTEL_METRICS_EXPORTER": "none",
+                              "OTEL_EXPORTER_OTLP_ENDPOINT": f"http://{address}:4318"})
+        self.ready()
+        (self.workspace / "read-me.txt").write_text("runtime close regression")
+        success_trace, failure_trace = uuid.uuid4().hex, uuid.uuid4().hex
+        fixture = Path(__file__).resolve().parent / "fixtures" / "http_close_client.mjs"
+        subprocess.run(["node", str(fixture), f"http://127.0.0.1:{self.port}/mcp",
+                        self.execution_id, success_trace, failure_trace], check=True, timeout=30)
+        # Flush the real Runtime exporter; no shared development services are changed.
+        docker("stop", "--time", "15", self.name)
+        self.assertEqual(json.loads(docker("inspect", self.name))[0]["State"]["ExitCode"], 0)
+
+        def trace(trace_id):
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/traces/{trace_id}", timeout=2) as response:
+                return json.load(response)["data"][0]["spans"]
+
+        collected = {}
+
+        def exported():
+            try:
+                collected["success"] = trace(success_trace)
+                collected["failure"] = trace(failure_trace)
+                return True
+            except (OSError, KeyError, IndexError):
+                return False
+
+        eventually(exported)
+        for span in collected["success"]:
+            tags = {tag["key"]: tag["value"] for tag in span["tags"]}
+            self.assertFalse(tags.get("error", False), span["operationName"])
+            self.assertNotEqual(tags.get("otel.status_code"), "ERROR")
+            self.assertFalse(any(field["value"] == "antnest.error" for log in span["logs"] for field in log["fields"]))
+            if span["operationName"] == "HTTP POST /mcp":
+                self.assertEqual(tags["antnest.protocol.outcome"], "success")
+                self.assertIn(tags["http.transport.outcome"], ["success", "canceled"])
+                if tags["http.transport.outcome"] == "canceled":
+                    self.assertEqual(tags["http.transport.error.type"], "client_disconnected")
+                    self.assertTrue(any(field["value"] == "antnest.cancelled" for log in span["logs"] for field in log["fields"]))
+        operations = [span for span in collected["success"] if span["operationName"] == "runtime.mcp.operation"]
+        self.assertGreaterEqual(len(operations), 9)  # Three connect/list/read/close cycles.
+        failed = [span for span in collected["failure"] if span["operationName"] in ["runtime.mcp.operation", "HTTP POST /mcp"]
+                  and any(tag["key"] == "error" and tag["value"] is True for tag in span["tags"])]
+        self.assertEqual({span["operationName"] for span in failed}, {"runtime.mcp.operation", "HTTP POST /mcp"})
+        print(json.dumps({"http_close_trace": "passed", "success_trace": success_trace,
+                          "failure_trace": failure_trace, "successful_operations": len(operations),
+                          "successful_disconnects": sum(any(tag["key"] == "http.transport.outcome" and tag["value"] == "canceled"
+                                                             for tag in span["tags"]) for span in collected["success"]),
+                          "failed_operation_and_http_spans": len(failed)}))
 
     def test_background_process_and_managed_service_survive_other_calls(self):
         self.start()

@@ -118,7 +118,11 @@ running Controller. It covers initialization, empty configuration, process reuse
 UID/environment isolation, cancellation, background jobs, information reads,
 child failure and shutdown, plus live Bash/stdio MCP progress, no-token silence,
 failure/cancellation and progress payload exclusion from logs. The UDP fixture
-is not a test of Egress policy or public network forwarding. Commands run
+is not a test of Egress policy or public network forwarding. The HTTP close
+regression also needs Node and the installed ACP service dependencies, and starts
+its own Jaeger container to check real SDK success and failure traces. See
+[response close classification](docs/observability.md#mcp-response-close-classification).
+Commands run
 serially from the repository root:
 
 ```sh
