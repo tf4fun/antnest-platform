@@ -1,5 +1,14 @@
 # ACP Protocol Conformance
 
+> Latest SDK audit and fixes (2026-09-16): the authority is official TypeScript
+> SDK `1.4.0`, including its schema and capability stability annotations.
+> The [42-method audit](acp-v1-sdk-audit.md) reproduced and then fixed refusal
+> context isolation, closed Session output subscriptions, and unknown-effect
+> cancellation responses. Current evidence: 958 unit/component, 237 PostgreSQL,
+> 9 SDK audit tests and 3 production-image Docker scenarios pass. Conservative
+> unknown-effect facts and Runtime admission protection remain in place.
+> This service evidence does not close the disclosed profile/F07/coverage gaps.
+
 > Execution-boundary update (2026-09-15): earlier deployed evidence below uses
 > the former Controller Run-admission architecture. It does not certify the current
 > refactor. ACP now checks locally published access/configuration and owns Run
@@ -17,8 +26,10 @@ The pinned implementation schema is `@agentclientprotocol/sdk` `1.4.0`:
 - package root and `schema/schema.json`: ACP v1, including experimental surfaces;
 - `experimental/v2` and `schema/v2/schema.unstable.json`: draft ACP v2.
 
-Check stability per capability against the official protocol/RFD status, not
-just the SDK export path or the absence of an unstable label on a leaf type.
+Use the latest official SDK's schema and capability-level stability annotations
+as the authority, as confirmed by the user on 2026-09-16. Website/RFD text is
+background when it differs from the SDK. Check parent capability annotations,
+not just the export path or the absence of an unstable label on a leaf type.
 
 A protocol surface is conformant only when all baseline requirements and every
 advertised optional capability have executable positive evidence. This is a
@@ -340,6 +351,16 @@ stdio and client-supplied **MCP** stdio are two different questions.
 
 ## Stable ACP v1 Matrix
 
+This matrix records scoped historical cases. The current SDK audit adds these
+semantic regressions, first reproduced as failures and now passing after fixes.
+They are ordinary assertions, with no expected-failure or skipped audit tests:
+
+| ID            | SDK requirement                                                              | Current evidence                                                                                | State           |
+| ------------- | ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | --------------- |
+| V1-REFUSAL-02 | Refused user turn and following output must not enter the next model context | GAP-01 + PostgreSQL regressions cover load/resume/fork/restart, checkpoint and atomic migration | Service-covered |
+| V1-CLOSE-02   | Close frees Session resources after cancelling work                          | GAP-02 + v1/v2 close/delete regressions cover all observers, pending attach and reopening       | Service-covered |
+| V1-CANCEL-02  | Client cancellation returns cancelled even if underlying operations fail     | GAP-03 + HTTP Docker verify cancelled response, durable unknown effects and Runtime protection  | Service-covered |
+
 | ID              | Protocol contract                                                                                                                            | Current evidence                                                                                                                    | State                     |
 | --------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------- |
 | V1-INIT-01      | `initialize` returns supported v1 for requested 0/1/2/99; truthful capabilities                                                              | `acp-v1-agent.test.ts`                                                                                                              | Covered                   |
@@ -362,7 +383,7 @@ stdio and client-supplied **MCP** stdio are two different questions.
 | V1-COMMAND-01   | Setup emits `available_commands_update`; `/help` and `/帮助` run through ordinary Prompt without model/Runtime calls                         | `acp-commands.postgres.test.ts`; F08 deployment                                                                                     | Service-covered           |
 | V1-COST-01      | Standard `usage_update.cost` carries saved cumulative known amounts, excluding private receipts                                              | `acp-cost.postgres.test.ts`; F10 deployment                                                                                         | Service-covered           |
 | V1-INFO-01      | `session_info_update` maps title/updatedAt; full live/observer/reload consistency combination remains unverified                             | `acp-v1-agent.test.ts`, list persistence tests                                                                                      | Layer-covered             |
-| V1-ERROR-01     | Invalid initialization/params, failed/unresolved Runs and unknown methods retain distinct errors                                             | adapter + raw-wire + lifecycle tests                                                                                                | Covered                   |
+| V1-ERROR-01     | Invalid initialization/params, failed/non-cancellation unresolved Runs and unknown methods retain distinct errors                            | adapter + raw-wire + lifecycle tests                                                                                                | Covered                   |
 | V1-MCP-01       | Nonempty HTTP/stdio/SSE/MCP-over-ACP input is rejected at every setup method, with no partial writes or replay                               | `acp-mcp-input.postgres.test.ts`                                                                                                    | Service-covered           |
 | V1-MCP-STDIO-01 | Generic v1 Agents must support client stdio MCP                                                                                              | Explicit platform-only profile above                                                                                                | **Intentional deviation** |
 

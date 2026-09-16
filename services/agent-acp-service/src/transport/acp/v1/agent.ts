@@ -43,7 +43,7 @@ export function createAcpV1Agent({
     skipMessageId?: string,
     configurationInResponse = true,
   ) => {
-    await outputs.attach({
+    const attached = await outputs.attach({
       keepExisting,
       configurationInResponse,
       identity: binding,
@@ -65,6 +65,7 @@ export function createAcpV1Agent({
       ...(beforeFirst === undefined ? {} : { beforeFirst }),
       waitForDelivery,
     });
+    if (!attached) return;
     permissions?.attach({
       binding,
       sessionId,
@@ -198,6 +199,7 @@ export function createAcpV1Agent({
       return dispatch("session/delete", params, requestId, async () => {
         requireInitialized(initialized, "session/delete");
         await mapError(() => application.deleteSession({ binding, sessionId: params.sessionId }));
+        outputs.detach(sessionOutputKey(binding, params.sessionId));
         permissions?.detach(params.sessionId);
         return {};
       });
@@ -246,6 +248,10 @@ export function createAcpV1Agent({
       return dispatch("session/close", params, requestId, async () => {
         requireInitialized(initialized, "session/close");
         await mapError(() => application.closeSession({ binding, sessionId: params.sessionId }));
+        const key = sessionOutputKey(binding, params.sessionId);
+        outputs.invalidate(key);
+        await outputs.flush(key);
+        outputs.detach(key);
         permissions?.detach(params.sessionId);
         return {};
       });
@@ -362,6 +368,10 @@ function promptResponse(result: ExecuteRunResult): acp.PromptResponse {
         retryable: false,
       });
     case "unresolved":
+      // Confirm cancellation on the wire without rewriting the durable unknown
+      // effect or Runtime stopping evidence. Other unresolved outcomes stay errors.
+      if (result.errorClass === "cancelled_tool_outcome_unknown")
+        return { stopReason: "cancelled" };
       throw new acp.RequestError(-32023, "Agent Run outcome is unresolved", {
         code: result.errorClass,
         retryable: false,

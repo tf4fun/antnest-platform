@@ -30,8 +30,8 @@ No cross-service SQL, new production endpoint or new deployment authorization.
 
 A Bash exit code 7 is a completed Tool result, validated by the model fixture;
 managed `isError` is a failed Tool. On HTTP cancellation the result is unobserved:
-v1 returns error -32023, v2 reports `_unresolved`, and further admission remains
-blocked. Tool status is `failed` in v1 and `cancelled` in v2. The test separately
+v1 returns `stopReason: cancelled`, v2 reports `_unresolved`, and further admission
+without Runtime stopping evidence remains blocked with `runtime_barrier_required`. Tool status is `failed` in v1 and `cancelled` in v2. The test separately
 verifies that execution was alive before cancellation and stopped afterwards.
 
 Jaeger evidence must show actual Gateway ancestry and Runtime child spans for
@@ -66,6 +66,12 @@ containers, volumes and networks on success/failure. Retained acceptance stacks
 are never targeted. Do not run this alongside another test/build profile.
 
 ## Evidence Status
+
+The 2026-09-16 ACP SDK fix changes v1's cancellation acknowledgment while retaining
+unknown-effect protection. This probe's response/admission assertions follow the
+current ACP boundary. Its fixture tests and the ACP production-image SDK regression
+pass; the full 12-path deployment below was not rerun for this fix and remains
+historical evidence.
 
 Deployment passed on 2026-09-08: 12 scenarios, 20 validated model requests,
 12 Jaeger traces. Each trace has one preparation, one ACP Tool dispatch and one

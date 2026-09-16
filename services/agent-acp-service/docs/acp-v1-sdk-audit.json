@@ -1,0 +1,820 @@
+{
+  "auditedAt": "2026-09-16",
+  "baselineCommit": "8c639ce",
+  "authority": "latest stable @agentclientprotocol/sdk npm package; user instruction on 2026-09-16",
+  "sdkVersion": "1.4.0",
+  "sdkRelease": "https://github.com/agentclientprotocol/typescript-sdk/releases/tag/v1.4.0",
+  "registryMetadata": {
+    "checkedAt": "2026-09-16T14:06:47.065Z",
+    "url": "https://registry.npmjs.org/@agentclientprotocol/sdk/latest",
+    "version": "1.4.0",
+    "gitHead": "e6463f444093ed7c5f1cc937c3f32afb5853e906",
+    "integrity": "sha512-/eufudw+aFY1LKLolT6yFE6UMmYRl7fMJ/DEONSIyR6wI3slHWITBsANRGqXEY8FRzqUxwh7QEaGiZHcJPVThg==",
+    "tarball": "https://registry.npmjs.org/@agentclientprotocol/sdk/-/sdk-1.4.0.tgz"
+  },
+  "schemaPath": "@agentclientprotocol/sdk/schema/schema.json",
+  "schemaSha256": "7f77702b34e0a0558e77220e9007bf8ee161a976bb8ac5021aba1b7e7b2c5708",
+  "methodCount": 42,
+  "nonExperimentalMethodCount": 25,
+  "notes": [
+    "receiver 是 SDK x-side，client 表示由 Agent 调用客户端，不是 Agent 应接收的端点。",
+    "JSON Schema 验证形状；描述中的 MUST/时序/上下文语义需要独立断言。",
+    "架构排除、明确拒绝和获准延期均不计作已实现。",
+    "实验分类依据 SDK 方法描述或其能力字段的 UNSTABLE 标记，不依据官网文档。"
+  ],
+  "methods": [
+    {
+      "method": "document/didChange",
+      "receiver": "agent",
+      "schemas": ["DidChangeDocumentNotification"],
+      "requiredFields": {
+        "DidChangeDocumentNotification": ["sessionId", "uri", "version", "contentChanges"]
+      },
+      "stability": "experimental",
+      "requirement": "属于 SDK AgentCapabilities.nes 标记 UNSTABLE 的通知能力；未宣告，不应作为请求测试",
+      "coverage": "awaiting-stability",
+      "implementation": ["src/transport/acp/v1/agent.ts"],
+      "tests": [],
+      "findings": []
+    },
+    {
+      "method": "document/didClose",
+      "receiver": "agent",
+      "schemas": ["DidCloseDocumentNotification"],
+      "requiredFields": {
+        "DidCloseDocumentNotification": ["sessionId", "uri"]
+      },
+      "stability": "experimental",
+      "requirement": "属于 SDK AgentCapabilities.nes 标记 UNSTABLE 的通知能力；未宣告，不应作为请求测试",
+      "coverage": "awaiting-stability",
+      "implementation": ["src/transport/acp/v1/agent.ts"],
+      "tests": [],
+      "findings": []
+    },
+    {
+      "method": "document/didFocus",
+      "receiver": "agent",
+      "schemas": ["DidFocusDocumentNotification"],
+      "requiredFields": {
+        "DidFocusDocumentNotification": ["sessionId", "uri", "version", "position", "visibleRange"]
+      },
+      "stability": "experimental",
+      "requirement": "属于 SDK AgentCapabilities.nes 标记 UNSTABLE 的通知能力；未宣告，不应作为请求测试",
+      "coverage": "awaiting-stability",
+      "implementation": ["src/transport/acp/v1/agent.ts"],
+      "tests": [],
+      "findings": []
+    },
+    {
+      "method": "document/didOpen",
+      "receiver": "agent",
+      "schemas": ["DidOpenDocumentNotification"],
+      "requiredFields": {
+        "DidOpenDocumentNotification": ["sessionId", "uri", "languageId", "version", "text"]
+      },
+      "stability": "experimental",
+      "requirement": "属于 SDK AgentCapabilities.nes 标记 UNSTABLE 的通知能力；未宣告，不应作为请求测试",
+      "coverage": "awaiting-stability",
+      "implementation": ["src/transport/acp/v1/agent.ts"],
+      "tests": [],
+      "findings": []
+    },
+    {
+      "method": "document/didSave",
+      "receiver": "agent",
+      "schemas": ["DidSaveDocumentNotification"],
+      "requiredFields": {
+        "DidSaveDocumentNotification": ["sessionId", "uri"]
+      },
+      "stability": "experimental",
+      "requirement": "属于 SDK AgentCapabilities.nes 标记 UNSTABLE 的通知能力；未宣告，不应作为请求测试",
+      "coverage": "awaiting-stability",
+      "implementation": ["src/transport/acp/v1/agent.ts"],
+      "tests": [],
+      "findings": []
+    },
+    {
+      "method": "nes/accept",
+      "receiver": "agent",
+      "schemas": ["AcceptNesNotification"],
+      "requiredFields": {
+        "AcceptNesNotification": ["sessionId", "id"]
+      },
+      "stability": "experimental",
+      "requirement": "属于 SDK AgentCapabilities.nes 标记 UNSTABLE 的通知能力；未宣告，不应作为请求测试",
+      "coverage": "awaiting-stability",
+      "implementation": ["src/transport/acp/v1/agent.ts"],
+      "tests": [],
+      "findings": []
+    },
+    {
+      "method": "nes/close",
+      "receiver": "agent",
+      "schemas": ["CloseNesResponse", "CloseNesRequest"],
+      "requiredFields": {
+        "CloseNesRequest": ["sessionId"]
+      },
+      "stability": "experimental",
+      "requirement": "SDK 的 UNSTABLE 方法或 AgentCapabilities.nes 下的实验能力；不宣告并拒绝请求",
+      "coverage": "awaiting-stability",
+      "implementation": ["src/transport/acp/v1/agent.ts"],
+      "tests": [
+        "test/transport/acp-v1-agent.test.ts",
+        "test/e2e/acp-v1-lifecycle.postgres.test.ts"
+      ],
+      "findings": []
+    },
+    {
+      "method": "nes/reject",
+      "receiver": "agent",
+      "schemas": ["RejectNesNotification"],
+      "requiredFields": {
+        "RejectNesNotification": ["sessionId", "id"]
+      },
+      "stability": "experimental",
+      "requirement": "属于 SDK AgentCapabilities.nes 标记 UNSTABLE 的通知能力；未宣告，不应作为请求测试",
+      "coverage": "awaiting-stability",
+      "implementation": ["src/transport/acp/v1/agent.ts"],
+      "tests": [],
+      "findings": []
+    },
+    {
+      "method": "nes/start",
+      "receiver": "agent",
+      "schemas": ["StartNesResponse", "StartNesRequest"],
+      "requiredFields": {
+        "StartNesRequest": []
+      },
+      "stability": "experimental",
+      "requirement": "SDK 的 UNSTABLE 方法或 AgentCapabilities.nes 下的实验能力；不宣告并拒绝请求",
+      "coverage": "awaiting-stability",
+      "implementation": ["src/transport/acp/v1/agent.ts"],
+      "tests": [
+        "test/transport/acp-v1-agent.test.ts",
+        "test/e2e/acp-v1-lifecycle.postgres.test.ts"
+      ],
+      "findings": []
+    },
+    {
+      "method": "nes/suggest",
+      "receiver": "agent",
+      "schemas": ["SuggestNesResponse", "SuggestNesRequest"],
+      "requiredFields": {
+        "SuggestNesRequest": ["sessionId", "uri", "version", "position", "triggerKind"]
+      },
+      "stability": "experimental",
+      "requirement": "SDK 的 UNSTABLE 方法或 AgentCapabilities.nes 下的实验能力；不宣告并拒绝请求",
+      "coverage": "awaiting-stability",
+      "implementation": ["src/transport/acp/v1/agent.ts"],
+      "tests": [
+        "test/transport/acp-v1-agent.test.ts",
+        "test/e2e/acp-v1-lifecycle.postgres.test.ts"
+      ],
+      "findings": []
+    },
+    {
+      "method": "providers/disable",
+      "receiver": "agent",
+      "schemas": ["DisableProviderResponse", "DisableProviderRequest"],
+      "requiredFields": {
+        "DisableProviderRequest": ["providerId"]
+      },
+      "stability": "experimental",
+      "requirement": "SDK 的 UNSTABLE 方法或 AgentCapabilities.nes 下的实验能力；不宣告并拒绝请求",
+      "coverage": "awaiting-stability",
+      "implementation": ["src/transport/acp/v1/agent.ts"],
+      "tests": [
+        "test/transport/acp-v1-agent.test.ts",
+        "test/e2e/acp-v1-lifecycle.postgres.test.ts"
+      ],
+      "findings": []
+    },
+    {
+      "method": "providers/list",
+      "receiver": "agent",
+      "schemas": ["ListProvidersResponse", "ListProvidersRequest"],
+      "requiredFields": {
+        "ListProvidersRequest": []
+      },
+      "stability": "experimental",
+      "requirement": "SDK 的 UNSTABLE 方法或 AgentCapabilities.nes 下的实验能力；不宣告并拒绝请求",
+      "coverage": "awaiting-stability",
+      "implementation": ["src/transport/acp/v1/agent.ts"],
+      "tests": [
+        "test/transport/acp-v1-agent.test.ts",
+        "test/e2e/acp-v1-lifecycle.postgres.test.ts"
+      ],
+      "findings": []
+    },
+    {
+      "method": "providers/set",
+      "receiver": "agent",
+      "schemas": ["SetProviderResponse", "SetProviderRequest"],
+      "requiredFields": {
+        "SetProviderRequest": ["providerId", "apiType", "baseUrl"]
+      },
+      "stability": "experimental",
+      "requirement": "SDK 的 UNSTABLE 方法或 AgentCapabilities.nes 下的实验能力；不宣告并拒绝请求",
+      "coverage": "awaiting-stability",
+      "implementation": ["src/transport/acp/v1/agent.ts"],
+      "tests": [
+        "test/transport/acp-v1-agent.test.ts",
+        "test/e2e/acp-v1-lifecycle.postgres.test.ts"
+      ],
+      "findings": []
+    },
+    {
+      "method": "session/fork",
+      "receiver": "agent",
+      "schemas": ["ForkSessionResponse", "ForkSessionRequest"],
+      "requiredFields": {
+        "ForkSessionRequest": ["sessionId", "cwd"]
+      },
+      "stability": "experimental",
+      "requirement": "SDK 明确 UNSTABLE；已宣告，仍承担配置/历史隔离与回归义务",
+      "coverage": "implemented-experimental",
+      "implementation": [
+        "src/transport/acp/v1/agent.ts",
+        "src/application/session-service.ts",
+        "src/adapters/postgres/context-repository.ts",
+        "src/adapters/postgres/execution-repository.ts",
+        "migrations/0008_refused_context.sql"
+      ],
+      "tests": [
+        "test/e2e/acp-v1-lifecycle.postgres.test.ts",
+        "test/e2e/acp-mcp-input.postgres.test.ts",
+        "test/e2e/acp-configuration.postgres.test.ts",
+        "test/audit/acp-v1-sdk.audit.ts",
+        "test/e2e/acp-sdk-regressions.postgres.test.ts",
+        "test/adapters/postgres/migrate.postgres.test.ts",
+        "test/adapters/postgres/local-run.postgres.test.ts"
+      ],
+      "findings": []
+    },
+    {
+      "method": "mcp/message",
+      "receiver": "both",
+      "schemas": ["MessageMcpRequest", "MessageMcpResponse", "MessageMcpNotification"],
+      "requiredFields": {
+        "MessageMcpRequest": ["connectionId", "method"],
+        "MessageMcpNotification": ["connectionId", "method"]
+      },
+      "stability": "experimental",
+      "requirement": "SDK 明确 UNSTABLE 的 MCP-over-ACP；不宣告，不建立客户端 MCP 桥",
+      "coverage": "awaiting-stability",
+      "implementation": ["src/transport/acp/v1/agent.ts"],
+      "tests": [],
+      "findings": ["PROFILE-01"]
+    },
+    {
+      "method": "mcp/connect",
+      "receiver": "client",
+      "schemas": ["ConnectMcpRequest", "ConnectMcpResponse"],
+      "requiredFields": {
+        "ConnectMcpRequest": ["serverId"]
+      },
+      "stability": "experimental",
+      "requirement": "SDK 明确 UNSTABLE 的 MCP-over-ACP；不宣告，不建立客户端 MCP 桥",
+      "coverage": "awaiting-stability",
+      "implementation": ["src/transport/acp/v1/agent.ts"],
+      "tests": [],
+      "findings": ["PROFILE-01"]
+    },
+    {
+      "method": "mcp/disconnect",
+      "receiver": "client",
+      "schemas": ["DisconnectMcpRequest", "DisconnectMcpResponse"],
+      "requiredFields": {
+        "DisconnectMcpRequest": ["connectionId"]
+      },
+      "stability": "experimental",
+      "requirement": "SDK 明确 UNSTABLE 的 MCP-over-ACP；不宣告，不建立客户端 MCP 桥",
+      "coverage": "awaiting-stability",
+      "implementation": ["src/transport/acp/v1/agent.ts"],
+      "tests": [],
+      "findings": ["PROFILE-01"]
+    },
+    {
+      "method": "authenticate",
+      "receiver": "agent",
+      "schemas": ["AuthenticateResponse", "AuthenticateRequest"],
+      "requiredFields": {
+        "AuthenticateRequest": ["methodId"]
+      },
+      "stability": "non-experimental",
+      "requirement": "按所宣告的认证方法/退出能力使用；本服务不宣告，身份由 Identity/Gateway 管理",
+      "coverage": "architecture-excluded",
+      "implementation": ["src/transport/acp/v1/agent.ts"],
+      "tests": [
+        "test/transport/acp-v1-agent.test.ts",
+        "test/e2e/acp-v1-lifecycle.postgres.test.ts"
+      ],
+      "findings": ["A2"]
+    },
+    {
+      "method": "initialize",
+      "receiver": "agent",
+      "schemas": ["InitializeResponse", "InitializeRequest"],
+      "requiredFields": {
+        "InitializeRequest": ["protocolVersion"]
+      },
+      "stability": "non-experimental",
+      "requirement": "基线；协商版本、能力缺省与真实声明；先初始化且只初始化一次",
+      "coverage": "service-tested",
+      "implementation": ["src/transport/acp/v1/agent.ts"],
+      "tests": [
+        "test/transport/acp-v1-agent.test.ts",
+        "test/transport/http-server.test.ts",
+        "test/audit/acp-v1-sdk.audit.ts"
+      ],
+      "findings": []
+    },
+    {
+      "method": "logout",
+      "receiver": "agent",
+      "schemas": ["LogoutResponse", "LogoutRequest"],
+      "requiredFields": {
+        "LogoutRequest": []
+      },
+      "stability": "non-experimental",
+      "requirement": "按所宣告的认证方法/退出能力使用；本服务不宣告，身份由 Identity/Gateway 管理",
+      "coverage": "architecture-excluded",
+      "implementation": ["src/transport/acp/v1/agent.ts"],
+      "tests": [
+        "test/transport/acp-v1-agent.test.ts",
+        "test/e2e/acp-v1-lifecycle.postgres.test.ts"
+      ],
+      "findings": ["A2"]
+    },
+    {
+      "method": "session/cancel",
+      "receiver": "agent",
+      "schemas": ["CancelNotification"],
+      "requiredFields": {
+        "CancelNotification": ["sessionId"]
+      },
+      "stability": "non-experimental",
+      "requirement": "基线通知；取消执行并使在途 Prompt 返回 cancelled，即便底层抛错",
+      "coverage": "service-tested",
+      "implementation": [
+        "src/transport/acp/v1/agent.ts",
+        "src/application/application.ts",
+        "src/application/run-supervisor.ts",
+        "src/application/turn-runner.ts"
+      ],
+      "tests": [
+        "test/e2e/acp-v1-lifecycle.postgres.test.ts",
+        "test/e2e/acp-permissions.postgres.test.ts",
+        "test/e2e/acp-output.postgres.test.ts",
+        "test/audit/acp-v1-sdk.audit.ts",
+        "test/e2e/acp-sdk-regressions.postgres.test.ts"
+      ],
+      "findings": [],
+      "resolvedFindings": ["GAP-03"]
+    },
+    {
+      "method": "session/close",
+      "receiver": "agent",
+      "schemas": ["CloseSessionResponse", "CloseSessionRequest"],
+      "requiredFields": {
+        "CloseSessionRequest": ["sessionId"]
+      },
+      "stability": "non-experimental",
+      "requirement": "宣告 close 后必须取消活动工作，然后释放会话资源",
+      "coverage": "service-tested",
+      "implementation": [
+        "src/transport/acp/v1/agent.ts",
+        "src/application/application.ts",
+        "src/application/run-supervisor.ts",
+        "src/transport/acp/session-output.ts"
+      ],
+      "tests": [
+        "test/e2e/acp-v1-lifecycle.postgres.test.ts",
+        "test/audit/acp-v1-sdk.audit.ts",
+        "test/e2e/acp-sdk-regressions.postgres.test.ts",
+        "test/transport/session-output.test.ts"
+      ],
+      "findings": [],
+      "resolvedFindings": ["GAP-02"]
+    },
+    {
+      "method": "session/delete",
+      "receiver": "agent",
+      "schemas": ["DeleteSessionResponse", "DeleteSessionRequest"],
+      "requiredFields": {
+        "DeleteSessionRequest": ["sessionId"]
+      },
+      "stability": "non-experimental",
+      "requirement": "宣告 delete 后适用；从列表删除，保留权限与幂等性；持久审计保留",
+      "coverage": "service-tested",
+      "implementation": [
+        "src/transport/acp/v1/agent.ts",
+        "src/application/session-service.ts",
+        "src/application/application.ts"
+      ],
+      "tests": [
+        "test/e2e/acp-v1-lifecycle.postgres.test.ts",
+        "test/application/session-service.test.ts",
+        "test/audit/acp-v1-sdk.audit.ts",
+        "test/e2e/acp-sdk-regressions.postgres.test.ts",
+        "test/transport/session-output.test.ts"
+      ],
+      "findings": []
+    },
+    {
+      "method": "session/list",
+      "receiver": "agent",
+      "schemas": ["ListSessionsResponse", "ListSessionsRequest"],
+      "requiredFields": {
+        "ListSessionsRequest": []
+      },
+      "stability": "non-experimental",
+      "requirement": "宣告 list 后适用；可选 cwd/cursor，分页元数据",
+      "coverage": "service-tested",
+      "implementation": [
+        "src/transport/acp/v1/agent.ts",
+        "src/application/session-service.ts",
+        "src/adapters/postgres/session-repository.ts"
+      ],
+      "tests": [
+        "test/e2e/acp-v1-lifecycle.postgres.test.ts",
+        "test/e2e/acp-output.postgres.test.ts",
+        "test/audit/acp-v1-sdk.audit.ts"
+      ],
+      "findings": []
+    },
+    {
+      "method": "session/load",
+      "receiver": "agent",
+      "schemas": ["LoadSessionResponse", "LoadSessionRequest"],
+      "requiredFields": {
+        "LoadSessionRequest": ["mcpServers", "cwd", "sessionId"]
+      },
+      "stability": "non-experimental",
+      "requirement": "宣告 loadSession 后适用；完整历史在响应之前回放；恢复配置与 MCP",
+      "coverage": "profile-deviation",
+      "implementation": ["src/transport/acp/v1/agent.ts", "src/application/session-service.ts"],
+      "tests": [
+        "test/e2e/acp-v1-lifecycle.postgres.test.ts",
+        "test/e2e/acp-output.postgres.test.ts",
+        "test/audit/acp-v1-sdk.audit.ts",
+        "test/e2e/acp-sdk-regressions.postgres.test.ts"
+      ],
+      "findings": ["PROFILE-01"]
+    },
+    {
+      "method": "session/new",
+      "receiver": "agent",
+      "schemas": ["NewSessionResponse", "NewSessionRequest"],
+      "requiredFields": {
+        "NewSessionRequest": ["cwd", "mcpServers"]
+      },
+      "stability": "non-experimental",
+      "requirement": "基线；创建独立会话；绝对 cwd；支持客户端 stdio MCP",
+      "coverage": "profile-deviation",
+      "implementation": [
+        "src/transport/acp/v1/agent.ts",
+        "src/application/session-service.ts",
+        "src/domain/mcp.ts"
+      ],
+      "tests": [
+        "test/e2e/acp-v1-lifecycle.postgres.test.ts",
+        "test/e2e/acp-mcp-input.postgres.test.ts",
+        "test/audit/acp-v1-sdk.audit.ts"
+      ],
+      "findings": ["PROFILE-01"]
+    },
+    {
+      "method": "session/prompt",
+      "receiver": "agent",
+      "schemas": ["PromptResponse", "PromptRequest"],
+      "requiredFields": {
+        "PromptRequest": ["sessionId", "prompt"]
+      },
+      "stability": "non-experimental",
+      "requirement": "基线；内容能力门控、更新先于最终响应；全部 StopReason 语义，包括 refusal 上下文排除",
+      "coverage": "service-tested",
+      "implementation": [
+        "src/transport/acp/v1/agent.ts",
+        "src/application/turn-runner.ts",
+        "src/application/context-builder.ts",
+        "src/adapters/postgres/context-repository.ts",
+        "src/adapters/postgres/context-repository.ts",
+        "src/adapters/postgres/execution-repository.ts",
+        "migrations/0008_refused_context.sql"
+      ],
+      "tests": [
+        "test/e2e/acp-v1-lifecycle.postgres.test.ts",
+        "test/e2e/acp-output.postgres.test.ts",
+        "test/e2e/acp-multimodal.postgres.test.ts",
+        "test/transport/acp-v1-agent.test.ts",
+        "test/audit/acp-v1-sdk.audit.ts",
+        "test/e2e/acp-sdk-regressions.postgres.test.ts",
+        "test/adapters/postgres/migrate.postgres.test.ts",
+        "test/adapters/postgres/local-run.postgres.test.ts"
+      ],
+      "findings": [],
+      "resolvedFindings": ["GAP-01", "GAP-03"]
+    },
+    {
+      "method": "session/resume",
+      "receiver": "agent",
+      "schemas": ["ResumeSessionResponse", "ResumeSessionRequest"],
+      "requiredFields": {
+        "ResumeSessionRequest": ["sessionId", "cwd"]
+      },
+      "stability": "non-experimental",
+      "requirement": "宣告 resume 后适用；恢复会话而不回放旧消息；mcpServers 可省略",
+      "coverage": "profile-deviation",
+      "implementation": ["src/transport/acp/v1/agent.ts", "src/application/session-service.ts"],
+      "tests": [
+        "test/e2e/acp-v1-lifecycle.postgres.test.ts",
+        "test/e2e/acp-mcp-input.postgres.test.ts",
+        "test/audit/acp-v1-sdk.audit.ts",
+        "test/e2e/acp-sdk-regressions.postgres.test.ts"
+      ],
+      "findings": ["PROFILE-01"]
+    },
+    {
+      "method": "session/set_config_option",
+      "receiver": "agent",
+      "schemas": ["SetSessionConfigOptionResponse", "SetSessionConfigOptionRequest"],
+      "requiredFields": {
+        "SetSessionConfigOptionRequest": ["sessionId", "configId"]
+      },
+      "stability": "non-experimental",
+      "requirement": "选择已提供的配置值，响应完整 configOptions；boolean 受客户端能力协商限制",
+      "coverage": "service-tested",
+      "implementation": [
+        "src/transport/acp/v1/agent.ts",
+        "src/domain/session-configuration.ts",
+        "src/application/session-configuration.ts"
+      ],
+      "tests": [
+        "test/e2e/acp-configuration.postgres.test.ts",
+        "test/domain/session-configuration.test.ts",
+        "test/audit/acp-v1-sdk.audit.ts"
+      ],
+      "findings": []
+    },
+    {
+      "method": "session/set_mode",
+      "receiver": "agent",
+      "schemas": ["SetSessionModeResponse", "SetSessionModeRequest"],
+      "requiredFields": {
+        "SetSessionModeRequest": ["sessionId", "modeId"]
+      },
+      "stability": "non-experimental",
+      "requirement": "若返回 modes 则可设置其中的 modeId；通知与实际执行一致",
+      "coverage": "service-tested",
+      "implementation": [
+        "src/transport/acp/v1/agent.ts",
+        "src/application/session-configuration.ts",
+        "src/transport/acp/configuration.ts"
+      ],
+      "tests": [
+        "test/e2e/acp-configuration.postgres.test.ts",
+        "test/transport/acp-v1-agent.test.ts",
+        "test/audit/acp-v1-sdk.audit.ts"
+      ],
+      "findings": []
+    },
+    {
+      "method": "elicitation/complete",
+      "receiver": "client",
+      "schemas": ["CompleteElicitationNotification"],
+      "requiredFields": {
+        "CompleteElicitationNotification": ["elicitationId"]
+      },
+      "stability": "non-experimental",
+      "requirement": "非实验能力；按客户端 elicitation.form/url 能力发起追问，URL 完成时通知；F07 用户批准暂缓",
+      "coverage": "approved-deferral",
+      "implementation": [],
+      "tests": [],
+      "findings": ["F07"]
+    },
+    {
+      "method": "elicitation/create",
+      "receiver": "client",
+      "schemas": ["CreateElicitationRequest", "CreateElicitationResponse"],
+      "requiredFields": {
+        "CreateElicitationRequest": ["message"]
+      },
+      "stability": "non-experimental",
+      "requirement": "非实验能力；按客户端 elicitation.form/url 能力发起追问，URL 完成时通知；F07 用户批准暂缓",
+      "coverage": "approved-deferral",
+      "implementation": [],
+      "tests": [],
+      "findings": ["F07"]
+    },
+    {
+      "method": "fs/read_text_file",
+      "receiver": "client",
+      "schemas": ["ReadTextFileRequest", "ReadTextFileResponse"],
+      "requiredFields": {
+        "ReadTextFileRequest": ["sessionId", "path"]
+      },
+      "stability": "non-experimental",
+      "requirement": "客户端可选能力；仅客户端宣告对应 fs/terminal 能力时才能调用；本平台执行归属远程 Runtime",
+      "coverage": "architecture-excluded",
+      "implementation": ["src/transport/acp/v1/agent.ts"],
+      "tests": [],
+      "findings": ["A3"]
+    },
+    {
+      "method": "fs/write_text_file",
+      "receiver": "client",
+      "schemas": ["WriteTextFileRequest", "WriteTextFileResponse"],
+      "requiredFields": {
+        "WriteTextFileRequest": ["sessionId", "path", "content"]
+      },
+      "stability": "non-experimental",
+      "requirement": "客户端可选能力；仅客户端宣告对应 fs/terminal 能力时才能调用；本平台执行归属远程 Runtime",
+      "coverage": "architecture-excluded",
+      "implementation": ["src/transport/acp/v1/agent.ts"],
+      "tests": [],
+      "findings": ["A3"]
+    },
+    {
+      "method": "session/request_permission",
+      "receiver": "client",
+      "schemas": ["RequestPermissionRequest", "RequestPermissionResponse"],
+      "requiredFields": {
+        "RequestPermissionRequest": ["sessionId", "toolCall", "options"]
+      },
+      "stability": "non-experimental",
+      "requirement": "执行敏感操作前反向请求；选项必须有效；拒绝/取消不能执行或保存 allow 规则",
+      "coverage": "service-tested",
+      "implementation": [
+        "src/transport/acp/v1/agent.ts",
+        "src/application/tool-permissions.ts",
+        "src/application/permission-connections.ts",
+        "src/transport/acp/permission-request.ts"
+      ],
+      "tests": [
+        "test/e2e/acp-permissions.postgres.test.ts",
+        "test/transport/permission-request.test.ts",
+        "test/audit/acp-v1-sdk.audit.ts"
+      ],
+      "findings": []
+    },
+    {
+      "method": "session/update",
+      "receiver": "client",
+      "schemas": ["SessionNotification"],
+      "requiredFields": {
+        "SessionNotification": ["sessionId", "update"]
+      },
+      "stability": "non-experimental",
+      "requirement": "基线反向通知；11 类非实验更新的格式、顺序、回放及业务数据",
+      "coverage": "partially-tested",
+      "implementation": ["src/transport/acp/v1/agent.ts", "src/transport/acp/session-output.ts"],
+      "tests": [
+        "test/e2e/acp-streaming.postgres.test.ts",
+        "test/e2e/acp-tool-progress.postgres.test.ts",
+        "test/e2e/acp-tool-presentation.postgres.test.ts",
+        "test/e2e/acp-plan.postgres.test.ts",
+        "test/e2e/acp-commands.postgres.test.ts",
+        "test/e2e/acp-cost.postgres.test.ts",
+        "test/e2e/acp-configuration.postgres.test.ts",
+        "test/audit/acp-v1-sdk.audit.ts"
+      ],
+      "findings": ["COVERAGE-02"]
+    },
+    {
+      "method": "terminal/create",
+      "receiver": "client",
+      "schemas": ["CreateTerminalRequest", "CreateTerminalResponse"],
+      "requiredFields": {
+        "CreateTerminalRequest": ["sessionId", "command"]
+      },
+      "stability": "non-experimental",
+      "requirement": "客户端可选能力；仅客户端宣告对应 fs/terminal 能力时才能调用；本平台执行归属远程 Runtime",
+      "coverage": "architecture-excluded",
+      "implementation": ["src/transport/acp/v1/agent.ts"],
+      "tests": [],
+      "findings": ["A3"]
+    },
+    {
+      "method": "terminal/kill",
+      "receiver": "client",
+      "schemas": ["KillTerminalRequest", "KillTerminalResponse"],
+      "requiredFields": {
+        "KillTerminalRequest": ["sessionId", "terminalId"]
+      },
+      "stability": "non-experimental",
+      "requirement": "客户端可选能力；仅客户端宣告对应 fs/terminal 能力时才能调用；本平台执行归属远程 Runtime",
+      "coverage": "architecture-excluded",
+      "implementation": ["src/transport/acp/v1/agent.ts"],
+      "tests": [],
+      "findings": ["A3"]
+    },
+    {
+      "method": "terminal/output",
+      "receiver": "client",
+      "schemas": ["TerminalOutputRequest", "TerminalOutputResponse"],
+      "requiredFields": {
+        "TerminalOutputRequest": ["sessionId", "terminalId"]
+      },
+      "stability": "non-experimental",
+      "requirement": "客户端可选能力；仅客户端宣告对应 fs/terminal 能力时才能调用；本平台执行归属远程 Runtime",
+      "coverage": "architecture-excluded",
+      "implementation": ["src/transport/acp/v1/agent.ts"],
+      "tests": [],
+      "findings": ["A3"]
+    },
+    {
+      "method": "terminal/release",
+      "receiver": "client",
+      "schemas": ["ReleaseTerminalRequest", "ReleaseTerminalResponse"],
+      "requiredFields": {
+        "ReleaseTerminalRequest": ["sessionId", "terminalId"]
+      },
+      "stability": "non-experimental",
+      "requirement": "客户端可选能力；仅客户端宣告对应 fs/terminal 能力时才能调用；本平台执行归属远程 Runtime",
+      "coverage": "architecture-excluded",
+      "implementation": ["src/transport/acp/v1/agent.ts"],
+      "tests": [],
+      "findings": ["A3"]
+    },
+    {
+      "method": "terminal/wait_for_exit",
+      "receiver": "client",
+      "schemas": ["WaitForTerminalExitRequest", "WaitForTerminalExitResponse"],
+      "requiredFields": {
+        "WaitForTerminalExitRequest": ["sessionId", "terminalId"]
+      },
+      "stability": "non-experimental",
+      "requirement": "客户端可选能力；仅客户端宣告对应 fs/terminal 能力时才能调用；本平台执行归属远程 Runtime",
+      "coverage": "architecture-excluded",
+      "implementation": ["src/transport/acp/v1/agent.ts"],
+      "tests": [],
+      "findings": ["A3"]
+    },
+    {
+      "method": "$/cancel_request",
+      "receiver": "protocol",
+      "schemas": ["CancelRequestNotification"],
+      "requiredFields": {
+        "CancelRequestNotification": ["requestId"]
+      },
+      "stability": "non-experimental",
+      "requirement": "协议通知；允许不停止业务，但原请求必须得到合法结果或 -32800；不能冒充 session/cancel",
+      "coverage": "service-tested",
+      "implementation": [
+        "node_modules/@agentclientprotocol/sdk/dist/jsonrpc.js",
+        "src/transport/acp/v1/agent.ts"
+      ],
+      "tests": ["test/audit/acp-v1-sdk.audit.ts"],
+      "findings": []
+    }
+  ],
+  "verification": {
+    "unit": {
+      "filesPassed": 83,
+      "testsPassed": 958
+    },
+    "postgres": {
+      "filesPassed": 32,
+      "testsPassed": 237,
+      "testsSkipped": 0
+    },
+    "sdkAudit": {
+      "testsPassed": 9,
+      "testsFailed": 0,
+      "exitCode": 0,
+      "failedProbeIds": []
+    },
+    "docker": {
+      "scenariosPassed": 3,
+      "modelRequests": 4,
+      "toolCalls": 1,
+      "cleanup": "completed",
+      "driver": "scripts/sdk-regressions-docker.mjs"
+    },
+    "scope": "ACP production image, private PostgreSQL and SDK HTTP clients with controlled model/MCP dependencies; full-platform deployment E2E not rerun",
+    "staticChecks": ["typecheck", "lint", "build", "format:check", "git diff --check"],
+    "progressFixtures": {
+      "testsPassed": 8,
+      "testsFailed": 0
+    }
+  },
+  "initialVerification": {
+    "unit": {
+      "filesPassed": 83,
+      "testsPassed": 956
+    },
+    "postgres": {
+      "filesPassed": 31,
+      "testsPassed": 224,
+      "testsSkipped": 0
+    },
+    "sdkAudit": {
+      "testsPassed": 6,
+      "testsFailed": 3,
+      "exitCode": 1,
+      "failedProbeIds": ["GAP-01", "GAP-02", "GAP-03"]
+    },
+    "scope": "Service-owned wire/application/PostgreSQL with deterministic model/Tool ports; no fresh full-platform deployment E2E"
+  }
+}

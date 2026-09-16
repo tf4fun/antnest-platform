@@ -1,5 +1,11 @@
 # ACP v1 功能补齐与 Goose 复用方案
 
+> 最新审计与修复（2026-09-16）：按用户确认，以最新正式 SDK `1.4.0` 为准。
+> [逐接口反向审计](acp-v1-sdk-audit.md) 已枚举 42 个方法，refusal 上下文、close 订阅释放、
+> 未知工具效果取消响应三个失败均已修复。958 项单元/组件、237 项 PostgreSQL、9 项 SDK
+> 审计及 3 场景生产 Docker 验证通过；取消线上的确认不修改内部 unresolved 和恢复保护。
+> F07、PROFILE-01、A2/A3 及草稿范围决定继续保留，不据此宣告完整平台符合全部 SDK 能力。
+
 > 执行边界更新（2026-09-15）：下文为此前 F01-F10 的历史交付计划和证据，不代表本轮重构已验收。
 > `acquire-run`、Controller 固定凭证快照及完成回执不再是当前合同；ACP 本地拥有执行和协议准入，
 > Controller 发布管理配置。当前方案与进度见 [执行边界方案](../../../docs/controller-acp-execution-boundary-plan.md)；
@@ -266,7 +272,7 @@ F02 部署联调已完成（2026-09-08）。入口为 `make e2e-tool-progress`�
 
 1. 通过真实 Gateway / Console BFF 登录、创建用户、模型配置、模板和 Agent。ACP v1/v2 各覆盖原生 Bash 与托管 stdio MCP 的成功、失败、取消，共 12 条路径；使用确定性 SSE 模型，不依赖外部 Provider。
 2. 工具先输出预览再等待测试门闩，确保客户端在结束前收到内容；成功路径断线重连后逐项比较首段回放，所有路径完成后重新连接比较完整 Tool 序列与唯一 ID。最终模型输入不包含托管工具预览 canary。
-3. 四条取消路径均验证真实执行停止，且保留未确认效果：v1 Tool `failed` / Prompt -32023，v2 Tool `cancelled` / `_unresolved`。后续 admission 仍拒绝 `agent_busy`。Bash 非零退出按合同是完成的调用，其 exit_code 由模型替身严格校验，不错误归类为传输失败。
+3. 历史记录（2026-09-08；v1 取消响应已于 2026-09-16 改为 `cancelled`，当前无停止证据的 admission 为 `runtime_barrier_required`，见最新审计）：四条取消路径均验证真实执行停止，且保留未确认效果：v1 Tool `failed` / Prompt -32023，v2 Tool `cancelled` / `_unresolved`。后续 admission 仍拒绝 `agent_busy`。Bash 非零退出按合同是完成的调用，其 exit_code 由模型替身严格校验，不错误归类为传输失败。
 4. Jaeger 的 12 条链路均具有 Gateway 祖先、ACP 与 Runtime 子调用、每 Run 一次信息/工具目录读取；每条 ACP dispatch 和 Runtime 实际工具调用都恰好一次。20 次模型请求均校验真实工具结果，Trace 不含预览或测试凭证。仅保留聚合结果，不提交原始 Trace / 事件转储。
 5. 单次只保留一组 Agent，使用独立 Compose 项目和一套共享 PostgreSQL 实例内的服务自有库；测试及失败重试均清理自有容器、volume、network，最终退出码包含残留审计。既有验收实例未修改。
 

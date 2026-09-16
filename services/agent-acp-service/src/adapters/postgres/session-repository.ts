@@ -192,7 +192,7 @@ export class PostgresSessionRepository implements SessionRepository {
       );
       await client.query(
         `INSERT INTO session_messages(
-           id, session_id, run_id, sequence, kind, visible, payload, created_at
+           id, session_id, run_id, sequence, kind, visible, payload, created_at, context_excluded
          )
          SELECT $2 || ':message:' || sequence::text,
                 $2, NULL, sequence, kind, visible,
@@ -205,7 +205,7 @@ export class PostgresSessionRepository implements SessionRepository {
                   )
                   ELSE payload
                 END,
-                created_at
+                created_at, context_excluded
            FROM session_messages
           WHERE session_id = $1
           ORDER BY sequence`,

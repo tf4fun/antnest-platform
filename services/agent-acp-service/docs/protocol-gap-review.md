@@ -1,5 +1,9 @@
 # ACP 接口与 Goose 差异审查
 
+> 当前入口（2026-09-16）：最新 [SDK v1 逐接口审计](acp-v1-sdk-audit.md) 以正式 SDK
+> `1.4.0` 为权威，枚举 42 个方法；本轮复现的三个语义失败已修复，9 项审计全绿。下文保留此前 Goose 对照及修复历史，
+> 不将历史缺口表当作今天的实现状态，也不以官网滞后的描述覆盖最新 SDK 定义。
+
 > 执行边界更新（2026-09-15）：本文件记录此前协议补齐基线，不作为本轮重构验收结果。
 > Controller 逐 Run admission/凭证/finish 已清退；ACP 按本地发布投影执行，最新责任与联调状态以
 > [执行边界方案](../../../docs/controller-acp-execution-boundary-plan.md) 为准；Agent UI 暂缓。

@@ -50,7 +50,7 @@ describe("production execution configuration composition", () => {
       );
       const lifetime = new AbortController();
       const pendingOutput = Promise.withResolvers<SessionOutputSnapshot>();
-      let attachment: Promise<void> | undefined;
+      let attachment: Promise<boolean> | undefined;
       try {
         await expect(
           components.application.assertAccess({ binding: binding() }),

@@ -51,7 +51,18 @@ export class PostgresExecutionRepository
           SET state = $2, terminal_class = $2, executor_state = $3,
               tool_effect_state = $4, unknown_effect_source = $5,
               stop_reason = $6, error_class = $7, updated_at = $8
-        WHERE id = $1 AND state = 'running' RETURNING id),
+        WHERE id = $1 AND state = 'running' RETURNING id, session_id),
+       refused_messages AS (
+         UPDATE session_messages SET context_excluded = true
+         FROM finished WHERE session_messages.session_id = finished.session_id
+           AND session_messages.run_id = finished.id AND $6 = 'refusal'
+         RETURNING session_messages.session_id, session_messages.sequence
+       ),
+       invalidated_checkpoints AS (
+         DELETE FROM context_checkpoints USING refused_messages
+         WHERE context_checkpoints.session_id = refused_messages.session_id
+           AND context_checkpoints.through_sequence >= refused_messages.sequence
+       ),
        cancelled_permissions AS (
          UPDATE tool_permissions SET decision = 'cancelled', reason = 'run_finished', decided_at = $8
          FROM finished WHERE tool_permissions.run_id = finished.id AND decision IS NULL

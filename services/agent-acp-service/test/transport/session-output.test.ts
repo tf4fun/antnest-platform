@@ -11,6 +11,80 @@ const message = (text: string): SessionEvent => ({
 });
 
 describe("Session output delivery", () => {
+  it("detaches every connection for one Session without removing another Session", async () => {
+    const streams = new SessionOutputStreams();
+    const stop = new AbortController();
+    const reads = [0, 1, 2].map(() =>
+      vi.fn(() => Promise.resolve({ sequence: 0, events: [], state: idle })),
+    );
+    try {
+      for (const [index, read] of reads.entries()) {
+        await streams.attach({
+          identity: binding(),
+          key: index < 2 ? "closed" : "other",
+          connectionId: String(index),
+          read,
+          send: vi.fn().mockResolvedValue(undefined),
+          signal: stop.signal,
+          onFailure: vi.fn(),
+        });
+      }
+      streams.detach("closed");
+      streams.detach("closed");
+      streams.invalidateOrganization(binding().organizationId);
+      await streams.flush("other");
+      expect(reads.map((read) => read.mock.calls.length)).toEqual([1, 1, 2]);
+      await streams.attach({
+        identity: binding(),
+        key: "closed",
+        connectionId: "restored",
+        read: reads[0]!,
+        send: vi.fn().mockResolvedValue(undefined),
+        signal: stop.signal,
+        onFailure: vi.fn(),
+      });
+      expect(reads[0]).toHaveBeenCalledTimes(2);
+    } finally {
+      stop.abort();
+    }
+  });
+
+  it("does not resurrect an attachment that was replacing a subscription when the Session detached", async () => {
+    const streams = new SessionOutputStreams();
+    const stop = new AbortController();
+    const gate = Promise.withResolvers<SessionOutputSnapshot>();
+    const read = vi
+      .fn<() => Promise<SessionOutputSnapshot>>()
+      .mockResolvedValueOnce({ sequence: 0, events: [], state: idle })
+      .mockImplementation(() => gate.promise);
+    const onFailure = vi.fn();
+    const input = {
+      identity: binding(),
+      key: "s",
+      connectionId: "c",
+      read,
+      send: vi.fn().mockResolvedValue(undefined),
+      signal: stop.signal,
+      onFailure,
+    };
+    try {
+      await streams.attach(input);
+      streams.invalidate("s");
+      const replacing = streams.attach(input);
+      streams.detach("s");
+      gate.resolve({ sequence: 1, events: [message("late")], state: idle });
+      await replacing;
+      streams.invalidateOrganization(binding().organizationId);
+      await streams.flush("s");
+      expect(read).toHaveBeenCalledTimes(2);
+      expect(input.send).not.toHaveBeenCalledWith(message("late"));
+      expect(onFailure).not.toHaveBeenCalled();
+    } finally {
+      gate.resolve({ sequence: 0, events: [], state: idle });
+      stop.abort();
+    }
+  });
+
   it("publishes current configuration on organization changes without replaying historical settings", async () => {
     const streams = new SessionOutputStreams();
     const stop = new AbortController();

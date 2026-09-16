@@ -1,4 +1,5 @@
 import type { ConnectionBinding } from "../../domain/types.js";
+import { DomainError } from "../../domain/errors.js";
 import {
   isExecutionAccessRevoked,
   type ExecutionAccessSnapshot,
@@ -31,18 +32,30 @@ export function sessionOutputKey(binding: ConnectionBinding, sessionId: string):
 // cursor and state, so replay/live handoff cannot lose or duplicate an event.
 export class SessionOutputStreams {
   private readonly subscriptions = new Set<OutputSubscription>();
+  private readonly attachments = new Set<{ input: OutputInput; cancelled: boolean }>();
 
-  public async attach(input: OutputInput): Promise<void> {
+  public async attach(input: OutputInput): Promise<boolean> {
+    const attachment = { input, cancelled: false };
+    this.attachments.add(attachment);
+    try {
+      return await this.attachCurrent(input, () => attachment.cancelled);
+    } finally {
+      this.attachments.delete(attachment);
+    }
+  }
+
+  private async attachCurrent(input: OutputInput, cancelled: () => boolean): Promise<boolean> {
     for (const current of this.subscriptions) {
       if (
         input.keepExisting === true &&
         current.input.key === input.key &&
         current.input.connectionId === input.connectionId
       )
-        return;
+        return true;
       if (current.input.key === input.key && current.input.connectionId === input.connectionId) {
         current.useSender(input.send);
         await current.flush();
+        if (cancelled()) return false;
         const cursor = current.cursor;
         const previousConfiguration = current.configurationFingerprint;
         if (previousConfiguration !== undefined) input = { ...input, previousConfiguration };
@@ -51,6 +64,7 @@ export class SessionOutputStreams {
         current.close();
       }
     }
+    if (cancelled() || input.signal.aborted) return false;
     const subscription = new OutputSubscription(input, () =>
       this.subscriptions.delete(subscription),
     );
@@ -58,6 +72,16 @@ export class SessionOutputStreams {
     subscription.start();
     await subscription.prepared.promise;
     if (input.waitForDelivery !== false) await subscription.flush();
+    return !cancelled() && !subscription.closed;
+  }
+
+  public detach(key: string): void {
+    for (const attachment of this.attachments) {
+      if (attachment.input.key === key) attachment.cancelled = true;
+    }
+    for (const subscription of this.subscriptions) {
+      if (subscription.input.key === key) subscription.close();
+    }
   }
 
   public invalidate(key: string): void {
@@ -85,12 +109,19 @@ export class SessionOutputStreams {
   }
 
   public disconnect(connectionId: string): void {
+    for (const attachment of this.attachments) {
+      if (attachment.input.connectionId === connectionId) attachment.cancelled = true;
+    }
     for (const subscription of this.subscriptions) {
       if (subscription.input.connectionId === connectionId) subscription.close();
     }
   }
 
   public revokeAccess(snapshot: ExecutionAccessSnapshot): void {
+    for (const attachment of this.attachments) {
+      if (isExecutionAccessRevoked(snapshot, attachment.input.identity))
+        attachment.cancelled = true;
+    }
     for (const subscription of this.subscriptions) {
       if (isExecutionAccessRevoked(snapshot, subscription.input.identity)) subscription.close();
     }
@@ -98,6 +129,9 @@ export class SessionOutputStreams {
 }
 
 class OutputSubscription {
+  public get closed(): boolean {
+    return this.stop.signal.aborted;
+  }
   public get configurationFingerprint(): string | undefined {
     return this.configuration;
   }
@@ -158,7 +192,9 @@ class OutputSubscription {
       .catch((error: unknown) => {
         const report = !this.stop.signal.aborted;
         this.close();
-        if (report) this.input.onFailure(error);
+        // Deletion invalidates this Session, not every Session on its transport.
+        if (report && !(error instanceof DomainError && error.code === "session_not_found"))
+          this.input.onFailure(error);
       })
       .finally(() => {
         this.pending = undefined;

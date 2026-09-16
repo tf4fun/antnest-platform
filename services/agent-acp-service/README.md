@@ -218,6 +218,10 @@ npm test
 npm run test:postgres
 ```
 
+The [SDK audit and regression report](docs/acp-v1-sdk-audit.md) lists all 42 SDK
+methods and gives commands for the isolated v1 audit and production-image Docker
+regressions. The audit requires its own disposable database ending in `_audit`.
+
 Run these commands from this service directory. If execution contract definitions
 change, regenerate the shared schemas with
 `node --import tsx scripts/execution-contract.mjs --write`, then review the diff

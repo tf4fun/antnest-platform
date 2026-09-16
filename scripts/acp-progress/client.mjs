@@ -116,10 +116,10 @@ async function scenario(version, source, ending, agent, gate) {
       const response = await pending;
       if (version === 1) {
         if (ending === "cancel")
-          assert.equal(
-            response.error?.code,
-            -32023,
-            "aborted HTTP result must retain unknown effects",
+          assert.deepEqual(
+            response.result,
+            { stopReason: "cancelled" },
+            "v1 confirms cancellation while retaining unknown effects internally",
           );
         else assert.equal(response.result?.stopReason, "end_turn");
       } else {
@@ -161,7 +161,9 @@ async function scenario(version, source, ending, agent, gate) {
           sessionId,
           prompt: [{ type: "text", text: "must remain blocked" }],
         }),
-        (error) => error.code === -32021 && error.data?.code === "agent_busy",
+        (error) =>
+          error.code === -32020 &&
+          error.data?.code === "runtime_barrier_required",
       );
     }
     outcomes.push({

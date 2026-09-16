@@ -34,12 +34,13 @@ export class PostgresContextRepository implements ContextRepository {
          FROM session_messages
         WHERE session_id = $1
           AND sequence > $2
+          AND NOT context_excluded
           AND kind IN ('user_message', 'agent_message', 'agent_thought', 'environment_change', 'tool_call')
         ORDER BY sequence`,
       [sessionId, checkpoint?.throughSequence ?? 0],
     );
     const plan = await this.kernel.query<{ payload: StoredSessionEvent }>(
-      "SELECT payload FROM session_messages WHERE session_id = $1 AND kind = 'plan' ORDER BY sequence DESC LIMIT 1",
+      "SELECT payload FROM session_messages WHERE session_id = $1 AND kind = 'plan' AND NOT context_excluded ORDER BY sequence DESC LIMIT 1",
       [sessionId],
     );
     const latestPlan =

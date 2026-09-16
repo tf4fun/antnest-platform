@@ -203,6 +203,10 @@ stored context reconstruction; see [Model reasoning history](model-reasoning-his
    before choosing a completed outcome.
 9. Persist the exact stop reason and terminal Run facts locally. Release the
    Agent slot after completion; no Controller finish receipt is involved.
+   A refusal atomically excludes that Run's messages from future model context
+   and invalidates summaries that contain them. Transcript/audit content remains
+   intact; forks inherit exclusion flags. Migration 0008 also repairs historical
+   refusals and inherited fork messages without excluding the fork's own turns.
 
 Tool calls are not replayed automatically after timeout or process crash.
 Runtime MCP calls may leave `tool_effect_state=unknown` after an unconfirmed
@@ -220,6 +224,14 @@ An explicit `unknown` declaration always remains unknown, even with a malformed
 source declaration. A rejected `callTool` promise is also `unknown`, because the adapter
 cannot prove whether the server executed the request. Once a Tool is unknown,
 the Run becomes `unresolved` before another model request can be issued.
+For `cancelled_tool_outcome_unknown`, ACP v1 confirms `stopReason: cancelled`
+while retaining these unknown-effect facts and Runtime stopping protection.
+Other unresolved outcomes remain errors; draft v2 keeps `_unresolved`.
+
+Session close drains final output and detaches all of that Session's output and
+permission subscriptions across connections; delete also detaches them. Pending
+output attachments cannot resurrect a detached subscription. Other Sessions on
+the transport remain usable, and load/resume may establish a new subscription.
 
 ## Platform-Owned MCP
 

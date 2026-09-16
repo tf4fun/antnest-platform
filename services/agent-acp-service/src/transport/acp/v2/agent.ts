@@ -65,7 +65,7 @@ export function createAcpV2Agent({
   };
   const attach = async (sessionId: string) => {
     const output = await mapError(() => application.readSessionOutput({ binding, sessionId }));
-    await outputs.attach({
+    const attached = await outputs.attach({
       keepExisting: true,
       configurationInResponse: true,
       identity: binding,
@@ -86,7 +86,7 @@ export function createAcpV2Agent({
           connection.client.notify(acp.methods.client.session.update, { sessionId, update }),
         ),
     });
-    attachPermission(sessionId);
+    if (attached) attachPermission(sessionId);
   };
   return acp
     .agent({ name: "antnest-agent-acp-service" })
@@ -154,6 +154,7 @@ export function createAcpV2Agent({
     .onRequest(acp.methods.agent.session.delete, ({ params, requestId }) =>
       dispatch("session/delete", params, requestId, async () => {
         await mapError(() => application.deleteSession({ binding, sessionId: params.sessionId }));
+        outputs.detach(sessionOutputKey(binding, params.sessionId));
         permissions?.detach(params.sessionId);
         return {};
       }),
@@ -204,7 +205,7 @@ export function createAcpV2Agent({
           );
         }
         const initialState = result.replay.find((event) => event.kind === "state");
-        await outputs.attach({
+        const attached = await outputs.attach({
           key: sessionOutputKey(binding, params.sessionId),
           identity: binding,
           connectionId: binding.connectionId,
@@ -227,7 +228,7 @@ export function createAcpV2Agent({
               }),
             ),
         });
-        attachPermission(params.sessionId);
+        if (attached) attachPermission(params.sessionId);
         return sessionSetup(params.sessionId);
       }),
     )
@@ -255,6 +256,10 @@ export function createAcpV2Agent({
     .onRequest(acp.methods.agent.session.close, ({ params, requestId }) =>
       dispatch("session/close", params, requestId, async () => {
         await mapError(() => application.closeSession({ binding, sessionId: params.sessionId }));
+        const key = sessionOutputKey(binding, params.sessionId);
+        outputs.invalidate(key);
+        await outputs.flush(key);
+        outputs.detach(key);
         permissions?.detach(params.sessionId);
         return {};
       }),

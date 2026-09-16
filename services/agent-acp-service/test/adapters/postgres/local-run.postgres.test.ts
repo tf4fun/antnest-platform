@@ -68,6 +68,45 @@ describe.skipIf(url === undefined)("local Run persistence", () => {
     return { runId, sessionId, snapshot };
   }
 
+  it("commits refusal isolation and checkpoint invalidation atomically with the terminal Run", async () => {
+    const { runId, sessionId } = await accept();
+    await pool.query(
+      "INSERT INTO context_checkpoints(id,session_id,through_sequence,summary,token_count,created_at) VALUES ('checkpoint',$1,1,'refused prompt',1,now())",
+      [sessionId],
+    );
+    await pool.query(`CREATE FUNCTION reject_exclusion() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'test refusal isolation failure'; END $$;
+      CREATE TRIGGER reject_exclusion BEFORE UPDATE OF context_excluded ON session_messages FOR EACH ROW EXECUTE FUNCTION reject_exclusion()`);
+    const input = {
+      runId,
+      terminalClass: "completed" as const,
+      executorState: "quiescent" as const,
+      toolEffectState: "none" as const,
+      stopReason: "refusal" as const,
+      finishedAt: new Date(),
+    };
+    await expect(executions.finish(input)).rejects.toThrow("test refusal isolation failure");
+    expect(await executions.getState(runId)).toBe("running");
+    expect(
+      (
+        await pool.query("SELECT context_excluded FROM session_messages WHERE session_id = $1", [
+          sessionId,
+        ])
+      ).rows,
+    ).toEqual([{ context_excluded: false }]);
+    expect((await pool.query("SELECT id FROM context_checkpoints")).rows).toHaveLength(1);
+    await pool.query("DROP TRIGGER reject_exclusion ON session_messages");
+    await executions.finish(input);
+    await executions.finish(input);
+    expect(
+      (
+        await pool.query("SELECT context_excluded FROM session_messages WHERE session_id = $1", [
+          sessionId,
+        ])
+      ).rows,
+    ).toEqual([{ context_excluded: true }]);
+    expect((await pool.query("SELECT id FROM context_checkpoints")).rows).toHaveLength(0);
+  });
+
   it.each([true, false])(
     "persists Runtime stopping independently from unknown tool effects: %s",
     async (runtimeCallStopped) => {
