@@ -9,6 +9,9 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 	"soft/antnest-platform/services/agent-controller/internal/ports"
 )
@@ -33,6 +36,7 @@ type ExecutionPublicationWorker struct {
 	publisher ExecutionSnapshotPublisher
 	schedule  ExecutionPublicationSchedule
 	logger    *slog.Logger
+	tracer    trace.Tracer
 	wake      chan struct{}
 	mu        sync.Mutex
 	pending   map[string]trace.SpanContext
@@ -50,7 +54,8 @@ func NewExecutionPublicationWorker(source ExecutionOrganizationSource, publisher
 		logger = slog.Default()
 	}
 	return &ExecutionPublicationWorker{source: source, publisher: publisher, schedule: schedule,
-		logger: logger, wake: make(chan struct{}, 1), pending: make(map[string]trace.SpanContext)}, nil
+		logger: logger, tracer: otel.Tracer("soft/antnest-platform/agent-controller/execution-publication"),
+		wake: make(chan struct{}, 1), pending: make(map[string]trace.SpanContext)}, nil
 }
 
 // Notify records only a commit hint. No work or network call runs in the writer.
@@ -200,6 +205,17 @@ func (worker *ExecutionPublicationWorker) publishOrganization(ctx context.Contex
 	}
 	ctx, cancel := context.WithTimeout(ctx, worker.schedule.RequestTimeout)
 	defer cancel()
-	_, err := worker.publisher.Publish(trace.ContextWithSpanContext(ctx, parent), organization)
-	return err
+	// A retained SpanContext alone is nonrecording, so driver SQL would be
+	// suppressed. Each bounded attempt owns the source/HTTP/acknowledgement work.
+	ctx, span := worker.tracer.Start(trace.ContextWithSpanContext(ctx, parent), "agent_controller.execution_publication",
+		trace.WithAttributes(attribute.String("antnest.organization.id", organization)))
+	defer span.End()
+	acknowledgement, err := worker.publisher.Publish(ctx, organization)
+	if err != nil {
+		span.SetStatus(codes.Error, "execution_publication_failed")
+		span.SetAttributes(attribute.String("error.type", "execution_publication_failed"), attribute.String("antnest.outcome", "error"))
+		return err
+	}
+	span.SetAttributes(attribute.Int64("antnest.configuration.applied_revision", acknowledgement.AppliedRevision))
+	return nil
 }

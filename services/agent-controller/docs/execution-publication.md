@@ -94,6 +94,30 @@ explicit lifecycle synchronization. Failed cycles use bounded exponential
 backoff; new hints cannot bypass it. One failed organization does not prevent
 other organizations in the same cycle from being attempted.
 
+### Background Publication Trace Contract
+
+Each bounded organization attempt owns one INTERNAL span named
+`agent_controller.execution_publication`, from before its current-state read
+through the acknowledgement write. Commit-triggered attempts use the retained
+commit span context as parent; retries get distinct attempt spans with that same
+causal parent. Startup and periodic attempts start fresh roots, without retaining
+an earlier management request or inheriting the worker's ambient span.
+
+Only the organization ID and a successfully persisted `applied_revision` are
+recorded. A failed attempt has ERROR status and the static classification
+`execution_publication_failed`; raw dependency errors, snapshots and credentials
+are never recorded. Cancellation and deadlines still bound the original work,
+and every started attempt ends on success or failure. A pre-cancelled attempt
+does no work and starts no span.
+
+The recording attempt context lets existing PostgreSQL driver instrumentation
+capture the source transaction and acknowledgement UPDATE beside the real ACP
+HTTP CLIENT. There are no per-query application wrappers and no global enabling
+of unparented database traces; periodic enumeration stays untraced. Lifecycle
+publication keeps its existing Temporal activity context and is unchanged.
+The owning-service gate precedes the separate RPC response-loss integration
+rerun; until then the consumer still reports its previous SQL evidence gap.
+
 Commit-triggered outbound RPCs inherit the originating span context through
 the shared transport instrumentation. Periodic repair has no fabricated user
 parent. Logs contain only safe failure classification. These callbacks are
