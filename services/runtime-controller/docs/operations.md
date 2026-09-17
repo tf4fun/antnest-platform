@@ -294,3 +294,14 @@ actual images and proves items 1, 2, 4, 5, and complete lifecycle deletion in
 an isolated disposable Compose project. Unit tests cover Docker List/Watch
 normalization, Agent-level mutation serialization, owned-volume handling, and
 Watch-gap reconciliation.
+
+## Expected Docker absence in traces
+
+Only the initial workspace lookup in EnsureStorage and the initial container
+lookup in Create treat HTTP 404 as expected absence. Their HTTP CLIENT spans
+retain status 404 and `antnest.outcome=absent`, with unset span status and no
+error event. The expectation applies to that single Docker GET, not subsequent
+requests. Required storage/image/network lookups, post-create verification,
+mutations, HTTP 5xx, transport errors and response read/close failures keep their
+existing error semantics. No Docker request, retry, timeout or domain outcome
+changes. Consumers must still require successful allocation after absence.

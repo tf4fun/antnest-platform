@@ -11,6 +11,7 @@ import (
 
 	"soft/antnest-platform/services/runtime-controller/internal/deployment"
 	"soft/antnest-platform/services/runtime-controller/internal/platform"
+	"soft/antnest-platform/services/runtime-controller/internal/telemetry"
 )
 
 var _ platform.Port = (*Driver)(nil)
@@ -188,7 +189,7 @@ func (d *Driver) Create(
 	}
 
 	name := containerName(key.AgentID)
-	existing, err := d.engine.InspectContainer(ctx, name)
+	existing, err := d.engine.InspectContainer(telemetry.WithExpectedDockerAbsence(ctx), name)
 	if err != nil && !errors.Is(err, ErrNotFound) {
 		return dockerFailure("platform_unavailable", err, false)
 	}
@@ -296,7 +297,7 @@ func (d *Driver) Delete(
 
 func (d *Driver) EnsureStorage(ctx context.Context, agentID string) deployment.EffectOutcome {
 	name := workspaceVolume(agentID)
-	volume, err := d.engine.InspectVolume(ctx, name)
+	volume, err := d.engine.InspectVolume(telemetry.WithExpectedDockerAbsence(ctx), name)
 	if errors.Is(err, ErrNotFound) {
 		createErr := d.engine.CreateVolume(ctx, name, d.workspaceLabels(agentID))
 		volume, err = d.engine.InspectVolume(ctx, name)

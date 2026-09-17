@@ -20,6 +20,14 @@ type Transport struct {
 	target string
 }
 
+type expectedDockerAbsenceKey struct{}
+
+// WithExpectedDockerAbsence applies only to the caller's single existence GET.
+// Never pass the returned context to required-resource or post-create checks.
+func WithExpectedDockerAbsence(ctx context.Context) context.Context {
+	return context.WithValue(ctx, expectedDockerAbsenceKey{}, true)
+}
+
 // NewTransport instruments an existing client without changing its timeout,
 // proxy, socket dialer, redirect policy, or retry behavior.
 func NewTransport(base http.RoundTripper, target string) http.RoundTripper {
@@ -67,7 +75,9 @@ func (t *Transport) RoundTrip(request *http.Request) (*http.Response, error) {
 	}
 	span.SetAttributes(attribute.Int("http.response.status_code", response.StatusCode))
 
-	body := &outboundBody{ReadCloser: response.Body, ctx: ctx, state: state, request: requestBody, status: response.StatusCode, sent: &sent}
+	expectedAbsence, _ := request.Context().Value(expectedDockerAbsenceKey{}).(bool)
+	body := &outboundBody{ReadCloser: response.Body, ctx: ctx, state: state, request: requestBody, status: response.StatusCode, sent: &sent,
+		expectedAbsence: expectedAbsence && t.target == "docker" && request.Method == http.MethodGet}
 	if response.Body == nil || response.Body == http.NoBody {
 		body.finish(nil)
 		return response, nil
@@ -102,15 +112,16 @@ func (b *outboundRequestBody) Read(p []byte) (int, error) {
 
 type outboundBody struct {
 	io.ReadCloser
-	ctx     context.Context
-	state   *httpObservation
-	request *outboundRequestBody
-	status  int
-	sent    *atomic.Bool
-	bytes   atomic.Int64
-	mu      sync.Mutex
-	ended   bool
-	stop    func() bool
+	ctx             context.Context
+	state           *httpObservation
+	request         *outboundRequestBody
+	status          int
+	expectedAbsence bool
+	sent            *atomic.Bool
+	bytes           atomic.Int64
+	mu              sync.Mutex
+	ended           bool
+	stop            func() bool
 }
 
 func (b *outboundBody) Read(p []byte) (int, error) {
@@ -145,6 +156,8 @@ func (b *outboundBody) finish(err error) {
 	switch {
 	case err != nil:
 		RecordFailure(b.ctx, span, err, "http_response", "response_failed", "HTTP response read, close or cancellation failed")
+	case b.status == http.StatusNotFound && b.expectedAbsence:
+		span.SetAttributes(attribute.String("antnest.outcome", "absent"))
 	case b.status >= 400:
 		RecordFailure(b.ctx, span, nil, "http_response", strconv.Itoa(b.status), "HTTP peer returned an error status")
 	default:

@@ -205,6 +205,82 @@ func TestHTTPDoesNotRecordHeaderValuesOrContents(t *testing.T) {
 	}
 }
 
+func TestExpectedDockerAbsenceDoesNotHideOtherFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name, peer, method         string
+		status                     int
+		expected                   bool
+		readErr, closeErr, sendErr error
+		want                       codes.Code
+	}{
+		{"expected absence", "docker", "GET", 404, true, nil, nil, nil, codes.Unset},
+		{"required resource", "docker", "GET", 404, false, nil, nil, nil, codes.Error},
+		{"server failure", "docker", "GET", 500, true, nil, nil, nil, codes.Error},
+		{"mutation", "docker", "POST", 404, true, nil, nil, nil, codes.Error},
+		{"other peer", "antnest-runtime", "GET", 404, true, nil, nil, nil, codes.Error},
+		{"read failure", "docker", "GET", 404, true, io.ErrUnexpectedEOF, nil, nil, codes.Error},
+		{"close failure", "docker", "GET", 404, true, nil, io.ErrUnexpectedEOF, nil, codes.Error},
+		{"send failure", "docker", "GET", 0, true, nil, nil, io.ErrUnexpectedEOF, codes.Error},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder, _ := contractRecorder(t)
+			original := context.Background()
+			ctx := original
+			if tc.expected {
+				ctx = WithExpectedDockerAbsence(ctx)
+			}
+			transport := NewTransport(contractRoundTrip(func(*http.Request) (*http.Response, error) {
+				if tc.sendErr != nil {
+					return nil, tc.sendErr
+				}
+				return &http.Response{StatusCode: tc.status, Body: &absenceBody{readErr: tc.readErr, closeErr: tc.closeErr}}, nil
+			}), tc.peer)
+			request := httptest.NewRequest(tc.method, "http://docker/resource", nil).WithContext(ctx)
+			response, err := transport.RoundTrip(request)
+			if !errors.Is(err, tc.sendErr) {
+				t.Fatal("send error changed")
+			}
+			if response != nil {
+				if tc.closeErr == nil {
+					_, _ = io.Copy(io.Discard, response.Body)
+				}
+				if err := response.Body.Close(); !errors.Is(err, tc.closeErr) {
+					t.Fatal("close error changed")
+				}
+			}
+			spans := recorder.Ended()
+			if len(spans) != 1 || spans[0].Status().Code != tc.want {
+				t.Fatalf("unexpected ended spans: %+v", spans)
+			}
+			attrs := spanAttrs(spans[0])
+			if response != nil && attrs["http.response.status_code"].AsInt64() != int64(tc.status) {
+				t.Fatal("wire status changed")
+			}
+			if tc.want == codes.Unset {
+				if attrs["antnest.outcome"].AsString() != "absent" || len(spans[0].Events()) != 0 {
+					t.Fatal("absence misclassified")
+				}
+				if _, ok := attrs["error.type"]; ok {
+					t.Fatal("absence has error type")
+				}
+			}
+			if original.Value(expectedDockerAbsenceKey{}) != nil {
+				t.Fatal("expectation leaked to caller")
+			}
+		})
+	}
+}
+
+type absenceBody struct{ readErr, closeErr error }
+
+func (b *absenceBody) Read([]byte) (int, error) {
+	if b.readErr != nil {
+		return 0, b.readErr
+	}
+	return 0, io.EOF
+}
+func (b *absenceBody) Close() error { return b.closeErr }
+
 func spanAttrs(span sdktrace.ReadOnlySpan) map[attribute.Key]attribute.Value {
 	result := make(map[attribute.Key]attribute.Value)
 	for _, item := range span.Attributes() {
