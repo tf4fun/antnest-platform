@@ -49,6 +49,11 @@ ACP evidence with controlled model/MCP dependencies, not a new platform-wide
 or real Runtime acceptance run. The retained development deployment was not
 changed.
 
+The subsequent [development synchronization](../../../docs/development-sync-20260917.md)
+deployed this exact image and records its separate retained-data, real-browser,
+model/Runtime and Trace evidence. Its strict timing-warning failure remains
+visible; it does not alter this dependency batch's service-gate results.
+
 The environment's automatic approval review rejected `npm audit` because it
 would send the project's complete dependency names/versions to an external
 registry. No alternative upload or indirect audit was attempted. This batch
