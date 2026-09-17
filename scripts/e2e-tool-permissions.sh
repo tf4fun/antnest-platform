@@ -1,6 +1,6 @@
 #!/bin/sh
 set -eu
-: "${COMPOSE_PROJECT_NAME:?Use an existing current Stage 3 development stack}"
+[ "${ANTNEST_E2E_DISPOSABLE:-false}" = true ] || { echo "Use make e2e-tool-permissions" >&2; exit 1; }
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 export ANTNEST_E2E_DEADLINE_MS=$(node -e 'process.stdout.write(String(Date.now()+900000))')
 docker_cmd() { node "$root/scripts/acp-closeout/docker.mjs" "$@"; }
@@ -12,7 +12,7 @@ printf 'Permission acceptance run: %s\n' "$run_id"
 cleanup() {
   status=$?
   trap - EXIT INT TERM
-  export ANTNEST_E2E_DEADLINE_MS=$(node -e 'process.stdout.write(String(Date.now()+300000))')
+  export ANTNEST_E2E_DEADLINE_MS=$(node -e 'process.stdout.write(String(Date.now()+120000))')
   docker_cmd rm -f "$client" >/dev/null 2>&1 || status=1
   docker_cmd --lifecycle run --rm --name "$cleaner" --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
     --network "${COMPOSE_PROJECT_NAME}_development" -e "TEST_PERMISSION_RUN_ID=$run_id" \

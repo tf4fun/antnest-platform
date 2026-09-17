@@ -1,64 +1,84 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
-import * as v1 from "@agentclientprotocol/sdk";
-import * as v2 from "@agentclientprotocol/sdk/experimental/v2";
-import { createWebSocketStream } from "@agentclientprotocol/sdk/experimental/ws-client";
-import { WebSocket } from "ws";
-import { verifyTraces } from "./trace.mjs";
+import { mkdir, writeFile } from "node:fs/promises";
+import { writeFileSync } from "node:fs";
+import { GatewayClient } from "../identity-closeout/support.mjs";
 import { until } from "../acp-closeout/wait.mjs";
+import { commandConnection } from "../acp-commands/connection.mjs";
 import {
-  parseVersion,
-  initializeParams,
-  replayRequest,
-  assertPromptComplete,
-  assertReplay,
-  assertStillRunning,
-} from "./protocol.mjs";
+  waitForAgentReady,
+  assertAgentDeleted,
+} from "../verification/agent-state.mjs";
+import { collectTrace } from "./trace.mjs";
+import { inspectLifecycle } from "../stage3-base/trace.mjs";
+import {
+  runtimeCommandId,
+  assertRuntimeOperation,
+} from "../stage3-base/contracts.mjs";
+import { seedManaged, templateBody } from "./setup.mjs";
+import { assertClosedRun, isBusyDenied } from "./drain.mjs";
 import {
   captureRuntime,
   assertDraining,
   assertRebuilt,
-  inspectDrain,
   assertModelSequence,
-  inspectPinnedTrace,
-  isStalePromptDenied,
 } from "./rebuild-evidence.mjs";
+import {
+  parseVersion,
+  replayRequest,
+  assertPromptComplete,
+  assertStillRunning,
+  assertReplay,
+} from "./protocol.mjs";
+import { collectManagedTrace, inspectManagedTrace } from "./request-trace.mjs";
 
-const organization = process.env.TEST_ORGANIZATION_ID;
-const owner = process.env.TEST_OWNER_ID;
-const cookie = process.env.TEST_USER_COOKIE;
-const image = process.env.TEST_RUNTIME_IMAGE;
-const version = parseVersion(process.env.TEST_ACP_VERSION);
-const acp = version === 1 ? v1 : v2;
-assert(
-  organization && owner && cookie && image,
-  "integration configuration missing",
-);
 const gateway = "http://edge-gateway:8080";
-let adminCookie = "";
-let csrf = "";
-let agentID;
-let connection;
-const updates = [];
-const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const runtime = () =>
-  request("http://runtime-controller:8080", `/internal/runtimes/${agentID}`);
+const version = parseVersion(process.env.TEST_ACP_VERSION);
+const profile = { name: `managed-v${version}`, version };
+const admin = new GatewayClient(gateway),
+  member = new GatewayClient(gateway);
+const connections = [],
+  requests = [],
+  lifecycle = [],
+  journals = [];
+const secrets = [
+  "managed-env-canary",
+  "managed-model-test",
+  "Managed workspace guidance version",
+  "PRIVATE_SKILL_BODY_NOT_FOR_INITIAL_CONTEXT",
+  "managed-password",
+  "stage3-admin-password",
+];
+let stage = "setup",
+  agentId,
+  deleted = false;
+const api = async (path, body, status = 200) =>
+  (await admin.request(path, { body, status })).body;
+const agent = () => api(`/api/admin/agents/${agentId}`);
+const state = async () =>
+  (await member.request(`/api/app/agents/${agentId}/state`)).body;
+async function internal(path) {
+  const response = await fetch(`http://runtime-controller:8080${path}`, {
+    signal: AbortSignal.timeout(15000),
+  });
+  assert.equal(response.status, 200, "Runtime inspection failed");
+  return response.json();
+}
+const runtime = () => internal(`/internal/runtimes/${agentId}`);
 async function modelState() {
   const response = await fetch("http://managed-model:8080/status", {
     signal: AbortSignal.timeout(5000),
   });
   assert.equal(response.status, 200);
-  const state = await response.json();
-  assert.deepEqual(state.errors, [], "model fixture rejected the real request");
-  return state;
+  const value = await response.json();
+  assert.deepEqual(value.errors, [], "model fixture rejected request");
+  return value;
 }
 async function waitHeld(step) {
-  for (let attempt = 0; attempt < 100; attempt++) {
-    const state = await modelState();
-    if (state.held?.step === step) return state.held;
-    await delay(200);
-  }
-  throw new Error(`model response barrier ${step} not reached`);
+  await until(
+    async () => (await modelState()).held?.step === step,
+    `model barrier ${step}`,
+    30000,
+  );
 }
 async function release(step) {
   const response = await fetch(`http://managed-model:8080/release/${step}`, {
@@ -67,411 +87,430 @@ async function release(step) {
   });
   assert.equal(response.status, 200, "model barrier release failed");
 }
-async function observeDrain(requestID, held, before) {
-  const query = new URLSearchParams({
-    service: "agent-controller",
-    operation: "recover Agent lifecycle operation",
-    tags: JSON.stringify({ "antnest.lifecycle.request_id": requestID }),
-    lookback: "1h",
-    limit: "100",
-  });
-  let observation;
-  let last;
-  for (let attempt = 0; attempt < 40; attempt++) {
-    try {
-      const response = await fetch(`http://jaeger:16686/api/traces?${query}`, {
-        signal: AbortSignal.timeout(5000),
-      });
-      assert.equal(response.status, 200);
-      observation = inspectDrain((await response.json()).data ?? [], {
-        agentID,
-        requestID,
-        receivedAt: held.received_at,
-      });
-      break;
-    } catch (error) {
-      last = error;
-    }
-    await delay(500);
-  }
-  if (!observation) throw last;
-  assert.equal(
-    (await modelState()).held?.step,
-    held.step,
-    "barrier ended before drain inspection",
-  );
-  const agent = await api(`/api/admin/agents/${agentID}`);
-  const inspection = await runtime();
-  const operation = await api(`/api/admin/operations/${requestID}`);
-  assertDraining(before, agent, inspection, operation, requestID);
-  return { step: held.step, ...observation };
-}
-
-async function request(base, path, body, expected = 200) {
-  const response = await fetch(base + path, {
-    method: body === undefined ? "GET" : "POST",
-    headers: {
-      "content-type": "application/json",
-      Cookie: adminCookie,
-      Origin: gateway,
-      "X-Antnest-CSRF-Token": csrf,
-      "Idempotency-Key": randomUUID(),
+async function waitOperation(requestId, kind) {
+  await until(
+    async () => {
+      const result = await api(`/api/admin/operations/${requestId}`);
+      assert.equal(result.kind, kind);
+      assert(
+        ["running", "completed"].includes(result.state),
+        "Agent lifecycle failed",
+      );
+      return result.state === "completed";
     },
-    body: body === undefined ? undefined : JSON.stringify(body),
-    signal: AbortSignal.timeout(15000),
-  });
-  assert.equal(
-    response.status,
-    expected,
-    `${path}: ${await response.clone().text()}`,
+    `${kind} completion`,
+    120000,
   );
-  if (path === "/api/session/login") {
-    adminCookie = response.headers
-      .getSetCookie()
-      .map((value) => value.split(";")[0])
-      .join("; ");
-    csrf = adminCookie.match(/(?:^|; )antnest_csrf=([^;]+)/)?.[1] ?? "";
-  }
-  return response.json();
 }
-const rpc = (path, body, expected) =>
-  request(
-    "http://agent-controller:8080",
-    path,
-    { request_id: randomUUID(), organization_id: organization, ...body },
-    expected,
+async function journal(kind, requestId) {
+  const phase = {
+    create: "runtime_initialize",
+    rebuild: "runtime_update",
+    delete: "runtime_delete",
+  }[kind];
+  const current = await runtime();
+  const result = await internal(
+    `/internal/runtime-operations/${runtimeCommandId(requestId, phase)}`,
   );
-const api = (path, body, expected) => request(gateway, path, body, expected);
-async function waitOperation(id) {
-  for (let attempt = 0; attempt < 120; attempt++) {
-    const result = await api(`/api/admin/operations/${id}`);
-    if (result.state === "completed") return;
-    assert.equal(result.state, "running", JSON.stringify(result));
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-  }
-  throw new Error(`operation ${id} did not complete`);
+  assertRuntimeOperation(result, {
+    agentId,
+    requestId,
+    phase,
+    runtimeRevision: current.runtime_revision,
+  });
+  journals.push({
+    kind,
+    request_id: result.request_id,
+    target_revision: result.target_revision,
+    completed: true,
+  });
 }
 async function connect() {
-  connection = acp
-    .client({ name: "managed-mcp-integration" })
-    .onNotification(acp.methods.client.session.update, ({ params }) =>
-      updates.push(params),
-    )
-    .onRequest(acp.methods.client.session.requestPermission, () => ({
-      outcome: { outcome: "cancelled" },
-    }))
-    .connect(
-      createWebSocketStream(
-        `ws://edge-gateway:8080/api/app/agents/${agentID}/v${version}/acp`,
-        {
-          WebSocket,
-          headers: { Cookie: cookie, Origin: gateway },
-        },
-      ),
-    );
-  const initialized = await call(
-    acp.methods.agent.initialize,
-    initializeParams(version, acp.PROTOCOL_VERSION),
-  );
-  assert.equal(initialized.protocolVersion, acp.PROTOCOL_VERSION);
+  const client = commandConnection(profile, agentId, member);
+  connections.push(client);
+  await client.initialize();
+  return client;
 }
-const call = (method, params) =>
-  connection.agent.request(method, params, {
-    signal: AbortSignal.timeout(120000),
-  });
-async function prompt(sessionId, phase) {
-  const offset = updates.length;
-  const result = await call(acp.methods.agent.session.prompt, {
-    sessionId,
-    prompt: [{ type: "text", text: phase }],
-  });
+async function send(client, name, params, expected = { kind: "request" }) {
+  let response;
+  try {
+    response = await client.request(name, params, 120000);
+    return response;
+  } finally {
+    requests.push({
+      ...client.lastRequest,
+      sessionId: params.sessionId ?? response?.sessionId,
+      ...expected,
+    });
+  }
+}
+async function prompt(client, sessionId, phase, snapshot) {
+  const offset = client.updates.length;
+  const result = await send(
+    client,
+    "prompt",
+    { sessionId, prompt: [{ type: "text", text: phase }] },
+    { kind: "managed", label: phase, phase, snapshot },
+  );
   if (version === 2)
     await until(
       () =>
-        updates
+        client.updates
           .slice(offset)
           .some(
-            ({ sessionId: target, update }) =>
-              target === sessionId &&
-              update.sessionUpdate === "state_update" &&
-              update.state === "idle",
+            (i) =>
+              i.sessionId === sessionId &&
+              i.update.sessionUpdate === "state_update" &&
+              i.update.state === "idle",
           ),
-      `${phase}: v2 idle`,
+      `${phase} idle`,
       120000,
     );
   assertPromptComplete(
     version,
     result,
-    updates.slice(offset),
+    client.updates.slice(offset),
     phase,
     sessionId,
   );
+  return client.updates.slice(offset);
 }
-
-try {
-  await api("/api/session/login", {
-    organization_slug: "stage3",
-    email: "stage3-admin@example.com",
-    password: "stage3-admin-password",
-  });
-  const profile = await rpc(
-    "/internal/model-profiles",
-    {
-      profile_key: "managed-fixture",
-      display_name: "Managed integration",
-      model: {
-        base_url: "http://managed-model:8080/v1",
-        model: "managed-fixture",
-        context_window: 64000,
-        max_output_tokens: 4096,
-        supports_images: false,
-      },
-      credential: { secret_type: "bearer", secret: "managed-model-test" },
-    },
-    201,
+async function audits(sessionId) {
+  const result = await api(
+    `/api/admin/execution-audits?agent_id=${agentId}&session_id=${sessionId}`,
   );
-  const templateBody = (server) => ({
-    name: "Managed MCP integration",
-    model_profile_revision_id: profile.revision_id,
-    system_prompt:
-      "Follow the current workspace guidance and use available tools.",
-    max_model_requests: 12,
-    runtime: {
-      image_ref: image,
-      resources: {
-        memory_bytes: 536870912,
-        pids_limit: 256,
-        tmpfs_bytes: 67108864,
-      },
-      mcp_servers: [
-        {
-          id: server,
-          command: "/usr/local/bin/managed-mcp-fixture",
-          args: [],
-          env: { FIXTURE_SECRET: "managed-env-canary" },
-        },
-      ],
+  assert.equal(result.next_cursor, null);
+  return result.items;
+}
+async function main() {
+  assert.match(process.env.TEST_RUNTIME_IMAGE ?? "", /^sha256:[a-f0-9]{64}$/);
+  await admin.request("/api/session/login", {
+    body: {
+      organization_slug: "stage3",
+      email: "stage3-admin@example.com",
+      password: "stage3-admin-password",
     },
   });
-  const template = await api(
-    "/api/admin/templates",
-    templateBody("alpha"),
-    201,
-  );
-  assert.deepEqual(
-    template.runtime.mcp_servers,
-    templateBody("alpha").runtime.mcp_servers,
-  );
-  const created = await api(
-    "/api/admin/agents",
-    {
-      owner_user_id: owner,
-      name: "Managed MCP integration",
+  const owner = await api("/api/admin/directory/users", {
+    email: "managed@example.com",
+    display_name: "Managed owner",
+    password: "managed-password",
+    role: "member",
+  });
+  await member.request("/api/session/login", {
+    body: {
+      organization_slug: "stage3",
+      email: "managed@example.com",
+      password: "managed-password",
+    },
+  });
+  secrets.push(...admin.cookies.values(), ...member.cookies.values());
+  const template = await seedManaged(api, process.env.TEST_RUNTIME_IMAGE);
+  stage = "create";
+  const created = await admin.request("/api/admin/agents", {
+    status: 202,
+    body: {
+      owner_user_id: owner.user.id,
+      name: "Managed acceptance",
       template_id: template.template_id,
-      template_revision: 1,
+      template_revision: template.revision,
     },
-    202,
+  });
+  agentId = created.body.agent.agent_id;
+  const createId = created.body.operation.request_id;
+  lifecycle.push({
+    kind: "create",
+    agentId,
+    requestId: createId,
+    traceID: created.traceID,
+  });
+  await waitOperation(createId, "create");
+  const ready = await waitForAgentReady(agent);
+  await until(
+    async () => (await state()).availability === "ready",
+    "ACP ready",
   );
-  agentID = created.agent.agent_id;
-  await waitOperation(created.operation.request_id);
-  const before = await api(`/api/admin/agents/${agentID}`);
-  assert.deepEqual(before.configuration.runtime.mcp_servers, [
+  await journal("create", createId);
+  const source = captureRuntime(ready, await runtime());
+  assert.deepEqual(ready.configuration.runtime.mcp_servers, [
     { id: "alpha", command: "/usr/local/bin/managed-mcp-fixture" },
   ]);
-  await connect();
-  const session = await call(acp.methods.agent.session.new, {
-    cwd: "/workspace",
-    mcpServers: [],
-  });
-  for (const phase of [
-    "managed-bootstrap",
-    "managed-exercise",
-    "managed-mutate",
-    "managed-fresh",
-  ])
-    await prompt(session.sessionId, phase);
-  const source = captureRuntime(before, await runtime());
-  const other = await call(acp.methods.agent.session.new, {
-    cwd: "/workspace",
-    mcpServers: [],
-  });
-  // Handle rejection immediately while HTTP probes run, then surface it below.
-  let completed = false;
-  const drainOffset = updates.length;
-  const pending = prompt(session.sessionId, "managed-draining").then(
-    () => {
-      completed = true;
-      return { ok: true };
-    },
-    (error) => {
-      completed = true;
-      return { error };
-    },
+  const client = await connect();
+  const { sessionId } = await send(
+    client,
+    "new",
+    { cwd: "/workspace", mcpServers: [] },
+    { kind: "request", label: "new" },
   );
-  const firstBarrier = await waitHeld(1);
-  await api(
-    `/api/admin/templates/${template.template_id}/revisions`,
-    templateBody("beta"),
-    201,
-  );
-  const historical = await api(
-    `/api/admin/templates/${template.template_id}/revisions/1`,
-  );
-  assert.deepEqual(
-    historical.runtime.mcp_servers,
-    templateBody("alpha").runtime.mcp_servers,
-  );
-  assert.deepEqual(
-    captureRuntime(await api(`/api/admin/agents/${agentID}`), await runtime()),
-    source,
-    "Template publication changed a running Agent",
-  );
-  const rebuild = await api(
-    `/api/admin/agents/${agentID}/rebuild`,
-    { template_id: template.template_id, template_revision: 2 },
-    202,
-  );
-  const drains = [await observeDrain(rebuild.request_id, firstBarrier, source)];
-  assert.equal(
-    completed,
-    false,
-    "held Run completed before first response release",
-  );
-  assertStillRunning(version, updates.slice(drainOffset), session.sessionId);
-  const deniedOffset = updates.length;
-  const modelCount = (await modelState()).requests.length;
-  await assert.rejects(
-    call(acp.methods.agent.session.prompt, {
-      sessionId: other.sessionId,
-      prompt: [{ type: "text", text: "managed-rebuild-denied" }],
-    }),
-    (error) =>
-      error.code === -32021 &&
-      error.data?.code === "agent_rebuilding" &&
-      error.data?.retryable === true,
-  );
-  assert.equal(
-    (await modelState()).requests.length,
-    modelCount,
-    "denied prompt called the model",
-  );
-  assert(
-    !updates
-      .slice(deniedOffset)
-      .some((item) => item.sessionId === other.sessionId),
-    "denied prompt produced conversation or Tool events",
-  );
-  await release(1);
-  const secondBarrier = await waitHeld(2);
-  drains.push(await observeDrain(rebuild.request_id, secondBarrier, source));
-  assert.equal(
-    completed,
-    false,
-    "held Run completed before final answer release",
-  );
-  assertStillRunning(version, updates.slice(drainOffset), session.sessionId);
-  await release(2);
-  const finished = await pending;
-  if (finished.error) throw finished.error;
-  assert.equal(finished.ok, true);
-  await waitOperation(rebuild.request_id);
-  const after = await api(`/api/admin/agents/${agentID}`);
-  assert.deepEqual(after.configuration.runtime.mcp_servers, [
-    { id: "beta", command: "/usr/local/bin/managed-mcp-fixture" },
-  ]);
-  const replacement = assertRebuilt(source, after, await runtime());
-  const beforeStale = (await modelState()).requests.length;
-  const staleOffset = updates.length;
-  await assert.rejects(
-    call(acp.methods.agent.session.prompt, {
-      sessionId: session.sessionId,
-      prompt: [{ type: "text", text: "managed-stale-denied" }],
-    }),
-    isStalePromptDenied,
-  );
-  assert.equal(
-    (await modelState()).requests.length,
-    beforeStale,
-    "stale Prompt invoked model",
-  );
-  assert.equal(
-    updates.length,
-    staleOffset,
-    "stale Prompt emitted Session events",
-  );
-  const beforeReplay = (await modelState()).requests.length;
-  const originalHistory = structuredClone(updates);
-  connection.close();
-  connection = undefined;
-  await connect();
-  const replayOffset = updates.length;
-  const replay = replayRequest(version, session.sessionId);
-  await call(acp.methods.agent.session[replay.method], replay.params);
-  assert.equal(
-    (await modelState()).requests.length,
-    beforeReplay,
-    "Session replay executed the model",
-  );
-  assertReplay(
-    version,
-    originalHistory,
-    updates.slice(replayOffset),
-    [
+  const original = [],
+    phases = [
       "managed-bootstrap",
       "managed-exercise",
       "managed-mutate",
       "managed-fresh",
-      "managed-draining",
-    ],
-    session.sessionId,
-    // The deliberate stale Prompt left a failed, unadmitted intent. It did not
-    // rewrite the earlier successful Run or produce a conversation message.
-    "_failed",
+    ];
+  for (const phase of phases) {
+    stage = phase;
+    original.push(...(await prompt(client, sessionId, phase, source)));
+  }
+  // Separate connection preserves actual request correlation while v1's prompt is pending.
+  const probe = await connect();
+  const other = await send(
+    probe,
+    "new",
+    { cwd: "/workspace", mcpServers: [] },
+    { kind: "request", label: "probe-new" },
   );
-  await prompt(session.sessionId, "managed-rebuilt");
-  connection.close();
-  connection = undefined;
+  stage = "publish-beta-template";
+  const next = await api(
+    `/api/admin/templates/${template.template_id}/revisions`,
+    templateBody(
+      template.model_profile_id,
+      process.env.TEST_RUNTIME_IMAGE,
+      "beta",
+    ),
+    201,
+  );
+  assert.equal(next.revision, template.revision + 1);
+  const history = await api(
+    `/api/admin/templates/${template.template_id}/revisions/${template.revision}`,
+  );
+  assert.deepEqual(history.runtime.mcp_servers, template.runtime.mcp_servers);
+  assert.deepEqual(captureRuntime(await agent(), await runtime()), source);
+  stage = "active-run-rebuild";
+  let finished = false;
+  const offset = client.updates.length;
+  const pending = prompt(client, sessionId, "managed-draining", source).then(
+    (value) => {
+      finished = true;
+      return value;
+    },
+  );
+  void pending.catch(() => {});
+  await waitHeld(1);
+  const running = (await audits(sessionId)).filter(
+    (item) => item.state === "running",
+  );
+  assert.equal(running.length, 1);
+  const runId = running[0].run_id;
+  const rebuilding = await admin.request(
+    `/api/admin/agents/${agentId}/rebuild`,
+    {
+      status: 202,
+      body: { template_id: next.template_id, template_revision: next.revision },
+    },
+  );
+  const requestId = rebuilding.body.request_id;
+  lifecycle.push({
+    kind: "rebuild",
+    agentId,
+    requestId,
+    traceID: rebuilding.traceID,
+  });
+  await until(
+    async () => (await state()).unavailable_reason === "agent_unavailable",
+    "ACP closed publication",
+  );
+  const drain = [];
+  for (const step of [1, 2]) {
+    if (step === 2) await waitHeld(2);
+    stage = `drain-barrier-${step}`;
+    const operation = await api(`/api/admin/operations/${requestId}`);
+    assertDraining(
+      source,
+      await agent(),
+      await runtime(),
+      operation,
+      requestId,
+    );
+    const audit = await api(`/api/admin/execution-audits/${runId}`);
+    assertClosedRun(await state(), audit, { agentId, sessionId, runId });
+    assertStillRunning(version, client.updates.slice(offset), sessionId);
+    assert.equal(finished, false);
+    assert.equal((await modelState()).held?.step, step);
+    const beforeProbe = probe.updates.length;
+    await assert.rejects(
+      send(
+        probe,
+        "prompt",
+        {
+          sessionId: other.sessionId,
+          prompt: [{ type: "text", text: "managed-rebuild-denied" }],
+        },
+        { kind: "request", label: `busy-${step}`, rejection: "agent_busy" },
+      ),
+      isBusyDenied,
+    );
+    assert.equal(probe.updates.length, beforeProbe);
+    assert.deepEqual(
+      await audits(other.sessionId),
+      [],
+      "rejected probe stored Run intent",
+    );
+    drain.push({
+      step,
+      request_id: requestId,
+      run_id: runId,
+      state: "running",
+      phase: "drain",
+      publication_closed: true,
+      runtime_unchanged: true,
+    });
+    await release(step);
+  }
+  original.push(...(await pending));
+  phases.push("managed-draining");
+  stage = "rebuilt";
+  await waitOperation(requestId, "rebuild");
+  const rebuilt = await waitForAgentReady(agent);
+  await until(
+    async () => (await state()).availability === "ready",
+    "rebuilt publication",
+  );
+  const replacement = assertRebuilt(source, rebuilt, await runtime());
+  await journal("rebuild", requestId);
+  assert.deepEqual(rebuilt.configuration.runtime.mcp_servers, [
+    { id: "beta", command: "/usr/local/bin/managed-mcp-fixture" },
+  ]);
+  const completed = await api(`/api/admin/execution-audits/${runId}`);
+  assert.equal(completed.state, "completed");
+  assert.equal(completed.executor_state, "quiescent");
+  assert.equal(completed.tool_effect_state, "settled");
+  assert.equal(completed.stop_reason, "end_turn");
+  stage = "existing-connection-new-runtime";
+  original.push(
+    ...(await prompt(client, sessionId, "managed-rebuilt", replacement)),
+  );
+  phases.push("managed-rebuilt");
+  await client.close();
+  await probe.close();
+  stage = "replay";
+  const replay = await connect(),
+    spec = replayRequest(version, sessionId);
+  await send(replay, spec.method, spec.params, {
+    kind: "request",
+    label: "replay",
+  });
+  assertReplay(version, original, replay.updates, phases, sessionId);
+  await replay.close();
   const model = await modelState();
   assertModelSequence(model);
-  const phases = [...new Set(model.requests.map((item) => item.phase))];
-  const traces = await verifyTraces(
-    "http://jaeger:16686",
-    model.requests,
-    [cookie, adminCookie],
-    (trace, requests, secrets) =>
-      inspectPinnedTrace(trace, requests, secrets, source, replacement),
-  );
-  for (const [key, expected] of [
-    ["tool_calls", 9],
-    ["information_reads", 6],
-    ["catalog_reads", 6],
-  ])
-    assert.equal(
-      traces.reduce((sum, trace) => sum + trace[key], 0),
-      expected,
-      `unexpected ${key}`,
+  assert.equal((await audits(sessionId)).length, 6);
+  stage = "delete";
+  const removed = await admin.request(`/api/admin/agents/${agentId}/delete`, {
+    body: {},
+    status: 202,
+  });
+  await waitOperation(removed.body.request_id, "delete");
+  assertAgentDeleted(await agent());
+  deleted = true;
+  await journal("delete", removed.body.request_id);
+  lifecycle.push({
+    kind: "delete",
+    agentId,
+    requestId: removed.body.request_id,
+    traceID: removed.traceID,
+  });
+  const business = {
+    status: "business_passed",
+    version,
+    agent_id: agentId,
+    deleted,
+    model_requests: model.requests.length,
+    runs: 6,
+    drain,
+    runtime_operations: journals,
+    existing_connection_refreshed: true,
+    history_preserved: true,
+  };
+  await writeFile("/tmp/managed-business.json", JSON.stringify(business), {
+    mode: 0o600,
+  });
+  console.log(JSON.stringify(business));
+  await mkdir("/tmp/managed-traces", { mode: 0o700 });
+  const save = (label) => (trace) =>
+    writeFileSync(`/tmp/managed-traces/${label}.json`, JSON.stringify(trace), {
+      mode: 0o600,
+    });
+  const lifecycleTraces = [],
+    sessionTraces = [],
+    sessionRaw = [];
+  save("inputs")({ lifecycle, requests, modelRequests: model.requests });
+  for (const expected of lifecycle) {
+    stage = `trace:${expected.kind}`;
+    lifecycleTraces.push(
+      await collectTrace("http://jaeger:16686", expected.traceID, (trace) => {
+        if (trace) save(expected.kind)(trace);
+        return inspectLifecycle(trace, expected, secrets);
+      }),
     );
-  const deleted = await api(`/api/admin/agents/${agentID}/delete`, {}, 202);
-  await waitOperation(deleted.request_id);
-  process.stdout.write(
-    JSON.stringify({
-      status: "passed",
-      version,
-      phases,
-      model_requests: model.requests.length,
-      rebuild: {
-        drain_observations: drains,
-        source_runtime: source.runtime_revision,
-        replacement_runtime: replacement.runtime_revision,
-        distinct_executions:
-          source.runtime_execution_id !== replacement.runtime_execution_id,
-        second_session_denied: true,
-        stale_connection_denied: true,
-      },
-      traces,
-    }) + "\n",
+  }
+  for (const expected of requests) {
+    stage = `trace:${expected.label}`;
+    sessionRaw.push(
+      await collectManagedTrace(
+        "http://jaeger:16686",
+        expected,
+        secrets,
+        model.requests,
+        save(expected.label),
+        (trace) => trace,
+      ),
+    );
+  }
+  for (const [index, trace] of sessionRaw.entries()) {
+    stage = `trace:${requests[index].label}`;
+    sessionTraces.push(
+      inspectManagedTrace(
+        trace,
+        requests[index],
+        secrets,
+        model.requests.filter((r) => r.trace_id === trace.traceID),
+      ),
+    );
+  }
+  assert.equal(
+    new Set(sessionTraces.map((t) => t.trace_id)).size,
+    requests.length,
   );
+  assert.equal(
+    sessionTraces.reduce((n, t) => n + (t.runtime_tool_calls ?? 0), 0),
+    9,
+  );
+  const strict = [...lifecycleTraces, ...sessionTraces].some(
+    (t) => t.strict_trace === "failed",
+  )
+    ? "failed"
+    : "passed";
+  console.log(
+    JSON.stringify({
+      status: "topology_passed",
+      version,
+      strict_trace: strict,
+      lifecycle_traces: lifecycleTraces,
+      session_traces: sessionTraces,
+    }),
+  );
+  if (strict === "failed") process.exitCode = 1;
+}
+try {
+  await main();
+} catch (error) {
+  console.error(
+    JSON.stringify({
+      status: "failed",
+      version,
+      stage,
+      error: error.name,
+      code: error.code,
+      location: error.stack
+        ?.split("\n")
+        .find((line) => line.includes("/app/scripts/"))
+        ?.trim(),
+    }),
+  );
+  process.exitCode = 1;
 } finally {
-  connection?.close();
-  // The parent owns container/volume cleanup, including failed active Runs.
+  for (const connection of connections)
+    await connection.close().catch(() => {});
 }

@@ -65,6 +65,18 @@ details in the owning service READMEs.
 | ACP AJV remediation, 2026-09-17 | AJV 8.20.0; 961 unit/component, 245 PostgreSQL, 9 SDK audit tests and four rebuilt production-image Docker scenarios passed | [Dependency report](../services/agent-acp-service/docs/ajv-remediation.md); official advisory/local lockfile comparison, not a full online dependency audit; retained deployment unchanged |
 | F07 latest SDK recheck, 2026-09-17 | Three independent official rmcp 3.4.0 codec probes passed, reproducing the missing-legacy-ID URL failure | [SDK boundary](../runtimes/antnest-runtime/docs/elicitation.md#latest-sdk-recheck-2026-09-17); F07 remains deferred, production Runtime stays on locked 3.2.0; no new F07 implementation or deployment acceptance |
 | Development ACP/UI synchronization, 2026-09-17 | Both verified images deployed; 11 health checks, original data retention, eight real-browser checks and two metadata/error checks passed; four real-chat topologies passed | [Deployment report](development-sync-20260917.md); strict browser exit 1 on 206.287 µs / -2.160485 ms timing warnings; Runtime and volumes retained, Agent ready/idle |
+| File observation asset migration, 2026-09-17 | Current Provider/Model, ACP authorization and per-message Trace fixtures; 43 local tests, 16 business paths, 16 execution and 48 replay/fork topologies passed | [File report](file-observation-revalidation.md); strict Trace failed on 34 timing-warning traces; disposable resources removed and 12 retained containers unchanged; no production change |
+| Structured Plan asset migration, 2026-09-17 | 12 business paths, 22 model requests, six plan updates, two invalid-plan rejections and two real Runtime writes; 38 request topologies and 58 final local tests passed | [Plan report](structured-plan-revalidation.md); strict Trace failed on 20 timing-warning traces; shared legacy replay oracle retired after consumer migration; cleanup verified, development stack unchanged |
+| Slash command asset migration, 2026-09-17 | v1 WebSocket/HTTP and v2 WebSocket passed command, attachment-history, restore and denial checks; 40 request topologies, two real Bash executions and 73 final local tests passed | [Command report](slash-command-revalidation.md); strict Trace failed on 15 timing-warning traces; credential/hostname collision repaired without a privacy exemption; obsolete validator retired, cleanup verified |
+| Tool permission asset migration, 2026-09-17 | Disposable wrapper, current Provider/Model and per-message Trace contracts; 26 permission scenarios, 52 model requests, 30 request topologies and 86 local tests passed; forced client-crash cleanup verified | [Permission report](tool-permission-revalidation.md); strict Trace failed on 13 timing-warning traces; all three temporary projects cleaned, 12 retained containers unchanged; no production change |
+| Multimodal asset migration, 2026-09-17 | Three transports passed exact native input/history, nine Provider requests, three local capability failures, six invalid inputs and identity isolation; 48 request topologies and 98 local tests passed | [Native input report](multimodal-revalidation.md); strict Trace failed on 19 warning traces plus one −454 µs local timestamp-order failure; both temporary projects cleaned, retained development unchanged; legacy helper subsequently retired in the cost batch |
+| Session cost asset migration, 2026-09-17 | Three transports, 52 model requests, frozen execution prices, 9 history restorations plus observer and one actual ACP restart; 137 Session and 19 pricing topologies, 116 local tests passed | [Cost report](session-cost-revalidation.md); strict Trace failed on 86 warning traces; all eight temporary projects cleaned, retained 12 containers unchanged; final-consumer legacy oracles retired |
+| Base Stage 3 asset migration, 2026-09-17 | Current default management flow, five lifecycles, three ACP transports, credential rotation, Rebuild persistence and logout revocation; 34 trace topologies/privacy checks and 55 local tests passed | [Base report](stage3-base-revalidation.md); strict Trace failed on 17 warning traces and four Docker probe ERROR spans; all seven temporary projects cleaned, retained 12 containers unchanged; legacy extended/retained branches remain pending |
+| Managed MCP asset migration, 2026-09-17 | Both SDK versions, 12 Runs, 30 model requests, 18 real Tool calls, four active-Run drain barriers, history/deletion checks; 28 Trace topologies and 63 local tests passed | [Managed report](managed-mcp-revalidation.md); strict Trace failed on 12 warning traces and six Docker probe ERROR spans; four projects cleaned, retained 12 containers unchanged; shared legacy oracles remain for other consumers |
+| Controller publication Trace, 2026-09-17 | Full service/race/PostgreSQL and lint gates passed; independent image built; 28 RPC topology checks verify four publication attempts and two actual acknowledgement UPDATEs with zero SQL gaps | [Controller report](controller-publication-trace-revalidation.md); strict warnings/probe errors remain failed; retained deployment unchanged |
+| ACP commit-receipt loss migration, 2026-09-17 | Both SDKs passed six faults, six natural exit-1 restarts, 12 Runs, eight Bash calls and 12 replay checks; all 32 selected-SQL/request/lifecycle topologies passed | [P1 report](acp-persistence-revalidation.md); strict gate failed on 12 traces, zero missing-evidence errors; five projects cleaned and 12 retained containers unchanged |
+| ACP interruption recovery migration, 2026-09-17 | Both SDKs passed eight SIGKILL scenarios, 16 Runs, 18 replays, two Runtime protection rejections and two Rebuilds; 71 final combined fixture tests passed | [P2 report](acp-persistence-revalidation.md); 44 complete topologies passed, six interrupted-parent gaps remain failed; strict gate failed on 27 traces; four projects cleaned and retained 12 containers unchanged |
+| Expected absence and crash Trace follow-up, 2026-09-17 | Runtime Controller race/PostgreSQL/lint passed; 57 affected fixture tests; fresh base and P2 deployments passed 34 and 44 complete topology checks, with eight expected Docker 404s and zero probe ERROR spans | [Follow-up](trace-acceptance-followup.md); eight recovery cases and 18 replays passed; six intentional crash traces are diagnostics, not completeness failures; normal timing warnings remain strict failures; candidates isolated and retained 12 containers unchanged |
 
 The model-selection, Provider-fallback and discovery results were read from
 the ignored local artifacts
@@ -100,10 +112,42 @@ historical trace returned 404, so its prior failure is not retrospectively chang
 
 - The latest ACP SDK/metadata combination now has scoped browser and 12-path
   Runtime progress/cancellation integration evidence. Other historical Stage 3
-  and managed-MCP deployment profiles were not comprehensively migrated or rerun;
+  and closeout deployment profiles were not comprehensively migrated or rerun;
   their recorded historical results do not imply current-candidate acceptance.
-  Migration or retirement of those old assets remains postponed until the
-  current changes have stabilized.
+  The [asset inventory and migration](acceptance-asset-migration.md) has now
+  started after development synchronization. File observations, structured Plan
+  and slash commands now have current business/topology evidence. Tool
+  permissions also have disposable deployment and forced-crash cleanup evidence;
+  multimodal now has three-transport native-input and 48-request Trace evidence.
+  Session cost now has 52-model-request, real-restart and 156-Trace scoped
+  evidence. Its final-consumer legacy multimodal/pricing oracles were retired.
+  The default base Stage 3 flow now has five-lifecycle, three-transport and
+  34-Trace evidence, including Rebuild retention and logout revocation. Its
+  strict gate retains both timing warnings and four Docker absence-probe ERROR
+  spans. Managed MCP now has both-version active-Run Rebuild and real-child
+  lifecycle evidence: 12 Runs and 28 trace topologies passed, strict warnings
+  and six lifecycle probe ERROR spans remain failed. [RPC response loss](rpc-response-loss-revalidation.md)
+  now has four publication/settlement cases, eight Runs and 28 scoped trace
+  checks. The [Controller-owned follow-up](controller-publication-trace-revalidation.md)
+  now records four publication attempts and two actual acknowledgement UPDATEs
+  with zero SQL gaps. Its full service/race/PostgreSQL gates and 28 scoped
+  integration checks pass; strict warnings and four probe ERROR spans remain
+  failed. The independent Controller candidate has not replaced the retained
+  development deployment. [ACP commit-receipt loss](acp-persistence-revalidation.md)
+  now has six fault cases and 32 scoped Trace checks; its strict failures remain.
+  [P2 interrupted-Run recovery](acp-persistence-revalidation.md) now passes eight
+  business cases, 18 replays, two protective rejections and two Rebuilds; 44
+  complete Trace topologies passed in the original run. The
+  [Trace follow-up](trace-acceptance-followup.md) now classifies deliberate
+  SIGKILL traces as diagnostics, keeps normal-request export/completeness checks,
+  and removes expected Docker absence errors in the independent candidate.
+  Normal lifecycle regression passes 34 topologies with four expected 404s and
+  zero Docker probe ERROR spans; strict timing warnings remain.
+  Retained/extended legacy base branches
+  remain pending.
+  The obsolete shared replay, command and permission admission validators were
+  replaced after their consumers migrated. Other shared helpers remain until
+  their consumers migrate. Strict timing failure is not full deployment acceptance.
 
 - F07 remains deferred: the latest official rmcp 3.4.0 still rejects standard
   URL input without a legacy `elicitationId`. The independent SDK recheck is

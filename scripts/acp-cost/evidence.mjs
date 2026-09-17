@@ -28,12 +28,20 @@ export function assertPublicFrames(frames) {
   assertSecretFree(JSON.stringify(frames), ["cost-model-test"]);
 }
 
-export function assertOperationUpdates(name, params, result, updates) {
+export function assertOperationUpdates(
+  name,
+  params,
+  result,
+  updates,
+  owned = new Map(),
+) {
   const target = ["new", "fork"].includes(name)
     ? result.sessionId
     : params.sessionId;
   assert(
-    updates.every((update) => target && update.sessionId === target),
+    operationUpdates(updates, target, owned).every(
+      (update) => target && update.sessionId === target,
+    ),
     `unexpected Session notification during ${name}`,
   );
 }
@@ -104,11 +112,18 @@ export function assertAttempts(actual, expected) {
       expected[index].phase,
       "Provider phase mismatch",
     );
-    assert.equal(
-      request.trace_id,
-      expected[index].trace_id,
-      "Provider trace mismatch",
-    );
+    if (expected[index].trace_id)
+      assert.equal(
+        request.trace_id,
+        expected[index].trace_id,
+        "Provider trace mismatch",
+      );
+    else
+      assert(
+        expected[index].requestId && expected[index].connectionTraceID,
+        "actual WebSocket request identity missing",
+      );
+    assert(request.trace_id, "Provider trace missing");
     assert(
       request.model_span_id && !ids.has(request.model_span_id),
       "missing or duplicate Provider span",
@@ -117,36 +132,58 @@ export function assertAttempts(actual, expected) {
   }
 }
 
-export function inspectPricingTrace(trace, secrets = []) {
-  assert(trace?.spans?.length, "pricing trace missing");
-  const spans = new Map(trace.spans.map((s) => [s.spanID, s]));
-  const service = (s) => trace.processes[s.processID]?.serviceName;
-  const controller = trace.spans.filter(
-    (s) => service(s) === "agent-controller",
+export function assertObserverIsolation(updates, baseline, sessionId, modeId) {
+  assert.deepEqual(
+    updates.slice(0, baseline.length),
+    baseline,
+    "observer history changed",
   );
-  assert(controller.length, "Controller price authority missing");
-  for (let span of controller) {
-    const chain = [],
-      seen = new Set();
-    while (span) {
-      assert(!seen.has(span.spanID), "cyclic pricing ancestry");
-      seen.add(span.spanID);
-      chain.push(service(span));
-      const parent = span.references?.find(
-        (r) => r.refType === "CHILD_OF" && r.traceID === trace.traceID,
+  for (const item of updates.slice(baseline.length)) {
+    assert.equal(item.sessionId, sessionId, "foreign Session reached observer");
+    if (item.update.sessionUpdate === "current_mode_update") {
+      assert(modeId, "observer mode baseline missing");
+      assert.equal(item.update.currentModeId, modeId, "observer mode changed");
+    } else {
+      assert.equal(
+        item.update.sessionUpdate,
+        "config_option_update",
+        "observer received non-configuration output",
       );
-      span = spans.get(parent?.spanID);
+      assertModelSelection(item.update, "agent_default");
     }
-    assert(
-      chain.indexOf("admin-console") > 0 &&
-        chain.indexOf("edge-gateway") > chain.indexOf("admin-console"),
-      "missing Gateway/Console pricing ancestry",
-    );
   }
-  assertSecretFree(JSON.stringify(trace), secrets);
-  return {
-    trace_id: trace.traceID,
-    controller_spans: controller.length,
-    gateway_console_ancestry: true,
-  };
+}
+
+// Catalog publication refreshes every attached Session. Only unchanged public
+// configuration of a known owned Session can be separated from an operation.
+export function operationUpdates(updates, target, owned) {
+  return updates.filter((item) => {
+    const baseline = owned.get(item.sessionId);
+    if (item.sessionId === target || !baseline) return true;
+    if (item.update.sessionUpdate === "config_option_update") {
+      assertModelSelection(item.update, baseline.model);
+      return false;
+    }
+    if (item.update.sessionUpdate === "current_mode_update") {
+      assert(baseline.mode, "owned mode baseline missing");
+      assert.equal(item.update.currentModeId, baseline.mode);
+      return false;
+    }
+    return true;
+  });
+}
+
+export function rememberSelection(owned, name, params, result) {
+  const sessionId = ["new", "fork"].includes(name)
+    ? result.sessionId
+    : params.sessionId;
+  if (!sessionId || !result.configOptions) return;
+  owned.set(sessionId, {
+    model: result.configOptions.find((o) => (o.id ?? o.configId) === "model")
+      ?.currentValue,
+    mode:
+      result.modes?.currentModeId ??
+      owned.get(sessionId)?.mode ??
+      owned.get(params.sessionId)?.mode,
+  });
 }

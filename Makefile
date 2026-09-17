@@ -13,6 +13,7 @@ define reset-test-database
 endef
 
 fmt:
+	services/agent-acp-service/node_modules/.bin/prettier --write scripts/rpc-response-loss/*.mjs scripts/acp-persistence/*.mjs scripts/acp-restart/*.mjs
 	gofmt -w $$(find services -name '*.go' -type f)
 	cargo fmt --manifest-path runtimes/antnest-runtime/Cargo.toml --all
 	cargo fmt --manifest-path services/runtime-egress/Cargo.toml --all
@@ -27,6 +28,7 @@ fmt:
 	services/agent-acp-service/node_modules/.bin/prettier --write scripts/managed-mcp/*.mjs scripts/acp-closeout/*.mjs scripts/identity-closeout/*.mjs scripts/acp-progress/*.mjs scripts/acp-files/*.mjs scripts/acp-plan/*.mjs scripts/acp-permissions/*.mjs scripts/acp-commands/*.mjs scripts/acp-multimodal/*.mjs scripts/acp-cost/*.mjs
 
 fmt-check:
+	services/agent-acp-service/node_modules/.bin/prettier --check scripts/rpc-response-loss/*.mjs scripts/acp-persistence/*.mjs scripts/acp-restart/*.mjs
 	@unformatted="$$(gofmt -l $$(find services -name '*.go' -type f))" || exit $$?; \
 		test -z "$$unformatted"
 	cargo fmt --manifest-path runtimes/antnest-runtime/Cargo.toml --all --check
@@ -85,6 +87,9 @@ test-node:
 	npm --prefix services/admin-console/web test
 	npm --prefix services/agent-ui/web test
 	$(MAKE) test-managed-mcp-fixtures
+	$(MAKE) test-rpc-response-loss-fixtures
+	$(MAKE) test-acp-persistence-fixtures
+	$(MAKE) test-acp-restart-fixtures
 	$(MAKE) test-tool-progress-fixtures
 	$(MAKE) test-file-observation-fixtures
 	$(MAKE) test-plan-fixtures
@@ -92,6 +97,7 @@ test-node:
 	$(MAKE) test-command-fixtures
 	$(MAKE) test-multimodal-fixtures
 	$(MAKE) test-cost-fixtures
+	$(MAKE) test-stage3-base-fixtures
 	$(MAKE) test-lifecycle-fixtures
 	$(MAKE) test-workspace-fixtures
 	node --test --test-concurrency=1 scripts/acp-closeout/*.test.mjs
@@ -99,6 +105,10 @@ test-node:
 
 test-managed-mcp-fixtures:
 	node --test --test-concurrency=1 scripts/managed-mcp/*.test.mjs
+
+.PHONY: test-rpc-response-loss-fixtures
+test-rpc-response-loss-fixtures:
+	node --test --test-concurrency=1 scripts/rpc-response-loss/*.test.mjs
 
 .PHONY: test-lifecycle-fixtures e2e-lifecycle
 test-lifecycle-fixtures:
@@ -160,7 +170,7 @@ test-permission-fixtures:
 	node --test --test-concurrency=1 scripts/acp-permissions/*.test.mjs
 
 e2e-tool-permissions:
-	sh scripts/e2e-tool-permissions.sh
+	ANTNEST_E2E_TOOL_PERMISSIONS=true sh scripts/e2e-stage3a.sh
 
 .PHONY: test-command-fixtures e2e-slash-commands
 test-command-fixtures:
@@ -244,6 +254,13 @@ e2e-stage2: docker-build
 e2e-stage3: docker-build-stage3
 	sh scripts/e2e-stage3a.sh
 
+.PHONY: test-stage3-base-fixtures e2e-stage3-local
+test-stage3-base-fixtures:
+	node --test --test-concurrency=1 scripts/stage3-base/*.test.mjs
+
+e2e-stage3-local:
+	sh scripts/e2e-stage3a.sh
+
 .PHONY: e2e-identity-access
 e2e-identity-access: docker-build-stage3
 	ANTNEST_E2E_IDENTITY_ACCESS=true sh scripts/e2e-stage3a.sh
@@ -258,3 +275,24 @@ e2e-agent-access: docker-build-stage3
 
 e2e-runtime-controller: docker-build-runtime-controller
 	sh services/runtime-controller/scripts/e2e.sh
+
+.PHONY: e2e-managed-mcp-v1 e2e-managed-mcp-v2
+e2e-managed-mcp-v1:
+	ANTNEST_E2E_MANAGED_MCP=true ANTNEST_E2E_MANAGED_MCP_VERSION=1 sh scripts/e2e-stage3a.sh
+
+e2e-managed-mcp-v2:
+	ANTNEST_E2E_MANAGED_MCP=true ANTNEST_E2E_MANAGED_MCP_VERSION=2 sh scripts/e2e-stage3a.sh
+
+.PHONY: test-acp-persistence-fixtures e2e-acp-persistence
+test-acp-persistence-fixtures:
+	node --test --test-concurrency=1 scripts/acp-persistence/*.test.mjs
+
+e2e-acp-persistence:
+	ANTNEST_E2E_ACP_PERSISTENCE=true sh scripts/e2e-stage3a.sh
+
+.PHONY: test-acp-restart-fixtures e2e-acp-restart
+test-acp-restart-fixtures:
+	node --test --test-concurrency=1 scripts/acp-restart/*.test.mjs
+
+e2e-acp-restart:
+	ANTNEST_E2E_ACP_RESTART=true sh scripts/e2e-stage3a.sh

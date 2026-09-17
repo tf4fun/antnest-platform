@@ -1,11 +1,17 @@
 # F04 Deployed Structured Plan Acceptance
 
-Status: deployed integration passed, 2026-09-09. This batch validates deployment,
-not new ACP or Runtime behavior. F04 service tests passed separately.
+Current revalidation: 2026-09-17. All 12 business scenarios and 38 independent
+request trace topology/privacy checks passed. Strict Trace failed on recorded
+timing warnings; the deployment command remains nonzero. See the
+[current report](../../docs/structured-plan-revalidation.md). The original
+2026-09-09 results below retain their historical candidate and scope. This
+profile changes acceptance fixtures, not production ACP or Runtime behavior.
 
 ## Workflow
 
-Create users, model profile, template and Agent through Gateway/Console BFF.
+Create users, a Provider connection and Model, a Template referencing the stable
+Model identity, and an Agent using the returned Template revision through
+Gateway/Console BFF. Wait for executable readiness before using ACP.
 For each ACP version, use a real Session to create a plan, execute one Runtime
 write and update the plan, reject an invalid plan, clear it, and start another
 Run that must see the empty plan. Fork before clearing; a Run on that fork must
@@ -23,7 +29,9 @@ local. The fixtures cannot write SQL or access Docker.
 
 New connections load/resume and fork the persisted stream through Gateway.
 Compare plan and Tool updates, including IDs and order, against the live stream;
-an empty matching subset is not success. Another user is rejected before access.
+an empty matching subset is not success. Another user receives the exact ACP
+`access_denied` error with no private updates; a successful authenticated
+WebSocket upgrade alone does not grant Agent access.
 All wire updates are validated against the pinned official SDK schemas. No
 client MCP injection, external Provider, new browser UI or forced-crash claim.
 Check Tool IDs across new Runs in the same Session, not just within one Run.
@@ -35,14 +43,22 @@ the first `tool_call_update` by its Tool ID.
 
 ## Traces And Ownership
 
-Collect execution trace IDs from Gateway connections and model requests, and
-replay trace IDs independently. Every Run needs Gateway ancestry, Controller
-admission/finish, model calls, PostgreSQL transactions and fresh Runtime info/
-catalog spans. Match exact model request IDs and admissions, not aggregate
-counts alone. Only the execution phase may have one remote dispatch and its
-actual Runtime Tool descendant; local-plan-only Runs must have none. Generic
-transaction spans prove the persistence path exists, not a count of plan commits.
-Replay/fork traces must exist and have no model or Runtime execution. Plan
+Collect twelve execution trace IDs from the actual model HTTP requests and
+correlate each to its prompt, Agent, Session and Gateway connection link. Match
+the HTTP CLIENT through `model.complete` to its owning `agent.run` and Run ID.
+Every Run needs committed PostgreSQL persistence with a real driver write and
+fresh Runtime info/catalog before model execution. Management calls inside a
+Run are forbidden; removed Controller admission/finish APIs are not expected.
+Only the execute phase may have one remote write dispatch and its actual Runtime
+Tool SERVER descendant; local-plan-only Runs must have none. Generic transaction
+spans prove a persistence path, not the number of plan commits.
+
+Collect twenty successful replay/fork and six denial request traces separately.
+Repeated loads of the same Session are disambiguated by their actual connection
+link. Each trace must match its method and resource identity. None may execute
+a Run, model or Runtime call. Denial diagnostics must stay within the matching
+rejected ACP request and domain operation; the wire response must carry its
+exact access error, without private updates or additional Session data. Plan
 content, user input and synthetic credentials must not appear in traces. IP
 forwarding is outside trace scope. Use bounded stable-span collection.
 This profile's sensitive-content check covers exported Jaeger traces only;
@@ -51,12 +67,14 @@ it does not establish absence from every container stdout log or metrics export.
 Run all verification serially. Build current production ACP/Runtime images,
 then `make test-plan-fixtures` and `make e2e-structured-plan`. Existing other
 service images must match source. The parent profile owns one disposable Compose
-project with one PostgreSQL instance and service-owned databases; it removes
+project with one PostgreSQL instance and service-owned databases. The Plan-only
+Compose override ignores local `.env`, removes the host Temporal port and keeps
+dynamic IPs separate from fixed Egress/Jaeger addresses. The parent removes
 all its containers, volumes and networks on success or failure, preserving
 existing human acceptance instances. Keep only final counts and verdicts here,
 not raw events, credentials or trace dumps.
 
-## Final Evidence
+## Historical Evidence — 2026-09-09
 
 Twelve scenarios passed across v1/v2 with 22 validated model requests, six local
 plan commits, two invalid-plan rejections and exactly two actual Runtime writes.

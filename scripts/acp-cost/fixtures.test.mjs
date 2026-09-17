@@ -1,10 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import {
-  assertCost,
-  assertAttempts,
-  inspectPricingTrace,
-} from "./evidence.mjs";
+import { assertCost, assertAttempts } from "./evidence.mjs";
 import { decide, encodeCompletion, createModelFixture } from "./model.mjs";
 
 test("wire oracle distinguishes unknown, zero and cumulative known cost", () => {
@@ -167,31 +163,4 @@ test("admission fixture holds a real completion until explicit release", async (
     await response?.catch(() => {});
     await new Promise((resolve) => server.close(resolve));
   }
-});
-
-test("pricing evidence requires Console and Gateway ancestors of the Controller authority", () => {
-  const trace = { traceID: "t", processes: {}, spans: [] };
-  for (const [id, service, parent] of [
-    ["e", "edge-gateway"],
-    ["c", "admin-console", "e"],
-    ["a", "agent-controller", "c"],
-  ]) {
-    trace.processes[id] = { serviceName: service };
-    trace.spans.push({
-      spanID: id,
-      processID: id,
-      references: parent
-        ? [{ refType: "CHILD_OF", traceID: "t", spanID: parent }]
-        : [],
-    });
-  }
-  assert.equal(inspectPricingTrace(trace).gateway_console_ancestry, true);
-  for (const id of ["e", "c", "a"]) {
-    const broken = structuredClone(trace);
-    broken.spans = broken.spans.filter((s) => s.spanID !== id);
-    assert.throws(() => inspectPricingTrace(broken));
-  }
-  const leaked = structuredClone(trace);
-  leaked.spans[2].tags = [{ key: "bad", value: "price-secret-canary" }];
-  assert.throws(() => inspectPricingTrace(leaked, ["price-secret-canary"]));
 });

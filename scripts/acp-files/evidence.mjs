@@ -1,52 +1,5 @@
 import assert from "node:assert/strict";
 import { assertTerminal, toolUpdates } from "../acp-progress/evidence.mjs";
-import { assertSecretFree } from "../identity-closeout/evidence.mjs";
-
-export function inspectReplayTrace(trace, secrets = []) {
-  assert(trace?.spans?.length, "missing replay trace");
-  const spans = new Map(trace.spans.map((span) => [span.spanID, span]));
-  const service = (span) => trace.processes[span.processID]?.serviceName;
-  const methods = new Set();
-  for (const span of spans.values()) {
-    assert.notEqual(
-      service(span),
-      "antnest-runtime",
-      "replay contacted Runtime",
-    );
-    assert(
-      !/^(model\.|mcp\.)/.test(span.operationName),
-      "replay executed a model/Runtime operation",
-    );
-    if (
-      service(span) !== "agent-acp-service" ||
-      !["acp.session.resume", "acp.session.fork"].includes(span.operationName)
-    )
-      continue;
-    methods.add(span.operationName);
-    let parent = span;
-    const seen = new Set();
-    while (
-      parent &&
-      service(parent) !== "edge-gateway" &&
-      !seen.has(parent.spanID)
-    ) {
-      seen.add(parent.spanID);
-      parent = spans.get(
-        parent.references?.find((ref) => ref.refType === "CHILD_OF")?.spanID,
-      );
-    }
-    assert(
-      parent && service(parent) === "edge-gateway",
-      "missing replay Gateway ancestry",
-    );
-  }
-  assert.deepEqual(
-    methods,
-    new Set(["acp.session.resume", "acp.session.fork"]),
-  );
-  assertSecretFree(JSON.stringify(trace), secrets);
-  return { trace_id: trace.traceID, spans: spans.size, no_execution: true };
-}
 
 export function assertFileEvents(version, item, frames) {
   const updates = toolUpdates(frames);

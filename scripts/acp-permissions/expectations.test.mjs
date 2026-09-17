@@ -57,3 +57,38 @@ test("each protocol must use its chosen model and execute both Smart judgments",
       );
     }
 });
+
+test("both wire versions reject Tool updates before approval, including reconnect replay", async () => {
+  const { assertApprovalPending } = await import("./expectations.mjs");
+  const params = {
+    sessionId: "s",
+    toolCall: { rawInput: { path: "p" } },
+    options: [{ optionId: "allow_once" }],
+  };
+  assertApprovalPending(params, [], "s", "allow_once");
+  assertApprovalPending(
+    { ...params, toolCall: undefined, subject: { toolCall: params.toolCall } },
+    [],
+    "s",
+    "allow_once",
+  );
+  for (const sessionUpdate of ["tool_call", "tool_call_update"]) {
+    assert.throws(
+      () =>
+        assertApprovalPending(
+          params,
+          [{ sessionId: "s", update: { sessionUpdate } }],
+          "s",
+          "allow_once",
+        ),
+      /before approval/,
+    );
+  }
+  assert.throws(() =>
+    assertApprovalPending(params, [], "foreign", "allow_once"),
+  );
+  assert.throws(() => assertApprovalPending(params, [], "s", "reject_once"));
+  assert.throws(() =>
+    assertApprovalPending({ ...params, toolCall: {} }, [], "s", "allow_once"),
+  );
+});

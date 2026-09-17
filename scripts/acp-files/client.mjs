@@ -5,11 +5,13 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import v1Schema from "@agentclientprotocol/sdk/schema/schema.json" with { type: "json" };
 import v2Schema from "@agentclientprotocol/sdk/schema/v2/schema.unstable.json" with { type: "json" };
 import { GatewayClient } from "../identity-closeout/support.mjs";
-import { rejectedUpgrade } from "../acp-closeout/support.mjs";
 import { connectACP, gateway } from "../identity-closeout/acp-connection.mjs";
-import { collectTrace, verifyTraces } from "../managed-mcp/trace.mjs";
+import { verifyTraces } from "../managed-mcp/trace.mjs";
 import { toolUpdates } from "../acp-progress/evidence.mjs";
-import { assertFileEvents, inspectReplayTrace } from "./evidence.mjs";
+import { assertFileEvents } from "./evidence.mjs";
+import { seedFiles, assertAgentDenied } from "./setup.mjs";
+import { waitForAgentReady } from "../verification/agent-state.mjs";
+import { inspectFileTrace, collectReplayRequestTrace } from "./trace.mjs";
 import { cases, contentMarker } from "./model.mjs";
 
 const admin = new GatewayClient(gateway);
@@ -19,7 +21,7 @@ const image = process.env.TEST_RUNTIME_IMAGE;
 assert(image, "test Runtime image required");
 const setup = { cwd: "/workspace", mcpServers: [] };
 const outcomes = [];
-const replayIDs = [];
+const replayRequests = [];
 const validators = [v1Schema, v2Schema].map((schema) =>
   new Ajv2020({ strict: false, validateFormats: false }).compile({
     $ref: "#/$defs/SessionUpdate",
@@ -125,11 +127,26 @@ async function scenario(version, item, agent) {
     client = await connect(version, agent);
     await replay(client, version, sessionId);
     assert.deepEqual(toolUpdates(client.updates), updates);
+    const method = version === 1 ? "session/load" : "session/resume";
+    replayRequests.push({
+      method,
+      sessionId,
+      connectionTraceID: client.traceID,
+    });
     const fork = await client.request("fork", { ...setup, sessionId });
+    replayRequests.push({
+      method: "session/fork",
+      sessionId: fork.sessionId,
+      connectionTraceID: client.traceID,
+    });
     client.updates.length = 0;
     await replay(client, version, fork.sessionId);
     assert.deepEqual(toolUpdates(client.updates), updates);
-    replayIDs.push(client.traceID);
+    replayRequests.push({
+      method,
+      sessionId: fork.sessionId,
+      connectionTraceID: client.traceID,
+    });
     outcomes.push({
       phase,
       file_facts: true,
@@ -157,32 +174,7 @@ await api("/api/admin/directory/users", {
 });
 await login(member, "file-owner@example.com", "file-owner-password");
 await login(stranger, "file-stranger@example.com", "file-stranger-password");
-const model = await api(
-  "/api/admin/model-profiles",
-  {
-    display_name: "File SSE model",
-    api_key: "file-model-test",
-    model: {
-      base_url: "http://file-model:8080/v1",
-      model: "file-model",
-      context_window: 64000,
-      max_output_tokens: 16384,
-      supports_images: false,
-    },
-  },
-  201,
-);
-const template = await api(
-  "/api/admin/templates",
-  {
-    name: "File acceptance",
-    model_profile_revision_id: model.revision_id,
-    system_prompt: "Use the requested tool.",
-    max_model_requests: 4,
-    runtime: { image_ref: image },
-  },
-  201,
-);
+const template = await seedFiles(api, image);
 for (const version of [1, 2]) {
   const created = await api(
     "/api/admin/agents",
@@ -190,14 +182,21 @@ for (const version of [1, 2]) {
       owner_user_id: user.user.id,
       name: `Files v${version}`,
       template_id: template.template_id,
-      template_revision: 1,
+      template_revision: template.revision,
     },
     202,
   );
   const agent = created.agent.agent_id;
   try {
     await operation(created.operation.request_id);
-    await rejectedUpgrade(version, agent, stranger);
+    await waitForAgentReady(() => api(`/api/admin/agents/${agent}`));
+    const foreign = connectACP(version, agent, stranger.cookie);
+    try {
+      await foreign.initialize();
+      await assertAgentDenied(foreign);
+    } finally {
+      foreign.close();
+    }
     for (const item of cases) await scenario(version, item, agent);
   } finally {
     await operation(
@@ -230,6 +229,7 @@ const traces = await verifyTraces(
   "http://jaeger:16686",
   observed.requests,
   secrets,
+  inspectFileTrace,
 );
 assert.equal(traces.length, outcomes.length);
 for (const trace of traces) {
@@ -238,20 +238,29 @@ for (const trace of traces) {
   assert.equal(trace.runtime_tool_calls, 1);
 }
 const replays = [];
-assert.equal(new Set(replayIDs).size, outcomes.length);
-for (const id of replayIDs)
+assert.equal(replayRequests.length, outcomes.length * 3);
+for (const expected of replayRequests)
   replays.push(
-    await collectTrace("http://jaeger:16686", id, (trace) =>
-      inspectReplayTrace(trace, secrets),
-    ),
+    await collectReplayRequestTrace("http://jaeger:16686", expected, secrets),
   );
+assert.equal(
+  new Set(replays.map((trace) => trace.trace_id)).size,
+  outcomes.length * 3,
+);
+const strictTrace = [...traces, ...replays].some(
+  (trace) => trace.strict_trace === "failed",
+)
+  ? "failed"
+  : "passed";
 console.log(
   JSON.stringify({
-    status: "passed",
+    status: "business_passed",
     scenarios: outcomes.length,
     model_requests: observed.requests.length,
     traces,
     replay_traces: replays,
     cross_user_rejections: 2,
+    strict_trace: strictTrace,
   }),
 );
+if (strictTrace === "failed") process.exitCode = 1;

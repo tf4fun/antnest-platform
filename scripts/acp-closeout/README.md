@@ -1,5 +1,13 @@
 # Gateway ACP Closeout Integration
 
+This is a historical mixed recovery/Identity profile. Current recovery fixtures
+are [ACP committed-response loss](../acp-persistence/README.md) and
+[ACP process interruption](../acp-restart/README.md), with their separate
+[scoped evidence](../../docs/acp-persistence-revalidation.md). The remaining
+Identity scenarios and legacy parent setup still require migration; the command
+below is not a validated current acceptance entry. Shared helpers remain for
+their existing consumers.
+
 Install locked host dependencies with `npm --prefix services/agent-acp-service ci`,
 then run `ANTNEST_E2E_ACP_CLOSEOUT=true make e2e-stage3`. The parent creates a
 disposable Compose project with real Identity, Controller, ACP, Runtime,
@@ -84,11 +92,13 @@ Not covered: acquire/finish response-loss windows, concurrent rebuild while a
 Run is active, OIDC/SCIM provisioning,
 browser rendering, or full ACP protocol conformance. Keep these open in the
 [closeout plan](../../docs/docker-single-node-closeout.md).
-The separate managed-MCP profile supplies stable-v1/draft-v2 active-Run rebuild
-evidence. The separate [RPC response-loss profile](rpc-loss.md), run with
-`make e2e-rpc-response-loss`, supplies deployed acquire/finish response-loss
-evidence for both versions. The exclusions above describe this SIGKILL profile,
-not those separate acceptance suites.
+The separate [current Managed MCP profile](../managed-mcp/README.md) supplies
+both-version active-Run rebuild evidence. `make e2e-rpc-response-loss` now runs
+the [current publication/settlement profile](../rpc-response-loss/README.md).
+Its scoped business checks pass while strict Trace evidence remains failed;
+the old [acquire/finish report](rpc-loss.md) is historical. ACP persistence fault
+recovery remains pending. The exclusions above describe this historical SIGKILL
+profile, not the migrated suites.
 
 Session setup/replay may send the standard command catalog. The suite validates
 that catalog separately from durable history; revoked/foreign operations must

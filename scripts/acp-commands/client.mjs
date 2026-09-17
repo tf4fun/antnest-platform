@@ -1,20 +1,20 @@
 import assert from "node:assert/strict";
-import { randomBytes } from "node:crypto";
-import * as v1 from "@agentclientprotocol/sdk";
-import { createHttpStream } from "@agentclientprotocol/sdk/experimental/http-client";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import v1Schema from "@agentclientprotocol/sdk/schema/schema.json" with { type: "json" };
 import v2Schema from "@agentclientprotocol/sdk/schema/v2/schema.unstable.json" with { type: "json" };
 import { GatewayClient } from "../identity-closeout/support.mjs";
 import { assertDeniedSessionError } from "../identity-closeout/agent-access-evidence.mjs";
-import { connectACP, gateway } from "../identity-closeout/acp-connection.mjs";
-import { rejectedUpgrade, until } from "../acp-closeout/support.mjs";
-import { collectTrace, inspectTrace } from "../managed-mcp/trace.mjs";
+import { gateway } from "../identity-closeout/acp-connection.mjs";
+import { until } from "../acp-closeout/support.mjs";
+import { commandConnection } from "./connection.mjs";
+import { collectCommandTrace } from "./trace.mjs";
+import { seedCommands } from "./setup.mjs";
+import { assertAgentDenied } from "../acp-files/setup.mjs";
+import { waitForAgentReady } from "../verification/agent-state.mjs";
 import {
   assertCatalog,
   assertOrdinaryTool,
   assertTranscript,
-  inspectCommandTrace,
   transcript,
 } from "./evidence.mjs";
 
@@ -24,7 +24,6 @@ const admin = new GatewayClient(gateway),
 const setup = { cwd: "/workspace", mcpServers: [] };
 const agents = [],
   traces = [],
-  normalTraces = [],
   outcomes = [];
 const marker = "F08_PRIVATE_ATTACHMENT";
 const validators = [v1Schema, v2Schema].map((schema) =>
@@ -53,46 +52,15 @@ async function operation(id) {
   );
 }
 
-function httpClient(agent) {
-  const traceID = randomBytes(16).toString("hex"),
-    updates = [];
-  const connection = v1
-    .client()
-    .onNotification(v1.methods.client.session.update, ({ params }) =>
-      updates.push(params),
-    )
-    .connect(
-      createHttpStream(`${gateway}/api/app/agents/${agent}/v1/acp`, {
-        headers: {
-          Cookie: member.cookie,
-          Origin: gateway,
-          "X-Antnest-CSRF-Token": member.cookies.get("antnest_csrf"),
-          traceparent: `00-${traceID}-${randomBytes(8).toString("hex")}-01`,
-        },
-      }),
-    );
-  const request = (method, params, timeout = 15000) =>
-    connection.agent.request(method, params, {
-      signal: AbortSignal.timeout(timeout),
-    });
-  return {
-    traceID,
-    updates,
-    close: () => connection.close(),
-    initialize: () =>
-      request(v1.methods.agent.initialize, {
-        protocolVersion: v1.PROTOCOL_VERSION,
-        clientCapabilities: {},
-      }),
-    request: (name, params, timeout) =>
-      request(v1.methods.agent.session[name], params, timeout),
-  };
+function record(client, label, kind = "request", extra = {}) {
+  assert(
+    client.lastRequest?.method.startsWith("session/"),
+    "actual SDK request missing",
+  );
+  traces.push({ ...client.lastRequest, label, kind, ...extra });
 }
-
-async function connect(profile, agent) {
-  const client = profile.http
-    ? httpClient(agent)
-    : connectACP(profile.version, agent, member.cookie);
+async function connect(profile, agent, browser = member) {
+  const client = commandConnection(profile, agent, browser);
   try {
     await client.initialize();
     return client;
@@ -158,7 +126,7 @@ async function prompt(client, version, sessionId, content) {
 }
 
 async function modelStatus() {
-  const response = await fetch("http://acp-closeout-model:8080/status", {
+  const response = await fetch("http://commands-model-peer:8080/status", {
     signal: AbortSignal.timeout(5000),
   });
   assert.equal(response.status, 200);
@@ -181,6 +149,7 @@ async function restore(profile, agent, sessionId, history) {
       sessionId: id,
       ...(profile.version === 2 ? { replayFrom: { type: "start" } } : {}),
     });
+    record(client, `${profile.name}:replay`);
     await catalog(client, id, profile.version);
     assertTranscript(client.updates, id, history);
   };
@@ -188,20 +157,17 @@ async function restore(profile, agent, sessionId, history) {
     await replay(sessionId);
     client.updates.length = 0;
     await client.request("resume", { ...setup, sessionId });
+    record(client, `${profile.name}:resume-without-replay`);
     await catalog(client, sessionId, profile.version);
     assertTranscript(client.updates, sessionId, []);
     client.updates.length = 0;
     const fork = await client.request("fork", { ...setup, sessionId });
     assert.notEqual(fork.sessionId, sessionId);
+    record(client, `${profile.name}:fork`, "request", {
+      sessionId: fork.sessionId,
+    });
     await catalog(client, fork.sessionId, profile.version);
     await replay(fork.sessionId);
-    traces.push({
-      id: client.traceID,
-      label: `${profile.name}:restore`,
-      runs: 0,
-      // v1 load and v2 resume share the application's resume operation.
-      methods: ["acp.session.resume", "acp.session.fork"],
-    });
   } finally {
     client.close();
   }
@@ -224,18 +190,15 @@ async function rejectForeign(profile, sessionId) {
           return true;
         },
       );
+      record(client, `${profile.name}:foreign-session:${name}`, "request", {
+        rejection: "session_access_denied",
+      });
     }
     assert.equal(
       client.updates.length,
       0,
       "foreign Session leaked notifications",
     );
-    traces.push({
-      id: client.traceID,
-      label: `${profile.name}:isolation`,
-      runs: 0,
-      methods: ["acp.session.resume", "acp.session.fork", "acp.session.prompt"],
-    });
   } finally {
     client.close();
   }
@@ -249,6 +212,7 @@ async function exercise(profile) {
   let sessionId;
   try {
     ({ sessionId } = await client.request("new", setup));
+    record(client, `${profile.name}:new`, "request", { sessionId });
     await catalog(client, sessionId, profile.version);
     stage = `${profile.name}:unsupported-binary-context`;
     client.updates.length = 0;
@@ -274,6 +238,9 @@ async function exercise(profile) {
         return true;
       },
     );
+    record(client, `${profile.name}:unsupported-binary`, "request", {
+      rejection: "unsupported_resource_content",
+    });
     assert.equal(
       client.updates.length,
       0,
@@ -299,6 +266,7 @@ async function exercise(profile) {
         });
       }
       const replies = await prompt(client, profile.version, sessionId, content);
+      record(client, `${profile.name}:${text}`, "command");
       assert.equal(replies.length, 1, "command must reply once");
       assert.equal(replies[0].content.length, 1);
       assert.equal(replies[0].content[0].type, "text");
@@ -317,12 +285,6 @@ async function exercise(profile) {
       );
       history.push({ role: "user", content }, ...replies);
     }
-    traces.push({
-      id: client.traceID,
-      label: `${profile.name}:commands`,
-      runs: 2,
-      methods: ["acp.session.new", "acp.session.prompt"],
-    });
   } finally {
     client.close();
   }
@@ -342,11 +304,15 @@ async function exercise(profile) {
     foreign_session_rejections: 3,
     unsupported_binary_rejections: 1,
   });
+  console.log(
+    JSON.stringify({ status: "transport_passed", ...outcomes.at(-1) }),
+  );
   if (profile.http) return;
   stage = `${profile.name}:ordinary-run`;
   const ordinary = await connect(profile, agents[0]);
   try {
     await ordinary.request("resume", { ...setup, sessionId });
+    record(ordinary, `${profile.name}:ordinary-resume`);
     await catalog(ordinary, sessionId, profile.version);
     const phase = `v${profile.version}-baseline`;
     const replies = await prompt(ordinary, profile.version, sessionId, [
@@ -360,7 +326,7 @@ async function exercise(profile) {
       `${phase} verified`,
     );
     assertOrdinaryTool(ordinary.updates, profile.version, phase);
-    normalTraces.push(ordinary.traceID);
+    record(ordinary, `${profile.name}:ordinary-run`, "ordinary", { phase });
   } finally {
     ordinary.close();
   }
@@ -387,32 +353,7 @@ async function main() {
     "commands-stranger@example.com",
     "commands-stranger-password",
   );
-  const model = await api(
-    "/api/admin/model-profiles",
-    {
-      display_name: "Command fixture",
-      api_key: "acp-closeout-model",
-      model: {
-        base_url: "http://acp-closeout-model:8080/v1",
-        model: "command-model",
-        context_window: 64000,
-        max_output_tokens: 4096,
-        supports_images: false,
-      },
-    },
-    201,
-  );
-  const template = await api(
-    "/api/admin/templates",
-    {
-      name: "Command acceptance",
-      model_profile_revision_id: model.revision_id,
-      system_prompt: "Use the requested tool.",
-      max_model_requests: 5,
-      runtime: { image_ref: process.env.TEST_RUNTIME_IMAGE },
-    },
-    201,
-  );
+  const template = await seedCommands(api, process.env.TEST_RUNTIME_IMAGE);
   try {
     for (const name of ["Commands", "Other agent"]) {
       const created = await api(
@@ -421,30 +362,30 @@ async function main() {
           owner_user_id: user.user.id,
           name,
           template_id: template.template_id,
-          template_revision: 1,
+          template_revision: template.revision,
         },
         202,
       );
       agents.push(created.agent.agent_id);
       await operation(created.operation.request_id);
+      await waitForAgentReady(() => api(`/api/admin/agents/${agents.at(-1)}`));
     }
-    for (const version of [1, 2])
-      await rejectedUpgrade(version, agents[0], stranger);
-    await stranger.request(`/api/app/agents/${agents[0]}/v1/acp`, {
-      body: {
-        jsonrpc: "2.0",
-        id: 1,
-        method: "initialize",
-        params: { protocolVersion: v1.PROTOCOL_VERSION },
-      },
-      status: 404,
-    });
     for (const profile of [
       { name: "v1-ws", version: 1 },
       { name: "v2-ws", version: 2 },
       { name: "v1-http", version: 1, http: true },
-    ])
+    ]) {
+      const foreign = await connect(profile, agents[0], stranger);
+      try {
+        await assertAgentDenied(foreign);
+        record(foreign, `${profile.name}:foreign-user`, "request", {
+          rejection: "access_denied",
+        });
+      } finally {
+        foreign.close();
+      }
       await exercise(profile);
+    }
   } finally {
     const failures = [];
     for (const agent of agents) {
@@ -469,10 +410,11 @@ async function main() {
         .map((request) => request.stage),
       ["tool", "reply"],
     );
-  assert.deepEqual(
-    new Set(requests.map((request) => request.trace_id)),
-    new Set(normalTraces),
-  );
+  assert.equal(new Set(requests.map((request) => request.trace_id)).size, 2);
+  assert.equal(traces.length, 40);
+  assert.equal(traces.filter((trace) => trace.kind === "command").length, 6);
+  assert.equal(traces.filter((trace) => trace.kind === "request").length, 32);
+  assert.equal(traces.filter((trace) => trace.kind === "ordinary").length, 2);
   const secrets = [
     marker,
     "acp-closeout-model",
@@ -480,38 +422,43 @@ async function main() {
     ...member.cookies.values(),
     ...stranger.cookies.values(),
   ];
-  const checked = [],
-    normal = [];
-  for (const { id, ...expected } of traces) {
+  const checked = [];
+  for (const expected of traces) {
     stage = `trace:${expected.label}`;
     checked.push(
-      await collectTrace("http://jaeger:16686", id, (trace) =>
-        inspectCommandTrace(trace, expected, secrets),
+      await collectCommandTrace(
+        "http://jaeger:16686",
+        expected,
+        secrets,
+        expected.kind === "ordinary" ? requests : [],
       ),
     );
   }
-  for (const id of normalTraces) {
-    stage = "trace:ordinary-run";
-    normal.push(
-      await collectTrace("http://jaeger:16686", id, (trace) =>
-        inspectTrace(
-          trace,
-          requests.filter((request) => request.trace_id === id),
-          secrets,
-        ),
-      ),
-    );
-  }
+  assert.equal(new Set(checked.map((trace) => trace.trace_id)).size, 40);
+  const normal = checked.filter((trace) => trace.kind === "ordinary");
+  assert.deepEqual(
+    new Set(normal.map((trace) => trace.trace_id)),
+    new Set(requests.map((request) => request.trace_id)),
+  );
+  assert.equal(
+    new Set(checked.map((trace) => trace.run_id).filter(Boolean)).size,
+    8,
+  );
+  const strictTrace = checked.some((trace) => trace.strict_trace === "failed")
+    ? "failed"
+    : "passed";
   console.log(
     JSON.stringify({
-      status: "passed",
+      status: "business_passed",
+      strict_trace: strictTrace,
       outcomes,
       model_requests: requests.length,
       cross_user_rejections: 3,
-      traces: checked,
+      traces: checked.filter((trace) => trace.kind !== "ordinary"),
       normal_traces: normal,
     }),
   );
+  if (strictTrace === "failed") process.exitCode = 1;
 }
 
 try {

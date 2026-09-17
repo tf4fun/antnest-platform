@@ -1,12 +1,17 @@
 # F03 Deployed File Observation Acceptance
 
-Status: deployed integration passed, 2026-09-09. Runtime and ACP consumer service
-tests passed separately; this profile verifies their actual deployment boundary.
+Current revalidation: 2026-09-17. All 16 business scenarios and 64 independent
+request trace topology/privacy checks passed. Strict Trace failed on recorded
+timing warnings; the deployment command remains nonzero. See the
+[current report](../../docs/file-observation-revalidation.md). The original
+2026-09-09 results below retain their historical candidate and scope.
 
 ## Workflow
 
-Login through Edge Gateway, create a model profile, template and Agent through
-Console BFF, then call ACP v1/v2 through Gateway. A deterministic SSE model asks
+Login through Edge Gateway, create a Provider connection and Model, reference
+its stable identity from a Template, then create an Agent using the returned
+Template revision through Console BFF. Wait for executable readiness and call
+ACP v1/v2 through Gateway. A deterministic SSE model asks
 the real Rust Runtime to use builtin write/edit/read and validates the actual
 result. It does not fabricate MCP results, file observations or ACP events.
 
@@ -15,7 +20,9 @@ full-file edit, read, empty creation, replacing an existing empty file,
 unchanged edit, oversized write with omitted diff, and failed edit. Each case
 uses a fresh Session/connection, exactly one Tool invocation and a final model
 response. Fresh-connection load/resume and fork must reproduce the same Tool
-events without new model/Tool calls. Another user must not access the Agent.
+events without new model/Tool calls. Another user must receive the exact ACP
+`access_denied` response with no private updates; an authenticated WebSocket
+upgrade is not Agent access.
 
 Assertions distinguish actual observed path from an initial request target,
 creation from empty before-image, complete file text from edit fragments,
@@ -37,9 +44,11 @@ After Agent deletion flushes Runtime telemetry, Jaeger must show one information
 read, one catalog read, one ACP Tool dispatch and one actual Runtime Tool span
 per Run, with Gateway ancestry. Use the existing bounded stable-span collection
 helper. The actual Runtime Tool span must be a descendant of the ACP dispatch,
-not merely present somewhere in the trace. Collect replay/fork connection trace
-IDs independently of model requests: those traces must exist and contain the
-ACP lifecycle methods but zero model/Runtime calls. A missing trace is failure.
+not merely present somewhere in the trace. Correlate the Provider's actual HTTP
+CLIENT span to `model.complete` and `agent.run`, without retired admission tags.
+Collect all 48 replay/fork message traces independently of model requests: each
+must match its method and Session, link to its actual WebSocket connection and
+contain zero Runs/model/Runtime calls. A missing or ambiguous trace is failure.
 Check short ASCII sentinels in complete file context and synthetic credentials
 are absent from traces; checking only a full escaped file string is insufficient.
 For edit requests, also check every model message role for the context sentinel
@@ -51,7 +60,9 @@ legitimate model content. IP forwarding is outside tracing scope.
 Build production Runtime and ACP images serially; other service images must
 already match the working source. The profile starts a fresh Compose project
 with one PostgreSQL instance and service-owned databases, no external Provider,
-no `.secret`, no browser dependency and no cross-service SQL. Test drivers have
+no `.secret`, no browser dependency and no cross-service SQL. Its Compose override
+ignores local `.env`, removes the host Temporal port and reserves a dynamic IP
+range separate from fixed Egress/Jaeger addresses. Test drivers have
 no Docker socket; all file operations flow through ACP and actual Runtime MCP.
 
 ```sh
@@ -71,7 +82,7 @@ health startup uses the remaining 15-minute profile budget, not that short probe
 limit; an explicit wrapper-only `--lifecycle` flag selects the wait. Neither mode
 can bypass an expired deadline. Cleanup has its own bounded allowance.
 
-## Final Evidence
+## Historical Evidence — 2026-09-09
 
 Sixteen scenarios passed across v1/v2, with 32 validated model requests,
 16 execution traces, 16 independently collected replay/fork traces and two

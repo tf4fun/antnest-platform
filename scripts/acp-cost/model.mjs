@@ -8,7 +8,7 @@ const phases = new Set([
   "reported",
   "zero",
   "cache",
-  "pinned",
+  "current-default",
   "selected",
   "unpriced-again",
   "fresh-unknown",

@@ -1,10 +1,15 @@
 import assert from "node:assert/strict";
 import { GatewayClient } from "../identity-closeout/support.mjs";
 import { connectACP, gateway } from "../identity-closeout/acp-connection.mjs";
-import { until, rejectedUpgrade } from "../acp-closeout/support.mjs";
+import { until } from "../acp-closeout/support.mjs";
 import { collectTrace } from "../managed-mcp/trace.mjs";
 import { inspectPermissionTrace } from "./trace.mjs";
-import { verifyModelRequests } from "./expectations.mjs";
+import { verifyModelRequests, assertApprovalPending } from "./expectations.mjs";
+
+import { seedPermissions } from "./setup.mjs";
+import { assertAgentDenied } from "../acp-files/setup.mjs";
+import { waitForAgentReady } from "../verification/agent-state.mjs";
+import { collectPlanRequestTrace } from "../acp-plan/requests.mjs";
 
 const admin = new GatewayClient(gateway),
   member = new GatewayClient(gateway),
@@ -12,7 +17,8 @@ const admin = new GatewayClient(gateway),
 const suffix = process.env.TEST_PERMISSION_RUN_ID,
   agents = [],
   outcomes = [],
-  runTraces = new Set();
+  executionRequests = [],
+  replayRequests = [];
 const email = `permission-owner-${suffix}@example.com`;
 assert.match(suffix ?? "", /^[0-9a-f-]{36}$/);
 const setup = { cwd: "/workspace", mcpServers: [] };
@@ -57,8 +63,13 @@ async function connect(version, agent) {
         if (signal.aborted) abort();
       }),
   });
-  await client.initialize();
-  return Object.assign(client, { pending, version });
+  try {
+    await client.initialize();
+    return Object.assign(client, { pending, version, agentId: agent });
+  } catch (error) {
+    client.close();
+    throw error;
+  }
 }
 async function session(client, mode) {
   stage = `v${client.version}-configure-${mode}`;
@@ -87,7 +98,8 @@ async function done(client, version, promise, sessionId, phase) {
           (frame) =>
             frame.sessionId === sessionId &&
             frame.update.sessionUpdate === "state_update" &&
-            frame.update.state === "idle",
+            frame.update.state === "idle" &&
+            frame.update.stopReason === "end_turn",
         ),
       "Run idle",
     );
@@ -105,10 +117,24 @@ async function done(client, version, promise, sessionId, phase) {
   assert.equal(client.pending.length, 0);
   outcomes.push(phase);
 }
+function identity(client, method, sessionId) {
+  return {
+    method,
+    sessionId,
+    agentId: client.agentId,
+    connectionTraceID: client.traceID,
+  };
+}
+function recordPrompt(client, sessionId, phase) {
+  executionRequests.push({
+    ...identity(client, "session/prompt", sessionId),
+    phase,
+  });
+}
 async function prompt(client, version, sessionId, phase, decision) {
   stage = phase;
   client.updates.length = 0;
-  runTraces.add(client.traceID);
+  recordPrompt(client, sessionId, phase);
   const pending = client.request(
     "prompt",
     { sessionId, prompt: [{ type: "text", text: phase }] },
@@ -125,19 +151,7 @@ async function prompt(client, version, sessionId, phase, decision) {
       await new Promise(() => {});
     }
     const request = client.pending.shift();
-    assert.equal(request.params.sessionId, sessionId);
-    const tool = request.params.toolCall ?? request.params.subject?.toolCall;
-    assert(tool?.rawInput, "exact arguments missing");
-    assert.equal(
-      client.updates.filter(
-        (frame) => frame.update.sessionUpdate === "tool_call",
-      ).length,
-      0,
-      "dispatch before approval",
-    );
-    assert(
-      request.params.options.some((option) => option.optionId === decision),
-    );
+    assertApprovalPending(request.params, client.updates, sessionId, decision);
     request.answer(decision);
   }
   const result = await observed;
@@ -180,6 +194,7 @@ async function exercise(version, agent, modelID) {
     sid = await session(client, "approve");
     client.updates.length = 0;
     stage = `v${version}-cancel`;
+    recordPrompt(client, sid, stage);
     const cancel = client.request(
       "prompt",
       {
@@ -190,12 +205,25 @@ async function exercise(version, agent, modelID) {
     );
     const observedCancel = cancel.catch((error) => ({ error }));
     await until(() => client.pending.length === 1, "cancel approval");
+    assertApprovalPending(
+      client.pending[0].params,
+      client.updates,
+      sid,
+      "allow_once",
+    );
     await client.notify("cancel", { sessionId: sid });
     const cancelled = await observedCancel;
     if (version === 1) assert.equal(cancelled.stopReason, "cancelled");
     else
       await until(
-        () => client.updates.some((frame) => frame.update.state === "idle"),
+        () =>
+          client.updates.some(
+            (frame) =>
+              frame.sessionId === sid &&
+              frame.update.sessionUpdate === "state_update" &&
+              frame.update.state === "idle" &&
+              frame.update.stopReason === "cancelled",
+          ),
         "cancel idle",
       );
     await until(
@@ -206,6 +234,7 @@ async function exercise(version, agent, modelID) {
     sid = await session(client, "approve");
     client.updates.length = 0;
     stage = `v${version}-reconnect`;
+    recordPrompt(client, sid, stage);
     const disconnected = client
       .request(
         "prompt",
@@ -217,6 +246,8 @@ async function exercise(version, agent, modelID) {
       )
       .catch(() => undefined);
     await until(() => client.pending.length === 1, "old approval");
+    const originalApproval = structuredClone(client.pending[0].params);
+    assertApprovalPending(originalApproval, client.updates, sid, "allow_once");
     client.close();
     await disconnected;
     client = await connect(version, agent);
@@ -225,8 +256,18 @@ async function exercise(version, agent, modelID) {
       sessionId: sid,
       ...(version === 2 ? { replayFrom: { type: "start" } } : {}),
     });
+    replayRequests.push(
+      identity(client, version === 1 ? "session/load" : "session/resume", sid),
+    );
     await until(() => client.pending.length === 1, "reissued approval");
-    client.pending.shift().answer("allow_once");
+    const reissued = client.pending.shift();
+    assert.deepEqual(
+      reissued.params,
+      originalApproval,
+      "reconnect changed the pending approval",
+    );
+    assertApprovalPending(reissued.params, client.updates, sid, "allow_once");
+    reissued.answer("allow_once");
     await until(
       () =>
         client.updates.some((frame) =>
@@ -235,6 +276,23 @@ async function exercise(version, agent, modelID) {
           ),
         ),
       "resumed result",
+    );
+    if (version === 2)
+      await until(
+        () =>
+          client.updates.some(
+            (frame) =>
+              frame.sessionId === sid &&
+              frame.update.sessionUpdate === "state_update" &&
+              frame.update.state === "idle" &&
+              frame.update.stopReason === "end_turn",
+          ),
+        "reconnected Run idle",
+      );
+    assert.equal(client.pending.length, 0);
+    assert(
+      !JSON.stringify(client.updates).includes("read_only"),
+      "judge text leaked to chat",
     );
     outcomes.push(`v${version}-reconnect`);
   } finally {
@@ -258,44 +316,10 @@ async function main() {
   });
   await login(member, email, "permission-owner-password");
   await login(stranger, foreign, "permission-owner-password");
-  const createModel = (name) =>
-    api(
-      "/api/admin/model-profiles",
-      {
-        display_name: name,
-        api_key: "permission-model-test",
-        model: {
-          base_url: "http://permission-model:8080/v1",
-          model: name,
-          context_window: 64000,
-          max_output_tokens: 4096,
-          supports_images: false,
-        },
-      },
-      201,
-    );
-  const model = await createModel(`permission-model-${suffix}`),
-    alternate = await createModel(`alternate-model-${suffix}`);
-  const template = await api(
-    "/api/admin/templates",
-    {
-      name: `Permissions ${suffix}`,
-      model_profile_revision_id: model.revision_id,
-      system_prompt: "Use requested tool.",
-      max_model_requests: 5,
-      runtime: {
-        image_ref: process.env.TEST_RUNTIME_IMAGE,
-        mcp_servers: [
-          {
-            id: "fixture",
-            command: "/usr/local/bin/managed-mcp-fixture",
-            args: [],
-            env: {},
-          },
-        ],
-      },
-    },
-    201,
+  const { template, alternateModelID } = await seedPermissions(
+    api,
+    process.env.TEST_RUNTIME_IMAGE,
+    suffix,
   );
   for (const version of [1, 2]) {
     const created = await api(
@@ -304,44 +328,40 @@ async function main() {
         owner_user_id: owner.user.id,
         name: `Permissions v${version} ${suffix}`,
         template_id: template.template_id,
-        template_revision: 1,
+        template_revision: template.revision,
       },
       202,
     );
     agents.push(created.agent.agent_id);
     await operation(created.operation.request_id);
-    await rejectedUpgrade(version, agents.at(-1), stranger);
-    await exercise(version, agents.at(-1), alternate.model_profile_id);
+    const agent = agents.at(-1);
+    await waitForAgentReady(() => api(`/api/admin/agents/${agent}`));
+    const denied = connectACP(version, agent, stranger.cookie);
+    try {
+      await denied.initialize();
+      await assertAgentDenied(denied);
+      replayRequests.push({
+        method: "session/new",
+        agentId: agent,
+        connectionTraceID: denied.traceID,
+        denial: "access_denied",
+      });
+    } finally {
+      denied.close();
+    }
+    await exercise(version, agent, alternateModelID);
   }
-  stage = "trace-validation";
-  const modelStatus = await (
-    await fetch("http://permission-model:8080/status")
-  ).json();
+  const modelResponse = await fetch("http://permission-model:8080/status", {
+    signal: AbortSignal.timeout(5000),
+  });
+  assert(modelResponse.ok);
+  const modelStatus = await modelResponse.json();
   assert.deepEqual(modelStatus.errors, []);
   assert.equal(outcomes.length, 26);
-  const traces = [];
-  for (const id of runTraces)
-    traces.push(
-      await collectTrace("http://jaeger:16686", id, (trace) =>
-        inspectPermissionTrace(
-          trace,
-          modelStatus.requests.filter((item) => item.trace_id === id),
-        ),
-      ),
-    );
   verifyModelRequests(
     modelStatus.requests,
     `permission-model-${suffix}`,
     `alternate-model-${suffix}`,
-  );
-  console.log(
-    JSON.stringify({
-      status: "passed",
-      scenarios: outcomes.length,
-      outcomes,
-      traces,
-      cross_user_rejections: 2,
-    }),
   );
   if (process.env.TEST_BROWSER === "true") {
     stage = "browser-validation";
@@ -359,6 +379,81 @@ async function main() {
       600000,
     );
   }
+  // Graceful Runtime shutdown flushes OTLP before inspecting the completed Runs.
+  // The independent wrapper cleanup still covers abrupt client loss.
+  for (const agent of agents)
+    await operation(
+      (await api(`/api/admin/agents/${agent}/delete`, {}, 202)).request_id,
+    );
+  stage = "trace-validation";
+  const ids = new Set(modelStatus.requests.map((item) => item.trace_id));
+  assert.equal(ids.size, 26, "one independent execution trace per prompt");
+  assert.equal(executionRequests.length, 26);
+  const secrets = [
+    "permission-model-test",
+    "read_only",
+    "permission-owner-password",
+    ...outcomes,
+    ...admin.cookies.values(),
+    ...member.cookies.values(),
+    ...stranger.cookies.values(),
+  ];
+  const traces = [],
+    replays = [];
+  for (const id of ids) {
+    const requests = modelStatus.requests.filter(
+      (item) => item.trace_id === id,
+    );
+    stage = `trace-${requests[0].phase}`;
+    traces.push(
+      await collectTrace("http://jaeger:16686", id, (trace) =>
+        inspectPermissionTrace(
+          trace,
+          requests,
+          executionRequests.find(
+            (expected) => expected.phase === requests[0].phase,
+          ),
+          secrets,
+        ),
+      ),
+    );
+  }
+  assert.equal(new Set(traces.map((trace) => trace.run_id)).size, 26);
+  assert.equal(
+    traces.reduce((sum, trace) => sum + trace.runtime_tool_calls, 0),
+    16,
+  );
+  assert.equal(
+    traces.reduce((sum, trace) => sum + trace.permission_waits, 0),
+    16,
+  );
+  assert.equal(replayRequests.length, 4);
+  for (const expected of replayRequests)
+    replays.push(
+      await collectPlanRequestTrace("http://jaeger:16686", expected, secrets),
+    );
+  assert.equal(
+    new Set([...traces, ...replays].map((trace) => trace.trace_id)).size,
+    30,
+  );
+  const strictTrace = [...traces, ...replays].some(
+    (trace) => trace.strict_trace === "failed",
+  )
+    ? "failed"
+    : "passed";
+  console.log(
+    JSON.stringify({
+      status: "business_passed",
+      strict_trace: strictTrace,
+      scenarios: outcomes.length,
+      model_requests: modelStatus.requests.length,
+      outcomes,
+      traces,
+      replay_traces: replays,
+      cross_user_rejections: 2,
+    }),
+  );
+  if (strictTrace === "failed") process.exitCode = 1;
 }
 try {
   await main();

@@ -46,3 +46,19 @@ export function verifyModelRequests(requests, defaultModel, alternateModel) {
   }
   assert.equal(requests.length, 52);
 }
+
+export function assertApprovalPending(params, updates, sessionId, decision) {
+  assert.equal(params.sessionId, sessionId);
+  const tool = params.toolCall ?? params.subject?.toolCall;
+  assert(tool?.rawInput, "exact arguments missing");
+  assert(
+    !updates.some((frame) =>
+      ["tool_call", "tool_call_update"].includes(frame.update.sessionUpdate),
+    ),
+    "dispatch before approval",
+  );
+  assert(
+    params.options.some((option) => option.optionId === decision),
+    "permission option missing",
+  );
+}

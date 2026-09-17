@@ -2,18 +2,34 @@ import assert from "node:assert/strict";
 import { GatewayClient } from "../identity-closeout/support.mjs";
 import { gateway } from "../identity-closeout/acp-connection.mjs";
 import { assertDeniedSessionError } from "../identity-closeout/agent-access-evidence.mjs";
-import { until, rejectedUpgrade } from "../acp-closeout/support.mjs";
+import { until } from "../acp-closeout/support.mjs";
 import { transcript } from "../acp-commands/evidence.mjs";
 import { collectTrace } from "../managed-mcp/trace.mjs";
-import { inspectNativeTrace } from "../acp-multimodal/evidence.mjs";
+import { collectNativeTrace } from "../acp-multimodal/trace.mjs";
+import { assertAgentDenied } from "../acp-files/setup.mjs";
+import { waitForAgentReady } from "../verification/agent-state.mjs";
+import {
+  createPricedModel,
+  revisePricedModel,
+  modelConfig,
+  waitForPublication,
+  waitForRestoredConfiguration,
+} from "./setup.mjs";
 import {
   assertCost,
+  assertObserverIsolation,
   assertAttempts,
   usageUpdates,
-  inspectPricingTrace,
   assertModelSelection,
 } from "./evidence.mjs";
-import { connect, profiles, setup, setModel, validate } from "./connection.mjs";
+import { inspectPricingTrace } from "./trace.mjs";
+import {
+  connect as rawConnect,
+  profiles,
+  setup,
+  setModel,
+  validate,
+} from "./connection.mjs";
 
 const admin = new GatewayClient(gateway),
   member = new GatewayClient(gateway),
@@ -23,6 +39,8 @@ const agents = [],
   expectedAttempts = [],
   traces = [],
   pricingTraces = [];
+const connect = (profile, agent, browser) =>
+  rawConnect(profile, agent, browser, traces);
 const rates = {
   currency: "USD",
   input_per_million: 2,
@@ -52,12 +70,14 @@ let stage = "setup",
   fallbackModel,
   observer;
 function assertObserver() {
-  if (observer?.baseline)
-    assert.deepEqual(
-      observer.client.updates,
-      observer.baseline,
-      "foreign notifications reached another owner's active connection",
-    );
+  if (!observer?.baseline) return;
+  validate(observer.client, profiles[0]);
+  assertObserverIsolation(
+    observer.client.updates,
+    observer.baseline,
+    observer.sessionId,
+    observer.modeId,
+  );
 }
 const api = async (path, body, status = 200) =>
   (await admin.request(path, { body, status })).body;
@@ -85,66 +105,40 @@ async function operation(id) {
     120000,
   );
 }
-function modelConfig(pricing) {
-  return {
-    base_url: "http://acp-closeout-model:8080/v1",
-    model: pricing ? "priced-model" : "unknown-model",
-    context_window: 64000,
-    max_output_tokens: 4096,
-    supports_images: false,
-    ...(pricing ? { pricing } : {}),
-  };
+async function publicationState() {
+  return (await stranger.request(`/api/app/agents/${agents[0]}/state`)).body;
 }
 async function createModel(name, pricing) {
-  const result = await admin.request("/api/admin/model-profiles", {
-    status: 201,
-    body: {
-      display_name: name,
-      api_key: "cost-model-test",
-      model: modelConfig(pricing),
-    },
-  });
-  pricingTraces.push(result.traceID);
-  const revision = await api(
-    `/api/admin/model-profile-revisions/${result.body.revision_id}`,
+  const before = agents.length ? await publicationState() : undefined;
+  const model = await createPricedModel(
+    admin.request.bind(admin),
+    name,
+    pricing,
+    pricingTraces,
   );
-  assert.deepEqual(revision.model.pricing, pricing);
-  assert(
-    !JSON.stringify(revision).includes("cost-model-test"),
-    "BFF credential leak",
-  );
-  return result.body;
+  if (before)
+    await waitForPublication(publicationState, before.configuration_revision);
+  return model;
 }
 async function reviseModel(model, pricing = revisedRates, revision = 2) {
-  stage = `publish-model-revision-${revision}`;
-  const result = await admin.request(
-    `/api/admin/model-profiles/${model.model_profile_id}/revisions`,
-    {
-      status: 201,
-      body: {
-        display_name: "Repriced fixture",
-        api_key: "cost-model-test",
-        model: modelConfig(pricing),
-      },
-    },
+  stage = `publish-model-version-${revision}`;
+  const before = await publicationState();
+  const current = await revisePricedModel(
+    admin.request.bind(admin),
+    model,
+    pricing,
+    pricingTraces,
   );
-  pricingTraces.push(result.traceID);
-  assert.equal(result.body.revision, revision);
-  const old = await api(
-    `/api/admin/model-profile-revisions/${model.revision_id}`,
-  );
-  const current = await api(
-    `/api/admin/model-profile-revisions/${result.body.revision_id}`,
-  );
-  assert.deepEqual(old.model.pricing, rates, "historical price changed");
-  assert.deepEqual(current.model.pricing, pricing, "new price lost");
+  assert.equal(current.revision, revision);
+  await waitForPublication(publicationState, before.configuration_revision);
+  Object.assign(model, current);
 }
 async function createAgent(profile, model, owner = ownerID) {
   const template = await api(
     "/api/admin/templates",
     {
       name: `${profile.name} cost`,
-      model_profile_revision_id: model.revision_id,
+      model_profile_id: model.model_profile_id,
       system_prompt: "Answer the request.",
       max_model_requests: 5,
       runtime: { image_ref: process.env.TEST_RUNTIME_IMAGE },
@@ -157,18 +151,21 @@ async function createAgent(profile, model, owner = ownerID) {
       owner_user_id: owner,
       name: `${profile.name} cost`,
       template_id: template.template_id,
-      template_revision: 1,
+      template_revision: template.revision,
     },
     202,
   );
   agents.push(result.agent.agent_id);
   await operation(result.operation.request_id);
+  await waitForAgentReady(() =>
+    api(`/api/admin/agents/${result.agent.agent_id}`),
+  );
   return result.agent.agent_id;
 }
 
 async function send(client, profile, sessionId, action, expected) {
   stage = `${profile.name}:${action}`;
-  client.checkpoint();
+  client.checkpoint(sessionId);
   const phase = `${profile.name}:${action}`;
   const result = await client.request(
     "prompt",
@@ -202,14 +199,23 @@ async function send(client, profile, sessionId, action, expected) {
     .join("");
   assert.equal(assistant, `${phase} verified`);
   const usage = assertCost(client.updates, sessionId, expected);
-  expectedAttempts.push({ phase, trace_id: client.traceID });
+  Object.assign(client.lastRequest, { kind: "native", phase, label: phase });
+  expectedAttempts.push({
+    phase,
+    ...(profile.http
+      ? { trace_id: client.lastRequest.traceID }
+      : {
+          requestId: client.lastRequest.requestId,
+          connectionTraceID: client.lastRequest.connectionTraceID,
+        }),
+  });
   assertAttempts((await modelStatus()).requests, expectedAttempts);
   assertObserver();
   return usage;
 }
 async function replay(client, profile, sessionId, history, expectedModel) {
   const before = (await modelStatus()).requests.length;
-  client.checkpoint();
+  client.checkpoint(sessionId);
   const result = await client.request(
     profile.version === 1 ? "load" : "resume",
     {
@@ -288,7 +294,9 @@ async function exercise(profile) {
     history.push(await send(client, profile, sessionId, "zero", 0.0128));
     history.push(await send(client, profile, sessionId, "cache", 0.0154));
     await reviseModel(model);
-    history.push(await send(client, profile, sessionId, "pinned", 0.0182));
+    history.push(
+      await send(client, profile, sessionId, "current-default", 0.021),
+    );
     await setModel(
       client,
       profile,
@@ -296,7 +304,7 @@ async function exercise(profile) {
       `profile:${model.model_profile_id}`,
     );
     await reviseModel(model, latestRates, 3);
-    history.push(await send(client, profile, sessionId, "selected", 0.0294));
+    history.push(await send(client, profile, sessionId, "selected", 0.0322));
     await setModel(
       client,
       profile,
@@ -304,7 +312,7 @@ async function exercise(profile) {
       `profile:${unknownModel.model_profile_id}`,
     );
     history.push(
-      await send(client, profile, sessionId, "unpriced-again", 0.0294),
+      await send(client, profile, sessionId, "unpriced-again", 0.0322),
     );
     const { sessionId: fresh } = await client.request("new", setup);
     await setModel(
@@ -359,7 +367,7 @@ async function exercise(profile) {
     );
     const forkHistory = [
       ...history,
-      await send(client, profile, fork.sessionId, "fork", 0.0406),
+      await send(client, profile, fork.sessionId, "fork", 0.0434),
     ];
     await replay(
       client,
@@ -369,11 +377,6 @@ async function exercise(profile) {
       `profile:${unknownModel.model_profile_id}`,
     );
     await frozenAdmission(client, profile);
-    traces.push({
-      id: client.traceID,
-      runs: 14,
-      label: `${profile.name}:before-restart`,
-    });
     saved.push({
       profile,
       model,
@@ -427,14 +430,14 @@ async function restore(item) {
       profile,
       sessionId,
       "restored-unpriced",
-      0.0294,
+      0.0322,
     );
     const forkNext = await send(
       client,
       profile,
       item.fork,
       "restored-fork",
-      0.0518,
+      0.0546,
     );
     await setModel(
       client,
@@ -442,7 +445,7 @@ async function restore(item) {
       sessionId,
       `profile:${model.model_profile_id}`,
     );
-    const next = await send(client, profile, sessionId, "post-restart", 0.0406);
+    const next = await send(client, profile, sessionId, "post-restart", 0.0434);
     await replay(
       client,
       profile,
@@ -457,12 +460,6 @@ async function restore(item) {
       [...item.forkHistory, forkNext],
       `profile:${model.model_profile_id}`,
     );
-    traces.push({
-      id: client.traceID,
-      runs: 3,
-      label: `${profile.name}:after-restart`,
-      methods: ["acp.session.resume", "acp.session.prompt"],
-    });
   } finally {
     client.close();
   }
@@ -470,17 +467,12 @@ async function restore(item) {
 async function isolation(item, otherAgent) {
   const { profile, agent, sessionId } = item;
   stage = `${profile.name}:isolation`;
-  if (profile.http)
-    await stranger.request(`/api/app/agents/${agent}/v1/acp`, {
-      status: 404,
-      body: {
-        jsonrpc: "2.0",
-        id: 1,
-        method: "initialize",
-        params: { protocolVersion: 1 },
-      },
-    });
-  else await rejectedUpgrade(profile.version, agent, stranger);
+  const foreign = await connect(profile, agent, stranger);
+  try {
+    await assertAgentDenied(foreign);
+  } finally {
+    foreign.close();
+  }
   const client = await connect(profile, otherAgent, member);
   try {
     for (const method of [
@@ -502,12 +494,6 @@ async function isolation(item, otherAgent) {
       );
     }
     assert.equal(client.updates.length, 0, "foreign Session leaked usage");
-    traces.push({
-      id: client.traceID,
-      runs: 0,
-      label: `${profile.name}:isolation`,
-      methods: ["acp.session.resume", "acp.session.fork", "acp.session.prompt"],
-    });
   } finally {
     client.close();
   }
@@ -545,6 +531,22 @@ async function main() {
     input_per_million: 2,
     output_per_million: 8,
   });
+  await member.request(
+    `/api/admin/model-profiles/${freeModel.model_profile_id}/revisions`,
+    {
+      status: 403,
+      body: {
+        expected_version: freeModel.revision,
+        display_name: "Denied edit",
+        model: modelConfig(rates),
+      },
+    },
+  );
+  assert.deepEqual(
+    (await api(`/api/admin/model-profiles/${freeModel.model_profile_id}`)).model
+      .pricing,
+    freeModel.model.pricing,
+  );
   try {
     const observerModel = await createModel("Observer fixture", rates);
     const observerAgent = await createAgent(
@@ -554,10 +556,8 @@ async function main() {
     );
     const observerClient = await connect(profiles[0], observerAgent, stranger);
     observer = { client: observerClient };
-    const { sessionId: observerSession } = await observerClient.request(
-      "new",
-      setup,
-    );
+    const { sessionId: observerSession, modes: observerModes } =
+      await observerClient.request("new", setup);
     const observerUsage = await send(
       observerClient,
       profiles[0],
@@ -565,12 +565,9 @@ async function main() {
       "observer",
       0.77,
     );
+    observer.sessionId = observerSession;
+    observer.modeId = observerModes.currentModeId;
     observer.baseline = structuredClone(observerClient.updates);
-    traces.push({
-      id: observerClient.traceID,
-      runs: 1,
-      label: "observer:execution",
-    });
     for (const profile of profiles) await exercise(profile);
     for (let index = 0; index < saved.length; index++)
       await isolation(saved[index], saved[(index + 1) % saved.length].agent);
@@ -579,6 +576,8 @@ async function main() {
     assertObserver();
     observerClient.close();
     observer = undefined;
+    const restartFingerprint = (await publicationState())
+      .configuration_revision;
     stage = "waiting-for-ACP-restart";
     assert.equal(
       (
@@ -594,6 +593,9 @@ async function main() {
       "ACP container restart",
       120000,
     );
+    stage = "waiting-for-ACP-configuration";
+    await waitForRestoredConfiguration(publicationState, restartFingerprint);
+    stage = "observer:restart-replay";
     const observerRestored = await connect(
       profiles[0],
       observerAgent,
@@ -607,13 +609,9 @@ async function main() {
       [observerUsage],
       "agent_default",
     );
+    observer.sessionId = observerSession;
+    observer.modeId = observerModes.currentModeId;
     observer.baseline = structuredClone(observerRestored.updates);
-    traces.push({
-      id: observerRestored.traceID,
-      runs: 0,
-      label: "observer:restored",
-      methods: ["acp.session.resume"],
-    });
     for (const item of saved) await restore(item);
     await observerRestored.request("list", {});
     assertObserver();
@@ -640,38 +638,63 @@ async function main() {
     "cost-model-test",
     "cost-owner-password",
     "cost-stranger-password",
+    ...requests.map((r) => r.phase),
     ...admin.cookies.values(),
     ...member.cookies.values(),
     ...stranger.cookies.values(),
   ];
+  assert.equal(traces.length, 137);
+  assert.equal(traces.filter((t) => t.rejection).length, 12);
+  assert.equal(pricingTraces.length, 19);
+  console.log(
+    JSON.stringify({
+      status: "business_complete",
+      model_requests: requests.length,
+      request_traces: traces.length,
+      pricing_commands: pricingTraces.length,
+      acp_restarts: 1,
+    }),
+  );
   const checked = [];
-  for (const { id, ...expected } of traces) {
+  assert.equal(traces.filter((t) => t.kind === "native").length, 52);
+  for (const expected of traces) {
     stage = `trace:${expected.label}`;
     checked.push(
-      await collectTrace("http://jaeger:16686", id, (trace) =>
-        inspectNativeTrace(
-          trace,
-          {
-            ...expected,
-            modelRequests: requests.filter((r) => r.trace_id === id),
-          },
-          secrets,
-        ),
-      ),
-    );
-  }
-  const pricing = [];
-  for (const id of pricingTraces) {
-    stage = "pricing-trace";
-    pricing.push(
-      await collectTrace("http://jaeger:16686", id, (trace) =>
-        inspectPricingTrace(trace, secrets),
+      await collectNativeTrace(
+        "http://jaeger:16686",
+        expected,
+        secrets,
+        requests,
       ),
     );
   }
   console.log(
+    JSON.stringify({ status: "request_traces_checked", count: checked.length }),
+  );
+  assert.equal(new Set(checked.map((t) => t.trace_id)).size, traces.length);
+  assert.equal(new Set(checked.map((t) => t.run_id).filter(Boolean)).size, 52);
+  assert.deepEqual(
+    new Set(checked.filter((t) => t.kind === "native").map((t) => t.trace_id)),
+    new Set(requests.map((r) => r.trace_id)),
+  );
+  const pricing = [];
+  for (const expected of pricingTraces) {
+    stage = "pricing-trace";
+    pricing.push(
+      await collectTrace("http://jaeger:16686", expected.traceID, (trace) =>
+        inspectPricingTrace(trace, expected, secrets),
+      ),
+    );
+  }
+  const strictTrace = [...checked, ...pricing].some(
+    (t) => t.strict_trace === "failed",
+  )
+    ? "failed"
+    : "passed";
+  console.log(
     JSON.stringify({
-      status: "passed",
+      status: "business_passed",
+      strict_trace: strictTrace,
       transports: profiles.map((p) => p.name),
       model_requests: requests.length,
       restored_sessions: saved.length * 3,
@@ -680,10 +703,12 @@ async function main() {
       acp_restarts: 1,
       active_foreign_observer_cost: 0.77,
       usage_private_fields: false,
+      request_traces: checked.length,
       traces: checked,
       pricing_traces: pricing,
     }),
   );
+  if (strictTrace === "failed") process.exitCode = 1;
 }
 try {
   await main();

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { cases, caseFor, decide, contentMarker } from "./model.mjs";
-import { assertFileEvents, inspectReplayTrace } from "./evidence.mjs";
+import { assertFileEvents } from "./evidence.mjs";
 
 function payload(phase, results = []) {
   return {
@@ -106,58 +106,6 @@ test("edit context sentinel cannot leak through any model message role", () => {
     value.messages.unshift({ role, content: contentMarker });
     assert.throws(() => decide(value), /file context/);
   }
-});
-
-test("replay evidence requires real lifecycle traces and rejects every execution path", () => {
-  const value = {
-    traceID: "replay",
-    processes: {
-      g: { serviceName: "edge-gateway" },
-      a: { serviceName: "agent-acp-service" },
-      r: { serviceName: "antnest-runtime" },
-    },
-    spans: [
-      { spanID: "1", operationName: "GET /acp", processID: "g" },
-      ...["resume", "fork"].map((method, index) => ({
-        spanID: String(index + 2),
-        operationName: `acp.session.${method}`,
-        processID: "a",
-        references: [{ refType: "CHILD_OF", spanID: "1" }],
-      })),
-    ],
-  };
-  assert.equal(inspectReplayTrace(value).no_execution, true);
-  assert.throws(() => inspectReplayTrace(undefined));
-  assert.throws(() =>
-    inspectReplayTrace({ ...value, spans: value.spans.slice(0, 1) }),
-  );
-  for (const operationName of [
-    "model.complete",
-    "mcp.tools.call",
-    "mcp.tools.list",
-    "mcp.runtime.info",
-  ])
-    assert.throws(() =>
-      inspectReplayTrace({
-        ...value,
-        spans: [
-          ...value.spans,
-          { spanID: "extra", operationName, processID: "a" },
-        ],
-      }),
-    );
-  assert.throws(() =>
-    inspectReplayTrace({
-      ...value,
-      spans: [
-        ...value.spans,
-        { spanID: "extra", operationName: "runtime.mcp.tool", processID: "r" },
-      ],
-    }),
-  );
-  const leaked = structuredClone(value);
-  leaked.spans[1].tags = [{ key: "preview", value: contentMarker }];
-  assert.throws(() => inspectReplayTrace(leaked, [contentMarker]));
 });
 
 test("oracle distinguishes complete file observations from location-only and errors", () => {

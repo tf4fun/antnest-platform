@@ -1,38 +1,50 @@
 #!/bin/sh
 set -eu
-
-# Invoked by e2e-stage3a after its ordinary user has logged in. The parent trap
-# owns all cleanup, including containers started here, on success and failure.
+[ "${ANTNEST_E2E_DISPOSABLE:-false}" = true ] || { echo 'Use make e2e-managed-mcp-v1' >&2; exit 1; }
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-version=${ANTNEST_E2E_MANAGED_MCP_VERSION:-1}
-case "$version" in
-  1|2) ;;
-  *) echo 'ANTNEST_E2E_MANAGED_MCP_VERSION must be 1 or 2' >&2; exit 1 ;;
-esac
-ANTNEST_E2E_DEADLINE_MS=$(node -e 'process.stdout.write(String(Date.now() + 900000))')
-export ANTNEST_E2E_DEADLINE_MS
-docker() { node "$root/scripts/acp-closeout/docker.mjs" "$@"; }
-image=$(docker image inspect --format '{{.Id}}' antnest/antnest-runtime:managed-integration)
+export ANTNEST_E2E_DEADLINE_MS=$(node -e 'process.stdout.write(String(Date.now()+900000))')
+docker_cmd() { node "$root/scripts/acp-closeout/docker.mjs" "$@"; }
 model="${COMPOSE_PROJECT_NAME}-managed-model"
-diagnostics() {
+client="${COMPOSE_PROJECT_NAME}-managed-client"
+temporary=$(mktemp -d "${TMPDIR:-/tmp}/antnest-managed-mcp.XXXXXX")
+cleanup() {
   status=$?
-  trap - EXIT
-  if [ "$status" -ne 0 ]; then docker logs --tail=40 "$model" >&2 || true; fi
+  trap - EXIT INT TERM
+  export ANTNEST_E2E_DEADLINE_MS=$(node -e 'process.stdout.write(String(Date.now()+60000))')
+  docker_cmd rm -f "$client" "$model" >/dev/null 2>&1 || status=1
+  rm -rf "$temporary"
   exit "$status"
 }
-trap diagnostics EXIT
-docker run -d --rm --name "$model" \
-  --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
-  --label "io.antnest.runtime-controller-scope=$COMPOSE_PROJECT_NAME" \
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+containers=$(docker_cmd ps -q --filter "label=com.docker.compose.project=$COMPOSE_PROJECT_NAME")
+# IDs originate from Docker and contain no shell metacharacters.
+docker_cmd inspect $containers >"$temporary/deployment.json"
+node "$root/scripts/stage3-base/deployment.mjs" "$temporary/deployment.json" "$COMPOSE_PROJECT_NAME"
+image=$(docker_cmd image inspect --format '{{.Id}}' antnest/antnest-runtime:managed-integration)
+docker_cmd run -d --name "$model" --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
   --network "${COMPOSE_PROJECT_NAME}_development" --network-alias managed-model \
   -v "$root/scripts:/app/scripts:ro" \
   antnest/agent-acp-service:local node /app/scripts/managed-mcp/model.mjs >/dev/null
-docker --lifecycle run --rm \
-  --label "io.antnest.runtime-controller-scope=$COMPOSE_PROJECT_NAME" \
-  --network "${COMPOSE_PROJECT_NAME}_development" \
-  -e TEST_ORGANIZATION_ID -e TEST_OWNER_ID -e TEST_USER_COOKIE \
-  -e "TEST_RUNTIME_IMAGE=$image" \
-  -e "TEST_ACP_VERSION=$version" \
+docker_cmd create --name "$client" --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
+  --network "${COMPOSE_PROJECT_NAME}_development" -e "TEST_RUNTIME_IMAGE=$image" -e "TEST_ACP_VERSION=${ANTNEST_E2E_MANAGED_MCP_VERSION:-1}" \
   -v "$root/scripts:/app/scripts:ro" \
-  antnest/agent-acp-service:local node /app/scripts/managed-mcp/client.mjs
-docker rm -f "$model" >/dev/null
+  antnest/agent-acp-service:local node /app/scripts/managed-mcp/client.mjs >/dev/null
+docker_cmd start "$client" >/dev/null
+while [ "$(docker_cmd inspect --format '{{.State.Running}}' "$client")" = true ]; do sleep 1; done
+status=$(docker_cmd inspect --format '{{.State.ExitCode}}' "$client")
+docker_cmd logs "$client"
+umask 077
+evidence="$root/.cache/managed-mcp/$COMPOSE_PROJECT_NAME"
+mkdir -p "$evidence"
+docker_cmd cp "$client:/tmp/managed-traces" "$evidence/" >/dev/null 2>&1 || true
+if docker_cmd cp "$client:/tmp/managed-business.json" "$temporary/business.json" >/dev/null 2>&1; then
+  node -e 'const assert=require("node:assert/strict"); const b=require(process.argv[1]); assert.equal(b.status,"business_passed"); assert.equal(b.deleted,true);' "$temporary/business.json"
+  [ -z "$(docker_cmd ps -aq --filter "label=io.antnest.runtime-controller-scope=$COMPOSE_PROJECT_NAME")" ] || { echo 'Deleted Agent retained a Runtime container' >&2; exit 1; }
+  [ -z "$(docker_cmd volume ls -q --filter "label=io.antnest.runtime-controller-scope=$COMPOSE_PROJECT_NAME")" ] || { echo 'Deleted Agent retained a Runtime volume' >&2; exit 1; }
+  echo '{"status":"deletion_resources_passed","runtime_containers":0,"runtime_volumes":0}'
+else
+  [ "$status" != 0 ] || status=1
+fi
+exit "$status"

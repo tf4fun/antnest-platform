@@ -1,8 +1,15 @@
-# Controller Response-Loss Acceptance
+# Historical Controller Response-Loss Acceptance
 
-Status: v1/v2 Docker acceptance passed on 2026-09-10.
+Historical status: v1/v2 Docker acceptance passed on 2026-09-10 against the
+then-current acquire-run/finish-run APIs. Those APIs and their RPC-only drivers
+are retired. This record does not describe current-candidate acceptance.
 
-## Reproduction
+`make e2e-rpc-response-loss` now runs the [current fixture](../rpc-response-loss/README.md).
+See [2026-09-17 revalidation](../../docs/rpc-response-loss-revalidation.md) for
+publication/settlement response loss, scoped business evidence and strict Trace
+failures. ACP database commit-receipt loss remains pending in its own batch.
+
+## Historical reproduction (retired)
 
 From the platform root, install the locked ACP service dependencies and build
 the local Stage 3 images, then run `make e2e-rpc-response-loss`. Do not combine

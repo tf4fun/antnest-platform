@@ -1,20 +1,20 @@
 import assert from "node:assert/strict";
-import { randomBytes } from "node:crypto";
-import * as v1 from "@agentclientprotocol/sdk";
-import { createHttpStream } from "@agentclientprotocol/sdk/experimental/http-client";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import v1Schema from "@agentclientprotocol/sdk/schema/schema.json" with { type: "json" };
 import v2Schema from "@agentclientprotocol/sdk/schema/v2/schema.unstable.json" with { type: "json" };
 import { GatewayClient } from "../identity-closeout/support.mjs";
 import { assertDeniedSessionError } from "../identity-closeout/agent-access-evidence.mjs";
-import { connectACP, gateway } from "../identity-closeout/acp-connection.mjs";
-import { rejectedUpgrade, until } from "../acp-closeout/support.mjs";
+import { gateway } from "../identity-closeout/acp-connection.mjs";
+import { until } from "../acp-closeout/support.mjs";
 import {
   assertCatalog,
   assertTranscript,
   transcript,
 } from "../acp-commands/evidence.mjs";
-import { collectTrace } from "../managed-mcp/trace.mjs";
+import { commandConnection } from "../acp-commands/connection.mjs";
+import { assertAgentDenied } from "../acp-files/setup.mjs";
+import { waitForAgentReady } from "../verification/agent-state.mjs";
+import { seedNative } from "./setup.mjs";
 import {
   nativePrompt,
   storedPrompt,
@@ -23,7 +23,7 @@ import {
   imageData,
   marker,
 } from "./fixtures.mjs";
-import { inspectNativeTrace } from "./evidence.mjs";
+import { collectNativeTrace } from "./trace.mjs";
 
 const admin = new GatewayClient(gateway),
   member = new GatewayClient(gateway),
@@ -39,7 +39,7 @@ const validators = [v1Schema, v2Schema].map((schema) =>
   }),
 );
 let stage = "setup",
-  textModel;
+  textModelID;
 const api = async (path, body, status = 200) =>
   (await admin.request(path, { body, status })).body;
 const login = (client, email, password) =>
@@ -59,45 +59,15 @@ async function operation(id) {
   );
 }
 
-function httpClient(agent) {
-  const traceID = randomBytes(16).toString("hex"),
-    updates = [];
-  const connection = v1
-    .client()
-    .onNotification(v1.methods.client.session.update, ({ params }) =>
-      updates.push(params),
-    )
-    .connect(
-      createHttpStream(`${gateway}/api/app/agents/${agent}/v1/acp`, {
-        headers: {
-          Cookie: member.cookie,
-          Origin: gateway,
-          "X-Antnest-CSRF-Token": member.cookies.get("antnest_csrf"),
-          traceparent: `00-${traceID}-${randomBytes(8).toString("hex")}-01`,
-        },
-      }),
-    );
-  const request = (method, params, timeout = 15000) =>
-    connection.agent.request(method, params, {
-      signal: AbortSignal.timeout(timeout),
-    });
-  return {
-    traceID,
-    updates,
-    close: () => connection.close(),
-    initialize: () =>
-      request(v1.methods.agent.initialize, {
-        protocolVersion: v1.PROTOCOL_VERSION,
-        clientCapabilities: {},
-      }),
-    request: (name, params, timeout) =>
-      request(v1.methods.agent.session[name], params, timeout),
-  };
+function record(client, label, kind = "request", extra = {}) {
+  assert(
+    client.lastRequest?.method.startsWith("session/"),
+    "actual SDK request missing",
+  );
+  traces.push({ ...client.lastRequest, label, kind, ...extra });
 }
-async function connect(profile, agent = agents[0]) {
-  const client = profile.http
-    ? httpClient(agent)
-    : connectACP(profile.version, agent, member.cookie);
+async function connect(profile, agent = agents[0], browser = member) {
+  const client = commandConnection(profile, agent, browser);
   try {
     const result = await client.initialize();
     const capabilities =
@@ -181,6 +151,12 @@ async function send(client, profile, sessionId, prompt, fails = false) {
       `${profile.name} native input verified`,
     );
   }
+  record(
+    client,
+    `${profile.name}:${fails ? "mismatch" : prompt[0].text.split(" ").at(-1)}`,
+    fails ? "local-failure" : "native",
+    { phase: prompt[0].text, version: profile.version },
+  );
   validate(client, profile);
   assert(
     !client.updates.some(({ update }) =>
@@ -199,6 +175,7 @@ async function setModel(client, profile, sessionId, value) {
     value,
     ...(profile.version === 2 ? { type: "id" } : {}),
   });
+  record(client, `${profile.name}:model-selection`);
   assert.equal(
     result.configOptions.find((o) => (o.id ?? o.configId) === "model")
       .currentValue,
@@ -206,7 +183,7 @@ async function setModel(client, profile, sessionId, value) {
   );
 }
 
-async function rejectInputs(client, sessionId) {
+async function rejectInputs(client, profile, sessionId) {
   const before = (await modelStatus()).length;
   for (const content of [
     {
@@ -238,6 +215,12 @@ async function rejectInputs(client, sessionId) {
         return true;
       },
     );
+    record(client, `${profile.name}:invalid-${content.type}`, "request", {
+      rejection:
+        content.type === "audio"
+          ? "unsupported_audio_content"
+          : "unsupported_resource_content",
+    });
     assert.equal(client.updates.length, 0, "invalid input created output");
   }
   assert.equal((await modelStatus()).length, before);
@@ -263,6 +246,7 @@ async function restore(profile, sessionId, history) {
       sessionId: id,
       ...(profile.version === 2 ? { replayFrom: { type: "start" } } : {}),
     });
+    record(client, `${profile.name}:replay`);
     await catalog(id);
     assertTranscript(client.updates, id, history);
     validate(client, profile);
@@ -272,15 +256,12 @@ async function restore(profile, sessionId, history) {
     client.updates.length = 0;
     const fork = await client.request("fork", { ...setup, sessionId });
     assert.notEqual(fork.sessionId, sessionId);
+    record(client, `${profile.name}:fork`, "request", {
+      sessionId: fork.sessionId,
+    });
     await catalog(fork.sessionId);
     assertTranscript(client.updates, fork.sessionId, []);
     await replay(fork.sessionId);
-    traces.push({
-      id: client.traceID,
-      runs: 0,
-      label: `${profile.name}:replay`,
-      methods: ["acp.session.resume", "acp.session.fork"],
-    });
   } finally {
     client.close();
   }
@@ -305,14 +286,11 @@ async function rejectForeign(profile, sessionId) {
           return true;
         },
       );
+      record(client, `${profile.name}:foreign-session:${name}`, "request", {
+        rejection: "session_access_denied",
+      });
     }
     assert.equal(client.updates.length, 0, "foreign Session leaked data");
-    traces.push({
-      id: client.traceID,
-      runs: 0,
-      label: `${profile.name}:isolation`,
-      methods: ["acp.session.resume", "acp.session.fork", "acp.session.prompt"],
-    });
   } finally {
     client.close();
   }
@@ -325,6 +303,7 @@ async function exercise(profile) {
   let sessionId;
   try {
     ({ sessionId } = await client.request("new", setup));
+    record(client, `${profile.name}:new`, "request", { sessionId });
     await until(
       () =>
         client.updates.some(
@@ -332,7 +311,7 @@ async function exercise(profile) {
         ),
       "Session initialization",
     );
-    await rejectInputs(client, sessionId);
+    await rejectInputs(client, profile, sessionId);
     const reply = await send(
       client,
       profile,
@@ -359,12 +338,7 @@ async function exercise(profile) {
       "replay or denial called Provider",
     );
     stage = `${profile.name}:model-mismatch`;
-    await setModel(
-      client,
-      profile,
-      sessionId,
-      `profile:${textModel.model_profile_id}`,
-    );
+    await setModel(client, profile, sessionId, `profile:${textModelID}`);
     await send(
       client,
       profile,
@@ -382,12 +356,6 @@ async function exercise(profile) {
       { type: "text", text: `${profile.name} restored` },
     ]);
     assert.equal((await modelStatus()).length, before + 3);
-    traces.push({
-      id: client.traceID,
-      runs: 4,
-      localFailures: 1,
-      label: `${profile.name}:execution`,
-    });
     outcomes.push({
       transport: profile.name,
       successful_runs: 3,
@@ -396,41 +364,14 @@ async function exercise(profile) {
       replayed_messages: history.length,
       foreign_session_rejections: 3,
     });
+    console.log(
+      JSON.stringify({ status: "transport_passed", ...outcomes.at(-1) }),
+    );
   } finally {
     client.close();
   }
 }
 
-async function createModel(native) {
-  const model = {
-    base_url: "http://acp-closeout-model:8080/v1",
-    model: native ? "native-model" : "text-model",
-    context_window: 64000,
-    max_output_tokens: 4096,
-    supports_images: native,
-    supports_audio: native,
-    supports_pdf: native,
-  };
-  const created = await api(
-    "/api/admin/model-profiles",
-    {
-      display_name: native ? "Native fixture" : "Text fixture",
-      api_key: "native-model-test",
-      model,
-    },
-    201,
-  );
-  const projected = await api(
-    `/api/admin/model-profile-revisions/${created.revision_id}`,
-  );
-  for (const key of ["supports_images", "supports_audio", "supports_pdf"])
-    assert.equal(projected.model[key] ?? false, native, `BFF lost ${key}`);
-  assert(
-    !JSON.stringify(projected).includes("native-model-test"),
-    "BFF exposed credential",
-  );
-  return created;
-}
 async function main() {
   assert(process.env.TEST_RUNTIME_IMAGE, "test Runtime image required");
   await login(admin, "stage3-admin@example.com", "stage3-admin-password");
@@ -452,19 +393,9 @@ async function main() {
     "native-stranger@example.com",
     "native-stranger-password",
   );
-  const model = await createModel(true);
-  textModel = await createModel(false);
-  const template = await api(
-    "/api/admin/templates",
-    {
-      name: "Native acceptance",
-      model_profile_revision_id: model.revision_id,
-      system_prompt: "Summarize native attachments.",
-      max_model_requests: 5,
-      runtime: { image_ref: process.env.TEST_RUNTIME_IMAGE },
-    },
-    201,
-  );
+  const seeded = await seedNative(api, process.env.TEST_RUNTIME_IMAGE);
+  const template = seeded.template;
+  textModelID = seeded.textModelID;
   try {
     for (const name of ["Native", "Other Agent"]) {
       const created = await api(
@@ -473,30 +404,30 @@ async function main() {
           owner_user_id: user.user.id,
           name,
           template_id: template.template_id,
-          template_revision: 1,
+          template_revision: template.revision,
         },
         202,
       );
       agents.push(created.agent.agent_id);
       await operation(created.operation.request_id);
+      await waitForAgentReady(() => api(`/api/admin/agents/${agents.at(-1)}`));
     }
-    for (const version of [1, 2])
-      await rejectedUpgrade(version, agents[0], stranger);
-    await stranger.request(`/api/app/agents/${agents[0]}/v1/acp`, {
-      body: {
-        jsonrpc: "2.0",
-        id: 1,
-        method: "initialize",
-        params: { protocolVersion: v1.PROTOCOL_VERSION },
-      },
-      status: 404,
-    });
     for (const profile of [
       { name: "v1-ws", version: 1 },
       { name: "v2-ws", version: 2 },
       { name: "v1-http", version: 1, http: true },
-    ])
+    ]) {
+      const foreign = await connect(profile, agents[0], stranger);
+      try {
+        await assertAgentDenied(foreign);
+        record(foreign, `${profile.name}:foreign-user`, "request", {
+          rejection: "access_denied",
+        });
+      } finally {
+        foreign.close();
+      }
       await exercise(profile);
+    }
   } finally {
     const failures = [];
     for (const agent of agents) {
@@ -513,41 +444,73 @@ async function main() {
   }
   const requests = await modelStatus();
   assert.equal(requests.length, 9);
+  assert.deepEqual(
+    requests.map((item) => item.phase),
+    ["v1-ws", "v2-ws", "v1-http"].flatMap((profile) =>
+      ["native", "continue", "restored"].map((phase) => `${profile} ${phase}`),
+    ),
+  );
+  assert.equal(new Set(requests.map((item) => item.trace_id)).size, 9);
+  assert.equal(traces.length, 48);
+  assert.equal(traces.filter((trace) => trace.kind === "request").length, 36);
+  assert.equal(traces.filter((trace) => trace.kind === "native").length, 9);
+  assert.equal(
+    traces.filter((trace) => trace.kind === "local-failure").length,
+    3,
+  );
   const secrets = [
     marker,
     audioData,
     pdfData,
     imageData,
     "native-model-test",
+    "native-owner-password",
+    "native-stranger-password",
+    "F09_PRIVATE_PDF",
+    ...requests.map((item) => item.phase),
     ...admin.cookies.values(),
     ...member.cookies.values(),
     ...stranger.cookies.values(),
   ];
   const checked = [];
-  for (const { id, ...expected } of traces) {
+  for (const expected of traces) {
     stage = `trace:${expected.label}`;
     checked.push(
-      await collectTrace("http://jaeger:16686", id, (trace) =>
-        inspectNativeTrace(
-          trace,
-          {
-            ...expected,
-            modelRequests: requests.filter((r) => r.trace_id === id),
-          },
-          secrets,
-        ),
+      await collectNativeTrace(
+        "http://jaeger:16686",
+        expected,
+        secrets,
+        requests,
       ),
     );
   }
+  assert.equal(new Set(checked.map((trace) => trace.trace_id)).size, 48);
+  assert.equal(
+    new Set(checked.map((trace) => trace.run_id).filter(Boolean)).size,
+    12,
+  );
+  assert.deepEqual(
+    new Set(
+      checked
+        .filter((trace) => trace.kind === "native")
+        .map((trace) => trace.trace_id),
+    ),
+    new Set(requests.map((item) => item.trace_id)),
+  );
+  const strictTrace = checked.some((trace) => trace.strict_trace === "failed")
+    ? "failed"
+    : "passed";
   console.log(
     JSON.stringify({
-      status: "passed",
+      status: "business_passed",
+      strict_trace: strictTrace,
       outcomes,
       model_requests: requests.length,
       cross_user_rejections: 3,
       traces: checked,
     }),
   );
+  if (strictTrace === "failed") process.exitCode = 1;
 }
 try {
   await main();

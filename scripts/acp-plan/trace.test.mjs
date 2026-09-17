@@ -1,142 +1,121 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import test from "node:test";
 import { inspectPlanTrace } from "./trace.mjs";
+import { executionFixture } from "./trace-fixture.mjs";
+import { phases } from "./model.mjs";
 
-function fixture() {
-  const spans = [
-    { spanID: "gateway", operationName: "GET /acp", processID: "g" },
-  ];
-  const requests = [];
-  const add = (
-    id,
-    parent,
-    operationName,
-    admission,
-    processID = "a",
-    startTime = 10,
-  ) =>
-    spans.push({
-      spanID: id,
-      operationName,
-      processID,
-      startTime,
-      duration: 2,
-      tags: [
-        { key: "admission.id", value: admission },
-        { key: "tool.name", value: "write" },
-      ],
-      references: [{ refType: "CHILD_OF", spanID: parent }],
-    });
-  for (const [phase, count] of [
-    ["v1-create", 2],
-    ["v1-execute", 3],
-  ]) {
-    add(phase, "gateway", "agent.run", phase);
-    for (const operation of [
-      "mcp.runtime.info",
-      "mcp.tools.list",
-      "postgres.transaction",
-      "agent_controller.finish_run",
-    ])
-      add(`${phase}-${operation}`, phase, operation, phase);
-    add(`${phase}-admit`, "gateway", "agent_controller.acquire_run", phase);
-    for (const kind of ["info", "list"])
-      add(
-        `${phase}-runtime-${kind}`,
-        `${phase}-${kind === "info" ? "mcp.runtime.info" : "mcp.tools.list"}`,
-        "HTTP POST /mcp",
-        phase,
-        "r",
-      );
-    for (let i = 0; i < count; i++) {
-      const id = `${phase}-model-${i}`;
-      add(id, phase, "model.complete", phase, "a", 20 + i * 5);
-      requests.push({ phase, stage: i, trace_id: "trace", model_span_id: id });
+const inspect = ({ trace, requests, expected }) =>
+  inspectPlanTrace(trace, requests, [], expected);
+test("all 12 plan Runs correlate current HTTP spans, persistence and exact local/remote work", () => {
+  for (const version of [1, 2])
+    for (const phase of phases) {
+      const fixture = executionFixture(`v${version}-${phase.id}`);
+      const result = inspect(fixture);
+      assert.equal(result.runtime_tool_calls, phase.remote);
+      assert.equal(result.model_requests, fixture.requests.length);
+      assert.equal(result.run_id, "run");
+      assert.equal(result.strict_trace, "passed");
     }
-  }
-  add("call", "v1-execute", "mcp.tools.call", "v1-execute");
-  add("runtime-tool", "call", "runtime.mcp.tool", "v1-execute", "r");
-  return {
-    trace: {
-      traceID: "trace",
-      spans,
-      processes: {
-        g: { serviceName: "edge-gateway" },
-        a: { serviceName: "agent-acp-service" },
-        r: { serviceName: "antnest-runtime" },
-      },
-    },
-    requests,
-  };
-}
-
-test("plan trace counts local and remote work per Run with real ancestors", () => {
-  const { trace, requests } = fixture();
-  const result = inspectPlanTrace(trace, requests);
-  assert.equal(result.runtime_tool_calls, 1);
-  assert.deepEqual(
-    result.runs.map((run) => run.remote_calls),
-    [0, 1],
-  );
-  assert.equal(result.model_requests, 5);
 });
-
-test("trace oracle rejects missing preparation, local tool forwarding and wrong descendants", () => {
+test("plan trace rejects absent preparation/persistence, extra or misattributed execution", () => {
   for (const mutate of [
-    (trace) => {
-      trace.spans = trace.spans.filter(
-        (span) => span.spanID !== "v1-create-mcp.tools.list",
-      );
+    (f) => {
+      f.trace.spans = f.trace.spans.filter((s) => s.spanID !== "list");
     },
-    (trace) => {
-      trace.spans.find((span) => span.spanID === "call").tags[0].value =
-        "v1-create";
+    (f) => {
+      f.trace.spans.find((s) => s.spanID === "call").tags[0].value = "foreign";
     },
-    (trace) => {
-      trace.spans.find(
-        (span) => span.spanID === "runtime-tool",
-      ).references[0].spanID = "gateway";
+    (f) => {
+      f.trace.spans.find((s) => s.spanID === "tool").references[0].spanID =
+        "request";
     },
-    (trace) => {
-      trace.spans.find((span) => span.spanID === "call").tags[1].value =
+    (f) => {
+      f.trace.spans.find((s) => s.spanID === "call").tags[1].value =
         "update_plan";
     },
-    (trace) => {
-      trace.spans.find(
-        (span) => span.spanID === "v1-create-model-0",
-      ).references = [];
+    (f) => {
+      f.trace.spans.find((s) => s.spanID === "model-0").references[0].spanID =
+        "request";
     },
-    (trace) => {
-      trace.spans = trace.spans.filter(
-        (span) => span.operationName !== "postgres.transaction",
-      );
+    (f) => {
+      f.trace.spans.find((s) => s.spanID === "transaction").operationName =
+        "postgres.transaction";
     },
-    (trace) => {
-      trace.spans.push({
-        ...trace.spans.find((span) => span.spanID === "call"),
-        spanID: "duplicate",
+    (f) => {
+      f.trace.spans.find((s) => s.spanID === "transaction").tags[1].value =
+        "rolled_back";
+    },
+    (f) => {
+      f.trace.spans = f.trace.spans.filter((s) => s.spanID !== "insert");
+    },
+    (f) => {
+      f.trace.spans.find((s) => s.spanID === "info").startTime = 100;
+    },
+    (f) => {
+      f.trace.spans.push({
+        ...structuredClone(f.trace.spans.find((s) => s.spanID === "call")),
+        spanID: "extra",
       });
     },
-    (trace) => {
-      trace.spans.push({
-        ...trace.spans.find((span) => span.spanID === "v1-create-model-0"),
-        spanID: "extra-model",
+    (f) => {
+      f.trace.spans.push({
+        ...structuredClone(f.trace.spans.find((s) => s.spanID === "model-0")),
+        spanID: "extra",
       });
+    },
+    (f) => {
+      f.requests[0].model_span_id = "model-0";
+    },
+    (f) => {
+      f.requests[1].model_span_id = f.requests[0].model_span_id;
+    },
+    (f) => {
+      f.requests[1].stage = 0;
+    },
+    (f) => {
+      f.expected.sessionId = "foreign";
+    },
+    (f) => {
+      f.expected.connectionTraceID = "foreign";
+    },
+    (f) => {
+      f.add("management", "run", "HTTP POST /internal", "agent-controller");
     },
   ]) {
-    const { trace, requests } = fixture();
-    mutate(trace);
-    assert.throws(() => inspectPlanTrace(trace, requests));
+    const fixture = executionFixture();
+    mutate(fixture);
+    assert.throws(() => inspect(fixture));
   }
+  const local = executionFixture("v1-create");
+  local.add("unexpected-tool", "run", "runtime.mcp.tool", "antnest-runtime");
+  assert.throws(() => inspect(local));
 });
-
-test("trace rejects absent trace/request, reused admission and private plan data", () => {
-  const { trace, requests } = fixture();
-  assert.throws(() => inspectPlanTrace(undefined, requests));
-  assert.throws(() => inspectPlanTrace(trace, []));
-  const reused = structuredClone(requests);
-  reused[2].model_span_id = reused[0].model_span_id;
-  assert.throws(() => inspectPlanTrace(trace, reused));
-  trace.spans[0].tags = [{ key: "body", value: "F04_PRIVATE_PLAN" }];
-  assert.throws(() => inspectPlanTrace(trace, requests, ["F04_PRIVATE_PLAN"]));
+test("invalid-plan is a handled Tool result; execution errors, capture and secrets never pass", () => {
+  const fixture = executionFixture("v2-invalid");
+  assert.equal(inspect(fixture).strict_trace, "passed");
+  fixture.trace.spans[0].warnings = ["clock skew adjustment disabled"];
+  assert.equal(inspect(fixture).strict_trace, "failed");
+  fixture.trace.spans[0].tags.push({ key: "error", value: true });
+  assert.throws(() => inspect(fixture));
+  const leaked = executionFixture();
+  leaked.trace.spans[0].tags.push({ key: "data", value: "F04_PRIVATE_PLAN" });
+  assert.throws(() =>
+    inspectPlanTrace(
+      leaked.trace,
+      leaked.requests,
+      ["F04_PRIVATE_PLAN"],
+      leaked.expected,
+    ),
+  );
+  const captured = executionFixture();
+  captured.trace.spans[0].logs = [
+    { fields: [{ key: "antnest.payload.json", value: "{}" }] },
+  ];
+  assert.throws(() => inspect(captured));
+  assert.throws(() =>
+    inspectPlanTrace(undefined, fixture.requests, [], fixture.expected),
+  );
+  assert.throws(() =>
+    inspectPlanTrace(fixture.trace, [], [], fixture.expected),
+  );
 });

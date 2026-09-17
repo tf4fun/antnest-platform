@@ -1,0 +1,19 @@
+# Isolated base acceptance: no retained ports or fixed-IP allocator overlap.
+services:
+  agent-controller:
+    image: ${ANTNEST_E2E_CONTROLLER_IMAGE:-antnest/agent-controller:local}
+  runtime-controller:
+    image: ${ANTNEST_E2E_RUNTIME_CONTROLLER_IMAGE:-antnest/runtime-controller:local}
+  temporal:
+    ports: !reset []
+networks:
+  control:
+    ipam:
+      config: !override
+        - subnet: ${ANTNEST_EGRESS_CONTROL_SUBNET}
+          ip_range: ${ANTNEST_BASE_CONTROL_DYNAMIC_RANGE}
+  runtime-management:
+    ipam:
+      config: !override
+        - subnet: ${ANTNEST_RUNTIME_MANAGEMENT_SUBNET}
+          ip_range: ${ANTNEST_BASE_RUNTIME_DYNAMIC_RANGE}

@@ -145,3 +145,209 @@ test("configuration operations cannot discard foreign notifications or wrong rep
   assertModelSelection(result, "profile:saved");
   assert.throws(() => assertModelSelection(result, "agent_default"));
 });
+
+test("outgoing request observation preserves raw private fields before SDK parsing", async () => {
+  const { observeStream } = await import("../acp-commands/transport.mjs");
+  const observed = [],
+    frames = [],
+    updates = [],
+    sent = [];
+  const frame = { jsonrpc: "2.0", id: 7, result: { _meta: { receipt: {} } } };
+  const stream = observeWire(
+    observeStream(
+      {
+        readable: new ReadableStream({
+          start(c) {
+            c.enqueue(frame);
+            c.close();
+          },
+        }),
+        writable: new WritableStream({
+          write(m) {
+            sent.push(m);
+          },
+        }),
+      },
+      observed,
+    ),
+    updates,
+    frames,
+  );
+  const writer = stream.writable.getWriter();
+  const outgoing = {
+    jsonrpc: "2.0",
+    id: 7,
+    method: "session/prompt",
+    params: { sessionId: "s" },
+  };
+  await writer.write(outgoing);
+  await writer.close();
+  assert.deepEqual(sent, [outgoing]);
+  assert.deepEqual(observed, [
+    { requestId: "7", method: "session/prompt", sessionId: "s" },
+  ]);
+  const reader = stream.readable.getReader();
+  assert.deepEqual((await reader.read()).value, frame);
+  assert.equal((await reader.read()).done, true);
+  assert.throws(() => assertPublicFrames(frames));
+});
+
+test("observer permits only its own public configuration refresh, never foreign usage or replay", async () => {
+  const { assertObserverIsolation } = await import("./evidence.mjs");
+  const baseline = [
+    {
+      sessionId: "observer",
+      update: {
+        sessionUpdate: "usage_update",
+        cost: { amount: 0.77, currency: "USD" },
+      },
+    },
+  ];
+  const refresh = {
+    sessionId: "observer",
+    update: {
+      sessionUpdate: "config_option_update",
+      configOptions: [{ id: "model", currentValue: "agent_default" }],
+    },
+  };
+  assertObserverIsolation(
+    [
+      ...baseline,
+      refresh,
+      {
+        sessionId: "observer",
+        update: { sessionUpdate: "current_mode_update", currentModeId: "ask" },
+      },
+    ],
+    baseline,
+    "observer",
+    "ask",
+  );
+  assert.throws(() =>
+    assertObserverIsolation(
+      [
+        ...baseline,
+        {
+          sessionId: "observer",
+          update: {
+            sessionUpdate: "current_mode_update",
+            currentModeId: "auto",
+          },
+        },
+      ],
+      baseline,
+      "observer",
+      "ask",
+    ),
+  );
+  for (const tail of [
+    { ...refresh, sessionId: "foreign" },
+    baseline[0],
+    {
+      ...refresh,
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "foreign" },
+      },
+    },
+    {
+      ...refresh,
+      update: {
+        ...refresh.update,
+        configOptions: [{ id: "model", currentValue: "profile:foreign" }],
+      },
+    },
+  ])
+    assert.throws(() =>
+      assertObserverIsolation([...baseline, tail], baseline, "observer"),
+    );
+  assert.throws(() => assertObserverIsolation([], baseline, "observer"));
+});
+
+test("multiplexed owned configuration refresh cannot hide foreign content or changed selections", async () => {
+  const { operationUpdates } = await import("./evidence.mjs");
+  const owned = new Map([["old", { model: "agent_default", mode: "ask" }]]);
+  const refresh = {
+    sessionId: "old",
+    update: {
+      sessionUpdate: "config_option_update",
+      configOptions: [{ id: "model", currentValue: "agent_default" }],
+    },
+  };
+  const target = {
+    sessionId: "new",
+    update: { sessionUpdate: "available_commands_update" },
+  };
+  assert.deepEqual(operationUpdates([refresh, target], "new", owned), [target]);
+  assertOperationUpdates(
+    "new",
+    {},
+    { sessionId: "new" },
+    [refresh, target],
+    owned,
+  );
+  for (const bad of [
+    { ...refresh, sessionId: "foreign" },
+    { ...refresh, update: { sessionUpdate: "usage_update" } },
+    { ...refresh, update: { sessionUpdate: "state_update", state: "idle" } },
+  ])
+    assert.throws(() =>
+      assertOperationUpdates(
+        "new",
+        {},
+        { sessionId: "new" },
+        [bad, target],
+        owned,
+      ),
+    );
+  const changed = structuredClone(refresh);
+  changed.update.configOptions[0].currentValue = "profile:other";
+  assert.throws(() => operationUpdates([changed], "new", owned));
+  assert.throws(() =>
+    operationUpdates(
+      [
+        {
+          sessionId: "old",
+          update: {
+            sessionUpdate: "current_mode_update",
+            currentModeId: "auto",
+          },
+        },
+      ],
+      "new",
+      owned,
+    ),
+  );
+});
+
+test("SDK set-config responses preserve the existing mode baseline and forks inherit it", async () => {
+  const { rememberSelection } = await import("./evidence.mjs");
+  const owned = new Map();
+  rememberSelection(
+    owned,
+    "new",
+    {},
+    {
+      sessionId: "parent",
+      modes: { currentModeId: "ask" },
+      configOptions: [{ id: "model", currentValue: "agent_default" }],
+    },
+  );
+  rememberSelection(
+    owned,
+    "setConfigOption",
+    { sessionId: "parent" },
+    { configOptions: [{ id: "model", currentValue: "profile:m" }] },
+  );
+  assert.deepEqual(owned.get("parent"), { model: "profile:m", mode: "ask" });
+  rememberSelection(
+    owned,
+    "fork",
+    { sessionId: "parent" },
+    {
+      sessionId: "fork",
+      configOptions: [{ id: "model", currentValue: "profile:m" }],
+    },
+  );
+  assert.deepEqual(owned.get("fork"), owned.get("parent"));
+});

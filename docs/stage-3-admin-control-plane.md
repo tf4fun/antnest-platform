@@ -1,7 +1,7 @@
 # Stage 3A Administrator Control Plane
 
 > Status: administrator workflow implemented; acceptance remains scoped by batch
-> Updated: 2026-09-16. Latest execution/workspace evidence: [current status](current-status.md).
+> Updated: 2026-09-17. Latest execution/workspace evidence: [current status](current-status.md).
 
 Stage 3A adds the first supported browser entry to Antnest Platform. It connects
 one administrator from login through Agent lifecycle management without moving
@@ -188,6 +188,13 @@ current Model Profiles and encrypted connection credentials; Template revisions
 reference stable model identities, with optional ordered fallback models.
 There is no separate model-history API.
 
+Model reads include a projected Provider endpoint. Model writes accept only
+model parameters; they must not copy `base_url` back from that read projection.
+Credential rotation uses the Provider connection's credential version. Current
+Model edits use `expected_version` and keep the API model name unchanged.
+Templates validate image-reference syntax and preserve valid references,
+including tags not installed locally; Runtime creation owns image resolution.
+
 Resource responses do not repeat the organization ID that the BFF already
 derives from the trusted principal. Read-only Group IDs and OIDC database IDs
 are omitted as well. SCIM token ID remains only as the opaque handle for its
@@ -369,7 +376,8 @@ volumes. It must prove, in order:
 
 1. build all Stage 3A images and start an empty deployment;
 2. bootstrap the configured organization and local system administrator;
-3. load the Console in a browser and log in through Edge Gateway;
+3. log in through Edge Gateway and load the management projection; interactive
+   browser evidence is recorded separately in the C4 reports;
 4. view the organization directory and bootstrap administrator;
 5. rotate the bootstrap administrator's local password, prove the replacement
    credential can log in, and restore the disposable fixture credential;
@@ -386,8 +394,10 @@ volumes. It must prove, in order:
     correlated with its operation; prove actual ancestry, required boundaries
     and secret exclusions, keeping strict warning results explicit;
 13. prove that only Edge Gateway has an externally reachable application port;
-14. log in as the ordinary member, obtain a browser-safe Agent projection, and
-    execute and replay one ACP v1 Session containing a Runtime Tool call;
+14. log in as the ordinary member, obtain a browser-safe Agent projection and
+    Workspace HTML, and execute/replay real Tool effects on ACP v1 WebSocket,
+    v2 WebSocket and v1 HTTP; verify workspace/history retention after Rebuild
+    and authoritative logout revocation on both WebSocket versions;
 15. delete the Agent, prove its Runtime container and workspace volume are
     reclaimed, prove the default list hides it, and prove the explicit deleted
     query retains its audit projection;
@@ -399,11 +409,32 @@ spoofing, organization scoping, request shaping, secret redaction, trace
 propagation, static fallback, and lifecycle forwarding. The Compose acceptance
 is the cross-service proof, not a replacement for those tests.
 
-Run the disposable acceptance with `make e2e-stage3`. It creates an isolated
-Compose project with empty volumes, performs the complete lifecycle over Edge
-Gateway, verifies the Agent workspace ACP path, admission trace, lifecycle trace
-set, and host-port boundary, and tears the project down on both success and
-failure. For local browser inspection only,
-`ANTNEST_E2E_KEEP_STACK=true sh scripts/e2e-stage3a.sh` retains a successful
-seeded stack and prints its URL and Compose project name; the operator must
-remove that project after inspection.
+Run `make e2e-stage3` to build images first, or `make e2e-stage3-local` to use
+existing local images. The [current base fixture](../scripts/stage3-base/README.md)
+uses an isolated Compose project with empty volumes, all five lifecycle command
+traces and independent ACP message traces. It verifies current configuration
+publication/settlement, real Runtime operations and host-port isolation, then
+tears down owned resources on success or failure. Clock warnings still produce
+a nonzero result.
+
+Managed MCP now has an independent disposable [current fixture](../scripts/managed-mcp/README.md)
+for both SDK versions and active-Run Rebuild.
+The [current RPC fault fixture](../scripts/rpc-response-loss/README.md) covers
+both-version publication/settlement acknowledgement loss. Its business checks
+pass; the subsequent Controller candidate closes background publication SQL
+tracing. Strict warnings and Docker probe errors remain failed. The separate
+[ACP persistence fixture](../scripts/acp-persistence/README.md) now has six
+committed-response-loss cases and 32 scoped Trace checks; strict faults remain
+failed. [Process interruption](../scripts/acp-restart/README.md) now has eight
+business cases, 18 replays and two physical Rebuilds. Its 44 complete Trace checks
+passed in the original run. The [Trace follow-up](trace-acceptance-followup.md)
+separates intentional SIGKILL diagnostics from normal-request completeness and
+validates expected Docker absence in the independent candidate; strict timing
+warnings remain outside this scope.
+See the [separate P1/P2 record](acp-persistence-revalidation.md).
+
+The historical retained-stack, OIDC and fault branches remain for
+their separate migration batches; they are not included in the current default
+base acceptance. In particular, `ANTNEST_E2E_KEEP_STACK=true` still selects the
+historical driver and is not a validated current seeding entry. Track pending
+consumers in the [asset inventory](acceptance-asset-migration.md).

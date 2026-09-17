@@ -43,16 +43,44 @@ if [ "$tool_progress" = true ]; then
   export ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT=false
 fi
 file_observations=${ANTNEST_E2E_FILE_OBSERVATIONS:-false}
+if [ "$file_observations" = true ]; then
+  export ANTNEST_FILES_CONTROL_DYNAMIC_RANGE="10.242.${network_octet}.128/25"
+  export ANTNEST_FILES_RUNTIME_DYNAMIC_RANGE="10.243.${network_octet}.128/25"
+  export ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT=false
+fi
 structured_plan=${ANTNEST_E2E_STRUCTURED_PLAN:-false}
+if [ "$structured_plan" = true ]; then
+  export ANTNEST_PLAN_CONTROL_DYNAMIC_RANGE="10.242.${network_octet}.128/25"
+  export ANTNEST_PLAN_RUNTIME_DYNAMIC_RANGE="10.243.${network_octet}.128/25"
+  export ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT=false
+fi
 slash_commands=${ANTNEST_E2E_SLASH_COMMANDS:-false}
+if [ "$slash_commands" = true ]; then
+  export ANTNEST_COMMANDS_CONTROL_DYNAMIC_RANGE="10.242.${network_octet}.128/25"
+  export ANTNEST_COMMANDS_RUNTIME_DYNAMIC_RANGE="10.243.${network_octet}.128/25"
+  export ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT=false
+fi
 multimodal=${ANTNEST_E2E_MULTIMODAL:-false}
+if [ "$multimodal" = true ]; then
+  export ANTNEST_MULTIMODAL_CONTROL_DYNAMIC_RANGE="10.242.${network_octet}.128/25"
+  export ANTNEST_MULTIMODAL_RUNTIME_DYNAMIC_RANGE="10.243.${network_octet}.128/25"
+  export ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT=false
+fi
 session_cost=${ANTNEST_E2E_SESSION_COST:-false}
+if [ "$session_cost" = true ]; then
+  export ANTNEST_COST_CONTROL_DYNAMIC_RANGE="10.242.${network_octet}.128/25"
+  export ANTNEST_COST_RUNTIME_DYNAMIC_RANGE="10.243.${network_octet}.128/25"
+  export ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT=false
+fi
 rpc_response_loss=${ANTNEST_E2E_RPC_RESPONSE_LOSS:-false}
 case "$rpc_response_loss" in
   true|false) ;;
   *) echo 'ANTNEST_E2E_RPC_RESPONSE_LOSS must be true or false' >&2; exit 1 ;;
 esac
 if [ "$rpc_response_loss" = true ]; then
+  export ANTNEST_RPC_CONTROL_DYNAMIC_RANGE="10.242.${network_octet}.128/25"
+  export ANTNEST_RPC_RUNTIME_DYNAMIC_RANGE="10.243.${network_octet}.128/25"
+  export ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT=false
   for incompatible in "$session_cost" "$multimodal" "$slash_commands" "$structured_plan" "$file_observations" "$tool_progress" "$keep_stack" "$agent_access" "$identity_access" "$acp_session" "${ANTNEST_E2E_ACP_CLOSEOUT:-false}" "${ANTNEST_E2E_MANAGED_MCP:-false}"; do
     [ "$incompatible" = false ] || { echo 'RPC response loss requires a separate disposable profile' >&2; exit 1; }
   done
@@ -97,7 +125,41 @@ if [ "$file_observations" = true ] && { [ "$tool_progress" = true ] || [ "$keep_
   echo "File observations require a separate disposable profile" >&2
   exit 1
 fi
+tool_permissions=${ANTNEST_E2E_TOOL_PERMISSIONS:-false}
+case "$tool_permissions" in
+  true|false) ;;
+  *) echo "ANTNEST_E2E_TOOL_PERMISSIONS must be true or false" >&2; exit 1 ;;
+esac
+if [ "$tool_permissions" = true ]; then
+  for incompatible in "$session_cost" "$multimodal" "$slash_commands" "$structured_plan" "$file_observations" "$tool_progress" "$rpc_response_loss" "$keep_stack" "$agent_access" "$identity_access" "$acp_session" "${ANTNEST_E2E_ACP_CLOSEOUT:-false}" "${ANTNEST_E2E_MANAGED_MCP:-false}"; do
+    [ "$incompatible" = false ] || { echo 'Tool permissions require a separate disposable profile' >&2; exit 1; }
+  done
+  export ANTNEST_PERMISSIONS_CONTROL_DYNAMIC_RANGE="10.242.${network_octet}.128/25"
+  export ANTNEST_PERMISSIONS_RUNTIME_DYNAMIC_RANGE="10.243.${network_octet}.128/25"
+  export ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT=false
+fi
+acp_persistence=${ANTNEST_E2E_ACP_PERSISTENCE:-false}
+case "$acp_persistence" in true|false) ;; *) echo 'Invalid persistence profile' >&2; exit 1 ;; esac
+if [ "$acp_persistence" = true ]; then
+  for incompatible in "$tool_permissions" "$session_cost" "$multimodal" "$slash_commands" "$structured_plan" "$file_observations" "$tool_progress" "$rpc_response_loss" "$keep_stack" "$agent_access" "$identity_access" "$acp_session" "${ANTNEST_E2E_ACP_CLOSEOUT:-false}" "${ANTNEST_E2E_MANAGED_MCP:-false}"; do
+    [ "$incompatible" = false ] || { echo 'Persistence requires a separate disposable profile' >&2; exit 1; }
+  done
+  export ANTNEST_PERSISTENCE_CONTROL_DYNAMIC_RANGE="10.242.${network_octet}.128/25"
+  export ANTNEST_PERSISTENCE_RUNTIME_DYNAMIC_RANGE="10.243.${network_octet}.128/25"
+  export ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT=false
+fi
+acp_restart=${ANTNEST_E2E_ACP_RESTART:-false}
+case "$acp_restart" in true|false) ;; *) echo 'Invalid restart profile' >&2; exit 1 ;; esac
+if [ "$acp_restart" = true ]; then
+  for incompatible in "$acp_persistence" "$tool_permissions" "$session_cost" "$multimodal" "$slash_commands" "$structured_plan" "$file_observations" "$tool_progress" "$rpc_response_loss" "$keep_stack" "$agent_access" "$identity_access" "$acp_session" "${ANTNEST_E2E_ACP_CLOSEOUT:-false}" "${ANTNEST_E2E_MANAGED_MCP:-false}"; do
+    [ "$incompatible" = false ] || { echo 'Restart requires a separate disposable profile' >&2; exit 1; }
+  done
+  export ANTNEST_RESTART_CONTROL_DYNAMIC_RANGE="10.242.${network_octet}.128/25"
+  export ANTNEST_RESTART_RUNTIME_DYNAMIC_RANGE="10.243.${network_octet}.128/25"
+  export ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT=false
+fi
 tool_profile=""
+[ "$tool_permissions" != true ] || tool_profile=tool-permissions
 [ "$tool_progress" != true ] || tool_profile=tool-progress
 [ "$file_observations" != true ] || tool_profile=file-observations
 [ "$structured_plan" != true ] || tool_profile=structured-plan
@@ -105,6 +167,27 @@ tool_profile=""
 [ "$multimodal" != true ] || tool_profile=multimodal
 [ "$session_cost" != true ] || tool_profile=session-cost
 [ "$rpc_response_loss" != true ] || tool_profile=rpc-response-loss
+[ "$acp_persistence" != true ] || tool_profile=acp-persistence
+[ "$acp_restart" != true ] || tool_profile=acp-restart
+managed_mcp=${ANTNEST_E2E_MANAGED_MCP:-false}
+case "$managed_mcp" in
+  true|false) ;;
+  *) echo 'ANTNEST_E2E_MANAGED_MCP must be true or false' >&2; exit 1 ;;
+esac
+if [ "$managed_mcp" = true ]; then
+  [ -z "$tool_profile" ] || { echo 'Managed MCP requires a separate disposable profile' >&2; exit 1; }
+  for incompatible in "$keep_stack" "$agent_access" "$identity_access" "$acp_session" "${ANTNEST_E2E_ACP_CLOSEOUT:-false}"; do
+    [ "$incompatible" = false ] || { echo 'Managed MCP requires a separate disposable profile' >&2; exit 1; }
+  done
+  case "${ANTNEST_E2E_MANAGED_MCP_VERSION:-1}" in
+    1|2) ;;
+    *) echo 'Managed MCP version must be 1 or 2' >&2; exit 1 ;;
+  esac
+  tool_profile=managed-mcp
+  export ANTNEST_MANAGED_CONTROL_DYNAMIC_RANGE="10.242.${network_octet}.128/25"
+  export ANTNEST_MANAGED_RUNTIME_DYNAMIC_RANGE="10.243.${network_octet}.128/25"
+  export ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT=false
+fi
 case "$tool_progress" in
   true|false) ;;
   *) echo "ANTNEST_E2E_TOOL_PROGRESS must be true or false" >&2; exit 1 ;;
@@ -138,6 +221,14 @@ if [ "$identity_access" = true ] && { [ "$keep_stack" = true ] || [ "${ANTNEST_E
   exit 1
 fi
 export ANTNEST_IDENTITY_ACCESS_TOKEN_TTL=12h
+base_profile=false
+if [ -z "$tool_profile" ] && [ "$keep_stack" = false ] && [ "$identity_access" = false ] && [ "$acp_session" = false ] && [ "$agent_access" = false ] && [ "${ANTNEST_E2E_ACP_CLOSEOUT:-false}" = false ] && [ "${ANTNEST_E2E_MANAGED_MCP:-false}" = false ]; then
+  base_profile=true
+  tool_profile=stage3-base
+  export ANTNEST_BASE_CONTROL_DYNAMIC_RANGE="10.242.${network_octet}.128/25"
+  export ANTNEST_BASE_RUNTIME_DYNAMIC_RANGE="10.243.${network_octet}.128/25"
+  export ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT=false
+fi
 if [ -n "$tool_profile" ]; then
   export ANTNEST_E2E_DEADLINE_MS=$(node -e 'process.stdout.write(String(Date.now()+900000))')
   docker() { node "$repository_root/scripts/acp-closeout/docker.mjs" "$@"; }
@@ -162,6 +253,70 @@ workspace_cookie_jar="$temporary_root/workspace-cookies.txt"
 agent_id=""
 
 compose() {
+  if [ "$managed_mcp" = true ]; then
+    if [ "$1" = up ]; then
+      docker --lifecycle compose --env-file /dev/null -f compose.yaml -f compose.stage3.yaml -f scripts/managed-mcp/compose.yaml --profile stage3 --profile observability "$@"
+    else
+      docker compose --env-file /dev/null -f compose.yaml -f compose.stage3.yaml -f scripts/managed-mcp/compose.yaml --profile stage3 --profile observability "$@"
+    fi
+    return
+  fi
+  if [ "$base_profile" = true ]; then
+    if [ "$1" = up ]; then
+      docker --lifecycle compose --env-file /dev/null -f compose.yaml -f compose.stage3.yaml -f scripts/stage3-base/compose.yaml --profile stage3 --profile observability "$@"
+    else
+      docker compose --env-file /dev/null -f compose.yaml -f compose.stage3.yaml -f scripts/stage3-base/compose.yaml --profile stage3 --profile observability "$@"
+    fi
+    return
+  fi
+  if [ "$session_cost" = true ]; then
+    if [ "$1" = up ]; then
+      docker --lifecycle compose --env-file /dev/null -f compose.yaml -f compose.stage3.yaml -f scripts/acp-cost/compose.yaml --profile stage3 --profile observability "$@"
+    else
+      docker compose --env-file /dev/null -f compose.yaml -f compose.stage3.yaml -f scripts/acp-cost/compose.yaml --profile stage3 --profile observability "$@"
+    fi
+    return
+  fi
+  if [ "$multimodal" = true ]; then
+    if [ "$1" = up ]; then
+      docker --lifecycle compose --env-file /dev/null -f compose.yaml -f compose.stage3.yaml -f scripts/acp-multimodal/compose.yaml --profile stage3 --profile observability "$@"
+    else
+      docker compose --env-file /dev/null -f compose.yaml -f compose.stage3.yaml -f scripts/acp-multimodal/compose.yaml --profile stage3 --profile observability "$@"
+    fi
+    return
+  fi
+  if [ "$tool_permissions" = true ]; then
+    if [ "$1" = up ]; then
+      docker --lifecycle compose --env-file /dev/null -f compose.yaml -f compose.stage3.yaml -f scripts/acp-permissions/compose.yaml --profile stage3 --profile observability "$@"
+    else
+      docker compose --env-file /dev/null -f compose.yaml -f compose.stage3.yaml -f scripts/acp-permissions/compose.yaml --profile stage3 --profile observability "$@"
+    fi
+    return
+  fi
+  if [ "$slash_commands" = true ]; then
+    if [ "$1" = up ]; then
+      docker --lifecycle compose --env-file /dev/null -f compose.yaml -f compose.stage3.yaml -f scripts/acp-commands/compose.yaml --profile stage3 --profile observability "$@"
+    else
+      docker compose --env-file /dev/null -f compose.yaml -f compose.stage3.yaml -f scripts/acp-commands/compose.yaml --profile stage3 --profile observability "$@"
+    fi
+    return
+  fi
+  if [ "$structured_plan" = true ]; then
+    if [ "$1" = up ]; then
+      docker --lifecycle compose --env-file /dev/null -f compose.yaml -f compose.stage3.yaml -f scripts/acp-plan/compose.yaml --profile stage3 --profile observability "$@"
+    else
+      docker compose --env-file /dev/null -f compose.yaml -f compose.stage3.yaml -f scripts/acp-plan/compose.yaml --profile stage3 --profile observability "$@"
+    fi
+    return
+  fi
+  if [ "$file_observations" = true ]; then
+    if [ "$1" = up ]; then
+      docker --lifecycle compose --env-file /dev/null -f compose.yaml -f compose.stage3.yaml -f scripts/acp-files/compose.yaml --profile stage3 --profile observability "$@"
+    else
+      docker compose --env-file /dev/null -f compose.yaml -f compose.stage3.yaml -f scripts/acp-files/compose.yaml --profile stage3 --profile observability "$@"
+    fi
+    return
+  fi
   if [ "$tool_progress" = true ]; then
     if [ "$1" = up ]; then
       docker --lifecycle compose --env-file /dev/null -f compose.yaml -f compose.stage3.yaml -f scripts/acp-progress/compose.yaml --profile stage3 --profile observability "$@"
@@ -170,11 +325,27 @@ compose() {
     fi
     return
   fi
+  if [ "$acp_restart" = true ]; then
+    if [ "$1" = up ]; then
+      docker --lifecycle compose --env-file /dev/null -f compose.yaml -f compose.stage3.yaml -f scripts/acp-restart/compose.yaml --profile stage3 --profile observability "$@"
+    else
+      docker compose --env-file /dev/null -f compose.yaml -f compose.stage3.yaml -f scripts/acp-restart/compose.yaml --profile stage3 --profile observability "$@"
+    fi
+    return
+  fi
+  if [ "$acp_persistence" = true ]; then
+    if [ "$1" = up ]; then
+      docker --lifecycle compose --env-file /dev/null -f compose.yaml -f compose.stage3.yaml -f scripts/acp-persistence/compose.yaml --profile stage3 --profile observability "$@"
+    else
+      docker compose --env-file /dev/null -f compose.yaml -f compose.stage3.yaml -f scripts/acp-persistence/compose.yaml --profile stage3 --profile observability "$@"
+    fi
+    return
+  fi
   if [ "$rpc_response_loss" = true ]; then
     if [ "$1" = up ]; then
-      docker --lifecycle compose -f compose.yaml -f compose.stage3.yaml -f scripts/acp-closeout/rpc-compose.yaml --profile stage3 --profile observability "$@"
+      docker --lifecycle compose --env-file /dev/null -f compose.yaml -f compose.stage3.yaml -f scripts/rpc-response-loss/compose.yaml --profile stage3 --profile observability "$@"
     else
-      docker compose -f compose.yaml -f compose.stage3.yaml -f scripts/acp-closeout/rpc-compose.yaml --profile stage3 --profile observability "$@"
+      docker compose --env-file /dev/null -f compose.yaml -f compose.stage3.yaml -f scripts/rpc-response-loss/compose.yaml --profile stage3 --profile observability "$@"
     fi
     return
   fi
@@ -253,21 +424,19 @@ cleanup() {
       status=1
     fi
   done
-  if [ "$status" -eq 0 ] && [ "${ANTNEST_E2E_MANAGED_MCP:-false}" = true ]; then
-    cat "$temporary_root/managed-mcp-evidence.json" || status=1
-  fi
   if [ "$status" -eq 0 ] && [ "${ANTNEST_E2E_ACP_CLOSEOUT:-false}" = true ]; then
     cat "$temporary_root/acp-closeout.json" || status=1
-  fi
-  if [ "$status" -eq 0 ] && [ "$tool_profile" = rpc-response-loss ]; then
-    cat "$temporary_root/rpc-response-loss.json" || status=1
   fi
   if [ "$status" -eq 0 ] && [ -f "$temporary_root/lifecycle-trace-evidence.json" ]; then
     cat "$temporary_root/lifecycle-trace-evidence.json" || status=1
   fi
   rm -rf -- "${temporary_root:?}"
   if [ -n "$tool_profile" ] && [ "$status" -eq 0 ]; then
-    echo "ACP v1/v2 deployed $tool_profile E2E passed; owned resources removed"
+    if [ "$tool_profile" = managed-mcp ]; then
+      echo "ACP v${ANTNEST_E2E_MANAGED_MCP_VERSION:-1} deployed $tool_profile E2E passed; owned resources removed"
+    else
+      echo "ACP v1/v2 deployed $tool_profile E2E passed; owned resources removed"
+    fi
   fi
   exit "$status"
 }
@@ -395,12 +564,7 @@ wait_agent_ready() {
 
 if [ -n "$tool_profile" ]; then
   compose up -d --wait
-  if [ "$rpc_response_loss" = true ]; then
-    ANTNEST_E2E_DISPOSABLE=true sh scripts/e2e-rpc-response-loss.sh >"$temporary_root/rpc-response-loss.json"
-    assert_field "$temporary_root/rpc-response-loss.json" status passed
-  else
-    ANTNEST_E2E_DISPOSABLE=true sh "scripts/e2e-${tool_profile}.sh"
-  fi
+  ANTNEST_E2E_DISPOSABLE=true sh "scripts/e2e-${tool_profile}.sh"
   exit 0
 fi
 
@@ -986,14 +1150,6 @@ if [ "${ANTNEST_E2E_ACP_CLOSEOUT:-false}" = true ]; then
   ANTNEST_E2E_DISPOSABLE=true ANTNEST_E2E_ACP_CONTAINER=$(compose ps -q agent-acp-service) \
     sh scripts/e2e-acp-closeout.sh >"$temporary_root/acp-closeout.json"
   assert_field "$temporary_root/acp-closeout.json" status passed
-fi
-
-if [ "${ANTNEST_E2E_MANAGED_MCP:-false}" = true ]; then
-  TEST_ORGANIZATION_ID="$organization_id" TEST_OWNER_ID="$owner_user_id" \
-    TEST_USER_COOKIE="$workspace_cookie" sh scripts/e2e-managed-mcp.sh \
-    >"$temporary_root/managed-mcp-evidence.json"
-  assert_field "$temporary_root/managed-mcp-evidence.json" status passed
-  assert_field "$temporary_root/managed-mcp-evidence.json" version "${ANTNEST_E2E_MANAGED_MCP_VERSION:-1}"
 fi
 
 node scripts/stage3-lifecycle-trace-assert.mjs "$jaeger_url" "$trace_id" \

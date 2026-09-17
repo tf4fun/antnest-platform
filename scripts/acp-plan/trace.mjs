@@ -1,156 +1,180 @@
 import assert from "node:assert/strict";
-import { assertSecretFree } from "../identity-closeout/evidence.mjs";
+import { tag } from "../observability/trace-tree.mjs";
 import { caseFor, stepsFor } from "./model.mjs";
+import { requestBoundary, hasError, timingEvidence } from "./requests.mjs";
 
-export function inspectPlanTrace(trace, requests, secrets = []) {
-  assert(trace?.spans?.length, "missing plan execution trace");
+export function inspectPlanTrace(trace, requests, secrets = [], expected) {
   assert(requests?.length, "missing model request correlation");
-  const spans = new Map(trace.spans.map((span) => [span.spanID, span]));
-  assert.equal(spans.size, trace.spans.length, "duplicate span identity");
-  const service = (span) => trace.processes[span.processID]?.serviceName;
-  const tag = (span, key) => span.tags?.find((tag) => tag.key === key)?.value;
-  const parents = (span) => {
-    const result = [],
-      seen = new Set();
-    while (span && !seen.has(span.spanID)) {
-      seen.add(span.spanID);
-      result.push(span);
-      span = spans.get(
-        span.references?.find((ref) => ref.refType === "CHILD_OF")?.spanID,
-      );
-    }
-    return result;
-  };
-  const acp = (operation) =>
+  assert.equal(expected?.method, "session/prompt");
+  const { tree, request, forwarded } = requestBoundary(
+    trace,
+    expected,
+    secrets,
+  );
+  const select = (service, operation) =>
     trace.spans.filter(
       (span) =>
-        service(span) === "agent-acp-service" &&
-        span.operationName === operation,
+        tree.service(span) === service && span.operationName === operation,
     );
-  for (const span of trace.spans.filter((span) =>
-    ["agent-acp-service", "antnest-runtime"].includes(service(span)),
-  ))
+  const acp = (operation) => select("agent-acp-service", operation);
+  const single = (spans, label) => {
+    assert.equal(spans.length, 1, `missing or duplicate ${label}`);
+    return spans[0];
+  };
+  const phase = expected.phase;
+  const item = caseFor(phase);
+  assert.deepEqual(
+    [...new Set(requests.map((request) => request.phase))],
+    [phase],
+  );
+  assert.deepEqual(
+    requests.map((request) => request.stage),
+    Array.from({ length: stepsFor(phase).length + 1 }, (_, index) => index),
+  );
+  const run = single(acp("agent.run"), "Run");
+  const runId = tag(run, "antnest.run.id");
+  assert(runId, "Run identity missing");
+  assert(tree.chain(run).includes(request), "Run detached from prompt");
+  const inside = (span) => tree.chain(span).includes(run);
+  assert(
+    !trace.spans.some(
+      (span) =>
+        inside(span) &&
+        ["agent-controller", "identity-service"].includes(tree.service(span)),
+    ),
+    "Run calls management service",
+  );
+  const persisted = acp("postgresql transaction").filter(
+    (span) =>
+      inside(span) &&
+      tag(span, "db.system.name") === "postgresql" &&
+      tag(span, "antnest.transaction.outcome") === "committed",
+  );
+  assert(
+    persisted.some((transaction) =>
+      trace.spans.some(
+        (span) =>
+          tree.service(span) === "agent-acp-service" &&
+          tag(span, "span.kind") === "client" &&
+          tag(span, "db.system.name") === "postgresql" &&
+          ["INSERT", "UPDATE"].includes(tag(span, "db.operation.name")) &&
+          tree.chain(span).includes(transaction),
+      ),
+    ),
+    "missing committed Run persistence path",
+  );
+  const prepared = ["mcp.runtime.info", "mcp.tools.list"].map((operation) => {
+    const span = single(acp(operation), operation);
+    assert(inside(span), "preparation detached from Run");
     assert(
-      parents(span).some((parent) => service(parent) === "edge-gateway"),
-      `missing Gateway ancestry: ${span.operationName}`,
+      trace.spans.some(
+        (child) =>
+          tree.service(child) === "antnest-runtime" &&
+          tree.chain(child).includes(span),
+      ),
+      "Runtime preparation descendant missing",
     );
-  const models = acp("model.complete");
-  assert.equal(models.length, requests.length, "unaccounted model requests");
+    return span;
+  });
+  assert.equal(
+    acp("model.complete").length,
+    requests.length,
+    "unaccounted model requests",
+  );
+  assert.equal(
+    acp("HTTP POST model").length,
+    requests.length,
+    "unaccounted model HTTP requests",
+  );
   assert.equal(
     new Set(requests.map((request) => request.model_span_id)).size,
     requests.length,
   );
-  const phases = [...new Set(requests.map((request) => request.phase))];
-  assert.equal(acp("agent.run").length, phases.length);
-  assert.equal(acp("agent_controller.acquire_run").length, phases.length);
-  assert.equal(acp("agent_controller.finish_run").length, phases.length);
-  const admissions = new Set(),
-    runs = [];
-  for (const phase of phases) {
-    const expected = caseFor(phase);
-    const observations = requests.filter((request) => request.phase === phase);
-    assert.deepEqual(
-      observations.map((request) => request.stage),
-      Array.from({ length: stepsFor(phase).length + 1 }, (_, index) => index),
-    );
-    const observedModels = observations.map((request) => {
-      assert.equal(request.trace_id, trace.traceID);
-      const model = models.find(
-        (span) => span.spanID === request.model_span_id,
-      );
-      assert(model, "actual model span missing");
-      return model;
-    });
-    const admission = tag(observedModels[0], "admission.id");
-    assert(
-      admission && !admissions.has(admission),
-      "admission missing or reused",
-    );
-    admissions.add(admission);
-    assert(
-      observedModels.every((span) => tag(span, "admission.id") === admission),
-    );
-    const owned = (operation) =>
-      acp(operation).filter((span) => tag(span, "admission.id") === admission);
-    const run = owned("agent.run");
-    assert.equal(run.length, 1);
-    const inRun = (span) =>
-      parents(span).some((parent) => parent.spanID === run[0].spanID);
-    assert(observedModels.every(inRun), "model not under actual Run");
-    assert(
-      acp("postgres.transaction").some(inRun),
-      "missing Run persistence path",
-    );
-    assert.equal(owned("agent_controller.finish_run").length, 1);
-    for (const operation of ["mcp.runtime.info", "mcp.tools.list"]) {
-      const prepared = owned(operation);
-      assert.equal(prepared.length, 1, "missing fresh Runtime preparation");
-      assert(inRun(prepared[0]));
-      assert(
-        prepared[0].startTime + prepared[0].duration <=
-          observedModels[0].startTime,
-      );
-      assert(
-        trace.spans.some(
-          (span) =>
-            service(span) === "antnest-runtime" &&
-            parents(span).some(
-              (parent) => parent.spanID === prepared[0].spanID,
-            ),
-        ),
-        "missing Runtime preparation descendant",
-      );
-    }
-    const calls = owned("mcp.tools.call");
+  const models = new Set();
+  for (const observed of requests) {
+    assert.equal(observed.trace_id, trace.traceID);
+    const http = tree.spans.get(observed.model_span_id);
     assert.equal(
-      calls.length,
-      expected.remote,
-      "incorrect per-Run remote dispatch count",
+      http?.operationName,
+      "HTTP POST model",
+      "model HTTP span missing",
     );
-    for (const call of calls) {
-      assert(inRun(call));
-      assert.equal(
-        tag(call, "tool.name"),
-        "write",
-        "local plan forwarded to Runtime",
+    assert.equal(tree.service(http), "agent-acp-service");
+    assert.equal(tag(http, "span.kind"), "client");
+    const model = tree.parent(http);
+    assert.equal(model?.operationName, "model.complete");
+    assert(inside(model), "model detached from Run");
+    models.add(model.spanID);
+    for (const span of prepared)
+      assert(
+        span.startTime + span.duration <= model.startTime,
+        "preparation followed model execution",
       );
-      const tools = trace.spans.filter(
-        (span) =>
-          service(span) === "antnest-runtime" &&
-          span.operationName === "runtime.mcp.tool" &&
-          parents(span).some((parent) => parent.spanID === call.spanID),
-      );
-      assert.equal(
-        tools.length,
-        1,
-        "actual Runtime Tool descendant missing or duplicated",
-      );
-    }
-    runs.push({
-      phase,
-      remote_calls: calls.length,
-      model_requests: observations.length,
-    });
   }
-  for (const operation of ["mcp.runtime.info", "mcp.tools.list"])
-    assert.equal(acp(operation).length, phases.length);
-  const remote = runs.reduce((sum, run) => sum + run.remote_calls, 0);
-  assert.equal(acp("mcp.tools.call").length, remote);
   assert.equal(
-    trace.spans.filter(
-      (span) =>
-        service(span) === "antnest-runtime" &&
-        span.operationName === "runtime.mcp.tool",
-    ).length,
-    remote,
+    models.size,
+    requests.length,
+    "multiple HTTP requests reused one model span",
   );
-  assertSecretFree(JSON.stringify(trace), secrets);
+  const calls = acp("mcp.tools.call");
+  const tools = select("antnest-runtime", "runtime.mcp.tool");
+  const servers = trace.spans.filter(
+    (span) =>
+      tree.service(span) === "antnest-runtime" &&
+      tag(span, "rpc.method") === "tools/call" &&
+      tag(span, "span.kind") === "server",
+  );
+  assert.equal(
+    calls.length,
+    item.remote,
+    "local plan forwarded to Runtime or missing write",
+  );
+  assert.equal(
+    tools.length,
+    item.remote,
+    "unexpected Runtime Tool invocation count",
+  );
+  assert.equal(
+    servers.length,
+    item.remote,
+    "unexpected Runtime Tool SERVER count",
+  );
+  for (const call of calls) {
+    assert(inside(call));
+    assert.equal(tag(call, "antnest.run.id"), runId);
+    assert.equal(
+      tag(call, "tool.name"),
+      "write",
+      "local plan forwarded to Runtime",
+    );
+    const tool = single(
+      tools.filter((tool) => tree.chain(tool).includes(call)),
+      "actual Runtime Tool descendant",
+    );
+    const server = single(
+      servers.filter((server) => tree.chain(tool).includes(server)),
+      "Runtime SERVER ancestor",
+    );
+    const client = tree.parent(server);
+    assert.equal(tree.service(client), "agent-acp-service");
+    assert.equal(tag(client, "span.kind"), "client");
+    assert(tree.chain(client).includes(call));
+  }
+  assert(
+    !trace.spans.some(hasError),
+    "unexpected execution error, including handled invalid-plan Run",
+  );
   return {
     trace_id: trace.traceID,
-    spans: spans.size,
-    runs,
-    model_requests: models.length,
-    runtime_tool_calls: remote,
+    run_id: runId,
+    phase,
+    spans: trace.spans.length,
+    model_requests: requests.length,
+    runtime_tool_calls: item.remote,
+    information_reads: 1,
+    catalog_reads: 1,
     gateway_ancestry: true,
+    persistence: true,
+    ...timingEvidence(trace, tree, request, forwarded),
   };
 }

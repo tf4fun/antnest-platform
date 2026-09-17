@@ -4,10 +4,13 @@ import v1Schema from "@agentclientprotocol/sdk/schema/schema.json" with { type: 
 import v2Schema from "@agentclientprotocol/sdk/schema/v2/schema.unstable.json" with { type: "json" };
 import { GatewayClient } from "../identity-closeout/support.mjs";
 import { assertDeniedSessionError } from "../identity-closeout/agent-access-evidence.mjs";
-import { rejectedUpgrade, until } from "../acp-closeout/support.mjs";
+import { until } from "../acp-closeout/support.mjs";
 import { connectACP, gateway } from "../identity-closeout/acp-connection.mjs";
 import { collectTrace } from "../managed-mcp/trace.mjs";
-import { inspectReplayTrace } from "../acp-files/evidence.mjs";
+import { assertAgentDenied } from "../acp-files/setup.mjs";
+import { waitForAgentReady } from "../verification/agent-state.mjs";
+import { seedPlans } from "./setup.mjs";
+import { collectPlanRequestTrace } from "./requests.mjs";
 import { inspectPlanTrace } from "./trace.mjs";
 import {
   assertPlanEvents,
@@ -23,8 +26,8 @@ const admin = new GatewayClient(gateway),
 const setup = { cwd: "/workspace", mcpServers: [] };
 const outcomes = [],
   agents = [],
-  executionIDs = new Set(),
-  replayIDs = [];
+  executionRequests = [],
+  replayRequests = [];
 const validators = [v1Schema, v2Schema].map((schema) =>
   new Ajv2020({ strict: false, validateFormats: false }).compile({
     $ref: "#/$defs/SessionUpdate",
@@ -53,12 +56,19 @@ async function connect(version, agent) {
   const client = connectACP(version, agent, member.cookie);
   try {
     await client.initialize();
+    client.agentId = agent;
     return client;
   } catch (error) {
     client.close();
     throw error;
   }
 }
+const requestIdentity = (client, method, sessionId) => ({
+  method,
+  sessionId,
+  agentId: client.agentId,
+  connectionTraceID: client.traceID,
+});
 async function replay(client, version, sessionId, expected) {
   client.updates.length = 0;
   await client.request(version === 1 ? "load" : "resume", {
@@ -66,6 +76,13 @@ async function replay(client, version, sessionId, expected) {
     sessionId,
     ...(version === 2 ? { replayFrom: { type: "start" } } : {}),
   });
+  replayRequests.push(
+    requestIdentity(
+      client,
+      version === 1 ? "session/load" : "session/resume",
+      sessionId,
+    ),
+  );
   assert(
     client.updates.every((frame) => frame.sessionId === sessionId),
     "foreign replay Session",
@@ -81,8 +98,10 @@ async function roundtrip(version, agent, sessionId, expected) {
     await replay(client, version, sessionId, expected);
     const fork = await client.request("fork", { ...setup, sessionId });
     assert.notEqual(fork.sessionId, sessionId);
+    replayRequests.push(
+      requestIdentity(client, "session/fork", fork.sessionId),
+    );
     await replay(client, version, fork.sessionId, expected);
-    replayIDs.push(client.traceID);
     return fork.sessionId;
   } finally {
     client.close();
@@ -91,7 +110,10 @@ async function roundtrip(version, agent, sessionId, expected) {
 async function prompt(client, version, sessionId, phase) {
   stage = phase;
   client.updates.length = 0;
-  executionIDs.add(client.traceID);
+  executionRequests.push({
+    ...requestIdentity(client, "session/prompt", sessionId),
+    phase,
+  });
   let completed = false;
   const pending = client.request(
     "prompt",
@@ -148,6 +170,9 @@ async function prompt(client, version, sessionId, phase) {
   for (const frame of client.updates)
     assert(validators[version - 1](frame.update), "invalid live schema");
   outcomes.push({ phase, ...assertPlanEvents(version, phase, client.updates) });
+  console.log(
+    JSON.stringify({ status: "scenario_passed", ...outcomes.at(-1) }),
+  );
   return structuredClone(relevantUpdates(client.updates));
 }
 
@@ -198,32 +223,7 @@ async function main() {
   });
   await login(member, "plan-owner@example.com", "plan-owner-password");
   await login(stranger, "plan-stranger@example.com", "plan-stranger-password");
-  const model = await api(
-    "/api/admin/model-profiles",
-    {
-      display_name: "Plan SSE model",
-      api_key: "plan-model-test",
-      model: {
-        base_url: "http://plan-model:8080/v1",
-        model: "plan-model",
-        context_window: 64000,
-        max_output_tokens: 16384,
-        supports_images: false,
-      },
-    },
-    201,
-  );
-  const template = await api(
-    "/api/admin/templates",
-    {
-      name: "Plan acceptance",
-      model_profile_revision_id: model.revision_id,
-      system_prompt: "Use the requested tool.",
-      max_model_requests: 5,
-      runtime: { image_ref: image },
-    },
-    201,
-  );
+  const template = await seedPlans(api, image);
   try {
     const sessions = [];
     for (const version of [1, 2]) {
@@ -234,20 +234,32 @@ async function main() {
           owner_user_id: user.user.id,
           name: `Plans v${version}`,
           template_id: template.template_id,
-          template_revision: 1,
+          template_revision: template.revision,
         },
         202,
       );
       agents.push(created.agent.agent_id);
       await operation(created.operation.request_id);
-      await rejectedUpgrade(version, agents.at(-1), stranger);
+      await waitForAgentReady(() => api(`/api/admin/agents/${agents.at(-1)}`));
+      const foreign = connectACP(version, agents.at(-1), stranger.cookie);
+      foreign.agentId = agents.at(-1);
+      try {
+        await foreign.initialize();
+        await assertAgentDenied(foreign);
+        replayRequests.push({
+          ...requestIdentity(foreign, "session/new"),
+          denial: "access_denied",
+        });
+      } finally {
+        foreign.close();
+      }
       sessions.push(await exercise(version, agents.at(-1)));
     }
     stage = "cross-agent-rejection";
     for (const version of [1, 2]) {
       const client = await connect(version, agents[1]);
       try {
-        for (const method of [version === 1 ? "load" : "resume", "fork"])
+        for (const method of [version === 1 ? "load" : "resume", "fork"]) {
           await assert.rejects(
             client.request(method, {
               ...setup,
@@ -261,12 +273,16 @@ async function main() {
               return true;
             },
           );
+          replayRequests.push({
+            ...requestIdentity(client, `session/${method}`, sessions[0]),
+            denial: "session_access_denied",
+          });
+        }
         assert.equal(
           client.updates.length,
           0,
           "foreign Session leaked updates",
         );
-        replayIDs.push(client.traceID);
       } finally {
         client.close();
       }
@@ -292,9 +308,14 @@ async function main() {
         .map((request) => request.stage),
       Array.from({ length: stepsFor(phase).length + 1 }, (_, index) => index),
     );
-  assert.deepEqual(
-    new Set(observed.requests.map((request) => request.trace_id)),
-    executionIDs,
+  assert.equal(executionRequests.length, outcomes.length);
+  const executionIDs = new Set(
+    observed.requests.map((request) => request.trace_id),
+  );
+  assert.equal(
+    executionIDs.size,
+    outcomes.length,
+    "one independent execution trace per prompt",
   );
   const secrets = [
     marker,
@@ -313,21 +334,49 @@ async function main() {
           trace,
           observed.requests.filter((request) => request.trace_id === id),
           secrets,
+          executionRequests.find(
+            (expected) =>
+              expected.phase ===
+              observed.requests.find((request) => request.trace_id === id)
+                .phase,
+          ),
         ),
       ),
     );
-  assert.equal(new Set(replayIDs).size, replayIDs.length);
-  for (const id of replayIDs)
+  assert.equal(
+    new Set(traces.map((trace) => trace.run_id)).size,
+    outcomes.length,
+  );
+  assert.equal(
+    traces.reduce((sum, trace) => sum + trace.runtime_tool_calls, 0),
+    2,
+  );
+  assert.equal(replayRequests.length, 26);
+  for (const expected of replayRequests)
     replays.push(
-      await collectTrace("http://jaeger:16686", id, (trace) =>
-        inspectReplayTrace(trace, secrets),
-      ),
+      await collectPlanRequestTrace("http://jaeger:16686", expected, secrets),
     );
+  assert.equal(
+    new Set(replays.map((trace) => trace.trace_id)).size,
+    replayRequests.length,
+  );
+  assert.equal(replays.filter((trace) => !trace.denial).length, 20);
+  assert.equal(replays.filter((trace) => trace.denial).length, 6);
+  const strictTrace = [...traces, ...replays].some(
+    (trace) => trace.strict_trace === "failed",
+  )
+    ? "failed"
+    : "passed";
   console.log(
     JSON.stringify({
-      status: "passed",
+      status: "business_passed",
+      strict_trace: strictTrace,
       scenarios: outcomes.length,
       model_requests: observed.requests.length,
+      plan_commits: outcomes.reduce((sum, outcome) => sum + outcome.plans, 0),
+      invalid_plan_rejections: outcomes.filter((outcome) =>
+        outcome.phase.endsWith("-invalid"),
+      ).length,
       outcomes,
       traces,
       replay_traces: replays,
@@ -335,6 +384,7 @@ async function main() {
       cross_agent_rejections: 4,
     }),
   );
+  if (strictTrace === "failed") process.exitCode = 1;
 }
 try {
   await main();
