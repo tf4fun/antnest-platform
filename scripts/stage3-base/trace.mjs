@@ -11,6 +11,7 @@ import {
 import { assertSecretFree } from "../identity-closeout/evidence.mjs";
 import { timingEvidence, hasError } from "../acp-plan/requests.mjs";
 import { runtimeCommandId } from "./contracts.mjs";
+import { inspectWorkflowRestart } from "./workflow-restart.mjs";
 
 export function inspectLifecycle(trace, expected, secrets = []) {
   const { kind, requestId, agentId } = expected;
@@ -25,8 +26,13 @@ export function inspectLifecycle(trace, expected, secrets = []) {
   const tree = traceTopology(trace);
   assertCaptureDisabled(trace);
   assertSecretFree(JSON.stringify(trace), secrets);
+  const restart = expected.workerRestart
+    ? inspectWorkflowRestart(trace, tree, expected)
+    : undefined;
   const errors = trace.spans.filter(hasError);
-  for (const error of errors) assertDockerProbe(trace, tree, error, expected);
+  for (const error of errors)
+    if (!restart?.errors.has(error))
+      assertDockerProbe(trace, tree, error, expected);
   const absence = trace.spans.filter(
     (s) =>
       !hasError(s) &&
@@ -127,209 +133,270 @@ export function inspectLifecycle(trace, expected, secrets = []) {
     );
     assertRPCParent(tree, consoleServer, "edge-gateway");
   }
-  const workflow = one(
-    trace.spans.filter(
-      (s) =>
-        s.operationName ===
-          (kind === "create"
-            ? "RunWorkflow:CreateAgentWorkflow"
-            : "RunWorkflow:LifecycleWorkflow") &&
-        tag(s, "temporalWorkflowID") === `agent-${kind}/${requestId}`,
+  const workflows = restart?.workflows ?? [
+    one(
+      trace.spans.filter(
+        (s) =>
+          s.operationName ===
+            (kind === "create"
+              ? "RunWorkflow:CreateAgentWorkflow"
+              : "RunWorkflow:LifecycleWorkflow") &&
+          tag(s, "temporalWorkflowID") === `agent-${kind}/${requestId}`,
+      ),
+      "Temporal workflow",
     ),
-    "Temporal workflow",
-  );
-  assert(
-    tree.chain(workflow).includes(admitted),
-    "workflow detached from admission",
-  );
+  ];
+  for (const workflow of workflows)
+    assert(
+      tree.chain(workflow).includes(admitted),
+      "workflow detached from admission",
+    );
   const phases = [
     kind === "create" ? "admit_agent" : "admit_lifecycle",
     ...lifecyclePlans[kind],
   ];
   let previous,
     settlement = false;
-  const activities = phases.map((phase) => {
+  const activities = phases.flatMap((phase) => {
     const name =
       phase.startsWith("admit_") || kind === "create"
         ? phase
         : `lifecycle.${phase}`;
-    const activity = one(
-      trace.spans.filter(
+    const attempts = trace.spans
+      .filter(
         (s) =>
           s.operationName === `RunActivity:${name}` &&
-          tree.chain(s).includes(workflow),
-      ),
-      name,
-    );
-    assert(tree.chain(activity).includes(workflow), "activity detached");
+          workflows.some((workflow) => tree.chain(s).includes(workflow)),
+      )
+      .sort((a, b) => a.startTime - b.startTime);
     assert.equal(
-      tag(activity, "temporalWorkflowID"),
-      `agent-${kind}/${requestId}`,
+      attempts.length,
+      restart && phase === "drain" ? 2 : 1,
+      `missing or duplicate ${name}`,
     );
-    if (previous)
-      assert(
-        activity.startTime >= previous.startTime + previous.duration,
-        "lifecycle phases overlap or are out of order",
-      );
-    previous = activity;
-    const transactions = trace.spans.filter(
-      (s) =>
-        tree.service(s) === "agent-controller" &&
-        tree.chain(s).includes(activity) &&
-        s.operationName === "postgresql transaction" &&
-        tag(s, "db.system.name") === "postgresql" &&
-        tag(s, "antnest.transaction.outcome") === "committed",
-    );
-    assert(
-      transactions.some((tx) =>
-        trace.spans.some(
-          (s) =>
-            tree.chain(s).includes(tx) &&
-            tree.service(s) === "agent-controller" &&
-            tag(s, "span.kind") === "client" &&
-            tag(s, "db.system.name") === "postgresql" &&
-            ["UPDATE", "INSERT"].includes(tag(s, "db.operation.name")) &&
-            /\b(?:UPDATE|INSERT)\b/i.test(tag(s, "db.query.text") ?? ""),
-        ),
-      ),
-      `${name}: missing committed driver write`,
-    );
-    const dependencies = [];
-    if (phase.startsWith("runtime_"))
-      dependencies.push([
-        "runtime-controller",
-        "POST",
-        `/internal/runtimes/{agent_id}/${phase.slice(8)}`,
-      ]);
-    if (
-      phase === "admit_agent" ||
-      (phase === "admit_lifecycle" && kind === "enable")
-    )
-      dependencies.push([
-        "identity-service",
-        "POST",
-        "/rpc/identity/resolve-owner-authorization",
-      ]);
-    const network =
-      {
-        network_ensure: [
-          [
-            "PUT",
-            kind === "rebuild"
-              ? "/internal/agent-network-attachments/{agent_id}"
-              : "/internal/agent-networks/{agent_id}",
-          ],
-        ],
-        network_fence: [
-          ["GET", "/internal/agent-networks/{agent_id}"],
-          ["PUT", "/internal/agent-network-attachments/{agent_id}"],
-        ],
-        network_restore: [
-          ["PUT", "/internal/agent-network-attachments/{agent_id}"],
-        ],
-        network_release: [
-          ["GET", "/internal/agent-networks/{agent_id}"],
-          ["POST", "/internal/agent-networks/{agent_id}/release"],
-        ],
-        ...(kind === "create"
-          ? {
-              publish: [
-                ["PUT", "/internal/agent-network-attachments/{agent_id}"],
-              ],
-            }
-          : {}),
-      }[phase] ?? [];
-    dependencies.push(
-      ...network.map((item) => ["antnest-runtime-egress", ...item]),
-    );
-    let preceding;
-    for (const dependency of dependencies) {
-      const server = rpc(activity, ...dependency);
-      assertRPCParent(tree, server, "agent-controller");
-      if (preceding)
+    return attempts.map((activity) => {
+      if (restart) {
+        assert.equal(tag(activity, "temporalRunID"), restart.runID);
         assert(
-          server.startTime >= preceding.startTime + preceding.duration,
-          "network commands out of order",
+          tree
+            .chain(activity)
+            .includes(
+              phase === "drain" || phase.startsWith("admit_")
+                ? restart.old
+                : restart.resumed,
+            ),
+          "Activity belongs to wrong worker Workflow span",
         );
-      preceding = server;
-      if (phase.startsWith("runtime_")) {
-        const command = tree
-          .chain(server)
-          .find((s) => tag(s, "antnest.operation.request_id"));
-        assert.equal(
-          tag(command, "antnest.operation.request_id"),
-          runtimeCommandId(requestId, phase),
-        );
-        assert.equal(tag(command, "antnest.agent.id"), agentId);
       }
-    }
-    if (phase === "drain") {
-      const applied = rpc(
-        activity,
-        "agent-acp-service",
-        "POST",
-        "/rpc/agent-acp/apply-execution-snapshot",
+      assert.equal(
+        tag(activity, "temporalWorkflowID"),
+        `agent-${kind}/${requestId}`,
       );
-      const settled = rpc(
-        activity,
-        "agent-acp-service",
-        "POST",
-        "/rpc/agent-acp/settle-agent",
+      if (previous)
+        assert(
+          activity.startTime >= previous.startTime + previous.duration,
+          "lifecycle phases overlap or are out of order",
+        );
+      previous = activity;
+      const transactions = trace.spans.filter(
+        (s) =>
+          tree.service(s) === "agent-controller" &&
+          tree.chain(s).includes(activity) &&
+          s.operationName === "postgresql transaction" &&
+          tag(s, "db.system.name") === "postgresql" &&
+          tag(s, "antnest.transaction.outcome") === "committed",
       );
-      assertRPCParent(tree, applied, "agent-controller");
-      assertRPCParent(tree, settled, "agent-controller");
-      const publication = tree
-        .chain(applied)
-        .find(
-          (s) =>
-            tree.service(s) === "agent-controller" &&
-            tag(s, "span.kind") === "client" &&
-            tag(s, "antnest.configuration.applied_revision") !== undefined,
+      if (activity === restart?.interrupted) {
+        assert(
+          transactions.some((tx) =>
+            trace.spans.some(
+              (s) =>
+                tree.chain(s).includes(tx) &&
+                tree.service(s) === "agent-controller" &&
+                tag(s, "span.kind") === "client" &&
+                tag(s, "db.system.name") === "postgresql" &&
+                tag(s, "db.operation.name") === "SELECT" &&
+                /\bFROM agent_controller\.agent_lifecycle_operations WHERE request_id = \$1\b/.test(
+                  (tag(s, "db.query.text") ?? "").replace(/\s+/g, " "),
+                ),
+            ),
+          ),
+          "interrupted drain: missing committed journal read",
         );
-      const confirmation = tree
-        .chain(settled)
-        .find(
-          (s) =>
-            tree.service(s) === "agent-controller" &&
-            tag(s, "span.kind") === "client" &&
-            tag(s, "antnest.settlement.outcome") !== undefined,
+        assert(
+          trace.spans.some(
+            (s) =>
+              tree.chain(s).includes(activity) &&
+              tree.service(s) === "agent-controller" &&
+              tag(s, "span.kind") === "client" &&
+              tag(s, "db.system.name") === "postgresql" &&
+              tag(s, "db.operation.name") === "UPDATE" &&
+              /^UPDATE agent_controller\.execution_configuration_sync SET applied_revision=GREATEST\(/.test(
+                (tag(s, "db.query.text") ?? "").replace(/\s+/g, " "),
+              ),
+          ),
+          "interrupted drain: missing publication SQL acknowledgement",
         );
-      for (const key of [
-        "antnest.operation.id",
-        "antnest.agent.id",
-        "antnest.configuration.revision",
-        "antnest.settlement.outcome",
-      ])
+        return {
+          phase,
+          span_id: activity.spanID,
+          interrupted: true,
+          committed_read: true,
+          publication_ack_write: true,
+        };
+      }
+      assert(
+        transactions.some((tx) =>
+          trace.spans.some(
+            (s) =>
+              tree.chain(s).includes(tx) &&
+              tree.service(s) === "agent-controller" &&
+              tag(s, "span.kind") === "client" &&
+              tag(s, "db.system.name") === "postgresql" &&
+              ["UPDATE", "INSERT"].includes(tag(s, "db.operation.name")) &&
+              /\b(?:UPDATE|INSERT)\b/i.test(tag(s, "db.query.text") ?? ""),
+          ),
+        ),
+        `${name}: missing committed driver write`,
+      );
+      const dependencies = [];
+      if (phase.startsWith("runtime_"))
+        dependencies.push([
+          "runtime-controller",
+          "POST",
+          `/internal/runtimes/{agent_id}/${phase.slice(8)}`,
+        ]);
+      if (
+        phase === "admit_agent" ||
+        (phase === "admit_lifecycle" && kind === "enable")
+      )
+        dependencies.push([
+          "identity-service",
+          "POST",
+          "/rpc/identity/resolve-owner-authorization",
+        ]);
+      const network =
+        {
+          network_ensure: [
+            [
+              "PUT",
+              kind === "rebuild"
+                ? "/internal/agent-network-attachments/{agent_id}"
+                : "/internal/agent-networks/{agent_id}",
+            ],
+          ],
+          network_fence: [
+            ["GET", "/internal/agent-networks/{agent_id}"],
+            ["PUT", "/internal/agent-network-attachments/{agent_id}"],
+          ],
+          network_restore: [
+            ["PUT", "/internal/agent-network-attachments/{agent_id}"],
+          ],
+          network_release: [
+            ["GET", "/internal/agent-networks/{agent_id}"],
+            ["POST", "/internal/agent-networks/{agent_id}/release"],
+          ],
+          ...(kind === "create"
+            ? {
+                publish: [
+                  ["PUT", "/internal/agent-network-attachments/{agent_id}"],
+                ],
+              }
+            : {}),
+        }[phase] ?? [];
+      dependencies.push(
+        ...network.map((item) => ["antnest-runtime-egress", ...item]),
+      );
+      let preceding;
+      for (const dependency of dependencies) {
+        const server = rpc(activity, ...dependency);
+        assertRPCParent(tree, server, "agent-controller");
+        if (preceding)
+          assert(
+            server.startTime >= preceding.startTime + preceding.duration,
+            "network commands out of order",
+          );
+        preceding = server;
+        if (phase.startsWith("runtime_")) {
+          const command = tree
+            .chain(server)
+            .find((s) => tag(s, "antnest.operation.request_id"));
+          assert.equal(
+            tag(command, "antnest.operation.request_id"),
+            runtimeCommandId(requestId, phase),
+          );
+          assert.equal(tag(command, "antnest.agent.id"), agentId);
+        }
+      }
+      if (phase === "drain") {
+        const applied = rpc(
+          activity,
+          "agent-acp-service",
+          "POST",
+          "/rpc/agent-acp/apply-execution-snapshot",
+        );
+        const settled = rpc(
+          activity,
+          "agent-acp-service",
+          "POST",
+          "/rpc/agent-acp/settle-agent",
+        );
+        assertRPCParent(tree, applied, "agent-controller");
+        assertRPCParent(tree, settled, "agent-controller");
+        const publication = tree
+          .chain(applied)
+          .find(
+            (s) =>
+              tree.service(s) === "agent-controller" &&
+              tag(s, "span.kind") === "client" &&
+              tag(s, "antnest.configuration.applied_revision") !== undefined,
+          );
+        const confirmation = tree
+          .chain(settled)
+          .find(
+            (s) =>
+              tree.service(s) === "agent-controller" &&
+              tag(s, "span.kind") === "client" &&
+              tag(s, "antnest.settlement.outcome") !== undefined,
+          );
+        for (const key of [
+          "antnest.operation.id",
+          "antnest.agent.id",
+          "antnest.configuration.revision",
+          "antnest.settlement.outcome",
+        ])
+          assert.equal(
+            tag(settled, key),
+            tag(confirmation, key),
+            "settlement request/acknowledgement mismatch",
+          );
         assert.equal(
-          tag(settled, key),
-          tag(confirmation, key),
-          "settlement request/acknowledgement mismatch",
+          tag(confirmation, "antnest.settlement.outcome"),
+          settlementOutcome,
         );
-      assert.equal(
-        tag(confirmation, "antnest.settlement.outcome"),
-        settlementOutcome,
-      );
-      assert.equal(tag(confirmation, "antnest.operation.id"), requestId);
-      assert.equal(tag(confirmation, "antnest.agent.id"), agentId);
-      const revision = tag(
-        publication,
-        "antnest.configuration.applied_revision",
-      );
-      assert(Number.isSafeInteger(revision) && revision > 0);
-      assert.equal(
-        tag(confirmation, "antnest.configuration.revision"),
-        revision,
-      );
-      assert(
-        tag(confirmation, "antnest.configuration.applied_revision") >= revision,
-      );
-      assert(
-        settled.startTime >= applied.startTime + applied.duration,
-        "settlement preceded publication",
-      );
-      settlement = true;
-    }
-    return { phase, span_id: activity.spanID, committed: true };
+        assert.equal(tag(confirmation, "antnest.operation.id"), requestId);
+        assert.equal(tag(confirmation, "antnest.agent.id"), agentId);
+        const revision = tag(
+          publication,
+          "antnest.configuration.applied_revision",
+        );
+        assert(Number.isSafeInteger(revision) && revision > 0);
+        assert.equal(
+          tag(confirmation, "antnest.configuration.revision"),
+          revision,
+        );
+        assert(
+          tag(confirmation, "antnest.configuration.applied_revision") >=
+            revision,
+        );
+        assert(
+          settled.startTime >= applied.startTime + applied.duration,
+          "settlement preceded publication",
+        );
+        settlement = true;
+      }
+      return { phase, span_id: activity.spanID, committed: true };
+    });
   });
   const timing = timingEvidence(trace, tree, admitted, tree.parent(admitted));
   return {
@@ -341,7 +408,16 @@ export function inspectLifecycle(trace, expected, secrets = []) {
     activities,
     settlement,
     ...timing,
-    platform_probe_errors: errors.length,
+    platform_probe_errors: errors.length - (restart?.errors.size ?? 0),
+    ...(restart
+      ? {
+          restart_error_spans: restart.errors.size,
+          workflow_spans: workflows.map((s) => ({
+            span_id: s.spanID,
+            end_reason: tag(s, "antnest.temporal.workflow.span_end"),
+          })),
+        }
+      : {}),
     platform_absence_probes: absence.length,
     strict_trace: errors.length ? "failed" : timing.strict_trace,
     timing: {

@@ -28,11 +28,11 @@ func TestTemporalCreationSurvivesWorkerReplacement(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	c, err := Open(ctx, address, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	c, closeClient, err := Open(ctx, address, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.Close()
+	defer closeClient()
 	queue := fmt.Sprintf("creation-test-%d", time.Now().UnixNano())
 	command := testCommand()
 	command.RequestID = queue

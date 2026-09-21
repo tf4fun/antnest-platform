@@ -32,11 +32,11 @@ func TestTemporalResumesAfterBusinessCommitBeforeActivityAcknowledgement(t *test
 	service := application.NewLifecycleService(repository, repository, deps, deps, offboardingClock{}, application.WithLifecycleExecution(testLifecycleExecution(repository)))
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	c, err := orchestration.Open(ctx, address, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	c, closeClient, err := orchestration.Open(ctx, address, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.Close()
+	defer closeClient()
 	queue := fmt.Sprintf("commit-boundary-%d", time.Now().UnixNano())
 	first := worker.New(c, queue, worker.Options{WorkerStopTimeout: time.Second})
 	committed := make(chan struct{})

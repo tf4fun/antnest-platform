@@ -8,6 +8,17 @@
 
 # Lifecycle Closeout
 
+The default `foundation` entry has a current-contract replacement described in
+[migration-contract.md](migration-contract.md). Network, shutdown, health,
+restore, loss, interrupted-update and older Workspace consumers remain separate
+migration batches. Their historical sections below are not current acceptance.
+The [2026-09-21 report](../../docs/lifecycle-foundation-revalidation.md) records
+nine completed operations and 15 passing Trace topologies; the graceful-restart
+Rebuild trace still fails on two missing Workflow-parent edges. The
+[Controller follow-up](../../docs/controller-workflow-span-revalidation.md) now
+passes all 16 topologies with zero missing parents in an isolated candidate.
+Strict warnings/errors remain failed; retained deployment is pending.
+
 These are disposable Docker integration profiles for C3/C5, not another option on
 the general Stage 3 launcher. All business commands enter through Edge Gateway
 and Admin Console. Docker inspection is used only as independent physical
@@ -21,6 +32,11 @@ make test-lifecycle-fixtures
 COMPOSE_PARALLEL_LIMIT=1 make docker-build-stage3 -j1
 make e2e-lifecycle
 ```
+
+Use `ANTNEST_E2E_CONTROLLER_IMAGE=<image-or-immutable-ID>` to select an isolated
+Controller candidate; deployment checks compare its actual image ID. The default
+remains `antnest/agent-controller:local`. Only this disposable Foundation Compose
+override consumes the option in this directory.
 
 The profile chooses unused ports/network ranges, creates one isolated Compose
 project, uses synthetic administrator/provider data and the locally built
@@ -47,30 +63,30 @@ The foundation profile verifies:
    Assignment acknowledgement is **not** evidence of actual TUN packet flow.
 5. Paginated global-cursor event replay and restart of the controller after
    terminal operations preserve the journal and request identity.
-6. The admission trace starts at Gateway and reaches Controller through Console.
-   Each asynchronous phase trace must link back to that exact Controller
-   admission span. Later attempts also link to their preceding attempt.
-   Required downstream spans must descend from the
-   phase root, not merely share a trace/service-name list.
-7. Before business operations, all eleven Compose services are present and
-   running; the ten services with health checks are healthy. Eight application
-   containers use the currently built image IDs. Only Gateway, PostgreSQL,
-   Jaeger and the local test model publish the exact chosen loopback ports;
-   internal application services publish none. The model port is a fixture-only
-   exception, not part of the operator deployment. The separate Runtime image
-   is resolved before startup and checked against actual Agent compute.
+6. Lifecycle traces bind the exact Gateway/Console admission and request ID to
+   the Temporal workflow, its activities, committed driver writes and identified
+   Runtime/Egress mutations. Drain includes ACP snapshot publication and matching
+   settlement acknowledgement. ACP Runs have their own message traces and public
+   audit identity; they do not acquire Controller admissions.
+7. All twelve Compose services, including Temporal, must be present and running;
+   services with health checks must be healthy. Eight application containers use
+   the locally built image IDs. Only Gateway, PostgreSQL, Jaeger and the model
+   publish the exact allocated loopback ports. Temporal remains private. Dynamic
+   network allocation excludes reserved Runtime infrastructure addresses.
 
-The general Stage 3 launcher's lifecycle check uses this same causal oracle,
-with the exact Gateway admission trace and terminal operation response. It does
-not accept service-name presence or a worker's self-link as predecessor proof.
-Collectors check the synthetic passwords/model keys and the actual session/CSRF
-cookie values used by the scenario, both raw and URL-encoded. A detected leak
-fails immediately without echoing the credential. This is a bounded canary
-check, not a claim that every possible secret has been discovered.
+The foundation collector uses the current Stage 3 lifecycle and per-request ACP
+oracles. Actual JSON-RPC request IDs and connection links distinguish repeated
+methods on the same Session. Provider HTTP CLIENT spans bind both completed Runs
+to their model requests and Runtime tool descendants. Supplied synthetic
+passwords, model keys and actual session cookies must not appear in traces;
+RPC content capture is disabled. This is a bounded canary scan.
 
-After successful cleanup, the compact result retains the admission trace ID
-and each validated worker's trace ID, root span ID, attempt and phase in attempt
-order. It does not retain raw spans, HTTP headers, cookie jars or service logs.
+Raw Jaeger spans and private diagnostics stay in ignored
+`.cache/lifecycle-foundation/<project>/`; the printed result contains compact
+business and topology evidence. Completed traces must pass topology checks and
+converge across three samples. A topology failure remains an exit-1 result while
+subsequent lifecycle traces are collected. Raw warnings and error spans remain
+present and make the strict exit nonzero. Export completion does not waive timing warnings.
 
 ## Whole-Platform Stream Shutdown
 
@@ -108,29 +124,19 @@ Tool, browser rendering or every ACP transport/version combination.
 ## Runtime-start Failure Batch
 
 Create another Template with a required managed MCP command that does not exist
-in the Runtime image. This is ordinary invalid administrator configuration, not
-a production fault flag. Gateway admission must remain asynchronous; the durable
-operation must fail at `runtime_initialize` with `runtime_not_ready` and an
-actionable detail. The Agent is `unavailable` (not an operation's `failed`
-state) and must not acquire an executable Runtime binding. Correlate actual
-owned-container JSON logs with Agent/generation and the required missing MCP's
-startup failure, so an unrelated bootstrap or network fault cannot satisfy
-the scenario. Logs remain in memory and are not echoed or retained.
+in the Runtime image. Use that Template's returned revision. Current lifecycle
+creation completes its durable provisioning phases; separately observed Runtime
+startup becomes unhealthy/exited (or restarting) without an executable binding.
+Correlate actual owned-container JSON logs with Agent/generation and the missing
+MCP's startup failure so an unrelated network fault cannot satisfy the scenario.
 
-Independently inspect the failed container and its allocated workspace, replay
-the exact failed create request without changing either, then delete the Agent
-through Gateway. Both resources must be absent **before** profile teardown.
-Keep the failed operation and exact requested/failure/deletion events queryable
-after deletion and an idle worker restart. Compare event history before and
-after every initial replay as well as restart replay. Reject any replay that
-recreates resources or duplicates events.
-
-Jaeger must contain the failed creation's Gateway admission and linked worker
-traces, with only the executed phase prefix and a terminal failed state. Require
-the failed Runtime RPC, operation-journal read and persisted failure code, plus
-successful, correctly identified Runtime ownership inspection during the later
-delete fence and the exact successful delete RPC/server ancestry. Successful commands
-retain the stricter full-phase/completed-state oracle.
+Inspect the failed compute and allocated workspace, replay the same create
+request without changing either, then delete the Agent through Gateway. Both
+resources must be absent before teardown. Retain the completed create/delete
+operations and their exact events after deletion and an idle worker restart;
+replay must not recreate resources or duplicate events. Both lifecycle traces
+must retain the full current workflow/driver topology. The observed failed
+Runtime is not represented as a failed provisioning operation.
 
 ## Active Run And Rebuild Batch
 
@@ -140,7 +146,8 @@ barrier. Publish a Template revision without changing the current Agent, then
 admit rebuild through Gateway while that tool is still running. Require durable
 `running/drain`, the original executable binding and physical container, an
 open network attachment, and only the first workspace effect. A second Session
-must receive `agent_rebuilding`, with no model request or tool dispatch.
+must receive `agent_busy` (`-32020`, nonretryable), with no updates, Run intent,
+model request or tool dispatch.
 
 Restart only the disposable Agent Controller with graceful Docker stop/start
 while drain is nonterminal. Inspect the stopped container before starting it:
@@ -148,7 +155,13 @@ exit code zero, no OOM/error and a completed stop are required, rather than
 assuming Docker's stop timeout did not escalate to a forced kill. At each drain
 checkpoint, require a positive unchanged shell PID, successful liveness check
 and absence of the release file. The ACP service, Runtime, shell and pending prompt
-must survive unchanged. Repeating the same rebuild request must identify the
+must survive unchanged. Trace validation requires both original Workflow spans with matching
+Workflow/Run identity: the stopped worker ends its span with `worker_shutdown`,
+and the replacement ends with `workflow_return`. The retried drain retains its
+durable scheduling parent, while later Activities descend from the new worker
+span. The interrupted drain requires a committed journal read and publication
+acknowledgement SQL; the successful retry requires its committed phase write.
+Both attempts must use the same acknowledged ACP snapshot revision. Cancellation errors remain visible and strict failures. Repeating the same rebuild request must identify the
 same operation. Repeat the blocked prompt assertion after restart, release the
 file barrier, and require the held Run to complete before Runtime replacement.
 Reconnect after the access revision changes and load the same ACP Session ID
@@ -156,12 +169,14 @@ before sending another prompt: the model must see the new
 Template guidance and an environment-rebuild notice, and a real Runtime `read`
 must return the exact two workspace effects, without replaying the old tool.
 
-Retain only compact evidence: two successful prompts, two denied admissions,
-exact physical effects, verified Controller process restart,
-and connected Gateway/ACP/Controller/Runtime traces. Close both ACP connections
+Retain compact evidence for two completed Runs, two rejected prompts, exact
+physical effects, a verified Controller process restart and current lifecycle
+and per-message ACP traces. Public audits must retain the held Run snapshot and
+bind the second Run to the rebuilt Agent execution revision. Session load must
+replay the exact visible persisted history without changing audits or model calls. Close both ACP connections
 before collecting their completed Gateway spans. Correlated model calls and
 Runtime dispatch/tool spans must descend from the same ACP Run using same-trace
-parent references, not just matching admission tags or service names. The model accepts only
+parent references and the actual durable Run ID. The model accepts only
 these synthetic prompts, rejects duplicates, and never calls an external model.
 Its control/status port is bound to loopback only in this disposable profile.
 
@@ -171,9 +186,9 @@ nonterminal physical-effect crash separately. Still required before full C3
 acceptance: real allowed/denied TUN traffic. Browser component evidence lives in Console;
 this profile does not claim browser acceptance or complete C3-01..05 by itself.
 
-Keep only the final compact result in the closeout document. Fixture tests
-reject disconnected spans, forged causal links, missing phases and duplicate or
-incorrect event cursors so a broken evidence collector cannot certify itself.
+Keep the compact result in the revalidation report and raw evidence private.
+Fixture tests reject disconnected spans, incorrect execution revisions, forged
+causal links, missing phases and duplicate or incorrect event cursors.
 
 ## Interrupted Runtime Update
 

@@ -16,16 +16,27 @@ import (
 	"soft/antnest-platform/services/agent-controller/internal/application"
 )
 
-func Open(ctx context.Context, address string, logger *slog.Logger) (client.Client, error) {
-	instrumentation, err := temporalotel.NewTracingInterceptor(temporalotel.TracerOptions{})
+// The returned close function must run after worker Stop and before telemetry
+// shutdown, so pending SDK Workflow parents can still be exported.
+func Open(ctx context.Context, address string, logger *slog.Logger) (client.Client, func(), error) {
+	spans := newWorkflowSpans()
+	instrumentation, err := temporalotel.NewTracingInterceptor(temporalotel.TracerOptions{SpanStarter: spans.start})
 	if err != nil {
-		return nil, fmt.Errorf("configure workflow tracing: %w", err)
+		return nil, nil, fmt.Errorf("configure workflow tracing: %w", err)
 	}
-	return client.DialContext(ctx, client.Options{
+	connection, err := client.DialContext(ctx, client.Options{
 		HostPort: address, Namespace: "antnest",
 		Logger:       temporallog.NewStructuredLogger(logger),
 		Interceptors: []interceptor.ClientInterceptor{instrumentation},
 	})
+	if err != nil {
+		spans.shutdown()
+		return nil, nil, err
+	}
+	return connection, func() {
+		connection.Close()
+		spans.shutdown()
+	}, nil
 }
 
 func NewWorker(temporalClient client.Client, service *application.LifecycleService, stopTimeout time.Duration) worker.Worker {

@@ -3,7 +3,9 @@
 This is batch P2 of the [persistence/restart contract](../acp-persistence/contract.md).
 It maps the historical completed/model-blocked/tool-blocked/tool-inflight
 scenarios onto current ACP ownership and public execution audits. Identity
-deactivation and foreign-Agent access remain in their own migration batch.
+deactivation and foreign-Agent access use their own normal-request profiles:
+[ACP closeout](../acp-closeout/README.md) and
+[organization/SCIM access](../identity-closeout/README.md).
 
 Both installed SDK versions must preserve completed history, classify known
 interrupted Runs, and retain unresolved Runtime effects honestly. The host must
@@ -39,4 +41,5 @@ private artifacts under `.cache/acp-restart/<project>/`.
 
 The final scoped and strict outcomes are recorded in the
 [revalidation report](../../docs/acp-persistence-revalidation.md). Historical
-shared helpers remain while Identity and other consumers are still pending.
+shared helpers remain for the separate lifecycle, retained-parent and Workspace
+consumer migrations; normal closeout no longer invokes the mixed crash client.

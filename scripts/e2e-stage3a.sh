@@ -244,6 +244,14 @@ if [ "$agent_access" = true ] || [ "$acp_session" = true ]; then
   export ANTNEST_IDENTITY_RUNTIME_DYNAMIC_RANGE="10.243.${network_octet}.128/25"
   export ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT=false
 fi
+case "${ANTNEST_E2E_ACP_CLOSEOUT:-false}" in true|false) ;; *) echo 'Invalid ACP closeout profile' >&2; exit 1 ;; esac
+if [ "${ANTNEST_E2E_ACP_CLOSEOUT:-false}" = true ]; then
+  [ -z "$tool_profile" ] && [ "$keep_stack" = false ] || { echo 'ACP closeout requires a separate disposable profile' >&2; exit 1; }
+  tool_profile=acp-closeout
+  export ANTNEST_IDENTITY_CONTROL_DYNAMIC_RANGE="10.242.${network_octet}.128/25"
+  export ANTNEST_IDENTITY_RUNTIME_DYNAMIC_RANGE="10.243.${network_octet}.128/25"
+  export ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT=false
+fi
 base_profile=false
 if [ -z "$tool_profile" ] && [ "$keep_stack" = false ] && [ "$identity_access" = false ] && [ "$acp_session" = false ] && [ "$agent_access" = false ] && [ "${ANTNEST_E2E_ACP_CLOSEOUT:-false}" = false ] && [ "${ANTNEST_E2E_MANAGED_MCP:-false}" = false ]; then
   base_profile=true
@@ -276,7 +284,7 @@ workspace_cookie_jar="$temporary_root/workspace-cookies.txt"
 agent_id=""
 
 compose() {
-  if [ "$tool_profile" = identity-http ] || [ "$tool_profile" = acp-session ] || [ "$tool_profile" = agent-access ]; then
+  if [ "$tool_profile" = identity-http ] || [ "$tool_profile" = acp-session ] || [ "$tool_profile" = agent-access ] || [ "$tool_profile" = acp-closeout ]; then
     if [ "$1" = up ]; then identity_lifecycle=--lifecycle; else identity_lifecycle=; fi
     docker $identity_lifecycle compose --env-file /dev/null -f compose.yaml -f compose.stage3.yaml \
       -f scripts/identity-closeout/oidc-compose.yaml -f scripts/identity-closeout/compose.yaml \
@@ -454,7 +462,7 @@ cleanup() {
       status=1
     fi
   done
-  if [ "$status" -eq 0 ] && [ "${ANTNEST_E2E_ACP_CLOSEOUT:-false}" = true ]; then
+  if [ "$status" -eq 0 ] && [ -z "$tool_profile" ] && [ "${ANTNEST_E2E_ACP_CLOSEOUT:-false}" = true ]; then
     cat "$temporary_root/acp-closeout.json" || status=1
   fi
   if [ "$status" -eq 0 ] && [ -f "$temporary_root/lifecycle-trace-evidence.json" ]; then
@@ -605,7 +613,7 @@ prepare_oidc() {
 }
 
 if [ -n "$tool_profile" ]; then
-  if [ "$tool_profile" = identity-http ] || [ "$tool_profile" = acp-session ] || [ "$tool_profile" = agent-access ]; then prepare_oidc; fi
+  if [ "$tool_profile" = identity-http ] || [ "$tool_profile" = acp-session ] || [ "$tool_profile" = agent-access ] || [ "$tool_profile" = acp-closeout ]; then prepare_oidc; fi
   compose up -d --wait
   ANTNEST_E2E_DISPOSABLE=true sh "scripts/e2e-${tool_profile}.sh"
   exit 0

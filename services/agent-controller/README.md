@@ -138,6 +138,7 @@ Docker and Jaeger acceptance commands are documented in
 - [Execution configuration publication: B2 in progress](docs/execution-publication.md)
 - [Owner-managed Agent default authorization](docs/agent-configuration.md)
 - [Observability guarantees and pending acceptance](docs/observability.md)
+- [Workflow span lifetime during graceful worker shutdown](docs/workflow-span-lifecycle.md)
 - [Architecture](docs/architecture.md)
 - [Operations](docs/operations.md)
 - [Identity offboarding](docs/identity-offboarding.md)

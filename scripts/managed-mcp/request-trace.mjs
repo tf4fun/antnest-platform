@@ -273,6 +273,7 @@ export async function collectManagedTrace(
   requests,
   save,
   inspect = inspectManagedTrace,
+  signal,
 ) {
   const query = new URLSearchParams({
     service: "agent-acp-service",
@@ -285,22 +286,30 @@ export async function collectManagedTrace(
     }),
   });
   for (let attempt = 0; attempt < 40; attempt++) {
+    signal?.throwIfAborted();
     const response = await fetch(`${base}/api/traces?${query}`, {
-      signal: AbortSignal.timeout(5000),
+      signal: signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(5000)])
+        : AbortSignal.timeout(5000),
     });
     assert(response.ok, "Managed request trace query failed");
     const id = selectCommandTrace((await response.json()).data, expected);
     if (id)
-      return collectTrace(base, id, (trace) => {
-        if (trace) save?.(trace);
-        return inspect(
-          trace,
-          expected,
-          secrets,
-          requests.filter((r) => r.trace_id === id),
-        );
-      });
-    await delay(1000);
+      return collectTrace(
+        base,
+        id,
+        (trace) => {
+          if (trace) save?.(trace);
+          return inspect(
+            trace,
+            expected,
+            secrets,
+            requests.filter((r) => r.trace_id === id),
+          );
+        },
+        signal,
+      );
+    await delay(1000, undefined, { signal });
   }
   throw new Error("actual Managed request trace missing");
 }

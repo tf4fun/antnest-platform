@@ -38,6 +38,10 @@ test("owner cancellation uses the standard notification on a fresh connection", 
     );
   });
   await client.initialize();
+  assert.equal(client.requests.length, 1);
+  assert.equal(client.requests[0].method, "initialize");
+  assert.equal(client.agentId, "agent-fixture");
+  assert.match(client.connectionTraceID, /^[a-f0-9]{32}$/);
   const received = once(socket, "message");
   await client.cancel("session-fixture");
   const [data] = await received;

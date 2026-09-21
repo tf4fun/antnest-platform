@@ -1,12 +1,56 @@
 # Gateway ACP Closeout Integration
 
-This is a historical mixed recovery/Identity profile. Current recovery fixtures
-are [ACP committed-response loss](../acp-persistence/README.md) and
-[ACP process interruption](../acp-restart/README.md), with their separate
-[scoped evidence](../../docs/acp-persistence-revalidation.md). The remaining
-Identity scenarios and legacy parent setup still require migration; the command
-below is not a validated current acceptance entry. Shared helpers remain for
-their existing consumers.
+## Current migration
+
+`make e2e-acp-closeout` and `ANTNEST_E2E_ACP_CLOSEOUT=true make e2e-stage3-local`
+select the independent normal-request profile. It uses current Provider/Model
+and returned Template revisions, an immutable Runtime image, isolated network
+ranges and private synthetic configuration. It does not load the retained `.env`.
+The owning [migration contract](migration-contract.md) separates this delivery
+from remaining lifecycle and Workspace consumers.
+
+For both SDK versions, the profile creates two Agents owned by one member and
+one owned by another member in the same organization. Real Bash effects and
+exact public-audit history establish positive access before testing all five
+foreign Session methods in both directions. Denials must identify the correct
+principal/Agent boundary, emit no notifications and change no ACP rows or model
+activity. An authenticated upgrade alone is not authorization: ACP must return
+the precise Agent denial.
+
+The existing owner's connections must reject prompts after global deactivation,
+and both Agents must automatically Disable. The unaffected member retains
+access and history. Restoring the owner must leave Agents disabled; explicit
+Enable preserves real workspace sentinels and old private history, then permits
+a fresh Run. Completed/replay/rejected requests use their actual message Trace
+identities and current ACP audit. Full topology/privacy precedes stable export;
+raw traces remain private and strict warnings/rejection errors remain failures.
+Evidence is written under `.cache/acp-closeout-normal/<project>/`.
+The [September 21 revalidation](../../docs/legacy-closeout-revalidation.md)
+records 824 passing local checks and 94 scoped Trace topologies, with strict
+warnings and rejection errors still failed.
+
+The historical scenarios map to current owning profiles:
+
+| Historical scenario | Current owner |
+| --- | --- |
+| Foreign principal / Agent and private Session isolation | Normal closeout profile above; cross-organization cases additionally use `e2e-agent-access` |
+| Owner revocation, both Agents Disable and explicit recovery | Normal closeout profile above; SCIM and cross-organization offboarding additionally use `e2e-agent-access` |
+| Completed history across ACP crash | `make e2e-acp-restart`, completed case |
+| Model held at ACP crash | `make e2e-acp-restart`, model case |
+| Completed Tool followed by held model at crash | `make e2e-acp-restart`, settled case |
+| In-flight unknown Tool effect and physical Rebuild | `make e2e-acp-restart`, inflight case |
+
+Crash recovery is separately opted in; normal closeout does not SIGKILL ACP.
+[P1 persistence faults](../acp-persistence/README.md) and
+[P2 interruption](../acp-restart/README.md) retain separate evidence. The older
+`client.mjs`, `support.mjs` and unknown-effect oracles below are historical source
+assets, not the normal profile's implementation. Shared helpers remain in use;
+this batch does not delete old assets.
+
+## Historical mixed profile (September 11)
+
+The following records the old candidate and its old ownership assumptions.
+It is not a current runnable acceptance recipe. Use the owning profiles above.
 
 Install locked host dependencies with `npm --prefix services/agent-acp-service ci`,
 then run `ANTNEST_E2E_ACP_CLOSEOUT=true make e2e-stage3`. The parent creates a

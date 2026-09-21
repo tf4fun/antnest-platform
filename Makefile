@@ -272,6 +272,10 @@ e2e-identity-access:
 e2e-acp-session:
 	ANTNEST_E2E_ACP_SESSION=true sh scripts/e2e-stage3a.sh
 
+.PHONY: e2e-acp-closeout
+e2e-acp-closeout:
+	ANTNEST_E2E_ACP_CLOSEOUT=true sh scripts/e2e-stage3a.sh
+
 .PHONY: e2e-agent-access
 e2e-agent-access:
 	ANTNEST_E2E_AGENT_ACCESS=true sh scripts/e2e-stage3a.sh

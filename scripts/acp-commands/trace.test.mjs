@@ -92,6 +92,19 @@ function fixture(kind = "command", http = false) {
 }
 const inspect = (f) =>
   inspectCommandTrace(f.trace, f.expected, ["PRIVATE"], f.requests ?? []);
+test("ordinary execution verifies the explicitly expected read tool after Rebuild", () => {
+  const f = fixture("ordinary");
+  f.expected.toolName = "read";
+  const tool = f.trace.spans
+    .find((s) => s.spanID === "call")
+    .tags.find((t) => t.key === "tool.name");
+  tool.value = "read";
+  assert.equal(inspect(f).runtime_tool_calls, 1);
+  tool.value = "bash";
+  assert.throws(() => inspect(f));
+  delete f.expected.toolName;
+  assert.equal(inspect(f).runtime_tool_calls, 1);
+});
 test("command and replay traces verify actual request IDs across WebSocket and HTTP", () => {
   for (const http of [false, true])
     for (const kind of ["command", "request"]) {

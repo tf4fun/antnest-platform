@@ -31,11 +31,11 @@ func checkEngineReplacement(t *testing.T, address string, kind domain.OperationK
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	c, err := Open(ctx, address, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	c, closeClient, err := Open(ctx, address, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.Close()
+	defer closeClient()
 	queue := fmt.Sprintf("lifecycle-test-%s-%d", kind, time.Now().UnixNano())
 	command := application.LifecycleCommand{Kind: kind, RequestID: queue, AgentID: "agent-test"}
 	phases, err := domain.OperationPlan(kind)

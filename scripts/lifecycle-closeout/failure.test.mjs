@@ -4,7 +4,32 @@ import {
   assertStartupFailure,
   assertFailureEvents,
   assertMCPStartupLog,
+  exerciseStartupFailure,
 } from "./failure.mjs";
+
+test("failed-start fixture uses its own returned Template revision", async () => {
+  const stop = new Error("stop after command assertion");
+  await assert.rejects(
+    exerciseStartupFailure({
+      image: "sha256:fixture",
+      templateBody: { runtime: { image_ref: "sha256:fixture" } },
+      agentBody: { template_id: "old", template_revision: 1 },
+      json: async () => ({
+        template_id: "bad-template",
+        revision: 7,
+        runtime: { image_ref: "sha256:fixture" },
+      }),
+      command: async (kind, id, body, expectation) => {
+        assert.equal(kind, "create");
+        assert.equal(body.template_id, "bad-template");
+        assert.equal(body.template_revision, 7);
+        assert.equal(expectation.runtimeStartupFailure, true);
+        throw stop;
+      },
+    }),
+    (error) => error === stop,
+  );
+});
 
 function fixture() {
   return {

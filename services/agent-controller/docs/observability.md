@@ -4,7 +4,8 @@ All five lifecycle kinds use the official
 `go.temporal.io/sdk/contrib/opentelemetry` interceptor.
 SDK headers carry parent context across durable Workflow/Activity execution.
 There is no PostgreSQL recovery worker or custom phase instrumentation.
-See [lifecycle workflows](lifecycle-workflows.md).
+See [lifecycle workflows](lifecycle-workflows.md) and the
+[Workflow span lifetime contract](workflow-span-lifecycle.md).
 
 Temporal's span names identify SDK operations and registered workflow/activity
 names. Names are registration identifiers, not separately maintained business
@@ -36,7 +37,8 @@ The private database pool returns a transaction handle that owns the envelope co
 - One outbound transport creates CLIENT before injection for runtime, egress,
   and identity HTTP clients. Protocol adapters supply operation names and their
   typed outcomes to the same exchange, including invalid responses in HTTP 200.
-  The controller currently has no separate outbound ACP HTTP client.
+  ACP execution snapshot publication and settlement use the same transport
+  through their protocol adapter.
 - Existing synchronous RPC dispatchers record complete decoded parameters and
   results only when `ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT=true` (default false).
   The switch gates serialization. There is no whitelist, DTO reflection tree,
@@ -123,8 +125,13 @@ from SDK history rather than business database fields.
 
 Jaeger acceptance checks Gateway -> Console -> Controller -> official Workflow
 and Activity spans, including actual RPC/transaction/SQL descendants. Wait six
-seconds for export after completion. A process killed before export may lose an
-unfinished span; that is an evidence gap, never a fabricated successful span.
+seconds for export after completion. After normal worker Stop and client Close, the Controller finishes any remaining
+actual SDK Workflow spans with `antnest.temporal.workflow.span_end=worker_shutdown`
+before provider shutdown. A replacement worker may create another span for the
+same logical Workflow/Run; both original contexts remain. `workflow_return`
+identifies normal SDK span End, which can still carry a workflow error. A process
+killed before shutdown/export may lose an unfinished span; that remains an
+evidence gap, never a fabricated successful span.
 
 Outbound `rpc.system=http_json` is replaced by
 `rpc.system.name=antnest.http-json`. Existing lifecycle attributes remain;

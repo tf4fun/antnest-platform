@@ -91,11 +91,17 @@ export async function exerciseStartupFailure({
     },
   });
   assert.equal(template.runtime.image_ref, image);
-  const created = await command("create", undefined, {
-    ...agentBody,
-    name: "Failed lifecycle Agent",
-    template_id: template.template_id,
-  });
+  const created = await command(
+    "create",
+    undefined,
+    {
+      ...agentBody,
+      name: "Failed lifecycle Agent",
+      template_id: template.template_id,
+      template_revision: template.revision,
+    },
+    { runtimeStartupFailure: true },
+  );
   const agentID = created.agentID;
   const path = `/api/admin/agents/${agentID}`;
   const deadline = Date.now() + 120000;

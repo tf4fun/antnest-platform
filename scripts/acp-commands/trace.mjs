@@ -223,10 +223,10 @@ export function inspectCommandTrace(
         );
     }
     assert.equal(models.size, 2);
-    const call = single(acp("mcp.tools.call"), "Bash dispatch");
+    const call = single(acp("mcp.tools.call"), "Runtime tool dispatch");
     assert(tree.chain(call).includes(run));
     assert.equal(tag(call, "antnest.run.id"), tag(run, "antnest.run.id"));
-    assert.equal(tag(call, "tool.name"), "bash");
+    assert.equal(tag(call, "tool.name"), expected.toolName ?? "bash");
     const tool = single(
       trace.spans.filter(
         (span) =>

@@ -190,11 +190,11 @@ func run(ctx context.Context, lookup func(string) string) (resultErr error) {
 	)
 	queries := application.NewAgentQueryService(repository)
 	events := application.NewEventService(repository, eventNotifier, repository)
-	workflowClient, err := orchestration.Open(ctx, cfg.TemporalAddress, logger)
+	workflowClient, closeWorkflowClient, err := orchestration.Open(ctx, cfg.TemporalAddress, logger)
 	if err != nil {
 		return classifyFailure("workflow_startup", err)
 	}
-	defer workflowClient.Close()
+	defer closeWorkflowClient()
 	workflowWorker := orchestration.NewWorker(workflowClient, lifecycle, cfg.ShutdownTimeout)
 	if err := workflowWorker.Start(); err != nil {
 		return classifyFailure("workflow_worker_startup", err)

@@ -1,6 +1,6 @@
 # Current Implementation And Acceptance
 
-Updated: 2026-09-17. This index tracks platform baseline `4169443`, Runtime
+Updated: 2026-09-21. This index tracks platform baseline `4169443`, Runtime
 response-close fix `f8e9acf`, and the later Agent UI C4 repair described below.
 Results are recorded evidence from their respective batches, not a fresh
 full-suite run against one combined candidate. Historical
@@ -83,6 +83,9 @@ details in the owning service READMEs.
 | ACP interruption recovery migration, 2026-09-17 | Both SDKs passed eight SIGKILL scenarios, 16 Runs, 18 replays, two Runtime protection rejections and two Rebuilds; 71 final combined fixture tests passed | [P2 report](acp-persistence-revalidation.md); 44 complete topologies passed, six interrupted-parent gaps remain failed; strict gate failed on 27 traces; four projects cleaned and retained 12 containers unchanged |
 | Expected absence and crash Trace follow-up, 2026-09-17 | Runtime Controller race/PostgreSQL/lint passed; 57 affected fixture tests; fresh base and P2 deployments passed 34 and 44 complete topology checks, with eight expected Docker 404s and zero probe ERROR spans | [Follow-up](trace-acceptance-followup.md); eight recovery cases and 18 replays passed; six intentional crash traces are diagnostics, not completeness failures; normal timing warnings remain strict failures; candidates isolated and retained 12 containers unchanged |
 | Development Controller synchronization, 2026-09-17 | Both verified Controller images deployed; 11 health checks, original data retention, five lifecycle flows, eight browser business checks and eleven Trace topologies passed | [Deployment report](controller-development-sync-20260917.md); three publication traces include source/HTTP/ack SQL, four Docker 404s are expected absence, zero ERROR spans; five lifecycle and one chat strict results retain timing warnings; temporary resources removed, original Agent ready/idle |
+| Historical ACP closeout entry, 2026-09-21 | Both SDKs, eight real Bash Runs, 40 foreign Session denials, four automatic Disable checks and 14 replays; 824 local checks and 94 scoped Trace topologies passed | [Normal-request migration](legacy-closeout-revalidation.md); 80 strict failures retain warnings and 108 rejection error spans; three projects cleaned and retained container states unchanged; crashes remain separately opted in |
+| Lifecycle foundation migration, 2026-09-21 | 928 local checks, nine lifecycle operations, two real Tool Runs and 15 of 16 Trace topologies passed | [Foundation report](lifecycle-foundation-revalidation.md); Rebuild after graceful Controller restart has two missing parent edges, so acceptance remains incomplete; ten strict failures retained, all three temporary projects cleaned. User selected a separate Controller repair batch |
+| Controller Workflow parent repair, 2026-09-21 | Full service/race/lint gates, 295 Temporal/PostgreSQL/component tests, 877 fixture checks and all 16 Foundation topologies pass; zero missing parents | [Candidate integration](controller-workflow-span-revalidation.md); real graceful worker replacement preserves both original Workflow spans and drain attempts. Ten strict warning/error failures remain; all six temporary projects cleaned. Retained deployment pending |
 
 The model-selection, Provider-fallback and discovery results were read from
 the ignored local artifacts
@@ -159,6 +162,16 @@ historical trace returned 404, so its prior failure is not retrospectively chang
   Session isolation; five automatic Disable checks include Controller restart
   and SCIM reprovisioning. Strict warnings and rejection error spans remain
   failed. Retained/extended legacy base branches remain pending.
+  The [historical mixed ACP closeout entry](legacy-closeout-revalidation.md)
+  now runs current normal access/recovery cases, with same-organization
+  principal/Agent isolation and 94 scoped Trace checks. Its former crash cases
+  remain in P2. [Lifecycle foundation](lifecycle-foundation-revalidation.md) now
+  has current business evidence. Its separate
+  [Controller repair](controller-workflow-span-revalidation.md) now passes all
+  16 topologies with zero missing Workflow parents; strict warnings/errors
+  remain failed and retained Controller deployment is pending. Network, shutdown,
+  health, restore, loss, interrupted-update and older Workspace consumers still
+  require migration.
   The obsolete shared replay, command and permission admission validators were
   replaced after their consumers migrated. Other shared helpers remain until
   their consumers migrate. Strict timing failure is not full deployment acceptance.

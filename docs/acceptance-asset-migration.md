@@ -49,7 +49,9 @@ deployment contract current.
 | Controller background publication observability | A nonrecording parent suppressed acknowledgement SQL spans | [Owning-service fix and integration](controller-publication-trace-revalidation.md): service/race/PostgreSQL and 28 scoped trace checks pass; four attempts and two acknowledgement UPDATEs, zero missing-SQL gaps; later [development synchronization](controller-development-sync-20260917.md) deployed both Controller fixes, with three complete publication traces and four expected Docker 404s; strict lifecycle/chat timing warnings remain failed |
 | ACP database commit-receipt loss | Old Controller admission retry is not ACP persistence recovery | [P1 evidence](acp-persistence-revalidation.md): six actual committed-result losses, six natural ACP failures/restarts, 12 replays and 32 scoped Trace checks; strict errors/warnings remain failed; P2 interruption is separately recorded below |
 | ACP completed/interrupted/unknown-effect recovery | Historical admission completion and Controller release events are not current ACP oracles | [P2 evidence](acp-persistence-revalidation.md): eight SIGKILL cases, 18 replays, current Runtime barrier rejection and two physical Rebuild proofs; 44 complete Trace checks, six missing interrupted parents and strict warnings/errors remain failed |
-| Other `acp-closeout`, lifecycle and older workspace flows | Legacy admission tables, completion fields and unknown-effect fences remain in some oracles | Map cancellation, loss/restart and barrier evidence to current owners; retain shared Docker/network/wait helpers used by current profiles |
+| Historical mixed `acp-closeout` entry | Normal access scenarios now use current ACP ownership; crash recovery remains separately opted in | [Current normal-request evidence](legacy-closeout-revalidation.md): 824 local checks, eight Bash Runs, 40 foreign Session denials, four automatic Disable checks and 94 scoped Trace topologies; strict warnings/rejection errors remain failed; old source assets retained |
+| Lifecycle foundation / active-Run drain | Current setup, public audits, exact replay and per-request traces migrated; original graceful-restart gap has a separate Controller repair | [Original migration](lifecycle-foundation-revalidation.md) retains its failure; [Controller candidate integration](controller-workflow-span-revalidation.md) passes nine operations and all 16 Trace topologies with zero missing parents, 295 Controller integration and 877 fixture checks. Strict warnings/errors remain failed; retained deployment pending |
+| Remaining Lifecycle and older Workspace flows | Network, shutdown, health, restore, loss, interrupted-update and old Workspace consumers retain legacy assumptions | Migrate each remaining consumer; retain shared Docker/network/wait helpers until their final consumer passes |
 | Identity Agent-access / ACP-session profiles | Migrated current Provider/Model, ACP audits, idempotent replay, authorization ownership and Temporal offboarding | [Current evidence](identity-access-revalidation.md): 26 ACP session and 58 Agent/offboarding Trace topologies; 6 denied prompts, 4 completed Tool Runs, 36 admin/8 Agent/20 foreign Session denials, 9 private Runs and 5 automatic Disable checks; strict warnings/rejection errors remain failed |
 | Identity HTTP/SCIM/OIDC and HTTP access | Old full-URL and causal SQL ownership assumptions; legacy parent deployment | [HTTP migration evidence](identity-access-revalidation.md): 9 local/SCIM, 7 OIDC and 4 access groups, actual outage/expiry, 13 complete Trace topologies; strict warnings/expiry error spans remain failed. ACP and Agent consumers have their separate evidence above. |
 
@@ -132,6 +134,17 @@ Controller acknowledgement recovery.
   continuation, organization isolation and automatic offboarding. 810 local
   checks and 97 scoped Trace topologies passed; strict warnings and rejection
   errors remain failed. Retained parent branches/shared assets remain separate.
+- [Historical ACP closeout entry](legacy-closeout-revalidation.md): both SDKs,
+  same-organization principal/Agent isolation, eight actual Bash effects,
+  14 exact history replays and four automatic Disable checks; 824 local checks
+  and 94 scoped Trace topologies passed. Strict warnings/rejection errors remain
+  failed; P2 crashes, lifecycle and Workspace consumers retain separate scope.
+- [Lifecycle foundation](lifecycle-foundation-revalidation.md): nine completed
+  lifecycle operations, two real Tool Runs, two busy rejections and exact history
+  replay. Its original 15-of-16 result is retained. The separate
+  [Controller candidate](controller-workflow-span-revalidation.md) now passes
+  all 16 topologies with zero missing parents; strict warnings/errors remain
+  failed and retained deployment is pending. No old asset retired.
 - [Controller development synchronization](controller-development-sync-20260917.md):
   both verified Controller images deployed, original data preserved, five
   lifecycle flows and eight browser business checks passed; eleven scoped Trace

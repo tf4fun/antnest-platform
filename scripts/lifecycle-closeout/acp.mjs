@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { randomBytes } from "node:crypto";
+import { observeStream } from "../acp-commands/transport.mjs";
 
 // Resolve the same pinned SDK as the service, without a second package manifest.
 const require = createRequire(
@@ -18,6 +19,7 @@ export function ownerStream(
   cookie,
   open = createWebSocketStream,
   Socket = WebSocket,
+  traceID = randomBytes(16).toString("hex"),
 ) {
   return open(
     `${gateway.replace("http:", "ws:")}/api/app/agents/${agentID}/v1/acp`,
@@ -26,7 +28,7 @@ export function ownerStream(
       headers: {
         Cookie: cookie,
         Origin: gateway,
-        traceparent: `00-${randomBytes(16).toString("hex")}-${randomBytes(8).toString("hex")}-01`,
+        traceparent: `00-${traceID}-${randomBytes(8).toString("hex")}-01`,
       },
     },
   );
@@ -44,6 +46,8 @@ export function requestOptions(timeout, signal) {
 export function connectOwner(gateway, agentID, cookie, signal) {
   signal?.throwIfAborted();
   const updates = [];
+  const requests = [],
+    connectionTraceID = randomBytes(16).toString("hex");
   const closed = new AbortController();
   let closeCode, handshakeStatus;
   // The SDK removes its error listener on close, but Node ws can still emit a
@@ -73,7 +77,17 @@ export function connectOwner(gateway, agentID, cookie, signal) {
       return { outcome: { outcome: "selected", optionId: option.optionId } };
     })
     .connect(
-      ownerStream(gateway, agentID, cookie, createWebSocketStream, OwnedSocket),
+      observeStream(
+        ownerStream(
+          gateway,
+          agentID,
+          cookie,
+          createWebSocketStream,
+          OwnedSocket,
+          connectionTraceID,
+        ),
+        requests,
+      ),
     );
   let disposed = false;
   const close = () => {
@@ -114,6 +128,10 @@ export function connectOwner(gateway, agentID, cookie, signal) {
   };
   return {
     updates,
+    requests,
+    connectionTraceID,
+    agentId: agentID,
+    transport: "websocket",
     close,
     get closeCode() {
       return closeCode;
