@@ -1,0 +1,6 @@
+# Opt-in overlay for Agent Controller development deployments using Jaeger
+# as the OTLP destination. That collector accepts traces, not metrics.
+services:
+  agent-controller:
+    environment:
+      OTEL_METRICS_EXPORTER: none

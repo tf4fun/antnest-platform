@@ -21,6 +21,10 @@ The two later Controller fixes were then
 Five lifecycle flows, eight browser business checks and eleven scoped Trace
 topologies passed, including four expected Docker 404s with zero probe errors.
 Strict lifecycle/chat timing warnings remain failed.
+The [Workflow span repair deployment](controller-development-sync-20260921.md)
+subsequently synchronized `d070a7d`'s validated Controller image, recovered the
+cold development Agent without losing data, and passed 12 retained and 16
+isolated Trace topologies. Strict timing/expected-error failures remain recorded.
 
 ## Implemented Boundaries
 
@@ -86,6 +90,7 @@ details in the owning service READMEs.
 | Historical ACP closeout entry, 2026-09-21 | Both SDKs, eight real Bash Runs, 40 foreign Session denials, four automatic Disable checks and 14 replays; 824 local checks and 94 scoped Trace topologies passed | [Normal-request migration](legacy-closeout-revalidation.md); 80 strict failures retain warnings and 108 rejection error spans; three projects cleaned and retained container states unchanged; crashes remain separately opted in |
 | Lifecycle foundation migration, 2026-09-21 | 928 local checks, nine lifecycle operations, two real Tool Runs and 15 of 16 Trace topologies passed | [Foundation report](lifecycle-foundation-revalidation.md); Rebuild after graceful Controller restart has two missing parent edges, so acceptance remains incomplete; ten strict failures retained, all three temporary projects cleaned. User selected a separate Controller repair batch |
 | Controller Workflow parent repair, 2026-09-21 | Full service/race/lint gates, 295 Temporal/PostgreSQL/component tests, 877 fixture checks and all 16 Foundation topologies pass; zero missing parents | [Candidate integration](controller-workflow-span-revalidation.md); real graceful worker replacement preserves both original Workflow spans and drain attempts. Ten strict warning/error failures remain; all six temporary projects cleaned. Retained deployment pending |
+| Workflow span development synchronization, 2026-09-21 | Verified Controller image deployed; original ACP rows and workspace preserved; five lifecycle flows, eight browser checks, 12 retained and 16 isolated Trace topologies pass | [Deployment report](controller-development-sync-20260921.md); cold Runtime identity loss recovered by normal Rebuild; Jaeger metrics mismatch corrected in opt-in Controller overlay; normal restart exits zero. Seven retained and eleven isolated strict failures remain; temporary resources cleaned, 12 development containers running |
 
 The model-selection, Provider-fallback and discovery results were read from
 the ignored local artifacts
@@ -169,8 +174,9 @@ historical trace returned 404, so its prior failure is not retrospectively chang
   has current business evidence. Its separate
   [Controller repair](controller-workflow-span-revalidation.md) now passes all
   16 topologies with zero missing Workflow parents; strict warnings/errors
-  remain failed and retained Controller deployment is pending. Network, shutdown,
-  health, restore, loss, interrupted-update and older Workspace consumers still
+  remain failed. The [development follow-up](controller-development-sync-20260921.md)
+  deployed the verified image and passed retained and isolated regression.
+  Network, shutdown, health, restore, loss, interrupted-update and older Workspace consumers still
   require migration.
   The obsolete shared replay, command and permission admission validators were
   replaced after their consumers migrated. Other shared helpers remain until

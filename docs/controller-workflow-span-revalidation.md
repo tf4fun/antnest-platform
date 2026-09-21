@@ -8,6 +8,9 @@ The candidate closes the missing-parent defect: **nine lifecycle operations and
 all 16 Foundation trace topologies pass, with zero missing parent edges**.
 Strict Trace remains failed on ten traces. The candidate has not replaced the
 retained development image or deployment, and these changes are not committed.
+Those statements describe this original batch. The later
+[development synchronization](controller-development-sync-20260921.md) records
+commit `d070a7d`, deployment, recovery and fresh scoped regression.
 
 ## Service-owned contract and change
 

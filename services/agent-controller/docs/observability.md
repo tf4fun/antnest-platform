@@ -1,5 +1,12 @@
 # Agent Controller Observability
 
+For retained development with Jaeger as the OTLP destination, use the opt-in
+[Controller Compose overlay](../../../compose.controller-development.yaml)
+and [deployment instructions](../../../docs/controller-development-sync-20260921.md).
+It disables this service's metrics exporter because that collector accepts
+traces only. Trace export remains enabled. Production metrics destinations
+retain their own configuration.
+
 All five lifecycle kinds use the official
 `go.temporal.io/sdk/contrib/opentelemetry` interceptor.
 SDK headers carry parent context across durable Workflow/Activity execution.
