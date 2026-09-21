@@ -153,10 +153,12 @@ component owns, what it must not own, and which narrower command validates it.
 ## Test Resource Hygiene
 
 Container-backed verification must run serially and clean up resources created
-only for that verification when it finishes or is interrupted. The only
-exception is the explicit `ANTNEST_E2E_KEEP_STACK=true` local browser-acceptance
-mode; it prints the retained project identity and transfers cleanup to the
-operator. After each run,
+only for that verification when it finishes or is interrupted.
+`ANTNEST_E2E_KEEP_STACK=true` is [retired](docs/retained-seed-retirement.md): the
+launcher rejects it before resource discovery or creation. Unset or `false`
+keeps the disposable path; existing development environments are unaffected.
+Use the disposable [current browser profiles](scripts/workspace-closeout/README.md)
+for acceptance. After each run,
 check for residual test containers and stop or remove the ones that are no
 longer needed; remove volumes only when they belong to a disposable test
 project. Repository E2E scripts must keep cleanup traps for both success and

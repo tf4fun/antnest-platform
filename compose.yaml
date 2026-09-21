@@ -69,7 +69,10 @@ services:
 
   temporal:
     profiles: [stage2, stage3]
-    image: temporalio/server:1.31.0
+    image: antnest/temporal:local
+    build:
+      context: .
+      dockerfile: scripts/temporal/Dockerfile
     depends_on:
       temporal-schema:
         condition: service_completed_successfully
@@ -87,9 +90,9 @@ services:
     volumes:
       - ./scripts/temporal/dynamicconfig.yaml:/etc/temporal/config/dynamicconfig/docker.yaml:ro
     healthcheck:
-      test: [CMD, nc, -z, localhost, "7233"]
+      test: [CMD, sh, /etc/temporal/readiness.sh]
       interval: 30s
-      timeout: 3s
+      timeout: 10s
       retries: 5
       start_period: 60s
       start_interval: 2s
@@ -341,6 +344,8 @@ services:
       context: .
       dockerfile: services/agent-controller/Dockerfile
     depends_on:
+      temporal:
+        condition: service_healthy
       temporal-namespace:
         condition: service_completed_successfully
       postgres:

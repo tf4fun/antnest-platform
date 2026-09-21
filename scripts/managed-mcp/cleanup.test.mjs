@@ -16,7 +16,7 @@ for (const [profile, file, flag] of [
     "ANTNEST_E2E_RPC_RESPONSE_LOSS",
   ],
 ])
-  test(`${profile} publishes final evidence only after successful parent cleanup`, async (t) => {
+  test(`${profile} publishes final success only after successful parent cleanup`, async (t) => {
     const source = await readFile(
       new URL("../e2e-stage3a.sh", import.meta.url),
       "utf8",
@@ -51,7 +51,7 @@ for (const [profile, file, flag] of [
       });
       child.stdin.end(`
 temporary_root="$FIXTURE_ROOT"
-tool_profile="${["rpc-response-loss", "managed-mcp"].includes(profile) ? profile : ""}"
+tool_profile="${profile}"
 keep_stack=false
 COMPOSE_PROJECT_NAME=fixture
 ${flag}=true
@@ -65,16 +65,14 @@ cleanup
       const code = await done;
       assert.equal(code, result === "success" ? 0 : 1);
       assert.equal(
-        profile !== "acp-closeout"
-          ? stdout.includes("E2E passed; owned resources removed")
-          : stdout.includes('"status":"passed"'),
+        stdout.includes("E2E passed; owned resources removed"),
         result === "success",
         `${result}: premature or missing final result`,
       );
     }
     assert.equal(
       source.split(`cat "$temporary_root/${file}"`).length - 1,
-      profile !== "acp-closeout" ? 0 : 1,
-      "profile evidence must only be published by cleanup",
+      0,
+      "retired inline profile evidence must not be published by cleanup",
     );
   });

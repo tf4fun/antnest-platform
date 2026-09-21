@@ -29,26 +29,38 @@ export function assertState(state, agentID) {
     "access_allowed",
     "active_session_id",
     "agent_id",
-    "agent_revision",
     "availability",
+    "configuration_revision",
+    "unavailable_reason",
   ]);
   assert.equal(state.agent_id, agentID);
   assert(["ready", "busy", "offline"].includes(state.availability));
   assert.equal(typeof state.access_allowed, "boolean");
   assert(
-    Number.isSafeInteger(state.agent_revision) && state.agent_revision > 0,
-  );
-  assert(
     state.active_session_id === null ||
       (typeof state.active_session_id === "string" &&
-        state.active_session_id.trim()),
+        state.active_session_id.trim().length > 0 &&
+        state.active_session_id.length <= 200),
   );
-  if (state.availability === "ready")
-    assert.equal(state.active_session_id, null);
   if (!state.access_allowed) {
     assert.equal(state.availability, "offline");
     assert.equal(state.active_session_id, null);
+    assert.equal(state.configuration_revision, null);
+    assert.equal(state.unavailable_reason, "access_denied");
+    return;
   }
+  assert.match(state.configuration_revision, /^[a-f0-9]{64}$/);
+  if (state.availability === "offline") {
+    assert.equal(state.active_session_id, null);
+    assert(
+      ["agent_unavailable", "runtime_barrier_required"].includes(
+        state.unavailable_reason,
+      ),
+    );
+  } else if (state.availability === "ready") {
+    assert.equal(state.active_session_id, null);
+    assert.equal(state.unavailable_reason, null);
+  } else assert([null, "agent_unavailable"].includes(state.unavailable_reason));
 }
 
 export function inspectStateTrace(trace, secrets) {

@@ -4,6 +4,8 @@ import {
   assertStopped,
   assertRestarted,
   inspectShutdownTrace,
+  assertReadyExecutionState,
+  assertIdleMaintenance,
 } from "./shutdown-evidence.mjs";
 
 const project = "antnest-lifecycle-01234567";
@@ -14,6 +16,7 @@ const before = [
     project,
     image: "image-1",
     running: true,
+    health: "healthy",
     exit: 0,
     oom: false,
     error: "",
@@ -241,6 +244,7 @@ test("shutdown accepts only a Gateway HTTP client cancellation in the same stop 
   const client = {
     ...trace.spans[0],
     spanID: "gateway-client",
+    operationName: "HTTP GET admin-console",
     references: [
       {
         refType: "CHILD_OF",
@@ -252,6 +256,7 @@ test("shutdown accepts only a Gateway HTTP client cancellation in the same stop 
       { key: "span.kind", value: "client" },
       { key: "error", value: true },
       { key: "error.type", value: "cancelled" },
+      { key: "http.request.method", value: "GET" },
       { key: "http.response.status_code", value: 200 },
     ],
   };
@@ -357,3 +362,262 @@ for (const [name, mutate] of [
     mutate(trace);
     assert.throws(() => inspectShutdownTrace(trace, expected, ["secret"]));
   });
+
+const readyState = {
+  agent_id: "agent",
+  availability: "ready",
+  access_allowed: true,
+  configuration_revision: "a".repeat(64),
+  active_session_id: null,
+  unavailable_reason: null,
+};
+test("shutdown consumes current ACP ready state, not legacy aggregate revisions", () => {
+  assertReadyExecutionState(readyState, "agent");
+  for (const state of [
+    { ...readyState, agent_id: "foreign" },
+    { ...readyState, agent_revision: 7 },
+    { ...readyState, configuration_revision: 7 },
+    { ...readyState, configuration_revision: null },
+    { ...readyState, active_session_id: "session" },
+    { ...readyState, access_allowed: false },
+    { ...readyState, unavailable_reason: "agent_unavailable" },
+  ])
+    assert.throws(() => assertReadyExecutionState(state, "agent"));
+});
+test("idle maintenance cannot execute a Run or reach the model", () => {
+  assertIdleMaintenance(
+    { items: [], next_cursor: null },
+    { requests: [], errors: [] },
+  );
+  for (const [audit, model] of [
+    [
+      { items: [{ run_id: "run" }], next_cursor: null },
+      { requests: [], errors: [] },
+    ],
+    [
+      { items: [], next_cursor: "more" },
+      { requests: [], errors: [] },
+    ],
+    [
+      { items: [], next_cursor: null },
+      { requests: [{}], errors: [] },
+    ],
+    [
+      { items: [], next_cursor: null },
+      { requests: [], errors: ["error"] },
+    ],
+  ])
+    assert.throws(() => assertIdleMaintenance(audit, model));
+});
+test("restarted services must be healthy", () => {
+  assert.throws(() =>
+    assertRestarted(project, before, [
+      { ...restarted[0], health: "unhealthy" },
+    ]),
+  );
+});
+test("watch topology validates all spans, preserves warnings and retains cancellation strict failure", () => {
+  const trace = traceFixture();
+  trace.spans[0].warnings = ["clock skew adjustment disabled; fixture"];
+  const original = structuredClone(trace);
+  assert.equal(
+    inspectShutdownTrace(trace, expected, []).strict_trace,
+    "failed",
+  );
+  assert.deepEqual(trace, original);
+  assert.equal(
+    inspectShutdownTrace(cancelledTrace(), expected, []).strict_trace,
+    "failed",
+  );
+  for (const mutate of [
+    (t) =>
+      t.spans.push({
+        ...t.spans[1],
+        spanID: "orphan",
+        references: [
+          { refType: "CHILD_OF", traceID: t.traceID, spanID: "missing" },
+        ],
+      }),
+    (t) =>
+      (t.spans[0].logs = [
+        { fields: [{ key: "antnest.payload.json", value: "{}" }] },
+      ]),
+    (t) => t.spans[1].tags.push({ key: "otel.status_code", value: "ERROR" }),
+  ]) {
+    const changed = traceFixture();
+    mutate(changed);
+    assert.throws(() => inspectShutdownTrace(changed, expected, []));
+  }
+});
+test("execution state watch requires the ACP POST RPC and rejects a Controller substitute", () => {
+  const trace = traceFixture();
+  trace.spans.splice(2, 1);
+  trace.processes["agent-acp-service"] = { serviceName: "agent-acp-service" };
+  const span = trace.spans.at(-1);
+  span.processID = "agent-acp-service";
+  span.references[0].spanID = "edge";
+  span.tags.find((t) => t.key === "http.route").value =
+    "/rpc/agent-acp/watch-agent-execution-state";
+  span.tags.push(
+    { key: "http.request.method", value: "POST" },
+    { key: "rpc.method", value: "watch_agent_execution_state" },
+  );
+  const want = { ...expected, console: false, executionState: true };
+  assert.equal(inspectShutdownTrace(trace, want, []).gateway_ancestry, true);
+  span.processID = "agent-controller";
+  assert.throws(() => inspectShutdownTrace(trace, want, []));
+});
+
+function dependencyCancellationFixture(executionState = false) {
+  const trace = traceFixture();
+  const server = (id, service, parent, route, method = "GET") => ({
+    spanID: id,
+    traceID: trace.traceID,
+    processID: service,
+    operationName: `HTTP ${method} ${route}`,
+    startTime: 1000000,
+    duration: 20,
+    references: parent
+      ? [{ refType: "CHILD_OF", traceID: trace.traceID, spanID: parent }]
+      : [],
+    tags: Object.entries({
+      "span.kind": "server",
+      "http.route": route,
+      "http.request.method": method,
+      "http.response.status_code": 200,
+    }).map(([key, value]) => ({ key, value })),
+  });
+  const client = (id, parent, peer, method = "GET") => ({
+    ...server(
+      id,
+      parent === "edge" ? "edge-gateway" : "admin-console",
+      parent,
+      `unused`,
+      method,
+    ),
+    operationName: `HTTP ${method} ${peer}`,
+    tags: Object.entries({
+      "span.kind": "client",
+      "http.request.method": method,
+      "http.response.status_code": 200,
+      "error.type": "cancelled",
+      error: true,
+    }).map(([key, value]) => ({ key, value })),
+  });
+  if (executionState) {
+    trace.processes["agent-acp-service"] = { serviceName: "agent-acp-service" };
+    trace.spans = [
+      trace.spans[0],
+      trace.spans[1],
+      client("forward", "edge", "agent-acp-service", "POST"),
+      server(
+        "acp",
+        "agent-acp-service",
+        "forward",
+        "/rpc/agent-acp/watch-agent-execution-state",
+        "POST",
+      ),
+    ];
+    trace.spans
+      .at(-1)
+      .tags.push(
+        { key: "rpc.method", value: "watch_agent_execution_state" },
+        { key: "error.type", value: "stream_interrupted" },
+        { key: "otel.status_code", value: "ERROR" },
+      );
+  } else {
+    trace.spans = [
+      trace.spans[0],
+      trace.spans[1],
+      client("forward", "edge", "admin-console"),
+      server(
+        "console",
+        "admin-console",
+        "forward",
+        "/api/admin/agents/{agent_id}/events/watch",
+      ),
+      client("console-forward", "console", "agent-controller"),
+      server(
+        "controller",
+        "agent-controller",
+        "console-forward",
+        expected.controllerRoute,
+      ),
+    ];
+    trace.spans[3].tags.push({ key: "error.type", value: "cancelled" });
+    trace.spans[3].logs = [
+      {
+        fields: [
+          { key: "event", value: "antnest.error" },
+          { key: "error.type", value: "cancelled" },
+        ],
+      },
+    ];
+    trace.spans[5].tags.push(
+      { key: "error.type", value: "canceled" },
+      { key: "otel.status_code", value: "ERROR" },
+      { key: "otel.status_description", value: "request_failed" },
+    );
+  }
+  return {
+    trace,
+    want: { ...expected, console: !executionState, executionState },
+  };
+}
+for (const executionState of [false, true]) {
+  test(`verified ${executionState ? "ACP state" : "lifecycle event"} shutdown cancellations retain strict failure`, () => {
+    const { trace, want } = dependencyCancellationFixture(executionState);
+    const original = structuredClone(trace);
+    const result = inspectShutdownTrace(trace, want, []);
+    assert.equal(result.gateway_ancestry, true);
+    assert.equal(result.strict_trace, "failed");
+    assert.equal(result.cancellation_error_spans, executionState ? 2 : 4);
+    assert.deepEqual(trace, original);
+  });
+  for (const [label, mutate] of [
+    ["outside stop window", (t) => (t.spans.at(-1).startTime = 4000000)],
+    [
+      "failed status",
+      (t) =>
+        (t.spans
+          .at(-1)
+          .tags.find((x) => x.key === "http.response.status_code").value = 503),
+    ],
+    [
+      "different error",
+      (t) =>
+        (t.spans.at(-1).tags.find((x) => x.key === "error.type").value =
+          "dependency_unavailable"),
+    ],
+    [
+      "foreign dependency",
+      (t) => (t.spans.at(-1).processID = "identity-service"),
+    ],
+    [
+      "unrelated client",
+      (t) => (t.spans[2].operationName = "HTTP GET unrelated"),
+    ],
+    ["detached client", (t) => (t.spans[2].references = [])],
+  ])
+    test(`${executionState ? "state" : "events"} cancellation rejects ${label}`, () => {
+      const { trace, want } = dependencyCancellationFixture(executionState);
+      mutate(trace);
+      assert.throws(() => inspectShutdownTrace(trace, want, []));
+    });
+}
+
+test("cancellation classification rejects conflicting error events on an otherwise matched span", () => {
+  const { trace, want } = dependencyCancellationFixture(false);
+  trace.spans[3].logs[0].fields.push({
+    key: "antnest.error.code",
+    value: "dependency_unavailable",
+  });
+  assert.throws(() => inspectShutdownTrace(trace, want, []));
+});
+
+test("Controller cancellation cannot use another HTTP method", () => {
+  const { trace, want } = dependencyCancellationFixture(false);
+  trace.spans.at(-1).tags.find((t) => t.key === "http.request.method").value =
+    "POST";
+  assert.throws(() => inspectShutdownTrace(trace, want, []));
+});

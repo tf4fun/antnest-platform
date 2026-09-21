@@ -18,6 +18,7 @@ Keep one protected recovery set, with a timestamp and checksums:
 | ACP | `antnest_agent_acp` | `ANTNEST_ACP_CLIENT_MCP_KEY`, durable Sessions/history/context |
 | Runtime Controller | `antnest_runtime_controller` | Controller scope, network/volume names, immutable Runtime image digests |
 | Egress | `antnest_egress` | Tunnel CIDR/resolver and deployment network configuration |
+| Temporal | `antnest_temporal`, `antnest_temporal_visibility` | Temporal role/DSN, namespace and matching server/schema versions; restore alongside Controller data |
 | Runtime filesystem | none | Every retained `antnest-workspace-<agent-id>` volume and the configured system Skills volume, including ownership, modes and symlinks |
 
 The three encryption keys are independent of database login passwords. Preserve
@@ -30,7 +31,7 @@ encrypt and restrict off-host storage according to operator policy. Do not print
 environment values or put credentials in terminal transcripts.
 
 The shared development PostgreSQL server uses private service roles created by
-`scripts/postgres-init.sh`. Recreate those exact roles and database owners before
+`scripts/postgres-init.sh` and `scripts/temporal/init-databases.sh`. Recreate those exact roles and database owners before
 restoring; database passwords may change if their DSNs are updated consistently.
 Application encryption keys must still match the existing ciphertext. Do not restore everything as one shared application
 owner. Nonstandard roles, grants or tablespaces also need their own reviewed
@@ -52,8 +53,9 @@ restored. Required images must remain available by the saved immutable digest.
    belong to the expected Agent and Controller scope. Record the Agents that were
    enabled so the operator can explicitly re-enable them later.
 3. Close external access and stop Gateway, Console, Agent UI, ACP, Agent
-   Controller, Runtime Controller, Egress and Identity. Verify stopped containers
-   and clean service exits. Keep the telemetry collector available until writer
+   Controller, Runtime Controller, Egress and Identity, then stop Temporal after
+   its Controller client has stopped. Verify every writer's stopped container
+   and clean service exit. Keep the telemetry collector available until writer
    exporters have flushed; stop it afterward. Leave only PostgreSQL running for
    logical export.
    No privileged maintenance client may mutate the databases during this window.
@@ -75,10 +77,12 @@ restored. Required images must remain available by the saved immutable digest.
    changing the destination. Use only trusted SQL/tar archives. Keep application
    services stopped, public ingress closed and all old Runtime writers absent.
 2. Restore into empty databases owned by their original roles. With the same
-   initialized database names and owners, use
+   initialized database names and owners, including both Temporal databases, use
    `pg_restore --exit-on-error --single-transaction --username=<backup-role>
    --dbname=<database> <archive>` for each database. Do not suppress errors or
-   treat a partially restored set as usable. See the
+   treat a partially restored set as usable. Run only role/database creation
+   before restore; defer Temporal schema initialization and all writers until
+   all seven restored databases have been verified. See the
    [PostgreSQL restore reference](https://www.postgresql.org/docs/17/app-pgrestore.html).
 3. Recreate the exact persistent volume identities and ownership labels. Extract
    the archives, preserving numeric UID/GID and permissions; compare against the
@@ -101,15 +105,16 @@ recovery procedure is a different scenario from this deliberately quiesced set.
 ## Reusable Acceptance
 
 The bounded `restore` lifecycle profile implements this procedure only for its
-own disposable test project. It uses all five actual services/databases and
+own disposable test project. It uses all seven actual databases and
 synthetic credentials, never `.secret`. It must:
 
 - Create an Agent and completed Tool-backed ACP Session through Gateway.
 - Disable the Agent and stop writers before snapshots.
-- Export all five databases and volume archives plus protected encryption keys.
+- Stop Temporal after application writers, then export all seven databases and
+  volume archives plus protected encryption keys.
 - Actually remove the temporary PostgreSQL, workspace and system Skills volumes;
   restore into new empty storage, not verify against surviving original data.
-- Require an independent complete five-database/two-volume manifest before any
+- Require an independent complete seven-database/two-volume manifest before any
   destructive step; a missing workspace must not survive and produce false success.
 - Compare database row/sequence and schema/object ownership/ACL fingerprints plus
   filesystem archives before any service can mutate restored data. Transactional
@@ -119,13 +124,20 @@ synthetic credentials, never `.secret`. It must:
   exercises its original encrypted MCP revision; load alone is insufficient.
 - Log in again, replay history without a model request, enable the Agent and run
   a real Tool against restored files, proving decrypted model configuration works.
+- Preserve public Agent events and the original completed Run. History replay
+  must not create or change an execution audit. The new Run must use the restored
+  Agent's newly admitted execution revision.
+- Keep isolated in-memory Jaeger available across storage replacement, collect
+  both pre/post-restore lifecycle and SDK request traces, and retain strict
+  warnings/errors as failures. Jaeger is diagnostic, outside the recovery set.
 - Delete only its own labelled resources and temporary backup files on success,
   failure or interruption. Conflicting ownership labels block deletion even in
   finally cleanup. Preserve retained human-acceptance stacks.
 
 ```sh
-node scripts/lifecycle-closeout/run.mjs restore
+make e2e-lifecycle-restore
 ```
 
-Final measured results belong in [C5-02](docker-single-node-closeout.md), not in
-committed dumps, secret bundles or step-by-step execution logs.
+Current migration results belong in [Restore revalidation](lifecycle-restore-revalidation.md);
+[C5-02](docker-single-node-closeout.md) retains historical evidence. Do not commit
+dumps, secret bundles or step-by-step execution logs.

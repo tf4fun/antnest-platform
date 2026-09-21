@@ -27,3 +27,8 @@ e2e:
 
 e2e-observation:
 	node scripts/creation-observation-e2e.mjs
+
+# Explicit fault component; excluded from the ordinary unit/normal-restart suite.
+.PHONY: test-crash-recovery
+test-crash-recovery:
+	ANTNEST_RUNTIME_CONTROLLER_CRASH_TEST=true GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go test -p=1 ./internal/control -run '^TestRuntimeUpdateProcessCrashRecovery$$' -count=1 -v -timeout=6m

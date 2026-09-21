@@ -50,9 +50,15 @@ test("foundation network allocation reserves static Runtime addresses and privat
   };
   configureFoundation(config);
   assert.equal(config.controllerImage, "antnest/agent-controller:local");
+  assert.equal(
+    config.runtimeControllerImage,
+    "antnest/runtime-controller:local",
+  );
   config.env.ANTNEST_E2E_CONTROLLER_IMAGE = "sha256:isolated-candidate";
+  config.env.ANTNEST_E2E_RUNTIME_CONTROLLER_IMAGE = "sha256:runtime-candidate";
   configureFoundation(config);
   assert.equal(config.controllerImage, "sha256:isolated-candidate");
+  assert.equal(config.runtimeControllerImage, "sha256:runtime-candidate");
   assert.equal(
     config.env.ANTNEST_LIFECYCLE_CONTROL_DYNAMIC_RANGE,
     "10.242.7.128/25",

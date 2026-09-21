@@ -27,6 +27,9 @@ export async function setupFoundation(admin, image) {
 export function configureFoundation(config) {
   config.controllerImage =
     config.env.ANTNEST_E2E_CONTROLLER_IMAGE ?? "antnest/agent-controller:local";
+  config.runtimeControllerImage =
+    config.env.ANTNEST_E2E_RUNTIME_CONTROLLER_IMAGE ??
+    "antnest/runtime-controller:local";
   for (const [source, target] of [
     [
       "ANTNEST_EGRESS_CONTROL_SUBNET",

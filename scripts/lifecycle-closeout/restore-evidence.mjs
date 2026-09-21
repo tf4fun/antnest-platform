@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { assertCompletedExecution } from "./foundation-evidence.mjs";
 
 export const databases = [
   "antnest_identity",
@@ -7,6 +8,8 @@ export const databases = [
   "antnest_agent_acp",
   "antnest_runtime_controller",
   "antnest_egress",
+  "antnest_temporal",
+  "antnest_temporal_visibility",
 ];
 export const keyNames = [
   "ANTNEST_IDENTITY_ENCRYPTION_KEY",
@@ -22,7 +25,23 @@ export const writerServices = [
   "runtime-controller",
   "runtime-egress",
   "identity-service",
+  "temporal",
 ];
+
+export function assertRestoreRun(runs, agent, sessionId) {
+  assert.equal(runs.length, 1, "restore prompt must create exactly one Run");
+  const run = runs[0];
+  assert(run.run_id, "public Run identity missing");
+  assert.equal(run.session_id, sessionId);
+  assertCompletedExecution(run, agent);
+  return run;
+}
+
+export function assertReplayAudits(before, after) {
+  assert.equal(before.next_cursor, null, "replay audit baseline truncated");
+  assert.equal(after.next_cursor, null, "replay audit evidence truncated");
+  assert.deepEqual(after, before, "history replay changed execution audits");
+}
 
 export function encryptionKeys(env) {
   return Object.fromEntries(

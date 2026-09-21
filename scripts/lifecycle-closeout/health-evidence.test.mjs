@@ -5,7 +5,116 @@ import {
   cpuDelta,
   assertCadence,
   startupSeconds,
+  assertHealthProjection,
 } from "./health-evidence.mjs";
+
+const readyAgent = {
+  agent_id: "agent-1",
+  lifecycle_state: "created",
+  activation_state: "enabled",
+  desired_state: "enabled",
+  runtime_state: "available",
+  executable_execution_revision: "exec-1",
+  configuration: { template: { template_id: "template-1", revision: 1 } },
+  runtime: { runtime_revision: "runtime-1", runtime_execution_id: "process-1" },
+};
+const readyState = {
+  agent_id: "agent-1",
+  access_allowed: true,
+  availability: "ready",
+  configuration_revision: "a".repeat(64),
+  active_session_id: null,
+  unavailable_reason: null,
+};
+const offline = {
+  ...readyState,
+  availability: "offline",
+  unavailable_reason: "agent_unavailable",
+};
+test("same-process health loss closes ACP access without replacing the binding", () => {
+  assertHealthProjection(
+    readyAgent,
+    { ...readyAgent, runtime_state: "unhealthy" },
+    offline,
+    "unhealthy",
+  );
+  assertHealthProjection(readyAgent, readyAgent, readyState, "recovered");
+});
+test("healthy restarted compute must remain without an executable binding", () => {
+  assertHealthProjection(
+    readyAgent,
+    { ...readyAgent, executable_execution_revision: undefined },
+    offline,
+    "restarted",
+  );
+  assert.throws(() =>
+    assertHealthProjection(readyAgent, readyAgent, offline, "restarted"),
+  );
+});
+for (const [name, agent, state, phase] of [
+  [
+    "health-only readiness",
+    { ...readyAgent, runtime_state: "unhealthy" },
+    readyState,
+    "unhealthy",
+  ],
+  [
+    "recovery rebound",
+    { ...readyAgent, executable_execution_revision: "exec-2" },
+    readyState,
+    "recovered",
+  ],
+  [
+    "changed Runtime",
+    {
+      ...readyAgent,
+      runtime: { ...readyAgent.runtime, runtime_revision: "other" },
+    },
+    readyState,
+    "recovered",
+  ],
+  [
+    "changed configuration",
+    { ...readyAgent, configuration: {} },
+    readyState,
+    "recovered",
+  ],
+  [
+    "foreign Agent",
+    readyAgent,
+    { ...readyState, agent_id: "other" },
+    "recovered",
+  ],
+  [
+    "new Run",
+    readyAgent,
+    { ...readyState, active_session_id: "session-1" },
+    "recovered",
+  ],
+  [
+    "lost authorization",
+    readyAgent,
+    { ...readyState, access_allowed: false },
+    "recovered",
+  ],
+  [
+    "fabricated digest",
+    readyAgent,
+    { ...readyState, configuration_revision: null },
+    "recovered",
+  ],
+  [
+    "wrong offline reason",
+    { ...readyAgent, runtime_state: "unhealthy" },
+    { ...offline, unavailable_reason: "access_denied" },
+    "unhealthy",
+  ],
+])
+  test(`health observation rejects ${name}`, () => {
+    assert.throws(() =>
+      assertHealthProjection(readyAgent, agent, state, phase),
+    );
+  });
 
 const startedAt = "2026-09-10T08:00:00.000Z";
 const probe = (start, end, code = 0) => ({

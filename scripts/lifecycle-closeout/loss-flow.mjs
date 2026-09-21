@@ -1,10 +1,23 @@
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
 import { GatewayClient } from "../identity-closeout/support.mjs";
-import { verifyTraces } from "../observability/collect.mjs";
-import { readAdmissionEvidence } from "./admission-evidence.mjs";
+import { collectManagedTrace } from "../managed-mcp/request-trace.mjs";
+import { inspectCommandTrace } from "../acp-commands/trace.mjs";
+import { strictSessionEvidence } from "../identity-closeout/session-trace.mjs";
+import { collectLifecycleEvidence } from "./foundation-evidence.mjs";
+import {
+  saveFoundationTrace,
+  saveFoundationFailure,
+} from "./foundation-trace.mjs";
+import { assertRestoreRun, assertReplayAudits } from "./restore-evidence.mjs";
+import { flushTraceProducers, physicalIdentity } from "./network-support.mjs";
+import {
+  stopLossRuntime,
+  inspectLossDenial,
+  readLossEvent,
+} from "./loss-current.mjs";
 import { connectOwner } from "./acp.mjs";
-import { composeArgs, lines } from "./docker.mjs";
+import { lines } from "./docker.mjs";
 import { assertControllerStopped } from "./drain-evidence.mjs";
 import { assertEventPage } from "./evidence.mjs";
 import {
@@ -19,15 +32,11 @@ import {
   journalReader,
   serviceContainer,
   until,
-} from "./interruption-support.mjs";
-import { inspectRunTrace } from "./run-trace.mjs";
-import { verifyLifecycleTrace } from "./trace.mjs";
+} from "./recovery-support.mjs";
 
 async function stopController(config, docker) {
   const ids = lines(
-    await docker(
-      composeArgs(config.project, ["ps", "-q", "runtime-controller"]),
-    ),
+    await docker(config.compose(["ps", "-q", "runtime-controller"])),
   );
   assert.equal(ids.length, 1);
   const before = JSON.parse(await docker(["inspect", ids[0]]))[0];
@@ -40,7 +49,7 @@ async function stopController(config, docker) {
     "runtime-controller",
   );
   await docker(
-    composeArgs(config.project, ["stop", "-t", "20", "runtime-controller"]),
+    config.compose(["stop", "-t", "20", "runtime-controller"]),
     true,
   );
   const stopped = JSON.parse(await docker(["inspect", ids[0]]))[0];
@@ -50,9 +59,7 @@ async function stopController(config, docker) {
 
 async function startController(config, docker, before) {
   await docker(
-    composeArgs(config.project, [
-      "-f",
-      "scripts/lifecycle-closeout/loss.compose.yaml",
+    config.compose([
       "up",
       "-d",
       "--no-build",
@@ -133,13 +140,35 @@ export async function runLoss(input) {
     );
     return state.requests;
   };
+  const requests = [];
+  input.traceSecrets.push(
+    "lifecycle-owner-password",
+    ...owner.cookies.values(),
+  );
+  const remember = (client, method, details) => {
+    const actual = client.requests.filter((r) => r.method === method).at(-1);
+    assert(actual, "actual loss SDK request missing");
+    requests.push({
+      ...actual,
+      agentId: client.agentId,
+      agentID: client.agentId,
+      requestID: actual.requestId,
+      connectionTraceID: client.connectionTraceID,
+      transport: "websocket",
+      kind: "request",
+      ...details,
+    });
+  };
   const cases = [];
   const postgres = await serviceContainer(
     input.docker,
     config.project,
     "postgres",
   );
-  const reader = journalReader(input.docker, postgres.Id);
+  const reader = {
+    ...journalReader(input.docker, postgres.Id),
+    lossEvent: (eventID) => readLossEvent(input.docker, postgres.Id, eventID),
+  };
   const model = await serviceContainer(
     input.docker,
     config.project,
@@ -160,12 +189,59 @@ export async function runLoss(input) {
   for (const mode of ["live", "cold"])
     cases.push(
       await lossCase(
-        { ...input, owner, modelState, reader, runtimeRead },
+        { ...input, owner, modelState, reader, runtimeRead, remember },
         mode,
       ),
     );
   assert.equal((await modelState()).length, 8);
-  return { profile: "runtime-loss", project: config.project, cases };
+  const calls = await modelState();
+  await flushTraceProducers(config, input.docker);
+  const requestTraces = await collectLifecycleEvidence(
+    requests,
+    (expected) =>
+      collectManagedTrace(
+        config.jaeger,
+        expected,
+        input.traceSecrets,
+        expected.kind === "ordinary"
+          ? calls.filter((c) => c.phase === expected.phase)
+          : [],
+        (trace) => {
+          expected.traceID = trace.traceID;
+          saveFoundationTrace(config, trace);
+        },
+        (trace, expected, secrets, modelCalls) => {
+          if (expected.rejection)
+            return inspectLossDenial(trace, expected, secrets);
+          const result = inspectCommandTrace(
+            trace,
+            expected,
+            secrets,
+            modelCalls,
+          );
+          if (expected.runId) assert.equal(result.run_id, expected.runId);
+          return strictSessionEvidence(result, trace);
+        },
+        signal,
+      ),
+    (expected, error) =>
+      saveFoundationFailure(
+        config,
+        { traceID: expected.traceID ?? expected.connectionTraceID },
+        error,
+      ),
+    signal,
+  );
+  return {
+    profile: "runtime-loss",
+    project: config.project,
+    cases,
+    request_traces: requestTraces,
+    completed_runs: 4,
+    denied_prompts: 2,
+    model_requests: calls.length,
+    deleted_before_teardown: true,
+  };
 }
 
 async function lossCase(
@@ -183,6 +259,7 @@ async function lossCase(
     modelState,
     reader,
     runtimeRead,
+    remember,
   },
   mode,
 ) {
@@ -193,15 +270,41 @@ async function lossCase(
   });
   const agentID = created.agentID;
   const initial = await ready(agentID);
+  const auditPath = `/api/admin/execution-audits?agent_id=${agentID}`;
+  const completedRun = async (agent, prior) => {
+    const page = await json(auditPath);
+    assert.equal(page.next_cursor, null);
+    assert.equal(page.items.length, prior ? 2 : 1);
+    const latest = page.items.filter((r) => r.run_id !== prior?.run_id);
+    assert.equal(latest.length, 1);
+    return assertRestoreRun(
+      [await json(`/api/admin/execution-audits/${latest[0].run_id}`)],
+      agent,
+      latest[0].session_id,
+    );
+  };
   let client = connectOwner(config.gateway, agentID, owner.cookie, signal);
   try {
     await client.initialize();
     const sessionId = (
       await client.request("new", { cwd: "/workspace", mcpServers: [] })
     ).sessionId;
+    remember(client, "session/new", { sessionId });
     await prompt(client, sessionId, `c5-${mode}-before`);
+    const beforeRun = await completedRun(initial.agent);
+    assert.equal(beforeRun.session_id, sessionId);
+    remember(client, "session/prompt", {
+      sessionId,
+      kind: "ordinary",
+      phase: `c5-${mode}-before`,
+      toolName: "bash",
+      runId: beforeRun.run_id,
+    });
+    const baselineAudits = await json(auditPath);
     const baselineRequests = await modelState();
     const savedHistory = await history(client, sessionId);
+    remember(client, "session/load", { sessionId });
+    assertReplayAudits(baselineAudits, await json(auditPath));
     assert(
       savedHistory.some((event) => event.update.sessionUpdate === "tool_call"),
     );
@@ -211,32 +314,11 @@ async function lossCase(
       "load replay invoked model",
     );
     client.close();
-    const baselineAdmissions = await readAdmissionEvidence(
-      config,
-      docker,
-      agentID,
-    );
-    await verifyTraces(
-      config.jaeger,
-      baselineRequests.filter((item) => item.phase === `c5-${mode}-before`),
-      [
-        "stage3-model-secret",
-        "lifecycle-owner-password",
-        ...owner.cookies.values(),
-      ],
-      (trace, calls, secrets) =>
-        inspectRunTrace(
-          trace,
-          calls,
-          secrets,
-          agentID,
-          baselineAdmissions,
-          "bash",
-        ),
-    );
     client = connectOwner(config.gateway, agentID, owner.cookie, signal);
     await client.initialize();
     assert.deepEqual(await history(client, sessionId), savedHistory);
+    remember(client, "session/load", { sessionId });
+    assertReplayAudits(baselineAudits, await json(auditPath));
     assert.equal((await reader.runtimeCursor()).initialized, true);
     const stopped =
       mode === "cold" ? await stopController(config, docker) : undefined;
@@ -244,7 +326,16 @@ async function lossCase(
       await docker(["inspect", initial.container.Id]),
     )[0];
     assertOwnedRuntime(target, initial, config.project);
-    await docker(["rm", "-f", target.Id]);
+    await stopLossRuntime(docker, target, initial, config.project);
+    if (mode === "live")
+      await until(
+        () => json(`/api/admin/agents/${agentID}`),
+        (a) =>
+          a.failure_code === "runtime_exited" &&
+          !a.executable_execution_revision,
+        signal,
+      );
+    await docker(["rm", target.Id]);
     assert.deepEqual(await resources(agentID), {
       containers: [],
       volumes: [initial.volume],
@@ -275,14 +366,47 @@ async function lossCase(
       page.events,
       await reader.lossEvent(publicLoss.event_id),
     );
+    const producerPage = await until(
+      () =>
+        runtimeRead(
+          "/internal/runtime-observations?after_sequence=0&limit=500",
+        ),
+      (p) =>
+        p.observations.some(
+          (o) =>
+            o.agent_id === agentID &&
+            o.runtime_revision === initial.agent.runtime.runtime_revision &&
+            o.kind ===
+              (mode === "live" ? "runtime_deleted" : "runtime_missing"),
+        ),
+      signal,
+    );
+    assert(producerPage.observations.length < 500);
+    const producer = producerPage.observations.find(
+      (o) =>
+        o.agent_id === agentID &&
+        o.runtime_revision === initial.agent.runtime.runtime_revision &&
+        o.kind === (mode === "live" ? "runtime_deleted" : "runtime_missing"),
+    );
     assertLossProducer(
       mode,
       initial,
       loss,
-      await reader.lossObservation(loss.data.observation_sequence),
+      await reader.lossObservation(producer.sequence),
       await runtimeRead(`/internal/runtimes/${agentID}`),
     );
     assertLossBinding(initial, await reader.lossBinding(agentID));
+    await until(
+      async () =>
+        (await owner.request(`/api/app/agents/${agentID}/state`)).body,
+      (state) =>
+        state.agent_id === agentID &&
+        state.access_allowed &&
+        state.availability === "offline" &&
+        state.unavailable_reason === "agent_unavailable",
+      signal,
+    );
+    const notifications = client.updates.length;
     await assert.rejects(
       client.request("prompt", {
         sessionId,
@@ -293,6 +417,12 @@ async function lossCase(
         return true;
       },
     );
+    remember(client, "session/prompt", {
+      sessionId,
+      rejection: "agent_unavailable",
+    });
+    assert.equal(client.updates.length, notifications);
+    assertReplayAudits(baselineAudits, await json(auditPath));
     assert.deepEqual(
       await modelState(),
       baselineRequests,
@@ -303,21 +433,46 @@ async function lossCase(
     console.error(
       `Runtime loss (${mode}): explicit Rebuild and same-session read`,
     );
-    const rebuilt = await command("rebuild", agentID, {
-      template_id: agentBody.template_id,
-      template_revision: agentBody.template_revision,
-    });
+    const rebuilt = await command(
+      "rebuild",
+      agentID,
+      {
+        template_id: agentBody.template_id,
+        template_revision: agentBody.template_revision,
+      },
+      {
+        missingSourceGeneration: Number(
+          initial.container.Config.Labels["io.antnest.runtime-generation"],
+        ),
+      },
+    );
     const replacement = await ready(agentID);
     assertReplacement(initial, replacement);
     client = connectOwner(config.gateway, agentID, owner.cookie, signal);
     await client.initialize();
     assert.deepEqual(await history(client, sessionId), savedHistory);
+    remember(client, "session/load", { sessionId });
+    assertReplayAudits(baselineAudits, await json(auditPath));
     assert.deepEqual(
       await modelState(),
       baselineRequests,
       "recovery history replay invoked model",
     );
     await prompt(client, sessionId, `c5-${mode}-after`);
+    const afterRun = await completedRun(replacement.agent, beforeRun);
+    assert.equal(afterRun.session_id, sessionId);
+    remember(client, "session/prompt", {
+      sessionId,
+      kind: "ordinary",
+      phase: `c5-${mode}-after`,
+      toolName: "read",
+      runId: afterRun.run_id,
+    });
+    assert.deepEqual(
+      await json(`/api/admin/execution-audits/${beforeRun.run_id}`),
+      beforeRun,
+    );
+    const completedAudits = await json(auditPath);
     client.close();
     const beforeRestart = await json(eventsPath);
     await startController(config, docker, await stopController(config, docker));
@@ -333,7 +488,8 @@ async function lossCase(
       signal,
     );
     const stable = await ready(agentID);
-    assert.deepEqual(stable.agent, replacement.agent);
+    assert.deepEqual(physicalIdentity(stable), physicalIdentity(replacement));
+    assertReplayAudits(completedAudits, await json(auditPath));
     assert.equal(stable.container.Id, replacement.container.Id);
     assert.deepEqual(
       await json(eventsPath),
@@ -361,37 +517,8 @@ async function lossCase(
         [`c5-${mode}-after`, "reply"],
       ],
     );
-    const admissions = await readAdmissionEvidence(config, docker, agentID);
     const deleted = await command("delete", agentID, {});
     assert.deepEqual(await resources(agentID), { containers: [], volumes: [] });
-    const runTraces = await verifyTraces(
-      config.jaeger,
-      requests,
-      [
-        "stage3-model-secret",
-        "lifecycle-owner-password",
-        ...owner.cookies.values(),
-      ],
-      (trace, calls, secrets) =>
-        inspectRunTrace(
-          trace,
-          calls,
-          secrets,
-          agentID,
-          admissions,
-          calls[0].phase.endsWith("before") ? "bash" : "read",
-        ),
-    );
-    const lifecycleTraces = [];
-    for (const operation of [created, rebuilt, deleted])
-      lifecycleTraces.push(
-        await verifyLifecycleTrace(
-          config.jaeger,
-          operation,
-          traceSecrets,
-          signal,
-        ),
-      );
     return {
       mode,
       agent_id: agentID,
@@ -402,8 +529,11 @@ async function lossCase(
       same_session: true,
       exact_workspace_bytes: true,
       controller_restart_stable: true,
-      run_traces: runTraces,
-      lifecycle_traces: lifecycleTraces,
+      producer_kind: producer.kind,
+      producer_sequence: producer.sequence,
+      current_inspect_loss_audit: true,
+      normal_runtime_exit: 0,
+      execution_audits_preserved: true,
     };
   } finally {
     client.close();

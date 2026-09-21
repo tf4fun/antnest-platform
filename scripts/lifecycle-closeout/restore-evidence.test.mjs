@@ -11,7 +11,80 @@ import {
   databases,
   keyDigests,
   assertInjectedKeys,
+  assertRestoreRun,
+  assertReplayAudits,
 } from "./restore-evidence.mjs";
+
+test("offline recovery includes both Temporal databases and its stopped writer", () => {
+  assert.deepEqual(databases, [
+    "antnest_identity",
+    "antnest_agent_controller",
+    "antnest_agent_acp",
+    "antnest_runtime_controller",
+    "antnest_egress",
+    "antnest_temporal",
+    "antnest_temporal_visibility",
+  ]);
+  assert(writerServices.includes("temporal"));
+  assert.throws(() =>
+    assertQuiesced(
+      stopped().filter((c) => c.Id !== "temporal"),
+      project,
+    ),
+  );
+});
+
+test("restore Run must belong to the expected Session and actual execution revision", () => {
+  const agent = {
+    agent_id: "agent",
+    executable_execution_revision: "revision",
+  };
+  const run = {
+    run_id: "run",
+    agent_id: "agent",
+    session_id: "session",
+    state: "completed",
+    terminal_class: "completed",
+    executor_state: "quiescent",
+    tool_effect_state: "settled",
+    execution_snapshot: { executionRevision: "revision" },
+  };
+  assertRestoreRun([run], agent, "session");
+  for (const change of [
+    { session_id: "foreign" },
+    { agent_id: "foreign" },
+    { state: "running" },
+    { tool_effect_state: "unknown" },
+    { execution_snapshot: { executionRevision: "old" } },
+  ])
+    assert.throws(() =>
+      assertRestoreRun([{ ...run, ...change }], agent, "session"),
+    );
+  assert.throws(() => assertRestoreRun([], agent, "session"));
+  assert.throws(() => assertRestoreRun([run, run], agent, "session"));
+});
+
+test("history replay preserves the complete public audit page and creates no execution", () => {
+  const before = {
+    items: [{ run_id: "run", state: "completed" }],
+    next_cursor: null,
+  };
+  assertReplayAudits(before, structuredClone(before));
+  assert.throws(() =>
+    assertReplayAudits(before, {
+      ...before,
+      items: [...before.items, { run_id: "new" }],
+    }),
+  );
+  assert.throws(() =>
+    assertReplayAudits(before, {
+      ...before,
+      items: [{ run_id: "run", state: "failed" }],
+    }),
+  );
+  const truncated = { ...before, next_cursor: "more" };
+  assert.throws(() => assertReplayAudits(truncated, truncated));
+});
 
 const completeManifest = () => ({
   postgres: { name: "postgres-fixture" },

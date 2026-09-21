@@ -21,6 +21,7 @@ fmt:
 	services/agent-acp-service/node_modules/.bin/prettier --write scripts/lifecycle-closeout/*.mjs
 	services/agent-acp-service/node_modules/.bin/prettier --write scripts/workspace-closeout/*.mjs
 	services/agent-acp-service/node_modules/.bin/prettier --write scripts/deployment.test.mjs
+	services/agent-acp-service/node_modules/.bin/prettier --write scripts/temporal/*.mjs
 	services/agent-acp-service/node_modules/.bin/prettier --write scripts/observability/*.mjs
 	services/agent-acp-service/node_modules/.bin/prettier --write scripts/verification/*.mjs
 	services/agent-acp-service/node_modules/.bin/prettier --write services/admin-console/tests/*.mjs
@@ -37,6 +38,7 @@ fmt-check:
 	services/agent-acp-service/node_modules/.bin/prettier --check scripts/lifecycle-closeout/*.mjs
 	services/agent-acp-service/node_modules/.bin/prettier --check scripts/workspace-closeout/*.mjs
 	services/agent-acp-service/node_modules/.bin/prettier --check scripts/deployment.test.mjs
+	services/agent-acp-service/node_modules/.bin/prettier --check scripts/temporal/*.mjs
 	services/agent-acp-service/node_modules/.bin/prettier --check scripts/observability/*.mjs
 	services/agent-acp-service/node_modules/.bin/prettier --check scripts/verification/*.mjs
 	services/agent-acp-service/node_modules/.bin/prettier --check services/admin-console/tests/*.mjs
@@ -81,6 +83,7 @@ test-rust:
 test-node:
 	node --test scripts/verification/*.test.mjs
 	node --test scripts/deployment.test.mjs
+	node --test --test-concurrency=1 scripts/temporal/*.test.mjs
 	node --test scripts/observability/*.test.mjs
 	node --test --test-concurrency=1 services/agent-acp-service/scripts/stage2-*.test.mjs
 	npm --prefix services/agent-acp-service test
@@ -121,12 +124,24 @@ e2e-lifecycle:
 e2e-lifecycle-shutdown:
 	node scripts/lifecycle-closeout/run.mjs shutdown
 
+.PHONY: e2e-lifecycle-health
+e2e-lifecycle-health:
+	node scripts/lifecycle-closeout/run.mjs health
+
+.PHONY: e2e-lifecycle-restore
+e2e-lifecycle-restore:
+	node scripts/lifecycle-closeout/run.mjs restore
+
 .PHONY: test-workspace-fixtures e2e-workspace
 test-workspace-fixtures:
 	node --test --test-concurrency=1 scripts/workspace-closeout/*.test.mjs
 
 e2e-workspace:
 	node scripts/workspace-closeout/run.mjs
+
+.PHONY: e2e-workspace-browser
+e2e-workspace-browser:
+	node scripts/workspace-closeout/browser-run.mjs
 
 .PHONY: e2e-lifecycle-interrupted
 e2e-lifecycle-interrupted:
@@ -224,6 +239,7 @@ docker-build-runtime-controller:
 	docker compose build runtime-controller
 
 docker-build: docker-build-runtime-controller
+	docker compose --profile stage2 build temporal
 	docker compose build agent-acp-service
 	docker compose --profile stage2 build identity-service
 	docker compose --profile stage2 build agent-controller
@@ -232,6 +248,7 @@ docker-build-agent-ui:
 	docker build -f services/agent-ui/Dockerfile -t antnest/agent-ui:local .
 
 docker-build-stage3: docker-build-runtime-controller
+	docker compose --profile stage3 build temporal
 	docker compose --profile stage3 build agent-acp-service
 	docker compose --profile stage3 build identity-service
 	docker compose --profile stage3 build agent-controller
@@ -303,3 +320,8 @@ test-acp-restart-fixtures:
 
 e2e-acp-restart:
 	ANTNEST_E2E_ACP_RESTART=true sh scripts/e2e-stage3a.sh
+
+# Explicit abnormal-exit diagnostic; excluded from stable lifecycle targets.
+.PHONY: e2e-lifecycle-crash
+e2e-lifecycle-crash:
+	node scripts/lifecycle-closeout/crash-run.mjs

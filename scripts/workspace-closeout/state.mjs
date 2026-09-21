@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
-import { randomBytes } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { assertState } from "./evidence.mjs";
 
@@ -22,23 +21,31 @@ export async function until(read, label, signal, timeout = 15000) {
 
 export function observeState(client, agentID, signal) {
   const states = [];
-  const traceID = randomBytes(16).toString("hex");
+  let traceID;
   let ended = false,
     failure;
   const source = new EventSource(
     `${client.base}/api/app/agents/${agentID}/state/watch`,
     {
-      fetch: (url, init) =>
-        fetch(url, {
+      fetch: async (url, init) => {
+        const response = await fetch(url, {
           ...init,
           signal: signal ? AbortSignal.any([signal, init.signal]) : init.signal,
           headers: {
             ...init.headers,
             Cookie: client.cookie,
             Origin: client.base,
-            traceparent: `00-${traceID}-${randomBytes(8).toString("hex")}-01`,
           },
-        }),
+        });
+        const actual = response.headers.get("x-antnest-trace-id");
+        if (!response.ok || !/^[a-f0-9]{32}$/.test(actual ?? "")) {
+          failure = new Error("invalid Workspace watch response identity");
+          await response.body?.cancel();
+          throw failure;
+        }
+        traceID = actual;
+        return response;
+      },
     },
   );
   const close = () => {
@@ -64,7 +71,9 @@ export function observeState(client, agentID, signal) {
   if (signal?.aborted) close();
   return {
     states,
-    traceID,
+    get traceID() {
+      return traceID;
+    },
     close,
     assertOpen: () => {
       if (failure) throw failure;

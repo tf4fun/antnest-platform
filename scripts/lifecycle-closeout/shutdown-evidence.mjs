@@ -1,4 +1,9 @@
 import assert from "node:assert/strict";
+import {
+  traceTopology,
+  assertCaptureDisabled,
+} from "../observability/trace-tree.mjs";
+import { hasError } from "../acp-plan/requests.mjs";
 import { assertSecretFree } from "../identity-closeout/evidence.mjs";
 
 function sameContainers(project, before, after) {
@@ -43,7 +48,9 @@ export function assertStopped(project, before, after) {
 export function assertRestarted(project, before, after) {
   return sameContainers(project, before, after).map(([prior, next]) => {
     assert(
-      next.running && Date.parse(next.started) > Date.parse(prior.started),
+      next.running &&
+        next.health === "healthy" &&
+        Date.parse(next.started) > Date.parse(prior.started),
       "service did not restart",
     );
     return { service: next.name, same_container: true };
@@ -59,7 +66,9 @@ export function inspectShutdownTrace(trace, expected, secrets) {
     trace.spans.every((s) => s.traceID === trace.traceID),
     "foreign shutdown span",
   );
-  const spans = new Map(trace.spans.map((s) => [s.spanID, s]));
+  const tree = traceTopology(trace);
+  assertCaptureDisabled(trace);
+  const spans = tree.spans;
   assert.equal(spans.size, trace.spans.length, "duplicate shutdown span");
   const service = (s) => trace.processes[s.processID]?.serviceName;
   const tag = (s, key) => s.tags?.find((t) => t.key === key)?.value;
@@ -85,7 +94,7 @@ export function inspectShutdownTrace(trace, expected, secrets) {
     "Gateway watch did not finish in the observed stop window",
   );
   const cancelled =
-    tag(root, "error") === true &&
+    hasError(root) &&
     tag(root, "otel.status_description") === "handler_aborted" &&
     tag(root, "antnest.http.request_cancelled") === true;
   function chain(span) {
@@ -108,9 +117,28 @@ export function inspectShutdownTrace(trace, expected, secrets) {
   }
   const identities = servers("identity-service");
   assert(identities.length > 0, "Identity access check missing");
-  const controllers = servers("agent-controller").filter(
-    (s) => tag(s, "http.route") === expected.controllerRoute,
+  if (expected.executionState)
+    assert(
+      !trace.spans.some(
+        (s) =>
+          service(s) === "agent-controller" || service(s) === "admin-console",
+      ),
+      "execution watch calls management service",
+    );
+  const controllers = servers(
+    expected.executionState ? "agent-acp-service" : "agent-controller",
+  ).filter(
+    (s) =>
+      tag(s, "http.route") ===
+      (expected.executionState
+        ? "/rpc/agent-acp/watch-agent-execution-state"
+        : expected.controllerRoute),
   );
+  if (expected.executionState)
+    for (const span of controllers) {
+      assert.equal(tag(span, "http.request.method"), "POST");
+      assert.equal(tag(span, "rpc.method"), "watch_agent_execution_state");
+    }
   assert.equal(controllers.length, 1, "exact Controller watch server required");
   const selected = new Set([root, ...identities]);
   for (const span of controllers) {
@@ -125,44 +153,108 @@ export function inspectShutdownTrace(trace, expected, secrets) {
     }
     selected.add(span);
   }
+  const inWindow = (span) => {
+    const ended = (span.startTime + span.duration) / 1000;
+    return span.duration > 0 && ended >= window.start && ended <= window.end;
+  };
+  const cancellation = (span) => {
+    if (!inWindow(span) || tag(span, "http.response.status_code") !== 200)
+      return false;
+    let classification;
+    if (span === root && cancelled) classification = "handler_aborted";
+    const parent = tree.parent(span);
+    if (
+      service(span) === "edge-gateway" &&
+      tag(span, "span.kind") === "client" &&
+      parent === root &&
+      tag(span, "error.type") === "cancelled" &&
+      span.operationName ===
+        (expected.executionState
+          ? "HTTP POST agent-acp-service"
+          : "HTTP GET admin-console") &&
+      tag(span, "http.request.method") ===
+        (expected.executionState ? "POST" : "GET")
+    )
+      classification = "cancelled";
+    if (
+      expected.executionState &&
+      controllers.includes(span) &&
+      tag(span, "error.type") === "stream_interrupted"
+    )
+      classification = "stream_interrupted";
+    if (expected.console) {
+      const consoleServer = (candidate) =>
+        service(candidate) === "admin-console" &&
+        tag(candidate, "span.kind") === "server" &&
+        tag(candidate, "http.route") ===
+          "/api/admin/agents/{agent_id}/events/watch" &&
+        tag(candidate, "http.request.method") === "GET" &&
+        selected.has(candidate);
+      if (consoleServer(span) && tag(span, "error.type") === "cancelled")
+        classification = "cancelled";
+      if (
+        service(span) === "admin-console" &&
+        tag(span, "span.kind") === "client" &&
+        consoleServer(parent) &&
+        span.operationName === "HTTP GET agent-controller" &&
+        tag(span, "http.request.method") === "GET" &&
+        tag(span, "error.type") === "cancelled" &&
+        controllers.some((controller) => tree.parent(controller) === span)
+      )
+        classification = "cancelled";
+      if (
+        controllers.includes(span) &&
+        tag(span, "http.request.method") === "GET" &&
+        tag(span, "error.type") === "canceled" &&
+        tag(span, "otel.status_description") === "request_failed"
+      )
+        classification = "canceled";
+    }
+    if (!classification) return false;
+    for (const event of span.logs ?? []) {
+      if (
+        !event.fields?.some(
+          (f) => f.key === "event" && f.value === "antnest.error",
+        )
+      )
+        continue;
+      for (const field of event.fields)
+        if (
+          ["error.type", "antnest.error.code"].includes(field.key) &&
+          field.value !== classification
+        )
+          return false;
+    }
+    return true;
+  };
   for (const span of selected) {
     chain(span);
     assert(
-      span.duration > 0 &&
-        (tag(span, "error") !== true || (span === root && cancelled)) &&
-        tag(span, "http.response.status_code") === 200,
-      `shutdown request did not finish successfully: ${service(span)}; ` +
-        `status=${Number(tag(span, "http.response.status_code"))}; ` +
-        `error=${tag(span, "error") === true}; ` +
-        `handler_aborted=${tag(span, "otel.status_description") === "handler_aborted"}; ` +
-        `finished=${span.duration > 0}`,
+      span.duration > 0 && tag(span, "http.response.status_code") === 200,
+      "shutdown request did not finish with HTTP 200",
     );
   }
   for (const span of trace.spans) {
-    const ended = (span.startTime + span.duration) / 1000;
-    const cancelledClient =
-      cancelled &&
-      service(span) === "edge-gateway" &&
-      tag(span, "span.kind") === "client" &&
-      tag(span, "error.type") === "cancelled" &&
-      tag(span, "http.response.status_code") === 200 &&
-      span.duration > 0 &&
-      ended >= window.start &&
-      ended <= window.end &&
-      span.references?.some(
-        (ref) =>
-          ref.refType === "CHILD_OF" &&
-          ref.traceID === trace.traceID &&
-          ref.spanID === root.spanID,
-      );
     assert(
-      tag(span, "error") !== true ||
-        (span === root && cancelled) ||
-        cancelledClient,
+      tree.chain(span).includes(root),
+      "shutdown span detached from Gateway watch",
+    );
+    assert(
+      !hasError(span) || cancellation(span),
       "unexpected error in shutdown trace dependency",
     );
   }
+  const warnings = [
+    ...(trace.warnings ?? []),
+    ...trace.spans.flatMap((s) => s.warnings ?? []),
+  ];
+  const errors = trace.spans.filter(hasError).length;
   return {
+    warning_count: warnings.length,
+    warnings: [...new Set(warnings)],
+    error_spans: errors,
+    cancellation_error_spans: errors,
+    strict_trace: warnings.length || errors ? "failed" : "passed",
     trace_id: trace.traceID,
     spans: trace.spans.length,
     finished_servers: selected.size,
@@ -170,4 +262,27 @@ export function inspectShutdownTrace(trace, expected, secrets) {
     gateway_outcome: cancelled ? "cancelled_stream" : "completed",
     stop_window_verified: true,
   };
+}
+
+export function assertReadyExecutionState(state, agentID) {
+  assert.deepEqual(Object.keys(state).sort(), [
+    "access_allowed",
+    "active_session_id",
+    "agent_id",
+    "availability",
+    "configuration_revision",
+    "unavailable_reason",
+  ]);
+  assert.equal(state.agent_id, agentID);
+  assert.equal(state.availability, "ready");
+  assert.equal(state.access_allowed, true);
+  assert.match(state.configuration_revision, /^[a-f0-9]{64}$/);
+  assert.equal(state.active_session_id, null);
+  assert.equal(state.unavailable_reason, null);
+}
+export function assertIdleMaintenance(audits, model) {
+  assert.deepEqual(audits.items, [], "idle maintenance created a Run");
+  assert.equal(audits.next_cursor, null, "audit baseline is truncated");
+  assert.deepEqual(model.requests, [], "idle maintenance reached model");
+  assert.deepEqual(model.errors, [], "model fixture rejected execution");
 }

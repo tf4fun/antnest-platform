@@ -1,73 +1,52 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { composeArgs, lines } from "./docker.mjs";
+import { lines } from "./docker.mjs";
 import { applicationServices } from "./deployment.mjs";
 import { GatewayClient } from "../identity-closeout/support.mjs";
-import { assertSecretFree } from "../identity-closeout/evidence.mjs";
 import { assertEmptySession } from "../identity-closeout/acp-session-evidence.mjs";
-import { assertState } from "../workspace-closeout/evidence.mjs";
 import { until } from "../workspace-closeout/state.mjs";
 import { connectOwner } from "./acp.mjs";
 import {
   assertStopped,
   assertRestarted,
   inspectShutdownTrace,
+  assertReadyExecutionState,
+  assertIdleMaintenance,
 } from "./shutdown-evidence.mjs";
+import { collectTrace } from "../managed-mcp/trace.mjs";
+import { collectManagedTrace } from "../managed-mcp/request-trace.mjs";
+import { inspectCommandTrace } from "../acp-commands/trace.mjs";
+import { strictSessionEvidence } from "../identity-closeout/session-trace.mjs";
+import { collectLifecycleEvidence } from "./foundation-evidence.mjs";
+import {
+  saveFoundationTrace,
+  saveFoundationFailure,
+} from "./foundation-trace.mjs";
+import { physicalIdentity } from "./network-support.mjs";
 import { openShutdownWatchSet } from "./shutdown-streams.mjs";
 
 async function inventory(config, docker) {
   const ids = lines(
     await docker(
-      composeArgs(config.project, [
+      config.compose([
         "ps",
         "-aq",
         ...applicationServices,
         "postgres",
+        "temporal",
       ]),
     ),
   );
   assert.equal(
     ids.length,
-    applicationServices.length + 1,
+    applicationServices.length + 2,
     "missing platform container",
   );
   const format =
-    '{"id":{{json .Id}},"name":{{json (index .Config.Labels "com.docker.compose.service")}},"project":{{json (index .Config.Labels "com.docker.compose.project")}},"image":{{json .Image}},"running":{{.State.Running}},"exit":{{.State.ExitCode}},"oom":{{.State.OOMKilled}},"error":{{json .State.Error}},"started":{{json .State.StartedAt}},"finished":{{json .State.FinishedAt}}}';
+    '{"id":{{json .Id}},"name":{{json (index .Config.Labels "com.docker.compose.service")}},"project":{{json (index .Config.Labels "com.docker.compose.project")}},"image":{{json .Image}},"health":{{with .State.Health}}{{json .Status}}{{else}}"none"{{end}},"running":{{.State.Running}},"exit":{{.State.ExitCode}},"oom":{{.State.OOMKilled}},"error":{{json .State.Error}},"started":{{json .State.StartedAt}},"finished":{{json .State.FinishedAt}}}';
   return (await docker(["inspect", "--format", format, ...ids]))
     .split("\n")
     .map(JSON.parse);
-}
-async function collectTrace(config, expected, secrets, signal) {
-  let result;
-  await until(
-    async () => {
-      const response = await fetch(
-        `${config.jaeger}/api/traces/${expected.traceID}`,
-        { signal: AbortSignal.any([signal, AbortSignal.timeout(5000)]) },
-      );
-      assert.equal(response.status, 200);
-      const body = await response.text();
-      assertSecretFree(body, secrets);
-      let trace;
-      try {
-        trace = JSON.parse(body).data?.[0];
-      } catch {
-        throw new Error("invalid Jaeger shutdown response");
-      }
-      if (!trace) return false;
-      // Wait only for export visibility; complete evidence must satisfy the oracle.
-      const serverCount = trace.spans.filter((s) =>
-        s.tags?.some((t) => t.key === "span.kind" && t.value === "server"),
-      ).length;
-      if (serverCount < (expected.console ? 4 : 3)) return false;
-      result = inspectShutdownTrace(trace, expected, secrets);
-      return true;
-    },
-    "shutdown trace export",
-    signal,
-    45000,
-  );
-  return result;
 }
 export async function runShutdown({
   config,
@@ -77,11 +56,38 @@ export async function runShutdown({
   agentBody,
   command,
   ready,
+  resources,
   traceSecrets,
 }) {
   const created = await command("create", undefined, agentBody);
   const agentID = created.agentID,
     initial = await ready(agentID);
+  const auditPath = `/api/admin/execution-audits?agent_id=${agentID}`;
+  const assertIdle = async () => {
+    const response = await fetch(`${config.model}/status`, {
+      signal: AbortSignal.any([signal, AbortSignal.timeout(5000)]),
+    });
+    assert.equal(response.status, 200);
+    assertIdleMaintenance(await json(auditPath), await response.json());
+  };
+  const historyPath = `/api/admin/agents/${agentID}/events?limit=100`;
+  const history = await json(historyPath);
+  assert(history.events.length < 100, "Agent history is truncated");
+  const requests = [];
+  const remember = (client, method, sessionId) => {
+    const request = client.requests.filter((r) => r.method === method).at(-1);
+    assert(request, "actual ACP request missing");
+    requests.push({
+      ...request,
+      sessionId,
+      agentId: agentID,
+      agentID,
+      requestID: request.requestId,
+      transport: "websocket",
+      kind: "request",
+      connectionTraceID: client.connectionTraceID,
+    });
+  };
   const sentinel = randomUUID(),
     sentinelPath = "/workspace/.c5-stop-sentinel";
   await docker([
@@ -125,8 +131,7 @@ export async function runShutdown({
         statePath,
         "workspace_state",
         (s) => {
-          assertState(s, agentID);
-          assert.equal(s.availability, "ready");
+          assertReadyExecutionState(s, agentID);
         },
         signal,
       ],
@@ -146,6 +151,8 @@ export async function runShutdown({
       mcpServers: [],
     });
     assertEmptySession(acp.updates, sessionId, 1, "new");
+    remember(acp, "session/new", sessionId);
+    await assertIdle();
     const before = await inventory(config, docker);
     eventWatch.assertOpen();
     stateWatch.assertOpen();
@@ -153,7 +160,7 @@ export async function runShutdown({
     // Host/VM wall clocks get one second of tolerance, not an unbounded window.
     const stopWindow = { start: Date.now() - 1000 };
     await docker(
-      composeArgs(config.project, ["stop", "-t", "45", ...applicationServices]),
+      config.compose(["stop", "-t", "45", ...applicationServices]),
       true,
     );
     stopWindow.end = Date.now() + 1000;
@@ -165,49 +172,60 @@ export async function runShutdown({
       signal,
     );
     assert.equal(acp.closeCode, 1001, "ACP did not close for normal shutdown");
-    await docker(
-      composeArgs(config.project, ["stop", "-t", "30", "postgres"]),
-      true,
-    );
+    await docker(config.compose(["stop", "-t", "30", "temporal"]), true);
+    await docker(config.compose(["stop", "-t", "30", "postgres"]), true);
     const stopped = assertStopped(
       config.project,
       before,
       await inventory(config, docker),
     );
-    const traces = [];
-    for (const expected of [
+    const expectations = [
       {
         traceID: eventWatch.traceID,
         route: "/api/admin/{path...}",
         console: true,
         controllerRoute: "/internal/agents/{agent_id}/events/watch",
+        kind: "event_watch",
+        agentID,
+        stopWindow,
       },
       {
         traceID: stateWatch.traceID,
         route: "/api/app/agents/{agent_id}/state/watch",
         console: false,
-        controllerRoute: "/internal/workspace/agents/{agent_id}/state/watch",
+        executionState: true,
+        kind: "state_watch",
+        agentID,
+        stopWindow,
       },
-    ])
-      traces.push(
-        await collectTrace(
-          config,
-          { ...expected, stopWindow },
-          traceSecrets,
+    ];
+    const traces = await collectLifecycleEvidence(
+      expectations,
+      (expected) =>
+        collectTrace(
+          config.jaeger,
+          expected.traceID,
+          (trace) => {
+            saveFoundationTrace(config, trace);
+            return inspectShutdownTrace(trace, expected, traceSecrets);
+          },
           signal,
         ),
-      );
-    await docker(
-      composeArgs(config.project, [
-        "up",
-        "-d",
-        "--wait",
-        "--wait-timeout",
-        "180",
-        "--no-build",
-      ]),
-      true,
+      (expected, error) => saveFoundationFailure(config, expected, error),
+      signal,
     );
+    // Start existing containers only: no one-shot migration jobs or replacements.
+    for (const services of [["postgres"], ["temporal"], applicationServices])
+      await docker(
+        config.compose([
+          "start",
+          "--wait",
+          "--wait-timeout",
+          "180",
+          ...services,
+        ]),
+        true,
+      );
     const restarted = assertRestarted(
       config.project,
       before,
@@ -219,7 +237,11 @@ export async function runShutdown({
       initial.container.Id,
       "Compose maintenance replaced dynamic Runtime",
     );
-    assert.equal(current.volume, initial.volume);
+    assert.deepEqual(
+      physicalIdentity(current),
+      physicalIdentity(initial),
+      "maintenance changed Runtime process, mounts or execution binding",
+    );
     assert(
       (await docker([
         "exec",
@@ -245,12 +267,56 @@ export async function runShutdown({
       mcpServers: [],
     });
     assertEmptySession(recovered.updates, sessionId, 1, "replay");
+    remember(recovered, "session/load", sessionId);
+    const metadata = (client) =>
+      client.updates.filter(
+        (u) => u.update.sessionUpdate === "session_info_update",
+      );
+    assert.deepEqual(
+      metadata(recovered),
+      metadata(acp),
+      "empty Session metadata changed during maintenance",
+    );
+    await assertIdle();
+    assert.deepEqual(
+      await json(historyPath),
+      history,
+      "maintenance changed Agent event journal",
+    );
     const fresh = await watchPair();
     assert.deepEqual(fresh[1].events[0], stateWatch.events[0]);
     assert.deepEqual(fresh[0].events[0], eventWatch.events[0]);
     for (const watch of watches) watch.close();
     for (const client of clients) client.close();
+    const requestTraces = await collectLifecycleEvidence(
+      requests,
+      (expected) =>
+        collectManagedTrace(
+          config.jaeger,
+          expected,
+          traceSecrets,
+          [],
+          (trace) => {
+            expected.traceID = trace.traceID;
+            saveFoundationTrace(config, trace);
+          },
+          (trace, expected, secrets, calls) =>
+            strictSessionEvidence(
+              inspectCommandTrace(trace, expected, secrets, calls),
+              trace,
+            ),
+          signal,
+        ),
+      (expected, error) =>
+        saveFoundationFailure(
+          config,
+          { traceID: expected.traceID ?? expected.connectionTraceID },
+          error,
+        ),
+      signal,
+    );
     await command("delete", agentID, {});
+    assert.deepEqual(await resources(agentID), { containers: [], volumes: [] });
     assert.equal(
       (await json(`/api/admin/agents/${agentID}`)).lifecycle_state,
       "deleted",
@@ -259,12 +325,18 @@ export async function runShutdown({
       profile: "shutdown",
       stopped,
       restarted,
+      stop_window: stopWindow,
       watches_closed_by_server: 2,
       acp_close_code: acp.closeCode,
       same_session_recovered: true,
       workspace: "retained",
       runtime: "unchanged",
-      traces,
+      watch_traces: traces,
+      request_traces: requestTraces,
+      execution_audits: 0,
+      model_requests: 0,
+      event_history_preserved: true,
+      deleted_before_teardown: true,
     };
   } finally {
     for (const watch of watches) watch.close();

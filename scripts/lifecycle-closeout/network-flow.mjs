@@ -2,10 +2,18 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { GatewayClient } from "../identity-closeout/support.mjs";
-import { collectTrace } from "../observability/collect.mjs";
-import { readAdmissionEvidence } from "./admission-evidence.mjs";
-import { inspectAccessTrace } from "../identity-closeout/agent-access-evidence.mjs";
-import { inspectRunTrace } from "./run-trace.mjs";
+import { collectTrace } from "../managed-mcp/trace.mjs";
+import { collectManagedTrace } from "../managed-mcp/request-trace.mjs";
+import { inspectCommandTrace } from "../acp-commands/trace.mjs";
+import { strictSessionEvidence } from "../identity-closeout/session-trace.mjs";
+import { hasError } from "../acp-plan/requests.mjs";
+import { assertNetworkRun } from "./network-current.mjs";
+import { collectLifecycleEvidence } from "./foundation-evidence.mjs";
+import {
+  saveFoundationTrace,
+  saveFoundationFailure,
+} from "./foundation-trace.mjs";
+import { inspectAccessTraceTopology } from "../identity-closeout/agent-access-evidence.mjs";
 import { connectOwner } from "./acp.mjs";
 import { inspectProbe, inspectTargetHistory } from "./network-evidence.mjs";
 import {
@@ -27,6 +35,7 @@ export async function runNetwork({
   command,
   resources,
   ready,
+  traceSecrets = [],
 }) {
   const fixture = await networkFixture(config, docker);
   const owner = new GatewayClient(config.gateway);
@@ -37,6 +46,27 @@ export async function runNetwork({
       password: "lifecycle-owner-password",
     },
   });
+  const secrets = [
+    ...traceSecrets,
+    "stage3-model-secret",
+    "lifecycle-owner-password",
+    ...owner.cookies.values(),
+  ];
+  const requests = [];
+  function remember(client, agentId, method, details) {
+    const request = client.requests.filter((r) => r.method === method).at(-1);
+    assert(request, "actual SDK request missing");
+    const expected = {
+      ...request,
+      agentId,
+      connectionTraceID: client.connectionTraceID,
+      transport: "websocket",
+      kind: "request",
+      ...details,
+    };
+    requests.push(expected);
+    return expected;
+  }
   const agents = [];
   for (const name of ["Network Agent A", "Network Agent B"]) {
     const created = await command("create", undefined, { ...agentBody, name });
@@ -100,6 +130,7 @@ export async function runNetwork({
     const sessionId = (
       await client.request("new", { cwd: "/workspace", mcpServers: [] })
     ).sessionId;
+    remember(client, agent.id, "session/new", { sessionId });
     // Separate WebSocket roots keep each Run's trace evidence unambiguous.
     const promise = client
       .request(
@@ -133,6 +164,21 @@ export async function runNetwork({
       .map((n) => n.update.content.text ?? "")
       .join("");
     assert.equal(text, `${probe.input.phase} checked`);
+    const audit = await json(
+      `/api/admin/execution-audits?agent_id=${probe.agent.id}&session_id=${probe.sessionId}`,
+    );
+    assert.equal(audit.next_cursor, null, "network Run list truncated");
+    assert.equal(audit.items.length, 1);
+    const run = await json(
+      `/api/admin/execution-audits/${audit.items[0].run_id}`,
+    );
+    assertNetworkRun([run], probe.agent.initial.agent, probe.sessionId);
+    remember(probe.client, probe.agent.id, "session/prompt", {
+      sessionId: probe.sessionId,
+      kind: "ordinary",
+      phase: probe.input.phase,
+      runId: run.run_id,
+    });
     probe.client.close();
     console.error(`Network ${probe.input.phase}: real ACP tool completed`);
   };
@@ -151,7 +197,7 @@ export async function runNetwork({
     throw new Error(`${phase}: real socket barrier not reached`);
   };
   let evidence;
-  const traceRequests = [];
+  let modelRequests;
   try {
     await finish(await start(a, "allowed"));
     const heldA = await hold(a, "held-a"),
@@ -213,6 +259,7 @@ export async function runNetwork({
     const model = await response.json();
     assert.deepEqual(model.errors, []);
     assert.equal(model.requests.length, probes.length * 2);
+    modelRequests = model.requests;
     const reports = [];
     for (const probe of probes) {
       const calls = model.requests.filter((r) => r.phase === probe.input.phase);
@@ -222,7 +269,6 @@ export async function runNetwork({
       );
       reports.push(inspectProbe(calls[1].report, probe.input, fixture.ip));
       assert.equal(calls[0].trace_id, calls[1].trace_id);
-      traceRequests.push({ calls, agentID: probe.agent.id });
     }
     const expected = probes
       .filter((p) => ["allowed", "held-a", "held-b"].includes(p.input.phase))
@@ -259,13 +305,8 @@ export async function runNetwork({
     for (const client of clients) client.close();
     for (const promise of pending) await promise;
   }
-  const admissionEvidence = new Map();
   for (const agent of agents) {
     const since = new Date(Date.now() - 1000).toISOString();
-    admissionEvidence.set(
-      agent.id,
-      await readAdmissionEvidence(config, docker, agent.id),
-    );
     await command("delete", agent.id, {});
     assert.deepEqual(await resources(agent.id), {
       containers: [],
@@ -279,38 +320,61 @@ export async function runNetwork({
     );
   }
   const producersStopped = await flushTraceProducers(config, docker);
-  const traces = [],
-    policyTraces = [];
-  for (const { calls, agentID } of traceRequests)
-    traces.push(
-      await collectTrace(
+  const requestTraces = await collectLifecycleEvidence(
+    requests.map((r) => ({ ...r, agentID: r.agentId, requestID: r.requestId })),
+    (expected) =>
+      collectManagedTrace(
         config.jaeger,
-        calls[0].trace_id,
-        (trace) =>
-          inspectRunTrace(
-            trace,
-            calls,
-            ["stage3-model-secret", "lifecycle-owner-password"],
-            agentID,
-            admissionEvidence.get(agentID),
-            "bash",
-          ),
+        expected,
+        secrets,
+        expected.kind === "ordinary"
+          ? modelRequests.filter((r) => r.phase === expected.phase)
+          : [],
+        (trace) => {
+          expected.traceID = trace.traceID;
+          saveFoundationTrace(config, trace);
+        },
+        (trace, expected, secrets, calls) => {
+          const result = inspectCommandTrace(trace, expected, secrets, calls);
+          if (expected.runId)
+            assert.equal(
+              result.run_id,
+              expected.runId,
+              "trace belongs to another Run",
+            );
+          return strictSessionEvidence(result, trace);
+        },
         signal,
       ),
-    );
-  for (const item of policies)
-    policyTraces.push(
-      await collectTrace(
+    (expected, error) =>
+      saveFoundationFailure(
+        config,
+        { traceID: expected.traceID ?? expected.connectionTraceID },
+        error,
+      ),
+    signal,
+  );
+  const policyTraces = await collectLifecycleEvidence(
+    policies,
+    (item) =>
+      collectTrace(
         config.jaeger,
         item.traceID,
-        (trace) => inspectPolicyTrace(trace, item),
+        (trace) => {
+          saveFoundationTrace(config, trace);
+          return inspectPolicyTrace(trace, item, secrets);
+        },
         signal,
       ),
-    );
+    (item, error) => saveFoundationFailure(config, item, error),
+    signal,
+  );
   signal.throwIfAborted();
   return {
     ...evidence,
-    traces,
+    request_traces: requestTraces,
+    model_requests: modelRequests.length,
+    completed_runs: probes.length,
     policy_traces: policyTraces,
     trace_producers_stopped: producersStopped,
     runtimes_cleanly_exited: agents.length,
@@ -318,7 +382,12 @@ export async function runNetwork({
   };
 }
 
-export function inspectPolicyTrace(trace, item) {
+export function inspectPolicyTrace(
+  trace,
+  item,
+  secrets = ["stage3-model-secret", "lifecycle-owner-password"],
+) {
+  assert(!trace.spans.some(hasError), "unexpected policy error span");
   const tag = (s, key) => s.tags?.find((t) => t.key === key)?.value;
   const spans = trace?.spans?.filter(
     (s) =>
@@ -339,18 +408,28 @@ export function inspectPolicyTrace(trace, item) {
     "Egress policy RPC did not succeed",
   );
   assert.notEqual(tag(spans[0], "error"), true);
-  return {
-    action: item.action,
-    ...inspectAccessTrace(
-      trace,
-      {
-        traceID: item.traceID,
-        service: "antnest-runtime-egress",
-        operation: "HTTP PUT /internal/agent-policy-assignments/{agent_id}",
-        spanID: spans[0].spanID,
-        via: ["admin-console", "agent-controller"],
-      },
-      ["stage3-model-secret", "lifecycle-owner-password"],
-    ),
-  };
+  const warnings = [
+    ...(trace.warnings ?? []),
+    ...trace.spans.flatMap((s) => s.warnings ?? []),
+  ];
+  return strictSessionEvidence(
+    {
+      warning_count: warnings.length,
+      warnings: [...new Set(warnings)],
+      strict_trace: warnings.length ? "failed" : "passed",
+      action: item.action,
+      ...inspectAccessTraceTopology(
+        trace,
+        {
+          traceID: item.traceID,
+          service: "antnest-runtime-egress",
+          operation: "HTTP PUT /internal/agent-policy-assignments/{agent_id}",
+          spanID: spans[0].spanID,
+          via: ["admin-console", "agent-controller"],
+        },
+        secrets,
+      ),
+    },
+    trace,
+  );
 }

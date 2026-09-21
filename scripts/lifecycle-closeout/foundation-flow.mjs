@@ -66,7 +66,7 @@ async function firstEvent(client, agentID, after = 0) {
   }
 }
 
-export async function runFoundationFlow(config, docker, signal) {
+export async function runFoundationFlow(config, docker, signal, scenario) {
   const client = new GatewayClient(config.gateway);
   const api = async (path, options) => {
     signal.throwIfAborted();
@@ -227,6 +227,29 @@ export async function runFoundationFlow(config, docker, signal) {
       containers: state.containers.map((c) => c.Id).sort(),
       volumes: state.volumes.sort(),
     };
+  }
+  if (scenario) {
+    const result = await scenario({
+      config,
+      docker,
+      signal,
+      api,
+      json,
+      principal,
+      agentBody,
+      command,
+      resources,
+      ready,
+      traceSecrets,
+    });
+    const traces = await collectLifecycleEvidence(
+      admitted,
+      (operation) =>
+        collectFoundationLifecycle(config, operation, traceSecrets, signal),
+      (operation, error) => saveFoundationFailure(config, operation, error),
+      signal,
+    );
+    return { ...result, operations: admitted.length, traces };
   }
   const created = await command("create", undefined, agentBody);
   const agentID = created.agentID;

@@ -88,7 +88,7 @@ derived from the port/subnet variables.
 
 ## 3. Build And Start
 
-Build all nine project images from the current source, serially:
+Build all ten project images from the current source, serially:
 
 ```sh
 COMPOSE_PARALLEL_LIMIT=1 make -j1 docker-build-stage3
@@ -101,6 +101,13 @@ required: Runtime Controller resolves the local image through the same Engine.
 Console accepts the image tag and records the resolved immutable image ID.
 Rebuilding the tag does not silently replace existing Agents or Template
 revisions; publish the intended revision and explicitly rebuild the Agent.
+
+The Temporal image `antnest/temporal:local` keeps server 1.31.0 and adds the
+same-version official `tdbg` binary plus a read-only readiness probe. Its health
+check requires frontend initialization and nonempty frontend/history/matching
+gossip rings. A listening 7233 port alone does not establish readiness after
+restart. The local HTTP probe port 7243 is not published. See the
+[readiness repair](temporal-readiness-revalidation.md) for scope and evidence.
 
 Enable telemetry and retain these settings for subsequent `up` commands:
 
@@ -134,6 +141,13 @@ one-shot initialization jobs, not resident workers: they provision databases,
 apply engine schemas, and register the `antnest` namespace, respectively.
 Successful exited initialization containers can be removed after startup without
 deleting their databases. Compose may recreate/rerun them on a subsequent `up`.
+After those jobs are removed, `compose start temporal` can fail while traversing
+the absent initialization dependencies. For same-container maintenance, start
+the existing Temporal container directly and wait for its Docker health to become
+`healthy` before starting Controller. For controlled image synchronization, use
+separate `up --no-deps --no-build --pull never --wait --wait-timeout 180` commands
+for Temporal and then Controller, with the same project, environment and Compose
+overlays. Confirm initialization already completed; this is not first deployment.
 
 ## 4. Empty Instance To A Usable Agent
 

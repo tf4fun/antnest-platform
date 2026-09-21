@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFile, writeFile, chmod } from "node:fs/promises";
 import { join } from "node:path";
-import { composeArgs, lines } from "./docker.mjs";
+import { lines } from "./docker.mjs";
 import {
   databases,
   encryptionKeys,
@@ -26,9 +26,7 @@ export async function verifyArtifacts(directory, files) {
 }
 
 export async function postgresContainer(config, docker) {
-  const ids = lines(
-    await docker(composeArgs(config.project, ["ps", "-q", "postgres"])),
-  );
+  const ids = lines(await docker(config.compose(["ps", "-q", "postgres"])));
   assert.equal(ids.length, 1);
   const value = JSON.parse(await docker(["inspect", ids[0]]))[0];
   assert.equal(
@@ -251,11 +249,8 @@ export async function restoreStorage(config, docker, directory, expected) {
   const before = await postgresContainer(config, docker);
   assert.equal(before.Id, metadata.postgresID);
   // Removing stopped service containers releases their system-Skills mount too.
-  await docker(
-    composeArgs(config.project, ["stop", "-t", "20", "postgres"]),
-    true,
-  );
-  await docker(composeArgs(config.project, ["rm", "-f"]));
+  await docker(config.compose(["stop", "-t", "20", "postgres"]), true);
+  await docker(config.compose(["rm", "-f"]));
   await recreateVolume(config, docker, metadata.postgres);
   for (const volume of metadata.volumes) {
     await recreateVolume(config, docker, volume);
@@ -285,7 +280,7 @@ export async function restoreStorage(config, docker, directory, expected) {
   }
   Object.assign(config.env, keys);
   await docker(
-    composeArgs(config.project, [
+    config.compose([
       "up",
       "-d",
       "--wait",
@@ -294,6 +289,10 @@ export async function restoreStorage(config, docker, directory, expected) {
       "--no-build",
       "postgres",
     ]),
+    true,
+  );
+  await docker(
+    config.compose(["run", "--rm", "--no-deps", "temporal-databases"]),
     true,
   );
   const after = await postgresContainer(config, docker);

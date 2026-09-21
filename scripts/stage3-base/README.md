@@ -32,8 +32,14 @@ uses already built local images; `make e2e-stage3` builds first. Both default
 to an isolated, bounded, disposable project. Existing development containers,
 volumes, credentials and ports are outside its ownership.
 
-The historical retained-stack, Identity/OIDC, Managed MCP and fault-injection
-branches remain in `e2e-stage3a.sh` for their separate migration batches.
+Identity/OIDC, Managed MCP and fault profiles now dispatch to their separate
+migrated launchers. Their old inline copies are superseded. The explicit
+`ANTNEST_E2E_KEEP_STACK=true` flag is now [retired](../../docs/retained-seed-retirement.md)
+and rejects before any dependency is invoked. Unset, empty or `false` keeps
+current disposable behavior. The [old inline tail](../../docs/stage3-tail-retirement.md)
+and its exclusive CLI/input helpers are now removed. The subsequent
+[interruption retirement](../../docs/interruption-assets-retirement.md) removes
+the historical startup-gate/Trace graph; shared current helpers remain.
 This driver verifies Workspace HTML/bootstrap and protocol behavior, not a new
 browser interaction acceptance. See C4 for the separate browser evidence.
 

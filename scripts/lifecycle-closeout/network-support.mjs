@@ -52,7 +52,9 @@ export function physicalIdentity({ container, volume, agent }) {
     started: container.State.StartedAt,
     restarts: container.RestartCount,
     config: container.Config,
-    mounts: container.Mounts,
+    mounts: [...container.Mounts].sort((a, b) =>
+      a.Destination.localeCompare(b.Destination),
+    ),
     volume,
     configuration: agent.configuration,
     runtime: agent.runtime,

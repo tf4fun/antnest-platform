@@ -26,12 +26,13 @@ export function assertLoss(initial, agent, events, recorded) {
     initial.agent.runtime.runtime_revision,
   );
   assert.equal(agent.agent_spec_revision, initial.agent.agent_spec_revision);
+  assert.deepEqual(agent.configuration, initial.agent.configuration);
   assert.equal(
     agent.last_successful_execution_revision,
     initial.agent.executable_execution_revision,
   );
   assert.equal(agent.failure_stage, "runtime_observation");
-  assert(["runtime_missing", "runtime_deleted"].includes(agent.failure_code));
+  assert(["runtime_missing", "runtime_exited"].includes(agent.failure_code));
   assert(agent.aggregate_sequence > initial.agent.aggregate_sequence);
   const losses = events.filter(
     (event) => event.event_type === "agent_runtime_missing",
@@ -58,10 +59,8 @@ export function assertLoss(initial, agent, events, recorded) {
     recorded.data.runtime_revision,
     initial.agent.runtime.runtime_revision,
   );
-  assert(
-    Number.isSafeInteger(recorded.data.observation_sequence) &&
-      recorded.data.observation_sequence > 0,
-  );
+  assert.equal(recorded.data.observation_sequence, 0);
+  assert.match(recorded.event_id, /^runtime-condition-loss-/);
   return recorded;
 }
 
@@ -89,11 +88,12 @@ export function assertReplacement(initial, replacement) {
   assert(replacement.container.Id);
   assert.notEqual(replacement.container.Id, initial.container.Id);
   assert.equal(replacement.volume, initial.volume);
+  assert.deepEqual(agent.configuration, initial.agent.configuration);
 }
 
 export function assertLossDenial(error) {
-  assert.equal(error?.code, -32021);
-  assert.equal(error.data?.code, "agent_build_failed");
+  assert.equal(error?.code, -32020);
+  assert.equal(error.data?.code, "agent_unavailable");
   assert.equal(error.data?.retryable, false);
 }
 
@@ -126,11 +126,13 @@ export function assertLossProducer(
   inspection,
 ) {
   assert(["live", "cold"].includes(mode));
-  assert.equal(observation.sequence, loss.data.observation_sequence);
+  assert(
+    Number.isSafeInteger(observation.sequence) && observation.sequence > 0,
+  );
+  assert.equal(loss.data.observation_sequence, 0);
   assert.equal(
     loss.data.reason,
-    observation.kind,
-    "Agent loss reason differs from its producer observation",
+    mode === "live" ? "runtime_exited" : "runtime_missing",
   );
   assert.equal(observation.agent_id, initial.agent.agent_id);
   assert.equal(
@@ -156,7 +158,7 @@ export function assertLossProducer(
     inspection.runtime_revision,
     initial.agent.runtime.runtime_revision,
   );
-  assert.equal(inspection.lifecycle_state, "ready");
+  assert.equal(inspection.lifecycle_state, "provisioned");
   assert.equal(inspection.health, "absent");
   assert(!inspection.mcp_endpoint && !inspection.runtime_execution_id);
 }

@@ -12,13 +12,19 @@ import { assertSecretFree } from "../identity-closeout/evidence.mjs";
 import { timingEvidence, hasError } from "../acp-plan/requests.mjs";
 import { runtimeCommandId } from "./contracts.mjs";
 import { inspectWorkflowRestart } from "./workflow-restart.mjs";
+import { inspectUpdateRestart } from "./update-restart.mjs";
 
 export function inspectLifecycle(trace, expected, secrets = []) {
   const { kind, requestId, agentId } = expected;
   const settlementOutcome = expected.settlementOutcome ?? "settled";
   assert(
+    !expected.networkAlreadyClosed || kind === "delete",
+    "already-closed network expectation is scoped to Delete",
+  );
+  assert(
     settlementOutcome === "settled" ||
-      (kind === "rebuild" && settlementOutcome === "runtime_barrier_required"),
+      (["disable", "rebuild", "delete"].includes(kind) &&
+        settlementOutcome === "runtime_barrier_required"),
     "invalid expected settlement outcome",
   );
   assert(lifecyclePlans[kind] && requestId && agentId);
@@ -26,9 +32,15 @@ export function inspectLifecycle(trace, expected, secrets = []) {
   const tree = traceTopology(trace);
   assertCaptureDisabled(trace);
   assertSecretFree(JSON.stringify(trace), secrets);
-  const restart = expected.workerRestart
-    ? inspectWorkflowRestart(trace, tree, expected)
-    : undefined;
+  assert(
+    !(expected.workerRestart && expected.updateRestart),
+    "conflicting restart scenarios",
+  );
+  const restart = expected.updateRestart
+    ? inspectUpdateRestart(trace, tree, expected)
+    : expected.workerRestart
+      ? inspectWorkflowRestart(trace, tree, expected)
+      : undefined;
   const errors = trace.spans.filter(hasError);
   for (const error of errors)
     if (!restart?.errors.has(error))
@@ -41,6 +53,19 @@ export function inspectLifecycle(trace, expected, secrets = []) {
       tag(s, "http.response.status_code") === 404,
   );
   for (const probe of absence) assertDockerProbe(trace, tree, probe, expected);
+  if (expected.missingSourceGeneration !== undefined) {
+    assert.equal(kind, "rebuild");
+    assert.equal(
+      trace.spans.filter(
+        (s) =>
+          s.operationName === "HTTP GET docker" &&
+          tag(s, "http.response.status_code") === 404 &&
+          tree.parent(s)?.operationName === "runtime.platform.inspect",
+      ).length,
+      1,
+      "missing-source Rebuild must prove exactly one source absence",
+    );
+  }
   assert(
     !trace.spans.some((s) =>
       /^(agent\.run|model\.|mcp\.)/.test(s.operationName),
@@ -171,7 +196,7 @@ export function inspectLifecycle(trace, expected, secrets = []) {
       .sort((a, b) => a.startTime - b.startTime);
     assert.equal(
       attempts.length,
-      restart && phase === "drain" ? 2 : 1,
+      restart && phase === (restart.phase ?? "drain") ? 2 : 1,
       `missing or duplicate ${name}`,
     );
     return attempts.map((activity) => {
@@ -181,7 +206,9 @@ export function inspectLifecycle(trace, expected, secrets = []) {
           tree
             .chain(activity)
             .includes(
-              phase === "drain" || phase.startsWith("admit_")
+              (restart.oldPhases ?? ["admit_lifecycle", "drain"]).includes(
+                phase,
+              )
                 ? restart.old
                 : restart.resumed,
             ),
@@ -221,8 +248,16 @@ export function inspectLifecycle(trace, expected, secrets = []) {
                 ),
             ),
           ),
-          "interrupted drain: missing committed journal read",
+          "interrupted Activity: missing committed journal read",
         );
+        if (restart.phase === "runtime_update")
+          return {
+            phase,
+            span_id: activity.spanID,
+            interrupted: true,
+            committed_read: true,
+            response_committed: true,
+          };
         assert(
           trace.spans.some(
             (s) =>
@@ -287,7 +322,9 @@ export function inspectLifecycle(trace, expected, secrets = []) {
           ],
           network_fence: [
             ["GET", "/internal/agent-networks/{agent_id}"],
-            ["PUT", "/internal/agent-network-attachments/{agent_id}"],
+            ...(expected.networkAlreadyClosed
+              ? []
+              : [["PUT", "/internal/agent-network-attachments/{agent_id}"]]),
           ],
           network_restore: [
             ["PUT", "/internal/agent-network-attachments/{agent_id}"],
@@ -304,6 +341,18 @@ export function inspectLifecycle(trace, expected, secrets = []) {
               }
             : {}),
         }[phase] ?? [];
+      if (phase === "network_fence" && expected.networkAlreadyClosed)
+        assert(
+          !trace.spans.some(
+            (s) =>
+              tree.chain(s).includes(activity) &&
+              tree.service(s) === "antnest-runtime-egress" &&
+              tag(s, "http.request.method") === "PUT" &&
+              tag(s, "http.route") ===
+                "/internal/agent-network-attachments/{agent_id}",
+          ),
+          "Delete repeated an already closed network fence",
+        );
       dependencies.push(
         ...network.map((item) => ["antnest-runtime-egress", ...item]),
       );
@@ -462,6 +511,58 @@ export function assertDockerProbe(trace, tree, error, expected) {
   assert.equal(tag(platform, "antnest.agent.id"), expected.agentId);
   assert.equal(tag(platform, "antnest.outcome"), "completed");
   assert.equal(tag(platform, "antnest.platform"), "docker");
+  if (platform.operationName === "runtime.platform.inspect") {
+    const generation = expected.missingSourceGeneration;
+    assert.equal(expected.kind, "rebuild");
+    assert(Number.isSafeInteger(generation) && generation > 0);
+    assert.equal(tag(platform, "antnest.runtime.generation"), generation);
+    assert.equal(tag(platform, "antnest.runtime.health"), "absent");
+    assert.equal(tag(platform, "antnest.runtime.platform_phase"), "absent");
+    assert(!tag(platform, "antnest.runtime.execution_id"));
+    const update = tree.parent(platform);
+    assert.equal(tree.service(update), "runtime-controller");
+    assert.equal(update.operationName, "runtime.lifecycle.update_runtime");
+    assert.equal(tag(update, "antnest.agent.id"), expected.agentId);
+    assert.equal(tag(update, "antnest.result"), "completed");
+    assert.equal(
+      tag(update, "antnest.operation.id"),
+      runtimeCommandId(expected.requestId, "runtime_update"),
+    );
+    const targets = trace.spans.filter(
+      (s) =>
+        tree.parent(s) === update &&
+        s.operationName === "runtime.platform.create",
+    );
+    assert.equal(targets.length, 1);
+    const target = targets[0];
+    assert(target.startTime >= platform.startTime + platform.duration);
+    assert.equal(tree.service(target), "runtime-controller");
+    assert.equal(tag(target, "antnest.agent.id"), expected.agentId);
+    assert.equal(tag(target, "antnest.outcome"), "completed");
+    assert.equal(tag(target, "antnest.runtime.generation"), generation + 1);
+    const calls = trace.spans.filter(
+      (s) =>
+        tree.parent(s) === target &&
+        tree.service(s) === "runtime-controller" &&
+        tag(s, "peer.service") === "docker" &&
+        tag(s, "span.kind") === "client" &&
+        tag(s, "http.request.method") === "POST" &&
+        !hasError(s),
+    );
+    const allocated = calls.find(
+      (s) => tag(s, "http.response.status_code") === 201,
+    );
+    assert(allocated, "missing source has no replacement allocation");
+    assert(
+      calls.some(
+        (s) =>
+          tag(s, "http.response.status_code") === 204 &&
+          s.startTime >= allocated.startTime + allocated.duration,
+      ),
+      "replacement was not started",
+    );
+    return;
+  }
   const storage = platform.operationName === "runtime.platform.ensure_storage";
   assert(
     storage

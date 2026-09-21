@@ -126,3 +126,54 @@ test("runtime identity retains process, mount, configuration and binding evidenc
     assert.notDeepEqual(physicalIdentity(other), before);
   }
 });
+
+test("Docker mount enumeration order does not change physical identity; mount attributes do", () => {
+  const state = {
+    container: {
+      Id: "same",
+      Image: "image",
+      State: { StartedAt: "start" },
+      RestartCount: 0,
+      Config: {},
+      Mounts: [
+        {
+          Destination: "/workspace",
+          Name: "workspace",
+          Source: "/vol/workspace",
+          RW: true,
+        },
+        {
+          Destination: "/skills",
+          Name: "skills",
+          Source: "/vol/skills",
+          RW: false,
+        },
+      ],
+    },
+    volume: "workspace",
+    agent: {
+      configuration: {},
+      runtime: { runtime_revision: "runtime" },
+      executable_execution_revision: "execution",
+    },
+  };
+  const before = structuredClone(state);
+  const reordered = structuredClone(state);
+  reordered.container.Mounts.reverse();
+  assert.deepEqual(physicalIdentity(state), physicalIdentity(reordered));
+  assert.deepEqual(
+    state,
+    before,
+    "inspection must not mutate raw Docker evidence",
+  );
+  for (const [field, value] of [
+    ["Name", "other"],
+    ["Source", "/other"],
+    ["RW", false],
+    ["Destination", "/other"],
+  ]) {
+    const changed = structuredClone(state);
+    changed.container.Mounts[0][field] = value;
+    assert.notDeepEqual(physicalIdentity(state), physicalIdentity(changed));
+  }
+});

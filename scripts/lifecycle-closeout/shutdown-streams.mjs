@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
-import { randomBytes } from "node:crypto";
 import { until } from "../workspace-closeout/state.mjs";
 
 const require = createRequire(
@@ -20,23 +19,31 @@ export function openShutdownWatchSet(definitions, open = openShutdownWatch) {
 }
 
 export function openShutdownWatch(client, path, event, validate, signal) {
-  const traceID = randomBytes(16).toString("hex"),
-    events = [];
+  const events = [];
+  let traceID;
   let ended = false,
     disposed = false,
     failure;
   const source = new EventSource(client.base + path, {
-    fetch: (url, init) =>
-      fetch(url, {
+    fetch: async (url, init) => {
+      const response = await fetch(url, {
         ...init,
         signal: AbortSignal.any([signal, init.signal]),
         headers: {
           ...init.headers,
           Cookie: client.cookie,
           Origin: client.base,
-          traceparent: `00-${traceID}-${randomBytes(8).toString("hex")}-01`,
         },
-      }),
+      });
+      const actual = response.headers.get("x-antnest-trace-id");
+      if (!response.ok || !/^[a-f0-9]{32}$/.test(actual ?? "")) {
+        failure = new Error("invalid shutdown watch response identity");
+        await response.body?.cancel();
+        throw failure;
+      }
+      traceID = actual;
+      return response;
+    },
   });
   const close = () => {
     disposed = true;
@@ -65,7 +72,9 @@ export function openShutdownWatch(client, path, event, validate, signal) {
     assert(!disposed, "watch closed by the test");
   };
   return {
-    traceID,
+    get traceID() {
+      return traceID;
+    },
     events,
     close,
     ready: () =>

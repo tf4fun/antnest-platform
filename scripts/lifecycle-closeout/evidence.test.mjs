@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { inspectLifecycle, assertEventPage } from "./evidence.mjs";
-import { verifyLifecycleTrace } from "./trace.mjs";
 import { workflowFixture } from "../observability/workflow-fixtures.mjs";
 import { lifecyclePlans } from "../observability/lifecycle-workflow.mjs";
 
@@ -107,23 +106,6 @@ for (const kind of Object.keys(lifecyclePlans)) {
       assert.throws(() => inspectLifecycle(f));
     });
 }
-test("collector reads a single complete business trace", async (t) => {
-  const f = fixture();
-  const calls = [];
-  t.mock.method(globalThis, "fetch", async (input) => {
-    calls.push(input);
-    return Response.json({ data: [f.admission] });
-  });
-  assert.deepEqual(
-    await verifyLifecycleTrace(
-      "http://fixture",
-      { ...f, traceID: f.admission.traceID },
-      ["synthetic-secret"],
-    ),
-    inspectLifecycle(f),
-  );
-  assert.equal(calls.length, 1);
-});
 const event = (sequence, agent = "a") => ({
   global_sequence: sequence,
   event_id: `e-${sequence}`,

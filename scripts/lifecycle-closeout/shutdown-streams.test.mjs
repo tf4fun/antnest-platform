@@ -7,18 +7,26 @@ import {
   openShutdownWatchSet,
 } from "./shutdown-streams.mjs";
 
-async function fixture(t, data = '{"agent_id":"agent"}') {
+async function fixture(
+  t,
+  data = '{"agent_id":"agent"}',
+  traceID = "a".repeat(32),
+) {
   let response,
     requests = 0;
   const server = createServer((request, reply) => {
     requests++;
     assert.equal(request.headers.cookie, "synthetic-cookie");
-    assert.match(
+    assert.equal(
       request.headers.traceparent,
-      /^00-[a-f0-9]{32}-[a-f0-9]{16}-01$/,
+      undefined,
+      "watch client must not invent an unexported parent",
     );
     response = reply;
-    reply.writeHead(200, { "content-type": "text/event-stream" });
+    reply.writeHead(200, {
+      "content-type": "text/event-stream",
+      ...(traceID === null ? {} : { "x-antnest-trace-id": traceID }),
+    });
     reply.write(`event: agent_event\ndata: ${data}\n\n`);
   });
   server.listen(0, "127.0.0.1");
@@ -60,6 +68,7 @@ test("watch proves initial delivery and remote closure without reconnect", async
   const { watch, end, requests } = await fixture(t);
   await watch.ready();
   watch.assertOpen();
+  assert.equal(watch.traceID, "a".repeat(32));
   end();
   await watch.waitClosed();
   assert.equal(requests(), 1);
@@ -79,3 +88,12 @@ test("invalid initial events cannot prove a usable watch", async (t) => {
     return true;
   });
 });
+
+for (const traceID of [null, "not-a-trace"])
+  test(`watch rejects missing/malformed actual response Trace identity: ${traceID}`, async (t) => {
+    const { watch } = await fixture(t, '{"agent_id":"agent"}', traceID);
+    await assert.rejects(
+      watch.ready(),
+      /invalid shutdown watch response identity/,
+    );
+  });

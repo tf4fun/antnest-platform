@@ -247,7 +247,7 @@ func (d *Driver) convergeContainer(
 func (d *Driver) Inspect(
 	ctx context.Context, key deployment.Key,
 ) (deployment.Inspection, error) {
-	container, err := d.engine.InspectContainer(ctx, containerName(key.AgentID))
+	container, err := d.engine.InspectContainer(telemetry.WithExpectedDockerAbsence(ctx), containerName(key.AgentID))
 	if errors.Is(err, ErrNotFound) {
 		return deployment.Inspection{
 			AgentID: key.AgentID, Generation: key.Generation,

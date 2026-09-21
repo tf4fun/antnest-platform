@@ -72,6 +72,7 @@ const initial = () => ({
     activation_state: "enabled",
     runtime_state: "available",
     agent_spec_revision: "s1",
+    configuration: { template: { template_id: "t", revision: 1 } },
     last_successful_execution_revision: "e1",
     executable_execution_revision: "e1",
     runtime: { runtime_revision: "r1" },
@@ -94,13 +95,13 @@ function events() {
   return [
     {
       agent_id: "a",
-      event_id: "loss",
+      event_id: "runtime-condition-loss-a-3",
       event_type: "agent_runtime_missing",
       global_sequence: 3,
       data: {
         reason: "runtime_missing",
         runtime_revision: "r1",
-        observation_sequence: 7,
+        observation_sequence: 0,
       },
     },
   ];
@@ -125,6 +126,7 @@ test("loss evidence requires absent executable binding and exact prior lineage/a
     { last_successful_execution_revision: "other" },
     { active_operation_request_id: "op" },
     { failure_code: "dependency_unavailable" },
+    { configuration: { template: { template_id: "foreign", revision: 1 } } },
     { aggregate_sequence: 2 },
   ])
     assert.throws(() =>
@@ -213,9 +215,15 @@ test("fault targeting rejects conflicting scope, Agent, or container identity", 
 });
 
 test("loss denial must be a semantic admission failure, not a timeout or disconnect", () => {
+  assert.throws(() =>
+    assertLossDenial({
+      code: -32021,
+      data: { code: "agent_build_failed", retryable: false },
+    }),
+  );
   assertLossDenial({
-    code: -32021,
-    data: { code: "agent_build_failed", retryable: false },
+    code: -32020,
+    data: { code: "agent_unavailable", retryable: false },
   });
   for (const error of [
     new Error("closed"),
@@ -265,12 +273,15 @@ for (const mode of ["live", "cold"]) {
     const inspection = {
       agent_id: "a",
       runtime_revision: "r1",
-      lifecycle_state: "ready",
+      lifecycle_state: "provisioned",
       health: "absent",
     };
     const loss = {
       ...events()[0],
-      data: { ...events()[0].data, reason: row.kind },
+      data: {
+        ...events()[0].data,
+        reason: mode === "live" ? "runtime_exited" : "runtime_missing",
+      },
     };
     assertLossProducer(mode, before, loss, row, inspection);
     assert.throws(() =>
@@ -281,7 +292,7 @@ for (const mode of ["live", "cold"]) {
           ...loss,
           data: {
             ...loss.data,
-            reason: mode === "live" ? "runtime_missing" : "runtime_deleted",
+            reason: mode === "live" ? "runtime_missing" : "runtime_exited",
           },
         },
         row,
@@ -289,7 +300,7 @@ for (const mode of ["live", "cold"]) {
       ),
     );
     for (const change of [
-      { sequence: 6 },
+      { sequence: 0 },
       { agent_id: "b" },
       { runtime_revision: "r2" },
       { generation: 2 },

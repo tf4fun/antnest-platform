@@ -433,8 +433,9 @@ validates expected Docker absence in the independent candidate; strict timing
 warnings remain outside this scope.
 See the [separate P1/P2 record](acp-persistence-revalidation.md).
 
-The historical retained-stack, OIDC and fault branches remain for
-their separate migration batches; they are not included in the current default
-base acceptance. In particular, `ANTNEST_E2E_KEEP_STACK=true` still selects the
-historical driver and is not a validated current seeding entry. Track pending
-consumers in the [asset inventory](acceptance-asset-migration.md).
+OIDC and fault profiles now dispatch to their separately migrated launchers.
+The explicit `ANTNEST_E2E_KEEP_STACK=true` mode is now [retired](retained-seed-retirement.md)
+and rejects before Node/Docker or resource creation. Unset or `false` uses the
+current disposable path. The [historical inline tail](stage3-tail-retirement.md)
+and its exclusive CLI/input helpers are removed; shared current helpers remain. The
+[asset inventory](acceptance-asset-migration.md) retains each profile's scoped evidence.

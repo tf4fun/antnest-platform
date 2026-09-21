@@ -80,3 +80,26 @@ for (const [label, mutate] of [
     mutate(trace);
     assert.throws(() => inspectPolicyTrace(trace, item));
   });
+
+test("policy topology retains timing warnings as strict failure without changing raw spans", () => {
+  const trace = fixture();
+  trace.spans[3].warnings = ["clock skew adjustment disabled; fixture"];
+  const before = structuredClone(trace);
+  const result = inspectPolicyTrace(trace, item);
+  assert.equal(result.gateway_ancestry, true);
+  assert.equal(result.strict_trace, "failed");
+  assert.deepEqual(trace, before);
+});
+test("policy evidence scans supplied actual credentials and rejects errors anywhere in the trace", () => {
+  const trace = fixture();
+  trace.spans[0].tags.push({
+    key: "unexpected",
+    value: "actual-session-cookie",
+  });
+  assert.throws(() =>
+    inspectPolicyTrace(trace, item, ["actual-session-cookie"]),
+  );
+  const failed = fixture();
+  failed.spans[0].tags.push({ key: "otel.status_code", value: "ERROR" });
+  assert.throws(() => inspectPolicyTrace(failed, item));
+});

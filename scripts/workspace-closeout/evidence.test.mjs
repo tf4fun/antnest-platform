@@ -26,7 +26,8 @@ const ready = {
   agent_id: "a1",
   availability: "ready",
   access_allowed: true,
-  agent_revision: 1,
+  configuration_revision: "a".repeat(64),
+  unavailable_reason: null,
   active_session_id: null,
 };
 test("state evidence rejects leaked fields, another Agent and impossible readiness", () => {

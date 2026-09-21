@@ -9,15 +9,38 @@
 # Lifecycle Closeout
 
 The default `foundation` entry has a current-contract replacement described in
-[migration-contract.md](migration-contract.md). Network, shutdown, health,
-restore, loss, interrupted-update and older Workspace consumers remain separate
-migration batches. Their historical sections below are not current acceptance.
+[migration-contract.md](migration-contract.md). The network profile's current
+contract is in [network-migration-contract.md](network-migration-contract.md).
+The shutdown profile uses [shutdown-migration-contract.md](shutdown-migration-contract.md).
+Health uses [health-migration-contract.md](health-migration-contract.md).
+Restore uses [restore-migration-contract.md](restore-migration-contract.md).
+Loss uses [loss-migration-contract.md](loss-migration-contract.md).
+Interrupted-update uses [interrupted-migration-contract.md](interrupted-migration-contract.md)
+for normal committed-response recovery. The old abrupt-crash source graph is
+[retired with its fault scope recorded](../../docs/interruption-assets-retirement.md). Workspace protocol now uses the same Foundation runner with its
+[own current contract](../workspace-closeout/protocol-migration-contract.md);
+the [four-scenario browser profile](../../docs/workspace-browser-revalidation.md)
+also migrated. The [retirement audit](../../docs/acceptance-retirement-audit.md)
+identifies the old lifecycle fallback and shared helpers. The
+[first cleanup](../../docs/acceptance-retirement-revalidation.md) removes the
+unreachable fallback and old admission graph; current shared helpers remain.
 The [2026-09-21 report](../../docs/lifecycle-foundation-revalidation.md) records
 nine completed operations and 15 passing Trace topologies; the graceful-restart
 Rebuild trace still fails on two missing Workflow-parent edges. The
 [Controller follow-up](../../docs/controller-workflow-span-revalidation.md) now
 passes all 16 topologies with zero missing parents in an isolated candidate.
-Strict warnings/errors remain failed; retained deployment is pending.
+Strict warnings/errors remain failed. The later
+[development synchronization](../../docs/controller-development-sync-20260921.md)
+deployed the Controller repair and repeated scoped regression.
+
+The opt-in Runtime reconstruction crash profile now has its own
+[contract](crash-contract.md) and [integration report](../../docs/runtime-crash-integration-revalidation.md).
+Run `make e2e-lifecycle-crash` separately. It kills only the disposable Runtime
+Controller at real Docker mutation boundaries, keeps Agent Controller/Temporal
+alive, and verifies immutable retries, workspace retention and single publication.
+This is separate from the normal committed-response restart profile. Successful
+recovery topology is scoped explicitly; raw crash/error/timing evidence remains
+strictly failed and the diagnostic target can return exit 2.
 
 These are disposable Docker integration profiles for C3/C5, not another option on
 the general Stage 3 launcher. All business commands enter through Edge Gateway
@@ -34,9 +57,11 @@ make e2e-lifecycle
 ```
 
 Use `ANTNEST_E2E_CONTROLLER_IMAGE=<image-or-immutable-ID>` to select an isolated
-Controller candidate; deployment checks compare its actual image ID. The default
-remains `antnest/agent-controller:local`. Only this disposable Foundation Compose
-override consumes the option in this directory.
+Controller candidate, or `ANTNEST_E2E_RUNTIME_CONTROLLER_IMAGE=<image-or-immutable-ID>`
+for Runtime Controller; deployment checks compare the actual image IDs. Defaults
+remain `antnest/agent-controller:local` and `antnest/runtime-controller:local`.
+The disposable Foundation, network, shutdown, health, restore, loss and interrupted-update profiles
+consume these options through their shared Compose override.
 
 The profile chooses unused ports/network ranges, creates one isolated Compose
 project, uses synthetic administrator/provider data and the locally built
@@ -92,7 +117,9 @@ present and make the strict exit nonzero. Export completion does not waive timin
 
 `make e2e-lifecycle-shutdown` runs separately from the other profiles, with real
 Gateway, Console, Identity, Controller, ACP, Egress and PostgreSQL services and
-OTLP enabled. It creates an idle Agent through Gateway and holds three real
+Temporal and OTLP enabled. It reuses the current Foundation setup and deployment
+checks; [revalidation evidence](../../docs/lifecycle-shutdown-revalidation.md)
+records its scoped results. It creates an idle Agent through Gateway and holds three real
 connections open: the administrator lifecycle event watch, the owner's workspace
 state watch and an initialized ACP v1 WebSocket with a persisted empty Session.
 Every observer must receive a valid initial result and remain open before stop.
@@ -100,26 +127,85 @@ Every observer must receive a valid initial result and remain open before stop.
 The coordinator stops the eight application services with ordinary Compose
 SIGTERM, without first closing client connections. All must exit zero without
 OOM/forced termination; the remote ends must close the watches and WebSocket.
-The database is then stopped cleanly. Jaeger stays up long enough to verify
-finished Gateway-rooted watch spans and their actual Identity/Console/Controller
-ancestry. Egress packet tracing remains excluded. Only bounded trace summaries
-and supplied synthetic-secret scans are retained.
+Temporal is then stopped before PostgreSQL; both must exit zero. Jaeger stays
+up long enough to verify finished Gateway-rooted watch spans. Administrative
+events traverse Identity/Console/Controller; owner execution state uses Identity
+and ACP's POST `/rpc/agent-acp/watch-agent-execution-state`, with no Controller
+state dependency. State carries a configuration digest, not `agent_revision`.
+The SSE client records the actual response Trace ID, without injecting a
+synthetic unexported parent. Every raw span is checked for topology/capture and
+supplied secrets; private raw evidence is saved for diagnosis.
 An HTTP receive stream can finish as `handler_aborted` during maintenance.
-Only the exact Gateway Watch root may carry that error: it must also carry
+The exact Gateway Watch root may carry that error only when it also carries
 `antnest.http.request_cancelled=true`, retain HTTP 200 and finish inside the
 observed stop window (one second of host/VM clock tolerance). The cancellation
-is reported separately from normal completion. Dependency errors, arbitrary
-panics and unclassified aborts still fail; the stop and remote-closure checks
-must pass before any trace is inspected.
+is reported separately from normal completion. The current oracle also recognizes
+exact HTTP-200 watch-path cancellation in the same window: direct Gateway CLIENT
+`cancelled`, Console event SERVER/Controller CLIENT `cancelled`, Controller event
+SERVER `canceled` with `request_failed`, and ACP execution-state SERVER
+`stream_interrupted`. It requires the owning route/method and ancestry and rejects
+conflicting error events. All remain raw errors and strict failures. Other
+dependency errors, arbitrary panics and unclassified aborts still fail; the stop
+and remote-closure checks must pass before any trace is inspected.
 
-Restart uses the same containers, databases, configuration and cookies. The
+Restart starts the existing PostgreSQL, Temporal and application containers in
+dependency order, without rerunning one-shot schema jobs or recreating resources.
+It uses the same containers, databases, configuration and cookies. The
 same Agent and workspace must remain; the same ACP Session loads without a Run
-or model call. Fresh watches must receive the same authoritative state/event
+or model call, verified by public execution audits and model request history.
+Session metadata and the full Agent event journal remain unchanged. Fresh watches must receive the same authoritative state/event
 history. Dynamic Runtime compute is deliberately not managed by Compose: it
 must remain the same running container, matching the operator runbook. Finally
 normal Agent deletion and exact-scope cleanup remove the disposable resources.
+The two ACP requests and Create/Delete operations also retain their current
+per-message and lifecycle topology checks. Warning/cancellation errors remain
+strict failures; topology failure exits 1 and strict-only failure exits 2.
 This tests idle-stream coordinated maintenance, not force-killing an active
 Tool, browser rendering or every ACP transport/version combination.
+
+The migration originally left stable acceptance incomplete: one full run passed,
+but two repeats failed at post-restart Delete with Temporal membership unavailable
+despite TCP health. The separate [readiness repair](../../docs/temporal-readiness-revalidation.md)
+uses frontend initialization and live service rings, plus a direct Controller
+startup dependency. Its repeated candidate results remain separate from the
+original failures; strict Trace warnings/cancellation errors are not waived.
+
+## Offline Backup And Restore
+
+`make e2e-lifecycle-restore` uses current Foundation setup and a deterministic
+Tool model. It normally disables its Agent, stops application writers followed
+by Temporal, then exports seven databases, workspace/system Skills archives and
+three encryption keys. Complete inventory, checksums and ownership are checked
+before replacing only owned storage. Original roles and empty databases are
+created before restoring data; schema initializers and writers wait until frozen
+row/sequence/ownership/ACL fingerprints and file archives match.
+
+The isolated diagnostic Jaeger stays running across storage replacement to retain
+both sides' traces. The model is recreated. Current public audit and Agent event
+history must survive; exact Session replay makes no model call or new Run.
+Prompt on an untouched restored Session exercises its saved encrypted MCP
+revision and one new Tool Run. Normal Delete removes Agent resources before
+shutdown and collection of lifecycle/SDK request traces. Strict warnings remain
+failed. See the [operational procedure](../../docs/docker-backup-restore.md) and
+[migration evidence](../../docs/lifecycle-restore-revalidation.md).
+
+## Runtime Health And Observation
+
+`make e2e-lifecycle-health` uses current Foundation setup and validates Engine
+health, Controller's Runtime state and ACP execution availability independently.
+It retains two 60-second idle CPU samples, the bounded unprivileged calibration,
+fast startup probes and steady 10-second/three-failure health policy. Samples
+must preserve the original process and binding.
+
+Only the test-owned Runtime is paused with SIGSTOP. After three failed checks,
+both Controller unhealthy and ACP offline must be observed. SIGCONT is sent by
+an independent cleanup client even if the scenario is interrupted. Health
+recovery within the same process preserves its execution identity and workspace.
+An ordinary exit-zero stop/start then proves a new healthy process cannot reuse
+the old executable binding. Explicit Rebuild restores availability with retained
+workspace and new revisions; Delete removes the test resources. No Run or model
+call is allowed. Create/Rebuild/Delete use current Trace oracles and retain strict
+failures. See [current evidence](../../docs/lifecycle-health-revalidation.md).
 
 ## Runtime-start Failure Batch
 
@@ -181,9 +267,12 @@ these synthetic prompts, rejects duplicates, and never calls an external model.
 Its control/status port is bound to loopback only in this disposable profile.
 
 This graceful restart does not claim SIGKILL recovery or loss of a
-Runtime-mutation response. The interrupted-update profile below covers the
-nonterminal physical-effect crash separately. Still required before full C3
-acceptance: real allowed/denied TUN traffic. Browser component evidence lives in Console;
+Runtime-mutation response. The interrupted-update profile below covers a lost
+committed response with normal Controller stops. Unfinished physical-effect
+crash recovery remains a separate fault scope without current E2E acceptance. The original C3 checklist also
+required real allowed/denied TUN traffic; the separate
+[network migration](../../docs/lifecycle-network-revalidation.md) now supplies
+that scoped evidence. Browser component evidence lives in Console;
 this profile does not claim browser acceptance or complete C3-01..05 by itself.
 
 Keep the compact result in the revalidation report and raw evidence private.
@@ -192,34 +281,43 @@ causal links, missing phases and duplicate or incorrect event cursors.
 
 ## Interrupted Runtime Update
 
-`make e2e-lifecycle-interrupted` is a separate disposable profile. A derived
-test-only Runtime image waits on a workspace file before executing the unchanged
-Runtime binary. After Gateway admits a rebuild, the checkpoint must prove that
-the old container is gone and the exact target container exists but is not ready.
-Read-only, service-owned journal queries must agree: Agent Controller still owns
-`running/runtime_update`, has no Runtime result, and references that same running
-Runtime Controller operation. No credentials, specs or raw journals are retained.
+`make e2e-lifecycle-interrupted` now uses current Foundation deployment and
+catalog setup with the [migration contract](interrupted-migration-contract.md).
+A private transparent HTTP fixture holds one selected Agent's real completed
+Runtime Update response. The checkpoint requires Agent Controller still at
+`running/runtime_update` without a result, and the exact Runtime child already
+committed with a physically present target. No response is fabricated.
 
-Briefly pause Agent Controller, then SIGKILL Runtime Controller and Agent
-Controller. Freezing the caller preserves the targeted in-flight checkpoint
-between the kills. Inspect exit code 137, no OOM and unchanged container
-identity, then re-read the frozen business journals before releasing the gate.
-Reject a completed/unknown child or changed parent phase at that checkpoint.
-Release the startup gate and restart the same Controllers. Temporal retries the
-interrupted Activity; the profile does not edit service records or emulate a
-scheduler. Runtime Controller retains its own platform-operation recovery.
+Both Controllers stop normally, Agent Controller first, and must exit zero.
+The fixture must record caller cancellation, not expiry. Restart Runtime
+Controller first, then Agent Controller. Temporal retries the same Activity;
+the same terminal child response and target are reused with no mutation attempt,
+extra generation, workspace replacement or duplicate updated/rebuilt event.
+Exact Gateway replay and final public Delete remain required.
+Catalog revision creation must leave the existing Agent unchanged. Rebuild selects
+the new Template revision and recovery verifies its changed request budget,
+unchanged remaining configuration and original workspace bytes.
 
-After recovery, require the same child request, target revision, generation,
-digest, container and workspace; one new execution publication and one Runtime
-updated observation. Exact Gateway replay must not create additional effects.
+The trace oracle preserves both actual Workflow parents, both Update attempts,
+the successful first Runtime SERVER and the canceled caller. It checks matching
+receipt hashes/identities and no Docker work on terminal retry. Cancellation and
+clock warnings remain strict failures. Deployment credentials, raw journals and
+traces stay in private ignored evidence; final results follow owned cleanup.
 
-All SDK Activities and downstream calls must retain the Gateway admission trace.
-SIGKILL may lose an unexported span; the trace oracle reports that evidence gap
-rather than manufacturing a parent or weakening ancestry checks. Final results
-are emitted only after resources owned by this profile have been removed.
+The old startup-gate/SIGKILL flow, overlay, image recipe and exclusive Trace
+collector are [retired](../../docs/interruption-assets-retirement.md). Current
+provisioning no longer waits for Runtime readiness, so that gate cannot establish
+a running Update. This normal-restart profile does not claim unfinished Runtime
+mutation crash recovery or lease expiry. Historical failure records and existing
+service recovery tests remain, with no claim of new crash E2E evidence.
+Current Update/loss consumers import `recovery-support.mjs`; their physical
+inspection reads Docker inventory and inspect data. Shared observability
+`evidence.mjs` and current collectors remain in use.
 
 ## Runtime Network Policy
 
+The [current network revalidation](../../docs/lifecycle-network-revalidation.md)
+records the migrated consumer and retained strict failures.
 The network profile uses raw TCP/NDJSON, not HTTP or proxy environment variables.
 Two real ordinary-user Runtime tools hold separate connections. After Agent A's
 deny ACK, its original conntrack entry must be absent while B's original entry
@@ -234,8 +332,8 @@ namespace before DNAT. Only the exact test target can receive TUN-origin traffic
 loss of the DNAT rule must not send the synthetic public destination to Internet.
 No host firewall/routes or production policy implementation is changed.
 
-`make e2e-lifecycle-network` reuses the empty-instance Gateway setup and exact
-lifecycle replay helpers, but runs a separate network scenario instead of
+`make e2e-lifecycle-network` reuses the current Foundation empty-instance Gateway
+setup and exact lifecycle replay helpers, but runs a separate network scenario instead of
 repeating the drain/crash profiles. Two Agents use real ACP v1 prompts, the
 deterministic local model and actual Runtime `bash` execution as UID/GID 1000.
 
@@ -264,9 +362,23 @@ before teardown and retain only final compact metrics.
 
 DNS denial needs both a bounded resolver error and a direct TCP connection
 rejection to the configured resolver; a timeout alone is not evidence. Agent B
-must still resolve the target while A is denied. Trace acceptance checks the
-owning repository's released/completed/settled admission, correlated to the exact
-ACP finish RPC. After deleting both Agents, gracefully stop all trace producers
+must still resolve the target while A is denied. Each prompt must have exactly
+one completed public Run audit for its actual Agent, Session and execution
+revision. Actual SDK request IDs and connection links identify six new-Session
+and six prompt traces; twelve Provider HTTP calls and six Runtime Bash calls
+must descend from their durable Runs. No Controller admission/finish RPC is
+expected. Four lifecycle traces use the current Temporal, committed SQL and
+publication/settlement contract; four policy-write traces require the exact
+Agent and Gateway/Console/Controller/Egress ancestry.
+
+The deployment checks all thirteen services and eight application image IDs.
+The additional target is healthy, has no host ports and belongs only to the
+test Egress network. Temporal remains private and dynamic network allocation
+reserves the static infrastructure addresses. Raw traces and failure diagnostics
+are saved privately under `.cache/lifecycle-network/<project>/`. Topology failure
+exits 1; warnings/errors retain strict exit 2 without rewriting evidence.
+
+After deleting both Agents, gracefully stop all trace producers
 and verify clean exits so telemetry shutdown completes before Jaeger collection.
 For both Runtimes, retain Docker die/stop/destroy events from their normal business
 Delete: exactly one exit code 0, no OOM or SIGKILL, exact owned container identity.
@@ -274,33 +386,33 @@ Stable index samples alone are not used as a producer-completion barrier.
 
 ## Unplanned Runtime Loss
 
-`make e2e-lifecycle-loss` exercises two disposable Agents independently: remove
-one running Runtime while its Controller is online; stop the Runtime Controller,
-remove the second Runtime, then restart that Controller. Require observed
-unavailability, an empty executable binding, retained recovery lineage and one
-loss audit event attributed to the old Runtime revision. Docker faults must
-target the exact inspected container with matching project scope and Agent label.
-Neither case deletes the workspace volume or alters any service database.
-The public event envelope is correlated with its internal event and producer
-observation through fixed read-only queries using each service's own database
-role. The live path must be `runtime_deleted / docker_event`; the cold path must
-be `runtime_missing / platform_reconciliation`. A generic unavailable state
-cannot substitute for either. Runtime Inspect must report the retained logical
-head as ready/absent, without an executable endpoint. The recovery spec is
-retained; only the physical/execution binding is cleared.
+`make e2e-lifecycle-loss` uses current Foundation setup and two disposable Agents.
+Each completes a real Bash append before its idle Runtime is normally stopped,
+verified exit-zero/no-OOM, and removed without force. In the live case the
+Controller observes exit invalidation before container removal; independently
+require `runtime_deleted / docker_event` from the Runtime journal. In the cold
+case Runtime Controller is normally stopped before removal, then restarted to
+require `runtime_missing / platform_reconciliation`. Fault targets must match
+exact inspected container, project scope and Agent identity. Workspace remains.
 
-Before each loss, the owner sends an ACP v1 prompt that invokes a real Runtime
-`bash` append. After loss, a prompt must be rejected without a model invocation.
-Rebuild uses only the existing Gateway lifecycle command and Template revision;
-exact-request replay must not repeat mutations. Load the same Session after
-replacement without executing its history, then use the real `read` tool to
-verify the original bytes. Require a distinct container/execution revision,
-the same workspace and a model-visible environment-reset notice. A second
-Controller restart must not invalidate the replacement or duplicate loss audit.
+Current Controller invalidation uses fresh Inspect: its public/private loss
+event has a `runtime-condition-loss-` identity and zero direct journal sequence.
+The live audit retains `runtime_exited`, the cold audit `runtime_missing`.
+Validate producer sequence, route, Agent, Runtime revision, generation and
+physical identity separately; a generic unavailable result cannot substitute.
+Runtime Inspect must report provisioned/absent without executable fields.
+The configured spec and last successful execution lineage remain preserved.
 
-Collect the initial write's Gateway-rooted trace before deleting its Runtime,
-then collect recovery prompt traces and admission-linked lifecycle traces.
-This profile covers deployed live/cold loss recovery, not browser interaction,
-forced in-flight Tool interruption, or artificial late-event delivery. The latter
-is separately covered by Controller PostgreSQL regression tests. Only print a
-passing summary after all owned resources have been removed.
+ACP state must become offline; Prompt rejects with `-32020/agent_unavailable`
+without notifications, model invocation or new Run audits. Explicit Rebuild
+uses the same Template revision with exact idempotent replay. Load the same
+Session without executing history, then use real Read to verify original bytes
+and the model-visible reset notice. Require new compute/Runtime/execution
+identity, unchanged configuration and workspace. Another normal Runtime
+Controller restart must preserve the replacement and exact loss/event history.
+
+After business Delete, flush producers normally and collect six lifecycle plus
+fourteen actual SDK request traces, including two protected rejections. Keep
+strict timing warnings and rejection ERROR spans failed. This is idle live/cold
+loss recovery; in-flight crashes and artificial delayed observations retain their
+separate scenarios. See [current evidence](../../docs/lifecycle-loss-revalidation.md).

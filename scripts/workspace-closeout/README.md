@@ -1,11 +1,36 @@
 # Workspace State Integration
 
 Current results and implementation boundaries are indexed in
-[current status](../../docs/current-status.md). The disposable C4 scenarios below
-describe the earlier closeout profile; their old admission-fence/Controller trace
-terminology is historical and is not acceptance of the refactored execution path.
-The later real-browser profiles have separate results; none retroactively closes
-all five deferred C4 checks.
+[current status](../../docs/current-status.md). The protocol entry and automated
+C4 browser entry use current contracts, with separate scope and evidence.
+The former manual four-scenario profile now runs as a repeatable browser test.
+The [retirement audit](../../docs/acceptance-retirement-audit.md) identifies old
+orchestration/admission helpers; the [first cleanup](../../docs/acceptance-retirement-revalidation.md)
+removes that superseded graph. The shared byte checker and model peers still
+have current consumers.
+
+## Current protocol profile
+
+`make e2e-workspace` runs `current-flow.mjs` through the disposable Foundation
+setup with the installed official ACP SDK. The [migration contract](protocol-migration-contract.md)
+and [revalidation report](../../docs/workspace-protocol-revalidation.md) define
+the six-field Gateway/ACP state, public execution audits, real bash
+process cancellation, explicit Rebuild recovery, offline completion/replay,
+replacement Runtime context and owner revocation/offboarding.
+
+Run `make test-workspace-fixtures` first. The Docker profile requires the current
+local application images, isolates its subnets and removes its own labeled
+containers, volumes and networks even on failure. Evidence and raw traces are
+private under `.cache/lifecycle-workspace/<project>/`; only reviewed summaries
+belong in documentation. Exit 1 means business/topology failure; exit 2 retains
+strict errors/timing warnings even if business and topology checks pass.
+
+An in-flight Tool cancellation retains unknown effects and
+`runtime_barrier_required` until explicit Rebuild replaces that Runtime. The
+profile proves physical process exit separately from ACP's immutable unknown
+Run facts. It does not claim automatic reuse, browser layout acceptance or a
+complete C4 milestone. The superseded `flow.mjs` and Controller admission oracle
+are retired; current state/request Trace checks remain.
 
 ## Current C4 Browser Revalidation
 
@@ -46,63 +71,41 @@ the official ACP SDK and a deterministic OpenAI-compatible model peer. The model
 is the only synthetic business dependency; it requests real Runtime tools.
 No production/provider credential or retained acceptance project is used.
 
-## Scenarios
+## Migrated historical browser profile
 
-1. Member login, scoped state snapshot/watch, new/load Session and real Tool work.
-2. Two Sessions contend for one Agent. A fresh connection cancels the owner's
-   active Session after the original connection closes. Verify physical tool
-   termination separately from the existing unknown-effect admission fence.
-   An explicit administrator Disable/Enable must recover that fence without
-   deleting workspace. This is not automatic recovery after cancellation.
-3. A closed state observer misses completion. A replacement reads current state
-   and ACP replay returns one history without resubmitting model/Tool effects.
-4. Explicit rebuild is visible to an open state observer. Workspace bytes survive;
-   later work uses the replacement Runtime and receives environment-change context.
-5. Owner deactivation closes observation/admission. Invalid identity responses
-   must not masquerade as ready state or disclose configuration/credentials.
-6. Jaeger verifies actual parent/child ancestry from Gateway to Identity,
-   Controller repository, ACP and Runtime; service-name presence is insufficient.
+`make e2e-workspace-browser` (or `node scripts/workspace-closeout/browser-run.mjs`)
+now runs the old four manual scenarios automatically in Chromium. It uses the
+current Foundation deployment, a vision-capable Provider Model and immutable
+Template revision/image. See the [migration contract](browser-migration-contract.md)
+and [revalidation report](../../docs/workspace-browser-revalidation.md).
+Run `make test-workspace-fixtures` first; Chromium must already be installed in
+the Agent UI Playwright environment. The run has a fifteen-minute deadline.
 
-Run `node --test --test-concurrency=1 scripts/workspace-closeout/*.test.mjs`,
-build current images serially with `make -j1 docker-build-stage3`, then run
-`node scripts/workspace-closeout/run.mjs`. The runner reuses the lifecycle
-fixture's scoped resource creation/cleanup and private service databases in one
-PostgreSQL instance. An interrupted or failed run cleans only its own project.
-Only compact final results are retained, never raw requests or credentials.
+The real browser signs in, appends/reads the synthetic workspace note, checks
+collapsed Tool activity and expanded output, uploads exact text/image bytes,
+rejects an unsupported file, reloads the same Session without duplicated answers
+or attachments, and creates a distinct mobile conversation. Mobile assertions
+cover overflow, readable text and 44px touch controls. It compares public Run/event
+history and the model ledger before/after replay, and verifies real Runtime bytes.
 
-These protocol-driven scenarios supplement Agent UI component tests. Actual
-desktop/mobile browser acceptance remains separately required before C4 closes;
-a SDK client alone is not evidence of browser recovery or layout correctness.
-Automatic reuse after cancelling an in-flight Runtime Tool is a pending product
-decision: the current MCP cancellation drops the response and preserves unknown
-effects, as documented in the earlier F02 acceptance. This profile must not
-declare all of C4 accepted while that usability decision remains unresolved.
+Browser connection identities come from actual Chromium WebSocket handshake
+response headers. Individual new/load/prompt requests retain their JSON-RPC IDs;
+all four Runs and replay requests receive full ancestry/privacy checks. Exact
+Provider calls and Runtime process binding are verified. Browser closure and
+normal service flush precede trace collection; strict errors/warnings remain
+failures. Exit 1 means business/topology failure; exit 2 retains strict failure.
 
-## Interactive Browser Acceptance
+Private reports, traces and desktop/mobile screenshots are under
+`.cache/lifecycle-workspace-browser/<project>/`. The runner deletes the Agent,
+workspace and all owned Docker resources. It requires no human `finish` input,
+real credentials, retained stack changes or user upload files. The old manual
+`waitForFinish` export and its exclusive tests are [retired](../../docs/browser-finish-retirement.md).
+`browser-control.mjs` retains the exact workspace-byte validator used by both
+browser profiles, including its private-content diagnostic check.
 
-Historical fixture: `browser-run.mjs` and the older protocol `run.mjs` still
-seed retired ModelProfile revision APIs. Use `c4-run.mjs` above for current
-acceptance; the instructions below describe the earlier manual evidence flow.
-
-`node scripts/workspace-closeout/browser-run.mjs` creates a separate disposable
-stack and prints its Gateway URL and synthetic member login. It generates only
-known test uploads in a temporary directory; neither real credentials nor user
-files are required. Use the browser's normal login and attachment picker.
-
-1. Send `c4-browser-write`, then `c4-browser-read` in one conversation. Inspect
-   the real bash/read results, default-collapsed activity and enabled composer.
-2. Attach the generated `workspace-notes.md` and `sample.png`, send
-   `c4-browser-attachments`, and inspect both previews and the reply. The model
-   peer requires exact file/image bytes, not just a successful HTTP response.
-3. Reload and re-enter the conversation. Check one copy of each message,
-   attachment and Tool result, without another model or Tool execution.
-4. At a narrow viewport create another conversation and send
-   `c4-browser-mobile`; inspect navigation, composer and content bounds.
-5. Enter `finish` on the runner's stdin. It independently checks exact model
-   requests and workspace bytes, then removes only its own Docker resources and
-   uploads. EOF, interruption or the 30-minute deadline also trigger cleanup,
-   but are not passing acceptance. Browser observations are recorded separately;
-   the runner does not assert screenshots or a complete C4 milestone.
+This supplements the broader current C4 browser profile above. It does not
+replace that profile's cancellation, approval, rebuild, revocation and metadata
+checks or the real-provider development profile below.
 
 ## Real Provider Development Acceptance
 

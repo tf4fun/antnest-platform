@@ -48,12 +48,12 @@ separate Runtime Provider service in the target architecture.
 
 ## Target Interfaces And Dependencies
 
-| Direction         | Interface                                                                                                      |
-| ----------------- | -------------------------------------------------------------------------------------------------------------- |
+| Direction         | Interface                                                                                                                   |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------- |
 | Inbound           | Internal RPC for image resolution, Runtime Initialize, Update, Disable, Enable, Delete, Inspect, and observation List/Watch |
-| Platform outbound | Docker Engine API initially; Kubernetes API in a later adapter                                                 |
-| Runtime outbound  | Bounded `GET /status` verification for independent observation and provisioned-state reads                           |
-| Persistence       | Private Runtime Environment head, operation, internal generation-claim, and bounded observation-journal schema |
+| Platform outbound | Docker Engine API initially; Kubernetes API in a later adapter                                                              |
+| Runtime outbound  | Bounded `GET /status` verification for independent observation and provisioned-state reads                                  |
+| Persistence       | Private Runtime Environment head, operation, internal generation-claim, and bounded observation-journal schema              |
 
 Runtime Controller never calls Runtime Egress. Agent Controller obtains an
 Agent network attachment from Egress and includes it in the immutable Runtime
@@ -194,3 +194,22 @@ No Provider or external model is called. `--image` and `--jaeger` override defau
   cross-service Stage 1 contract and acceptance.
 - [`../../docs/service-layout.md`](../../docs/service-layout.md): repository
   ownership and dependency rules.
+
+### Opt-in reconstruction crash component
+
+`make test-crash-recovery` (from this service directory) runs four real process
+exit boundaries using the production control service, PostgreSQL adapters and
+Docker driver. See [the contract](docs/crash-recovery-contract.md). It creates its
+own PostgreSQL, internal network, UDP fixture peer, Skills volume and Runtime
+resources; existing development databases and images are not changed.
+
+Requires the installed `postgres:17-bookworm`, `node:24-bookworm-slim` and
+`antnest/antnest-runtime:local` images, a local Unix Docker context and `/dev/net/tun`
+in Docker. `ANTNEST_RUNTIME_CONTROLLER_CRASH_IMAGE` may select a different installed
+Runtime image. Optional `ANTNEST_RUNTIME_CRASH_EVIDENCE` names an existing private
+directory for scoped result summaries and Runtime diagnostics on failure.
+
+This explicitly opted-in abnormal-exit component is separate from routine
+normal-restart acceptance. It proves service recovery, not public Controller
+Rebuild, Temporal retries or execution publication; those need the integration
+batch after the Runtime-owned gates. No forced-kill span completeness is claimed.

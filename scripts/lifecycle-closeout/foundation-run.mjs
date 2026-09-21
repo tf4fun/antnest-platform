@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { inspect } from "node:util";
 import { mkdir, writeFile } from "node:fs/promises";
 import { configuration, dockerClient, cleanup, lines } from "./docker.mjs";
 import {
@@ -9,7 +10,21 @@ import { applicationServices, assertDeployment } from "./deployment.mjs";
 import { runFoundationFlow } from "./foundation-flow.mjs";
 import { foundationTraceExitCode } from "./foundation-evidence.mjs";
 
-export async function runFoundation() {
+export async function runFoundation(profile = "foundation") {
+  assert(
+    [
+      "foundation",
+      "network",
+      "shutdown",
+      "health",
+      "restore",
+      "loss",
+      "interrupted",
+      "crash",
+      "workspace",
+      "workspace-browser",
+    ].includes(profile),
+  );
   const abort = new AbortController();
   const interrupt = () =>
     abort.abort(new Error("Foundation verification interrupted"));
@@ -20,7 +35,32 @@ export async function runFoundation() {
   try {
     config = await configuration(abort.signal);
     configureFoundation(config);
-    config.evidence = `.cache/lifecycle-foundation/${config.project}`;
+    if (
+      [
+        "network",
+        "restore",
+        "loss",
+        "interrupted",
+        "crash",
+        "workspace",
+        "workspace-browser",
+      ].includes(profile)
+    ) {
+      const foundationCompose = config.compose;
+      config.compose = (args) =>
+        foundationCompose([
+          "-f",
+          profile === "workspace"
+            ? "scripts/workspace-closeout/compose.yaml"
+            : profile === "workspace-browser"
+              ? "scripts/workspace-closeout/browser.compose.yaml"
+              : `scripts/lifecycle-closeout/${profile === "interrupted" ? "update-receipt" : profile}.compose.yaml`,
+          ...args,
+        ]);
+    }
+    if (profile === "restore")
+      (await import("./restore-flow.mjs")).configureRestore(config);
+    config.evidence = `.cache/lifecycle-${profile}/${config.project}`;
     await mkdir(`${config.evidence}/traces`, { recursive: true, mode: 0o700 });
     console.error(`Disposable foundation project: ${config.project}`);
     const docker = dockerClient(config.env, abort.signal);
@@ -52,7 +92,56 @@ export async function runFoundation() {
       JSON.stringify(rows),
       { mode: 0o600 },
     );
-    deployment = inspectFoundationDeployment(rows, config);
+    let baseRows = rows;
+    if (profile === "network") {
+      const { inspectNetworkTarget } = await import("./network-current.mjs");
+      inspectNetworkTarget(rows, config);
+      baseRows = rows.filter(
+        (r) =>
+          r.Config.Labels["com.docker.compose.service"] !== "network-target",
+      );
+    }
+    if (profile === "interrupted") {
+      const { inspectUpdateProxyDeployment } =
+        await import("./interrupted-current.mjs");
+      inspectUpdateProxyDeployment(rows, config);
+      baseRows = rows.filter(
+        (r) => r.Config.Labels["com.docker.compose.service"] !== "update-proxy",
+      );
+    }
+    if (profile === "crash") {
+      const peers = rows.filter(
+        (r) => r.Config.Labels["com.docker.compose.service"] === "crash-proxy",
+      );
+      assert.equal(peers.length, 1);
+      const peer = peers[0];
+      assert.equal(
+        peer.Config.Labels["com.docker.compose.project"],
+        config.project,
+      );
+      assert.equal(peer.State.Health.Status, "healthy");
+      assert.deepEqual(peer.HostConfig.PortBindings ?? {}, {});
+      assert.deepEqual(Object.keys(peer.NetworkSettings.Networks), [
+        `${config.project}_development`,
+      ]);
+      const rc = rows.find(
+        (r) =>
+          r.Config.Labels["com.docker.compose.service"] ===
+          "runtime-controller",
+      );
+      assert(
+        rc.Config.Env.includes("ANTNEST_DOCKER_HOST=unix:///fault/docker.sock"),
+      );
+      assert.equal(
+        rc.Mounts.find((m) => m.Destination === "/fault")?.Name,
+        peer.Mounts.find((m) => m.Destination === "/fault")?.Name,
+      );
+      baseRows = rows.filter((r) => r !== peer);
+    }
+    deployment = {
+      ...inspectFoundationDeployment(baseRows, config),
+      services: rows.length,
+    };
     const images = {};
     for (const name of applicationServices)
       images[name] = await docker([
@@ -62,11 +151,13 @@ export async function runFoundation() {
         "{{.Id}}",
         name === "agent-controller"
           ? config.controllerImage
-          : `antnest/${name}:local`,
+          : name === "runtime-controller"
+            ? config.runtimeControllerImage
+            : `antnest/${name}:local`,
       ]);
     assertDeployment(
       config,
-      rows
+      baseRows
         .filter(
           (r) => r.Config.Labels["com.docker.compose.service"] !== "temporal",
         )
@@ -80,7 +171,31 @@ export async function runFoundation() {
         })),
       images,
     );
-    result = await runFoundationFlow(config, docker, abort.signal);
+    const scenario =
+      profile === "crash"
+        ? (await import("./crash-flow.mjs")).runCrash
+        : profile === "network"
+          ? (await import("./network-flow.mjs")).runNetwork
+          : profile === "shutdown"
+            ? (await import("./shutdown.mjs")).runShutdown
+            : profile === "health"
+              ? (await import("./health-flow.mjs")).runHealth
+              : profile === "restore"
+                ? (await import("./restore-flow.mjs")).runRestore
+                : profile === "loss"
+                  ? (await import("./loss-flow.mjs")).runLoss
+                  : profile === "interrupted"
+                    ? (await import("./update-receipt-flow.mjs"))
+                        .runUpdateReceipt
+                    : profile === "workspace"
+                      ? (await import("../workspace-closeout/current-flow.mjs"))
+                          .workspaceProtocol
+                      : profile === "workspace-browser"
+                        ? (
+                            await import("../workspace-closeout/browser-current-flow.mjs")
+                          ).runBrowserProfile
+                        : undefined;
+    result = await runFoundationFlow(config, docker, abort.signal, scenario);
     await writeFile(
       `${config.evidence}/business.json`,
       JSON.stringify(result),
@@ -91,9 +206,55 @@ export async function runFoundation() {
     if (config?.evidence)
       await writeFile(
         `${config.evidence}/failure.private.txt`,
-        String(error.stack),
+        inspect(error, { depth: 8 }),
         { mode: 0o600 },
       );
+    if (
+      config?.evidence &&
+      [
+        "shutdown",
+        "health",
+        "restore",
+        "loss",
+        "interrupted",
+        "crash",
+        "workspace",
+        "workspace-browser",
+      ].includes(profile)
+    ) {
+      // Preserve bounded, private service diagnostics before owned cleanup.
+      const diagnostics = {};
+      try {
+        const diagnosticDocker = dockerClient(config.env, undefined, 60000);
+        const ids = lines(
+          await diagnosticDocker([
+            "ps",
+            "-aq",
+            "--filter",
+            `label=com.docker.compose.project=${config.project}`,
+          ]),
+        );
+        for (const id of ids) {
+          try {
+            diagnostics[id] = await diagnosticDocker([
+              "logs",
+              "--tail",
+              "100",
+              id,
+            ]);
+          } catch {
+            diagnostics[id] = "diagnostic retrieval failed";
+          }
+        }
+      } catch {
+        diagnostics.retrieval = "diagnostic retrieval failed";
+      }
+      await writeFile(
+        `${config.evidence}/services.private.json`,
+        JSON.stringify(diagnostics),
+        { mode: 0o600 },
+      );
+    }
   } finally {
     clearTimeout(timer);
     try {
@@ -114,14 +275,18 @@ export async function runFoundation() {
   assert(result);
   const code = foundationTraceExitCode([
     ...result.traces,
-    ...result.active_run_rebuild.run_traces,
+    ...(result.active_run_rebuild?.run_traces ?? result.request_traces ?? []),
+    ...(result.policy_traces ?? []),
+    ...(result.watch_traces ?? []),
   ]);
   console.log(
     JSON.stringify({
       status:
         code === 1
           ? "business_passed_trace_failed"
-          : "business_and_topology_passed",
+          : profile === "crash"
+            ? "business_and_recovery_topology_passed"
+            : "business_and_topology_passed",
       ...result,
       deployment,
       cleanup: "verified",

@@ -1,5 +1,44 @@
 import assert from "node:assert/strict";
 
+export function assertHealthProjection(initial, agent, state, phase) {
+  assert(["unhealthy", "recovered", "restarted"].includes(phase));
+  assert.equal(agent.agent_id, initial.agent_id);
+  assert.equal(agent.lifecycle_state, "created");
+  assert.equal(agent.activation_state, "enabled");
+  assert.equal(agent.desired_state, "enabled");
+  assert(!agent.active_operation_request_id);
+  assert.deepEqual(agent.configuration, initial.configuration);
+  assert.equal(
+    agent.runtime?.runtime_revision,
+    initial.runtime.runtime_revision,
+  );
+  assert.equal(
+    agent.runtime_state,
+    phase === "unhealthy" ? "unhealthy" : "available",
+  );
+  if (phase === "restarted")
+    assert(
+      !agent.executable_execution_revision,
+      "restarted Runtime was silently adopted",
+    );
+  else {
+    assert.equal(
+      agent.executable_execution_revision,
+      initial.executable_execution_revision,
+    );
+    assert.deepEqual(agent.runtime, initial.runtime);
+  }
+  assert.equal(state.agent_id, initial.agent_id);
+  assert.equal(state.access_allowed, true);
+  assert.match(state.configuration_revision, /^[a-f0-9]{64}$/);
+  assert.equal(state.active_session_id, null);
+  assert.equal(state.availability, phase === "recovered" ? "ready" : "offline");
+  assert.equal(
+    state.unavailable_reason,
+    phase === "recovered" ? null : "agent_unavailable",
+  );
+}
+
 export function startupSeconds(container) {
   const startedAt = Date.parse(container.State.StartedAt);
   assert(Number.isFinite(startedAt), "Runtime has no valid process start time");
