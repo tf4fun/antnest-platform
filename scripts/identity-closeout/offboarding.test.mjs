@@ -7,106 +7,7 @@ import {
   failureCategory,
 } from "./offboarding-evidence.mjs";
 
-const sourceID = "1".repeat(32);
-function fixture() {
-  const source = {
-    traceID: sourceID,
-    processes: {
-      e: { serviceName: "edge-gateway" },
-      i: { serviceName: "identity-service" },
-      c: { serviceName: "agent-controller" },
-    },
-    spans: [],
-  };
-  const span = (trace, id, processID, operationName, parent, tags = []) => {
-    const value = {
-      traceID: trace.traceID,
-      spanID: id,
-      processID,
-      operationName,
-      tags,
-      references: parent
-        ? [{ refType: "CHILD_OF", traceID: trace.traceID, spanID: parent }]
-        : [],
-    };
-    trace.spans.push(value);
-    return value;
-  };
-  span(source, "edge", "e", "HTTP POST");
-  span(source, "identity", "i", "HTTP POST", "edge");
-  span(
-    source,
-    "receipt",
-    "c",
-    "agent_controller.identity_offboarding.receive",
-    "identity",
-  );
-  span(
-    source,
-    "schedule",
-    "c",
-    "agent_controller.identity_offboarding.disable",
-    "identity",
-    [{ key: "agent.id", value: "agent-a" }],
-  );
-  const traces = [source];
-  for (const [index, phase] of [
-    "drain",
-    "network_fence",
-    "runtime_disable",
-    "publish",
-  ].entries()) {
-    const trace = {
-      traceID: String(index + 2).repeat(32),
-      processes: {
-        c: { serviceName: "agent-controller" },
-        d: {
-          serviceName:
-            phase === "runtime_disable"
-              ? "runtime-controller"
-              : "antnest-runtime-egress",
-        },
-      },
-      spans: [],
-    };
-    const root = span(
-      trace,
-      "root",
-      "c",
-      "recover Agent lifecycle operation",
-      null,
-      [
-        { key: "antnest.lifecycle.request_id", value: "disable-a" },
-        { key: "antnest.lifecycle.kind", value: "disable" },
-        { key: "antnest.lifecycle.phase", value: phase },
-        { key: "antnest.agent.id", value: "agent-a" },
-      ],
-    );
-    root.references.push({
-      refType: "FOLLOWS_FROM",
-      traceID: sourceID,
-      spanID: "schedule",
-    });
-    if (phase === "runtime_disable" || phase === "network_fence")
-      span(trace, "dependency", "d", "HTTP POST", "root", [
-        {
-          key: "http.request.method",
-          value: phase === "runtime_disable" ? "POST" : "PUT",
-        },
-        {
-          key: "http.route",
-          value:
-            phase === "runtime_disable"
-              ? "/internal/runtimes/{agent_id}/disable"
-              : "/internal/agent-network-attachments/{agent_id}",
-        },
-      ]);
-    traces.push(trace);
-  }
-  return traces;
-}
-const expected = { sourceID, agentID: "agent-a", requestID: "disable-a" };
-
+import { offboardingFixture } from "./offboarding-trace-fixture.mjs";
 test("offboarding requires disabled Agent and independently absent Runtime", () => {
   const agent = {
     agent_id: "agent-a",
@@ -134,30 +35,6 @@ test("offboarding requires disabled Agent and independently absent Runtime", () 
   assert.throws(() =>
     assertDisabled({ ...agent, desired_state: "enabled" }, runtime, "agent-a"),
   );
-});
-test("offboarding accepts exact Gateway source and linked Disable phases", () => {
-  assert.equal(
-    inspectOffboardingTrace(fixture(), expected, []).phases.length,
-    4,
-  );
-});
-test("offboarding rejects missing phase and unrelated dependency spans", () => {
-  assert.throws(() =>
-    inspectOffboardingTrace(fixture().slice(0, -1), expected, []),
-  );
-  const traces = fixture();
-  traces[3].spans[1].references = [];
-  assert.throws(() => inspectOffboardingTrace(traces, expected, []));
-});
-test("inspection spans cannot substitute for the mutating Disable RPC", () => {
-  for (const index of [2, 3]) {
-    const traces = fixture();
-    traces[index].spans[1].tags = [
-      { key: "http.request.method", value: "GET" },
-      { key: "http.route", value: "/internal/runtimes/{agent_id}" },
-    ];
-    assert.throws(() => inspectOffboardingTrace(traces, expected, []));
-  }
 });
 test("failure diagnostics never echo SDK or malformed JSON payloads", () => {
   for (const error of [
@@ -194,31 +71,136 @@ test("actual fixture process fails safely during bootstrap, cleanup and async Po
     assert(!result.stderr.includes("synthetic-password"));
   }
 });
-test("offboarding rejects broken, foreign or cyclic source links", () => {
-  for (const reference of [
-    { refType: "FOLLOWS_FROM", traceID: sourceID, spanID: "missing" },
-    { refType: "FOLLOWS_FROM", traceID: "f".repeat(32), spanID: "schedule" },
-    { refType: "FOLLOWS_FROM", traceID: "2".repeat(32), spanID: "root" },
-  ]) {
-    const traces = fixture();
-    traces[1].spans[0].references = [reference];
-    assert.throws(() => inspectOffboardingTrace(traces, expected, []));
-  }
+test("offboarding binds source receipt and Agent schedule to current Temporal Disable and all committed phases", () => {
+  const { trace, expected } = offboardingFixture();
+  const r = inspectOffboardingTrace([trace], expected, []);
+  assert.equal(r.phases.length, 5);
+  assert.equal(r.settlement, true);
 });
-test("offboarding rejects another Agent or operation and secret leakage", () => {
-  assert.throws(() =>
-    inspectOffboardingTrace(fixture(), { ...expected, agentID: "agent-b" }, []),
+for (const [name, mutate] of [
+  [
+    "missing receipt",
+    (t) => (t.spans = t.spans.filter((s) => s.spanID !== "receipt")),
+  ],
+  [
+    "wrong event",
+    (t) =>
+      (t.spans
+        .find((s) => s.spanID === "receipt")
+        .tags.find((f) => f.key === "identity.revocation.sequence").value = 99),
+  ],
+  [
+    "wrong Agent",
+    (t) =>
+      (t.spans
+        .find((s) => s.spanID === "schedule")
+        .tags.find((f) => f.key === "agent.id").value = "other"),
+  ],
+  [
+    "detached workflow",
+    (t) =>
+      (t.spans.find((s) => s.spanID === "workflow").references[0].spanID =
+        "controller"),
+  ],
+  [
+    "missing phase",
+    (t) => (t.spans = t.spans.filter((s) => s.spanID !== "lifecycle.publish")),
+  ],
+  [
+    "wrong workflow",
+    (t) =>
+      (t.spans
+        .find((s) => s.spanID === "lifecycle.drain")
+        .tags.find((f) => f.key === "temporalWorkflowID").value = "other"),
+  ],
+  [
+    "no commit",
+    (t) =>
+      (t.spans
+        .find((s) => s.spanID === "transaction-lifecycle.drain")
+        .tags.find((f) => f.key === "antnest.transaction.outcome").value =
+        "rolled_back"),
+  ],
+  [
+    "missing settlement",
+    (t) => (t.spans = t.spans.filter((s) => s.spanID !== "settle-agent")),
+  ],
+  [
+    "wrong settlement",
+    (t) =>
+      (t.spans
+        .find((s) => s.spanID === "settle-agent-client")
+        .tags.find((f) => f.key === "antnest.operation.id").value = "other"),
+  ],
+  [
+    "inspection instead of mutation",
+    (t) =>
+      (t.spans
+        .find((s) => s.spanID === "rpc-lifecycle.runtime_disable")
+        .tags.find((f) => f.key === "http.route").value =
+        "/internal/runtimes/{agent_id}"),
+  ],
+  [
+    "private payload",
+    (t) => t.spans[0].tags.push({ key: "private", value: "PRIVATE" }),
+  ],
+])
+  test(`offboarding rejects ${name}`, () => {
+    const { trace, expected } = offboardingFixture();
+    mutate(trace);
+    assert.throws(() =>
+      inspectOffboardingTrace([trace], expected, ["PRIVATE"]),
+    );
+  });
+test("offboarding retains strict warning failures", () => {
+  const { trace, expected } = offboardingFixture();
+  trace.warnings = ["clock diagnostic"];
+  assert.equal(
+    inspectOffboardingTrace([trace], expected, []).strict_trace,
+    "failed",
   );
-  assert.throws(() =>
-    inspectOffboardingTrace(
-      fixture(),
-      { ...expected, requestID: "disable-b" },
-      [],
-    ),
+});
+
+test("global user revocation scopes phases to the matching Agent workflow within a shared source Trace", () => {
+  const { trace, expected } = offboardingFixture();
+  const selected = new Set(["workflow"]);
+  let added = true;
+  while (added) {
+    added = false;
+    for (const s of trace.spans)
+      if (
+        !selected.has(s.spanID) &&
+        s.references.some(
+          (r) => r.refType === "CHILD_OF" && selected.has(r.spanID),
+        )
+      ) {
+        selected.add(s.spanID);
+        added = true;
+      }
+  }
+  const other = trace.spans
+    .filter((s) => selected.has(s.spanID))
+    .map((s) => {
+      const copy = structuredClone(s);
+      copy.spanID += "-other";
+      for (const r of copy.references)
+        r.spanID = selected.has(r.spanID)
+          ? r.spanID + "-other"
+          : r.spanID === "schedule"
+            ? "schedule-other"
+            : r.spanID;
+      for (const tag of copy.tags)
+        if (tag.key === "temporalWorkflowID")
+          tag.value = "agent-disable/other-request";
+      return copy;
+    });
+  const schedule = structuredClone(
+    trace.spans.find((s) => s.spanID === "schedule"),
   );
-  const traces = fixture();
-  traces[0].spans[0].tags = [{ key: "bad", value: "synthetic-password" }];
-  assert.throws(() =>
-    inspectOffboardingTrace(traces, expected, ["synthetic-password"]),
-  );
+  schedule.spanID = "schedule-other";
+  schedule.tags.find((t) => t.key === "agent.id").value = "agent-other";
+  trace.spans.push(schedule, ...other);
+  assert.equal(inspectOffboardingTrace([trace], expected, []).phases.length, 5);
+  trace.spans = trace.spans.filter((s) => s.spanID !== "lifecycle.publish");
+  assert.throws(() => inspectOffboardingTrace([trace], expected, []));
 });

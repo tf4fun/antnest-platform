@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { waitForAgentReady } from "../verification/agent-state.mjs";
 import { GatewayClient } from "./support.mjs";
 import { assertUnchanged } from "./agent-access-evidence.mjs";
 import { addPeerMembership, oidcOwner } from "./offboarding-oidc.mjs";
@@ -20,11 +21,12 @@ async function createAgent(admin, template, owner, organization) {
       owner_user_id: owner,
       name: `Offboarding ${owner}`,
       template_id: template.template_id,
-      template_revision: 1,
+      template_revision: template.revision,
     },
   });
   const item = { admin, agent: body.agent.agent_id, organization };
   await waitOperation(item, body.operation.request_id);
+  await waitForAgentReady(() => agentDetail(item));
   await sentinel(item, "write");
   return item;
 }

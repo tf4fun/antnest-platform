@@ -68,7 +68,12 @@ function driverOperation(span) {
 }
 
 export function databaseChildren(trace, server) {
-  const { service, chain } = traceTree(trace);
+  traceTree(trace);
+  return databaseChildrenTopology(trace, server);
+}
+
+export function databaseChildrenTopology(trace, server) {
+  const { service, chain } = traceTopology(trace);
   assert.equal(tag(server, "span.kind"), "server", "DB owner must be SERVER");
   const children = trace.spans.filter((span) => {
     if (tag(span, "db.system.name") !== "postgresql") return false;
@@ -94,8 +99,10 @@ export function databaseChildren(trace, server) {
     const owner = chain(span)
       .slice(1)
       .find((item) => tag(item, "span.kind") === "server");
-    if (service(span) === service(server))
-      assert(owner, "DB CLIENT detached from owning SERVER");
+    // Background work may retain this SERVER as a causal ancestor while its
+    // recording attempt and SQL belong to another service.
+    if (service(span) !== service(server)) return false;
+    assert(owner, "DB CLIENT detached from owning SERVER");
     return owner === server;
   });
   assert(children.length > 0, "owning SERVER has zero PostgreSQL spans");
@@ -155,7 +162,12 @@ export function databaseChildren(trace, server) {
 }
 
 export function owningServer(trace, expected) {
-  const { service, parent } = traceTree(trace);
+  traceTree(trace);
+  return owningServerTopology(trace, expected);
+}
+
+export function owningServerTopology(trace, expected) {
+  const { service, parent } = traceTopology(trace);
   assert(
     expected.route && expected.method,
     "owning SERVER route/method required",
@@ -203,7 +215,7 @@ export function owningServer(trace, expected) {
     );
   if (expected.status !== undefined)
     assert.equal(tag(server, "http.response.status_code"), expected.status);
-  const database = databaseChildren(trace, server);
+  const database = databaseChildrenTopology(trace, server);
   return { server, client, database };
 }
 

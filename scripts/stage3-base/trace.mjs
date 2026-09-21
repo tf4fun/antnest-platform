@@ -51,13 +51,6 @@ export function inspectLifecycle(trace, expected, secrets = []) {
   );
   assert.equal(tree.service(root), "edge-gateway");
   assert.equal(tag(root, "span.kind"), "server");
-  assert.equal(tag(root, "http.route"), "/api/admin/{path...}");
-  assert.equal(tag(root, "http.request.method"), "POST");
-  assert.equal(tag(root, "http.response.status_code"), 202);
-  const route =
-    kind === "create"
-      ? "/internal/agents"
-      : `/internal/agents/{agent_id}/${kind}`;
   const rpc = (scope, service, method, route, status = 200) =>
     one(
       trace.spans.filter(
@@ -71,24 +64,69 @@ export function inspectLifecycle(trace, expected, secrets = []) {
       ),
       `${service} ${route}`,
     );
-  const admitted = rpc(root, "agent-controller", "POST", route, 202);
-  assert.equal(tag(admitted, "antnest.agent.id"), agentId);
-  assertRPCParent(tree, admitted, "admin-console");
-  const consoleServer = one(
-    tree
-      .chain(admitted)
-      .filter(
+  let admitted;
+  if (expected.offboarding === true) {
+    assert.equal(kind, "disable");
+    admitted = one(
+      trace.spans.filter(
         (s) =>
-          tree.service(s) === "admin-console" &&
-          tag(s, "span.kind") === "server",
+          tree.service(s) === "agent-controller" &&
+          s.operationName === "agent_controller.identity_offboarding.disable" &&
+          tag(s, "agent.id") === agentId,
       ),
-    "Console SERVER",
-  );
-  assert.equal(
-    tag(consoleServer, "http.route"),
-    route.replace("/internal", "/api/admin"),
-  );
-  assertRPCParent(tree, consoleServer, "edge-gateway");
+      "offboarding schedule",
+    );
+    assert.equal(tag(admitted, "span.kind"), "consumer");
+    const identity = tree
+      .chain(admitted)
+      .find(
+        (s) =>
+          tree.service(s) === "identity-service" &&
+          tag(s, "span.kind") === "server",
+      );
+    assert(
+      identity && tree.chain(identity).includes(root),
+      "offboarding has no owning Identity/Gateway source",
+    );
+    const sequence = tag(admitted, "identity.revocation.sequence");
+    assert(Number.isSafeInteger(sequence) && sequence > 0);
+    one(
+      trace.spans.filter(
+        (s) =>
+          tree.service(s) === "agent-controller" &&
+          s.operationName === "agent_controller.identity_offboarding.receive" &&
+          tag(s, "identity.revocation.sequence") === sequence &&
+          tree.chain(s).includes(identity),
+      ),
+      "matching revocation receipt",
+    );
+  } else {
+    assert.equal(tag(root, "http.route"), "/api/admin/{path...}");
+    assert.equal(tag(root, "http.request.method"), "POST");
+    assert.equal(tag(root, "http.response.status_code"), 202);
+    const route =
+      kind === "create"
+        ? "/internal/agents"
+        : `/internal/agents/{agent_id}/${kind}`;
+    admitted = rpc(root, "agent-controller", "POST", route, 202);
+    assert.equal(tag(admitted, "antnest.agent.id"), agentId);
+    assertRPCParent(tree, admitted, "admin-console");
+    const consoleServer = one(
+      tree
+        .chain(admitted)
+        .filter(
+          (s) =>
+            tree.service(s) === "admin-console" &&
+            tag(s, "span.kind") === "server",
+        ),
+      "Console SERVER",
+    );
+    assert.equal(
+      tag(consoleServer, "http.route"),
+      route.replace("/internal", "/api/admin"),
+    );
+    assertRPCParent(tree, consoleServer, "edge-gateway");
+  }
   const workflow = one(
     trace.spans.filter(
       (s) =>
@@ -116,7 +154,11 @@ export function inspectLifecycle(trace, expected, secrets = []) {
         ? phase
         : `lifecycle.${phase}`;
     const activity = one(
-      trace.spans.filter((s) => s.operationName === `RunActivity:${name}`),
+      trace.spans.filter(
+        (s) =>
+          s.operationName === `RunActivity:${name}` &&
+          tree.chain(s).includes(workflow),
+      ),
       name,
     );
     assert(tree.chain(activity).includes(workflow), "activity detached");
@@ -303,7 +345,9 @@ export function inspectLifecycle(trace, expected, secrets = []) {
     platform_absence_probes: absence.length,
     strict_trace: errors.length ? "failed" : timing.strict_trace,
     timing: {
-      controller_start_minus_console_us:
+      [expected.offboarding
+        ? "schedule_start_minus_identity_us"
+        : "controller_start_minus_console_us"]:
         admitted.startTime - tree.parent(admitted).startTime,
     },
   };

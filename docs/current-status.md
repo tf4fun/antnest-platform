@@ -16,6 +16,11 @@ The C4 capability-error fix and ACP SDK/metadata/AJV candidate were subsequently
 [synchronized into the retained development stack](development-sync-20260917.md).
 Ten browser/business checks and four successful-chat topologies passed there;
 the strict browser script still failed on recorded timing warnings.
+The two later Controller fixes were then
+[synchronized into the same retained stack](controller-development-sync-20260917.md).
+Five lifecycle flows, eight browser business checks and eleven scoped Trace
+topologies passed, including four expected Docker 404s with zero probe errors.
+Strict lifecycle/chat timing warnings remain failed.
 
 ## Implemented Boundaries
 
@@ -77,6 +82,7 @@ details in the owning service READMEs.
 | ACP commit-receipt loss migration, 2026-09-17 | Both SDKs passed six faults, six natural exit-1 restarts, 12 Runs, eight Bash calls and 12 replay checks; all 32 selected-SQL/request/lifecycle topologies passed | [P1 report](acp-persistence-revalidation.md); strict gate failed on 12 traces, zero missing-evidence errors; five projects cleaned and 12 retained containers unchanged |
 | ACP interruption recovery migration, 2026-09-17 | Both SDKs passed eight SIGKILL scenarios, 16 Runs, 18 replays, two Runtime protection rejections and two Rebuilds; 71 final combined fixture tests passed | [P2 report](acp-persistence-revalidation.md); 44 complete topologies passed, six interrupted-parent gaps remain failed; strict gate failed on 27 traces; four projects cleaned and retained 12 containers unchanged |
 | Expected absence and crash Trace follow-up, 2026-09-17 | Runtime Controller race/PostgreSQL/lint passed; 57 affected fixture tests; fresh base and P2 deployments passed 34 and 44 complete topology checks, with eight expected Docker 404s and zero probe ERROR spans | [Follow-up](trace-acceptance-followup.md); eight recovery cases and 18 replays passed; six intentional crash traces are diagnostics, not completeness failures; normal timing warnings remain strict failures; candidates isolated and retained 12 containers unchanged |
+| Development Controller synchronization, 2026-09-17 | Both verified Controller images deployed; 11 health checks, original data retention, five lifecycle flows, eight browser business checks and eleven Trace topologies passed | [Deployment report](controller-development-sync-20260917.md); three publication traces include source/HTTP/ack SQL, four Docker 404s are expected absence, zero ERROR spans; five lifecycle and one chat strict results retain timing warnings; temporary resources removed, original Agent ready/idle |
 
 The model-selection, Provider-fallback and discovery results were read from
 the ignored local artifacts
@@ -132,8 +138,11 @@ historical trace returned 404, so its prior failure is not retrospectively chang
   now records four publication attempts and two actual acknowledgement UPDATEs
   with zero SQL gaps. Its full service/race/PostgreSQL gates and 28 scoped
   integration checks pass; strict warnings and four probe ERROR spans remain
-  failed. The independent Controller candidate has not replaced the retained
-  development deployment. [ACP commit-receipt loss](acp-persistence-revalidation.md)
+  failed. The later [Controller deployment synchronization](controller-development-sync-20260917.md)
+  promoted both verified Controller candidates into retained development and
+  passed five lifecycle flows, eight browser business checks and eleven scoped
+  Trace topologies; strict timing warnings remain failed.
+  [ACP commit-receipt loss](acp-persistence-revalidation.md)
   now has six fault cases and 32 scoped Trace checks; its strict failures remain.
   [P2 interrupted-Run recovery](acp-persistence-revalidation.md) now passes eight
   business cases, 18 replays, two protective rejections and two Rebuilds; 44
@@ -143,8 +152,13 @@ historical trace returned 404, so its prior failure is not retrospectively chang
   and removes expected Docker absence errors in the independent candidate.
   Normal lifecycle regression passes 34 topologies with four expected 404s and
   zero Docker probe ERROR spans; strict timing warnings remain.
-  Retained/extended legacy base branches
-  remain pending.
+  [Identity/access migration](identity-access-revalidation.md) now has four
+  independent HTTP/SCIM/OIDC, access/outage/expiry, ACP session and Agent
+  offboarding deployments: 810 local checks and 97 scoped Trace topologies pass.
+  Both SDK versions retain logout/recovery, accepted-Run effects and foreign
+  Session isolation; five automatic Disable checks include Controller restart
+  and SCIM reprovisioning. Strict warnings and rejection error spans remain
+  failed. Retained/extended legacy base branches remain pending.
   The obsolete shared replay, command and permission admission validators were
   replaced after their consumers migrated. Other shared helpers remain until
   their consumers migrate. Strict timing failure is not full deployment acceptance.

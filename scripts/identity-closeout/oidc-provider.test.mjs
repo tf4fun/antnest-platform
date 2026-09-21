@@ -5,6 +5,21 @@ import { createHash, createPublicKey, verify } from "node:crypto";
 import test from "node:test";
 import { createOIDCProvider, fixtureSecret } from "./oidc-provider.mjs";
 
+test("IdP records exact protocol traceparents without credentials or query strings", async (t) => {
+  const f = await setup(t);
+  const traceparent = `00-${"a".repeat(32)}-${"b".repeat(16)}-01`;
+  const response = await fetch(`${f.issuer}/jwks?secret=private-canary`, {
+    headers: { traceparent, Authorization: "Bearer private-canary" },
+  });
+  assert.equal(response.status, 200);
+  await response.arrayBuffer();
+  const records = await (await fetch(`${f.issuer}/fixture/requests`)).json();
+  assert.deepEqual(records, [
+    { method: "GET", url: `${f.issuer}/jwks`, traceparent, status: 200 },
+  ]);
+  assert(!JSON.stringify(records).includes("private-canary"));
+});
+
 async function setup(t, prefix = "", userInfo = false) {
   const server = createServer();
   server.listen(0, "127.0.0.1");

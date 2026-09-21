@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { readFile, writeFile } from "node:fs/promises";
+import { GatewayClient, assertNoStore } from "./support.mjs";
 import {
-  GatewayClient,
-  assertNoStore,
-  verifyIdentityTraces,
-} from "./support.mjs";
+  verifyIdentityEvidence as verifyIdentityTraces,
+  identityEvidenceExitCode,
+} from "./trace.mjs";
 import { waitForExpiry, assertClearedSessionCookies } from "./expiry.mjs";
 
 const [gateway, jaeger, phase, statePath] = process.argv.slice(2);
@@ -107,9 +107,10 @@ if (phase === "prepare") {
     ],
     secrets,
   );
+  process.exitCode = identityEvidenceExitCode(traces);
   process.stdout.write(
     JSON.stringify({
-      status: "passed",
+      status: "business_passed",
       suite: "session-expiry",
       expires_at: issued.body.expires_at,
       traces,

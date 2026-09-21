@@ -1,0 +1,20 @@
+# Disposable Identity profiles. Never included by retained deployment Compose.
+services:
+  temporal:
+    ports: !reset []
+  identity-service:
+    labels:
+      io.antnest.e2e-run-id: ${ANTNEST_E2E_RUN_ID:?required}
+    environment:
+      ANTNEST_IDENTITY_TOKEN_TTL: ${ANTNEST_IDENTITY_ACCESS_TOKEN_TTL:-12h}
+networks:
+  control:
+    ipam:
+      config: !override
+        - subnet: ${ANTNEST_EGRESS_CONTROL_SUBNET}
+          ip_range: ${ANTNEST_IDENTITY_CONTROL_DYNAMIC_RANGE}
+  runtime-management:
+    ipam:
+      config: !override
+        - subnet: ${ANTNEST_RUNTIME_MANAGEMENT_SUBNET}
+          ip_range: ${ANTNEST_IDENTITY_RUNTIME_DYNAMIC_RANGE}

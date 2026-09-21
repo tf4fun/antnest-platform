@@ -4,8 +4,9 @@ import { assertSecretFree } from "./evidence.mjs";
 import { collectTrace } from "../observability/collect.mjs";
 import {
   assertCaptureDisabled,
-  owningServer,
+  owningServerTopology,
   traceTree,
+  traceTopology,
   tag,
 } from "../observability/trace-tree.mjs";
 
@@ -98,12 +99,19 @@ export class GatewayClient {
 }
 
 export function inspectIdentityTrace(trace, expectation, secrets) {
-  const { service, chain: ancestors } = traceTree(trace);
+  traceTree(trace);
+  return inspectIdentityTraceTopology(trace, expectation, secrets);
+}
+
+export function inspectIdentityTraceTopology(trace, expectation, secrets) {
+  if (expectation.traceID !== undefined)
+    assert.equal(trace?.traceID, expectation.traceID, "wrong Identity trace");
+  const { service, chain: ancestors } = traceTopology(trace);
   assertCaptureDisabled(trace);
   assertSecretFree(JSON.stringify(trace), secrets);
   const isIdentityServer = (span) =>
     service(span) === "identity-service" && tag(span, "span.kind") === "server";
-  const { server: identityRequest, database } = owningServer(trace, {
+  const { server: identityRequest, database } = owningServerTopology(trace, {
     ...expectation,
     service: "identity-service",
   });
@@ -119,12 +127,18 @@ export function inspectIdentityTrace(trace, expectation, secrets) {
     );
   }
   const outbound = (expectation.oidcRequests ?? []).map((expected) => {
+    assert(expected.spanID, "actual IdP traceparent identity missing");
+    const endpoint = new URL(expected.url);
     const matching = trace.spans.filter(
       (span) =>
         service(span) === "identity-service" &&
         tag(span, "span.kind") === "client" &&
         tag(span, "http.request.method") === expected.method &&
-        tag(span, "url.full") === expected.url,
+        span.spanID === expected.spanID &&
+        tag(span, "server.address") === endpoint.hostname &&
+        tag(span, "url.scheme") === endpoint.protocol.slice(0, -1) &&
+        (endpoint.port === "" ||
+          tag(span, "server.port") === Number(endpoint.port)),
     );
     assert.equal(matching.length, 1, "one exact IdP client request required");
     const span = matching[0];
@@ -148,6 +162,23 @@ export function inspectIdentityTrace(trace, expectation, secrets) {
       span_id: span.spanID,
     };
   });
+  if (expectation.oidcRequests) {
+    const peers = new Set(
+      expectation.oidcRequests.map((item) => new URL(item.url).hostname),
+    );
+    const actual = trace.spans.filter(
+      (span) =>
+        service(span) === "identity-service" &&
+        tag(span, "span.kind") === "client" &&
+        peers.has(tag(span, "server.address")) &&
+        ancestors(span).slice(1).find(isIdentityServer) === identityRequest,
+    );
+    assert.deepEqual(
+      new Set(actual.map((span) => span.spanID)),
+      new Set(outbound.map((item) => item.span_id)),
+      "unexpected or duplicate IdP client request",
+    );
+  }
   return {
     trace_id: trace.traceID,
     spans: trace.spans.length,

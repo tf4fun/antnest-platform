@@ -34,6 +34,7 @@ export ANTNEST_BOOTSTRAP_ADMIN_EMAIL=stage3-admin@example.com
 export ANTNEST_BOOTSTRAP_ADMIN_PASSWORD=stage3-admin-password
 keep_stack=${ANTNEST_E2E_KEEP_STACK:-false}
 identity_access=${ANTNEST_E2E_IDENTITY_ACCESS:-false}
+identity_core=${ANTNEST_E2E_IDENTITY_CORE:-false}
 acp_session=${ANTNEST_E2E_ACP_SESSION:-false}
 agent_access=${ANTNEST_E2E_AGENT_ACCESS:-false}
 tool_progress=${ANTNEST_E2E_TOOL_PROGRESS:-false}
@@ -221,6 +222,28 @@ if [ "$identity_access" = true ] && { [ "$keep_stack" = true ] || [ "${ANTNEST_E
   exit 1
 fi
 export ANTNEST_IDENTITY_ACCESS_TOKEN_TTL=12h
+case "$identity_core" in true|false) ;; *) echo 'Invalid Identity core profile' >&2; exit 1 ;; esac
+if [ "$identity_core" = true ]; then
+  [ -z "$tool_profile" ] || { echo 'Identity core requires a separate disposable profile' >&2; exit 1; }
+  for incompatible in "$identity_access" "$agent_access" "$acp_session" "$keep_stack" "${ANTNEST_E2E_ACP_CLOSEOUT:-false}"; do
+    [ "$incompatible" = false ] || { echo 'Identity core requires a separate disposable profile' >&2; exit 1; }
+  done
+fi
+if [ "$identity_core" = true ] || [ "$identity_access" = true ]; then
+  tool_profile=identity-http
+  export ANTNEST_IDENTITY_SUITE=access
+  [ "$identity_core" = false ] || export ANTNEST_IDENTITY_SUITE=core
+  export ANTNEST_IDENTITY_CONTROL_DYNAMIC_RANGE="10.242.${network_octet}.128/25"
+  export ANTNEST_IDENTITY_RUNTIME_DYNAMIC_RANGE="10.243.${network_octet}.128/25"
+  export ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT=false
+fi
+if [ "$agent_access" = true ] || [ "$acp_session" = true ]; then
+  tool_profile=acp-session
+  [ "$agent_access" = false ] || tool_profile=agent-access
+  export ANTNEST_IDENTITY_CONTROL_DYNAMIC_RANGE="10.242.${network_octet}.128/25"
+  export ANTNEST_IDENTITY_RUNTIME_DYNAMIC_RANGE="10.243.${network_octet}.128/25"
+  export ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT=false
+fi
 base_profile=false
 if [ -z "$tool_profile" ] && [ "$keep_stack" = false ] && [ "$identity_access" = false ] && [ "$acp_session" = false ] && [ "$agent_access" = false ] && [ "${ANTNEST_E2E_ACP_CLOSEOUT:-false}" = false ] && [ "${ANTNEST_E2E_MANAGED_MCP:-false}" = false ]; then
   base_profile=true
@@ -253,6 +276,13 @@ workspace_cookie_jar="$temporary_root/workspace-cookies.txt"
 agent_id=""
 
 compose() {
+  if [ "$tool_profile" = identity-http ] || [ "$tool_profile" = acp-session ] || [ "$tool_profile" = agent-access ]; then
+    if [ "$1" = up ]; then identity_lifecycle=--lifecycle; else identity_lifecycle=; fi
+    docker $identity_lifecycle compose --env-file /dev/null -f compose.yaml -f compose.stage3.yaml \
+      -f scripts/identity-closeout/oidc-compose.yaml -f scripts/identity-closeout/compose.yaml \
+      --profile stage3 --profile observability "$@"
+    return
+  fi
   if [ "$managed_mcp" = true ]; then
     if [ "$1" = up ]; then
       docker --lifecycle compose --env-file /dev/null -f compose.yaml -f compose.stage3.yaml -f scripts/managed-mcp/compose.yaml --profile stage3 --profile observability "$@"
@@ -562,21 +592,26 @@ wait_agent_ready() {
   return 1
 }
 
+prepare_oidc() {
+  mkdir "$temporary_root/certs"
+  openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=oidc-fixture \
+    -addext 'subjectAltName=DNS:oidc-fixture' \
+    -keyout "$temporary_root/certs/tls.key" -out "$temporary_root/certs/tls.crt" >/dev/null 2>&1
+  compose create oidc-fixture
+  docker run --rm --network none --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
+    --mount "type=bind,source=$temporary_root/certs,target=/input,readonly" \
+    --mount "type=volume,source=${COMPOSE_PROJECT_NAME}-oidc-certs,target=/certs" \
+    debian:bookworm-slim cp /input/tls.key /input/tls.crt /certs/
+}
+
 if [ -n "$tool_profile" ]; then
+  if [ "$tool_profile" = identity-http ] || [ "$tool_profile" = acp-session ] || [ "$tool_profile" = agent-access ]; then prepare_oidc; fi
   compose up -d --wait
   ANTNEST_E2E_DISPOSABLE=true sh "scripts/e2e-${tool_profile}.sh"
   exit 0
 fi
 
-mkdir "$temporary_root/certs"
-openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=oidc-fixture \
-  -addext 'subjectAltName=DNS:oidc-fixture' \
-  -keyout "$temporary_root/certs/tls.key" -out "$temporary_root/certs/tls.crt" >/dev/null 2>&1
-compose create oidc-fixture
-docker run --rm --network none --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
-  --mount "type=bind,source=$temporary_root/certs,target=/input,readonly" \
-  --mount "type=volume,source=${COMPOSE_PROJECT_NAME}-oidc-certs,target=/certs" \
-  debian:bookworm-slim cp /input/tls.key /input/tls.crt /certs/
+prepare_oidc
 compose up -d --wait
 
 if [ "$agent_access" = true ]; then

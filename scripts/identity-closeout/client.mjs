@@ -2,10 +2,13 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import {
   GatewayClient,
-  verifyIdentityTraces,
   assertNoStore,
   assertCookiesCleared,
 } from "./support.mjs";
+import {
+  verifyIdentityEvidence as verifyIdentityTraces,
+  identityEvidenceExitCode,
+} from "./trace.mjs";
 
 const [gateway, jaeger] = process.argv.slice(2);
 assert(gateway && jaeger, "Gateway and Jaeger URLs are required");
@@ -432,9 +435,10 @@ await usersAndGroups();
 await rotateTokens(tokens);
 await admin.request("/api/session", { method: "DELETE", status: 204 });
 const evidence = await verifyIdentityTraces(jaeger, traces, secrets);
+process.exitCode = identityEvidenceExitCode(evidence);
 process.stdout.write(
   JSON.stringify({
-    status: "passed",
+    status: "business_passed",
     checks,
     requests: admin.requests + member.requests + protocol.requests,
     traces: evidence,

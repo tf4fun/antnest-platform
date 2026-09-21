@@ -138,7 +138,31 @@ for (const version of [1, 2])
         availableCommands: [{ name: "help", description: "Also /帮助" }],
       },
     });
-    assertPrivateReplay(updates, "own", phase, version, history);
+    const metadata = {
+      id: "own",
+      title: phase,
+      updated_at: "2026-09-17T00:00:00.000Z",
+    };
+    updates.unshift({
+      sessionId: "own",
+      update: {
+        sessionUpdate: "session_info_update",
+        title: metadata.title,
+        updatedAt: metadata.updated_at,
+      },
+    });
+    assertPrivateReplay(updates, "own", phase, version, history, metadata);
+    for (const change of [
+      { title: "foreign" },
+      { updatedAt: "2020-01-01T00:00:00.000Z" },
+      { private: "leak" },
+    ]) {
+      const bad = structuredClone(updates);
+      Object.assign(bad[0].update, change);
+      assert.throws(() =>
+        assertPrivateReplay(bad, "own", phase, version, history, metadata),
+      );
+    }
     assert.throws(() =>
       assertPrivateReplay(
         updates,
@@ -159,7 +183,7 @@ for (const version of [1, 2])
         items.shift();
       },
       (items) => {
-        items[0].update.messageId = "foreign";
+        items[1].update.messageId = "foreign";
       },
       (items) => {
         items.reverse();
@@ -168,13 +192,13 @@ for (const version of [1, 2])
         items.splice(1, 0, structuredClone(items[0]));
       },
       (items) => {
-        items[0].update.content =
+        items[1].update.content =
           version === 1
             ? { type: "text", text: `v${version}-b` }
             : [{ type: "text", text: `v${version}-b` }];
       },
       (items) => {
-        items[1].update.content =
+        items[2].update.content =
           version === 1
             ? { type: "text", text: `Private history v${version}-b` }
             : [{ type: "text", text: `Private history v${version}-b` }];
@@ -183,7 +207,7 @@ for (const version of [1, 2])
       const invalid = structuredClone(updates);
       mutate(invalid);
       assert.throws(() =>
-        assertPrivateReplay(invalid, "own", phase, version, history),
+        assertPrivateReplay(invalid, "own", phase, version, history, metadata),
       );
     }
   });
@@ -191,12 +215,13 @@ for (const version of [1, 2])
 test("Session denial cannot smuggle history in its error or notifications", () => {
   const error = {
     code: -32020,
-    message: "Session belongs to another Agent",
+    message: "Session belongs to another organization",
     data: { code: "session_access_denied", retryable: false },
   };
   evidence.assertDeniedSessionError(error);
   for (const invalid of [
     { ...error, message: "Private history v1-b" },
+    { ...error, message: "Session belongs to another Agent" },
     { ...error, data: { ...error.data, history: "Private history v1-b" } },
     { ...error, code: -32603 },
   ])
@@ -214,7 +239,7 @@ test("Session denial cannot smuggle history in its error or notifications", () =
   );
 });
 
-test("resume replaces exactly one target MCP revision without touching foreign data", () => {
+test("active Session replay with unchanged MCP sources preserves every persisted row", () => {
   const before = {
     acp_sessions: [
       {
@@ -225,77 +250,41 @@ test("resume replaces exactly one target MCP revision without touching foreign d
       },
       { id: "foreign", state: "active", updated_at: "old" },
     ],
-    runs: [],
+    runs: [{ id: "run", state: "completed" }],
+    session_messages: [
+      { id: "message", session_id: "own", payload: { text: "private" } },
+    ],
     context_checkpoints: [
-      { id: "old", session_id: "foreign", summary: "private" },
+      { id: "checkpoint", session_id: "foreign", summary: "private" },
     ],
     client_mcp_revisions: [
-      { id: "mcp-1", session_id: "own", revision: "1", nonce: "old" },
+      { id: "mcp-1", session_id: "own", revision: "1", sources: [] },
     ],
   };
-  const after = structuredClone(before);
-  after.acp_sessions[0].updated_at = "new";
-  after.acp_sessions[0].client_mcp_revision_id = "mcp-2";
-  after.client_mcp_revisions.push({
-    id: "mcp-2",
-    session_id: "own",
-    revision: "2",
-    nonce: "new",
-  });
-  assertReplayIsolation(before, after, "own");
+  assertReplayIsolation(before, structuredClone(before), "own");
   for (const mutate of [
-    (s) => {
-      s.acp_sessions[1].updated_at = "changed";
-    },
-    (s) => {
-      s.acp_sessions[0].state = "closed";
-    },
-    (s) => {
-      s.acp_sessions.pop();
-    },
-    (s) => {
-      s.runs.push({ id: "unexpected" });
-    },
-    (s) => {
-      s.client_mcp_revisions[0].nonce = "changed";
-    },
-    (s) => {
-      s.client_mcp_revisions[1].session_id = "foreign";
-    },
-    (s) => {
-      s.client_mcp_revisions[1].revision = "10";
-    },
-    (s) => {
+    (s) => (s.acp_sessions[1].updated_at = "changed"),
+    (s) => (s.acp_sessions[0].state = "closed"),
+    (s) => s.acp_sessions.pop(),
+    (s) => s.runs.push({ id: "unexpected" }),
+    (s) => s.client_mcp_revisions[0].sources.push({ name: "injected" }),
+    (s) =>
       s.client_mcp_revisions.push({
-        id: "extra",
+        id: "mcp-2",
         session_id: "own",
-        revision: "3",
-      });
-    },
-    (s) => {
-      s.acp_sessions[0].client_mcp_revision_id = "foreign";
-    },
-    (s) => {
-      s.client_mcp_revisions.pop();
-    },
-    (s) => {
-      s.context_checkpoints[0].summary = "changed";
-    },
-    (s) => {
-      s.context_checkpoints.pop();
-    },
-    (s) => {
-      s.context_checkpoints.push({
-        id: "unexpected",
-        session_id: "own",
-        summary: "invented",
-      });
-    },
+        revision: "2",
+        sources: [],
+      }),
+    (s) => (s.acp_sessions[0].client_mcp_revision_id = "mcp-2"),
+    (s) => (s.acp_sessions[0].updated_at = "new"),
+    (s) => (s.context_checkpoints[0].summary = "changed"),
+    (s) => (s.session_messages[0].payload.text = "changed"),
   ]) {
-    const invalid = structuredClone(after);
-    mutate(invalid);
-    assert.throws(() => assertReplayIsolation(before, invalid, "own"));
+    const after = structuredClone(before);
+    mutate(after);
+    assert.throws(() => assertReplayIsolation(before, after, "own"));
   }
+  assert.throws(() => assertReplayIsolation(before, before, "missing"));
 });
 
 test("negative-effect evidence rejects changed projections or model activity", () => {
@@ -474,4 +463,64 @@ test("access traces require same-trace causal ownership, not only service presen
       inspectAccessTrace(trace, expectation, ["scope/cookie"]),
     );
   }
+});
+
+test("access topology preserves raw warning/error failures after owning SQL and privacy validation", () => {
+  const trace = traceFixture();
+  trace.warnings = ["clock warning"];
+  const expected = {
+    traceID: trace.traceID,
+    service: "agent-controller",
+    method: "GET",
+    route: "/internal/agents/{agent_id}",
+    rpcMethod: "GET /internal/agents/{agent_id}",
+    via: ["admin-console"],
+  };
+  const result = evidence.inspectAccessTraceTopology(trace, expected, []);
+  assert.equal(result.gateway_ancestry, true);
+  assert.throws(() => inspectAccessTrace(trace, expected, []));
+});
+
+test("already attached replay need not repeat unchanged Session metadata", () => {
+  const history = [
+    {
+      session_id: "s",
+      sequence: 1,
+      visible: true,
+      kind: "agent_message",
+      payload: {
+        kind: "agent_message",
+        messageId: "reply",
+        content: [{ type: "text", text: "Private history v1-a" }],
+      },
+    },
+  ];
+  const updates = [
+    {
+      sessionId: "s",
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        messageId: "reply",
+        content: history[0].payload.content[0],
+      },
+    },
+    {
+      sessionId: "s",
+      update: {
+        sessionUpdate: "available_commands_update",
+        availableCommands: [{ name: "help", description: "Also /帮助" }],
+      },
+    },
+  ];
+  const metadata = {
+    id: "s",
+    title: "v1-a",
+    updated_at: "2026-09-17T00:00:00.000Z",
+  };
+  assertPrivateReplay(updates, "s", "v1-a", 1, history, metadata, {
+    alreadyAttached: true,
+  });
+  assert.throws(() =>
+    assertPrivateReplay(updates, "s", "v1-a", 1, history, metadata),
+  );
 });

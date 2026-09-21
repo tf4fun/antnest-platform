@@ -46,12 +46,12 @@ deployment contract current.
 | `managed-mcp` | Eighth batch migrated public configuration setup, ACP Run/drain ownership, current connections and individual request traces | [Current evidence](managed-mcp-revalidation.md): both SDK versions, 12 Runs, 30 Provider requests, 18 Tool calls, four drain barriers, 28 trace topologies and 63 local tests passed; strict warnings/probe ERROR spans remain failed; all four projects cleaned |
 | Historical retained/extended base consumers | Some extended branches still use old setup and lifecycle helpers | Migrate each remaining consumer before retiring shared helpers; retained seeding is not current acceptance |
 | RPC response-loss profile | Ninth batch maps retired acquire/finish acknowledgements to current Controller-to-ACP publication/settlement and explicitly separates ACP persistence faults | [Current evidence](rpc-response-loss-revalidation.md): four cases, eight Runs/Tools/replays, 28 scoped trace checks and 61 local checks passed; strict warnings, four probe ERROR spans and two missing Controller acknowledgement SQL traces remain failures; ten unused RPC-only files retired after all three projects cleaned |
-| Controller background publication observability | A nonrecording parent suppressed acknowledgement SQL spans | [Owning-service fix and integration](controller-publication-trace-revalidation.md): service/race/PostgreSQL and 28 scoped trace checks pass; four attempts and two acknowledgement UPDATEs, zero missing-SQL gaps; strict warnings/probe errors remain failed; candidate not deployed to retained environment |
+| Controller background publication observability | A nonrecording parent suppressed acknowledgement SQL spans | [Owning-service fix and integration](controller-publication-trace-revalidation.md): service/race/PostgreSQL and 28 scoped trace checks pass; four attempts and two acknowledgement UPDATEs, zero missing-SQL gaps; later [development synchronization](controller-development-sync-20260917.md) deployed both Controller fixes, with three complete publication traces and four expected Docker 404s; strict lifecycle/chat timing warnings remain failed |
 | ACP database commit-receipt loss | Old Controller admission retry is not ACP persistence recovery | [P1 evidence](acp-persistence-revalidation.md): six actual committed-result losses, six natural ACP failures/restarts, 12 replays and 32 scoped Trace checks; strict errors/warnings remain failed; P2 interruption is separately recorded below |
 | ACP completed/interrupted/unknown-effect recovery | Historical admission completion and Controller release events are not current ACP oracles | [P2 evidence](acp-persistence-revalidation.md): eight SIGKILL cases, 18 replays, current Runtime barrier rejection and two physical Rebuild proofs; 44 complete Trace checks, six missing interrupted parents and strict warnings/errors remain failed |
 | Other `acp-closeout`, lifecycle and older workspace flows | Legacy admission tables, completion fields and unknown-effect fences remain in some oracles | Map cancellation, loss/restart and barrier evidence to current owners; retain shared Docker/network/wait helpers used by current profiles |
-| Identity Agent-access / ACP-session fault profiles | Some setup and durable recovery checks use old model/admission fields | Preserve authorization, expiry/outage and accepted-Run behavior while updating the fixture contract |
-| Identity-only/OIDC fixtures | Some branches avoid retired model setup; generic Stage 3 isolation still needs review | Review individually and rerun before classifying them as current; do not remove useful identity coverage with an obsolete parent driver |
+| Identity Agent-access / ACP-session profiles | Migrated current Provider/Model, ACP audits, idempotent replay, authorization ownership and Temporal offboarding | [Current evidence](identity-access-revalidation.md): 26 ACP session and 58 Agent/offboarding Trace topologies; 6 denied prompts, 4 completed Tool Runs, 36 admin/8 Agent/20 foreign Session denials, 9 private Runs and 5 automatic Disable checks; strict warnings/rejection errors remain failed |
+| Identity HTTP/SCIM/OIDC and HTTP access | Old full-URL and causal SQL ownership assumptions; legacy parent deployment | [HTTP migration evidence](identity-access-revalidation.md): 9 local/SCIM, 7 OIDC and 4 access groups, actual outage/expiry, 13 complete Trace topologies; strict warnings/expiry error spans remain failed. ACP and Agent consumers have their separate evidence above. |
 
 The remaining legacy branches above remain pending. No historical
 directory has been retired wholesale. The obsolete file replay helper was removed only
@@ -74,7 +74,7 @@ The obsolete RPC-only acquire/finish client, proxy, snapshot, model and oracles
 were removed after current response-loss business checks and cleanup. The dated
 report remains historical. ACP commit-receipt loss now has its separate P1
 evidence; P2 separately verifies completed/interrupted/unknown-effect recovery
-through current public audits and Runtime replacement. Identity and other
+through current public audits and Runtime replacement. Other retained/extended
 shared-helper consumers remain pending; neither P1 nor P2 is equated with
 Controller acknowledgement recovery.
 
@@ -127,6 +127,16 @@ Controller acknowledgement recovery.
   setup, two-page metadata, attachments, approvals and browser lifecycle.
 - [Development synchronization](development-sync-20260917.md): deployed ACP/UI,
   real-provider conversation/tools, retained history and metadata/error checks.
+- [Identity and access](identity-access-revalidation.md): four independent
+  deployments cover HTTP/SCIM/OIDC, outage/expiry/logout, ACP accepted-Run
+  continuation, organization isolation and automatic offboarding. 810 local
+  checks and 97 scoped Trace topologies passed; strict warnings and rejection
+  errors remain failed. Retained parent branches/shared assets remain separate.
+- [Controller development synchronization](controller-development-sync-20260917.md):
+  both verified Controller images deployed, original data preserved, five
+  lifecycle flows and eight browser business checks passed; eleven scoped Trace
+  topologies include complete publication SQL and four expected Docker 404s.
+  Strict lifecycle/chat timing warnings remain failed.
 - Shared `scripts/verification`, identity clients, Docker/network wrappers and
   trace topology helpers remain in use. Review imports before moving an asset.
 

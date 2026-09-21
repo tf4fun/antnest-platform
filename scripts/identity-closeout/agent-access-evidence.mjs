@@ -2,10 +2,14 @@ import assert from "node:assert/strict";
 import { collectTrace } from "../observability/collect.mjs";
 import {
   assertCaptureDisabled,
-  owningServer,
+  owningServerTopology,
+  traceTopology,
   traceTree,
 } from "../observability/trace-tree.mjs";
 import { assertSecretFree } from "./evidence.mjs";
+import { collectTrace as collectCompleteTrace } from "../managed-mcp/trace.mjs";
+import { hasError } from "../acp-plan/requests.mjs";
+import { saveSessionTrace } from "./session-trace.mjs";
 import { assertMessageReplay } from "../acp-closeout/replay.mjs";
 
 export function assertUnchanged(before, after) {
@@ -43,20 +47,47 @@ export function assertPrivateReplay(
   phase,
   version,
   persisted,
+  metadata,
+  { alreadyAttached = false } = {},
 ) {
   assert(version === 1 || version === 2, "unsupported replay version");
   assert(
     updates.every((item) => item.sessionId === session),
     "foreign Session notification in replay",
   );
+  assert(metadata?.id === session, "authoritative Session metadata missing");
+  const infos = updates.filter(
+    ({ update }) => update.sessionUpdate === "session_info_update",
+  );
+  assert(
+    infos.length === 1 || (alreadyAttached && infos.length === 0),
+    "missing or duplicate Session metadata",
+  );
+  if (infos.length)
+    assert.deepEqual(infos[0].update, {
+      sessionUpdate: "session_info_update",
+      title: metadata.title,
+      updatedAt: new Date(metadata.updated_at).toISOString(),
+    });
   const history = persisted
     .filter((item) => item.session_id === session)
     .sort((left, right) => Number(left.sequence) - Number(right.sequence));
   assertMessageReplay(
     updates.filter(
-      (item) => version !== 2 || item.update.sessionUpdate !== "state_update",
+      (item) =>
+        item.update.sessionUpdate !== "session_info_update" &&
+        (version !== 2 || item.update.sessionUpdate !== "state_update"),
     ),
-    history,
+    history.map((item) => ({
+      ...item,
+      payload: {
+        ...item.payload,
+        messageId:
+          version === 1
+            ? (item.payload.responseId ?? item.payload.messageId)
+            : item.payload.messageId,
+      },
+    })),
     version,
   );
   const messageType = version === 1 ? "agent_message_chunk" : "agent_message";
@@ -99,7 +130,7 @@ export function assertPrivateReplay(
 export function assertDeniedSessionError(error) {
   assert(
     error?.code === -32020 &&
-      error.message === "Session belongs to another Agent",
+      error.message === "Session belongs to another organization",
     "foreign Session must return only the generic access error",
   );
   assert(
@@ -121,58 +152,34 @@ export function assertReplayIsolation(before, after, session) {
   const original = before.acp_sessions.find((item) => item.id === session);
   const resumed = after.acp_sessions.find((item) => item.id === session);
   assert(original && resumed, "replayed Session missing");
-  const priorIDs = new Set(before.client_mcp_revisions.map((item) => item.id));
-  const added = after.client_mcp_revisions.filter(
-    (item) => !priorIDs.has(item.id),
+  assert.equal(
+    original.state,
+    "active",
+    "replay fixture requires an active Session",
   );
-  assert(
-    added.length === 1 && added[0].session_id === session,
-    "resume must create exactly one target MCP revision",
-  );
-  const nextRevision =
-    1 +
-    Math.max(
-      0,
-      ...before.client_mcp_revisions
-        .filter((item) => item.session_id === session)
-        .map((item) => Number(item.revision)),
-    );
-  assert(
-    Number(added[0].revision) === nextRevision &&
-      resumed.client_mcp_revision_id === added[0].id,
-    "resume revision or pointer is incorrect",
-  );
-  // Resume replaces client MCP configuration; every other persisted byte remains authoritative.
-  assertUnchanged(before, {
-    ...after,
-    acp_sessions: after.acp_sessions.map((item) =>
-      item.id === session
-        ? {
-            ...item,
-            updated_at: original.updated_at,
-            client_mcp_revision_id: original.client_mcp_revision_id,
-          }
-        : item,
-    ),
-    client_mcp_revisions: after.client_mcp_revisions.filter(
-      (item) => item.id !== added[0].id,
-    ),
-  });
+  // Current identical client MCP configuration is idempotent; no revision,
+  // pointer, timestamp, history or foreign-row mutation is permitted.
+  assertUnchanged(before, after);
 }
 
 export function inspectAccessTrace(trace, expected, secrets) {
+  traceTree(trace);
+  return inspectAccessTraceTopology(trace, expected, secrets);
+}
+
+export function inspectAccessTraceTopology(trace, expected, secrets) {
   assert(
     trace?.traceID === expected.traceID && trace.spans?.length,
     "wrong or missing access trace",
   );
-  const { service, chain: ancestors } = traceTree(trace);
+  const { service, chain: ancestors } = traceTopology(trace);
   assertCaptureDisabled(trace);
   assert(
     !expected.operation?.includes(".repository."),
     "Repository selectors are no longer supported",
   );
   const matches = expected.route
-    ? [owningServer(trace, expected).server]
+    ? [owningServerTopology(trace, expected).server]
     : trace.spans.filter(
         (span) =>
           service(span) === expected.service &&
@@ -214,6 +221,34 @@ export async function verifyAccessTraces(base, expectations, secrets, options) {
         undefined,
         options,
       )),
+    );
+  }
+  return results;
+}
+
+export async function verifyAccessEvidence(base, expectations, secrets) {
+  const results = [];
+  for (const id of new Set(expectations.map((e) => e.traceID))) {
+    assert.match(id ?? "", /^[a-f0-9]{32}$/);
+    results.push(
+      ...(await collectCompleteTrace(base, id, (trace) => {
+        saveSessionTrace(trace);
+        const checks = expectations
+          .filter((e) => e.traceID === id)
+          .map((e) => inspectAccessTraceTopology(trace, e, secrets));
+        const warnings = [
+          ...(trace.warnings ?? []),
+          ...trace.spans.flatMap((s) => s.warnings ?? []),
+        ];
+        const errors = trace.spans.filter(hasError).length;
+        return checks.map((c) => ({
+          ...c,
+          warning_count: warnings.length,
+          warnings: [...new Set(warnings)],
+          error_spans: errors,
+          strict_trace: warnings.length || errors ? "failed" : "passed",
+        }));
+      })),
     );
   }
   return results;

@@ -1,13 +1,34 @@
 import assert from "node:assert/strict";
-import { setTimeout as delay } from "node:timers/promises";
-import { assertSecretFree } from "./evidence.mjs";
 import { assertCatalog } from "../acp-commands/evidence.mjs";
 
 export function assertEmptySession(updates, sessionId, version, phase) {
   assert(phase === "new" || phase === "replay", "unknown Session setup phase");
   assertCatalog(updates, sessionId);
+  const metadata = updates.filter(
+    ({ update }) => update.sessionUpdate === "session_info_update",
+  );
+  assert.equal(
+    metadata.length,
+    1,
+    "empty Session metadata missing or duplicated",
+  );
+  assert.equal(metadata[0].sessionId, sessionId);
+  const info = metadata[0].update;
+  assert.equal(info.title, null, "rejected prompt changed empty Session title");
+  assert(
+    Number.isFinite(Date.parse(info.updatedAt)),
+    "invalid Session update timestamp",
+  );
+  assert.deepEqual(Object.keys(info).sort(), [
+    "sessionUpdate",
+    "title",
+    "updatedAt",
+  ]);
   const states = updates.filter(
-    ({ update }) => update.sessionUpdate !== "available_commands_update",
+    ({ update }) =>
+      !["available_commands_update", "session_info_update"].includes(
+        update.sessionUpdate,
+      ),
   );
   assert.equal(
     states.length,
@@ -25,8 +46,8 @@ export function assertEmptySession(updates, sessionId, version, phase) {
 
 export function assertCompletedRun(run, accepted, tools) {
   assert(
-    run?.id === accepted.id && run.admission_id === accepted.admission_id,
-    "Run/admission was replaced",
+    run?.id === accepted.id && run.request_id === accepted.request_id,
+    "Run/request was replaced",
   );
   assert(
     run.state === "completed" &&
@@ -38,87 +59,20 @@ export function assertCompletedRun(run, accepted, tools) {
     run.error_class === null && run.cancel_requested_at === null,
     "Run was cancelled or failed",
   );
-  assert(run.admission_finished_at, "completed Run did not release admission");
+  assert(accepted.execution_snapshot, "accepted execution missing");
+  assert.deepEqual(
+    run.execution_snapshot,
+    accepted.execution_snapshot,
+    "execution snapshot replaced",
+  );
+  assert.equal(run.executor_state, "quiescent");
+  assert.equal(run.tool_effect_state, "settled");
+  assert.equal(run.unknown_effect_source, null);
   assert(
-    tools.length === 1 && tools[0].state === "completed",
+    tools.length === 1 &&
+      tools[0].run_id === run.id &&
+      tools[0].state === "completed" &&
+      tools[0].runtime_call_stopped === true,
     "missing, duplicated or unsettled Tool",
   );
-}
-
-export function inspectSessionTrace(trace, traceID, secrets) {
-  assert(
-    trace?.traceID === traceID && trace.spans?.length,
-    "wrong or missing trace",
-  );
-  const spans = new Map(trace.spans.map((span) => [span.spanID, span]));
-  const service = (span) => trace.processes[span.processID]?.serviceName;
-  const tag = (span, key) => span.tags?.find((item) => item.key === key)?.value;
-  const root = trace.spans.find(
-    (span) =>
-      service(span) === "edge-gateway" &&
-      tag(span, "span.kind") === "server" &&
-      tag(span, "http.response.status_code") === 101,
-  );
-  assert(root, "Gateway upgrade completion missing");
-  const checks = trace.spans.filter(
-    (span) =>
-      service(span) === "edge-gateway" &&
-      tag(span, "span.kind") === "client" &&
-      tag(span, "rpc.method") === "/rpc/identity/resolve-access-token",
-  );
-  assert(checks.length >= 4, "message-level Identity checks missing");
-  for (const check of checks) {
-    let current = check;
-    const seen = new Set();
-    while (current && current !== root && !seen.has(current.spanID)) {
-      seen.add(current.spanID);
-      const parent = current.references?.find(
-        (ref) => ref.refType === "CHILD_OF" && ref.traceID === traceID,
-      );
-      current = spans.get(parent?.spanID);
-    }
-    assert(current === root, "message check lacks Gateway ancestry");
-  }
-  const failed = checks.filter(
-    (span) =>
-      tag(span, "error") === true || tag(span, "otel.status_code") === "ERROR",
-  );
-  assert(failed.length > 0, "denied Identity check missing");
-  assertSecretFree(JSON.stringify(trace), secrets);
-  return {
-    trace_id: traceID,
-    spans: trace.spans.length,
-    session_checks: checks.length,
-    failed_checks: failed.length,
-    gateway_ancestry: true,
-  };
-}
-
-export async function verifySessionTraces(base, traceIDs, secrets) {
-  const results = [];
-  for (const traceID of traceIDs) {
-    let lastError;
-    for (let attempt = 0; attempt < 40; attempt++) {
-      try {
-        const response = await fetch(`${base}/api/traces/${traceID}`, {
-          signal: AbortSignal.timeout(3000),
-        });
-        assert.equal(response.status, 200);
-        results.push(
-          inspectSessionTrace(
-            (await response.json()).data?.[0],
-            traceID,
-            secrets,
-          ),
-        );
-        lastError = undefined;
-        break;
-      } catch (error) {
-        lastError = error;
-      }
-      await delay(500);
-    }
-    if (lastError) throw lastError;
-  }
-  return results;
 }

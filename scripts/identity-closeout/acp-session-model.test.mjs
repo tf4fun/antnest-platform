@@ -106,7 +106,7 @@ test("HTTP barrier must be observed, explicitly released once, and rejects repla
     signal: AbortSignal.timeout(3000),
     headers: {
       "content-type": "application/json",
-      authorization: "Bearer acp-session-model",
+      authorization: "Bearer acp-session-private-key",
       traceparent: `00-${"a".repeat(32)}-${"b".repeat(16)}-01`,
     },
     body: JSON.stringify(payload("v1-admitted")),

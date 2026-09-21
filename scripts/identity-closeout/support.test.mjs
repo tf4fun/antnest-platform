@@ -7,6 +7,7 @@ import { databaseRequest, fields } from "../observability/trace-fixtures.mjs";
 import {
   GatewayClient,
   inspectIdentityTrace,
+  inspectIdentityTraceTopology,
   verifyIdentityTraces,
   assertNoStore,
   assertCookiesCleared,
@@ -173,6 +174,68 @@ test("trace evidence requires a DB child of the exact Identity SERVER", () => {
   assert.equal(result.gateway_ancestry, true);
 });
 
+test("Identity SQL ownership excludes a causally linked Controller publication", () => {
+  const trace = traceFixture();
+  trace.processes.controller = { serviceName: "agent-controller" };
+  trace.spans.push({
+    traceID: trace.traceID,
+    spanID: "publication",
+    processID: "controller",
+    operationName: "agent_controller.execution_publication",
+    tags: fields({ "span.kind": "internal" }),
+    references: [{ refType: "CHILD_OF", traceID: trace.traceID, spanID: "2" }],
+  });
+  trace.spans.push({
+    ...structuredClone(trace.spans[2]),
+    spanID: "controller-sql",
+    processID: "controller",
+    references: [
+      { refType: "CHILD_OF", traceID: trace.traceID, spanID: "publication" },
+    ],
+  });
+  assert.equal(inspectIdentityTrace(trace, expectation, []).database_spans, 1);
+  trace.spans.splice(2, 1);
+  assert.throws(
+    () => inspectIdentityTrace(trace, expectation, []),
+    /zero PostgreSQL/,
+  );
+});
+
+test("Identity topology retains timing evidence while strict entry rejects it", () => {
+  const trace = traceFixture();
+  trace.spans[1].warnings = ["clock skew adjustment disabled; example"];
+  const saved = structuredClone(trace);
+  assert.equal(
+    inspectIdentityTraceTopology(trace, expectation, []).database_spans,
+    1,
+  );
+  assert.deepEqual(trace, saved);
+  assert.throws(() => inspectIdentityTrace(trace, expectation, []), /warnings/);
+  trace.spans[2].references = [];
+  assert.throws(
+    () => inspectIdentityTraceTopology(trace, expectation, []),
+    /DB|database/,
+  );
+});
+
+test("Identity topology does not relax SQL privacy or actual request identity", () => {
+  const trace = traceFixture();
+  trace.spans[2].tags.push(...fields({ "db.query.parameters": "private" }));
+  assert.throws(
+    () => inspectIdentityTraceTopology(trace, expectation, []),
+    /parameters/,
+  );
+  assert.throws(
+    () =>
+      inspectIdentityTraceTopology(
+        traceFixture(),
+        { ...expectation, traceID: "b".repeat(32) },
+        [],
+      ),
+    /wrong.*trace/,
+  );
+});
+
 test("Identity expectations sharing a trace use one delayed query", async () => {
   const events = [];
   const item = { ...expectation, traceID: "a".repeat(32) };
@@ -295,7 +358,7 @@ const oidcRequests = [
   { method: "POST", url: "https://idp.test/token" },
   { method: "GET", url: "https://idp.test/jwks" },
   { method: "GET", url: "https://idp.test/userinfo" },
-];
+].map((request, index) => ({ ...request, spanID: `client-${index}` }));
 function oidcTraceFixture() {
   const trace = traceFixture();
   for (const [index, request] of oidcRequests.entries())
@@ -311,8 +374,9 @@ function oidcTraceFixture() {
       tags: [
         { key: "span.kind", value: "client" },
         { key: "http.request.method", value: request.method },
-        { key: "url.full", value: request.url },
+        { key: "server.address", value: new URL(request.url).hostname },
         { key: "http.response.status_code", value: 200 },
+        { key: "url.scheme", value: "https" },
       ],
     });
   return trace;

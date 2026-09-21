@@ -261,16 +261,19 @@ test-stage3-base-fixtures:
 e2e-stage3-local:
 	sh scripts/e2e-stage3a.sh
 
-.PHONY: e2e-identity-access
-e2e-identity-access: docker-build-stage3
+.PHONY: e2e-identity-access e2e-identity-core
+e2e-identity-core:
+	ANTNEST_E2E_IDENTITY_CORE=true sh scripts/e2e-stage3a.sh
+
+e2e-identity-access:
 	ANTNEST_E2E_IDENTITY_ACCESS=true sh scripts/e2e-stage3a.sh
 
 .PHONY: e2e-acp-session
-e2e-acp-session: docker-build-stage3
+e2e-acp-session:
 	ANTNEST_E2E_ACP_SESSION=true sh scripts/e2e-stage3a.sh
 
 .PHONY: e2e-agent-access
-e2e-agent-access: docker-build-stage3
+e2e-agent-access:
 	ANTNEST_E2E_AGENT_ACCESS=true sh scripts/e2e-stage3a.sh
 
 e2e-runtime-controller: docker-build-runtime-controller

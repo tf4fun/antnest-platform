@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
-import { WebSocket } from "ws";
+import { readFile, writeFile } from "node:fs/promises";
 import { Pool } from "pg";
 import { GatewayClient } from "./support.mjs";
 import { gateway, connectACP } from "./acp-connection.mjs";
@@ -22,12 +21,25 @@ import {
 } from "./offboarding-client.mjs";
 import {
   assertUnchanged,
-  verifyAccessTraces,
+  verifyAccessEvidence,
   assertPrivateReplay,
   assertReplayIsolation,
   assertDeniedSessionError,
   assertNoNotifications,
 } from "./agent-access-evidence.mjs";
+
+import { createAccessCatalog } from "./catalog.mjs";
+import { waitForAgentReady } from "../verification/agent-state.mjs";
+import { assertAgentDenied } from "../acp-files/setup.mjs";
+import { collectManagedTrace } from "../managed-mcp/request-trace.mjs";
+import { inspectCommandTrace } from "../acp-commands/trace.mjs";
+import { inspectAccessRun } from "./access-run.mjs";
+import {
+  saveSessionTrace,
+  collectDeniedMessage,
+  strictSessionEvidence,
+} from "./session-trace.mjs";
+import { identityEvidenceExitCode } from "./trace.mjs";
 
 installFailureBoundary();
 const seed = JSON.parse(await readFile("/fixture-seed.json", "utf8"));
@@ -36,6 +48,8 @@ const adminA = new GatewayClient(gateway),
   memberB = new GatewayClient(gateway);
 const clients = new Set(),
   traces = [],
+  acpRequests = [],
+  revokedMessages = [],
   offboarding = [],
   resources = [],
   secrets = [
@@ -52,7 +66,7 @@ const pool = new Pool({
   options: "-c default_transaction_read_only=on",
 });
 let step = "setup",
-  deniedUpgrades = 0,
+  deniedAgents = 0,
   deniedSessions = 0,
   deniedAdmin = 0;
 const ownerID = seed.a.user.id;
@@ -95,6 +109,7 @@ async function snapshot() {
       "/api/admin/agents",
       "/api/admin/templates",
       "/api/admin/model-profiles",
+      "/api/admin/provider-connections",
       `/api/admin/agents/${item.agent}`,
       `/api/admin/agents/${item.agent}/events`,
       `/api/admin/operations/${item.operation}`,
@@ -144,34 +159,15 @@ async function setup() {
     ["a", adminA, adminA, a.organization_id],
     ["b", adminB, memberB, b.organization_id],
   ]) {
-    const model = (
-      await admin.request("/api/admin/model-profiles", {
-        status: 201,
-        body: {
-          display_name: "Same model name",
-          api_key: `scope-credential-${key}`,
-          model: {
-            base_url: "http://agent-access-model:8080/v1",
-            model: `scope-${key}`,
-            context_window: 64000,
-            max_output_tokens: 4096,
-            supports_images: false,
-          },
-        },
-      })
-    ).body;
-    const template = (
-      await admin.request("/api/admin/templates", {
-        status: 201,
-        body: {
-          name: "Same template name",
-          model_profile_revision_id: model.revision_id,
-          system_prompt: `Private organization ${key} guidance`,
-          max_model_requests: 4,
-          runtime: { image_ref: "antnest/antnest-runtime:local" },
-        },
-      })
-    ).body;
+    const { provider, model, template } = await createAccessCatalog(admin, {
+      name: "Same model name",
+      modelName: `scope-${key}`,
+      credential: `scope-credential-${key}`,
+      baseURL: "http://agent-access-model:8080/v1",
+      runtimeImage: process.env.ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF,
+      systemPrompt: `Private organization ${key} guidance`,
+      maxModelRequests: 4,
+    });
     const created = (
       await admin.request("/api/admin/agents", {
         status: 202,
@@ -180,7 +176,7 @@ async function setup() {
           owner_user_id: ownerID,
           name: "Same agent name",
           template_id: template.template_id,
-          template_revision: 1,
+          template_revision: template.revision,
         },
       })
     ).body;
@@ -199,10 +195,16 @@ async function setup() {
       owner,
       organization,
       model,
+      provider,
       template,
       agent: created.agent.agent_id,
       operation: created.operation.request_id,
     });
+    await waitForAgentReady(
+      async () =>
+        (await admin.request(`/api/admin/agents/${created.agent.agent_id}`))
+          .body,
+    );
     await sentinel(resources.at(-1), "write");
   }
   assert.notEqual(
@@ -219,6 +221,14 @@ async function administratorIsolation() {
     [resources[1], resources[0]],
   ]) {
     const headers = foreignHeaders(other.organization);
+    for (const path of [
+      `/api/admin/templates/${own.template.template_id}`,
+      `/api/admin/templates/${own.template.template_id}/revisions/${own.template.revision}`,
+      `/api/admin/model-profiles/${own.model.model_profile_id}`,
+      `/api/admin/provider-connections/${own.provider.connection_id}`,
+    ])
+      await own.admin.request(path);
+
     const listed = (
       await own.admin.request("/api/admin/agents?limit=1&view=current", {
         headers,
@@ -249,9 +259,9 @@ async function administratorIsolation() {
       `/api/admin/agents/${other.agent}/events/watch`,
       `/api/admin/operations/${other.operation}`,
       `/api/admin/templates/${other.template.template_id}`,
-      `/api/admin/templates/${other.template.template_id}/revisions/1`,
+      `/api/admin/templates/${other.template.template_id}/revisions/${other.template.revision}`,
       `/api/admin/model-profiles/${other.model.model_profile_id}`,
-      `/api/admin/model-profile-revisions/${other.model.revision_id}`,
+      `/api/admin/provider-connections/${other.provider.connection_id}`,
     ]) {
       const response = await own.admin.request(path, { headers, status: 404 });
       deniedAdmin++;
@@ -271,7 +281,10 @@ async function administratorIsolation() {
         status: 404,
         body:
           action === "rebuild"
-            ? { template_id: own.template.template_id, template_revision: 1 }
+            ? {
+                template_id: own.template.template_id,
+                template_revision: own.template.revision,
+              }
             : {},
       });
       deniedAdmin++;
@@ -286,7 +299,7 @@ async function administratorIsolation() {
         owner_user_id: ownerID,
         name: "Injected",
         template_id: own.template.template_id,
-        template_revision: 1,
+        template_revision: own.template.revision,
         organization_id: other.organization,
       },
     });
@@ -297,7 +310,7 @@ async function administratorIsolation() {
         owner_user_id: ownerID,
         name: "Foreign template",
         template_id: other.template.template_id,
-        template_revision: 1,
+        template_revision: other.template.revision,
       },
     });
     deniedAdmin++;
@@ -308,7 +321,7 @@ async function administratorIsolation() {
       owner_user_id: seed.b.user.id,
       name: "Foreign owner",
       template_id: resources[0].template.template_id,
-      template_revision: 1,
+      template_revision: resources[0].template.revision,
     },
   });
   deniedAdmin++;
@@ -344,9 +357,11 @@ async function workspaceIsolation() {
       [own.agent],
     );
     assertUnchanged(Object.keys(response.body.agents[0]).sort(), [
+      "activation_state",
       "agent_id",
-      "availability",
+      "lifecycle_state",
       "name",
+      "runtime_state",
     ]);
   }
   assertUnchanged(
@@ -358,42 +373,32 @@ async function workspaceIsolation() {
     [],
   );
 }
-async function rejectedUpgrade(version, item, browser, status = 404) {
-  const socket = new WebSocket(
-    `${gateway.replace("http:", "ws:")}/api/app/agents/${item.agent}/v${version}/acp`,
-    {
-      headers: {
-        Cookie: browser.cookie,
-        Origin: gateway,
-        ...foreignHeaders(item.organization),
-      },
-      handshakeTimeout: 10000,
-    },
-  );
+function remember(client, method, details = {}) {
+  const request = client.requests.filter((r) => r.method === method).at(-1);
+  assert(request, "actual SDK request missing");
+  return {
+    ...request,
+    agentId: client.agentId,
+    transport: "websocket",
+    connectionTraceID: client.traceID,
+    kind: "request",
+    ...details,
+  };
+}
+async function rejectedAgent(version, item, browser) {
+  const client = connectACP(version, item.agent, browser.cookie, {
+    headers: foreignHeaders(item.organization),
+  });
+  clients.add(client);
   try {
-    const response = await new Promise((resolve, reject) => {
-      socket.once("open", () =>
-        reject(new Error("unauthorized upgrade succeeded")),
-      );
-      socket.on("error", () =>
-        reject(new Error("upgrade probe transport failure")),
-      );
-      socket.once("unexpected-response", (_request, result) => {
-        result.destroy();
-        resolve(result);
-      });
-    });
-    assert.equal(response.statusCode, status, "Agent upgrade rejection status");
-    deniedUpgrades++;
-    traces.push({
-      traceID: response.headers["x-antnest-trace-id"],
-      service: "agent-controller",
-      method: "POST",
-      route: "/rpc/agent-controller/list-workspace-agents",
-      rpcMethod: "POST /rpc/agent-controller/list-workspace-agents",
-    });
+    await client.initialize();
+    await assertAgentDenied(client);
+    acpRequests.push(
+      remember(client, "session/new", { rejection: "access_denied" }),
+    );
+    deniedAgents++;
   } finally {
-    socket.terminate();
+    close(client);
   }
 }
 async function open(version, item) {
@@ -414,6 +419,9 @@ async function replay(client, version, session) {
     mcpServers: [],
     ...(version === 2 ? { replayFrom: { type: "start" } } : {}),
   });
+  acpRequests.push(
+    remember(client, version === 1 ? "session/load" : "session/resume"),
+  );
   return client.updates.slice(offset);
 }
 async function baseline(version, item, phase = `v${version}-${item.key}`) {
@@ -431,13 +439,20 @@ async function baseline(version, item, phase = `v${version}-${item.key}`) {
     const rows = (
       await pool.query("SELECT * FROM runs WHERE session_id=$1", [session])
     ).rows;
-    return rows.length === 1 && rows[0].admission_finished_at ? rows[0] : false;
+    return rows.length === 1 &&
+      rows[0].executor_state === "quiescent" &&
+      rows[0].state === "completed"
+      ? rows[0]
+      : false;
   }, "completed admitted Run");
   assert(
     run.state === "completed" &&
       run.stop_reason === "end_turn" &&
       run.error_class === null,
     "authorized Run did not complete",
+  );
+  acpRequests.push(
+    remember(client, "session/prompt", { phase, kind: "access-run" }),
   );
   const before = await acpSnapshot(),
     calls = await modelState();
@@ -448,6 +463,8 @@ async function baseline(version, item, phase = `v${version}-${item.key}`) {
     phase,
     version,
     before.session_messages,
+    (await acpSnapshot()).acp_sessions.find((s) => s.id === session),
+    { alreadyAttached: true },
   );
   const after = await acpSnapshot();
   assertReplayIsolation(before, after, session);
@@ -493,6 +510,11 @@ async function sessionIsolation(version, own, other) {
     );
     assertNoNotifications(own.client.updates, offset);
     assertUnchanged(before, await snapshot());
+    acpRequests.push(
+      remember(own.client, `session/${method}`, {
+        rejection: "session_access_denied",
+      }),
+    );
     deniedSessions++;
   }
 }
@@ -519,6 +541,11 @@ async function membershipBoundary(version, a, b) {
     }),
   );
   assert.equal(b.client.closeCode, 1008);
+  revokedMessages.push({
+    ...remember(b.client, "session/prompt"),
+    reason: "revoked",
+    closeCode: 1008,
+  });
   assertNoNotifications(b.client.updates, offset);
   close(b.client);
   await a.client.request("list", {});
@@ -545,11 +572,20 @@ async function membershipBoundary(version, a, b) {
     body: { ...update, active: true },
   });
   await remainsDisabled(resources[1]);
-  await rejectedUpgrade(version, resources[1], memberB, 403);
+  await rejectedAgent(version, resources[1], memberB);
   const workspace = (
     await memberB.request("/api/app/bootstrap")
   ).body.agents.find((agent) => agent.agent_id === resources[1].agent);
-  assert.equal(workspace?.availability, "offline");
+  assert.equal(
+    workspace,
+    undefined,
+    "revoked Agent reappeared before explicit Enable",
+  );
+  const state = (
+    await memberB.request(`/api/app/agents/${resources[1].agent}/state`)
+  ).body;
+  assert.equal(state.availability, "offline");
+  assert.equal(state.access_allowed, false);
   await explicitEnable(resources[1]);
   const restored = await open(version, resources[1]);
   const beforeReplay = await acpSnapshot();
@@ -560,6 +596,7 @@ async function membershipBoundary(version, a, b) {
     `v${version}-b`,
     version,
     beforeReplay.session_messages,
+    (await acpSnapshot()).acp_sessions.find((s) => s.id === b.session),
   );
   assertReplayIsolation(beforeReplay, await acpSnapshot(), b.session);
   close(restored);
@@ -580,9 +617,9 @@ try {
   for (const version of [1, 2]) {
     step = `v${version}_acp_scope`;
     const before = await snapshot();
-    await rejectedUpgrade(version, resources[1], adminA);
-    await rejectedUpgrade(version, resources[0], memberB);
-    await rejectedUpgrade(version, resources[1], adminB);
+    await rejectedAgent(version, resources[1], adminA);
+    await rejectedAgent(version, resources[0], memberB);
+    await rejectedAgent(version, resources[1], adminB);
     assertUnchanged(before, await snapshot());
     const a = await baseline(version, resources[0]),
       b = await baseline(version, resources[1]);
@@ -615,6 +652,7 @@ try {
             phase,
             2,
             before.session_messages,
+            (await acpSnapshot()).acp_sessions.find((s) => s.id === session),
           );
           assertReplayIsolation(before, await acpSnapshot(), session);
         } finally {
@@ -626,26 +664,41 @@ try {
   step = "trace_acceptance";
   const calls = await modelState();
   assert.equal(calls.length, 9);
-  for (const call of calls)
-    traces.push({
-      traceID: call.trace_id,
-      service: "agent-acp-service",
-      operation: "model.complete",
-      spanID: call.model_span_id,
-    });
-  const evidence = await verifyAccessTraces(
+  const evidence = await verifyAccessEvidence(
     "http://jaeger:16686",
     traces,
     secrets,
   );
+  for (const request of acpRequests)
+    evidence.push(
+      await collectManagedTrace(
+        "http://jaeger:16686",
+        request,
+        secrets,
+        calls,
+        saveSessionTrace,
+        (trace, expected, secrets, calls) =>
+          strictSessionEvidence(
+            (request.kind === "access-run"
+              ? inspectAccessRun
+              : inspectCommandTrace)(trace, expected, secrets, calls),
+            trace,
+          ),
+      ),
+    );
+  for (const request of revokedMessages)
+    evidence.push(
+      await collectDeniedMessage("http://jaeger:16686", request, secrets),
+    );
+  process.exitCode = identityEvidenceExitCode([...evidence, ...offboarding]);
   for (const browser of [adminA, adminB, memberB])
     await browser.request("/api/session", { method: "DELETE", status: 204 });
   process.stdout.write(
     JSON.stringify({
-      status: "passed",
+      status: "business_passed",
       versions: [1, 2],
       denied_admin: deniedAdmin,
-      denied_upgrades: deniedUpgrades,
+      denied_agent_requests: deniedAgents,
       denied_session_commands: deniedSessions,
       membership_revocations: 2,
       completed_runs: calls.length,
@@ -654,6 +707,12 @@ try {
     }) + "\n",
   );
 } catch (error) {
+  if (process.env.ANTNEST_IDENTITY_EVIDENCE_DIR)
+    await writeFile(
+      `${process.env.ANTNEST_IDENTITY_EVIDENCE_DIR}/failure.private.txt`,
+      String(error.stack),
+      { mode: 0o600 },
+    );
   console.error(
     JSON.stringify({
       event: "agent_access_failed",

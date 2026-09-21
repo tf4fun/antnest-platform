@@ -81,7 +81,10 @@ export function createSessionModel() {
     try {
       assert.equal(request.method, "POST");
       assert.equal(request.url, "/v1/chat/completions");
-      assert.equal(request.headers.authorization, "Bearer acp-session-model");
+      assert.equal(
+        request.headers.authorization,
+        "Bearer acp-session-private-key",
+      );
       assert.match(
         request.headers.traceparent ?? "",
         /^00-[a-f0-9]{32}-[a-f0-9]{16}-01$/,

@@ -21,6 +21,7 @@ export function createOIDCProvider({ issuer, callback, userInfo = false }) {
   };
   const codes = new Map();
   const canaries = new Set();
+  const requests = [];
   const basePath = new URL(issuer).pathname.replace(/\/$/, "");
   const counters = {
     discovery: 0,
@@ -147,6 +148,27 @@ export function createOIDCProvider({ issuer, callback, userInfo = false }) {
 
   async function route(request, response) {
     const url = new URL(request.url, issuer);
+    const path = url.pathname.slice(basePath.length);
+    if (
+      [
+        "/.well-known/openid-configuration",
+        "/token",
+        "/jwks",
+        "/userinfo",
+      ].includes(path)
+    ) {
+      const traceparent = request.headers.traceparent;
+      if (/^00-[a-f0-9]{32}-[a-f0-9]{16}-01$/.test(traceparent ?? "")) {
+        response.once("finish", () =>
+          requests.push({
+            method: request.method,
+            url: url.origin + url.pathname,
+            traceparent,
+            status: response.statusCode,
+          }),
+        );
+      }
+    }
     switch (`${request.method} ${url.pathname.slice(basePath.length)}`) {
       case "GET /status":
         return json(response, 200, { status: "ready" });
@@ -154,6 +176,8 @@ export function createOIDCProvider({ issuer, callback, userInfo = false }) {
         return json(response, 200, counters);
       case "GET /fixture/canaries":
         return json(response, 200, [...canaries].filter(Boolean));
+      case "GET /fixture/requests":
+        return json(response, 200, requests);
       case "POST /fixture/rotate":
         secretRevision = 2;
         return json(response, 200, { revision: secretRevision });

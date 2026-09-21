@@ -9,6 +9,17 @@ esac
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 export ANTNEST_E2E_DEADLINE_MS=$(node -e 'process.stdout.write(String(Date.now()+900000))')
 docker() { node "$root/scripts/acp-closeout/docker.mjs" "$@"; }
+umask 077
+evidence="$root/.cache/identity-agent/$COMPOSE_PROJECT_NAME"
+mkdir -p "$evidence/traces"
+compose() {
+  docker --lifecycle compose --env-file /dev/null -f "$root/compose.yaml" -f "$root/compose.stage3.yaml" \
+    -f "$root/scripts/identity-closeout/oidc-compose.yaml" -f "$root/scripts/identity-closeout/compose.yaml" \
+    --profile stage3 --profile observability "$@"
+}
+containers=$(docker ps -q --filter "label=com.docker.compose.project=$COMPOSE_PROJECT_NAME")
+docker inspect $containers >"$evidence/deployment.private.json"
+node "$root/scripts/identity-closeout/deployment.mjs" "$evidence/deployment.private.json" "$COMPOSE_PROJECT_NAME"
 directory=$(mktemp -d "${TMPDIR:-/tmp}/antnest-agent-access.XXXXXX")
 client="${COMPOSE_PROJECT_NAME}-agent-access-client"
 model="${COMPOSE_PROJECT_NAME}-agent-access-model"
@@ -16,7 +27,8 @@ cleanup() {
   status=$?
   trap - EXIT INT TERM
   export ANTNEST_E2E_DEADLINE_MS=$(node -e 'process.stdout.write(String(Date.now()+90000))')
-  if [ "$status" -ne 0 ]; then docker logs --tail=5 "$client" >&2 || true; fi
+  compose logs --no-color edge-gateway admin-console identity-service agent-controller agent-acp-service >"$evidence/services.private.log" 2>/dev/null || true
+  docker logs "$client" >"$evidence/client.json" 2>"$evidence/client.stderr" || true
   docker rm -f "$client" "$model" >/dev/null 2>&1 || status=1
   rm -rf -- "${directory:?}"
   exit "$status"
@@ -36,6 +48,8 @@ docker create --name "$client" --label "com.docker.compose.project=$COMPOSE_PROJ
   --network "${COMPOSE_PROJECT_NAME}_development" \
   -e "TEST_ACP_DATABASE_URL=postgres://antnest_agent_acp:${ANTNEST_AGENT_ACP_POSTGRES_PASSWORD:-antnest-agent-acp-dev}@postgres:5432/antnest_agent_acp" \
   -e "TEST_GATEWAY_PUBLIC_URL=$ANTNEST_EDGE_PUBLIC_BASE_URL" \
+  -e "ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF=$ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF" \
+  -e ANTNEST_IDENTITY_EVIDENCE_DIR=/evidence/traces -v "$evidence:/evidence" \
   -v "${COMPOSE_PROJECT_NAME}-oidc-certs:/test-ca:ro" \
   -v "$directory:/coordination" \
   -v "$root/scripts:/app/closeout-scripts:ro" -v "$directory/seed.json:/fixture-seed.json:ro" \
@@ -48,8 +62,8 @@ while [ "$(docker inspect --format '{{.State.Running}}' "$client")" = true ]; do
   for checkpoint in controller-offline controller-online; do
     if [ -f "$directory/$checkpoint.request" ] && [ ! -f "$directory/$checkpoint.ack" ]; then
       case "$checkpoint" in
-        controller-offline) docker compose -f "$root/compose.yaml" -f "$root/compose.stage3.yaml" --profile stage3 stop agent-controller >/dev/null ;;
-        controller-online) docker compose -f "$root/compose.yaml" -f "$root/compose.stage3.yaml" --profile stage3 start --wait agent-controller >/dev/null ;;
+        controller-offline) compose stop agent-controller >/dev/null ;;
+        controller-online) compose start --wait agent-controller >/dev/null ;;
       esac
       touch "$directory/$checkpoint.ack"
     fi
@@ -58,5 +72,10 @@ while [ "$(docker inspect --format '{{.State.Running}}' "$client")" = true ]; do
   [ "$attempt" -le 600 ] || { echo 'Agent access test deadline exceeded' >&2; exit 1; }
   sleep 1
 done
-[ "$(docker inspect --format '{{.State.ExitCode}}' "$client")" = 0 ]
-docker logs "$client"
+status=$(docker inspect --format '{{.State.ExitCode}}' "$client")
+docker logs "$client" >"$evidence/client.json" 2>"$evidence/client.stderr"
+case "$status" in
+  0|2) node -e 'const fs=require("node:fs"),assert=require("node:assert/strict");const r=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));assert.equal(r.status,"business_passed");console.log(JSON.stringify(r));' "$evidence/client.json" ;;
+  *) echo 'Agent access business/topology failed; diagnostics retained privately' >&2 ;;
+esac
+exit "$status"

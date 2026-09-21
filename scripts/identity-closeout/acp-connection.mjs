@@ -5,6 +5,8 @@ import { createWebSocketStream } from "@agentclientprotocol/sdk/experimental/ws-
 import { WebSocket } from "ws";
 import { observeSocket, requestWithin } from "../acp-closeout/connection.mjs";
 
+import { observeStream } from "../acp-commands/transport.mjs";
+
 export const gateway = "http://edge-gateway:8080";
 
 export function connectACP(version, agent, cookie, options = {}) {
@@ -16,7 +18,8 @@ export function connectACP(version, agent, cookie, options = {}) {
   const ObservedSocket = observeSocket(WebSocket, closed, (code) => {
     closeCode = code;
   });
-  const updates = [];
+  const updates = [],
+    requests = [];
   const connection = acp
     .client()
     .onNotification(acp.methods.client.session.update, ({ params }) =>
@@ -30,16 +33,20 @@ export function connectACP(version, agent, cookie, options = {}) {
         })),
     )
     .connect(
-      createWebSocketStream(
-        `${gateway.replace("http:", "ws:")}/api/app/agents/${agent}/v${version}/acp`,
-        {
-          WebSocket: ObservedSocket,
-          headers: {
-            Cookie: cookie,
-            Origin: gateway,
-            traceparent: `00-${traceID}-${parent}-01`,
+      observeStream(
+        createWebSocketStream(
+          `${gateway.replace("http:", "ws:")}/api/app/agents/${agent}/v${version}/acp`,
+          {
+            WebSocket: ObservedSocket,
+            headers: {
+              ...options.headers,
+              Cookie: cookie,
+              Origin: gateway,
+              traceparent: `00-${traceID}-${parent}-01`,
+            },
           },
-        },
+        ),
+        requests,
       ),
     );
   const request = (method, params, timeout = 15000) =>
@@ -53,6 +60,10 @@ export function connectACP(version, agent, cookie, options = {}) {
   return {
     traceID,
     updates,
+    requests,
+    agentId: agent,
+    connectionTraceID: traceID,
+    transport: "websocket",
     close: () => connection.close(),
     get closeCode() {
       return closeCode;

@@ -4,6 +4,7 @@ import {
   Client,
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
+import { waitForAgentReady } from "../verification/agent-state.mjs";
 import { assertUnchanged } from "./agent-access-evidence.mjs";
 import {
   assertDisabled,
@@ -37,7 +38,7 @@ export async function inspectRuntime(item) {
 export async function sentinel(item, action) {
   const runtime = await inspectRuntime(item);
   assert(
-    runtime.lifecycle_state === "ready" && runtime.health === "healthy",
+    runtime.lifecycle_state === "provisioned" && runtime.health === "healthy",
     "sentinel requires a ready Runtime",
   );
   const client = new Client(
@@ -108,7 +109,7 @@ export async function explicitEnable(item) {
     { body: {}, status: 202 },
   );
   await waitOperation(item, body.request_id);
-  assert.equal((await agentDetail(item)).runtime_state, "available");
+  await waitForAgentReady(() => agentDetail(item));
   await sentinel(item, "read");
 }
 

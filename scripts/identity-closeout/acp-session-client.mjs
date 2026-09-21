@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { connectACP, gateway } from "./acp-connection.mjs";
-import { GatewayClient, verifyIdentityTraces } from "./support.mjs";
+import { GatewayClient } from "./support.mjs";
 import { assertEmptySession } from "./acp-session-evidence.mjs";
+
+import { collectDeniedMessage } from "./session-trace.mjs";
+import { identityEvidenceExitCode } from "./trace.mjs";
 
 const agent = process.env.ANTNEST_STAGE3_AGENT_ID;
 assert(agent, "Stage 3 Agent ID required");
@@ -51,10 +54,10 @@ for (const version of [1, 2]) {
     connection.close();
   }
   expectations.push({
-    traceID: connection.traceID,
-    method: "POST",
-    route: "/rpc/identity/resolve-access-token",
-    rpcMethod: "resolve_access_token",
+    connectionTraceID: connection.traceID,
+    method: "session/prompt",
+    reason: "revoked",
+    closeCode: 1008,
   });
 
   // A new login must recover the same durable Session without the rejected input.
@@ -82,14 +85,15 @@ for (const version of [1, 2]) {
   });
 }
 
-const traces = await verifyIdentityTraces(
-  "http://jaeger:16686",
-  expectations,
-  secrets,
-);
+const traces = [];
+for (const expected of expectations)
+  traces.push(
+    await collectDeniedMessage("http://jaeger:16686", expected, secrets),
+  );
+process.exitCode = identityEvidenceExitCode(traces);
 process.stdout.write(
   JSON.stringify({
-    status: "passed",
+    status: "business_passed",
     acp_session_revocation: evidence,
     traces,
   }) + "\n",

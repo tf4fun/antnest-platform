@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  inspectSessionTrace,
   assertCompletedRun,
   assertEmptySession,
 } from "./acp-session-evidence.mjs";
@@ -19,8 +18,27 @@ for (const version of [1, 2])
       sessionId: "s",
       update: { sessionUpdate: "state_update", state: "idle" },
     };
-    const valid = version === 1 ? [catalog] : [idle, catalog];
-    assertEmptySession([catalog], "s", version, "new");
+    const info = {
+      sessionId: "s",
+      update: {
+        sessionUpdate: "session_info_update",
+        title: null,
+        updatedAt: "2026-09-17T00:00:00.000Z",
+      },
+    };
+    const valid = version === 1 ? [info, catalog] : [info, idle, catalog];
+    assertEmptySession([info, catalog], "s", version, "new");
+    for (const update of [
+      { ...info.update, title: "denied prompt" },
+      { ...info.update, updatedAt: "invalid" },
+      { ...info.update, extra: "private" },
+    ])
+      assert.throws(() =>
+        assertEmptySession([{ ...info, update }, catalog], "s", version, "new"),
+      );
+    assert.throws(() =>
+      assertEmptySession([...valid, info], "s", version, "replay"),
+    );
     assertEmptySession(valid, "s", version, "replay");
     assert.throws(() =>
       assertEmptySession([idle, catalog], "s", version, "new"),
@@ -36,7 +54,7 @@ for (const version of [1, 2])
         assert.throws(
           () =>
             assertEmptySession(
-              [{ ...idle, update }, catalog],
+              [info, { ...idle, update }, catalog],
               "s",
               version,
               "replay",
@@ -76,64 +94,12 @@ for (const version of [1, 2])
     );
   });
 
-function traceFixture() {
-  const traceID = "a".repeat(32);
-  return {
-    traceID,
-    processes: { edge: { serviceName: "edge-gateway" } },
-    spans: [
-      {
-        spanID: "root",
-        processID: "edge",
-        operationName: "HTTP GET",
-        tags: [
-          { key: "http.response.status_code", value: 101 },
-          { key: "span.kind", value: "server" },
-        ],
-        references: [],
-      },
-      ...[1, 2, 3, 4].map((n) => ({
-        spanID: String(n),
-        processID: "edge",
-        operationName: "HTTP POST identity-service",
-        tags: [
-          { key: "span.kind", value: "client" },
-          { key: "rpc.method", value: "/rpc/identity/resolve-access-token" },
-          ...(n === 4 ? [{ key: "error", value: true }] : []),
-        ],
-        references: [{ refType: "CHILD_OF", traceID, spanID: "root" }],
-      })),
-    ],
+test("completed Run requires same execution, quiescent executor, no cancellation and one settled Tool", () => {
+  const running = {
+    id: "run",
+    request_id: "request",
+    execution_snapshot: { execution_revision: "revision" },
   };
-}
-test("session traces require complete message-check evidence, not just handshake presence", () => {
-  const trace = traceFixture();
-  assert.equal(inspectSessionTrace(trace, trace.traceID, []).session_checks, 4);
-  for (const mutate of [
-    (t) => t.spans.pop(),
-    (t) => (t.spans[4].tags = []),
-    (t) => (t.spans[4].references = []),
-    (t) => (t.spans[4].references[0].traceID = "b".repeat(32)),
-    (t) => (t.spans[0].tags = []),
-    (t) => (t.spans[4].processID = "unknown"),
-    (t) =>
-      (t.spans[0].tags.find((tag) => tag.key === "span.kind").value = "client"),
-    (t) =>
-      (t.spans[4].tags.find((tag) => tag.key === "rpc.method").value =
-        "/rpc/identity/local-login"),
-  ]) {
-    const invalid = traceFixture();
-    mutate(invalid);
-    assert.throws(() => inspectSessionTrace(invalid, trace.traceID, []));
-  }
-  assert.throws(() => inspectSessionTrace(trace, "b".repeat(32), []));
-  assert.throws(() =>
-    inspectSessionTrace(trace, trace.traceID, ["resolve-access-token"]),
-  );
-});
-
-test("completed Run requires same admission, released authority, no cancellation and one settled Tool", () => {
-  const running = { id: "run", admission_id: "admission" };
   const run = {
     ...running,
     state: "completed",
@@ -141,18 +107,25 @@ test("completed Run requires same admission, released authority, no cancellation
     stop_reason: "end_turn",
     error_class: null,
     cancel_requested_at: null,
-    admission_finished_at: "date",
+    executor_state: "quiescent",
+    tool_effect_state: "settled",
+    unknown_effect_source: null,
   };
-  const tools = [{ state: "completed" }];
+  const tools = [
+    { run_id: "run", state: "completed", runtime_call_stopped: true },
+  ];
   assertCompletedRun(run, running, tools);
   for (const fields of [
     { id: "other" },
-    { admission_id: "other" },
+    { request_id: "other" },
+    { execution_snapshot: { execution_revision: "other" } },
     { state: "failed" },
     { terminal_class: "cancelled" },
     { stop_reason: "refusal" },
     { error_class: "lost" },
-    { admission_finished_at: null },
+    { executor_state: "unknown" },
+    { tool_effect_state: "unknown" },
+    { unknown_effect_source: "runtime" },
     { cancel_requested_at: "date" },
   ])
     assert.throws(() =>
@@ -160,4 +133,25 @@ test("completed Run requires same admission, released authority, no cancellation
     );
   for (const invalid of [[], [...tools, ...tools], [{ state: "unresolved" }]])
     assert.throws(() => assertCompletedRun(run, running, invalid));
+});
+
+test("completed Runtime Tool must belong to the Run and have stopping evidence", () => {
+  const r = {
+    id: "run",
+    request_id: "request",
+    execution_snapshot: { id: "same" },
+    state: "completed",
+    terminal_class: "completed",
+    stop_reason: "end_turn",
+    error_class: null,
+    cancel_requested_at: null,
+    executor_state: "quiescent",
+    tool_effect_state: "settled",
+    unknown_effect_source: null,
+  };
+  for (const t of [
+    { run_id: "foreign", state: "completed", runtime_call_stopped: true },
+    { run_id: "run", state: "completed", runtime_call_stopped: false },
+  ])
+    assert.throws(() => assertCompletedRun(r, r, [t]));
 });

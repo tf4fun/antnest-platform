@@ -8,9 +8,13 @@ import { waitForExpiry } from "./expiry.mjs";
 import {
   assertCompletedRun,
   assertEmptySession,
-  verifySessionTraces,
 } from "./acp-session-evidence.mjs";
-import { verifyTraces } from "../managed-mcp/trace.mjs";
+import { collectManagedTrace } from "../managed-mcp/request-trace.mjs";
+import { inspectCommandTrace } from "../acp-commands/trace.mjs";
+import { collectDeniedMessage, saveSessionTrace } from "./session-trace.mjs";
+import { identityEvidenceExitCode } from "./trace.mjs";
+import { createAccessCatalog } from "./catalog.mjs";
+import { waitForAgentReady } from "../verification/agent-state.mjs";
 import { assertStoredSessionEffects } from "./acp-session-effects.mjs";
 
 const credentials = {
@@ -21,11 +25,13 @@ const credentials = {
 const browser = new GatewayClient(gateway),
   admin = new GatewayClient(gateway);
 const clients = new Set(),
-  traceIDs = [],
+  denied = [],
+  execution = [],
+  restored = [],
   secrets = [
     credentials.password,
     "stage3-admin-password",
-    "acp-session-model",
+    "acp-session-private-key",
   ];
 const pool = new Pool({
   connectionString: process.env.TEST_ACP_DATABASE_URL,
@@ -79,8 +85,30 @@ function close(client) {
   client.close();
   clients.delete(client);
 }
-const createSession = (client) =>
-  client.request("new", { cwd: "/workspace", mcpServers: [] });
+function remember(client, method, details = {}) {
+  const request = client.requests
+    .filter((item) => item.method === method)
+    .at(-1);
+  assert(request, "actual SDK request metadata missing");
+  return {
+    ...request,
+    agentId: agent,
+    transport: "websocket",
+    connectionTraceID: client.traceID,
+    kind: "request",
+    ...details,
+  };
+}
+async function createSession(client) {
+  const result = await client.request("new", {
+    cwd: "/workspace",
+    mcpServers: [],
+  });
+  restored.push(
+    remember(client, "session/new", { sessionId: result.sessionId }),
+  );
+  return result;
+}
 const prompt = (client, sessionId, phase) =>
   client.request(
     "prompt",
@@ -98,6 +126,9 @@ async function replay(client, version, sessionId) {
     mcpServers: [],
     ...(version === 2 ? { replayFrom: { type: "start" } } : {}),
   });
+  restored.push(
+    remember(client, version === 1 ? "session/load" : "session/resume"),
+  );
   return client.updates.slice(before);
 }
 async function snapshot(session) {
@@ -132,7 +163,7 @@ function unchanged(before, after) {
     "denied request or replay mutated durable state",
   );
 }
-async function rejectedPrompt(client, sessionId, code) {
+async function rejectedPrompt(client, sessionId, code, reason) {
   const before = await snapshot(sessionId);
   assert.equal(
     before.runs.length,
@@ -142,7 +173,11 @@ async function rejectedPrompt(client, sessionId, code) {
   await assert.rejects(prompt(client, sessionId, "denied-must-not-run"));
   assert.equal(client.closeCode, code, "unexpected admission close");
   unchanged(before, await snapshot(sessionId));
-  traceIDs.push(client.traceID);
+  denied.push({
+    ...remember(client, "session/prompt"),
+    closeCode: code,
+    reason,
+  });
   close(client);
 }
 async function modelState() {
@@ -162,10 +197,15 @@ async function settled(sessionId, count = 1) {
   return until(async () => {
     const state = await snapshot(sessionId);
     return state.runs.length === count &&
-      state.runs.every((run) => run.admission_finished_at)
+      state.runs.every(
+        (run) =>
+          run.state === "completed" &&
+          run.executor_state === "quiescent" &&
+          run.tool_effect_state === "settled",
+      )
       ? state
       : false;
-  }, "terminal Run and released admission");
+  }, "terminal Run and settled effects");
 }
 async function setup() {
   await admin.request("/api/session/login", {
@@ -184,37 +224,22 @@ async function setup() {
       role: "member",
     },
   });
-  const model = await admin.request("/api/admin/model-profiles", {
-    status: 201,
-    body: {
-      display_name: "ACP session fixture",
-      api_key: "acp-session-model",
-      model: {
-        base_url: "http://acp-session-model:8080/v1",
-        model: "session-fixture",
-        context_window: 64000,
-        max_output_tokens: 4096,
-        supports_images: false,
-      },
-    },
-  });
-  const template = await admin.request("/api/admin/templates", {
-    status: 201,
-    body: {
-      name: "ACP session fixture",
-      model_profile_revision_id: model.body.revision_id,
-      system_prompt: "Use Runtime tools.",
-      max_model_requests: 8,
-      runtime: { image_ref: "antnest/antnest-runtime:local" },
-    },
+  const { template } = await createAccessCatalog(admin, {
+    name: "ACP session fixture",
+    modelName: "session-fixture",
+    credential: "acp-session-private-key",
+    baseURL: "http://acp-session-model:8080/v1",
+    runtimeImage: process.env.ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF,
+    systemPrompt: "Use Runtime tools.",
+    maxModelRequests: 8,
   });
   const created = await admin.request("/api/admin/agents", {
     status: 202,
     body: {
       owner_user_id: owner.body.user.id,
       name: "ACP session fixture",
-      template_id: template.body.template_id,
-      template_revision: 1,
+      template_id: template.template_id,
+      template_revision: template.revision,
     },
   });
   agent = created.body.agent.agent_id;
@@ -229,7 +254,29 @@ async function setup() {
     "Agent ready",
     120000,
   );
+  await waitForAgentReady(
+    async () => (await admin.request(`/api/admin/agents/${agent}`)).body,
+  );
   await login();
+}
+async function logoutIdle() {
+  step = "logout_empty_session";
+  for (const version of [1, 2]) {
+    const client = await open(version);
+    const { sessionId } = await createSession(client);
+    assertEmptySession(client.updates, sessionId, version, "new");
+    await browser.request("/api/session", { method: "DELETE", status: 204 });
+    await rejectedPrompt(client, sessionId, 1008, "revoked");
+    await login();
+    const restored = await open(version);
+    assertEmptySession(
+      await replay(restored, version, sessionId),
+      sessionId,
+      version,
+      "replay",
+    );
+    close(restored);
+  }
 }
 async function outageAndExpiry() {
   const connected = [];
@@ -242,7 +289,7 @@ async function outageAndExpiry() {
   step = "identity_outage";
   await checkpoint(1);
   for (const item of connected)
-    await rejectedPrompt(item.client, item.sessionId, 1013);
+    await rejectedPrompt(item.client, item.sessionId, 1013, "unavailable");
   const deniedHTTP = await browser.request("/api/session", { status: 503 });
   assert.equal(deniedHTTP.headers.getSetCookie().length, 0);
   assert(browser.cookie === longCookie, "outage destroyed browser cookie");
@@ -259,7 +306,7 @@ async function outageAndExpiry() {
     const created = await createSession(shortClient);
     await shortClient.request("list", {});
     await waitForExpiry(issued.expires_at);
-    await rejectedPrompt(shortClient, created.sessionId, 1008);
+    await rejectedPrompt(shortClient, created.sessionId, 1008, "expired");
   }
   assert.equal(
     (await modelState()).requests.length,
@@ -288,12 +335,22 @@ async function admittedRun(version) {
   );
   const accepted = (await snapshot(sessionId)).runs[0];
   assert(
-    accepted?.state === "running" && accepted.admission_id,
+    accepted?.state === "running" &&
+      accepted.execution_snapshot &&
+      accepted.request_id,
     "Run not actually admitted",
+  );
+  execution.push(
+    remember(client, "session/prompt", { kind: "ordinary", phase }),
   );
   await browser.request("/api/session", { method: "DELETE", status: 204 });
   await assert.rejects(client.request("list", {}));
   assert.equal(client.closeCode, 1008);
+  denied.push({
+    ...remember(client, "session/list"),
+    closeCode: 1008,
+    reason: "revoked",
+  });
   await pending;
   close(client);
   const release = await fetch(
@@ -336,6 +393,12 @@ async function admittedRun(version) {
   );
   const nextPhase = `v${version}-recovered`;
   await prompt(recovered, sessionId, nextPhase);
+  execution.push(
+    remember(recovered, "session/prompt", {
+      kind: "ordinary",
+      phase: nextPhase,
+    }),
+  );
   const next = await settled(sessionId, 2);
   assert.equal(
     next.runs.length,
@@ -357,28 +420,38 @@ async function admittedRun(version) {
 
 try {
   await setup();
+  await logoutIdle();
   await outageAndExpiry();
   for (const version of [1, 2]) await admittedRun(version);
   step = "trace_acceptance";
   const state = await modelState();
   assert.equal(state.requests.length, 8, "model request count mismatch");
-  const traces = await verifySessionTraces(
-    "http://jaeger:16686",
-    traceIDs,
-    secrets,
-  );
-  const executionTraces = await verifyTraces(
-    "http://jaeger:16686",
-    state.requests,
-    secrets,
-  );
+  const traces = [];
+  for (const expected of denied)
+    traces.push(
+      await collectDeniedMessage("http://jaeger:16686", expected, secrets),
+    );
+  const executionTraces = [];
+  for (const expected of [...restored, ...execution])
+    executionTraces.push(
+      await collectManagedTrace(
+        "http://jaeger:16686",
+        expected,
+        secrets,
+        state.requests,
+        saveSessionTrace,
+        inspectCommandTrace,
+      ),
+    );
+  process.exitCode = identityEvidenceExitCode([...traces, ...executionTraces]);
   await browser.request("/api/session", { method: "DELETE", status: 204 });
   await admin.request("/api/session", { method: "DELETE", status: 204 });
   process.stdout.write(
     JSON.stringify({
-      status: "passed",
+      status: "business_passed",
       versions: [1, 2],
-      denied_prompts: 4,
+      denied_prompts: 6,
+      empty_logout_recoveries: 2,
       continued_runs: 2,
       recovered_runs: 2,
       model_requests: state.requests.length,

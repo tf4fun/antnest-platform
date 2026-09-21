@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { readFile, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
+import { GatewayClient, assertNoStore } from "./support.mjs";
 import {
-  GatewayClient,
-  assertNoStore,
-  verifyIdentityTraces,
-} from "./support.mjs";
+  verifyIdentityEvidence as verifyIdentityTraces,
+  identityEvidenceExitCode,
+  correlateOIDCRequests,
+} from "./trace.mjs";
 import { fixtureSecret, providerAccessToken } from "./oidc-provider.mjs";
 import { createFixtureClient, parseFixtureJSON } from "./oidc-transport.mjs";
 
@@ -345,7 +346,17 @@ for (const prefix of ["", "/denials", "/profile"])
   secrets.push(
     ...parseFixtureJSON((await idp(`${prefix}/fixture/canaries`)).text),
   );
-const evidence = await verifyIdentityTraces(jaeger, traces, secrets);
+const received = [];
+for (const prefix of ["", "/denials", "/profile"])
+  received.push(
+    ...parseFixtureJSON((await idp(`${prefix}/fixture/requests`)).text),
+  );
+const evidence = await verifyIdentityTraces(
+  jaeger,
+  correlateOIDCRequests(traces, received),
+  secrets,
+);
+process.exitCode = identityEvidenceExitCode(evidence);
 const counts = await stats();
 for (const prefix of ["/denials", "/profile"]) {
   const other = parseFixtureJSON((await idp(`${prefix}/fixture/stats`)).text);
@@ -367,7 +378,7 @@ await writeFile(
 );
 process.stdout.write(
   JSON.stringify({
-    status: "passed",
+    status: "business_passed",
     suite: "oidc",
     checks,
     idp: counts,

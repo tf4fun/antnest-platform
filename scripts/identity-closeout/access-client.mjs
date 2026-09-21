@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { assertNoStore, GatewayClient } from "./support.mjs";
 import {
-  assertNoStore,
-  GatewayClient,
-  verifyIdentityTraces,
-} from "./support.mjs";
+  verifyIdentityEvidence as verifyIdentityTraces,
+  identityEvidenceExitCode,
+} from "./trace.mjs";
 
 const [gateway, jaeger, seedPath] = process.argv.slice(2);
 const seed = JSON.parse(await readFile(seedPath, "utf8"));
@@ -327,9 +327,10 @@ checks.push("token-membership-and-user-invalidation-have-distinct-scopes");
 for (const browser of [root, a2, b])
   await browser.request("/api/session", { method: "DELETE", status: 204 });
 const evidence = await verifyIdentityTraces(jaeger, traces, secrets);
+process.exitCode = identityEvidenceExitCode(evidence);
 process.stdout.write(
   JSON.stringify({
-    status: "passed",
+    status: "business_passed",
     suite: "identity-access",
     checks,
     traces: evidence,
