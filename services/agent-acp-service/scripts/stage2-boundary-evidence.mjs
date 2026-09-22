@@ -110,7 +110,11 @@ export function inspectExecutionBoundary({ source, run }) {
       (span) =>
         tree.service(span) === "agent-acp-service" &&
         tag(span, "db.system.name") === "postgresql" &&
-        ["insert", "update", "transaction"].includes(tag(span, "db.operation.name")),
+        tag(span, "span.kind") === "client" &&
+        ["INSERT", "UPDATE"].includes(tag(span, "db.operation.name")) &&
+        span.operationName === tag(span, "db.operation.name") &&
+        typeof tag(span, "db.query.text") === "string" &&
+        tag(span, "db.query.text").length > 0,
     ),
     "ACP persistence missing",
   );

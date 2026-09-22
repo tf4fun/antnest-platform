@@ -488,7 +488,7 @@ async function isolation(item, otherAgent) {
             : { ...setup, sessionId },
         ),
         (error) => {
-          assertDeniedSessionError(error);
+          assertDeniedSessionError(error, "Agent");
           return true;
         },
       );

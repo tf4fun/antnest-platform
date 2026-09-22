@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { mkdir, writeFile } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import {
   executionHeaders,
@@ -33,6 +34,10 @@ const identity = `http://127.0.0.1:${env("ANTNEST_IDENTITY_HOST_PORT")}`;
 const execution = `http://127.0.0.1:${env("ANTNEST_ACP_HOST_PORT")}`;
 const model = `http://127.0.0.1:${env("ANTNEST_STAGE2_MODEL_HOST_PORT")}`;
 const gateway = `http://127.0.0.1:${env("ANTNEST_EDGE_HOST_PORT")}`;
+const project = env("COMPOSE_PROJECT_NAME");
+assert(/^antnest-stage2-e2e-\d+$/u.test(project), "disposable Stage 2 project required");
+const traceDirectory = `.cache/stage2-boundary/${project}/traces`;
+await mkdir(traceDirectory, { recursive: true, mode: 0o700 });
 const compose = (...args) =>
   execFileSync(
     "docker",
@@ -657,6 +662,7 @@ try {
   const jaeger = `http://127.0.0.1:${env("ANTNEST_JAEGER_UI_HOST_PORT")}`;
   const traceFailures = [];
   const readTrace = async (id) => {
+    assert(/^[a-f0-9]{32}$/u.test(id), "valid Trace ID required");
     const data = await waitForTraceParents(async (signal) => {
       const response = await fetch(`${jaeger}/api/traces/${id}`, { signal });
       if (response.status === 404) return null;
@@ -664,6 +670,9 @@ try {
       const payload = await response.json();
       if (payload.data?.length === 0) return null;
       assert.equal(payload.data?.length, 1);
+      await writeFile(`${traceDirectory}/${id}.json`, JSON.stringify(payload.data[0]), {
+        mode: 0o600,
+      });
       return payload.data[0];
     });
     const diagnostics = data.spans

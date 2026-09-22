@@ -185,7 +185,17 @@ try {
   ]);
   await waitFor(async () => {
     try {
-      await docker(["exec", postgres, "pg_isready", "-U", "acp_audit"]);
+      await docker([
+        "exec",
+        postgres,
+        "pg_isready",
+        "-h",
+        "127.0.0.1",
+        "-U",
+        "acp_audit",
+        "-d",
+        "acp_audit",
+      ]);
       return true;
     } catch {
       return false;
@@ -342,6 +352,10 @@ try {
   await client.request("session/close", { sessionId: fork.sessionId });
   const other = await client.request("session/new", setup);
   await client.request("session/close", { sessionId });
+  // Close changes Session activity time. Its final metadata can reach a separate
+  // observer after the caller receives the close response; establish delivery
+  // on both connections before measuring later configuration notifications.
+  await metadata(sessionId);
   const offsets = [client.updates.length, observer.updates.length];
   config.revision += 1;
   config.agents[0].default_authorization.mode = "chat";
@@ -356,7 +370,15 @@ try {
       ),
   );
   assert(!client.updates.slice(offsets[0]).some((item) => item.sessionId === sessionId));
-  assert(!observer.updates.slice(offsets[1]).some((item) => item.sessionId === sessionId));
+  assert(
+    !observer.updates.slice(offsets[1]).some((item) => item.sessionId === sessionId),
+    `Observer updates after close: ${JSON.stringify(
+      observer.updates
+        .slice(offsets[1])
+        .filter((item) => item.sessionId === sessionId)
+        .map((item) => item.update.sessionUpdate),
+    )}`,
+  );
   await client.request("session/load", { ...setup, sessionId });
   await client.request("session/set_mode", { sessionId, modeId: "auto" });
   const active = prompt(sessionId, "cancel-tool-marker");

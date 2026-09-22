@@ -28,11 +28,7 @@ import {
   assertLossProducer,
   assertLossBinding,
 } from "./loss-evidence.mjs";
-import {
-  journalReader,
-  serviceContainer,
-  until,
-} from "./recovery-support.mjs";
+import { journalReader, serviceContainer, until } from "./recovery-support.mjs";
 
 async function stopController(config, docker) {
   const ids = lines(

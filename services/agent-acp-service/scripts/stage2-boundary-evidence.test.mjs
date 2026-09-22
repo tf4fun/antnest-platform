@@ -102,7 +102,9 @@ function fixture() {
   });
   add(run, "sql", "INSERT", "agent-acp-service", "run", {
     "db.system.name": "postgresql",
-    "db.operation.name": "insert",
+    "db.operation.name": "INSERT",
+    "span.kind": "client",
+    "db.query.text": "INSERT INTO runs (id) VALUES ($1)",
   });
   run.spans.push(...source.spans);
   Object.assign(run.processes, source.processes);
@@ -178,7 +180,32 @@ for (const [name, change] of [
   [
     "database read alone instead of execution persistence",
     ({ run }) => {
-      run.spans[4].tags[1].value = "select";
+      run.spans[4].operationName = "SELECT";
+      run.spans[4].tags[1].value = "SELECT";
+    },
+  ],
+  [
+    "legacy lowercase database operation",
+    ({ run }) => {
+      run.spans[4].tags[1].value = "insert";
+    },
+  ],
+  [
+    "database wrapper instead of the driver operation",
+    ({ run }) => {
+      run.spans[4].operationName = "postgresql transaction";
+    },
+  ],
+  [
+    "database span without CLIENT kind",
+    ({ run }) => {
+      run.spans[4].tags.find((field) => field.key === "span.kind").value = "internal";
+    },
+  ],
+  [
+    "database span without native query metadata",
+    ({ run }) => {
+      run.spans[4].tags = run.spans[4].tags.filter((field) => field.key !== "db.query.text");
     },
   ],
   [

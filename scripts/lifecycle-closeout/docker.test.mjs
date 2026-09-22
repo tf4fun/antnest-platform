@@ -28,6 +28,7 @@ for (const kind of ["container", "volume", "network"])
     );
     const removed = [];
     const stopped = [];
+    const anonymousVolumes = new Set(["foreign", "own"]);
     const docker = async (args) => {
       const selectedKind = ["ps", "inspect", "stop", "rm"].includes(args[0])
         ? "container"
@@ -49,6 +50,8 @@ for (const kind of ["container", "volume", "network"])
         return "";
       }
       if (args[0] === "rm" || args[1] === "rm") {
+        if (args[0] === "rm" && args.includes("-v"))
+          anonymousVolumes.delete(args.at(-1));
         removed.push(args.at(-1));
         remaining.delete(args.at(-1));
         return "";
@@ -59,6 +62,13 @@ for (const kind of ["container", "volume", "network"])
     assert.deepEqual(removed, ["own"]);
     assert.deepEqual(stopped, kind === "container" ? ["own"] : []);
     assert(remaining.has("foreign"));
+    if (kind === "container") {
+      assert(anonymousVolumes.has("foreign"));
+      assert(
+        !anonymousVolumes.has("own"),
+        "owned container left its anonymous volume",
+      );
+    }
   });
 
 test("awaits bounded Docker network discovery before using the synchronous IPAM selector", async () => {

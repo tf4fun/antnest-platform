@@ -27,8 +27,10 @@ for (const [name, initial, residual, expected] of [
     const directory = await mkdtemp(join(tmpdir(), "antnest-stage3-cleanup-"));
     const temporary = join(directory, "work");
     const calls = join(directory, "calls");
+    const anonymousVolume = join(directory, "anonymous-volume");
     try {
       await mkdir(temporary);
+      await writeFile(anonymousVolume, "attached only to owned-container");
       // Obsolete evidence must not be printed even if a stale file is present.
       const secret = "synthetic-private-evidence";
       await writeFile(join(temporary, "lifecycle-trace-evidence.json"), secret);
@@ -45,6 +47,7 @@ for (const [name, initial, residual, expected] of [
         docker() {
           printf 'docker %s\\n' "$*" >> "$CALLS"
           case "$*" in
+            'rm -f -v owned-container') rm "$ANONYMOUS_VOLUME" ;;
             'ps -aq --filter label=com.docker.compose.project='*)
               if [ ! -f "$CALLS.seen" ]; then touch "$CALLS.seen"; echo owned-container;
               elif [ "$RESIDUAL" = true ]; then echo leftover; fi ;;
@@ -61,6 +64,7 @@ for (const [name, initial, residual, expected] of [
           env: {
             PATH: process.env.PATH,
             CALLS: calls,
+            ANONYMOUS_VOLUME: anonymousVolume,
             INITIAL: String(initial),
             RESIDUAL: String(residual),
             temporary_root: temporary,
@@ -82,7 +86,7 @@ for (const [name, initial, residual, expected] of [
         "docker ps -aq --filter label=com.docker.compose.project=antnest-stage3-fixture",
       );
       assert(stop >= 0 && enumerate > stop);
-      assert(commands.includes("docker rm -f owned-container"));
+      await assert.rejects(access(anonymousVolume), { code: "ENOENT" });
       assert(commands.includes("compose down --volumes --remove-orphans"));
       for (const label of [
         "com.docker.compose.project",

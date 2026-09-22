@@ -127,10 +127,14 @@ export function assertPrivateReplay(
     );
 }
 
-export function assertDeniedSessionError(error) {
+export function assertDeniedSessionError(error, boundary = "organization") {
+  assert(
+    ["organization", "Agent"].includes(boundary),
+    "unknown Session boundary",
+  );
   assert(
     error?.code === -32020 &&
-      error.message === "Session belongs to another organization",
+      error.message === `Session belongs to another ${boundary}`,
     "foreign Session must return only the generic access error",
   );
   assert(

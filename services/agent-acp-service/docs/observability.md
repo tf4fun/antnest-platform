@@ -204,3 +204,17 @@ observability/Jaeger profiles after integrating the changed span expectations.
 
 Admission results and integration status are recorded in the platform
 [service rollout](../../../docs/observability-rollout.md).
+
+### Stage 2 Oracle Alignment, 2026-09-22
+
+The [final candidate regression](../../../docs/final-candidate-regression-20260922.md)
+found an old lowercase-operation predicate in the Stage 2 execution oracle.
+It now checks actual `INSERT`/`UPDATE` CLIENT spans with matching operation titles
+and native query metadata. Test-first fixtures reject reads, wrapper spans,
+missing metadata and legacy lowercase operations; all 55 Stage 2 helper tests
+pass. The real rerun passes all nine business scenarios and its audit, execution,
+lifecycle and Gateway connection topology checks. Strict clock diagnostics retain
+exit 1, and the existing ACP process-kill case retains its explicit incomplete
+Trace boundary. Raw responses now survive disposable stack cleanup under
+`.cache/stage2-boundary/<project>/traces/` with private permissions. This changes
+acceptance evidence only, not service instrumentation.

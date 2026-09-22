@@ -83,3 +83,66 @@ test("recovery preflight rejects missing, changed or escaping artifacts before m
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("restore releases anonymous volumes before recreating persistent storage", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "antnest-restore-volumes-"));
+  const project = "antnest-lifecycle-1234abcd";
+  try {
+    const keys = Object.fromEntries(
+      keyNames.map((key) => [key, Buffer.alloc(32, 1).toString("base64")]),
+    );
+    const files = {};
+    for (const name of [...databases.map((db) => `${db}.dump`), "keys.json"]) {
+      const data =
+        name === "keys.json" ? JSON.stringify(keys) : "synthetic dump";
+      await writeFile(join(directory, name), data, { mode: 0o600 });
+      files[name] = createHash("sha256").update(data).digest("hex");
+    }
+    await writeFile(
+      join(directory, "manifest.json"),
+      JSON.stringify({
+        postgresID: "owned-postgres",
+        postgres: { name: "owned-pg-data" },
+        volumes: [],
+        files,
+        fingerprints: Object.fromEntries(databases.map((db) => [db, "digest"])),
+      }),
+      { mode: 0o600 },
+    );
+    const volumes = new Set([
+      "owned-anonymous",
+      "foreign-anonymous",
+      "owned-pg-data",
+    ]);
+    const docker = async (args) => {
+      if (args[0] === "compose" && args[1] === "ps") return "owned-postgres";
+      if (args[0] === "inspect")
+        return JSON.stringify([
+          {
+            Id: "owned-postgres",
+            Config: { Labels: { "com.docker.compose.project": project } },
+            State: { Health: { Status: "healthy" } },
+          },
+        ]);
+      if (args[0] === "compose" && args[1] === "stop") return "";
+      if (args[0] === "compose" && args[1] === "rm") {
+        if (args.includes("-v")) volumes.delete("owned-anonymous");
+        return "";
+      }
+      assert.deepEqual(args, ["volume", "inspect", "owned-pg-data"]);
+      throw new Error("stop before persistent storage recreation");
+    };
+    await assert.rejects(
+      restoreStorage(
+        { project, compose: (args) => ["compose", ...args] },
+        docker,
+        directory,
+        { postgres: "owned-pg-data", volumes: [] },
+      ),
+      /stop before persistent storage recreation/,
+    );
+    assert.deepEqual([...volumes], ["foreign-anonymous", "owned-pg-data"]);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});

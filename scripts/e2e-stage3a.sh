@@ -414,12 +414,12 @@ cleanup() {
   if [ -n "$tool_profile" ]; then
     docker ps -aq --filter "label=com.docker.compose.project=$COMPOSE_PROJECT_NAME" |
       while IFS= read -r owned_container; do
-        [ -z "$owned_container" ] || docker rm -f "$owned_container" >/dev/null 2>&1 || true
+        [ -z "$owned_container" ] || docker rm -f -v "$owned_container" >/dev/null 2>&1 || true
       done
   fi
   docker ps -aq --filter "label=io.antnest.runtime-controller-scope=$COMPOSE_PROJECT_NAME" 2>/dev/null |
     while IFS= read -r runtime_container; do
-      [ -z "$runtime_container" ] || docker rm -f "$runtime_container" >/dev/null 2>&1 || true
+      [ -z "$runtime_container" ] || docker rm -f -v "$runtime_container" >/dev/null 2>&1 || true
     done
   docker volume ls -q --filter "label=io.antnest.runtime-controller-scope=$COMPOSE_PROJECT_NAME" 2>/dev/null |
     while IFS= read -r runtime_volume; do

@@ -104,3 +104,14 @@ with Go lint zero issues, both Rust Clippy checks and Node lint/type checks;
 `make fmt-check` passed. Runtime image build also passed 126 Linux module tests,
 one real UID 1000 CLI integration test, Clippy and release build. ACP production
 image build passed. No threshold, test scope or baseline was weakened.
+
+### Combined candidate follow-up, 2026-09-22
+
+The combined regression exposed an overly specific reused denial assertion:
+cross-Agent requests expected the cross-organization message. The caller now
+explicitly selects the `Agent` boundary. The default organization assertion
+remains strict; neither path accepts the other message, foreign history,
+additional error data, a different error code or a retryable denial. The
+test-first reproduction and 29 focused checks are recorded in the
+[combined candidate report](../../docs/final-candidate-regression-20260922.md).
+The fresh Docker rerun is recorded there separately from the original failure.

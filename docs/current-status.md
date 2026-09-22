@@ -1,8 +1,17 @@
 # Current Implementation And Acceptance
 
-Updated: 2026-09-22. This index tracks platform baseline `4169443`, Runtime
+Updated: 2026-09-22. The latest [combined candidate regression](final-candidate-regression-20260922.md)
+covers `898a2be` plus acceptance-only corrections: service/database/build gates,
+32 integration entries, and the final retained-environment comparison. Business
+and applicable scoped Trace topology checks pass; strict timing and expected
+fault/cancellation diagnostics remain failed. The initial UI lookup timeouts and
+one fixture Agent deletion failure did not recur in subsequent unchanged runs
+and remain recorded intermittencies. No production implementation or deployment
+changed; the original twelve development containers and ten image IDs are unchanged.
+
+The earlier index tracks platform baseline `4169443`, Runtime
 response-close fix `f8e9acf`, and the later Agent UI C4 repair described below.
-Results are recorded evidence from their respective batches, not a fresh
+Those earlier results are recorded evidence from their respective batches, not a fresh
 full-suite run against one combined candidate. Historical
 reports retain their original candidate, date and scope.
 The Runtime response-close follow-up passed its service-owned gates and was
@@ -65,8 +74,12 @@ details in the owning service READMEs.
 
 ## Recorded Acceptance
 
+The latest combined result is recorded first; earlier rows retain their original
+candidate and scope.
+
 | Batch                                                      | Recorded result                                                                                                                                                                                                                                                                                                                        | Evidence and boundary                                                                                                                                                                                                                                                                                                                                                                                                    |
 | ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Combined candidate regression, 2026-09-22                  | Service, database and fresh Linux build gates pass; 1,224 shared checks pass with five separately covered skips; all 32 integration entries pass business and applicable scoped topology                                                                                                                                               | [Final regression](final-candidate-regression-20260922.md); acceptance-only fixes, strict diagnostics remain failed, two recorded intermittencies; resource baseline and twelve retained containers unchanged, no deployment                                                                                                                                                                                             |
 | Docker single-node baseline, 2026-09-11                    | 25 accepted; five C4 browser items explicitly deferred                                                                                                                                                                                                                                                                                 | [Report](docker-single-node-verification-report.md); historical candidate, not current-HEAD coverage                                                                                                                                                                                                                                                                                                                     |
 | Controller/ACP integration, 2026-09-15                     | Nine Docker business scenarios, PostgreSQL/protocol and three Temporal recovery tests passed; trace structure errors zero                                                                                                                                                                                                              | [B5 record](controller-acp-execution-boundary-plan.md#103-可执行的小步交付); strict clock-warning failures retained                                                                                                                                                                                                                                                                                                      |
 | ACP database tracing, 2026-09-15                           | Service gates and real-driver contracts passed; three real Gateway chats passed the database contract                                                                                                                                                                                                                                  | [Service report](../services/agent-acp-service/docs/observability.md#database-alignment-verification-2026-09-15); full browser profile not strictly passed                                                                                                                                                                                                                                                               |
@@ -160,11 +173,16 @@ historical trace returned 404, so its prior failure is not retrospectively chang
   The [migration inventory](acceptance-asset-migration.md) records each batch's
   evidence. There is no remaining entry migration identified in that inventory;
   this does not claim every historical fault has a current replacement.
-- The latest recorded shared regression passes 1,222 checks with five opt-in
-  skips. Recent scoped Docker runs retain strict timing, intentional cancellation
-  and rejection failures. They were run in separate batches, not as one complete
-  platform acceptance against a single combined candidate. The latest Runtime
-  crash batch adds its own scoped Docker integration evidence.
+- The [combined candidate regression](final-candidate-regression-20260922.md)
+  now covers the current integration inventory against one unchanged production
+  candidate, with acceptance-only fixture/cleanup corrections. The final shared
+  suite passes 1,224 checks; its five opt-in skips pass in the dedicated
+  PostgreSQL persistence gate. All 32 entries pass business and applicable scoped
+  topology checks and restore the resource baseline. Strict timing, intentional
+  cancellation/rejection and crash-export diagnostics remain failed. The original
+  UI lookup timeouts and one Agent deletion failure remain recorded intermittencies,
+  not proven repairs. The Runtime reconstruction crash batch retains its separate
+  opt-in evidence; it is not silently added to normal-restart stability.
 - The selected Runtime reconstruction scope now has a
   [four-boundary service component batch](runtime-crash-recovery-revalidation.md)
   and [two-window public Controller/Temporal integration](runtime-crash-integration-revalidation.md).

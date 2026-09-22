@@ -227,7 +227,7 @@ export async function cleanup(
         await attempt(async () => {
           await inspectOwned(docker, config.project, kind, id);
           await docker(
-            kind === "container" ? ["rm", "-f", id] : [kind, "rm", id],
+            kind === "container" ? ["rm", "-f", "-v", id] : [kind, "rm", id],
           );
         });
       }

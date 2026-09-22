@@ -239,6 +239,27 @@ test("Session denial cannot smuggle history in its error or notifications", () =
   );
 });
 
+test("cross-Agent denial requires an explicit boundary and keeps error data private", () => {
+  const error = {
+    code: -32020,
+    message: "Session belongs to another Agent",
+    data: { code: "session_access_denied", retryable: false },
+  };
+  evidence.assertDeniedSessionError(error, "Agent");
+  assert.throws(() => evidence.assertDeniedSessionError(error));
+  for (const invalid of [
+    { ...error, message: "Session belongs to another organization" },
+    { ...error, message: "Session belongs to another principal" },
+    { ...error, message: "Private history v1-b" },
+    { ...error, data: { ...error.data, history: "Private history v1-b" } },
+    { ...error, data: { ...error.data, retryable: true } },
+    { ...error, data: { ...error.data, code: "session_not_found" } },
+    { ...error, code: -32603 },
+  ])
+    assert.throws(() => evidence.assertDeniedSessionError(invalid, "Agent"));
+  assert.throws(() => evidence.assertDeniedSessionError(error, "invalid"));
+});
+
 test("active Session replay with unchanged MCP sources preserves every persisted row", () => {
   const before = {
     acp_sessions: [

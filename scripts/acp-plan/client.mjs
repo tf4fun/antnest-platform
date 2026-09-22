@@ -269,7 +269,7 @@ async function main() {
                 : {}),
             }),
             (error) => {
-              assertDeniedSessionError(error);
+              assertDeniedSessionError(error, "Agent");
               return true;
             },
           );

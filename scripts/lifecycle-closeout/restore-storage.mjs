@@ -250,7 +250,7 @@ export async function restoreStorage(config, docker, directory, expected) {
   assert.equal(before.Id, metadata.postgresID);
   // Removing stopped service containers releases their system-Skills mount too.
   await docker(config.compose(["stop", "-t", "20", "postgres"]), true);
-  await docker(config.compose(["rm", "-f"]));
+  await docker(config.compose(["rm", "-f", "-v"]));
   await recreateVolume(config, docker, metadata.postgres);
   for (const volume of metadata.volumes) {
     await recreateVolume(config, docker, volume);
