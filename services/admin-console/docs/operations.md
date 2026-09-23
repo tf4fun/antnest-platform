@@ -81,7 +81,7 @@ regression serially:
 
 ```sh
 docker build -t antnest/admin-console:local -f services/admin-console/Dockerfile .
-node services/admin-console/tests/shutdown-docker.mjs
+node tests/e2e/admin-console/shutdown-docker.mjs
 ```
 
 The runner reuses the repository's bounded Docker-command helpers; install the

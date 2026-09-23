@@ -31,7 +31,7 @@ timing/error failures. Clean only temporary resources and verification children.
 
 Prior service gates and 36 disposable candidate topologies remain separate
 evidence. Private baselines, backups, drivers and raw traces are under
-`.cache/runtime-sync-20260921/`; do not publish ignored artifacts.
+`artifacts/verification/runtime-sync-20260921/`; do not publish ignored artifacts.
 
 ## Deployment and preservation results
 

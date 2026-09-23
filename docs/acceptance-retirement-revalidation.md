@@ -38,7 +38,7 @@ is retired.
 
 Private pre-change source hashes, copies of the nine removed files, logs and
 retained-environment baseline are stored under
-`.cache/acceptance-retirement-20260921/`. Verification runs serially; the two
+`artifacts/verification/acceptance-retirement-20260921/`. Verification runs serially; the two
 Docker profiles use isolated owned projects and normal producer shutdown.
 
 The shared suite passes 1,208 tests, with five pre-existing opt-in ACP PostgreSQL

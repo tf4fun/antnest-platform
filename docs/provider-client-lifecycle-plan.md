@@ -36,7 +36,7 @@
 | 事实 | 源码依据 | 本次处理 |
 | --- | --- | --- |
 | Controller 准入已返回 Provider 绑定，不固定凭证版本 | [Run 合同](../contracts/agent-controller/run-api.md) | 保持非秘密快照，不把认证版本重新放回准入 |
-| ACP 仍严格要求旧 credential_ref / credential_version | [Controller adapter](../services/agent-acp-service/src/adapters/controller/client.ts) | 同步 DTO、持久化解码和测试夹具 |
+| ACP 仍严格要求旧 credential_ref / credential_version | `src/adapters/controller/client.ts`（当时路径，现已移除） | 同步 DTO、持久化解码和测试夹具 |
 | ACP 共用一个 OpenAI-compatible adapter，不是每请求创建客户端 | [composition](../services/agent-acp-service/src/composition.ts) | 增加连接级客户端管理，不以预热 HTTP 连接为理由重写模型协议 |
 | 当前 Run 只解析一次凭证，再传给 Loop 与 permission judge | [RunExecutor](../services/agent-acp-service/src/application/run-executor.ts) | 从执行链移除秘密参数，改为使用逻辑客户端 |
 | 启动恢复会自动执行 admitting 记录，running 记录则按中断收尾 | [RunRecovery](../services/agent-acp-service/src/application/run-recovery.ts)、[启动入口](../services/agent-acp-service/src/composition.ts) | 目标改为仅做异常收尾，不自动继续旧任务；当前实现尚未修改 |

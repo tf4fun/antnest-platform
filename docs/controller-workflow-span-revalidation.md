@@ -126,8 +126,8 @@ Retained IDs, images, health and running states match the 12-container baseline:
 one running and eleven stopped. No retained service was started or replaced.
 
 Private service/component logs, image identity and cleanup comparisons are in
-`.cache/controller-workflow-span-20260921/`; raw deployment evidence is under
-`.cache/lifecycle-foundation/<project>/`. Old failed reports remain historical.
+`artifacts/verification/controller-workflow-span-20260921/`; raw deployment evidence is under
+`artifacts/verification/lifecycle-foundation/<project>/`. Old failed reports remain historical.
 
 Retained Controller deployment/synchronization is still pending. Network packet
 flow, shutdown, health, restore, loss, interrupted-update, older Workspace and

@@ -81,19 +81,19 @@ of a missing standard capability and is not used to justify the deferral.
 
 ### Latest SDK Recheck, 2026-09-17
 
-The independent [probe package](../sdk-probes/elicitation/Cargo.toml) pins
+The independent [probe package](../../../tests/integration/antnest-runtime/sdk-probes/elicitation/Cargo.toml) pins
 official `rmcp =3.4.0` with its own lockfile. It imports the official
 typed codec directly; no vendor source, patch or protocol adapter is involved.
 The registry archive and lockfile agree on SHA-256
 `b23c62fe489ac1d401ab32688cfacac3737a8978dc3343e5361464c7724fd3cb`.
 Production `Cargo.toml` and `Cargo.lock` were not changed.
 
-Run from `runtimes/antnest-runtime`:
+Run from the repository root:
 
 ```sh
-cargo test --locked --manifest-path sdk-probes/elicitation/Cargo.toml
-cargo fmt --manifest-path sdk-probes/elicitation/Cargo.toml --check
-cargo clippy --locked --manifest-path sdk-probes/elicitation/Cargo.toml --all-targets -- -D warnings
+cargo test --locked --manifest-path tests/integration/antnest-runtime/sdk-probes/elicitation/Cargo.toml
+cargo fmt --manifest-path tests/integration/antnest-runtime/sdk-probes/elicitation/Cargo.toml --check
+cargo clippy --locked --manifest-path tests/integration/antnest-runtime/sdk-probes/elicitation/Cargo.toml --all-targets -- -D warnings
 ```
 
 All three codec checks passed: standard form with opaque state roundtrips;
@@ -106,7 +106,7 @@ The codec prerequisite is still unsatisfied, so no production SDK upgrade,
 Runtime/ACP/UI implementation, HTTP/stdio interaction acceptance, Docker or
 browser integration was started for F07. Follow the resume conditions above
 when this prerequisite changes. Local registry and command logs are under
-`.cache/f07-sdk-20260917/`; they are not guaranteed in a fresh clone.
+`artifacts/verification/f07-sdk-20260917/`; they are not guaranteed in a fresh clone.
 
 ### Production SDK Update, 2026-09-09
 

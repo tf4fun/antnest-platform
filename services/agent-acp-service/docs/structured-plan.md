@@ -89,7 +89,7 @@ did not call an external Provider or establish browser/deployment acceptance.
 
 ## Deployment Acceptance
 
-The [separate deployment profile](../../../scripts/acp-plan/README.md) passed
+The [separate deployment profile](../../../tests/e2e/acp-plan/README.md) passed
 twelve v1/v2 scenarios through Gateway using real Controller, PostgreSQL and
 Runtime services with a deterministic SSE model. It validates six local plan
 commits, two rejected invalid plans, two actual Runtime writes, exact snapshots,

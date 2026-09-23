@@ -2,7 +2,7 @@
 
 Date: 2026-09-17. Fixture-only integration batch after base Stage 3 migration.
 No production service code, SDK dependency or retained deployment was changed.
-The [fixture contract](../scripts/managed-mcp/contracts.md) was defined before
+The [fixture contract](../tests/e2e/managed-mcp/contracts.md) was defined before
 implementation; new setup, drain and Trace behavior was developed test-first.
 
 ## Result and boundary
@@ -104,11 +104,11 @@ The test-only image remains
 its rebuilt fixture layer matched the existing binary. Production Runtime stayed
 `sha256:2ed4ffe11b2f7ce24de4bcfb07566e7de012637400c7a82d3703fdc53ab1b909`.
 
-Private local evidence is under `.cache/legacy-acceptance-20260917/`:
+Private local evidence is under `artifacts/verification/legacy-acceptance-20260917/`:
 `managed-gates-final.log`, `managed-build.log`, `managed-image.log`,
 `managed-v1-docker-3.log`, `managed-v2-docker-1.log`,
 `managed-final-traces.json` and `managed-cleanup.json`.
-Raw traces/expectations are under `.cache/managed-mcp/<project>/managed-traces/`.
+Raw traces/expectations are under `artifacts/verification/managed-mcp/<project>/managed-traces/`.
 
 Removed only the Managed client's obsolete pinned/admission/stale-connection and
 clock-based drain validators and their obsolete tests. `captureRuntime` remains

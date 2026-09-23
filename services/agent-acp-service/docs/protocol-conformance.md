@@ -107,13 +107,13 @@ event storage; no new table, migration or private ACP field was added.
 
 ## Tool Progress Consumer Batch F02 (2026-09-08)
 
-| Contract                                                                                                                          | Executable evidence                           | Coverage        |
-| --------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- | --------------- |
-| First preview before final HTTP MCP result; official SDK token association and execution fence                                    | `test/adapters/mcp/tool-progress.test.ts`     | Layer-covered   |
-| Bounded UTF-8 preview, coalescing, slow persistence, numeric units, silent tools, event limits, late callbacks and write failures | `test/application/tool-progress.test.ts`      | Layer-covered   |
-| Same normalized Tool ID, previews before success/failure/cancellation, failed writes abort IO without retry                       | `test/application/turn-runner.test.ts`        | Layer-covered   |
-| Real HTTP MCP -> Tool loop -> PostgreSQL -> ACP v1/v2 live updates, replay and identity isolation                                 | `test/e2e/acp-tool-progress.postgres.test.ts` | Service-covered |
-| Terminal Tool/Run reject new progress; live and rebuilt model context contain final results, not previews                         | `test/e2e/acp-tool-progress.postgres.test.ts` | Service-covered |
+| Contract                                                                                                                          | Executable evidence                                                          | Coverage        |
+| --------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- | --------------- |
+| First preview before final HTTP MCP result; official SDK token association and execution fence                                    | `tests/integration/agent-acp-service/adapters/mcp/tool-progress.test.ts`     | Layer-covered   |
+| Bounded UTF-8 preview, coalescing, slow persistence, numeric units, silent tools, event limits, late callbacks and write failures | `test/application/tool-progress.test.ts`                                     | Layer-covered   |
+| Same normalized Tool ID, previews before success/failure/cancellation, failed writes abort IO without retry                       | `test/application/turn-runner.test.ts`                                       | Layer-covered   |
+| Real HTTP MCP -> Tool loop -> PostgreSQL -> ACP v1/v2 live updates, replay and identity isolation                                 | `tests/integration/agent-acp-service/e2e/acp-tool-progress.postgres.test.ts` | Service-covered |
+| Terminal Tool/Run reject new progress; live and rebuilt model context contain final results, not previews                         | `tests/integration/agent-acp-service/e2e/acp-tool-progress.postgres.test.ts` | Service-covered |
 
 Additional regression evidence covers blocked progress writes during cancellation,
 failure or ownership loss (`turn-runner.test.ts`), delayed invalidation after a
@@ -133,7 +133,7 @@ tests added for its identified coverage gaps. No new table or migration was need
 
 ## Tool Progress Deployment Batch F02 (2026-09-08)
 
-F02 deployment evidence is now separately complete: [reusable profile](../../../scripts/acp-progress/README.md).
+F02 deployment evidence is now separately complete: [reusable profile](../../../tests/e2e/acp-progress/README.md).
 Twelve cases cover Gateway ACP v1/v2, real Rust Bash / managed stdio MCP,
 early progress, success/error/cancellation and fresh-connection replay. Twenty
 deterministic SSE model requests validate actual results and reject preview
@@ -145,13 +145,13 @@ and networks were removed; no external Provider or browser test was used.
 
 ## Tool Presentation Foundation F03 (2026-09-08)
 
-| Behavior                                                                                                                                            | Executable evidence                                                                                            | Coverage        |
-| --------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | --------------- |
-| Exact builtin kind, deterministic/MCP title, real workspace target, unknown/ambiguous location omission                                             | `test/domain/tool-presentation.test.ts`, `test/adapters/mcp/tool-presentation.test.ts`, `tool-catalog.test.ts` | Layer-covered   |
-| Independent bounded structured output; Unicode JSON shape survives adapter storage                                                                  | `test/adapters/postgres/session-event-codec.test.ts`, `test/domain/tool-presentation.test.ts`                  | Layer-covered   |
-| v1/v2 live, reconnect, fork and identity isolation; declared error versus unknown outcome; previews do not override metadata or enter model context | `test/e2e/acp-tool-presentation.postgres.test.ts`                                                              | Service-covered |
-| NUL keys/values and lone surrogates survive live and persisted replay/fork without blocking Run completion                                          | `test/e2e/acp-tool-presentation.postgres.test.ts`, `test/adapters/postgres/repositories.postgres.test.ts`      | Service-covered |
-| Recovery updates status/content without replacing initial title or inventing raw output                                                             | `test/adapters/postgres/repositories.postgres.test.ts`                                                         | Service-covered |
+| Behavior                                                                                                                                            | Executable evidence                                                                                                                                                     | Coverage        |
+| --------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------- |
+| Exact builtin kind, deterministic/MCP title, real workspace target, unknown/ambiguous location omission                                             | `test/domain/tool-presentation.test.ts`, `tests/integration/agent-acp-service/adapters/mcp/tool-presentation.test.ts`, `tool-catalog.test.ts`                           | Layer-covered   |
+| Independent bounded structured output; Unicode JSON shape survives adapter storage                                                                  | `test/adapters/postgres/session-event-codec.test.ts`, `test/domain/tool-presentation.test.ts`                                                                           | Layer-covered   |
+| v1/v2 live, reconnect, fork and identity isolation; declared error versus unknown outcome; previews do not override metadata or enter model context | `tests/integration/agent-acp-service/e2e/acp-tool-presentation.postgres.test.ts`                                                                                        | Service-covered |
+| NUL keys/values and lone surrogates survive live and persisted replay/fork without blocking Run completion                                          | `tests/integration/agent-acp-service/e2e/acp-tool-presentation.postgres.test.ts`, `tests/integration/agent-acp-service/adapters/postgres/repositories.postgres.test.ts` | Service-covered |
+| Recovery updates status/content without replacing initial title or inventing raw output                                                             | `tests/integration/agent-acp-service/adapters/postgres/repositories.postgres.test.ts`                                                                                   | Service-covered |
 
 Final service acceptance: 317 unit/component cases (41 files), 85 PostgreSQL
 cases (12 files), production build and root formatting/lint gates passed.
@@ -162,14 +162,14 @@ Actual F03 Gateway/Runtime deployment evidence is recorded in its separate batch
 
 ## Runtime File Fact Consumer F03 (2026-09-09)
 
-| Behavior                                                                                                                                                                                    | Executable evidence                                                                                    | Coverage                  |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ | ------------------------- |
-| Exact builtin identity and settled success; invalid paths/metadata, conflicting fields and encoded size rejected; read and omitted diff remain location-only                                | `test/adapters/mcp/file-observation.test.ts`, `tool-presentation.test.ts`                              | Layer/component-covered   |
-| Actual MCP metadata reaches the adapter without entering model output; error result cannot claim a successful file change                                                                   | `test/adapters/mcp/tool-presentation.test.ts`, `test/e2e/acp-tool-presentation.postgres.test.ts`       | Component/service-covered |
-| v1 complete before/after; v2 add/modify and optional absolute Git patch; null versus empty, Unicode/NUL, CRLF, no final newline, quoting, path fidelity and bounded work/output             | `test/transport/file-content.test.ts`                                                                  | Layer-covered             |
-| Escaped file facts survive PostgreSQL; actual path replaces intent; v1/v2 SDK-schema-valid live, replay, fork, application recreation, identity isolation; exactly one actual SDK Tool call | `test/e2e/acp-file-observation.postgres.test.ts`, `test/adapters/postgres/session-event-codec.test.ts` | Service-covered           |
-| Complete file facts absent from model requests, loaded context and stored Tool summaries                                                                                                    | `test/e2e/acp-file-observation.postgres.test.ts`                                                       | Service-covered           |
-| Tool instrumentation preserves caller result without adding file paths/content to telemetry                                                                                                 | `test/telemetry/instrumented-ports.test.ts`                                                            | Layer-covered             |
+| Behavior                                                                                                                                                                                    | Executable evidence                                                                                                                                            | Coverage                  |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------- |
+| Exact builtin identity and settled success; invalid paths/metadata, conflicting fields and encoded size rejected; read and omitted diff remain location-only                                | `test/adapters/mcp/file-observation.test.ts`, `tool-presentation.test.ts`                                                                                      | Layer/component-covered   |
+| Actual MCP metadata reaches the adapter without entering model output; error result cannot claim a successful file change                                                                   | `tests/integration/agent-acp-service/adapters/mcp/tool-presentation.test.ts`, `tests/integration/agent-acp-service/e2e/acp-tool-presentation.postgres.test.ts` | Component/service-covered |
+| v1 complete before/after; v2 add/modify and optional absolute Git patch; null versus empty, Unicode/NUL, CRLF, no final newline, quoting, path fidelity and bounded work/output             | `test/transport/file-content.test.ts`                                                                                                                          | Layer-covered             |
+| Escaped file facts survive PostgreSQL; actual path replaces intent; v1/v2 SDK-schema-valid live, replay, fork, application recreation, identity isolation; exactly one actual SDK Tool call | `tests/integration/agent-acp-service/e2e/acp-file-observation.postgres.test.ts`, `test/adapters/postgres/session-event-codec.test.ts`                          | Service-covered           |
+| Complete file facts absent from model requests, loaded context and stored Tool summaries                                                                                                    | `tests/integration/agent-acp-service/e2e/acp-file-observation.postgres.test.ts`                                                                                | Service-covered           |
+| Tool instrumentation preserves caller result without adding file paths/content to telemetry                                                                                                 | `test/telemetry/instrumented-ports.test.ts`                                                                                                                    | Layer-covered             |
 
 The tests use real official MCP HTTP SDK, ACP wire connections and PostgreSQL,
 with deterministic Controller/model fixtures. They do not themselves verify real
@@ -184,7 +184,7 @@ introduced for file observations.
 
 ## Tool Presentation Deployment F03 (2026-09-09)
 
-[The deployed profile](../../../scripts/acp-files/README.md) validates login,
+[The deployed profile](../../../tests/e2e/acp-files/README.md) validates login,
 Gateway/Console Agent management, actual Runtime read/write/edit, v1/v2 standard
 Tool output, new-connection replay and fork. Sixteen cases pass, with 32 validated
 deterministic model requests. Creation/empty-before/full-file edit/read/no-change/
@@ -208,13 +208,13 @@ The [structured-plan contract](structured-plan.md) uses a local `update_plan`
 tool and complete plan replacement, not Markdown inference or a Runtime tool.
 The same committed fact becomes v1 `plan` or v2 items `plan_update`.
 
-| Behavior                                                                                                                                                                    | Executable evidence                                                                        | Coverage                 |
-| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ | ------------------------ |
-| Full entries, explicit clear, schema bounds and name collision; local dispatch without Runtime execution or remote ToolAttempt                                              | `test/domain/plan.test.ts`, `test/application/plan-execution.test.ts`                      | Layer/component-covered  |
-| SDK-valid v1/v2 notifications before final reply; load/resume, fork, application recreation and cross-user/Agent isolation                                                  | `test/e2e/acp-plan.postgres.test.ts`                                                       | Service-covered          |
-| Atomic plan/result rollback, cancellation ordered by actual Run lock, duplicate commit rejection and publication failure after commit                                       | `test/e2e/acp-plan.postgres.test.ts`                                                       | PostgreSQL-covered       |
-| Latest plan independent of checkpoint; real budget-driven compaction retains an assistant-authored Run-start snapshot, with later updates taking precedence                 | `test/application/plan-context.test.ts`, `test/e2e/acp-plan.postgres.test.ts`              | Layer/service-covered    |
-| NUL and lone surrogates survive all persisted argument copies, replay and context; interrupted-call recovery before/after local commit does not invent a remote side effect | `test/adapters/postgres/session-event-codec.test.ts`, `test/e2e/acp-plan.postgres.test.ts` | Layer/PostgreSQL-covered |
+| Behavior                                                                                                                                                                    | Executable evidence                                                                                                       | Coverage                 |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
+| Full entries, explicit clear, schema bounds and name collision; local dispatch without Runtime execution or remote ToolAttempt                                              | `test/domain/plan.test.ts`, `test/application/plan-execution.test.ts`                                                     | Layer/component-covered  |
+| SDK-valid v1/v2 notifications before final reply; load/resume, fork, application recreation and cross-user/Agent isolation                                                  | `tests/integration/agent-acp-service/e2e/acp-plan.postgres.test.ts`                                                       | Service-covered          |
+| Atomic plan/result rollback, cancellation ordered by actual Run lock, duplicate commit rejection and publication failure after commit                                       | `tests/integration/agent-acp-service/e2e/acp-plan.postgres.test.ts`                                                       | PostgreSQL-covered       |
+| Latest plan independent of checkpoint; real budget-driven compaction retains an assistant-authored Run-start snapshot, with later updates taking precedence                 | `test/application/plan-context.test.ts`, `tests/integration/agent-acp-service/e2e/acp-plan.postgres.test.ts`              | Layer/service-covered    |
+| NUL and lone surrogates survive all persisted argument copies, replay and context; interrupted-call recovery before/after local commit does not invent a remote side effect | `test/adapters/postgres/session-event-codec.test.ts`, `tests/integration/agent-acp-service/e2e/acp-plan.postgres.test.ts` | Layer/PostgreSQL-covered |
 
 The suite uses real ACP wire connections and PostgreSQL with deterministic
 model, Controller and Runtime fixtures. Application recreation and interrupted
@@ -230,7 +230,7 @@ acceptance instances were preserved. No external Provider was called.
 
 ## Structured Plan Deployment F04 (2026-09-09)
 
-The [deployment profile](../../../scripts/acp-plan/README.md) passed twelve
+The [deployment profile](../../../tests/e2e/acp-plan/README.md) passed twelve
 Gateway v1/v2 scenarios and 22 deterministic model requests. It verifies exact
 initial/replacement/clear plans before a gated final reply, rejected invalid
 updates, cross-Run empty-state recovery, preserved pre-clear fork state and
@@ -515,15 +515,15 @@ adds stable-v1 deployed revision/Run-boundary evidence; uncertain effects remain
 
 ## Session Configuration Consumer F05 (2026-09-09)
 
-| Requirement                                                                                                     | Reusable evidence                                                                                                                 | Boundary                                            |
-| --------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
-| Model/mode setup, v1 mode alias, full responses and cross-version notifications; official SDK schema validation | `test/e2e/acp-configuration.postgres.test.ts`                                                                                     | Real ACP v1/v2 and PostgreSQL                       |
-| Live identity checks, foreign Session rejection, invalid choice, CAS conflict and event atomicity               | `test/application/session-configuration.test.ts`, `test/e2e/acp-configuration.postgres.test.ts`                                   | Service-owned                                       |
-| Reconnect/load/resume/fork preserve overrides; config events stay out of model history                          | `test/e2e/acp-configuration.postgres.test.ts`                                                                                     | Service-owned                                       |
-| Active snapshot unchanged; next Run changes model endpoint/credential/context; Chat exposes no tools            | `test/e2e/acp-configuration.postgres.test.ts`, `test/application/configuration-execution.test.ts`                                 | Deterministic Controller/model/Tool ports           |
-| Admission intent and recovery retain the original selection; missing new-admission configuration fails closed   | `test/application/run-recovery.test.ts`, `test/adapters/controller/client.test.ts`, `test/e2e/acp-configuration.postgres.test.ts` | No implicit auto authorization                      |
-| Exact-source authorization rules; inherited default and unavailable model presentation                          | `test/domain/session-configuration.test.ts`, `test/application/configuration-execution.test.ts`                                   | User permission interaction remains F06             |
-| Output cursor preservation and pending own-message filtering; operation spans exclude selections                | `test/transport/session-output.test.ts`, `test/telemetry/instrumented-ports.test.ts`                                              | Component tests, not a new Jaeger deployment report |
+| Requirement                                                                                                     | Reusable evidence                                                                                                                                                | Boundary                                            |
+| --------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| Model/mode setup, v1 mode alias, full responses and cross-version notifications; official SDK schema validation | `tests/integration/agent-acp-service/e2e/acp-configuration.postgres.test.ts`                                                                                     | Real ACP v1/v2 and PostgreSQL                       |
+| Live identity checks, foreign Session rejection, invalid choice, CAS conflict and event atomicity               | `test/application/session-configuration.test.ts`, `tests/integration/agent-acp-service/e2e/acp-configuration.postgres.test.ts`                                   | Service-owned                                       |
+| Reconnect/load/resume/fork preserve overrides; config events stay out of model history                          | `tests/integration/agent-acp-service/e2e/acp-configuration.postgres.test.ts`                                                                                     | Service-owned                                       |
+| Active snapshot unchanged; next Run changes model endpoint/credential/context; Chat exposes no tools            | `tests/integration/agent-acp-service/e2e/acp-configuration.postgres.test.ts`, `test/application/configuration-execution.test.ts`                                 | Deterministic Controller/model/Tool ports           |
+| Admission intent and recovery retain the original selection; missing new-admission configuration fails closed   | `test/application/run-recovery.test.ts`, `test/adapters/controller/client.test.ts`, `tests/integration/agent-acp-service/e2e/acp-configuration.postgres.test.ts` | No implicit auto authorization                      |
+| Exact-source authorization rules; inherited default and unavailable model presentation                          | `test/domain/session-configuration.test.ts`, `test/application/configuration-execution.test.ts`                                                                  | User permission interaction remains F06             |
+| Output cursor preservation and pending own-message filtering; operation spans exclude selections                | `test/transport/session-output.test.ts`, `test/telemetry/instrumented-ports.test.ts`                                                                             | Component tests, not a new Jaeger deployment report |
 
 Only model/mode select options are currently advertised. There is no real boolean
 setting, so no placeholder is invented to exercise boolean capability negotiation.
@@ -578,7 +578,7 @@ required before a production conformance claim:
 | E2E-RECOVERY-01 | Disconnect/restart/resume replays once without repeating model or Tool effects. | v1/v2 Docker-covered for completed, model-wait, settled, unknown Tool and committed acquire/finish response-loss windows |
 | E2E-RUNTIME-01  | Run A retains its captured Runtime; Run B obtains the next revision.            | v1/v2 active-Run rebuild deployed                                                                                        |
 
-`test/e2e/acp-happy-path.postgres.test.ts` covers E2E-V1-01 using real
+`tests/integration/agent-acp-service/e2e/acp-happy-path.postgres.test.ts` covers E2E-V1-01 using real
 WebSockets, the official v1 client, and PostgreSQL. It verifies stable message
 identities and Tool history across reconnection and repeated load without
 another model call, Tool call, or Run admission. A separate case reconstructs
@@ -587,14 +587,14 @@ encryption key before load. Controller, model, and Tool ports are deterministic
 stubs. This service suite is not Gateway/Runtime integration or an OS-process
 crash test; the separate Docker profile below adds those dependencies.
 
-`test/e2e/acp-access.postgres.test.ts` adds 16 cases across v1/v2 for Session
+`tests/integration/agent-acp-service/e2e/acp-access.postgres.test.ts` adds 16 cases across v1/v2 for Session
 ownership, access-revision changes, principal deactivation and active-Run
 protection. Cancellation is a notification: rejected cancellation must not emit
 a response or prevent a subsequent request on the connection. Replay assertions
 inspect only newly received frames; model, Tool and admission counts must not
 increase from replay or unauthorized operations.
 
-`test/e2e/acp-mcp-input.postgres.test.ts` has twelve cases across v1/v2.
+`tests/integration/agent-acp-service/e2e/acp-mcp-input.postgres.test.ts` has twelve cases across v1/v2.
 HTTP, stdio, SSE and MCP-over-ACP are rejected separately at every setup method,
 on active and closed Sessions with history. Empty-list lifecycle cases preserve
 immutable revisions and fork isolation. Retained client revisions reject before
@@ -602,7 +602,7 @@ Run admission; empty load/resume restores platform-only execution without
 rewriting history. These prove the platform-only profile,
 not v1's mandatory stdio support.
 
-`test/e2e/acp-v1-lifecycle.postgres.test.ts` adds ten cases for persisted
+`tests/integration/agent-acp-service/e2e/acp-v1-lifecycle.postgres.test.ts` adds ten cases for persisted
 ordering, pagination, fork independence, close/restore, idempotent deletion,
 cancellation/reuse, optional-method rejection and workspace/content validation.
 Its expected transcript includes usage updates for each model response, not
@@ -616,7 +616,7 @@ without an access-revision change. Gateway closeout retains those distinctions.
 ### Gateway And Process Recovery Acceptance
 
 `ANTNEST_E2E_ACP_CLOSEOUT=true make e2e-stage3` runs the
-[closeout integration](../../../scripts/acp-closeout/README.md). Edge exposes
+[closeout integration](../../../tests/e2e/acp-closeout/README.md). Edge exposes
 `/api/app/agents/{agent_id}/v1/acp` and `/api/app/agents/{agent_id}/v2/acp`;
 the existing unversioned Workspace route remains a v1 alias. Both use identical
 authenticated upgrade admission, same-origin checks and authoritative subject
@@ -647,7 +647,7 @@ removed, not retained as a collection of intermediate evidence files.
 
 E2E-RECOVERY-01 now also has v1/v2 deployed uncertain in-flight Tool evidence
 from the extension below. AcquireRun/FinishRun response-loss windows now also
-have a [dedicated deployed profile](../../../scripts/acp-closeout/rpc-loss.md).
+have a [dedicated deployed profile](../../../tests/e2e/acp-closeout/rpc-loss.md).
 Active-Run rebuild and stale Prompt
 rejection now have v1/v2 deployment evidence in the batch linked below.
 User deactivation is not proof of browser logout/expiry revocation
@@ -703,7 +703,7 @@ model requests. Four completed baseline/recovery Jaeger traces contain 812
 spans with Gateway-to-Runtime ancestry. All 150 shared fixture/oracle tests
 passed serially. Final success is emitted only after owned resources have been
 removed. See the [C1 unknown-effect report](../../../docs/docker-single-node-closeout.md#c1-unknown-effect-recovery-2026-09-10)
-and [reproducible profile](../../../scripts/acp-closeout/README.md).
+and [reproducible profile](../../../tests/e2e/acp-closeout/README.md).
 This extension does not claim crash-time unexported spans, RPC response-loss
 handling or browser acceptance. The separate managed-MCP profile above supplies
 active-Run rebuild parity for draft v2.
@@ -727,16 +727,16 @@ for scope and final checks; C3-C6 remain open.
 This batch changes Agent ACP Service only. It uses the F05 admitted policy and
 the official SDK for v1/v2 reverse requests, without a new public approval API.
 
-| Boundary                                                                                                                 | Executable evidence                                                            | Result                                                                                                                                 |
-| ------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
-| Four permission options, malformed/unknown outcomes, explicit rules and read-only hint precedence                        | `test/domain/tool-permissions.test.ts`                                         | No unrecognized outcome authorizes execution                                                                                           |
-| Waiting, once/always, live access revocation, connection replacement, cancellation and worker loss                       | `test/application/tool-permissions.test.ts`                                    | Request stored before interaction; decision committed before dispatch                                                                  |
-| SDK cancellation cleanup and v1/v2 envelope differences                                                                  | `test/transport/permission-request.test.ts`                                    | Late replies cannot grant permission; nonresponsive connections are reclaimed                                                          |
-| MCP annotation delivery through the official SDK and catalog                                                             | `test/adapters/mcp/official-client.test.ts`, `tool-catalog.test.ts`            | Explicit platform hints reach policy evaluation                                                                                        |
-| v1 WebSocket/HTTP and v2 WebSocket with PostgreSQL                                                                       | `test/e2e/acp-permissions.postgres.test.ts`                                    | Four decisions control actual Tool calls; approval precedes all Tool attempts; reconnect, denial, cancellation and deadline paths pass |
-| Exact arguments, duplicate answers, atomic rules, locked-transaction deadline/cancellation, startup and terminal cleanup | `test/adapters/postgres/tool-permissions.postgres.test.ts`                     | No stale always rule; terminal Runs cannot regain permission                                                                           |
-| Fork and Session lifecycle                                                                                               | Permission E2E plus v1/v2 lifecycle mapping and connection registry unit tests | Parent rules do not escape into a new Session; only successful close/delete detaches                                                   |
-| Observability                                                                                                            | Permission application test                                                    | Wait span and bounded decision metrics retain IDs, not Tool arguments                                                                  |
+| Boundary                                                                                                                 | Executable evidence                                                                                | Result                                                                                                                                 |
+| ------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| Four permission options, malformed/unknown outcomes, explicit rules and read-only hint precedence                        | `test/domain/tool-permissions.test.ts`                                                             | No unrecognized outcome authorizes execution                                                                                           |
+| Waiting, once/always, live access revocation, connection replacement, cancellation and worker loss                       | `test/application/tool-permissions.test.ts`                                                        | Request stored before interaction; decision committed before dispatch                                                                  |
+| SDK cancellation cleanup and v1/v2 envelope differences                                                                  | `test/transport/permission-request.test.ts`                                                        | Late replies cannot grant permission; nonresponsive connections are reclaimed                                                          |
+| MCP annotation delivery through the official SDK and catalog                                                             | `tests/integration/agent-acp-service/adapters/mcp/official-client.test.ts`, `tool-catalog.test.ts` | Explicit platform hints reach policy evaluation                                                                                        |
+| v1 WebSocket/HTTP and v2 WebSocket with PostgreSQL                                                                       | `tests/integration/agent-acp-service/e2e/acp-permissions.postgres.test.ts`                         | Four decisions control actual Tool calls; approval precedes all Tool attempts; reconnect, denial, cancellation and deadline paths pass |
+| Exact arguments, duplicate answers, atomic rules, locked-transaction deadline/cancellation, startup and terminal cleanup | `tests/integration/agent-acp-service/adapters/postgres/tool-permissions.postgres.test.ts`          | No stale always rule; terminal Runs cannot regain permission                                                                           |
+| Fork and Session lifecycle                                                                                               | Permission E2E plus v1/v2 lifecycle mapping and connection registry unit tests                     | Parent rules do not escape into a new Session; only successful close/delete detaches                                                   |
+| Observability                                                                                                            | Permission application test                                                                        | Wait span and bounded decision metrics retain IDs, not Tool arguments                                                                  |
 
 Final test metrics: ACP **427 tests / 53 files**; PostgreSQL **140 tests / 17
 files** (123.47 s, serial); repository `make test-node` **751 tests** including
@@ -773,7 +773,7 @@ submission during configuration, and prevents a late response overwriting newer
 notifications. Its approval inbox binds offered decisions to active requests,
 cleans up on cancellation/disconnect and labels each request's Session.
 
-The reusable `scripts/acp-permissions` profile checks **26 v1/v2 scenarios**
+The reusable `tests/e2e/acp-permissions` profile checks **26 v1/v2 scenarios**
 through real Gateway, Console, Controller, PostgreSQL and managed-MCP Runtime.
 Two execution traces cover **26 Runs, 52 model requests, 16 permission waits and
 16 Runtime calls**. Each Smart phase must have exactly one judge request; each
@@ -823,13 +823,13 @@ Both ACP adapters announce the full catalog on authorized Session setup.
 Commands use normal Prompt admission and durable replies, without Provider or
 Runtime calls. No command API, table, or polling loop was added.
 
-| Evidence                                                                                                                  | Tests                                                                               |
-| ------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| Exact parsing, aliases, attachments not reinterpreted, actual handlers                                                    | `test/domain/slash-commands.test.ts`, `test/application/prompt-coordinator.test.ts` |
-| No model/credentials/Runtime setup; cancellation, deadline, ownership, persistence failure                                | `test/application/run-executor.test.ts`                                             |
-| Catalog on new/load/resume/fork using each official SDK                                                                   | `test/transport/acp-v1-agent.test.ts`, `test/transport/acp-agent.test.ts`           |
-| Official wire shapes, history/attachments, application restart, fork, identity/Session isolation and active-Run exclusion | `test/e2e/acp-commands.postgres.test.ts`                                            |
-| Official v1 HTTP client, catalog on SSE, command reply before Prompt completion                                           | `test/e2e/acp-http.postgres.test.ts`                                                |
+| Evidence                                                                                                                  | Tests                                                                                                                                   |
+| ------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Exact parsing, aliases, attachments not reinterpreted, actual handlers                                                    | `test/domain/slash-commands.test.ts`, `test/application/prompt-coordinator.test.ts`                                                     |
+| No model/credentials/Runtime setup; cancellation, deadline, ownership, persistence failure                                | `test/application/run-executor.test.ts`                                                                                                 |
+| Catalog on new/load/resume/fork using each official SDK                                                                   | `tests/integration/agent-acp-service/transport/acp-v1-agent.test.ts`, `tests/integration/agent-acp-service/transport/acp-agent.test.ts` |
+| Official wire shapes, history/attachments, application restart, fork, identity/Session isolation and active-Run exclusion | `tests/integration/agent-acp-service/e2e/acp-commands.postgres.test.ts`                                                                 |
+| Official v1 HTTP client, catalog on SSE, command reply before Prompt completion                                           | `tests/integration/agent-acp-service/e2e/acp-http.postgres.test.ts`                                                                     |
 
 PostgreSQL tests run the real ACP application and transport against a dedicated
 test database; Controller, Provider and Runtime ports use deterministic fixtures.
@@ -854,7 +854,7 @@ batch were removed; no test/build/lint subprocess remained.
 ### Gateway Deployment Acceptance
 
 `make e2e-slash-commands` passed with the current images in an isolated Compose
-project. The [reusable fixture](../../../scripts/acp-commands/README.md) uses
+project. The [reusable fixture](../../../tests/e2e/acp-commands/README.md) uses
 Gateway APIs for all setup and cleanup, one PostgreSQL instance with separate
 service databases, the official ACP SDK, real Runtime Bash and Jaeger. The model
 is deterministic; no external credentials or direct database queries are used.
@@ -987,7 +987,7 @@ every SessionUpdate is checked against the corresponding official schema.
 
 All test-owned containers, volumes and networks were removed. No service
 implementation or schema change was needed in this integration batch. See
-[the test profile](../../../scripts/acp-multimodal/README.md) for the command and
+[the test profile](../../../tests/e2e/acp-multimodal/README.md) for the command and
 scope. This proves platform native delivery, not arbitrary MIME conversion,
 Provider recognition quality, killed-process recovery or real deployed browser
 acceptance; the latter retain their own stage-closeout scenarios.
@@ -999,15 +999,15 @@ The future optional Controller price field is accepted and validated; its
 producer contract and administrative endpoints are not implemented by this
 batch. No schema migration or additional billing table was introduced.
 
-| Evidence                          | Executable coverage                                                                                                                                                                                                                   |
-| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Pricing and known-cost projection | `test/domain/usage.test.ts`: Provider priority, zero vs missing, USD, cache subsets/fallback, frozen rates, bounded accumulation                                                                                                      |
-| Actual JSON/SSE adapter           | `test/adapters/model/cost.test.ts`: normalized measured tokens, invalid metadata, partial/repeated usage snapshots, valid receipts on invalid completion or interrupted stream                                                        |
-| Error and judge accounting        | `test/application/turn-runner.test.ts`, `permission-judge.test.ts`: account before final output failure or classifier fallback; persistence failures propagate                                                                        |
-| Private persistence               | `test/adapters/postgres/usage.postgres.test.ts`: concurrent same-ID retry, conflicting IDs, terminal-race barrier, restart snapshot, unchanged replay, independent fork baseline                                                      |
-| Standard wire projections         | v1/v2 transport tests compare exact standard `usage_update.cost`, excluding private receipt fields                                                                                                                                    |
-| Real service boundary             | `test/e2e/acp-cost.postgres.test.ts`: v1/v2 WebSocket, real application and PostgreSQL, reported/estimated/unknown amounts, reconnect/replay, new Session isolation; deterministic model responses and Controller/Runtime substitutes |
-| Price consumer readiness          | Controller adapter tests accept the proposed optional field, reject invalid rates/currency, and preserve old no-price responses; not a claim that the production Controller emits prices                                              |
+| Evidence                          | Executable coverage                                                                                                                                                                                                                                                  |
+| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Pricing and known-cost projection | `test/domain/usage.test.ts`: Provider priority, zero vs missing, USD, cache subsets/fallback, frozen rates, bounded accumulation                                                                                                                                     |
+| Actual JSON/SSE adapter           | `test/adapters/model/cost.test.ts`: normalized measured tokens, invalid metadata, partial/repeated usage snapshots, valid receipts on invalid completion or interrupted stream                                                                                       |
+| Error and judge accounting        | `test/application/turn-runner.test.ts`, `permission-judge.test.ts`: account before final output failure or classifier fallback; persistence failures propagate                                                                                                       |
+| Private persistence               | `tests/integration/agent-acp-service/adapters/postgres/usage.postgres.test.ts`: concurrent same-ID retry, conflicting IDs, terminal-race barrier, restart snapshot, unchanged replay, independent fork baseline                                                      |
+| Standard wire projections         | v1/v2 transport tests compare exact standard `usage_update.cost`, excluding private receipt fields                                                                                                                                                                   |
+| Real service boundary             | `tests/integration/agent-acp-service/e2e/acp-cost.postgres.test.ts`: v1/v2 WebSocket, real application and PostgreSQL, reported/estimated/unknown amounts, reconnect/replay, new Session isolation; deterministic model responses and Controller/Runtime substitutes |
+| Price consumer readiness          | Controller adapter tests accept the proposed optional field, reject invalid rates/currency, and preserve old no-price responses; not a claim that the production Controller emits prices                                                                             |
 
 Two read-only adversarial reviews found and corrected lost usage on failed
 outputs, invalid token/cache metadata, partial SSE snapshots, terminal-state

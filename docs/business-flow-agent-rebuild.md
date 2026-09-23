@@ -232,7 +232,7 @@ Owner 并未改变；旧访问快照不能直接跨越重建继续发起新 Run�
 只读复查现有重建主 Trace：
 
 ```sh
-node scripts/observability/check-lifecycle.mjs \
+node tests/e2e/observability/check-lifecycle.mjs \
   --kind rebuild \
   --admission ff312d3edadaafc2d21d5059f4ca416b \
   --request lifecycle-f0e8e3017875037377e0107c040773e577a96b7f48607ceefe14416086cf474c \
@@ -242,7 +242,7 @@ node scripts/observability/check-lifecycle.mjs \
 可复用的单场景执行脚本：
 
 ```sh
-node scripts/observability/exercise-lifecycles.mjs \
+node tests/e2e/observability/exercise-lifecycles.mjs \
   --kind rebuild --agent <available-agent-id> \
   --template <template-id> --revision <revision> --confirm-development
 ```
@@ -394,13 +394,13 @@ Tunnel 仍为 `100.64.0.15/version 1`，策略仍 `deny_all/version 1`，仅 att
 
 ### 6.4 可复用验证
 
-`scripts/observability/rebuild-configuration.mjs` 提供公开 DTO 的模板发布隔离与配置切换断言，
+`tests/e2e/observability/rebuild-configuration.mjs` 提供公开 DTO 的模板发布隔离与配置切换断言，
 配套反例覆盖隐式启动重建、旧配置/修订残留和 Owner 变化。配置正文中的提示词、Docker 配额、
 进程身份、事件关联和准入快照另由上述集成检查提供，不能由公开 DTO 断言代替。
 
 ```sh
-node --test scripts/observability/rebuild-configuration.test.mjs
-node scripts/observability/check-lifecycle.mjs \
+node --test tests/e2e/observability/rebuild-configuration.test.mjs
+node tests/e2e/observability/check-lifecycle.mjs \
   --kind rebuild --admission 130448ae9bdb50399c8c24824d9696df \
   --request lifecycle-099557e1fcb16e1d700722e2c97a49faf31b45c770a2d6629844fba1a0cdfa2d \
   --agent agent_81d31b4536b04fbc9753176137351092

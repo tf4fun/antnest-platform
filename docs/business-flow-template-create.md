@@ -151,7 +151,7 @@ memory_bytes=1073741824、pids_limit=256、tmpfs_bytes=268435456，无托管 MCP
 
 本次没有额外重放请求、创建修订或修改当前模型。旧版
 [API 创建/重放 Trace](http://127.0.0.1:16686/trace/c41f74713052fcce96f376e01f2b7b4b)
-属于历史证据，不以它代替当前浏览器验收。复用 `scripts/observability/exercise-template.mjs`
+属于历史证据，不以它代替当前浏览器验收。复用 `tests/e2e/observability/exercise-template.mjs`
 会另建测试模板，本轮未运行它，不声称重新验收了其重放分支。
 
 ## 5. 独立复核与后续边界
@@ -169,11 +169,11 @@ memory_bytes=1073741824、pids_limit=256、tmpfs_bytes=268435456，无托管 MCP
 
 上述为正常路径验证与剩余项登记，没有修改服务代码，也没有扩展到 Provider 停用、模板修订或 Agent 创建。
 后续构建依然按既定边界由 Runtime Controller 解析实际镜像 ID并记录元数据，模板不承担平台资源检查。
-相关设计与历史镜像测试见 [Runtime Controller 镜像校验脚本](../services/runtime-controller/scripts/build-image-smoke.mjs)。
+相关设计与历史镜像测试见 [Runtime Controller 镜像校验脚本](../tests/e2e/runtime-controller/build-image-smoke.mjs)。
 
-Trace 校验复用 [HTTP/RPC 边界](../scripts/observability/evidence.mjs)、
-[图与 SQL 归属](../scripts/observability/trace-tree.mjs)、
-[成功状态](../scripts/observability/successful-span.mjs)；等待至少 6 秒再读取 Jaeger。
+Trace 校验复用 [HTTP/RPC 边界](../tests/e2e/observability/evidence.mjs)、
+[图与 SQL 归属](../tests/e2e/observability/trace-tree.mjs)、
+[成功状态](../tests/e2e/observability/successful-span.mjs)；等待至少 6 秒再读取 Jaeger。
 仅记录最终指标和链接，不落盘原始 Trace、Cookie 或密钥。
 
 本轮验证：观测脚本串行回归 235 项通过，四份相关文档 76 个本地文件链接有效，
@@ -183,7 +183,7 @@ Trace 校验复用 [HTTP/RPC 边界](../scripts/observability/evidence.mjs)、
 现成边界复核命令：
 
 ```sh
-node scripts/observability/check-trace.mjs http://127.0.0.1:16686 0e76651c8fdebef9d3daddc7ccb907ff \
+node tests/e2e/observability/check-trace.mjs http://127.0.0.1:16686 0e76651c8fdebef9d3daddc7ccb907ff \
   '{"rootService":"edge-gateway","route":"/api/admin/{path...}","status":201,"hops":[["edge-gateway","identity-service",1],["edge-gateway","admin-console",1],["admin-console","agent-controller",1]]}'
 ```
 

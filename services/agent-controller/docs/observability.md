@@ -150,7 +150,7 @@ remain suppressed. There are no new downstream readiness calls.
 
 Regression coverage includes complete nested/new RPC fields beyond 16 KiB, disabled capture without serialization, actual parent IDs, protocol failures and long SSE flushes without payload events.
 
-`internal/repository/postgres/observation_integration_test.go` adds real
+`tests/integration/go/agent-controller/internal/repository/postgres/observation_integration_test.go` adds real
 PostgreSQL coverage through the production constructors and the existing
 `ANTNEST_AGENT_CONTROLLER_TEST_DATABASE_URL` fixture: query parenting, commit
 and replay rollback, SQLSTATE/error status, parameter/result omission, batch

@@ -100,5 +100,5 @@ The next migration is Health / Runtime observation, followed by restore, loss,
 interrupted-update and older Workspace consumers. Old shared assets stay intact.
 
 Private snapshots, backups and bounded verification drivers are under
-`.cache/temporal-sync-20260921/`; ignored artifacts are not guaranteed in a fresh
+`artifacts/verification/temporal-sync-20260921/`; ignored artifacts are not guaranteed in a fresh
 clone and must not be published.

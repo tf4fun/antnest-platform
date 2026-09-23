@@ -190,7 +190,7 @@ all these profiles have just run on the current candidate.
 | ACP user capabilities | `e2e-tool-progress`, `e2e-file-observations`, `e2e-structured-plan`, `e2e-tool-permissions`, `e2e-slash-commands`, `e2e-multimodal`, `e2e-session-cost` |
 | Managed MCP | Stage 3 with `ANTNEST_E2E_MANAGED_MCP=true`, separately selecting version `1` and `2` |
 | Lifecycle and workspace | `e2e-lifecycle`, `e2e-lifecycle-interrupted`, `e2e-lifecycle-network`, `e2e-lifecycle-loss`, `e2e-lifecycle-shutdown`, `e2e-workspace`; lifecycle `health` and `restore` profiles |
-| Process signals | `node services/admin-console/tests/shutdown-docker.mjs`, `node services/edge-gateway/tests/shutdown-docker.mjs` against the final owning images |
+| Process signals | `node tests/e2e/admin-console/shutdown-docker.mjs`, `node tests/e2e/edge-gateway/shutdown-docker.mjs` against the final owning images |
 
 Run profiles serially and honor their mutual-exclusion checks; do not combine
 incompatible fault scenarios to save deployment time. Each disposable profile
@@ -347,10 +347,10 @@ ID even when its build steps are cached. The resulting identities are:
 
 | Profile | Current result |
 | --- | --- |
-| `sh scripts/e2e-stage1.sh` | Pass, 40.498s, project `antnest-stage1-e2e-44629`. Real write/edit/read/bash, UID/GID 1000, process restart identity, initially closed attachment, open-state control isolation, public IP/domain traffic, deny/allow transitions, Egress restart and closed-attachment network release |
-| `sh services/runtime-controller/scripts/e2e.sh` | Pass, 31.942s, project `antnest-runtime-controller-e2e-45339`, explicitly isolated scope `antnest-final-runtime-controller-55c6c9ad`. Initialize, persisted Controller restart/observation cursor, Runtime restart/old-execution 409, update, disable/enable and deletion of compute/workspace |
-| `sh scripts/e2e-stage2.sh` | Pass, 58.399s, project `antnest-stage2-e2e-53066`. Distinct administrator/member owner, asynchronous create/delete, actual Runtime write, owner offboarding, original workspace preservation, exact replay, inactive-owner denial and new ACP upgrade 403 |
-| `ANTNEST_E2E_ACP_CLOSEOUT=true sh scripts/e2e-stage3a.sh` | Pass, 195.153s, project `antnest-stage3-e2e-53749`. Default Gateway identity/SCIM/OIDC and administrator/workspace flow, plus stable-v1/draft-v2 recovery: 8 actual SIGKILL/restarts, 26 model requests, cross-identity isolation, unknown-effect fencing, explicit rebuild and replay without repeated Tool effects |
+| `sh tests/e2e/e2e-stage1.sh` | Pass, 40.498s, project `antnest-stage1-e2e-44629`. Real write/edit/read/bash, UID/GID 1000, process restart identity, initially closed attachment, open-state control isolation, public IP/domain traffic, deny/allow transitions, Egress restart and closed-attachment network release |
+| `sh tests/e2e/runtime-controller/run.sh` | Pass, 31.942s, project `antnest-runtime-controller-e2e-45339`, explicitly isolated scope `antnest-final-runtime-controller-55c6c9ad`. Initialize, persisted Controller restart/observation cursor, Runtime restart/old-execution 409, update, disable/enable and deletion of compute/workspace |
+| `sh tests/e2e/e2e-stage2.sh` | Pass, 58.399s, project `antnest-stage2-e2e-53066`. Distinct administrator/member owner, asynchronous create/delete, actual Runtime write, owner offboarding, original workspace preservation, exact replay, inactive-owner denial and new ACP upgrade 403 |
+| `ANTNEST_E2E_ACP_CLOSEOUT=true sh tests/e2e/e2e-stage3a.sh` | Pass, 195.153s, project `antnest-stage3-e2e-53749`. Default Gateway identity/SCIM/OIDC and administrator/workspace flow, plus stable-v1/draft-v2 recovery: 8 actual SIGKILL/restarts, 26 model requests, cross-identity isolation, unknown-effect fencing, explicit rebuild and replay without repeated Tool effects |
 
 The Stage 1 test initially exercised an obsolete caller contract: assigning an
 allow policy did not open the separately managed attachment, and release used
@@ -421,9 +421,9 @@ is set by either launcher. Packet forwarding is outside tracing.
 
 | Profile | Final result |
 | --- | --- |
-| `node scripts/lifecycle-closeout/run.mjs` | Exit 0; 9 operations, 7 verified lifecycle sequences, 10 main-Agent events, 2 network CAS changes; exact replay, workspace preservation/deletion and failed-start cleanup pass |
+| `node tests/e2e/lifecycle-closeout/run.mjs` | Exit 0; 9 operations, 7 verified lifecycle sequences, 10 main-Agent events, 2 network CAS changes; exact replay, workspace preservation/deletion and failed-start cleanup pass |
 | Active-Run rebuild within that profile | 2 completed and 2 rejected prompts; Controller exits 0 while draining; same Session after rebuild, exact physical Tool effects, closed Run admission and connected Runtime spans |
-| Final `sh scripts/e2e-stage3a.sh` | Exit 0; 78 local-identity/SCIM requests across 9 check groups; 7 OIDC check groups, 12 authorization attempts/grants; ACP v1/v2 revoked prompts rejected with close code 1008 and empty-session recovery; create phase chain verified |
+| Final `sh tests/e2e/e2e-stage3a.sh` | Exit 0; 78 local-identity/SCIM requests across 9 check groups; 7 OIDC check groups, 12 authorization attempts/grants; ACP v1/v2 revoked prompts rejected with close code 1008 and empty-session recovery; create phase chain verified |
 
 The final OIDC increment runs in `antnest-stage3-e2e-26484`, using Gateway
 44485, PostgreSQL 44484 and Jaeger 44486. The controlled HTTPS IdP records four
@@ -477,7 +477,7 @@ This historical consumer result is not a new execution of the OIDC increment.
 ## Whole-Platform Shutdown Increment
 
 The final `make e2e-lifecycle-shutdown` equivalent (`node
-scripts/lifecycle-closeout/run.mjs shutdown`) passes in disposable project
+tests/e2e/lifecycle-closeout/run.mjs shutdown`) passes in disposable project
 `antnest-lifecycle-9647902f`. The final Gateway image is
 `sha256:c0b2412c3d386bcc58a3b2db350c6964e692193bde6f6ef95f8591a5c787f4ba`.
 No model prompt, external Provider, production credential or retained stack is
@@ -514,7 +514,7 @@ every ACP transport/version combination.
 
 ### Current-Candidate Workspace Integration
 
-`node scripts/workspace-closeout/run.mjs` passes in disposable project
+`node tests/e2e/workspace-closeout/run.mjs` passes in disposable project
 `antnest-lifecycle-55546ce4` after the full service gates and Agent UI image
 build. It uses the current local service tags, controlled model responses and
 one PostgreSQL instance with private service databases. It completes two
@@ -734,3 +734,7 @@ examined Node/Docker/test executable names, not leftover verification workers.
 The root README is aligned with the accepted/deferred scope.
 Only these final observations and metrics are retained, not the interactive
 fixture command, temporary credentials, screenshots or raw logs.
+
+The commands and counts above describe that historical candidate. The current
+[test layout and integration entries](test-layout-migration.md) use root Go
+overlays; service-local `go test` alone now covers only service unit tests.

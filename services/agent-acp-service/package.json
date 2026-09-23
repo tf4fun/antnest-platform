@@ -13,6 +13,7 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --maxWorkers=1",
+    "test:integration": "vitest run --config vitest.integration.config.ts --maxWorkers=1",
     "test:postgres": "vitest run --config vitest.postgres.config.ts --maxWorkers=1",
     "test:audit:v1": "vitest run --config vitest.audit.config.ts --maxWorkers=1",
     "start": "node dist/main.js",

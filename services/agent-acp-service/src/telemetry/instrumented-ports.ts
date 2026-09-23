@@ -53,8 +53,12 @@ export class InstrumentedAcpApplication implements AcpApplicationPort {
   }
 
   public readSessionOutput(input: Parameters<AcpApplicationPort["readSessionOutput"]>[0]) {
-    return this.sessionOperation("output", input.binding.agentId, input.sessionId, () =>
-      this.delegate.readSessionOutput(input),
+    return this.sessionOperation(
+      "output",
+      input.binding.agentId,
+      input.sessionId,
+      () => this.delegate.readSessionOutput(input),
+      "read",
     );
   }
 
@@ -120,7 +124,11 @@ export class InstrumentedAcpApplication implements AcpApplicationPort {
     return observe(
       this.telemetry,
       "acp.session.prompt",
-      { "agent.id": input.binding.agentId, "session.id": input.sessionId },
+      {
+        "agent.id": input.binding.agentId,
+        "session.id": input.sessionId,
+        "antnest.operation.phase": "admit",
+      },
       "antnest.acp.session_method.duration",
       "antnest.acp.session_methods",
       { method: "prompt" },
@@ -145,11 +153,16 @@ export class InstrumentedAcpApplication implements AcpApplicationPort {
     agentId: string,
     sessionId: string | undefined,
     operation: () => Promise<Result>,
+    phase?: string,
   ): Promise<Result> {
     return observe(
       this.telemetry,
       `acp.session.${method}`,
-      { "agent.id": agentId, "session.id": sessionId },
+      {
+        "agent.id": agentId,
+        "session.id": sessionId,
+        ...(phase ? { "antnest.operation.phase": phase } : {}),
+      },
       "antnest.acp.session_method.duration",
       "antnest.acp.session_methods",
       { method },

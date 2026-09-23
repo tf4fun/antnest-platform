@@ -1,0 +1,23 @@
+import json,os,pathlib,subprocess
+root=pathlib.Path(__file__).resolve().parent
+projects=['antnest-lifecycle-284110cf','antnest-lifecycle-c5855a3f']
+def run(*a):return subprocess.check_output(a,text=True).strip()
+left={}
+for project in projects:
+ for label in ['com.docker.compose.project','io.antnest.runtime-controller-scope']:
+  for kind,cmd in [('containers',['ps','-aq']),('volumes',['volume','ls','-q']),('networks',['network','ls','-q'])]:
+   found=run('docker',*cmd,'--filter',f'label={label}={project}').splitlines()
+   left[f'{project}/{label}/{kind}']=found
+   assert not found,(project,label,kind,found)
+before=json.loads((root/'retained-before.json').read_text())
+rows=json.loads(run('docker','inspect',*[r['id'] for r in before]))
+now=[dict(id=r['Id'],name=r['Name'],image=r['Image'],running=r['State']['Running'],health=r['State'].get('Health',{}).get('Status'),mounts=r['Mounts']) for r in rows]
+for a,b in zip(before,now):
+ for v in (a,b):v['mounts']=sorted(v['mounts'],key=lambda x:x['Destination'])
+ assert a==b, f'retained changed: {a["name"]}'
+processes=run('ps','-axo','pid=,ppid=,command=').splitlines()
+own=[p for p in processes if ('node ' in p or 'python3 ' in p or 'make ' in p) and any(x in p for x in ['run-profile.py','run-command.py','scripts/lifecycle-closeout/run.mjs','node --test --test-concurrency=1']) and int(p.split()[0])!=os.getpid()]
+assert not own,own
+out=dict(projects=projects,resources=left,retained_containers_unchanged=len(now),retained_running=sum(r['running'] for r in now),retained_healthy=sum(r['health']=='healthy' for r in now),verification_children=own)
+p=root/'cleanup.json';p.write_text(json.dumps(out,indent=2)+'\n');p.chmod(0o600)
+print(json.dumps({k:v for k,v in out.items() if k!='resources'}))

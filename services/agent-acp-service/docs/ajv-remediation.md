@@ -41,7 +41,7 @@ Service verification after the upgrade:
 The rebuilt `antnest/agent-acp-service:ajv-fixed` image is
 `sha256:e3aa69201e82455db532a47bb6417eadb344260d4119a237c5e9f35818273c9f`.
 An isolated, network-disabled container confirmed installed AJV 8.20.0.
-The existing `scripts/sdk-regressions-docker.mjs` passed metadata observer/list/
+The existing `tests/e2e/agent-acp-service/sdk-regressions-docker.mjs` passed metadata observer/list/
 fork/process-restart consistency, refusal-context exclusion, close/reload and
 unknown-effect Tool cancellation protection. It made four controlled model
 requests and one Tool call and completed fixture cleanup. This is service-owned
@@ -60,6 +60,6 @@ registry. No alternative upload or indirect audit was attempted. This batch
 uses the published advisory and a local lockfile comparison for this one issue;
 it is not a claim that a full online dependency audit is clean.
 
-Local evidence is in `.cache/acp-ajv-20260917/`: official registry metadata,
+Local evidence is in `artifacts/verification/acp-ajv-20260917/`: official registry metadata,
 before/after lockfile comparison, installation output and verification logs.
 Ignored cache files are not guaranteed to exist in a fresh clone.

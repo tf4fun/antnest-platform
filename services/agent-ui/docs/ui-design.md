@@ -70,14 +70,14 @@ placement is clamped to the viewport; no model catalog lives in Agent UI.
 For the local development instance, run from the repository root:
 
 ```sh
-node scripts/workspace-closeout/model-selection-browser.mjs --confirm-development --real-models
+node tests/e2e/workspace-closeout/model-selection-browser.mjs --confirm-development --real-models
 ```
 
 This opt-in check uses the bootstrap account from `.env`, adds DeepSeek V4 Pro
 through Console if missing, switches Flash/Pro before two real prompts, reloads
 the Session and checks desktop/mobile layouts. It retains the model and test
 conversation for human acceptance. Screenshots and the compact final result go
-to `.cache/model-selection-acceptance`; credentials are never included.
+to `artifacts/verification/model-selection-acceptance`; credentials are never included.
 
 `npm test` covers presentation semantics and protocol behavior. The reusable
 `npm run test:browser` suite covers real computed styles, contrast pairs,

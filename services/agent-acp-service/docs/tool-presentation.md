@@ -98,7 +98,7 @@ Runtime Bash is not an ACP client Terminal. Do not synthesize terminal IDs.
 Runtime diff production, ACP consumption and the deployed file observation
 workflow have passed their respective acceptance profiles.
 
-Deployment evidence (2026-09-09): [reusable profile](../../../scripts/acp-files/README.md)
+Deployment evidence (2026-09-09): [reusable profile](../../../tests/e2e/acp-files/README.md)
 passed 16 scenarios through Gateway ACP v1/v2 and real Rust Runtime, using 32
 deterministic SSE model requests. Sixteen execution traces each contain one
 preparation and one actual Tool dispatch/invocation with the correct ancestry.

@@ -214,13 +214,13 @@ uses. Adapter stubs must not be described as full-platform acceptance.
   PKCE verifiers and Provider tokens must not reach browser responses, logs or
   traces; the application session belongs only in an HttpOnly cookie, not
   JavaScript-accessible storage. Accepted for the controlled HTTP workflow by
-  the [Gateway OIDC suite](../scripts/identity-closeout/README.md), not as vendor
+  the [Gateway OIDC suite](../tests/e2e/identity-closeout/README.md), not as vendor
   IdP UI/browser acceptance or a claim that all of C2 is closed.
 - [x] **C2-03** Exercise Gateway SCIM discovery, User/Group create/update,
   membership changes, deactivate/reactivate, deletion, and token rotation/revoke
   within the supported SCIM profile. Do not advertise unsupported SCIM features.
   Accepted for this workflow scope by the
-  [Gateway identity suite](../scripts/identity-closeout/README.md): real HTTP,
+  [Gateway identity suite](../tests/e2e/identity-closeout/README.md): real HTTP,
   Identity-owned PostgreSQL, Console projections and Jaeger parent chains.
   This does not accept OIDC convergence or cross-organization isolation.
 - [x] **C2-04** Verify deactivation after a user has connected: existing HTTP
@@ -293,7 +293,7 @@ Delivery batches keep each service change separate from deployed acceptance:
    policy management. Egress assignment GET is desired state only; errors must
    not be cleared by pretending this proves packet-gate application.
 3. **Docker integration (foundation passed, 2026-09-10):** independent
-   [lifecycle profile](../scripts/lifecycle-closeout/README.md), invoked with
+   [lifecycle profile](../tests/e2e/lifecycle-closeout/README.md), invoked with
    `make e2e-lifecycle`. The initial batch closes C3-01 and adds deployed
    evidence for C3-02..05, without claiming their remaining fault scenarios.
 4. **Runtime-start failure ownership (Runtime Controller service batch passed,
@@ -533,7 +533,7 @@ Egress batch final evidence (not deployed C3-04 acceptance):
 Sources: [HTTP contract tests](../services/runtime-egress/tests/control_http.rs),
 [recovery tests](../services/runtime-egress/tests/control_service.rs),
 [trace test](../services/runtime-egress/tests/control_trace.rs),
-and [PostgreSQL tests](../services/runtime-egress/tests/postgres_repository.rs).
+and [PostgreSQL tests](../tests/integration/runtime-egress/postgres_repository.rs).
 The six PostgreSQL cases use their separate database profile, not an ignored-test
 pass claim. Test-owned PostgreSQL container/volume/networks were removed; existing
 development stacks were not replaced. This batch does not prove Console policy
@@ -792,7 +792,7 @@ C4-01..05 remain open until that evidence exists.
 
 #### C4 Fifth Batch: Deployed State And Conversation Integration
 
-The [workspace profile](../scripts/workspace-closeout/README.md), invoked with
+The [workspace profile](../tests/e2e/workspace-closeout/README.md), invoked with
 `make e2e-workspace`, passed on 2026-09-10 using current Stage 3 images and
 isolated project `antnest-lifecycle-cad9af5b`. Only the model protocol peer is
 synthetic; Identity, Gateway, ACP, PostgreSQL and Runtime tools are real.
@@ -1507,7 +1507,7 @@ oracles; their findings were reproduced in negative tests and fixed.
 | Controller | Full module tests and real PostgreSQL repository/E2E suites passed; image rebuilt |
 | Admission gates | `make -j1 fmt-check lint` passed: Go 0 issues, both Rust Clippy targets, Node lint and all three TypeScript checks; five document-link checks, two shell syntax checks and `git diff --check` passed |
 
-Reproduction and limits: [RPC profile](../scripts/acp-closeout/rpc-loss.md).
+Reproduction and limits: [RPC profile](../tests/e2e/acp-closeout/rpc-loss.md).
 No external Provider or real credential was used. Final success was published
 only after owned containers, volumes and networks were removed. This completes
 the remaining C1-05 recovery window; crash-during-rebuild, browser acceptance,
@@ -1532,7 +1532,7 @@ Two independent read-only reviews checked the oracles and boundary coverage.
 | Recovery baseline Jaeger evidence | 2 Gateway-rooted traces, 462 spans; Identity, Controller, ACP, model spans and actual Runtime calls verified |
 | Test environment allocation | Existing Docker IPAM ranges are excluded from subnet selection, including enclosing/contained ranges; discovery errors abort rather than assume a free range |
 
-The reusable commands are in the [recovery profile](../scripts/acp-closeout/README.md)
+The reusable commands are in the [recovery profile](../tests/e2e/acp-closeout/README.md)
 and the updated [protocol matrix](../services/agent-acp-service/docs/protocol-conformance.md).
 No external Provider or real credential was used. Temporary resources were
 removed; retained development instances were not modified. This does not accept
@@ -1601,7 +1601,7 @@ cleanup tests cover success, failed teardown and remaining resources. The v2
 extension reuses existing images; this batch does not claim a new image build.
 
 Reproduction and negative-oracle tests are in the
-[managed MCP profile](../scripts/managed-mcp/README.md). This accepts the active-Run
+[managed MCP profile](../tests/e2e/managed-mcp/README.md). This accepts the active-Run
 portion of C1-05 for stable v1 and draft v2, not a crash during rebuild, RPC
 response-loss windows, or C3-C6 in their entirety. Unknown in-flight Tool effects
 are covered by the separate profile below.
@@ -1694,7 +1694,7 @@ This is a C1-03/04/05/06 evidence increment, not acceptance of all C1-C6.
 At that checkpoint, unknown in-flight Tool effects, admission RPC response-loss
 windows, active-Run rebuild, remaining Identity workflows and C5-03 CPU diagnosis
 were still open. The current C1-C6 checklists above supersede this dated status.
-The [integration README](../scripts/acp-closeout/README.md) and
+The [integration README](../tests/e2e/acp-closeout/README.md) and
 [protocol matrix](../services/agent-acp-service/docs/protocol-conformance.md)
 define the reproducible scope. No external Provider was used.
 
@@ -1725,7 +1725,7 @@ event bus, downstream consumer, browser acceptance, or new Jaeger report is
 claimed by this service-owned batch.
 
 C2 Gateway integration batch (2026-09-08): the default Stage 3 suite now runs
-`scripts/identity-closeout/client.mjs` through Edge, Console and real Identity.
+`tests/e2e/identity-closeout/client.mjs` through Edge, Console and real Identity.
 Its **78 HTTP requests / 9 scenario groups** cover local cookie/CSRF/login/logout,
 member restrictions, inactive Membership denial, global User token revocation,
 SCIM User/Group lifecycle, pagination, group PATCH and unlinking, stable User
@@ -2100,7 +2100,7 @@ identified event-type whitelist and compensation recheck gaps; both now have
 regression coverage. No new full-platform Docker or Jaeger acceptance is claimed.
 
 Final service verification (2026-09-08): all 13 Controller Go packages passed
-`go test -race -coverprofile=.cache/agent-controller-offboarding.cover -p=1
+`go test -race -coverprofile=artifacts/verification/agent-controller-offboarding.cover -p=1
 ./services/agent-controller/... -count=1` with the real isolated PostgreSQL
 profile. Total statement coverage is 69.5%; application 75.7%, Identity client
 87.0%, and PostgreSQL repository 66.8%. `make fmt-check` and `make lint` passed
@@ -2141,7 +2141,7 @@ an unrelated Inspect span cannot pass. This stronger check exposed lost
 `Request.Pattern` in Runtime Controller's deadline wrapper, fixed in `652c469`
 with five routing regression cases and full service race tests.
 
-The [reusable suite](../scripts/identity-closeout/README.md) uses real internal
+The [reusable suite](../tests/e2e/identity-closeout/README.md) uses real internal
 services, one isolated PostgreSQL instance with service-owned databases, official
 ACP/MCP SDKs, and a deterministic local model/HTTPS IdP. It does not claim a real
 external Provider or fresh browser UI acceptance. Mid-Disable crash injection,

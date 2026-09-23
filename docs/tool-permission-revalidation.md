@@ -9,7 +9,7 @@ scoped business/topology evidence, not a full strict deployment pass.
 
 ## Fixture Contract Repair
 
-The [permission driver](../scripts/acp-permissions/README.md) now owns a
+The [permission driver](../tests/e2e/acp-permissions/README.md) now owns a
 disposable Stage 3 project. It no longer seeds users or catalog records into a
 retained development stack. A dedicated Compose override ignores local `.env`,
 removes the fixed Temporal port and separates dynamic addresses from fixed
@@ -138,7 +138,7 @@ is tracked in the [asset inventory](acceptance-asset-migration.md); the subseque
 [multimodal migration](multimodal-revalidation.md) adds current native-input,
 local capability-failure and per-request Trace evidence.
 
-Ignored local evidence lives under `.cache/legacy-acceptance-20260917/`:
+Ignored local evidence lives under `artifacts/verification/legacy-acceptance-20260917/`:
 `permissions-red.log`, `permissions-chat-red.log`, `permissions-gates-final.log`,
 `permissions-docker-1.log`, `permissions-docker-2.log`, `permissions-crash.log`,
 `permissions-result.json`, `permissions-summary.json`, `permissions-compose.json`

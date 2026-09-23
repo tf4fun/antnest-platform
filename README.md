@@ -6,7 +6,15 @@ than around one shared application package.
 
 The [current implementation and acceptance index](docs/current-status.md)
 distinguishes the latest service boundaries, recorded verification and remaining
-scope. Updated 2026-09-16; historical stage reports retain their original scope.
+scope. Updated 2026-09-23; historical stage reports retain their original scope.
+The [Stage 3 current-service closeout](docs/stage-3-current-services-closeout.md)
+records the reviewed clock-warning exception and keeps deferred browser checks
+explicit. Planned new services belong to Stage 4.
+
+[Test ownership and commands](tests/README.md) define the repository test layout:
+unit tests stay within their service, integration tests live in
+`tests/integration/`, deployed acceptance tests in `tests/e2e/`, and shared
+verification tools in `tests/support/`.
 
 ## Service Map
 
@@ -76,7 +84,7 @@ remain planning-only; horizontal scaling and HA are deferred.
 Runtime-owned stdio MCP and per-Run context construction are described in
 [`docs/runtime-context-and-managed-mcp.md`](docs/runtime-context-and-managed-mcp.md).
 The reproducible Docker acceptance profile is documented in
-[`scripts/managed-mcp/README.md`](scripts/managed-mcp/README.md).
+[`tests/e2e/managed-mcp/README.md`](tests/e2e/managed-mcp/README.md).
 
 ## Current Integration Status
 
@@ -157,7 +165,7 @@ only for that verification when it finishes or is interrupted.
 `ANTNEST_E2E_KEEP_STACK=true` is [retired](docs/retained-seed-retirement.md): the
 launcher rejects it before resource discovery or creation. Unset or `false`
 keeps the disposable path; existing development environments are unaffected.
-Use the disposable [current browser profiles](scripts/workspace-closeout/README.md)
+Use the disposable [current browser profiles](tests/e2e/workspace-closeout/README.md)
 for acceptance. After each run,
 check for residual test containers and stop or remove the ones that are no
 longer needed; remove volumes only when they belong to a disposable test

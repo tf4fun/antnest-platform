@@ -159,6 +159,20 @@ model responses still retain error status and typed error events.
   Thus a prompt, its model calls and Runtime tools form one trace without waiting
   for the browser connection to close. Direct clients without message context
   still create an ACP message root linked to their connection.
+- `acp.session.prompt` covers admission (`acceptPrompt`), not Run completion.
+  The protocol boundary `acp session/prompt` waits for completion and output
+  flush on v1, but returns the acknowledgement on v2. `acp.session.output`
+  covers a durable snapshot read, not notification delivery. The output pump
+  inherits the trigger that starts its drain, including reads from coalesced
+  invalidations; this is causal context, not temporal containment. See the
+  [timing review](../../../docs/acp-async-timing-review-20260923.md) for actual
+  warning origins and completion-barrier verification.
+- These existing application spans now expose `antnest.operation.phase=admit`
+  for `acp.session.prompt` and `antnest.operation.phase=read` for
+  `acp.session.output`. Gateway message spans expose `relay` and `forward`;
+  the forwarding span is a PRODUCER because it ends after the WebSocket send.
+  These low-cardinality labels clarify their existing lifetimes without changing
+  request completion, Run ownership, context propagation or clock-skew evidence.
 - HTTP names are `HTTP METHOD /status`, `HTTP METHOD /v1/acp`, `HTTP METHOD /v2/acp`,
   `HTTP METHOD unmatched`; CLIENT names are `HTTP METHOD model`,
   `HTTP METHOD antnest-runtime`, `HTTP METHOD mcp`. ACP dispatcher names are
@@ -193,7 +207,7 @@ npm --prefix services/agent-acp-service run format
 npm --prefix services/agent-acp-service run typecheck
 npm --prefix services/agent-acp-service run lint
 npm --prefix services/agent-acp-service test
-node --test services/agent-acp-service/scripts/stage2-evidence.test.mjs
+node --test tests/e2e/agent-acp-service/stage2-evidence.test.mjs
 make test-agent-acp-postgres
 make fmt-check
 make lint
@@ -216,5 +230,5 @@ pass. The real rerun passes all nine business scenarios and its audit, execution
 lifecycle and Gateway connection topology checks. Strict clock diagnostics retain
 exit 1, and the existing ACP process-kill case retains its explicit incomplete
 Trace boundary. Raw responses now survive disposable stack cleanup under
-`.cache/stage2-boundary/<project>/traces/` with private permissions. This changes
+`artifacts/verification/stage2-boundary/<project>/traces/` with private permissions. This changes
 acceptance evidence only, not service instrumentation.

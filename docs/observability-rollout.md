@@ -44,14 +44,14 @@ Agent UI 仍是静态服务，不新增浏览器 tracing；未立项服务不启
 
 ## 可复用验证器
 
-`scripts/observability/evidence.mjs` 检查指定同步 HTTP 场景：精确 SERVER 根、
+`tests/e2e/observability/evidence.mjs` 检查指定同步 HTTP 场景：精确 SERVER 根、
 CLIENT 到下游 SERVER 的直接父子关系、调用数量、Header/正文预算和秘密 canary。
 不通过服务名共同出现来推断完整链路，不打印或持久化请求正文。
 它不替代各服务的协议结果、异步 Link、数据库和执行器语义测试。
 
 ```sh
-node --test scripts/observability/evidence.test.mjs
-node scripts/observability/check-trace.mjs http://127.0.0.1:16686 TRACE_ID \
+node --test tests/e2e/observability/evidence.test.mjs
+node tests/e2e/observability/check-trace.mjs http://127.0.0.1:16686 TRACE_ID \
   '{"rootService":"edge-gateway","route":"/{path...}","status":200,"hops":[["edge-gateway","admin-console"]]}'
 ```
 

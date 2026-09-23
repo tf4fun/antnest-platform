@@ -7,7 +7,7 @@ returned exit 1 (`make` returned 2). No production implementation changed.
 
 ## Contract And Fixture Repair
 
-The [progress driver](../scripts/acp-progress/README.md) covers ACP v1/v2,
+The [progress driver](../tests/e2e/acp-progress/README.md) covers ACP v1/v2,
 native Bash/Runtime-managed stdio MCP, and success/failure/cancellation. The
 external OpenAI-compatible SSE model is deterministic; Gateway, Identity,
 Controller, ACP, Rust Runtime, PostgreSQL, Temporal and Jaeger are real services.
@@ -94,7 +94,7 @@ a numeric threshold. No timestamp, SDK, system clock or strict warning gate was
 changed. The existing [maintenance decision](controller-acp-execution-boundary-plan.md#obs-acp-clock)
 still governs dedicated timing work; this report does not mark strict Trace passed.
 
-Compact local reports and logs are under `.cache/acp-progress-20260916/` (the
+Compact local reports and logs are under `artifacts/verification/acp-progress-20260916/` (the
 directory was created before local midnight). `result-final.json` records every
 phase, Run/Trace ID, error operation, warning and cross-service timing edge.
 `result-first.json` retains the earlier run, including its −2.403374 ms warning.

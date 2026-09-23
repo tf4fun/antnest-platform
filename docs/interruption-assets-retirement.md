@@ -32,7 +32,7 @@ this source-only retirement neither edits nor reruns those Go tests. Historical
 
 ## Exact removal boundary
 
-Eleven files are removed from `scripts/lifecycle-closeout/`:
+Eleven files are removed from `tests/e2e/lifecycle-closeout/`:
 
 - `interrupted-flow.mjs`
 - `interruption-evidence.mjs`
@@ -63,7 +63,7 @@ successfully before deletion. Remaining executable-reference and relative-import
 checks find no consumers of removed assets and no unresolved module paths.
 
 Source snapshots, hashes and the deletion manifest are preserved privately under
-`.cache/interruption-assets-retirement-20260921/`; historical source also exists
+`artifacts/verification/interruption-assets-retirement-20260921/`; historical source also exists
 in Git history. No Docker image, retained data, rollback artifact or private
 historical evidence is deleted. The README's stale claim that the current
 interrupted profile covers a nonterminal physical-effect crash is corrected.

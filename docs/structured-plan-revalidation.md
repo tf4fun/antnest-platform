@@ -9,7 +9,7 @@ evidence, not a full strict deployment pass.
 
 ## Current Contract And Preserved Coverage
 
-The [Plan driver](../scripts/acp-plan/README.md) creates a Provider connection
+The [Plan driver](../tests/e2e/acp-plan/README.md) creates a Provider connection
 and Model, references the stable Model identity from a Template, uses the
 returned Template revision and waits for executable Agent readiness. Exact ACP
 resource denials replace the obsolete expectation of a rejected authenticated
@@ -122,7 +122,7 @@ fixture was retired). The old dated reports remain intact; no directory or
 unmapped scenario was deleted. Other migrations are in the
 [asset inventory](acceptance-asset-migration.md), with slash commands next.
 
-Ignored local evidence is under `.cache/legacy-acceptance-20260917/`:
+Ignored local evidence is under `artifacts/verification/legacy-acceptance-20260917/`:
 `plan-red.log`, `plan-gates-final.log`, `plan-docker-1.log`, `plan-result.json`,
 `plan-summary.json` and `plan-cleanup.json`. Results retain compact warning and
 timing details. Raw service logs that could contain credentials were omitted;

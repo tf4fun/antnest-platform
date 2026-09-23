@@ -118,7 +118,7 @@ Controller SQL 统计按具有 `db.query.text` 的 Span 计数，包含 BEGIN/CO
 - 本轮为空闲 Agent、无在途 Run、相同模板和镜像输入；不涵盖故障注入、重启恢复、并发准入、标签更新、
   新配置生效、完整页面请求集合、SSE 全量检查或同键重放。既有专项测试不能冒充本轮实机证据。
 
-重查可使用 `scripts/observability/check-lifecycle.mjs`，按 §2 的 kind/request/agent 和 §1 Trace ID 传参。
+重查可使用 `tests/e2e/observability/check-lifecycle.mjs`，按 §2 的 kind/request/agent 和 §1 Trace ID 传参。
 其输出 `phase_traces` 当前表示阶段数而不是不同 Trace 数；本轮始终是四个操作对应四条主 Trace。
 本地 Jaeger 数据依赖当前实例的保存时间，清空观测存储后链接不再是可用证据。
 

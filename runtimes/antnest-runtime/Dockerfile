@@ -9,6 +9,7 @@ WORKDIR /src
 COPY runtimes/antnest-runtime/rust-toolchain.toml ./rust-toolchain.toml
 RUN rustup show active-toolchain
 COPY runtimes/antnest-runtime ./runtimes/antnest-runtime
+COPY tests/integration/antnest-runtime ./tests/integration/antnest-runtime
 COPY contracts/runtime ./contracts/runtime
 WORKDIR /src/runtimes/antnest-runtime
 RUN --mount=type=cache,target=/usr/local/cargo/registry \

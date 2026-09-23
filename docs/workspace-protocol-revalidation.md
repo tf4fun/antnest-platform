@@ -5,7 +5,7 @@ service implementations, deploy images to the retained development environment,
 or retire historical browser assets.
 
 `make e2e-workspace` now uses the current disposable Foundation setup and
-installed official ACP SDK. The [migration contract](../scripts/workspace-closeout/protocol-migration-contract.md)
+installed official ACP SDK. The [migration contract](../tests/e2e/workspace-closeout/protocol-migration-contract.md)
 defines current state ownership, execution audits, process evidence and cleanup.
 The [automated C4 browser profile](c4-browser-revalidation.md) remains a separate
 scope; protocol acceptance does not establish browser recovery or layout.
@@ -34,8 +34,8 @@ scope; protocol acceptance does not establish browser recovery or layout.
 ## Original failed runs retained
 
 Private verification logs and retained-environment inventory are under
-`.cache/workspace-protocol-migration-20260921/`; raw profile evidence is under
-`.cache/lifecycle-workspace/<project>/`. Files include private public-audit
+`artifacts/verification/workspace-protocol-migration-20260921/`; raw profile evidence is under
+`artifacts/verification/lifecycle-workspace/<project>/`. Files include private public-audit
 snapshots, model/request metadata, watch observations, deployment and raw traces.
 
 Project `antnest-lifecycle-e3e29bb8` passes the business sequence but fails six of

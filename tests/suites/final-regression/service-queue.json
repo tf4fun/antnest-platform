@@ -1,0 +1,188 @@
+[
+  {
+    "name": "format",
+    "command": [
+      "make",
+      "fmt-check"
+    ],
+    "env": {
+      "COMPOSE_PARALLEL_LIMIT": "1",
+      "COMPOSE_ENV_FILES": ".env.example"
+    },
+    "pause_file": {
+      "input": "output",
+      "relative": "pause-before-next"
+    },
+    "timeout_ms": 1200000,
+    "grace_ms": 180000
+  },
+  {
+    "name": "go-race",
+    "command": [
+      "sh",
+      "-c",
+      "for service in runtime-controller identity-service agent-controller admin-console edge-gateway; do GOCACHE=\"$PWD/.cache/go-build\" GOMODCACHE=\"$PWD/.cache/go-mod\" node tests/integration/go/run.mjs \"$service\" --profile all --output \"$ANTNEST_SUITE_GO_OUTPUT\" -- -race -timeout=10m || exit $?; done"
+    ],
+    "env": {
+      "COMPOSE_PARALLEL_LIMIT": "1",
+      "COMPOSE_ENV_FILES": ".env.example",
+      "ANTNEST_SUITE_GO_OUTPUT": {
+        "input": "output",
+        "relative": "go-race"
+      }
+    },
+    "pause_file": {
+      "input": "output",
+      "relative": "pause-before-next"
+    },
+    "timeout_ms": 1200000,
+    "grace_ms": 180000
+  },
+  {
+    "name": "go-lint",
+    "command": [
+      "make",
+      "go-lint"
+    ],
+    "env": {
+      "COMPOSE_PARALLEL_LIMIT": "1",
+      "COMPOSE_ENV_FILES": ".env.example"
+    },
+    "pause_file": {
+      "input": "output",
+      "relative": "pause-before-next"
+    },
+    "timeout_ms": 1200000,
+    "grace_ms": 180000
+  },
+  {
+    "name": "node-lint",
+    "command": [
+      "make",
+      "node-lint"
+    ],
+    "env": {
+      "COMPOSE_PARALLEL_LIMIT": "1",
+      "COMPOSE_ENV_FILES": ".env.example"
+    },
+    "pause_file": {
+      "input": "output",
+      "relative": "pause-before-next"
+    },
+    "timeout_ms": 1200000,
+    "grace_ms": 180000
+  },
+  {
+    "name": "stage2-fixtures",
+    "command": [
+      "/bin/sh",
+      "-c",
+      "node --test --test-concurrency=1 tests/e2e/agent-acp-service/stage2-*.test.mjs"
+    ],
+    "env": {
+      "COMPOSE_PARALLEL_LIMIT": "1",
+      "COMPOSE_ENV_FILES": ".env.example"
+    },
+    "pause_file": {
+      "input": "output",
+      "relative": "pause-before-next"
+    },
+    "timeout_ms": 1200000,
+    "grace_ms": 180000
+  },
+  {
+    "name": "acp-tests",
+    "command": [
+      "sh",
+      "-c",
+      "npm --prefix services/agent-acp-service test && npm --prefix services/agent-acp-service run test:integration"
+    ],
+    "env": {
+      "COMPOSE_PARALLEL_LIMIT": "1",
+      "COMPOSE_ENV_FILES": ".env.example"
+    },
+    "pause_file": {
+      "input": "output",
+      "relative": "pause-before-next"
+    },
+    "timeout_ms": 1200000,
+    "grace_ms": 180000
+  },
+  {
+    "name": "acp-sdk-audit",
+    "command": [
+      "node",
+      "tests/support/dependencies.mjs",
+      "--profile",
+      "postgres",
+      "--output",
+      {
+        "input": "output",
+        "relative": "dependencies"
+      },
+      "--name",
+      "acp-sdk-audit-database",
+      "--timeout-ms",
+      "900000",
+      "--grace-ms",
+      "15000",
+      "--startup-wait-seconds",
+      "30",
+      "--",
+      "npm",
+      "--prefix",
+      "services/agent-acp-service",
+      "run",
+      "test:audit:v1"
+    ],
+    "check_resources": true,
+    "env": {
+      "COMPOSE_PARALLEL_LIMIT": "1",
+      "COMPOSE_ENV_FILES": ".env.example"
+    },
+    "pause_file": {
+      "input": "output",
+      "relative": "pause-before-next"
+    },
+    "timeout_ms": 1200000,
+    "grace_ms": 180000
+  },
+  {
+    "name": "console-tests",
+    "command": [
+      "npm",
+      "--prefix",
+      "services/admin-console/web",
+      "test"
+    ],
+    "env": {
+      "COMPOSE_PARALLEL_LIMIT": "1",
+      "COMPOSE_ENV_FILES": ".env.example"
+    },
+    "pause_file": {
+      "input": "output",
+      "relative": "pause-before-next"
+    },
+    "timeout_ms": 1200000,
+    "grace_ms": 180000
+  },
+  {
+    "name": "ui-tests",
+    "command": [
+      "npm",
+      "--prefix",
+      "services/agent-ui/web",
+      "test"
+    ],
+    "env": {
+      "COMPOSE_PARALLEL_LIMIT": "1",
+      "COMPOSE_ENV_FILES": ".env.example"
+    },
+    "pause_file": {
+      "input": "output",
+      "relative": "pause-before-next"
+    },
+    "timeout_ms": 1200000,
+    "grace_ms": 180000
+  }
+]

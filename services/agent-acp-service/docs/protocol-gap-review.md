@@ -324,14 +324,14 @@ A1 参考 Goose `serve`，不迁移 Agent compute，不建立第二套应用 API
 
 ### 本批验证
 
-| 验证           | 结果                                                                                                                                                |
-| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| ACP 单元/组件  | 34 文件、255 项通过；包含 10 项 HTTP 接入、身份与资源生命周期测试                                                                                   |
-| ACP PostgreSQL | 9 文件、66 项通过；新增 HTTP Tool/回复顺序、取消、活动 Run 重连、跨身份隔离、HTTP/WebSocket 历史互通                                                |
-| Gateway        | 全模块测试及 `-race` 通过；标准 golangci-lint 0 issues                                                                                              |
-| 生产构建       | ACP TypeScript 构建、ACP Service 与 Gateway Docker 镜像构建通过                                                                                     |
-| 仓库准入       | `make fmt-check`、`make lint` 通过；Go 标准 lint、两项 Rust Clippy、ACP ESLint/类型检查、两个前端类型检查均通过                                     |
-| Docker Stage 3 | `scripts/e2e-stage3a.sh` 通过；Workspace 客户端分别执行 WebSocket 和 HTTP 的真实 Runtime Tool/聊天/断线后回放，原有身份、生命周期和 Jaeger 验收通过 |
+| 验证           | 结果                                                                                                                                                  |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ACP 单元/组件  | 34 文件、255 项通过；包含 10 项 HTTP 接入、身份与资源生命周期测试                                                                                     |
+| ACP PostgreSQL | 9 文件、66 项通过；新增 HTTP Tool/回复顺序、取消、活动 Run 重连、跨身份隔离、HTTP/WebSocket 历史互通                                                  |
+| Gateway        | 全模块测试及 `-race` 通过；标准 golangci-lint 0 issues                                                                                                |
+| 生产构建       | ACP TypeScript 构建、ACP Service 与 Gateway Docker 镜像构建通过                                                                                       |
+| 仓库准入       | `make fmt-check`、`make lint` 通过；Go 标准 lint、两项 Rust Clippy、ACP ESLint/类型检查、两个前端类型检查均通过                                       |
+| Docker Stage 3 | `tests/e2e/e2e-stage3a.sh` 通过；Workspace 客户端分别执行 WebSocket 和 HTTP 的真实 Runtime Tool/聊天/断线后回放，原有身份、生命周期和 Jaeger 验收通过 |
 
 单服务 PostgreSQL 验证复用已有开发实例，仅创建并删除独立测试数据库。
 Docker 联调使用自动清理的临时项目 `antnest-stage3-e2e-14950`，容器、卷、网络

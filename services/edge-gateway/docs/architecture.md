@@ -113,7 +113,7 @@ After upgrade, a message relay replaces blind byte copying. Each complete
 client message is buffered within 64 MiB, then checked against Identity using
 the original browser token before forwarding. Protocol values remain unchanged,
 except W3C context in standard request/notification `params._meta`, which the
-transport tracing wrapper replaces with the actual Gateway CLIENT context.
+transport tracing wrapper replaces with the actual Gateway PRODUCER context.
 Responses and non-JSON frames remain byte-for-byte unchanged. The current
 principal must be active and retain the same User/Organization/Membership;
 authentication cannot switch identity inside an existing connection. One

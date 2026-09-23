@@ -1,0 +1,11 @@
+import { subscribe } from 'node:diagnostics_channel';
+import { appendFileSync } from 'node:fs';
+subscribe('undici:request:error', ({request, error}) => {
+  try {
+    const origin=String(request.origin);
+    if (!origin.startsWith('http://127.0.0.1:')) return;
+    const path=String(request.path).split('?')[0];
+    if (!path.startsWith('/api/')) return;
+    appendFileSync(new URL('./http-errors.private.jsonl',import.meta.url),JSON.stringify({time:new Date().toISOString(),method:request.method,path,error:{name:error.name,code:error.code,message:error.message,cause:error.cause?{name:error.cause.name,code:error.cause.code,message:error.cause.message}:undefined}})+'\n',{mode:0o600});
+  } catch {}
+});

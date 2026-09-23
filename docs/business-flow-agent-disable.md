@@ -169,7 +169,7 @@ Temporal 保存工作流历史、调度和重试，不再使用业务库里的 c
 不能因此虚报生命周期失败，也不能把零 warning 写成所有底层 HTTP 都无错误。
 
 ```sh
-node scripts/observability/check-lifecycle.mjs \
+node tests/e2e/observability/check-lifecycle.mjs \
   --kind disable \
   --admission f6ac45b9cb246be61b0b2ce9085d145e \
   --request lifecycle-f7697387dbf6c4e63e226e5320f3392573f9b6cc28a37640fccb730e85349762 \

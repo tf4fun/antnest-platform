@@ -284,4 +284,21 @@ npm --prefix web run build
 golangci-lint run ./...
 ```
 
+Go unit and component tests remain in the service packages. HTTP startup and
+shutdown integration tests live in
+[`tests/integration/go/admin-console`](../../tests/integration/go/admin-console).
+Run them from the repository root through the Go overlay runner:
+
+```sh
+node tests/integration/go/run.mjs admin-console --package cmd/admin-console -- -run '^TestRun' -count=1
+```
+
+Browser integration fixtures live in
+[`tests/integration/admin-console`](../../tests/integration/admin-console).
+After the web build, run `npm --prefix web run test:browser:catalog` and
+`npm --prefix web run test:browser:audit` from this service directory.
+Docker shutdown and opt-in development model discovery acceptance live in
+[`tests/e2e/admin-console`](../../tests/e2e/admin-console); run their Node
+entry points from the repository root.
+
 See [architecture](docs/architecture.md) and [operations](docs/operations.md).

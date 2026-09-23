@@ -186,7 +186,7 @@ Provider/模板及其他服务数据库保留；没有请求外部模型、执�
 复核现有目标（不再次创建或重放）：
 
 ```sh
-node scripts/observability/exercise-creation-observation.mjs \
+node tests/e2e/observability/exercise-creation-observation.mjs \
   --confirm-development --retain-for-review \
   --agent agent_5693113b9d7cb1bfd4636293015277b5 \
   --request lifecycle-050f31d91f82a42dad09359a5f7ebb19ceff9574bfd277b8ebe9423fa2a1ea0a \

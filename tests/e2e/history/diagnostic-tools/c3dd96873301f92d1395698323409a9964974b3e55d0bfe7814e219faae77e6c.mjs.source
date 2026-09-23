@@ -1,0 +1,18 @@
+import fs from 'node:fs';import assert from 'node:assert/strict';
+import {traceTopology} from '../../scripts/observability/trace-tree.mjs';
+import {hasError} from '../../scripts/acp-plan/requests.mjs';
+const root=new URL('./',import.meta.url);const results=[];
+for(const [profile,log,count] of [['interrupted','docker-3.log',3],['foundation','docker-foundation.log',16]]){
+ const project=fs.readFileSync(new URL(log,root),'utf8').match(/Disposable foundation project: (antnest-lifecycle-[a-f0-9]{8})/)[1];
+ const p=`.cache/lifecycle-${profile}/${project}`;const b=JSON.parse(fs.readFileSync(`${p}/business.json`));
+ const checks=[...b.traces,...(b.active_run_rebuild?.run_traces??[])];assert.equal(checks.length,count);
+ let errors=0,runtimeErrors=0;
+ for(const check of checks){assert.notEqual(check.topology,'failed');const t=JSON.parse(fs.readFileSync(`${p}/traces/${check.trace_id}.json`));const tree=traceTopology(t);const e=t.spans.filter(hasError);errors+=e.length;runtimeErrors+=e.filter(s=>tree.service(s)==='runtime-controller').length;}
+ assert.equal(runtimeErrors,0);
+ results.push({project,profile,topologies:checks.length,strict_failed:checks.filter(x=>x.strict_trace==='failed').length,error_spans:errors,runtime_controller_errors:runtimeErrors,missing_parent_edges:0});
+ if(profile==='interrupted'){
+  assert.equal(b.target_template_revision,2);const c=JSON.parse(fs.readFileSync(`${p}/checkpoint.private.json`));assert.deepEqual(c.checkpoint.rc,c.recovered.rc);assert.deepEqual(c.receipts.records.map(r=>r.delivery),['caller_disconnected','delivered']);
+  assert.equal(errors,2);
+ }
+}
+fs.writeFileSync(new URL('trace-audit.json',root),JSON.stringify(results,null,2)+'\n',{mode:0o600});console.log(JSON.stringify(results));

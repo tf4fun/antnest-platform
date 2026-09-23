@@ -6,6 +6,11 @@ execution or exposing internal service credentials to the browser.
 
 ## Status
 
+The [2026-09-22 timeout follow-up](../../docs/timeout-failure-followup-20260922.md)
+synchronizes usage component-test initialization and checks the delayed replay
+boundary. It changes no production behavior or query timeout; the original
+intermittent full-suite scheduling cause remains unproven.
+
 Session-first workspace behind Edge Gateway at `/workspace/`. The entry selects
 an Agent explicitly; Console may deep-link to `/workspace/?agent=<id>`. A Session
 is selected with `&session=<id>`. There is no project hierarchy and ACP always
@@ -104,15 +109,18 @@ See [architecture](docs/architecture.md) and the platform
 The service's [UI design rules](docs/ui-design.md) define shared controls,
 disclosures, responsive navigation, accessibility, and visual regression checks.
 
-`test:browser` runs Chromium and the production ACP SDK with deterministic
-Gateway/ACP wire fixtures. It checks selection, reload, streamed output, tool
+`test:browser` runs the root-level
+[browser integration suite](../../tests/integration/agent-ui/workspace-browser.mjs)
+with Chromium, the production ACP SDK and deterministic Gateway/ACP wire
+fixtures. Unit and component tests remain in `web/src/`. The browser suite
+checks selection, reload, streamed output, tool
 details, cross-Agent isolation, mobile navigation and browser storage.
 Keyboard modality, touch targets, text contrast, approval rendering, long labels,
 and reduced-motion behavior are also asserted across desktop/mobile widths.
 The suite closes
 its server/browser afterward. It is not a live Provider or deployed-stack test.
 
-F06 uses the [deployed permission profile](../../scripts/acp-permissions/README.md).
+F06 uses the [deployed permission profile](../../tests/e2e/acp-permissions/README.md).
 Pure tests cover approval inbox cleanup, stale replies, configuration response
 ordering and disabled submission during configuration. The deployed browser profile
 covers allow once, reject once, Chat mode, completion unlocking, default

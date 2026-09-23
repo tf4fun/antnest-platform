@@ -4,7 +4,7 @@ Date: 2026-09-21. Baseline: `866d0aa` plus preceding uncommitted acceptance and
 Temporal readiness/development synchronization batches. This batch owns the Loss
 acceptance consumer; no production service changes or legacy asset removal.
 
-The [migration contract](../scripts/lifecycle-closeout/loss-migration-contract.md)
+The [migration contract](../tests/e2e/lifecycle-closeout/loss-migration-contract.md)
 keeps live Docker-event and cold inventory-reconciliation cases. Each first
 completes a real Bash append and exact history replay. The owned idle Runtime is
 stopped normally, its exit-zero/no-OOM state checked, then its stopped container
@@ -75,8 +75,8 @@ eleven health checks pass (Jaeger has no check). Formatting and local document
 links pass. No production implementation changed, no old asset was removed, and
 changes remain uncommitted.
 
-Private logs are under `.cache/lifecycle-loss-migration-20260921/`; raw profile
-evidence is under `.cache/lifecycle-loss/<project>/`.
+Private logs are under `artifacts/verification/lifecycle-loss-migration-20260921/`; raw profile
+evidence is under `artifacts/verification/lifecycle-loss/<project>/`.
 
 ## Subsequent service repair
 

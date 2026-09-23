@@ -1,0 +1,93 @@
+[
+  {
+    "name": "migration-final-format",
+    "command": [
+      "make",
+      "fmt"
+    ]
+  },
+  {
+    "name": "migration-format-check",
+    "command": [
+      "make",
+      "fmt-check"
+    ]
+  },
+  {
+    "name": "acp-final-protocol-profile",
+    "command": [
+      "npm",
+      "--prefix",
+      "services/agent-acp-service",
+      "run",
+      "test:integration"
+    ]
+  },
+  {
+    "name": "console-final-unit",
+    "command": [
+      "go",
+      "test",
+      "-count=1",
+      "-p=1",
+      "./services/admin-console/..."
+    ]
+  },
+  {
+    "name": "console-root-http-integration",
+    "command": [
+      "node",
+      "tests/integration/go/run.mjs",
+      "admin-console",
+      "--",
+      "-race"
+    ]
+  },
+  {
+    "name": "gateway-final-unit",
+    "command": [
+      "go",
+      "test",
+      "-count=1",
+      "-p=1",
+      "./services/edge-gateway/..."
+    ]
+  },
+  {
+    "name": "gateway-root-http-integration",
+    "command": [
+      "node",
+      "tests/integration/go/run.mjs",
+      "edge-gateway",
+      "--",
+      "-race"
+    ]
+  },
+  {
+    "name": "runtime-final-sdk-progress",
+    "command": [
+      "cargo",
+      "test",
+      "--manifest-path",
+      "runtimes/antnest-runtime/Cargo.toml",
+      "--locked",
+      "progress"
+    ]
+  },
+  {
+    "name": "runtime-final-linux",
+    "command": [
+      "docker",
+      "build",
+      "--target",
+      "build",
+      "--progress",
+      "plain",
+      "--iidfile",
+      ".cache/test-layout-migration-20260922/runtime-build-image.id",
+      "-f",
+      "runtimes/antnest-runtime/Dockerfile",
+      "."
+    ]
+  }
+]

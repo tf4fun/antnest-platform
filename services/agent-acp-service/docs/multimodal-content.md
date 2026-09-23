@@ -88,7 +88,7 @@ reference text, never used to read a server file or choose an upload destination
    load/fork/isolation/failed Run release and Jaeger ancestry. Real Provider
    acceptance is separately reported; a fixture is not evidence of recognition
    quality. F08 now accepts embedded text but still rejects unsupported ZIP
-   content before admission. See the [reusable deployment profile](../../../scripts/acp-multimodal/README.md).
+   content before admission. See the [reusable deployment profile](../../../tests/e2e/acp-multimodal/README.md).
 
 Service batch results are recorded once in [protocol conformance](protocol-conformance.md#multimodal-input-f09-acp-service-batch-2026-09-09).
 No migration, additional database table, Runtime change or external Provider

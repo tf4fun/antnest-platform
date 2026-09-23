@@ -108,6 +108,18 @@ cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked
 ```
 
+Unit and isolated component tests remain in this service. Real TCP, UDP,
+PostgreSQL and Linux command-process integration sources live in
+[`tests/integration/runtime-egress`](../../tests/integration/runtime-egress).
+Explicit Cargo test paths and test-only module includes retain the original
+test names and private implementation access. The existing Cargo commands
+continue to compile and run these sources.
+
+Run `make test-egress-postgres` from the repository root for the opt-in database
+cases. The Linux command-process case also runs in this service's Docker build;
+a non-Linux host does not execute that case. The Docker build copies the root
+integration sources and must use the repository root as its build context.
+
 See [`docs/architecture.md`](docs/architecture.md),
 [`docs/operations.md`](docs/operations.md),
 [`docs/observability.md`](docs/observability.md), and the cross-service

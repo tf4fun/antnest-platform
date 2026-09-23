@@ -87,11 +87,11 @@ the error span was retained, not covered by the clock deferral.
 
 ## Artifacts And Scope
 
-Local evidence is under `.cache/runtime-close-integration-20260916/`:
+Local evidence is under `artifacts/verification/runtime-close-integration-20260916/`:
 `runtime-before.json`, `runtime-after.json`, workspace checksums, `rebuild.log`,
 `browser-acceptance/`, `chat-traces.json`, `chat-trace-timing.json`,
 `negative-trace.json`, `lifecycle-trace.json` and `final-agent-state.json`.
-The earlier `.cache/development-acceptance/` evidence was archived under
+The earlier `artifacts/verification/development-acceptance/` evidence was archived under
 `previous-development-acceptance/` before the profile wrote fresh results.
 These ignored artifacts are not guaranteed in a fresh clone; this report
 preserves their scoped conclusions.

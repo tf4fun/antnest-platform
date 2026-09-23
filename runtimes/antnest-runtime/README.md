@@ -128,7 +128,7 @@ serially from the repository root:
 ```sh
 docker build --target build -f runtimes/antnest-runtime/Dockerfile -t antnest/antnest-runtime:managed-build .
 docker build -f runtimes/antnest-runtime/Dockerfile -t antnest/antnest-runtime:managed-e2e .
-python3 runtimes/antnest-runtime/tests/e2e_managed_mcp.py
+python3 tests/e2e/antnest-runtime/e2e_managed_mcp.py
 ```
 
 Only the build stage contains the test fixture executable; it is not shipped in
@@ -182,15 +182,24 @@ cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked
 ```
 
+Unit and isolated component tests remain in the Runtime sources. SDK, wire,
+network and process integration sources live in
+[`tests/integration/antnest-runtime`](../../tests/integration/antnest-runtime).
+Explicit Cargo test paths and test-only module includes keep the original
+module names, private implementation access and test names. The commands above
+continue to compile and run these sources. The isolated container suite and its
+fixtures live in [`tests/e2e/antnest-runtime`](../../tests/e2e/antnest-runtime).
+
 The Docker build uses the crate's pinned Rust toolchain and supplies the Linux
-compile and unit-test gate. `make e2e-stage1` is the production-shape admission
+compile and test gate. `make e2e-stage1` is the production-shape admission
 gate: it starts the real PID 1 binary with TUN and container capabilities,
 checks the non-privileged execution and control-network boundaries, exercises
 MCP, restarts Runtime to verify owned network-state reconciliation, and proves
 Runtime/Egress policy changes. Host checks cover portable contract and
-configuration logic. Building the image requires the platform repository root
-because `contracts/runtime` is a shared, language-neutral artifact. The binary
-requires Linux for TUN and privilege setup. Normal execution is
+configuration logic; Linux-only integration cases require the Docker gate.
+Building the image requires the platform repository root because
+`contracts/runtime` and the root integration sources are copied into the build.
+The binary requires Linux for TUN and privilege setup. Normal execution is
 Controller-managed; launching it manually without generation bootstrap values
 is expected to fail closed.
 

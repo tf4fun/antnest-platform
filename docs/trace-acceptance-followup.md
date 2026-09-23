@@ -29,7 +29,7 @@ The independently tagged image is
 `antnest/runtime-controller:expected-absence-20260917`, image ID
 `sha256:d994b5e92363cb630ae9b6bc3d64bc8deee64fc93bfd26cf257e54d10f6b1c3d`.
 The retained development deployment and the normal local image tag are not
-replaced. Local evidence is in `.cache/acp-persistence-20260917/` under
+replaced. Local evidence is in `artifacts/verification/acp-persistence-20260917/` under
 `runtime-absence-*`.
 
 ## Fixture integration contract
@@ -72,8 +72,8 @@ All 34 request/lifecycle topology checks passed. Four real expected-absence
 count is zero. Strict Trace still fails on 19 warning traces, which are outside
 this change. The profile retains its nonzero result for those warnings.
 
-Evidence is in `.cache/stage3-base/antnest-stage3-e2e-15658/` and
-`.cache/legacy-acceptance-20260917/base-docker-8.log`. Cleanup verified zero owned
+Evidence is in `artifacts/verification/stage3-base/antnest-stage3-e2e-15658/` and
+`artifacts/verification/legacy-acceptance-20260917/base-docker-8.log`. Cleanup verified zero owned
 resources or verification children, with the retained 12-container baseline
 unchanged, before starting the separate crash-recovery regression.
 
@@ -93,8 +93,8 @@ requests/lifecycles. The profile returns nonzero for those warnings, not for
 the six diagnostic crash traces. The business and topology outcomes do not
 claim full strict acceptance. P1 error semantics remain unchanged.
 
-Private evidence is in `.cache/acp-restart/antnest-stage3-e2e-16578/` and
-`.cache/legacy-acceptance-20260917/restart-docker-5.log`. All resources belonging
+Private evidence is in `artifacts/verification/acp-restart/antnest-stage3-e2e-16578/` and
+`artifacts/verification/legacy-acceptance-20260917/restart-docker-5.log`. All resources belonging
 to this and prior P2 attempts are gone; no verification children remain and the
 retained 12-container baseline is unchanged. The isolated candidate has not
 been deployed to the retained stack. No shared legacy assets were retired.

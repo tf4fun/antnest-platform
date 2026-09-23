@@ -37,7 +37,7 @@ Preserve the normal local tag and retained development.
 Require all prior source-generation/allocation, loss/recovery, SDK/public audit,
 and topology evidence, with zero source-Inspect ERROR spans. Strict timing and
 deliberate rejection markers must remain failed. Development synchronization is
-a separate follow-up. Private logs live in `.cache/runtime-inspect-absence-20260921/`.
+a separate follow-up. Private logs live in `artifacts/verification/runtime-inspect-absence-20260921/`.
 
 The isolated candidate is `antnest/runtime-controller:inspect-absence-20260921`,
 image ID `sha256:4612f0bcd3bc86a95bd5b71f0de2c5fb509c9ffce819ef67a49d38bbf26137e0`.

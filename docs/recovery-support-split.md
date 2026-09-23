@@ -5,7 +5,7 @@ Date: 2026-09-21. Follows [Stage 3 inline-tail cleanup](stage3-tail-retirement.m
 ## Boundary
 
 Current `update-receipt-flow.mjs` and `loss-flow.mjs` now import
-`scripts/lifecycle-closeout/recovery-support.mjs`. Bounded polling, Compose-owned
+`tests/e2e/lifecycle-closeout/recovery-support.mjs`. Bounded polling, Compose-owned
 service inspection and the ten fixed service-owned journal queries move without
 semantic changes. Current Runtime inspection preserves ownership filters, exact
 image/workspace checks and execution identity, generation, digest, health,
@@ -69,7 +69,7 @@ image is rebuilt or deployed. Formatting, local documentation links, relative
 imports and `git diff --check` pass. Prior uncommitted changes are preserved.
 
 Private source hashes, logs and a fresh twelve-container development baseline are
-under `.cache/recovery-support-split-20260921/` with private file permissions.
+under `artifacts/verification/recovery-support-split-20260921/` with private file permissions.
 Historical unfinished-mutation crash recovery remains separate from normal
 committed-response recovery. The follow-up
 [retires the historical startup gate/Compose/image/Trace graph](interruption-assets-retirement.md)

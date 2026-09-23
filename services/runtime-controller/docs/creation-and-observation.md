@@ -67,7 +67,8 @@ One producer batch alone is not end-to-end completion.
 
 Runtime Controller batch verification: `make fmt-check`, `make lint` (zero
 issues), the full Go suite with a real isolated PostgreSQL database, and
-`creation-observation-e2e.mjs` against a separately built Docker Controller passed.
+[`creation-observation-e2e.mjs`](../../../tests/e2e/runtime-controller/creation-observation-e2e.mjs)
+against a separately built Docker Controller passed.
 The migration test covers completed, running, unknown and failed predecessor
 operations. The Docker test uses the existing Runtime image and an allocated
 Egress network, without invoking an external model. Test resources are removed.
@@ -85,7 +86,9 @@ sequence diagrams with fresh evidence; existing traces describe the old behavior
 
 ## Focused Docker Verification
 
-`make e2e-observation` runs against an independently started test Controller.
+`make e2e-observation` from the service directory runs against an independently
+started test Controller. The equivalent command from the repository root is
+`node tests/e2e/runtime-controller/creation-observation-e2e.mjs`.
 It creates a unique Agent, observes readiness separately, checks exact command
 replay, then updates/disables/enables/deletes without intervening readiness waits.
 It does not require Agent Controller, ACP, an external Provider or a second

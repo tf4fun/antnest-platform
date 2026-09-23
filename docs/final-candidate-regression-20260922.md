@@ -3,7 +3,7 @@
 Date: 2026-09-22. Status: regression complete; business and scoped topology pass,
 strict Trace admission remains failed. This is a new serial regression of
 `898a2be429a79f3d7f3dc4fb11931344be7022ce`, with a formatting-only import change
-in `scripts/lifecycle-closeout/loss-flow.mjs`, the ACP Docker/Stage 2 fixture
+in `tests/e2e/lifecycle-closeout/loss-flow.mjs`, the ACP Docker/Stage 2 fixture
 corrections and shared cleanup corrections below recorded in the private
 candidate manifest. Production service behavior has not changed in this batch.
 
@@ -36,7 +36,7 @@ F07 remains deferred. Intentional SIGKILL reconstruction diagnostics retain thei
 to the normal restart suite. Agent Session automatic continuation and
 host/database failure recovery remain outside the selected scope.
 
-Private evidence is under `.cache/final-regression-20260922/`. It includes the
+Private evidence is under `artifacts/verification/final-regression-20260922/`. It includes the
 source manifest and exact patch, commands, original logs, image manifests and
 per-profile resource comparisons. Available per-profile business, deployment,
 browser and raw Trace artifacts remain in each runner's private directory. Some
@@ -243,10 +243,10 @@ strict results remain failed; this is not an all-green strict acceptance claim.
 | Workspace browser    | Five browser groups; 13 inspections                       | 2    | `workspace-browser.log`        |
 | C4 browser           | Eleven browser groups; ten scoped inspections             | 1    | `c4-browser.log`               |
 
-All log names resolve under `.cache/final-regression-20260922/`. The matrix
+All log names resolve under `artifacts/verification/final-regression-20260922/`. The matrix
 manifest records durations and results; the associated queue records retain
 commands. C4 raw evidence is under
-`.cache/c4-browser-2026-09-21T19-23-36-299Z/`.
+`artifacts/verification/c4-browser-2026-09-21T19-23-36-299Z/`.
 
 ## Completion record
 

@@ -140,7 +140,7 @@ dependency-disconnection supervision is outside this creation pilot.
 Run the reusable normal-path check after final publication:
 
 ```sh
-node scripts/observability/check-create-workflow.mjs \
+node tests/e2e/observability/check-create-workflow.mjs \
   --trace e8ce24d85296149ba14472dc7e594c10 \
   --request lifecycle-ba8fff06db5a9e95f3067e294a7bc0ce876b6156666fec2b2cf6417dc70e1605
 ```

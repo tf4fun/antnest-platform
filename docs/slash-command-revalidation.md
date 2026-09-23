@@ -9,7 +9,7 @@ business/topology evidence, not a full strict deployment pass.
 
 ## Fixture Contract Repair
 
-The [command driver](../scripts/acp-commands/README.md) uses current Provider/Model
+The [command driver](../tests/e2e/acp-commands/README.md) uses current Provider/Model
 creation, stable Model identity, the returned Template revision and executable
 Agent readiness. Foreign users are initialized through the official SDK and
 must receive the exact ACP `access_denied` response to `session/new`, on v1
@@ -120,7 +120,7 @@ claim is made. The [asset inventory](acceptance-asset-migration.md) tracks the
 remaining groups; the subsequent [Tool permission migration](tool-permission-revalidation.md)
 adds disposable deployment and an independent client-crash cleanup control.
 
-Ignored local evidence is under `.cache/legacy-acceptance-20260917/`:
+Ignored local evidence is under `artifacts/verification/legacy-acceptance-20260917/`:
 `commands-red.log`, `commands-hostname-red.log`, `commands-gates-final.log`,
 `commands-docker-1.log`, `commands-docker-2.log`, `commands-result.json`,
 `commands-summary.json` and `commands-cleanup.json`. These contain compact

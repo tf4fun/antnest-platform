@@ -15,7 +15,7 @@ previous value; both pages must display exactly the received title/time. Reload
 must list and load the same metadata without changing activity time or
 reexecuting model/Tool work. No shared protocol or service API changed.
 
-The [C4 runner](../scripts/workspace-closeout/c4-run.mjs) starts isolated real
+The [C4 runner](../tests/e2e/workspace-closeout/c4-run.mjs) starts isolated real
 Gateway, Identity, Controller, ACP, Runtime, UI, PostgreSQL, Temporal and Jaeger
 services with synthetic accounts. Only the external model is controlled. The
 browser does not mock Gateway/ACP traffic. Images were built serially using
@@ -28,7 +28,7 @@ browser does not mock Gateway/ACP traffic. Images were built serially using
 | Agent UI | `sha256:199d86414a5ca54ac13deb4fd6dad70c66cf1b5ffb189f6701e5e3e99484a6f1` |
 
 Build logs, all nine service image IDs and fixture output are retained locally
-under `.cache/acp-platform-integration-20260916/`. The preceding ACP service gates
+under `artifacts/verification/acp-platform-integration-20260916/`. The preceding ACP service gates
 remain 959 unit/contract/component, 245 PostgreSQL and 9 SDK audit tests, plus
 four isolated ACP production-image scenarios. Those counts belong to the
 preceding service batch; they are not fresh reruns here. This batch reran all
@@ -36,7 +36,7 @@ preceding service batch; they are not fresh reruns here. This batch reran all
 
 ## Final Deployment Evidence
 
-Final report: `.cache/c4-browser-2026-09-16T15-48-45-799Z/report.json`, project
+Final report: `artifacts/verification/c4-browser-2026-09-16T15-48-45-799Z/report.json`, project
 `antnest-lifecycle-93af7ada`. All 11 browser/business checks passed:
 
 - Member login, Agent selection, new/load Session and real Runtime tools.
@@ -72,7 +72,7 @@ warning entries, all `clock skew adjustment disabled`:
 The same raw timestamp review found ACP server starts 221, 458, 165 and 218
 microseconds before their intact Gateway client parents, with millisecond-aligned
 ACP start times. The review and independent cleanup inventory are saved in
-`.cache/acp-platform-integration-20260916/final-review.json`. Desktop attachments,
+`artifacts/verification/acp-platform-integration-20260916/final-review.json`. Desktop attachments,
 mobile conversation and revoked-login screenshots were inspected; the final
 mobile screenshot also retained readable layout and input controls.
 
@@ -85,7 +85,7 @@ browser processes were removed. The retained development stack remained healthy.
 
 ## Earlier Run And Timing Review
 
-The first run at `.cache/c4-browser-2026-09-16T15-44-38-856Z/report.json`
+The first run at `artifacts/verification/c4-browser-2026-09-16T15-44-38-856Z/report.json`
 passed all 11 browser checks, including the new metadata comparison. Nine
 successful chat traces passed topology with zero error spans/events. Five
 passed strict Trace checking; four failed with 292 repeated clock-warning

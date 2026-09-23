@@ -1,7 +1,7 @@
 # Identity / access acceptance migration
 
 This migration is delivered in the three owning batches in the
-[fixture contract](../scripts/identity-closeout/migration-contract.md).
+[fixture contract](../tests/e2e/identity-closeout/migration-contract.md).
 HTTP Identity evidence does not accept ACP recovery or Agent offboarding.
 Production service behavior, clocks and export intervals are unchanged.
 
@@ -42,8 +42,8 @@ The real expiry rejection has three error spans. Raw traces are archived
 unchanged; neither warnings nor error spans are suppressed. Both profiles
 therefore retain exit code 2 after all independent business checks run.
 
-Private evidence is under `.cache/identity-http/<project>/`; the coordinated
-logs and fixture-test logs are in `.cache/identity-migration-20260917/`.
+Private evidence is under `artifacts/verification/identity-http/<project>/`; the coordinated
+logs and fixture-test logs are in `artifacts/verification/identity-migration-20260917/`.
 Failed earlier deployments exposed the obsolete OIDC URL and cross-service SQL
 assumptions; their results are not counted as passing acceptance.
 
@@ -68,7 +68,7 @@ Eight denied message traces and 18 setup/replay/execution traces passed
 topology/privacy. The strict result remains failed: deliberate rejections retain
 22 error spans; 12 of the 26 Trace checks fail strict evaluation, with 213 raw
 warning entries. Raw warnings and errors remain unchanged. Evidence is in
-`.cache/identity-session/antnest-stage3-e2e-28715/`.
+`artifacts/verification/identity-session/antnest-stage3-e2e-28715/`.
 
 ## Agent access / offboarding integration
 
@@ -109,7 +109,7 @@ all warning entries. A denied Gateway message is distinguished from previous
 successful or ACP-rejected prompts on that same connection by the Gateway
 admission failure, then validated for its exact connection, Identity attempt,
 SQL ownership and absence of execution. Evidence is in
-`.cache/identity-agent/antnest-stage3-e2e-30632/`.
+`artifacts/verification/identity-agent/antnest-stage3-e2e-30632/`.
 
 ## Verification and remaining boundary
 

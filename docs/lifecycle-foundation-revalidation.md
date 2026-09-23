@@ -19,7 +19,7 @@ report preserves the original failure; strict warnings/errors remain separate.
 
 `make e2e-lifecycle` now selects the foundation-specific flow and deployment.
 Other Lifecycle and Workspace entry points still use their existing flows.
-See the [migration contract](../scripts/lifecycle-closeout/migration-contract.md).
+See the [migration contract](../tests/e2e/lifecycle-closeout/migration-contract.md).
 
 - Current Provider creation, stable Model ID and returned Template revisions
   replace retired Model-revision setup. The failed-start Template also uses its
@@ -117,8 +117,8 @@ single health comparison was transiently unequal; the immediate diagnostic and
 final full comparison matched. No retained service was started or modified.
 
 Private deployment snapshots, raw traces, errors and results are under
-`.cache/lifecycle-foundation/<project>/`; serial logs, local test results and
-retained-state comparisons are under `.cache/lifecycle-foundation-20260921/`.
+`artifacts/verification/lifecycle-foundation/<project>/`; serial logs, local test results and
+retained-state comparisons are under `artifacts/verification/lifecycle-foundation-20260921/`.
 They contain private/synthetic fixture material and are not committed.
 
 Network packet flow, shutdown, health, restore, loss, interrupted-update,

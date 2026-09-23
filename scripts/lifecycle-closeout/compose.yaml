@@ -1,8 +1,0 @@
-# Disposable fixture only. Relative mounts are rooted at the first Compose file.
-services:
-  stage3-model:
-    command: ["node", "/lifecycle/model.mjs"]
-    volumes:
-      - ./scripts/lifecycle-closeout:/lifecycle:ro
-    ports:
-      - "127.0.0.1:${ANTNEST_LIFECYCLE_MODEL_HOST_PORT}:8080"

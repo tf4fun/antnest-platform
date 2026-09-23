@@ -1,9 +1,12 @@
 .cache/
+artifacts/verification/
 bin/
 coverage/
 dist/
 node_modules/
 target/
+__pycache__/
+*.pyc
 *.tsbuildinfo
 .env
 .env.*

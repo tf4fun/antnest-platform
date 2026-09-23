@@ -24,6 +24,7 @@ func RelayACPMessage(ctx context.Context, kind int, payload []byte, admit func(c
 	options := []trace.SpanStartOption{trace.WithNewRoot(), trace.WithSpanKind(trace.SpanKindServer), trace.WithAttributes(
 		attribute.String("rpc.system.name", "jsonrpc"), attribute.String("rpc.service", "acp"),
 		attribute.String("rpc.method", method), attribute.String("network.transport", "websocket"),
+		attribute.String("antnest.operation.phase", "relay"),
 		attribute.Int("messaging.message.body.size", len(payload)),
 	)}
 	if connection := trace.SpanContextFromContext(ctx); connection.IsValid() {
@@ -38,14 +39,15 @@ func RelayACPMessage(ctx context.Context, kind int, payload []byte, admit func(c
 			return err
 		}
 	}
-	ctx, client := tracer.Start(ctx, "acp "+method, trace.WithSpanKind(trace.SpanKindClient), trace.WithAttributes(
+	ctx, forwarded := tracer.Start(ctx, "acp "+method, trace.WithSpanKind(trace.SpanKindProducer), trace.WithAttributes(
 		attribute.String("rpc.system.name", "jsonrpc"), attribute.String("rpc.service", "acp"),
 		attribute.String("rpc.method", method), attribute.String("peer.service", "agent-acp-service"),
+		attribute.String("antnest.operation.phase", "forward"),
 	))
-	defer client.End()
+	defer forwarded.End()
 	err := send(injectACPContext(ctx, message, payload))
 	if err != nil {
-		recordFailure(client, "message_send", err)
+		recordFailure(forwarded, "message_send", err)
 		recordFailure(received, "message_send", err)
 	}
 	return err

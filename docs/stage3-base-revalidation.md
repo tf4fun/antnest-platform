@@ -11,7 +11,7 @@ probe spans occur within three of those warning traces). Driver and Make exit
 ## Current contract and scenario mapping
 
 The default `e2e-stage3a.sh` path now uses the
-[base fixture](../scripts/stage3-base/README.md). `make e2e-stage3-local` uses
+[base fixture](../tests/e2e/stage3-base/README.md). `make e2e-stage3-local` uses
 existing images; `make e2e-stage3` builds first. The fixture starts with empty
 volumes and exercises management through Gateway using synthetic credentials.
 
@@ -85,7 +85,7 @@ verification child processes. All 12 retained development containers have the
 same IDs, images and health state and remain running. Shell syntax, Compose
 configuration and `git diff --check` passed. No production image was rebuilt.
 
-Local evidence is in `.cache/legacy-acceptance-20260917/`:
+Local evidence is in `artifacts/verification/legacy-acceptance-20260917/`:
 `base-gates-final.log`, `base-docker-7.log`, `base-result.json`,
 `base-summary.json`, `base-compose-check.log` and `base-cleanup.json`.
 The README documents the separate private raw lifecycle diagnostics directory.

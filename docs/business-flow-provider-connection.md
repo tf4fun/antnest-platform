@@ -168,9 +168,9 @@ Controller INSERT 从 9 降至 5、SQL 从 17 降至 13。总 Span 从 27 降至
 | 模型编辑、凭证轮换 | 新代码已有单测/集成测试；本场景未操作，不借创建 Trace 声称其浏览器复验已完成 |
 | ACP 与下游场景 | 暂缓 ACP 适配；模板和 Agent 创建须在本场景人工确认后逐项执行 |
 
-核对复用 [trace-tree.mjs](../scripts/observability/trace-tree.mjs)、
-[evidence.mjs](../scripts/observability/evidence.mjs)、
-[successful-span.mjs](../scripts/observability/successful-span.mjs)。
+核对复用 [trace-tree.mjs](../tests/e2e/observability/trace-tree.mjs)、
+[evidence.mjs](../tests/e2e/observability/evidence.mjs)、
+[successful-span.mjs](../tests/e2e/observability/successful-span.mjs)。
 等待至少 6 秒后查询 Jaeger，不保存原始 Trace、Cookie 或秘密文件。
 开发 Jaeger 会采集离散 RPC 完整内容，不应作为公开数据源。
 
@@ -181,7 +181,7 @@ Controller INSERT 从 9 降至 5、SQL 从 17 降至 13。总 Span 从 27 降至
 现成 HTTP/RPC 边界检查命令（无需在 `.cache` 放脚本）：
 
 ```sh
-node scripts/observability/check-trace.mjs http://127.0.0.1:16686 0709a295bf7d1cf04b348afdd28c2104 \
+node tests/e2e/observability/check-trace.mjs http://127.0.0.1:16686 0709a295bf7d1cf04b348afdd28c2104 \
   '{"rootService":"edge-gateway","route":"/api/admin/{path...}","status":201,"hops":[["edge-gateway","identity-service",1],["edge-gateway","admin-console",1],["admin-console","agent-controller",1]]}'
 ```
 

@@ -13,7 +13,7 @@ below remain unchanged.
 
 ## Current contract
 
-The [shutdown migration contract](../scripts/lifecycle-closeout/shutdown-migration-contract.md)
+The [shutdown migration contract](../tests/e2e/lifecycle-closeout/shutdown-migration-contract.md)
 was defined first. The profile reuses current Foundation setup and exact
 lifecycle replay with the actual Template revision, immutable Runtime image,
 private Temporal, reserved infrastructure addresses and twelve-service deployment
@@ -127,8 +127,8 @@ running state and health. Old acceptance assets remain retained.
 ## Evidence and remaining scope
 
 Private logs and baseline snapshots are under
-`.cache/lifecycle-shutdown-migration-20260921/`; deployment/raw Trace diagnostics
-are under `.cache/lifecycle-shutdown/<project>/`. Ignored evidence must not be
+`artifacts/verification/lifecycle-shutdown-migration-20260921/`; deployment/raw Trace diagnostics
+are under `artifacts/verification/lifecycle-shutdown/<project>/`. Ignored evidence must not be
 published and is not guaranteed in a fresh clone.
 
 This scope is idle coordinated maintenance, not SIGKILL or active-Tool crash

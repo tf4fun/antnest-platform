@@ -1,0 +1,98 @@
+{
+  "status": "verified-and-removed",
+  "evidence": [
+    "artifacts/verification/cache-source-exit-20260922/persistence-migrated-postgres.result.json",
+    "artifacts/verification/cache-source-exit-20260922/migrated-acp-audit-database.result.json",
+    "artifacts/verification/cache-source-exit-20260922/controller-profile/suite.result.json",
+    "artifacts/verification/cache-source-exit-20260922/runtime-inspect-profile/suite.result.json",
+    "artifacts/verification/cache-source-exit-20260922/runtime-repository-profile/suite.result.json",
+    "artifacts/verification/cache-source-exit-20260922/dependency-cwd-green-v2.result.json"
+  ],
+  "entries": [
+    {
+      "source": ".cache/acp-persistence-20260917/run-postgres.py",
+      "source_sha256": "83219e5c7bc1d8aaf1887e8f05f34ad0df24a557d0ad5f8dbc66a5b376bc9447",
+      "archive": "tests/e2e/history/dependency-wrappers/83219e5c7bc1d8aaf1887e8f05f34ad0df24a557d0ad5f8dbc66a5b376bc9447.py.source",
+      "runner": "tests/support/dependencies.mjs",
+      "profile": "postgres",
+      "startup_wait_seconds": 30,
+      "timeout_ms": 900000,
+      "grace_ms": 15000,
+      "cwd": ".",
+      "command": "argument-vector"
+    },
+    {
+      "source": ".cache/acp-v1-release-audit-20260916/run-postgres.py",
+      "source_sha256": "5e61e8e5ebd2ae3248a9ce825f46a08162e60bcd0af9d01412955a8fa51a9ae4",
+      "archive": "tests/e2e/history/dependency-wrappers/5e61e8e5ebd2ae3248a9ce825f46a08162e60bcd0af9d01412955a8fa51a9ae4.py.source",
+      "runner": "tests/support/dependencies.mjs",
+      "profile": "postgres",
+      "startup_wait_seconds": 30,
+      "timeout_ms": 1200000,
+      "grace_ms": 5000,
+      "cwd": "services/agent-acp-service",
+      "command": "argument-vector",
+      "difference": "The old child had no outer timeout; the formal wrapper uses an explicit 20-minute bound. RELEASE_AUDIT_DATABASE_URL has no current consumer."
+    },
+    {
+      "source": ".cache/publication-trace-20260917/run-postgres.py",
+      "source_sha256": "c19d831836438b7875f951ab163ecd8dde073c193b3cff7e8d29a50b5b774fa5",
+      "archive": "tests/e2e/history/dependency-wrappers/c19d831836438b7875f951ab163ecd8dde073c193b3cff7e8d29a50b5b774fa5.py.source",
+      "runner": "tests/support/dependencies.mjs",
+      "profile": "postgres",
+      "startup_wait_seconds": 30,
+      "timeout_ms": 900000,
+      "grace_ms": 15000,
+      "cwd": ".",
+      "command": "argument-vector"
+    },
+    {
+      "source": ".cache/final-regression-20260922/audit-postgres.py",
+      "source_sha256": "1a259a356fbedde0aba32b447ff48cb9cbb4d74f54e53f8fc6dca4cc7d95f8fd",
+      "archive": "tests/e2e/history/dependency-wrappers/1a259a356fbedde0aba32b447ff48cb9cbb4d74f54e53f8fc6dca4cc7d95f8fd.py.source",
+      "runner": "tests/support/dependencies.mjs",
+      "profile": "postgres",
+      "startup_wait_seconds": 30,
+      "timeout_ms": 900000,
+      "grace_ms": 15000,
+      "cwd": ".",
+      "command": "argument-vector"
+    },
+    {
+      "source": ".cache/controller-workflow-span-20260921/run-components.py",
+      "source_sha256": "8a7900981a79e96058afa828e176b58a6389b7028436edd0636fd9d407365c57",
+      "archive": "tests/e2e/history/dependency-wrappers/8a7900981a79e96058afa828e176b58a6389b7028436edd0636fd9d407365c57.py.source",
+      "runner": "tests/support/dependencies.mjs",
+      "profile": "temporal",
+      "startup_wait_seconds": 180,
+      "timeout_ms": 900000,
+      "grace_ms": 20000,
+      "cwd": ".",
+      "command": "tests/suites/dependencies/controller-workflow-span.json"
+    },
+    {
+      "source": ".cache/runtime-crash-recovery-20260921/postgres-gate.py",
+      "source_sha256": "c094cdf51206cbd6994ce59202dadb0571fec454556c9ba21358184341dac5ea",
+      "archive": "tests/e2e/history/dependency-wrappers/c094cdf51206cbd6994ce59202dadb0571fec454556c9ba21358184341dac5ea.py.source",
+      "runner": "tests/support/dependencies.mjs",
+      "profile": "postgres",
+      "startup_wait_seconds": 60,
+      "timeout_ms": 300000,
+      "grace_ms": 10000,
+      "cwd": ".",
+      "command": "tests/suites/dependencies/runtime-crash-postgres.json"
+    },
+    {
+      "source": ".cache/runtime-inspect-absence-20260921/run-service.py",
+      "source_sha256": "7bf4662b351a4db1514b2830324bb32036b23544174ce6e73dbd2938807340c4",
+      "archive": "tests/e2e/history/dependency-wrappers/7bf4662b351a4db1514b2830324bb32036b23544174ce6e73dbd2938807340c4.py.source",
+      "runner": "tests/support/dependencies.mjs",
+      "profile": "postgres",
+      "startup_wait_seconds": 90,
+      "timeout_ms": 900000,
+      "grace_ms": 30000,
+      "cwd": ".",
+      "command": "tests/suites/dependencies/runtime-inspect.json"
+    }
+  ]
+}

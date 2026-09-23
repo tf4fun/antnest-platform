@@ -142,6 +142,14 @@ make test-runtime-controller-postgres
 make e2e-runtime-controller
 ```
 
+Unit tests remain alongside the service packages. PostgreSQL and Docker
+integration sources live in
+[`tests/integration/go/runtime-controller`](../../tests/integration/go/runtime-controller),
+and the deployed lifecycle scenario lives in
+[`tests/e2e/runtime-controller/run.sh`](../../tests/e2e/runtime-controller/run.sh).
+The root Go runner overlays those sources into their owning service packages so
+they retain access to package-private implementation details.
+
 The PostgreSQL and Docker targets require a local Docker Engine and use
 disposable test databases/projects. The E2E proves initialization from an
 empty environment, Controller-process restart recovery, status identity,
@@ -154,12 +162,13 @@ configuration. Containers receive both values as startup diagnostic metadata;
 operation records retain them after deletion. No automatic pull/update is added.
 
 To verify image resolution against an installed local image without creating
-containers, volumes, or database records, run from this service directory:
+containers, volumes, or database records, run from the repository root:
 
 ```bash
 ANTNEST_RUNTIME_CONTROLLER_TEST_DOCKER_SOCKET=/var/run/docker.sock \
 ANTNEST_RUNTIME_CONTROLLER_TEST_IMAGE_TAG=antnest/antnest-runtime:local \
-go test ./internal/platform/docker -run '^TestInstalledImageResolution$' -count=1
+node tests/integration/go/run.mjs runtime-controller --package internal/platform/docker -- \
+  -run '^TestInstalledImageResolution$' -count=1
 ```
 
 Use the socket path of your Docker context. This opt-in check only inspects the
@@ -171,7 +180,7 @@ For build metadata integration against an existing development instance with
 Jaeger enabled, run from the repository root:
 
 ```bash
-node services/runtime-controller/scripts/build-image-smoke.mjs --project <compose-project>
+node tests/e2e/runtime-controller/build-image-smoke.mjs --project <compose-project>
 ```
 
 This uses the instance's existing PostgreSQL and installed Runtime image. It
@@ -197,9 +206,17 @@ No Provider or external model is called. `--image` and `--jaeger` override defau
 
 ### Opt-in reconstruction crash component
 
-`make test-crash-recovery` (from this service directory) runs four real process
-exit boundaries using the production control service, PostgreSQL adapters and
-Docker driver. See [the contract](docs/crash-recovery-contract.md). It creates its
+The [root crash-recovery suite](../../tests/e2e/go/runtime-controller/internal/control/crash_recovery_component_test.go)
+runs four real process exit boundaries using the production control service,
+PostgreSQL adapters and Docker driver. Run it from the repository root:
+
+```bash
+ANTNEST_RUNTIME_CONTROLLER_CRASH_TEST=true \
+node tests/integration/go/run.mjs runtime-controller --profile e2e --package internal/control -- \
+  -run '^TestRuntimeUpdateProcessCrashRecovery$' -count=1 -v -timeout=6m
+```
+
+See [the contract](docs/crash-recovery-contract.md). It creates its
 own PostgreSQL, internal network, UDP fixture peer, Skills volume and Runtime
 resources; existing development databases and images are not changed.
 
@@ -208,6 +225,13 @@ Requires the installed `postgres:17-bookworm`, `node:24-bookworm-slim` and
 in Docker. `ANTNEST_RUNTIME_CONTROLLER_CRASH_IMAGE` may select a different installed
 Runtime image. Optional `ANTNEST_RUNTIME_CRASH_EVIDENCE` names an existing private
 directory for scoped result summaries and Runtime diagnostics on failure.
+The fixture is compiled for Unix hosts. Evidence, `TMPDIR`, child job inputs and
+effect journals must stay outside `.cache`; parent-path traversal and dangling
+aliases are rejected before database or Docker actions. Output leaves must be
+ordinary files, are checked again when opened, and are written with mode 600.
+Effect journals keep append-and-sync semantics. The storage contract checks run
+with `-run '^TestCrashStorage(ParentEntry|ChildEntry|PhysicalEffects|DiagnosticEntry|Paths|Files)$'`
+through the same root runner without enabling the real Docker crash suite.
 
 This explicitly opted-in abnormal-exit component is separate from routine
 normal-restart acceptance. It proves service recovery, not public Controller

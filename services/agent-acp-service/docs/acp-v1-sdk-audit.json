@@ -119,8 +119,8 @@
       "coverage": "awaiting-stability",
       "implementation": ["src/transport/acp/v1/agent.ts"],
       "tests": [
-        "test/transport/acp-v1-agent.test.ts",
-        "test/e2e/acp-v1-lifecycle.postgres.test.ts"
+        "tests/integration/agent-acp-service/transport/acp-v1-agent.test.ts",
+        "tests/integration/agent-acp-service/e2e/acp-v1-lifecycle.postgres.test.ts"
       ],
       "findings": []
     },
@@ -150,8 +150,8 @@
       "coverage": "awaiting-stability",
       "implementation": ["src/transport/acp/v1/agent.ts"],
       "tests": [
-        "test/transport/acp-v1-agent.test.ts",
-        "test/e2e/acp-v1-lifecycle.postgres.test.ts"
+        "tests/integration/agent-acp-service/transport/acp-v1-agent.test.ts",
+        "tests/integration/agent-acp-service/e2e/acp-v1-lifecycle.postgres.test.ts"
       ],
       "findings": []
     },
@@ -167,8 +167,8 @@
       "coverage": "awaiting-stability",
       "implementation": ["src/transport/acp/v1/agent.ts"],
       "tests": [
-        "test/transport/acp-v1-agent.test.ts",
-        "test/e2e/acp-v1-lifecycle.postgres.test.ts"
+        "tests/integration/agent-acp-service/transport/acp-v1-agent.test.ts",
+        "tests/integration/agent-acp-service/e2e/acp-v1-lifecycle.postgres.test.ts"
       ],
       "findings": []
     },
@@ -184,8 +184,8 @@
       "coverage": "awaiting-stability",
       "implementation": ["src/transport/acp/v1/agent.ts"],
       "tests": [
-        "test/transport/acp-v1-agent.test.ts",
-        "test/e2e/acp-v1-lifecycle.postgres.test.ts"
+        "tests/integration/agent-acp-service/transport/acp-v1-agent.test.ts",
+        "tests/integration/agent-acp-service/e2e/acp-v1-lifecycle.postgres.test.ts"
       ],
       "findings": []
     },
@@ -201,8 +201,8 @@
       "coverage": "awaiting-stability",
       "implementation": ["src/transport/acp/v1/agent.ts"],
       "tests": [
-        "test/transport/acp-v1-agent.test.ts",
-        "test/e2e/acp-v1-lifecycle.postgres.test.ts"
+        "tests/integration/agent-acp-service/transport/acp-v1-agent.test.ts",
+        "tests/integration/agent-acp-service/e2e/acp-v1-lifecycle.postgres.test.ts"
       ],
       "findings": []
     },
@@ -218,8 +218,8 @@
       "coverage": "awaiting-stability",
       "implementation": ["src/transport/acp/v1/agent.ts"],
       "tests": [
-        "test/transport/acp-v1-agent.test.ts",
-        "test/e2e/acp-v1-lifecycle.postgres.test.ts"
+        "tests/integration/agent-acp-service/transport/acp-v1-agent.test.ts",
+        "tests/integration/agent-acp-service/e2e/acp-v1-lifecycle.postgres.test.ts"
       ],
       "findings": []
     },
@@ -241,14 +241,14 @@
         "migrations/0008_refused_context.sql"
       ],
       "tests": [
-        "test/e2e/acp-v1-lifecycle.postgres.test.ts",
-        "test/e2e/acp-mcp-input.postgres.test.ts",
-        "test/e2e/acp-configuration.postgres.test.ts",
-        "test/audit/acp-v1-sdk.audit.ts",
-        "test/e2e/acp-sdk-regressions.postgres.test.ts",
-        "test/adapters/postgres/migrate.postgres.test.ts",
-        "test/adapters/postgres/local-run.postgres.test.ts",
-        "test/e2e/acp-session-info.postgres.test.ts"
+        "tests/integration/agent-acp-service/e2e/acp-v1-lifecycle.postgres.test.ts",
+        "tests/integration/agent-acp-service/e2e/acp-mcp-input.postgres.test.ts",
+        "tests/integration/agent-acp-service/e2e/acp-configuration.postgres.test.ts",
+        "tests/integration/agent-acp-service/audit/acp-v1-sdk.audit.ts",
+        "tests/integration/agent-acp-service/e2e/acp-sdk-regressions.postgres.test.ts",
+        "tests/integration/agent-acp-service/adapters/postgres/migrate.postgres.test.ts",
+        "tests/integration/agent-acp-service/adapters/postgres/local-run.postgres.test.ts",
+        "tests/integration/agent-acp-service/e2e/acp-session-info.postgres.test.ts"
       ],
       "findings": []
     },
@@ -307,8 +307,8 @@
       "coverage": "architecture-excluded",
       "implementation": ["src/transport/acp/v1/agent.ts"],
       "tests": [
-        "test/transport/acp-v1-agent.test.ts",
-        "test/e2e/acp-v1-lifecycle.postgres.test.ts"
+        "tests/integration/agent-acp-service/transport/acp-v1-agent.test.ts",
+        "tests/integration/agent-acp-service/e2e/acp-v1-lifecycle.postgres.test.ts"
       ],
       "findings": ["A2"]
     },
@@ -324,9 +324,9 @@
       "coverage": "service-tested",
       "implementation": ["src/transport/acp/v1/agent.ts"],
       "tests": [
-        "test/transport/acp-v1-agent.test.ts",
-        "test/transport/http-server.test.ts",
-        "test/audit/acp-v1-sdk.audit.ts"
+        "tests/integration/agent-acp-service/transport/acp-v1-agent.test.ts",
+        "tests/integration/agent-acp-service/transport/http-server.test.ts",
+        "tests/integration/agent-acp-service/audit/acp-v1-sdk.audit.ts"
       ],
       "findings": []
     },
@@ -342,8 +342,8 @@
       "coverage": "architecture-excluded",
       "implementation": ["src/transport/acp/v1/agent.ts"],
       "tests": [
-        "test/transport/acp-v1-agent.test.ts",
-        "test/e2e/acp-v1-lifecycle.postgres.test.ts"
+        "tests/integration/agent-acp-service/transport/acp-v1-agent.test.ts",
+        "tests/integration/agent-acp-service/e2e/acp-v1-lifecycle.postgres.test.ts"
       ],
       "findings": ["A2"]
     },
@@ -364,11 +364,11 @@
         "src/application/turn-runner.ts"
       ],
       "tests": [
-        "test/e2e/acp-v1-lifecycle.postgres.test.ts",
-        "test/e2e/acp-permissions.postgres.test.ts",
-        "test/e2e/acp-output.postgres.test.ts",
-        "test/audit/acp-v1-sdk.audit.ts",
-        "test/e2e/acp-sdk-regressions.postgres.test.ts"
+        "tests/integration/agent-acp-service/e2e/acp-v1-lifecycle.postgres.test.ts",
+        "tests/integration/agent-acp-service/e2e/acp-permissions.postgres.test.ts",
+        "tests/integration/agent-acp-service/e2e/acp-output.postgres.test.ts",
+        "tests/integration/agent-acp-service/audit/acp-v1-sdk.audit.ts",
+        "tests/integration/agent-acp-service/e2e/acp-sdk-regressions.postgres.test.ts"
       ],
       "findings": [],
       "resolvedFindings": ["GAP-03"]
@@ -390,9 +390,9 @@
         "src/transport/acp/session-output.ts"
       ],
       "tests": [
-        "test/e2e/acp-v1-lifecycle.postgres.test.ts",
-        "test/audit/acp-v1-sdk.audit.ts",
-        "test/e2e/acp-sdk-regressions.postgres.test.ts",
+        "tests/integration/agent-acp-service/e2e/acp-v1-lifecycle.postgres.test.ts",
+        "tests/integration/agent-acp-service/audit/acp-v1-sdk.audit.ts",
+        "tests/integration/agent-acp-service/e2e/acp-sdk-regressions.postgres.test.ts",
         "test/transport/session-output.test.ts"
       ],
       "findings": [],
@@ -414,10 +414,10 @@
         "src/application/application.ts"
       ],
       "tests": [
-        "test/e2e/acp-v1-lifecycle.postgres.test.ts",
+        "tests/integration/agent-acp-service/e2e/acp-v1-lifecycle.postgres.test.ts",
         "test/application/session-service.test.ts",
-        "test/audit/acp-v1-sdk.audit.ts",
-        "test/e2e/acp-sdk-regressions.postgres.test.ts",
+        "tests/integration/agent-acp-service/audit/acp-v1-sdk.audit.ts",
+        "tests/integration/agent-acp-service/e2e/acp-sdk-regressions.postgres.test.ts",
         "test/transport/session-output.test.ts"
       ],
       "findings": []
@@ -438,10 +438,10 @@
         "src/adapters/postgres/session-repository.ts"
       ],
       "tests": [
-        "test/e2e/acp-v1-lifecycle.postgres.test.ts",
-        "test/e2e/acp-output.postgres.test.ts",
-        "test/audit/acp-v1-sdk.audit.ts",
-        "test/e2e/acp-session-info.postgres.test.ts"
+        "tests/integration/agent-acp-service/e2e/acp-v1-lifecycle.postgres.test.ts",
+        "tests/integration/agent-acp-service/e2e/acp-output.postgres.test.ts",
+        "tests/integration/agent-acp-service/audit/acp-v1-sdk.audit.ts",
+        "tests/integration/agent-acp-service/e2e/acp-session-info.postgres.test.ts"
       ],
       "findings": []
     },
@@ -457,11 +457,11 @@
       "coverage": "profile-deviation",
       "implementation": ["src/transport/acp/v1/agent.ts", "src/application/session-service.ts"],
       "tests": [
-        "test/e2e/acp-v1-lifecycle.postgres.test.ts",
-        "test/e2e/acp-output.postgres.test.ts",
-        "test/audit/acp-v1-sdk.audit.ts",
-        "test/e2e/acp-sdk-regressions.postgres.test.ts",
-        "test/e2e/acp-session-info.postgres.test.ts"
+        "tests/integration/agent-acp-service/e2e/acp-v1-lifecycle.postgres.test.ts",
+        "tests/integration/agent-acp-service/e2e/acp-output.postgres.test.ts",
+        "tests/integration/agent-acp-service/audit/acp-v1-sdk.audit.ts",
+        "tests/integration/agent-acp-service/e2e/acp-sdk-regressions.postgres.test.ts",
+        "tests/integration/agent-acp-service/e2e/acp-session-info.postgres.test.ts"
       ],
       "findings": ["PROFILE-01"]
     },
@@ -481,10 +481,10 @@
         "src/domain/mcp.ts"
       ],
       "tests": [
-        "test/e2e/acp-v1-lifecycle.postgres.test.ts",
-        "test/e2e/acp-mcp-input.postgres.test.ts",
-        "test/audit/acp-v1-sdk.audit.ts",
-        "test/e2e/acp-session-info.postgres.test.ts"
+        "tests/integration/agent-acp-service/e2e/acp-v1-lifecycle.postgres.test.ts",
+        "tests/integration/agent-acp-service/e2e/acp-mcp-input.postgres.test.ts",
+        "tests/integration/agent-acp-service/audit/acp-v1-sdk.audit.ts",
+        "tests/integration/agent-acp-service/e2e/acp-session-info.postgres.test.ts"
       ],
       "findings": ["PROFILE-01"]
     },
@@ -508,14 +508,14 @@
         "migrations/0008_refused_context.sql"
       ],
       "tests": [
-        "test/e2e/acp-v1-lifecycle.postgres.test.ts",
-        "test/e2e/acp-output.postgres.test.ts",
-        "test/e2e/acp-multimodal.postgres.test.ts",
-        "test/transport/acp-v1-agent.test.ts",
-        "test/audit/acp-v1-sdk.audit.ts",
-        "test/e2e/acp-sdk-regressions.postgres.test.ts",
-        "test/adapters/postgres/migrate.postgres.test.ts",
-        "test/adapters/postgres/local-run.postgres.test.ts"
+        "tests/integration/agent-acp-service/e2e/acp-v1-lifecycle.postgres.test.ts",
+        "tests/integration/agent-acp-service/e2e/acp-output.postgres.test.ts",
+        "tests/integration/agent-acp-service/e2e/acp-multimodal.postgres.test.ts",
+        "tests/integration/agent-acp-service/transport/acp-v1-agent.test.ts",
+        "tests/integration/agent-acp-service/audit/acp-v1-sdk.audit.ts",
+        "tests/integration/agent-acp-service/e2e/acp-sdk-regressions.postgres.test.ts",
+        "tests/integration/agent-acp-service/adapters/postgres/migrate.postgres.test.ts",
+        "tests/integration/agent-acp-service/adapters/postgres/local-run.postgres.test.ts"
       ],
       "findings": [],
       "resolvedFindings": ["GAP-01", "GAP-03"]
@@ -532,11 +532,11 @@
       "coverage": "profile-deviation",
       "implementation": ["src/transport/acp/v1/agent.ts", "src/application/session-service.ts"],
       "tests": [
-        "test/e2e/acp-v1-lifecycle.postgres.test.ts",
-        "test/e2e/acp-mcp-input.postgres.test.ts",
-        "test/audit/acp-v1-sdk.audit.ts",
-        "test/e2e/acp-sdk-regressions.postgres.test.ts",
-        "test/e2e/acp-session-info.postgres.test.ts"
+        "tests/integration/agent-acp-service/e2e/acp-v1-lifecycle.postgres.test.ts",
+        "tests/integration/agent-acp-service/e2e/acp-mcp-input.postgres.test.ts",
+        "tests/integration/agent-acp-service/audit/acp-v1-sdk.audit.ts",
+        "tests/integration/agent-acp-service/e2e/acp-sdk-regressions.postgres.test.ts",
+        "tests/integration/agent-acp-service/e2e/acp-session-info.postgres.test.ts"
       ],
       "findings": ["PROFILE-01"]
     },
@@ -556,9 +556,9 @@
         "src/application/session-configuration.ts"
       ],
       "tests": [
-        "test/e2e/acp-configuration.postgres.test.ts",
+        "tests/integration/agent-acp-service/e2e/acp-configuration.postgres.test.ts",
         "test/domain/session-configuration.test.ts",
-        "test/audit/acp-v1-sdk.audit.ts"
+        "tests/integration/agent-acp-service/audit/acp-v1-sdk.audit.ts"
       ],
       "findings": []
     },
@@ -578,9 +578,9 @@
         "src/transport/acp/configuration.ts"
       ],
       "tests": [
-        "test/e2e/acp-configuration.postgres.test.ts",
-        "test/transport/acp-v1-agent.test.ts",
-        "test/audit/acp-v1-sdk.audit.ts"
+        "tests/integration/agent-acp-service/e2e/acp-configuration.postgres.test.ts",
+        "tests/integration/agent-acp-service/transport/acp-v1-agent.test.ts",
+        "tests/integration/agent-acp-service/audit/acp-v1-sdk.audit.ts"
       ],
       "findings": []
     },
@@ -657,9 +657,9 @@
         "src/transport/acp/permission-request.ts"
       ],
       "tests": [
-        "test/e2e/acp-permissions.postgres.test.ts",
+        "tests/integration/agent-acp-service/e2e/acp-permissions.postgres.test.ts",
         "test/transport/permission-request.test.ts",
-        "test/audit/acp-v1-sdk.audit.ts"
+        "tests/integration/agent-acp-service/audit/acp-v1-sdk.audit.ts"
       ],
       "findings": []
     },
@@ -679,17 +679,17 @@
         "src/adapters/postgres/session-repository.ts"
       ],
       "tests": [
-        "test/e2e/acp-streaming.postgres.test.ts",
-        "test/e2e/acp-tool-progress.postgres.test.ts",
-        "test/e2e/acp-tool-presentation.postgres.test.ts",
-        "test/e2e/acp-plan.postgres.test.ts",
-        "test/e2e/acp-commands.postgres.test.ts",
-        "test/e2e/acp-cost.postgres.test.ts",
-        "test/e2e/acp-configuration.postgres.test.ts",
-        "test/audit/acp-v1-sdk.audit.ts",
-        "test/e2e/acp-session-info.postgres.test.ts",
+        "tests/integration/agent-acp-service/e2e/acp-streaming.postgres.test.ts",
+        "tests/integration/agent-acp-service/e2e/acp-tool-progress.postgres.test.ts",
+        "tests/integration/agent-acp-service/e2e/acp-tool-presentation.postgres.test.ts",
+        "tests/integration/agent-acp-service/e2e/acp-plan.postgres.test.ts",
+        "tests/integration/agent-acp-service/e2e/acp-commands.postgres.test.ts",
+        "tests/integration/agent-acp-service/e2e/acp-cost.postgres.test.ts",
+        "tests/integration/agent-acp-service/e2e/acp-configuration.postgres.test.ts",
+        "tests/integration/agent-acp-service/audit/acp-v1-sdk.audit.ts",
+        "tests/integration/agent-acp-service/e2e/acp-session-info.postgres.test.ts",
         "test/transport/session-output.test.ts",
-        "scripts/sdk-regressions-docker.mjs"
+        "tests/e2e/agent-acp-service/sdk-regressions-docker.mjs"
       ],
       "findings": [],
       "resolvedFindings": ["COVERAGE-02"]
@@ -778,7 +778,7 @@
         "node_modules/@agentclientprotocol/sdk/dist/jsonrpc.js",
         "src/transport/acp/v1/agent.ts"
       ],
-      "tests": ["test/audit/acp-v1-sdk.audit.ts"],
+      "tests": ["tests/integration/agent-acp-service/audit/acp-v1-sdk.audit.ts"],
       "findings": []
     }
   ],
@@ -803,7 +803,7 @@
       "modelRequests": 4,
       "toolCalls": 1,
       "cleanup": "completed",
-      "driver": "scripts/sdk-regressions-docker.mjs",
+      "driver": "tests/e2e/agent-acp-service/sdk-regressions-docker.mjs",
       "includes": [
         "metadata across observers, list and fork",
         "process restart with same-revision configuration republication",
@@ -852,7 +852,7 @@
       "modelRequests": 4,
       "toolCalls": 1,
       "cleanup": "completed",
-      "driver": "scripts/sdk-regressions-docker.mjs"
+      "driver": "tests/e2e/agent-acp-service/sdk-regressions-docker.mjs"
     },
     "scope": "ACP production image, private PostgreSQL and SDK HTTP clients with controlled model/MCP dependencies; full-platform deployment E2E not rerun",
     "staticChecks": ["typecheck", "lint", "build", "format:check", "git diff --check"],

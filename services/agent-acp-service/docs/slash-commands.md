@@ -74,7 +74,7 @@ spans apply; command input and attachment contents are not added to OTLP.
    batch. Local tests do not constitute that deployment acceptance.
 
 Service implementation, local verification and the separate
-[Gateway deployment batch](../../../scripts/acp-commands/README.md) are complete.
+[Gateway deployment batch](../../../tests/e2e/acp-commands/README.md) are complete.
 The deployment retains supported file references and explicitly rejects embedded
 resources, since production Controller has not advertised that F09 capability.
 Final metrics and

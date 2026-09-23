@@ -180,7 +180,7 @@ identity, service health and loopback-only host bindings, rejecting accidental
 publication of internal application ports. Its extra model port is test-only.
 It does not perform browser actions.
 Keep only its successful final metrics; a failed or interrupted run is not
-acceptance. The [lifecycle profile](../scripts/lifecycle-closeout/README.md)
+acceptance. The [lifecycle profile](../tests/e2e/lifecycle-closeout/README.md)
 also documents loss/network/crash subcases, which must run separately.
 
 ## 5. Diagnose Before Retrying

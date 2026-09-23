@@ -246,12 +246,12 @@ CONNECT 隔离不等于所有表级权限均已测试；探针 healthy 不等于
 ### 8.3 可复用验证与审查
 
 ```sh
-node --test --test-concurrency=1 scripts/observability/*.test.mjs
-node scripts/observability/exercise-deployment-entry.mjs \
+node --test --test-concurrency=1 tests/e2e/observability/*.test.mjs
+node tests/e2e/observability/exercise-deployment-entry.mjs \
   --gateway http://127.0.0.1:8090 --jaeger http://127.0.0.1:16686
 ```
 
-新增 [入口检查器](../scripts/observability/deployment-entry.mjs) 只约束这两个成功场景，
+新增 [入口检查器](../tests/e2e/observability/deployment-entry.mjs) 只约束这两个成功场景，
 复用通用 Trace 图校验，不修改其他允许失败/重试的业务场景语义。
 44 项场景测试、观测脚本总计 188 项通过；现场脚本通过。根目录 `make fmt-check`、`make lint`
 通过；本轮涉及文档的 87 个本地文件链接均有效。反例包括有效主链之外的多余节点、

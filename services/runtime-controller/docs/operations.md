@@ -145,7 +145,7 @@ previous process must not count as evidence that the new process is ready.
 
 ```sh
 docker compose build runtime-controller
-node scripts/lifecycle-closeout/run.mjs health
+node tests/e2e/lifecycle-closeout/run.mjs health
 ```
 
 The profile needs the other local Stage 3 images and shared Node test dependencies

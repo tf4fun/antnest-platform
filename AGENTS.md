@@ -18,3 +18,19 @@ one owning service with its documentation and tests at a time. Record pending
 consumer work instead of editing multiple service implementations in one batch.
 Run cross-service integration after the service batches have passed their local
 gates; do not describe one completed producer as a complete business workflow.
+
+## Test source and evidence storage
+
+Never author, stage, or keep project test scripts, fixtures, source snapshots,
+test manifests, recovery inputs, or lasting verification evidence in `.cache/`.
+It is not a transfer directory for files that must survive cache deletion.
+Service unit tests belong in their service; integration and E2E sources belong
+in root `tests/integration/` and `tests/e2e/`; shared tooling belongs in
+`tests/support/`. Durable private evidence and backups belong in
+`artifacts/verification/`, excluded from Git and Docker build contexts.
+
+When recovering a cached test source, verify its destination and preservation
+record, then remove that individual cache original immediately. Do not leave
+old copies in `.cache` under a historical/snapshot exception. Review historical
+assertions and retain necessary source/history outside the cache.
+Only reproducible dependency/compiler caches may remain in `.cache`.

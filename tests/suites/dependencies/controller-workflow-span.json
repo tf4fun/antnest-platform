@@ -1,0 +1,40 @@
+[
+  {
+    "name": "controller-workflow-span",
+    "command": [
+      "node",
+      "tests/support/dependencies.mjs",
+      "--profile",
+      "temporal",
+      "--output",
+      {
+        "input": "output",
+        "relative": "dependency"
+      },
+      "--name",
+      "controller-workflow-span",
+      "--startup-wait-seconds",
+      "180",
+      "--timeout-ms",
+      "900000",
+      "--grace-ms",
+      "20000",
+      "--",
+      "node",
+      "tests/integration/go/run.mjs",
+      "agent-controller",
+      "--package",
+      "internal/orchestration",
+      "--output",
+      {
+        "input": "output",
+        "relative": "go"
+      },
+      "--",
+      "-race",
+      "./services/agent-controller/internal/repository/postgres",
+      "./services/agent-controller/internal/e2e"
+    ],
+    "check_resources": true
+  }
+]

@@ -268,7 +268,7 @@ Goose 私有 steer/recipes/scheduler 不在标准接口枚举里；不新增另�
 
 ### 已完成批次：F02 Gateway 与 Runtime 部署联调
 
-F02 部署联调已完成（2026-09-08）。入口为 `make e2e-tool-progress`，可复用合同及脚本见 [部署验收](../../../scripts/acp-progress/README.md)。本批仅补部署驱动、反例断言与文档，没有新增生产端点、表或跨服务 SQL。
+F02 部署联调已完成（2026-09-08）。入口为 `make e2e-tool-progress`，可复用合同及脚本见 [部署验收](../../../tests/e2e/acp-progress/README.md)。本批仅补部署驱动、反例断言与文档，没有新增生产端点、表或跨服务 SQL。
 
 1. 通过真实 Gateway / Console BFF 登录、创建用户、模型配置、模板和 Agent。ACP v1/v2 各覆盖原生 Bash 与托管 stdio MCP 的成功、失败、取消，共 12 条路径；使用确定性 SSE 模型，不依赖外部 Provider。
 2. 工具先输出预览再等待测试门闩，确保客户端在结束前收到内容；成功路径断线重连后逐项比较首段回放，所有路径完成后重新连接比较完整 Tool 序列与唯一 ID。最终模型输入不包含托管工具预览 canary。
@@ -315,7 +315,7 @@ F02 部署联调已完成（2026-09-08）。入口为 `make e2e-tool-progress`�
 
 ### 已完成批次：F03 Gateway 与 Runtime 部署联调
 
-2026-09-09，通过 `make e2e-file-observations` 运行独立 Compose 项目；脚本与合同见 [F03 部署验收](../../../scripts/acp-files/README.md)。本批只补验收驱动、判定器及文档，未改生产服务实现。
+2026-09-09，通过 `make e2e-file-observations` 运行独立 Compose 项目；脚本与合同见 [F03 部署验收](../../../tests/e2e/acp-files/README.md)。本批只补验收驱动、判定器及文档，未改生产服务实现。
 
 1. Gateway 登录、用户/模型/模板/Agent 创建，真实 Runtime 文件 read/write/edit，以及 Agent 删除均通过正常业务入口。v1/v2 各 8 条场景：创建、编辑、读取、空文件创建、空文件替换、无变化、超限省略、失败编辑。验证 Unicode/父目录空格、完整 before/after、SDK schema 和 v2 patch 路径/应用结果。
 2. 32 次确定性 SSE 模型请求验证实际返回值；不是外部 Provider，也不伪造 MCP 输出。全文件 metadata 不进入 Tool 模型结果，edit 的上下文短标记不进入任何消息角色。
@@ -340,7 +340,7 @@ F02 部署联调已完成（2026-09-08）。入口为 `make e2e-tool-progress`�
 
 ### 已完成批次：F04 Gateway 部署与 Trace 验收
 
-2026-09-09，入口为 `make e2e-structured-plan`，可复用驱动与证据边界见 [部署验收](../../../scripts/acp-plan/README.md)。本批仅补脚本、判定器和文档，不改生产服务实现。
+2026-09-09，入口为 `make e2e-structured-plan`，可复用驱动与证据边界见 [部署验收](../../../tests/e2e/acp-plan/README.md)。本批仅补脚本、判定器和文档，不改生产服务实现。
 
 1. 经 Gateway/Console 登录、创建用户/模型/模板/Agent，v1/v2 各覆盖初建、真实 Runtime 写入后更新、非法更新拒绝、清空、下一 Run 恢复空计划、清空前 fork 保留旧计划，共 12 个场景、22 次确定性 SSE 模型请求。没有调用外部 Provider。
 2. 六次计划提交在最终答复的门闩释放前到达；模型逐字段核对 Run-start 快照及有序调用/结果，计划删除项、重排、优先级与状态变化保持准确，不因 Run 结束自动完成剩余步骤。
@@ -435,7 +435,7 @@ F08 服务批次只修改 ACP：最小命令目录、双版本通知、Prompt �
 
 #### F08 Gateway 部署联调收尾
 
-2026-09-09，通过独立 Compose 项目的 `make e2e-slash-commands` 完成三种传输入口的命令、目录、历史/文件引用、fork、身份隔离及后续真实工具执行验证。流程与可复用判定器见 [部署合同](../../../scripts/acp-commands/README.md)，最终量化结果统一记录在 [协议验收](protocol-conformance.md#slash-commands-f08-2026-09-09)。
+2026-09-09，通过独立 Compose 项目的 `make e2e-slash-commands` 完成三种传输入口的命令、目录、历史/文件引用、fork、身份隔离及后续真实工具执行验证。流程与可复用判定器见 [部署合同](../../../tests/e2e/acp-commands/README.md)，最终量化结果统一记录在 [协议验收](protocol-conformance.md#slash-commands-f08-2026-09-09)。
 
 联调暴露 Gateway 的 HTTP handler 异常退出不结束入口 span：按 Gateway 独立批次先补回归测试，再改为 deferred 收尾，保留 panic 和已提交响应的原语义，未改 ACP 或 Controller。修正后完整部署验收通过，测试自有容器、卷和网络已回收，既有验收实例未修改。生产未宣告 `embeddedContext` 的缺口归入 F09；本批明确验证拒绝，不以单服务替身配置冒充生产支持。
 

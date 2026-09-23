@@ -15,7 +15,50 @@
     "useUnknownInCatchVariables": true,
     "verbatimModuleSyntax": true,
     "resolveJsonModule": true,
-    "types": ["node", "vitest/globals"]
+    "types": ["node", "vitest/globals"],
+    "typeRoots": ["./node_modules/@types", "./node_modules"],
+    "paths": {
+      "@agentclientprotocol/sdk": ["./node_modules/@agentclientprotocol/sdk/dist/acp.d.ts"],
+      "@agentclientprotocol/sdk/experimental/http-client": [
+        "./node_modules/@agentclientprotocol/sdk/dist/http-stream.d.ts"
+      ],
+      "@agentclientprotocol/sdk/experimental/server": [
+        "./node_modules/@agentclientprotocol/sdk/dist/server.d.ts"
+      ],
+      "@agentclientprotocol/sdk/experimental/node": [
+        "./node_modules/@agentclientprotocol/sdk/dist/node-adapter.d.ts"
+      ],
+      "@agentclientprotocol/sdk/experimental/v2": [
+        "./node_modules/@agentclientprotocol/sdk/dist/v2/acp.d.ts"
+      ],
+      "@agentclientprotocol/sdk/experimental/ws-client": [
+        "./node_modules/@agentclientprotocol/sdk/dist/ws-stream.d.ts"
+      ],
+      "@agentclientprotocol/sdk/schema/schema.json": [
+        "./node_modules/@agentclientprotocol/sdk/schema/schema.json"
+      ],
+      "@agentclientprotocol/sdk/schema/v2/schema.unstable.json": [
+        "./node_modules/@agentclientprotocol/sdk/schema/v2/schema.unstable.json"
+      ],
+      "@modelcontextprotocol/server": [
+        "./node_modules/@modelcontextprotocol/server/dist/index.d.mts"
+      ],
+      "@opentelemetry/api": ["./node_modules/@opentelemetry/api/build/src/index.d.ts"],
+      "@opentelemetry/sdk-node": ["./node_modules/@opentelemetry/sdk-node/build/src/index.d.ts"],
+      "ajv": ["./node_modules/ajv/dist/ajv.d.ts"],
+      "ajv/dist/2020.js": ["./node_modules/ajv/dist/2020.d.ts"],
+      "diff": ["./node_modules/diff/libesm/index.d.ts"],
+      "eventsource-parser": ["./node_modules/eventsource-parser/dist/index.d.ts"],
+      "pg": ["./node_modules/@types/pg/index.d.ts"],
+      "vitest": ["./node_modules/vitest/dist/index.d.ts"],
+      "ws": ["./node_modules/@types/ws/index.d.ts"],
+      "zod": ["./node_modules/zod/index.d.cts"]
+    }
   },
-  "include": ["src/**/*.ts", "test/**/*.ts", "*.ts"]
+  "include": [
+    "src/**/*.ts",
+    "test/**/*.ts",
+    "*.ts",
+    "../../tests/integration/agent-acp-service/**/*.ts"
+  ]
 }

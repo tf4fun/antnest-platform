@@ -506,5 +506,5 @@ fn record_driver_error(span: &tracing::Span, error: &Error) {
 mod tests;
 
 #[cfg(test)]
-#[path = "postgres_observation_tests.rs"]
+#[path = "../../../../tests/integration/runtime-egress/postgres_observation_tests.rs"]
 mod postgres_tests;

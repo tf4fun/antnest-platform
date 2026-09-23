@@ -1,0 +1,14 @@
+import { readFileSync, writeFileSync } from "node:fs";
+import { inspectCrashTrace } from "../../scripts/lifecycle-closeout/crash-trace.mjs";
+const dir = ".cache/lifecycle-crash/antnest-lifecycle-9df4eda3";
+const business = JSON.parse(readFileSync(`${dir}/business.json`));
+const results = [];
+for (const phase of ["before-create", "after-start"]) {
+ const proof = JSON.parse(readFileSync(`${dir}/${phase}.recovered.private.json`));
+ const op = business.traces.find(t => t.request_id === proof.checkpoint.ac.request_id);
+ const trace = JSON.parse(readFileSync(`${dir}/traces/${op.trace_id}.json`));
+ const result = inspectCrashTrace(trace, {kind: "rebuild", traceID: op.trace_id, requestId: op.request_id, agentId: op.agent_id, crashRecovery: { ...proof, phase }});
+ results.push(result);
+ console.log(JSON.stringify({phase, attempts: result.attempts, spans: result.spans, missing_parents: result.crash_diagnostics.missing_parents.length, strict_trace: result.strict_trace}));
+}
+writeFileSync(".cache/runtime-crash-integration-20260922/rechecked-traces.json", JSON.stringify(results), {mode:0o600});

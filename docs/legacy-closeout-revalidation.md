@@ -2,7 +2,7 @@
 
 Recorded: 2026-09-21, on source baseline `6827ddd`. This is the first delivery
 batch for the remaining historical consumers, following the
-[migration contract](../scripts/acp-closeout/migration-contract.md). Production
+[migration contract](../tests/e2e/acp-closeout/migration-contract.md). Production
 services, dependencies, clocks and export intervals are unchanged.
 
 ## Current entry and historical scenario mapping
@@ -86,9 +86,9 @@ one running container and 11 stopped containers. This batch does not claim a
 fresh healthy retained-development deployment or start those stopped services.
 
 Private client/deployment snapshots and raw traces are in
-`.cache/acp-closeout-normal/antnest-stage3-e2e-27659/`. Coordinated logs, negative
+`artifacts/verification/acp-closeout-normal/antnest-stage3-e2e-27659/`. Coordinated logs, negative
 and final tests, baseline and cleanup evidence are under
-`.cache/legacy-closeout-20260921/`. These ignored artifacts are not published.
+`artifacts/verification/legacy-closeout-20260921/`. These ignored artifacts are not published.
 
 Lifecycle foundation/drain and its shutdown, network, health, restore, loss and
 interrupted-update consumers, older Workspace protocol/manual-browser flows,

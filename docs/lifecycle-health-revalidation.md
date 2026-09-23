@@ -6,7 +6,7 @@ Health acceptance consumer; no production service or SDK changes.
 
 ## Current contract
 
-The [migration contract](../scripts/lifecycle-closeout/health-migration-contract.md)
+The [migration contract](../tests/e2e/lifecycle-closeout/health-migration-contract.md)
 was defined before implementation. `make e2e-lifecycle-health` now routes through
 current Foundation setup, private Temporal, reserved network ranges, actual
 Template revision and immutable Runtime image checks. It collects current
@@ -62,8 +62,8 @@ All twelve retained development container IDs, images, mounts, running and healt
 states match the baseline; eleven health checks pass (Jaeger has no health check).
 
 Private logs and retained-container baseline are under
-`.cache/lifecycle-health-migration-20260921/`; profile/raw Trace evidence is under
-`.cache/lifecycle-health/<project>/`. Red-test logs and earlier batch failures
+`artifacts/verification/lifecycle-health-migration-20260921/`; profile/raw Trace evidence is under
+`artifacts/verification/lifecycle-health/<project>/`. Red-test logs and earlier batch failures
 remain historical evidence.
 Restore, loss, interrupted-update and older Workspace consumers remain separate
 migration batches; shared legacy assets and retained development stay intact.

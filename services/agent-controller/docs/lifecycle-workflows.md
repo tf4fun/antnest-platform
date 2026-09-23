@@ -164,7 +164,7 @@ Reproduce from repository root with an existing valid template; the script
 creates and deletes only its own Agent:
 
 ```sh
-node scripts/observability/exercise-lifecycles.mjs \
+node tests/e2e/observability/exercise-lifecycles.mjs \
   --confirm-development --template TEMPLATE_ID --revision REVISION
 ```
 

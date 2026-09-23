@@ -95,6 +95,6 @@ completion claim.
 
 No external Provider, database, browser or deployed ACP consumer was used in
 this producer batch. Subsequent ACP consumer and deployment batches completed
-that boundary: [F02 deployment profile](../../../scripts/acp-progress/README.md)
+that boundary: [F02 deployment profile](../../../tests/e2e/acp-progress/README.md)
 passed 12 Gateway ACP v1/v2 paths against actual Bash and managed stdio MCP,
 including early output, cancellation, replay and Jaeger ancestry.

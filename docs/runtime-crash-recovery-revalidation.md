@@ -76,7 +76,7 @@ the PostgreSQL gate: all six scopes have no owned containers, volumes or network
 and no verification children remain. Twelve retained development containers keep
 identity, images, mounts, networks, start times and restart counts. Twelve are
 running and eleven configured health checks remain healthy. Private evidence is
-under `.cache/runtime-crash-recovery-20260921/` with modes 700/600. No development
+under `artifacts/verification/runtime-crash-recovery-20260921/` with modes 700/600. No development
 service is deployed or restarted; prior uncommitted changes remain preserved.
 
 ## Integration required at component completion

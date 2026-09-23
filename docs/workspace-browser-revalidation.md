@@ -2,7 +2,7 @@
 
 Date: 2026-09-21. Acceptance assets only. The former manual `browser-run.mjs`
 entry now runs repeatable Chromium acceptance through `make e2e-workspace-browser`.
-The [contract](../scripts/workspace-closeout/browser-migration-contract.md) keeps
+The [contract](../tests/e2e/workspace-closeout/browser-migration-contract.md) keeps
 its four original prompts and real effects while replacing retired ModelProfile
 revision writes, manual finish input and connection-level Trace assumptions.
 The [larger C4 browser suite](c4-browser-revalidation.md) remains independent.
@@ -41,8 +41,8 @@ the later [finish-helper retirement](browser-finish-retirement.md) removes only
 that unused export and its exclusive tests.
 
 Private logs and retained-environment baseline are under
-`.cache/workspace-browser-migration-20260921/`; raw migrated profile evidence is
-under `.cache/lifecycle-workspace-browser/<project>/`.
+`artifacts/verification/workspace-browser-migration-20260921/`; raw migrated profile evidence is
+under `artifacts/verification/lifecycle-workspace-browser/<project>/`.
 
 ## Verification
 
@@ -72,7 +72,7 @@ This includes unit/contract negatives and the real Chromium/WebSocket component.
 No production service change requires a new service build in this batch.
 
 The independent existing C4 regression uses project `antnest-lifecycle-148f8a5d`,
-with its private report in `.cache/c4-browser-2026-09-21T13-06-00-954Z/`. All eleven
+with its private report in `artifacts/verification/c4-browser-2026-09-21T13-06-00-954Z/`. All eleven
 browser check groups pass, including file/model-capability rejection, approval,
 cross-Session cancellation, offline completion, close/reopen, Rebuild, revocation,
 Session metadata and mobile/privacy checks. Ten saved Trace topologies pass the

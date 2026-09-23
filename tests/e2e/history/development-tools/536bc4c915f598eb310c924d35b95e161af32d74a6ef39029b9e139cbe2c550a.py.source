@@ -1,0 +1,16 @@
+import json,subprocess,time,pathlib
+p=pathlib.Path(__file__).resolve().parent
+name='antnest-dev-20260915-agent-controller-1'
+def inspect():return json.loads(subprocess.check_output(['docker','inspect',name]))[0]
+before=inspect();assert before['State']['Health']['Status']=='healthy'
+subprocess.run(['docker','stop','-t','20',name],check=True,stdout=subprocess.DEVNULL)
+stopped=inspect();assert stopped['State']['Status']=='exited' and stopped['State']['ExitCode']==0
+subprocess.run(['docker','start',name],check=True,stdout=subprocess.DEVNULL)
+for _ in range(90):
+ after=inspect()
+ if after['State']['Running'] and after['State']['Health']['Status']=='healthy':break
+ time.sleep(1)
+else:raise RuntimeError('Controller did not recover')
+assert before['Id']==after['Id'] and before['State']['StartedAt']!=after['State']['StartedAt']
+r={'status':'passed','exit_code':0,'same_container':True,'healthy':True,'image':after['Image']}
+(p/'idle-restart.json').write_text(json.dumps(r));print(json.dumps(r))

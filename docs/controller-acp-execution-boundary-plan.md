@@ -941,7 +941,7 @@ Console 目录与同步交付批次（2026-09-15）：合同 revision 44，三�
 
 ### 10.3 可执行的小步交付
 
-**B5 联调进展（2026-09-15）：** `scripts/e2e-stage2.sh` 已使用真实 Controller 当前态发布、ACP、
+**B5 联调进展（2026-09-15）：** `tests/e2e/e2e-stage2.sh` 已使用真实 Controller 当前态发布、ACP、
 Runtime MCP、Identity、PostgreSQL、Temporal 和 Jaeger，模型仅为本地确定性 HTTP 夹具，不使用外部凭证。
 九个业务场景跑通：创建、同 Run 凭证轮换、Controller 离线连续执行/新连接、执行中重建、停用/启用、
 ACP 崩溃中断且不重放、身份撤销、删除保留审计，以及真实登录后的 Gateway/Console/ACP 审计读取。
@@ -998,12 +998,12 @@ SDK 在显式起点模式下的默认 endTime 仍使用 `Date.now()`。
 
 B5 部署接线准备（2026-09-15）：移除 ACP 的 Controller URL/timeout 和启动依赖，
 Controller 配置正向 ACP 发布地址、同步重试参数；两端显式使用相同快照上限，执行期限由 ACP 配置。
-新增 [部署接线预检](../scripts/verification/README.md#controller-and-acp-deployment)，
+新增 [部署接线预检](../tests/support/verification/README.md#controller-and-acp-deployment)，
 对实际 Compose 渲染结果先失败后通过；部署/验证脚本共 29 项测试通过，fmt-check、标准 lint 通过。
 Controller 与 ACP 的 Docker 镜像均构建成功；未启动新业务组合，不计为 E2E 或 Jaeger 验收。
 只读复核发现的数值/URL 规范化漏报已补测试并修正；预检不复制两服务的完整配置解析器，
 具体超时/重试参数仍由服务启动校验。旧开发实例两只循环重启的 Runtime 已停止，未删除数据卷。
-上述接线准备之后，`scripts/e2e-stage2.sh` 及 ACP 脚本的旧 subject、模型 revision 和反向 Controller trace
+上述接线准备之后，`tests/e2e/e2e-stage2.sh` 及 ACP 脚本的旧 subject、模型 revision 和反向 Controller trace
 断言已清退，实际新组合验收见本节开头；不以准备批次的构建成功替代 B5。B4U 继续暂缓。
 
 B1/B2 是服务交付包，不是一口气改完所有文件的要求。批准方案后按下列顺序推进；每步先补合同/行为测试，

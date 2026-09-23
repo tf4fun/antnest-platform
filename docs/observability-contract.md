@@ -51,7 +51,9 @@ Jaeger 必须处于受控网络；正文不能再复制到普通日志或提交�
 ## 3. 基础链路
 
 - 入站提取 W3C context 后创建 SERVER；出站先创建 CLIENT 再注入 context。
-- 同步调用保持真实父子关系；后台 attempt 使用有界 root 和 Links，不悬挂已经完成的请求。
+- 同步调用保持真实父子关系；独立重试或可恢复的后台 attempt 使用有界 root 和 Links。
+  当前进程内由请求提交的 ACP Run 按服务合同保留同一 Trace 的因果父子关系；准入返回或
+  v2 请求确认结束不代表 Run 完成。不能把所有 CHILD_OF 都解释成时间包含关系。
 - 名称统一为 `HTTP <METHOD> <route template>` 和 `HTTP <METHOD> <target>`，不包含查询串、资源实例 ID 或正文。
 - 保留已有 request/operation/Agent/session/run/revision ID；不以 Trace ID 替代业务幂等键。
 - 服务身份使用 OTel Resource；指标不按正文或用户/Agent ID 建立无限标签。
@@ -59,6 +61,19 @@ Jaeger 必须处于受控网络；正文不能再复制到普通日志或提交�
 - 包装保留取消、背压、Flush、Hijack、双向传输及原始 error；观测不能修改协议结果。
 - HTTP 200 中的 RPC error/MCP isError 由协议边界标记业务失败，不伪造 HTTP 状态。
 - 导出关闭不等于停止上下文传播。标准 SDK 批量异步导出，导出失败不得改变业务结果。
+
+### ACP 消息与异步 Run 的观测边界
+
+Gateway 的 WebSocket 消息根 Span 只覆盖准入和转发，`antnest.operation.phase=relay`；
+其出站 `PRODUCER` Span 在消息写入连接后结束，标记 `antnest.operation.phase=forward`，
+不代表 ACP 已处理请求或返回响应。该 Span 的 W3C context 是 ACP 入站协议 Span
+的直接父 context；父子关系表示转发因果，不要求远端处理落在发送耗时内。
+普通 HTTP 请求/响应出站仍使用 `CLIENT`。ACP 的 `acp.session.prompt` 只覆盖 Run 准入，
+标记 `antnest.operation.phase=admit`；`acp.session.output` 只覆盖持久化输出快照读取，
+标记 `antnest.operation.phase=read`。`agent.run` 的 `execute` 阶段独立于准入。
+这些标记只描述已有边界，不改变 Span 父子关系、结束时机或协议行为；
+异步子 Span 晚于父 Span 结束仍表示因果关系。跨主机亚毫秒时间倒挂保留原始告警，
+按实际来源单独评估，不通过调整业务等待或时间戳消除。
 
 ### 数据库事务
 

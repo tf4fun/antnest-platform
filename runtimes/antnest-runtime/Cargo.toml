@@ -29,6 +29,10 @@ url = "2.5.8"
 uuid = { version = "1.18.1", features = ["v4"] }
 yaml-rust2 = { version = "0.12.0", default-features = false }
 
+[[test]]
+name = "executor_cli"
+path = "../../tests/integration/antnest-runtime/executor_cli.rs"
+
 [dev-dependencies]
 tokio = { version = "1.52.0", features = ["io-std"] }
 opentelemetry_sdk = { version = "0.32.1", features = ["metrics", "testing", "trace"] }

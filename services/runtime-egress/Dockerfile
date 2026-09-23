@@ -2,6 +2,7 @@ FROM rust:1.96-bookworm AS build
 ARG CARGO_BUILD_JOBS=2
 WORKDIR /src
 COPY services/runtime-egress ./services/runtime-egress
+COPY tests/integration/runtime-egress ./tests/integration/runtime-egress
 COPY contracts/runtime ./contracts/runtime
 COPY contracts/egress ./contracts/egress
 WORKDIR /src/services/runtime-egress

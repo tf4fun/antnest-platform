@@ -100,7 +100,7 @@ have exited. The intended twelve development containers remain available.
 
 Private backups, row digests, container and Agent snapshots, local verification
 drivers, raw traces, browser reports/screenshots and final cleanup checks are in
-`.cache/controller-sync-20260917/`. Earlier browser evidence was archived before
+`artifacts/verification/controller-sync-20260917/`. Earlier browser evidence was archived before
 the profile ran. Ignored artifacts are not guaranteed in a fresh clone and must
 not be published with the report.
 

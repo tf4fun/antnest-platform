@@ -10,7 +10,7 @@ evidence, not full strict deployment acceptance.
 
 ## Contract and retained scenarios
 
-The [cost driver](../scripts/acp-cost/README.md) creates Provider Connections
+The [cost driver](../tests/e2e/acp-cost/README.md) creates Provider Connections
 with synthetic credentials and initial priced/unpriced Models. It reads current
 Model details by stable ID and edits prices with the returned `expected_version`.
 Templates reference that Model ID; Agent creation uses the actual Template
@@ -130,11 +130,11 @@ volumes, rollback images and private backup were not replaced or removed.
 ## Superseded assets and next batch
 
 After cost became the final migrated consumer and Docker business/topology plus
-cleanup checks passed, `scripts/acp-multimodal/evidence.mjs` and its three
+cleanup checks passed, `tests/e2e/acp-multimodal/evidence.mjs` and its three
 admission-era fixture cases were removed. The current multimodal `trace.mjs`
 now serves both native input and non-Tool cost execution checks. The old
 ancestry-only pricing validator and its one fixture were replaced by
-`scripts/acp-cost/trace.mjs` and mutation tests for exact HTTP boundaries,
+`tests/e2e/acp-cost/trace.mjs` and mutation tests for exact HTTP boundaries,
 committed current Model writes, unrelated errors, privacy and strict warnings.
 Raw-wire, model, restart and cost business fixtures remain.
 
@@ -143,7 +143,7 @@ migration remains a separate batch. See the
 [asset inventory](acceptance-asset-migration.md). This work does not certify all
 remaining historical profiles.
 
-Ignored local evidence is under `.cache/legacy-acceptance-20260917/`:
+Ignored local evidence is under `artifacts/verification/legacy-acceptance-20260917/`:
 `cost-docker-8.log`, `cost-result.json`, `cost-summary.json`,
 `cost-gates-final.log`, `cost-compose-check.log`, `cost-cleanup.json`, the
 retained baseline, and the earlier red-test/deployment logs. No raw credentials,

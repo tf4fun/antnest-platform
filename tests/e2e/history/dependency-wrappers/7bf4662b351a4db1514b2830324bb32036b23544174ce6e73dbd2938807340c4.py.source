@@ -1,0 +1,38 @@
+import json, os, pathlib, signal, subprocess, sys
+root=pathlib.Path(__file__).resolve().parents[2]
+out=pathlib.Path(__file__).resolve().parent
+project='antnest-inspect-tests-'+str(os.getpid())
+env=dict(os.environ,COMPOSE_PROJECT_NAME=project,ANTNEST_POSTGRES_HOST_PORT='0',GOCACHE=str(root/'.cache/go-build'),GOMODCACHE=str(root/'.cache/go-mod'))
+env['PATH']='/Users/xiaxilin/.nvm/versions/node/v26.8.2/bin:'+env['PATH']
+base=['docker','compose','--env-file','/dev/null','-p',project,'-f','compose.yaml']
+child=None;code=1
+def stop(sig,frame):raise KeyboardInterrupt
+signal.signal(signal.SIGINT,stop);signal.signal(signal.SIGTERM,stop)
+def run(args,timeout=180):
+ return subprocess.run(args,cwd=root,env=env,check=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,timeout=timeout).stdout
+try:
+ run(base+['up','-d','--wait','--wait-timeout','90','--no-build','--pull','never','postgres'])
+ ids=run(base+['ps','-q','postgres']).split();assert len(ids)==1
+ row=json.loads(run(['docker','inspect',*ids]))[0]
+ port=row['NetworkSettings']['Ports']['5432/tcp'][0]['HostPort']
+ run(base+['exec','-T','postgres','createdb','-U','antnest_test_admin','-O','antnest_runtime_controller','antnest_runtime_controller_test'])
+ env['ANTNEST_RUNTIME_CONTROLLER_TEST_DATABASE_URL']='postgres://antnest_runtime_controller:antnest-runtime-controller-dev@127.0.0.1:'+port+'/antnest_runtime_controller_test'
+ context=json.loads(run(['docker','context','inspect']))[0]['Endpoints']['docker']['Host']
+ assert context.startswith('unix://');env['ANTNEST_RUNTIME_CONTROLLER_TEST_DOCKER_SOCKET']=context[7:]
+ env['ANTNEST_RUNTIME_CONTROLLER_TEST_IMAGE_TAG']='antnest/antnest-runtime:local'
+ env['ANTNEST_RUNTIME_CONTROLLER_TEST_MOVED_IMAGE_TAG']='node:24-bookworm-slim'
+ with (out/'service.log').open('x') as log:
+  child=subprocess.Popen(['node','scripts/verification/go-service.mjs','runtime-controller'],cwd=root,env=env,stdout=log,stderr=subprocess.STDOUT,start_new_session=True)
+  try:code=child.wait(timeout=900)
+  except subprocess.TimeoutExpired:code=124
+finally:
+ if child and child.poll() is None:
+  os.killpg(child.pid,signal.SIGTERM)
+  try:child.wait(timeout=30)
+  except subprocess.TimeoutExpired:os.killpg(child.pid,signal.SIGKILL);child.wait()
+ run(base+['down','--volumes','--remove-orphans'])
+ for args in [('ps','-aq'),('volume','ls','-q'),('network','ls','-q')]:
+  assert not run(['docker',*args,'--filter','label=com.docker.compose.project='+project]).strip()
+ p=out/'service-cleanup.json';p.write_text(json.dumps({'project':project,'cleanup':True,'exit':code}));p.chmod(0o600)
+ print(json.dumps({'service_exit':code,'project':project,'cleanup':True}))
+sys.exit(code)

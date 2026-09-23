@@ -1,6 +1,188 @@
 # Current Implementation And Acceptance
 
-Updated: 2026-09-22. The latest [combined candidate regression](final-candidate-regression-20260922.md)
+Updated: 2026-09-23. **All project test sources and lasting assets have left
+`.cache`; migration and final integration audit are complete.** The earlier directory
+migration alone did not prove equivalence. Individual source review, dedicated
+checks, archives and deletion records now cover every migration entry. See the
+[cache inventory](cache-test-inventory.md) for evidence and historical boundaries.
+The [Stage 3 current-service closeout](stage-3-current-services-closeout.md)
+accepts the implemented single-node scope with individually reviewed clock
+warnings. Original strict Trace failures and the five deferred C4 browser items
+remain recorded; planned new services belong to Stage 4.
+The [ACP asynchronous timing review](acp-async-timing-review-20260923.md) traces
+the sampled browser warnings to four short Gateway-to-ACP boundaries rather
+than their warning-bearing descendants. Completion-barrier tests find no early
+Run completion or ownership release; forwarding metadata and ambiguous Span
+boundaries remain observability follow-up. Gateway forwarding now has a `forward`
+phase and `PRODUCER` kind; an isolated Stage 2 Docker run confirmed the four
+sampled Gateway spans directly parent ACP receives. Coalesced output-refresh
+correlation and the clock warnings remain, and strict Trace verification still
+returns nonzero.
+The [cache exit checkpoint](cache-source-exit.md) records 0 remaining development scripts,
+verified wrapper/manifest/dependency/diagnostic removals and actual isolated
+regressions. All ten diagnostic sources have now left cache: six passed 87
+checks and historical replay, followed by four with 27 Python/twelve cleanup
+contracts and actual isolated SDK, Commands, progress-interruption and Identity
+regressions. Strict failures remain recorded; retained resources/images did not
+change and no owned test processes remain. All 29 cleanup/environment originals
+have also been verified and removed: thirty cleanup contracts, 57 total Python
+checks, 29 historical report replays and all 29 real Docker CLI profiles passed.
+A real residue correctly failed, the disposable probe was removed, and retained
+containers/resources/images stayed unchanged. The replay uses reconstructed
+Docker responses; the actual Docker run uses synthetic logs/Traces. Neither
+claims a new business deployment acceptance.
+Three development originals have subsequently left cache: Runtime/Temporal final
+checks and Controller idle restart. Eighteen new contracts and all 75 Python
+checks passed, both historical summaries/18 raw Traces replayed, and isolated
+Docker checks passed including an old-publication rejection and normal restart.
+Two probe containers were removed and retained state stayed unchanged. Temporal's
+historical replay lacks a saved latest-restart inspection; fresh cutoff behavior
+is proven only by the disposable gate. Controller final checks have also left
+cache after preserving original assertions, adding identity/workspace contracts,
+passing all 84 Python checks and validating saved report compatibility. Its
+disposable Docker/PostgreSQL gate passes two positive and eleven expected-failure
+cases, with retained resources unchanged; these synthetic cases are not a new
+browser business acceptance. Nine read-only MJS originals have now also left
+cache: five Agent-state, three chat-Trace reviews and one rejection-Trace entry.
+All 64 combined contracts pass, including 22 actual CLI/local-HTTP cases.
+Thirteen saved Agent reports, thirteen chat Traces and one rejection Trace replay
+identically, excluding new check timestamps and retaining four strict failures.
+No retained service was queried or changed. Both Runtime/Temporal SDK replay
+originals have also left cache after 82 combined and seven runner checks. An
+isolated PostgreSQL/pinned-SDK gate passes two synthetic success cases, seven
+negative cases and both original PGDMP replays. Each historical report matches
+with 71 messages and 69 notifications; Runtime strict remains failed, Temporal
+remains passed. Local HTTP/WS/Jaeger adapters do not prove a new deployment.
+The database fixture was removed and retained resources/images stayed unchanged.
+Controller recovery has also left cache after 79 related checks and ten isolated
+Docker cases, including original workspace bytes and exact report/Trace replay.
+The 284-span historical Trace retains its strict failure. A real tmpfs-shadowing
+gap and fixture anonymous-volume leak were corrected; final owned resources were
+removed and retained resources/images stayed unchanged. Three ordinary lifecycle
+originals have now also left cache: Controller 20260917/20260921 and Temporal
+20260921. `lifecycle-contracts-final` passes 118 checks; `lifecycle-docker-final`
+passes nine cases, comprising four successes (including three exact historical
+report replays) and five expected failures. All fifteen historical lifecycle
+strict failures remain recorded. The Docker gate uses owned shell Runtime
+containers/volumes and local Gateway/Jaeger fixtures; it does not establish a new
+real-service business acceptance. The twelve retained containers, 271 volumes,
+fourteen networks and images stayed unchanged. The Runtime-loss lifecycle
+original has also been verified, archived and removed. Its
+`runtime-loss-contracts-final` gate passes 159 related checks, and
+`runtime-loss-docker` passes seven actual Docker cases: two successes including
+one exact historical report replay, plus five expected failures. The TERM/exit-7
+case rejects before rebuild without SIGKILL. The normal path preserves exit zero,
+exited observation, removal, absent observation and rebuild from generation two
+to three, with five absences and six checks. Five historical lifecycle strict
+failures remain recorded. Shared snapshot preflight binds identity and
+publication cutoff and derives scope from Compose without a new caller field.
+This gate also uses owned shell Runtime containers/volumes and local
+Gateway/Jaeger fixtures, not a new real-service business acceptance. Result and
+isolation checks pass; twelve retained containers, 271 volumes, fourteen networks
+and images stayed unchanged. The development map now has twenty-five completed
+originals, zero pending originals and zero pending formal targets. The overall
+ledger records 4,057 transfers and 8,114 rows. No Python deployment originals
+remain in cache.
+
+Metadata browser migration is complete and its cache original has been removed.
+The driver keeps its two-page metadata/list/reload/history and audio-rejection
+assertions, with complete early configuration checks and three exclusive private
+outputs. `metadata-related-final` passes 239 related checks;
+`metadata-reviewed-contracts` passes 44 focused checks after fixture storage
+review. `metadata-browser-final` passes nine real UI/Chromium/local-ACP cases,
+including exact historical report compatibility and normal SIGTERM report
+preservation. This is not original browser-frame replay or a deployed Provider
+acceptance. The fixture uses a fresh durable output root and built UI without
+HMR. Retained resources and images stayed unchanged; owned processes were reaped.
+
+The shared storage guard now rejects dangling aliases, and Identity collectors,
+three access clients and all ten Foundation profiles validate evidence before
+external effects. The 335-check `storage-identity-foundation-final` gate passes,
+including blocked-effect CLI cases and valid-path controls. Snapshot updates
+remain supported for ordinary private files. This is entry/collector validation,
+not a new business deployment. Go crash storage now passes six tests and nineteen
+subtests, including early TMPDIR traversal rejection and guarded fixture paths.
+The four original Runtime crash boundaries also pass with dedicated PostgreSQL
+and Docker resources; generation, effect counts, workspace and terminal replay
+assertions remain. Retained resources and all image tags are unchanged. Evidence
+is in `crash-storage-reviewed-contracts` and `crash-storage-reviewed-docker`.
+No cached deployment originals remain.
+
+Runtime deployment migration subsequently passed `runtime-deployment-python-final`
+(95 support tests and 18 stateful four-mode entry tests) and all five cases in
+`runtime-deployment-docker-final`. Its cache source is hash-archived and removed.
+The driver binds effective Compose/full IDs, protects baseline and backup files,
+propagates workspace errors and recovers known containers after failed mutation
+or normal interruption while retaining failure. The Docker gate uses owned shell
+services and PostgreSQL; global `after` correctly rejects the stopped retained
+containers, while the component model proves its full positive path. All retained
+resources and image references remained unchanged. At that checkpoint two Controller
+and one Temporal deployment source remained in cache; no retained-service deployment was performed.
+
+Controller 20260921 deployment migration is now verified and its cache original
+has been removed. The Python gate passes 95 support and 30 integration tests;
+12 focused Controller entry tests pass after snapshot-oracle extraction. Six
+actual Docker cases cover all four modes, three database archives, bound Runtime
+recovery, row-preservation failures, candidate rollback and recovery after old
+Controller removal before creation. Cleanup preserves all retained resources and
+image tags. Exact historical safe-snapshot/report fields remain compatible;
+the pre-recovery `after` snapshot is an expected failure, and the stopped full
+inspect is not promoted into a healthy baseline. The historical strict failure
+stays recorded. Evidence is in `controller-deployment-docker-first` and
+`controller-deployment-history`. The corresponding Runtime missing-container
+recovery window is now verified in the follow-up below.
+
+Controller 20260917 is now verified, archived and removed. The final complete gate
+passes 96 support and 38 integration tests; nine actual Docker cases prove both
+service orders, exact final business assertions and target-only failure recovery.
+Six Docker cases and historical compatibility also pass again for the extracted
+shared 20260921 driver. Saved 0917 snapshots/report fields match, retaining the
+browser Trace failure and five lifecycle strict failures. One earlier observer
+process-group PermissionError remains recorded; no descendants remained, and
+all sixteen observer checks plus the full gate passed afterward. Retained
+resources and image references are unchanged. At that checkpoint only Temporal
+remained in cache. No retained service deployment was performed.
+
+Temporal deployment is now verified, archived and removed. All 96 support and
+50 integration tests pass, followed by eight actual Docker cases and historical
+baseline/deployment/archive compatibility. The original five modes, four backups
+and dependency order remain; recovery pins old images and old probes where the
+new readiness script is unavailable. Whole-workspace bytes and find/hash failures
+are checked. Global after still rejects stopped retained containers; the complete
+component model proves its positive. Historical earlier restart failure and saved
+resume/restart results are preserved without a fabricated latest inspect. The
+owned candidate image and all fixture resources are removed. Cache originals
+are now zero. Runtime recovery subsequently passed 22 focused flow tests,
+96 support/54 integration tests and six real Docker cases (`runtime-missing-python`,
+`runtime-missing-docker`). Confirmed absence, unchanged Compose and all other
+baseline IDs/names authorize only the old image recreation; unknown replacements
+and failed queries reject. Original deployment failure is retained. Final storage
+and shared regression audit pass: `make test-node` records 3,364 passed with five
+existing PostgreSQL opt-in skips, the cache scan passes, and all retained
+containers/volumes/networks and 44 image references match. No test processes remain.
+
+The [repository test-layout migration](test-layout-migration.md) established the
+main layout: service unit tests remain within services, integration and deployed
+tests live under root `tests/integration/` and `tests/e2e/`, and shared runners
+live under `tests/support/`. Shared cache-only tooling has formal entries;
+individual source migrations are recorded in the completed maps.
+Source-preservation, default test/lint entries, service/database/Linux gates and
+representative Docker business checks pass. Stage 2 and C4 strict timing failures
+remain recorded. The Runtime Python cleanup regression passes after fixing an
+anonymous-volume leak; the final twelve stopped containers, 271 volumes, fourteen
+networks and pinned images match the baseline, with no owned test processes left.
+This batch changes test infrastructure and fixtures; it does not deploy services.
+
+The [timeout/failure follow-up](timeout-failure-followup-20260922.md)
+fixes UI fixture initialization synchronization and preserves detailed, bounded
+Agent cleanup failures. It passes 1,242 shared checks, 69 UI unit and 128 component
+checks, and three targeted Docker business/cleanup profiles with 244 Trace
+topology checks. Strict timing diagnostics still fail. The original intermittent
+failures' precise causes remain unproven; this is not a production repair claim.
+All retained resources and images match this batch's baseline, in which the
+twelve development containers were already stopped. No deployment occurred.
+
+The latest full [combined candidate regression](final-candidate-regression-20260922.md)
 covers `898a2be` plus acceptance-only corrections: service/database/build gates,
 32 integration entries, and the final retained-environment comparison. Business
 and applicable scoped Trace topology checks pass; strict timing and expected
@@ -79,11 +261,13 @@ candidate and scope.
 
 | Batch                                                      | Recorded result                                                                                                                                                                                                                                                                                                                        | Evidence and boundary                                                                                                                                                                                                                                                                                                                                                                                                    |
 | ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Repository test layout, 2026-09-22 | Root integration/E2E layout, recovered cache-only tooling, preserved Go/Rust test functions, service/database/Linux gates and representative Docker business checks pass | [Migration report](test-layout-migration.md); strict Stage 2/C4 timing failures retained, Python anonymous-volume cleanup repaired and rerun; exact environment restored, no deployment |
+| UI timeout and fixture failure follow-up, 2026-09-22 | UI initialization synchronization and bounded cleanup diagnostics; 1,242 shared checks, 69 UI unit and 128 component checks pass; three targeted Docker business/cleanup profiles and 244 topologies pass | [Follow-up report](timeout-failure-followup-20260922.md); strict timing failures retained, original deletion root cause unproven; interruption recovered and Session cost rerun with complete exit evidence; retained stopped environment and ten image IDs unchanged |
 | Combined candidate regression, 2026-09-22                  | Service, database and fresh Linux build gates pass; 1,224 shared checks pass with five separately covered skips; all 32 integration entries pass business and applicable scoped topology                                                                                                                                               | [Final regression](final-candidate-regression-20260922.md); acceptance-only fixes, strict diagnostics remain failed, two recorded intermittencies; resource baseline and twelve retained containers unchanged, no deployment                                                                                                                                                                                             |
 | Docker single-node baseline, 2026-09-11                    | 25 accepted; five C4 browser items explicitly deferred                                                                                                                                                                                                                                                                                 | [Report](docker-single-node-verification-report.md); historical candidate, not current-HEAD coverage                                                                                                                                                                                                                                                                                                                     |
 | Controller/ACP integration, 2026-09-15                     | Nine Docker business scenarios, PostgreSQL/protocol and three Temporal recovery tests passed; trace structure errors zero                                                                                                                                                                                                              | [B5 record](controller-acp-execution-boundary-plan.md#103-可执行的小步交付); strict clock-warning failures retained                                                                                                                                                                                                                                                                                                      |
 | ACP database tracing, 2026-09-15                           | Service gates and real-driver contracts passed; three real Gateway chats passed the database contract                                                                                                                                                                                                                                  | [Service report](../services/agent-acp-service/docs/observability.md#database-alignment-verification-2026-09-15); full browser profile not strictly passed                                                                                                                                                                                                                                                               |
-| Workspace model selection, 2026-09-15                      | Two real model responses, selection retained after reload, no prompt replay, desktop/mobile menus passed                                                                                                                                                                                                                               | [Script](../scripts/workspace-closeout/model-selection-browser.mjs); local result recorded at 20:38 +08:00                                                                                                                                                                                                                                                                                                               |
+| Workspace model selection, 2026-09-15                      | Two real model responses, selection retained after reload, no prompt replay, desktop/mobile menus passed                                                                                                                                                                                                                               | [Script](../tests/e2e/workspace-closeout/model-selection-browser.mjs); local result recorded at 20:38 +08:00                                                                                                                                                                                                                                                                                                               |
 | Ordered Provider fallback, 2026-09-15                      | Three real responses, referenced Provider disable, fallback/reload, manual cross-provider selection, no-candidate and layout checks passed                                                                                                                                                                                             | [Feature and verification](provider-failover.md); local result recorded at 23:12 +08:00                                                                                                                                                                                                                                                                                                                                  |
 | Model discovery, 2026-09-16                                | Real read-only discovery, draft non-persistence, explicit subset save, saved-model preservation and mobile checks passed                                                                                                                                                                                                               | [Feature and verification](model-discovery.md); local result recorded at 00:40 +08:00                                                                                                                                                                                                                                                                                                                                    |
 | Runtime response-close deployment, 2026-09-16              | Rebuild and workspace retention verified; three real chats passed behavior/topology checks with zero error spans/events; a separate real tool error stayed visible                                                                                                                                                                     | [Integration record](runtime-http-close-integration.md); strict browser/lifecycle scripts still failed on clock warnings                                                                                                                                                                                                                                                                                                 |
@@ -134,9 +318,9 @@ candidate and scope.
 
 The model-selection, Provider-fallback and discovery results were read from
 the ignored local artifacts
-`.cache/model-selection-acceptance/result.json`,
-`.cache/provider-failover-acceptance/result.json` and
-`.cache/model-discovery-acceptance/summary.json`. This index preserves their
+`artifacts/verification/model-selection-acceptance/result.json`,
+`artifacts/verification/provider-failover-acceptance/result.json` and
+`artifacts/verification/model-discovery-acceptance/summary.json`. This index preserves their
 scoped summaries; artifacts and screenshots are not guaranteed in a fresh clone.
 Those three profiles were not rerun for the index refresh. The Runtime and C4
 rows record their separate later executions with reusable acceptance scripts.
@@ -147,7 +331,7 @@ The full development-browser result at 2026-09-15 12:57 +08:00 remains **failed*
 at `chat_trace` with `Jaeger span warnings require review`, and zero browser
 errors. It recorded login, real conversation/tools, history recovery without
 resubmission and mobile checks; those observations do not make the entire script
-pass. See [browser acceptance](../scripts/workspace-closeout/README.md) and
+pass. See [browser acceptance](../tests/e2e/workspace-closeout/README.md) and
 the ACP report for the separate Runtime `client_disconnected` finding.
 
 The [2026-09-16 Runtime follow-up](../runtimes/antnest-runtime/docs/observability.md#mcp-response-close-classification)
@@ -164,6 +348,14 @@ historical trace returned 404, so its prior failure is not retrospectively chang
 
 ## Remaining Scope
 
+- The [repository-wide test layout](test-layout-migration.md) has its recorded
+  scoped checks, while the complete [cache-source exit](cache-test-inventory.md)
+  is complete. `.cache` may contain only reproducible dependency/compiler
+  caches. Private lasting evidence belongs in `artifacts/verification/`, and
+  sources and manifests belong in the versioned test tree. All cached project
+  assets have been individually verified and removed; final storage enforcement
+  and shared regression audit pass. Retained-environment drivers
+  have not been freshly executed against the retained services in this move.
 - The historical acceptance entry migration and identified source-retirement
   inventory are now reconciled in the [closeout audit](acceptance-migration-closeout.md).
   Current Stage 3, Identity, lifecycle and Workspace entries point to their
@@ -180,8 +372,12 @@ historical trace returned 404, so its prior failure is not retrospectively chang
   PostgreSQL persistence gate. All 32 entries pass business and applicable scoped
   topology checks and restore the resource baseline. Strict timing, intentional
   cancellation/rejection and crash-export diagnostics remain failed. The original
-  UI lookup timeouts and one Agent deletion failure remain recorded intermittencies,
-  not proven repairs. The Runtime reconstruction crash batch retains its separate
+  UI lookup timeouts and one Agent deletion failure remain recorded intermittencies.
+  The [targeted follow-up](timeout-failure-followup-20260922.md) repairs fixture
+  initialization synchronization and lost cleanup diagnostics, with local gates
+  and three Docker business/cleanup regressions passing. It does not establish
+  either original intermittent root cause; strict timing failures remain.
+  The Runtime reconstruction crash batch retains its separate
   opt-in evidence; it is not silently added to normal-restart stability.
 - The selected Runtime reconstruction scope now has a
   [four-boundary service component batch](runtime-crash-recovery-revalidation.md)
@@ -202,9 +398,11 @@ historical trace returned 404, so its prior failure is not retrospectively chang
   current priority decision, no new F07 recheck or implementation is scheduled.
 - [OBS-ACP-CLOCK](controller-acp-execution-boundary-plan.md#obs-acp-clock) is an
   accepted maintenance deferral for inspected, recorded timing warnings. Strict
-  results remain unchanged. These inspected nonlogical findings are not active
-  development blockers or a scheduled repair item; unrelated logic errors and
-  unexplained warnings still need investigation.
+  results remain unchanged. The later [Stage 3 decision](stage-3-current-services-closeout.md)
+  accepts its reviewed clock-only findings for the functional/structural gate;
+  these inspected nonlogical findings are not active development blockers or a
+  scheduled repair item. Unrelated logic errors and unexplained warnings still
+  need investigation.
 - The original five C4 items retain their historical deferral. Current scoped
   browser evidence is recorded in [C4 revalidation](c4-browser-revalidation.md)
   and the later [combined integration](acp-platform-integration.md);
@@ -214,8 +412,9 @@ historical trace returned 404, so its prior failure is not retrospectively chang
   batch evidence. The later development synchronization deployed the verified
   ACP/UI candidates and added scoped real-provider regression; it is not a new
   full-platform acceptance run.
-- Skill Registry and Channel Gateway are not started. Scheduler and Kubernetes
-  remain planning-only; horizontal scaling and high availability are deferred.
+- Skill Registry and Channel Gateway are not started. They and the planned
+  Scheduler belong to Stage 4. Kubernetes remains planning-only; horizontal
+  scaling and high availability are outside Stage 3.
 - The declared ACP profile does not imply universal conformance or client MCP
   injection support. [Protocol conformance](../services/agent-acp-service/docs/protocol-conformance.md)
   remains authoritative for individual capabilities and exclusions.

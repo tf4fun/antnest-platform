@@ -59,7 +59,7 @@ The existing profile ran against the retained Agent and real configured
 DeepSeek model:
 
 ```sh
-node scripts/workspace-closeout/development-browser.mjs \
+node tests/e2e/workspace-closeout/development-browser.mjs \
   --confirm-development --agent agent_13f29da090d9a459c2d6f02576f74705
 ```
 
@@ -135,7 +135,7 @@ the remaining historical acceptance profiles.
 
 ## Local Artifacts
 
-Evidence is under `.cache/development-sync-20260917/`: sanitized container and
+Evidence is under `artifacts/verification/development-sync-20260917/`: sanitized container and
 Agent snapshots, database digests, private backup, archived previous browser
 evidence, current browser report/screenshots, additional metadata/error probes,
 unmodified traces, timing review and final business checks. The extra deployed

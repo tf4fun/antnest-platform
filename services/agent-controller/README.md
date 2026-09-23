@@ -124,11 +124,31 @@ and pending-runtime semantics.
 
 ## Local Verification
 
+Run these commands serially from the repository root:
+
 ```sh
 go test ./services/agent-controller/...
 make test-agent-controller-postgres
 make lint
 ```
+
+Unit and isolated component tests remain alongside the service packages.
+Real PostgreSQL, Temporal and HTTP-with-PostgreSQL test sources live in
+[`tests/integration/go/agent-controller`](../../tests/integration/go/agent-controller).
+The root Go runner overlays these tests into their owning packages, preserving
+private implementation access without duplicating the test sources.
+
+To run the Temporal integration package, set `ANTNEST_TEMPORAL_TEST_ADDRESS`
+and use:
+
+```sh
+node tests/integration/go/run.mjs agent-controller --package internal/orchestration -- -count=1
+```
+
+The repository's commit-before-acknowledgement recovery test additionally needs
+`ANTNEST_AGENT_CONTROLLER_TEST_DATABASE_URL` for a disposable database. With both
+dependencies configured, the root runner can run the complete service integration
+set by omitting `--package`.
 
 Docker and Jaeger acceptance commands are documented in
 [`docs/operations.md`](docs/operations.md).

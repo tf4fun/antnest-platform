@@ -62,8 +62,8 @@ The retained development stack was not redeployed in this batch.
 
 ## Integration Fixture
 
-Run [c4-run.mjs](../scripts/workspace-closeout/c4-run.mjs) using the
-[documented prerequisites](../scripts/workspace-closeout/README.md#current-c4-browser-revalidation).
+Run [c4-run.mjs](../tests/e2e/workspace-closeout/c4-run.mjs) using the
+[documented prerequisites](../tests/e2e/workspace-closeout/README.md#current-c4-browser-revalidation).
 The older interactive runner still seeds retired ModelProfile revision APIs.
 The new runner uses current Provider/Model/Template identities and checks the
 ACP-scoped Tool call ID against its result; obsolete raw Provider ID assumptions
@@ -78,12 +78,12 @@ client continues to validate SSE snapshots with its strict schema.
 The coordinator handles browser signals so Playwright cannot exit before Docker
 cleanup. A real `SIGINT` after browser/Tool completion returned controlled exit 1
 and independently verified removal of all project containers, volumes and
-networks. Evidence: `.cache/c4-interruption-result.json`, with the interrupted
-project report under `.cache/c4-browser-2026-09-16T13-31-37-892Z/`.
+networks. Evidence: `artifacts/verification/c4-interruption-result.json`, with the interrupted
+project report under `artifacts/verification/c4-browser-2026-09-16T13-31-37-892Z/`.
 
 ## Final Docker Evidence
 
-Final report: `.cache/c4-browser-2026-09-16T13-32-52-000Z/report.json`.
+Final report: `artifacts/verification/c4-browser-2026-09-16T13-32-52-000Z/report.json`.
 Project `antnest-lifecycle-21ca6fae` used the UI image above and Runtime image
 `sha256:2ed4ffe11b2f7ce24de4bcfb07566e7de012637400c7a82d3703fdc53ab1b909`.
 The final runner returned **exit 1**, with `status=browser_passed`,
@@ -113,7 +113,7 @@ Runtime Tool call passed structural checks. No timestamps or warning thresholds
 were changed. The canceled request's trace is recorded separately with expected
 cancellation and validated topology; it is not counted as a successful chat.
 
-The earlier complete run at `.cache/c4-browser-2026-09-16T13-23-57-482Z/` also
+The earlier complete run at `artifacts/verification/c4-browser-2026-09-16T13-23-57-482Z/` also
 passed business/topology checks, but its revocation screenshot captured only the
 transient disabled state. The final run strengthens that assertion to actual
 login return. Earlier clock deltas ranged from 12.918 µs to −1.147281 ms; those
@@ -123,8 +123,8 @@ Screenshots in the final evidence directory include attachments, capability
 rejection, permission approval, Rebuild, mobile conversation and revoked login.
 All final test-owned containers, volumes and networks were removed. The UI fix
 and acceptance assets are saved with this report; no retained development
-deployment was changed. Local `.cache` evidence is ignored and is not guaranteed
-in a fresh clone.
+deployment was changed. Local evidence has since moved to private ignored
+`artifacts/verification/` storage and is not guaranteed in a fresh clone.
 The final ownership audit covered all 12 projects created during this batch and
 found zero remaining test resources; retained development services remained up
 with no unhealthy status. Formatting, whitespace and 71 local documentation

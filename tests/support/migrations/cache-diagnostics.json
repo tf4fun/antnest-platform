@@ -1,0 +1,150 @@
+{
+  "status": "verified-and-removed",
+  "scope": "All ten diagnostic sources verified and removed. Offline replays remain historical; actual SDK, Commands, progress interruption and Identity runs have separate evidence. Strict failures remain failures.",
+  "evidence": [
+    "artifacts/verification/cache-source-exit-20260922/offline-evidence-contracts.result.json",
+    "artifacts/verification/cache-source-exit-20260922/offline-evidence-replay/comparison.json",
+    "artifacts/verification/cache-source-exit-20260922/offline-migrated-document-links.result.json",
+    "artifacts/verification/cache-source-exit-20260922/observers-final-contracts.result.json",
+    "artifacts/verification/cache-source-exit-20260922/observers-environment-middle.json.comparison.json",
+    "artifacts/verification/cache-source-exit-20260922/identity-log-final-contracts.result.json",
+    "artifacts/verification/cache-source-exit-20260922/observers-environment-final.json.comparison.json",
+    "artifacts/verification/cache-source-exit-20260922/observer-docker/final-isolation.json"
+  ],
+  "entries": [
+    {
+      "source": ".cache/acp-persistence-20260917/check-links.py",
+      "source_sha256": "aa05131166a7f312fa1ad90ac2235bd99f7e0af788a36956eb5140479e022918",
+      "archive": "tests/e2e/history/diagnostic-tools/aa05131166a7f312fa1ad90ac2235bd99f7e0af788a36956eb5140479e022918.py.source",
+      "runner": "tests/support/verification/check-links.py",
+      "parameters": {
+        "documents": [
+          "docs/current-status.md",
+          "docs/acceptance-asset-migration.md",
+          "docs/stage-3-admin-control-plane.md",
+          "docs/controller-publication-trace-revalidation.md",
+          "docs/acp-persistence-revalidation.md",
+          "tests/e2e/acp-persistence/README.md",
+          "tests/e2e/acp-persistence/contract.md",
+          "tests/e2e/acp-restart/README.md",
+          "tests/e2e/acp-closeout/README.md",
+          "services/agent-controller/docs/execution-publication.md"
+        ]
+      }
+    },
+    {
+      "source": ".cache/lifecycle-interrupted-migration-20260921/audit.mjs",
+      "source_sha256": "c3dd96873301f92d1395698323409a9964974b3e55d0bfe7814e219faae77e6c",
+      "archive": "tests/e2e/history/diagnostic-tools/c3dd96873301f92d1395698323409a9964974b3e55d0bfe7814e219faae77e6c.mjs.source",
+      "runner": "tests/support/verification/audit-lifecycle-evidence.mjs",
+      "parameters": {
+        "profiles": [
+          {
+            "profile": "interrupted",
+            "expectedTraceCount": 3,
+            "expectedTargetTemplateRevision": 2,
+            "expectedErrors": 2
+          },
+          {
+            "profile": "foundation",
+            "expectedTraceCount": 16
+          }
+        ],
+        "projectPattern": "Disposable foundation project: (antnest-lifecycle-[a-f0-9]{8})"
+      }
+    },
+    {
+      "source": ".cache/runtime-crash-integration-20260922/recheck-traces.mjs",
+      "source_sha256": "079dbcfad1e3e9b9eebd7e1b17372a9b904d44989b94e8ed21749a7a30a12a31",
+      "archive": "tests/e2e/history/diagnostic-tools/079dbcfad1e3e9b9eebd7e1b17372a9b904d44989b94e8ed21749a7a30a12a31.mjs.source",
+      "runner": "tests/support/verification/recheck-crash-traces.mjs",
+      "parameters": {
+        "phases": ["before-create", "after-start"],
+        "historicalProject": "antnest-lifecycle-9df4eda3"
+      }
+    },
+    {
+      "source": ".cache/lifecycle-shutdown-migration-20260921/http-diagnostics.mjs",
+      "source_sha256": "0b56998ce3772413c51cc26e8352029f30f6c4707546e08e16cf757f9b823d80",
+      "archive": "tests/e2e/history/diagnostic-tools/0b56998ce3772413c51cc26e8352029f30f6c4707546e08e16cf757f9b823d80.mjs.source",
+      "runner": "tests/support/diagnostics/http-errors.mjs",
+      "parameters": {
+        "originPrefix": "http://127.0.0.1:",
+        "pathPrefix": "/api/"
+      }
+    },
+    {
+      "source": ".cache/temporal-readiness-20260921/http-diagnostics.mjs",
+      "source_sha256": "0b56998ce3772413c51cc26e8352029f30f6c4707546e08e16cf757f9b823d80",
+      "archive": "tests/e2e/history/diagnostic-tools/0b56998ce3772413c51cc26e8352029f30f6c4707546e08e16cf757f9b823d80.mjs.source",
+      "runner": "tests/support/diagnostics/http-errors.mjs",
+      "parameters": {
+        "originPrefix": "http://127.0.0.1:",
+        "pathPrefix": "/api/"
+      }
+    },
+    {
+      "source": ".cache/stage3-tail-retirement-20260921/capture-failure.mjs",
+      "source_sha256": "f4d756bdd1cae920e787520b32cb06914383bc014c1dee26089c12136cf60160",
+      "archive": "tests/e2e/history/diagnostic-tools/f4d756bdd1cae920e787520b32cb06914383bc014c1dee26089c12136cf60160.mjs.source",
+      "runner": "tests/support/diagnostics/capture-http-failure-traces.mjs",
+      "parameters": {
+        "wait_ms": 6000,
+        "request_timeout_ms": 5000,
+        "http_status": 500
+      }
+    },
+    {
+      "source": ".cache/final-regression-20260922/sdk-diagnostic.py",
+      "source_sha256": "d20d0bb7b38c0467b91aaec86f0831898f8faea7854f120a7d4e08833704e7e5",
+      "archive": "tests/e2e/history/diagnostic-tools/d20d0bb7b38c0467b91aaec86f0831898f8faea7854f120a7d4e08833704e7e5.py.source",
+      "runner": "tests/support/diagnostics/sdk-observer.py",
+      "parameters": {
+        "cleanup_grace_seconds": 45,
+        "configuration": "artifacts/verification/cache-source-exit-20260922/observer-docker/configs/sdk.json"
+      },
+      "evidence": "artifacts/verification/cache-source-exit-20260922/observer-docker/sdk.result.json",
+      "scope": "Four SDK scenarios passed with actual state/log collection and cleanup."
+    },
+    {
+      "source": ".cache/final-regression-20260922/commands-diagnostic.py",
+      "source_sha256": "34dd1b04039a3a5bfa57b49853118791bbc3bf606f5681cb1efd382889c46757",
+      "archive": "tests/e2e/history/diagnostic-tools/34dd1b04039a3a5bfa57b49853118791bbc3bf606f5681cb1efd382889c46757.py.source",
+      "runner": "tests/support/diagnostics/commands-observer.py",
+      "parameters": {
+        "cleanup_grace_seconds": 180,
+        "configuration": "artifacts/verification/cache-source-exit-20260922/observer-docker/configs/commands.json"
+      },
+      "evidence": "artifacts/verification/cache-source-exit-20260922/observer-docker/commands.result.json",
+      "scope": "Business and scoped topology passed; 19 strict traces remain failed, original Make exit 2 preserved."
+    },
+    {
+      "source": ".cache/acp-progress-20260916/interrupt.py",
+      "source_sha256": "f57875c8c3e9d3828748eafb6005794281ef2ac663a253feac42e61b3e8f99ba",
+      "archive": "tests/e2e/history/diagnostic-tools/f57875c8c3e9d3828748eafb6005794281ef2ac663a253feac42e61b3e8f99ba.py.source",
+      "runner": "tests/e2e/acp-progress/interruption.py",
+      "parameters": {
+        "trigger_deadline_seconds": 160,
+        "fixture_exit_timeout_seconds": 150,
+        "cleanup_grace_seconds": 150,
+        "configuration": "artifacts/verification/cache-source-exit-20260922/observer-docker/configs/interruption.json"
+      },
+      "evidence": "artifacts/verification/cache-source-exit-20260922/observer-docker/interruption/interruption.json",
+      "scope": "Actual SIGTERM after progress-client creation; fixture exited nonzero and cleared both resource labels, captured descendants and original process group before harness fallback."
+    },
+    {
+      "source": ".cache/stage3-tail-retirement-20260921/identity-diagnostic.sh",
+      "source_sha256": "bc934c834bba0cdfac46af13044bd401d8bb4a6fcce384990cecb19287b76d68",
+      "archive": "tests/e2e/history/diagnostic-tools/bc934c834bba0cdfac46af13044bd401d8bb4a6fcce384990cecb19287b76d68.sh.source",
+      "runner": "tests/e2e/e2e-stage3a.sh",
+      "parameters": {
+        "environment": {
+          "ANTNEST_E2E_IDENTITY_CORE": "true",
+          "ANTNEST_E2E_IDENTITY_DIAGNOSTIC_LOG": "<explicit durable private log file>"
+        }
+      },
+      "evidence": "artifacts/verification/cache-source-exit-20260922/observer-docker/identity-summary.json",
+      "scope": "Complete three-service stdout/stderr captured before teardown. Sixteen Identity business checks and ten topologies passed; two strict results and shell exit 2 remain failed. Cleanup and environment comparison passed."
+    }
+  ]
+}

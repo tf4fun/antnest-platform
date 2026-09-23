@@ -1,0 +1,54 @@
+import os
+from pathlib import Path
+import signal
+import subprocess
+import sys
+import time
+
+root = Path(__file__).resolve().parents[2]
+container = 'antnest-acp-release-audit-20260916'
+child = None
+created = False
+
+def stop(signum, frame):
+    raise KeyboardInterrupt
+
+signal.signal(signal.SIGINT, stop)
+signal.signal(signal.SIGTERM, stop)
+try:
+    subprocess.run(['docker', 'run', '--detach', '--name', container,
+                    '--label', 'antnest.purpose=acp-release-schema-audit',
+                    '-e', 'POSTGRES_USER=acp_audit', '-e', 'POSTGRES_PASSWORD=acp_audit',
+                    '-e', 'POSTGRES_DB=acp_audit', '-p', '127.0.0.1:55439:5432',
+                    'postgres:17-bookworm'], check=True, stdout=subprocess.DEVNULL)
+    created = True
+    for attempt in range(60):
+        if subprocess.run(['docker', 'exec', container, 'pg_isready', '-U', 'acp_audit'],
+                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0:
+            break
+        time.sleep(0.5)
+    else:
+        raise RuntimeError('Audit PostgreSQL did not become ready')
+    env = dict(os.environ)
+    env['PATH'] = '/Users/xiaxilin/.nvm/versions/node/v26.8.2/bin:' + env['PATH']
+    env['ANTNEST_ACP_TEST_DATABASE_URL'] = 'postgres://acp_audit:acp_audit@127.0.0.1:55439/acp_audit'
+    env['ANTNEST_ACP_RELEASE_AUDIT_DATABASE_URL'] = env['ANTNEST_ACP_TEST_DATABASE_URL']
+    env['ANTNEST_ACP_AUDIT_DATABASE_URL'] = env['ANTNEST_ACP_TEST_DATABASE_URL']
+    child = subprocess.Popen(sys.argv[1:], cwd=root / 'services/agent-acp-service',
+                             env=env, start_new_session=True)
+    status = child.wait()
+finally:
+    if child is not None:
+        try:
+            os.killpg(child.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        try:
+            child.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            os.killpg(child.pid, signal.SIGKILL)
+            child.wait()
+    if created:
+        subprocess.run(['docker', 'rm', '--force', '--volumes', container],
+                       check=True, stdout=subprocess.DEVNULL)
+sys.exit(status)

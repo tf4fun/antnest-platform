@@ -1,0 +1,41 @@
+[
+  {
+    "name": "ui-local-final",
+    "command": [
+      "npm",
+      "--prefix",
+      "services/agent-ui/web",
+      "test"
+    ],
+    "env": {
+      "COMPOSE_PARALLEL_LIMIT": "1",
+      "COMPOSE_ENV_FILES": ".env.example"
+    },
+    "pause_file": {
+      "input": "output",
+      "relative": "pause-before-next"
+    },
+    "timeout_ms": 1200000,
+    "grace_ms": 180000
+  },
+  {
+    "name": "ui-typecheck",
+    "command": [
+      "npm",
+      "--prefix",
+      "services/agent-ui/web",
+      "run",
+      "typecheck"
+    ],
+    "env": {
+      "COMPOSE_PARALLEL_LIMIT": "1",
+      "COMPOSE_ENV_FILES": ".env.example"
+    },
+    "pause_file": {
+      "input": "output",
+      "relative": "pause-before-next"
+    },
+    "timeout_ms": 1200000,
+    "grace_ms": 180000
+  }
+]

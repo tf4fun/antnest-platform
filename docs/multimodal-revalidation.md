@@ -10,7 +10,7 @@ preserved. This is scoped business/topology evidence, not full strict acceptance
 
 ## Current Fixture Contract
 
-The [native input driver](../scripts/acp-multimodal/README.md) creates current
+The [native input driver](../tests/e2e/acp-multimodal/README.md) creates current
 Provider/Model resources and reads stable Model details to verify image/audio/PDF
 capability projections and credential isolation. Template/Agent setup uses the
 returned revision and executable readiness. Foreign users initialize with the
@@ -150,7 +150,7 @@ Session cost was the next batch and is now recorded in the
 [cost report](session-cost-revalidation.md). The current next batch is the base
 Stage 3 product flow in the [asset inventory](acceptance-asset-migration.md).
 
-Ignored local evidence is under `.cache/legacy-acceptance-20260917/`:
+Ignored local evidence is under `artifacts/verification/legacy-acceptance-20260917/`:
 `multimodal-red.log`, `multimodal-order-red.log`, `multimodal-gates-final.log`,
 `multimodal-docker-1.log`, `multimodal-docker-2.log`, `multimodal-result.json`,
 `multimodal-summary.json`, `multimodal-compose.json` and `multimodal-cleanup.json`.

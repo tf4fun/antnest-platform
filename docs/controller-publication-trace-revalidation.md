@@ -77,8 +77,8 @@ and parent cleanup removed all owned containers, volumes and networks. The
 retained 12-container development baseline remains unchanged.
 
 Local service, fixture, lint and image-build logs are in
-`.cache/publication-trace-20260917/`. The service test runner created only a
+`artifacts/verification/publication-trace-20260917/`. The service test runner created only a
 temporary PostgreSQL container and removed it and its volume after verification.
 The RPC runner's compact metrics are in
-`.cache/legacy-acceptance-20260917/rpc-docker-4.log`; complete traces and actual
-correlation inputs remain private under `.cache/rpc-response-loss/<project>/`.
+`artifacts/verification/legacy-acceptance-20260917/rpc-docker-4.log`; complete traces and actual
+correlation inputs remain private under `artifacts/verification/rpc-response-loss/<project>/`.

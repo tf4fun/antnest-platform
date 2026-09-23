@@ -67,14 +67,30 @@ go test ./...
 golangci-lint run ./...
 ```
 
+Go unit and component tests remain in the service packages. HTTP/TCP stream
+shutdown integration tests live in
+[`tests/integration/go/edge-gateway`](../../tests/integration/go/edge-gateway).
+Run them from the repository root through the Go overlay runner:
+
+```sh
+node tests/integration/go/run.mjs edge-gateway --package cmd/edge-gateway -- -count=1
+```
+
 Gateway-owned unit tests are complemented by the real-stack
-[Identity closeout client](../../scripts/identity-closeout/README.md), run by
+[Identity closeout client](../../tests/e2e/identity-closeout/README.md), run by
 `make e2e-stage3`. It checks browser HTTP and existing ACP v1/v2 logout
 revocation, SCIM provisioning, controlled OIDC and Console projections through
 the public entry, plus causal Jaeger spans. The separate HTTP access profile
 tests organization isolation and natural expiry. `make e2e-acp-session` uses
 the separate disposable ACP fault profile for post-upgrade expiry, dependency
 outage/recovery and durable Run completion after browser logout/disconnect.
+
+Run the [Docker signal regression](../../tests/e2e/edge-gateway/shutdown-docker.mjs)
+from the repository root with the Gateway image installed:
+
+```sh
+node tests/e2e/edge-gateway/shutdown-docker.mjs
+```
 
 See [architecture](docs/architecture.md) and [operations](docs/operations.md).
 

@@ -93,7 +93,7 @@ Permission wait/decision telemetry carries Run/Session/tool-call identifiers and
 bounded decision/reason attributes. Arguments, credentials and tool output are
 not copied into OTLP. The model span distinguishes `permission_judge` from
 `response`; this observes the classifier request, not Tool/IP packet traffic.
-See the reusable [deployment profile](../../../scripts/acp-permissions/README.md).
+See the reusable [deployment profile](../../../tests/e2e/acp-permissions/README.md).
 
 Reference: local ACP SDK 1.4.0 schemas; Goose `acp/server.rs`,
 `permission/permission_inspector.rs` and `agents/tool_execution.rs`.

@@ -95,7 +95,7 @@ accounting are deterministic service tests, not claimed as real-provider fault
 injection.
 
 The recorded browser run passed on 2026-09-15 at 23:12 +08:00. Its local result,
-`.cache/provider-failover-acceptance/result.json`, records three real responses,
+`artifacts/verification/provider-failover-acceptance/result.json`, records three real responses,
 ordered backups, referenced Provider disable, live configuration updates,
 reload/manual selection, no available candidate, no prompt replay and layout
 checks. See [current status](current-status.md) for the evidence boundary; this
@@ -104,7 +104,7 @@ does not make the separate development-browser strict Trace profile pass.
 Run the reusable acceptance script from the repository root:
 
 ```sh
-node scripts/workspace-closeout/provider-failover-browser.mjs \
+node tests/e2e/workspace-closeout/provider-failover-browser.mjs \
   --confirm-development --real-models
 ```
 
@@ -112,6 +112,6 @@ This opt-in script reads bootstrap settings from `.env` and OpenRouter's key fro
 `../.secret`, makes three short paid requests, and may add the Provider/model,
 publish a Template revision and rebuild one development Agent. Availability
 switches are restored in `finally`. No secret is printed. Compact results and
-screenshots go to ignored `.cache/provider-failover-acceptance/`; the script itself
+screenshots go to ignored `artifacts/verification/provider-failover-acceptance/`; the script itself
 is maintained under `scripts/`, not in the cache. No live Provider error causes
 automatic replay or silent paid-model retries.

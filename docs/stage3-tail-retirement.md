@@ -14,7 +14,7 @@ to their migrated child scripts. This batch removes that unreachable source.
   evidence-printing branches.
 - Remove `scripts/stage3-workspace-client.mjs`,
   `scripts/stage3-lifecycle-trace-assert.mjs`, and their exclusive
-  `scripts/lifecycle-closeout/stage3-trace.mjs` input adapter/test.
+  `tests/e2e/lifecycle-closeout/stage3-trace.mjs` input adapter/test.
 - Preserve current profile selection, Docker ownership, deadlines, OIDC
   preparation, current model/client fixtures and all current child launchers.
   Preserve generic lifecycle Trace helpers: historical interrupted-update
@@ -97,7 +97,7 @@ and the added dispatch/trust tests. Previous uncommitted work is preserved.
 Private coordinator and owned-profile evidence use modes 700/600.
 
 Private pre-change hashes/source snapshots, logs and retained-container baseline
-are under `.cache/stage3-tail-retirement-20260921/`.
+are under `artifacts/verification/stage3-tail-retirement-20260921/`.
 
 The follow-up [separates current interruption helpers](recovery-support-split.md)
 from historical startup-gate/SIGKILL assets. Historical graph retirement remains

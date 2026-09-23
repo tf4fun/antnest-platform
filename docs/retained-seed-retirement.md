@@ -27,7 +27,7 @@ No production service or image changes in this batch.
 
 ## Test-first evidence
 
-The new `scripts/stage3-base/retained-entry.test.mjs` executes the real shell
+The new `tests/e2e/stage3-base/retained-entry.test.mjs` executes the real shell
 entry with dependency sentinels for Node, Docker, curl, mktemp and openssl.
 Sentinels record and stop the first dependency instead of touching services.
 Before implementation, the four rejection cases fail because the entry reaches
@@ -53,7 +53,7 @@ retained, not treated as full strict acceptance.
 
 The five saved raw lifecycle traces independently have zero missing parents and
 zero error spans; current Session topology/privacy checks pass. Private raw
-lifecycle evidence is under `.cache/stage3-base/antnest-stage3-e2e-2095/`.
+lifecycle evidence is under `artifacts/verification/stage3-base/antnest-stage3-e2e-2095/`.
 Independent cleanup finds zero owned containers, volumes or networks and no
 verification/browser children. All twelve retained development containers keep
 the same identities, images, mounts, networks, start times and restart counts;
@@ -66,7 +66,7 @@ the only added executable source is its seven-case contract/component test.
 Private coordinator and owned-profile evidence use directory/file modes 700/600.
 
 Private logs, source hashes and retained-container baseline are under
-`.cache/retained-seed-retirement-20260921/`.
+`artifacts/verification/retained-seed-retirement-20260921/`.
 
 The following [inline-tail retirement](stage3-tail-retirement.md) removes that
 setup and its exclusive CLI/input helpers while keeping current Identity shell

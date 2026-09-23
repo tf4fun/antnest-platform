@@ -4,7 +4,7 @@ Date: 2026-09-21. Baseline: `866d0aa` plus preceding uncommitted acceptance and
 Temporal readiness/development synchronization batches. This batch owns Restore
 acceptance and its documentation; no production service implementation changes.
 
-The [migration contract](../scripts/lifecycle-closeout/restore-migration-contract.md)
+The [migration contract](../tests/e2e/lifecycle-closeout/restore-migration-contract.md)
 defines the current recovery set and ordering. The old five-database scenario
 omitted Temporal history/visibility and its live writer. Current acceptance uses
 Foundation deployment, stops application writers followed by Temporal, restores
@@ -53,6 +53,6 @@ checks pass (Jaeger has no health check). No old shared asset was removed.
 Loss/interrupted-update and older Workspace consumers remain; Loss is next.
 
 Private evidence is stored under
-`.cache/lifecycle-restore-migration-20260921/` and
-`.cache/lifecycle-restore/<project>/`. Temporary recovery archives are removed
+`artifacts/verification/lifecycle-restore-migration-20260921/` and
+`artifacts/verification/lifecycle-restore/<project>/`. Temporary recovery archives are removed
 after the scenario. Retained development and other legacy assets are preserved.

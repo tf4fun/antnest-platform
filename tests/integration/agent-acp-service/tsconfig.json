@@ -1,0 +1,4 @@
+{
+  "extends": "../../../services/agent-acp-service/tsconfig.json",
+  "include": ["**/*.ts"]
+}

@@ -1,0 +1,56 @@
+[
+  {
+    "name": "acp-final-format",
+    "command": [
+      "sh",
+      "-c",
+      "npm --prefix services/agent-acp-service run format && services/agent-acp-service/node_modules/.bin/prettier --write 'tests/**/*.ts' 'tests/**/*.mjs'"
+    ]
+  },
+  {
+    "name": "migration-node-lint",
+    "command": [
+      "make",
+      "node-lint"
+    ]
+  },
+  {
+    "name": "acp-final-unit",
+    "command": [
+      "npm",
+      "--prefix",
+      "services/agent-acp-service",
+      "test"
+    ]
+  },
+  {
+    "name": "acp-final-protocol-integration",
+    "command": [
+      "npm",
+      "--prefix",
+      "services/agent-acp-service",
+      "run",
+      "test:integration"
+    ]
+  },
+  {
+    "name": "acp-final-audit",
+    "command": [
+      "node",
+      "tests/support/dependencies.mjs",
+      "--output",
+      {
+        "input": "output",
+        "relative": "dependencies"
+      },
+      "--name",
+      "acp-final-audit-database",
+      "--",
+      "npm",
+      "--prefix",
+      "services/agent-acp-service",
+      "run",
+      "test:audit:v1"
+    ]
+  }
+]

@@ -1,0 +1,35 @@
+import json, os, pathlib, subprocess
+
+os.umask(0o077)
+p = pathlib.Path(__file__).resolve().parent
+def call(*args):
+    return subprocess.check_output(args, text=True, timeout=30)
+baseline = json.loads((p / 'resource-baseline.json').read_text())
+commands = {'containers':['ps','-aq','--no-trunc'], 'volumes':['volume','ls','-q'], 'networks':['network','ls','-q','--no-trunc']}
+inventory = {k: sorted(call('docker',*args).split()) for k,args in commands.items()}
+delta = {k:{'added': sorted(set(inventory[k])-set(baseline[k])), 'removed': sorted(set(baseline[k])-set(inventory[k]))} for k in baseline}
+before = json.loads((p / 'retained-before.json').read_text())
+inspected = json.loads(call('docker','inspect',*[r['Id'] for r in before]))
+after = [{
+    'Id':r['Id'], 'Name':r['Name'], 'Image':r['Image'], 'RestartCount':r['RestartCount'],
+    'Mounts':r['Mounts'], 'StartedAt':r['State']['StartedAt'], 'Running':r['State']['Running'],
+    'Health':r['State'].get('Health',{}).get('Status'), 'Networks':sorted(r['NetworkSettings']['Networks'])
+} for r in inspected]
+changes=[]
+for old,new in zip(before,after):
+    for key in old:
+        if old[key] != new.get(key): changes.append({'name':old['Name'],'field':key,'before':old[key],'after':new.get(key)})
+images = json.loads((p / 'images-candidate.json').read_text())
+actual = json.loads(call('docker','image','inspect',*[r['reference'] for r in images]))
+image_changes = [r['reference'] for r,a in zip(images,actual) if r['id'] != a['Id']]
+result = {'resource_counts':{k:len(v) for k,v in inventory.items()}, 'resource_delta':delta,
+          'retained_count':len(after),'retained_running':sum(r['Running'] for r in after),
+          'retained_healthy':sum(r['Health']=='healthy' for r in after),
+          'retained_changes':changes,'image_changes':image_changes}
+(p / 'retained-final.json').write_text(json.dumps(after,indent=2))
+(p / 'final-environment.json').write_text(json.dumps(result,indent=2))
+print(json.dumps(result))
+assert not any(values for d in delta.values() for values in d.values()), 'resource inventory drift'
+assert not changes, 'retained container changed'
+assert not image_changes, 'image drift'
+assert all(r['Running'] and r['Health'] in (None,'healthy') for r in after), 'unhealthy retained container'

@@ -198,10 +198,10 @@ sequenceDiagram
 本轮相关脚本测试 311 项通过，零失败/跳过；全仓库 `make -j1 fmt-check lint` 通过。
 
 ```sh
-node --test --test-concurrency=1 scripts/observability/*.test.mjs \
-  scripts/verification/agent-state.test.mjs
+node --test --test-concurrency=1 tests/e2e/observability/*.test.mjs \
+  tests/support/verification/agent-state.test.mjs
 
-node scripts/observability/check-lifecycle.mjs \
+node tests/e2e/observability/check-lifecycle.mjs \
   --kind delete \
   --admission cc9511b93902874d3ed750d49ee799b4 \
   --request lifecycle-8d15b8f362e6f750fe18566e6c1eaaf4797959dfab87cf7611e8d901907b50dc \

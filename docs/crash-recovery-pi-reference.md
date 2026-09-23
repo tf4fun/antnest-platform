@@ -115,7 +115,7 @@ a product behavior decision, not a consequence of adding synthetic model message
 Existing ACP RunRecovery tests pass: 14 cases. The targeted Runtime Controller
 Update recovery test group also passes. These are in-process tests using existing
 fixtures, not new crash-process, PostgreSQL component or Docker E2E evidence.
-Commands/results are private under `.cache/crash-recovery-research-20260921/`.
+Commands/results are private under `artifacts/verification/crash-recovery-research-20260921/`.
 No production code, schema, image or development deployment changes in this batch.
 
 The selected Runtime batch now has [component recovery evidence](runtime-crash-recovery-revalidation.md);

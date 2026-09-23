@@ -7,13 +7,13 @@ rewritten as passing strict acceptance.
 
 Date: 2026-09-17. This fixture migration follows the separate
 [Controller publication Trace fix](controller-publication-trace-revalidation.md).
-The [shared contract](../scripts/acp-persistence/contract.md) was defined before
+The [shared contract](../tests/e2e/acp-persistence/contract.md) was defined before
 tests and implementation. ACP production code is unchanged. Historical
 Controller admission tables/RPCs are not recovery oracles.
 
 ## P1: committed database response loss
 
-The [new fixture](../scripts/acp-persistence/README.md) uses the current public
+The [new fixture](../tests/e2e/acp-persistence/README.md) uses the current public
 Provider/Model/Template APIs, installed v1/v2 SDKs, and public execution audits.
 A private PostgreSQL wire proxy forwards actual SQL and holds only after the
 successful command tag and idle ReadyForQuery. Exact Session/Run scope, executed
@@ -61,15 +61,15 @@ development baseline stayed unchanged. Controller used the independent image
 `sha256:e7d6da966ebd4e3af1520c41f1612469556b8ccfc0e5e313217c4a67bdb6b69d`;
 retained containers and normal image tags were not replaced.
 
-Private evidence is under `.cache/acp-persistence/<project>/`, including process
+Private evidence is under `artifacts/verification/acp-persistence/<project>/`, including process
 observations, exact fault receipts, before/after public audits and raw traces.
-Local logs are under `.cache/acp-persistence-20260917/`; the temporary component
+Local logs are under `artifacts/verification/acp-persistence-20260917/`; the temporary component
 PostgreSQL container and volume were removed. Root wrapper logs and baseline
-checks are under `.cache/legacy-acceptance-20260917/`.
+checks are under `artifacts/verification/legacy-acceptance-20260917/`.
 
 ## P2: process interruption and unknown Runtime effects
 
-The [separate P2 fixture](../scripts/acp-restart/README.md) replaces the historical
+The [separate P2 fixture](../tests/e2e/acp-restart/README.md) replaces the historical
 completed/model-blocked/tool-blocked/tool-inflight recovery assumptions with
 current public audit and Runtime protection semantics. Only this batch uses
 SIGKILL, after semantic barriers; the host verifies exit 137, unchanged container

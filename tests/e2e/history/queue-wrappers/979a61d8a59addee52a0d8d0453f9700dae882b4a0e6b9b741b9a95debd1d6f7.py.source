@@ -1,0 +1,53 @@
+import os,sys,json,pathlib,subprocess,time,signal,re
+p=pathlib.Path(__file__).resolve().parent
+os.umask(0o077)
+active=None
+def stop(sig,frame):
+    if active and active.poll() is None: active.send_signal(signal.SIGTERM)
+    raise SystemExit(128+sig)
+signal.signal(signal.SIGINT,stop);signal.signal(signal.SIGTERM,stop)
+results=[]
+try:
+    for row in json.loads((p/sys.argv[1]).read_text()):
+        name=row['name'];begin=time.time()
+        if row.get('pin_images'):
+            expected=json.loads((p/'images-candidate.json').read_text())
+            actual=json.loads(subprocess.check_output(['docker','image','inspect',*[x['reference'] for x in expected]],text=True,timeout=30))
+            if [x['Id'] for x in actual] != [x['id'] for x in expected]:
+                print('CANDIDATE IMAGE DRIFT: stop for review',flush=True)
+                break
+
+        print('START '+name,flush=True)
+        active=subprocess.Popen([sys.executable,str(p/'run-command.py'),name+'.log',*row['command']])
+        code=active.wait()
+        results.append({'name':name,'exit':code,'seconds':round(time.time()-begin,2),'command':row['command']})
+        (p/(sys.argv[1]+'.results.json')).write_text(json.dumps(results,indent=2))
+        print('DONE '+name+' exit='+str(code),flush=True)
+        if row.get('check_resources'):
+            base=json.loads((p/'resource-baseline.json').read_text())
+            args={'containers':['ps','-aq','--no-trunc'],'volumes':['volume','ls','-q'],'networks':['network','ls','-q','--no-trunc']}
+            now={k:sorted(subprocess.check_output(['docker',*a],text=True,timeout=30).split()) for k,a in args.items()}
+            delta={k:{'added':sorted(set(now[k])-set(base[k])),'removed':sorted(set(base[k])-set(now[k]))} for k in base}
+            (p/(name+'.resources.json')).write_text(json.dumps(delta,indent=2))
+            if any(v for d in delta.values() for v in d.values()):
+                print('RESOURCE INVENTORY CHANGED: stop for review',flush=True)
+                break
+
+        log = p / (name+'.log')
+        fatal = []
+        if log.exists():
+            content = log.read_text()
+            for match in re.finditer(r'(?m)^\{', content):
+                try: report,_ = json.JSONDecoder().raw_decode(content[match.start():])
+                except ValueError: continue
+                if isinstance(report,dict) and report.get('status')=='failed' and report.get('error_type'):
+                    fatal.append({'stage':report.get('stage'),'error_type':report['error_type']})
+        if fatal:
+            print('BUSINESS ASSERTION FAILED: '+json.dumps(fatal),flush=True)
+            break
+        if code not in row.get('accepted_exits',[0]):break
+finally:
+    if active and active.poll() is None:
+        active.terminate()
+        try:active.wait(timeout=200)
+        except subprocess.TimeoutExpired:active.kill();active.wait()

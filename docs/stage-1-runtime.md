@@ -582,7 +582,7 @@ components from absorbing those future responsibilities.
 
 ### 17.1 Implemented Stage 1A/1B
 
-The standalone `scripts/e2e-stage1.sh` harness acts as the lifecycle caller;
+The standalone `tests/e2e/e2e-stage1.sh` harness acts as the lifecycle caller;
 it must follow the same Egress contract as Agent Controller. Allocation and an
 allow policy do not open traffic. After Runtime readiness, the harness opens
 the attachment explicitly, exercises policy changes without recreating Runtime,

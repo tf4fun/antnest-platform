@@ -46,7 +46,7 @@ func TestWorkspaceRelayForwardsMessageTraceBeforeSocketCloses(t *testing.T) {
 	defer tick.Stop()
 	for {
 		for _, span := range recorder.Ended() {
-			if span.SpanContext().SpanID() == parent.SpanID() && span.SpanContext().TraceID() == parent.TraceID() && span.SpanKind() == trace.SpanKindClient && span.Name() == "acp session/prompt" {
+			if span.SpanContext().SpanID() == parent.SpanID() && span.SpanContext().TraceID() == parent.TraceID() && span.SpanKind() == trace.SpanKindProducer && span.Name() == "acp session/prompt" {
 				return
 			}
 		}

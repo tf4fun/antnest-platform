@@ -560,7 +560,7 @@ Egress 本轮串行验证：完整本地套件 107 通过；真实 PostgreSQL �
 5. 先处理 §16 的失败收敛、入口超时和验收断言，再精简 R1 阶段状态装载；R2 保留，R3 只评估重复包装，不以盲目减少 Span 数为目标。
 6. 将 R5/R6 作为明确的小任务处理；前端/外部/故障验收继续保持独立范围。
 
-复用入口：[业务总索引](business-flow-entrypoints.md)、[观测规范](observability-contract.md)、[数据库整改记录](observability-database-remediation.md)、[观测脚本](../scripts/observability/)、[单节点运维](docker-single-node-operations.md)。本文件是评审底稿，不自动将上述待审议项标为完成。
+复用入口：[业务总索引](business-flow-entrypoints.md)、[观测规范](observability-contract.md)、[数据库整改记录](observability-database-remediation.md)、[观测脚本](../tests/e2e/observability/)、[单节点运维](docker-single-node-operations.md)。本文件是评审底稿，不自动将上述待审议项标为完成。
 
 ## 16. 独立自查结论
 
@@ -606,7 +606,7 @@ Egress 本轮串行验证：完整本地套件 107 通过；真实 PostgreSQL �
 
 这不表示已采集的成功 Trace 实际漏掉这些调用，而是以后删错步骤，当前检查器可能依然通过。
 
-依据：[生命周期检查器](../scripts/observability/lifecycle-workflow.mjs)、[合成 Trace 样本](../scripts/observability/workflow-fixtures.mjs)。
+依据：[生命周期检查器](../tests/e2e/observability/lifecycle-workflow.mjs)、[合成 Trace 样本](../tests/e2e/observability/workflow-fixtures.mjs)。
 
 **最小修正方向：** 按场景给出必要依赖调用序列、服务归属和提交结果。已证实资源缺失等合法分支单列，不要求它们虚构未发生的 RPC。SQL 数量用于比较成本，不能代替调用和业务效果断言；不新增一套通用流程引擎来做验证。
 
@@ -632,7 +632,7 @@ Provider 查询依据：[连接详情](../services/admin-console/web/src/pages/p
 
 当前真实 Temporal Worker 更换用例使用计数型 Activity；真实 PostgreSQL 的生命周期组件用例使用 Temporal test environment。两组证据各自有价值，但尚不能共同充当“真实业务事务提交后、Activity 完成确认前 Worker 中断”的直接证据。建议补一个真实 Temporal + PostgreSQL、幂等下游替身的交叉用例，在提交后故障注入，断言阶段、审计事件与外部效果不会重复，不扩成全平台故障矩阵。
 
-依据：[真实引擎用例](../services/agent-controller/internal/orchestration/lifecycle_engine_test.go)、[PostgreSQL 组件用例](../services/agent-controller/internal/repository/postgres/workflow_component_test.go)。
+依据：[真实引擎用例](../tests/integration/go/agent-controller/internal/orchestration/lifecycle_engine_test.go)、[PostgreSQL 组件用例](../tests/integration/go/agent-controller/internal/repository/postgres/workflow_component_test.go)。
 
 建议实施顺序：**S1 失败收敛 → S2 请求超时 → S3 验收断言 → R1 阶段存储合同 → R5 同值语义**。每项单独补测试、验收后再推进；R4 新 Provider Trace、R6 部署入口和上述交叉故障测试分别补证，继续遵守每个场景提交 Jaeger 链接后等待人类检查的流程。前端订阅验收不因这次后端自查被标为完成。
 
@@ -665,7 +665,7 @@ R1 的明确收益是每次 advance 去掉 3 次不可变快照 SELECT，成功�
 | 根级准入 | `make -j1 fmt-check lint` 通过：Go standard 0 issues；两个 Rust Clippy 均 `-D warnings`；前端 lint/typecheck 通过 |
 | 最终独立复核 | 服务侧无新增问题；Trace 脚本追加反例并修正后再次定点确认，原三类漏洞无残留；所有只读审查者已关闭 |
 
-新增 [真实 Temporal + PostgreSQL 交叉测试](../services/agent-controller/internal/repository/postgres/workflow_commit_engine_test.go)：在 Runtime delete 阶段业务事务提交后、Activity 完成确认前停止 Worker，换新 Worker，验证 Runtime 删除、网络释放、最终审计事件各一次。下游是幂等测试替身；不是 Docker SIGKILL、真实 Runtime 故障或全栈断网测试。
+新增 [真实 Temporal + PostgreSQL 交叉测试](../tests/integration/go/agent-controller/internal/repository/postgres/workflow_commit_engine_test.go)：在 Runtime delete 阶段业务事务提交后、Activity 完成确认前停止 Worker，换新 Worker，验证 Runtime 删除、网络释放、最终审计事件各一次。下游是幂等测试替身；不是 Docker SIGKILL、真实 Runtime 故障或全栈断网测试。
 
 Egress 无扰动测试通过数据面输入建立流并验证反向报文 peer、流计数和 kernel cleanup 调用次数；它不是新的真实内核长连接 E2E。保留同值但未应用、fence 修复及陈旧 CAS 反例，不以返回 action 相同替代验证。两个专用测试数据库已清理，没有新增验收容器。
 

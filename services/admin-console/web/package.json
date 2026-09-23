@@ -10,8 +10,8 @@
     "test": "npm run test:unit && npm run test:components",
     "test:unit": "node --test --experimental-strip-types src/lib/*.test.ts",
     "test:components": "vitest run --config vitest.config.ts",
-    "test:browser:audit": "node ../tests/execution-audit-browser.mjs",
-    "test:browser:catalog": "node ../tests/catalog-browser.mjs"
+    "test:browser:audit": "node ../../../tests/integration/admin-console/execution-audit-browser.mjs",
+    "test:browser:catalog": "node ../../../tests/integration/admin-console/catalog-browser.mjs"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.15",

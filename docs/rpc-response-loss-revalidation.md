@@ -79,8 +79,8 @@ closeout have passed.
 
 ## Reproduction and artifacts
 
-Use [the current fixture](../scripts/rpc-response-loss/README.md) and its
-[contract](../scripts/rpc-response-loss/contract.md):
+Use [the current fixture](../tests/e2e/rpc-response-loss/README.md) and its
+[contract](../tests/e2e/rpc-response-loss/contract.md):
 
 ```sh
 make test-rpc-response-loss-fixtures
@@ -88,9 +88,9 @@ make e2e-rpc-response-loss
 ```
 
 Local fixture/shared gates are recorded in
-`.cache/legacy-acceptance-20260917/rpc-gates-final.log`.
+`artifacts/verification/legacy-acceptance-20260917/rpc-gates-final.log`.
 Private deployed traces and exact correlation inputs are under
-`.cache/rpc-response-loss/<project>/rpc-traces/`. Process, deletion and deployment
+`artifacts/verification/rpc-response-loss/<project>/rpc-traces/`. Process, deletion and deployment
 metrics are in `rpc-docker-*.log`; cleanup and the retained 12-container baseline
 are in `rpc-cleanup.json` and `rpc-retained-before.json` in the same acceptance
 cache. These logs/traces are local evidence, not committed source assets.
@@ -122,7 +122,7 @@ images and health. No retained data, rollback image or private backup was remove
 
 The 61 local fixture/shared checks passed before final deployment. After the
 consumer search and cleanup, only the ten obsolete RPC-specific source/test/
-Compose files were removed. The dated [historical record](../scripts/acp-closeout/rpc-loss.md)
+Compose files were removed. The dated [historical record](../tests/e2e/acp-closeout/rpc-loss.md)
 remains with a current-entry redirect. Shared closeout model, connection, replay,
 wait, checkpoint, network, Docker and unknown-effect helpers remain for their
 unmigrated consumers. Their fixture tests do not constitute current deployment

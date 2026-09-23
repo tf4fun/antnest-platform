@@ -1,0 +1,47 @@
+[
+  {
+    "name": "runtime-inspect",
+    "command": [
+      "node",
+      "tests/support/dependencies.mjs",
+      "--profile",
+      "postgres",
+      "--output",
+      {
+        "input": "output",
+        "relative": "dependency"
+      },
+      "--name",
+      "runtime-inspect",
+      "--startup-wait-seconds",
+      "90",
+      "--timeout-ms",
+      "900000",
+      "--grace-ms",
+      "30000",
+      "--",
+      "node",
+      "tests/support/docker-test-images.mjs",
+      "--image",
+      {
+        "input": "runtime_test_image"
+      },
+      "--moved-image",
+      {
+        "input": "runtime_moved_image"
+      },
+      "--output",
+      {
+        "input": "output",
+        "relative": "images"
+      },
+      "--name",
+      "service",
+      "--",
+      "node",
+      "tests/support/verification/go-service.mjs",
+      "runtime-controller"
+    ],
+    "check_resources": true
+  }
+]

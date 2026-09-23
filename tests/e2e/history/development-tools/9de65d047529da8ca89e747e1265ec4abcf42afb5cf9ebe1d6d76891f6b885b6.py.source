@@ -1,0 +1,140 @@
+import hashlib, json, os, subprocess, sys
+from pathlib import Path
+from datetime import datetime, timezone
+
+ROOT = Path(__file__).resolve().parent
+PROJECT = 'antnest-dev-20260915'
+PG = PROJECT + '-postgres-1'
+SERVICES = ['agent-controller', 'runtime-controller']
+CANDIDATES = {
+    'agent-controller': ('antnest/agent-controller:publication-trace-20260917', 'sha256:e7d6da966ebd4e3af1520c41f1612469556b8ccfc0e5e313217c4a67bdb6b69d'),
+    'runtime-controller': ('antnest/runtime-controller:expected-absence-20260917', 'sha256:d994b5e92363cb630ae9b6bc3d64bc8deee64fc93bfd26cf257e54d10f6b1c3d'),
+}
+COMPOSE = ['docker', 'compose', '-p', PROJECT, '-f', 'compose.yaml', '-f', 'compose.stage3.yaml', '--profile', 'stage3', '--profile', 'observability']
+
+def run(args, **kwargs):
+    return subprocess.check_output(args, **kwargs)
+
+def write(name, value):
+    path = ROOT / name
+    path.write_text(json.dumps(value, indent=2) + '\n')
+    path.chmod(0o600)
+
+def containers():
+    names = run(['docker', 'ps', '--format', '{{.Names}}'], text=True).splitlines()
+    return json.loads(run(['docker', 'inspect', *names]))
+
+def safe(c):
+    return {'name': c['Name'].lstrip('/'), 'id': c['Id'], 'image': c['Image'],
+            'health': c['State'].get('Health', {}).get('Status'),
+            'mounts': [{k: m.get(k) for k in ['Type', 'Name', 'Source', 'Destination', 'RW']} for m in c['Mounts']],
+            'networks': sorted(c['NetworkSettings']['Networks'])}
+
+def sql(database, query):
+    return run(['docker', 'exec', '-i', PG, 'psql', '-X', '-qAt', '-v', 'ON_ERROR_STOP=1', '-U', 'antnest_test_admin', '-d', database], input=query.encode()).decode().strip()
+
+def rows():
+    result = {}
+    for table in ['acp_sessions', 'runs', 'session_messages', 'tool_attempts']:
+        result[table] = json.loads(sql('antnest_agent_acp', f"SELECT coalesce(jsonb_object_agg(id, md5(row_to_json(t)::text)), '{{}}'::jsonb) FROM {table} t;"))
+    return result
+
+mode = sys.argv[1]
+if mode == 'before':
+    assert not (ROOT / 'containers-before.json').exists(), 'baseline already exists'
+    current = containers()
+    assert len(current) == 12
+    config = json.loads(run(COMPOSE + ['config', '--format', 'json']))
+    for service in SERVICES:
+        c = next(c for c in current if c['Name'] == '/' + PROJECT + '-' + service + '-1')
+        assert c['State']['Health']['Status'] == 'healthy'
+        actual = dict(item.split('=', 1) for item in c['Config']['Env'])
+        expected = config['services'][service]['environment']
+        differences = [key for key, value in expected.items() if actual.get(key) != str(value)]
+        assert not differences, f'{service}: environment keys differ: {differences}'
+        tag, image = CANDIDATES[service]
+        assert json.loads(run(['docker', 'image', 'inspect', tag]))[0]['Id'] == image
+    assert sql('antnest_agent_acp', "SELECT count(*) FROM runs WHERE state IN ('admitting','running');") == '0'
+    baseline_rows = rows()
+    write('database-before.json', baseline_rows)
+    for database in ['antnest_agent_controller', 'antnest_runtime_controller', 'antnest_agent_acp']:
+        path = ROOT / (database + '-before.dump')
+        with open(path, 'xb') as archive:
+            os.chmod(path, 0o600)
+            subprocess.run(['docker', 'exec', PG, 'pg_dump', '-U', 'antnest_test_admin', '-Fc', database], stdout=archive, check=True)
+        with open(path, 'rb') as archive:
+            subprocess.run(['docker', 'exec', '-i', PG, 'pg_restore', '--list'], stdin=archive, stdout=subprocess.DEVNULL, check=True)
+    for service in SERVICES:
+        old = next(c for c in current if c['Name'] == '/' + PROJECT + '-' + service + '-1')['Image']
+        run(['docker', 'tag', old, f'antnest/{service}:pre-controller-sync-20260917'])
+    write('containers-before.json', [safe(c) for c in current])
+    write('baseline.json', {'checked_at': datetime.now(timezone.utc).isoformat(), 'source': run(['git','rev-parse','HEAD'],text=True).strip(), 'candidates': CANDIDATES, 'environment_match': True, 'active_runs': 0, 'data_counts': {k:len(v) for k,v in baseline_rows.items()}})
+    print(json.dumps({'status':'passed', 'containers':len(current), 'environment_match':True, 'backups':3, 'data_counts':{k:len(v) for k,v in baseline_rows.items()}}))
+elif mode in SERVICES:
+    before = json.loads((ROOT / 'containers-before.json').read_text())
+    service = mode
+    run(['docker','tag',CANDIDATES[service][0],f'antnest/{service}:local'])
+    subprocess.run(COMPOSE + ['up','-d','--no-deps','--no-build','--pull','never','--wait','--wait-timeout','120',service],check=True)
+    current = containers()
+    c = next(c for c in current if c['Name'] == '/' + PROJECT + '-' + service + '-1')
+    assert c['Image'] == CANDIDATES[service][1]
+    assert c['State']['Health']['Status'] == 'healthy'
+    write(service + '-deployed.json',safe(c))
+    print(json.dumps({'service':service,'healthy':True,'image':c['Image']}))
+elif mode in ['after', 'final']:
+    before = json.loads((ROOT / 'containers-before.json').read_text())
+    current = [safe(c) for c in containers()]
+    assert len(current) == len(before)
+    for old in before:
+        now = next(c for c in current if c['name']==old['name'])
+        assert now['mounts'] == old['mounts'], old['name'] + ': mounts changed'
+        assert now['networks'] == old['networks']
+        service = next((s for s in SERVICES if now['name']==PROJECT+'-'+s+'-1'),None)
+        assert now['image'] == (CANDIDATES[service][1] if service else old['image'])
+        if not service: assert now['id'] == old['id'], now['name'] + ': unexpectedly replaced'
+        if old['health']: assert now['health'] == 'healthy'
+    original = json.loads((ROOT / 'database-before.json').read_text())
+    latest = rows()
+    for table, saved in original.items():
+        assert all(latest[table].get(key)==digest for key,digest in saved.items()), table + ': original rows changed'
+    assert sql('antnest_agent_acp', "SELECT count(*) FROM runs WHERE state IN ('admitting','running');") == '0'
+    write('containers-'+mode+'.json',current)
+    report={'status':'passed','healthy':sum(bool(c['health']) for c in current),'containers':len(current),'original_rows_preserved':{k:len(v) for k,v in original.items()},'current_rows':{k:len(v) for k,v in latest.items()},'active_runs':0,'other_containers_unchanged':10,'mounts_preserved':True}
+    if mode == 'final':
+        browser = json.loads((ROOT / 'browser-acceptance/report.json').read_text())
+        session = browser['session_id']
+        import re
+        assert re.fullmatch(r'[a-f0-9-]{36}',session)
+        assert len(browser['checks'])==8 and browser['browser_errors']==0
+        runs=json.loads(sql('antnest_agent_acp', f"SELECT jsonb_agg(jsonb_build_object('state',state,'stop_reason',stop_reason,'executor_state',executor_state)) FROM runs WHERE session_id='{session}';"))
+        assert len(runs)==3 and all(r=={'state':'completed','stop_reason':'end_turn','executor_state':'quiescent'} for r in runs)
+        attempts=json.loads(sql('antnest_agent_acp', f"SELECT jsonb_agg(jsonb_build_object('tool',t.tool_name,'state',t.state,'effect',t.tool_effect_state)) FROM tool_attempts t JOIN runs r ON r.id=t.run_id WHERE r.session_id='{session}';"))
+        assert len(attempts)==3 and all(r['state']=='completed' and r['effect']=='settled' for r in attempts)
+        rejected=json.loads(sql('antnest_agent_acp', f"SELECT jsonb_agg(payload) FROM session_messages WHERE session_id='{session}' AND kind='tool_call' AND payload->>'status'='failed';"))
+        assert len(rejected)==2
+        for r in rejected:
+            assert all(c['text'].startswith('Tool arguments do not match the declared schema:') for c in r['content'])
+            assert sql('antnest_agent_acp', "SELECT count(*) FROM tool_attempts WHERE tool_call_id='"+r['toolCallId']+"';")=='0'
+        runtime='antnest-runtime-agent_13f29da090d9a459c2d6f02576f74705'
+        content=run(['docker','exec',runtime,'cat',browser['workspace_file']],text=True)
+        assert content==browser['workspace_marker']
+        agent_before=json.loads((ROOT/'agent-before.json').read_text())
+        agent_final=json.loads((ROOT/'agent-final.json').read_text())
+        agent_before.pop('checked_at');agent_final.pop('checked_at')
+        assert agent_before==agent_final
+        temp=json.loads((ROOT/'temporary-agent.json').read_text())['agent_id']
+        for command in [['ps','-aq'],['volume','ls','-q'],['network','ls','-q']]:
+            for scope in ['label=io.antnest.agent-id='+temp,'name='+temp]:
+                assert not run(['docker',*command,'--filter',scope],text=True).strip()
+        processes=run(['ps','-axo','pid=,ppid=,command='],text=True)
+        outstanding=[line for line in processes.splitlines() if any(p in line for p in ['node scripts/workspace-closeout/development-browser.mjs','node .cache/controller-sync-20260917/lifecycle.mjs','playwright_chromiumdev_profile','chrome-headless-shell'])]
+        assert not outstanding,'verification children remain'
+        lifecycle=json.loads((ROOT/'lifecycle-report.json').read_text())
+        assert lifecycle['status']=='passed'
+        for item in lifecycle['lifecycle']:
+            assert all(w.startswith('clock skew adjustment disabled') for w in item['evidence']['warnings'])
+        report.update({'session_id':session,'new_completed_runs':3,'completed_runtime_calls':3,'preflight_rejections':2,'workspace_marker_matches':True,'agent_configuration_unchanged':True,'temporary_resources':0,'verification_children':0})
+    write('checks-'+mode+'.json',report)
+    print(json.dumps(report))
+else:
+    raise ValueError('unknown mode')

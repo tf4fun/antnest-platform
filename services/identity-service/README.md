@@ -77,13 +77,25 @@ make test-identity-postgres
 docker compose --profile stage2 build identity-service
 ```
 
+Unit tests remain in this service. Repository and protocol integration tests
+live in [`tests/integration/go/identity-service`](../../tests/integration/go/identity-service).
+The root runner uses a Go overlay to compile them in their original service
+packages, preserving access to internal helpers without duplicating test source.
+With `ANTNEST_IDENTITY_TEST_DATABASE_URL` set to a dedicated disposable database,
+run the integration suite from the repository root:
+
+```bash
+node tests/integration/go/run.mjs identity-service -- -race
+```
+
 The PostgreSQL suite includes deterministic login-admission races plus a local
 HTTPS OIDC fixture (authorization redirect, PKCE, client authentication, signed
 ID token and JWKS). It checks completion deadlines, immutable client registration,
 and successful secret rotation. These are service-owned component tests, not
 Gateway/browser acceptance. To reuse a development PostgreSQL instance, supply
 `ANTNEST_IDENTITY_TEST_DATABASE_URL` for a dedicated disposable database and run
-`go test -p=1 ./services/identity-service/...`; never point tests at business data.
+`node tests/support/verification/go-service.mjs identity-service` from the
+repository root; never point tests at business data.
 
 See [`docs/architecture.md`](docs/architecture.md) for the module and domain
 model and [`docs/operations.md`](docs/operations.md) for configuration,

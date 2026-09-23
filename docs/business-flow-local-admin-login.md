@@ -173,13 +173,13 @@ sequenceDiagram
 
 ## 5. 可复用检查与范围
 
-[登录接口验收器](../scripts/observability/exercise-local-admin-login.mjs)仍用于 Cookie、令牌撤销及重放拒绝等
+[登录接口验收器](../tests/e2e/observability/exercise-local-admin-login.mjs)仍用于 Cookie、令牌撤销及重放拒绝等
 API 级回归，不作为真实浏览器流程的替代；其“新令牌首次 GET”样本不能冒充真实页面刷新。
-[Trace 图检查](../scripts/observability/trace-tree.mjs)和
-[成功 Span 检查](../scripts/observability/successful-span.mjs)用于本次现场核对父子关系、SQL 所属与错误记录。
+[Trace 图检查](../tests/e2e/observability/trace-tree.mjs)和
+[成功 Span 检查](../tests/e2e/observability/successful-span.mjs)用于本次现场核对父子关系、SQL 所属与错误记录。
 
 复验应重复 §1 的浏览器动作，再按 §2 检查各页面阶段，不能只重放其中两个接口。
-已有脚本回归命令为 `node --test --test-concurrency=1 scripts/observability/*.test.mjs`。
+已有脚本回归命令为 `node --test --test-concurrency=1 tests/e2e/observability/*.test.mjs`。
 本次串行回归 230 项通过；三份相关文档 76 个本地文件链接有效，`git diff --check` 通过。
 只读子 agent 复核后，已修正表单与自动发现的先后、首次使用 UPDATE 和无 Cookie 本地返回的图文表述；
 审查者已关闭，没有执行测试、访问浏览器或凭证。

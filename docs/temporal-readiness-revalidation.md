@@ -91,7 +91,7 @@ was pending; the later [development synchronization](temporal-development-sync-2
 deploys this exact image and records normal restart, preserved data and nine
 retained topologies. No old acceptance assets were retired.
 
-Private evidence is under `.cache/temporal-readiness-20260921/`; raw profile evidence stays
-under `.cache/lifecycle-shutdown/<project>/` or
-`.cache/lifecycle-foundation/<project>/`. Original migration failures remain
+Private evidence is under `artifacts/verification/temporal-readiness-20260921/`; raw profile evidence stays
+under `artifacts/verification/lifecycle-shutdown/<project>/` or
+`artifacts/verification/lifecycle-foundation/<project>/`. Original migration failures remain
 historical failures, not retroactively passing results.

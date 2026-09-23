@@ -89,7 +89,7 @@ pgx 的 StatementDescription 只提供参数类型和结果列信息，部分结
 
 ### 验收脚本不是缓存
 
-复用脚本放在 `scripts/verification/`，包含说明和自身测试；`.cache` 只存构建缓存。
+复用脚本放在 `tests/support/verification/`，包含说明和自身测试；`.cache` 只存构建缓存。
 现有 Trace 断言改为“精确 RPC SERVER + 技术数据库后代”，拒绝旧业务 wrapper、断链和异服务父节点。
 Jaeger 查询仍在请求完成后等待六秒，再查询一次；不吞掉 warning，不修改服务导出行为。
 
@@ -154,6 +154,6 @@ Runtime Controller/Egress 的真实上游业务 Trace 随后续 Agent 场景核�
 为 BEGIN、三次 SELECT、COMMIT；零 warning。第一次脚本将事务外查询误算进事务内，
 已根据父 Span 修正，未删除查询、放松父子断言或修改业务来匹配测试。
 
-新复用脚本是 `scripts/observability/exercise-egress-database.mjs`，不放 `.cache`。
+新复用脚本是 `tests/e2e/observability/exercise-egress-database.mjs`，不放 `.cache`。
 它提交相同策略、核对持久化值不变，不代表数据面无副作用：现有应用路径可能重置流表。
 对无扰动更新和重复读取的后续评审见[主流程时序文档](business-flow-trace-review.md)。

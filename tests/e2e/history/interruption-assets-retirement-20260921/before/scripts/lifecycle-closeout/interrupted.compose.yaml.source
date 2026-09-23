@@ -1,0 +1,10 @@
+services:
+  agent-controller:
+    environment:
+      ANTNEST_AGENT_CONTROLLER_DEPENDENCY_TIMEOUT: 35s
+      OTEL_BSP_SCHEDULE_DELAY: "100"
+  runtime-controller:
+    environment:
+      ANTNEST_RUNTIME_MUTATION_TIMEOUT: 30s
+      ANTNEST_RUNTIME_READY_TIMEOUT: 20s
+      OTEL_BSP_SCHEDULE_DELAY: "100"

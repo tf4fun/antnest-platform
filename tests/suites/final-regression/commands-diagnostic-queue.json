@@ -1,0 +1,30 @@
+[
+  {
+    "name": "slash-commands-diagnostic",
+    "command": [
+      "python3",
+      "-B",
+      "tests/support/diagnostics/commands-observer.py",
+      "--config",
+      {
+        "input": "commands_observer_config"
+      }
+    ],
+    "accepted_exits": [
+      0,
+      2
+    ],
+    "check_resources": true,
+    "pin_images": true,
+    "env": {
+      "COMPOSE_PARALLEL_LIMIT": "1",
+      "COMPOSE_ENV_FILES": ".env.example"
+    },
+    "pause_file": {
+      "input": "output",
+      "relative": "pause-before-next"
+    },
+    "timeout_ms": 1200000,
+    "grace_ms": 180000
+  }
+]

@@ -29,6 +29,18 @@ tracing = "0.1.43"
 tracing-opentelemetry = { version = "0.33.0", default-features = false }
 tracing-subscriber = { version = "0.3.22", features = ["env-filter", "fmt", "json"] }
 
+[[test]]
+name = "dns_proxy"
+path = "../../tests/integration/runtime-egress/dns_proxy.rs"
+
+[[test]]
+name = "packet_loop"
+path = "../../tests/integration/runtime-egress/packet_loop.rs"
+
+[[test]]
+name = "postgres_repository"
+path = "../../tests/integration/runtime-egress/postgres_repository.rs"
+
 [dev-dependencies]
 http-body-util = "0.1.3"
 opentelemetry_sdk = { version = "0.32.1", features = ["metrics", "testing", "trace"] }

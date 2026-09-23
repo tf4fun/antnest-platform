@@ -247,7 +247,7 @@ acknowledgement recovery.
   timing results fail. Three temporary projects are cleaned and twelve retained
   containers unchanged. The subsequent retirement batches below resolve the
   identified obsolete helper graph while retaining current consumers.
-- Shared `scripts/verification`, identity clients, Docker/network wrappers and
+- Shared `tests/support/verification`, identity clients, Docker/network wrappers and
   trace topology helpers remain in use. Review imports before moving an asset.
 
 These are scoped evidence, not replacements for every historical scenario.

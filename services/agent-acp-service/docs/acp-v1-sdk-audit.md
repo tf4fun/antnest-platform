@@ -76,7 +76,7 @@ SDK schema 共 265 个定义，SHA-256：
 - **行为**：首次建立订阅发送当前值，后续只发送变化值；替换 Prompt 输出订阅保留比较结果。
   新连接恢复时重新发送当前值；空标题明确为 `null`。load/resume 不改活动时间，fork 使用
   自己持久化的时间和继承标题。字段与 `session/list` 一致，不将历史元数据混入模型上下文。
-- **回归**：[acp-session-info.postgres.test.ts](../test/e2e/acp-session-info.postgres.test.ts)
+- **回归**：[acp-session-info.postgres.test.ts](../../../tests/integration/agent-acp-service/e2e/acp-session-info.postgres.test.ts)
   的 8 条场景覆盖 v1/v2 混合观察者、在途及完成、配置/close、跨用户/Agent 拒绝、
   load/resume（含 v2 replay）与应用重启、new/fork；使用 SDK schema 校验。
   输出订阅单元回归覆盖无消息序号变化时的更新、相同值去重、清空标题及重新订阅。
@@ -230,17 +230,17 @@ ANTNEST_ACP_AUDIT_DATABASE_URL=postgres://USER:PASSWORD@127.0.0.1:PORT/acp_audit
 
 # 生产镜像 + 独立 PostgreSQL + 受控 HTTP 模型/MCP；自动清理。
 docker build -f services/agent-acp-service/Dockerfile -t antnest/agent-acp-service:sdk-fixes .
-node services/agent-acp-service/scripts/sdk-regressions-docker.mjs
+node tests/e2e/agent-acp-service/sdk-regressions-docker.mjs
 ```
 
-源码：[审计探针](../test/audit/acp-v1-sdk.audit.ts)、
-[扩展数据库回归](../test/e2e/acp-sdk-regressions.postgres.test.ts)、
-[生产 Docker 场景](../scripts/sdk-regressions-docker.mjs)。
-日志与标准 JSON 在 `.cache/acp-v1-release-audit-20260916/fix-*`，它们是本机证据；
+源码：[审计探针](../../../tests/integration/agent-acp-service/audit/acp-v1-sdk.audit.ts)、
+[扩展数据库回归](../../../tests/integration/agent-acp-service/e2e/acp-sdk-regressions.postgres.test.ts)、
+[生产 Docker 场景](../../../tests/e2e/agent-acp-service/sdk-regressions-docker.mjs)。
+日志与标准 JSON 在 `artifacts/verification/acp-v1-release-audit-20260916/fix-*`，它们是本机证据；
 正式可复现内容为源码、清单、固定 SDK 依赖及本报告。
 元数据批次的对应日志/JSON 使用相同目录下的 `metadata-*` 前缀。
 
-服务批次通过后，同步修订 `scripts/acp-progress` 集成探针对 v1 取消结果的旧断言。
+服务批次通过后，同步修订 `tests/e2e/acp-progress` 集成探针对 v1 取消结果的旧断言。
 本次未重跑该历史全平台部署套件，不将探针修订算作全平台联调完成。
 
 剩余组合证据包括尚未支持的实验通知兼容性，随 SDK 升级重新评估；本轮 COVERAGE-02 已关闭。

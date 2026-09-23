@@ -1,0 +1,19 @@
+import json,pathlib,subprocess,re,os
+p=pathlib.Path(__file__).resolve().parent
+run=lambda a:subprocess.check_output(a,text=True).strip()
+projects=[]
+for log in p.glob('docker*.log'):
+ projects.extend(re.findall(r'(?:Disposable foundation project|C4 disposable project): (antnest-lifecycle-[a-f0-9]{8})',log.read_text()))
+assert projects
+for project in set(projects):
+ for label in ['com.docker.compose.project','io.antnest.runtime-controller-scope']:
+  for args in [['ps','-aq'],['volume','ls','-q'],['network','ls','-q']]:assert not run(['docker',*args,'--filter',f'label={label}={project}']),(project,args)
+old=json.loads((p/'retained-before.json').read_text());rows=json.loads(run(['docker','inspect',*[r['Id'] for r in old]]))
+new=[{k:r[k] for k in ['Id','Name','Image','RestartCount','Mounts']}|{'StartedAt':r['State']['StartedAt'],'Running':r['State']['Running'],'Health':r['State'].get('Health',{}).get('Status'),'Networks':sorted(r['NetworkSettings']['Networks'])} for r in rows]
+for a,b in zip(old,new):
+ for x in [a,b]:x['Mounts']=sorted(x['Mounts'],key=lambda m:m['Destination'])
+ assert a==b,a['Name']
+ps=run(['ps','-axo','pid=,ppid=,command=']).splitlines()
+assert not [l for l in ps if any(t in l for t in ['run-profile.py','scripts/workspace-closeout/run.mjs','scripts/lifecycle-closeout/run.mjs','scripts/workspace-closeout/browser-run.mjs','scripts/workspace-closeout/c4-run.mjs','playwright_chromiumdev_profile','node --test --test-concurrency=1']) and 'zsh -lc' not in l]
+result={'projects':sorted(set(projects)),'owned_resources':0,'retained_containers_unchanged':len(new),'running':sum(x['Running'] for x in new),'healthy':sum(x['Health']=='healthy' for x in new),'verification_children':0}
+f=p/'cleanup.json';f.write_text(json.dumps(result,indent=2));f.chmod(0o600);print(json.dumps(result))

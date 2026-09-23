@@ -59,12 +59,12 @@ actual Runtime file observations, persisted for v1/v2 replay. Complete file
 before/after becomes standard version-specific diff content without entering
 model context. See [Tool presentation](docs/tool-presentation.md). The Runtime
 producer and ACP consumer have service-owned coverage. The
-[file-diff deployment profile](../../scripts/acp-files/README.md) also passed 16
+[file-diff deployment profile](../../tests/e2e/acp-files/README.md) also passed 16
 Gateway/Runtime scenarios, 16 execution traces and 16 side-effect-free replay
 traces. F04 now adds the local `update_plan` tool, standard v1/v2 plan notifications,
 atomic persistence, replay/fork and plan context recovery. See
 [Structured plans](docs/structured-plan.md) for the service-owned batch and
-[deployed plan acceptance](../../scripts/acp-plan/README.md): twelve Gateway
+[deployed plan acceptance](../../tests/e2e/acp-plan/README.md): twelve Gateway
 scenarios, four execution traces covering twelve Runs, and eight independent
 replay/denial traces passed. F05 now adds organization model selection, Session
 mode overrides, full configuration responses/notifications, persistence and
@@ -208,6 +208,17 @@ ACP `authMethods` because authentication completed at the transport boundary.
 
 ## Local Commands
 
+Unit tests remain in `test/`. PostgreSQL and protocol integration tests live in
+[`tests/integration/agent-acp-service`](../../tests/integration/agent-acp-service),
+and Docker/Stage 2 acceptance lives in
+[`tests/e2e/agent-acp-service`](../../tests/e2e/agent-acp-service).
+Their runners reuse this service's locked dependencies; no separate root test
+installation is required. `test:integration` runs official ACP/MCP protocol peers,
+HTTP/WebSocket/SSE boundaries and HTTP trace propagation. `test:postgres`
+selects the real PostgreSQL cases, and
+`test:audit:v1` remains the opt-in SDK audit. The execution contract generator
+stays in `scripts/`.
+
 ```bash
 npm ci
 npm run format:check
@@ -215,6 +226,7 @@ npm run lint
 npm run typecheck
 node --import tsx scripts/execution-contract.mjs --check
 npm test
+npm run test:integration
 npm run test:postgres
 ```
 

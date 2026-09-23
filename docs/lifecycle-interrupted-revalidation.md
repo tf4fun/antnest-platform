@@ -4,7 +4,7 @@ Date: 2026-09-21. Normal-restart migration and regression complete, following
 Runtime Controller development synchronization. Strict failures remain recorded.
 This batch changes acceptance assets only.
 
-The [migration contract](../scripts/lifecycle-closeout/interrupted-migration-contract.md)
+The [migration contract](../tests/e2e/lifecycle-closeout/interrupted-migration-contract.md)
 maps the former readiness-gated crash checkpoint to the current committed Update
 response boundary. Resource provisioning and Runtime readiness are independent;
 the old gate cannot hold the current mutation open. The normal-restart entry
@@ -22,8 +22,8 @@ and non-wire client IDs/status) were corrected in the fixtures; the original log
 are retained. No production span was fabricated or rewritten.
 
 Private logs and independent retained-environment checks live under
-`.cache/lifecycle-interrupted-migration-20260921/`. Raw disposable evidence is
-under `.cache/lifecycle-interrupted/<project>/`.
+`artifacts/verification/lifecycle-interrupted-migration-20260921/`. Raw disposable evidence is
+under `artifacts/verification/lifecycle-interrupted/<project>/`.
 
 The first shared regression passes 969 checks with five gated skips (974 total).
 Project `antnest-lifecycle-de3be44c` passes all three business operations, exact

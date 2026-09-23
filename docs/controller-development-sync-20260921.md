@@ -139,7 +139,7 @@ has no container health check.
 ## Evidence and remaining scope
 
 Private backups, original failure logs, raw traces and deployment drivers are in
-`.cache/controller-sync-20260921/`. These ignored artifacts must not be published
+`artifacts/verification/controller-sync-20260921/`. These ignored artifacts must not be published
 and are not guaranteed in a fresh clone. The earlier implementation and
 integration report retains its original candidate-only scope.
 

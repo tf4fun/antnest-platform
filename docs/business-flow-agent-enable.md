@@ -223,7 +223,7 @@ Operation 完成不再代表按钮立即进入可执行状态，仍需当前 Age
 只读复查已经存在的主 Trace：
 
 ```sh
-node scripts/observability/check-lifecycle.mjs \
+node tests/e2e/observability/check-lifecycle.mjs \
   --kind enable \
   --admission f310cb870db0673ef61424469d2176ee \
   --request lifecycle-04b4ccd53a0b333c17aa34cd2828386d7da32eda8fe43bd4b18c32b141249373 \
@@ -233,7 +233,7 @@ node scripts/observability/check-lifecycle.mjs \
 后续在另一已停用的开发 Agent 上可复用单场景脚本：
 
 ```sh
-node scripts/observability/exercise-lifecycles.mjs \
+node tests/e2e/observability/exercise-lifecycles.mjs \
   --kind enable --agent <disabled-agent-id> --confirm-development
 ```
 

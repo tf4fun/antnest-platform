@@ -1,0 +1,39 @@
+[
+  {
+    "name": "runtime-crash-postgres",
+    "command": [
+      "node",
+      "tests/support/dependencies.mjs",
+      "--profile",
+      "postgres",
+      "--output",
+      {
+        "input": "output",
+        "relative": "dependency"
+      },
+      "--name",
+      "runtime-crash-postgres",
+      "--startup-wait-seconds",
+      "60",
+      "--timeout-ms",
+      "300000",
+      "--grace-ms",
+      "10000",
+      "--",
+      "node",
+      "tests/integration/go/run.mjs",
+      "runtime-controller",
+      "--package",
+      "internal/repository/postgres",
+      "--output",
+      {
+        "input": "output",
+        "relative": "go"
+      },
+      "--",
+      "-v",
+      "-timeout=4m"
+    ],
+    "check_resources": true
+  }
+]

@@ -259,7 +259,7 @@ services:
       ANTNEST_STAGE2_MODEL_PORT: "8080"
       ANTNEST_STAGE2_MODEL_CREDENTIAL: stage2-model-secret
     volumes:
-      - ./services/agent-acp-service/scripts/stage2-model-server.mjs:/fixtures/stage2-model-server.mjs:ro
+      - ./tests/e2e/agent-acp-service/stage2-model-server.mjs:/fixtures/stage2-model-server.mjs:ro
     healthcheck:
       test:
         [
@@ -283,7 +283,7 @@ services:
       ANTNEST_STAGE2_MODEL_PORT: "8080"
       ANTNEST_STAGE2_MODEL_CREDENTIAL: stage3-model-secret
     volumes:
-      - ./services/agent-acp-service/scripts/stage2-model-server.mjs:/fixtures/stage2-model-server.mjs:ro
+      - ./tests/e2e/agent-acp-service/stage2-model-server.mjs:/fixtures/stage2-model-server.mjs:ro
     healthcheck:
       test:
         [

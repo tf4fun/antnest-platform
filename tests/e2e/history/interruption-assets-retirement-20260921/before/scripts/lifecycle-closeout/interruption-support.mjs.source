@@ -1,0 +1,83 @@
+// Historical startup-gate/SIGKILL diagnostics only. Current profiles use recovery-support.
+import assert from "node:assert/strict";
+import { lines, scopeLabel, composeArgs } from "./docker.mjs";
+
+export const interruptionCompose = (project, args) =>
+  composeArgs(project, [
+    "-f",
+    "scripts/lifecycle-closeout/interrupted.compose.yaml",
+    ...args,
+  ]);
+
+export async function removeTestImages(docker, tags) {
+  const errors = [];
+  for (const tag of tags.filter(Boolean)) {
+    try {
+      const matches = await docker([
+        "image",
+        "ls",
+        "-q",
+        "--filter",
+        `reference=${tag}`,
+      ]);
+      if (matches) await docker(["image", "rm", tag]);
+      assert.equal(
+        await docker(["image", "ls", "-q", "--filter", `reference=${tag}`]),
+        "",
+      );
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+  if (errors.length)
+    throw new AggregateError(errors, "Test image cleanup incomplete");
+}
+
+export { until, serviceContainer, journalReader } from "./recovery-support.mjs";
+
+export async function runtimePhysical(
+  docker,
+  config,
+  agentID,
+  nonce,
+  excludedID,
+) {
+  const filter = [
+    "--filter",
+    `label=${scopeLabel}=${config.project}`,
+    "--filter",
+    `label=io.antnest.agent-id=${agentID}`,
+  ];
+  const ids = lines(await docker(["ps", "-aq", "--no-trunc", ...filter]));
+  const volumes = lines(await docker(["volume", "ls", "-q", ...filter]));
+  if (!ids.length) return { ids, volumes };
+  assert.equal(ids.length, 1);
+  if (ids[0] === excludedID) return { ids, volumes };
+  const c = JSON.parse(await docker(["inspect", ids[0]]))[0];
+  assert.equal(c.Image, config.image);
+  assert.deepEqual(volumes, [`antnest-workspace-${agentID}`]);
+  const mount = c.Mounts.find((m) => m.Destination === "/workspace");
+  assert.equal(mount?.Name, volumes[0]);
+  assert.equal(mount.RW, true);
+  const marker = c.State.Running
+    ? await docker([
+        "exec",
+        c.Id,
+        "sh",
+        "-c",
+        "if [ -f /workspace/.c3-update-entered ]; then cat /workspace/.c3-update-entered; fi",
+      ])
+    : "";
+  return {
+    id: c.Id,
+    agent_id: c.Config.Labels["io.antnest.agent-id"],
+    generation: Number(c.Config.Labels["io.antnest.runtime-generation"]),
+    digest: c.Config.Labels["io.antnest.runtime-spec-digest"],
+    volume: volumes[0],
+    started_at: c.State.StartedAt,
+    restarts: c.RestartCount,
+    running: c.State.Running,
+    healthy: c.State.Health?.Status === "healthy",
+    entered: Boolean(nonce) && marker === nonce,
+  };
+}

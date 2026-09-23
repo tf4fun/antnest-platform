@@ -109,6 +109,14 @@ describe("instrumented ports", () => {
       outputChanged: vi.fn(),
     });
     await submitted.completion;
+    expect(telemetry.spans).toContainEqual({
+      name: "acp.session.prompt",
+      attributes: {
+        "agent.id": "agent-1",
+        "session.id": "session-1",
+        "antnest.operation.phase": "admit",
+      },
+    });
     expect(telemetry.counts).toContainEqual({
       name: "antnest.acp.run_admissions",
       attributes: { result: "accepted" },
@@ -116,6 +124,20 @@ describe("instrumented ports", () => {
     });
     expect("executeRun" in application).toBe(false);
     expect(JSON.stringify(telemetry)).not.toContain("secret prompt");
+  });
+
+  it("labels output observation as a durable snapshot read", async () => {
+    const telemetry = recordingTelemetry();
+    const application = new InstrumentedAcpApplication(acpApplication(), telemetry.port);
+    await application.readSessionOutput({ binding: binding(), sessionId: "session-1" });
+    expect(telemetry.spans).toContainEqual({
+      name: "acp.session.output",
+      attributes: {
+        "agent.id": "agent-1",
+        "session.id": "session-1",
+        "antnest.operation.phase": "read",
+      },
+    });
   });
 
   it("records a bounded admission rejection class", async () => {

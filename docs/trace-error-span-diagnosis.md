@@ -15,8 +15,8 @@ stack and application code are unchanged. See the
 The review reads every raw trace, independently of the fail-fast topology
 validator, from these private directories:
 
-- `.cache/acp-persistence/antnest-stage3-e2e-3903/persistence-traces/`
-- `.cache/acp-restart/antnest-stage3-e2e-10806/restart-traces/`
+- `artifacts/verification/acp-persistence/antnest-stage3-e2e-3903/persistence-traces/`
+- `artifacts/verification/acp-restart/antnest-stage3-e2e-10806/restart-traces/`
 
 Counts use actual `error=true` or `otel.status_code=ERROR` tags, and actual
 `CHILD_OF` references resolved against each final saved span set.
@@ -36,8 +36,8 @@ their final saved span sets. This does not clear their other strict failures.
 The P2 summary previously omitted the six Runtime errors: `requestTraceBoundary`
 invokes the strict topology assertion before `inspectInterruptedTrace` reaches
 its error inventory. The client catch then stores only the first assertion
-message. See [interruption inspection](../scripts/acp-restart/trace.mjs) and
-[result collection](../scripts/acp-restart/client.mjs). The strict verdict stayed
+message. See [interruption inspection](../tests/e2e/acp-restart/trace.mjs) and
+[result collection](../tests/e2e/acp-restart/client.mjs). The strict verdict stayed
 failed, but the diagnostic report concealed simultaneous failures.
 
 ## Which error spans should remain errors?

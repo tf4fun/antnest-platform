@@ -56,7 +56,7 @@ remains authoritative and follows the existing Tool result size policy.
   identity isolation, terminal-state guards and preview-free model context.
 - Separate Gateway + actual Rust Runtime deployment integration passed all 12
   v1/v2 Bash / managed MCP success, error and cancel paths, with live output,
-  complete reconnect replay and 12 Jaeger chains. See the [reusable profile](../../../scripts/acp-progress/README.md).
+  complete reconnect replay and 12 Jaeger chains. See the [reusable profile](../../../tests/e2e/acp-progress/README.md).
   This evidence supplements, rather than substitutes for, the service tests.
 
 References: [Runtime contract](../../../runtimes/antnest-runtime/docs/tool-progress.md),

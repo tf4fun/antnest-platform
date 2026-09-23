@@ -137,8 +137,8 @@ Verification on 2026-09-16 for this service-owned follow-up:
   Test containers/networks were removed. Existing development containers were
   not replaced, and the full browser profile was not rerun.
 
-Ignored local logs are `.cache/runtime-http-close-build.log` and
-`.cache/runtime-http-close-e2e.log`; they are not guaranteed in a fresh clone.
+Ignored local logs are `artifacts/verification/runtime-http-close-build.log` and
+`artifacts/verification/runtime-http-close-e2e.log`; they are not guaranteed in a fresh clone.
 The tests are tracked. The subsequent
 [2026-09-16 deployment and integration](../../../docs/runtime-http-close-integration.md)
 replaced the development Runtime and verified real conversations, retained

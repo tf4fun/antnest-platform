@@ -209,7 +209,7 @@ the entire Docker profile was rerun with these stricter assertions. Existing Sta
 lifecycle admission and linked worker trace assertions also passed. All containers
 and volumes under test project `antnest-stage3-e2e-52182`, including dynamically
 created Runtime resources, were removed and verified absent. Existing development
-instances were not reset. See the [reproduction instructions](../scripts/managed-mcp/README.md).
+instances were not reset. See the [reproduction instructions](../tests/e2e/managed-mcp/README.md).
 
 Scope limits remain intentional: client-injected stdio is not hosted on ACP,
 managed child configuration is applied on rebuild, there are no per-child HTTP

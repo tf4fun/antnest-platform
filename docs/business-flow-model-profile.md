@@ -94,7 +94,7 @@ edge-gateway SERVER  POST /api/admin/{path...}
 共 4 个服务、10 个 Span；3 条跨服务调用各 1 次。创建 HTTP 201，身份解析 HTTP 200，
 无错误 Span、缺失父 Span、重复调用或 Jaeger 警告，无 `/status` 或外部 Provider 调用。
 2 个接收 RPC 边界各记录请求和响应，合计 4 条正文事件；HTTP BFF/代理不重复采集正文。
-复用 `scripts/observability/query.mjs`，查询前等待 6 秒，只执行一次普通 Trace 查询。
+复用 `tests/e2e/observability/query.mjs`，查询前等待 6 秒，只执行一次普通 Trace 查询。
 
 ## 5. 验收结果与边界
 

@@ -161,7 +161,7 @@ without changing the HTTP status or readiness JSON.
   BEGIN, three SELECTs and COMMIT. Namespace is `antnest_egress`, SQL titles are
   operations, and no prepare/acquire or packet spans are emitted.
 
-Reproduce with `node scripts/observability/exercise-egress-database.mjs
+Reproduce with `node tests/e2e/observability/exercise-egress-database.mjs
 --confirm-development --agent AGENT_ID` from the platform root. The script reads
 development login settings locally, submits the current policy and version,
 asserts unchanged persisted configuration, verifies the trace, and logs out.

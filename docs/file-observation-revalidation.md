@@ -9,7 +9,7 @@ Production implementations, system clocks and warning gates were unchanged.
 
 ## Contract Migration
 
-The [file driver](../scripts/acp-files/README.md) now creates a Provider
+The [file driver](../tests/e2e/acp-files/README.md) now creates a Provider
 connection, reads its stable Model identity and uses the returned Template
 revision. It waits for executable Agent readiness. It rejects an ambiguous
 Model inventory instead of selecting an arbitrary item.
@@ -89,7 +89,7 @@ were gone. All 12 retained development containers kept the same IDs, image IDs
 and health state. Development data, rollback images and private backups were
 not part of this cleanup.
 
-Ignored local evidence is under `.cache/legacy-acceptance-20260917/`:
+Ignored local evidence is under `artifacts/verification/legacy-acceptance-20260917/`:
 `files-result.json`, `files-summary.json`, `cleanup-result.json`, red-test logs
 and gate/driver logs. Compact results retain warning/timing details; raw service
 logs that could contain credentials were omitted. Cache files are not guaranteed

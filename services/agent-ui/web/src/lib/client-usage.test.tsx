@@ -452,7 +452,7 @@ test("App displays per-session usage, new/unknown states, and disconnect freshne
       }),
     ),
   );
-  render(<App />);
+  await renderApp();
   await openUsage();
   expect(await screen.findByText("USD 0.03")).toBeTruthy();
   expect(
@@ -486,6 +486,14 @@ test("App displays per-session usage, new/unknown states, and disconnect freshne
     expect(screen.queryByRole("group", { name: "Session usage" })).toBeNull(),
   );
 });
+
+async function renderApp() {
+  // Bootstrap, SDK connection and history replay span several React commits.
+  // Flush the fixture's initialization before starting a DOM-query timeout.
+  await act(async () => {
+    render(<App />);
+  });
+}
 
 async function openUsage() {
   const trigger = await screen.findByRole("button", { name: /Context usage/ });
@@ -527,7 +535,7 @@ function appBootstrap() {
 test("App does not mark fresh usage stale because a different chat failed to load", async () => {
   appBootstrap();
   updates.set("s1", [priced(0.03)]);
-  render(<App />);
+  await renderApp();
   await openUsage();
   await screen.findByText("USD 0.03");
   await act(async () => {
@@ -551,6 +559,38 @@ test("App does not mark fresh usage stale because a different chat failed to loa
   });
   expect(await screen.findByText("USD 0.04")).toBeTruthy();
   expect(screen.queryByText("Last received")).toBeNull();
+});
+
+test("App commits replayed usage only after selected history completes", async () => {
+  appBootstrap();
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  onLoad = async (id, socket) => {
+    socket.update(id, priced(0.03));
+    await pending;
+    return {};
+  };
+  try {
+    await renderApp();
+    expect(
+      sockets[0]?.requests.some((request) => request.method === "session/load"),
+    ).toBe(true);
+    expect(screen.queryByRole("button", { name: /Context usage/ })).toBeNull();
+    expect(
+      (screen.getByRole("textbox", { name: "Message" }) as HTMLTextAreaElement)
+        .disabled,
+    ).toBe(true);
+  } finally {
+    await act(async () => release());
+  }
+  fireEvent.click(screen.getByRole("button", { name: /Context usage/ }));
+  expect(screen.getByText("USD 0.03")).toBeTruthy();
+  expect(
+    (screen.getByRole("textbox", { name: "Message" }) as HTMLTextAreaElement)
+      .disabled,
+  ).toBe(false);
 });
 
 test("Agent switching disposes pending replay before late same-ID callbacks arrive", async () => {

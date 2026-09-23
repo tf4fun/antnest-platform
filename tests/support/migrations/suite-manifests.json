@@ -1,0 +1,147 @@
+{
+  "status": "formal-templates-verified",
+  "entries": [
+    {
+      "source": "artifacts/verification/final-regression-20260922/build-queue.json",
+      "source_sha256": "033d8426f23ed6cf1abfbb6fb41c13457438485bac7fcba53477adfb1f42595f",
+      "destination": "tests/suites/final-regression/build-queue.json",
+      "rows": 10
+    },
+    {
+      "source": "artifacts/verification/final-regression-20260922/commands-diagnostic-queue.json",
+      "source_sha256": "7126140544d08ea9209f9724231815d9ff7db805a60d815685165f80745ecfdf",
+      "destination": "tests/suites/final-regression/commands-diagnostic-queue.json",
+      "rows": 1
+    },
+    {
+      "source": "artifacts/verification/final-regression-20260922/database-build-queue.json",
+      "source_sha256": "237f7a0dc858a6e74ff2e57555cebe74515dae3b3da49a9ae06df04d881430f0",
+      "destination": "tests/suites/final-regression/database-build-queue.json",
+      "rows": 14
+    },
+    {
+      "source": "artifacts/verification/final-regression-20260922/database-queue.json",
+      "source_sha256": "7fd543deca8a63d07148a2da9a3b3d74597f665898078dad432a5b635b4653f9",
+      "destination": "tests/suites/final-regression/database-queue.json",
+      "rows": 4
+    },
+    {
+      "source": "artifacts/verification/final-regression-20260922/frontend-queue.json",
+      "source_sha256": "19e1cc1ab310e796b8a5b8f20ed7d81fdead02a97d8d87cb3b7e63427a8aad61",
+      "destination": "tests/suites/final-regression/frontend-queue.json",
+      "rows": 2
+    },
+    {
+      "source": "artifacts/verification/final-regression-20260922/integration-after-boundaries-queue.json",
+      "source_sha256": "06f3a6cad21562399c54067099c4de016bfe6effbae1dc6ab852982086ea29bc",
+      "destination": "tests/suites/final-regression/integration-after-boundaries-queue.json",
+      "rows": 14
+    },
+    {
+      "source": "artifacts/verification/final-regression-20260922/integration-after-cleanup-queue.json",
+      "source_sha256": "ec204539420eea94ab8155be0c8ac4e5e43602639232feb2063869bce041d1dc",
+      "destination": "tests/suites/final-regression/integration-after-cleanup-queue.json",
+      "rows": 28
+    },
+    {
+      "source": "artifacts/verification/final-regression-20260922/integration-after-plan-queue.json",
+      "source_sha256": "dd4046df4ec0464a5ecff9dbe30bbf2b4a1dc815d0caa239b593950bc35a3d7d",
+      "destination": "tests/suites/final-regression/integration-after-plan-queue.json",
+      "rows": 15
+    },
+    {
+      "source": "artifacts/verification/final-regression-20260922/integration-after-restore-queue.json",
+      "source_sha256": "e4868efcc585f01adc66d2fca2630c6546782fc8782fdce390b735bf93256040",
+      "destination": "tests/suites/final-regression/integration-after-restore-queue.json",
+      "rows": 7
+    },
+    {
+      "source": "artifacts/verification/final-regression-20260922/integration-final-closeout-queue.json",
+      "source_sha256": "e91d426d28ba364dd8e9b8c234a8a4f07f8ffd59dc57e5e6e6b67fad80da13d4",
+      "destination": "tests/suites/final-regression/integration-final-closeout-queue.json",
+      "rows": 13
+    },
+    {
+      "source": "artifacts/verification/final-regression-20260922/integration-final-queue.json",
+      "source_sha256": "508720b3fab3cd29bc47a336a3a9f096e5be4cbb366112af3e0355b24fb3e0ef",
+      "destination": "tests/suites/final-regression/integration-final-queue.json",
+      "rows": 32
+    },
+    {
+      "source": "artifacts/verification/final-regression-20260922/integration-final-rest-queue.json",
+      "source_sha256": "b30c91fe0d5254d9e575dbdc88120ff1519f097777bc053d00d7176cd3d799ec",
+      "destination": "tests/suites/final-regression/integration-final-rest-queue.json",
+      "rows": 29
+    },
+    {
+      "source": "artifacts/verification/final-regression-20260922/integration-queue.json",
+      "source_sha256": "4fe8d6376b4a1327d3f09f1b5925841d52654573cf5406d73221c3ee4ff4ebe5",
+      "destination": "tests/suites/final-regression/integration-queue.json",
+      "rows": 32
+    },
+    {
+      "source": "artifacts/verification/final-regression-20260922/integration-remaining-queue.json",
+      "source_sha256": "76b0507e9b10ab5fe1a46d446ebdc7ac2c8b5998630e0816316ac1d0551d7e85",
+      "destination": "tests/suites/final-regression/integration-remaining-queue.json",
+      "rows": 29
+    },
+    {
+      "source": "artifacts/verification/final-regression-20260922/service-queue-fixed.json",
+      "source_sha256": "cd54e7326c2c8b0c0bffda33249ee1ac387d993a0c730ce684aeffaecadbb811",
+      "destination": "tests/suites/final-regression/service-queue-fixed.json",
+      "rows": 9
+    },
+    {
+      "source": "artifacts/verification/final-regression-20260922/service-queue.json",
+      "source_sha256": "c2c01858b7bca4183b154312b786b6a81a0649cbbfa86686a49a71b710832dc9",
+      "destination": "tests/suites/final-regression/service-queue.json",
+      "rows": 9
+    },
+    {
+      "source": "artifacts/verification/final-regression-20260922/stage2-final-queue.json",
+      "source_sha256": "df1bb7ef20381f8a47c95468b7c1ca04ae0e4c218728e7994fd2eeff7bd37508",
+      "destination": "tests/suites/final-regression/stage2-final-queue.json",
+      "rows": 1
+    },
+    {
+      "source": "artifacts/verification/timeout-failure-followup-20260922/integration-queue.json",
+      "source_sha256": "df6aa3e12b3fb3bc5b2a1242d5f8d25515b7d0533c596279c639d03145d8ce12",
+      "destination": "tests/suites/timeout-failure/integration-queue.json",
+      "rows": 3
+    },
+    {
+      "source": "artifacts/verification/timeout-failure-followup-20260922/integration-resume-queue.json",
+      "source_sha256": "075f37e36c25718b0e00ea6be010f2b848a392f9a250e3814a5ffebf143258e3",
+      "destination": "tests/suites/timeout-failure/integration-resume-queue.json",
+      "rows": 1
+    },
+    {
+      "source": "artifacts/verification/timeout-failure-followup-20260922/local-queue.json",
+      "source_sha256": "d06ae866c8e1f4018db520089008f68f4ad164804e83fb4046673e3c1a22bedb",
+      "destination": "tests/suites/timeout-failure/local-queue.json",
+      "rows": 4
+    },
+    {
+      "source": "artifacts/verification/timeout-failure-followup-20260922/ui-local-queue.json",
+      "source_sha256": "426151889c03b3ae40fe8331da55317a491a50a679366095efb9d9876f1b3eba",
+      "destination": "tests/suites/timeout-failure/ui-local-queue.json",
+      "rows": 2
+    },
+    {
+      "source": ".cache/test-layout-migration-20260922/acp-final.manifest.json",
+      "source_sha256": "12352f2206c9fd2f53300d0e5d0451dad873fce38248ad0c1e191f36c04233af",
+      "destination": "tests/suites/test-layout/acp-final.manifest.json",
+      "rows": 5,
+      "archive": "tests/e2e/history/suite-manifests/12352f2206c9fd2f53300d0e5d0451dad873fce38248ad0c1e191f36c04233af.json.source"
+    },
+    {
+      "source": ".cache/test-layout-migration-20260922/final-checks.manifest.json",
+      "source_sha256": "711f9731fb7a0d43236e5ca9362e8791e74a555a112186a3c6da2ddb788a4020",
+      "destination": "tests/suites/test-layout/final-checks.manifest.json",
+      "rows": 9,
+      "archive": "tests/e2e/history/suite-manifests/711f9731fb7a0d43236e5ca9362e8791e74a555a112186a3c6da2ddb788a4020.json.source"
+    }
+  ],
+  "verification": "artifacts/verification/cache-source-exit-20260922/suite-catalog-contracts.result.json",
+  "scope": "Template/command/configuration coverage; historical suites were not re-executed in full."
+}

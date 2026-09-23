@@ -99,7 +99,7 @@ uses the pinned Playwright dev dependency and Chromium (`npm --prefix web exec
 loopback-only static server on a free port and intercepts only synthetic browser
 API responses. It checks desktop/mobile overflow, collapsed/expanded content,
 opaque-ID routing and refresh independence, then closes its browser and server.
-Screenshots overwrite `.cache/console-audit-browser/`; the test source is kept
+Screenshots overwrite `artifacts/verification/console-audit-browser/`; the test source is kept
 in `tests/execution-audit-browser.mjs`, not in a disposable cache. This is a
 Console-only UI test, not proof of real Gateway/ACP integration.
 

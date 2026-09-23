@@ -26,7 +26,7 @@ fewer than the preceding 1,213-test batch. The byte/privacy assertion and curren
 HTTP/WebSocket/Chromium component checks remain.
 
 Private source hashes, pre-change module/test snapshots, logs and retained
-container baseline are under `.cache/browser-finish-retirement-20260921/`.
+container baseline are under `artifacts/verification/browser-finish-retirement-20260921/`.
 The shared suite and both disposable browser profiles run serially.
 
 The automated four-scenario profile uses project `antnest-lifecycle-eda7814c`.
@@ -39,7 +39,7 @@ screenshots were inspected: real expanded Tool output, attachments/rejection
 feedback, exact replay, and mobile layout.
 
 The independent C4 profile uses project `antnest-lifecycle-436be050`, with evidence
-in `.cache/c4-browser-2026-09-21T13-47-37-655Z/`. All eleven browser groups pass:
+in `artifacts/verification/c4-browser-2026-09-21T13-47-37-655Z/`. All eleven browser groups pass:
 real Tools, two-page metadata, attachments/capability rejection, approvals,
 cross-Session cancellation, offline/close-reopen replay, Rebuild, mobile,
 revocation and privacy. All ten saved traces pass the existing topology checks,

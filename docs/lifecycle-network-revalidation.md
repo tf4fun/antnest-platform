@@ -6,7 +6,7 @@ retained development deployment and old shared assets are unchanged.
 
 ## Contract and implementation
 
-The [network migration contract](../scripts/lifecycle-closeout/network-migration-contract.md)
+The [network migration contract](../tests/e2e/lifecycle-closeout/network-migration-contract.md)
 was written before implementation. The network profile now uses the current
 Foundation setup and lifecycle command/replay implementation: Provider connection,
 stable Model ID, the actual returned Template revision, immutable Runtime image
@@ -112,8 +112,8 @@ warning class. No production deployment or data migration was performed.
 ## Evidence and remaining scope
 
 Private local logs and retained-container snapshots are under
-`.cache/lifecycle-network-migration-20260921/`; deployment inspection, raw traces
-and failure diagnostics are under `.cache/lifecycle-network/<project>/`. Ignored
+`artifacts/verification/lifecycle-network-migration-20260921/`; deployment inspection, raw traces
+and failure diagnostics are under `artifacts/verification/lifecycle-network/<project>/`. Ignored
 artifacts are not guaranteed in a fresh clone and must not be published.
 
 Shutdown, health, restore, loss, interrupted-update, older Workspace and retained /

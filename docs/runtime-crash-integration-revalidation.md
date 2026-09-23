@@ -8,7 +8,7 @@ service behavior, schema changes, image builds or development deployment.
 
 ## Contract and exercised path
 
-The [integration contract](../scripts/lifecycle-closeout/crash-contract.md) defines
+The [integration contract](../tests/e2e/lifecycle-closeout/crash-contract.md) defines
 two separately created Agents. Each uses Gateway → Console → Agent Controller
 Rebuild → Temporal → Runtime Controller → real Docker. Rebuild explicitly selects
 a newer Template revision. Agent Controller and Temporal remain alive while the
@@ -69,7 +69,7 @@ local images. This target is separate from stable graceful-restart acceptance.
 The shared fixture suite runs serially:
 
 ```sh
-node --test --test-concurrency=1 scripts/*.test.mjs scripts/*/*.test.mjs
+node --test --test-concurrency=1 tests/e2e/*/*.test.mjs tests/support/*.test.mjs tests/support/*/*.test.mjs tests/integration/deployment/*.test.mjs tests/integration/deployment/temporal/*.test.mjs
 ```
 
 Shared regression: 1,222 passed, five opt-in skips, zero failures, including 20
@@ -99,8 +99,8 @@ networks, and zero verification children. All twelve retained containers keep
 the same IDs, image IDs, start times, restart counts, mounts and networks; twelve
 remain running and eleven healthy. No retained service was restarted.
 
-Evidence is private under `.cache/runtime-crash-integration-20260922/` and
-`.cache/lifecycle-crash/<project>/`. Full strict Trace is deliberately not waived;
+Evidence is private under `artifacts/verification/runtime-crash-integration-20260922/` and
+`artifacts/verification/lifecycle-crash/<project>/`. Full strict Trace is deliberately not waived;
 the profile retains exit 2 for recorded crash/error/timing diagnostics after
 business and scoped recovery topology pass.
 

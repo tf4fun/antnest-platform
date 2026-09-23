@@ -1,0 +1,40 @@
+import json, os, pathlib, re, signal, subprocess, time
+
+os.umask(0o077)
+p = pathlib.Path(__file__).resolve().parent
+output = p / 'commands-diagnostic-inner.log'
+child = None
+def stop(sig,frame):
+    if child and child.poll() is None: os.killpg(child.pid,signal.SIGTERM)
+    raise SystemExit(128+sig)
+signal.signal(signal.SIGINT,stop);signal.signal(signal.SIGTERM,stop)
+try:
+    with output.open('x') as log:
+        child = subprocess.Popen(['make','e2e-slash-commands'],stdout=log,stderr=subprocess.STDOUT,start_new_session=True)
+        while child.poll() is None:
+            projects = set(re.findall(r'antnest-stage3-e2e-\d+', output.read_text()))
+            for project in projects:
+                ids = subprocess.check_output(['docker','ps','-aq','--filter',f'label=com.docker.compose.project={project}'],text=True,timeout=15).split()
+                if not ids: continue
+                inspection = subprocess.run(['docker','inspect',*ids],capture_output=True,text=True,timeout=15)
+                # Teardown can remove an object after enumeration. This read-only
+                # observer must never interrupt the fixture for that normal race.
+                if inspection.returncode != 0: continue
+                inspected = json.loads(inspection.stdout)
+                states=[]
+                for row in inspected:
+                    name=row['Name'].strip('/')
+                    states.append({'name':name,'state':row['State'],'restarts':row['RestartCount']})
+                    if any(s in name for s in ['agent-controller','runtime-controller','agent-acp-service','edge-gateway','admin-console']):
+                        data=subprocess.run(['docker','logs','--tail','3000',row['Id']],capture_output=True,timeout=15)
+                        if data.returncode==0:(p/(name+'.private.log')).write_bytes(data.stdout+data.stderr)
+                (p/(project+'.diagnostic-states.json')).write_text(json.dumps(states,indent=2))
+            time.sleep(3)
+        code=child.returncode
+finally:
+    if child and child.poll() is None:
+        os.killpg(child.pid,signal.SIGTERM)
+        try: child.wait(timeout=180)
+        except subprocess.TimeoutExpired: os.killpg(child.pid,signal.SIGKILL);child.wait()
+print(output.read_text())
+raise SystemExit(code)

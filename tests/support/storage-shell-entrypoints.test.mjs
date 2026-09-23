@@ -1,0 +1,184 @@
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import test from "node:test";
+
+const root = fileURLToPath(new URL("../../", import.meta.url));
+const children = [
+  ["managed-mcp", "managed-mcp"],
+  ["rpc-response-loss", "rpc-response-loss"],
+  ["stage3-base", "stage3-base"],
+  ["acp-persistence", "acp-persistence"],
+  ["acp-restart", "acp-restart"],
+  ["acp-session", "identity-session"],
+  ["identity-http", "identity-http"],
+  ["agent-access", "identity-agent"],
+  ["acp-closeout", "acp-closeout-normal"],
+];
+function launch(t, entry, evidenceRoot, cached, extra = {}, setup = () => {}) {
+  const work = mkdtempSync(join(tmpdir(), "antnest-shell-storage-"));
+  t.after(() => rmSync(work, { recursive: true, force: true }));
+  for (const file of [
+    "tests/e2e/e2e-" + entry + ".sh",
+    "tests/support/storage.mjs",
+    ...(existsSync(join(root, "tests/support/verification/stage3-storage.mjs"))
+      ? ["tests/support/verification/stage3-storage.mjs"]
+      : []),
+  ]) {
+    mkdirSync(dirname(join(work, file)), { recursive: true });
+    copyFileSync(join(root, file), join(work, file));
+  }
+  const bin = join(work, "bin");
+  mkdirSync(bin);
+  for (const command of ["docker", "mktemp", "curl", "openssl"])
+    writeFileSync(
+      join(bin, command),
+      '#!/bin/sh\nprintf "%s\\n" "' +
+        command +
+        '" >> "$ENTRY_CALLS"\nexit 73\n',
+      { mode: 0o700 },
+    );
+  writeFileSync(
+    join(bin, "node"),
+    '#!/bin/sh\ncase "$1" in -e|*tests/support/storage.mjs|*tests/support/verification/stage3-storage.mjs) exec "$ENTRY_NODE" "$@";; esac\nprintf "%s\\n" "node:$1" >> "$ENTRY_CALLS"\nexit 73\n',
+    { mode: 0o700 },
+  );
+  mkdirSync(join(work, "artifacts/verification"), { recursive: true });
+  if (cached) {
+    mkdirSync(join(work, ".cache"));
+    symlinkSync(
+      join(work, ".cache"),
+      join(work, "artifacts/verification", evidenceRoot),
+    );
+  }
+  const marker = join(work, "calls");
+  const env = {
+    PATH: bin + ":/usr/bin:/bin",
+    ENTRY_NODE: process.execPath,
+    ENTRY_CALLS: marker,
+    ANTNEST_E2E_DISPOSABLE: "true",
+    ANTNEST_E2E_KEEP_STACK: "false",
+    COMPOSE_PROJECT_NAME: "antnest-stage3-e2e-1234",
+    ANTNEST_E2E_RUN_ID: "fixture-run",
+    ANTNEST_IDENTITY_SUITE: "core",
+    ...extra,
+  };
+  setup(work, env);
+  const result = spawnSync(
+    "/bin/sh",
+    [join(work, "tests/e2e/e2e-" + entry + ".sh")],
+    { cwd: work, env, encoding: "utf8", timeout: 5000 },
+  );
+  assert.ifError(result.error);
+  return {
+    ...result,
+    calls: existsSync(marker) ? readFileSync(marker, "utf8") : "",
+  };
+}
+
+for (const [entry, directory] of children) {
+  test(`${entry} rejects cached evidence before Docker or temporary setup`, (t) => {
+    const result = launch(t, entry, directory, true);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /durable.*cache/i);
+    assert.equal(result.calls, "");
+  });
+  test(`${entry} durable output still reaches its first dependency`, (t) => {
+    const result = launch(t, entry, directory, false);
+    assert.notEqual(result.calls, "");
+    assert.doesNotMatch(result.stderr, /durable.*cache/i);
+  });
+  for (const alias of [false, true])
+    test(`${entry} rejects cached temporary storage (alias=${alias}) before dependencies`, (t) => {
+      const result = launch(t, entry, directory, false, {}, (work, env) => {
+        mkdirSync(join(work, ".cache"));
+        symlinkSync(join(work, ".cache"), join(work, "cache-alias"));
+        env.TMPDIR = join(work, alias ? "cache-alias" : ".cache");
+      });
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, /durable.*cache/i);
+      assert.equal(result.calls, "");
+    });
+  test(`${entry} rejects an existing cached leaf before dependencies`, (t) => {
+    const result = launch(t, entry, directory, false, {}, (work) => {
+      const output = join(
+        work,
+        "artifacts/verification",
+        directory,
+        "antnest-stage3-e2e-1234",
+      );
+      mkdirSync(output, { recursive: true });
+      mkdirSync(join(work, ".cache"));
+      writeFileSync(join(work, ".cache/report.json"), "preserved");
+      symlinkSync(
+        join(work, ".cache/report.json"),
+        join(output, "deployment.private.json"),
+      );
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /durable.*cache/i);
+    assert.equal(result.calls, "");
+  });
+}
+
+for (const entry of ["stage1", "stage3a"])
+  test(`${entry} rejects cached temporary storage before setup`, (t) => {
+    const result = launch(t, entry, "unused", false, {}, (work, env) => {
+      mkdirSync(join(work, ".cache"));
+      env.TMPDIR = join(work, ".cache");
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /durable.*cache/i);
+    assert.equal(result.calls, "");
+  });
+
+for (const directory of ["go-integration", "stage2-boundary"])
+  test(`Stage 2 rejects ${directory} cache aliases before Docker`, (t) => {
+    const result = launch(t, "stage2", directory, true);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /durable.*cache/i);
+    assert.equal(result.calls, "");
+  });
+
+for (const [flag, directory] of [
+  ["", "stage3-base"],
+  ["MANAGED_MCP", "managed-mcp"],
+  ["RPC_RESPONSE_LOSS", "rpc-response-loss"],
+  ["ACP_PERSISTENCE", "acp-persistence"],
+  ["ACP_RESTART", "acp-restart"],
+  ["ACP_SESSION", "identity-session"],
+  ["IDENTITY_CORE", "identity-http"],
+  ["IDENTITY_ACCESS", "identity-http"],
+  ["AGENT_ACCESS", "identity-agent"],
+  ["ACP_CLOSEOUT", "acp-closeout-normal"],
+])
+  test(`Stage 3 rejects selected ${directory} evidence before network discovery (${flag || "default"})`, (t) => {
+    const result = launch(
+      t,
+      "stage3a",
+      directory,
+      true,
+      flag ? { ["ANTNEST_E2E_" + flag]: "true" } : {},
+    );
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /durable.*cache/i);
+    assert.equal(result.calls, "");
+  });
+
+test("Stage 3 durable output still reaches network discovery", (t) => {
+  const result = launch(t, "stage3a", "stage3-base", false);
+  assert.match(result.calls, /network\.mjs/);
+  assert.doesNotMatch(result.stderr, /durable.*cache/i);
+});

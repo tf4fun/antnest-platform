@@ -410,22 +410,22 @@ propagation, static fallback, and lifecycle forwarding. The Compose acceptance
 is the cross-service proof, not a replacement for those tests.
 
 Run `make e2e-stage3` to build images first, or `make e2e-stage3-local` to use
-existing local images. The [current base fixture](../scripts/stage3-base/README.md)
+existing local images. The [current base fixture](../tests/e2e/stage3-base/README.md)
 uses an isolated Compose project with empty volumes, all five lifecycle command
 traces and independent ACP message traces. It verifies current configuration
 publication/settlement, real Runtime operations and host-port isolation, then
 tears down owned resources on success or failure. Clock warnings still produce
 a nonzero result.
 
-Managed MCP now has an independent disposable [current fixture](../scripts/managed-mcp/README.md)
+Managed MCP now has an independent disposable [current fixture](../tests/e2e/managed-mcp/README.md)
 for both SDK versions and active-Run Rebuild.
-The [current RPC fault fixture](../scripts/rpc-response-loss/README.md) covers
+The [current RPC fault fixture](../tests/e2e/rpc-response-loss/README.md) covers
 both-version publication/settlement acknowledgement loss. Its business checks
 pass; the subsequent Controller candidate closes background publication SQL
 tracing. Strict warnings and Docker probe errors remain failed. The separate
-[ACP persistence fixture](../scripts/acp-persistence/README.md) now has six
+[ACP persistence fixture](../tests/e2e/acp-persistence/README.md) now has six
 committed-response-loss cases and 32 scoped Trace checks; strict faults remain
-failed. [Process interruption](../scripts/acp-restart/README.md) now has eight
+failed. [Process interruption](../tests/e2e/acp-restart/README.md) now has eight
 business cases, 18 replays and two physical Rebuilds. Its 44 complete Trace checks
 passed in the original run. The [Trace follow-up](trace-acceptance-followup.md)
 separates intentional SIGKILL diagnostics from normal-request completeness and

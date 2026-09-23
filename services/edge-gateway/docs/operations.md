@@ -41,9 +41,13 @@ Transport; the WebSocket dial wrapper traces its handshake separately from messa
 
 Each client ACP request or notification starts a bounded Gateway message trace,
 linked to the connection trace rather than parented by its long-lived HTTP span.
-The message SERVER includes session revalidation; its CLIENT covers forwarding
+The message SERVER includes session revalidation; its PRODUCER covers forwarding
 to ACP, not waiting for the eventual protocol response. W3C context is injected
 into standard ACP `params._meta`; caller-supplied trace context is replaced.
+`antnest.operation.phase=relay` on the message SERVER and `forward` on the
+outbound PRODUCER make those bounded lifetimes explicit in Jaeger. The outbound
+span ending before ACP dispatch or Run completion is expected; these attributes
+do not suppress clock-skew warnings or change propagation.
 ACP dispatch, Run execution, model and Runtime calls inherit this context.
 Message spans record method and byte count only, never prompt or response content.
 Responses, binary frames and malformed envelopes remain unchanged; validation
@@ -98,11 +102,12 @@ seconds for cancelled handlers, up to five seconds for exporter shutdown, and
 margin. Increase the platform stop grace as well when increasing the HTTP
 shutdown budget.
 
-Run the service-owned signal regression after building its image:
+Run the service-owned signal regression from the repository root after building
+its image:
 
 ```sh
 docker build -f services/edge-gateway/Dockerfile -t antnest/edge-gateway:local .
-node services/edge-gateway/tests/shutdown-docker.mjs
+node tests/e2e/edge-gateway/shutdown-docker.mjs
 ```
 
 The regression starts only a Gateway container and a controlled Node HTTP

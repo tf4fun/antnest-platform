@@ -5,7 +5,7 @@ producer contract. ACP consumption and deployed Gateway acceptance are separate
 batches; no ACP implementation changes belong here.
 
 Subsequent integration also passed on 2026-09-09: the
-[F03 deployment profile](../../../scripts/acp-files/README.md) covers actual
+[F03 deployment profile](../../../tests/e2e/acp-files/README.md) covers actual
 Runtime file operations through Gateway/ACP v1/v2, replay and Jaeger. The
 producer-only evidence below remains distinct from that deployed workflow.
 

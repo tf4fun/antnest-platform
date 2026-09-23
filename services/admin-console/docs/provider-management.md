@@ -118,7 +118,7 @@ gates serially. Browser inspection supplements these reusable tests.
 The opt-in real discovery acceptance runs against the local development Gateway:
 
 ```sh
-node services/admin-console/tests/model-discovery-browser.mjs --confirm-development
+node tests/e2e/admin-console/model-discovery-browser.mjs --confirm-development
 ```
 
 Run from the platform root with the development `.env` and parent `.secret`
@@ -126,4 +126,4 @@ available. It discovers OpenRouter models, checks the unsaved-connection flow,
 adds one explicitly selected model to an existing enabled OpenRouter connection,
 and verifies merged/saved/fallback views on desktop and mobile. It never calls a
 completion endpoint or changes credentials. Only final screenshots and a compact
-summary are written to ignored `.cache/model-discovery-acceptance/`.
+summary are written to ignored `artifacts/verification/model-discovery-acceptance/`.
