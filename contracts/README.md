@@ -26,8 +26,20 @@ generated application models, persistence records, or reusable business code.
 | [`agent-acp/execution-snapshot.schema.json`](agent-acp/execution-snapshot.schema.json) | Agent ACP Service | Agent Controller | Controller and ACP | Organization execution snapshot with current Providers, models, access and ordered fallback |
 | [`agent-acp/agent-execution-state.schema.json`](agent-acp/agent-execution-state.schema.json) | Agent ACP Service | Edge Gateway | Gateway state consumers | ACP-owned availability and active Session observation |
 | [`identity/identity-contract.json`](identity/identity-contract.json) | Identity Service | Agent Controller, Edge Gateway, and administrative clients | Agent Controller and internal identity clients | Organizations, principals, local authentication, OIDC configuration, and SCIM credential administration |
-| [`edge-gateway/session-contract.json`](edge-gateway/session-contract.json) | Edge Gateway | Identity Service and Admin Console | Browser clients and Admin Console | Browser session, administrator admission, and trusted principal projection |
+| [`edge-gateway/session-contract.json`](edge-gateway/session-contract.json) | Edge Gateway | Identity Service, Agent UI and Admin Console | Browser clients and Node Bridge | Browser session, Workspace HTML/API/SSE admission, administrator admission and trusted principal projection |
 | [`admin-console/admin-contract.json`](admin-console/admin-contract.json) | Admin Console | Edge Gateway, Identity Service, and Agent Controller | Administrator web application | Stage 3A thin-BFF route and authority-field inventory |
+
+## Agent UI Full-Stack Boundary
+
+These contracts define the active development deployment. The Node Bridge and
+browser use business HTTP/SSE through Gateway; the ACP extension remains an
+internal producer contract.
+
+| Contract | Owner | Required reviewers | Consumers | Purpose |
+| --- | --- | --- | --- | --- |
+| [`agent-ui/workspace-api.json`](agent-ui/workspace-api.json), [`wire schema`](agent-ui/workspace-api.schema.json), [`semantics`](agent-ui/workspace-api.md) | Agent UI | Edge Gateway, ACP Service | Gateway and browser | Authenticated HTTP/SSE route and projection boundary |
+| [`agent-acp/workspace-bridge.schema.json`](agent-acp/workspace-bridge.schema.json), [`semantics`](agent-acp/workspace-bridge.md) | Agent ACP Service | Agent UI, Edge Gateway | Node Bridge | Durable prompt receipt, targeted cancel and replay delivery metadata |
+| [`edge-gateway/session-contract.json`](edge-gateway/session-contract.json) | Edge Gateway | Identity Service, Agent UI | Browser and Node Bridge | Active authentication, proxy and SSE admission routes |
 
 Obsolete prototype contracts are deleted when their service is rewritten; they
 do not remain as an implied compatibility layer.

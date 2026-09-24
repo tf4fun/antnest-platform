@@ -1,6 +1,6 @@
 {
   "contract": "antnest.edge-gateway.session",
-  "version": 12,
+  "version": 13,
   "session_validation": {
     "invalid_or_expired": "401 unauthenticated; clear browser cookies",
     "identity_unavailable": "503 identity_unavailable; preserve cookies; never admit upstream requests",
@@ -191,12 +191,46 @@
       "authentication": "none",
       "success_status": "upstream"
     },
+    "workspace_bridge_api": {
+      "method": "GET|POST",
+      "path": "/api/app/workspace/v1/{path...}",
+      "authentication": "browser_session",
+      "csrf": "unsafe_methods",
+      "origin": "same-origin for unsafe methods",
+      "identity_headers": [
+        "X-Antnest-Organization-ID",
+        "X-Antnest-Principal-ID",
+        "X-Antnest-User-ID",
+        "X-Antnest-Membership-ID",
+        "X-Antnest-Administrator"
+      ],
+      "trust": "strip all incoming X-Antnest identity fields before injecting verified values",
+      "identity_failure": "401 or 503; do not contact Node",
+      "body_limit": "at least existing negotiated ACP multimodal input limit",
+      "upstream": "internal agent-ui Node, not ACP"
+    },
+    "workspace_bridge_events": {
+      "method": "GET",
+      "path": "/api/app/workspace/v1/agents/{agent_id}/events",
+      "authentication": "browser_session_at_entry_and_lease_revalidation",
+      "transport": "SSE",
+      "replay": "scope_bound_cursor_or_reset",
+      "cursor_sources": ["cursor query on initial EventSource", "Last-Event-ID on reconnect"],
+      "lease_max_seconds": 300,
+      "buffering": "disabled",
+      "upstream_disconnect": "observation only; never cancel ACP Run"
+    },
     "workspace_application": {
       "method": "GET|HEAD",
       "path": "/workspace/{path...}",
-      "authentication": "none",
+      "authentication": "browser_session_for_html; none_for_assets",
       "success_status": "upstream",
-      "prefix_stripped": true
+      "html_cache": "private, no-store",
+      "asset_cache": "public immutable by content hash",
+      "prefix": "preserved",
+      "html_identity": "verified Gateway principal headers",
+      "upstream": "internal agent-ui Node via ANTNEST_AGENT_UI_URL",
+      "return_to": "validated same-origin /workspace/ path preserving agent and session query"
     }
   },
   "trusted_headers": [
@@ -207,13 +241,17 @@
     "X-Antnest-Organization-Role",
     "X-Antnest-Principal-ID",
     "X-Antnest-Agent-ID",
-    "X-Antnest-Agent-Access-Subject"
+    "X-Antnest-Agent-Access-Subject",
+    "X-Antnest-Administrator"
   ],
   "response_headers": ["X-Antnest-Trace-ID"],
   "upstream_injected_headers": [
     "X-Antnest-Organization-ID",
     "X-Antnest-Principal-ID",
-    "X-Antnest-Agent-ID"
+    "X-Antnest-Agent-ID",
+    "X-Antnest-User-ID",
+    "X-Antnest-Membership-ID",
+    "X-Antnest-Administrator"
   ],
   "error": {
     "required": ["code", "message"],

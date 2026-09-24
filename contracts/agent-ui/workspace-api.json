@@ -1,0 +1,99 @@
+{
+  "contract": "antnest.agent-ui.workspace-api",
+  "version": 1,
+  "status": "proposed; no production route is active yet",
+  "base_path": "/api/app/workspace/v1",
+  "schema": "workspace-api.schema.json",
+  "transport": "same-origin authenticated HTTP; SSE for observation",
+  "routes": {
+    "bootstrap": {
+      "method": "GET",
+      "path": "/bootstrap",
+      "response": "bootstrap"
+    },
+    "sessions": {
+      "method": "GET",
+      "path": "/agents/{agentId}/sessions",
+      "response": "sessionPage"
+    },
+    "create_session": {
+      "method": "POST",
+      "path": "/agents/{agentId}/sessions",
+      "response": "createSessionResponse"
+    },
+    "agent_view": {
+      "method": "GET",
+      "path": "/agents/{agentId}/view",
+      "response": "agentView"
+    },
+    "session_view": {
+      "method": "GET",
+      "path": "/agents/{agentId}/sessions/{sessionId}/view",
+      "response": "sessionView"
+    },
+    "turns": {
+      "method": "GET",
+      "path": "/agents/{agentId}/sessions/{sessionId}/turns",
+      "response": "turnPage"
+    },
+    "turn_content": {
+      "method": "GET",
+      "path": "/agents/{agentId}/sessions/{sessionId}/turns/{turnId}/content",
+      "response": "contentPage"
+    },
+    "events": {
+      "method": "GET",
+      "path": "/agents/{agentId}/events",
+      "transport": "SSE",
+      "event": "streamEvent"
+    },
+    "prompt": {
+      "method": "POST",
+      "path": "/agents/{agentId}/sessions/{sessionId}/prompts",
+      "request": "promptRequest",
+      "response": "promptAccepted",
+      "success_status": 202
+    },
+    "operation": {
+      "method": "GET",
+      "path": "/agents/{agentId}/sessions/{sessionId}/operations/{intentId}",
+      "response": "operation"
+    },
+    "cancel": {
+      "method": "POST",
+      "path": "/agents/{agentId}/sessions/{sessionId}/operations/{intentId}/cancel",
+      "request": "cancelRequest",
+      "response": "operation"
+    },
+    "configuration": {
+      "method": "POST",
+      "path": "/agents/{agentId}/sessions/{sessionId}/configuration",
+      "request": "configurationRequest",
+      "response": "sessionView"
+    },
+    "permission_decision": {
+      "method": "POST",
+      "path": "/agents/{agentId}/permissions/{permissionId}/decision",
+      "request": "permissionDecisionRequest",
+      "response": "sessionView"
+    },
+    "turn_process": {
+      "method": "GET",
+      "path": "/agents/{agentId}/sessions/{sessionId}/turns/{turnId}/process",
+      "response": "processPage"
+    },
+    "process_content": {
+      "method": "GET",
+      "path": "/agents/{agentId}/sessions/{sessionId}/turns/{turnId}/process/{itemId}/content",
+      "response": "processContentPage"
+    }
+  },
+  "errors": "error",
+  "maximum_json_request_bytes": 67108864,
+  "ordinary_browser_timeout_ms": 30000,
+  "ordinary_node_timeout_ms": 60000,
+  "sse_heartbeat_ms": 15000,
+  "sse_identity_lease_max_ms": 300000,
+  "sse_subscriber_queue_max_bytes": 1048576,
+  "process_page_max_bytes": 262144
+}

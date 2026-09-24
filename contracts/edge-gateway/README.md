@@ -5,6 +5,11 @@ Agent workspace routes plus the trusted headers Edge Gateway may inject into
 internal services. It is a product-facing browser contract, not the future
 third-party OpenAPI.
 
+Version 13 of `session-contract.json` includes the active Node Workspace HTML,
+HTTP API and SSE routes. Gateway authenticates HTML and business API requests,
+while hashed static assets are served without a browser session. The browser
+uses this route set instead of a direct ACP connection.
+
 Identity access tokens are cookie-only secrets. Token IDs remain Identity audit
 identifiers and are not stored in the browser session. Neither may appear in
 the JSON response schemas described by this contract.

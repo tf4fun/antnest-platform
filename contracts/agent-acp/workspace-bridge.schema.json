@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://antnest.dev/contracts/agent-acp/workspace-bridge.schema.json",
+  "title": "Proposed ACP workspace Bridge extension values",
+  "$defs": {
+    "id": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "revision": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+    "promptIntent": {
+      "type": "object",
+      "properties": {
+        "intentId": { "$ref": "#/$defs/id" },
+        "expectedAppendVersion": { "$ref": "#/$defs/revision" }
+      },
+      "required": ["intentId", "expectedAppendVersion"],
+      "additionalProperties": false
+    },
+    "targetCancel": {
+      "type": "object",
+      "properties": { "expectedRunId": { "$ref": "#/$defs/id" } },
+      "required": ["expectedRunId"],
+      "additionalProperties": false
+    },
+    "configurationCondition": {
+      "type": "object",
+      "properties": {
+        "expectedRevision": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+      },
+      "required": ["expectedRevision"],
+      "additionalProperties": false
+    },
+    "bridgeCapabilities": {
+      "type": "object",
+      "properties": {
+        "intentReceipt": { "const": 1 },
+        "targetCancel": { "const": 1 },
+        "deliveryMark": { "const": 1 },
+        "configurationCas": { "const": 1 }
+      },
+      "required": ["intentReceipt", "targetCancel", "deliveryMark"],
+      "additionalProperties": false
+    },
+    "loadCut": {
+      "type": "object",
+      "properties": {
+        "sealedWatermark": { "$ref": "#/$defs/revision" },
+        "appendVersion": { "$ref": "#/$defs/revision" }
+      },
+      "required": ["sealedWatermark", "appendVersion"],
+      "additionalProperties": false
+    },
+    "deliveryMark": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": { "const": "part" },
+            "sequence": { "$ref": "#/$defs/revision" },
+            "partIndex": { "$ref": "#/$defs/revision" },
+            "partCount": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+            "runId": { "anyOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] },
+            "messageId": { "$ref": "#/$defs/id" }
+          },
+          "required": ["kind", "sequence", "partIndex", "partCount", "runId", "messageId"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": { "const": "checkpoint" },
+            "sequence": { "$ref": "#/$defs/revision" }
+          },
+          "required": ["kind", "sequence"],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "intentReceipt": {
+      "type": "object",
+      "properties": {
+        "intentId": { "$ref": "#/$defs/id" },
+        "sessionId": { "$ref": "#/$defs/id" },
+        "runId": { "$ref": "#/$defs/id" },
+        "phase": { "enum": ["persisting", "accepted", "running", "awaiting_permission", "cancelling", "completed", "failed", "cancelled", "unknown"] },
+        "appendVersion": { "$ref": "#/$defs/revision" },
+        "outputWatermark": { "$ref": "#/$defs/revision" },
+        "stopReason": { "type": ["string", "null"] }
+      },
+      "required": ["intentId", "sessionId", "runId", "phase", "appendVersion", "outputWatermark", "stopReason"],
+      "additionalProperties": false
+    },
+    "executionObservation": {
+      "type": "object",
+      "properties": {
+        "sessionId": { "$ref": "#/$defs/id" },
+        "appendVersion": { "$ref": "#/$defs/revision" },
+        "outputWatermark": { "$ref": "#/$defs/revision" },
+        "activeRunId": { "anyOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] },
+        "recentReceipts": { "type": "array", "items": { "$ref": "#/$defs/intentReceipt" } },
+        "configurationRevision": { "anyOf": [{ "type": "string", "pattern": "^[a-f0-9]{64}$" }, { "type": "null" }] }
+      },
+      "required": ["sessionId", "appendVersion", "outputWatermark", "activeRunId", "recentReceipts", "configurationRevision"],
+      "additionalProperties": false
+    }
+  }
+}

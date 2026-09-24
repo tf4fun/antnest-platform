@@ -1,0 +1,668 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://antnest.dev/contracts/agent-ui/workspace-api.schema.json",
+  "title": "Proposed Agent UI workspace v1 wire values",
+  "$defs": {
+    "id": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "revision": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "cursor": { "type": "string", "minLength": 1, "maxLength": 4096 },
+    "contentBlock": {
+      "type": "object",
+      "properties": { "type": { "type": "string", "minLength": 1 } },
+      "required": ["type"],
+      "additionalProperties": true,
+      "description": "A complete ACP ContentBlock; SDK validates its negotiated variant at the service adapter boundary."
+    },
+    "error": {
+      "type": "object",
+      "properties": {
+        "code": { "type": "string", "minLength": 1 },
+        "message": { "type": "string", "minLength": 1 },
+        "requestId": { "$ref": "#/$defs/id" },
+        "retryable": { "type": "boolean" },
+        "operationId": { "$ref": "#/$defs/id" },
+        "recovery": {
+          "enum": ["refresh", "query_operation", "login", "retry_read", "none"]
+        }
+      },
+      "required": ["code", "message", "requestId", "retryable", "recovery"],
+      "additionalProperties": false
+    },
+    "promptRequest": {
+      "type": "object",
+      "properties": {
+        "intentId": { "$ref": "#/$defs/id" },
+        "expectedAppendVersion": { "$ref": "#/$defs/revision" },
+        "prompt": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/contentBlock" }
+        }
+      },
+      "required": ["intentId", "expectedAppendVersion", "prompt"],
+      "additionalProperties": false
+    },
+    "promptAccepted": {
+      "type": "object",
+      "properties": {
+        "operationId": { "$ref": "#/$defs/id" },
+        "acceptance": { "const": "bridge" },
+        "phase": { "const": "dispatching" }
+      },
+      "required": ["operationId", "acceptance", "phase"],
+      "additionalProperties": false
+    },
+    "bootstrap": {
+      "type": "object",
+      "properties": {
+        "principal": {
+          "type": "object",
+          "properties": {
+            "userId": { "$ref": "#/$defs/id" },
+            "organizationId": { "$ref": "#/$defs/id" },
+            "administrator": { "type": "boolean" }
+          },
+          "required": ["userId", "organizationId", "administrator"],
+          "additionalProperties": false
+        },
+        "agents": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "agentId": { "$ref": "#/$defs/id" },
+              "name": { "type": "string", "minLength": 1 },
+              "lifecycle": { "enum": ["not_created", "created", "deleted"] },
+              "activation": { "enum": ["enabled", "disabled"] },
+              "runtime": {
+                "enum": [
+                  "unknown",
+                  "waiting",
+                  "available",
+                  "unhealthy",
+                  "exited",
+                  "absent"
+                ]
+              }
+            },
+            "required": ["agentId", "name", "lifecycle", "runtime"],
+            "additionalProperties": false
+          }
+        },
+        "renderedAt": { "type": "string", "minLength": 1 },
+        "bridgeEpoch": { "$ref": "#/$defs/id" }
+      },
+      "required": ["principal", "agents", "renderedAt", "bridgeEpoch"],
+      "additionalProperties": false
+    },
+    "sessionSummary": {
+      "type": "object",
+      "properties": {
+        "sessionId": { "$ref": "#/$defs/id" },
+        "title": { "type": "string" },
+        "updatedAt": { "type": ["string", "null"] },
+        "activeOperationId": {
+          "anyOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }]
+        }
+      },
+      "required": ["sessionId", "title", "updatedAt", "activeOperationId"],
+      "additionalProperties": false
+    },
+    "sessionPage": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/sessionSummary" }
+        },
+        "nextCursor": {
+          "anyOf": [{ "$ref": "#/$defs/cursor" }, { "type": "null" }]
+        }
+      },
+      "required": ["items", "nextCursor"],
+      "additionalProperties": false
+    },
+    "createSessionResponse": {
+      "type": "object",
+      "properties": { "sessionId": { "$ref": "#/$defs/id" } },
+      "required": ["sessionId"],
+      "additionalProperties": false
+    },
+    "cancelRequest": {
+      "type": "object",
+      "properties": { "expectedRunId": { "$ref": "#/$defs/id" } },
+      "required": ["expectedRunId"],
+      "additionalProperties": false
+    },
+    "operation": {
+      "type": "object",
+      "properties": {
+        "operationId": { "$ref": "#/$defs/id" },
+        "sessionId": { "$ref": "#/$defs/id" },
+        "phase": {
+          "enum": [
+            "dispatching",
+            "accepted",
+            "running",
+            "awaiting_permission",
+            "cancelling",
+            "completed",
+            "failed",
+            "cancelled",
+            "uncertain"
+          ]
+        },
+        "acceptance": { "enum": ["bridge", "acp", "unknown"] },
+        "runId": { "$ref": "#/$defs/id" },
+        "outputWatermark": { "$ref": "#/$defs/revision" },
+        "stopReason": { "type": ["string", "null"] },
+        "errorClass": { "type": ["string", "null"], "maxLength": 128 },
+        "error": { "$ref": "#/$defs/error" }
+      },
+      "required": ["operationId", "sessionId", "phase", "acceptance"],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": { "acceptance": { "const": "acp" } },
+            "required": ["acceptance"]
+          },
+          "then": {
+            "properties": { "runId": true, "outputWatermark": true },
+            "required": ["runId", "outputWatermark"]
+          }
+        }
+      ]
+    },
+    "streamEvent": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "snapshot",
+            "delta",
+            "operation",
+            "permission",
+            "reset",
+            "access_revoked"
+          ]
+        },
+        "agentId": { "$ref": "#/$defs/id" },
+        "bridgeEpoch": { "$ref": "#/$defs/id" },
+        "projectionId": { "$ref": "#/$defs/id" },
+        "fromStreamRevision": { "$ref": "#/$defs/revision" },
+        "toStreamRevision": { "$ref": "#/$defs/revision" },
+        "cursor": { "$ref": "#/$defs/cursor" },
+        "sessionId": { "$ref": "#/$defs/id" },
+        "incarnation": { "$ref": "#/$defs/id" },
+        "sessionViewRevision": { "$ref": "#/$defs/revision" },
+        "view": { "$ref": "#/$defs/agentView" },
+        "operation": { "$ref": "#/$defs/operation" },
+        "permission": { "$ref": "#/$defs/permission" },
+        "patch": {
+          "type": "array",
+          "maxItems": 128,
+          "items": {
+            "type": "object",
+            "properties": {
+              "op": { "enum": ["add", "replace", "remove"] },
+              "path": { "type": "string", "minLength": 1 },
+              "value": {}
+            },
+            "required": ["op", "path"],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "type",
+        "agentId",
+        "bridgeEpoch",
+        "projectionId",
+        "fromStreamRevision",
+        "toStreamRevision",
+        "cursor"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": { "type": { "const": "delta" } },
+            "required": ["type"]
+          },
+          "then": {
+            "properties": {
+              "sessionId": true,
+              "incarnation": true,
+              "sessionViewRevision": true,
+              "patch": true
+            },
+            "required": [
+              "sessionId",
+              "incarnation",
+              "sessionViewRevision",
+              "patch"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": { "type": { "const": "operation" } },
+            "required": ["type"]
+          },
+          "then": {
+            "properties": { "operation": true },
+            "required": ["operation"]
+          }
+        },
+        {
+          "if": {
+            "properties": { "type": { "const": "permission" } },
+            "required": ["type"]
+          },
+          "then": {
+            "properties": { "permission": true },
+            "required": ["permission"]
+          }
+        },
+        {
+          "if": {
+            "properties": { "type": { "enum": ["snapshot", "reset"] } },
+            "required": ["type"]
+          },
+          "then": { "properties": { "view": true }, "required": ["view"] }
+        }
+      ]
+    },
+    "agentView": {
+      "type": "object",
+      "properties": {
+        "agentId": { "$ref": "#/$defs/id" },
+        "bridgeEpoch": { "$ref": "#/$defs/id" },
+        "availability": { "enum": ["ready", "busy", "offline"] },
+        "promptCapabilities": {
+          "type": "object",
+          "properties": {
+            "image": { "type": "boolean" },
+            "audio": { "type": "boolean" },
+            "embeddedContext": { "type": "boolean" }
+          },
+          "additionalProperties": false
+        },
+        "activeSessionId": {
+          "anyOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }]
+        },
+        "selectedSessionId": {
+          "anyOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }]
+        },
+        "selectedView": {
+          "anyOf": [{ "$ref": "#/$defs/sessionView" }, { "type": "null" }]
+        },
+        "operations": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/operation" }
+        },
+        "permissions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/permission" }
+        },
+        "streamCursor": { "$ref": "#/$defs/cursor" }
+      },
+      "required": [
+        "agentId",
+        "bridgeEpoch",
+        "availability",
+        "promptCapabilities",
+        "activeSessionId",
+        "selectedSessionId",
+        "selectedView",
+        "operations",
+        "permissions",
+        "streamCursor"
+      ],
+      "additionalProperties": false,
+      "allOf": [{
+        "if": {
+          "properties": { "selectedSessionId": { "type": "null" } },
+          "required": ["selectedSessionId"]
+        },
+        "then": {
+          "properties": { "selectedView": { "type": "null" } }
+        },
+        "else": {
+          "properties": { "selectedView": { "$ref": "#/$defs/sessionView" } }
+        }
+      }]
+    },
+    "sessionView": {
+      "type": "object",
+      "properties": {
+        "agentId": { "$ref": "#/$defs/id" },
+        "sessionId": { "$ref": "#/$defs/id" },
+        "title": { "type": ["string", "null"], "maxLength": 512 },
+        "updatedAt": { "type": ["string", "null"], "maxLength": 64 },
+        "bridgeEpoch": { "$ref": "#/$defs/id" },
+        "incarnation": { "$ref": "#/$defs/id" },
+        "viewRevision": { "$ref": "#/$defs/revision" },
+        "appendVersion": {
+          "anyOf": [{ "$ref": "#/$defs/revision" }, { "type": "null" }]
+        },
+        "outputWatermark": {
+          "anyOf": [{ "$ref": "#/$defs/revision" }, { "type": "null" }]
+        },
+        "historyToken": {
+          "anyOf": [{ "$ref": "#/$defs/cursor" }, { "type": "null" }]
+        },
+        "streamCursor": { "$ref": "#/$defs/cursor" },
+        "historyState": {
+          "enum": [
+            "cold",
+            "loading",
+            "ready",
+            "reconciling",
+            "blocked",
+            "view_limited"
+          ]
+        },
+        "turns": {
+          "type": "array",
+          "maxItems": 21,
+          "items": { "$ref": "#/$defs/turn" }
+        },
+        "olderTurnsCursor": {
+          "anyOf": [{ "$ref": "#/$defs/cursor" }, { "type": "null" }]
+        },
+        "limitedPreview": {
+          "type": "object",
+          "properties": {
+            "text": { "type": "string", "maxLength": 4096 },
+            "truncated": { "const": true }
+          },
+          "required": ["text", "truncated"],
+          "additionalProperties": false
+        },
+        "operations": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/operation" }
+        },
+        "permissions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/permission" }
+        },
+        "configOptions": { "type": "array", "items": { "type": "object" } },
+        "configurationToken": {
+          "anyOf": [{ "$ref": "#/$defs/cursor" }, { "type": "null" }]
+        },
+        "usage": { "type": ["object", "null"] }
+      },
+      "required": [
+        "agentId",
+        "sessionId",
+        "title",
+        "updatedAt",
+        "bridgeEpoch",
+        "incarnation",
+        "viewRevision",
+        "appendVersion",
+        "outputWatermark",
+        "historyToken",
+        "streamCursor",
+        "historyState",
+        "turns",
+        "olderTurnsCursor",
+        "operations",
+        "permissions"
+      ],
+      "additionalProperties": false,
+      "if": { "properties": { "historyState": { "const": "view_limited" } } },
+      "then": {
+        "required": ["limitedPreview"],
+        "properties": {
+          "limitedPreview": true,
+          "historyToken": { "type": "null" },
+          "olderTurnsCursor": { "type": "null" },
+          "turns": { "type": "array", "maxItems": 0 },
+          "outputWatermark": { "$ref": "#/$defs/revision" }
+        }
+      },
+      "else": { "not": { "required": ["limitedPreview"] } },
+      "allOf": [{
+        "if": { "properties": { "historyState": { "const": "blocked" } } },
+        "then": { "properties": {
+          "historyToken": { "type": "null" },
+          "configurationToken": { "type": "null" },
+          "olderTurnsCursor": { "type": "null" }
+        } }
+      }]
+    },
+    "turn": {
+      "type": "object",
+      "properties": {
+        "turnId": { "$ref": "#/$defs/id" },
+        "outcome": {
+          "enum": ["running", "completed", "failed", "cancelled", "unknown"]
+        },
+        "prompt": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/contentBlock" }
+        },
+        "finalResponse": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/contentBlock" }
+        },
+        "contentCursor": {
+          "anyOf": [{ "$ref": "#/$defs/cursor" }, { "type": "null" }]
+        },
+        "processVersion": { "$ref": "#/$defs/revision" },
+        "processCount": { "$ref": "#/$defs/revision" }
+      },
+      "required": [
+        "turnId",
+        "outcome",
+        "prompt",
+        "finalResponse",
+        "contentCursor",
+        "processVersion",
+        "processCount"
+      ],
+      "additionalProperties": false
+    },
+    "turnPage": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "maxItems": 20,
+          "items": { "$ref": "#/$defs/turn" }
+        },
+        "nextCursor": {
+          "anyOf": [{ "$ref": "#/$defs/cursor" }, { "type": "null" }]
+        },
+        "newerCursor": {
+          "anyOf": [{ "$ref": "#/$defs/cursor" }, { "type": "null" }]
+        }
+      },
+      "required": ["items", "nextCursor", "newerCursor"],
+      "additionalProperties": false
+    },
+    "contentPage": {
+      "type": "object",
+      "properties": {
+        "section": { "enum": ["prompt", "finalResponse"] },
+        "items": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/contentBlock" }
+        },
+        "fragment": {
+          "type": "object",
+          "properties": {
+            "blockIndex": { "$ref": "#/$defs/revision" },
+            "byteOffset": { "$ref": "#/$defs/revision" },
+            "totalBytes": { "$ref": "#/$defs/revision" },
+            "serializedBlockBase64": {
+              "type": "string",
+              "contentEncoding": "base64"
+            }
+          },
+          "required": [
+            "blockIndex",
+            "byteOffset",
+            "totalBytes",
+            "serializedBlockBase64"
+          ],
+          "additionalProperties": false
+        },
+        "nextCursor": {
+          "anyOf": [{ "$ref": "#/$defs/cursor" }, { "type": "null" }]
+        },
+        "complete": { "type": "boolean" }
+      },
+      "required": ["section", "items", "nextCursor", "complete"],
+      "additionalProperties": false
+    },
+    "processPage": {
+      "type": "object",
+      "properties": {
+        "turnId": { "$ref": "#/$defs/id" },
+        "processVersion": { "$ref": "#/$defs/revision" },
+        "items": {
+          "type": "array",
+          "maxItems": 10,
+          "items": { "$ref": "#/$defs/processItem" }
+        },
+        "nextCursor": {
+          "anyOf": [{ "$ref": "#/$defs/cursor" }, { "type": "null" }]
+        }
+      },
+      "required": ["turnId", "processVersion", "items", "nextCursor"],
+      "additionalProperties": false
+    },
+    "processContentPage": {
+      "type": "object",
+      "properties": {
+        "turnId": { "$ref": "#/$defs/id" },
+        "itemId": { "$ref": "#/$defs/id" },
+        "items": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/contentBlock" }
+        },
+        "fragment": {
+          "type": "object",
+          "properties": {
+            "blockIndex": { "$ref": "#/$defs/revision" },
+            "byteOffset": { "$ref": "#/$defs/revision" },
+            "totalBytes": { "$ref": "#/$defs/revision" },
+            "serializedBlockBase64": {
+              "type": "string",
+              "contentEncoding": "base64"
+            }
+          },
+          "required": [
+            "blockIndex",
+            "byteOffset",
+            "totalBytes",
+            "serializedBlockBase64"
+          ],
+          "additionalProperties": false
+        },
+        "nextCursor": {
+          "anyOf": [{ "$ref": "#/$defs/cursor" }, { "type": "null" }]
+        },
+        "complete": { "type": "boolean" }
+      },
+      "required": ["turnId", "itemId", "items", "nextCursor", "complete"],
+      "additionalProperties": false
+    },
+    "processItem": {
+      "type": "object",
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "kind": { "enum": ["thought", "tool", "plan", "notice"] },
+        "summary": { "type": "string" },
+        "status": {
+          "enum": ["pending", "running", "completed", "failed", "unknown"]
+        },
+        "content": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/contentBlock" }
+        },
+        "contentCursor": {
+          "anyOf": [{ "$ref": "#/$defs/cursor" }, { "type": "null" }]
+        }
+      },
+      "required": ["id", "kind", "summary", "content", "contentCursor"],
+      "additionalProperties": false
+    },
+    "permission": {
+      "type": "object",
+      "properties": {
+        "permissionId": { "$ref": "#/$defs/id" },
+        "sessionId": { "$ref": "#/$defs/id" },
+        "generation": { "$ref": "#/$defs/revision" },
+        "toolCall": {
+          "type": "object",
+          "properties": {
+            "toolCallId": { "$ref": "#/$defs/id" },
+            "title": { "type": "string" },
+            "kind": { "type": "string" },
+            "rawInput": {}
+          },
+          "required": ["toolCallId"],
+          "additionalProperties": false
+        },
+        "options": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "properties": {
+              "optionId": { "$ref": "#/$defs/id" },
+              "name": { "type": "string", "minLength": 1 },
+              "kind": {
+                "enum": [
+                  "allow_once",
+                  "allow_always",
+                  "reject_once",
+                  "reject_always"
+                ]
+              }
+            },
+            "required": ["optionId", "name", "kind"],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "permissionId",
+        "sessionId",
+        "generation",
+        "toolCall",
+        "options"
+      ],
+      "additionalProperties": false
+    },
+    "permissionDecisionRequest": {
+      "type": "object",
+      "properties": {
+        "generation": { "$ref": "#/$defs/revision" },
+        "optionId": { "$ref": "#/$defs/id" }
+      },
+      "required": ["generation", "optionId"],
+      "additionalProperties": false
+    },
+    "configurationRequest": {
+      "type": "object",
+      "properties": {
+        "configId": { "$ref": "#/$defs/id" },
+        "value": { "anyOf": [{ "type": "string" }, { "type": "boolean" }] },
+        "expectedConfigurationToken": { "$ref": "#/$defs/cursor" }
+      },
+      "required": ["configId", "value", "expectedConfigurationToken"],
+      "additionalProperties": false
+    }
+  }
+}
