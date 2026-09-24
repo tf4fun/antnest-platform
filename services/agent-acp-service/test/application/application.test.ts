@@ -17,6 +17,7 @@ function setup() {
     resumeSession: vi.fn(),
     closeSession: vi.fn(),
     requestCancellation: vi.fn(),
+    requestTargetCancellation: vi.fn().mockResolvedValue(true),
     readOutput: vi.fn(),
     requirePromptSession: vi.fn().mockResolvedValue(undefined),
   };
@@ -29,6 +30,7 @@ function setup() {
     snapshot: snapshot(),
     outputSequence: 0,
   });
+  const checkBridgeIntent = vi.fn().mockResolvedValue(undefined);
   const execute = vi.fn<RunExecutionPort["execute"]>().mockResolvedValue({
     terminalClass: "completed",
     executorState: "quiescent",
@@ -39,7 +41,7 @@ function setup() {
     configuration: { get: vi.fn(), set: vi.fn() },
     access: { assert },
     sessions,
-    prompts: { accept },
+    prompts: { accept, checkBridgeIntent },
     runs: new RunSupervisor({ execute }),
   });
   const input = {
@@ -48,10 +50,91 @@ function setup() {
     prompt: [{ type: "text", text: "hello" }],
     outputChanged: vi.fn(),
   };
-  return { application, sessions, assert, accept, execute, input };
+  return { application, sessions, assert, accept, checkBridgeIntent, execute, input };
 }
 
 describe("AcpApplication prompt ownership", () => {
+  it("checks an existing Bridge intent before the Agent busy gate", async () => {
+    const { application, accept, checkBridgeIntent, execute, input } = setup();
+    const running = Promise.withResolvers<Awaited<ReturnType<RunExecutionPort["execute"]>>>();
+    execute.mockReturnValueOnce(running.promise);
+    const bridgeInput = {
+      ...input,
+      bridgeIntent: { intentId: "intent-1", expectedAppendVersion: 0 },
+    };
+    const first = await application.acceptPrompt(bridgeInput);
+    checkBridgeIntent.mockRejectedValueOnce(
+      new DomainError("intent_already_recorded", "Intent already exists"),
+    );
+    await expect(application.acceptPrompt(bridgeInput)).rejects.toMatchObject({
+      code: "intent_already_recorded",
+    });
+    expect(accept).toHaveBeenCalledOnce();
+    running.resolve({
+      terminalClass: "completed",
+      executorState: "quiescent",
+      toolEffectState: "none",
+      stopReason: "end_turn",
+    });
+    await first.completion;
+  });
+
+  it("does not abort a newer Run after an older target cancellation waits for storage", async () => {
+    const { application, sessions, accept, execute, input } = setup();
+    accept
+      .mockResolvedValueOnce({
+        runId: "run-1",
+        requestId: "request-1",
+        sessionId: "session-1",
+        userMessageId: "message-1",
+        snapshot: snapshot(),
+        outputSequence: 0,
+      })
+      .mockResolvedValueOnce({
+        runId: "run-2",
+        requestId: "request-2",
+        sessionId: "session-1",
+        userMessageId: "message-2",
+        snapshot: snapshot(),
+        outputSequence: 0,
+      });
+    const firstFinish = Promise.withResolvers<Awaited<ReturnType<RunExecutionPort["execute"]>>>();
+    const secondFinish = Promise.withResolvers<Awaited<ReturnType<RunExecutionPort["execute"]>>>();
+    execute.mockReturnValueOnce(firstFinish.promise).mockReturnValueOnce(secondFinish.promise);
+    const first = await application.acceptPrompt(input);
+    const storage = Promise.withResolvers<boolean>();
+    vi.mocked(sessions.requestTargetCancellation).mockReturnValueOnce(storage.promise);
+    const lateCancel = application.cancelRun({
+      binding: input.binding,
+      sessionId: input.sessionId,
+      expectedRunId: first.runId,
+    });
+    firstFinish.resolve({
+      terminalClass: "completed",
+      executorState: "quiescent",
+      toolEffectState: "none",
+      stopReason: "end_turn",
+    });
+    await first.completion;
+    await Promise.resolve();
+    const next = await application.acceptPrompt(input);
+    storage.resolve(true);
+    await lateCancel;
+    expect(execute.mock.calls[1]?.[0].signal.aborted).toBe(false);
+    secondFinish.resolve({
+      terminalClass: "completed",
+      executorState: "quiescent",
+      toolEffectState: "none",
+      stopReason: "end_turn",
+    });
+    await next.completion;
+    expect(sessions.requestTargetCancellation).toHaveBeenCalledWith(
+      input.sessionId,
+      input.binding,
+      first.runId,
+    );
+  });
+
   it("checks the Session before locally submitting and executing the prompt", async () => {
     const { application, sessions, assert, accept, execute, input } = setup();
     const result = await application.acceptPrompt(input);

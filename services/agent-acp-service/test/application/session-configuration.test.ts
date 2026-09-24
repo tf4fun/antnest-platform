@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { createHash } from "node:crypto";
 import { SessionConfigurationService } from "../../src/application/session-configuration.js";
 import { DomainError } from "../../src/domain/errors.js";
 import type { SessionConfigurationRepository } from "../../src/ports/session-configuration.js";
@@ -87,6 +88,29 @@ describe("local Session configuration", () => {
         Promise.resolve(agent.default_authorization.mode),
       ),
     ).toBe("approve");
+  });
+
+  it("rejects a stale Bridge configuration revision before writing", async () => {
+    const f = await fixture();
+    const expectedRevision = createHash("sha256")
+      .update(JSON.stringify(["session-1", "3"]))
+      .digest("hex");
+    await expect(
+      f.service.set({ ...f.input, configId: "mode", value: "chat", expectedRevision }),
+    ).resolves.toMatchObject({ modeId: "chat" });
+    expect(f.save).toHaveBeenCalledOnce();
+    f.save.mockClear();
+    await expect(
+      f.service.set({
+        ...f.input,
+        configId: "mode",
+        value: "auto",
+        expectedRevision: "0".repeat(64),
+      }),
+    ).rejects.toMatchObject({
+      code: "configuration_conflict",
+    });
+    expect(f.save).not.toHaveBeenCalled();
   });
 
   it.each([

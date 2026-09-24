@@ -27,6 +27,7 @@ export type CreateRunIntentInput = {
   userMessageId: string;
   prompt: ContentBlock[];
   createdAt: Date;
+  bridgeIntent?: { intentId: string; expectedAppendVersion: number };
 };
 
 export type AdmissionDisposition = "accepted" | "cancelled";
@@ -41,6 +42,7 @@ export type AcceptRunInput = {
 
 export interface RunRepository {
   getSession(sessionId: string): Promise<SessionRecord | null>;
+  findBridgeIntent(sessionId: string, intentId: string): Promise<{ digest: string } | null>;
   createRunIntent(input: CreateRunIntentInput): Promise<RunIntent>;
   requestCancellation(runId: string, requestedAt: Date): Promise<void>;
   acceptRun(input: AcceptRunInput): Promise<AdmissionDisposition>;

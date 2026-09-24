@@ -34,7 +34,11 @@ export type ForkSessionInput = {
 };
 
 export interface SessionRepository {
-  readOutput(sessionId: string, afterSequence?: number): Promise<SessionOutputSnapshot>;
+  readOutput(
+    sessionId: string,
+    afterSequence?: number,
+    includeDelivery?: boolean,
+  ): Promise<SessionOutputSnapshot>;
   create(input: CreateSessionInput): Promise<void>;
   get(sessionId: string): Promise<SessionRecord | null>;
   list(input: ListSessionsInput): Promise<{
@@ -46,6 +50,7 @@ export interface SessionRepository {
   replay(sessionId: string): Promise<SessionEvent[]>;
   getCurrentRunState(sessionId: string): Promise<Extract<SessionEvent, { kind: "state" }>>;
   requestCancellation(sessionId: string, requestedAt: Date): Promise<void>;
+  requestTargetCancellation(sessionId: string, runId: string, requestedAt: Date): Promise<boolean>;
   close(sessionId: string, closedAt: Date): Promise<void>;
   delete(sessionId: string, deletedAt: Date): Promise<void>;
   getClientMcpRevision(revisionId: string): Promise<NormalizedClientMcpSource[]>;

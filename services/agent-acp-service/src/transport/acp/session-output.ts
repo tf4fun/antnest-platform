@@ -5,7 +5,7 @@ import {
   type ExecutionAccessSnapshot,
   type ExecutionIdentity,
 } from "../../domain/execution-configuration.js";
-import type { SessionEvent, SessionOutputSnapshot } from "../../ports/acp-application.js";
+import type { DeliveredSessionEvent, SessionOutputSnapshot } from "../../ports/acp-application.js";
 
 type OutputInput = {
   identity: ExecutionIdentity;
@@ -18,7 +18,8 @@ type OutputInput = {
   previousConfiguration?: string;
   previousInfo?: string;
   read: (afterSequence: number | undefined) => Promise<SessionOutputSnapshot>;
-  send: (event: SessionEvent) => Promise<void>;
+  send: (event: DeliveredSessionEvent) => Promise<void>;
+  checkpoint?: (sequence: number) => Promise<void>;
   signal: AbortSignal;
   onFailure: (error: unknown) => void;
   beforeFirst?: () => Promise<void>;
@@ -54,7 +55,7 @@ export class SessionOutputStreams {
       )
         return true;
       if (current.input.key === input.key && current.input.connectionId === input.connectionId) {
-        current.useSender(input.send);
+        current.useSender(input.send, input.checkpoint);
         await current.flush();
         if (cancelled()) return false;
         const cursor = current.cursor;
@@ -155,12 +156,14 @@ class OutputSubscription {
   private pending: Promise<void> | undefined;
   private first = true;
   private send: OutputInput["send"];
+  private checkpoint: OutputInput["checkpoint"];
 
   public constructor(
     public readonly input: OutputInput,
     private readonly remove: () => void,
   ) {
     this.send = input.send;
+    this.checkpoint = input.checkpoint;
     this.configuration = input.previousConfiguration;
     this.info = input.previousInfo;
     this.sequence = input.afterSequence;
@@ -173,8 +176,9 @@ class OutputSubscription {
     else this.refresh();
   }
 
-  public useSender(send: OutputInput["send"]): void {
+  public useSender(send: OutputInput["send"], checkpoint: OutputInput["checkpoint"]): void {
     this.send = send;
+    this.checkpoint = checkpoint;
   }
 
   public close(): void {
@@ -219,13 +223,24 @@ class OutputSubscription {
         await this.bounded(this.input.beforeFirst);
       const configurationInResponse = this.first && this.input.configurationInResponse === true;
       this.first = false;
+      let lastMarkedSequence = this.sequence ?? 0;
       const info = JSON.stringify(snapshot.info);
       if (snapshot.info !== undefined && info !== this.info)
         await this.bounded(() => this.send({ kind: "session_info", ...snapshot.info! }));
       this.info = info;
       for (const event of snapshot.events) {
+        if (event.kind === "state" && this.checkpoint !== undefined) continue;
         if (event.kind === "configuration" && snapshot.configuration !== undefined) continue;
+        if (
+          this.checkpoint !== undefined &&
+          event.delivery !== undefined &&
+          event.delivery.sequence > lastMarkedSequence + 1
+        ) {
+          await this.bounded(() => this.checkpoint!(event.delivery!.sequence - 1));
+        }
         await this.bounded(() => this.send(event));
+        if (event.delivery !== undefined)
+          lastMarkedSequence = Math.max(lastMarkedSequence, event.delivery.sequence);
       }
       const configuration = JSON.stringify(snapshot.configuration);
       if (
@@ -240,6 +255,8 @@ class OutputSubscription {
       this.configuration = configuration;
       const state = JSON.stringify(snapshot.state);
       if (state !== this.state) await this.bounded(() => this.send(snapshot.state));
+      if (this.checkpoint !== undefined && snapshot.sequence > lastMarkedSequence)
+        await this.bounded(() => this.checkpoint!(snapshot.sequence));
       this.sequence = snapshot.sequence;
       this.state = state;
     }

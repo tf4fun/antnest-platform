@@ -138,6 +138,16 @@ export class InstrumentedAcpApplication implements AcpApplicationPort {
           this.telemetry.count("antnest.acp.run_admissions", { result: "accepted" });
           return accepted;
         } catch (error) {
+          if (input.bridgeIntent !== undefined && error instanceof DomainError) {
+            const result =
+              error.code === "intent_already_recorded"
+                ? "hit"
+                : error.code === "idempotency_conflict"
+                  ? "conflict"
+                  : null;
+            if (result !== null)
+              this.telemetry.count("antnest.acp.bridge_intent_reuse", { result });
+          }
           this.telemetry.count("antnest.acp.run_admissions", {
             result: "rejected",
             rejection_class: rejectionClass(error),

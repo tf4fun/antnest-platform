@@ -28,7 +28,9 @@ export class SessionService implements Pick<
 
   public async readOutput(input: Parameters<AcpApplicationPort["readSessionOutput"]>[0]) {
     await this.requireAuthorized(input.sessionId, input.binding);
-    return this.dependencies.repository.readOutput(input.sessionId, input.afterSequence);
+    return input.includeDelivery === true
+      ? this.dependencies.repository.readOutput(input.sessionId, input.afterSequence, true)
+      : this.dependencies.repository.readOutput(input.sessionId, input.afterSequence);
   }
 
   public async createSession(
@@ -103,16 +105,18 @@ export class SessionService implements Pick<
       mcpRevisionId: this.dependencies.id(),
       mcpSources: requireNoClientMcpServers(input.mcpServers),
     });
-    const snapshot = await this.dependencies.repository.readOutput(
-      session.id,
-      input.replayFromStart ? 0 : undefined,
-    );
+    const afterSequence = input.replayFromStart ? 0 : undefined;
+    const snapshot =
+      input.includeDelivery === true
+        ? await this.dependencies.repository.readOutput(session.id, afterSequence, true)
+        : await this.dependencies.repository.readOutput(session.id, afterSequence);
     return {
       replay: [
         ...snapshot.events.filter((event) => event.kind !== "configuration"),
         snapshot.state,
       ],
       sequence: snapshot.sequence,
+      ...(snapshot.appendVersion === undefined ? {} : { appendVersion: snapshot.appendVersion }),
     };
   }
 
@@ -139,6 +143,19 @@ export class SessionService implements Pick<
   ): Promise<void> {
     const session = await this.requireAuthorized(sessionId, binding);
     await this.dependencies.repository.requestCancellation(session.id, this.dependencies.now());
+  }
+
+  public async requestTargetCancellation(
+    sessionId: string,
+    binding: Parameters<AcpApplicationPort["createSession"]>[0]["binding"],
+    runId: string,
+  ): Promise<boolean> {
+    const session = await this.requireAuthorized(sessionId, binding);
+    return this.dependencies.repository.requestTargetCancellation(
+      session.id,
+      runId,
+      this.dependencies.now(),
+    );
   }
 
   public async requirePromptSession(

@@ -85,11 +85,16 @@ export interface SessionEventPublisher {
   publish(event: SessionEvent): Promise<void>;
 }
 
+export type DeliveredSessionEvent = SessionEvent & {
+  delivery?: { sequence: number; runId: string | null; messageId: string };
+};
+
 export type SessionOutputSnapshot = {
   info?: { title: string | null; updatedAt: string };
   configuration?: SessionConfigurationView;
   sequence: number;
-  events: SessionEvent[];
+  events: DeliveredSessionEvent[];
+  appendVersion?: number;
   state: Extract<SessionEvent, { kind: "state" }>;
 };
 
@@ -132,11 +137,13 @@ export interface AcpApplicationPort {
     sessionId: string;
     configId: string;
     value: string | boolean;
+    expectedRevision?: string;
   }): Promise<SessionConfigurationView>;
   readSessionOutput(input: {
     binding: ConnectionBinding;
     sessionId: string;
     afterSequence?: number;
+    includeDelivery?: boolean;
   }): Promise<SessionOutputSnapshot>;
   assertAccess(input: { binding: ConnectionBinding }): Promise<void>;
   createSession(input: {
@@ -165,13 +172,19 @@ export interface AcpApplicationPort {
     additionalDirectories: string[];
     mcpServers: ClientMcpInput[];
     replayFromStart: boolean;
-  }): Promise<{ replay: SessionEvent[]; sequence: number }>;
+    includeDelivery?: boolean;
+  }): Promise<{ replay: DeliveredSessionEvent[]; sequence: number; appendVersion?: number }>;
   closeSession(input: { binding: ConnectionBinding; sessionId: string }): Promise<void>;
-  cancelRun(input: { binding: ConnectionBinding; sessionId: string }): Promise<void>;
+  cancelRun(input: {
+    binding: ConnectionBinding;
+    sessionId: string;
+    expectedRunId?: string;
+  }): Promise<void>;
   acceptPrompt(input: {
     binding: ConnectionBinding;
     sessionId: string;
     prompt: ContentBlock[];
+    bridgeIntent?: { intentId: string; expectedAppendVersion: number };
     outputChanged: () => void;
   }): Promise<SubmittedAcpRun>;
 }

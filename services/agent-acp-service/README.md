@@ -138,6 +138,7 @@ this directory is the only implementation authority for Agent ACP Service.
 | Execution snapshot RPC           | inbound   | Apply current organization configuration and volatile credentials    |
 | Agent settlement RPC             | inbound   | Close execution for Controller lifecycle operations                  |
 | Execution state get/watch RPC    | inbound   | Current workspace state without Controller Run state                 |
+| Workspace execution/intent RPCs  | inbound   | Principal-scoped Bridge recovery receipts and Session watermarks     |
 | Administrative audit RPCs        | inbound   | Organization-scoped retained Run/input/event queries                 |
 | MCP `2026-07-28` HTTP            | outbound  | Platform Runtime Tool execution                                      |
 | ACP `session/request_permission` | outbound  | User confirmation on the existing ACP connection                     |
@@ -156,8 +157,22 @@ experimental Streamable HTTP transport (POST/GET/DELETE). See the
 recovery and Gateway integration. Each endpoint feeds the
 matching official SDK surface: the stable package root for v1 and the
 batch-capable experimental `WireStream` for v2. ACP success shapes are not
-extended with Antnest fields. The unversioned `/acp` is deliberately absent so
+extended outside their standard schema; the optional `antnest.dev/bridge`
+negotiation uses SDK-supported `_meta`. The unversioned `/acp` is deliberately absent so
 protocol selection is never implicit.
+
+The [workspace Bridge extension](../../contracts/agent-acp/workspace-bridge.md)
+adds durable prompt intent IDs with Session append compare-and-swap, targeted Run
+cancellation, scoped execution/intent observation, and sequenced replay/live
+delivery marks. Standard ACP clients do not negotiate the extension and retain
+their existing wire behavior. The two internal `GET /rpc/agent-acp/workspace/…`
+routes require trusted organization, principal and Agent headers and repeat
+authorization before reading; they are not browser endpoints. ACP remains the
+execution and history authority when the future agent-ui Node Bridge reconnects.
+The B1 producer's local evidence is 826 unit tests, 159 integration tests, 248
+PostgreSQL/E2E tests, contract validation, and a production-container readiness
+and protected-route smoke test. Node, Gateway and browser consumption remain
+separate service batches.
 
 ### ACP Capability Matrix
 

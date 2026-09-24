@@ -1,5 +1,6 @@
 import type { PoolClient } from "pg";
 import { sessionConfigurationSchema } from "../../domain/session-configuration.js";
+import { bridgeIntentDigest } from "../../domain/bridge-intent.js";
 
 import type { EnvironmentChangeFact, SessionRecord } from "../../domain/types.js";
 import { DomainError } from "../../domain/errors.js";
@@ -56,6 +57,17 @@ export class PostgresRunRepository implements RunRepository {
         };
   }
 
+  public async findBridgeIntent(
+    sessionId: string,
+    intentId: string,
+  ): Promise<{ digest: string } | null> {
+    const result = await this.kernel.query<{ intent_digest: string }>(
+      `SELECT intent_digest FROM runs WHERE session_id = $1 AND bridge_intent_id = $2`,
+      [sessionId, intentId],
+    );
+    return result.rows[0] === undefined ? null : { digest: result.rows[0].intent_digest };
+  }
+
   public async createRunIntent(input: CreateRunIntentInput): Promise<RunIntent> {
     try {
       return await this.kernel.transaction(async (client) => {
@@ -63,8 +75,9 @@ export class PostgresRunRepository implements RunRepository {
           state: string;
           client_mcp_revision_id: string;
           configuration: unknown;
+          append_version: string;
         }>(
-          `SELECT state, client_mcp_revision_id, configuration
+          `SELECT state, client_mcp_revision_id, configuration, append_version
              FROM acp_sessions WHERE id = $1 FOR UPDATE`,
           [input.sessionId],
         );
@@ -72,6 +85,35 @@ export class PostgresRunRepository implements RunRepository {
         if (sessionRow.state !== "active") {
           throw new DomainError("session_not_active", "Session is not active");
         }
+        const bridgeIntent = input.bridgeIntent;
+        const digest =
+          bridgeIntent === undefined
+            ? null
+            : bridgeIntentDigest(bridgeIntent.expectedAppendVersion, input.prompt);
+        if (bridgeIntent !== undefined) {
+          const existing = await client.query<{ intent_digest: string }>(
+            `SELECT intent_digest FROM runs
+              WHERE session_id = $1 AND bridge_intent_id = $2`,
+            [input.sessionId, bridgeIntent.intentId],
+          );
+          if (existing.rows[0] !== undefined) {
+            if (existing.rows[0].intent_digest !== digest)
+              throw new DomainError(
+                "idempotency_conflict",
+                "Intent key belongs to different input",
+              );
+            throw new DomainError("intent_already_recorded", "Intent already has a durable Run");
+          }
+          if (Number(sessionRow.append_version) !== bridgeIntent.expectedAppendVersion)
+            throw new DomainError("session_append_conflict", "Session append version changed");
+        }
+        const currentAppendVersion = Number(sessionRow.append_version);
+        if (
+          !Number.isSafeInteger(currentAppendVersion) ||
+          currentAppendVersion >= Number.MAX_SAFE_INTEGER
+        )
+          throw new DomainError("session_append_conflict", "Session append version is exhausted");
+        const nextAppendVersion = currentAppendVersion + 1;
         const result = await client.query<{
           id: string;
           request_id: string;
@@ -87,8 +129,10 @@ export class PostgresRunRepository implements RunRepository {
              id, request_id, session_id, client_mcp_revision_id,
              expected_access_revision, state,
              pending_user_message_id, input_prompt,
-             created_at, updated_at, session_configuration
-           ) VALUES ($1, $2, $3, $4, $5, 'admitting', $6, $7::jsonb, $8, $8, $9::jsonb)
+             created_at, updated_at, session_configuration,
+             bridge_intent_id, intent_digest, expected_append_version, append_version
+           ) VALUES ($1, $2, $3, $4, $5, 'admitting', $6, $7::jsonb, $8, $8, $9::jsonb,
+                     $10, $11, $12, $13)
            RETURNING id, request_id, session_id, client_mcp_revision_id,
                      expected_access_revision, state,
                      pending_user_message_id, input_prompt, session_configuration`,
@@ -102,8 +146,16 @@ export class PostgresRunRepository implements RunRepository {
             JSON.stringify(input.prompt),
             input.createdAt,
             JSON.stringify(sessionConfigurationSchema.parse(sessionRow.configuration)),
+            bridgeIntent?.intentId ?? null,
+            digest,
+            bridgeIntent?.expectedAppendVersion ?? null,
+            nextAppendVersion,
           ],
         );
+        await client.query("UPDATE acp_sessions SET append_version = $2 WHERE id = $1", [
+          input.sessionId,
+          nextAppendVersion,
+        ]);
         const row = requireRow(result.rows[0], "Run intent was not created");
         return {
           id: row.id,

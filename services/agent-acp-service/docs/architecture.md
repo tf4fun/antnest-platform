@@ -184,6 +184,10 @@ stored context reconstruction; see [Model reasoning history](model-reasoning-his
    Tool ID from `(runId, model request index, provider call ID)`. This single ID
    is used by assistant history, Tool results and ACP updates; provider IDs may
    repeat in later requests without colliding in the Session.
+   A non-streaming Provider response is read with a 4 MiB body ceiling before
+   JSON parsing; the streaming path retains its 4 Mi-character aggregate
+   ceiling. Oversized responses fail as `model_invalid_response` before their
+   text or Tool calls enter durable Session output.
 6. Validate the complete Tool-call batch, including unique call IDs, known
    names, and JSON Schema arguments, before the first Tool effect. If any call
    is invalid, execute none of them and return explicit Tool errors to the
@@ -391,6 +395,10 @@ delivery, and re-read when invalidated during delivery. The existing single
 worker per database owns all live invalidations; this is not multi-worker fanout.
 
 Model/Tool execution and terminal persistence never wait for socket delivery.
+The scoped Bridge intent observation reads a Run's durable `error_class` with
+its terminal receipt. It exposes only that bounded classification, not model
+provider messages, so the Node Bridge can show a useful rejection after an
+asynchronous Prompt or a browser reload.
 An online v1 Prompt response separately waits for its preceding notifications;
 v2 emits idle only after transcript and local terminal facts are durable. Each
 output operation has a 30-second bound. Disconnection, authorization failure,

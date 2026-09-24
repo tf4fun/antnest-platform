@@ -17,10 +17,11 @@ export type AcpApplicationDependencies = {
     | "resumeSession"
     | "closeSession"
     | "requestCancellation"
+    | "requestTargetCancellation"
     | "requirePromptSession"
     | "readOutput"
   >;
-  prompts: Pick<PromptCoordinator, "accept">;
+  prompts: Pick<PromptCoordinator, "accept" | "checkBridgeIntent">;
   runs: RunLifecyclePort;
 };
 
@@ -98,6 +99,15 @@ export class AcpApplication implements AcpApplicationPort {
 
   public async cancelRun(input: Parameters<AcpApplicationPort["cancelRun"]>[0]): Promise<void> {
     await this.assertAccess(input);
+    if (input.expectedRunId !== undefined) {
+      const matched = await this.dependencies.sessions.requestTargetCancellation(
+        input.sessionId,
+        input.binding,
+        input.expectedRunId,
+      );
+      if (matched) await this.dependencies.runs.cancelTarget(input.sessionId, input.expectedRunId);
+      return;
+    }
     await this.dependencies.sessions.requestCancellation(input.sessionId, input.binding);
     await this.dependencies.runs.cancel(input.sessionId);
   }
@@ -106,6 +116,7 @@ export class AcpApplication implements AcpApplicationPort {
     input: Parameters<AcpApplicationPort["acceptPrompt"]>[0],
   ): Promise<SubmittedAcpRun> {
     await this.dependencies.sessions.requirePromptSession(input.sessionId, input.binding);
+    if (input.bridgeIntent !== undefined) await this.dependencies.prompts.checkBridgeIntent(input);
     return this.dependencies.runs.submit(input, (signal) =>
       this.dependencies.prompts.accept(input, signal),
     );

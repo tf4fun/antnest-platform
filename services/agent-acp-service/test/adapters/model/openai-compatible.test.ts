@@ -12,6 +12,58 @@ function bodyText(init: RequestInit | undefined): string {
 }
 
 describe("OpenAICompatibleModel", () => {
+  it("rejects an oversized non-streaming completion before parsing or publishing it", async () => {
+    let cancelled = 0;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(Buffer.alloc(4 * 1024 * 1024, 0x20));
+        controller.enqueue(Buffer.from("x"));
+      },
+      cancel() {
+        cancelled += 1;
+      },
+    });
+    const model = new OpenAICompatibleModel({
+      fetchFn: () =>
+        Promise.resolve(new Response(body, { headers: { "content-type": "application/json" } })),
+    });
+    await expect(model.complete(request())).rejects.toMatchObject({
+      code: "model_invalid_response",
+      message: "Model response exceeded the size limit",
+    });
+    expect(cancelled).toBe(1);
+  });
+
+  it("rejects a declared oversized non-streaming body without reading it", async () => {
+    let reads = 0;
+    let cancelled = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull() {
+        reads += 1;
+      },
+      cancel() {
+        cancelled += 1;
+      },
+    });
+    const model = new OpenAICompatibleModel({
+      fetchFn: () =>
+        Promise.resolve(
+          new Response(body, {
+            headers: {
+              "content-type": "application/json",
+              "content-length": String(4 * 1024 * 1024 + 1),
+            },
+          }),
+        ),
+    });
+    await expect(model.complete(request())).rejects.toMatchObject({
+      code: "model_invalid_response",
+      message: "Model response exceeded the size limit",
+    });
+    expect(cancelled).toBe(1);
+    expect(reads).toBeLessThanOrEqual(1);
+  });
+
   it("uses OpenRouter's authenticated endpoint and preserves streamed tool calls and usage", async () => {
     const packets = [
       { choices: [{ index: 0, delta: { content: "Checking" }, finish_reason: null }] },

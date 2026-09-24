@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { PromptCoordinator } from "../../src/application/prompt-coordinator.js";
+import { bridgeIntentDigest } from "../../src/domain/bridge-intent.js";
 import type { ContentBlock } from "../../src/domain/types.js";
 import type { RunIntent, RunRepository } from "../../src/ports/run-repository.js";
 import { executionConfiguration } from "../fixtures/execution-configuration.js";
@@ -38,6 +39,7 @@ async function setup(initialize = true) {
         prompt: input.prompt,
       }),
     ),
+    findBridgeIntent: vi.fn().mockResolvedValue(null),
     acceptRun: vi.fn<RunRepository["acceptRun"]>().mockResolvedValue("accepted"),
     requestCancellation: vi.fn<RunRepository["requestCancellation"]>().mockResolvedValue(),
     rejectRun: vi.fn<RunRepository["rejectRun"]>().mockResolvedValue("failed"),
@@ -62,6 +64,30 @@ async function setup(initialize = true) {
 }
 
 describe("PromptCoordinator", () => {
+  it("passes a Bridge intent through authorization into durable Run reservation", async () => {
+    const test = await setup();
+    const bridgeIntent = { intentId: "intent-1", expectedAppendVersion: 3 };
+    await test.coordinator.accept({ ...test.input, bridgeIntent });
+    expect(test.repository.createRunIntent).toHaveBeenCalledWith(
+      expect.objectContaining({ bridgeIntent }),
+    );
+  });
+
+  it("detects a duplicate or conflicting Bridge intent before new admission", async () => {
+    const test = await setup();
+    const bridgeIntent = { intentId: "intent-1", expectedAppendVersion: 0 };
+    const digest = bridgeIntentDigest(0, test.input.prompt);
+    test.repository.findBridgeIntent.mockResolvedValueOnce({ digest });
+    await expect(
+      test.coordinator.checkBridgeIntent({ ...test.input, bridgeIntent }),
+    ).rejects.toMatchObject({ code: "intent_already_recorded" });
+    test.repository.findBridgeIntent.mockResolvedValueOnce({ digest: "0".repeat(64) });
+    await expect(
+      test.coordinator.checkBridgeIntent({ ...test.input, bridgeIntent }),
+    ).rejects.toMatchObject({ code: "idempotency_conflict" });
+    expect(test.repository.createRunIntent).not.toHaveBeenCalled();
+  });
+
   it.each(["/帮助", "ordinary request"])(
     "classifies %s after local acceptance without changing the saved prompt",
     async (text) => {

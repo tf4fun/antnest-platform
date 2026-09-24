@@ -247,8 +247,38 @@ function isRecord(value: unknown): value is { [key: string]: JsonValue } {
 }
 
 async function readPayload(response: Response): Promise<unknown> {
+  const maxResponseBytes = 4 * 1024 * 1024;
+  const declaredLength = response.headers.get("content-length");
+  if (
+    declaredLength !== null &&
+    /^\d+$/u.test(declaredLength) &&
+    Number(declaredLength) > maxResponseBytes
+  ) {
+    await response.body?.cancel();
+    throw invalidResponse("Model response exceeded the size limit");
+  }
+  if (response.body === null) throw invalidResponse("Model API returned an empty response");
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let bytes = 0;
   try {
-    return await response.json();
+    for (let next = await reader.read(); !next.done; next = await reader.read()) {
+      const value = next.value;
+      bytes += value.byteLength;
+      if (bytes > maxResponseBytes) {
+        await reader.cancel();
+        throw invalidResponse("Model response exceeded the size limit");
+      }
+      chunks.push(value);
+    }
+  } catch (error) {
+    if (error instanceof OpenAICompatibleModelError) throw error;
+    throw invalidResponse("Model API response could not be read", error);
+  } finally {
+    reader.releaseLock();
+  }
+  try {
+    return JSON.parse(Buffer.concat(chunks, bytes).toString("utf8")) as unknown;
   } catch (error) {
     throw invalidResponse("Model API returned non-JSON content", error);
   }

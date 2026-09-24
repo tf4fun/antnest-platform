@@ -48,6 +48,29 @@ Provider-grouped model options and capability-driven `thinking_effort` are defin
 in [Session model selection](session-model-selection.md). Their values are
 Session-scoped, not Agent template or credential changes.
 
+## Bridge conditional writes
+
+The principal-scoped execution observation now returns a non-null opaque
+`configurationRevision` derived from the Session's persisted configuration
+revision. When a Bridge client supplies
+`session/set_config_option.params._meta["antnest.dev/configuration"].expectedRevision`,
+ACP verifies that exact durable revision after access checks and before
+changing the option. The repository's numeric revision CAS also rejects a
+concurrent winner between the read and the write. The negotiated Bridge
+capability advertises `configurationCas: 1`; standard ACP clients without the
+metadata keep the ordinary method behavior. The
+[shared contract](../../../contracts/agent-acp/workspace-bridge.md) fixes the
+digest and error semantics.
+
+The ACP service unit, SDK transport, isolated PostgreSQL and production-image
+Docker tests cover the condition, stale writes and revision changes. The
+production-image test races two independent ACP connections on one revision
+and verifies one winner and one persisted increment. The Node
+Bridge consumer now forwards the observed producer revision and rejects writes
+when the producer lacks the negotiated capability. The cross-service
+Docker/Chromium regression races two separate Node Bridge owners, checks one
+successful write and one conflict, then confirms both views show the winner.
+
 ## Verification
 
 Cover snapshot publication and completeness, inherited versus

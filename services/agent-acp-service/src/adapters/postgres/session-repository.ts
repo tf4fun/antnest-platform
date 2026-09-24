@@ -38,17 +38,29 @@ export class PostgresSessionRepository implements SessionRepository {
     private readonly secretBox: SecretBox,
   ) {}
 
-  public async readOutput(sessionId: string, afterSequence?: number) {
+  public async readOutput(sessionId: string, afterSequence?: number, includeDelivery = false) {
     const result = await this.kernel.query<{
       sequence: string;
+      append_version: string;
       title: string | null;
       updated_at: Date;
-      events: StoredSessionEvent[];
+      events: Array<
+        | StoredSessionEvent
+        | {
+            sequence: number;
+            runId: string | null;
+            messageId: string;
+            payload: StoredSessionEvent;
+          }
+      >;
       state: "admitting" | "running" | "completed" | "cancelled" | "failed" | "unresolved" | null;
       stop_reason: "end_turn" | "max_tokens" | "max_turn_requests" | "refusal" | null;
     }>(
-      `SELECT s.last_message_sequence AS sequence, s.title, s.updated_at,
-              COALESCE((SELECT jsonb_agg(m.payload ORDER BY m.sequence)
+      `SELECT s.last_message_sequence AS sequence, s.append_version, s.title, s.updated_at,
+              COALESCE((SELECT jsonb_agg(
+                CASE WHEN $3::boolean THEN jsonb_build_object(
+                  'sequence', m.sequence, 'runId', m.run_id, 'messageId', m.id, 'payload', m.payload
+                ) ELSE m.payload END ORDER BY m.sequence)
                 FROM session_messages m WHERE m.session_id = s.id AND m.visible
                   AND m.sequence > COALESCE($2::bigint, s.last_message_sequence)), '[]'::jsonb) AS events,
               r.state,
@@ -57,13 +69,30 @@ export class PostgresSessionRepository implements SessionRepository {
          LEFT JOIN LATERAL (SELECT state, stop_reason FROM runs
            WHERE session_id = s.id ORDER BY created_at DESC, id DESC LIMIT 1) r ON true
         WHERE s.id = $1`,
-      [sessionId, afterSequence ?? null],
+      [sessionId, afterSequence ?? null, includeDelivery],
     );
     const row = requireRow(result.rows[0], "Session does not exist");
     return {
       sequence: Number(row.sequence),
       info: { title: row.title, updatedAt: row.updated_at.toISOString() },
-      events: row.events.map(decodeSessionEvent),
+      events: row.events.map((entry) => {
+        if (!includeDelivery) return decodeSessionEvent(entry as StoredSessionEvent);
+        const delivered = entry as {
+          sequence: number;
+          runId: string | null;
+          messageId: string;
+          payload: StoredSessionEvent;
+        };
+        return {
+          ...decodeSessionEvent(delivered.payload),
+          delivery: {
+            sequence: Number(delivered.sequence),
+            runId: delivered.runId,
+            messageId: delivered.messageId,
+          },
+        };
+      }),
+      ...(includeDelivery ? { appendVersion: Number(row.append_version) } : {}),
       state: outputState(row.state, row.stop_reason),
     };
   }
@@ -335,6 +364,25 @@ export class PostgresSessionRepository implements SessionRepository {
         throw new Error("Session does not exist");
       }
       await markRunsCancelled(client, sessionId, requestedAt);
+    });
+  }
+
+  public async requestTargetCancellation(
+    sessionId: string,
+    runId: string,
+    requestedAt: Date,
+  ): Promise<boolean> {
+    return this.kernel.transaction(async (client) => {
+      const session = await selectSessionForUpdate(client, sessionId);
+      if (session.state === "deleted") throw new Error("Session does not exist");
+      const result = await client.query<{ id: string }>(
+        `UPDATE runs
+            SET cancel_requested_at = COALESCE(cancel_requested_at, $3), updated_at = $3
+          WHERE id = $1 AND session_id = $2 AND state IN ('admitting', 'running')
+          RETURNING id`,
+        [runId, sessionId, requestedAt],
+      );
+      return result.rowCount === 1;
     });
   }
 

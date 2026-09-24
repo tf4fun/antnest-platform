@@ -11,6 +11,88 @@ const message = (text: string): SessionEvent => ({
 });
 
 describe("Session output delivery", () => {
+  it("retains persisted state events for clients without Bridge checkpoints", async () => {
+    const streams = new SessionOutputStreams();
+    const stop = new AbortController();
+    const send = vi.fn<(event: SessionEvent) => Promise<void>>().mockResolvedValue(undefined);
+    try {
+      await streams.attach({
+        identity: binding(),
+        key: "legacy-state",
+        connectionId: "c",
+        afterSequence: 0,
+        read: () =>
+          Promise.resolve({
+            sequence: 1,
+            events: [{ kind: "state" as const, state: "running" as const }],
+            state: idle,
+          }),
+        send,
+        signal: stop.signal,
+        onFailure: vi.fn(),
+      });
+      expect(send.mock.calls.map(([event]) => event)).toEqual([
+        { kind: "state", state: "running" },
+        idle,
+      ]);
+    } finally {
+      stop.abort();
+    }
+  });
+
+  it("checkpoints filtered events and invisible sequence gaps before advancing the live cursor", async () => {
+    const streams = new SessionOutputStreams();
+    const stop = new AbortController();
+    const calls: string[] = [];
+    const first = {
+      ...message("one"),
+      delivery: { sequence: 1, runId: "run-1", messageId: "event-1" },
+    };
+    const third = {
+      ...message("three"),
+      delivery: { sequence: 3, runId: "run-1", messageId: "event-3" },
+    };
+    try {
+      await streams.attach({
+        identity: binding(),
+        key: "marked",
+        connectionId: "c",
+        afterSequence: 0,
+        read: () =>
+          Promise.resolve({
+            sequence: 4,
+            events: [
+              first,
+              {
+                kind: "state",
+                state: "running",
+                delivery: {
+                  sequence: 2,
+                  runId: "run-1",
+                  messageId: "event-2",
+                },
+              },
+              third,
+            ],
+            state: idle,
+          }),
+        send: (event) => {
+          calls.push(`send:${event.delivery?.sequence ?? event.kind}`);
+          return Promise.resolve();
+        },
+        checkpoint: (sequence) => {
+          calls.push(`checkpoint:${sequence}`);
+          return Promise.resolve();
+        },
+        signal: stop.signal,
+        onFailure: vi.fn(),
+      });
+      expect(calls).toEqual(["send:1", "checkpoint:2", "send:3", "send:state", "checkpoint:4"]);
+    } finally {
+      stop.abort();
+    }
+  });
+
   it("delivers current metadata once per change, including same-sequence changes and a cleared title", async () => {
     const streams = new SessionOutputStreams();
     const stop = new AbortController();

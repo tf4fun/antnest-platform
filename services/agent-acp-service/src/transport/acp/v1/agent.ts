@@ -1,5 +1,8 @@
 import * as acp from "@agentclientprotocol/sdk";
 import { fileContent } from "./file-content.js";
+import { targetCancelRunId } from "./target-cancel.js";
+import { configurationCondition } from "./configuration-condition.js";
+import { promptBridgeIntent } from "./prompt-intent.js";
 import { v1Configuration } from "../configuration.js";
 import { permissionRequest, v1Permission } from "../permission-request.js";
 import type { PermissionConnectionsPort } from "../../../ports/tool-permissions.js";
@@ -11,6 +14,7 @@ import type { ClientMcpInput } from "../../../domain/mcp.js";
 import type { ConnectionBinding, ContentBlock } from "../../../domain/types.js";
 import type {
   AcpApplicationPort,
+  DeliveredSessionEvent,
   ExecuteRunResult,
   SessionEvent,
 } from "../../../ports/acp-application.js";
@@ -33,6 +37,7 @@ export function createAcpV1Agent({
 }: CreateAcpV1AgentInput): acp.AgentApp {
   const dispatch = createAcpDispatcher("v1", binding);
   let initialized = false;
+  let bridgeDelivery = false;
   let connection: acp.AgentConnection;
   const attach = async (
     sessionId: string,
@@ -56,11 +61,18 @@ export function createAcpV1Agent({
           binding,
           sessionId,
           ...(cursor === undefined ? {} : { afterSequence: cursor }),
+          ...(bridgeDelivery ? { includeDelivery: true } : {}),
         }),
       send: (event) =>
-        event.kind === "user_message" && event.messageId === skipMessageId
+        !bridgeDelivery && event.kind === "user_message" && event.messageId === skipMessageId
           ? Promise.resolve()
-          : replay(connection.client, sessionId, [event]),
+          : replay(connection.client, sessionId, [event], bridgeDelivery),
+      ...(bridgeDelivery
+        ? {
+            checkpoint: (sequence: number) =>
+              deliveryCheckpoint(connection.client, sessionId, sequence),
+          }
+        : {}),
       onFailure: (error) => connection.close(error),
       ...(beforeFirst === undefined ? {} : { beforeFirst }),
       waitForDelivery,
@@ -96,11 +108,22 @@ export function createAcpV1Agent({
     });
     return result;
   };
-  const setConfiguration = async (sessionId: string, configId: string, value: string | boolean) => {
+  const setConfiguration = async (
+    sessionId: string,
+    configId: string,
+    value: string | boolean,
+    expectedRevision?: string,
+  ) => {
     const output = await mapError(() => application.readSessionOutput({ binding, sessionId }));
     await attach(sessionId, output.sequence, undefined, true, true);
     const result = await mapError(() =>
-      application.setSessionConfiguration({ binding, sessionId, configId, value }),
+      application.setSessionConfiguration({
+        binding,
+        sessionId,
+        configId,
+        value,
+        ...(expectedRevision === undefined ? {} : { expectedRevision }),
+      }),
     );
     const key = sessionOutputKey(binding, sessionId);
     outputs.invalidate(key);
@@ -122,6 +145,7 @@ export function createAcpV1Agent({
           );
         }
         initialized = true;
+        bridgeDelivery = bridgeRequested(params._meta);
         return {
           protocolVersion: acp.PROTOCOL_VERSION,
           agentInfo: {
@@ -145,6 +169,18 @@ export function createAcpV1Agent({
               close: {},
             },
           },
+          ...(bridgeDelivery
+            ? {
+                _meta: {
+                  "antnest.dev/bridge": {
+                    intentReceipt: 1,
+                    targetCancel: 1,
+                    deliveryMark: 1,
+                    configurationCas: 1,
+                  },
+                },
+              }
+            : {}),
         };
       });
     })
@@ -166,10 +202,23 @@ export function createAcpV1Agent({
     .onRequest(acp.methods.agent.session.load, ({ params, client, requestId }) => {
       return dispatch("session/load", params, requestId, async () => {
         requireInitialized(initialized, "session/load");
-        const result = await resume(application, binding, params, true);
-        await replay(client, params.sessionId, result.replay);
+        const result = await resume(application, binding, params, true, bridgeDelivery);
+        await replay(client, params.sessionId, result.replay, bridgeDelivery);
+        if (bridgeDelivery) await deliveryCheckpoint(client, params.sessionId, result.sequence);
         await attach(params.sessionId, result.sequence);
-        return sessionSetup(params.sessionId);
+        const setup = await sessionSetup(params.sessionId);
+        if (!bridgeDelivery) return setup;
+        if (result.appendVersion === undefined)
+          throw new Error("Negotiated Bridge replay omitted append version");
+        return {
+          ...setup,
+          _meta: {
+            "antnest.dev/delivery": {
+              sealedWatermark: result.sequence,
+              appendVersion: result.appendVersion,
+            },
+          },
+        };
       });
     })
     .onRequest(acp.methods.agent.session.list, ({ params, requestId }) => {
@@ -223,7 +272,7 @@ export function createAcpV1Agent({
     .onRequest(acp.methods.agent.session.resume, ({ params, requestId }) => {
       return dispatch("session/resume", params, requestId, async () => {
         requireInitialized(initialized, "session/resume");
-        const result = await resume(application, binding, params, false);
+        const result = await resume(application, binding, params, false, bridgeDelivery);
         await attach(params.sessionId, result.sequence);
         return sessionSetup(params.sessionId);
       });
@@ -231,7 +280,12 @@ export function createAcpV1Agent({
     .onRequest(acp.methods.agent.session.setConfigOption, ({ params, requestId }) => {
       return dispatch("session/set_config_option", params, requestId, async () => {
         requireInitialized(initialized, "session/set_config_option");
-        const result = await setConfiguration(params.sessionId, params.configId, params.value);
+        const result = await setConfiguration(
+          params.sessionId,
+          params.configId,
+          params.value,
+          configurationCondition(params._meta),
+        );
         return { configOptions: result.configOptions };
       });
     })
@@ -264,12 +318,16 @@ export function createAcpV1Agent({
           assertPromptSupported(params.prompt, promptCapabilities);
         }
         const key = sessionOutputKey(binding, params.sessionId);
+        const bridgeIntent = await mapError(() =>
+          Promise.resolve(promptBridgeIntent(params._meta)),
+        );
         let observing = false;
         const accepted = await mapError(() =>
           application.acceptPrompt({
             binding,
             sessionId: params.sessionId,
             prompt: toDomainContent(params.prompt),
+            ...(bridgeIntent === undefined ? {} : { bridgeIntent }),
             outputChanged: () => {
               if (observing) outputs.invalidate(key);
             },
@@ -301,7 +359,14 @@ export function createAcpV1Agent({
         return;
       }
       return dispatch("session/cancel", params, undefined, () =>
-        mapError(() => application.cancelRun({ binding, sessionId: params.sessionId })),
+        mapError(() => {
+          const expectedRunId = targetCancelRunId(params._meta);
+          return application.cancelRun({
+            binding,
+            sessionId: params.sessionId,
+            ...(expectedRunId === undefined ? {} : { expectedRunId }),
+          });
+        }),
       );
     });
 }
@@ -316,6 +381,7 @@ function resume(
     mcpServers?: acp.McpServer[];
   },
   replayFromStart: boolean,
+  includeDelivery: boolean,
 ): ReturnType<AcpApplicationPort["resumeSession"]> {
   return mapError(() =>
     application.resumeSession({
@@ -325,6 +391,7 @@ function resume(
       additionalDirectories: [...(params.additionalDirectories ?? [])],
       mcpServers: toClientMcpInputs(params.mcpServers ?? []),
       replayFromStart,
+      ...(includeDelivery ? { includeDelivery: true } : {}),
     }),
   );
 }
@@ -332,13 +399,57 @@ function resume(
 async function replay(
   client: acp.AgentContext,
   sessionId: string,
-  events: readonly SessionEvent[],
+  events: readonly DeliveredSessionEvent[],
+  includeDelivery = false,
 ): Promise<void> {
   for (const event of events) {
-    for (const update of toAcpUpdates(event)) {
-      await client.notify(acp.methods.client.session.update, { sessionId, update });
+    const updates = toAcpUpdates(event);
+    if (includeDelivery && event.delivery !== undefined && updates.length === 0)
+      await deliveryCheckpoint(client, sessionId, event.delivery.sequence);
+    for (const [partIndex, update] of updates.entries()) {
+      await client.notify(acp.methods.client.session.update, {
+        sessionId,
+        update,
+        ...(includeDelivery && event.delivery !== undefined
+          ? {
+              _meta: {
+                "antnest.dev/delivery": {
+                  kind: "part",
+                  sequence: event.delivery.sequence,
+                  partIndex,
+                  partCount: updates.length,
+                  runId: event.delivery.runId,
+                  messageId: event.delivery.messageId,
+                },
+              },
+            }
+          : {}),
+      });
     }
   }
+}
+
+function bridgeRequested(meta: Record<string, unknown> | null | undefined): boolean {
+  const value = meta?.["antnest.dev/bridge"];
+  if (value === null || typeof value !== "object") return false;
+  const capabilities = value as Record<string, unknown>;
+  return (
+    capabilities.intentReceipt === 1 &&
+    capabilities.targetCancel === 1 &&
+    capabilities.deliveryMark === 1
+  );
+}
+
+function deliveryCheckpoint(
+  client: acp.AgentContext,
+  sessionId: string,
+  sequence: number,
+): Promise<void> {
+  return client.notify(acp.methods.client.session.update, {
+    sessionId,
+    update: { sessionUpdate: "available_commands_update", availableCommands: availableCommands() },
+    _meta: { "antnest.dev/delivery": { kind: "checkpoint", sequence } },
+  });
 }
 
 function requireInitialized(initialized: boolean, method: string): void {
@@ -460,11 +571,30 @@ function contentUpdates(
   messageId: string,
   content: readonly ContentBlock[],
 ): acp.SessionUpdate[] {
-  return content.map((block) => ({
-    sessionUpdate,
-    messageId,
-    content: block as acp.ContentBlock,
-  }));
+  const updates: acp.SessionUpdate[] = [];
+  const maxTextCodeUnits = 64 * 1024;
+  for (const block of content) {
+    const text = block.type === "text" && typeof block.text === "string" ? block.text : null;
+    if (text === null || text.length <= maxTextCodeUnits) {
+      updates.push({ sessionUpdate, messageId, content: block as acp.ContentBlock });
+      continue;
+    }
+    for (let start = 0; start < text.length;) {
+      let end = Math.min(start + maxTextCodeUnits, text.length);
+      if (end < text.length) {
+        const before = text.charCodeAt(end - 1);
+        const after = text.charCodeAt(end);
+        if (before >= 0xd800 && before <= 0xdbff && after >= 0xdc00 && after <= 0xdfff) end -= 1;
+      }
+      updates.push({
+        sessionUpdate,
+        messageId,
+        content: { ...block, text: text.slice(start, end) } as acp.ContentBlock,
+      });
+      start = end;
+    }
+  }
+  return updates;
 }
 
 function toDomainContent(content: readonly acp.ContentBlock[]): ContentBlock[] {

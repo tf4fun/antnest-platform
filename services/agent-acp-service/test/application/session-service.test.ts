@@ -277,6 +277,9 @@ function createRepository() {
   const requestCancellation = vi.fn<SessionRepository["requestCancellation"]>(() =>
     Promise.resolve(),
   );
+  const requestTargetCancellation = vi.fn<SessionRepository["requestTargetCancellation"]>(() =>
+    Promise.resolve(true),
+  );
   const close = vi.fn<SessionRepository["close"]>(() => Promise.resolve());
   const deleteSession = vi.fn<SessionRepository["delete"]>(() => Promise.resolve());
   const getClientMcpRevision = vi.fn<SessionRepository["getClientMcpRevision"]>(() =>
@@ -292,6 +295,7 @@ function createRepository() {
     readOutput,
     getCurrentRunState,
     requestCancellation,
+    requestTargetCancellation,
     close,
     delete: deleteSession,
     getClientMcpRevision,

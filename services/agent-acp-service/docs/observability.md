@@ -42,6 +42,16 @@ SDK dispatch and existing application/adapter boundaries. Acceptance is coordina
 - Permission observation belongs to a decorator around `ToolPermissionPort`;
   business decision code returns its existing result. Run execution retains
   its existing interface and terminal facts; no telemetry business hooks.
+- The ACP application decorator counts durable Bridge intent reuse as
+  `antnest.acp.bridge_intent_reuse`, with only `result=hit|conflict`. It records
+  `intent_already_recorded` and `idempotency_conflict` after the authorized
+  producer check; ordinary prompts and unrelated admission failures do not
+  increment it. The metric never labels identity, Agent, Session, intent or
+  Prompt content. Service tests verify both outcomes and label privacy. A
+  production-image Docker E2E runs the exported application decorator against
+  both outcomes, flushes OTLP/HTTP on normal shutdown, and verifies the actual
+  counter data points and their sole `result` label. Other existing ACP metrics
+  retain their own attribute policies.
 
 ### PostgreSQL Boundary
 

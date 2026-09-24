@@ -30,6 +30,7 @@ async function setup(overrides: SessionConfiguration = {}) {
   const local = await localExecution();
   const repository = {
     getSession: vi.fn<RunRepository["getSession"]>().mockResolvedValue(session),
+    findBridgeIntent: vi.fn<RunRepository["findBridgeIntent"]>().mockResolvedValue(null),
     createRunIntent: vi.fn<RunRepository["createRunIntent"]>((input) =>
       Promise.resolve({
         id: input.runId,

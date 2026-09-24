@@ -24,6 +24,8 @@ import type { ExecutionConfigurationPort } from "../ports/execution-configuratio
 import type { AgentSettlementPort } from "../ports/agent-settlement.js";
 import type { AgentExecutionStatePort } from "../ports/agent-execution-state.js";
 import type { ExecutionAuditPort } from "../ports/execution-audit.js";
+import type { BridgeObservationService } from "../application/bridge-observation.js";
+import { bridgeObservationRoute, serveBridgeObservation } from "./bridge-observation.js";
 import { executionAuditRoute, serveExecutionAudit } from "./execution-audit.js";
 import {
   AGENT_EXECUTION_STATE_PATH,
@@ -42,6 +44,7 @@ export type AgentAcpHttpServerOptions = {
   settlement?: AgentSettlementPort;
   executionState?: AgentExecutionStatePort;
   executionAudits?: ExecutionAuditPort;
+  bridgeObservation?: Pick<BridgeObservationService, "readIntent" | "readSession">;
   stateDeliveryTimeoutMs?: number;
   maxConfigurationBytes?: number;
   permissions?: PermissionConnectionsPort;
@@ -134,6 +137,17 @@ export class AgentAcpHttpServer {
   }
 
   private async handleHttp(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    const bridgeRoute = bridgeObservationRoute(request.url);
+    if (bridgeRoute !== undefined) {
+      await serveBridgeObservation(
+        request,
+        response,
+        bridgeRoute,
+        this.options.bridgeObservation,
+        this.options.ready,
+      );
+      return;
+    }
     const auditRoute = executionAuditRoute(request.url);
     if (auditRoute !== undefined) {
       await serveExecutionAudit(

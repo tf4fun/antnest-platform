@@ -1,5 +1,6 @@
 import { DomainError } from "../domain/errors.js";
 import { normalizePromptResources } from "../domain/embedded-resource.js";
+import { bridgeIntentDigest } from "../domain/bridge-intent.js";
 import { matchCommand, type SessionCommand } from "../domain/slash-commands.js";
 import {
   authorizeSession,
@@ -31,6 +32,7 @@ export type AcceptPromptInput = {
   binding: ConnectionBinding;
   sessionId: string;
   prompt: ContentBlock[];
+  bridgeIntent?: { intentId: string; expectedAppendVersion: number };
 };
 
 export type AcceptedRun = {
@@ -57,6 +59,28 @@ export class PromptCoordinator {
     return this.dependencies.directory.withAccess(input.binding, ({ agent, configuration }) =>
       this.acceptConfigured(input, agent, configuration, signal),
     );
+  }
+
+  public async checkBridgeIntent(input: AcceptPromptInput): Promise<void> {
+    const bridgeIntent = input.bridgeIntent;
+    if (bridgeIntent === undefined) return;
+    await this.dependencies.directory.withAccess(input.binding, async () => {
+      const session = await this.dependencies.repository.getSession(input.sessionId);
+      if (session === null) throw new DomainError("session_not_found", "Session does not exist");
+      authorizeSession(session, input.binding);
+      const existing = await this.dependencies.repository.findBridgeIntent(
+        input.sessionId,
+        bridgeIntent.intentId,
+      );
+      if (existing === null) return;
+      const digest = bridgeIntentDigest(
+        bridgeIntent.expectedAppendVersion,
+        normalizePromptResources(input.prompt),
+      );
+      if (existing.digest !== digest)
+        throw new DomainError("idempotency_conflict", "Intent key belongs to different input");
+      throw new DomainError("intent_already_recorded", "Intent already has a durable Run");
+    });
   }
 
   private async acceptConfigured(
@@ -104,6 +128,7 @@ export class PromptCoordinator {
         expectedAccessRevision: agent.access_revision,
         userMessageId,
         prompt: normalizePromptResources(input.prompt),
+        ...(input.bridgeIntent === undefined ? {} : { bridgeIntent: input.bridgeIntent }),
         createdAt: now,
       }),
     );

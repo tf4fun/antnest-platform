@@ -33,6 +33,40 @@ function acceptedRun(sessionId = "session-1"): AcceptedAcpRun {
 }
 
 describe("RunSupervisor ownership", () => {
+  it("does not abort a replacement Run when a target cancellation arrives late", async () => {
+    const firstFinish = Promise.withResolvers<ExecuteRunResult>();
+    const secondFinish = Promise.withResolvers<ExecuteRunResult>();
+    const execute = vi
+      .fn<RunExecutionPort["execute"]>()
+      .mockReturnValueOnce(firstFinish.promise)
+      .mockReturnValueOnce(secondFinish.promise);
+    const supervisor = new RunSupervisor({ execute });
+    const first = await supervisor.submit(input(), () => Promise.resolve(acceptedRun()));
+    firstFinish.resolve(completed);
+    await first.completion;
+    await Promise.resolve();
+    const secondAccepted = { ...acceptedRun(), runId: "run-replacement" };
+    const second = await supervisor.submit(input(), () => Promise.resolve(secondAccepted));
+    await supervisor.cancelTarget("session-1", first.runId);
+    expect(execute.mock.calls[1]?.[0].signal.aborted).toBe(false);
+    secondFinish.resolve(completed);
+    await second.completion;
+  });
+
+  it("defers an exact target cancellation until a pending admission reveals its Run ID", async () => {
+    const gate = Promise.withResolvers<AcceptedAcpRun>();
+    const execute = vi.fn<RunExecutionPort["execute"]>(({ signal }) => {
+      expect(signal.aborted).toBe(true);
+      return Promise.resolve(cancelled);
+    });
+    const supervisor = new RunSupervisor({ execute });
+    const submission = supervisor.submit(input(), () => gate.promise);
+    await supervisor.cancelTarget("session-1", "run-session-1");
+    gate.resolve(acceptedRun());
+    const submitted = await submission;
+    await expect(submitted.completion).resolves.toEqual(cancelled);
+  });
+
   it("quiesces an idle Agent without inventing an execution slot", async () => {
     const execute = vi.fn<RunExecutionPort["execute"]>();
     const supervisor = new RunSupervisor({ execute });

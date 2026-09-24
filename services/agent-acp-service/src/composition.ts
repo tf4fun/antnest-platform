@@ -25,6 +25,8 @@ import { PostgresKernel, postgresPoolOptions } from "./adapters/postgres/kernel.
 import { migrate } from "./adapters/postgres/migrate.js";
 import { PostgresRunEventRepository } from "./adapters/postgres/run-event-repository.js";
 import { PostgresRunRepository } from "./adapters/postgres/run-repository.js";
+import { PostgresBridgeObservationRepository } from "./adapters/postgres/bridge-observation-repository.js";
+import { BridgeObservationService } from "./application/bridge-observation.js";
 import { SecretBox } from "./adapters/postgres/secret-box.js";
 import { PostgresSessionRepository } from "./adapters/postgres/session-repository.js";
 import { PostgresWorkerLock, WorkerOwnershipLostError } from "./adapters/postgres/worker-lock.js";
@@ -118,6 +120,7 @@ export async function startAgentAcpService(
       settlement: built.settlement,
       executionState: built.executionState,
       executionAudits: built.executionAudits,
+      bridgeObservation: built.bridgeObservation,
       stateDeliveryTimeoutMs: config.stateDeliveryTimeoutMs,
       outputs: built.outputs,
       application: built.application,
@@ -282,6 +285,11 @@ export function buildComponents(
     settlement: new AgentSettlement({ directory, supervisor, protection: executions, now }),
     executionState: new AgentExecutionState({ directory, supervisor, protection: executions }),
     executionAudits: new ExecutionAudits(new PostgresExecutionAudits(kernel)),
+    bridgeObservation: new BridgeObservationService({
+      access,
+      sessions: sessionService,
+      repository: new PostgresBridgeObservationRepository(kernel),
+    }),
     outputs,
     application,
     recovery,

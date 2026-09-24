@@ -12,6 +12,8 @@ import { InvalidationListeners } from "./invalidation-listeners.js";
 type RunSlot = {
   binding: ConnectionBinding;
   sessionId: string;
+  runId: string | null;
+  pendingTargetCancels: Set<string>;
   controller: AbortController;
   finished: PromiseWithResolvers<void>;
   waiters: Set<() => void>;
@@ -31,6 +33,7 @@ export interface RunLifecyclePort {
     accept: (signal: AbortSignal) => Promise<AcceptedAcpRun>,
   ): Promise<SubmittedAcpRun>;
   cancel(sessionId: string): Promise<void>;
+  cancelTarget(sessionId: string, runId: string): Promise<void>;
 }
 
 export class RunSupervisor implements RunLifecyclePort {
@@ -70,6 +73,8 @@ export class RunSupervisor implements RunLifecyclePort {
     const slot: RunSlot = {
       binding: { ...input.binding },
       sessionId: input.sessionId,
+      runId: null,
+      pendingTargetCancels: new Set(),
       controller: new AbortController(),
       finished: Promise.withResolvers<void>(),
       waiters: new Set(),
@@ -78,6 +83,10 @@ export class RunSupervisor implements RunLifecyclePort {
     this.changes.invalidate(key);
     try {
       const accepted = await accept(slot.controller.signal);
+      slot.runId = accepted.runId;
+      if (slot.pendingTargetCancels.has(accepted.runId))
+        slot.controller.abort(new Error("Target ACP Run cancelled"));
+      slot.pendingTargetCancels.clear();
       const completion = Promise.resolve().then(() =>
         this.delegate.execute({
           accepted,
@@ -106,6 +115,20 @@ export class RunSupervisor implements RunLifecyclePort {
     const slots = [...this.active.values()].filter((slot) => slot.sessionId === sessionId);
     for (const slot of slots) slot.controller.abort(new Error("ACP Session cancelled"));
     await Promise.all(slots.map((slot) => slot.finished.promise));
+  }
+
+  public async cancelTarget(sessionId: string, runId: string): Promise<void> {
+    const slots = [...this.active.values()].filter((slot) => slot.sessionId === sessionId);
+    const matched: RunSlot[] = [];
+    for (const slot of slots) {
+      if (slot.runId === null) {
+        slot.pendingTargetCancels.add(runId);
+      } else if (slot.runId === runId) {
+        slot.controller.abort(new Error("Target ACP Run cancelled"));
+        matched.push(slot);
+      }
+    }
+    await Promise.all(matched.map((slot) => slot.finished.promise));
   }
 
   // Only local dispatch quiescence. Remote stopping evidence is a separate fact.

@@ -164,6 +164,34 @@ describe("instrumented ports", () => {
     });
   });
 
+  it.each([
+    ["intent_already_recorded", "hit"],
+    ["idempotency_conflict", "conflict"],
+  ] as const)("counts durable Bridge intent %s without identity labels", async (code, result) => {
+    const telemetry = recordingTelemetry();
+    const delegate: AcpApplicationPort = {
+      ...acpApplication(),
+      acceptPrompt: vi.fn(() => Promise.reject(new DomainError(code, "Intent already exists"))),
+    };
+    const application = new InstrumentedAcpApplication(delegate, telemetry.port);
+    await expect(
+      application.acceptPrompt({
+        binding: binding(),
+        sessionId: "session-1",
+        prompt: [{ type: "text", text: "private prompt" }],
+        bridgeIntent: { intentId: "private-intent", expectedAppendVersion: 0 },
+        outputChanged: vi.fn(),
+      }),
+    ).rejects.toMatchObject({ code });
+    expect(telemetry.counts).toContainEqual({
+      name: "antnest.acp.bridge_intent_reuse",
+      attributes: { result },
+      value: 1,
+    });
+    expect(JSON.stringify(telemetry)).not.toContain("private-intent");
+    expect(JSON.stringify(telemetry)).not.toContain("private prompt");
+  });
+
   it("collapses an unregistered application code before writing metric labels", async () => {
     const telemetry = recordingTelemetry();
     const failure = new DomainError("unbounded_domain_code", "Unexpected application code");
