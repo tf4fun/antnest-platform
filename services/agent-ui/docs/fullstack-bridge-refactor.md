@@ -332,6 +332,8 @@ HTTP 请求 span 在 HTTP 工作结束时结束；后台观察/执行有独立�
 
 测试位置遵循仓库政策：服务单元/服务组件测试放服务内；集成和端到端源码分别在根 `tests/integration/`、`tests/e2e/`，通用支撑在 `tests/support/`。持久私有证据在 `artifacts/verification/`，不得写入 `.cache/`。开发阶段不保留旧 ACP 浏览器协议测试作为兼容门槛；删除旧测试本身不代表当前产品行为已验收，仍须通过上表中的新链路断言。
 
+实际读屏器和全键盘操作的待执行步骤见 [无障碍验收](accessibility-acceptance.md)；自动 axe/Chromium 检查不能替代其中的读出、焦点和状态体验记录。
+
 验收门槛是 B0–B5 与 I1/I2 对应证据齐全：UI 不再直接持有 ACP/WS；关闭页面、Bridge 重启、超时与权限重绑的业务结果符合矩阵；单 intent 不产生重复 Run；旧取消不影响新 Run；身份与 cursor 无串扰；当前产品行为覆盖完整；内存与代理流式行为通过实际栈测量。旧入口已清理，不作为部署模式。
 
 列出的超时、心跳、分页与等待预算仍是拟定默认值，尚非生产实测指标。B0 共享契约已建立；Gateway 的现行 Node HTML、业务 HTTP/SSE 与身份代理路由已并入正式 `session-contract.json` v13，原“计划中路由”副本已删除。B1 ACP 生产者通过本地验收。B2 Node Bridge 已实现官方 SDK HTTP adapter、受理/对账、权限、compact View/分页、SSE 和容器入口；本地服务测试、契约测试、生产容器 fixture 的活动态容量与慢观察者回归，以及真实 ACP/Controller 六服务主流程均已通过。真实 Run 在 Bridge 强制 drain 后的持久化读取与完成、选中另一个 Session 时的活动 Run 可见性，以及跨 Session 已完成与运行中两个 intent 的 Agent View 对账也已通过；慢网叠加真实 Run 的固定 80 Run 负载和十分钟本地 SSE 曲线已验证；跨机器与真实六服务更长周期尚未覆盖。B3 Gateway 的身份代理、CSRF、SSE 租约和关闭清理已通过本地 Go 回归；当前路由与 Compose 已统一指向 Node，真实六服务主流程、Bridge/Gateway 重启与两种无受理回执崩溃窗口均已覆盖；任意故障时序不由这些固定场景保证。
