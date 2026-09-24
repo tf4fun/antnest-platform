@@ -46,7 +46,9 @@ describe("ACP v1 Streamable HTTP", () => {
     forkSession: vi.fn(),
     closeSession: vi.fn(),
     cancelRun: vi.fn(),
-    resumeSession: vi.fn(() => Promise.resolve({ replay: [], sequence: 0 })),
+    resumeSession: vi.fn<AcpApplicationPort["resumeSession"]>(() =>
+      Promise.resolve({ replay: [], sequence: 0 }),
+    ),
     readSessionOutput: vi.fn(() =>
       Promise.resolve({
         sequence: 0,
@@ -262,6 +264,142 @@ describe("ACP v1 Streamable HTTP", () => {
       agentId: "agent-1",
     });
     expect(application.createSession).toHaveBeenCalledOnce();
+  });
+
+  it("preserves negotiated Bridge delivery metadata over official HTTP POST and SSE", async () => {
+    await start();
+    application.resumeSession.mockResolvedValueOnce({
+      replay: [
+        {
+          kind: "agent_message",
+          messageId: "answer-1",
+          content: [{ type: "text", text: "hello" }],
+          delivery: { sequence: 1, runId: "run-1", messageId: "event-1" },
+        },
+      ],
+      sequence: 1,
+      appendVersion: 1,
+    });
+    const marks: unknown[] = [];
+    const connection = acp
+      .client()
+      .onNotification(acp.methods.client.session.update, ({ params }) => {
+        const mark = params._meta?.["antnest.dev/delivery"];
+        if (mark !== undefined) marks.push(mark);
+      })
+      .connect(createHttpStream(url, { headers: headers() }));
+    connections.push(connection);
+    const initialized = await connection.agent.request(
+      acp.methods.agent.initialize,
+      {
+        protocolVersion: acp.PROTOCOL_VERSION,
+        _meta: {
+          "antnest.dev/bridge": {
+            intentReceipt: 1,
+            targetCancel: 1,
+            deliveryMark: 1,
+          },
+        },
+      },
+    );
+    expect(initialized._meta?.["antnest.dev/bridge"]).toEqual({
+      intentReceipt: 1,
+      targetCancel: 1,
+      deliveryMark: 1,
+      configurationCas: 1,
+    });
+    const loaded = await connection.agent.request(
+      acp.methods.agent.session.load,
+      {
+        sessionId: "session-1",
+        cwd: "/workspace",
+        mcpServers: [],
+      },
+    );
+    expect(loaded._meta?.["antnest.dev/delivery"]).toEqual({
+      sealedWatermark: 1,
+      appendVersion: 1,
+    });
+    expect(marks).toContainEqual({
+      kind: "part",
+      sequence: 1,
+      partIndex: 0,
+      partCount: 1,
+      runId: "run-1",
+      messageId: "event-1",
+    });
+    expect(marks).toContainEqual({ kind: "checkpoint", sequence: 1 });
+  });
+
+  it("delivers large text as complete bounded parts through official HTTP SSE", async () => {
+    await start();
+    const text = "answer-".repeat(20_000);
+    application.resumeSession.mockResolvedValueOnce({
+      replay: [
+        {
+          kind: "agent_message",
+          messageId: "answer-large",
+          content: [{ type: "text", text }],
+          delivery: { sequence: 1, runId: "run-1", messageId: "event-large" },
+        },
+      ],
+      sequence: 1,
+      appendVersion: 1,
+    });
+    const notifications: acp.SessionNotification[] = [];
+    const connection = acp
+      .client()
+      .onNotification(acp.methods.client.session.update, ({ params }) => {
+        if (params.update.sessionUpdate === "agent_message_chunk")
+          notifications.push(params);
+      })
+      .connect(createHttpStream(url, { headers: headers() }));
+    connections.push(connection);
+    await connection.agent.request(acp.methods.agent.initialize, {
+      protocolVersion: acp.PROTOCOL_VERSION,
+      _meta: {
+        "antnest.dev/bridge": {
+          intentReceipt: 1,
+          targetCancel: 1,
+          deliveryMark: 1,
+        },
+      },
+    });
+    const loaded = await connection.agent.request(
+      acp.methods.agent.session.load,
+      {
+        sessionId: "session-1",
+        cwd: "/workspace",
+        mcpServers: [],
+      },
+    );
+    expect(loaded._meta?.["antnest.dev/delivery"]).toMatchObject({
+      sealedWatermark: 1,
+    });
+    await expect.poll(() => notifications.length).toBeGreaterThan(1);
+    expect(
+      notifications
+        .map(({ update }) =>
+          update.sessionUpdate === "agent_message_chunk" &&
+          update.content.type === "text"
+            ? update.content.text
+            : "",
+        )
+        .join(""),
+    ).toBe(text);
+    for (const [partIndex, params] of notifications.entries()) {
+      expect(params._meta?.["antnest.dev/delivery"]).toMatchObject({
+        kind: "part",
+        sequence: 1,
+        partIndex,
+        partCount: notifications.length,
+        runId: "run-1",
+        messageId: "event-large",
+      });
+      expect(Buffer.byteLength(JSON.stringify(params))).toBeLessThan(
+        400 * 1024,
+      );
+    }
   });
 
   it.each(

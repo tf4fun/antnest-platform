@@ -24,7 +24,8 @@ export function chatTrace(index = 1, rejection = false) {
     "span.kind": "server",
   });
   add("forward", "gateway", "edge-gateway", "acp session/prompt", {
-    "span.kind": "client",
+    "span.kind": "producer",
+    "antnest.operation.phase": "forward",
   });
   add("prompt", "forward", "agent-acp-service", "acp session/prompt", {
     "rpc.method": "session/prompt",

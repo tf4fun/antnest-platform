@@ -1,0 +1,30 @@
+services:
+  acp-gate:
+    profiles: [ui-no-receipt]
+    image: node:24-bookworm-slim
+    command: ["node", "/tests/e2e/agent-ui/acp-gate.mjs"]
+    volumes:
+      - ./tests:/tests:ro
+    ports:
+      - "127.0.0.1::8080"
+    networks: [development]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/__fault/state').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+  agent-ui-fault:
+    profiles: [ui-no-receipt]
+    image: ${ANTNEST_C4_AGENT_UI_IMAGE:-antnest/agent-ui:local}
+    environment:
+      ANTNEST_AGENT_ACP_SERVICE_URL: http://acp-gate:8080
+      ANTNEST_AGENT_CONTROLLER_URL: http://agent-controller:8080
+      OTEL_SDK_DISABLED: "true"
+    ports:
+      - "127.0.0.1::8080"
+    networks: [development]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/status').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 2s
+      timeout: 2s
+      retries: 15

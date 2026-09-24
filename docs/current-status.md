@@ -1,6 +1,16 @@
 # Current Implementation And Acceptance
 
-Updated: 2026-09-23. **All project test sources and lasting assets have left
+Updated: 2026-09-24. Agent UI now runs as one Node full-stack development
+service: Gateway-authenticated HTML, business HTTP/SSE, a server-owned ACP
+Bridge and request-scoped React SSR. Service, contract, Chromium and isolated
+six-service Docker regressions pass, including an 80-Run fixed load, Bridge and
+Gateway restart, identity expiry/revocation and pending permission recovery.
+The current [Agent UI refactor plan](../services/agent-ui/docs/fullstack-bridge-refactor.md)
+records its evidence and remaining full screen-reader/keyboard review and
+capacity work beyond fixed loads; this work does not reopen the existing Stage 3
+current-service closeout.
+
+**All project test sources and lasting assets have left
 `.cache`; migration and final integration audit are complete.** The earlier directory
 migration alone did not prove equivalence. Individual source review, dedicated
 checks, archives and deletion records now cover every migration entry. See the

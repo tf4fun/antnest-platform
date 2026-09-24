@@ -1,0 +1,23 @@
+services:
+  agent-ui:
+    environment:
+      NODE_OPTIONS: ${ANTNEST_UI_E2E_NODE_OPTIONS:-}
+  agent-ui-peer:
+    profiles: [ui-peer]
+    image: ${ANTNEST_C4_AGENT_UI_IMAGE:-antnest/agent-ui:local}
+    environment:
+      ANTNEST_AGENT_ACP_SERVICE_URL: http://agent-acp-service:8080
+      ANTNEST_AGENT_CONTROLLER_URL: http://agent-controller:8080
+      OTEL_SDK_DISABLED: "true"
+    ports:
+      - "127.0.0.1::8080"
+    networks: [development]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/status').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+  agent-acp-service:
+    image: ${ANTNEST_UI_E2E_ACP_IMAGE}
+  edge-gateway:
+    image: ${ANTNEST_UI_E2E_GATEWAY_IMAGE}

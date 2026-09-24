@@ -634,6 +634,299 @@ describe("ACP v1 agent mapping", () => {
     ]);
   });
 
+  it("forwards a conditional configuration revision through the official SDK request", async () => {
+    const setSessionConfiguration = vi.fn<
+      AcpApplicationPort["setSessionConfiguration"]
+    >(async () => sessionConfigurationView());
+    const application = createApplication({ setSessionConfiguration });
+    const agent = createAcpV1Agent({
+      binding,
+      application,
+      promptCapabilities: { image: false, embeddedContext: false },
+    });
+    await acp.client().connectWith(agent, async (context) => {
+      await context.request(acp.methods.agent.initialize, {
+        protocolVersion: acp.PROTOCOL_VERSION,
+        clientCapabilities: {},
+        _meta: {
+          "antnest.dev/bridge": {
+            intentReceipt: 1,
+            targetCancel: 1,
+            deliveryMark: 1,
+          },
+        },
+      });
+      await context.request(acp.methods.agent.session.setConfigOption, {
+        sessionId: "session-1",
+        configId: "mode",
+        value: "chat",
+        _meta: {
+          "antnest.dev/configuration": { expectedRevision: "a".repeat(64) },
+        },
+      });
+      expect(setSessionConfiguration).toHaveBeenCalledWith({
+        binding,
+        sessionId: "session-1",
+        configId: "mode",
+        value: "chat",
+        expectedRevision: "a".repeat(64),
+      });
+      await expect(
+        context.request(acp.methods.agent.session.setConfigOption, {
+          sessionId: "session-1",
+          configId: "mode",
+          value: "chat",
+          _meta: { "antnest.dev/configuration": { expectedRevision: "bad" } },
+        }),
+      ).rejects.toBeDefined();
+      expect(setSessionConfiguration).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("negotiates Bridge delivery and seals a replay only after complete update parts", async () => {
+    const application = createApplication({
+      resumeSession: vi.fn(() =>
+        Promise.resolve({
+          sequence: 3,
+          appendVersion: 2,
+          replay: [
+            {
+              kind: "agent_message" as const,
+              messageId: "answer-1",
+              content: [
+                { type: "text" as const, text: "first" },
+                { type: "text" as const, text: "second" },
+              ],
+              delivery: { sequence: 1, messageId: "event-1", runId: "run-1" },
+            },
+            {
+              kind: "agent_message" as const,
+              messageId: "empty-answer",
+              content: [],
+              delivery: { sequence: 2, messageId: "event-2", runId: "run-1" },
+            },
+            { kind: "state" as const, state: "idle" as const },
+          ],
+        }),
+      ),
+    });
+    const notifications: acp.SessionNotification[] = [];
+    const client = acp
+      .client()
+      .onNotification(acp.methods.client.session.update, ({ params }) => {
+        notifications.push(params);
+      });
+    const agent = createAcpV1Agent({
+      binding,
+      promptCapabilities: { image: false, embeddedContext: false },
+      application,
+    });
+    await client.connectWith(agent, async (context) => {
+      const initialized = await context.request(acp.methods.agent.initialize, {
+        protocolVersion: acp.PROTOCOL_VERSION,
+        clientCapabilities: {},
+        _meta: {
+          "antnest.dev/bridge": {
+            intentReceipt: 1,
+            targetCancel: 1,
+            deliveryMark: 1,
+          },
+        },
+      });
+      expect(initialized._meta?.["antnest.dev/bridge"]).toEqual({
+        intentReceipt: 1,
+        targetCancel: 1,
+        deliveryMark: 1,
+        configurationCas: 1,
+      });
+      const loaded = await context.request(acp.methods.agent.session.load, {
+        sessionId: "session-1",
+        cwd: "/workspace",
+        mcpServers: [],
+      });
+      expect(loaded._meta?.["antnest.dev/delivery"]).toEqual({
+        sealedWatermark: 3,
+        appendVersion: 2,
+      });
+    });
+    expect(
+      notifications
+        .map((entry) => entry._meta?.["antnest.dev/delivery"])
+        .filter(Boolean),
+    ).toEqual([
+      {
+        kind: "part",
+        sequence: 1,
+        partIndex: 0,
+        partCount: 2,
+        runId: "run-1",
+        messageId: "event-1",
+      },
+      {
+        kind: "part",
+        sequence: 1,
+        partIndex: 1,
+        partCount: 2,
+        runId: "run-1",
+        messageId: "event-1",
+      },
+      { kind: "checkpoint", sequence: 2 },
+      { kind: "checkpoint", sequence: 3 },
+    ]);
+  });
+
+  it("splits large text into bounded ACP chunks without splitting a durable delivery", async () => {
+    const text = "x".repeat(65_535) + "😀" + "\u0000".repeat(65_536) + "tail";
+    const application = createApplication({
+      resumeSession: vi.fn(() =>
+        Promise.resolve({
+          sequence: 1,
+          appendVersion: 0,
+          replay: [
+            {
+              kind: "agent_message" as const,
+              messageId: "answer-1",
+              content: [{ type: "text" as const, text }],
+              delivery: { sequence: 1, messageId: "event-1", runId: "run-1" },
+            },
+          ],
+        }),
+      ),
+    });
+    const notifications: acp.SessionNotification[] = [];
+    const client = acp
+      .client()
+      .onNotification(acp.methods.client.session.update, ({ params }) => {
+        if (params.update.sessionUpdate === "agent_message_chunk")
+          notifications.push(params);
+      });
+    const agent = createAcpV1Agent({
+      binding,
+      promptCapabilities: { image: false, embeddedContext: false },
+      application,
+    });
+    await client.connectWith(agent, async (context) => {
+      await context.request(acp.methods.agent.initialize, {
+        protocolVersion: acp.PROTOCOL_VERSION,
+        _meta: {
+          "antnest.dev/bridge": {
+            intentReceipt: 1,
+            targetCancel: 1,
+            deliveryMark: 1,
+          },
+        },
+      });
+      await context.request(acp.methods.agent.session.load, {
+        sessionId: "session-1",
+        cwd: "/workspace",
+        mcpServers: [],
+      });
+    });
+    expect(notifications.length).toBeGreaterThan(1);
+    expect(
+      notifications
+        .map(({ update }) =>
+          update.sessionUpdate === "agent_message_chunk" &&
+          update.content.type === "text"
+            ? update.content.text
+            : "",
+        )
+        .join(""),
+    ).toBe(text);
+    for (const [partIndex, params] of notifications.entries()) {
+      expect(params.update).toMatchObject({
+        sessionUpdate: "agent_message_chunk",
+        messageId: "answer-1",
+      });
+      if (
+        params.update.sessionUpdate === "agent_message_chunk" &&
+        params.update.content.type === "text"
+      ) {
+        expect(params.update.content.text.length).toBeLessThanOrEqual(65_536);
+        expect(params.update.content.text.endsWith("\ud83d")).toBe(false);
+        expect(params.update.content.text.startsWith("\ude00")).toBe(false);
+      }
+      expect(Buffer.byteLength(JSON.stringify(params))).toBeLessThan(
+        400 * 1024,
+      );
+      expect(params._meta?.["antnest.dev/delivery"]).toEqual({
+        kind: "part",
+        sequence: 1,
+        partIndex,
+        partCount: notifications.length,
+        runId: "run-1",
+        messageId: "event-1",
+      });
+    }
+  });
+
+  it("marks live output after the sealed load cut without replaying an older sequence", async () => {
+    const application = createApplication({
+      resumeSession: vi.fn(() =>
+        Promise.resolve({ sequence: 1, appendVersion: 1, replay: [] }),
+      ),
+    });
+    application.readSessionOutput = vi.fn<
+      AcpApplicationPort["readSessionOutput"]
+    >(({ afterSequence, includeDelivery }) => {
+      expect(includeDelivery).toBe(true);
+      expect(afterSequence).toBe(1);
+      return Promise.resolve({
+        sequence: 3,
+        events: [
+          {
+            kind: "agent_message",
+            messageId: "answer-2",
+            content: [{ type: "text", text: "new" }],
+            delivery: { sequence: 2, runId: "run-1", messageId: "event-2" },
+          },
+        ],
+        state: { kind: "state", state: "idle" },
+      });
+    });
+    const marks: unknown[] = [];
+    const client = acp
+      .client()
+      .onNotification(acp.methods.client.session.update, ({ params }) => {
+        const mark = params._meta?.["antnest.dev/delivery"];
+        if (mark !== undefined) marks.push(mark);
+      });
+    const agent = createAcpV1Agent({
+      binding,
+      application,
+      promptCapabilities: { image: false, embeddedContext: false },
+    });
+    await client.connectWith(agent, async (context) => {
+      await context.request(acp.methods.agent.initialize, {
+        protocolVersion: acp.PROTOCOL_VERSION,
+        _meta: {
+          "antnest.dev/bridge": {
+            intentReceipt: 1,
+            targetCancel: 1,
+            deliveryMark: 1,
+          },
+        },
+      });
+      await context.request(acp.methods.agent.session.load, {
+        sessionId: "session-1",
+        cwd: "/workspace",
+        mcpServers: [],
+      });
+    });
+    expect(marks).toEqual([
+      { kind: "checkpoint", sequence: 1 },
+      {
+        kind: "part",
+        sequence: 2,
+        partIndex: 0,
+        partCount: 1,
+        runId: "run-1",
+        messageId: "event-2",
+      },
+      { kind: "checkpoint", sequence: 3 },
+    ]);
+  });
+
   it("creates a v1 Tool call before publishing its terminal update", async () => {
     const updates: acp.SessionUpdate[] = [];
     const execute = vi.fn<OutputApplication["execute"]>(async ({ publish }) => {
@@ -1063,6 +1356,77 @@ describe("ACP v1 agent mapping", () => {
     });
 
     expect(cancelRun).toHaveBeenCalledWith({ binding, sessionId: "session-1" });
+  });
+
+  it("passes the exact Run target from ACP v1 cancellation metadata", async () => {
+    const cancelRun = vi.fn<AcpApplicationPort["cancelRun"]>(() =>
+      Promise.resolve(),
+    );
+    const agent = createAcpV1Agent({
+      binding,
+      application: createApplication({ cancelRun }),
+      promptCapabilities: { image: false, embeddedContext: false },
+    });
+    await acp.client().connectWith(agent, async (context) => {
+      await context.request(acp.methods.agent.initialize, {
+        protocolVersion: acp.PROTOCOL_VERSION,
+      });
+      await context.notify(acp.methods.agent.session.cancel, {
+        sessionId: "session-1",
+        _meta: { "antnest.dev/target-cancel": { expectedRunId: "run-1" } },
+      });
+      await vi.waitFor(() =>
+        expect(cancelRun).toHaveBeenCalledWith({
+          binding,
+          sessionId: "session-1",
+          expectedRunId: "run-1",
+        }),
+      );
+    });
+  });
+
+  it("passes the stable Bridge intent through the official v1 prompt request", async () => {
+    const acceptPrompt = vi.fn<AcpApplicationPort["acceptPrompt"]>(() =>
+      Promise.resolve({
+        outputSequence: 0,
+        runId: "run-1",
+        requestId: "request-1",
+        sessionId: "session-1",
+        userMessageId: "message-1",
+        snapshot: snapshot(),
+        completion: Promise.resolve({
+          terminalClass: "completed",
+          executorState: "quiescent",
+          toolEffectState: "none",
+          stopReason: "end_turn",
+        }),
+      }),
+    );
+    const agent = createAcpV1Agent({
+      binding,
+      application: createApplication({ acceptPrompt }),
+      promptCapabilities: { image: false, embeddedContext: false },
+    });
+    await acp.client().connectWith(agent, async (context) => {
+      await context.request(acp.methods.agent.initialize, {
+        protocolVersion: acp.PROTOCOL_VERSION,
+      });
+      await context.request(acp.methods.agent.session.prompt, {
+        sessionId: "session-1",
+        prompt: [{ type: "text", text: "hello" }],
+        _meta: {
+          "antnest.dev/intent": {
+            intentId: "intent-1",
+            expectedAppendVersion: 0,
+          },
+        },
+      });
+    });
+    expect(acceptPrompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        bridgeIntent: { intentId: "intent-1", expectedAppendVersion: 0 },
+      }),
+    );
   });
 
   it.each([

@@ -5,6 +5,7 @@ import v1Schema from "@agentclientprotocol/sdk/schema/schema.json" with { type: 
 import v2Schema from "@agentclientprotocol/sdk/schema/v2/schema.unstable.json" with { type: "json" };
 import { migrate } from "../../../../services/agent-acp-service/src/adapters/postgres/migrate.js";
 import { PostgresSessionConfiguration } from "../../../../services/agent-acp-service/src/adapters/postgres/session-configuration.js";
+import { PostgresBridgeObservationRepository } from "../../../../services/agent-acp-service/src/adapters/postgres/bridge-observation-repository.js";
 import { PostgresContextRepository } from "../../../../services/agent-acp-service/src/adapters/postgres/context-repository.js";
 import { PostgresExecutionRepository } from "../../../../services/agent-acp-service/src/adapters/postgres/execution-repository.js";
 import { PostgresRunRepository } from "../../../../services/agent-acp-service/src/adapters/postgres/run-repository.js";
@@ -359,6 +360,37 @@ describe.skipIf(databaseUrl === undefined)(
         ).toHaveLength(0);
       });
     }
+
+    it("v1: a stale producer configuration condition cannot overwrite a newer committed choice", async () => {
+      const client = await app.connect(1);
+      const sessionId = String(
+        (await client.request("session/new", setup)).result?.sessionId,
+      );
+      const kernel = new PostgresKernel(pool);
+      const observation = new PostgresBridgeObservationRepository(kernel);
+      const firstRevision = (await observation.readSession(sessionId))
+        ?.configurationRevision;
+      expect(firstRevision).toMatch(/^[a-f0-9]{64}$/u);
+      const conditional = (value: string) =>
+        client.request("session/set_config_option", {
+          sessionId,
+          configId: "mode",
+          value,
+          _meta: {
+            "antnest.dev/configuration": { expectedRevision: firstRevision },
+          },
+        });
+      expect((await conditional("chat")).error).toBeUndefined();
+      const nextRevision = (await observation.readSession(sessionId))
+        ?.configurationRevision;
+      expect(nextRevision).not.toBe(firstRevision);
+      expect((await conditional("approve")).error).toBeDefined();
+      const stored = await new PostgresSessionConfiguration(kernel).get(
+        sessionId,
+      );
+      expect(stored.configuration.authorizationMode).toBe("chat");
+      expect(stored.revision).toBe(1);
+    });
 
     it("bounds configuration lock waits without losing the connection or blocking reads", async () => {
       const client = await app.connect(1);

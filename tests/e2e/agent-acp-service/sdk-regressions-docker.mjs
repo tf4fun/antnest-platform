@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -406,6 +406,90 @@ try {
   );
   await client.request("session/close", { sessionId: fork.sessionId });
   const other = await client.request("session/new", setup);
+  const bridgeClient = connect();
+  const bridgePeer = connect();
+  for (const peer of [bridgeClient, bridgePeer]) {
+    const negotiated = await peer.request("initialize", {
+      protocolVersion: 1,
+      clientCapabilities: {},
+      _meta: {
+        "antnest.dev/bridge": {
+          intentReceipt: 1,
+          targetCancel: 1,
+          deliveryMark: 1,
+        },
+      },
+    });
+    assert.equal(negotiated._meta?.["antnest.dev/bridge"]?.configurationCas, 1);
+    await peer.request("session/load", {
+      ...setup,
+      sessionId: other.sessionId,
+    });
+  }
+  const configurationRevision = String(
+    (
+      await pool.query(
+        "SELECT configuration_revision FROM acp_sessions WHERE id = $1",
+        [other.sessionId],
+      )
+    ).rows[0].configuration_revision,
+  );
+  const expectedRevision = createHash("sha256")
+    .update(JSON.stringify([other.sessionId, configurationRevision]))
+    .digest("hex");
+  const conditional = (peer, value) =>
+    peer.request("session/set_config_option", {
+      sessionId: other.sessionId,
+      configId: "mode",
+      value,
+      _meta: { "antnest.dev/configuration": { expectedRevision } },
+    });
+  const attempts = await Promise.allSettled([
+    conditional(bridgeClient, "auto"),
+    conditional(bridgePeer, "chat"),
+  ]);
+  const winner = attempts.findIndex(
+    (attempt) => attempt.status === "fulfilled",
+  );
+  assert(winner === 0 || winner === 1, JSON.stringify(attempts));
+  assert.equal(
+    attempts.filter((attempt) => attempt.status === "fulfilled").length,
+    1,
+  );
+  const loser = attempts[1 - winner];
+  assert.equal(loser.status, "rejected");
+  assert.equal(loser.reason?.data?.code, "configuration_conflict");
+  await assert.rejects(
+    conditional(bridgeClient, "approve"),
+    (error) => error.data?.code === "configuration_conflict",
+  );
+  const committed = (
+    await pool.query(
+      "SELECT configuration_revision, configuration FROM acp_sessions WHERE id = $1",
+      [other.sessionId],
+    )
+  ).rows[0];
+  assert.equal(committed.configuration_revision, "1");
+  assert.equal(
+    committed.configuration.authorizationMode,
+    winner === 0 ? "auto" : "chat",
+  );
+  const winningMode = winner === 0 ? "auto" : "chat";
+  await waitFor(() =>
+    [bridgeClient, bridgePeer].every((peer) =>
+      peer.updates.some(
+        (update) =>
+          update.sessionId === other.sessionId &&
+          update.update.sessionUpdate === "config_option_update" &&
+          update.update.configOptions.some(
+            (option) =>
+              option.id === "mode" && option.currentValue === winningMode,
+          ),
+      ),
+    ),
+  );
+  await bridgeClient.close();
+  await bridgePeer.close();
   await client.request("session/close", { sessionId });
   // Close changes Session activity time. Its final metadata can reach a separate
   // observer after the caller receives the close response; establish delivery
@@ -474,6 +558,7 @@ try {
       "refusal-context-with-retained-transcript",
       "close-all-observers-and-reload",
       "cancel-unknown-tool-with-runtime-protection",
+      "concurrent-conditional-session-configuration-has-one-winner",
     ],
     modelRequests: modelRequests.length,
     toolCalls,

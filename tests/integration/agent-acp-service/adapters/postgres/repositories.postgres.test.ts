@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 
 import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -8,6 +8,7 @@ import { migrate } from "../../../../../services/agent-acp-service/src/adapters/
 import { PostgresKernel } from "../../../../../services/agent-acp-service/src/adapters/postgres/kernel.js";
 import { PostgresSessionRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/session-repository.js";
 import { PostgresRunRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/run-repository.js";
+import { PostgresBridgeObservationRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/bridge-observation-repository.js";
 import { PostgresContextRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/context-repository.js";
 import { PostgresExecutionRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/execution-repository.js";
 import { PostgresRunEventRepository } from "../../../../../services/agent-acp-service/src/adapters/postgres/run-event-repository.js";
@@ -23,6 +24,7 @@ describe.skipIf(databaseUrl === undefined)(
     const secretBox = new SecretBox(randomBytes(32));
     const sessions = new PostgresSessionRepository(kernel, secretBox);
     const runs = new PostgresRunRepository(kernel);
+    const bridgeObservations = new PostgresBridgeObservationRepository(kernel);
     const contexts = new PostgresContextRepository(kernel);
     const executions = new PostgresExecutionRepository(kernel);
     const events = new PostgresRunEventRepository(kernel);
@@ -35,6 +37,207 @@ describe.skipIf(databaseUrl === undefined)(
 
     afterAll(async () => {
       await pool.end();
+    });
+
+    it("does not mark a replacement Run when a stale target cancellation arrives", async () => {
+      const sessionId = randomUUID();
+      const revisionId = randomUUID();
+      const firstRunId = randomUUID();
+      const secondRunId = randomUUID();
+      await sessions.create({
+        sessionId,
+        binding: {
+          connectionId: "connection-target-cancel",
+          organizationId: "organization-1",
+          principalId: "principal-1",
+          agentId: "agent-1",
+        },
+        cwd: "/workspace",
+        mcpRevisionId: revisionId,
+        mcpSources: [],
+      });
+      const create = (runId: string) =>
+        runs.createRunIntent({
+          runId,
+          requestId: randomUUID(),
+          sessionId,
+          expectedAccessRevision: "access-1",
+          userMessageId: randomUUID(),
+          prompt: [{ type: "text" as const, text: "hello" }],
+          createdAt: new Date(),
+        });
+      await create(firstRunId);
+      await runs.rejectRun(firstRunId, "provider_unavailable", new Date());
+      await create(secondRunId);
+      await expect(
+        sessions.requestTargetCancellation(sessionId, firstRunId, new Date()),
+      ).resolves.toBe(false);
+      const replacement = await pool.query<{
+        cancel_requested_at: Date | null;
+      }>("SELECT cancel_requested_at FROM runs WHERE id = $1", [secondRunId]);
+      expect(replacement.rows[0]?.cancel_requested_at).toBeNull();
+      await expect(
+        sessions.requestTargetCancellation(sessionId, secondRunId, new Date()),
+      ).resolves.toBe(true);
+    });
+
+    it("persists one append position and one Run for a repeated Bridge intent", async () => {
+      const sessionId = randomUUID();
+      await sessions.create({
+        sessionId,
+        binding: {
+          connectionId: "connection-bridge-intent",
+          organizationId: "organization-1",
+          principalId: "principal-1",
+          agentId: "agent-1",
+        },
+        cwd: "/workspace",
+        mcpRevisionId: randomUUID(),
+        mcpSources: [],
+      });
+      const base = {
+        requestId: randomUUID(),
+        sessionId,
+        expectedAccessRevision: "access-1",
+        userMessageId: randomUUID(),
+        createdAt: new Date(),
+        prompt: [{ type: "text" as const, text: "hello" }],
+        bridgeIntent: { intentId: "intent-1", expectedAppendVersion: 0 },
+      };
+      const firstRunId = randomUUID();
+      await runs.createRunIntent({ ...base, runId: firstRunId });
+      await expect(
+        runs.createRunIntent({
+          ...base,
+          runId: randomUUID(),
+          requestId: randomUUID(),
+          userMessageId: randomUUID(),
+        }),
+      ).rejects.toMatchObject({ code: "intent_already_recorded" });
+      await expect(
+        runs.createRunIntent({
+          ...base,
+          runId: randomUUID(),
+          requestId: randomUUID(),
+          userMessageId: randomUUID(),
+          prompt: [{ type: "text", text: "different" }],
+        }),
+      ).rejects.toMatchObject({ code: "idempotency_conflict" });
+      await expect(
+        runs.createRunIntent({
+          ...base,
+          runId: randomUUID(),
+          requestId: randomUUID(),
+          userMessageId: randomUUID(),
+          bridgeIntent: { intentId: "intent-2", expectedAppendVersion: 0 },
+        }),
+      ).rejects.toMatchObject({ code: "session_append_conflict" });
+      const session = await pool.query<{ append_version: string }>(
+        "SELECT append_version FROM acp_sessions WHERE id = $1",
+        [sessionId],
+      );
+      expect(session.rows[0]?.append_version).toBe("1");
+      const stored = await pool.query<{
+        id: string;
+        bridge_intent_id: string;
+        append_version: string;
+        intent_digest: string;
+      }>(
+        "SELECT id, bridge_intent_id, append_version, intent_digest FROM runs WHERE session_id = $1",
+        [sessionId],
+      );
+      expect(stored.rows).toHaveLength(1);
+      expect(stored.rows[0]).toMatchObject({
+        id: firstRunId,
+        bridge_intent_id: "intent-1",
+        append_version: "1",
+      });
+      expect(stored.rows[0]?.intent_digest).toMatch(/^[a-f0-9]{64}$/);
+    });
+
+    it("reads a Bridge intent receipt and Session execution summary from durable facts", async () => {
+      const sessionId = randomUUID();
+      const revisionId = randomUUID();
+      const runId = randomUUID();
+      await sessions.create({
+        sessionId,
+        binding: {
+          connectionId: "connection-bridge-observation",
+          organizationId: "organization-1",
+          principalId: "principal-1",
+          agentId: "agent-1",
+        },
+        cwd: "/workspace",
+        mcpRevisionId: revisionId,
+        mcpSources: [],
+      });
+      await runs.createRunIntent({
+        runId,
+        requestId: randomUUID(),
+        sessionId,
+        expectedAccessRevision: "access-1",
+        userMessageId: randomUUID(),
+        prompt: [{ type: "text", text: "hello" }],
+        createdAt: new Date(),
+        bridgeIntent: { intentId: "intent-observe", expectedAppendVersion: 0 },
+      });
+      await expect(
+        bridgeObservations.readIntent(sessionId, "intent-observe"),
+      ).resolves.toMatchObject({
+        intentId: "intent-observe",
+        sessionId,
+        runId,
+        phase: "persisting",
+        appendVersion: 1,
+        outputWatermark: 0,
+      });
+      await expect(
+        bridgeObservations.readSession(sessionId),
+      ).resolves.toMatchObject({
+        sessionId,
+        appendVersion: 1,
+        outputWatermark: 0,
+        activeRunId: runId,
+        recentReceipts: [{ intentId: "intent-observe", runId }],
+        configurationRevision: createHash("sha256")
+          .update(JSON.stringify([sessionId, "0"]))
+          .digest("hex"),
+      });
+      await pool.query(
+        "UPDATE acp_sessions SET configuration_revision = 1 WHERE id = $1",
+        [sessionId],
+      );
+      await expect(
+        bridgeObservations.readSession(sessionId),
+      ).resolves.toMatchObject({
+        configurationRevision: createHash("sha256")
+          .update(JSON.stringify([sessionId, "1"]))
+          .digest("hex"),
+      });
+      await runs.acceptRun({
+        runId,
+        snapshot: snapshot(revisionId),
+        environmentFact: null,
+        acceptedAt: new Date(),
+      });
+      await expect(
+        bridgeObservations.readIntent(sessionId, "intent-observe"),
+      ).resolves.toMatchObject({ phase: "running", outputWatermark: 1 });
+      await expect(
+        sessions.readOutput(sessionId, 0, true),
+      ).resolves.toMatchObject({
+        sequence: 1,
+        appendVersion: 1,
+        events: [
+          {
+            kind: "user_message",
+            delivery: { sequence: 1, runId, messageId: expect.any(String) },
+          },
+        ],
+      });
+      await expect(
+        bridgeObservations.readIntent(sessionId, "another-intent"),
+      ).resolves.toBeNull();
     });
 
     it.each(["failed", "cancelled_before_accept", "cancelled_before_reject"])(

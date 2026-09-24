@@ -10,6 +10,7 @@ const routes = [
   "/api/app/agents/agent-1/v1/acp",
   "/api/app/agents/agent-1/acp",
   "/api/admin/agents/agent-1/events/watch",
+  "/api/app/workspace/v1/agents/agent-1/events",
 ];
 
 function upstream() {
@@ -42,13 +43,13 @@ function upstream() {
     const statePath = "/rpc/agent-acp/watch-agent-execution-state";
     if (
       request.method !== (path === statePath ? "POST" : "GET") ||
-      ![statePath, "/v1/acp", routes[3]].includes(path)
+      ![statePath, "/v1/acp", routes[3], routes[4]].includes(path)
     ) {
       unexpected.push({ method: request.method, path });
       response.writeHead(404).end();
       return;
     }
-    if ([statePath, "/v1/acp"].includes(path)) {
+    if ([statePath, "/v1/acp", routes[4]].includes(path)) {
       assert.equal(request.headers["x-antnest-organization-id"], "org-1");
       assert.equal(request.headers["x-antnest-principal-id"], "user-admin");
       assert.equal(request.headers["x-antnest-agent-id"], "agent-1");
@@ -136,7 +137,7 @@ async function ready(url, signal) {
   throw new Error("Gateway readiness deadline exceeded");
 }
 
-async function exercise(project, docker, signal) {
+async function exercise(project, docker, signal, gatewayImage) {
   const backend = `${project}-upstream`;
   const gateway = `${project}-edge`;
   const fixture = fileURLToPath(import.meta.url);
@@ -203,7 +204,7 @@ async function exercise(project, docker, signal) {
     "ANTNEST_EDGE_SHUTDOWN_TIMEOUT=2s",
     "-e",
     "OTEL_SDK_DISABLED=true",
-    "antnest/edge-gateway:local",
+    gatewayImage,
   ]);
   const image = await docker(["inspect", "--format", "{{.Image}}", gateway]);
   const expectedImage = await docker([
@@ -211,7 +212,7 @@ async function exercise(project, docker, signal) {
     "inspect",
     "--format",
     "{{.Id}}",
-    "antnest/edge-gateway:local",
+    gatewayImage,
   ]);
   assert.equal(image, expectedImage);
   const backendURL = await containerURL(docker, backend);
@@ -293,6 +294,7 @@ async function exercise(project, docker, signal) {
 async function run() {
   const { dockerClient } = await import("../lifecycle-closeout/docker.mjs");
   const project = `antnest-gateway-stop-${randomUUID().slice(0, 8)}`;
+  const gatewayImage = process.env.ANTNEST_GATEWAY_TEST_IMAGE ?? "antnest/edge-gateway:local";
   const abort = new AbortController();
   const interrupt = () =>
     abort.abort(new Error("Gateway shutdown regression interrupted"));
@@ -306,9 +308,18 @@ async function run() {
       project,
       dockerClient(process.env, abort.signal, 180000),
       abort.signal,
+      gatewayImage,
     );
   } catch (error) {
     failure = error;
+    try {
+      const logs = await dockerClient(process.env, undefined, 30000)([
+        "logs", `${project}-edge`,
+      ]);
+      console.error(`Gateway shutdown diagnostics:\n${logs}`);
+    } catch {
+      // The container may not have been created yet.
+    }
   } finally {
     abort.abort();
     try {

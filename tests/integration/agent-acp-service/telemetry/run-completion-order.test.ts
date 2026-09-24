@@ -274,6 +274,7 @@ function setup() {
         resumeSession: vi.fn(),
         closeSession: vi.fn(),
         requestCancellation: vi.fn(),
+        requestTargetCancellation: vi.fn().mockResolvedValue(false),
         requirePromptSession: vi.fn().mockResolvedValue(undefined),
         readOutput: vi.fn<AcpApplicationDependencies["sessions"]["readOutput"]>(
           ({ afterSequence }) =>
@@ -286,6 +287,7 @@ function setup() {
         ),
       },
       prompts: {
+        checkBridgeIntent: vi.fn().mockResolvedValue(undefined),
         accept: vi.fn().mockResolvedValue({
           outputSequence: 0,
           runId: "run-1",

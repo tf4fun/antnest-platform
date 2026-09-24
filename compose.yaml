@@ -434,15 +434,27 @@ services:
     build:
       context: .
       dockerfile: services/agent-ui/Dockerfile
+    depends_on:
+      agent-acp-service:
+        condition: service_healthy
+      agent-controller:
+        condition: service_healthy
+    environment:
+      ANTNEST_AGENT_ACP_SERVICE_URL: http://agent-acp-service:8080
+      ANTNEST_AGENT_UI_ACP_MAX_PROMPT_BYTES: ${ANTNEST_ACP_MAX_PROMPT_BYTES:-16777216}
+      ANTNEST_AGENT_CONTROLLER_URL: http://agent-controller:8080
+      OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-true}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_SERVICE_NAME: agent-ui
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8080/status"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/status').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 30s
       timeout: 3s
       retries: 3
       start_period: 20s
       start_interval: 1s
-    networks: [development]
-    stop_grace_period: 10s
+    networks: [development, observability]
+    stop_grace_period: 30s
 
   edge-gateway:
     profiles: [stage3]

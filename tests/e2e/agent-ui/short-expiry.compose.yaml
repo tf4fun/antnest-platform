@@ -1,0 +1,4 @@
+services:
+  identity-service:
+    environment:
+      ANTNEST_IDENTITY_TOKEN_TTL: ${ANTNEST_UI_E2E_IDENTITY_TOKEN_TTL:-15s}

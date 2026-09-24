@@ -13,6 +13,8 @@ test("C4 holds only named recovery phases and validates post-rebuild context", (
   assert.equal(decide(payload("c4-browser-hold-cancel")).hold, true);
   assert.equal(decide(payload("c4-browser-hold-offline")).hold, true);
   assert.equal(decide(payload("c4-browser-hold-close")).hold, true);
+  assert.equal(decide(payload("c4-browser-hold-logout")).hold, true);
+  assert.equal(decide(payload("c4-browser-hold-peer")).hold, true);
   assert.throws(() => decide(payload("c4-browser-hold-unknown")));
   assert.throws(() => decide(payload("c4-browser-after-rebuild")));
   const rebuilt = payload("c4-browser-after-rebuild");
@@ -21,6 +23,37 @@ test("C4 holds only named recovery phases and validates post-rebuild context", (
     content: "isolated execution environment was rebuilt",
   });
   assert.equal(decide(rebuilt).call.name, "read");
+});
+
+test("C4 volume phases return bounded, distinct large responses", () => {
+  for (let index = 0; index < 80; index++) {
+    const phase = `c4-browser-volume-${String(index).padStart(2, "0")}`;
+    const result = decide(payload(phase));
+    assert.equal(result.phase, phase);
+    assert.equal(result.hold, false);
+    assert.ok(result.text.startsWith(`${phase}:`));
+    assert.equal(result.text.length, phase.length + 1 + 32 * 1024);
+  }
+  assert.throws(() => decide(payload("c4-browser-volume-80")));
+});
+
+test("C4 large output phase crosses the ACP text notification bound", () => {
+  const phase = "c4-browser-large-output";
+  const result = decide(payload(phase));
+  assert.equal(result.phase, phase);
+  assert.equal(result.hold, false);
+  assert.ok(result.text.startsWith(`${phase}:`));
+  assert.equal(result.text.length, phase.length + 1 + 96 * 1024);
+});
+
+test("C4 window phases add distinct short turns after a large history", () => {
+  for (let index = 0; index < 20; index++) {
+    const phase = `c4-browser-window-${String(index).padStart(2, "0")}`;
+    assert.deepEqual(decide(payload(phase)), {
+      phase, hold: false, text: `${phase} completed`,
+    });
+  }
+  assert.throws(() => decide(payload("c4-browser-window-20")));
 });
 
 test("C4 approval requires the actual retained file result", () => {

@@ -578,7 +578,7 @@ Gateway 的 Agent 列表/页面 bootstrap 可继续读 Controller；但不能依
 
 原 [Controller 工作台查询](../services/agent-controller/internal/repository/postgres/query.go)
 曾 JOIN `run_admissions` 得到忙闲和活动 Session；B2 已移除此依赖，但消费者尚未迁移，
-[Agent UI](../services/agent-ui/web/src/App.tsx) 据此在刷新/另一连接中找到可以取消的执行。
+[Agent UI 当前 Bridge](../services/agent-ui/web/src/lib/use-bridge-workspace.ts) 据此在刷新/另一连接中找到可以取消的执行。
 删表后不能简单删除 JOIN 并总是返回 ready 或空 Session。
 
 目标将现有工作台状态能力迁到 ACP，提供 `get-agent-execution-state` 和 `watch-agent-execution-state`

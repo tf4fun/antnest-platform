@@ -5,8 +5,11 @@ import { decide as basicDecision, note } from "./browser-model.mjs";
 
 const held = new Set([
   "c4-browser-hold-cancel",
+  "c4-browser-hold-after-cancel",
   "c4-browser-hold-offline",
   "c4-browser-hold-close",
+  "c4-browser-hold-logout",
+  "c4-browser-hold-peer",
 ]);
 export function decide(payload) {
   assert.equal(payload.model, "stage3-model");
@@ -14,7 +17,20 @@ export function decide(payload) {
   const content = payload.messages[index]?.content;
   const phase = Array.isArray(content) ? content[0]?.text : content;
   const tail = payload.messages.slice(index + 1);
-  if (held.has(phase) || phase === "c4-browser-after-cancel") {
+  if (/^c4-browser-volume-[0-7][0-9]$/.test(phase ?? "")) {
+    assert.equal(tail.length, 0);
+    return { phase, hold: false, text: `${phase}:${"v".repeat(32 * 1024)}` };
+  }
+  if (phase === "c4-browser-large-output") {
+    assert.equal(tail.length, 0);
+    return { phase, hold: false, text: `${phase}:${"v".repeat(96 * 1024)}` };
+  }
+  if (/^c4-browser-window-(0[0-9]|1[0-9])$/.test(phase ?? "")) {
+    assert.equal(tail.length, 0);
+    return { phase, hold: false, text: `${phase} completed` };
+  }
+  if (held.has(phase) || phase === "c4-browser-after-cancel" ||
+    phase === "c4-browser-timeout") {
     assert.equal(tail.length, 0);
     return { phase, hold: held.has(phase), text: `${phase} completed` };
   }
