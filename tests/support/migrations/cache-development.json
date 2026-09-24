@@ -260,6 +260,11 @@
       "source_sha256": "8964490c035cd4366ab3b117d52d1871714fbd010b523405a93f98004b191004",
       "archive": "tests/e2e/history/development-tools/8964490c035cd4366ab3b117d52d1871714fbd010b523405a93f98004b191004.mjs.source",
       "runner": "tests/e2e/development/metadata-browser.mjs",
+      "runner_status": "retired-after-agent-ui-http-sse-refactor",
+      "replacement": [
+        "tests/integration/agent-ui/workspace-bridge-browser.test.mjs",
+        "tests/e2e/agent-ui/fullstack-current.test.mjs"
+      ],
       "profile": "metadata-browser",
       "status": "verified-and-removed"
     },

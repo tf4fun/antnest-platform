@@ -87,7 +87,10 @@ and nine real UI/Chromium cases, including exact historical JSON compatibility
 and normal interruption report preservation. The original is hash-archived and
 removed. Actual SDK traffic uses a local ACP fixture; original browser frames
 were not available and no retained service or Provider was used. Source and
-private evidence locations are recorded in `cache-development.json`.
+private evidence locations are recorded in `cache-development.json`. That
+Vite/WebSocket runner was later retired after HTTP/SSE browser integration and
+real six-service E2E covered its metadata and audio rejection behavior. The
+archive and migration record remain historical evidence, not an active UI gate.
 
 Runtime deployment now passes 95 support tests, 18 stateful entry tests and five
 owned-resource Docker cases. Its original is archived and removed. The driver

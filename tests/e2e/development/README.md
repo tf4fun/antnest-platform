@@ -14,8 +14,10 @@ its original has left cache. Ordinary lifecycle passes 118 related checks and
 nine Docker cases, including three exact historical reports; its three originals
 have left cache. Runtime-loss passes 159 related checks and seven actual Docker
 cases, including its exact historical report; its original has also left cache.
-Metadata browser passes 239 related checks, 44 final focused contracts and nine
-actual UI/Chromium cases; its original has also left cache.
+The former metadata browser driver passed 239 related checks, 44 focused
+contracts and nine UI/Chromium cases before retirement. Its historical source
+remains archived outside cache; current Agent UI metadata and model rejection
+are checked through the HTTP/SSE browser fixture and six-service E2E.
 Runtime deployment now passes 22 stateful entry tests and six actual Docker
 cases, including missing-container recovery; its original has left cache. Controller 20260921 also passes
 12 focused entry tests, six actual Docker cases and legacy snapshot/report-field
@@ -57,14 +59,13 @@ report filenames. They create output with a private umask. Credentials stay in
 | `trace-review.mjs` | `jaeger`, `envFile`, `secretFile`, `output`, `sessionId` or `browserReport`, `expectedTraceCount`, `minRuntimeTraces` | Reads saved Session identity and queries chat traces; checks the expected count, topology, allowed timing diagnostic category and minimum number containing Runtime calls. Saves raw traces and a separate review. It makes no model request. |
 | `lifecycle.mjs` | `gateway`, `jaeger`, `envFile`, `secretFile`, `retainedAgentId`, `output`, `fixtureName`, `workspaceFile`, `workspaceMarker`, `runtimeControllerScope` | Uses the retained Agent's current Template/owner to create a temporary Agent. Writes its fixture file, disables/enables/rebuilds/deletes it, verifies workspace/volume retention and deletion, three independent publications and five lifecycle traces. Compares the retained Agent's Runtime/configuration/revisions before and after. |
 | `runtime-loss.mjs` | All `lifecycle.mjs` fields except `runtimeControllerScope`, plus `restartSnapshot`, `composeSnapshot` | Runs the temporary-Agent lifecycle, stops its owned Runtime normally and removes that stopped container. Verifies exited/absent/offline observation, explicit source-missing Rebuild, workspace retention, expected 404 Trace behavior and publications after the supplied start-time cutoff. Deletes the temporary Agent and compares the retained Agent. |
-| `metadata-browser.mjs` | `gateway`, `envFile`, `output`, `agentId`, `sessionId`, `workspaceUrl` or `browserReport` | Sends a real model prompt to the existing Session and compares two pages' metadata, list/reload results and visible history without prompt replay. Opens a new Session for unsupported audio, checks the error and composer recovery, and saves screenshots and `metadata-report.json`. The new messages and Session remain for review. |
 | `rejection-trace.mjs` | `jaeger`, `output`, `rejectedSessionId` or `metadataReport` | Queries the rejected Session's single prompt Trace, requires the expected unsupported-content category, disabled capture and no model HTTP or Runtime Tool call. Saves raw Trace and its review; does not issue another prompt. |
 | `recover.mjs` | `gateway`, `jaeger`, `envFile`, `secretFile`, `output`, `retainedAgentId`, `runtimeContainerPrefix`, `runtimeControllerScope`, `workspaceVolume`, `workspaceManifest` | Explicitly rebuilds the selected Agent after checking its failure, container identity/scope and complete RW workspace volume. Compares configuration, workspace bytes/volume and its recovery Trace. Verified with isolated fixtures; not a default retained-environment gate. |
 
-`browserReport` is a JSON file with `agent_id`, `session_id` and, for the metadata
-browser, `workspace_url`. Explicit `agentId`, `sessionId` and `workspaceUrl`
-override the corresponding report fields. A driver reads only the identities it
-needs. `metadataReport` supplies `rejected_session_id`; `rejectedSessionId`
+`browserReport` is a JSON file with `agent_id` and `session_id`. Explicit
+`agentId` and `sessionId` override the corresponding report fields. A driver
+reads only the identities it needs. Historical `metadataReport` supplies
+`rejected_session_id`; `rejectedSessionId`
 overrides it.
 
 `database` is an object with `container`, `user` and `name`. Replay invokes
@@ -525,29 +526,13 @@ The complete 134-file source disposition and original reports are linked from
 [migration report](../../../docs/test-layout-migration.md) for actual validation;
 this README does not assert a new successful run against a retained environment.
 
-### Metadata browser integration
+### Agent UI metadata and rejection integration
 
-The driver validates all configuration and credentials before starting Chromium.
-Its workspace URL must share the Gateway origin, use `/workspace/`, and contain
-exactly one matching `agent` and `session` parameter. Explicit identities/URL
-still override saved report fields; an earlier failed Trace status does not
-invalidate those identities. JSON and both PNG outputs must be absent and remain
-exclusive mode-600 writes, including paths with spaces. Normal SIGINT/SIGTERM
-stops polling, closes Chromium and saves an `Interrupted` failure report.
-
-The reusable local gate builds the real UI and runs eight Chromium/SDK cases
-against local HTTP/ACP fixtures, without a Provider, database or Docker:
-
-```sh
-node tests/integration/development/metadata-browser-run.mjs \
-  --output artifacts/verification/metadata-browser-new
-```
-
-The output directory must not exist; existing roots are rejected before build.
-Add `--history /path/to/private/metadata-report.json` for the ninth case, which
-checks exact historical report compatibility. It does not replay original
-browser frames or DOM records. Other cases cover successful two-page metadata,
-list/history reload without prompt replay, audio rejection/composer recovery,
-wrong stop reason, observer/list/history mismatches, wrong rejection category,
-browser-close failure and normal interruption. Configuration and fixture-output
-contracts are included in `make test-node`.
+The old Vite/WebSocket metadata driver and its local fixture were retired with
+the browser ACP entry. Current metadata synchronization, reload without prompt
+replay, model rejection copy and composer recovery are checked by
+`tests/integration/agent-ui/workspace-bridge-browser.test.mjs`. The real
+Gateway/Identity/Node/ACP/Controller/Runtime path, including durable rejection
+class, provider non-invocation and reload, is checked by
+`tests/e2e/agent-ui/fullstack-current.test.mjs`. Historical source and private
+evidence remain in the cache migration archive and verification record.

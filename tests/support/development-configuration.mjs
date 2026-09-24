@@ -135,15 +135,6 @@ export function readDevelopmentConfiguration(file, profile) {
       "browserReport",
       "reportBasename",
     ],
-    "metadata-browser": [
-      "output",
-      "gateway",
-      "envFile",
-      "browserReport",
-      "agentId",
-      "sessionId",
-      "workspaceUrl",
-    ],
     "trace-review": [
       "output",
       "jaeger",
@@ -395,51 +386,6 @@ export function readDevelopmentConfiguration(file, profile) {
       "replay-trace.private.json",
       "replay-report.json",
     ];
-  } else if (profile === "metadata-browser") {
-    origin(config.gateway, "gateway");
-    config.gateway = new URL(config.gateway).origin;
-    config.agentId = text(
-      config.agentId ?? previous.agent_id,
-      "agentId",
-      agentPattern,
-    );
-    config.sessionId = text(
-      config.sessionId ?? previous.session_id,
-      "sessionId",
-      sessionPattern,
-    );
-    const url = new URL(
-      text(config.workspaceUrl ?? previous.workspace_url, "workspaceUrl"),
-    );
-    assert(
-      url.origin === config.gateway &&
-        !url.username &&
-        !url.password &&
-        !url.hash &&
-        url.pathname === "/workspace/",
-      "workspace URL must match the gateway workspace",
-    );
-    assert.deepEqual(
-      [...url.searchParams.keys()].sort(),
-      ["agent", "session"],
-      "workspace URL requires exactly one Agent and Session",
-    );
-    assert.equal(
-      url.searchParams.get("agent"),
-      config.agentId,
-      "workspace Agent mismatch",
-    );
-    assert.equal(
-      url.searchParams.get("session"),
-      config.sessionId,
-      "workspace Session mismatch",
-    );
-    config.workspaceUrl = url.href;
-    names = [
-      "metadata-report.json",
-      "metadata-desktop.png",
-      "capability-rejection.png",
-    ];
   } else if (profile === "agent-state") {
     origin(config.gateway, "gateway");
     config.agentId = text(
@@ -491,7 +437,6 @@ export function readDevelopmentConfiguration(file, profile) {
     settings = parseEnv(input(config.envFile));
     const keys = [
       "agent-state",
-      "metadata-browser",
       "replay",
       "recover",
       "lifecycle",
