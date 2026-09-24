@@ -29,6 +29,7 @@ const (
 	HeaderMembershipID       = "X-Antnest-Membership-ID"
 	HeaderSystemRole         = "X-Antnest-System-Role"
 	HeaderOrganizationRole   = "X-Antnest-Organization-Role"
+	HeaderAdministrator      = "X-Antnest-Administrator"
 	HeaderPrincipalID        = "X-Antnest-Principal-ID"
 	HeaderAgentID            = "X-Antnest-Agent-ID"
 	HeaderTraceID            = "X-Antnest-Trace-ID"
@@ -81,28 +82,29 @@ type Dependencies struct {
 }
 
 type handler struct {
-	identity         IdentityService
-	agents           agentcontroller.Service
-	execution        agentacp.Service
-	sessions         *session.Manager
-	requestTimeout   time.Duration
-	streamLease      time.Duration
-	loginWindow      time.Duration
-	loginAdmission   *loginAdmission
-	newRequestID     func() string
-	httpClient       *http.Client
-	logger           *slog.Logger
-	consoleURL       *url.URL
-	agentUIURL       *url.URL
-	agentACPURL      *url.URL
-	acpConnections   chan struct{}
-	acpMessages      chan struct{}
-	stateConnections chan struct{}
-	adminProxy       *httputil.ReverseProxy
-	appProxy         *httputil.ReverseProxy
-	workspaceProxy   *httputil.ReverseProxy
-	scimProxy        *httputil.ReverseProxy
-	mux              *http.ServeMux
+	identity             IdentityService
+	agents               agentcontroller.Service
+	execution            agentacp.Service
+	sessions             *session.Manager
+	requestTimeout       time.Duration
+	streamLease          time.Duration
+	loginWindow          time.Duration
+	loginAdmission       *loginAdmission
+	newRequestID         func() string
+	httpClient           *http.Client
+	logger               *slog.Logger
+	consoleURL           *url.URL
+	agentUIURL           *url.URL
+	agentACPURL          *url.URL
+	acpConnections       chan struct{}
+	acpMessages          chan struct{}
+	stateConnections     chan struct{}
+	bridgeStreams        chan struct{}
+	adminProxy           *httputil.ReverseProxy
+	appProxy             *httputil.ReverseProxy
+	workspaceBridgeProxy *httputil.ReverseProxy
+	scimProxy            *httputil.ReverseProxy
+	mux                  *http.ServeMux
 }
 
 func NewHandler(config Config, dependencies Dependencies) (http.Handler, error) {
@@ -163,13 +165,12 @@ func NewHandler(config Config, dependencies Dependencies) (http.Handler, error) 
 		consoleURL: consoleURL, agentUIURL: agentUIURL, agentACPURL: agentACPURL,
 		acpConnections: make(chan struct{}, 64), acpMessages: make(chan struct{}, 4),
 		stateConnections: make(chan struct{}, 64),
+		bridgeStreams:    make(chan struct{}, 64),
 		mux:              http.NewServeMux(),
 	}
 	h.adminProxy = h.newProxy(consoleURL, "console_unavailable", "Admin Console is unavailable", nil)
 	h.appProxy = h.newProxy(consoleURL, "console_unavailable", "Admin Console is unavailable", nil)
-	h.workspaceProxy = h.newProxy(
-		agentUIURL, "workspace_unavailable", "Agent workspace is unavailable", stripWorkspacePath,
-	)
+	h.workspaceBridgeProxy = h.newWorkspaceBridgeProxy(agentUIURL)
 	h.scimProxy = h.newSCIMProxy(identityURL)
 	h.routes()
 	return h, nil
@@ -185,6 +186,7 @@ func (h *handler) routes() {
 	h.mux.HandleFunc("GET /api/app/bootstrap", telemetry.Handler(h.workspaceBootstrap))
 	h.mux.HandleFunc("GET /api/app/agents/{agent_id}/state", telemetry.Handler(h.getWorkspaceState))
 	h.mux.HandleFunc("GET /api/app/agents/{agent_id}/state/watch", telemetry.Handler(h.watchWorkspaceState))
+	h.mux.HandleFunc("/api/app/workspace/v1/{path...}", telemetry.Handler(h.workspaceBridgeAPI))
 	for _, route := range []struct{ suffix, version string }{
 		{"acp", "v1"}, {"v1/acp", "v1"}, {"v2/acp", "v2"},
 	} {
@@ -522,12 +524,101 @@ func (h *handler) workspaceApplication(response http.ResponseWriter, request *ht
 		return
 	}
 	if request.URL.Path == "/workspace" {
-		http.Redirect(response, request, "/workspace/", http.StatusTemporaryRedirect)
+		target := "/workspace/"
+		if request.URL.RawQuery != "" {
+			target += "?" + request.URL.RawQuery
+		}
+		http.Redirect(response, request, target, http.StatusTemporaryRedirect)
 		return
+	}
+	asset := strings.HasPrefix(request.URL.Path, "/workspace/assets/")
+	var principal identity.Principal
+	if !asset {
+		response.Header().Set("Cache-Control", "private, no-store")
+		var ok bool
+		principal, ok = h.authenticateWorkspaceDocument(response, request)
+		if !ok {
+			return
+		}
 	}
 	request.Header.Del("Cookie")
 	request.Header.Del("Authorization")
-	h.workspaceProxy.ServeHTTP(response, request)
+	for _, header := range []string{
+		HeaderOrganizationID, HeaderPrincipalID, HeaderUserID,
+		HeaderMembershipID, HeaderAgentID, HeaderAdministrator,
+	} {
+		request.Header.Del(header)
+	}
+	if !asset {
+		request.Header.Set(HeaderOrganizationID, principal.OrganizationID)
+		request.Header.Set(HeaderPrincipalID, principal.UserID)
+		request.Header.Set(HeaderUserID, principal.UserID)
+		request.Header.Set(HeaderMembershipID, principal.MembershipID)
+		if principal.Administrator() {
+			request.Header.Set(HeaderAdministrator, "true")
+		} else {
+			request.Header.Set(HeaderAdministrator, "false")
+		}
+	}
+	h.workspaceBridgeProxy.ServeHTTP(response, request)
+}
+
+func (h *handler) authenticateWorkspaceDocument(response http.ResponseWriter, request *http.Request) (identity.Principal, bool) {
+	values, ok := h.sessions.Read(request)
+	if !ok {
+		redirectWorkspaceLogin(response, request)
+		return identity.Principal{}, false
+	}
+	ctx, cancel := context.WithTimeout(request.Context(), h.requestTimeout)
+	defer cancel()
+	principal, err := h.identity.Resolve(ctx, values.AccessToken)
+	if err != nil && !identity.IsCode(err, "unauthenticated") && !identity.IsCode(err, "inactive_principal") {
+		writeError(response, http.StatusServiceUnavailable, "identity_unavailable", "Session could not be verified")
+		return identity.Principal{}, false
+	}
+	if err != nil || !principal.Active {
+		h.sessions.Clear(response)
+		redirectWorkspaceLogin(response, request)
+		return identity.Principal{}, false
+	}
+	return principal, true
+}
+
+func redirectWorkspaceLogin(response http.ResponseWriter, request *http.Request) {
+	returnTo := "/workspace/"
+	if request.URL.Path == "/workspace/" {
+		query, err := url.ParseQuery(request.URL.RawQuery)
+		if err == nil && len(query) <= 2 {
+			agent := query["agent"]
+			session := query["session"]
+			if len(agent) == 1 && validWorkspaceReturnID(agent[0]) &&
+				(len(session) == 0 || len(session) == 1 && validWorkspaceReturnID(session[0])) {
+				valid := true
+				for key := range query {
+					if key != "agent" && key != "session" {
+						valid = false
+					}
+				}
+				if valid {
+					returnTo += "?" + query.Encode()
+				}
+			}
+		}
+	}
+	response.Header().Set("Cache-Control", "private, no-store")
+	http.Redirect(response, request, "/?return_to="+url.QueryEscape(returnTo), http.StatusSeeOther)
+}
+
+func validWorkspaceReturnID(value string) bool {
+	if value == "" || len(value) > 200 || strings.TrimSpace(value) != value {
+		return false
+	}
+	for _, character := range value {
+		if character < 0x20 || character == 0x7f {
+			return false
+		}
+	}
+	return true
 }
 
 func webSocketUpgrade(request *http.Request) bool {
@@ -678,14 +769,6 @@ func parseServiceURL(raw string) (*url.URL, error) {
 		return nil, fmt.Errorf("invalid service URL")
 	}
 	return parsed, nil
-}
-
-func stripWorkspacePath(request *http.Request) string {
-	path := strings.TrimPrefix(request.URL.Path, "/workspace")
-	if path == "" {
-		return "/"
-	}
-	return path
 }
 
 func (h *handler) writeIdentityError(response http.ResponseWriter, err error) {

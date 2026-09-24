@@ -62,6 +62,17 @@ HTTP limits/security headers
   -> Admin Console or Agent UI application proxy
 ```
 
+The planned full-stack Workspace route `/api/app/workspace/v1/*` uses a separate
+Node Bridge base URL. Each business request resolves the browser session,
+replaces incoming identity headers with the verified Organization, Principal,
+User, Membership and path Agent IDs, and enforces same-origin and CSRF checks
+before forwarding. Ordinary requests allow the Node response deadline; SSE
+forwards `Last-Event-ID` and flushes immediately, while a bounded lease
+revalidates browser identity and closes only the observer on revocation.
+`/workspace/` document requests require a browser session and preserve a
+validated Agent/Session deep link through login; hashed assets remain public.
+The Node Bridge remains a separate internal target from the current static UI.
+
 Login and logout call Identity Service directly because the Gateway owns the
 browser credential boundary. Every administrative command goes to Admin
 Console. Only workspace discovery calls Agent Controller's principal-scoped
@@ -99,9 +110,10 @@ IDs and names only. During a same-origin WebSocket upgrade at
 Organization/Principal and the route Agent ID. ACP owns Agent and Session
 authorization, including unavailable targets and protocol errors. Incoming
 cookies, authorization and forged internal identity headers are not forwarded.
-The Agent
-UI application is served under `/workspace/` with that prefix stripped before
-the internal static-service request.
+The Agent UI application is served under `/workspace/` by the Node service.
+Gateway preserves the path for SSR, forwards verified identity only for HTML,
+and routes hashed assets without identity. The Workspace HTTP/SSE API targets
+that same Node service; ACP retains durable execution authority.
 
 The existing `/api/app/agents/{agent_id}/acp` Workspace route remains a v1
 alias. Versions are an explicit route allowlist, not arbitrary upstream paths;

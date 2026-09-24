@@ -7,7 +7,7 @@
 | `ANTNEST_EDGE_LISTEN` | no | HTTP listen address, default `:8080` |
 | `ANTNEST_IDENTITY_SERVICE_URL` | yes | trusted Identity Service base URL |
 | `ANTNEST_ADMIN_CONSOLE_URL` | yes | trusted Admin Console base URL |
-| `ANTNEST_AGENT_UI_URL` | yes | trusted Agent UI static-service base URL |
+| `ANTNEST_AGENT_UI_URL` | yes | internal Node Agent UI base URL for authenticated HTML, static assets, HTTP API and SSE |
 | `ANTNEST_AGENT_CONTROLLER_URL` | yes | trusted Agent Controller base URL for ID/name discovery only |
 | `ANTNEST_AGENT_ACP_URL` | yes | trusted Agent ACP Service base URL |
 | `ANTNEST_EDGE_COOKIE_SECURE` | no | require HTTPS cookies, default `true` |

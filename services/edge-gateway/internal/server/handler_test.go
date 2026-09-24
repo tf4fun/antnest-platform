@@ -187,7 +187,7 @@ func testWorkspaceACPRoute(t *testing.T, publicPath, upstreamPath string) {
 	}
 }
 
-func TestWorkspaceApplicationStripsPublicPrefix(t *testing.T) {
+func TestWorkspaceApplicationPreservesPublicPrefix(t *testing.T) {
 	t.Parallel()
 
 	received := ""
@@ -199,7 +199,7 @@ func TestWorkspaceApplicationStripsPublicPrefix(t *testing.T) {
 	)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/workspace/assets/app.js", nil))
-	if response.Code != http.StatusOK || received != "/assets/app.js" {
+	if response.Code != http.StatusOK || received != "/workspace/assets/app.js" {
 		t.Fatalf("status=%d upstream path=%q", response.Code, received)
 	}
 }
@@ -667,7 +667,9 @@ func newTestHandlerWithServices(
 	httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		recorder := httptest.NewRecorder()
 		console.ServeHTTP(recorder, request)
-		return recorder.Result(), nil
+		result := recorder.Result()
+		result.Request = request
+		return result, nil
 	})}
 	sessions, err := session.NewManager(session.Config{
 		Now:     func() time.Time { return now },

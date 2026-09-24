@@ -103,6 +103,11 @@ func managedStream(request *http.Request) bool {
 		}
 		parts[i] = decoded
 	}
+	if len(parts) == 7 && parts[0] == "api" && parts[1] == "app" &&
+		parts[2] == "workspace" && parts[3] == "v1" &&
+		parts[4] == "agents" && parts[5] != "" && parts[6] == "events" {
+		return true
+	}
 	if len(parts) < 5 || parts[0] != "api" || parts[2] != "agents" || parts[3] == "" {
 		return false
 	}

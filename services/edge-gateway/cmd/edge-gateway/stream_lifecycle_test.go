@@ -118,6 +118,8 @@ func TestManagedReceiveRoutes(t *testing.T) {
 		"/api/app/agents/agent-1/v1/acp",
 		"/api/app/agents/agent-1/acp",
 		"/api/admin/agents/agent-1/events/watch",
+		"/api/app/workspace/v1/agents/agent-1/events",
+		"/api/app/workspace/v1/agents/agent%2F1/events",
 	} {
 		t.Run(path, func(t *testing.T) {
 			for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodDelete, http.MethodHead} {
@@ -132,6 +134,7 @@ func TestManagedReceiveRoutes(t *testing.T) {
 		"/", "/status", "/api/admin/overview", "/api/app/agents/agent-1/state",
 		"/api/app/agents/agent-1/v2/acp", "/api/app/agents/agent-1/v3/acp",
 		"/api/admin/agents/agent-1/events", "/api/app/agents/agent-1/v1/acp/extra",
+		"/api/app/workspace/v1/agents/agent-1/events/extra",
 	} {
 		if managedStream(httptest.NewRequest(http.MethodGet, path, nil)) {
 			t.Errorf("ordinary HTTP must retain graceful drain: %s", path)

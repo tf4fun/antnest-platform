@@ -8,6 +8,11 @@ routes the request without owning the requested business operation.
 
 Implemented for Stage 3A. The canonical cross-service behavior is
 [`../../docs/stage-3-admin-control-plane.md`](../../docs/stage-3-admin-control-plane.md).
+The Agent UI full-stack Gateway route sends `/workspace/` HTML, hashed assets,
+and Workspace HTTP/SSE API requests to the same Node `agent-ui` service through
+`ANTNEST_AGENT_UI_URL`. HTML receives verified principal headers; assets remain
+anonymous and never receive browser-supplied identity. Deployment and
+cross-service acceptance remain separate integration work.
 
 ## Owns
 
@@ -16,8 +21,9 @@ Implemented for Stage 3A. The canonical cross-service behavior is
 - access-token resolution and administrator admission;
 - metadata-only Agent workspace discovery; ACP owns per-Agent access decisions;
 - authenticated workspace state snapshots/subscriptions with bounded leases;
-- same-origin Agent UI and ACP v1/v2 WebSocket routing with per-message browser
-  session revalidation;
+- same-origin ACP v1/v2 WebSocket routing for ACP clients with per-message
+  browser session revalidation;
+- scoped Agent UI HTTP proxy and leased SSE observation through `ANTNEST_AGENT_UI_URL`;
 - ACP v1 Streamable HTTP routing with per-request browser authentication;
 - trusted principal headers, security headers, request limits, and tracing;
 - browser OIDC discovery/start/callback and transparent SCIM protocol ingress;
@@ -36,7 +42,7 @@ Implemented for Stage 3A. The canonical cross-service behavior is
 - Identity Service for login, token resolution, and token revocation;
 - Admin Console for the application and `/api/admin/*` BFF;
 - Agent Controller for principal-scoped discovery and lifecycle/activation/Runtime metadata;
-- Agent UI for `/workspace/*` static application routes;
+- Agent UI Node service for `/workspace/*` SSR, HTTP commands, and SSE observation;
 - Agent ACP Service for execution-state reads/watches and authenticated `/api/app/agents/{agent_id}/v1/acp` (stable)
   and `/api/app/agents/{agent_id}/v2/acp` (draft) WebSockets; the Workspace
   `/api/app/agents/{agent_id}/acp` alias retains v1 behavior;
