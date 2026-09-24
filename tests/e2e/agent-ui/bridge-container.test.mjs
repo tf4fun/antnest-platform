@@ -802,9 +802,17 @@ test("Bridge production container connects to official ACP HTTP and serves a sel
     }
     assert.notEqual(replacementIncarnation, initialIncarnation,
       "Production Bridge must retire an idle owner and rebuild its readable Session");
+    const stopStartedAt = performance.now();
     await docker(["stop", "-t", "30", container], 45_000);
+    const stopDurationMs = performance.now() - stopStartedAt;
     const { stdout: exitCode } = await docker(["inspect", "-f", "{{.State.ExitCode}}", container]);
+    const stopEvidence = `${root}/artifacts/verification/agent-ui-capacity-20260923`;
+    await mkdir(stopEvidence, { recursive: true });
+    await writeFile(`${stopEvidence}/normal-stop.json`,
+      JSON.stringify({ stopDurationMs, exitCode: Number(exitCode.trim()), stopGraceMs: 30_000 }, null, 2) + "\n");
     assert.equal(exitCode.trim(), "0", "Bridge must exit normally after flushing telemetry");
+    assert.ok(stopDurationMs < 30_000,
+      `Bridge normal stop must finish within the 30 s container grace: ${stopDurationMs} ms`);
     for (const path of ["/v1/traces", "/v1/metrics"])
       assert.ok(telemetryRequests.some((item) => item.path === path && item.bytes > 0),
         `Production Bridge did not export ${path} during normal stop: ${JSON.stringify(telemetryRequests)}`);
