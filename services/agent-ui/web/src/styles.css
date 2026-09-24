@@ -514,6 +514,46 @@ button:active:not(:disabled) {
   margin: 0 auto;
   padding: 40px 0 30px;
 }
+.session-opening-status {
+  margin: 0 0 28px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.session-opening-turns {
+  display: flex;
+  flex-direction: column;
+  gap: 36px;
+}
+.session-opening-turn {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 0 0 8px;
+}
+.session-opening-line {
+  display: block;
+  width: 86%;
+  height: 14px;
+  border-radius: 4px;
+  background: var(--line);
+}
+.session-opening-short {
+  width: 18%;
+  height: 11px;
+}
+.session-opening-question {
+  width: 54%;
+  height: 20px;
+}
+.session-opening-process {
+  width: 38%;
+  height: 32px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface-control);
+}
+.session-opening-answer {
+  width: 68%;
+}
 .conversation {
   display: flex;
   flex-direction: column;
@@ -524,6 +564,16 @@ button:active:not(:disabled) {
   display: flex;
   flex-direction: column;
   gap: 18px;
+}
+.turn-failure {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid #e2b9b3;
+  border-radius: 6px;
+  background: #fff3f1;
+  color: #8c3028;
+  font-size: 12px;
+  line-height: 1.45;
 }
 .turn-heading {
   display: flex;
@@ -2144,3 +2194,14 @@ details[open] > summary > .disclosure-chevron {
   overflow-wrap: anywhere;
   color: var(--danger);
 }
+.limited-history {
+  margin: 1.5rem 0;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+}
+
+.limited-history h2 { margin: 0 0 0.5rem; font-size: 1rem; }
+.limited-history p { margin: 0; }
+.limited-history pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 18rem;
+  overflow: auto; margin: 1rem 0 0; font: inherit; }

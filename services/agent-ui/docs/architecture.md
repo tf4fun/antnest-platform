@@ -1,205 +1,121 @@
 # Agent UI Architecture
 
-## Purpose
+Agent UI is one TypeScript/Node service. Its Node process owns the ACP Bridge,
+HTTP API, SSE streams, static assets and React SSR. The browser uses same-origin
+HTTP commands and SSE observation; it does not connect to ACP. The Edge Gateway
+authenticates requests and proxies them to the Node service. See the
+[full-stack Bridge plan](fullstack-bridge-refactor.md) for contracts, delivery
+batches and remaining acceptance work.
 
-Agent UI converts an authenticated principal's accessible Agents and ACP
-Sessions into one conversation workspace. It is a presentation service, not a
-browser-hosted Agent Core.
-
-Provider fallback is ACP-owned. The UI renders the effective model and its
-standard `config_option_update` description as an inline status notice, including
-when a configuration changes while the conversation is idle. It does not poll
-Controller, calculate fallback priority, or replay a failed prompt. Manual model
-selection remains the same ACP configuration action. Reconnect reads current
-configuration rather than retaining a browser-only Provider override.
-
-## Module Map
+## Ownership
 
 ```text
-App
-  -> useWorkspace (global connection, scope and asynchronous interaction coordination)
-  -> workspace-projection (pure global discovery/catalog/history transitions)
-  -> useSessionPresentation (per-Agent/Session draft, error and interaction state)
-  -> useSessionCatalog (connection-owned directory loading, pagination and retry)
-  -> useConversationHistory (selected Session readiness)
-  -> components (navigation, conversation, activity, composer)
-  -> AgentUIClient port
-       -> GatewayClient (production bootstrap)
-            -> GatewayAgentConnection (official ACP v1 SDK over WebSocket)
-            -> EventSource (scoped Gateway state snapshots)
-       -> PreviewClient (Vite development only)
+Browser: BridgeApp -> useBridgeWorkspace -> BridgeHttpClient / SSE observer
+                                    -> WorkspacePage / presentation components
+Edge Gateway: identity, CSRF and streaming proxy
+Agent UI Node: HTTP routes -> owner registry -> ACP SDK connection / replay
+ACP Service: Session, Run, history, permissions and durable intent authority
+Agent Controller: Agent directory and lifecycle
 ```
 
-The presentation model uses browser-safe IDs, labels, statuses, messages, and
-tool summaries. ACP wire conversion and cursor-based Session pagination live in the
-production transport adapter. Components do not fetch or open WebSockets
-directly.
+The browser owns only the route, draft, unsent attachments, expanded details and
+other presentation state. `use-bridge-workspace.ts` coordinates the current
+Agent and Session; `bridge-agent-controller.ts` applies versioned views and
+operations. `WorkspacePage.tsx` renders the model without transport knowledge.
 
-## Browser State
+The Node Bridge owns an ACP connection per authorized owner, Session replay,
+compact views, operation reconciliation and permission requests. A browser
+reload or disconnect removes an observer, not an accepted Run. The Bridge can
+reconstruct its view after restart; ACP remains authoritative for admission,
+execution and persisted output. Node keeps bounded Session, owner and global
+history budgets, and rejects a replay that cannot fit without replacing the
+previous readable view.
 
-Session configuration is rendered from ACP `configOptions` on new/load and
-`config_option_update`; selections use `session/set_config_option`, with no
-optimistic policy change. Choices affect later Runs, not an active Run snapshot.
+## Request and observation flow
 
-Session usage is projected from standard `usage_update`, separately from message
-history. Context counts are current capacity/use, not cumulative tokens; optional
-cost is cumulative known cost, not an invoice. Replay clears the old projection;
-failed replay retains last received values with a per-Conversation freshness
-marker. Concurrent loads of the same Session share one replay. Agent and Session
-IDs together scope selection; no browser storage or local price calculation is
-involved. See [Session usage](session-usage.md) for validation and failure rules.
+1. Gateway authenticates the principal and forwards the scoped request to Node.
+2. Node renders a request-scoped SSR shell with a bounded bootstrap wait. The
+   browser hydrates that exact shell and starts observing the selected Agent.
+3. Browser commands use same-origin HTTP. A Prompt carries one stable intent;
+   an uncertain HTTP response is reconciled by that intent rather than resent.
+4. SSE delivers versioned Agent and Session views. On a gap or process epoch
+   change, the browser fetches an authoritative snapshot.
+5. A Run remains in ACP after the browser closes or Node restarts. Re-entering
+   the workspace reloads its view and any pending permission request.
 
-Tool permissions use `session/request_permission`, separate from messages.
-The connection owns transient pending requests; the UI offers only the server's
-options with exact tool arguments. Always means this Session, never the Agent.
-Answering removes that request, not the server's execution lock. Cancellation,
-connection close and replacement remove stale buttons. A reload loads the
-Session and receives a fresh approval request from the server; browser storage
-never persists approval authority. Requests remain visible when switching chats.
+The Node connection to ACP uses the official SDK over its internal HTTP
+transport. The standard ACP WebSocket endpoint can still serve other clients;
+it is outside the Agent UI browser path.
 
-```text
-global: loading -> chooser -> selected Agent
-connection: offline -> connecting -> ready -> offline
-catalog: loading -> page | failed -> retry; page -> load more -> page
-selected history: loading -> ready | failed -> retry
-local interaction: idle -> running | configuring -> idle
-```
+## Boundaries and failure behavior
 
-These are independent dimensions, not one combined enum. Bootstrap failure is a
-global error; a failed Session load does not discard Agent discovery or other
-Sessions. A prompt error is Session-scoped, and Stop remains an outstanding
-request until authoritative execution state clears it. Navigation epochs reject
-late selection changes while connection epochs reject callbacks from a replaced
-Agent connection. Selecting another Session never cancels an accepted prompt.
-Directory failures stay in the sidebar; ACP initialization and selected Session
-loading do not wait for the directory. Pages load on demand without a total-page
-cutoff, and repeated cursors fail that page without losing earlier results.
-Search covers loaded conversations. Partial pages cannot prove that an already
-observed Session was deleted, so they never remove its in-memory transcript.
+The browser never receives the ACP access subject, provider credentials,
+internal service addresses or Runtime endpoints. Gateway owns browser identity
+and CSRF; Node scopes its owners and private caches to that identity. Access
+loss clears the browser's private view and redirects through the Gateway login
+entry with the selected route preserved. If an authorized bootstrap replaces
+the principal without a redirect, the browser also clears in-memory drafts and
+unsent attachments before the new identity can select the same Agent ID.
 
-History replay uses a private message-ID index and buffer with the same update
-semantics as live projection. Historical notifications do not publish per-record
-UI snapshots. The matching successful load response installs the candidate;
-failure retains readable history and the existing usage freshness rules.
+A Session load must complete before its composer or configuration controls
+become available. Failed replay keeps the previous readable history and offers
+retry. Switching Sessions does not cancel a Run; Stop targets the selected
+accepted Run, and a late Stop for an older Run cannot cancel a newer one.
+Transport failure never turns an uncertain submission into an automatic retry.
+Failed ACP Runs carry their persisted `errorClass` through the Bridge operation
+View and SSE. The browser maps `model_unsupported_content` to an actionable
+attachment message for the latest failed turn; the composer becomes available
+again when the Agent is ready. Unknown failure classes keep the generic Run
+failure notice.
+After keyboard submission temporarily disables the editor, focus returns to it
+when the Run settles if the user has not moved focus elsewhere. Moving to
+another control or clicking the page cancels that restoration.
+The browser retries a failed observer after 1, 2, 4 and later bounded delays
+up to 30 seconds. A live SSE connection resets this backoff; selecting another
+Session or explicitly refreshing can start a new read immediately.
 
-ACP Service remains authoritative for Run admission. A busy Agent disables
-new submission across all of its conversations. Closing or reopening the page
-must eventually recover that state from the Gateway rather than trusting local
-state.
+Drafts and unsent attachments stay scoped to their Agent and Session in memory.
+Session history, Agent availability, configuration, Usage and permissions come
+from authoritative Bridge views. Tool details and older turns load on demand.
+ACP's unmarked `session_info_update` sideband also flows through the Session View as nullable
+title and update time. The browser uses these fields for navigation metadata;
+late catalog pages or older Views cannot replace a newer server timestamp.
+When ACP has no update time, the browser does not stamp the View with its own
+clock.
+Expanded process content is released after collapse; content previews are
+reclaimed when their last local reference is removed.
+Creating a Session records it in the local directory before selection. A late
+creation response cannot replace a Session the user selected afterward, and a
+same-identity bootstrap arriving after creation merges discovery without
+discarding the new Session.
 
-Draft text, selected attachments, sidebar visibility, expanded tool details,
-and the active local route are presentation state. Sessions, messages, Agent
-busy state, and tool results are server facts and must not be treated as
-durable because they appeared in browser memory.
-User and Organization IDs from bootstrap are retained only as the in-memory
-identity boundary for cached history. A change discards private presentation
-state and replaces ACP; overlapping Agent IDs cannot retain the old identity.
+Node drain first rejects new requests with retryable 503 and marks `/status`
+unready while `/live` remains available; then it closes observers and flushes
+telemetry without cancelling ACP Runs. Single-replica deployment is the current model. Multi-replica
+ownership needs a separate lease and fencing design.
+The Node process starts OTLP/HTTP tracing and metrics when configured, records
+bounded route names and final status for each HTTP request, and awaits SDK
+shutdown after Bridge drain. Aggregate owners, observer leases, held work,
+cached/reserved history bytes, stream subscribers, queued/retained journal bytes,
+active/queued Session replays, uncertain operation count/age, and Node heap/RSS
+are observable gauges without scope labels. Cold replay duration and local
+intent reuse outcomes are also exported; ACP separately records durable intent
+reuse. These metrics contain no Agent, Session or principal labels.
+Gateway's W3C trace context becomes the parent of each Node HTTP span;
+Controller and ACP calls within the active HTTP request continue that context.
+Background work deliberately omits an ended HTTP parent; independent span links
+for that work remain pending.
 
-`session-presentation.ts` owns the local `idle -> running -> idle` interaction
-transition and the mutually exclusive `configuring` phase. These describe client
-requests, not durable Runs. The Agent-wide busy observation can block a different
-Session without changing that Session's draft. Errors and failed-prompt retry
-drafts belong to the originating Session, not whichever view is currently open.
-History synchronization remains separately scoped to connection plus Session:
-an ACP socket being ready does not mean a replay has completed. Permission
-requests live in the connection's Session-tagged inbox and are never persisted.
+If React fails before producing its SSR shell, Node sends a safe loading shell
+with no serialized bootstrap. The browser mounts with `createRoot` for that
+response and fetches a fresh authorized bootstrap; successfully rendered pages
+continue to use `hydrateRoot`.
 
-The URL is navigation only: no default Agent connection, no default first Session,
-and no fallback from an invalid Session to another conversation. In-memory
-projections are replaced from successful ACP replay, with the old readable
-transcript retained on failed replay. No browser database or attyd private
-business API is copied into this service.
+## Verification
 
-Historical message updates do not carry a standard original message timestamp
-in the supported ACP profile. Replay therefore leaves that timestamp unknown
-and the UI omits it; the current receipt time is not substituted. Live local
-submission and live first-chunk receipt may retain their observed time. Replaying
-message or Tool content also preserves the Session's known `updatedAt` rather
-than moving old conversations to the top. An explicit ACP Session metadata
-timestamp remains authoritative, during both replay and live delivery.
-
-## Production Invariants
-
-1. The application calls same-origin `/api/app/*` routes only.
-2. JavaScript never receives `agent_access_subject`, provider credentials,
-   internal RPC addresses, Runtime endpoints, or MCP credentials.
-3. Edge Gateway authenticates before returning bootstrap data or upgrading an
-   ACP WebSocket.
-4. ACP v1 is the stable default. Draft ACP v2 may be offered explicitly but
-   never silently substituted.
-5. A fresh connection obtains authoritative Session and Agent state before
-   enabling the composer. Transport loss keeps the thread readable and requires
-   bounded read-only recovery or explicit retry; no polling loop invents state.
-6. Tool activity is collapsed by default and keeps the complete received audit
-   detail available on demand. Expanded output preserves line breaks, wraps long
-   tokens and scrolls vertically rather than silently clipping text. The UI does
-   not remove output bytes; upstream truncation markers remain visible. The
-   summary identifies execution status rather than copying the first output line. Tool text is
-   rendered literally, never as executable HTML.
-7. Attachments use negotiated standard content: images, WAV/MP3 audio and PDF
-   resources; UTF-8 files use embedded text or the baseline plain-text fallback.
-   Native audio/PDF and embedded text are limited to 1 MiB, other supported
-   browser files to 4 MiB. Unknown binary formats are rejected. See
-   [multimodal input](multimodal-input.md) for exact capability and replay rules.
-8. A submitted user prompt appears locally before the blocking ACP request
-   settles; a failed request triggers authoritative Session replay while the
-   transport is open. A closed transport retains received content until a new
-   connection can recover history; it never receives new replay requests.
-9. A principal with no accessible Agent retains account exit and, for an
-   administrator, a path back to Control Center.
-
-## Failure Semantics
-
-### Conversation Recovery And Cancellation
-
-The transport being ready does not mean the selected Session has finished
-loading. The composer and Session settings remain closed until that Session's
-load succeeds. A failed load keeps the last readable transcript and offers an
-explicit retry; late completion of a different Session cannot unlock the view.
-
-Stop targets the Session of the outstanding prompt, or the scoped active Session
-from state observation after page re-entry, not the Session currently selected
-in the sidebar. Switching conversations is a read operation and must
-not replay over a live prompt stream on the same connection. A cancel
-notification is not completion: submission stays closed until the prompt settles
-and a fresh Gateway state snapshot permits work. A notification is only a request,
-not proof of cancellation. Cross-connection termination needs deployed acceptance.
-Before the prompt has reached ACP (for example while reading an attachment),
-Stop cancels local preparation and prevents the later prompt request entirely.
-
-Refresh workspace reloads accessible Agents, reconnects ACP, and loads the
-selected Session. It never sends a prompt. The existing transcript remains
-readable during transport loss; inaccessible Agents are removed after the
-authoritative refresh. Local completion or error does not assign `ready` to an
-Agent. Current-Agent availability comes only from the validated state subscription;
-bootstrap summaries cannot overwrite it. Subscription failure marks it unknown
-and recovers through authenticated bootstrap with backoff, not periodic polling.
-ACP failure has its own bounded reconnect path. See [Workspace state](workspace-state.md).
-Revision changes, busy-to-ready transitions and missed-observation recovery
-refresh Session list, history and configuration at idle by replacing ACP. The
-pending recovery waits for a local prompt to settle; it never replays over it.
-Real Docker/browser/Jaeger cross-connection acceptance remains a separate C4 batch.
-Starting an explicit refresh immediately disposes the prior connection attempt,
-including one whose initialization has not returned. Late callbacks cannot
-reopen the composer after a failed refresh or replace the user's newer Session
-selection. Cached history is scoped to both Agent and Session IDs; a successful
-empty replay still replaces it with an empty transcript.
-
-- `401` redirects to the Edge Gateway login entry.
-- `403` shows that no usable Agent is available without leaking policy facts.
-- transport loss keeps the current thread readable and disables submission;
-- malformed server data fails the affected view instead of guessing defaults;
-- automatic read-only reconnect uses a visible 1-30 second bounded backoff,
-  not a fixed retry count; manual refresh remains available and neither path
-  replays a prompt or polls while the subscription is healthy;
-- development preview data cannot be enabled in a production build.
-
-## Extension Rules
-
-- Add protocol behavior behind `AgentUIClient`; do not place fetch calls in
-  components.
-- Add a visual token to the platform design language before redefining a shared
-  color or control state.
-- Keep Agent configuration and lifecycle actions in Admin Console.
-- Keep Channel-specific affordances in Channel Gateway clients, not this UI.
-- Do not add a database, server-side Session cache, or private Agent model here.
+Service unit and component tests live under `web/src` and `web/server/test`.
+HTTP/SSE, SSR and Gateway contracts live under root `tests/integration/`;
+deployed browser and container checks live under root `tests/e2e/agent-ui/`.
+The [refactor plan](fullstack-bridge-refactor.md) records acceptance gaps and
+durable evidence locations. Development does not retain a browser ACP/Nginx
+compatibility mode.

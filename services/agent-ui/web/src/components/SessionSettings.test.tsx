@@ -89,6 +89,10 @@ test("model picker exposes grouped, searchable choices and the current selection
   );
   const trigger = screen.getByRole("combobox", { name: "Model" });
   expect(trigger.textContent).toContain("DeepSeek V4 Flash");
+  const descriptionId = trigger.getAttribute("aria-describedby");
+  expect(descriptionId).toBeTruthy();
+  expect(document.getElementById(descriptionId!)?.textContent)
+    .toBe("Current value: DeepSeek V4 Flash");
   fireEvent.click(trigger);
   expect(screen.getByRole("group", { name: "DeepSeek" })).toBeTruthy();
   expect(
@@ -147,4 +151,40 @@ test("selecting the current value makes no request; zero results are explicit", 
     target: { value: "missing" },
   });
   expect(screen.getByText("No matching options")).toBeTruthy();
+});
+
+test("changed selection returns keyboard focus after configuration completes without stealing it", () => {
+  const change = vi.fn();
+  const view = render(<SessionSettings options={[model]} disabled={false} onChange={change} />);
+  const trigger = screen.getByRole("combobox", { name: "Model" });
+  fireEvent.keyDown(trigger, { key: "ArrowDown" });
+  fireEvent.click(screen.getByRole("option", { name: /Pro/ }));
+  expect(change).toHaveBeenCalledWith("model", "pro");
+  view.rerender(<SessionSettings options={[model]} disabled onChange={change} />);
+  document.body.tabIndex = -1;
+  document.body.focus();
+  view.rerender(<SessionSettings options={[{ ...model, currentValue: "pro" }]} disabled={false} onChange={change} />);
+  expect(document.activeElement).toBe(trigger);
+
+  fireEvent.keyDown(trigger, { key: "ArrowDown" });
+  fireEvent.click(screen.getByRole("option", { name: /Flash/ }));
+  view.rerender(<SessionSettings options={[{ ...model, currentValue: "pro" }]} disabled onChange={change} />);
+  const other = document.createElement("button");
+  document.body.append(other);
+  other.focus();
+  view.rerender(<SessionSettings options={[model]} disabled={false} onChange={change} />);
+  expect(document.activeElement).toBe(other);
+  other.remove();
+  document.body.removeAttribute("tabindex");
+});
+
+test("boolean ACP configuration renders a switch and submits a boolean value", () => {
+  const change = vi.fn();
+  render(<SessionSettings options={[{ id: "safe_mode", name: "Safe mode", type: "boolean",
+    currentValue: true, description: "Require confirmation" }]} disabled={false}
+    onChange={change} />);
+  const toggle = screen.getByRole("switch", { name: "Safe mode" });
+  expect(toggle.getAttribute("aria-checked")).toBe("true");
+  fireEvent.click(toggle);
+  expect(change).toHaveBeenCalledWith("safe_mode", false);
 });

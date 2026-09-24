@@ -1,5 +1,10 @@
 # Session Workspace Refactor
 
+> Historical design record. The current development implementation is the
+> [Node fullstack Bridge](architecture.md); its browser uses HTTP/SSE and its
+> `/workspace/` entry is server-rendered. The static service and browser ACP
+> connection described below are no longer deployment or compatibility paths.
+
 ## Boundary
 
 Agent UI remains an independently built static service hosted at `/workspace/`

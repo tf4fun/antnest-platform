@@ -43,7 +43,7 @@ export function applyConversation(
   return {
     ...current,
     conversations: [
-      mergeConversationHistory(current.conversations.find(same), incoming),
+      mergeMetadata(current.conversations.find(same), incoming),
       ...current.conversations.filter((session) => !same(session)),
     ],
   };
@@ -65,11 +65,27 @@ export function applySessionCatalog(
     ...current,
     conversations: [
       ...incoming.map((session) =>
-        mergeConversationHistory(cached.get(session.id), session),
+        mergeMetadata(cached.get(session.id), session, true),
       ),
       ...current.conversations.filter(
         (session) => session.agentId !== agentId || !ids.has(session.id),
       ),
     ],
   };
+}
+
+function mergeMetadata(
+  cached: Conversation | undefined,
+  incoming: Conversation,
+  preserveEqual = false,
+): Conversation {
+  const merged = mergeConversationHistory(cached, incoming);
+  if (!cached) return merged;
+  const previousTime = Date.parse(cached.updatedAt);
+  const incomingTime = Date.parse(incoming.updatedAt);
+  if (!Number.isFinite(previousTime) ||
+    (Number.isFinite(incomingTime) &&
+      !(preserveEqual ? previousTime >= incomingTime : previousTime > incomingTime)))
+    return merged;
+  return { ...merged, title: cached.title, updatedAt: cached.updatedAt };
 }

@@ -39,7 +39,9 @@ export function ConfigPicker({
   const trigger = useRef<HTMLButtonElement>(null);
   const popup = useRef<HTMLDivElement>(null);
   const search = useRef<HTMLInputElement>(null);
+  const restoreTriggerFocus = useRef(false);
   const listId = useId();
+  const currentId = useId();
   const groups = option.options.map((item) =>
     "options" in item
       ? { name: item.name, id: item.group, choices: item.options }
@@ -109,6 +111,26 @@ export function ConfigPicker({
   useEffect(() => {
     if (disabled) setOpen(false);
   }, [disabled]);
+  useLayoutEffect(() => {
+    if (!restoreTriggerFocus.current) return;
+    if (!disabled) {
+      if (document.activeElement === document.body)
+        trigger.current?.focus({ preventScroll: true });
+      restoreTriggerFocus.current = false;
+      return;
+    }
+    const abandon = (event: Event) => {
+      if (event.type === "pointerdown" ||
+        (event.target !== trigger.current && event.target !== document.body))
+        restoreTriggerFocus.current = false;
+    };
+    document.addEventListener("focusin", abandon);
+    document.addEventListener("pointerdown", abandon);
+    return () => {
+      document.removeEventListener("focusin", abandon);
+      document.removeEventListener("pointerdown", abandon);
+    };
+  }, [disabled, option.currentValue]);
   useEffect(() => {
     if (!expanded) return;
     const outside = (event: Event) => {
@@ -160,6 +182,7 @@ export function ConfigPicker({
         type="button"
         role="combobox"
         aria-label={option.name}
+        aria-describedby={currentId}
         aria-haspopup="listbox"
         aria-controls={expanded ? listId : undefined}
         aria-expanded={expanded}
@@ -178,6 +201,9 @@ export function ConfigPicker({
         <strong>{current?.name ?? option.currentValue}</strong>
         <ChevronDown size={12} aria-hidden="true" />
       </button>
+      <span id={currentId} className="sr-only">
+        Current value: {current?.name ?? option.currentValue}
+      </span>
       {expanded
         ? createPortal(
             <div
@@ -223,8 +249,10 @@ export function ConfigPicker({
                         aria-selected={choice.value === option.currentValue}
                         onClick={() => {
                           close(true);
-                          if (choice.value !== option.currentValue)
+                          if (choice.value !== option.currentValue) {
+                            restoreTriggerFocus.current = true;
                             onChange(choice.value);
+                          }
                         }}
                       >
                         <span>

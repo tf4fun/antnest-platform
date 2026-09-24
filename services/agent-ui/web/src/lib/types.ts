@@ -41,6 +41,11 @@ export type ToolActivity = {
 
 export type Message = {
   presentation?: "thought";
+  turnOutcome?: "running" | "completed" | "failed" | "cancelled" | "unknown";
+  contentIncomplete?: boolean;
+  processCount?: number;
+  processLoaded?: boolean;
+  processHasMore?: boolean;
   id: string;
   role: "user" | "assistant" | "system";
   content: string;
@@ -51,7 +56,8 @@ export type Message = {
 
 export type Conversation = {
   plan?: { content: string; status: "pending" | "in_progress" | "completed"; priority: "low" | "medium" | "high" }[];
-  historyState?: "loading" | "failed";
+  historyState?: "loading" | "failed" | "view_limited" | "blocked";
+  limitedPreview?: { text: string; truncated: true };
   usage?: SessionUsage;
   usageStale?: boolean;
   configOptions?: SessionConfigOption[];

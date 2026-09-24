@@ -23,9 +23,11 @@ export function SessionUsage({
     };
     const escape = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
-      event.preventDefault();
+      const restoreFocus = root.current?.contains(document.activeElement) ||
+        document.activeElement === document.body;
+      if (restoreFocus) event.preventDefault();
       setOpen(false);
-      trigger.current?.focus();
+      if (restoreFocus) trigger.current?.focus();
     };
     window.addEventListener("pointerdown", dismiss);
     window.addEventListener("keydown", escape);

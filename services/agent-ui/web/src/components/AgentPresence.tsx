@@ -7,8 +7,19 @@ const labels: Record<AgentStatus, string> = {
   unknown: "Status unavailable",
 };
 
-export function AgentPresence({ status }: { status: AgentStatus }) {
+export function AgentPresence({
+  status,
+  announce = false,
+}: {
+  status: AgentStatus;
+  announce?: boolean;
+}) {
   return (
-    <span className={`presence presence-${status}`}>{labels[status]}</span>
+    <span
+      className={`presence presence-${status}`}
+      role={announce ? "status" : undefined}
+    >
+      {labels[status]}
+    </span>
   );
 }

@@ -15,18 +15,21 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type Ref,
   type ReactNode,
 } from "react";
 import type { AgentStatus, Attachment } from "../lib/types";
 import { canSubmit } from "../lib/presentation";
 
 type Props = {
+  rootRef?: Ref<HTMLDivElement>;
   sessionControls?: ReactNode;
   usage?: ReactNode;
   fileAccept: string;
   configuring: boolean;
   preparing?: boolean;
   historyReady: boolean;
+  historyLimited?: boolean;
   value: string;
   attachments: Attachment[];
   agentStatus: AgentStatus;
@@ -59,6 +62,10 @@ export function Composer(props: Props) {
   const hintId = useId();
   const fileInput = useRef<HTMLInputElement>(null);
   const textarea = useRef<HTMLTextAreaElement>(null);
+  const expandButton = useRef<HTMLButtonElement>(null);
+  const restoreEditorFocus = useRef(false);
+  const pendingRemovalFocus = useRef<{ id: string; index: number } | null>(null);
+  const removeButtons = useRef(new Map<string, HTMLButtonElement>());
   useLayoutEffect(() => {
     if (!textarea.current) return;
     if (expanded) {
@@ -79,6 +86,8 @@ export function Composer(props: Props) {
     ? "Preparing conversation"
     : props.configuring
       ? "Updating session settings"
+      : props.historyLimited
+        ? "Conversation history is limited; sending is unavailable"
       : !props.historyReady && props.connected && !props.sending
         ? "Conversation not yet synchronized"
         : statusCopy(props.agentStatus, props.connected, props.sending);
@@ -90,9 +99,40 @@ export function Composer(props: Props) {
       connected: props.connected && props.historyReady,
       configuring: props.configuring || Boolean(props.preparing),
     }) && !props.sending;
+  useLayoutEffect(() => {
+    if (!disabled) {
+      if (restoreEditorFocus.current && document.activeElement === document.body)
+        textarea.current?.focus({ preventScroll: true });
+      restoreEditorFocus.current = false;
+      return;
+    }
+    if (!restoreEditorFocus.current) return;
+    const abandon = (event: Event) => {
+      if (event.type === "pointerdown" ||
+        (event.target !== textarea.current && event.target !== document.body))
+        restoreEditorFocus.current = false;
+    };
+    document.addEventListener("focusin", abandon);
+    document.addEventListener("pointerdown", abandon);
+    return () => {
+      document.removeEventListener("focusin", abandon);
+      document.removeEventListener("pointerdown", abandon);
+    };
+  }, [disabled]);
+  useLayoutEffect(() => {
+    const pending = pendingRemovalFocus.current;
+    if (!pending || props.attachments.some((attachment) => attachment.id === pending.id))
+      return;
+    pendingRemovalFocus.current = null;
+    if (document.activeElement !== document.body) return;
+    const next = props.attachments[Math.min(pending.index, props.attachments.length - 1)];
+    if (next) removeButtons.current.get(next.id)?.focus({ preventScroll: true });
+    else if (!disabled) textarea.current?.focus({ preventScroll: true });
+    else expandButton.current?.focus({ preventScroll: true });
+  }, [props.attachments, disabled]);
 
   return (
-    <div className="composer-region">
+    <div className="composer-region" ref={props.rootRef}>
       <div
         className={`composer ${expanded ? "composer-expanded" : ""} ${submitEnabled ? "composer-ready" : ""}`}
         role="group"
@@ -100,7 +140,7 @@ export function Composer(props: Props) {
       >
         {props.attachments.length ? (
           <div className="composer-attachments">
-            {props.attachments.map((attachment) => {
+            {props.attachments.map((attachment, index) => {
               const Icon =
                 attachment.kind === "image"
                   ? ImageIcon
@@ -120,7 +160,15 @@ export function Composer(props: Props) {
                   </span>
                   <button
                     type="button"
-                    onClick={() => props.onRemoveAttachment(attachment.id)}
+                    ref={(node) => {
+                      if (node) removeButtons.current.set(attachment.id, node);
+                      else removeButtons.current.delete(attachment.id);
+                    }}
+                    onClick={(event) => {
+                      if (document.activeElement === event.currentTarget)
+                        pendingRemovalFocus.current = { id: attachment.id, index };
+                      props.onRemoveAttachment(attachment.id);
+                    }}
                     aria-label={`Remove ${attachment.name}`}
                     title={`Remove ${attachment.name}`}
                   >
@@ -149,18 +197,19 @@ export function Composer(props: Props) {
               !event.nativeEvent.isComposing
             ) {
               event.preventDefault();
-              if (submitEnabled) props.onSubmit();
+              if (submitEnabled) {
+                restoreEditorFocus.current = true;
+                props.onSubmit();
+              }
             }
           }}
           placeholder="Message your agent"
           rows={1}
           value={props.value}
         />
-        {hint ? (
-          <div className="composer-hint" id={hintId} role="status">
-            {hint}
-          </div>
-        ) : null}
+        <div className={hint ? "composer-hint" : "sr-only"} id={hintId} role="status">
+          {hint}
+        </div>
         <div className="composer-actions">
           <input
             ref={fileInput}
@@ -192,6 +241,7 @@ export function Composer(props: Props) {
           <div className="composer-submit-controls">
             {props.usage}
             <button
+              ref={expandButton}
               type="button"
               className="icon-button"
               title={
@@ -232,7 +282,10 @@ export function Composer(props: Props) {
                 type="button"
                 className="send-button"
                 disabled={!submitEnabled}
-                onClick={props.onSubmit}
+                onClick={(event) => {
+                  if (event.detail === 0) restoreEditorFocus.current = true;
+                  props.onSubmit();
+                }}
                 aria-label="Send message"
                 title="Send message"
               >

@@ -1,4 +1,10 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import type {
   AgentSummary,
@@ -207,6 +213,38 @@ test("ordinary single-response chats have no empty process disclosure", () => {
   expect(screen.getByText("12%")).toBeTruthy();
 });
 
+test("completed history builds process messages on demand and releases folded DOM after five minutes", () => {
+  vi.useFakeTimers();
+  try {
+    const { container, rerender } = render(
+      <Conversation agent={agent} conversation={conversation} settled />,
+    );
+    expect(container.querySelector(".tool-activity")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Show process" }));
+    expect(container.querySelector(".tool-activity")).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Hide process" }));
+    act(() => vi.advanceTimersByTime(4 * 60 * 1000));
+    rerender(
+      <Conversation
+        agent={agent}
+        conversation={{ ...conversation, updatedAt: "2026-09-16T00:00:00Z" }}
+        settled
+      />,
+    );
+    act(() => vi.advanceTimersByTime(60 * 1000 - 1));
+    expect(container.querySelector(".tool-activity")).not.toBeNull();
+    act(() => vi.advanceTimersByTime(1));
+    expect(container.querySelector(".tool-activity")).toBeNull();
+    expect(screen.getByText(/Revenue increased by/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Show process" }));
+    expect(container.querySelector(".tool-activity")).not.toBeNull();
+    act(() => vi.advanceTimersByTime(5 * 60 * 1000));
+    expect(container.querySelector(".tool-activity")).not.toBeNull();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 test("live system notices keep their timeline position and are never hidden by process folding", () => {
   const messages = [...conversation.messages];
   messages.splice(2, 0, {
@@ -260,6 +298,6 @@ test("expanded tool details survive live updates and completion, but another Ses
       .getAttribute("aria-expanded"),
   ).toBe("false");
   expect(
-    container.querySelector<HTMLDetailsElement>(".tool-activity")!.open,
-  ).toBe(false);
+    container.querySelector<HTMLDetailsElement>(".tool-activity"),
+  ).toBeNull();
 });

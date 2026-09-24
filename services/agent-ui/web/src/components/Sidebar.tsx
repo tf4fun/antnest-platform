@@ -29,6 +29,7 @@ type Props = {
   newConversationDisabled: boolean;
   logoutDisabled: boolean;
   onClose: () => void;
+  onClosed?: () => void;
   onSelectAgent: (id: string) => void;
   onSelectConversation: (id: string) => void;
   onNewConversation: () => void;
@@ -59,7 +60,7 @@ export function Sidebar(props: Props) {
   );
 
   return (
-    <NavigationPanel open={props.open} onClose={props.onClose}>
+    <NavigationPanel open={props.open} onClose={props.onClose} onClosed={props.onClosed}>
       <div className="sidebar-brand-row">
         <Brand />
         <button

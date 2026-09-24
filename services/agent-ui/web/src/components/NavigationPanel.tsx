@@ -11,19 +11,26 @@ const isMobile = () => window.matchMedia?.(query).matches ?? false;
 export function NavigationPanel({
   open,
   onClose,
+  onClosed,
   children,
 }: {
   open: boolean;
   onClose: () => void;
+  onClosed?: () => void;
   children: ReactNode;
 }) {
   const mobile = useSyncExternalStore(subscribe, isMobile, () => false);
   const dialog = useRef<HTMLDialogElement>(null);
+  const closed = useRef(onClosed);
+  closed.current = onClosed;
   useEffect(() => {
     const element = dialog.current;
     if (!element || !open) return;
     element.showModal();
-    return () => element.close();
+    return () => {
+      element.close();
+      closed.current?.();
+    };
   }, [open, mobile]);
 
   if (!mobile)
@@ -37,6 +44,27 @@ export function NavigationPanel({
       ref={dialog}
       className="sidebar"
       aria-label="Workspace navigation"
+      tabIndex={-1}
+      onKeyDown={(event) => {
+        if (event.key !== "Tab") return;
+        const items = [...event.currentTarget.querySelectorAll<HTMLElement>(
+          'a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])',
+        )].filter((item) => item.getClientRects().length > 0);
+        const first = items[0];
+        const last = items.at(-1);
+        if (!first || !last) {
+          event.preventDefault();
+          event.currentTarget.focus();
+        } else if (event.shiftKey && (document.activeElement === first ||
+          !event.currentTarget.contains(document.activeElement))) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && (document.activeElement === last ||
+          !event.currentTarget.contains(document.activeElement))) {
+          event.preventDefault();
+          first.focus();
+        }
+      }}
       onCancel={(event) => {
         event.preventDefault();
         onClose();

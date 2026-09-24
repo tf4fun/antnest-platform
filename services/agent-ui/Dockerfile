@@ -1,15 +1,24 @@
-FROM node:24-alpine AS web-build
+FROM node:24-alpine AS ui-build
 
-WORKDIR /src
+WORKDIR /app
 COPY services/agent-ui/web/package*.json ./
 RUN npm ci
-COPY services/agent-ui/web/ ./
-RUN npm run build
+COPY services/agent-ui/web/server/ ./server/
+COPY services/agent-ui/web/src/ ./src/
+COPY services/agent-ui/web/index.html services/agent-ui/web/tsconfig*.json services/agent-ui/web/vite*.ts ./
+RUN npm run build:bridge && npm prune --omit=dev
 
-FROM nginx:1.29-alpine
+FROM node:24-alpine
 
-COPY services/agent-ui/nginx.conf /etc/nginx/conf.d/default.conf
-COPY --from=web-build /src/dist/ /usr/share/nginx/html/
+WORKDIR /app
+ENV NODE_ENV=production
+COPY --from=ui-build --chown=node:node /app/package.json ./package.json
+COPY --from=ui-build --chown=node:node /app/node_modules/ ./node_modules/
+COPY --from=ui-build --chown=node:node /app/server/dist/ ./server/dist/
+COPY --from=ui-build --chown=node:node /app/dist/client/ ./dist/client/
+COPY --from=ui-build --chown=node:node /app/dist/ssr/ ./dist/ssr/
+USER node
 
 EXPOSE 8080
-HEALTHCHECK --interval=10s --timeout=2s --retries=5 CMD wget -q -O - http://127.0.0.1:8080/status >/dev/null || exit 1
+HEALTHCHECK --interval=10s --timeout=2s --retries=5 CMD node -e "fetch('http://127.0.0.1:8080/status').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+CMD ["node", "server/dist/main.js"]

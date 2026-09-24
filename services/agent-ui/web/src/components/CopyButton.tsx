@@ -14,28 +14,30 @@ export function CopyButton({ text, label }: { text: string; label: string }) {
         ? "Copied"
         : label;
   return (
-    <button
-      className="icon-button copy-button"
-      type="button"
-      title={title}
-      aria-label={label}
-      onClick={async () => {
-        try {
-          await navigator.clipboard.writeText(text);
-          setResult({ text, outcome: "copied" });
-        } catch {
-          setResult({ text, outcome: "failed" });
-        }
-      }}
-    >
-      {outcome === "copied" ? (
-        <Check size={14} aria-hidden="true" />
-      ) : (
-        <Copy size={14} aria-hidden="true" />
-      )}
+    <>
+      <button
+        className="icon-button copy-button"
+        type="button"
+        title={title}
+        aria-label={label}
+        onClick={async () => {
+          try {
+            await navigator.clipboard.writeText(text);
+            setResult({ text, outcome: "copied" });
+          } catch {
+            setResult({ text, outcome: "failed" });
+          }
+        }}
+      >
+        {outcome === "copied" ? (
+          <Check size={14} aria-hidden="true" />
+        ) : (
+          <Copy size={14} aria-hidden="true" />
+        )}
+      </button>
       <span className="sr-only" role="status">
         {outcome ? title : ""}
       </span>
-    </button>
+    </>
   );
 }

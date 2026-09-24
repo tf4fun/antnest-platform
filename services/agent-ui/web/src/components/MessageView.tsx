@@ -77,10 +77,12 @@ export function MessageView({
   message,
   answer = false,
   onDisclosure,
+  onLoadContent,
 }: {
   message: Message;
   answer?: boolean;
   onDisclosure?: () => void;
+  onLoadContent?: (messageId: string) => void;
 }) {
   return (
     <article
@@ -136,10 +138,20 @@ export function MessageView({
             <Markdown text={message.content} />
           )
         ) : null}
+        {message.contentIncomplete ? (
+          <p className="message-content-incomplete" role="status">
+            More content available
+            {onLoadContent ? (
+              <button type="button" onClick={() => onLoadContent(message.id)}>
+                Load full content
+              </button>
+            ) : null}
+          </p>
+        ) : null}
         {(answer || message.role !== "assistant") &&
         (message.createdAt || message.content) ? (
           <footer className="message-meta">
-            {message.content && (answer || message.role === "user") ? (
+            {message.content && !message.contentIncomplete && (answer || message.role === "user") ? (
               <CopyButton
                 text={message.content}
                 label={answer ? "Copy response" : "Copy prompt"}

@@ -64,3 +64,28 @@ test("Session catalog refresh keeps exact selection and failed replay retains re
     undefined,
   );
 });
+
+test("limited View removes cached complete history when applied to workspace", () => {
+  const current = previewWorkspace();
+  const previous = current.conversations[0]!;
+  const limited = { ...previous, messages: [], historyState: "view_limited" as const,
+    limitedPreview: { text: "partial output", truncated: true as const } };
+  const next = applyConversation(current, limited);
+  assert.deepEqual(next.conversations[0]?.messages, []);
+  assert.deepEqual(next.conversations[0]?.limitedPreview, limited.limitedPreview);
+});
+
+test("late Session Views and catalog pages do not roll back newer metadata", () => {
+  const current = previewWorkspace();
+  const previous = current.conversations[0]!;
+  current.conversations[0] = { ...previous, title: "Newest title",
+    updatedAt: "2026-09-24T02:00:00Z" };
+  const older = { ...previous, title: "Old title",
+    updatedAt: "2026-09-24T01:00:00Z" };
+  const fromView = applyConversation(current, older);
+  assert.equal(fromView.conversations[0]?.title, "Newest title");
+  assert.equal(fromView.conversations[0]?.updatedAt, "2026-09-24T02:00:00Z");
+  const fromCatalog = applySessionCatalog(current, current.activeAgentId, [older]);
+  assert.equal(fromCatalog.conversations[0]?.title, "Newest title");
+  assert.equal(fromCatalog.conversations[0]?.updatedAt, "2026-09-24T02:00:00Z");
+});

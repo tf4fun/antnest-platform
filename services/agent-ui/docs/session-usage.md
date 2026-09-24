@@ -1,5 +1,10 @@
 # Session Usage And Cost (F10)
 
+This records the F10 contract and its historical acceptance evidence. The
+browser ACP adapter and its tests were removed during the Node Bridge refactor;
+current behavior is covered by Bridge view, projection and browser tests. See
+the [current architecture](architecture.md).
+
 Status: Agent UI service batch verified (2026-09-10). ACP, Controller and Console
 pricing are implemented; deployed Gateway/ACP/Jaeger acceptance remains a separate
 batch. This service does not calculate prices, persist usage or expose new APIs.

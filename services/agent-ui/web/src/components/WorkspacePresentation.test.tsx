@@ -291,3 +291,114 @@ test("approval choices preserve names and expose distinct allow and reject treat
   screen.getByRole("button", { name: "Reject", exact: true }).click();
   expect(onAnswer).toHaveBeenCalledWith("request", "no");
 });
+
+test("a disconnected permission inbox remains readable without actionable decisions", () => {
+  const onAnswer = vi.fn();
+  render(<PermissionRequests conversations={[]} onOpen={vi.fn()} onAnswer={onAnswer}
+    disabled requests={[{ id: "request", request: { sessionId: "session",
+      toolCall: { toolCallId: "tool", title: "Run report", rawInput: { command: "report" } },
+      options: [{ optionId: "yes", kind: "allow_once", name: "Allow once" }],
+    } }]} />);
+  expect(screen.getByText("Run report")).toBeTruthy();
+  const button = screen.getByRole("button", { name: "Allow once" });
+  expect(button.hasAttribute("disabled")).toBe(true);
+  fireEvent.click(button);
+  expect(onAnswer).not.toHaveBeenCalled();
+});
+
+test("same-named tool decisions expose their Session and tool as accessible descriptions", () => {
+  render(<PermissionRequests
+    conversations={[{ id: "session-a", title: "Budget review" },
+      { id: "session-b", title: "Incident review" }]}
+    onOpen={vi.fn()} onAnswer={vi.fn()}
+    requests={["session-a", "session-b"].map((sessionId) => ({
+      id: sessionId,
+      request: {
+        sessionId,
+        toolCall: { toolCallId: `tool-${sessionId}`, title: "Read report", rawInput: {} },
+        options: [{ optionId: "allow", kind: "allow_once" as const, name: "Allow once" }],
+      },
+    }))}
+  />);
+  expect(screen.getByRole("button", {
+    name: "Allow once", description: /Conversation: Budget review.*Read report/,
+  })).toBeTruthy();
+  expect(screen.getByRole("button", {
+    name: "Allow once", description: /Conversation: Incident review.*Read report/,
+  })).toBeTruthy();
+  expect(screen.getByRole("region", {
+    name: "Tool approval", description: /Conversation: Budget review.*Read report/,
+  })).toBeTruthy();
+  expect(screen.getByRole("region", {
+    name: "Requested tool input", description: /Conversation: Incident review.*Read report/,
+  })).toBeTruthy();
+});
+
+test("permission live announcement stays concise when tool input is large", () => {
+  const request = {
+    id: "request-a",
+    request: {
+      sessionId: "session-a",
+      toolCall: { toolCallId: "tool-a", title: "Read report",
+        rawInput: { text: "long-input".repeat(2_000) } },
+      options: [{ optionId: "allow", kind: "allow_once" as const, name: "Allow once" }],
+    },
+  };
+  const props = { conversations: [{ id: "session-a", title: "Budget review" },
+    { id: "session-b", title: "Incident review" }], onOpen: vi.fn(), onAnswer: vi.fn() };
+  const view = render(<PermissionRequests {...props} requests={[]} />);
+  const liveStatus = screen.getByRole("status");
+  expect(liveStatus.textContent).toBe("");
+  view.rerender(<PermissionRequests {...props} requests={[request]} />);
+  expect(screen.getByRole("status")).toBe(liveStatus);
+  expect(screen.getByRole("status").textContent).toBe(
+    "1 tool approval requires a decision. Most recent: Read report in Budget review.",
+  );
+  expect(screen.getByRole("region", { name: "Requested tool input" }).textContent)
+    .toContain("long-input");
+  view.rerender(<PermissionRequests {...props} requests={[request,
+    { ...request, id: "request-b", request: { ...request.request,
+      sessionId: "session-b", toolCall: { ...request.request.toolCall,
+        title: "Inspect log" } } }]} />);
+  expect(screen.getByRole("status").textContent).toBe(
+    "2 tool approvals require a decision. Most recent: Inspect log in Incident review.",
+  );
+  expect(screen.getByRole("status").textContent?.length).toBeLessThan(200);
+  view.rerender(<PermissionRequests {...props}
+    conversations={[{ id: "session-a", title: "Long session ".repeat(200) }]}
+    requests={[{ ...request, request: { ...request.request,
+      toolCall: { ...request.request.toolCall, title: "Long tool ".repeat(200) },
+    } }]} />);
+  expect(screen.getByRole("status").textContent?.length).toBeLessThan(200);
+});
+
+test("resolving focused tool approvals moves through the next request to messages", () => {
+  const request = {
+    id: "request",
+    request: {
+      sessionId: "session",
+      toolCall: { toolCallId: "tool", title: "Run report", rawInput: {} },
+      options: [{ optionId: "yes", kind: "allow_once" as const, name: "Allow once" }],
+    },
+  };
+  const renderPage = (requests: typeof request[]) => (
+    <>
+      <div role="region" aria-label="Conversation messages" tabIndex={0} />
+      <PermissionRequests conversations={[]} onOpen={vi.fn()} onAnswer={vi.fn()}
+        requests={requests} />
+    </>
+  );
+  const nextRequest = { ...request, id: "next-request" };
+  const view = render(renderPage([request, nextRequest]));
+  const button = screen.getAllByRole("button", { name: "Allow once" })[0]!;
+  button.focus();
+  fireEvent.click(button);
+  view.rerender(renderPage([nextRequest]));
+  const nextButton = screen.getByRole("button", { name: "Allow once" });
+  expect(document.activeElement).toBe(nextButton);
+  fireEvent.click(nextButton);
+  view.rerender(renderPage([]));
+  expect(document.activeElement).toBe(screen.getByRole("region", {
+    name: "Conversation messages",
+  }));
+});

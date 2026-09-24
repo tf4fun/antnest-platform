@@ -38,6 +38,42 @@ const bootstrapSchema = z.object({
     ),
 });
 
+const bridgeBootstrapSchema = z.strictObject({
+  principal: z.strictObject({
+    userId: z.string().min(1),
+    organizationId: z.string().min(1),
+    administrator: z.boolean(),
+  }),
+  agents: z.array(z.strictObject({
+    agentId: z.string().min(1),
+    name: z.string().min(1),
+    lifecycle: z.enum(["not_created", "created", "deleted"]),
+    activation: z.enum(["enabled", "disabled"]).optional(),
+    runtime: z.enum(["unknown", "waiting", "available", "unhealthy", "exited", "absent"]),
+  }).refine((agent) => (agent.lifecycle === "created") ===
+    (agent.activation !== undefined))),
+  renderedAt: z.string().min(1),
+  bridgeEpoch: z.string().min(1),
+});
+
+export function workspaceFromBridgeBootstrap(payload: unknown): WorkspaceSnapshot {
+  const bootstrap = bridgeBootstrapSchema.parse(payload);
+  return workspaceFromBootstrap({
+    principal: {
+      user_id: bootstrap.principal.userId,
+      organization_id: bootstrap.principal.organizationId,
+      administrator: bootstrap.principal.administrator,
+    },
+    agents: bootstrap.agents.map((agent) => ({
+      agent_id: agent.agentId,
+      name: agent.name,
+      lifecycle_state: agent.lifecycle,
+      ...(agent.activation === undefined ? {} : { activation_state: agent.activation }),
+      runtime_state: agent.runtime,
+    })),
+  });
+}
+
 export function workspaceFromBootstrap(payload: unknown): WorkspaceSnapshot {
   const bootstrap = bootstrapSchema.parse(payload);
   return {

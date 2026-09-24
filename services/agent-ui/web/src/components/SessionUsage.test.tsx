@@ -69,6 +69,20 @@ test("usage dismisses on Escape or outside clicks and handles unknown capacity",
   expect(screen.queryByRole("button", { name: /Context usage/ })).toBeNull();
 });
 
+test("closing usage from another control does not steal keyboard focus", () => {
+  render(<>
+    <SessionUsage usage={{ used: 10, size: 100 }} stale={false} />
+    <button type="button">Other action</button>
+  </>);
+  const trigger = screen.getByRole("button", { name: /Context usage/ });
+  fireEvent.click(trigger);
+  const other = screen.getByRole("button", { name: "Other action" });
+  other.focus();
+  fireEvent.keyDown(window, { key: "Escape" });
+  expect(screen.queryByRole("group", { name: "Session usage" })).toBeNull();
+  expect(document.activeElement).toBe(other);
+});
+
 test("over-capacity usage cannot stretch the composer toolbar", () => {
   render(
     <SessionUsage

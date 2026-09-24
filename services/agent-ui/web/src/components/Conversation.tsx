@@ -1,5 +1,5 @@
 import { Bot, Check, ChevronRight, ListChecks } from "lucide-react";
-import { useId, useLayoutEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
   AgentSummary,
   Conversation as ConversationModel,
@@ -15,7 +15,12 @@ type DisclosureProps = {
   atBottom?: boolean;
   canAutoCollapse?: () => boolean;
   onProcessToggle?: () => void;
+  onLoadContent?: (messageId: string) => void;
+  onLoadProcess?: (turnId: string) => Promise<void> | void;
+  onUnloadProcess?: (turnId: string) => void;
 };
+
+const FOLDED_PROCESS_RETENTION_MS = 5 * 60 * 1000;
 
 export function Conversation({
   conversation,
@@ -24,10 +29,23 @@ export function Conversation({
   atBottom = true,
   canAutoCollapse,
   onProcessToggle,
+  onLoadContent,
+  onLoadProcess,
+  onUnloadProcess,
+  visibleStart,
+  visibleEnd,
+  historyGapAfter,
+  loadingNewer = false,
+  onLoadNewer,
 }: {
   conversation: ConversationModel | undefined;
   agent: AgentSummary;
   settled?: boolean;
+  visibleStart?: number;
+  visibleEnd?: number;
+  historyGapAfter?: number;
+  loadingNewer?: boolean;
+  onLoadNewer?: (button: HTMLButtonElement) => void;
 } & DisclosureProps) {
   const turns = useMemo(
     () => conversationTurns(conversation?.messages ?? []),
@@ -43,11 +61,15 @@ export function Conversation({
       </div>
     );
   }
+  const start = visibleStart ?? 0;
+  const visible = turns.slice(start, visibleEnd);
   return (
     <div className="conversation">
-      {turns.map((turn, index) => (
+      {visible.map((turn, offset) => {
+        const index = start + offset;
+        return (
+        <Fragment key={JSON.stringify([agent.id, conversation.id, turn.id])}>
         <ConversationTurn
-          key={JSON.stringify([agent.id, conversation.id, turn.id])}
           turn={turn}
           number={index + 1}
           agent={agent}
@@ -55,8 +77,19 @@ export function Conversation({
           atBottom={atBottom}
           canAutoCollapse={canAutoCollapse}
           onProcessToggle={onProcessToggle}
+          onLoadContent={onLoadContent}
+          onLoadProcess={onLoadProcess}
+          onUnloadProcess={onUnloadProcess}
         />
-      ))}
+        {historyGapAfter === index + 1 && onLoadNewer ? (
+          <button type="button" className="load-older-turns"
+            disabled={loadingNewer} onClick={(event) => onLoadNewer(event.currentTarget)}>
+            {loadingNewer ? "Loading newer messages" : "Load newer messages"}
+          </button>
+        ) : null}
+        </Fragment>
+        );
+      })}
       {conversation.plan?.length ? (
         <details className="session-plan">
           <summary onClick={onProcessToggle}>
@@ -109,6 +142,9 @@ function ConversationTurn({
   atBottom,
   canAutoCollapse,
   onProcessToggle,
+  onLoadContent,
+  onLoadProcess,
+  onUnloadProcess,
 }: {
   turn: Turn;
   number: number;
@@ -118,22 +154,52 @@ function ConversationTurn({
   const panelId = useId();
   const [compact, setCompact] = useState(completed);
   const [expanded, setExpanded] = useState(false);
+  const [retained, setRetained] = useState(!completed);
+  const [loadingProcess, setLoadingProcess] = useState(false);
+  const [processError, setProcessError] = useState(false);
   useLayoutEffect(() => {
     if (!completed) setCompact(false);
     else if (canAutoCollapse?.() ?? atBottom) setCompact(true);
   }, [completed, atBottom, canAutoCollapse]);
   const folded = completed && compact;
-  const entries = folded ? turn.process : turn.response;
+  const bridgeProcess = (turn.prompt?.processCount ?? 0) > 0;
+  const unloadRef = useRef(onUnloadProcess);
+  unloadRef.current = onUnloadProcess;
+  useEffect(() => {
+    if (!folded || expanded) {
+      setRetained(true);
+      return;
+    }
+    if (!retained) return;
+    const timeout = window.setTimeout(() => {
+      setRetained(false);
+      if (bridgeProcess) unloadRef.current?.(turn.id.slice(0, -7));
+    }, FOLDED_PROCESS_RETENTION_MS);
+    return () => window.clearTimeout(timeout);
+  }, [folded, expanded, retained, bridgeProcess, turn.id]);
+  const entries = folded || bridgeProcess ? turn.process : turn.response;
   const tools = turn.process.flatMap((message) => message.activities ?? []);
   const failed = tools.filter((tool) => tool.status === "failed").length;
+  const processCount = turn.prompt?.processCount ?? 0;
+  const hasProcess = entries.length > 0 || (processCount > 0 && Boolean(onLoadProcess));
+  useEffect(() => {
+    if (!expanded || !processCount || turn.prompt?.processLoaded ||
+      !onLoadProcess || loadingProcess || processError) return;
+    setLoadingProcess(true);
+    void Promise.resolve().then(() => onLoadProcess(turn.id.slice(0, -7)))
+      .catch(() => setProcessError(true))
+      .finally(() => setLoadingProcess(false));
+  }, [expanded, processCount, turn.prompt?.processLoaded, onLoadProcess,
+    turn.id, loadingProcess, processError]);
   const processLabel = tools.length
     ? `${tools.length} ${tools.length === 1 ? "tool call" : "tool calls"}`
-    : `${turn.process.length} ${turn.process.length === 1 ? "update" : "updates"}`;
+    : `${turn.process.length || processCount} ${(turn.process.length || processCount) === 1 ? "update" : "updates"}`;
   const entry = (message: Message) => (
     <MessageView
       key={message.id}
       message={message}
       onDisclosure={onProcessToggle}
+      onLoadContent={onLoadContent}
     />
   );
   return (
@@ -141,16 +207,16 @@ function ConversationTurn({
       <h3 className="turn-heading">
         <span>Exchange {number}</span>
       </h3>
-      {turn.prompt ? <MessageView message={turn.prompt} /> : null}
+      {turn.prompt ? <MessageView message={turn.prompt} onLoadContent={onLoadContent} /> : null}
       {turn.response.some((message) => message.role === "assistant") ? (
         <div className="turn-agent-label">
           <Bot size={15} aria-hidden="true" />
           <span>{agent.name}</span>
         </div>
       ) : null}
-      {entries.length ? (
+      {hasProcess ? (
         <div className="turn-process" data-complete={folded}>
-          {folded ? (
+          {folded || bridgeProcess ? (
             <button
               type="button"
               className="turn-process-trigger"
@@ -159,6 +225,8 @@ function ConversationTurn({
               aria-controls={panelId}
               onClick={() => {
                 onProcessToggle?.();
+                setRetained(true);
+                if (!expanded) setProcessError(false);
                 setExpanded((value) => !value);
               }}
             >
@@ -179,16 +247,36 @@ function ConversationTurn({
           <div
             id={panelId}
             className="turn-process-content"
-            hidden={folded && !expanded}
+            hidden={(folded || bridgeProcess) && !expanded}
           >
-            {entries.map(entry)}
+            {loadingProcess ? <p role="status">Loading process</p> : null}
+            {processError ? <p role="alert">Process could not be loaded.</p> : null}
+            {(!folded && !bridgeProcess) || expanded || retained ? entries.map(entry) : null}
+            {expanded && turn.prompt?.processHasMore && onLoadProcess ? (
+              <button type="button" className="load-more-process" disabled={loadingProcess}
+                onClick={() => {
+                  if (loadingProcess) return;
+                  setLoadingProcess(true);
+                  setProcessError(false);
+                  void Promise.resolve().then(() => onLoadProcess(turn.id.slice(0, -7)))
+                    .catch(() => setProcessError(true))
+                    .finally(() => setLoadingProcess(false));
+                }}>
+                {loadingProcess ? "Loading process" : "Load more process"}
+              </button>
+            ) : null}
           </div>
         </div>
       ) : null}
-      {folded && turn.output ? (
-        <MessageView key={turn.output.id} message={turn.output} answer />
+      {(folded || bridgeProcess) && turn.output ? (
+        <MessageView key={turn.output.id} message={turn.output} answer onLoadContent={onLoadContent} />
       ) : null}
-      {folded ? turn.notices.map(entry) : null}
+      {folded || bridgeProcess ? turn.notices.map(entry) : null}
+      {turn.prompt?.turnOutcome === "failed" ? (
+        <p className="turn-failure" role="alert" aria-label="Run failed">
+          Run failed. The saved conversation is available; send a new message when the Agent is available.
+        </p>
+      ) : null}
     </section>
   );
 }

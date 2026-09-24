@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { workspaceFromBootstrap } from "./bootstrap.ts";
+import { workspaceFromBootstrap, workspaceFromBridgeBootstrap } from "./bootstrap.ts";
 
 const principal = {
   user_id: "user-1",
@@ -94,4 +94,30 @@ test("rejects missing, inconsistent and execution-only management state", () => 
       }),
     );
   }
+});
+
+test("Bridge bootstrap maps the verified principal and Agent directory into the current UI model", () => {
+  const workspace = workspaceFromBridgeBootstrap({
+    principal: { userId: "user-1", organizationId: "org-1", administrator: true },
+    agents: [{ agentId: "agent-1", name: "Research", lifecycle: "created", activation: "enabled", runtime: "available" }],
+    renderedAt: "2026-09-23T00:00:00.000Z", bridgeEpoch: "epoch-1",
+  });
+  assert.equal(workspace.principal.administrator, true);
+  assert.equal(workspace.agents[0]?.id, "agent-1");
+  assert.equal(workspace.agents[0]?.status, "unknown");
+  assert.equal(workspace.activeAgentId, "");
+});
+
+test("Bridge bootstrap rejects duplicate or inconsistent Agent entries", () => {
+  const base = {
+    principal: { userId: "user-1", organizationId: "org-1", administrator: false },
+    renderedAt: "2026-09-23T00:00:00.000Z", bridgeEpoch: "epoch-1",
+  };
+  assert.throws(() => workspaceFromBridgeBootstrap({ ...base, agents: [
+    { agentId: "agent-1", name: "One", lifecycle: "created", activation: "enabled", runtime: "available" },
+    { agentId: "agent-1", name: "Two", lifecycle: "created", activation: "enabled", runtime: "available" },
+  ] }));
+  assert.throws(() => workspaceFromBridgeBootstrap({ ...base, agents: [
+    { agentId: "agent-1", name: "One", lifecycle: "not_created", activation: "enabled", runtime: "unknown" },
+  ] }));
 });
