@@ -155,6 +155,7 @@ try {
     }
     const expected = {
       sessionId: report.sessions[requests[0].phase],
+      bridge: true,
       requireTools: requests.some((request) => request.stage === "tool"),
       secrets: ["stage3-model-secret", "c4-member-password"],
     };
@@ -177,6 +178,23 @@ try {
   report.error = error.message;
   process.exitCode = 1;
   console.error(error.stack);
+  if (config) {
+    const docker = dockerClient(config.env, abort.signal, 30000);
+    const logs = await docker(
+      composeArgs(config.project, [
+        "-f",
+        "tests/e2e/workspace-closeout/c4.compose.yaml",
+        "logs",
+        "--no-color",
+        "--tail",
+        "200",
+        "agent-ui",
+        "agent-acp-service",
+        "edge-gateway",
+      ]),
+    ).catch(() => "");
+    await writeFile(`${output}/failure-services.log`, logs);
+  }
 } finally {
   clearTimeout(timer);
   try {

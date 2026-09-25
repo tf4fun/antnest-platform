@@ -14,7 +14,7 @@ export function inspectChatTrace(trace, expected) {
 // Diagnostics do not waive the strict warning gate or change source timestamps.
 export function inspectChatTraceTopology(
   trace,
-  { sessionId, requireTools = false, secrets = [] },
+  { sessionId, requireTools = false, bridge = false, secrets = [] },
 ) {
   const tree = traceTopology(trace);
   assertCaptureDisabled(trace);
@@ -22,7 +22,15 @@ export function inspectChatTraceTopology(
   assert.equal(roots.length, 1, "chat must have one Gateway message root");
   const root = roots[0];
   assert.equal(tree.service(root), "edge-gateway");
-  assert.equal(tag(root, "rpc.method"), "session/prompt");
+  if (bridge) {
+    assert.equal(
+      root.operationName,
+      "HTTP POST /api/app/workspace/v1/{path...}",
+    );
+    assert.equal(tag(root, "http.route"), "/api/app/workspace/v1/{path...}");
+  } else {
+    assert.equal(tag(root, "rpc.method"), "session/prompt");
+  }
   assert.equal(tag(root, "span.kind"), "server");
   const prompts = trace.spans.filter(
     (span) =>
@@ -33,11 +41,27 @@ export function inspectChatTraceTopology(
   assert.equal(prompts.length, 1, "missing or duplicate ACP prompt");
   const prompt = prompts[0];
   assert.equal(tag(prompt, "antnest.session.id"), sessionId);
-  const forwarded = tree.parent(prompt);
-  assert.equal(tree.service(forwarded), "edge-gateway");
-  assert.equal(tag(forwarded, "span.kind"), "producer");
-  assert.equal(tag(forwarded, "antnest.operation.phase"), "forward");
-  assert.equal(tree.parent(forwarded), root);
+  if (bridge) {
+    const acpHttp = tree.parent(prompt);
+    assert.equal(tree.service(acpHttp), "agent-acp-service");
+    assert.equal(acpHttp.operationName, "HTTP POST /v1/acp");
+    assert.equal(tag(acpHttp, "span.kind"), "server");
+    const bridgeServer = tree.parent(acpHttp);
+    assert.equal(tree.service(bridgeServer), "agent-ui");
+    assert.equal(bridgeServer.operationName, "agent_ui.http.request");
+    assert.equal(tag(bridgeServer, "span.kind"), "server");
+    const gatewayClient = tree.parent(bridgeServer);
+    assert.equal(tree.service(gatewayClient), "edge-gateway");
+    assert.equal(gatewayClient.operationName, "HTTP POST agent-ui");
+    assert.equal(tag(gatewayClient, "span.kind"), "client");
+    assert.equal(tree.parent(gatewayClient), root);
+  } else {
+    const forwarded = tree.parent(prompt);
+    assert.equal(tree.service(forwarded), "edge-gateway");
+    assert.equal(tag(forwarded, "span.kind"), "producer");
+    assert.equal(tag(forwarded, "antnest.operation.phase"), "forward");
+    assert.equal(tree.parent(forwarded), root);
+  }
   const runs = trace.spans.filter(
     (span) =>
       tree.service(span) === "agent-acp-service" &&

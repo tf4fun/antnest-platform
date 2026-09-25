@@ -11,6 +11,7 @@ import {
   type ConversationTurn as Turn,
 } from "../lib/conversation-turns";
 import { MessageView } from "./MessageView";
+import { ConversationEmpty } from "./ConversationEmpty";
 import { isWorkspaceReadTimeout } from "../lib/workspace-api-client";
 
 type DisclosureProps = {
@@ -56,14 +57,7 @@ export function Conversation({
     [conversation?.messages],
   );
   if (!conversation || !turns.length) {
-    return (
-      <div className="empty-thread">
-        <span className="empty-thread-mark">
-          <Bot size={22} aria-hidden="true" />
-        </span>
-        <h2>Start with {agent.name}</h2>
-      </div>
-    );
+    return <ConversationEmpty agent={agent} />;
   }
   const start = visibleStart ?? 0;
   const visible = turns.slice(start, visibleEnd);

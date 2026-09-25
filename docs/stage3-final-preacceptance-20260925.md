@@ -1,76 +1,91 @@
 # Stage 3 final pre-acceptance checkpoint
 
-Date: 2026-09-25. Candidate source: `a6ebb15b8a5da2844c185fa5f5e76fff5bf45251`.
-This is preparation evidence, not a new Stage 3 final acceptance decision. The
-single-node service boundary and reviewed clock-warning exception remain those
-in [the Stage 3 closeout](stage-3-current-services-closeout.md). Planned new
-services remain Stage 4 work.
+Date: 2026-09-25. Base source: `a6ebb15b8a5da2844c185fa5f5e76fff5bf45251`.
+The current candidate also contains the Agent UI and C4 test changes recorded
+below; its exact commit and image IDs belong in the final acceptance manifest.
+This records readiness to enter final acceptance, not a new Stage 3 acceptance
+decision. The agreed single-node service boundary and reviewed clock-warning
+exception remain in [the Stage 3 closeout](stage-3-current-services-closeout.md).
+Planned new services remain Stage 4 work.
 
 ## Candidate checks completed
 
-The committed Agent UI candidate passed 219 server tests, 156 browser-logic
+The committed Agent UI refactor passed 219 server tests, 156 browser-logic
 tests, 106 component tests, 19 shared-contract tests, 16 Node HTTP/SSE tests,
-two memory probes, production build/typechecks, and four Chromium/SSR tests.
-The production Bridge container gate passed after correcting its test fixture
-to bind ACP clients by principal and wait for both the delivery watermark and
-`ready` history state. Earlier unchanged runs had passed once and failed twice
-at the 17 MiB delivery case; both failures are retained under
-`artifacts/verification/stage3-preacceptance-20260925/`. The failed fixture
-had indexed mutable ACP connections by load order, and its private diagnostic
-recorded repeated cold loads after the missed update. One complete run of the
-corrected fixture has passed; repeatability remains a candidate gate.
-
+two memory probes, production build/typechecks and four Chromium/SSR tests.
 The isolated six-service Chromium main workflow, complete-history workflow,
-and pre-receipt Bridge crash reconciliation each passed on the same candidate.
-Their test-owned resources were removed. Before and after this batch, Docker
-had the same twelve retained containers, 285 volumes, and fourteen networks.
-Private command output is in
+and pre-receipt Bridge crash reconciliation passed. Their test-owned resources
+were removed. The Bridge production-container fixture was corrected to bind
+ACP clients by principal and wait for the delivery watermark and `ready`
+history state. Its 17 MiB case has since passed twice, including a repeat on
+this candidate. Earlier failures and diagnostics remain private under
 `artifacts/verification/stage3-preacceptance-20260925/`.
 
-The first local server run failed seven loopback-listener tests with sandbox
-`EPERM`; the unchanged suite passed when loopback binding was permitted. That
-environment failure is preserved in the private logs. `git diff --check` and
-the staged diff check passed. Repository-wide `make fmt-check` initially listed
-22 unformatted test sources, including Agent UI and other service files. A
-separate mechanical Prettier pass normalized those sources; the complete
-`make fmt-check` now passes. This test-source formatting is separate from the
-Agent UI behavior commit.
+The current permission and SSR fixes passed 219 server, 156 browser-logic and
+107 component tests, production build/typechecks, four Chromium/SSR browser
+tests, 16 Bridge HTTP/SSE integration tests, both memory checks, 97 C4 helper
+tests and the repeated Bridge production-container gate. A valid pending
+permission now checks execution authorization without waiting for unrelated
+historical replay. An Agent page without a selected Session renders its empty
+state directly on the server instead of suspending on the lazy Conversation
+chunk. Initial local tests that opened loopback listeners failed with sandbox
+`EPERM`; the same suites passed when loopback binding was permitted.
 
-## C4 evidence reconciliation
+Repository-wide `make fmt-check` passed after a separate mechanical pass on
+22 pre-existing unformatted test sources. The current C4 migration changed
+test sources again; `make fmt-check`, `git diff --check` and the 14-case
+chat Trace contract rerun passed on the current worktree.
 
-The [2026-09-16 C4 browser report](c4-browser-revalidation.md) passed its five
-scoped business items on its dated UI image. It cannot by itself establish
-browser acceptance of this Node/HTTP/SSE candidate. The current E2E evidence
-has the following boundaries:
+## C4 candidate evidence
 
-| Item | Current candidate evidence | Remaining check |
+The [2026-09-16 C4 browser report](c4-browser-revalidation.md) predates the
+Node Bridge. The migrated HTTP/SSE C4 profile now runs on the current UI,
+Gateway and ACP images. Its second complete run recorded
+`status=browser_passed`, all eleven business/privacy checks passed and
+`cleanup=verified` in
+`artifacts/verification/c4-browser-2026-09-25T12-23-26-721Z/report.json`.
+It checks real login, exact Runtime workspace bytes, attachments and previews,
+capability rejection, Tool permission, two-Session busy/Stop behavior, offline
+and close/reopen completion, Rebuild, identity revocation, private-data
+responses, and desktop/mobile layout. Candidate screenshots are retained in
+that private evidence directory. The earlier unported C4 failures and the
+permission/SSR red-green diagnostics are retained in the same verification
+area.
+
+The C4 Trace contract now requires Gateway HTTP → Agent UI Bridge → ACP HTTP
+→ ACP Prompt → Run → model/Runtime ancestry. The old runner expected direct
+Gateway ACP forwarding; the new contract has a red-green unit test, and the
+real C4 rerun passed successful-Run topology. There were no error spans in
+those successful Runs. `strict_trace=failed` and original exit 1 remain:
+every saved warning is the previously reviewed Jaeger
+`clock skew adjustment disabled` category. The cancelled Run has its separate
+expected-cancellation scope. This is not a zero-warning strict pass.
+
+| Item | Current candidate evidence | Remaining review |
 | --- | --- | --- |
-| C4-01 | Real Gateway login, Agent/Session selection, multiple Runs, permission and Tool flow in the six-service main path | Recheck exact Runtime workspace bytes and Tool presentation in the C4-specific browser profile |
-| C4-02 | Current browser covers capability rejection and attachment recovery; earlier C4 report checked exact text/image bytes and visible previews | Recheck accepted text/image bytes, preview and Tool result on the new UI |
-| C4-03 | Two Sessions, busy state, Stop, page close, offline completion, Bridge/Gateway restart and one-model-request recovery have current E2E evidence | Include the C4-specific cross-Session cancellation path in the candidate profile |
-| C4-04 | Identity expiry, logout and revocation on open pages have current E2E evidence | Recheck real Runtime Rebuild feedback and privacy payload audit on this candidate |
-| C4-05 | Current component, Chromium/SSR, mobile navigation and six-service checks pass | Run current desktop/mobile C4 browser interactions and preserve candidate screenshots |
+| C4-01 | Login, Agent/Session, Run, permission, Tool and exact Runtime bytes passed | Frozen final candidate manifest |
+| C4-02 | Attachment previews/bytes and capability rejection passed | Frozen final candidate manifest |
+| C4-03 | Two Sessions, Stop, offline and close/reopen completion passed | Frozen final candidate manifest |
+| C4-04 | Rebuild, revocation and private-data response audit passed | Frozen final candidate manifest |
+| C4-05 | Desktop/mobile interactions, Chromium/SSR and screenshots passed | Real screen-reader and non-local deployment remain deferred by user scope |
 
-The existing `tests/e2e/workspace-closeout/c4-browser.mjs` still observes ACP
-WebSocket frames and old UI selectors. It must be adapted to the current
-HTTP/SSE workspace, or replaced by an equivalent current-candidate profile,
-before the remaining C4 checks can be closed. Real screen-reader use and
-non-local deployment remain deferred by the user's scope decision; the
-historical five-item checklist is not silently marked passed.
+The C4 network privacy audit reads finite HTTP responses and the scoped Agent
+View. SSE body and resumption are covered separately by Bridge integration
+and fullstack profiles. The historical closeout decision is not silently
+rewritten by this pre-acceptance result.
 
-## Remaining final-candidate admission
+## Final acceptance work
 
-1. Establish repeatability of the corrected Bridge container gate. The
-   formatting gate is complete, with its changes kept separate from the Agent
-   UI behavior commit.
-2. Revalidate the missing C4-specific browser observations against the
-   committed Node/HTTP/SSE candidate.
-3. Run the Stage 1/2/3, Identity, lifecycle, ACP, Console and Workspace
-   business/topology inventory against one fixed source and image candidate,
-   with serial Docker resource accounting. The
+1. Freeze and review one source and service-image manifest, including the
+   permission/SSR correction and C4 migration, then use it consistently for
+   final acceptance.
+2. Run the Stage 1/2/3, Identity, lifecycle, ACP, Console and Workspace
+   business/topology inventory against that fixed candidate, with serial
+   Docker resource accounting. The
    [2026-09-22 combined regression](final-candidate-regression-20260922.md)
-   predates this commit and is historical evidence only.
-4. Update the Stage 3 closeout and current-status index with the resulting
+   is historical evidence for an earlier candidate.
+3. Update the Stage 3 closeout and current-status index with the resulting
    candidate report. Preserve original strict Trace exits and apply the
-   documented exception only to individually reviewed nonlogical clock
-   warnings. New business, parentage, privacy or unexplained diagnostics fail.
+   documented exception only to reviewed clock-only warnings. Any new
+   business, parentage, privacy or unexplained diagnostic failure remains a
+   final-acceptance failure.

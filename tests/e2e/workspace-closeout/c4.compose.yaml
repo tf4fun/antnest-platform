@@ -1,6 +1,10 @@
 services:
   agent-ui:
     image: ${ANTNEST_C4_AGENT_UI_IMAGE:-antnest/agent-ui:local}
+  agent-acp-service:
+    image: ${ANTNEST_C4_AGENT_ACP_IMAGE:-antnest/agent-acp-service:local}
+  edge-gateway:
+    image: ${ANTNEST_C4_EDGE_GATEWAY_IMAGE:-antnest/edge-gateway:local}
   temporal:
     ports: !reset []
   stage3-model:

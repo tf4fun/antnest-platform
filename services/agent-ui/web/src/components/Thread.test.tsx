@@ -1,5 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useState } from "react";
+import { renderToString } from "react-dom/server";
 import { afterEach, expect, test, vi } from "vitest";
 import { Thread } from "./Thread";
 import type { Conversation as ConversationModel } from "../lib/types";
@@ -14,6 +15,13 @@ const history = (from: number, count: number) => Array.from({ length: count }, (
 }));
 const conversation = (messages: ConversationModel["messages"]): ConversationModel => ({
   id: "session", agentId: "agent", title: "Question", updatedAt: "now", messages,
+});
+
+test("an Agent without a selected Session renders its empty state during SSR", () => {
+  const html = renderToString(<Thread agent={agent} working={false} />);
+  expect(html).toContain("Start with ");
+  expect(html).toContain("Agent</h2>");
+  expect(html).not.toContain("Opening conversation");
 });
 
 test("Bridge history continuation is visible above the current conversation", async () => {

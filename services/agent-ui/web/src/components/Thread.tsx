@@ -14,6 +14,7 @@ import type {
   Conversation as ConversationModel,
 } from "../lib/types";
 import { SessionOpening } from "./SessionOpening";
+import { ConversationEmpty } from "./ConversationEmpty";
 
 const Conversation = lazy(() =>
   import("./Conversation").then((module) => ({ default: module.Conversation })),
@@ -214,6 +215,8 @@ export function Thread({
           {opening ? (
             <SessionOpening error={openingError} onRetry={onRetryOpening}
               onBack={onBackOpening} />
+          ) : !conversation ? (
+            <ConversationEmpty agent={agent} />
           ) : (
             <Suspense
               fallback={

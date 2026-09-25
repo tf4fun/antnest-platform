@@ -51,13 +51,17 @@ node --test --test-concurrency=1 tests/e2e/workspace-closeout/*.test.mjs
 node tests/e2e/workspace-closeout/c4-run.mjs
 ```
 
-`ANTNEST_C4_AGENT_UI_IMAGE` optionally selects a separately built UI candidate.
+`ANTNEST_C4_AGENT_UI_IMAGE`, `ANTNEST_C4_AGENT_ACP_IMAGE` and
+`ANTNEST_C4_EDGE_GATEWAY_IMAGE` optionally select separately built candidate
+images for the three services changed by the Bridge architecture.
 The Runtime image is resolved from `antnest/antnest-runtime:local`. The runner
 uses isolated subnets with separate fixed/dynamic address ranges and no host
 Temporal port, so the retained development stack can remain running. It removes
 its labeled containers, volumes and networks on completion/failure/interruption.
 Reports, traces and screenshots are written to `artifacts/verification/c4-browser-<timestamp>/`.
 Strict trace warnings retain a failing exit code even when browser checks pass.
+The current driver uses same-origin HTTP/SSE and requires Gateway HTTP → Agent
+UI Bridge → ACP HTTP Trace ancestry; it does not rely on ACP WebSocket frames.
 See the [current evidence and limits](../../../docs/c4-browser-revalidation.md).
 The later [ACP/Runtime/UI integration batch](../../../docs/acp-platform-integration.md)
 records the combined candidate after the SDK and Session metadata fixes.

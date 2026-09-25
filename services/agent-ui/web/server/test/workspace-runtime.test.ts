@@ -1268,6 +1268,9 @@ test("SSE resumes the View cut and publishes a live ACP turn without cancelling 
     }),
   );
   assert.equal(stale?.status, 409);
+  // A durable output can be ahead of local replay while the permission request
+  // already belongs to this authorized owner.
+  watermark = 2;
   const accepted = await runtime.handle(
     new Request(decisionPath, {
       method: "POST",

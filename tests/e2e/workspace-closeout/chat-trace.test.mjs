@@ -51,6 +51,50 @@ const expected = {
 test("chat trace proves Gateway, prompt, Run, model and Runtime ancestry", () => {
   assert.equal(inspectChatTrace(fixture(), expected).runtime_calls, 1);
 });
+test("chat trace proves Gateway HTTP to Agent UI Bridge to ACP ancestry", () => {
+  const trace = fixture();
+  trace.spans.splice(
+    1,
+    0,
+    {
+      ...trace.spans[0],
+      spanID: "gateway-client",
+      operationName: "HTTP POST agent-ui",
+      references: [{ refType: "CHILD_OF", traceID: "chat", spanID: "gateway" }],
+      tags: [{ key: "span.kind", value: "client" }],
+    },
+    {
+      ...trace.spans[0],
+      spanID: "bridge",
+      processID: "agent-ui",
+      operationName: "agent_ui.http.request",
+      references: [
+        { refType: "CHILD_OF", traceID: "chat", spanID: "gateway-client" },
+      ],
+      tags: [{ key: "span.kind", value: "server" }],
+    },
+    {
+      ...trace.spans[0],
+      spanID: "acp-http",
+      processID: "agent-acp-service",
+      operationName: "HTTP POST /v1/acp",
+      references: [{ refType: "CHILD_OF", traceID: "chat", spanID: "bridge" }],
+      tags: [{ key: "span.kind", value: "server" }],
+    },
+  );
+  trace.processes["agent-ui"] = { serviceName: "agent-ui" };
+  trace.spans[0].operationName = "HTTP POST /api/app/workspace/v1/{path...}";
+  trace.spans[0].tags = [
+    { key: "span.kind", value: "server" },
+    { key: "http.route", value: "/api/app/workspace/v1/{path...}" },
+  ];
+  trace.spans.splice(4, 1);
+  trace.spans[4].references[0].spanID = "acp-http";
+  assert.equal(
+    inspectChatTrace(trace, { ...expected, bridge: true }).runtime_calls,
+    1,
+  );
+});
 test("clock diagnostics retain warnings without passing the strict gate", () => {
   const trace = fixture();
   trace.spans[6].warnings = [

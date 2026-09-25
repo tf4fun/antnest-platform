@@ -454,7 +454,7 @@ export function createWorkspaceRuntime(input: {
           throw new PermissionDecisionError(
             "Permission request is no longer current",
           );
-        const session = await lease.owner.authorizeSession(pending.sessionId);
+        const session = await lease.owner.authorizeExecution(pending.sessionId);
         lease.owner.decidePermission(permissionId, generation, optionId);
         return lease.owner
           .streamJournal(pending.sessionId)

@@ -31,31 +31,28 @@ export async function runBrowser(
   });
   const frames = [];
   const errors = [];
+  let browserPhase = "startup";
   const paths = [];
   const pageTasks = [];
-  const pageFrames = new WeakMap();
   const track = (page) => {
-    const received = [];
-    pageFrames.set(page, received);
     page.setDefaultTimeout(25000);
-    page.on("pageerror", () => errors.push("page error"));
-    page.on("websocket", (socket) =>
-      socket.on("framereceived", ({ payload }) => {
-        frames.push(String(payload));
-        try {
-          received.push(JSON.parse(String(payload)));
-        } catch {
-          errors.push("invalid ACP JSON frame");
-        }
+    page.on("pageerror", (error) =>
+      errors.push({
+        phase: browserPhase,
+        url: page.url(),
+        message: error.message,
       }),
     );
+    page.on("websocket", () => errors.push("unexpected browser WebSocket"));
     page.on("response", (response) => {
       const url = new URL(response.url());
       // SSE watches have no finite response body. Their state payloads are
-      // schema-checked by the production client; audit finite JSON and ACP here.
+      // schema-checked by the production client; audit finite JSON here.
       if (
         url.pathname.startsWith("/api/app/") &&
-        !url.pathname.endsWith("/watch")
+        !url.pathname.endsWith("/watch") &&
+        !url.pathname.endsWith("/events") &&
+        !response.headers()["content-type"]?.startsWith("text/event-stream")
       ) {
         paths.push(url.pathname);
         pageTasks.push(
@@ -74,6 +71,14 @@ export async function runBrowser(
     target.getByRole("textbox", { name: "Message", exact: true });
   const enabled = (target = page) =>
     until(() => input(target).isEnabled(), "composer ready", signal);
+  const newConversation = async (target) => {
+    await target
+      .getByRole("button", { name: "New conversation", exact: true })
+      .filter({ visible: true })
+      .first()
+      .click();
+    await enabled(target);
+  };
   const state = async () => {
     const response = await context.request.get(
       `${config.gateway}/api/app/agents/${fixture.agentID}/state`,
@@ -90,6 +95,15 @@ export async function runBrowser(
     });
     assert.equal(response.status, 200);
     return response.json();
+  };
+  const openAgentPage = async (target) => {
+    const bootstrap = target.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname ===
+          "/api/app/workspace/v1/bootstrap" && response.status() === 200,
+    );
+    await target.goto(url);
+    await bootstrap;
   };
   async function prompt(phase, response, target = page) {
     await enabled(target);
@@ -120,19 +134,24 @@ export async function runBrowser(
     );
   }
   async function check(name) {
+    browserPhase = name;
     report.checks.push(name);
     console.error(`C4 passed: ${name}`);
     await checkpoint();
   }
-  const sessionInfo = (target, sessionId) =>
-    pageFrames
-      .get(target)
-      .findLast(
-        (frame) =>
-          frame.method === "session/update" &&
-          frame.params?.sessionId === sessionId &&
-          frame.params.update.sessionUpdate === "session_info_update",
-      )?.params.update;
+  const sessionInfo = async (sessionId) => {
+    const response = await context.request.get(
+      `${config.gateway}/api/app/workspace/v1/agents/${fixture.agentID}/view?sessionId=${sessionId}`,
+    );
+    assert.equal(response.status(), 200);
+    const body = await response.json();
+    frames.push(JSON.stringify(body));
+    assert.equal(body.selectedView?.sessionId, sessionId);
+    return {
+      title: body.selectedView.title,
+      updatedAt: body.selectedView.updatedAt,
+    };
+  };
   async function visibleInfo(target, expected) {
     const row = target.locator(".conversation-option.active");
     await until(
@@ -158,7 +177,7 @@ export async function runBrowser(
       .locator(".chooser-agent")
       .filter({ hasText: "C4 Browser Agent" })
       .click();
-    await enabled();
+    await newConversation(page);
     assert(
       (await page.locator("body").innerText()).includes("C4 Browser Agent"),
     );
@@ -180,35 +199,36 @@ export async function runBrowser(
     await observer.goto(firstURL);
     await enabled(observer);
     const firstSession = new URL(firstURL).searchParams.get("session");
-    const previousMetadata = sessionInfo(observer, firstSession);
+    const previousMetadata = await sessionInfo(firstSession);
     assert(previousMetadata, "observer must receive current Session metadata");
     await prompt("c4-browser-read", "Workspace note: alpha-beta.");
     await check("member_login_new_load_session_real_tools");
     await until(
-      () =>
-        sessionInfo(page, firstSession)?.updatedAt &&
-        sessionInfo(page, firstSession).updatedAt !==
-          previousMetadata.updatedAt &&
-        sessionInfo(page, firstSession)?.updatedAt ===
-          sessionInfo(observer, firstSession)?.updatedAt,
+      async () =>
+        (await sessionInfo(firstSession)).updatedAt !==
+        previousMetadata.updatedAt,
       "cross-page session metadata",
       signal,
     );
-    const metadata = sessionInfo(page, firstSession);
+    const metadata = await sessionInfo(firstSession);
     assert.equal(metadata.title, "c4-browser-write");
     await visibleInfo(page, metadata);
     await visibleInfo(observer, metadata);
-    pageFrames.get(observer).length = 0;
     await observer.reload();
     await enabled(observer);
-    const listed = pageFrames
-      .get(observer)
-      .flatMap((frame) => frame.result?.sessions ?? [])
-      .find((session) => session.sessionId === firstSession);
+    const listedResponse = await context.request.get(
+      `${config.gateway}/api/app/workspace/v1/agents/${fixture.agentID}/sessions`,
+    );
+    assert.equal(listedResponse.status(), 200);
+    const listedBody = await listedResponse.json();
+    frames.push(JSON.stringify(listedBody));
+    const listed = listedBody.items.find(
+      (session) => session.sessionId === firstSession,
+    );
     assert(listed, "fresh page must list the existing Session");
     assert.equal(listed.title, metadata.title);
     assert.equal(listed.updatedAt, metadata.updatedAt);
-    assert.deepEqual(sessionInfo(observer, firstSession), metadata);
+    assert.deepEqual(await sessionInfo(firstSession), metadata);
     await visibleInfo(observer, metadata);
     report.session_metadata = {
       title: metadata.title,
@@ -256,8 +276,8 @@ export async function runBrowser(
     await page.reload();
     await enabled();
     const negative = track(await context.newPage());
-    await negative.goto(url);
-    await enabled(negative);
+    await openAgentPage(negative);
+    await newConversation(negative);
     const beforeRejected = (await model()).requests.length;
     await negative
       .getByLabel("File attachments", { exact: true })
@@ -303,15 +323,15 @@ export async function runBrowser(
     await check("real_tool_permission_interaction");
 
     const other = track(await context.newPage());
-    await other.goto(url);
-    await enabled(other);
+    await openAgentPage(other);
+    await newConversation(other);
     await held("c4-browser-hold-cancel");
     await until(
       async () => !(await input(other).isEnabled()),
       "cross-session busy",
       signal,
     );
-    await other
+    await page
       .getByRole("button", { name: "Stop operation", exact: true })
       .click();
     await until(
