@@ -7,34 +7,18 @@ const view = (answer: string, cursor: string | null, revision: number) => ({
   viewRevision: revision, historyState: "ready",
   turns: [{ turnId: "turn", outcome: "completed", prompt: [{ type: "text", text: "Question" }],
     finalResponse: [{ type: "text", text: answer }], contentCursor: cursor,
+    contentSection: cursor === null ? null : "finalResponse",
     processVersion: 0, processCount: 0 }],
   olderTurnsCursor: null, configOptions: [], usage: null,
 });
 
-test("limited View drops prior history, in-flight content, and pagination", async () => {
-  let release!: (value: unknown) => void;
-  const store = new BridgeSessionStore("agent", "session", {
-    turnContent: async () => new Promise((resolve) => { release = resolve; }),
-  });
-  store.accept({ ...view("Partial", "cut", 1), olderTurnsCursor: "older" }, "now");
-  const pending = store.loadMessageContent("turn:answer");
-  const limited = { ...view("", null, 2), historyState: "view_limited",
-    turns: [], olderTurnsCursor: null, historyToken: null, outputWatermark: 2,
-    limitedPreview: { text: "recent output", truncated: true } };
-  store.accept(limited, "later");
-  release({ section: "finalResponse", items: [{ type: "text", text: " stale" }],
-    nextCursor: null, complete: true });
-  await pending;
-  assert.deepEqual(store.conversation?.messages, []);
-  assert.equal(store.conversation?.historyState, "view_limited");
-  assert.equal(store.conversation?.limitedPreview?.text, "recent output");
-  assert.equal(store.olderTurnsCursor, null);
-  assert.equal(store.hasNewerTurns, false);
-  await assert.rejects(store.loadMessageContent("turn:answer"), /does not belong/u);
-  store.accept({ ...limited, outputWatermark: 3,
-    limitedPreview: { text: "new output", truncated: true } }, "still later");
-  assert.deepEqual(store.conversation?.messages, []);
-  assert.equal(store.conversation?.limitedPreview?.text, "new output");
+test("invalid lossy View does not clear a previously complete history", () => {
+  const store = new BridgeSessionStore("agent", "session", {});
+  store.accept(view("Saved", null, 1), "now");
+  assert.throws(() => store.accept({ ...view("", null, 2), historyState: "view_limited",
+    turns: [], historyToken: null, outputWatermark: 2,
+    limitedPreview: { text: "partial", truncated: true } }, "later"));
+  assert.equal(store.conversation?.messages[1]?.content, "Saved");
 });
 
 test("blocked View shows sealed messages but disables stale detail and pagination", async () => {
@@ -106,7 +90,7 @@ test("older turn page prepends history once and keeps the continuation cursor", 
       return { items: [{ turnId: "older", outcome: "completed",
         prompt: [{ type: "text", text: "Earlier" }],
         finalResponse: [{ type: "text", text: "Earlier answer" }],
-        contentCursor: null, processVersion: 0, processCount: 0 }],
+        contentCursor: null, contentSection: null, processVersion: 0, processCount: 0 }],
         nextCursor: null, newerCursor: "latest" };
     },
   });
@@ -123,7 +107,7 @@ test("deep history retains only the current page and latest View, then navigates
   const seen: string[] = [];
   const turn = (index: number) => ({ turnId: `turn-${index}`, outcome: "completed",
     prompt: [{ type: "text", text: `Question ${index}` }], finalResponse: [],
-    contentCursor: null, processVersion: 0, processCount: 0 });
+    contentCursor: null, contentSection: null, processVersion: 0, processCount: 0 });
   const store = new BridgeSessionStore("agent", "session", {
     turnContent: async () => ({}),
     turns: async (_agent, _session, cursor) => {
@@ -167,11 +151,11 @@ test("same-epoch reset keeps loaded older history and its next cursor", async ()
       if (cursor === "before-1") return { items: [{ turnId: "older", outcome: "completed",
         prompt: [{ type: "text", text: "Earlier" }],
         finalResponse: [{ type: "text", text: "Earlier answer" }],
-        contentCursor: null, processVersion: 0, processCount: 0 }],
+        contentCursor: null, contentSection: null, processVersion: 0, processCount: 0 }],
         nextCursor: "before-2", newerCursor: "latest" };
       return { items: [{ turnId: "oldest", outcome: "completed",
         prompt: [{ type: "text", text: "Oldest" }], finalResponse: [],
-        contentCursor: null, processVersion: 0, processCount: 0 }],
+        contentCursor: null, contentSection: null, processVersion: 0, processCount: 0 }],
         nextCursor: null, newerCursor: "before-1" };
     },
   });
@@ -194,11 +178,11 @@ test("new output watermark keeps read history and rebases the older cursor", asy
       if (cursor === "before-new")
         return { items: [{ turnId: "older", outcome: "completed",
           prompt: [{ type: "text", text: "before-old" }], finalResponse: [],
-          contentCursor: null, processVersion: 0, processCount: 0 }],
+          contentCursor: null, contentSection: null, processVersion: 0, processCount: 0 }],
           nextCursor: "before-new-2", newerCursor: "latest" };
       return { items: [{ turnId: cursor === "before-new-2" ? "oldest" : "older",
         outcome: "completed", prompt: [{ type: "text", text: cursor }],
-        finalResponse: [], contentCursor: null, processVersion: 0, processCount: 0 }],
+        finalResponse: [], contentCursor: null, contentSection: null, processVersion: 0, processCount: 0 }],
         nextCursor: cursor === "before-old" ? "before-old-2" : null,
         newerCursor: cursor === "before-new-2" ? "before-new" : "latest" };
     },
@@ -227,7 +211,7 @@ test("a changed watermark without any turn overlap does not invent continuous hi
     turnContent: async () => ({}),
     turns: async () => ({ items: [{ turnId: "older", outcome: "completed",
       prompt: [{ type: "text", text: "Earlier" }], finalResponse: [],
-      contentCursor: null, processVersion: 0, processCount: 0 }],
+      contentCursor: null, contentSection: null, processVersion: 0, processCount: 0 }],
       nextCursor: null, newerCursor: "latest" }),
   });
   store.accept({ ...view("Current", null, 1), outputWatermark: 5,
@@ -247,7 +231,7 @@ test("same-epoch View update retries an interrupted older-page request", async (
   const page = { items: [{ turnId: "older", outcome: "completed",
     prompt: [{ type: "text", text: "Earlier" }],
     finalResponse: [{ type: "text", text: "Earlier answer" }],
-    contentCursor: null, processVersion: 0, processCount: 0 }],
+    contentCursor: null, contentSection: null, processVersion: 0, processCount: 0 }],
     nextCursor: null, newerCursor: "latest" };
   const store = new BridgeSessionStore("agent", "session", {
     turnContent: async () => ({}),
@@ -277,7 +261,7 @@ test("an interrupted older-page request restarts from the new output watermark",
       if (cursor === "current-page")
         return { items: [{ turnId: "fresh", outcome: "completed",
           prompt: [{ type: "text", text: "Fresh" }], finalResponse: [],
-          contentCursor: null, processVersion: 0, processCount: 0 }],
+          contentCursor: null, contentSection: null, processVersion: 0, processCount: 0 }],
           nextCursor: null, newerCursor: "latest" };
       return new Promise((_resolve, reject) => {
         signal?.addEventListener("abort", () => reject(new Error("Watermark changed")), { once: true });
@@ -300,7 +284,7 @@ test("new Bridge epoch discards loaded older history and cursor", async () => {
     turnContent: async () => ({}),
     turns: async () => ({ items: [{ turnId: "older", outcome: "completed",
       prompt: [{ type: "text", text: "Earlier" }], finalResponse: [],
-      contentCursor: null, processVersion: 0, processCount: 0 }],
+      contentCursor: null, contentSection: null, processVersion: 0, processCount: 0 }],
       nextCursor: null, newerCursor: "latest" }),
   });
   store.accept({ ...view("Current", null, 1), olderTurnsCursor: "before-1" }, "now");
@@ -321,7 +305,7 @@ test("late older page cannot prepend into a replaced Session View", async () => 
   const pending = store.loadOlderTurns();
   store.accept(view("New", null, 2), "later");
   release({ items: [{ turnId: "older", outcome: "completed", prompt: [], finalResponse: [],
-    contentCursor: null, processVersion: 0, processCount: 0 }],
+    contentCursor: null, contentSection: null, processVersion: 0, processCount: 0 }],
   nextCursor: null, newerCursor: "latest" });
   await pending;
   assert.deepEqual(store.conversation?.messages.map((item) => item.content), ["Question", "New"]);
@@ -336,7 +320,7 @@ test("process history is fetched only on demand and its truncated content remain
       return cursor === undefined
         ? { turnId: "turn", processVersion: 2, items: [{ id: "tool-1", kind: "tool",
           summary: "Read file", status: "completed", content: [{ type: "text", text: "preview" }],
-          contentCursor: "content-cut" }], nextCursor: "page-2" }
+          toolSections: { detailStartIndex: 0 }, contentCursor: "content-cut" }], nextCursor: "page-2" }
         : { turnId: "turn", processVersion: 2, items: [{ id: "thought-1", kind: "thought",
           summary: "Consider result", status: "completed", content: [], contentCursor: null }],
           nextCursor: null };
@@ -357,11 +341,11 @@ test("process history is fetched only on demand and its truncated content remain
   assert.equal(store.conversation?.messages[0]?.processHasMore, false);
   const tool = store.conversation?.messages.find((item) => item.id === "turn:process:tool-1");
   assert.equal(tool?.contentIncomplete, true);
-  assert.match(tool?.content ?? "", /preview/u);
+  assert.match(tool?.activities?.[0]?.detail ?? "", /preview/u);
   await store.loadMessageContent("turn:process:tool-1");
   const complete = store.conversation?.messages.find((item) => item.id === "turn:process:tool-1");
   assert.equal(complete?.contentIncomplete, false);
-  assert.match(complete?.content ?? "", /preview rest/u);
+  assert.match(complete?.activities?.[0]?.detail ?? "", /preview rest/u);
 });
 
 test("same-version reset retains the process continuation instead of refetching the first page", async () => {
@@ -406,13 +390,84 @@ test("matching Session reset retains loaded process without another fetch", asyn
   assert.equal(calls, 1);
 });
 
+test("running process updates reuse a complete page cache and reject stale deltas", async () => {
+  let calls = 0;
+  const item = (id: string, summary: string) => ({ id, kind: "thought", summary,
+    status: "running", content: [], contentCursor: null });
+  const store = new BridgeSessionStore("agent", "session", {
+    turnContent: async () => ({}), turns: async () => ({}),
+    process: async () => { calls++; return { turnId: "turn", processVersion: calls === 1 ? 2 : 6,
+      items: [item("one", "One"), item("two", "Two")], nextCursor: null }; },
+    processContent: async () => ({}),
+  });
+  const live = (revision: number, version: number, count: number,
+    delta?: { fromVersion: number; items: { index: number; item: ReturnType<typeof item> }[] }) =>
+    ({ ...view("", null, revision), turns: [{ ...view("", null, revision).turns[0],
+      outcome: "running", processVersion: version, processCount: count,
+      ...(delta ? { liveProcessDelta: delta } : {}) }] });
+  store.accept(live(1, 2, 2), "now");
+  await store.loadProcess("turn");
+  store.accept(live(2, 4, 2, { fromVersion: 2,
+    items: [{ index: 1, item: item("two", "Updated") }] }), "later");
+  assert.equal(store.conversation?.messages.find((message) =>
+    message.id === "turn:process:two")?.content, "Updated");
+  assert.equal(store.conversation?.messages[0]?.processLoaded, true);
+  await store.loadProcess("turn");
+  assert.equal(calls, 1);
+  store.accept(live(3, 5, 3, { fromVersion: 4,
+    items: [{ index: 2, item: item("three", "Appended") }] }), "later");
+  assert.equal(store.conversation?.messages.find((message) =>
+    message.id === "turn:process:three")?.content, "Appended");
+  assert.equal(calls, 1);
+  store.accept(live(4, 6, 2, { fromVersion: 5,
+    items: [{ index: 0, item: item("one", "Stale") }] }), "later");
+  assert.equal(store.conversation?.messages[0]?.processLoaded, false);
+  await store.loadProcess("turn");
+  assert.equal(calls, 2);
+});
+
+test("eight live item changes after forty paged items add no process page reads", async () => {
+  let reads = 0;
+  const item = (index: number, summary = `Step ${index}`) => ({
+    id: `item-${index}`, kind: "thought", summary,
+    status: "running", content: [], contentCursor: null,
+  });
+  const store = new BridgeSessionStore("agent", "session", {
+    turnContent: async () => ({}), turns: async () => ({}),
+    process: async (_agent, _session, _turn, cursor) => {
+      reads++;
+      const start = cursor === undefined ? 0 : Number(cursor);
+      return { turnId: "turn", processVersion: 40,
+        items: Array.from({ length: 10 }, (_, offset) => item(start + offset)),
+        nextCursor: start === 30 ? null : String(start + 10) };
+    }, processContent: async () => ({}),
+  });
+  const live = (revision: number, version: number,
+    delta?: { fromVersion: number; items: { index: number; item: ReturnType<typeof item> }[] }) =>
+    ({ ...view("", null, revision), turns: [{ ...view("", null, revision).turns[0],
+      outcome: "running", processVersion: version, processCount: 40,
+      ...(delta ? { liveProcessDelta: delta } : {}) }] });
+  store.accept(live(1, 40), "now");
+  for (let page = 0; page < 4; page++) await store.loadProcess("turn");
+  assert.equal(reads, 4);
+  for (let change = 1; change <= 8; change++) {
+    store.accept(live(change + 1, change + 40, { fromVersion: change + 39,
+      items: [{ index: 0, item: item(0, `Updated ${change}`) }] }), "later");
+    await store.loadProcess("turn");
+  }
+  assert.equal(reads, 4);
+  assert.equal(store.conversation?.messages.find((message) =>
+    message.id === "turn:process:item-0")?.content, "Updated 8");
+});
+
 test("folded process can release cached items and fetch them again when reopened", async () => {
   let calls = 0;
   const store = new BridgeSessionStore("agent", "session", {
     turnContent: async () => ({}), turns: async () => ({}),
     process: async () => { calls += 1; return { turnId: "turn", processVersion: 1,
       items: [{ id: "tool", kind: "tool", summary: "Read", status: "completed",
-        content: [{ type: "text", text: "large output" }], contentCursor: null }],
+        content: [{ type: "text", text: "large output" }],
+        toolSections: { detailStartIndex: 0 }, contentCursor: null }],
       nextCursor: null }; },
     processContent: async () => ({}),
   });
@@ -445,6 +500,192 @@ test("unloading a folded process rejects a late page without reviving cached con
   assert.equal(store.conversation?.messages.some((item) => item.id === "turn:process:late"), false);
 });
 
+test("unrelated View revision keeps an in-flight process page alive", async () => {
+  let release!: (value: unknown) => void;
+  let requestSignal!: AbortSignal;
+  let calls = 0;
+  const store = new BridgeSessionStore("agent", "session", {
+    turnContent: async () => ({}), turns: async () => ({}),
+    process: async (_agent, _session, _turn, _cursor, signal) => {
+      calls++;
+      requestSignal = signal!;
+      return new Promise((resolve) => { release = resolve; });
+    }, processContent: async () => ({}),
+  });
+  const processView = { ...view("Done", null, 1), turns: [{ ...view("Done", null, 1).turns[0],
+    processVersion: 1, processCount: 1 }] };
+  store.accept(processView, "now");
+  const pending = store.loadProcess("turn");
+  store.accept({ ...processView, viewRevision: 2 }, "later");
+  assert.equal(requestSignal.aborted, false);
+  release({ turnId: "turn", processVersion: 1, items: [{ id: "tool", kind: "tool",
+    summary: "Read", status: "completed", content: [],
+    toolSections: { detailStartIndex: 0 }, contentCursor: null }],
+  nextCursor: null });
+  await pending;
+  assert.equal(calls, 1);
+  assert.equal(store.conversation?.messages.some((item) => item.id === "turn:process:tool"), true);
+});
+
+test("folding a process aborts its in-flight page request", async () => {
+  let requestSignal!: AbortSignal;
+  const store = new BridgeSessionStore("agent", "session", {
+    turnContent: async () => ({}), turns: async () => ({}),
+    process: async (_agent, _session, _turn, _cursor, signal) => {
+      requestSignal = signal!;
+      return new Promise((_resolve, reject) => signal?.addEventListener("abort",
+        () => reject(new Error("aborted")), { once: true }));
+    }, processContent: async () => ({}),
+  });
+  store.accept({ ...view("Done", null, 1), turns: [{ ...view("Done", null, 1).turns[0],
+    processVersion: 1, processCount: 1 }] }, "now");
+  const pending = store.loadProcess("turn");
+  store.unloadProcess("turn");
+  assert.equal(requestSignal.aborted, true);
+  await pending;
+});
+
+test("folding cancels the next process page without dropping the loaded page", async () => {
+  let nextSignal!: AbortSignal;
+  const store = new BridgeSessionStore("agent", "session", {
+    turnContent: async () => ({}), turns: async () => ({}),
+    process: async (_agent, _session, _turn, cursor, signal) => cursor === undefined
+      ? { turnId: "turn", processVersion: 1,
+        items: [{ id: "first", kind: "thought", summary: "First", status: "completed",
+          content: [], contentCursor: null }], nextCursor: "page-2" }
+      : new Promise((_resolve, reject) => {
+        nextSignal = signal!;
+        signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+      }),
+    processContent: async () => ({}),
+  });
+  store.accept({ ...view("Done", null, 1), turns: [{ ...view("Done", null, 1).turns[0],
+    processVersion: 1, processCount: 2 }] }, "now");
+  await store.loadProcess("turn");
+  const pending = store.loadProcess("turn");
+  store.cancelProcessRequests("turn");
+  assert.equal(nextSignal.aborted, true);
+  await pending;
+  assert.equal(store.conversation?.messages.some((item) => item.id === "turn:process:first"), true);
+  assert.equal(store.conversation?.messages[0]?.processHasMore, true);
+});
+
+test("process content survives metadata updates and is aborted when folded", async () => {
+  let contentSignal!: AbortSignal;
+  let release!: (value: unknown) => void;
+  const store = new BridgeSessionStore("agent", "session", {
+    turnContent: async () => ({}), turns: async () => ({}),
+    process: async () => ({ turnId: "turn", processVersion: 1,
+      items: [{ id: "tool", kind: "tool", summary: "Read", status: "completed",
+        content: [], toolSections: { detailStartIndex: 0 },
+        contentCursor: "content-1" }], nextCursor: null }),
+    processContent: async (_agent, _session, _turn, _item, _cursor, signal) => {
+      contentSignal = signal!;
+      return new Promise((resolve) => { release = resolve; });
+    },
+  });
+  const processView = { ...view("Done", null, 1), turns: [{ ...view("Done", null, 1).turns[0],
+    processVersion: 1, processCount: 1 }] };
+  store.accept(processView, "now");
+  await store.loadProcess("turn");
+  const pending = store.loadMessageContent("turn:process:tool");
+  store.accept({ ...processView, viewRevision: 2 }, "later");
+  assert.equal(contentSignal.aborted, false);
+  store.unloadProcess("turn");
+  assert.equal(contentSignal.aborted, true);
+  release({ turnId: "turn", itemId: "tool", items: [{ type: "text", text: "late" }],
+    nextCursor: null, complete: true });
+  await pending;
+  assert.equal(store.conversation?.messages.some((item) => item.id === "turn:process:tool"), false);
+});
+
+test("reconnect suspends stale reads while retaining a same-owner process page", async () => {
+  let firstSignal!: AbortSignal;
+  let releaseFirst!: (value: unknown) => void;
+  let contentReads = 0;
+  const store = new BridgeSessionStore("agent", "session", {
+    turnContent: async () => ({}), turns: async () => ({}),
+    process: async () => ({ turnId: "turn", processVersion: 1,
+      items: [{ id: "tool", kind: "tool", summary: "Read", status: "completed",
+        content: [{ type: "text", text: "Preview" }],
+        toolSections: { detailStartIndex: 0 }, contentCursor: "content-1" }],
+      nextCursor: null }),
+    processContent: async (_agent, _session, _turn, _item, _cursor, signal) => {
+      contentReads++;
+      if (contentReads === 1) {
+        firstSignal = signal!;
+        return new Promise((resolve) => { releaseFirst = resolve; });
+      }
+      return { turnId: "turn", itemId: "tool",
+        items: [{ type: "text", text: " full" }], nextCursor: null, complete: true };
+    },
+  });
+  const processView = { ...view("Done", null, 1), turns: [{ ...view("Done", null, 1).turns[0],
+    processVersion: 1, processCount: 1 }] };
+  store.accept(processView, "now");
+  await store.loadProcess("turn");
+  const pending = store.loadMessageContent("turn:process:tool");
+  store.suspendReads();
+  assert.equal(firstSignal.aborted, true);
+  releaseFirst({ turnId: "turn", itemId: "tool",
+    items: [{ type: "text", text: " stale" }], nextCursor: null, complete: true });
+  await pending;
+  store.accept({ ...processView, viewRevision: 2 }, "later");
+  assert.equal(store.conversation?.messages.find((item) =>
+    item.id === "turn:process:tool")?.activities?.[0]?.detail, "Preview");
+  await store.loadMessageContent("turn:process:tool");
+  assert.equal(store.conversation?.messages.find((item) =>
+    item.id === "turn:process:tool")?.activities?.[0]?.detail, "Preview full");
+  assert.equal(contentReads, 2);
+  store.accept({ ...processView, bridgeEpoch: "replacement-epoch", viewRevision: 3 }, "new owner");
+  assert.equal(store.conversation?.messages.some((item) =>
+    item.id === "turn:process:tool"), false,
+  "A replacement Bridge owner must not reuse the previous process body");
+});
+
+test("changed process version aborts an in-flight process request", async () => {
+  let requestSignal!: AbortSignal;
+  const store = new BridgeSessionStore("agent", "session", {
+    turnContent: async () => ({}), turns: async () => ({}),
+    process: async (_agent, _session, _turn, _cursor, signal) => {
+      requestSignal = signal!;
+      return new Promise((_resolve, reject) => signal?.addEventListener("abort",
+        () => reject(new Error("aborted")), { once: true }));
+    }, processContent: async () => ({}),
+  });
+  const processView = { ...view("Done", null, 1), turns: [{ ...view("Done", null, 1).turns[0],
+    processVersion: 1, processCount: 1 }] };
+  store.accept(processView, "now");
+  const pending = store.loadProcess("turn");
+  store.accept({ ...processView, viewRevision: 2, turns: [{ ...processView.turns[0],
+    processVersion: 2 }] }, "later");
+  assert.equal(requestSignal.aborted, true);
+  await pending;
+});
+
+test("process history follows more than 1024 distinct advancing page cursors", async () => {
+  const count = 1026;
+  let reads = 0;
+  const store = new BridgeSessionStore("agent", "session", {
+    turnContent: async () => ({}), turns: async () => ({}),
+    process: async (_agent, _session, _turn, cursor) => {
+      const index = cursor === undefined ? 0 : Number(cursor);
+      reads++;
+      return { turnId: "turn", processVersion: 1,
+        items: [{ id: `item-${index}`, kind: "thought", summary: `Step ${index}`,
+          status: "completed", content: [], contentCursor: null }],
+        nextCursor: index + 1 === count ? null : String(index + 1) };
+    }, processContent: async () => ({}),
+  });
+  store.accept({ ...view("Done", null, 1), turns: [{ ...view("Done", null, 1).turns[0],
+    processVersion: 1, processCount: count }] }, "now");
+  for (let index = 0; index < count; index++) await store.loadProcess("turn");
+  assert.equal(reads, count);
+  assert.equal(store.conversation?.messages[0]?.processHasMore, false);
+  assert.equal(store.conversation?.messages.filter((item) => item.id.startsWith("turn:process:"))
+    .length, count);
+});
+
 test("history page replacement retries a retained turn's interrupted process load", async () => {
   let releaseFirst!: (value: unknown) => void;
   let calls = 0;
@@ -452,7 +693,7 @@ test("history page replacement retries a retained turn's interrupted process loa
     turnContent: async () => ({}),
     turns: async () => ({ items: [{ turnId: "earlier", outcome: "completed",
       prompt: [{ type: "text", text: "Earlier" }], finalResponse: [],
-      contentCursor: null, processVersion: 0, processCount: 0 }],
+      contentCursor: null, contentSection: null, processVersion: 0, processCount: 0 }],
       nextCursor: null, newerCursor: "latest" }),
     process: async () => {
       calls++;

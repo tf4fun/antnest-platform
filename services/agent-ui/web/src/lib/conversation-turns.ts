@@ -41,7 +41,7 @@ function latestAnswer(response: readonly Message[]): Message | undefined {
     if (message.activities?.length) return undefined;
     if (
       !message.presentation &&
-      (message.content.trim() || message.attachments?.length)
+      (message.content.trim() || message.attachments?.length || message.contentIncomplete)
     )
       return message;
   }

@@ -1,12 +1,12 @@
 import type { ContentBlock } from "@agentclientprotocol/sdk";
 
-const maximumFragmentBytes = 64 * 1024 * 1024;
 type Section = "prompt" | "finalResponse";
 type Fragment = {
   section: Section;
   blockIndex: number;
   totalBytes: number;
-  bytes: Uint8Array;
+  chunks: readonly Uint8Array[];
+  receivedBytes: number;
 };
 
 export type BridgeContentState = {
@@ -59,7 +59,7 @@ export function appendBridgeContentPage(
     const part = raw.fragment;
     if (!Number.isSafeInteger(part.blockIndex) || !Number.isSafeInteger(part.byteOffset) ||
       !Number.isSafeInteger(part.totalBytes) ||
-      (part.totalBytes as number) < 1 || (part.totalBytes as number) > maximumFragmentBytes ||
+      (part.totalBytes as number) < 1 ||
       typeof part.serializedBlockBase64 !== "string" ||
       part.blockIndex !== target.length)
       throw new Error("Invalid Bridge content fragment");
@@ -69,16 +69,18 @@ export function appendBridgeContentPage(
       (fragment === null ? part.byteOffset !== 0 :
         fragment.section !== section || fragment.blockIndex !== part.blockIndex ||
         fragment.totalBytes !== part.totalBytes ||
-        part.byteOffset !== fragment.bytes.length))
+        part.byteOffset !== fragment.receivedBytes))
       throw new Error("Bridge content fragment is out of order");
-    const accumulated = new Uint8Array((part.byteOffset as number) + bytes.length);
-    if (fragment !== null) accumulated.set(fragment.bytes);
-    accumulated.set(bytes, part.byteOffset as number);
+    const chunks = [...(fragment?.chunks ?? []), bytes];
     fragment = {
       section, blockIndex: part.blockIndex as number,
-      totalBytes: part.totalBytes as number, bytes: accumulated,
+      totalBytes: part.totalBytes as number, chunks,
+      receivedBytes: (part.byteOffset as number) + bytes.length,
     };
-    if (accumulated.length === fragment.totalBytes) {
+    if (fragment.receivedBytes === fragment.totalBytes) {
+      const accumulated = new Uint8Array(fragment.totalBytes);
+      let offset = 0;
+      for (const chunk of chunks) { accumulated.set(chunk, offset); offset += chunk.length; }
       let parsed: unknown;
       try {
         parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(accumulated));
@@ -128,8 +130,6 @@ export async function loadBridgeTurnContent(
     const cursor = state.cursor;
     if (cursor === null || seen.has(cursor))
       throw new Error("Bridge content cursor did not advance");
-    if (seen.size >= 1024)
-      throw new Error("Bridge content page limit exceeded");
     seen.add(cursor);
     state = appendBridgeContentPage(
       state,

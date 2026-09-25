@@ -131,14 +131,13 @@ test("incomplete batches have explicit part and pending-event limits", () => {
   );
 });
 
-test("summary mode bounds pending content while preserving complete delivery and duplicate checks", () => {
+test("large multipart payloads remain complete with duplicate checks", () => {
   const tracker = new DeliveryTracker<string>(0);
-  tracker.accept(part(1, 0, 2), "old".repeat(1_000));
-  tracker.enableSummaryMode((update) => update.slice(-4));
-  assert.ok(tracker.bufferedBytes < 128);
+  const first = "old".repeat(1_000);
+  tracker.accept(part(1, 0, 2), first);
   const huge = "x".repeat(17 * 1024 * 1024);
   assert.deepEqual(tracker.accept(part(1, 1, 2), huge), [{ sequence: 1,
-    runId: "run-1", messageId: "event-1", updates: ["dold", "xxxx"] }]);
+    runId: "run-1", messageId: "event-1", updates: [first, huge] }]);
   assert.equal(tracker.watermark, 1);
   assert.equal(tracker.bufferedBytes, 0);
   assert.deepEqual(tracker.accept(part(1, 1, 2), huge), []);

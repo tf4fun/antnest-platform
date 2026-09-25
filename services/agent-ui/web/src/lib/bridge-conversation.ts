@@ -1,9 +1,9 @@
 import type { SessionConfigOption } from "@agentclientprotocol/sdk";
 import { initialBridgeContent, type BridgeContentState } from "./bridge-content.ts";
 import { contentView } from "./content-view.ts";
-import type { BridgeProcessItem } from "./bridge-process.ts";
+import { parseBridgeProcessItem, type BridgeProcessItem } from "./bridge-process.ts";
 import { conversationTitle } from "./presentation.ts";
-import type { Attachment, Conversation, Message } from "./types.ts";
+import type { Attachment, Conversation, Message, PlanEntry } from "./types.ts";
 
 export type BridgeConversationProjection = {
   conversation: Conversation;
@@ -13,6 +13,8 @@ export type BridgeConversationProjection = {
   turns: ReadonlyMap<string, BridgeContentState>;
   turnSignatures: ReadonlyMap<string, string>;
   processes: ReadonlyMap<string, { version: number; count: number }>;
+  liveProcessDeltas: ReadonlyMap<string, { fromVersion: number;
+    items: { index: number; item: BridgeProcessItem }[] }>;
   olderTurnsCursor: string | null;
 };
 
@@ -25,9 +27,8 @@ export function projectBridgeConversation(
   if (!isRecord(raw) || raw.sessionId !== sessionId ||
     typeof raw.bridgeEpoch !== "string" || !raw.bridgeEpoch)
     throw new Error("Bridge Session scope does not match selection");
-  const limited = raw.historyState === "view_limited";
   const blocked = raw.historyState === "blocked";
-  if ((raw.historyState !== "ready" && !limited && !blocked) || !Array.isArray(raw.turns) ||
+  if ((raw.historyState !== "ready" && !blocked) || !Array.isArray(raw.turns) ||
     !nullableCursor(raw.olderTurnsCursor) ||
     (raw.title !== undefined && raw.title !== null &&
       (typeof raw.title !== "string" || raw.title.length > 512)) ||
@@ -36,22 +37,23 @@ export function projectBridgeConversation(
     (raw.outputWatermark !== undefined && raw.outputWatermark !== null &&
       (!Number.isSafeInteger(raw.outputWatermark) || (raw.outputWatermark as number) < 0)) ||
     (raw.configOptions !== undefined && !Array.isArray(raw.configOptions)) ||
-    (limited ? raw.turns.length !== 0 || raw.olderTurnsCursor !== null ||
-      raw.historyToken !== null || !Number.isSafeInteger(raw.outputWatermark) ||
-      (raw.outputWatermark as number) < 0 || !isRecord(raw.limitedPreview) ||
-      typeof raw.limitedPreview.text !== "string" || raw.limitedPreview.text.length > 4096 ||
-      raw.limitedPreview.truncated !== true : raw.limitedPreview !== undefined) ||
     (blocked && (raw.historyToken !== null || raw.configurationToken !== null ||
       raw.olderTurnsCursor !== null)))
     throw new Error("Invalid Bridge Session View");
   const turns = new Map<string, BridgeContentState>();
   const turnSignatures = new Map<string, string>();
   const processes = new Map<string, { version: number; count: number }>();
+  const liveProcessDeltas = new Map<string, { fromVersion: number;
+    items: { index: number; item: BridgeProcessItem }[] }>();
   const messages: Message[] = [];
   for (const rawTurn of raw.turns) {
     if (!isRecord(rawTurn) || typeof rawTurn.turnId !== "string" || !rawTurn.turnId ||
       turns.has(rawTurn.turnId) || !Array.isArray(rawTurn.prompt) ||
       !Array.isArray(rawTurn.finalResponse) || !nullableCursor(rawTurn.contentCursor) ||
+      (rawTurn.contentSection !== null && rawTurn.contentSection !== "prompt" &&
+        rawTurn.contentSection !== "finalResponse") ||
+      (rawTurn.contentCursor === null) !== (rawTurn.contentSection === null) ||
+      (rawTurn.contentSection === "prompt" && rawTurn.finalResponse.length > 0) ||
       !outcome(rawTurn.outcome) || !Number.isSafeInteger(rawTurn.processVersion) ||
       (rawTurn.processVersion as number) < 0 || !Number.isSafeInteger(rawTurn.processCount) ||
       (rawTurn.processCount as number) < 0)
@@ -60,14 +62,34 @@ export function projectBridgeConversation(
     const state = initialBridgeContent(rawTurn.prompt, rawTurn.finalResponse, rawTurn.contentCursor);
     turns.set(turnId, state);
     turnSignatures.set(turnId, JSON.stringify([rawTurn.outcome, rawTurn.prompt,
-      rawTurn.finalResponse, rawTurn.contentCursor]));
+      rawTurn.finalResponse, rawTurn.contentCursor, rawTurn.contentSection]));
     processes.set(turnId, { version: rawTurn.processVersion as number,
       count: rawTurn.processCount as number });
-    messages.push({ ...message(`${turnId}:prompt`, "user", state.prompt, !state.complete),
+    if (rawTurn.liveProcessDelta !== undefined) {
+      const delta = rawTurn.liveProcessDelta;
+      if (rawTurn.outcome !== "running" || !isRecord(delta) ||
+        !Number.isSafeInteger(delta.fromVersion) || (delta.fromVersion as number) < 0 ||
+        (delta.fromVersion as number) >= (rawTurn.processVersion as number) ||
+        !Array.isArray(delta.items) || delta.items.length < 1 || delta.items.length > 10)
+        throw new Error("Invalid Bridge live process delta");
+      const seen = new Set<number>();
+      const items = delta.items.map((change) => {
+        if (!isRecord(change) || !Number.isSafeInteger(change.index) ||
+          (change.index as number) < 0 || (change.index as number) >= (rawTurn.processCount as number) ||
+          seen.has(change.index as number)) throw new Error("Invalid Bridge live process index");
+        seen.add(change.index as number);
+        return { index: change.index as number, item: parseBridgeProcessItem(change.item) };
+      });
+      liveProcessDeltas.set(turnId, { fromVersion: delta.fromVersion as number, items });
+    }
+    messages.push({ ...message(`${turnId}:prompt`, "user", state.prompt,
+      rawTurn.contentSection === "prompt"),
       turnOutcome: rawTurn.outcome as NonNullable<Message["turnOutcome"]>,
+      processVersion: rawTurn.processVersion as number,
       processCount: rawTurn.processCount as number, processLoaded: rawTurn.processCount === 0 });
-    if (state.finalResponse.length || !state.complete)
-      messages.push(message(`${turnId}:answer`, "assistant", state.finalResponse, !state.complete));
+    if (state.finalResponse.length || rawTurn.contentSection === "finalResponse")
+      messages.push(message(`${turnId}:answer`, "assistant", state.finalResponse,
+        rawTurn.contentSection === "finalResponse"));
   }
   return {
     conversation: {
@@ -78,9 +100,6 @@ export function projectBridgeConversation(
       updatedAt: typeof raw.updatedAt === "string" && raw.updatedAt
         ? raw.updatedAt : updatedAt,
       messages,
-      ...(limited ? { historyState: "view_limited" as const,
-        limitedPreview: { text: (raw.limitedPreview as Record<string, unknown>).text as string,
-          truncated: true as const } } : {}),
       ...(blocked ? { historyState: "blocked" as const } : {}),
       configOptions: configOptions(raw.configOptions ?? []),
       ...(raw.usage === undefined || raw.usage === null ? {} : { usage: usage(raw.usage) }),
@@ -88,6 +107,7 @@ export function projectBridgeConversation(
     turns,
     turnSignatures,
     processes,
+    liveProcessDeltas,
     bridgeEpoch: raw.bridgeEpoch,
     incarnation: typeof raw.incarnation === "string" ? raw.incarnation : null,
     outputWatermark: typeof raw.outputWatermark === "number" ? raw.outputWatermark : null,
@@ -191,15 +211,54 @@ export function replaceBridgeProcessContent(conversation: Conversation,
 
 function processMessage(turnId: string, item: BridgeProcessItem): Message {
   const id = `${turnId}:process:${item.id}`;
-  const projected = message(id, item.kind === "notice" ? "system" : "assistant",
+  const projected = message(id, "assistant",
     item.content, item.contentCursor !== null);
-  const content = projected.content || (item.kind === "tool" ? "" : item.summary);
-  return { ...projected, content,
-    ...(item.kind === "thought" || item.kind === "plan" ? { presentation: "thought" as const } : {}),
-    ...(item.kind === "tool" ? { activities: [{ id: item.id, label: item.summary,
-      tool: item.summary, summary: item.summary,
-      status: item.status === "failed" ? "failed" as const :
-        item.status === "completed" ? "completed" as const : "running" as const }] } : {}) };
+  if (item.kind === "notice")
+    return { ...projected, presentation: "notice",
+      content: projected.content || item.summary };
+  if (item.kind === "plan") {
+    const planEntries = parsePlanEntries(item.content[0]);
+    return { ...projected, presentation: "plan",
+      content: planEntries ? "" : projected.content || item.summary,
+      ...(planEntries ? { planEntries } : {}) };
+  }
+  if (item.kind === "tool") {
+    const sections = item.toolSections ?? { detailStartIndex: 0 };
+    const input = syntheticToolText(item.content[sections.inputIndex ?? -1], "Input: ");
+    const output = syntheticToolText(item.content[sections.outputIndex ?? -1], "Output: ");
+    const detail = message(id, "assistant", item.content.slice(sections.detailStartIndex),
+      item.contentCursor !== null);
+    const labels = { pending: "Pending", running: "Running", completed: "Completed",
+      failed: "Failed", unknown: "Status unknown" };
+    return { ...projected, content: "", attachments: undefined,
+      activities: [{ id: item.id, label: item.summary, tool: item.summary,
+        status: item.status, summary: labels[item.status],
+        ...(input === undefined ? {} : { input }),
+        ...(output === undefined ? {} : { output }),
+        ...(detail.content ? { detail: detail.content } : {}),
+        ...(detail.attachments ? { attachments: detail.attachments } : {}) }] };
+  }
+  return { ...projected, content: projected.content || item.summary,
+    ...(item.kind === "thought" ? { presentation: "thought" as const } : {}) };
+}
+
+function syntheticToolText(block: unknown, prefix: string): string | undefined {
+  return isRecord(block) && block.type === "text" && typeof block.text === "string" &&
+    block.text.startsWith(prefix) ? block.text.slice(prefix.length) : undefined;
+}
+
+function parsePlanEntries(block: unknown): PlanEntry[] | undefined {
+  if (!isRecord(block) || block.type !== "text" || typeof block.text !== "string")
+    return undefined;
+  let parsed: unknown;
+  try { parsed = JSON.parse(block.text); } catch { return undefined; }
+  if (!Array.isArray(parsed) || !parsed.every((entry) => isRecord(entry) &&
+    typeof entry.content === "string" &&
+    (entry.priority === "low" || entry.priority === "medium" || entry.priority === "high") &&
+    (entry.status === "pending" || entry.status === "in_progress" ||
+      entry.status === "completed"))) return undefined;
+  return parsed.map((entry) => ({ content: entry.content,
+    priority: entry.priority, status: entry.status }));
 }
 
 function message(

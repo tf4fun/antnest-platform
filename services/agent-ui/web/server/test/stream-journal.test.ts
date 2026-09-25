@@ -78,6 +78,31 @@ test("snapshot cursor hands off a contiguous retained suffix", async () => {
   await observer.return();
 });
 
+test("one published event is encoded once for one, four or eight observers", async () => {
+  for (const count of [1, 4, 8]) {
+    const stream = journal({ maxSubscribers: count });
+    const cut = stream.snapshot((cursor) => ({ streamCursor: cursor }));
+    const observers = Array.from({ length: count }, () => stream.subscribe(cut.cursor,
+      (cursor) => ({ streamCursor: cursor })));
+    const stringify = JSON.stringify;
+    let encodings = 0;
+    JSON.stringify = ((value: unknown, ...options: unknown[]) => {
+      if (value && typeof value === "object" && "operation" in value &&
+        "toStreamRevision" in value) encodings++;
+      return (stringify as (...args: unknown[]) => string | undefined)(value, ...options);
+    }) as typeof JSON.stringify;
+    try {
+      const published = stream.publish({ type: "operation",
+        operation: { operationId: "intent-1" } });
+      for (const observer of observers) {
+        assert.equal((await observer.next()).value, published);
+        await observer.return();
+      }
+      assert.equal(encodings, 1, `${count} observers must share one encoding`);
+    } finally { JSON.stringify = stringify; stream.close(); }
+  }
+});
+
 test("oversized snapshots fail before issuing an unusable SSE cursor", () => {
   const stream = journal({ maxSubscriberBytes: 700 });
   assert.throws(

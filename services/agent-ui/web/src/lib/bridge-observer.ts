@@ -30,7 +30,7 @@ export async function openBridgeObserver(input: {
   if (initial === null)
     throw new Error("Workspace View does not match the selected Agent and Session");
   input.onView(initial);
-  let state = initialBridgeStream(input.agentId, input.sessionId);
+  let state = { ...initialBridgeStream(input.agentId, input.sessionId), view: initial as BridgeAgentView | null };
   const source = (input.sourceFactory ?? ((url) => new EventSource(url)))(
     input.api.eventsURL(input.agentId, input.sessionId, initial.streamCursor),
   );
@@ -46,7 +46,7 @@ export async function openBridgeObserver(input: {
   source.addEventListener("open", () => {
     if (!closed) input.onConnected?.();
   });
-  for (const name of ["snapshot", "reset", "operation", "permission", "delta", "access_revoked"]) {
+  for (const name of ["snapshot", "reset", "delta", "access_revoked"]) {
     source.addEventListener(name, (event) => {
       if (closed) return;
       let raw: unknown;

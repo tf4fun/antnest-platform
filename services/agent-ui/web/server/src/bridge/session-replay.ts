@@ -1,6 +1,5 @@
 import {
   DeliveryTracker,
-  DeliveryBufferCapacityError,
   type DeliveredBatch,
   type DeliveryMark,
 } from "./delivery.ts";
@@ -11,11 +10,6 @@ type Projection<Update, View> = {
   empty(): View;
   apply(view: View, batch: DeliveredBatch<Update>): View;
   estimate?(view: View): number;
-  seal?(view: View): void;
-  prepareReplacement?(view: View): void;
-  limit?(view: View): boolean;
-  isLimited?(view: View): boolean;
-  summarize?(update: Update): Update | undefined;
 };
 
 type Attempt<Update, View> = {
@@ -76,22 +70,8 @@ export class SessionReplay<View, Update> {
     const target = this.candidate ?? this.current;
     if (target.error !== undefined) return;
     try {
-      let batches: DeliveredBatch<Update>[];
-      try {
-        batches = target.tracker.accept(mark, update);
-      } catch (error) {
-        if (
-          !(error instanceof DeliveryBufferCapacityError) ||
-          target !== this.current ||
-          !this.limitCurrent()
-        )
-          throw error;
-        batches = target.tracker.accept(mark, update);
-      }
-      for (const batch of batches) {
+      for (const batch of target.tracker.accept(mark, update))
         target.view = this.projection.apply(target.view, batch);
-        this.enableSummaryIfLimited(target);
-      }
     } catch (error) {
       target.error = error;
       this.needsReconcile = true;
@@ -118,8 +98,6 @@ export class SessionReplay<View, Update> {
   public load(loader: (candidate: View) => Promise<ReplayCut>): Promise<void> {
     if (this.loading !== undefined) return this.loading;
     const candidate = this.newAttempt();
-    if (this.appendVersion !== null)
-      this.projection.prepareReplacement?.(candidate.view);
     this.candidate = candidate;
     const pending = this.performLoad(candidate, loader).finally(() => {
       if (this.candidate === candidate) this.candidate = undefined;
@@ -139,21 +117,15 @@ export class SessionReplay<View, Update> {
     );
   }
 
-  public limitCurrent(): boolean {
-    if (
-      this.loading !== undefined ||
-      this.appendVersion === null ||
-      this.needsReconcile ||
-      !(this.projection.limit?.(this.current.view) ?? false)
-    )
-      return false;
-    this.enableSummaryIfLimited(this.current);
-    return true;
-  }
-
-  private enableSummaryIfLimited(attempt: Attempt<Update, View>): void {
-    if (this.projection.isLimited?.(attempt.view) && this.projection.summarize)
-      attempt.tracker.enableSummaryMode(this.projection.summarize);
+  public async advanceLiveVersion(appendVersion: number, watermark: number): Promise<void> {
+    if (this.loading !== undefined || this.needsReconcile || this.appendVersion === null ||
+      appendVersion < this.appendVersion) throw new Error("Live history cannot advance");
+    const current = this.current;
+    try { await this.waitForSeal(current, watermark); }
+    catch (error) { this.invalidate(error); throw error; }
+    if (current !== this.current || this.loading !== undefined || this.needsReconcile)
+      throw new Error("Live history changed while awaiting delivery");
+    this.appendVersion = appendVersion;
   }
 
   private async performLoad(
@@ -165,7 +137,6 @@ export class SessionReplay<View, Update> {
       if (candidate.error !== undefined) throw candidate.error;
       await this.waitForSeal(candidate, cut.sealedWatermark);
       candidate.tracker.seal(cut.sealedWatermark);
-      this.projection.seal?.(candidate.view);
       this.current = candidate;
       this.appendVersion = cut.appendVersion;
       this.needsReconcile = false;

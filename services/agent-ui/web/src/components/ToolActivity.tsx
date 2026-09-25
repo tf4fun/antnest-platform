@@ -2,6 +2,8 @@ import {
   Check,
   ChevronRight,
   CircleAlert,
+  CircleHelp,
+  Clock3,
   FilePenLine,
   FileSearch,
   LoaderCircle,
@@ -23,9 +25,11 @@ const kindIcon: Record<string, LucideIcon> = {
 };
 
 const statusIcon: Record<ToolActivityModel["status"], LucideIcon> = {
+  pending: Clock3,
   completed: Check,
   failed: CircleAlert,
   running: LoaderCircle,
+  unknown: CircleHelp,
 };
 
 export function ToolActivity({
@@ -39,9 +43,8 @@ export function ToolActivity({
   const Icon = kindIcon[activity.tool] ?? Wrench;
   const duration =
     activity.durationMs === undefined ? "" : `${activity.durationMs} ms`;
-  const output =
-    activity.output ||
-    (activity.detail !== activity.input ? activity.detail : undefined);
+  const hasPayload = Boolean(activity.input || activity.output || activity.detail ||
+    activity.attachments?.length);
 
   return (
     <details className={`tool-activity tool-${activity.status}`}>
@@ -76,15 +79,19 @@ export function ToolActivity({
         {activity.input ? (
           <ToolPayload label="Input" text={activity.input} />
         ) : null}
-        {output ? (
-          <ToolPayload label="Output" text={output} />
-        ) : (
+        {activity.output ? <ToolPayload label="Output" text={activity.output} /> : null}
+        {activity.detail ? <ToolPayload label="Details" text={activity.detail} /> : null}
+        {activity.attachments?.length ? <ul className="tool-attachments">
+          {activity.attachments.map((attachment) =>
+            <li key={attachment.id}>{attachment.name} · {attachment.sizeLabel}</li>)}
+        </ul> : null}
+        {!hasPayload ? (
           <p className="tool-empty">
-            {activity.status === "running"
+            {activity.status === "running" || activity.status === "pending"
               ? "Waiting for output"
               : "No output received"}
           </p>
-        )}
+        ) : null}
       </div>
     </details>
   );

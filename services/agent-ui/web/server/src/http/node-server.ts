@@ -14,6 +14,7 @@ type WorkspaceHandler = { handle(request: Request): Promise<Response | null> };
 type WorkspaceRoute = { agentId: string; sessionId: string | null };
 type DocumentOptions = {
   assetRoot?: string;
+  requestDeadlineMs?: number;
   isDraining?: () => boolean;
   telemetry?: Pick<BridgeTelemetry, "observeHttp">;
   renderDocument?(output: ServerResponse, input: {
@@ -24,6 +25,9 @@ type DocumentOptions = {
 };
 
 export function createWorkspaceHttpServer(runtime: WorkspaceHandler, options: DocumentOptions = {}): Server {
+  const deadlineMs = options.requestDeadlineMs ?? 60_000;
+  if (!Number.isSafeInteger(deadlineMs) || deadlineMs < 1)
+    throw new RangeError("Invalid ordinary HTTP deadline");
   const server = createServer((incoming, outgoing) => {
     const work = async () => {
       await serve(runtime, options, incoming, outgoing);
@@ -146,6 +150,12 @@ async function serve(
       await serveDocument(runtime, options.renderDocument, request, outgoing);
       return;
     }
+    const eventStream = method === "GET" &&
+      /^\/api\/app\/workspace\/v1\/agents\/[^/]+\/events$/u.test(new URL(request.url).pathname);
+    if (!eventStream) {
+      await serveOrdinary(runtime, request, outgoing, disconnect, options.requestDeadlineMs ?? 60_000);
+      return;
+    }
     const result = await runtime.handle(request);
     const response =
       result ??
@@ -162,7 +172,7 @@ async function serve(
     outgoing.writeHead(response.status, Object.fromEntries(response.headers));
     if (response.headers.get("content-type")?.startsWith("text/event-stream"))
       outgoing.flushHeaders();
-    if (response.body === null || method === "HEAD") {
+    if (response.body === null) {
       outgoing.end();
       return;
     }
@@ -172,6 +182,7 @@ async function serve(
     }
     if (!outgoing.destroyed) outgoing.end();
   } catch {
+    if (outgoing.destroyed) return;
     if (outgoing.headersSent) {
       outgoing.destroy();
       return;
@@ -189,6 +200,68 @@ async function serve(
         recovery: "retry_read",
       }),
     );
+  }
+}
+
+class HttpDeadlineError extends Error {}
+
+async function serveOrdinary(
+  runtime: WorkspaceHandler,
+  request: Request,
+  output: ServerResponse,
+  disconnect: AbortController,
+  deadlineMs: number,
+): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  let abort!: () => void;
+  const interrupted = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new HttpDeadlineError()), deadlineMs);
+    abort = () => reject(request.signal.reason);
+    request.signal.addEventListener("abort", abort, { once: true });
+  });
+  const read = async () => {
+    const response = await runtime.handle(request) ?? Response.json({
+      code: "route_not_found", message: "Workspace route was not found",
+      requestId: randomUUID(), retryable: false, recovery: "none",
+    }, { status: 404 });
+    if (request.signal.aborted) {
+      await response.body?.cancel();
+      request.signal.throwIfAborted();
+    }
+    const chunks: Uint8Array[] = [];
+    if (response.body !== null && request.method !== "HEAD") {
+      reader = response.body.getReader();
+      try {
+        while (true) {
+          const part = await reader.read();
+          if (part.done) break;
+          chunks.push(part.value);
+        }
+      } finally { reader.releaseLock(); reader = undefined; }
+    } else await response.body?.cancel();
+    return { response, bytes: Buffer.concat(chunks) };
+  };
+  try {
+    const { response, bytes } = await Promise.race([read(), interrupted]);
+    if (output.destroyed) return;
+    output.writeHead(response.status, Object.fromEntries(response.headers));
+    output.end(bytes);
+  } catch (cause) {
+    if (cause instanceof HttpDeadlineError && !output.destroyed) {
+      const prompt = /\/prompts$|\/operations\/[^/]+\/cancel$/u.test(new URL(request.url).pathname);
+      output.writeHead(504, { "content-type": "application/json; charset=utf-8",
+        "cache-control": "no-store", connection: "close" });
+      output.end(JSON.stringify({ code: "workspace_deadline_exceeded",
+        message: "Workspace request timed out", requestId: randomUUID(), retryable: true,
+        recovery: prompt ? "query_operation" : request.method === "GET" ? "retry_read" : "refresh" }));
+      // Only this HTTP wait expires. Accepted ACP work has its own lifetime.
+      disconnect.abort(cause);
+    } else if (!output.destroyed) throw cause;
+  } finally {
+    clearTimeout(timer);
+    request.signal.removeEventListener("abort", abort);
+    if (reader !== undefined) void reader.cancel().catch(() => {});
   }
 }
 

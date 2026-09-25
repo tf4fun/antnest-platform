@@ -4,12 +4,12 @@ import type {
   NewSessionResponse,
   SessionConfigOption,
   SessionNotification,
-  SessionUpdate,
 } from "@agentclientprotocol/sdk";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import {
   AcpHttpBridge,
   AgentAccessRevokedError,
+  BridgeCapabilityError,
   type AcpBridgeCallbacks,
   type ExecutionObservation,
   type AgentExecutionState,
@@ -19,12 +19,11 @@ import { parseDeliveryMark } from "./delivery.ts";
 import { ConfigurationConflictError } from "./configuration-token.ts";
 import {
   CompactTranscript,
-  HistoryCapacityError,
   type TranscriptTurn,
 } from "./compact-transcript.ts";
 import { OperationCoordinator } from "./operations.ts";
 import { PermissionInbox, type PendingPermission } from "./permission-inbox.ts";
-import { ReplayLoadGate } from "./replay-load-gate.ts";
+import { ReplayCapacityError, ReplayLoadGate } from "./replay-load-gate.ts";
 import type { BridgeScope } from "./registry.ts";
 import { SessionReplay } from "./session-replay.ts";
 import { ViewPager, type ViewContext } from "./view-pager.ts";
@@ -70,8 +69,10 @@ type ConditionReplay = SessionReplay<
   SessionNotification["update"]
 >;
 
-const defaultSessionHistoryBytes = 64 * 1024 * 1024;
-const defaultCachedHistoryBytes = 256 * 1024 * 1024;
+type AuthorizedSession = { appendVersion: number; outputWatermark: number;
+  operations: OperationCoordinator; recentReceipts: IntentReceipt[];
+  configurationRevision: string | null; upstreamConfigurationRevision: string | null };
+
 const defaultMaxAgentJournals = 32;
 const defaultMaxSessionJournals = 32;
 const defaultMaxAgentSubscribers = 16;
@@ -82,14 +83,19 @@ export class AgentBridgeOwner {
   private readonly inbox: PermissionInbox;
   private readonly sessions = new Map<string, ConditionReplay>();
   private readonly sessionPins = new Map<string, number>();
+  private readonly authorizationWorkflows = new Map<string, Promise<AuthorizedSession>>();
+  private readonly pagers = new Map<string, { transcript: CompactTranscript; watermark: number;
+    epoch: string; incarnation: string; key: Buffer; pager: ViewPager }>();
   private readonly activeRunSessions = new Set<string>();
+  private readonly activeRunWork = new Map<string, () => void>();
+  private readonly idleSince = new Map<string, number>();
+  private readonly incarnations = new Map<string, string>();
+  private readonly retainWork: () => () => void;
+  private readonly now: () => number;
+  private readonly idleMs: number;
+  private readonly newIncarnation: () => string;
+  private sweeping: Promise<void> | undefined;
   private readonly replayLoads: ReplayLoadGate;
-  private readonly maxSessionHistoryBytes: number;
-  private readonly maxCachedHistoryBytes: number;
-  private readonly reserveHistory: (
-    owner: AgentBridgeOwner,
-    bytes: number,
-  ) => () => void;
   private readonly recordColdReplay: (
     durationMs: number,
     outcome: "success" | "error",
@@ -101,6 +107,7 @@ export class AgentBridgeOwner {
   private readonly maxAgentJournals: number;
   private readonly maxSessionJournals: number;
   private readonly maxAgentSubscribers: number;
+  private readonly replayRetryBackoffMs: number;
   private acp: AcpBridgePort | undefined;
   private retired = false;
   private draining = false;
@@ -115,6 +122,7 @@ export class AgentBridgeOwner {
   private readonly changed: (
     owner: AgentBridgeOwner,
     sessionId: string,
+    reconcile: boolean,
   ) => void;
   private readonly evicted: (
     owner: AgentBridgeOwner,
@@ -129,14 +137,19 @@ export class AgentBridgeOwner {
     selectedSessionId: string | null,
   ) => void;
   private readonly watchAbort = new AbortController();
-  private lastAgentState: string | undefined;
+  private observedAgentState: AgentExecutionState | undefined;
+  private agentStateSequence = 0;
+  private agentReadSequence = 0;
+  private appliedAgentReadSequence = 0;
+  private executionReadSequence = 0;
+  private readonly executionObservations = new Map<string, { sequence: number; value: ExecutionObservation }>();
   private accessRevoked = false;
 
   private constructor(
     scope: BridgeScope,
     retainWork: () => () => void,
     stream: { epoch: string; key: Buffer },
-    changed: (owner: AgentBridgeOwner, sessionId: string) => void,
+    changed: (owner: AgentBridgeOwner, sessionId: string, reconcile: boolean) => void,
     evicted: (owner: AgentBridgeOwner, sessionId: string) => void,
     agentChanged: (owner: AgentBridgeOwner, state: AgentExecutionState) => void,
     agentJournalEvicted: (
@@ -144,26 +157,28 @@ export class AgentBridgeOwner {
       selectedSessionId: string | null,
     ) => void,
     maxQueuedLoads: number,
-    maxSessionHistoryBytes: number,
-    maxCachedHistoryBytes: number,
     maxAgentJournals: number,
     maxSessionJournals: number,
     maxAgentSubscribers: number,
-    reserveHistory: (owner: AgentBridgeOwner, bytes: number) => () => void,
     recordColdReplay: (
       durationMs: number,
       outcome: "success" | "error",
     ) => void,
     recordLocalIntentReuse: (outcome: "hit" | "conflict") => void,
     closed: (owner: AgentBridgeOwner) => void,
+    lifecycle: { now: () => number; idleMs: number; incarnation: () => string;
+      replayRetryBackoffMs: number },
   ) {
-    if (
-      !Number.isSafeInteger(maxSessionHistoryBytes) ||
-      maxSessionHistoryBytes < 1 ||
-      !Number.isSafeInteger(maxCachedHistoryBytes) ||
-      maxCachedHistoryBytes < maxSessionHistoryBytes + sessionOverheadBytes
-    )
-      throw new RangeError("Invalid Bridge history cache budget");
+    if (!Number.isFinite(lifecycle.idleMs) || lifecycle.idleMs < 0)
+      throw new RangeError("Invalid Session idle lifetime");
+    this.retainWork = retainWork;
+    this.now = lifecycle.now;
+    this.idleMs = lifecycle.idleMs;
+    if (!Number.isSafeInteger(lifecycle.replayRetryBackoffMs) ||
+      lifecycle.replayRetryBackoffMs < 1)
+      throw new RangeError("Invalid replay retry backoff");
+    this.replayRetryBackoffMs = lifecycle.replayRetryBackoffMs;
+    this.newIncarnation = lifecycle.incarnation;
     if (!Number.isSafeInteger(maxAgentJournals) || maxAgentJournals < 1)
       throw new RangeError("Invalid Agent journal capacity");
     if (!Number.isSafeInteger(maxSessionJournals) || maxSessionJournals < 1)
@@ -178,9 +193,6 @@ export class AgentBridgeOwner {
     this.agentChanged = agentChanged;
     this.agentJournalEvicted = agentJournalEvicted;
     this.replayLoads = new ReplayLoadGate(maxQueuedLoads);
-    this.maxSessionHistoryBytes = maxSessionHistoryBytes;
-    this.maxCachedHistoryBytes = maxCachedHistoryBytes;
-    this.reserveHistory = reserveHistory;
     this.recordColdReplay = recordColdReplay;
     this.recordLocalIntentReuse = recordLocalIntentReuse;
     this.closed = closed;
@@ -192,12 +204,15 @@ export class AgentBridgeOwner {
       retainWork,
     });
     this.operations = new OperationCoordinator({
-      prompt: (input) => this.connection().prompt(input),
+      prompt: async (input) => {
+        try { return await this.connection().prompt(input); }
+        finally { this.notifyChanged(input.sessionId, true); }
+      },
       readIntent: (sessionId, intentId, signal) =>
         this.connection().readIntent(sessionId, intentId, signal),
       cancel: (sessionId, runId) => this.connection().cancel(sessionId, runId),
       retainWork,
-      changed: (sessionId) => this.notifyChanged(sessionId),
+      changed: (sessionId) => this.notifyChanged(sessionId, true),
       recordLocalIntentReuse: this.recordLocalIntentReuse,
     });
   }
@@ -207,16 +222,17 @@ export class AgentBridgeOwner {
     retainWork(): () => void;
     stream?: { epoch: string; key: Buffer };
     maxQueuedLoads?: number;
-    maxSessionHistoryBytes?: number;
-    maxCachedHistoryBytes?: number;
+    now?: () => number;
+    idleMs?: number;
+    replayRetryBackoffMs?: number;
+    incarnation?: () => string;
     maxAgentJournals?: number;
     maxSessionJournals?: number;
     maxAgentSubscribers?: number;
-    reserveHistory?(owner: AgentBridgeOwner, bytes: number): () => void;
     recordColdReplay?(durationMs: number, outcome: "success" | "error"): void;
     recordLocalIntentReuse?(outcome: "hit" | "conflict"): void;
     closed?(owner: AgentBridgeOwner): void;
-    changed?(owner: AgentBridgeOwner, sessionId: string): void;
+    changed?(owner: AgentBridgeOwner, sessionId: string, reconcile: boolean): void;
     evicted?(owner: AgentBridgeOwner, sessionId: string): void;
     agentChanged?(owner: AgentBridgeOwner, state: AgentExecutionState): void;
     agentJournalEvicted?(
@@ -237,20 +253,21 @@ export class AgentBridgeOwner {
       input.agentChanged ?? (() => {}),
       input.agentJournalEvicted ?? (() => {}),
       input.maxQueuedLoads ?? 8,
-      input.maxSessionHistoryBytes ?? defaultSessionHistoryBytes,
-      input.maxCachedHistoryBytes ?? defaultCachedHistoryBytes,
       input.maxAgentJournals ?? defaultMaxAgentJournals,
       input.maxSessionJournals ?? defaultMaxSessionJournals,
       input.maxAgentSubscribers ?? defaultMaxAgentSubscribers,
-      input.reserveHistory ?? (() => () => {}),
       input.recordColdReplay ?? (() => {}),
       input.recordLocalIntentReuse ?? (() => {}),
       input.closed ?? (() => {}),
+      { now: input.now ?? Date.now, idleMs: input.idleMs ?? 300_000,
+        incarnation: input.incarnation ?? randomUUID,
+        replayRetryBackoffMs: input.replayRetryBackoffMs ?? 500 },
     );
     owner.acp = await input.connect(input.scope, {
       update: (params) => owner.onUpdate(params),
       requestPermission: (params, signal) =>
-        owner.inbox.request(params, signal),
+        owner.retired ? Promise.resolve({ outcome: { outcome: "cancelled" as const } })
+          : owner.inbox.request(params, signal),
     });
     if (owner.acp.closed !== undefined)
       void owner.acp.closed.then(() => owner.close(), () => owner.close());
@@ -355,7 +372,42 @@ export class AgentBridgeOwner {
     const read = this.connection().readAgentExecutionState;
     if (read === undefined)
       throw new Error("ACP Agent execution state is unavailable");
-    return read.call(this.connection());
+    const generation = this.agentStateSequence;
+    const sequence = ++this.agentReadSequence;
+    const state = await read.call(this.connection());
+    if (this.retired) throw new Error("Bridge owner is retired");
+    if (generation === this.agentStateSequence && sequence > this.appliedAgentReadSequence) {
+      this.observedAgentState = state;
+      this.appliedAgentReadSequence = sequence;
+    }
+    return this.observedAgentState ?? state;
+  }
+
+  public cachedAgentState(): AgentExecutionState {
+    if (this.observedAgentState === undefined) throw new Error("Agent state has not been authorized");
+    return this.observedAgentState;
+  }
+
+  public cachedReceipts(sessionId: string): IntentReceipt[] {
+    return this.executionObservations.get(sessionId)?.value.recentReceipts ?? [];
+  }
+
+  public cachedSession(sessionId: string): {
+    session: Awaited<ReturnType<AgentBridgeOwner["authorizeSession"]>>; blocked: boolean;
+  } {
+    const replay = this.sessions.get(sessionId);
+    const snapshot = replay?.snapshot();
+    const execution = this.executionObservations.get(sessionId)?.value;
+    if (!replay || !snapshot || snapshot.appendVersion === null || !execution)
+      throw new Error("Session has not been authorized");
+    const watermark = Math.max(execution.outputWatermark,
+      ...this.operations.snapshot(sessionId, execution.recentReceipts).map((item) => item.outputWatermark ?? 0));
+    const blocked = snapshot.needsReconcile || !replay.hasCompleteOutput(watermark) ||
+      snapshot.appendVersion !== execution.appendVersion;
+    return { blocked, session: { appendVersion: snapshot.appendVersion, outputWatermark: watermark,
+      recentReceipts: execution.recentReceipts, operations: this.operations,
+      configurationRevision: blocked ? null : this.configurationRevision(sessionId, execution.configurationRevision),
+      upstreamConfigurationRevision: blocked ? null : execution.configurationRevision } };
   }
 
   public agentJournal(sessionId: string | null): StreamJournal<unknown> {
@@ -379,6 +431,7 @@ export class AgentBridgeOwner {
         epoch: this.streamEpoch,
         projectionId: randomUUID(),
         key: this.streamKey,
+        observersChanged: () => this.refreshIdle(sessionId ?? ""),
       });
       this.agentJournals.set(selection, journal);
     } else {
@@ -445,51 +498,43 @@ export class AgentBridgeOwner {
         value,
         expectedRevision,
       );
-      const releaseBudget = this.reserveHistory(
-        this,
-        Buffer.byteLength(JSON.stringify(response.configOptions)) + 4096,
-      );
-      try {
-        if (
-          transcript.applyConfigurationResponse(
-            response.configOptions,
-            startedAt,
-          )
-        )
-          this.notifyChanged(sessionId);
-      } finally {
-        releaseBudget();
-      }
+      if (this.retired || this.sessions.get(sessionId)?.snapshot().view !== transcript)
+        throw new Error("Session materialization is stale or retired");
+      if (transcript.applyConfigurationResponse(response.configOptions, startedAt))
+        this.notifyChanged(sessionId);
     } finally {
       releasePin();
     }
   }
 
-  public async authorizeSession(sessionId: string): Promise<{
-    appendVersion: number;
-    outputWatermark: number;
-    operations: OperationCoordinator;
-    recentReceipts: IntentReceipt[];
-    configurationRevision: string | null;
-    upstreamConfigurationRevision: string | null;
-  }> {
+  public authorizeSession(sessionId: string): Promise<AuthorizedSession> {
+    const existing = this.authorizationWorkflows.get(sessionId);
+    if (existing) return existing;
+    const work = this.authorizeSessionOwned(sessionId);
+    this.authorizationWorkflows.set(sessionId, work);
+    const clear = () => {
+      if (this.authorizationWorkflows.get(sessionId) === work)
+        this.authorizationWorkflows.delete(sessionId);
+    };
+    void work.then(clear, clear);
+    return work;
+  }
+
+  private async authorizeSessionOwned(sessionId: string): Promise<AuthorizedSession> {
     if (this.retired) throw new Error("Bridge owner is retired");
+    const releaseWork = this.retainWork();
     const releasePin = this.pinSession(sessionId);
     try {
       let replay = this.sessions.get(sessionId);
       const created = replay === undefined;
       if (replay === undefined) {
         replay = new SessionReplay({
-          empty: () => new CompactTranscript(this.maxSessionHistoryBytes),
+          empty: () => new CompactTranscript(),
           apply: (view, batch) => view.apply(batch),
           estimate: (view) => view.estimatedRetainedBytes,
-          seal: (view) => view.enableLiveLimit(),
-          prepareReplacement: (view) => view.enableLiveLimit(),
-          limit: (view) => view.limitLive(),
-          isLimited: (view) => view.isLimited,
-          summarize: summarizeLimitedUpdate,
         });
         this.sessions.set(sessionId, replay);
+        this.incarnations.set(sessionId, this.newIncarnation());
       }
       const before = replay.snapshot();
       const coldReplay = replay.snapshot().appendVersion === null;
@@ -497,28 +542,17 @@ export class AgentBridgeOwner {
         const startedAt = coldReplay ? performance.now() : 0;
         let outcome: "success" | "error" = "error";
         try {
-          const releaseBudget = this.reserveForLoad(sessionId);
-          try {
-            await replay.load((candidate) =>
-              this.replayLoads.run(async () => {
-                const loaded = await this.connection().load(sessionId);
-                candidate.setInitialConfigOptions(
-                  loaded.response?.configOptions,
-                );
-                return loaded.cut;
-              }),
-            );
-          } finally {
-            releaseBudget();
-          }
+          await this.loadReplay(sessionId, replay);
           outcome = "success";
         } catch (error) {
           if (
             created &&
             this.sessions.get(sessionId) === replay &&
             replay.snapshot().appendVersion === null
-          )
+          ) {
             this.sessions.delete(sessionId);
+            this.incarnations.delete(sessionId);
+          }
           throw error;
         } finally {
           if (coldReplay)
@@ -526,29 +560,25 @@ export class AgentBridgeOwner {
         }
       }
       const execution = await this.authorizeExecution(sessionId);
+      this.assertCurrentSession(sessionId, replay);
+      const retainedVersion = replay.snapshot().appendVersion;
+      if (!coldReplay && !replay.snapshot().needsReconcile && retainedVersion !== null &&
+        (retainedVersion !== execution.appendVersion ||
+          this.operations.knowsLocalVersion(sessionId, retainedVersion)) &&
+        this.operations.knowsAppendTransition(sessionId, retainedVersion, execution.appendVersion))
+        await replay.advanceLiveVersion(execution.appendVersion, execution.outputWatermark);
       if (
-        !replay.snapshot().view.isLimited &&
-        (!replay.hasCompleteOutput(execution.outputWatermark) ||
-          replay.snapshot().appendVersion !== execution.appendVersion)
+        !replay.hasCompleteOutput(execution.outputWatermark) ||
+        replay.snapshot().appendVersion !== execution.appendVersion
       ) {
-        const releaseBudget = this.reserveForLoad(sessionId);
-        try {
-          await replay.load((candidate) =>
-            this.replayLoads.run(async () => {
-              const loaded = await this.connection().load(sessionId);
-              candidate.setInitialConfigOptions(loaded.response?.configOptions);
-              return loaded.cut;
-            }),
-          );
-        } finally {
-          releaseBudget();
-        }
+        await this.loadReplay(sessionId, replay);
         this.applyKnownOutcomes(sessionId, execution.recentReceipts);
         if (!replay.hasCompleteOutput(execution.outputWatermark))
           throw new Error("ACP replay is behind the durable output watermark");
         if (replay.snapshot().appendVersion !== execution.appendVersion)
           throw new Error("ACP replay is behind the current append version");
       }
+      this.assertCurrentSession(sessionId, replay);
       const after = replay.snapshot();
       if (
         this.hasStreamJournal(sessionId) &&
@@ -571,12 +601,47 @@ export class AgentBridgeOwner {
       };
     } finally {
       releasePin();
+      releaseWork();
     }
+  }
+
+  private async loadReplay(sessionId: string, replay: ConditionReplay): Promise<void> {
+    for (let attempt = 0; attempt < 4; attempt++) {
+      this.assertCurrentSession(sessionId, replay);
+      try {
+        await replay.load((candidate) => this.replayLoads.run(async () => {
+          const loaded = await this.connection().load(sessionId);
+          this.assertCurrentSession(sessionId, replay);
+          candidate.setInitialConfigOptions(loaded.response?.configOptions);
+          return loaded.cut;
+        }));
+        return;
+      } catch (error) {
+        if (this.retired) throw new Error("Bridge owner is retired");
+        if (attempt === 3 || error instanceof BridgeCapabilityError ||
+          error instanceof ReplayCapacityError || error instanceof RangeError) throw error;
+        await this.waitReplayRetry(this.replayRetryBackoffMs * 2 ** attempt);
+      }
+    }
+  }
+
+  private waitReplayRetry(delayMs: number): Promise<void> {
+    const signal = this.watchAbort.signal;
+    if (signal.aborted) return Promise.reject(new Error("Bridge owner is retired"));
+    return new Promise((resolve, reject) => {
+      const finish = () => { signal.removeEventListener("abort", abort); resolve(); };
+      const abort = () => {
+        clearTimeout(timer);
+        signal.removeEventListener("abort", abort);
+        reject(new Error("Bridge owner is retired"));
+      };
+      const timer = setTimeout(finish, delayMs);
+      signal.addEventListener("abort", abort, { once: true });
+    });
   }
 
   public readTurns(sessionId: string): TranscriptTurn[] {
     const view = this.readyTranscript(sessionId).view;
-    if (view.isLimited) throw new HistoryCapacityError();
     return view.turns();
   }
 
@@ -600,24 +665,13 @@ export class AgentBridgeOwner {
     if (
       snapshot?.appendVersion === null ||
       snapshot === undefined ||
-      snapshot.loading ||
-      snapshot.view.isLimited
+      snapshot.loading
     )
       return null;
     return {
       appendVersion: snapshot.appendVersion,
       watermark: snapshot.watermark,
     };
-  }
-
-  public viewLimit(sessionId: string): {
-    watermark: number;
-    preview: { text: string; truncated: true };
-  } | null {
-    const ready = this.readyTranscript(sessionId);
-    return ready.view.isLimited
-      ? { watermark: ready.watermark, preview: ready.view.limitedPreview }
-      : null;
   }
 
   private configurationRevision(
@@ -645,7 +699,6 @@ export class AgentBridgeOwner {
     allowStale = false,
   ): ViewPager {
     const ready = this.readyTranscript(sessionId, allowStale);
-    if (ready.view.isLimited) throw new HistoryCapacityError();
     if (
       context.sessionId !== sessionId ||
       (context.watermark !== undefined &&
@@ -655,11 +708,19 @@ export class AgentBridgeOwner {
       context.agentId !== this.scope.agentId
     )
       throw new Error("View pager scope or watermark mismatch");
-    return new ViewPager({
-      transcript: ready.view,
-      context: { ...context, watermark: ready.watermark },
-      key,
-    });
+    const cached = this.pagers.get(sessionId);
+    if (cached?.transcript === ready.view && cached.watermark === ready.watermark &&
+      cached.epoch === context.epoch && cached.incarnation === context.incarnation && cached.key.equals(key))
+      return cached.pager;
+    const sameScope = cached?.transcript === ready.view && cached.epoch === context.epoch &&
+      cached.incarnation === context.incarnation && cached.key.equals(key);
+    const pager = new ViewPager({ transcript: ready.view,
+      context: { ...context, watermark: ready.watermark }, key,
+      now: this.now,
+      ...(sameScope ? { turnContentCache: cached.pager.sharedTurnContentCache() } : {}) });
+    this.pagers.set(sessionId, { transcript: ready.view, watermark: ready.watermark,
+      epoch: context.epoch, incarnation: context.incarnation, key: Buffer.from(key), pager });
+    return pager;
   }
 
   public streamJournal(sessionId: string): StreamJournal<unknown> {
@@ -681,6 +742,7 @@ export class AgentBridgeOwner {
         epoch: this.streamEpoch,
         projectionId: randomUUID(),
         key: this.streamKey,
+        observersChanged: () => this.refreshIdle(sessionId ?? ""),
       });
       this.journals.set(sessionId, journal);
     } else {
@@ -700,43 +762,62 @@ export class AgentBridgeOwner {
 
   private pinSession(sessionId: string): () => void {
     this.sessionPins.set(sessionId, (this.sessionPins.get(sessionId) ?? 0) + 1);
+    this.idleSince.delete(sessionId);
+    let released = false;
     return () => {
+      if (released) return;
+      released = true;
       const remaining = (this.sessionPins.get(sessionId) ?? 1) - 1;
       if (remaining === 0) this.sessionPins.delete(sessionId);
       else this.sessionPins.set(sessionId, remaining);
+      this.refreshIdle(sessionId);
     };
   }
 
-  private reserveForLoad(sessionId: string): () => void {
-    if (!this.evictColdUntil(this.maxSessionHistoryBytes, sessionId))
-      throw new HistoryCapacityError();
-    return this.reserveHistory(this, this.maxSessionHistoryBytes);
+  public sessionIncarnation(sessionId: string): string {
+    const incarnation = this.incarnations.get(sessionId);
+    if (incarnation === undefined) throw new Error("Session history is not ready");
+    return incarnation;
   }
 
-  private evictColdUntil(
-    reserveBytes: number,
-    protectedSessionId: string,
-  ): boolean {
-    while (
-      this.estimatedCachedHistoryBytes + reserveBytes >
-      this.maxCachedHistoryBytes
-    ) {
-      const cold = [...this.sessions].find(([sessionId, replay]) =>
-        this.canEvict(sessionId, replay, protectedSessionId),
-      );
-      if (cold === undefined) return false;
-      this.evictSession(cold[0]);
+  public sweep(): Promise<void> {
+    if (this.retired || this.draining) return Promise.resolve();
+    this.sweeping ??= this.sweepSessions().finally(() => { this.sweeping = undefined; });
+    return this.sweeping;
+  }
+
+  private async sweepSessions(): Promise<void> {
+    for (const { pager } of this.pagers.values()) pager.releaseIdleContentCaches();
+    // Recovered Runs must be observed even with no browser subscriber.
+    for (const sessionId of new Set([...this.activeRunSessions, ...this.operations.trackedSessionIds()])) {
+      if (this.retired || this.draining) return;
+      try { await this.authorizeExecution(sessionId); } catch { /* Keep work pinned until a trustworthy observation. */ }
     }
-    return true;
+    for (const [sessionId, replay] of this.sessions) {
+      this.refreshIdle(sessionId);
+      const idleSince = this.idleSince.get(sessionId);
+      if (idleSince !== undefined && this.now() - idleSince >= this.idleMs && this.canEvict(sessionId, replay))
+        this.evictSession(sessionId);
+    }
+  }
+
+  private refreshIdle(sessionId: string): void {
+    const replay = this.sessions.get(sessionId);
+    if (replay === undefined || this.retired) return;
+    if (!this.canEvict(sessionId, replay)) this.idleSince.delete(sessionId);
+    else if (!this.idleSince.has(sessionId)) this.idleSince.set(sessionId, this.now());
+  }
+
+  private assertCurrentSession(sessionId: string, replay: ConditionReplay): void {
+    if (this.retired || this.sessions.get(sessionId) !== replay)
+      throw new Error("Session materialization is stale or retired");
   }
 
   private canEvict(
     sessionId: string,
     replay: ConditionReplay,
-    protectedSessionId: string,
   ): boolean {
     return (
-      sessionId !== protectedSessionId &&
       !replay.snapshot().loading &&
       (this.sessionPins.get(sessionId) ?? 0) === 0 &&
       (this.journals.get(sessionId)?.subscriberCount ?? 0) === 0 &&
@@ -749,12 +830,16 @@ export class AgentBridgeOwner {
 
   private evictSession(sessionId: string): void {
     this.sessions.delete(sessionId);
+    this.pagers.delete(sessionId);
+    this.idleSince.delete(sessionId);
+    this.incarnations.delete(sessionId);
     this.journals.get(sessionId)?.close();
     this.journals.delete(sessionId);
     this.agentJournals.get(sessionId)?.close();
     this.agentJournals.delete(sessionId);
     this.viewRevisions.delete(sessionId);
     this.receiptDigests.delete(sessionId);
+    this.executionObservations.delete(sessionId);
     this.activeRunSessions.delete(sessionId);
     this.evicted(this, sessionId);
   }
@@ -795,19 +880,34 @@ export class AgentBridgeOwner {
     configurationRevision: string | null;
     upstreamConfigurationRevision: string | null;
   }> {
-    const execution = await this.connection().readExecution(sessionId);
+    const sequence = ++this.executionReadSequence;
+    let execution = await this.connection().readExecution(sessionId);
+    if (this.retired) throw new Error("Bridge owner is retired");
     if (execution.sessionId !== sessionId)
       throw new Error("ACP execution scope mismatch");
     for (const receipt of execution.recentReceipts) {
       if (receipt.sessionId !== sessionId)
         throw new Error("ACP receipt scope mismatch");
     }
+    const newerObservation = () => {
+      const current = this.executionObservations.get(sessionId);
+      return current !== undefined && current.sequence > sequence ? current : undefined;
+    };
+    execution = newerObservation()?.value ?? execution;
     this.operations.observeReceipts(sessionId, execution.recentReceipts);
     if (options?.reconcileMissing !== false)
       await this.operations.reconcileMissing(
         sessionId,
         execution.recentReceipts,
       );
+    if (this.retired) throw new Error("Bridge owner is retired");
+    const newer = newerObservation();
+    if (newer !== undefined) {
+      execution = newer.value;
+      this.operations.observeReceipts(sessionId, execution.recentReceipts);
+    } else if (this.sessions.has(sessionId) || execution.activeRunId !== null || this.operations.trackedSessionIds().includes(sessionId))
+      this.executionObservations.set(sessionId, { sequence, value: execution });
+    else this.executionObservations.delete(sessionId);
     this.applyKnownOutcomes(sessionId, execution.recentReceipts);
     const transcript = this.sessions.get(sessionId)?.snapshot().view;
     const requiredOutputWatermark = Math.max(
@@ -817,15 +917,21 @@ export class AgentBridgeOwner {
         .map((operation) => operation.outputWatermark ?? 0),
     );
     if (transcript !== undefined || this.journals.has(sessionId)) {
-      if (execution.activeRunId === null)
-        this.activeRunSessions.delete(sessionId);
-      else this.activeRunSessions.add(sessionId);
       const digest = JSON.stringify(execution.recentReceipts);
       const previousDigest = this.receiptDigests.get(sessionId);
       this.receiptDigests.set(sessionId, digest);
       if (previousDigest !== undefined && previousDigest !== digest)
         this.notifyChanged(sessionId);
     }
+    if (execution.activeRunId !== null) {
+      if (!this.activeRunWork.has(sessionId)) this.activeRunWork.set(sessionId, this.retainWork());
+      this.activeRunSessions.add(sessionId);
+    } else {
+      this.activeRunSessions.delete(sessionId);
+      this.activeRunWork.get(sessionId)?.();
+      this.activeRunWork.delete(sessionId);
+    }
+    this.refreshIdle(sessionId);
     return {
       appendVersion: execution.appendVersion,
       outputWatermark: requiredOutputWatermark,
@@ -868,9 +974,17 @@ export class AgentBridgeOwner {
     this.journals.clear();
     for (const journal of this.agentJournals.values()) journal.close();
     this.agentJournals.clear();
+    for (const replay of this.sessions.values()) replay.invalidate(new Error("Bridge owner is retired"));
     this.sessions.clear();
+    this.pagers.clear();
+    this.idleSince.clear();
+    this.incarnations.clear();
+    for (const release of this.activeRunWork.values()) release();
+    this.activeRunWork.clear();
+    this.activeRunSessions.clear();
     this.viewRevisions.clear();
     this.receiptDigests.clear();
+    this.executionObservations.clear();
     this.closed(this);
   }
 
@@ -901,9 +1015,11 @@ export class AgentBridgeOwner {
           (state) => {
             if (this.retired || this.draining) return;
             const encoded = JSON.stringify(state);
-            if (encoded === this.lastAgentState) return;
-            this.lastAgentState = encoded;
-            this.agentChanged(this, state);
+            const changed = encoded !== JSON.stringify(this.observedAgentState);
+            this.observedAgentState = state;
+            // Even an equal fresh watch result invalidates older HTTP reads.
+            this.agentStateSequence++;
+            if (changed) this.agentChanged(this, state);
           },
           this.watchAbort.signal,
         );
@@ -932,6 +1048,7 @@ export class AgentBridgeOwner {
   }
 
   private onUpdate(params: SessionNotification): void {
+    if (this.retired) return;
     const replay = this.sessions.get(params.sessionId);
     if (replay === undefined) return;
     const mark = parseDeliveryMark(params._meta?.["antnest.dev/delivery"]);
@@ -939,55 +1056,13 @@ export class AgentBridgeOwner {
       const update = params.update;
       if (update.sessionUpdate !== "config_option_update" &&
         update.sessionUpdate !== "session_info_update") return;
-      try {
-        const releaseBudget = this.reserveHistory(
-          this,
-          Buffer.byteLength(JSON.stringify(update)) + 4096,
-        );
-        try {
-          replay.applySideband((view) => {
-            if (update.sessionUpdate === "config_option_update")
-              view.applyConfigurationNotification(update.configOptions);
-            else view.applySessionInfoNotification(update);
-          });
-        } finally {
-          releaseBudget();
-        }
-      } catch (error) {
-        replay.invalidate(error);
-      }
-      this.notifyChanged(params.sessionId);
-      return;
-    }
-    if (replay.snapshot().view.isLimited) {
-      const before = replay.snapshot().watermark;
-      try {
-        replay.receive(mark, params.update);
-        if (replay.snapshot().watermark > before)
-          this.notifyChanged(params.sessionId);
-      } catch (error) {
-        replay.invalidate(error);
-        this.notifyChanged(params.sessionId);
-      }
-      return;
-    }
-    let releaseBudget: () => void;
-    try {
-      releaseBudget = this.reserveHistory(
-        this,
-        Buffer.byteLength(JSON.stringify(params.update ?? null)) + 4096,
-      );
-    } catch (error) {
-      if (error instanceof HistoryCapacityError && replay.limitCurrent()) {
-        try {
-          replay.receive(mark, params.update);
-        } catch (cause) {
-          replay.invalidate(cause);
-        }
-      } else {
-        replay.invalidate(error);
-      }
-      this.notifyChanged(params.sessionId);
+      let changed = false;
+      replay.applySideband((view) => {
+        if (update.sessionUpdate === "config_option_update")
+          { view.applyConfigurationNotification(update.configOptions); changed = true; }
+        else changed = view.applySessionInfoNotification(update);
+      });
+      if (changed) this.notifyChanged(params.sessionId);
       return;
     }
     const before = replay.snapshot();
@@ -997,10 +1072,9 @@ export class AgentBridgeOwner {
       if (!after.loading && after.watermark > before.watermark)
         this.notifyChanged(params.sessionId);
     } catch (error) {
-      if (!(error instanceof HistoryCapacityError)) throw error;
+      replay.invalidate(error);
       this.notifyChanged(params.sessionId);
-    } finally {
-      releaseBudget();
+      throw error;
     }
   }
 
@@ -1023,32 +1097,14 @@ export class AgentBridgeOwner {
     }
   }
 
-  private notifyChanged(sessionId: string): void {
+  private notifyChanged(sessionId: string, reconcile = false): void {
     if (this.retired) return;
+    this.refreshIdle(sessionId);
     const revision = this.viewRevision(sessionId);
     if (revision >= Number.MAX_SAFE_INTEGER) return;
     this.viewRevisions.set(sessionId, revision + 1);
-    this.changed(this, sessionId);
+    this.changed(this, sessionId, reconcile);
   }
-}
-
-function summarizeLimitedUpdate(
-  update: SessionUpdate,
-): SessionUpdate | undefined {
-  if (
-    update.sessionUpdate === "agent_message_chunk" &&
-    update.content.type === "text"
-  )
-    return {
-      ...update,
-      content: { type: "text", text: update.content.text.slice(-4096) },
-    };
-  if (update.sessionUpdate === "usage_update") return update;
-  if (update.sessionUpdate === "config_option_update")
-    return Buffer.byteLength(JSON.stringify(update)) <= 16_384
-      ? update
-      : { sessionUpdate: "config_option_update", configOptions: [] };
-  return undefined;
 }
 
 function advertises(

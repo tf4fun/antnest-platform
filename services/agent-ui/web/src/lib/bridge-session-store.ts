@@ -33,7 +33,8 @@ export class BridgeSessionStore {
   private readonly processCursors = new Map<string, string | null>();
   private readonly processSeen = new Map<string, Set<string>>();
   private readonly pendingProcess = new Map<string, Promise<void>>();
-  private readonly processGeneration = new Map<string, number>();
+  private readonly pendingProcessContent = new Map<string, Promise<void>>();
+  private readonly processControllers = new Map<string, AbortController>();
 
   constructor(
     agentId: string,
@@ -67,12 +68,21 @@ export class BridgeSessionStore {
     return this.historyPage?.ids.size ?? 0;
   }
 
+  suspendReads(): void {
+    this.generation += 1;
+    this.controller.abort();
+    this.controller = new AbortController();
+    this.pending.clear();
+    this.pendingOlder = undefined;
+    this.abortAllProcessRequests();
+  }
+
   accept(raw: unknown, updatedAt: string): Conversation {
     const next = projectBridgeConversation(raw, this.agentId, this.sessionId, updatedAt);
     const retained = new Map<string, Map<string, BridgeProcessItem>>();
     const retainedProcessCursors = new Map<string, string | null>();
     const retainedProcessSeen = new Map<string, Set<string>>();
-    const sameHistory = next.conversation.historyState !== "view_limited" &&
+    const sameHistory =
       next.conversation.historyState !== "blocked" &&
       this.projection?.bridgeEpoch === next.bridgeEpoch &&
       this.projection.incarnation === next.incarnation;
@@ -115,19 +125,33 @@ export class BridgeSessionStore {
       for (const [turnId, items] of this.processItems) {
         const previousInfo = this.projection.processes.get(turnId);
         const nextInfo = next.processes.get(turnId);
-        if (!previousInfo || !nextInfo || previousInfo.version !== nextInfo.version ||
-          previousInfo.count !== nextInfo.count) continue;
+        if (!previousInfo || !nextInfo) continue;
+        const stable = previousInfo.version === nextInfo.version &&
+          previousInfo.count === nextInfo.count;
+        const updated = stable ? items : applyLiveProcessDelta(items,
+          previousInfo, nextInfo, next.liveProcessDeltas.get(turnId),
+          this.processCursors.get(turnId));
+        if (updated === null) continue;
         next.conversation = replaceBridgeProcess(next.conversation, turnId,
-          [...items.values()], this.processCursors.get(turnId) !== null);
-        retained.set(turnId, items);
-        retainedProcessCursors.set(turnId, this.processCursors.get(turnId) ?? null);
+          [...updated.values()], stable && this.processCursors.get(turnId) !== null);
+        retained.set(turnId, updated);
+        retainedProcessCursors.set(turnId, stable ? this.processCursors.get(turnId) ?? null : null);
         retainedProcessSeen.set(turnId, this.processSeen.get(turnId) ?? new Set());
       }
     }
+    const stableProcess = new Set<string>();
+    if (sameHistory && this.projection)
+      for (const [turnId, info] of next.processes) {
+        const previous = this.projection.processes.get(turnId);
+        if (previous?.version === info.version && previous.count === info.count)
+          stableProcess.add(turnId);
+      }
     this.generation += 1;
     this.controller.abort();
     this.controller = new AbortController();
     this.pending.clear();
+    for (const turnId of this.processControllers.keys())
+      if (!stableProcess.has(turnId)) this.abortProcessRequests(turnId);
     this.pendingOlder = pendingOlder;
     this.olderCursors.clear();
     for (const cursor of retainedCursors) this.olderCursors.add(cursor);
@@ -141,8 +165,6 @@ export class BridgeSessionStore {
     for (const [turnId, cursor] of retainedProcessCursors) this.processCursors.set(turnId, cursor);
     this.processSeen.clear();
     for (const [turnId, seen] of retainedProcessSeen) this.processSeen.set(turnId, seen);
-    this.pendingProcess.clear();
-    this.processGeneration.clear();
     this.projection = next;
     this.recentProjection = projectBridgeConversation(raw, this.agentId, this.sessionId, updatedAt);
     this.changed(next.conversation);
@@ -202,9 +224,7 @@ export class BridgeSessionStore {
     if (existing) return existing;
     if (!this.api.process || !this.api.processContent)
       return Promise.reject(new Error("Bridge process API is unavailable"));
-    const generation = this.generation;
-    const processGeneration = this.processGeneration.get(turnId) ?? 0;
-    const signal = this.controller.signal;
+    const signal = this.processSignal(turnId);
     const pending = (async () => {
       let page: Awaited<ReturnType<typeof loadBridgeProcessPage>>;
       try {
@@ -213,15 +233,13 @@ export class BridgeSessionStore {
           new Set(this.processItems.get(turnId)?.keys() ?? []),
           this.processCursors.get(turnId) ?? undefined, signal);
       } catch (cause) {
-        if (generation !== this.generation || signal.aborted ||
-          processGeneration !== (this.processGeneration.get(turnId) ?? 0)) return;
+        if (signal.aborted) return;
         throw cause;
       }
-      if (generation !== this.generation || signal.aborted || !this.projection ||
-        processGeneration !== (this.processGeneration.get(turnId) ?? 0)) return;
+      if (signal.aborted || !this.projection) return;
       const seen = new Set(this.processSeen.get(turnId) ?? []);
       if (page.nextCursor !== null) {
-        if (seen.has(page.nextCursor) || seen.size >= 1024)
+        if (seen.has(page.nextCursor))
           throw new Error("Bridge process cursor did not advance");
         seen.add(page.nextCursor);
       }
@@ -236,6 +254,7 @@ export class BridgeSessionStore {
       this.changed(conversation);
     })().finally(() => {
       if (this.pendingProcess.get(turnId) === pending) this.pendingProcess.delete(turnId);
+      this.releaseProcessController(turnId, signal);
     });
     this.pendingProcess.set(turnId, pending);
     return pending;
@@ -246,11 +265,9 @@ export class BridgeSessionStore {
     const promptId = `${turnId}:prompt`;
     const prompt = projection?.conversation.messages.find((item) => item.id === promptId);
     if (!projection || !prompt || !projection.processes.has(turnId)) return;
-    this.processGeneration.set(turnId, (this.processGeneration.get(turnId) ?? 0) + 1);
-    this.pendingProcess.delete(turnId);
+    this.cancelProcessRequests(turnId);
     const ids = new Set([...this.processItems.get(turnId)?.keys() ?? []].map((id) =>
       `${turnId}:process:${id}`));
-    for (const id of ids) this.pending.delete(id);
     this.processItems.delete(turnId);
     this.processCursors.delete(turnId);
     this.processSeen.delete(turnId);
@@ -262,6 +279,10 @@ export class BridgeSessionStore {
     this.changed(conversation);
   }
 
+  cancelProcessRequests(turnId: string): void {
+    this.abortProcessRequests(turnId);
+  }
+
   private loadProcessContent(messageId: string): Promise<void> {
     const marker = ":process:";
     const split = messageId.indexOf(marker);
@@ -271,33 +292,31 @@ export class BridgeSessionStore {
     if (!item || !this.projection?.conversation.messages.some((message) => message.id === messageId))
       return Promise.reject(new Error("Bridge process item does not belong to the selected Session"));
     if (item.contentCursor === null) return Promise.resolve();
-    const existing = this.pending.get(messageId);
+    const existing = this.pendingProcessContent.get(messageId);
     if (existing) return existing;
     if (!this.api.process || !this.api.processContent)
       return Promise.reject(new Error("Bridge process API is unavailable"));
-    const generation = this.generation;
-    const processGeneration = this.processGeneration.get(turnId) ?? 0;
-    const signal = this.controller.signal;
+    const signal = this.processSignal(turnId);
     const pending = (async () => {
       let complete: BridgeProcessItem;
       try {
         complete = await loadBridgeProcessContent(this.api as Required<ContentApi>,
           this.agentId, this.sessionId, turnId, item, signal);
       } catch (cause) {
-        if (generation !== this.generation || signal.aborted ||
-          processGeneration !== (this.processGeneration.get(turnId) ?? 0)) return;
+        if (signal.aborted) return;
         throw cause;
       }
-      if (generation !== this.generation || signal.aborted || !this.projection ||
-        processGeneration !== (this.processGeneration.get(turnId) ?? 0)) return;
+      if (signal.aborted || !this.projection) return;
       this.processItems.get(turnId)?.set(itemId, complete);
       const conversation = replaceBridgeProcessContent(this.projection.conversation, turnId, complete);
       this.projection = { ...this.projection, conversation };
       this.changed(conversation);
     })().finally(() => {
-      if (this.pending.get(messageId) === pending) this.pending.delete(messageId);
+      if (this.pendingProcessContent.get(messageId) === pending)
+        this.pendingProcessContent.delete(messageId);
+      this.releaseProcessController(turnId, signal);
     });
-    this.pending.set(messageId, pending);
+    this.pendingProcessContent.set(messageId, pending);
     return pending;
   }
 
@@ -438,7 +457,7 @@ export class BridgeSessionStore {
     this.controller.abort();
     this.controller = new AbortController();
     this.pending.clear();
-    this.pendingProcess.clear();
+    this.abortAllProcessRequests();
     this.pendingOlder = undefined;
     this.olderCursors.clear();
     this.historyPage = undefined;
@@ -480,7 +499,7 @@ export class BridgeSessionStore {
     this.controller.abort();
     this.controller = new AbortController();
     this.pending.clear();
-    this.pendingProcess.clear();
+    this.abortAllProcessRequests();
     this.retainProcessCaches(retainedIds);
     this.historyPage = { ids: olderIds, newerCursor, depth };
     this.projection = { ...recent, conversation, turns, turnSignatures, processes,
@@ -494,9 +513,36 @@ export class BridgeSessionStore {
         this.processItems.delete(id);
         this.processCursors.delete(id);
         this.processSeen.delete(id);
-        this.pendingProcess.delete(id);
-        this.processGeneration.delete(id);
       }
+  }
+
+  private processSignal(turnId: string): AbortSignal {
+    let controller = this.processControllers.get(turnId);
+    if (!controller) {
+      controller = new AbortController();
+      this.processControllers.set(turnId, controller);
+    }
+    return controller.signal;
+  }
+
+  private releaseProcessController(turnId: string, signal: AbortSignal): void {
+    const controller = this.processControllers.get(turnId);
+    if (controller?.signal !== signal || this.pendingProcess.has(turnId) ||
+      [...this.pendingProcessContent.keys()].some((id) => id.startsWith(`${turnId}:process:`)))
+      return;
+    this.processControllers.delete(turnId);
+  }
+
+  private abortProcessRequests(turnId: string): void {
+    this.processControllers.get(turnId)?.abort();
+    this.processControllers.delete(turnId);
+    this.pendingProcess.delete(turnId);
+    for (const id of this.pendingProcessContent.keys())
+      if (id.startsWith(`${turnId}:process:`)) this.pendingProcessContent.delete(id);
+  }
+
+  private abortAllProcessRequests(): void {
+    for (const turnId of this.processControllers.keys()) this.abortProcessRequests(turnId);
   }
 
   private rememberOlderCursor(cursor: string): void {
@@ -509,11 +555,10 @@ export class BridgeSessionStore {
     this.generation += 1;
     this.controller.abort();
     this.pending.clear();
+    this.abortAllProcessRequests();
     this.processItems.clear();
     this.processCursors.clear();
     this.processSeen.clear();
-    this.pendingProcess.clear();
-    this.processGeneration.clear();
     this.pendingOlder = undefined;
     this.historyPage = undefined;
     this.recentProjection = undefined;
@@ -521,6 +566,30 @@ export class BridgeSessionStore {
     this.rebaseMatched = false;
     this.projection = undefined;
   }
+}
+
+function applyLiveProcessDelta(
+  cached: Map<string, BridgeProcessItem>,
+  previous: { version: number; count: number },
+  next: { version: number; count: number },
+  delta: { fromVersion: number; items: { index: number; item: BridgeProcessItem }[] } | undefined,
+  cursor: string | null | undefined,
+): Map<string, BridgeProcessItem> | null {
+  if (cursor !== null || cached.size !== previous.count || !delta ||
+    next.version <= previous.version || previous.version < delta.fromVersion ||
+    next.count < previous.count) return null;
+  const items = [...cached.values()];
+  for (const { index, item } of delta.items) {
+    if (index < previous.count) {
+      if (items[index]?.id !== item.id) return null;
+      items[index] = item;
+    } else if (index < next.count && !items[index]) {
+      items[index] = item;
+    } else return null;
+  }
+  if (items.length !== next.count || items.some((item) => item === undefined) ||
+    new Set(items.map((item) => item.id)).size !== next.count) return null;
+  return new Map(items.map((item) => [item.id, item]));
 }
 
 function messagesForTurns(messages: readonly Conversation["messages"][number][],

@@ -1,4 +1,9 @@
-import { HistoryCapacityError } from "./compact-transcript.ts";
+export class ReplayCapacityError extends Error {
+  public constructor() {
+    super("Replay queue capacity exceeded");
+    this.name = "ReplayCapacityError";
+  }
+}
 
 export class ReplayLoadGate {
   private busy = false;
@@ -18,7 +23,7 @@ export class ReplayLoadGate {
   public async run<T>(load: () => Promise<T>): Promise<T> {
     if (this.busy) {
       if (this.waiting.length >= this.maxQueued)
-        throw new HistoryCapacityError();
+        throw new ReplayCapacityError();
       await new Promise<void>((resolve) => this.waiting.push(resolve));
     } else {
       this.busy = true;

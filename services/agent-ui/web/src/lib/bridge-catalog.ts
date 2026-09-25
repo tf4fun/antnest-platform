@@ -1,4 +1,5 @@
 import type { Conversation } from "./types.ts";
+import { compactCachedConversation } from "./conversation-history.ts";
 import type { BridgeHttpClient } from "./workspace-api-client.ts";
 
 type CatalogApi = Pick<BridgeHttpClient, "sessions">;
@@ -28,6 +29,11 @@ export class BridgeSessionCatalog {
     this.items.set(conversation.id, existing && newer(existing.updatedAt, conversation.updatedAt)
       ? { ...conversation, title: existing.title, updatedAt: existing.updatedAt }
       : conversation);
+  }
+
+  releaseCompletedProcess(sessionId: string): void {
+    const existing = this.items.get(sessionId);
+    if (existing) this.items.set(sessionId, compactCachedConversation(existing));
   }
 
   loadPage(): Promise<{ hasMore: boolean }> {

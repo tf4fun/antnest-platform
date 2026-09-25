@@ -53,6 +53,8 @@ type LocalOperation = {
   sessionId: string;
   operation: Operation;
   uncertainSince: number | null;
+  expectedAppendVersion: number;
+  acceptedAppendVersion?: number;
 };
 
 export class OperationConflictError extends Error {
@@ -147,6 +149,7 @@ export class OperationCoordinator {
       settled: Promise.resolve(),
       sessionId: input.sessionId,
       uncertainSince: null,
+      expectedAppendVersion: input.expectedAppendVersion,
       operation: {
         operationId: input.intentId,
         sessionId: input.sessionId,
@@ -202,8 +205,25 @@ export class OperationCoordinator {
 
   public hasInFlight(sessionId: string): boolean {
     return [...this.local.values()].some(
-      (entry) => entry.sessionId === sessionId && entry.inFlight,
+      (entry) => entry.sessionId === sessionId && entry.inFlight && !terminal(entry.operation.phase),
     );
+  }
+
+  public knowsLocalVersion(sessionId: string, version: number): boolean {
+    return [...this.local.values()].some((entry) => entry.sessionId === sessionId &&
+      entry.acceptedAppendVersion === version && entry.expectedAppendVersion + 1 === version);
+  }
+
+  public knowsAppendTransition(sessionId: string, from: number, to: number): boolean {
+    if (from > to) return false;
+    let next = from;
+    const admissions = [...this.local.values()].filter((entry) => entry.sessionId === sessionId);
+    while (next < to) {
+      if (!admissions.some((entry) => entry.expectedAppendVersion === next &&
+        entry.acceptedAppendVersion === next + 1)) return false;
+      next++;
+    }
+    return true;
   }
 
   public trackedSessionIds(): string[] {
@@ -247,6 +267,7 @@ export class OperationCoordinator {
         throw new OperationConflictError("ACP receipt scope mismatch");
       const local = this.local.get(operationKey(sessionId, receipt.intentId));
       if (local === undefined) continue;
+      local.acceptedAppendVersion = receipt.appendVersion;
       this.setOperation(local, operationFromReceipt(receipt));
       if (terminal(local.operation.phase)) {
         local.retired = true;
@@ -293,6 +314,7 @@ export class OperationCoordinator {
           "ACP returned a receipt for another operation",
         );
       const operation = operationFromReceipt(result.receipt);
+      if (local !== undefined) local.acceptedAppendVersion = result.receipt.appendVersion;
       if (
         local !== undefined &&
         JSON.stringify(local.operation) !== JSON.stringify(operation)
@@ -337,8 +359,13 @@ export class OperationCoordinator {
     )
       throw new OperationConflictError("The requested Run is no longer active");
     await this.dependencies.cancel(sessionId, expectedRunId);
-    const cancelling = { ...operation, phase: "cancelling" as const };
     const local = this.local.get(operationKey(sessionId, intentId));
+    const latest = local?.operation ?? await this.read(sessionId, intentId);
+    if (latest.acceptance !== "acp") return { ...latest };
+    if (latest.runId !== expectedRunId)
+      throw new OperationConflictError("The requested Run is no longer active");
+    if (terminal(latest.phase)) return { ...latest };
+    const cancelling = { ...latest, phase: "cancelling" as const };
     if (local !== undefined) {
       this.setOperation(local, cancelling);
       this.dependencies.changed?.(sessionId);

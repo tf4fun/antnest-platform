@@ -12,7 +12,7 @@ function view(sessionId: string | null): BridgeAgentView {
       sessionId, bridgeEpoch: "epoch", historyState: "ready", viewRevision: 1,
       title: null, updatedAt: null,
       turns: [{ turnId: "turn", outcome: "completed", prompt: [{ type: "text", text: "Question" }],
-        finalResponse: [{ type: "text", text: "Answer" }], contentCursor: null,
+        finalResponse: [{ type: "text", text: "Answer" }], contentCursor: null, contentSection: null,
         processVersion: 0, processCount: 0 }],
       olderTurnsCursor: null, configOptions: [], usage: null,
     },
@@ -92,6 +92,27 @@ test("Controller resync reopens only the current selected Session", async () => 
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.deepEqual(selected, ["session", "session"]);
   controller.close();
+});
+
+test("a missing Session ends selection without scheduling another observer", async () => {
+  let attempts = 0;
+  const controller = new BridgeAgentController({
+    agentId: "agent",
+    api: { agentView: async () => ({}), eventsURL: () => "" },
+    openObserver: async () => {
+      attempts++;
+      throw new WorkspaceApiError("Session not found", 404,
+        "session_not_found", "none");
+    },
+  });
+  try {
+    await assert.rejects(controller.select("gone"), (cause: unknown) =>
+      cause instanceof WorkspaceApiError && cause.code === "session_not_found");
+    await new Promise((resolve) => setTimeout(resolve, 1_100));
+    assert.equal(attempts, 1);
+  } finally {
+    controller.close();
+  }
 });
 
 test("Controller backs off repeated transport failures and resets after recovery", async (t) => {

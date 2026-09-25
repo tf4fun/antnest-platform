@@ -4,11 +4,10 @@ import type {
   SessionConfigSelectGroup,
   SessionConfigSelectOption,
   SessionUpdate,
+  ToolCallUpdate,
   UsageUpdate,
 } from "@agentclientprotocol/sdk";
 import type { DeliveredBatch } from "./delivery.ts";
-
-const defaultMaxBytes = 64 * 1024 * 1024;
 
 export type ProcessItem = {
   id: string;
@@ -17,6 +16,7 @@ export type ProcessItem = {
   status: "pending" | "running" | "completed" | "failed" | "unknown";
   content: ContentBlock[];
   contentCursor: null;
+  toolSections?: { inputIndex?: number; outputIndex?: number; detailStartIndex: number };
 };
 
 export type TranscriptTurn = {
@@ -38,26 +38,31 @@ export type SessionUsage = {
 
 export type SessionInfo = { title: string | null; updatedAt: string | null };
 
+type ToolFields = Pick<ToolCallUpdate, "rawInput" | "rawOutput" | "content">;
+type StoredProcess = Omit<ProcessItem, "content"> & {
+  content: ContentBlock[];
+  contentBytes: number;
+  tool?: ToolFields;
+  toolBytes?: Partial<Record<keyof ToolFields, number>>;
+  bytes: number;
+};
+
 type StoredTurn = {
   turnId: string;
+  contentRevision: number;
   outcome: TranscriptTurn["outcome"];
   prompt: ContentBlock[];
   answers: Map<string, ContentBlock[]>;
-  process: ProcessItem[];
+  process: StoredProcess[];
   processIndex: Map<string, number>;
   processVersion: number;
+  processChanges: Array<{ version: number; index: number }>;
+  processChangeRevision: number;
 };
 
-export class HistoryCapacityError extends Error {
-  public constructor() {
-    super("History capacity exceeded");
-    this.name = "HistoryCapacityError";
-  }
-}
-
 export class CompactTranscript {
-  private readonly maxBytes: number;
   private usedBytes = 0;
+  private turnRevision = 0;
   private readonly order: string[] = [];
   private readonly records = new Map<string, StoredTurn>();
   private currentConfigOptions: SessionConfigOption[] = [];
@@ -65,109 +70,26 @@ export class CompactTranscript {
   private configSequence = 0;
   private currentUsage: SessionUsage | null = null;
   private currentSessionInfo: SessionInfo = { title: null, updatedAt: null };
-  private liveLimitEnabled = false;
-  private limited = false;
-  private previewText = "";
-
-  public constructor(maxBytes = defaultMaxBytes) {
-    if (!Number.isSafeInteger(maxBytes) || maxBytes < 1)
-      throw new RangeError("History budget must be a positive safe integer");
-    this.maxBytes = maxBytes;
-  }
-
   public apply(batch: DeliveredBatch<SessionUpdate>): this {
-    if (this.limited) {
-      this.captureLimited(batch);
-      return this;
-    }
-    const encoded = JSON.stringify(batch.updates);
-    let nextConfig = this.currentConfigOptions;
-    let nextUsage = this.currentUsage;
-    let nextInfo = this.currentSessionInfo;
     for (const update of batch.updates) {
-      if (update.sessionUpdate === "config_option_update")
-        nextConfig = safeConfigOptions(update.configOptions);
-      else if (update.sessionUpdate === "usage_update")
-        nextUsage = projectUsage(nextUsage, update);
-      else if (update.sessionUpdate === "session_info_update")
-        nextInfo = projectSessionInfo(nextInfo, update);
+      this.applyUpdate(batch, update);
+      if (["user_message_chunk", "agent_message_chunk", "agent_thought_chunk", "tool_call", "tool_call_update", "plan"].includes(update.sessionUpdate))
+        this.turnRevision++;
     }
-    if (
-      encoded === undefined ||
-      this.usedBytes +
-        Buffer.byteLength(encoded) +
-        metadataBytes(nextConfig, nextUsage, nextInfo) >
-        this.maxBytes
-    ) {
-      if (this.liveLimitEnabled) {
-        this.enterLimited();
-        this.captureLimited(batch);
-        return this;
-      }
-      throw new HistoryCapacityError();
-    }
-    this.usedBytes += Buffer.byteLength(encoded);
-    for (const update of batch.updates) this.applyUpdate(batch, update);
     return this;
-  }
-
-  public enableLiveLimit(): void {
-    this.liveLimitEnabled = true;
-  }
-
-  public limitLive(): boolean {
-    if (!this.liveLimitEnabled) return false;
-    if (!this.limited) this.enterLimited();
-    return true;
-  }
-
-  public get isLimited(): boolean {
-    return this.limited;
-  }
-
-  public get limitedPreview(): { text: string; truncated: true } {
-    return { text: this.previewText, truncated: true };
-  }
-
-  private enterLimited(): void {
-    this.limited = true;
-    this.order.length = 0;
-    this.records.clear();
-    this.usedBytes = 0;
-    if (Buffer.byteLength(JSON.stringify(this.currentConfigOptions)) > 16_384) {
-      this.currentConfigOptions = [];
-      this.configSequence += 1;
-    }
-  }
-
-  private captureLimited(batch: DeliveredBatch<SessionUpdate>): void {
-    for (const update of batch.updates) {
-      if (
-        update.sessionUpdate === "agent_message_chunk" &&
-        update.content.type === "text"
-      )
-        this.previewText = (this.previewText + update.content.text).slice(
-          -4096,
-        );
-      else if (update.sessionUpdate === "usage_update")
-        this.currentUsage = projectUsage(this.currentUsage, update);
-      else if (update.sessionUpdate === "session_info_update")
-        this.currentSessionInfo = projectSessionInfo(this.currentSessionInfo, update);
-      else if (update.sessionUpdate === "config_option_update") {
-        const bounded =
-          Buffer.byteLength(JSON.stringify(update.configOptions)) <= 16_384;
-        this.currentConfigOptions = bounded
-          ? safeConfigOptions(update.configOptions)
-          : [];
-        this.configUpdated = true;
-        this.configSequence += 1;
-      }
-    }
   }
 
   public setOutcome(turnId: string, outcome: TranscriptTurn["outcome"]): void {
     const turn = this.records.get(turnId);
-    if (turn !== undefined) turn.outcome = outcome;
+    if (turn !== undefined && turn.outcome !== outcome) {
+      this.turnRevision++;
+      this.usedBytes += jsonBytes(outcome) - jsonBytes(turn.outcome);
+      turn.outcome = outcome;
+      if (outcome !== "running" && outcome !== "unknown") {
+        this.usedBytes -= turn.processChanges.reduce((sum, change) => sum + jsonBytes(change), 0);
+        turn.processChanges.length = 0;
+      }
+    }
   }
 
   public setInitialConfigOptions(
@@ -175,11 +97,6 @@ export class CompactTranscript {
   ): void {
     if (this.configUpdated) return;
     const projected = safeConfigOptions(options ?? []);
-    if (
-      metadataBytes(projected, this.currentUsage, this.currentSessionInfo) + this.usedBytes >
-      this.maxBytes
-    )
-      throw new HistoryCapacityError();
     this.currentConfigOptions = projected;
   }
 
@@ -197,11 +114,6 @@ export class CompactTranscript {
   ): boolean {
     if (startedAt !== this.configSequence) return false;
     const projected = safeConfigOptions(options);
-    if (
-      metadataBytes(projected, this.currentUsage, this.currentSessionInfo) + this.usedBytes >
-      this.maxBytes
-    )
-      throw new HistoryCapacityError();
     this.currentConfigOptions = projected;
     this.configUpdated = true;
     this.configSequence += 1;
@@ -214,12 +126,11 @@ export class CompactTranscript {
 
   public applySessionInfoNotification(
     update: Extract<SessionUpdate, { sessionUpdate: "session_info_update" }>,
-  ): void {
+  ): boolean {
     const projected = projectSessionInfo(this.currentSessionInfo, update);
-    if (!this.limited && this.usedBytes +
-      metadataBytes(this.currentConfigOptions, this.currentUsage, projected) > this.maxBytes)
-      throw new HistoryCapacityError();
+    if (projected.title === this.currentSessionInfo.title && projected.updatedAt === this.currentSessionInfo.updatedAt) return false;
     this.currentSessionInfo = projected;
+    return true;
   }
 
   public get usage(): SessionUsage | null {
@@ -232,6 +143,8 @@ export class CompactTranscript {
     return { ...this.currentSessionInfo };
   }
 
+  public get conversationRevision(): number { return this.turnRevision; }
+
   public get turnCount(): number {
     return this.order.length;
   }
@@ -239,14 +152,15 @@ export class CompactTranscript {
   public get estimatedRetainedBytes(): number {
     return (
       this.usedBytes +
-      metadataBytes(this.currentConfigOptions, this.currentUsage, this.currentSessionInfo) +
-      Buffer.byteLength(this.previewText)
+      metadataBytes(this.currentConfigOptions, this.currentUsage, this.currentSessionInfo)
     );
   }
 
   public pageBefore(
     before: number,
     limit = 20,
+    includeProcess = true,
+    cloneContent = true,
   ): {
     items: TranscriptTurn[];
     nextBefore: number | null;
@@ -264,7 +178,7 @@ export class CompactTranscript {
     return {
       items: this.order
         .slice(start, before)
-        .map((id) => this.materialize(this.records.get(id)!)),
+        .map((id) => this.materialize(this.records.get(id)!, includeProcess, cloneContent)),
       nextBefore: start === 0 ? null : start,
     };
   }
@@ -272,6 +186,8 @@ export class CompactTranscript {
   public pageAfter(
     after: number,
     limit = 20,
+    includeProcess = true,
+    cloneContent = true,
   ): {
     items: TranscriptTurn[];
     nextAfter: number | null;
@@ -289,7 +205,7 @@ export class CompactTranscript {
     return {
       items: this.order
         .slice(after, end)
-        .map((id) => this.materialize(this.records.get(id)!)),
+        .map((id) => this.materialize(this.records.get(id)!, includeProcess, cloneContent)),
       nextAfter: end === this.order.length ? null : end,
     };
   }
@@ -298,9 +214,9 @@ export class CompactTranscript {
     return this.order.map((id) => this.materialize(this.records.get(id)!));
   }
 
-  public turnById(turnId: string): TranscriptTurn | null {
+  public turnById(turnId: string, includeProcess = true, cloneContent = true): TranscriptTurn | null {
     const turn = this.records.get(turnId);
-    return turn === undefined ? null : this.materialize(turn);
+    return turn === undefined ? null : this.materialize(turn, includeProcess, cloneContent);
   }
 
   public processInfo(
@@ -312,24 +228,43 @@ export class CompactTranscript {
       : { version: turn.processVersion, count: turn.process.length };
   }
 
+  public processChanges(turnId: string): { fromVersion: number; indices: number[] } | null {
+    const turn = this.records.get(turnId);
+    if (turn === undefined) return null;
+    const first = turn.processChanges[0];
+    return { fromVersion: first === undefined ? turn.processVersion : first.version - 1,
+      indices: [...new Set(turn.processChanges.map((change) => change.index))].sort((a, b) => a - b) };
+  }
+
+  public processChangedInLatestRevision(turnId: string): boolean {
+    return this.records.get(turnId)?.processChangeRevision === this.turnRevision;
+  }
+
+  public turnContentRevision(turnId: string): number | null {
+    return this.records.get(turnId)?.contentRevision ?? null;
+  }
+
   public processItem(
     turnId: string,
     index: number,
   ): Readonly<ProcessItem> | null {
     const item = this.records.get(turnId)?.process[index];
-    return item ?? null;
+    return item === undefined ? null : materializeProcess(item);
   }
 
-  private materialize(turn: StoredTurn): TranscriptTurn {
+  // The pager may borrow content synchronously, then clone only the public window.
+  // Default readers retain independent snapshots; borrowed blocks must never escape.
+  private materialize(turn: StoredTurn, includeProcess = true, cloneContent = true): TranscriptTurn {
+    const answers = [...turn.answers.values()].flat();
     return {
       turnId: turn.turnId,
       outcome: turn.outcome,
-      prompt: structuredClone(turn.prompt),
-      finalResponse: structuredClone([...turn.answers.values()].flat()),
+      prompt: cloneContent ? structuredClone(turn.prompt) : turn.prompt,
+      finalResponse: cloneContent ? structuredClone(answers) : answers,
       contentCursor: null,
       processVersion: turn.processVersion,
       processCount: turn.process.length,
-      process: structuredClone(turn.process),
+      process: includeProcess ? turn.process.map(materializeProcess) : [],
     };
   }
 
@@ -353,9 +288,10 @@ export class CompactTranscript {
         return;
       }
       case "user_message_chunk": {
-        this.turn(
-          batch.runId ?? update.messageId ?? batch.messageId,
-        ).prompt.push(structuredClone(update.content));
+        const turn = this.turn(batch.runId ?? update.messageId ?? batch.messageId);
+        turn.prompt.push(structuredClone(update.content));
+        turn.contentRevision += 1;
+        this.usedBytes += jsonBytes(update.content);
         return;
       }
       case "agent_message_chunk": {
@@ -363,9 +299,12 @@ export class CompactTranscript {
           batch.runId ?? update.messageId ?? batch.messageId,
         );
         const id = update.messageId ?? batch.messageId;
+        if (!turn.answers.has(id)) this.usedBytes += jsonBytes(id);
         const content = turn.answers.get(id) ?? [];
         content.push(structuredClone(update.content));
         turn.answers.set(id, content);
+        turn.contentRevision += 1;
+        this.usedBytes += jsonBytes(update.content);
         return;
       }
       case "agent_thought_chunk": {
@@ -386,51 +325,20 @@ export class CompactTranscript {
       case "tool_call":
       case "tool_call_update": {
         const turn = this.turn(batch.runId ?? batch.messageId);
-        this.moveInterimAnswers(turn);
-        const id = `tool-${update.toolCallId}`;
-        const existing = turn.process[turn.processIndex.get(id) ?? -1];
-        const content: ContentBlock[] = [
-          ...(update.rawInput === undefined
-            ? []
-            : [
-                {
-                  type: "text" as const,
-                  text: `Input: ${JSON.stringify(update.rawInput)}`,
-                },
-              ]),
-          ...(update.rawOutput === undefined
-            ? []
-            : [
-                {
-                  type: "text" as const,
-                  text: `Output: ${JSON.stringify(update.rawOutput)}`,
-                },
-              ]),
-          ...(update.content ?? []).flatMap((entry): ContentBlock[] =>
-            entry.type === "content"
-              ? [structuredClone(entry.content)]
-              : [{ type: "text", text: JSON.stringify(entry) }],
-          ),
-        ];
-        this.upsertProcess(
-          turn,
-          id,
-          "tool",
-          update.title ?? existing?.summary ?? "Tool",
-          toolStatus(update.status),
-          content,
-        );
+        if (update.sessionUpdate === "tool_call") this.moveInterimAnswers(turn);
+        this.updateTool(turn, update);
         return;
       }
       case "plan": {
         const turn = this.turn(batch.runId ?? batch.messageId);
         this.upsertProcess(
           turn,
-          `plan-${batch.messageId}`,
+          "plan",
           "plan",
           "Plan",
           "completed",
           { type: "text", text: JSON.stringify(update.entries) },
+          false,
         );
         return;
       }
@@ -444,13 +352,17 @@ export class CompactTranscript {
     if (turn === undefined) {
       turn = {
         turnId: id,
+        contentRevision: 0,
         outcome: "unknown",
         prompt: [],
         answers: new Map(),
         process: [],
         processIndex: new Map(),
         processVersion: 0,
+        processChanges: [],
+        processChangeRevision: -1,
       };
+      this.usedBytes += jsonBytes(id) + jsonBytes(turn.outcome);
       this.records.set(id, turn);
       this.order.push(id);
     }
@@ -458,7 +370,9 @@ export class CompactTranscript {
   }
 
   private moveInterimAnswers(turn: StoredTurn): void {
+    if (turn.answers.size > 0) turn.contentRevision += 1;
     for (const [messageId, content] of turn.answers) {
+      this.usedBytes -= jsonBytes(messageId) + content.reduce((bytes, block) => bytes + jsonBytes(block), 0);
       this.upsertProcess(
         turn,
         `interim-${messageId}`,
@@ -471,6 +385,30 @@ export class CompactTranscript {
     turn.answers.clear();
   }
 
+  private updateTool(
+    turn: StoredTurn,
+    update: Extract<SessionUpdate, { sessionUpdate: "tool_call" | "tool_call_update" }>,
+  ): void {
+    const id = `tool-${update.toolCallId}`;
+    const index = turn.processIndex.get(id);
+    const previous = index === undefined ? undefined : turn.process[index];
+    const tool = { ...previous?.tool };
+    const toolBytes = { ...previous?.toolBytes };
+    for (const field of ["rawInput", "rawOutput", "content"] as const) {
+      const value = update[field];
+      if (value === undefined || value === null) continue;
+      Object.assign(tool, { [field]: structuredClone(value) });
+      toolBytes[field] = jsonBytes(value);
+    }
+    const item: StoredProcess = {
+      id, kind: "tool", summary: update.title ?? previous?.summary ?? "Tool",
+      status: update.status == null ? previous?.status ?? "unknown" : toolStatus(update.status),
+      content: [], contentCursor: null, contentBytes: 0, tool, toolBytes, bytes: 0,
+    };
+    item.bytes = processMetadataBytes(item) + Object.values(toolBytes).reduce((sum, bytes) => sum + bytes, 0);
+    this.storeProcess(turn, item);
+  }
+
   private upsertProcess(
     turn: StoredTurn,
     id: string,
@@ -478,30 +416,71 @@ export class CompactTranscript {
     summary: string,
     status: ProcessItem["status"],
     content?: ContentBlock | ContentBlock[],
+    append = true,
   ): void {
     const index = turn.processIndex.get(id);
     const previous = index === undefined ? undefined : turn.process[index];
-    const item: ProcessItem = {
-      id,
-      kind,
-      summary,
-      status,
-      content: [
-        ...(previous?.content ?? []),
-        ...(content === undefined
-          ? []
-          : (Array.isArray(content) ? content : [content]).map((block) =>
-              structuredClone(block),
-            )),
-      ],
-      contentCursor: null,
+    const blocks = content === undefined ? [] : Array.isArray(content) ? content : [content];
+    const next = append ? previous?.content ?? [] : [];
+    for (const block of blocks) next.push(structuredClone(block));
+    const contentBytes = (append ? previous?.contentBytes ?? 0 : 0) +
+      blocks.reduce((bytes, block) => bytes + jsonBytes(block), 0);
+    const item: StoredProcess = {
+      id, kind, summary, status, content: next, contentBytes, contentCursor: null, bytes: 0,
     };
+    item.bytes = processMetadataBytes(item) + contentBytes;
+    this.storeProcess(turn, item);
+  }
+
+  private storeProcess(turn: StoredTurn, item: StoredProcess): void {
+    const index = turn.processIndex.get(item.id);
+    this.usedBytes += item.bytes - (index === undefined ? 0 : turn.process[index]!.bytes);
     if (index === undefined) {
-      turn.processIndex.set(id, turn.process.length);
+      turn.processIndex.set(item.id, turn.process.length);
       turn.process.push(item);
     } else turn.process[index] = item;
     turn.processVersion += 1;
+    turn.processChangeRevision = this.turnRevision + 1;
+    if (turn.outcome === "running" || turn.outcome === "unknown") {
+      const changedIndex = index ?? turn.process.length - 1;
+      const firstChange = turn.processChanges[0];
+      // Only one changing item is coalesced, so an older large tool is not
+      // rematerialized on every unrelated small update.
+      if (firstChange?.index !== changedIndex ||
+        turn.processVersion - firstChange.version >= 8) {
+        for (const change of turn.processChanges) this.usedBytes -= jsonBytes(change);
+        const change = { version: turn.processVersion, index: changedIndex };
+        turn.processChanges = [change];
+        this.usedBytes += jsonBytes(change);
+      }
+    }
   }
+}
+
+function jsonBytes(value: unknown): number {
+  return Buffer.byteLength(JSON.stringify(value));
+}
+
+function processMetadataBytes(item: StoredProcess): number {
+  return jsonBytes({ id: item.id, kind: item.kind, summary: item.summary, status: item.status });
+}
+
+function materializeProcess(item: StoredProcess): ProcessItem {
+  const hasInput = item.tool?.rawInput !== undefined;
+  const hasOutput = item.tool?.rawOutput !== undefined;
+  const content: ContentBlock[] = item.tool === undefined ? item.content : [
+    ...(hasInput ? [{ type: "text" as const, text: `Input: ${JSON.stringify(item.tool.rawInput)}` }] : []),
+    ...(hasOutput ? [{ type: "text" as const, text: `Output: ${JSON.stringify(item.tool.rawOutput)}` }] : []),
+    ...(item.tool.content ?? []).flatMap((entry): ContentBlock[] => entry.type === "content"
+      ? [entry.content] : [{ type: "text", text: JSON.stringify(entry) }]),
+  ];
+  return { id: item.id, kind: item.kind, summary: item.summary, status: item.status,
+    content: structuredClone(content), contentCursor: null,
+    ...(item.tool === undefined ? {} : { toolSections: {
+      ...(hasInput ? { inputIndex: 0 } : {}),
+      ...(hasOutput ? { outputIndex: hasInput ? 1 : 0 } : {}),
+      detailStartIndex: Number(hasInput) + Number(hasOutput),
+    } }) };
 }
 
 function metadataBytes(

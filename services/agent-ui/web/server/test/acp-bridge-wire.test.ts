@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { RequestError } from "@agentclientprotocol/sdk";
 import {
   bridgeHeaders,
   requireBridgeCapabilities,
@@ -9,6 +10,8 @@ import {
   parseAgentExecutionState,
   consumeAgentExecutionStateStream,
   AgentAccessRevokedError,
+  SessionNotFoundError,
+  sessionRequestFailure,
   configurationParams,
 } from "../src/adapters/acp-http.ts";
 
@@ -176,6 +179,22 @@ test("an unknown intent stays uncertain while a hidden Session remains denied", 
         { status: 404 },
       ),
     ),
-    BridgeCapabilityError,
+    SessionNotFoundError,
   );
+});
+
+test("a hidden or deleted Session keeps its permanent absence across ACP observations", async () => {
+  await assert.rejects(
+    parseAgentExecutionState(new Response(JSON.stringify({
+      code: "session_not_found", retryable: false,
+    }), { status: 404 }), "agent:1"),
+    SessionNotFoundError,
+  );
+  const missing = new RequestError(-32020, "Session does not exist", {
+    code: "session_not_found", retryable: false,
+  });
+  assert.ok(sessionRequestFailure(missing) instanceof SessionNotFoundError);
+  assert.equal(sessionRequestFailure(new RequestError(-32020, "temporary failure", {
+    code: "upstream_unavailable", retryable: true,
+  })), undefined);
 });

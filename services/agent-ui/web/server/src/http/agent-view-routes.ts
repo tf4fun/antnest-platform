@@ -1,5 +1,5 @@
-import { HistoryCapacityError } from "../bridge/compact-transcript.ts";
-import { AgentAccessRevokedError } from "../adapters/acp-http.ts";
+import { ReplayCapacityError } from "../bridge/replay-load-gate.ts";
+import { AgentAccessRevokedError, SessionNotFoundError } from "../adapters/acp-http.ts";
 import { OperationReconciliationTimeoutError } from "../bridge/operations.ts";
 import { StreamCapacityError } from "../bridge/stream-journal.ts";
 import type { BridgeScope } from "../bridge/registry.ts";
@@ -42,8 +42,10 @@ export function createAgentViewHandler(dependencies: {
         return error(504, "workspace_deadline_exceeded", "Operation reconciliation timed out", "retry_read");
       if (cause instanceof AgentAccessRevokedError)
         return error(403, "access_denied", "Agent access denied", "none");
-      if (cause instanceof HistoryCapacityError)
-        return error(429, "history_capacity_exceeded", "Session history exceeds Bridge capacity", "retry_read");
+      if (cause instanceof SessionNotFoundError)
+        return error(404, "session_not_found", "Session not found", "none");
+      if (cause instanceof ReplayCapacityError)
+        return error(429, "replay_capacity_exceeded", "Concurrent replay queue is full", "retry_read");
       if (cause instanceof StreamCapacityError)
         return error(429, "stream_capacity_exceeded", "Workspace stream exceeds Bridge capacity", "retry_read");
       return error(503, "upstream_unavailable", "Agent view is unavailable", "retry_read");

@@ -37,6 +37,12 @@ export class WorkspaceApiError extends Error {
   }
 }
 
+export function isWorkspaceReadTimeout(cause: unknown): boolean {
+  return cause instanceof WorkspaceApiError &&
+    (cause.code === "workspace_request_timeout" ||
+      cause.code === "workspace_deadline_exceeded");
+}
+
 type Options = {
   fetch?: typeof fetch;
   csrf: () => string | undefined;
@@ -168,37 +174,54 @@ export class BridgeHttpClient {
     const abort = () => controller.abort(options.signal?.reason);
     options.signal?.addEventListener("abort", abort, { once: true });
     if (options.signal?.aborted) abort();
-    const timer = setTimeout(() => controller.abort(new Error("Workspace request timed out")), this.timeoutMs);
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort(new Error("Workspace request timed out"));
+    }, this.timeoutMs);
+    let rejectAbort!: () => void;
+    const interrupted = new Promise<never>((_resolve, reject) => {
+      rejectAbort = () => reject(controller.signal.reason);
+      controller.signal.addEventListener("abort", rejectAbort, { once: true });
+    });
     try {
-      const response = await this.fetcher(path, {
-        method, credentials: "same-origin", headers,
-        ...(method === "POST" ? { body: JSON.stringify(options.body) } : {}),
-        signal: controller.signal,
-      });
-      const result: unknown = await response.json();
-      if (response.ok) return result;
-      const error = isRecord(result) ? result : {};
-      throw new WorkspaceApiError(
-        typeof error.message === "string" ? error.message : "Workspace request failed",
-        response.status,
-        typeof error.code === "string" ? error.code : "workspace_request_failed",
-        options.ambiguousOperationId && response.status >= 500
-          ? "query_operation"
-          : isRecovery(error.recovery) ? error.recovery : "retry_read",
-        options.ambiguousOperationId,
-      );
+      if (controller.signal.aborted) throw controller.signal.reason;
+      return await Promise.race([interrupted, (async () => {
+        const response = await this.fetcher(path, {
+          method, credentials: "same-origin", headers,
+          ...(method === "POST" ? { body: JSON.stringify(options.body) } : {}),
+          signal: controller.signal,
+        });
+        const result: unknown = await response.json();
+        if (response.ok) return result;
+        const error = isRecord(result) ? result : {};
+        throw new WorkspaceApiError(
+          typeof error.message === "string" ? error.message : "Workspace request failed",
+          response.status,
+          typeof error.code === "string" ? error.code : "workspace_request_failed",
+          options.ambiguousOperationId && response.status >= 500
+            ? "query_operation"
+            : isRecovery(error.recovery) ? error.recovery : "retry_read",
+          options.ambiguousOperationId,
+        );
+      })()]);
     } catch (cause) {
       if (cause instanceof WorkspaceApiError) throw cause;
       throw new WorkspaceApiError(
-        controller.signal.aborted ? "Workspace request was interrupted" : "Workspace connection failed",
+        timedOut ? "Workspace request timed out" :
+          controller.signal.aborted ? "Workspace request was interrupted" :
+            "Workspace connection failed",
         undefined,
-        controller.signal.aborted ? "workspace_request_interrupted" : "workspace_network_error",
+        timedOut ? "workspace_request_timeout" :
+          controller.signal.aborted ? "workspace_request_interrupted" :
+            "workspace_network_error",
         options.ambiguousOperationId ? "query_operation" : "retry_read",
         options.ambiguousOperationId,
       );
     } finally {
       clearTimeout(timer);
       options.signal?.removeEventListener("abort", abort);
+      controller.signal.removeEventListener("abort", rejectAbort);
     }
   }
 }

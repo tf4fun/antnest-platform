@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { projectBridgeConversation, replaceBridgeTurnContent } from "./bridge-conversation.ts";
+import { projectBridgeConversation, replaceBridgeProcess, replaceBridgeTurnContent } from "./bridge-conversation.ts";
 import { initialBridgeContent } from "./bridge-content.ts";
 
 test("Session projection uses ACP metadata instead of deriving title or local time", () => {
@@ -9,7 +9,7 @@ test("Session projection uses ACP metadata instead of deriving title or local ti
     title: "Server title", updatedAt: "2026-09-24T02:00:00Z",
     turns: [{ turnId: "turn-1", outcome: "completed",
       prompt: [{ type: "text", text: "Different first prompt" }], finalResponse: [],
-      contentCursor: null, processVersion: 0, processCount: 0 }],
+      contentCursor: null, contentSection: null, processVersion: 0, processCount: 0 }],
     olderTurnsCursor: null,
   };
   const projected = projectBridgeConversation(view, "agent-1", "session-1", "local-time");
@@ -23,16 +23,28 @@ test("Bridge turn preview keeps incomplete content explicit and preserves stable
     turns: [{ turnId: "turn-1", outcome: "completed",
       prompt: [{ type: "text", text: "Question" }],
       finalResponse: [{ type: "text", text: "Partial answer" }],
-      contentCursor: "next-content", processVersion: 2, processCount: 3 }],
+      contentCursor: "next-content", contentSection: "finalResponse",
+      processVersion: 2, processCount: 3 }],
     olderTurnsCursor: "older", configOptions: [], usage: null,
   }, "agent-1", "session-1", "2026-09-23T00:00:00.000Z");
   assert.deepEqual(projected.conversation.messages.map(({ id, role, content, contentIncomplete }) =>
     ({ id, role, content, contentIncomplete })), [
-    { id: "turn-1:prompt", role: "user", content: "Question", contentIncomplete: true },
+    { id: "turn-1:prompt", role: "user", content: "Question", contentIncomplete: false },
     { id: "turn-1:answer", role: "assistant", content: "Partial answer", contentIncomplete: true },
   ]);
   assert.equal(projected.turns.get("turn-1")?.cursor, "next-content");
+  assert.equal(projected.conversation.messages[0]?.processVersion, 2);
   assert.equal(projected.olderTurnsCursor, "older");
+});
+
+test("prompt continuation leaves no phantom incomplete answer", () => {
+  const projected = projectBridgeConversation({ sessionId: "session", bridgeEpoch: "epoch",
+    historyState: "ready", turns: [{ turnId: "turn", outcome: "completed",
+      prompt: [], finalResponse: [], contentCursor: "next-prompt",
+      contentSection: "prompt", processVersion: 0, processCount: 0 }],
+    olderTurnsCursor: null }, "agent", "session", "now");
+  assert.deepEqual(projected.conversation.messages.map((message) =>
+    [message.id, message.contentIncomplete]), [["turn:prompt", true]]);
 });
 
 test("failed Bridge turn retains its authoritative outcome", () => {
@@ -40,10 +52,40 @@ test("failed Bridge turn retains its authoritative outcome", () => {
     sessionId: "session-1", bridgeEpoch: "epoch-1", historyState: "ready",
     turns: [{ turnId: "turn-1", outcome: "failed",
       prompt: [{ type: "text", text: "Question" }], finalResponse: [],
-      contentCursor: null, processVersion: 0, processCount: 0 }],
+      contentCursor: null, contentSection: null, processVersion: 0, processCount: 0 }],
     olderTurnsCursor: null, configOptions: [], usage: null,
   }, "agent-1", "session-1", "2026-09-23T00:00:00.000Z");
   assert.equal(projected.conversation.messages[0]?.turnOutcome, "failed");
+});
+
+test("real Bridge process keeps plan progress and tool sections inside their cards", () => {
+  const projected = projectBridgeConversation({ sessionId: "session", bridgeEpoch: "epoch",
+    historyState: "ready", turns: [{ turnId: "turn", outcome: "completed",
+      prompt: [{ type: "text", text: "Question" }], finalResponse: [],
+      contentCursor: null, contentSection: null, processVersion: 1, processCount: 2 }],
+    olderTurnsCursor: null }, "agent", "session", "now");
+  const next = replaceBridgeProcess(projected.conversation, "turn", [
+    { id: "plan", kind: "plan", summary: "Plan", status: "completed",
+      content: [{ type: "text", text: JSON.stringify([
+        { content: "Read file", priority: "medium", status: "completed" },
+        { content: "Summarize", priority: "high", status: "in_progress" },
+      ]) }], contentCursor: null },
+    { id: "tool", kind: "tool", summary: "Read", status: "pending",
+      toolSections: { inputIndex: 0, outputIndex: 1, detailStartIndex: 2 },
+      content: [{ type: "text", text: 'Input: {"path":"notes.txt"}' },
+        { type: "text", text: 'Output: {"lines":2}' },
+        { type: "text", text: "File contents" }], contentCursor: null },
+  ]);
+  const plan = next.messages.find((item) => item.id === "turn:process:plan");
+  const tool = next.messages.find((item) => item.id === "turn:process:tool");
+  assert.equal(plan?.presentation, "plan");
+  assert.deepEqual(plan?.planEntries?.map((entry) => entry.status),
+    ["completed", "in_progress"]);
+  assert.equal(tool?.content, "");
+  assert.equal(tool?.activities?.[0]?.input, '{"path":"notes.txt"}');
+  assert.equal(tool?.activities?.[0]?.output, '{"lines":2}');
+  assert.equal(tool?.activities?.[0]?.detail, "File contents");
+  assert.equal(tool?.activities?.[0]?.status, "pending");
 });
 
 test("completed Bridge content projects all attachment blocks in order", () => {
@@ -53,7 +95,7 @@ test("completed Bridge content projects all attachment blocks in order", () => {
       prompt: [{ type: "text", text: "Question" }],
       finalResponse: [{ type: "text", text: "A" }, { type: "resource_link", name: "source", uri: "https://example.test" },
         { type: "text", text: "B" }],
-      contentCursor: null, processVersion: 0, processCount: 0 }],
+      contentCursor: null, contentSection: null, processVersion: 0, processCount: 0 }],
     olderTurnsCursor: null, configOptions: [], usage: null,
   }, "agent-1", "session-1", "2026-09-23T00:00:00.000Z");
   assert.equal(projected.conversation.messages[1]?.content, "A\n[source]\nB");
@@ -65,7 +107,7 @@ test("Bridge Session View cannot project another Session or duplicate turns", ()
     turns: [], olderTurnsCursor: null, configOptions: [], usage: null };
   assert.throws(() => projectBridgeConversation(base, "agent-1", "session-2", "now"), /Session scope/u);
   const turn = { turnId: "same", outcome: "completed", prompt: [], finalResponse: [],
-    contentCursor: null, processVersion: 0, processCount: 0 };
+    contentCursor: null, contentSection: null, processVersion: 0, processCount: 0 };
   assert.throws(() => projectBridgeConversation({ ...base, turns: [turn, turn] },
     "agent-1", "session-1", "now"), /duplicate turn/u);
 });
@@ -102,40 +144,19 @@ test("Bridge Session View projects configuration and usage into existing control
     cost: { amount: 0.1, currency: "USD" } });
 });
 
-test("limited Bridge View exposes only an incomplete preview, never a turn", () => {
-  const projected = projectBridgeConversation({
-    sessionId: "session", bridgeEpoch: "epoch", incarnation: "incarnation",
-    historyState: "view_limited", turns: [], olderTurnsCursor: null,
-    historyToken: null, outputWatermark: 42,
-    limitedPreview: { text: "recent output", truncated: true },
-    configOptions: [], usage: { used: 5, size: 100 },
-  }, "agent", "session", "now");
-  assert.equal(projected.conversation.historyState, "view_limited");
-  assert.deepEqual(projected.conversation.limitedPreview,
-    { text: "recent output", truncated: true });
-  assert.deepEqual(projected.conversation.messages, []);
-  assert.equal(projected.outputWatermark, 42);
-  assert.equal(projected.olderTurnsCursor, null);
-  assert.equal(projected.turns.size, 0);
-});
-
-test("limited Bridge View rejects a full turn, token, or unbounded preview", () => {
-  const base = { sessionId: "session", bridgeEpoch: "epoch", historyState: "view_limited",
+test("Bridge View rejects the removed lossy history state", () => {
+  assert.throws(() => projectBridgeConversation({
+    sessionId: "session", bridgeEpoch: "epoch", historyState: "view_limited",
     turns: [], olderTurnsCursor: null, historyToken: null, outputWatermark: 1,
-    limitedPreview: { text: "partial", truncated: true } };
-  for (const invalid of [
-    { turns: [{ turnId: "turn" }] }, { historyToken: "token" },
-    { limitedPreview: { text: "x".repeat(4097), truncated: true } },
-    { limitedPreview: { text: "complete", truncated: false } },
-  ]) assert.throws(() => projectBridgeConversation({ ...base, ...invalid },
-    "agent", "session", "now"), /Invalid Bridge Session View/u);
+    limitedPreview: { text: "partial", truncated: true },
+  }, "agent", "session", "now"), /Invalid Bridge Session View/u);
 });
 
 test("blocked Bridge View keeps sealed turns without write or pagination tokens", () => {
   const base = { ...{
     sessionId: "session", bridgeEpoch: "epoch", historyState: "blocked",
     turns: [{ turnId: "turn", outcome: "completed", prompt: [{ type: "text", text: "Question" }],
-      finalResponse: [{ type: "text", text: "Saved answer" }], contentCursor: null,
+      finalResponse: [{ type: "text", text: "Saved answer" }], contentCursor: null, contentSection: null,
       processVersion: 0, processCount: 0 }],
     olderTurnsCursor: null, historyToken: null, configurationToken: null,
     outputWatermark: 2, configOptions: [], usage: null,

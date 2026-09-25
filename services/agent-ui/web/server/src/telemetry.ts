@@ -80,7 +80,6 @@ export async function startBridgeTelemetry(config: {
       const observers = meter.createObservableGauge("antnest.ui.bridge.observer_leases");
       const work = meter.createObservableGauge("antnest.ui.bridge.held_work");
       const cached = meter.createObservableGauge("antnest.ui.bridge.cached_history_bytes", { unit: "By" });
-      const reserved = meter.createObservableGauge("antnest.ui.bridge.reserved_history_bytes", { unit: "By" });
       const subscribers = meter.createObservableGauge("antnest.ui.bridge.stream_subscribers");
       const queued = meter.createObservableGauge("antnest.ui.bridge.journal_queued_bytes", { unit: "By" });
       const retained = meter.createObservableGauge("antnest.ui.bridge.journal_retained_bytes", { unit: "By" });
@@ -97,7 +96,6 @@ export async function startBridgeTelemetry(config: {
         result.observe(observers, state.observerLeases);
         result.observe(work, state.heldWork);
         result.observe(cached, state.cachedBytes);
-        result.observe(reserved, state.reservedBytes);
         result.observe(subscribers, state.streamSubscribers);
         result.observe(queued, state.journalQueuedBytes);
         result.observe(retained, state.journalRetainedBytes);
@@ -107,7 +105,7 @@ export async function startBridgeTelemetry(config: {
         result.observe(oldestUncertainMs, state.oldestUncertainMs);
         result.observe(heap, memory.heapUsed);
         result.observe(rss, memory.rss);
-      }, [owners, observers, work, cached, reserved, subscribers, queued, retained,
+      }, [owners, observers, work, cached, subscribers, queued, retained,
         activeReplays, queuedReplays, uncertainOperations, oldestUncertainMs, heap, rss]);
     },
     observeHttp(method, route, work, headers = {}) {

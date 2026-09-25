@@ -65,14 +65,13 @@ test("Session catalog refresh keeps exact selection and failed replay retains re
   );
 });
 
-test("limited View removes cached complete history when applied to workspace", () => {
+test("blocked View replaces the cached history with its last sealed content", () => {
   const current = previewWorkspace();
   const previous = current.conversations[0]!;
-  const limited = { ...previous, messages: [], historyState: "view_limited" as const,
-    limitedPreview: { text: "partial output", truncated: true as const } };
-  const next = applyConversation(current, limited);
+  const blocked = { ...previous, messages: [], historyState: "blocked" as const };
+  const next = applyConversation(current, blocked);
   assert.deepEqual(next.conversations[0]?.messages, []);
-  assert.deepEqual(next.conversations[0]?.limitedPreview, limited.limitedPreview);
+  assert.equal(next.conversations[0]?.historyState, "blocked");
 });
 
 test("late Session Views and catalog pages do not roll back newer metadata", () => {

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createAgentViewHandler } from "../src/http/agent-view-routes.ts";
-import { AgentAccessRevokedError } from "../src/adapters/acp-http.ts";
+import { AgentAccessRevokedError, SessionNotFoundError } from "../src/adapters/acp-http.ts";
 import { OperationReconciliationTimeoutError } from "../src/bridge/operations.ts";
 import { createViewHandler } from "../src/http/view-routes.ts";
 import { StreamCapacityError } from "../src/bridge/stream-journal.ts";
@@ -38,6 +38,21 @@ test("Agent view permits no Session selection and rejects foreign scope or dupli
     async read() { throw new AgentAccessRevokedError(); },
   });
   assert.equal((await revoked(new Request(url, { headers })))?.status, 403);
+  const missing = createAgentViewHandler({
+    async read() { throw new SessionNotFoundError(); },
+  });
+  const missingResponse = await missing(new Request(`${url}?sessionId=gone`, { headers }));
+  assert.equal(missingResponse?.status, 404);
+  assert.equal((await missingResponse?.json()).code, "session_not_found");
+  const missingSession = createViewHandler({
+    async read() { throw new SessionNotFoundError(); },
+  });
+  const missingSessionResponse = await missingSession(new Request(
+    "http://localhost/api/app/workspace/v1/agents/agent-1/sessions/gone/view",
+    { headers },
+  ));
+  assert.equal(missingSessionResponse?.status, 404);
+  assert.equal((await missingSessionResponse?.json()).code, "session_not_found");
   const timedOut = createAgentViewHandler({
     async read() { throw new OperationReconciliationTimeoutError(); },
   });

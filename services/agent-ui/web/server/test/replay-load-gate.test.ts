@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { ReplayLoadGate } from "../src/bridge/replay-load-gate.ts";
-import { HistoryCapacityError } from "../src/bridge/compact-transcript.ts";
+import { ReplayCapacityError } from "../src/bridge/replay-load-gate.ts";
 
 test("a failed replay releases the slot for the next queued Session", async () => {
   const gate = new ReplayLoadGate(1);
@@ -36,7 +36,7 @@ test("replay admission reports only active and queued loads", async () => {
   assert.deepEqual(gate.snapshotMetrics(), { active: 1, queued: 0 });
   const second = gate.run(() => secondHold);
   assert.deepEqual(gate.snapshotMetrics(), { active: 1, queued: 1 });
-  await assert.rejects(gate.run(async () => {}), HistoryCapacityError);
+  await assert.rejects(gate.run(async () => {}), ReplayCapacityError);
   assert.deepEqual(gate.snapshotMetrics(), { active: 1, queued: 1 });
   finishFirst();
   await first;

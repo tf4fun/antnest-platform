@@ -1,8 +1,16 @@
+import { applyAgentDelta } from "../src/protocol/agent-view-delta.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { AcpBridgePort } from "../src/bridge/agent-owner.ts";
 import { HistoryTokens } from "../src/bridge/history-token.ts";
 import { createWorkspaceRuntime } from "../src/workspace-runtime.ts";
+
+function expandedEvent(event: any, previous: any): any {
+  if (event.type !== "delta") return event;
+  const view = applyAgentDelta(previous, event);
+  assert.ok(view, "SSE delta must apply to the preceding View");
+  return { ...event, view };
+}
 
 const scope = {
   organizationId: "org-1",
@@ -88,7 +96,7 @@ test("Agent SSE capacity is shared across selections and released on disconnect"
     }),
   });
   assert.deepEqual(runtime.metrics(), { owners: 0, observerLeases: 0, heldWork: 0,
-    cachedBytes: 0, reservedBytes: 0, streamSubscribers: 0,
+    cachedBytes: 0, streamSubscribers: 0,
     journalQueuedBytes: 0, journalRetainedBytes: 0,
     activeReplays: 0, queuedReplays: 0,
     uncertainOperations: 0, oldestUncertainMs: 0 });
@@ -126,7 +134,7 @@ test("Agent SSE capacity is shared across selections and released on disconnect"
     await admittedReader?.cancel();
     await runtime.drain(1_000);
     assert.deepEqual(runtime.metrics(), { owners: 0, observerLeases: 0, heldWork: 0,
-      cachedBytes: 0, reservedBytes: 0, streamSubscribers: 0,
+      cachedBytes: 0, streamSubscribers: 0,
       journalQueuedBytes: 0, journalRetainedBytes: 0,
       activeReplays: 0, queuedReplays: 0,
       uncertainOperations: 0, oldestUncertainMs: 0 });
@@ -209,7 +217,7 @@ test("failed replacement replay serves a freshly authorized read-only sealed Vie
         reader.read(),
         new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Blocked SSE timed out")), 1500)),
       ])).value);
-      assert.equal(JSON.parse(frame.match(/data: (.+)/u)?.[1] ?? "null")
+      assert.equal(expandedEvent(JSON.parse(frame.match(/data: (.+)/u)?.[1] ?? "null"), selected)
         .view.selectedView.historyState, "blocked");
     } finally {
       streamAbort.abort();
@@ -232,11 +240,9 @@ test("failed replacement replay serves a freshly authorized read-only sealed Vie
   }
 });
 
-test("live history overflow publishes a limited Session and Agent View", async () => {
+test("live history remains complete in HTTP, multipart output and Agent SSE", async () => {
   let update!: (value: unknown) => void;
   const runtime = createWorkspaceRuntime({
-    maxSessionHistoryBytes: 256,
-    maxCachedHistoryBytes: 20_000,
     connect: async (_identity, callbacks) => {
       update = callbacks.update as (value: unknown) => void;
       return {
@@ -264,7 +270,8 @@ test("live history overflow publishes a limited Session and Agent View", async (
     assert.equal(initial?.status, 200);
     const previousToken = (await initial?.json()).historyToken;
     const agentBefore = await read("http://localhost/api/app/workspace/v1/agents/agent-1/view?sessionId=session-1");
-    const agentCursor = (await agentBefore?.json()).streamCursor;
+    const initialAgentView = await agentBefore?.json();
+    const agentCursor = initialAgentView.streamCursor;
     const stream = await runtime.handle(new Request(
       `http://localhost/api/app/workspace/v1/agents/agent-1/events?sessionId=session-1&cursor=${encodeURIComponent(agentCursor)}`,
       { headers, signal: streamAbort.signal },
@@ -279,19 +286,17 @@ test("live history overflow publishes a limited Session and Agent View", async (
     const response = await read(`${base}/view`);
     assert.equal(response?.status, 200);
     const view = await response?.json();
-    assert.equal(view.historyState, "view_limited");
+    assert.equal(view.historyState, "ready");
     assert.equal(view.outputWatermark, 1);
-    assert.equal(view.historyToken, null);
-    assert.deepEqual(view.turns, []);
-    assert.equal(view.limitedPreview.truncated, true);
-    assert.match(view.limitedPreview.text, /output/u);
+    assert.equal(typeof view.historyToken, "string");
+    assert.equal(view.turns[0].finalResponse[0].text, "output".repeat(200));
     assert.equal(view.operations[0]?.operationId, "intent-1");
     const frame = new TextDecoder().decode((await Promise.race([
       streamReader.read(),
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Limited SSE timed out")), 2000)),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("SSE timed out")), 2000)),
     ])).value);
-    assert.equal(JSON.parse(frame.match(/data: (.+)/u)?.[1] ?? "null")
-      .view.selectedView.historyState, "view_limited");
+    assert.equal(expandedEvent(JSON.parse(frame.match(/data: (.+)/u)?.[1] ?? "null"), initialAgentView)
+      .view.selectedView.historyState, "ready");
     update({ sessionId: "session-1", update: {
       sessionUpdate: "agent_message_chunk", messageId: "answer-1",
       content: { type: "text", text: "later" },
@@ -312,18 +317,19 @@ test("live history overflow publishes a limited Session and Agent View", async (
       partIndex: 1, partCount: 2, runId: "run-1", messageId: "event-3" } } });
     const splitComplete = await (await read(`${base}/view`))?.json();
     assert.equal(splitComplete.outputWatermark, 3);
-    assert.match(splitComplete.limitedPreview.text, /split-a split-b/u);
+    assert.equal(splitComplete.turns[0].finalResponse.map((block: { text: string }) => block.text).join(""),
+      "output".repeat(200) + "later split-a split-b");
     const agent = await read("http://localhost/api/app/workspace/v1/agents/agent-1/view?sessionId=session-1");
     assert.equal(agent?.status, 200);
-    assert.equal((await agent?.json()).selectedView.historyState, "view_limited");
-    assert.equal((await read(`${base}/turns`))?.status, 429);
+    assert.equal((await agent?.json()).selectedView.historyState, "ready");
+    assert.equal((await read(`${base}/turns`))?.status, 200);
     const prompt = await runtime.handle(new Request(`${base}/prompts`, {
       method: "POST", headers: { ...headers, "Content-Type": "application/json",
         "Idempotency-Key": "later-intent", "If-Match": previousToken },
       body: JSON.stringify({ intentId: "later-intent", expectedAppendVersion: 1,
-        prompt: [{ type: "text", text: "Do not submit from a limited View" }] }),
+        prompt: [{ type: "text", text: "Continue from the complete View" }] }),
     }));
-    assert.equal(prompt?.status, 429);
+    assert.equal(prompt?.status, 202);
   } finally {
     streamAbort.abort();
     await streamReader?.cancel();
@@ -331,13 +337,10 @@ test("live history overflow publishes a limited Session and Agent View", async (
   }
 });
 
-test("total history budget rejects a third scope and releases memory after owner sweep", async () => {
+test("history accounting covers every identity and releases data after owner sweep", async () => {
   const runtime = createWorkspaceRuntime({
     idleMs: 0,
     maxOwners: 3,
-    maxSessionHistoryBytes: 100,
-    maxCachedHistoryBytes: 20_000,
-    maxGlobalHistoryBytes: 40_000,
     connect: async () => ({
       async readAgentExecutionState() { return { availability: "ready" as const, activeSessionId: null }; },
       async load() { return { cut: { sealedWatermark: 0, appendVersion: 0 } }; },
@@ -358,20 +361,18 @@ test("total history budget rejects a third scope and releases memory after owner
   assert.equal((await view("user-1"))?.status, 200);
   assert.equal((await view("user-2"))?.status, 200);
   const full = await view("user-3");
-  assert.equal(full?.status, 429);
-  assert.equal((await full?.json()).code, "history_capacity_exceeded");
+  assert.equal(full?.status, 200);
+  assert.ok(runtime.metrics().cachedBytes >= 3 * 16_384);
   await runtime.sweep();
+  assert.equal(runtime.metrics().cachedBytes, 0);
   assert.equal((await view("user-3"))?.status, 200);
   await runtime.drain(1_000);
 });
 
-test("live output shares the global budget across owners without discarding another View", async () => {
+test("live output retains independent complete histories across owners", async () => {
   const updates = new Map<string, (value: unknown) => void>();
   const runtime = createWorkspaceRuntime({
     maxOwners: 2,
-    maxSessionHistoryBytes: 64 * 1024,
-    maxCachedHistoryBytes: 128 * 1024,
-    maxGlobalHistoryBytes: 120 * 1024,
     connect: async (identity, callbacks) => {
       updates.set(identity.principalId, callbacks.update as (value: unknown) => void);
       return {
@@ -401,7 +402,6 @@ test("live output shares the global budget across owners without discarding anot
   try {
     assert.equal((await read("user-1")).status, 200);
     assert.equal((await read("user-2")).status, 200);
-    let limited: string | undefined;
     const counts = new Map([ ["user-1", 0], ["user-2", 0] ]);
     for (let index = 0; index < 16; index++) {
       const principalId = index % 2 === 0 ? "user-1" : "user-2";
@@ -409,29 +409,34 @@ test("live output shares the global budget across owners without discarding anot
       counts.set(principalId, sequence);
       assert.doesNotThrow(() => updates.get(principalId)?.({
         sessionId: "session-1",
-        update: { sessionUpdate: "agent_message_chunk", messageId: `answer-${sequence}`,
+        update: { sessionUpdate: "agent_message_chunk", messageId: "answer",
           content: { type: "text", text: "x".repeat(8 * 1024) } },
         _meta: { "antnest.dev/delivery": { kind: "part", sequence,
           partIndex: 0, partCount: 1, runId: "run-1",
           messageId: `event-${sequence}` } },
       }));
       const result = await read(principalId);
-      if (result.body?.selectedView?.historyState === "view_limited") {
-        assert.equal(result.status, 200);
-        assert.equal(result.body.selectedView.outputWatermark, sequence);
-        assert.equal(result.body.selectedView.historyToken, null);
-        assert.equal(result.body.selectedView.limitedPreview.truncated, true);
-        limited = principalId;
-        break;
-      }
       assert.equal(result.status, 200);
+      assert.equal(result.body.selectedView.historyState, "ready");
+      assert.equal(result.body.selectedView.outputWatermark, sequence);
     }
-    assert.ok(limited, "Active output must reach the global history limit");
-    assert.ok((counts.get(limited) ?? 0) < 8,
-      "Global overload must happen before an individual Session reaches 64 KiB");
-    const other = limited === "user-1" ? "user-2" : "user-1";
-    assert.equal((await read(other)).status, 200,
-      "A failed active update must preserve the other owner's readable View");
+    for (const id of ["user-1", "user-2"]) {
+      const view = (await read(id)).body.selectedView;
+      const turn = view.turns[0];
+      const blocks = [...turn.finalResponse];
+      let cursor = turn.contentCursor;
+      while (cursor !== null) {
+        const page = await (await runtime.handle(new Request(
+          `${base}/turns/${turn.turnId}/content?cursor=${encodeURIComponent(cursor)}`,
+          { headers: { "x-antnest-organization-id": "org-1",
+            "x-antnest-principal-id": id, "x-antnest-agent-id": "agent-1" } },
+        )))!.json();
+        if (page.section === "finalResponse") blocks.push(...page.items);
+        cursor = page.nextCursor;
+      }
+      assert.equal(blocks.length, 8);
+      assert.ok(blocks.every((block: { text: string }) => block.text === "x".repeat(8 * 1024)));
+    }
   } finally {
     await runtime.drain(1_000);
   }
@@ -766,8 +771,8 @@ test("Agent-only SSE reports a new operation without selecting its Session", asy
     reader.read(),
     new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Agent SSE timed out")), 2000)),
   ])).value);
-  const event = JSON.parse(frame.match(/data: (.+)/u)?.[1] ?? "null");
-  assert.equal(event.type, "reset");
+  const event = expandedEvent(JSON.parse(frame.match(/data: (.+)/u)?.[1] ?? "null"), agent);
+  assert.equal(event.type, "delta");
   assert.equal(event.view.selectedView, null);
   assert.equal(event.view.operations[0]?.sessionId, "session-1");
   assert.equal(event.view.operations[0]?.operationId, "intent-1");
@@ -828,8 +833,8 @@ test("upstream Agent watch pushes external state changes into Agent-only SSE", a
       if (timer !== undefined) clearTimeout(timer);
     }
     const frame = new TextDecoder().decode(chunk.value);
-    const event = JSON.parse(frame.match(/data: (.+)/u)?.[1] ?? "null");
-    assert.equal(event.type, "reset");
+    const event = expandedEvent(JSON.parse(frame.match(/data: (.+)/u)?.[1] ?? "null"), view);
+    assert.equal(event.type, "delta");
     assert.equal(event.view.availability, "busy");
     assert.equal(event.view.activeSessionId, "session-2");
   } finally {
@@ -1228,8 +1233,8 @@ test("SSE resumes the View cut and publishes a live ACP turn without cancelling 
     ),
   ]);
   const frame = new TextDecoder().decode(chunk.value);
-  assert.match(frame, /event: reset/u);
-  const data = JSON.parse(frame.match(/data: (.+)/u)?.[1] ?? "null");
+  assert.match(frame, /event: delta/u);
+  const data = expandedEvent(JSON.parse(frame.match(/data: (.+)/u)?.[1] ?? "null"), view);
   assert.equal(data.view.selectedView.turns[0]?.turnId, "run-1");
   assert.equal(data.view.selectedView.turns[0]?.finalResponse[0]?.text, "live answer");
   const permissionAbort = new AbortController();
@@ -1242,9 +1247,9 @@ test("SSE resumes the View cut and publishes a live ACP turn without cancelling 
     permissionAbort.signal,
   );
   const permissionFrame = new TextDecoder().decode((await reader.read()).value);
-  const permissionEvent = JSON.parse(
+  const permissionEvent = expandedEvent(JSON.parse(
     permissionFrame.match(/data: (.+)/u)?.[1] ?? "null",
-  );
+  ), data.view);
   assert.equal(
     permissionEvent.view.permissions[0]?.toolCall.toolCallId,
     "tool-1",
@@ -1355,9 +1360,9 @@ test("prompt acceptance and durable receipt changes appear in View and SSE", asy
   );
   assert.equal(accepted?.status, 202);
   const bridgeFrame = new TextDecoder().decode((await reader.read()).value);
-  const bridgeEvent = JSON.parse(
+  const bridgeEvent = expandedEvent(JSON.parse(
     bridgeFrame.match(/data: (.+)/u)?.[1] ?? "null",
-  );
+  ), view);
   assert.deepEqual(bridgeEvent.view.operations[0], {
     operationId: "intent-1",
     sessionId: "session-1",
@@ -1380,9 +1385,9 @@ test("prompt acceptance and durable receipt changes appear in View and SSE", asy
   )?.json();
   assert.equal(durableView.operations[0]?.acceptance, "acp");
   const durableFrame = new TextDecoder().decode((await reader.read()).value);
-  const durableEvent = JSON.parse(
+  const durableEvent = expandedEvent(JSON.parse(
     durableFrame.match(/data: (.+)/u)?.[1] ?? "null",
-  );
+  ), bridgeEvent.view);
   assert.equal(durableEvent.view.operations[0]?.runId, "run-1");
   abort.abort();
   await reader.cancel();
@@ -1577,4 +1582,27 @@ test("configuration command accepts only a current advertised value and returns 
     (await post(body(false, first.configurationToken)))?.status,
     409,
   );
+});
+
+test("runtime sweep keeps a recovered Run alive without observers then retires after its own grace", async () => {
+  let now = 0; let active = true; let closes = 0; let cancels = 0;
+  const runtime = createWorkspaceRuntime({ now: () => now, idleMs: 300_000,
+    connect: async () => ({
+      async load() { return { cut: { appendVersion: 1, sealedWatermark: 0 } }; },
+      async readExecution(sessionId) { return { sessionId, appendVersion: 1, outputWatermark: 0,
+        activeRunId: active ? "run" : null, recentReceipts: [], configurationRevision: null }; },
+      async readIntent() { return { kind: "unknown" as const }; }, async prompt() {},
+      async cancel() { cancels++; }, close() { closes++; },
+    }) });
+  const headers = { "x-antnest-organization-id": "org-1", "x-antnest-principal-id": "user-1", "x-antnest-agent-id": "agent-1" };
+  try {
+    assert.equal((await runtime.handle(new Request(`${base}/view`, { headers })))?.status, 200);
+    assert.equal(runtime.metrics().observerLeases, 0);
+    assert.equal(runtime.metrics().heldWork, 1);
+    now = 900_000; await runtime.sweep(); assert.equal(closes, 0);
+    active = false; await runtime.sweep(); assert.equal(runtime.metrics().heldWork, 0);
+    now = 1_199_999; await runtime.sweep(); assert.equal(closes, 0);
+    now = 1_200_000; await runtime.sweep(); assert.equal(closes, 1);
+    assert.equal(runtime.metrics().cachedBytes, 0); assert.equal(cancels, 0);
+  } finally { await runtime.drain(100); }
 });

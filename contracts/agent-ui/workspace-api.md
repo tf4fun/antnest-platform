@@ -67,7 +67,7 @@ permission state for that Session, and its `streamCursor`. Required nullable
 `title` and `updatedAt` carry the latest authorized ACP Session metadata through
 HTTP and SSE; `null` means not known, and the browser must not replace an
 unknown server timestamp with its local clock. These fields remain available
-on limited or blocked Views. `historyToken` binds the scope, Bridge epoch, Session
+on blocked Views. `historyToken` binds the scope, Bridge epoch, Session
 incarnation and ACP `appendVersion`; it is an opaque condition, never an
 authentication credential. A cold/unavailable view has null append version,
 output watermark and history token; submission stays disabled until a
@@ -75,18 +75,15 @@ validated condition arrives. A cursor is bound to its identity, Agent, selected
 Session, fixed history cut and projection version. Old or foreign cursors fail
 or cause an explicit reset; they never revive retired state.
 
-If live output exceeds the Bridge history budget after a successful replay,
-the selected Session uses `historyState: "view_limited"`. It retains the
-authorized `operations` and `permissions` and a complete received
-`outputWatermark`, while `turns` is empty, `olderTurnsCursor` and
-`historyToken` are null, and submission remains disabled. Required
-`limitedPreview` contains at most 4096 characters of displayable recent
-output with `truncated: true`; empty text is valid for non-text output. This
-preview is explicitly incomplete and cannot become a turn or a full-content
-response. History endpoints may return `history_capacity_exceeded` until a
-bounded replay succeeds. The Bridge must continue consuming delivery marks
-and observing Run and permission state without an unbounded in-memory output
-queue; it must not retry an over-budget replay in a tight loop.
+Protocol-valid history and active output are retained completely. Cumulative
+conversation size is not an admission rule and must not clear history, clip
+output or disable the next prompt. Byte metrics describe retained current
+entities, including replacements and replay candidates, not accumulated wire
+traffic. Resource controls apply to concurrent loads and disposable delivery
+queues. Unobserved, idle Sessions are released independently after five minutes;
+active Runs, including recovered Runs, interactions and replay work prevent
+retirement. Rematerializing a Session creates a new incarnation. Read cursors
+from a retired incarnation cannot recreate or mutate that old incarnation.
 
 When a replacement replay fails after a sealed Session View was already
 available, the Bridge may return `historyState: "blocked"` with that retained
@@ -108,7 +105,10 @@ watermark must start from the new View cursor, skip matching turns while
 reestablishing the page boundary, and reject a gap it cannot prove contiguous.
 The stable `turnId` comes from persisted Run/message identity, not array order.
 `turn.contentCursor` is non-null when
-prompt/final response content is not fully inline. A `contentPage` identifies
+prompt/final response content is not fully inline. `turn.contentSection` is
+`prompt` or `finalResponse` to identify which visible message owns that
+continuation; it is null exactly when `contentCursor` is null. The browser
+offers the full-content action on that message only. A `contentPage` identifies
 its `section` (`prompt` or `finalResponse`) and returns complete ACP blocks in
 order without mixing sections within one page. When prompt continuation ends,
 `nextCursor` advances to any remaining final response content. If one serialized
@@ -123,7 +123,55 @@ content exposes `contentCursor` for `GET .../turns/{turnId}/process/{itemId}/con
 That response returns whole blocks or an exact serialized-block fragment with
 offset and total length, and `complete` becomes true only after all content is
 read. Process page and item cursors bind the selected turn, item, process
-version, identity and fixed output watermark.
+version, identity and fixed output watermark. The browser follows distinct
+advancing process cursors until the advertised item count is reached, without
+an additional cumulative page-count limit; repeated cursors and duplicate
+items remain invalid.
+While a turn has `outcome: running`, its `processVersion` and `processCount`
+also drive the live presentation: the browser opens the process by default,
+fetches advancing process pages automatically, and refreshes them when the
+version changes. A user may fold the live process, which stops its in-flight
+reads; reopening resumes from the current View. Completed turns retain the
+explicit, on-demand history behavior. On a running-to-terminal transition the
+browser keeps the observed process open for a reader away from the bottom and
+may fold it when the reader is at the bottom. Live process bodies remain bounded
+by the same item content cursor rather than being inlined into every View/SSE
+update.
+For a running turn, `liveProcessDelta` may provide at most ten current process
+items with their stable zero-based indices. `fromVersion` is the oldest prior
+`processVersion` from which those items cover every intervening process change;
+multiple changes to one index are represented by its latest item. A browser may
+apply the delta only when it has the complete process for a version at least
+`fromVersion`, all existing identities still match their indices, and new items
+append contiguously to the advertised `processCount`. Otherwise it must reload
+the process through the versioned pages. The current producer publishes only
+the latest process change, covering the immediately preceding version, or
+coalesces up to eight consecutive changes to the same process item. A change
+to another item resets that window. The producer omits the delta after an
+unrelated transcript change. This keeps an unchanged large process body out
+of later small updates; a skipped version outside the window reloads through
+the pages. The delta is also omitted if its public payload would exceed the
+budget. Completed turns never carry this live field.
+For a tool process item, `toolSections` identifies the content block indices
+of its optional current raw input and raw output, followed by additional tool
+content at `detailStartIndex`. These indices refer to the complete item content
+across inline and continuation pages; omitted input/output do not create
+placeholder blocks. The browser keeps these sections inside one tool card and
+preserves `pending`, `running`, `completed`, `failed` and `unknown` status.
+For a standard ACP plan item, the first text content block contains the JSON
+array of complete SDK plan entries (`content`, `priority`, `status`); the browser
+renders it as a Plan with progress and entries, including after continuation.
+The browser owns each expanded turn's process requests separately from ordinary
+View/history requests. A View revision that leaves that turn's process version
+and item count unchanged must not interrupt its in-flight process page or item
+content read. Folding the turn, changing its process identity, switching history
+pages or closing the selected Session aborts those requests; a late response
+cannot repopulate released process content.
+The browser's ordinary JSON deadline includes response-body reading and settles
+even when an underlying fetch ignores abort. It distinguishes a deadline from
+caller cancellation. Process and full-content read failures keep already loaded
+material visible and offer an explicit retry; timeout copy remains distinct from
+other failures.
 
 `POST .../prompts` requires a client-generated stable `intentId`, the same
 `Idempotency-Key`, an immutable `expectedAppendVersion` in the body and a
@@ -150,6 +198,10 @@ otherwise its append CAS decides whether that old intent may be admitted.
 `POST .../operations/O/cancel` carries `expectedRunId`; O remains the intent
 ID. Cancellation must target that Run through ACP's durable state and in-memory
 supervisor, so a delayed Stop cannot affect a later Run in the same Session.
+If a terminal receipt is observed while cancellation is in flight, its terminal
+phase wins over a late cancellation response. A recovered operation without a
+local receipt rereads its durable outcome before the Bridge returns a
+`cancelling` phase; missing receipts remain `uncertain`.
 Configuration applies only a server-advertised select string or boolean value
 with the opaque
 `configurationToken` from the current view; response loss is reconciled by reading the current
@@ -163,12 +215,18 @@ The error envelope has stable `code`, non-secret `message`, `requestId`,
 403 denied (with existing existence-hiding rules), 404 absent, 409 conflict,
 413 too large, 422 unsupported content, 428 missing append condition, 429
 capacity, 503 unavailable and 504 ordinary request deadline. An exhausted
-history budget is `history_capacity_exceeded`; a stream snapshot or live
+replay queue is `replay_capacity_exceeded`; a stream snapshot or live
 selection over budget is `stream_capacity_exceeded` and requires a fresh read.
 A new scope denied because every Bridge owner slot is busy receives
 `bridge_capacity_exceeded`; a cold owner may be retired to admit it.
 A missing/expired durable
 receipt stays unknown. `retryable` never authorizes automatic prompt replay.
+When the producer confirms that a selected Session is absent or invisible, its
+Agent/Session View, event stream, history, operation and configuration routes
+return `404 session_not_found` with
+`retryable: false` and `recovery: "none"`. The browser ends that selection and
+returns to the Agent directory; transient observation failures remain
+retryable. A missing intent receipt is still `uncertain`, not Session absence.
 
 The Node HTTP request reader has a 64 MiB absolute ceiling, while Prompt
 admission uses the ACP POST body ceiling (16 MiB by default). Before returning
@@ -189,12 +247,23 @@ coverage defined above, and the selected Session's history. The optional
 Its `projectionId` includes the selected Session; switching selection creates a
 new projection.
 `streamRevision` is an Agent subscription sequence, separate from each
-Session's `viewRevision`. A `delta` requires the Session's incarnation and
-new view revision. Its `patch` is a bounded JSON Patch subset (`add`, `replace`,
-`remove`) against browser-safe selected view fields; the service validates an
-allowlist of paths and the resulting projection schema before publishing.
-Forbidden fields such as credentials and internal endpoints are never patch
-targets. Large responses use reset/snapshot instead of oversized deltas.
+Session's `viewRevision`. A `delta` carries `sessionId`, `incarnation`,
+`fromSessionViewRevision` and `sessionViewRevision`; all four are null for an
+Agent-only selection. The browser requires the same selection/incarnation and
+the exact preceding Session revision before applying the event atomically.
+Its `patch` contains 1–128 JSON Patch operations (`add`, `replace`, `remove`)
+against the retained **Agent View**, limited to availability, active Session,
+prompt capabilities, operations, permissions and mutable selected-view fields.
+Identity, selection, epoch and incarnation cannot be patched. Prototype paths
+are forbidden. Add/replace require a value; remove has no value. Array indexes
+and JSON Pointer escaping follow JSON Patch semantics. A failed operation or
+invalid resulting projection rejects the entire event and requests a reset.
+The Agent cursor advances to the envelope cursor; Session `streamCursor` remains
+its separate Session journal cursor and is not patched. Ordinary changes use
+delta; unchanged views publish nothing. Reset is reserved for initial sync,
+incarnation replacement, gaps, slow observers or deltas exceeding 64 KiB.
+Operation and permission changes travel in the same atomic delta as the
+corresponding selected-view summary, rather than separate uncoordinated events.
 
 The Node owner takes an atomic snapshot cut and registers its suffix before
 returning the snapshot cursor. The first EventSource connection can pass that
@@ -217,7 +286,7 @@ When a journal limit is reached, an unsubscribed journal may be retired; a
 subscribed journal is protected and new demand gets
 `429 stream_capacity_exceeded` if none can be retired. An expired suffix
 causes a fresh reset snapshot. These caps are separate from the history
-budget, so tab count and old SSE cursors cannot silently consume unbounded
+retained history, so tab count and old SSE cursors cannot silently consume unbounded
 owner memory.
 The initial heartbeat interval is 15 seconds. Gateway must revalidate the
 original Identity session within a maximum five-minute lease, including when
@@ -239,3 +308,10 @@ The contract integration test lives at
 Service unit and component tests stay with their service; real stack checks
 live at root `tests/e2e/`. Cutover requires local gates and the subsequent
 cross-service batches in the design.
+
+A delta additionally carries `fromCursor`, the opaque Agent View cursor before
+its patch. This allows the browser to apply the first SSE delta directly to its
+HTTP snapshot, without decoding a signed cursor or requiring a redundant reset.
+It must equal the retained Agent View cursor. Once the stream projection is
+established, both cursor and stream revision continuity are checked. HTTP reads
+publish any new state into that same journal before issuing their snapshot cut.

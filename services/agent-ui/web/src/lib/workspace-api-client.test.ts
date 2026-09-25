@@ -108,6 +108,30 @@ test("structured errors preserve recovery action and do not retry", async () => 
   assert.equal(calls, 1);
 });
 
+test("read timeout settles when fetch ignores abort and stays distinct from caller cancellation", async () => {
+  const client = new BridgeHttpClient({ csrf: () => undefined, timeoutMs: 5,
+    fetch: async () => new Promise<Response>(() => {}) });
+  await assert.rejects(client.process("agent-1", "session-1", "turn-1"),
+    (cause: unknown) => cause instanceof WorkspaceApiError &&
+      cause.code === "workspace_request_timeout" && cause.recovery === "retry_read");
+
+  const caller = new AbortController();
+  const cancelled = client.process("agent-1", "session-1", "turn-1", undefined,
+    caller.signal);
+  caller.abort();
+  await assert.rejects(cancelled, (cause: unknown) => cause instanceof WorkspaceApiError &&
+    cause.code === "workspace_request_interrupted");
+});
+
+test("read timeout includes a stalled response body", async () => {
+  const client = new BridgeHttpClient({ csrf: () => undefined, timeoutMs: 5,
+    fetch: async () => new Response(new ReadableStream({ start() {} }), {
+      headers: { "Content-Type": "application/json" } }) });
+  await assert.rejects(client.process("agent-1", "session-1", "turn-1"),
+    (cause: unknown) => cause instanceof WorkspaceApiError &&
+      cause.code === "workspace_request_timeout");
+});
+
 test("proxy failure after prompt submission requires operation lookup", async () => {
   const client = new BridgeHttpClient({
     csrf: () => "csrf-1",

@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { diffAgentViews } from "../../../services/agent-ui/web/server/dist/protocol/agent-view-delta.js";
 import { test } from "node:test";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { createServer } from "../../../services/agent-ui/web/node_modules/vite/dist/node/index.js";
 import { chromium } from "../../../services/agent-ui/web/node_modules/playwright/index.mjs";
@@ -10,6 +12,8 @@ test(
   { timeout: 90_000 },
   async () => {
     const clients = new Set();
+    const loadingEvidence = fileURLToPath(new URL("../../../artifacts/verification/agent-ui/", import.meta.url));
+    mkdirSync(loadingEvidence, { recursive: true });
     const prompts = [];
     const sockets = [];
     const diagnostics = [];
@@ -24,11 +28,19 @@ test(
     let answer = "Saved answer";
     let sessionTitle = "Saved question";
     let sessionUpdatedAt = "2026-09-23T00:00:00Z";
-    let limited = false;
     let blocked = false;
     let runtimeFailed = false;
     let expired = false;
     let streamUnavailable = false;
+    let interruptFirstPromptStream = false;
+    let firstPromptCompletedWithoutObserver = false;
+    let liveTurnPhase = "absent";
+    let liveProcessVersion = 1;
+    let liveSecondText = "Live second step";
+    let dropNextProcessPage = false;
+    let dropNextProcessContent = false;
+    let holdSelectedView = false;
+    const heldSelectedViews = [];
     let operation = null;
     let server;
     let browser;
@@ -78,10 +90,10 @@ test(
         viewRevision: revision + 1,
         appendVersion: operation ? 2 : 1,
         outputWatermark: revision + 1,
-        historyToken: limited || blocked ? null : `history-${revision}`,
+        historyToken: blocked ? null : `history-${revision}`,
         streamCursor: `session-${revision}`,
-        historyState: limited ? "view_limited" : blocked ? "blocked" : "ready",
-        olderTurnsCursor: limited || blocked ? null : "before-1",
+        historyState: blocked ? "blocked" : "ready",
+        olderTurnsCursor: blocked ? null : "before-1",
         operations: operation ? [operation] : [],
         permissions: [],
         configOptions: [
@@ -94,12 +106,7 @@ test(
         ],
         configurationToken: blocked ? null : `config-${configurationRevision}`,
         usage: { used: 5, size: 100 },
-        ...(limited
-          ? { limitedPreview: { text: "recent output only", truncated: true } }
-          : {}),
-        turns: limited
-          ? []
-          : [
+        turns: [
               {
                 turnId: "turn-1",
                 outcome: runtimeFailed ? "failed" : "completed",
@@ -108,9 +115,20 @@ test(
                   ? []
                   : [{ type: "text", text: answer }],
                 contentCursor: blocked ? "saved-cut" : null,
+                contentSection: blocked ? "finalResponse" : null,
                 processVersion: 1,
                 processCount: 2,
               },
+              ...(liveTurnPhase !== "absent" ? [{ turnId: "turn-live", outcome: liveTurnPhase,
+                prompt: [{ type: "text", text: "Live question" }], finalResponse:
+                  liveTurnPhase === "completed" ? [{ type: "text", text: "Live finished" }] : [],
+                contentCursor: null, contentSection: null, processVersion: liveProcessVersion, processCount: 2,
+                ...(liveTurnPhase === "running" && liveProcessVersion > 1 ? {
+                  liveProcessDelta: { fromVersion: liveProcessVersion - 1,
+                    items: [{ index: 1, item: { id: "live-second", kind: "thought",
+                      summary: "Live progress", status: "running",
+                      content: [{ type: "text", text: liveSecondText }], contentCursor: null } }] },
+                } : {}) }] : []),
             ],
       },
     });
@@ -120,21 +138,29 @@ test(
       response.setHeader("cache-control", "no-store");
       response.end(JSON.stringify(value));
     };
+    let publishedView = agentView("cursor-0");
+    const publications = [];
     const publish = () => {
       revision++;
       const cursor = `cursor-${revision}`;
+      const next = agentView(cursor);
+      const delta = diffAgentViews(publishedView, next);
+      const body = delta && Buffer.byteLength(JSON.stringify(delta)) < 65536
+        ? { ...delta, fromCursor: publishedView.streamCursor }
+        : { type: "reset", view: next };
       const event = {
-        type: "reset",
+        ...body,
         agentId: "agent-1",
         bridgeEpoch: "epoch-1",
         projectionId: "projection-1",
         fromStreamRevision: revision - 1,
         toStreamRevision: revision,
         cursor,
-        view: agentView(cursor),
       };
+      publishedView = next;
+      publications.push(event);
       for (const response of clients)
-        response.write(`event: reset\ndata: ${JSON.stringify(event)}\n\n`);
+        response.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
     };
     try {
       server = await createServer({
@@ -212,7 +238,13 @@ test(
                   return;
                 }
                 if (path === "/api/app/workspace/v1/agents/agent-1/view") {
-                  writeJSON(response, agentView(`cursor-${revision}`));
+                  if (holdSelectedView) {
+                    heldSelectedViews.push(response);
+                    return;
+                  }
+                  if (diffAgentViews(publishedView, agentView(publishedView.streamCursor))?.patch.length)
+                    publish();
+                  writeJSON(response, publishedView);
                   return;
                 }
                 if (path === "/api/app/workspace/v1/agents/agent-1/events") {
@@ -269,6 +301,11 @@ test(
                       },
                       202,
                     );
+                    publish();
+                    if (promptNumber === 1 && interruptFirstPromptStream) {
+                      streamUnavailable = true;
+                      for (const observer of [...clients]) observer.end();
+                    }
                     setTimeout(() => {
                       answer =
                         promptNumber === 1
@@ -283,6 +320,8 @@ test(
                         phase: "completed",
                         outputWatermark: revision + 1,
                       };
+                      if (promptNumber === 1 && interruptFirstPromptStream)
+                        firstPromptCompletedWithoutObserver = streamUnavailable && clients.size === 0;
                       publish();
                     }, 150);
                   });
@@ -302,6 +341,7 @@ test(
                     });
                     safeMode = false;
                     configurationRevision++;
+                    publish();
                     writeJSON(response, {
                       configOptions: agentView(`cursor-${revision}`)
                         .selectedView.configOptions,
@@ -326,7 +366,7 @@ test(
                       permissionId: "permission-1",
                       status: "accepted",
                     });
-                    setTimeout(publish, 20);
+                    publish();
                   });
                   return;
                 }
@@ -345,7 +385,7 @@ test(
                         finalResponse: [
                           { type: "text", text: "Earlier answer" },
                         ],
-                        contentCursor: null,
+                        contentCursor: null, contentSection: null,
                         processVersion: 0,
                         processCount: 0,
                       },
@@ -361,6 +401,13 @@ test(
                 ) {
                   const cursor = url.searchParams.get("cursor");
                   processReads.push(cursor ?? "page");
+                  if (cursor !== null && dropNextProcessPage) {
+                    dropNextProcessPage = false;
+                    response.writeHead(200, { "content-type": "application/json" });
+                    response.write('{"turnId":"turn-1","items":[');
+                    setImmediate(() => response.destroy());
+                    return;
+                  }
                   writeJSON(
                     response,
                     cursor === null
@@ -373,6 +420,7 @@ test(
                               kind: "tool",
                               summary: "Inspect source",
                               status: "completed",
+                              toolSections: { detailStartIndex: 0 },
                               content: [
                                 { type: "text", text: "Output preview" },
                               ],
@@ -386,9 +434,9 @@ test(
                           processVersion: 1,
                           items: [
                             {
-                              id: "thought-1",
-                              kind: "thought",
-                              summary: "Review result",
+                              id: "interim-1",
+                              kind: "notice",
+                              summary: "Intermediate response",
                               status: "completed",
                               content: [{ type: "text", text: "Second step" }],
                               contentCursor: null,
@@ -399,11 +447,30 @@ test(
                   );
                   return;
                 }
+                if (path ===
+                  "/api/app/workspace/v1/agents/agent-1/sessions/session-1/turns/turn-live/process") {
+                  const cursor = url.searchParams.get("cursor");
+                  processReads.push(cursor === null ? "live-page" : "live-page-2");
+                  writeJSON(response, { turnId: "turn-live", processVersion: liveProcessVersion,
+                    items: [{ id: cursor === null ? "live-first" : "live-second",
+                      kind: "thought", summary: "Live progress", status: "running",
+                      content: [{ type: "text", text: cursor === null
+                        ? "Live first step" : liveSecondText }], contentCursor: null }],
+                    nextCursor: cursor === null ? "live-next" : null });
+                  return;
+                }
                 if (
                   path ===
                   "/api/app/workspace/v1/agents/agent-1/sessions/session-1/turns/turn-1/process/tool-1/content"
                 ) {
                   processReads.push("content");
+                  if (dropNextProcessContent) {
+                    dropNextProcessContent = false;
+                    response.writeHead(200, { "content-type": "application/json" });
+                    response.write('{"turnId":"turn-1","items":[');
+                    setImmediate(() => response.destroy());
+                    return;
+                  }
                   writeJSON(response, {
                     turnId: "turn-1",
                     itemId: "tool-1",
@@ -485,7 +552,29 @@ test(
         if (response.status() >= 400)
           diagnostics.push(`http ${response.status()}: ${response.url()}`);
       });
+      holdSelectedView = true;
       await page.goto(`${origin}/workspace/?agent=agent-1&session=session-1`);
+      await page.locator(".session-opening").waitFor();
+      const visualTokens = await page.evaluate(() => {
+        const root = getComputedStyle(document.documentElement);
+        return Object.fromEntries(["--paper", "--sidebar", "--line", "--muted", "--signal-strong"]
+          .map((name) => [name, root.getPropertyValue(name).trim()]));
+      });
+      assert.deepEqual(visualTokens, {
+        "--paper": "#fbfbfa",
+        "--sidebar": "#efefec",
+        "--line": "#deded9",
+        "--muted": "#62625d",
+        "--signal-strong": "#a6d000",
+      }, "Agent UI should use the canonical Antnest palette on the rendered page");
+      assert.equal(await page.locator(".session-opening").getAttribute("aria-busy"), "true");
+      assert.equal(await page.locator(".session-opening-turns[aria-hidden='true']").count(), 1);
+      const openingProcess = await page.locator(".session-opening-process").first().boundingBox();
+      assert.ok(openingProcess);
+      await assertWcagPage(page);
+      await page.screenshot({ path: `${loadingEvidence}opening-desktop.png`, animations: "disabled" });
+      holdSelectedView = false;
+      for (const held of heldSelectedViews.splice(0)) writeJSON(held, publishedView);
       try {
         await page.getByText("Saved answer").waitFor({ timeout: 10_000 });
       } catch (cause) {
@@ -493,6 +582,56 @@ test(
           `${cause.message}\nPage: ${await page.locator("body").innerText()}\nPaths: ${seenPaths.join(", ")}\n${diagnostics.join("\n")}`,
         );
       }
+      const loadedProcess = await page.locator(".turn-process-trigger").first().boundingBox();
+      assert.ok(loadedProcess);
+      assert.ok(Math.abs(openingProcess.x - loadedProcess.x) <= 2);
+      assert.ok(Math.abs(openingProcess.width - loadedProcess.width) <= 2);
+      const mobilePage = await context.newPage();
+      await mobilePage.setViewportSize({ width: 390, height: 844 });
+      await mobilePage.emulateMedia({ reducedMotion: "reduce" });
+      holdSelectedView = true;
+      await mobilePage.goto(`${origin}/workspace/?agent=agent-1&session=session-1`);
+      await mobilePage.locator(".session-opening").waitFor();
+      const mobileOpeningProcess = await mobilePage.locator(".session-opening-process")
+        .first().boundingBox();
+      assert.ok(mobileOpeningProcess);
+      assert.equal(await mobilePage.locator(".session-opening-line").first().evaluate(
+        (element) => getComputedStyle(element).animationName), "none");
+      await mobilePage.screenshot({ path: `${loadingEvidence}opening-mobile.png`, animations: "disabled" });
+      assert.ok(await mobilePage.evaluate(() => document.documentElement.scrollWidth <= 390));
+      holdSelectedView = false;
+      for (const held of heldSelectedViews.splice(0)) writeJSON(held, {
+        code: "upstream_timeout", message: "History timed out", requestId: "opening-timeout",
+        retryable: true, recovery: "retry_read",
+      }, 504);
+      await mobilePage.getByRole("alert").filter({ hasText: "History timed out" }).waitFor();
+      await mobilePage.screenshot({ path: `${loadingEvidence}opening-error-mobile.png`, animations: "disabled" });
+      assert.equal(await mobilePage.locator(".session-opening").getAttribute("aria-busy"), "false");
+      assert.equal(await mobilePage.locator(".session-opening-turns").count(), 0);
+      await assertWcagPage(mobilePage);
+      await mobilePage.getByRole("button", { name: "Retry loading" }).click();
+      await mobilePage.getByText("Saved answer").waitFor();
+      const mobileLoadedProcess = await mobilePage.locator(".turn-process-trigger")
+        .first().boundingBox();
+      assert.ok(mobileLoadedProcess);
+      assert.ok(Math.abs(mobileOpeningProcess.x - mobileLoadedProcess.x) <= 2);
+      assert.ok(Math.abs(mobileOpeningProcess.width - mobileLoadedProcess.width) <= 2);
+      await mobilePage.screenshot({ path: `${loadingEvidence}conversation-mobile.png`,
+        animations: "disabled" });
+      await mobilePage.close();
+      const backPage = await context.newPage();
+      holdSelectedView = true;
+      await backPage.goto(`${origin}/workspace/?agent=agent-1&session=session-1`);
+      await backPage.locator(".session-opening").waitFor();
+      holdSelectedView = false;
+      for (const held of heldSelectedViews.splice(0)) writeJSON(held, {
+        code: "upstream_timeout", message: "History timed out", requestId: "opening-timeout-back",
+        retryable: true, recovery: "retry_read",
+      }, 504);
+      await backPage.getByRole("button", { name: "Back to agent" }).click();
+      await backPage.waitForURL((url) => url.searchParams.get("agent") === "agent-1" &&
+        url.searchParams.get("session") === null);
+      await backPage.close();
       assert.equal(
         await page
           .getByRole("region", { name: "Conversation messages" })
@@ -540,6 +679,12 @@ test(
         true,
       );
       await assertWcagPage(page);
+      const viewsBeforeStreamRecovery = seenPaths.filter(
+        (path) => path === "/api/app/workspace/v1/agents/agent-1/view",
+      ).length;
+      sessionTitle = "Changed while observer was offline";
+      publish();
+      assert.equal(clients.size, 0, "The missed update must have no connected observer");
       streamUnavailable = false;
       for (let attempt = 0; attempt < 200 && clients.size !== 1; attempt++)
         await new Promise((resolve) => setTimeout(resolve, 20));
@@ -552,6 +697,16 @@ test(
         .locator(".topbar-agent .presence")
         .getByText("Available")
         .waitFor();
+      await page.locator(".conversation-option.active strong")
+        .filter({ hasText: sessionTitle }).waitFor();
+      assert.ok(seenPaths.filter((path) =>
+        path === "/api/app/workspace/v1/agents/agent-1/view").length >
+        viewsBeforeStreamRecovery,
+      "Reconnect must recover the missed state from an authoritative View");
+      sessionTitle = "Saved question";
+      publish();
+      await page.locator(".conversation-option.active strong")
+        .filter({ hasText: sessionTitle }).waitFor();
       assert.equal(await composerStatus.innerText(), "");
       assert.equal(
         await page.getByRole("button", { name: "Allow once" }).isEnabled(),
@@ -657,14 +812,56 @@ test(
         "browser-csrf",
       );
       await page.getByRole("button", { name: "Show process" }).click();
+      await page.locator(".tool-activity summary").click();
       await page.getByText("Output preview").waitFor();
+      dropNextProcessContent = true;
       await page.getByRole("button", { name: "Load full content" }).click();
+      await page.getByText("Full content could not be loaded.").waitFor();
+      await page.getByText("Output preview").waitFor();
+      await page.getByRole("button", { name: "Retry full content" }).focus();
+      await page.keyboard.press("Enter");
       await page.getByText("Output preview full").waitFor();
-      assert.deepEqual(processReads, ["page", "content"]);
+      assert.equal(await page.evaluate(() =>
+        document.activeElement?.matches(".message")), true,
+      "Finishing full content must focus the message that replaced its keyboard action");
+      assert.equal(await page.evaluate(() =>
+        getComputedStyle(document.activeElement).outlineStyle), "solid",
+      "The focused full message needs a visible keyboard indicator");
+      assert.deepEqual(processReads, ["page", "content", "content"]);
+      await page.getByText("Loaded 1 of 2 updates").waitFor();
+      const desktopViewport = page.viewportSize();
+      await page.setViewportSize({ width: 390, height: 844 });
+      const olderControl = page.getByRole("button", { name: "Load earlier messages" });
+      const olderBounds = await olderControl.boundingBox();
+      assert.ok(olderBounds && olderBounds.height >= 32,
+        "History pagination needs a usable mobile touch target");
+      assert.ok(await olderControl.evaluate((element) =>
+        Number.parseFloat(getComputedStyle(element).borderTopLeftRadius) >= 4),
+      "History pagination should use the same compact control shape as the workspace");
+      await page.screenshot({ path: `${loadingEvidence}process-ready-mobile.png`,
+        animations: "disabled" });
+      dropNextProcessPage = true;
       await page.getByRole("button", { name: "Load more process" }).click();
-      await page.getByText("Second step").waitFor({ state: "attached" });
+      await page.getByText("Process could not be loaded.").waitFor();
+      await page.getByText("Output preview full").waitFor();
+      await page.getByText("Loaded 1 of 2 updates").waitFor();
       await assertWcagPage(page);
-      assert.deepEqual(processReads, ["page", "content", "page-2"]);
+      await page.screenshot({ path: `${loadingEvidence}process-error-mobile.png`,
+        animations: "disabled" });
+      await page.getByRole("button", { name: "Retry process" }).focus();
+      await page.keyboard.press("Enter");
+      await page.getByText("Second step").waitFor({ state: "attached" });
+      assert.equal(await page.evaluate(() => document.activeElement?.className),
+        "turn-process-trigger",
+        "Finishing the last process page must return keyboard focus to its disclosure");
+      if (desktopViewport) await page.setViewportSize(desktopViewport);
+      const firstExchange = await page.locator(".conversation-turn").first().innerText();
+      assert.ok(firstExchange.indexOf("Second step") < firstExchange.indexOf(answer),
+        "An interim Agent response must remain inside process before the final answer");
+      assert.equal(await page.locator(".turn-process-content .message-system").count(), 0);
+      await page.getByText("Loaded 2 of 2 updates").waitFor();
+      await assertWcagPage(page);
+      assert.deepEqual(processReads, ["page", "content", "content", "page-2", "page-2"]);
       await page.getByRole("button", { name: "Load earlier messages" }).click();
       await page.getByText("Earlier answer").waitFor();
       const historyFocus = await page.evaluate(() => ({
@@ -687,7 +884,14 @@ test(
       );
       await secondPage.getByText("Saved answer").waitFor();
       await page.getByRole("textbox", { name: "Message" }).fill("Continue");
+      interruptFirstPromptStream = true;
       await page.getByRole("button", { name: "Send message" }).click();
+      for (let attempt = 0; attempt < 200 && !firstPromptCompletedWithoutObserver; attempt++)
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      assert.equal(firstPromptCompletedWithoutObserver, true,
+        "The accepted Prompt must finish while no browser SSE observer is connected");
+      assert.equal(prompts.length, 1, "Losing the observer must not replay the Prompt");
+      streamUnavailable = false;
       await page.getByText("Completed over SSE").waitFor();
       await secondPage.getByText("Completed over SSE").waitFor();
       for (const observer of [page, secondPage])
@@ -763,46 +967,38 @@ test(
       runtimeFailed = false;
       publish();
       await secondPage.getByText("Continued after tab close").waitFor();
-      limited = true;
+      const viewReadsBefore = seenPaths.filter((path) => path.endsWith("/view")).length;
+      sessionTitle = "Renamed through incremental delivery";
       publish();
-      await secondPage
-        .getByRole("status", { name: "History limited" })
-        .waitFor();
-      assert.doesNotMatch(
-        await secondPage.getByRole("status", { name: "History limited" }).innerText(),
-        /recent output only/u,
-      );
-      await secondPage.getByRole("region", { name: "Recent output preview" })
-        .getByText("recent output only").waitFor();
-      await assertWcagPage(secondPage);
-      assert.equal(
-        await secondPage.getByText("Continued after tab close").count(),
-        0,
-      );
-      assert.equal(await secondPage.locator(".conversation-turn").count(), 0);
-      assert.equal(
-        await secondPage
-          .getByRole("button", { name: "Send message" })
-          .isDisabled(),
-        true,
-      );
+      await secondPage.locator(".conversation-option.active strong").filter({ hasText: sessionTitle }).waitFor();
+      assert.equal(publications.at(-1).type, "delta");
+      assert.equal(JSON.stringify(publications.at(-1)).includes(answer), false,
+        "A title update must not repeat the retained answer");
+      assert.equal(seenPaths.filter((path) => path.endsWith("/view")).length, viewReadsBefore,
+        "A continuous delta must update the browser without a View GET");
+      await secondPage.getByText("Continued after tab close").waitFor();
       await secondPage.reload();
-      await secondPage
-        .getByRole("status", { name: "History limited" })
-        .waitFor();
-      assert.equal(await secondPage.getByRole("region", {
-        name: "Recent output preview",
-      }).getByText("recent output only").count(), 1);
-      assert.equal(
-        prompts.length,
-        2,
-        "Limited View reload must not resubmit the Prompt",
-      );
+      await secondPage.getByText("Continued after tab close").waitFor();
+      assert.equal(prompts.length, 2, "Reload must not resubmit the Prompt");
+      liveTurnPhase = "running";
+      publish();
+      await secondPage.getByRole("button", { name: "Hide process" }).waitFor();
+      await secondPage.getByText("Live first step").waitFor({ state: "attached" });
+      await secondPage.getByText("Live second step").waitFor({ state: "attached" });
+      assert.deepEqual(processReads.slice(-2), ["live-page", "live-page-2"]);
+      const liveReads = processReads.length;
+      liveProcessVersion = 2;
+      liveSecondText = "Live second step updated";
+      publish();
+      await secondPage.getByText(liveSecondText).waitFor({ state: "attached" });
+      assert.equal(processReads.length, liveReads,
+        "A continuous live process delta must not refetch process pages");
+      liveTurnPhase = "completed";
+      publish();
+      await secondPage.getByText("Live finished").waitFor();
       for (let attempt = 0; attempt < 200 && clients.size !== 1; attempt++)
         await new Promise((resolve) => setTimeout(resolve, 20));
       assert.equal(clients.size, 1, "Reloaded page must reattach its SSE observer");
-      limited = false;
-      publish();
       await secondPage
         .getByRole("textbox", { name: "Message" })
         .fill("Ready again");
@@ -919,12 +1115,15 @@ test(
 
 test(
   "Bridge browser switches scoped Sessions without mixing drafts or observers",
-  { timeout: 60_000 },
+  { timeout: 90_000 },
   async () => {
     const streams = new Set();
     const peerStreams = new Set();
     const selectedViews = [];
     const promptBodies = [];
+    const heldProcessContent = [];
+    let processContentClosed = false;
+    let processContentRequests = 0;
     let firstIntentId = "";
     let rejectedAudio = false;
     let rejectedIntentId = "";
@@ -990,14 +1189,14 @@ test(
             outcome: "completed",
             prompt: [{ type: "text", text: `Question ${id}` }],
             finalResponse: [{ type: "text", text: `Answer ${id}` }],
-            contentCursor: null,
-            processVersion: 0,
-            processCount: 0,
+            contentCursor: null, contentSection: null,
+            processVersion: id === "one" ? 1 : 0,
+            processCount: id === "one" ? 1 : 0,
           },
           ...(id === "two" && rejectedAudio ? [{
             turnId: "rejected-run", outcome: "failed",
             prompt: [{ type: "text", text: "Unsupported audio check" }],
-            finalResponse: [], contentCursor: null,
+            finalResponse: [], contentCursor: null, contentSection: null,
             processVersion: 0, processCount: 0,
           }] : []),
         ],
@@ -1138,6 +1337,29 @@ test(
                     : view(id));
                   return;
                 }
+                if (url.pathname ===
+                  "/api/app/workspace/v1/agents/agent-1/sessions/one/turns/turn-one/process") {
+                  writeJSON(response, { turnId: "turn-one", processVersion: 1,
+                    items: [{ id: "tool-one", kind: "tool", summary: "Large tool",
+                      status: "completed", toolSections: { detailStartIndex: 0 },
+                      content: [{ type: "text", text: "Preview" }],
+                      contentCursor: "tool-more" }], nextCursor: null });
+                  return;
+                }
+                if (url.pathname ===
+                  "/api/app/workspace/v1/agents/agent-1/sessions/one/turns/turn-one/process/tool-one/content") {
+                  processContentRequests++;
+                  if (processContentRequests === 1) {
+                    heldProcessContent.push(response);
+                    response.on("close", () => { processContentClosed = true; });
+                  } else {
+                    writeJSON(response, { turnId: "turn-one", itemId: "tool-one",
+                      items: [{ type: "text", text:
+                        `Late tool body ${processContentRequests}: ${"x".repeat(1024 * 1024)} END-OF-LARGE-TOOL` }],
+                      nextCursor: null, complete: true });
+                  }
+                  return;
+                }
                 if (
                   url.pathname === "/api/app/workspace/v1/agents/agent-1/events"
                 ) {
@@ -1172,11 +1394,23 @@ test(
       await page
         .getByRole("textbox", { name: "Message" })
         .fill("Draft for one");
+      await page.getByRole("button", { name: "Show process" }).click();
+      await page.locator(".tool-activity summary").click();
+      await page.getByRole("button", { name: "Load full content" }).click();
+      for (let attempt = 0; attempt < 100 && heldProcessContent.length === 0; attempt++)
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      assert.equal(heldProcessContent.length, 1,
+        "The full tool body must have an in-flight browser request");
       await page
         .getByRole("complementary", { name: "Workspace navigation" })
         .getByRole("button", { name: /Conversation two/u })
         .click();
       await page.getByText("Answer two").waitFor();
+      for (let attempt = 0; attempt < 100 && !processContentClosed; attempt++)
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      assert.equal(processContentClosed, true,
+        "Leaving the Session must abort its in-flight tool content response");
+      assert.equal(await page.getByText("Late tool body").count(), 0);
       assert.equal(
         await page.getByRole("textbox", { name: "Message" }).inputValue(),
         "",
@@ -1289,6 +1523,12 @@ test(
         { name: "report.pdf", mimeType: "application/pdf", buffer: pdf },
         { name: "note.txt", mimeType: "text/plain", buffer: note },
       ]);
+      await page.getByRole("textbox", { name: "Message" }).evaluate((editor) => {
+        editor.dispatchEvent(new KeyboardEvent("keydown", {
+          key: "Enter", keyCode: 229, bubbles: true, cancelable: true,
+        }));
+      });
+      assert.equal(promptBodies.length, 0, "IME confirmation must not submit the draft");
       await page.getByRole("textbox", { name: "Message" }).press("Enter");
       for (
         let attempt = 0;
@@ -1342,6 +1582,52 @@ test(
       assert.equal(await page.getByRole("textbox", { name: "Message" }).isEnabled(), true);
       assert.equal(promptBodies.length, 2, "Reload must not replay a rejected Prompt");
       await page.close();
+      const memoryPage = await context.newPage();
+      await memoryPage.goto(`${origin}/workspace/?agent=agent-1&session=two`);
+      await memoryPage.getByText("Answer two").waitFor();
+      const heapSession = await context.newCDPSession(memoryPage);
+      const heapBytes = async () => {
+        await heapSession.send("HeapProfiler.collectGarbage");
+        const { usedSize: bytes } = await heapSession.send("Runtime.getHeapUsage");
+        assert.ok(Number.isSafeInteger(bytes) && bytes > 0);
+        return bytes;
+      };
+      const baselineHeapBytes = await heapBytes();
+      const loadedBytes = [];
+      const afterNavigationBytes = [];
+      try {
+        for (let cycle = 0; cycle < 6; cycle++) {
+          await memoryPage.getByRole("complementary", { name: "Workspace navigation" })
+            .getByRole("button", { name: /Conversation one/u }).click();
+          await memoryPage.getByText("Answer one").waitFor();
+          await memoryPage.getByRole("button", { name: "Show process" }).click();
+          await memoryPage.locator(".tool-activity summary").click();
+          await memoryPage.getByRole("button", { name: "Load full content" }).click();
+          await memoryPage.waitForFunction(() =>
+            document.body.textContent?.includes("END-OF-LARGE-TOOL"));
+          loadedBytes.push(await heapBytes());
+          await memoryPage.getByRole("complementary", { name: "Workspace navigation" })
+            .getByRole("button", { name: /Conversation two/u }).click();
+          await memoryPage.getByText("Answer two").waitFor();
+          assert.equal(await memoryPage.getByText("END-OF-LARGE-TOOL").count(), 0);
+          afterNavigationBytes.push(await heapBytes());
+        }
+        assert.ok(loadedBytes.every((bytes, index) =>
+          bytes > afterNavigationBytes[index] + 512 * 1024),
+        `CDP heap samples did not detect loaded tool bodies: ${JSON.stringify({ loadedBytes, afterNavigationBytes })}`);
+        assert.ok(afterNavigationBytes.at(-1) < afterNavigationBytes[0] + 2 * 1024 * 1024,
+          `Navigation retained large tool bodies: ${JSON.stringify(afterNavigationBytes)}`);
+        const evidence = fileURLToPath(new URL(
+          "../../../artifacts/verification/agent-ui/browser-navigation-heap.json", import.meta.url));
+        mkdirSync(fileURLToPath(new URL(
+          "../../../artifacts/verification/agent-ui/", import.meta.url)), { recursive: true });
+        writeFileSync(evidence, JSON.stringify({ baselineHeapBytes, loadedBytes,
+          afterNavigationBytes,
+          bodyBytes: 1024 * 1024, cycles: 6 }, null, 2) + "\n");
+      } finally {
+        await heapSession.detach();
+        await memoryPage.close();
+      }
       const mobileContext = await browser.newContext({
         viewport: { width: 390, height: 844 },
         isMobile: true,

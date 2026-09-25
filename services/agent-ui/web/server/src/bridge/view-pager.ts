@@ -2,7 +2,6 @@ import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import type { ContentBlock } from "@agentclientprotocol/sdk";
 import {
   CompactTranscript,
-  HistoryCapacityError,
   type ProcessItem,
   type TranscriptTurn,
 } from "./compact-transcript.ts";
@@ -17,11 +16,18 @@ export type ViewContext = BridgeScope & {
 
 export type PublicTurn = Omit<TranscriptTurn, "process" | "contentCursor"> & {
   contentCursor: string | null;
+  contentSection: "prompt" | "finalResponse" | null;
+  liveProcessDelta?: { fromVersion: number;
+    items: Array<{ index: number; item: PublicProcessItem }> };
 };
 
 export type PublicProcessItem = Omit<ProcessItem, "contentCursor"> & {
   contentCursor: string | null;
 };
+
+type CachedTurnContent = { revision: number; inlineBytes: number; prompt: ContentBlock[];
+  finalResponse: ContentBlock[]; promptIndex: number; finalIndex: number };
+export type TurnContentPreviewCache = Map<string, CachedTurnContent>;
 
 type Position =
   | { kind: "turn"; before: number }
@@ -57,6 +63,14 @@ export class ViewPager {
   private readonly key: Buffer;
   private readonly inlineBytes: number;
   private readonly pageBytes: number;
+  private serializedContent: { key: string; revision: number; bytes: Buffer;
+    lastAccessMs: number } | undefined;
+  private processContentCache: { turnId: string; version: number; itemIndex: number;
+    itemId: string; content: ContentBlock[]; blockIndex: number; bytes: Buffer;
+    lastAccessMs: number } | undefined;
+  private recent: { revision: number; value: ReturnType<ViewPager["recentTurns"]> } | undefined;
+  private readonly turnContentCache: TurnContentPreviewCache;
+  private readonly now: () => number;
 
   public constructor(input: {
     transcript: CompactTranscript;
@@ -64,6 +78,8 @@ export class ViewPager {
     key: Buffer;
     inlineBytes?: number;
     pageBytes?: number;
+    turnContentCache?: TurnContentPreviewCache;
+    now?: () => number;
   }) {
     if (input.key.length < 32)
       throw new RangeError("View cursor key is too short");
@@ -81,6 +97,22 @@ export class ViewPager {
     this.key = Buffer.from(input.key);
     this.inlineBytes = inlineBytes;
     this.pageBytes = pageBytes;
+    this.turnContentCache = input.turnContentCache ?? new Map();
+    this.now = input.now ?? Date.now;
+  }
+
+  public releaseIdleContentCaches(maxIdleMs = 30_000): void {
+    const now = this.now();
+    if (this.serializedContent !== undefined &&
+      now - this.serializedContent.lastAccessMs >= maxIdleMs)
+      this.serializedContent = undefined;
+    if (this.processContentCache !== undefined &&
+      now - this.processContentCache.lastAccessMs >= maxIdleMs)
+      this.processContentCache = undefined;
+  }
+
+  public sharedTurnContentCache(): TurnContentPreviewCache {
+    return this.turnContentCache;
   }
 
   public recentTurns(): {
@@ -88,7 +120,9 @@ export class ViewPager {
     olderTurnsCursor: string | null;
     newerTurnsCursor: string | null;
   } {
-    return this.turnPage(this.transcript.turnCount);
+    if (this.recent?.revision !== this.transcript.conversationRevision)
+      this.recent = { revision: this.transcript.conversationRevision, value: this.turnPage(this.transcript.turnCount) };
+    return this.recent.value;
   }
 
   public get watermark(): number {
@@ -125,7 +159,7 @@ export class ViewPager {
     if (position.kind !== "content") throw new ViewCursorError();
     if (expectedTurnId !== undefined && position.turnId !== expectedTurnId)
       throw new ViewCursorError();
-    const turn = this.transcript.turnById(position.turnId);
+    const turn = this.transcript.turnById(position.turnId, false, false);
     if (turn === null) throw new ViewCursorError();
     const blocks = turn[position.section];
     if (
@@ -138,42 +172,54 @@ export class ViewPager {
     let consumed = 0;
     while (index < blocks.length) {
       const block = blocks[index]!;
-      const serialized = Buffer.from(JSON.stringify(block));
-      if (position.offset > 0 || serialized.length > this.pageBytes - 512) {
-        if (items.length > 0) break;
-        if (position.offset >= serialized.length) throw new ViewCursorError();
-        const length = Math.min(
-          serialized.length - position.offset,
-          Math.floor(((this.pageBytes - 512) * 3) / 4),
-        );
-        const nextOffset = position.offset + length;
-        const next =
-          nextOffset < serialized.length
-            ? { ...position, offset: nextOffset }
-            : this.nextContentPosition(turn, position, index + 1);
-        const nextCursor = next === null ? null : this.issue(next);
-        return {
-          section: position.section,
-          items: [],
-          fragment: {
-            blockIndex: index,
-            byteOffset: position.offset,
-            totalBytes: serialized.length,
-            serializedBlockBase64: serialized
-              .subarray(position.offset, nextOffset)
-              .toString("base64"),
-          },
-          nextCursor,
-          complete: nextCursor === null,
-        };
+      const cacheKey = JSON.stringify([position.turnId, position.section, index]);
+      if (this.serializedContent?.key !== cacheKey ||
+        this.serializedContent.revision !== this.transcript.conversationRevision)
+        this.serializedContent = { key: cacheKey, revision: this.transcript.conversationRevision,
+          bytes: Buffer.from(JSON.stringify(block)), lastAccessMs: this.now() };
+      this.serializedContent.lastAccessMs = this.now();
+      const serialized = this.serializedContent.bytes;
+      const afterBlock = this.nextContentPosition(turn, position, index + 1);
+      const afterCursor = afterBlock === null ? null : this.issue(afterBlock);
+      const envelopeBytes = Buffer.byteLength(JSON.stringify({ section: position.section,
+        items: [], nextCursor: afterCursor, complete: afterCursor === null }));
+      if (position.offset === 0 && envelopeBytes + consumed + serialized.length + items.length <= this.pageBytes) {
+        items.push(structuredClone(block));
+        consumed += serialized.length;
+        index++;
+        continue;
       }
-      if (consumed + serialized.length > this.pageBytes - 512) break;
-      items.push(structuredClone(block));
-      consumed += serialized.length;
-      index += 1;
+      if (items.length > 0) break;
+      if (position.offset >= serialized.length) throw new ViewCursorError();
+      const fragmentPage = (length: number) => {
+        const end = position.offset + length;
+        const next = end < serialized.length ? { ...position, offset: end } : afterBlock;
+        const nextCursor = next === null ? null : this.issue(next);
+        return { section: position.section, items: [], fragment: {
+          blockIndex: index, byteOffset: position.offset, totalBytes: serialized.length,
+          serializedBlockBase64: "",
+        }, nextCursor, complete: nextCursor === null };
+      };
+      let low = 1;
+      let high = serialized.length - position.offset;
+      let best = 0;
+      while (low <= high) {
+        const length = Math.floor((low + high) / 2);
+        // Base64 adds exactly four ASCII bytes per three source bytes. Include
+        // the real signed continuation cursor and JSON envelope in the bound.
+        const bytes = Buffer.byteLength(JSON.stringify(fragmentPage(length))) + 4 * Math.ceil(length / 3);
+        if (bytes <= this.pageBytes) { best = length; low = length + 1; }
+        else high = length - 1;
+      }
+      if (best === 0) throw new RangeError("View page envelope exceeds its response budget");
+      const page = fragmentPage(best);
+      page.fragment.serializedBlockBase64 = serialized.subarray(position.offset, position.offset + best).toString("base64");
+      if (page.nextCursor === null) this.serializedContent = undefined;
+      return page;
     }
     const next = this.nextContentPosition(turn, position, index);
     const nextCursor = next === null ? null : this.issue(next);
+    if (nextCursor === null) this.serializedContent = undefined;
     return {
       section: position.section,
       items,
@@ -227,7 +273,7 @@ export class ViewPager {
         nextCursor,
       };
       if (Buffer.byteLength(JSON.stringify(candidate)) > this.pageBytes) {
-        if (items.length === 0) throw new HistoryCapacityError();
+        if (items.length === 0) throw new RangeError("View page envelope exceeds its response budget");
         break;
       }
       items.push(item);
@@ -275,98 +321,85 @@ export class ViewPager {
     const info = this.transcript.processInfo(position.turnId);
     if (info === null || info.version !== position.version)
       throw new ViewCursorError();
-    const item = this.transcript.processItem(
-      position.turnId,
-      position.itemIndex,
-    );
+    let cached = this.processContentCache;
+    if (cached?.turnId !== position.turnId || cached.version !== position.version ||
+      cached.itemIndex !== position.itemIndex) {
+      const item = this.transcript.processItem(position.turnId, position.itemIndex);
+      if (item === null) throw new ViewCursorError();
+      cached = { turnId: position.turnId, version: position.version,
+        itemIndex: position.itemIndex, itemId: publicProcessId(item.id),
+        content: item.content, blockIndex: -1, bytes: Buffer.alloc(0),
+        lastAccessMs: this.now() };
+      this.processContentCache = cached;
+    }
     if (
-      item === null ||
-      publicProcessId(item.id) !== expectedItemId ||
-      position.blockIndex >= item.content.length
+      cached.itemId !== expectedItemId ||
+      position.blockIndex >= cached.content.length
     )
       throw new ViewCursorError();
+    cached.lastAccessMs = this.now();
     const items: ContentBlock[] = [];
     let index = position.blockIndex;
-    while (index < item.content.length) {
-      const block = item.content[index]!;
-      const serialized = Buffer.from(JSON.stringify(block));
+    let consumedBytes = 0;
+    while (index < cached.content.length) {
+      const block = cached.content[index]!;
+      if (cached.blockIndex !== index) {
+        cached.blockIndex = index;
+        cached.bytes = Buffer.from(JSON.stringify(block));
+      }
+      const serialized = cached.bytes;
       const next =
-        index + 1 < item.content.length
+        index + 1 < cached.content.length
           ? this.issue({ ...position, blockIndex: index + 1, offset: 0 })
           : null;
-      const candidate = {
-        turnId: position.turnId,
-        itemId: expectedItemId,
-        items: [...items, block],
-        nextCursor: next,
-        complete: next === null,
-      };
+      const envelopeBytes = Buffer.byteLength(JSON.stringify({
+        turnId: position.turnId, itemId: expectedItemId,
+        items: [], nextCursor: next, complete: next === null,
+      }));
       if (
         position.offset === 0 &&
-        Buffer.byteLength(JSON.stringify(candidate)) <= this.pageBytes
+        envelopeBytes + consumedBytes + serialized.length + items.length <= this.pageBytes
       ) {
         items.push(structuredClone(block));
+        consumedBytes += serialized.length;
         index += 1;
         continue;
       }
       if (items.length > 0) break;
       if (position.offset >= serialized.length) throw new ViewCursorError();
+      const fragmentPage = (length: number) => {
+        const end = position.offset + length;
+        const continuation = end < serialized.length
+          ? this.issue({ ...position, offset: end }) : next;
+        return { turnId: position.turnId, itemId: expectedItemId,
+          items: [], fragment: { blockIndex: index, byteOffset: position.offset,
+            totalBytes: serialized.length, serializedBlockBase64: "" },
+          nextCursor: continuation, complete: continuation === null };
+      };
       let low = 1;
       let high = serialized.length - position.offset;
       let best = 0;
       while (low <= high) {
         const length = Math.floor((low + high) / 2);
-        const end = position.offset + length;
-        const continuation =
-          end < serialized.length
-            ? this.issue({ ...position, offset: end })
-            : next;
-        const page = {
-          turnId: position.turnId,
-          itemId: expectedItemId,
-          items: [],
-          fragment: {
-            blockIndex: index,
-            byteOffset: position.offset,
-            totalBytes: serialized.length,
-            serializedBlockBase64: serialized
-              .subarray(position.offset, end)
-              .toString("base64"),
-          },
-          nextCursor: continuation,
-          complete: continuation === null,
-        };
-        if (Buffer.byteLength(JSON.stringify(page)) <= this.pageBytes) {
+        const bytes = Buffer.byteLength(JSON.stringify(fragmentPage(length))) +
+          4 * Math.ceil(length / 3);
+        if (bytes <= this.pageBytes) {
           best = length;
           low = length + 1;
         } else high = length - 1;
       }
-      if (best === 0) throw new HistoryCapacityError();
-      const end = position.offset + best;
-      const nextCursor =
-        end < serialized.length
-          ? this.issue({ ...position, offset: end })
-          : next;
-      return {
-        turnId: position.turnId,
-        itemId: expectedItemId,
-        items: [],
-        fragment: {
-          blockIndex: index,
-          byteOffset: position.offset,
-          totalBytes: serialized.length,
-          serializedBlockBase64: serialized
-            .subarray(position.offset, end)
-            .toString("base64"),
-        },
-        nextCursor,
-        complete: nextCursor === null,
-      };
+      if (best === 0) throw new RangeError("View page envelope exceeds its response budget");
+      const page = fragmentPage(best);
+      page.fragment.serializedBlockBase64 = serialized
+        .subarray(position.offset, position.offset + best).toString("base64");
+      if (page.nextCursor === null) this.processContentCache = undefined;
+      return page;
     }
     const nextCursor =
-      index < item.content.length
+      index < cached.content.length
         ? this.issue({ ...position, blockIndex: index, offset: 0 })
         : null;
+    if (nextCursor === null) this.processContentCache = undefined;
     return {
       turnId: position.turnId,
       itemId: expectedItemId,
@@ -386,7 +419,7 @@ export class ViewPager {
     const limit = Math.min(this.inlineBytes, Math.floor(this.pageBytes / 16));
     let remaining = limit;
     for (const block of item.content) {
-      const bytes = Buffer.byteLength(JSON.stringify(block));
+      const bytes = inlineBlockBytes(block, remaining);
       if (bytes > remaining) break;
       content.push(structuredClone(block));
       remaining -= bytes;
@@ -399,6 +432,7 @@ export class ViewPager {
         Math.min(512, Math.floor(this.pageBytes / 8)),
       ),
       status: item.status,
+      ...(item.toolSections === undefined ? {} : { toolSections: item.toolSections }),
       content,
       contentCursor:
         content.length < item.content.length
@@ -421,7 +455,7 @@ export class ViewPager {
   } {
     let page: ReturnType<CompactTranscript["pageBefore"]>;
     try {
-      page = this.transcript.pageBefore(before, 20);
+      page = this.transcript.pageBefore(before, 20, false, false);
     } catch {
       throw new ViewCursorError();
     }
@@ -445,7 +479,7 @@ export class ViewPager {
   } {
     let page: ReturnType<CompactTranscript["pageAfter"]>;
     try {
-      page = this.transcript.pageAfter(after, 20);
+      page = this.transcript.pageAfter(after, 20, false, false);
     } catch {
       throw new ViewCursorError();
     }
@@ -459,55 +493,75 @@ export class ViewPager {
   }
 
   private publicTurn(turn: TranscriptTurn): PublicTurn {
-    let remaining = this.inlineBytes;
-    const prompt: ContentBlock[] = [];
-    const finalResponse: ContentBlock[] = [];
-    let promptIndex = 0;
-    let finalIndex = 0;
-    for (const block of turn.prompt) {
-      const bytes = Buffer.byteLength(JSON.stringify(block));
-      if (bytes > remaining) break;
-      prompt.push(block);
-      remaining -= bytes;
-      promptIndex += 1;
-    }
-    if (promptIndex === turn.prompt.length) {
-      for (const block of turn.finalResponse) {
-        const bytes = Buffer.byteLength(JSON.stringify(block));
+    const revision = this.transcript.turnContentRevision(turn.turnId);
+    if (revision === null) throw new ViewCursorError();
+    // Share only immutable preview blocks; signed cursors belong to this Pager's watermark.
+    let content = this.turnContentCache.get(turn.turnId);
+    if (content?.revision === revision && content.inlineBytes === this.inlineBytes) {
+      this.turnContentCache.delete(turn.turnId);
+      this.turnContentCache.set(turn.turnId, content);
+    } else {
+      let remaining = this.inlineBytes;
+      const prompt: ContentBlock[] = [];
+      const finalResponse: ContentBlock[] = [];
+      let promptIndex = 0;
+      let finalIndex = 0;
+      for (const block of turn.prompt) {
+        const bytes = inlineBlockBytes(block, remaining);
         if (bytes > remaining) break;
-        finalResponse.push(block);
+        prompt.push(structuredClone(block));
         remaining -= bytes;
-        finalIndex += 1;
+        promptIndex += 1;
+      }
+      if (promptIndex === turn.prompt.length) {
+        for (const block of turn.finalResponse) {
+          const bytes = inlineBlockBytes(block, remaining);
+          if (bytes > remaining) break;
+          finalResponse.push(structuredClone(block));
+          remaining -= bytes;
+          finalIndex += 1;
+        }
+      }
+      content = { revision, inlineBytes: this.inlineBytes,
+        prompt, finalResponse, promptIndex, finalIndex };
+      this.turnContentCache.delete(turn.turnId);
+      this.turnContentCache.set(turn.turnId, content);
+      if (this.turnContentCache.size > 20)
+        this.turnContentCache.delete(this.turnContentCache.keys().next().value!);
+    }
+    const next: Position | null = content.promptIndex < turn.prompt.length
+      ? { kind: "content", turnId: turn.turnId, section: "prompt",
+        index: content.promptIndex, offset: 0, finalStart: 0 }
+      : content.finalIndex < turn.finalResponse.length
+        ? { kind: "content", turnId: turn.turnId, section: "finalResponse",
+          index: content.finalIndex, offset: 0, finalStart: content.finalIndex }
+        : null;
+    let liveProcessDelta: PublicTurn["liveProcessDelta"];
+    if (turn.outcome === "running" && turn.processVersion > 0 &&
+      this.transcript.processChangedInLatestRevision(turn.turnId)) {
+      const changes = this.transcript.processChanges(turn.turnId);
+      if (changes !== null && changes.indices.length <= 10) {
+        const items = changes.indices.map((index) => {
+          const raw = this.transcript.processItem(turn.turnId, index);
+          if (raw === null) throw new ViewCursorError();
+          return { index, item: this.publicProcessItem(turn.turnId,
+            turn.processVersion, index, raw) };
+        });
+        const candidate = { fromVersion: changes.fromVersion, items };
+        if (Buffer.byteLength(JSON.stringify(candidate)) <= this.pageBytes)
+          liveProcessDelta = candidate;
       }
     }
-    const next: Position | null =
-      promptIndex < turn.prompt.length
-        ? {
-            kind: "content",
-            turnId: turn.turnId,
-            section: "prompt",
-            index: promptIndex,
-            offset: 0,
-            finalStart: 0,
-          }
-        : finalIndex < turn.finalResponse.length
-          ? {
-              kind: "content",
-              turnId: turn.turnId,
-              section: "finalResponse",
-              index: finalIndex,
-              offset: 0,
-              finalStart: finalIndex,
-            }
-          : null;
     return {
       turnId: turn.turnId,
       outcome: turn.outcome,
-      prompt,
-      finalResponse,
+      prompt: content.prompt,
+      finalResponse: content.finalResponse,
       contentCursor: next === null ? null : this.issue(next),
+      contentSection: next?.section ?? null,
       processVersion: turn.processVersion,
       processCount: turn.processCount,
+      ...(liveProcessDelta === undefined ? {} : { liveProcessDelta }),
     };
   }
 
@@ -649,4 +703,12 @@ function truncateUtf8(value: string, maxBytes: number): string {
     used += bytes;
   }
   return result;
+}
+
+function inlineBlockBytes(block: ContentBlock, remaining: number): number {
+  // Every UTF-16 code unit needs at least one encoded byte; do not serialize text
+  // already known to exceed the window. Exact JSON size decides small blocks.
+  if (block.type === "text" && block.text.length > remaining) return remaining + 1;
+  if ((block.type === "image" || block.type === "audio") && block.data.length > remaining) return remaining + 1;
+  return Buffer.byteLength(JSON.stringify(block));
 }

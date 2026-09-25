@@ -27,8 +27,12 @@ export function Thread({
   working,
   settled = false,
   opening = false,
+  openingError,
+  onRetryOpening,
+  onBackOpening,
   onLoadContent,
   onLoadProcess,
+  onCancelProcess,
   onUnloadProcess,
   hasOlderTurns = false,
   onLoadOlder,
@@ -42,8 +46,12 @@ export function Thread({
   working: boolean;
   settled?: boolean;
   opening?: boolean;
-  onLoadContent?: (messageId: string) => void;
+  openingError?: string;
+  onRetryOpening?: () => void;
+  onBackOpening?: () => void;
+  onLoadContent?: (messageId: string) => Promise<void> | void;
   onLoadProcess?: (turnId: string) => Promise<void> | void;
+  onCancelProcess?: (turnId: string) => void;
   onUnloadProcess?: (turnId: string) => void;
   hasOlderTurns?: boolean;
   onLoadOlder?: () => Promise<void> | void;
@@ -156,22 +164,6 @@ export function Thread({
         }}
       >
         <div className="thread-width" ref={content}>
-          <p className="sr-only" role="status" aria-label="History limited">
-            {conversation?.historyState === "view_limited"
-              ? "Conversation history is limited. Recent output is incomplete; full history is unavailable in this view."
-              : null}
-          </p>
-          {conversation?.historyState === "view_limited" ? (
-            <section className="limited-history">
-              <h2>Conversation history is limited</h2>
-              <p>The Agent may still be working. Recent output below is incomplete. Full history is unavailable in this view.</p>
-              {conversation.limitedPreview?.text ? (
-                <pre tabIndex={0} role="region" aria-label="Recent output preview">
-                  {conversation.limitedPreview.text}
-                </pre>
-              ) : null}
-            </section>
-          ) : null}
           {!opening && windowStart > 0 ? (
             <button type="button" className="load-older-turns"
               onClick={(event) => {
@@ -219,8 +211,9 @@ export function Thread({
           ) : null}
           {olderError ? <p role="alert">Earlier messages could not be loaded.</p> : null}
           {newerError ? <p role="alert">Newer messages could not be loaded.</p> : null}
-          {conversation?.historyState === "view_limited" ? null : opening ? (
-            <SessionOpening />
+          {opening ? (
+            <SessionOpening error={openingError} onRetry={onRetryOpening}
+              onBack={onBackOpening} />
           ) : (
             <Suspense
               fallback={
@@ -238,6 +231,7 @@ export function Thread({
                 onProcessToggle={pauseFollowing}
                 onLoadContent={readOnly ? undefined : onLoadContent}
                 onLoadProcess={readOnly ? undefined : onLoadProcess}
+                onCancelProcess={onCancelProcess}
                 onUnloadProcess={onUnloadProcess}
                 visibleStart={windowStart}
                 visibleEnd={windowStart + visibleTurnCount}

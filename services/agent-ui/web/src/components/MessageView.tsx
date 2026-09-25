@@ -1,14 +1,18 @@
 import {
   AudioLines,
   Brain,
+  Check,
   ChevronRight,
   FileText,
   Image as ImageIcon,
+  ListChecks,
   UserRound,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { Attachment, Message } from "../lib/types";
+import { isWorkspaceReadTimeout } from "../lib/workspace-api-client";
 import { ToolActivity } from "./ToolActivity";
 import { CopyButton } from "./CopyButton";
 
@@ -73,6 +77,32 @@ function Markdown({ text }: { text: string }) {
   );
 }
 
+function PlanActivity({ message, onDisclosure }: { message: Message;
+  onDisclosure?: () => void }) {
+  const [open, setOpen] = useState(true);
+  const panelId = useId();
+  const entries = message.planEntries;
+  const completed = entries?.filter((entry) => entry.status === "completed").length ?? 0;
+  return <section className="plan-card" aria-label="Plan">
+    <button type="button" className="plan-card-trigger" aria-expanded={open}
+      aria-controls={panelId} onClick={() => { onDisclosure?.(); setOpen((value) => !value); }}>
+      <ListChecks size={15} aria-hidden="true" />
+      <strong>Plan</strong>
+      {entries ? <span className="plan-progress">{completed}/{entries.length}</span> : null}
+      <ChevronRight size={15} className="disclosure-chevron" aria-hidden="true" />
+    </button>
+    <div id={panelId} className="plan-card-content" hidden={!open}>
+      {entries ? <ol>{entries.map((entry, index) =>
+        <li key={`${index}:${entry.content}`} data-status={entry.status}>
+          {entry.status === "completed" ? <Check size={14} aria-label="Completed" /> :
+            <span className="plan-status" aria-label={entry.status === "in_progress"
+              ? "In progress" : "Pending"} />}
+          <span>{entry.content}</span>
+        </li>)}</ol> : message.content ? <Markdown text={message.content} /> : null}
+    </div>
+  </section>;
+}
+
 export function MessageView({
   message,
   answer = false,
@@ -82,10 +112,36 @@ export function MessageView({
   message: Message;
   answer?: boolean;
   onDisclosure?: () => void;
-  onLoadContent?: (messageId: string) => void;
+  onLoadContent?: (messageId: string) => Promise<void> | void;
 }) {
+  const [loadingContent, setLoadingContent] = useState(false);
+  const [contentError, setContentError] = useState<"timeout" | "error" | null>(null);
+  const articleRef = useRef<HTMLElement | null>(null);
+  const focusAfterContentLoad = useRef(false);
+  useEffect(() => {
+    if (!message.contentIncomplete) setContentError(null);
+  }, [message.contentIncomplete, message.id]);
+  useLayoutEffect(() => {
+    if (!focusAfterContentLoad.current || loadingContent) return;
+    if (!message.contentIncomplete && document.activeElement === document.body)
+      articleRef.current?.focus({ preventScroll: true });
+    focusAfterContentLoad.current = false;
+  }, [loadingContent, message.contentIncomplete]);
+  const loadContent = () => {
+    if (!onLoadContent || loadingContent) return;
+    setLoadingContent(true);
+    setContentError(null);
+    let pending: Promise<void>;
+    try { pending = Promise.resolve(onLoadContent(message.id)); }
+    catch (cause) { pending = Promise.reject(cause); }
+    void pending
+      .catch((cause: unknown) => setContentError(isWorkspaceReadTimeout(cause) ? "timeout" : "error"))
+      .finally(() => setLoadingContent(false));
+  };
   return (
     <article
+      ref={articleRef}
+      tabIndex={-1}
       className={`message message-${message.role}${answer ? " message-answer" : ""}`}
     >
       <div className="message-main">
@@ -118,7 +174,9 @@ export function MessageView({
             ))}
           </div>
         ) : null}
-        {message.content ? (
+        {message.presentation === "plan" ? (
+          <PlanActivity message={message} onDisclosure={onDisclosure} />
+        ) : message.content ? (
           message.presentation === "thought" ? (
             <details className="thought-process">
               <summary onClick={onDisclosure}>
@@ -142,12 +200,21 @@ export function MessageView({
           <p className="message-content-incomplete" role="status">
             More content available
             {onLoadContent ? (
-              <button type="button" onClick={() => onLoadContent(message.id)}>
-                Load full content
+              <button type="button" onClick={(event) => {
+                focusAfterContentLoad.current = event.detail === 0 &&
+                  document.activeElement === event.currentTarget;
+                loadContent();
+              }} disabled={loadingContent}>
+                {loadingContent ? "Loading full content" :
+                  contentError ? "Retry full content" : "Load full content"}
               </button>
             ) : null}
           </p>
         ) : null}
+        {message.contentIncomplete && contentError ? <p role="alert">
+          {contentError === "timeout" ? "Full content request timed out." :
+            "Full content could not be loaded."}
+        </p> : null}
         {(answer || message.role !== "assistant") &&
         (message.createdAt || message.content) ? (
           <footer className="message-meta">

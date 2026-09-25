@@ -1,12 +1,6 @@
-export type BridgeAgentView = {
-  agentId: string;
-  bridgeEpoch: string;
-  promptCapabilities: { image?: boolean; audio?: boolean; embeddedContext?: boolean };
-  selectedSessionId: string | null;
-  selectedView: Record<string, unknown> | null;
-  streamCursor: string;
-  [key: string]: unknown;
-};
+import { applyAgentDelta, validAgentView, type AgentView } from "../../server/src/protocol/agent-view-delta.ts";
+
+export type BridgeAgentView = AgentView;
 
 export type BridgeStreamState = {
   agentId: string;
@@ -61,19 +55,20 @@ export function applyBridgeEvent(state: BridgeStreamState, raw: unknown): Bridge
       },
     };
   }
-  if (!sameProjection || state.revision === null)
+  const previous = state.view;
+  if (!previous || !validAgentView(previous) || previous.bridgeEpoch !== raw.bridgeEpoch)
     return { action: "refresh", state };
-  if (raw.toStreamRevision <= state.revision)
+  if (state.revision !== null && sameProjection && raw.toStreamRevision <= state.revision)
     return { action: "ignore", state };
-  if (raw.fromStreamRevision !== state.revision ||
-    raw.toStreamRevision !== state.revision + 1)
+  if ((state.projectionId !== null && !sameProjection) ||
+    (state.revision !== null && raw.fromStreamRevision !== state.revision) ||
+    raw.toStreamRevision !== raw.fromStreamRevision + 1 || raw.type !== "delta")
     return { action: "refresh", state };
-  if (raw.type !== "operation" && raw.type !== "permission" && raw.type !== "delta")
-    return { action: "refresh", state };
-  return {
-    action: "refresh",
-    state: { ...state, revision: raw.toStreamRevision },
-  };
+  const view = applyAgentDelta(previous, raw);
+  if (view === null) return { action: "refresh", state };
+  return { action: "view", state: { ...state, bridgeEpoch: raw.bridgeEpoch,
+    projectionId: raw.projectionId, revision: raw.toStreamRevision, view } };
+
 }
 
 function validEventHead(value: Record<string, unknown>): value is Record<string, unknown> & {
@@ -98,21 +93,8 @@ function validView(
   bridgeEpoch: string,
   cursor: string,
 ): raw is BridgeAgentView {
-  if (!isRecord(raw) || raw.agentId !== state.agentId ||
-    bridgeEpoch.length === 0 || cursor.length === 0 ||
-    raw.bridgeEpoch !== bridgeEpoch || raw.selectedSessionId !== state.selectedSessionId ||
-    raw.streamCursor !== cursor || !validCapabilities(raw.promptCapabilities))
-    return false;
-  if (state.selectedSessionId === null) return raw.selectedView === null;
-  return isRecord(raw.selectedView) &&
-    raw.selectedView.sessionId === state.selectedSessionId &&
-    raw.selectedView.bridgeEpoch === bridgeEpoch;
-}
-
-function validCapabilities(value: unknown): boolean {
-  return isRecord(value) && Object.entries(value).every(([name, enabled]) =>
-    (name === "image" || name === "audio" || name === "embeddedContext") &&
-    typeof enabled === "boolean");
+  return validAgentView(raw) && raw.agentId === state.agentId &&
+    raw.bridgeEpoch === bridgeEpoch && raw.selectedSessionId === state.selectedSessionId && raw.streamCursor === cursor;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -1,8 +1,7 @@
+import { diffAgentViews, validAgentView } from "./protocol/agent-view-delta.ts";
 import { randomBytes, randomUUID } from "node:crypto";
 import type { AcpBridgeCallbacks } from "./adapters/acp-http.ts";
 import { AgentBridgeOwner, type AcpBridgePort } from "./bridge/agent-owner.ts";
-import { HistoryCapacityError } from "./bridge/compact-transcript.ts";
-import { SharedHistoryBudget } from "./bridge/history-budget.ts";
 import {
   ConfigurationConflictError,
   ConfigurationTokens,
@@ -29,7 +28,6 @@ export type BridgeRuntimeMetrics = {
   observerLeases: number;
   heldWork: number;
   cachedBytes: number;
-  reservedBytes: number;
   streamSubscribers: number;
   journalQueuedBytes: number;
   journalRetainedBytes: number;
@@ -48,9 +46,6 @@ export function createWorkspaceRuntime(input: {
   tokenKey?: Buffer;
   now?: () => number;
   idleMs?: number;
-  maxSessionHistoryBytes?: number;
-  maxCachedHistoryBytes?: number;
-  maxGlobalHistoryBytes?: number;
   maxOwners?: number;
   maxAcpPromptBytes?: number;
   maxAgentJournals?: number;
@@ -70,11 +65,10 @@ export function createWorkspaceRuntime(input: {
   const bridgeEpoch = (input.epoch ?? randomUUID)();
   const tokens = new HistoryTokens(key);
   const configurationTokens = new ConfigurationTokens(key);
-  const historyBudget = new SharedHistoryBudget(input.maxGlobalHistoryBytes ?? 512 * 1024 * 1024);
   const owners = new Set<AgentBridgeOwner>();
   const refreshes = new WeakMap<
     AgentBridgeOwner,
-    Map<string, { dirty: boolean; running: boolean }>
+    Map<string, { dirty: boolean; running: boolean; reconcile: boolean }>
   >();
   const latestAgentProjections = new WeakMap<
     AgentBridgeOwner,
@@ -85,22 +79,19 @@ export function createWorkspaceRuntime(input: {
       const owner = await AgentBridgeOwner.open({
         scope,
         retainWork,
+        now: input.now, idleMs: input.idleMs, incarnation: input.incarnation,
         connect: input.connect,
-        maxSessionHistoryBytes: input.maxSessionHistoryBytes,
-        maxCachedHistoryBytes: input.maxCachedHistoryBytes,
-        reserveHistory: (owner, bytes) => historyBudget.reserve(owner, bytes),
         recordColdReplay: input.recordColdReplay,
         recordLocalIntentReuse: input.recordLocalIntentReuse,
         closed: (owner) => {
-          historyBudget.unregister(owner);
           owners.delete(owner);
         },
         maxAgentJournals: input.maxAgentJournals,
         maxSessionJournals: input.maxSessionJournals,
         maxAgentSubscribers: input.maxAgentSubscribers,
         stream: { epoch: identity.epoch, key },
-        changed: (owner, sessionId) => scheduleRefresh(scope, owner, sessionId),
-        agentChanged: (owner) => scheduleRefresh(scope, owner, ""),
+        changed: (owner, sessionId, reconcile) => scheduleRefresh(scope, owner, sessionId, reconcile),
+        agentChanged: (owner) => scheduleRefresh(scope, owner, "", true),
         evicted: (owner, sessionId) => {
           latestAgentProjections.get(owner)?.delete(sessionId);
           refreshes.get(owner)?.delete(sessionId);
@@ -109,7 +100,6 @@ export function createWorkspaceRuntime(input: {
           latestAgentProjections.get(owner)?.delete(selectedSessionId ?? "");
         },
       });
-      historyBudget.register(owner);
       owners.add(owner);
       return owner;
     },
@@ -130,7 +120,20 @@ export function createWorkspaceRuntime(input: {
       projections = new Map();
       latestAgentProjections.set(owner, projections);
     }
+    const journal = owner.agentJournal(sessionId);
+    const cursor = journal.snapshot((cursor) => cursor).cursor;
+    const previous = projections.get(sessionId ?? "")?.(cursor);
+    const next = projection(cursor);
+    if (!validAgentView(next)) throw new Error("Invalid Agent View projection");
+    const delta = validAgentView(previous) ? diffAgentViews(previous, next) : null;
+    if (delta?.patch.length === 0) return;
     projections.set(sessionId ?? "", projection);
+    if (previous === undefined) return;
+    if (delta !== null) {
+      try { journal.publish(delta); return; }
+      catch (error) { if (!(error instanceof RangeError)) throw error; }
+    }
+    journal.publishReset(projection);
   }
   function currentAgentProjection(
     owner: AgentBridgeOwner,
@@ -149,19 +152,18 @@ export function createWorkspaceRuntime(input: {
     streamCursor: string,
     blocked = false,
   ) {
-    const limited = blocked ? null : lease.owner.viewLimit(sessionId);
-    const pager = limited === null ? lease.owner.viewPager(
+    const pager = lease.owner.viewPager(
       sessionId,
       {
         ...scope,
         sessionId,
         epoch: lease.epoch,
-        incarnation: lease.incarnation,
+        incarnation: lease.owner.sessionIncarnation(sessionId),
       },
       key,
       blocked,
-    ) : null;
-    const recent = pager?.recentTurns();
+    );
+    const recent = pager.recentTurns();
     const metadata = lease.owner.viewMetadata(sessionId, blocked);
     return {
       agentId: scope.agentId,
@@ -169,22 +171,21 @@ export function createWorkspaceRuntime(input: {
       title: metadata.sessionInfo.title,
       updatedAt: metadata.sessionInfo.updatedAt,
       bridgeEpoch: lease.epoch,
-      incarnation: lease.incarnation,
+      incarnation: lease.owner.sessionIncarnation(sessionId),
       viewRevision: lease.owner.viewRevision(sessionId),
       appendVersion: session.appendVersion,
-      outputWatermark: limited?.watermark ?? pager!.watermark,
-      historyToken: limited || blocked ? null : tokens.issue({
+      outputWatermark: pager.watermark,
+      historyToken: blocked ? null : tokens.issue({
         ...scope,
         sessionId,
         epoch: lease.epoch,
-        incarnation: lease.incarnation,
+        incarnation: lease.owner.sessionIncarnation(sessionId),
         appendVersion: session.appendVersion,
       }),
       streamCursor,
-      historyState: limited ? "view_limited" as const : blocked ? "blocked" as const : "ready" as const,
+      historyState: blocked ? "blocked" as const : "ready" as const,
       turns: recent?.items ?? [],
       olderTurnsCursor: blocked ? null : recent?.olderTurnsCursor ?? null,
-      ...(limited ? { limitedPreview: limited.preview } : {}),
       operations: lease.owner.operations.snapshot(
         sessionId,
         session.recentReceipts,
@@ -200,7 +201,7 @@ export function createWorkspaceRuntime(input: {
               ...scope,
               sessionId,
               epoch: lease.epoch,
-              incarnation: lease.incarnation,
+              incarnation: lease.owner.sessionIncarnation(sessionId),
               revision: session.configurationRevision,
             })
           : null,
@@ -237,8 +238,6 @@ export function createWorkspaceRuntime(input: {
     for (const permission of owner.permissions)
       sessions.add(permission.sessionId);
     const sessionIds = [...sessions];
-    const observed = new Array<ReturnType<typeof owner.operations.snapshot>>(sessionIds.length);
-    let selectedView: unknown = null;
     let next = 0;
     let failure: unknown;
     await Promise.all(Array.from({ length: Math.min(8, sessionIds.length) }, async () => {
@@ -249,41 +248,46 @@ export function createWorkspaceRuntime(input: {
           const selected = sessionId === selectedSessionId
             ? await readAuthorizedSession(owner, sessionId)
             : null;
-          const execution = selected?.session ?? await owner.authorizeExecution(sessionId);
-          observed[index] = owner.operations.snapshot(sessionId, execution.recentReceipts);
-          if (sessionId === selectedSessionId) {
-            const cursor = owner.streamJournal(sessionId).snapshot((value) => value).cursor;
-            selectedView = makeView(scope, sessionId, lease, execution, cursor,
-              selected?.blocked ?? false);
-          }
+          if (selected === null) await owner.authorizeExecution(sessionId);
         } catch (error) {
           failure = error;
         }
       }
     }));
     if (failure !== undefined) throw failure;
-    const operations = new Map<string, ReturnType<typeof owner.operations.snapshot>[number]>();
-    for (const sessionOperations of observed)
-      for (const operation of sessionOperations)
-        operations.set(JSON.stringify([operation.sessionId, operation.operationId]), operation);
-    const permissions = owner.permissions.filter((item) => sessions.has(item.sessionId));
-    return (streamCursor) => ({
-      agentId: scope.agentId,
-      bridgeEpoch: lease.epoch,
-      availability: state.availability,
-      promptCapabilities: owner.promptCapabilities,
-      activeSessionId: state.activeSessionId,
-      selectedSessionId,
-      selectedView,
-      operations: [...operations.values()],
-      permissions,
-      streamCursor,
-    });
+    return projectAgentView(scope, lease, selectedSessionId);
+  }
+  function projectAgentView(
+    scope: BridgeScope, lease: BridgeLease<AgentBridgeOwner>, selectedSessionId: string | null,
+  ): (cursor: string) => unknown {
+    const owner = lease.owner;
+    const state = owner.cachedAgentState();
+    const sessionIds = new Set<string>(owner.trackedOperationSessionIds());
+    if (selectedSessionId !== null) sessionIds.add(selectedSessionId);
+    if (state.activeSessionId !== null) sessionIds.add(state.activeSessionId);
+    for (const permission of owner.permissions) sessionIds.add(permission.sessionId);
+    const operations = [...sessionIds].flatMap((sessionId) => owner.operations.snapshot(sessionId, owner.cachedReceipts(sessionId)));
+    const active = operations.find((operation) => !["completed", "failed", "cancelled", "uncertain"].includes(operation.phase));
+    let selectedView: unknown = null;
+    if (selectedSessionId !== null) {
+      const cached = owner.cachedSession(selectedSessionId);
+      const cursor = owner.streamJournal(selectedSessionId).snapshot((value) => value).cursor;
+      selectedView = makeView(scope, selectedSessionId, lease, cached.session, cursor, cached.blocked);
+    }
+    const permissions = owner.permissions.filter((item) => sessionIds.has(item.sessionId));
+    const promptCapabilities = owner.promptCapabilities;
+    return (streamCursor) => ({ agentId: scope.agentId, bridgeEpoch: lease.epoch,
+      availability: state.availability === "ready" && active ? "busy" : state.availability,
+      promptCapabilities,
+      activeSessionId: state.activeSessionId ?? active?.sessionId ?? null,
+      selectedSessionId, selectedView, operations,
+      permissions, streamCursor });
   }
   function scheduleRefresh(
     scope: BridgeScope,
     owner: AgentBridgeOwner,
     sessionId: string,
+    reconcile = false,
   ): void {
     if (
       !owner.hasStreamJournal(sessionId) &&
@@ -296,10 +300,11 @@ export function createWorkspaceRuntime(input: {
     }
     let state = sessions.get(sessionId);
     if (state === undefined) {
-      state = { dirty: false, running: false };
+      state = { dirty: false, running: false, reconcile: false };
       sessions.set(sessionId, state);
     }
     state.dirty = true;
+    state.reconcile ||= reconcile;
     if (state.running) return;
     state.running = true;
     const pending = state;
@@ -307,23 +312,26 @@ export function createWorkspaceRuntime(input: {
       void (async () => {
         while (pending.dirty) {
           pending.dirty = false;
+          const reconcile = pending.reconcile;
+          pending.reconcile = false;
           let lease: BridgeLease<AgentBridgeOwner> | undefined;
           try {
             lease = await registry.observe(scope);
             if (lease.owner !== owner) break;
-            if (owner.hasStreamJournal(sessionId)) {
-              const { session, blocked } = await readAuthorizedSession(owner, sessionId);
-              owner
-                .streamJournal(sessionId)
-                .publishReset((cursor) =>
-                  makeView(scope, sessionId, lease!, session, cursor, blocked),
-                );
+            if (reconcile) {
+              const sessionsToRead = sessionId ? new Set([sessionId]) : new Set([
+                ...owner.agentJournalSelections().filter((id): id is string => id !== null),
+                ...owner.trackedOperationSessionIds(),
+                ...(owner.cachedAgentState().activeSessionId ? [owner.cachedAgentState().activeSessionId!] : []),
+              ]);
+              for (const id of sessionsToRead) {
+                if (owner.retainedSession(id) !== null) await readAuthorizedSession(owner, id);
+                else await owner.authorizeExecution(id);
+              }
             }
             for (const selected of owner.agentJournalSelections()) {
-              const projection = await prepareAgentView(scope, lease, selected);
+              const projection = projectAgentView(scope, lease, selected);
               rememberAgentProjection(owner, selected, projection);
-              owner.agentJournal(selected).publishReset((cursor) =>
-                currentAgentProjection(owner, selected)(cursor));
             }
           } catch {
             // A failed read preserves the last valid view; a later read can retry.
@@ -347,14 +355,12 @@ export function createWorkspaceRuntime(input: {
           : await lease.owner.authorizeExecution(sessionId, {
               reconcileMissing: false,
             });
-        if (requireHistory && lease.owner.viewLimit(sessionId) !== null)
-          throw new HistoryCapacityError();
         return {
           condition: {
             ...scope,
             sessionId,
             epoch: lease.epoch,
-            incarnation: lease.incarnation,
+            incarnation: requireHistory ? lease.owner.sessionIncarnation(sessionId) : lease.incarnation,
             appendVersion: session.appendVersion,
           },
           operations: session.operations,
@@ -378,7 +384,7 @@ export function createWorkspaceRuntime(input: {
               ...scope,
               sessionId,
               epoch: lease.epoch,
-              incarnation: lease.incarnation,
+              incarnation: lease.owner.sessionIncarnation(sessionId),
             },
             key,
           ),
@@ -472,7 +478,7 @@ export function createWorkspaceRuntime(input: {
             ...scope,
             sessionId,
             epoch: lease.epoch,
-            incarnation: lease.incarnation,
+            incarnation: lease.owner.sessionIncarnation(sessionId),
             revision: current.configurationRevision,
           })
         )
@@ -526,9 +532,13 @@ export function createWorkspaceRuntime(input: {
       (await views(request)) ??
       (await history(request)) ??
       (await commands(request)),
-    sweep: () => registry.sweep(),
+    sweep: async () => {
+      for (const owner of owners) await owner.sweep();
+      await registry.sweep();
+    },
     drain: (timeoutMs) => registry.drain(timeoutMs),
     metrics: () => {
+      let cachedBytes = 0;
       let streamSubscribers = 0;
       let journalQueuedBytes = 0;
       let journalRetainedBytes = 0;
@@ -537,6 +547,7 @@ export function createWorkspaceRuntime(input: {
       let uncertainOperations = 0;
       let oldestUncertainMs = 0;
       for (const owner of owners) {
+        cachedBytes += owner.estimatedCachedHistoryBytes;
         const snapshot = owner.streamMetrics();
         streamSubscribers += snapshot.subscribers;
         journalQueuedBytes += snapshot.queuedBytes;
@@ -548,7 +559,7 @@ export function createWorkspaceRuntime(input: {
         uncertainOperations += operations.uncertainOperations;
         oldestUncertainMs = Math.max(oldestUncertainMs, operations.oldestUncertainMs);
       }
-      return { ...registry.snapshotMetrics(), ...historyBudget.snapshotMetrics(),
+      return { ...registry.snapshotMetrics(), cachedBytes,
         streamSubscribers, journalQueuedBytes, journalRetainedBytes,
         activeReplays, queuedReplays, uncertainOperations, oldestUncertainMs };
     },

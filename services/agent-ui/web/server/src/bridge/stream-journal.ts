@@ -6,6 +6,33 @@ type Body = {
   [key: string]: unknown;
 };
 
+type EncodedEvent = { json?: string; bytes: number; frame?: Uint8Array };
+const encodedEvents = new WeakMap<object, EncodedEvent>();
+const frameEncoder = new TextEncoder();
+
+function encoding(event: object): EncodedEvent {
+  let cached = encodedEvents.get(event);
+  if (!cached) {
+    const json = JSON.stringify(event);
+    cached = { json, bytes: Buffer.byteLength(json) };
+    encodedEvents.set(event, cached);
+  }
+  return cached;
+}
+
+export function encodedStreamFrame(event: StreamEvent<unknown>): Uint8Array {
+  const cached = encoding(event);
+  if (cached.frame === undefined) {
+    cached.frame = frameEncoder.encode(
+      `id: ${event.cursor}\nevent: ${event.type}\ndata: ${cached.json}\n\n`,
+    );
+    // The wire buffer now owns the JSON bytes; retaining the string as well
+    // would keep two copies for every journaled event that reached HTTP.
+    cached.json = undefined;
+  }
+  return cached.frame;
+}
+
 export type StreamEvent<View> = {
   type: "snapshot" | "reset" | Body["type"];
   agentId: string;
@@ -46,6 +73,7 @@ export class StreamJournal<View> {
   private retainedBytes = 0;
   private readonly subscribers = new Set<Subscriber<View>>();
   private currentRevision = 0;
+  private readonly observersChanged: () => void;
 
   public constructor(input: {
     scope: BridgeScope;
@@ -57,6 +85,7 @@ export class StreamJournal<View> {
     maxRetainedBytes?: number;
     maxSubscriberBytes?: number;
     maxSubscribers?: number;
+    observersChanged?(): void;
   }) {
     if (input.key.length < 32)
       throw new RangeError("Stream cursor key is too short");
@@ -80,6 +109,7 @@ export class StreamJournal<View> {
       (input.maxSubscribers ?? 8) < 1
     )
       throw new RangeError("Invalid subscriber count budget");
+    this.observersChanged = input.observersChanged ?? (() => {});
     this.scope = input.scope;
     this.sessionId = input.sessionId;
     this.epoch = input.epoch;
@@ -125,6 +155,7 @@ export class StreamJournal<View> {
     const next = previous + 1;
     const event: StreamEvent<View> = {
       ...body,
+      ...(body.type === "delta" ? { fromCursor: this.cursor(previous) } : {}),
       agentId: this.scope.agentId,
       bridgeEpoch: this.epoch,
       projectionId: this.projectionId,
@@ -184,6 +215,7 @@ export class StreamJournal<View> {
       closed = true;
       resetPending = false;
       this.subscribers.delete(subscriber);
+      this.observersChanged();
       queue.length = 0;
       queuedBytes = 0;
       waiter?.({ done: true, value: undefined });
@@ -246,6 +278,7 @@ export class StreamJournal<View> {
       ? this.snapshotEvent("reset", makeView)
       : null;
     this.subscribers.add(subscriber);
+    this.observersChanged();
     if (initialReset !== null) {
       enqueue(initialReset);
     } else {
@@ -381,6 +414,6 @@ export class StreamJournal<View> {
   }
 }
 
-function size(value: unknown): number {
-  return Buffer.byteLength(JSON.stringify(value));
+function size(value: object): number {
+  return encoding(value).bytes;
 }

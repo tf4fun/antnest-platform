@@ -9,6 +9,7 @@ import { formatBytes } from "./presentation.ts";
 import { runFailureMessage } from "./run-failure.ts";
 import { useSessionPresentation } from "./use-session-presentation.ts";
 import { applyConversation, applyDiscovery, applySessionCatalog, sameIdentity } from "./workspace-projection.ts";
+import { compactCachedConversation } from "./conversation-history.ts";
 import { readWorkspaceRoute, selectWorkspaceRoute, workspacePath, type WorkspaceRoute } from "./navigation.ts";
 import { BridgeHttpClient, WorkspaceApiError } from "./workspace-api-client.ts";
 import type { AgentStatus, AgentSummary, Attachment, WorkspaceSnapshot } from "./types.ts";
@@ -115,7 +116,7 @@ export function useBridgeWorkspace(options: {
   const sessionSettled = connected && conversationReady && !sessionWorking;
   const openingHistory = Boolean(selected) && !conversationReady &&
     !historyError && !connectionError &&
-    activeConversation?.historyState !== "view_limited" && !activeConversation?.messages.length;
+    !activeConversation?.messages.length;
   const cancellable = connected && Boolean(activeOperation?.runId);
 
   useEffect(() => {
@@ -185,9 +186,13 @@ export function useBridgeWorkspace(options: {
           return;
         }
         if (snapshot.conversation) {
-          catalog.remember(snapshot.conversation);
+          const incoming = snapshot.conversation;
+          catalog.remember(workspaceRef.current?.activeAgentId === agentId &&
+            workspaceRef.current.activeConversationId === incoming.id
+            ? incoming : compactCachedConversation(incoming));
           setWorkspace((current) => current?.activeAgentId === agentId
-            ? applyConversation(current, snapshot.conversation!) : current);
+            ? applyConversation(current, current.activeConversationId === incoming.id
+              ? incoming : compactCachedConversation(incoming)) : current);
         }
       },
     });
@@ -219,8 +224,15 @@ export function useBridgeWorkspace(options: {
     selectedRef.current = sessionId;
     setHistoryError(undefined);
     void controller.select(sessionId).catch((cause: unknown) => {
-      if (controllerRef.current === controller)
-        setHistoryError(message(cause, "Conversation history could not be loaded."));
+      if (controllerRef.current !== controller) return;
+      if (sessionId !== null && cause instanceof WorkspaceApiError &&
+        cause.code === "session_not_found" &&
+        workspaceRef.current?.activeAgentId === agentId &&
+        workspaceRef.current.activeConversationId === sessionId) {
+        navigate({ agentId, sessionId: null }, false);
+        return;
+      }
+      setHistoryError(message(cause, "Conversation history could not be loaded."));
     });
   }, [workspace?.activeAgentId, workspace?.activeConversationId]);
 
@@ -231,11 +243,14 @@ export function useBridgeWorkspace(options: {
     const changed = next.activeAgentId !== current.activeAgentId ||
       next.activeConversationId !== current.activeConversationId;
     if (changed) navigationEpoch.current++;
+    if (changed && current.activeConversationId !== null)
+      catalogRef.current?.releaseCompletedProcess(current.activeConversationId);
     if (push && changed)
       window.history.pushState(null, "", workspacePath({
         agentId: next.activeAgentId, sessionId: next.activeConversationId,
       }));
     setWorkspace((latest) => latest ? selectWorkspaceRoute(latest, route) : latest);
+    workspaceRef.current = next;
     setMenuOpen(false);
   }
 
@@ -424,12 +439,11 @@ export function useBridgeWorkspace(options: {
     onLoadOlder: () => controllerRef.current?.loadOlderTurns(),
     onLoadNewer: () => controllerRef.current?.loadNewerTurns(),
     onShowLatest: () => controllerRef.current?.showLatestTurns(),
-    onLoadContent: (messageId: string) => {
-      void controllerRef.current?.loadMessageContent(messageId).catch((cause: unknown) =>
-        setConnectionError(message(cause, "Full message content could not be loaded.")));
-    },
+    onLoadContent: (messageId: string) => controllerRef.current?.loadMessageContent(messageId) ??
+      Promise.reject(new Error("No Bridge Session is selected")),
     onLoadProcess: (turnId: string) => controllerRef.current?.loadProcess(turnId) ??
       Promise.reject(new Error("No Bridge Session is selected")),
+    onCancelProcess: (turnId: string) => controllerRef.current?.cancelProcessRequests(turnId),
     onUnloadProcess: (turnId: string) => controllerRef.current?.unloadProcess(turnId),
   };
 }

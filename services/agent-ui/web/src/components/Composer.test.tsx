@@ -39,6 +39,20 @@ test("expanding and collapsing the editor preserves the draft and never submits"
   expect(input.onChange).not.toHaveBeenCalled();
 });
 
+test("IME confirmation never submits or collapses the composer", () => {
+  const input = props();
+  const { container } = render(<Composer {...input} />);
+  const area = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message" });
+  fireEvent.click(screen.getByRole("button", { name: "Expand message editor" }));
+  fireEvent.keyDown(area, { key: "Enter", isComposing: true });
+  fireEvent.keyDown(area, { key: "Enter", keyCode: 229 });
+  fireEvent.keyDown(area, { key: "Escape", keyCode: 229 });
+  expect(input.onSubmit).not.toHaveBeenCalled();
+  expect(container.querySelector(".composer-expanded")).not.toBeNull();
+  fireEvent.keyDown(area, { key: "Enter" });
+  expect(input.onSubmit).toHaveBeenCalledOnce();
+});
+
 test("configuration, connection and execution gating survive toolbar integration", () => {
   const input = props();
   const { rerender } = render(<Composer {...input} configuring />);
@@ -75,9 +89,9 @@ test("composer hint keeps one live region through availability changes", () => {
   expect(hint.textContent).toBe("Connection unavailable");
   expect(editor.getAttribute("aria-describedby")).toBe(hint.id);
 
-  rerender(<Composer {...input} historyReady={false} historyLimited />);
+  rerender(<Composer {...input} historyReady={false} />);
   expect(screen.getByRole("status")).toBe(hint);
-  expect(hint.textContent).toBe("Conversation history is limited; sending is unavailable");
+  expect(hint.textContent).toBe("Conversation not yet synchronized");
 
   rerender(<Composer {...input} />);
   expect(screen.getByRole("status")).toBe(hint);
@@ -85,10 +99,23 @@ test("composer hint keeps one live region through availability changes", () => {
   expect(editor.hasAttribute("aria-describedby")).toBe(false);
 });
 
-test("limited history blocks a new message while an active Run can still be stopped", () => {
+test("opening history keeps the draft mounted with an accurate disabled hint", () => {
   const input = props();
-  render(<Composer {...input} historyReady={false} historyLimited cancellable />);
-  expect(screen.getByText("Conversation history is limited; sending is unavailable")).toBeTruthy();
+  const { rerender } = render(<Composer {...input} connected={false}
+    historyReady={false} openingHistory />);
+  const editor = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message" });
+  expect(editor.value).toBe("An unsent draft");
+  expect(editor.disabled).toBe(true);
+  expect(screen.getByRole("status").textContent).toBe("Opening conversation history");
+  rerender(<Composer {...input} connected={false} historyReady={false} openingFailure />);
+  expect(screen.getByRole("status").textContent).toBe("Conversation history unavailable");
+  expect(editor.value).toBe("An unsent draft");
+});
+
+test("unsynchronized history blocks a new message while an active Run can still be stopped", () => {
+  const input = props();
+  render(<Composer {...input} historyReady={false} cancellable />);
+  expect(screen.getByText("Conversation not yet synchronized")).toBeTruthy();
   expect(screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message" }).disabled).toBe(true);
   fireEvent.click(screen.getByRole("button", { name: "Stop operation" }));
   expect(input.onCancel).toHaveBeenCalledOnce();

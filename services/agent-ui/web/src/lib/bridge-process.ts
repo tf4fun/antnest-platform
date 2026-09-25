@@ -8,6 +8,7 @@ export type BridgeProcessItem = {
   status: "pending" | "running" | "completed" | "failed" | "unknown";
   content: ContentBlock[];
   contentCursor: string | null;
+  toolSections?: { inputIndex?: number; outputIndex?: number; detailStartIndex: number };
 };
 
 type ProcessApi = {
@@ -30,20 +31,30 @@ export async function loadBridgeProcessPage(api: ProcessApi, agentId: string,
     !nullableCursor(raw.nextCursor))
     throw new Error("Invalid Bridge process page");
   for (const value of raw.items) {
-    if (!isRecord(value) || typeof value.id !== "string" || !value.id || ids.has(value.id) ||
-      !kind(value.kind) || typeof value.summary !== "string" || !status(value.status) ||
-      !Array.isArray(value.content) || !nullableCursor(value.contentCursor))
-      throw new Error("Invalid Bridge process item");
-    ids.add(value.id);
-    const content = initialBridgeContent([], value.content, value.contentCursor);
-    items.push({ id: value.id, kind: value.kind, summary: value.summary,
-      status: value.status, content: content.finalResponse,
-      contentCursor: value.contentCursor });
+    const item = parseBridgeProcessItem(value);
+    if (ids.has(item.id)) throw new Error("Duplicate Bridge process item");
+    ids.add(item.id);
+    items.push(item);
     if (ids.size > count) throw new Error("Bridge process count changed");
   }
   if ((raw.nextCursor === null) !== (ids.size === count))
     throw new Error("Bridge process count changed");
   return { items, nextCursor: raw.nextCursor };
+}
+
+export function parseBridgeProcessItem(value: unknown): BridgeProcessItem {
+  if (!isRecord(value) || typeof value.id !== "string" || !value.id ||
+    !kind(value.kind) || typeof value.summary !== "string" || !status(value.status) ||
+    !Array.isArray(value.content) || !nullableCursor(value.contentCursor) ||
+    (value.kind === "tool" ? !toolSections(value.toolSections) :
+      value.toolSections !== undefined))
+    throw new Error("Invalid Bridge process item");
+  const content = initialBridgeContent([], value.content, value.contentCursor);
+  return { id: value.id, kind: value.kind, summary: value.summary,
+    status: value.status, content: content.finalResponse,
+    contentCursor: value.contentCursor,
+    ...(value.kind === "tool" ? { toolSections: value.toolSections as
+      BridgeProcessItem["toolSections"] } : {}) };
 }
 
 export async function loadBridgeProcessContent(api: ProcessApi, agentId: string,
@@ -54,7 +65,7 @@ export async function loadBridgeProcessContent(api: ProcessApi, agentId: string,
   while (!state.complete) {
     signal?.throwIfAborted();
     const cursor = state.cursor;
-    if (cursor === null || seen.has(cursor) || seen.size >= 1024)
+    if (cursor === null || seen.has(cursor))
       throw new Error("Bridge process content cursor did not advance");
     seen.add(cursor);
     const raw: unknown = await api.processContent(agentId, sessionId, turnId,
@@ -77,6 +88,19 @@ function kind(value: unknown): value is BridgeProcessItem["kind"] {
 function status(value: unknown): value is BridgeProcessItem["status"] {
   return value === "pending" || value === "running" || value === "completed" ||
     value === "failed" || value === "unknown";
+}
+
+function toolSections(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  const input = value.inputIndex;
+  const output = value.outputIndex;
+  const detail = value.detailStartIndex;
+  const present = (index: unknown) => index !== undefined;
+  return (input === undefined || input === 0) &&
+    (output === undefined || output === (present(input) ? 1 : 0)) &&
+    detail === Number(present(input)) + Number(present(output)) &&
+    Object.keys(value).every((key) =>
+      key === "inputIndex" || key === "outputIndex" || key === "detailStartIndex");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

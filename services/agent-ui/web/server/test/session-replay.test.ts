@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { SessionReplay } from "../src/bridge/session-replay.ts";
-import { CompactTranscript, HistoryCapacityError } from "../src/bridge/compact-transcript.ts";
+import { CompactTranscript } from "../src/bridge/compact-transcript.ts";
 import type { SessionUpdate } from "@agentclientprotocol/sdk";
 
 const part = (sequence: number, partIndex = 0, partCount = 1) => ({
@@ -13,92 +13,26 @@ const part = (sequence: number, partIndex = 0, partCount = 1) => ({
   messageId: `event-${sequence}`,
 });
 
-test("only a successfully sealed replay enables the live output limit", async () => {
-  const sealed: string[] = [];
-  const session = new SessionReplay<{ name: string }, string>({
-    empty: () => ({ name: "candidate" }),
-    apply: (view) => view,
-    seal: (view) => sealed.push(view.name),
-  });
-  await assert.rejects(session.load(async () => { throw new Error("load failed"); }));
-  assert.deepEqual(sealed, []);
-  await session.load(async () => ({ sealedWatermark: 0, appendVersion: 1 }));
-  assert.deepEqual(sealed, ["candidate"]);
-});
-
-test("limited replay summarizes later large parts without losing the delivery watermark", async () => {
-  const session = new SessionReplay<{ limited: boolean; updates: string[] }, string>({
-    empty: () => ({ limited: false, updates: [] }),
-    apply: (view, batch) => {
-      view.updates.push(...batch.updates);
-      if (view.updates.length >= 1) view.limited = true;
-      return view;
-    },
-    isLimited: (view) => view.limited,
-    summarize: (update) => update.slice(-4),
-  });
-  await session.load(async () => ({ sealedWatermark: 0, appendVersion: 1 }));
-  session.receive(part(1), "first");
-  session.receive(part(2, 0, 2), "x".repeat(17 * 1024 * 1024));
-  assert.ok(session.estimatedRetainedBytes < 256);
-  assert.equal(session.snapshot().watermark, 1);
-  session.receive(part(2, 1, 2), "last");
-  assert.equal(session.snapshot().watermark, 2);
-  assert.deepEqual(session.snapshot().view.updates, ["first", "xxxx", "last"]);
-});
-
-test("a sealed replay limits itself before an oversized first pending part is rejected", async () => {
-  const session = new SessionReplay<{ limited: boolean; updates: string[] }, string>({
-    empty: () => ({ limited: false, updates: [] }),
-    apply: (view, batch) => { view.updates.push(...batch.updates); return view; },
-    limit: (view) => { view.limited = true; return true; },
-    isLimited: (view) => view.limited,
-    summarize: (update) => update.slice(-4),
-  });
-  await session.load(async () => ({ sealedWatermark: 0, appendVersion: 1 }));
-  session.receive(part(1), "x".repeat(17 * 1024 * 1024));
-  assert.equal(session.snapshot().view.limited, true);
-  assert.equal(session.snapshot().watermark, 1);
-  assert.deepEqual(session.snapshot().view.updates, ["xxxx"]);
-  assert.equal(session.snapshot().needsReconcile, false);
-});
-
-test("replacement of a sealed View may become limited when its fresh replay exceeds history budget", async () => {
+test("large cold and replacement replays preserve every multipart payload", async () => {
   const session = new SessionReplay<CompactTranscript, SessionUpdate>({
-    empty: () => new CompactTranscript(1024),
+    empty: () => new CompactTranscript(),
     apply: (view, batch) => view.apply(batch),
-    seal: (view) => view.enableLiveLimit(),
-    prepareReplacement: (view) => view.enableLiveLimit(),
-    limit: (view) => view.limitLive(),
-    isLimited: (view) => view.isLimited,
-    summarize: (update) => update.sessionUpdate === "agent_message_chunk" &&
-      update.content.type === "text"
-      ? { ...update, content: { type: "text", text: update.content.text.slice(-32) } }
-      : undefined,
   });
+  const text = "x".repeat(17 * 1024 * 1024);
   const update = (text: string): SessionUpdate => ({ sessionUpdate: "agent_message_chunk",
-    messageId: "answer",
-    content: { type: "text", text } });
-  await session.load(async () => ({ sealedWatermark: 0, appendVersion: 1 }));
-  await session.load(async () => {
-    session.receive(part(1), update("a".repeat(600)));
-    session.receive(part(2), update("b".repeat(600)));
-    return { sealedWatermark: 2, appendVersion: 2 };
-  });
-  assert.equal(session.snapshot().view.isLimited, true);
-  assert.equal(session.snapshot().watermark, 2);
-  assert.equal(session.snapshot().needsReconcile, false);
-  assert.equal(session.snapshot().view.limitedPreview.text, "b".repeat(600));
-  const cold = new SessionReplay<CompactTranscript, SessionUpdate>({
-    empty: () => new CompactTranscript(1024),
-    apply: (view, batch) => view.apply(batch),
-    seal: (view) => view.enableLiveLimit(),
-    prepareReplacement: (view) => view.enableLiveLimit(),
-  });
-  await assert.rejects(cold.load(async () => {
-    cold.receive(part(1), update("x".repeat(1200)));
-    return { sealedWatermark: 1, appendVersion: 1 };
-  }), HistoryCapacityError);
+    messageId: "answer", content: { type: "text", text } });
+  for (const version of [1, 2]) {
+    await session.load(async () => {
+      session.receive(part(1, 0, 2), update(text));
+      assert.equal(session.snapshot().watermark, version === 1 ? 0 : 1);
+      session.receive(part(1, 1, 2), update("complete"));
+      return { sealedWatermark: 1, appendVersion: version };
+    });
+    assert.equal(session.snapshot().watermark, 1);
+    assert.equal(session.snapshot().needsReconcile, false);
+    assert.deepEqual(session.snapshot().view.turns()[0]?.finalResponse,
+      [{ type: "text", text }, { type: "text", text: "complete" }]);
+  }
 });
 
 test("replay keeps the old view readable and replaces it only after a sealed cut", async () => {
@@ -151,15 +85,15 @@ test("load waits for notifications that arrive after the sealed response", async
   assert.deepEqual(session.snapshot().view, ["late answer"]);
 });
 
-test("a capacity failure interrupts the seal wait and preserves the previous view", async () => {
+test("a protocol failure interrupts the seal wait and preserves the previous view", async () => {
   const session = new SessionReplay<string[], string>({
     empty: () => [], apply: (view, batch) => [...view, ...batch.updates],
   }, { sealWaitMs: 1_000 });
   session.receive(part(1), "old");
   const loading = session.load(async () => ({ sealedWatermark: 3, appendVersion: 2 }));
   await new Promise((resolve) => setImmediate(resolve));
-  session.invalidate(new Error("history capacity"));
-  await assert.rejects(loading, /history capacity/);
+  session.invalidate(new Error("invalid delivery"));
+  await assert.rejects(loading, /invalid delivery/);
   assert.deepEqual(session.snapshot().view, ["old"]);
   assert.equal(session.snapshot().needsReconcile, true);
 });
@@ -170,11 +104,11 @@ test("failed replay ignores later parts instead of replacing the original failur
   });
   const loading = session.load(async () => {
     session.receive(part(1), "first");
-    session.invalidate(new Error("history capacity"));
+    session.invalidate(new Error("invalid delivery"));
     assert.doesNotThrow(() => session.receive(part(1), "conflicting late part"));
     return { sealedWatermark: 1, appendVersion: 1 };
   });
-  await assert.rejects(loading, /history capacity/);
+  await assert.rejects(loading, /invalid delivery/);
   assert.deepEqual(session.snapshot().view, []);
 });
 

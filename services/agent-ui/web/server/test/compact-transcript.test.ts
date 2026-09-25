@@ -3,7 +3,6 @@ import { test } from "node:test";
 import type { SessionUpdate } from "@agentclientprotocol/sdk";
 import {
   CompactTranscript,
-  HistoryCapacityError,
 } from "../src/bridge/compact-transcript.ts";
 
 function batch(
@@ -15,52 +14,149 @@ function batch(
   return { sequence, runId, messageId, updates };
 }
 
-test("Session metadata survives replay updates and live history limiting", () => {
-  const transcript = new CompactTranscript(1024);
-  assert.deepEqual(transcript.sessionInfo, { title: null, updatedAt: null });
-  transcript.apply(batch(1, null, "info-1", {
-    sessionUpdate: "session_info_update", title: "Original title",
-    updatedAt: "2026-09-24T00:00:00Z",
+test("tool patches replace current fields, retain omitted fields and clear empty collections", () => {
+  const transcript = new CompactTranscript();
+  transcript.apply(batch(1, "run", "start", {
+    sessionUpdate: "tool_call", toolCallId: "tool", title: "Read", status: "in_progress",
+    rawInput: { path: "notes.txt" }, rawOutput: { result: "obsolete" },
+    content: [{ type: "content", content: { type: "text", text: "obsolete output" } }],
   }));
-  assert.deepEqual(transcript.sessionInfo, {
-    title: "Original title", updatedAt: "2026-09-24T00:00:00Z",
-  });
-  transcript.enableLiveLimit();
-  transcript.apply(batch(2, "run-1", "large", {
-    sessionUpdate: "agent_message_chunk", messageId: "answer-1",
-    content: { type: "text", text: "a".repeat(2048) },
+  const before = transcript.turns();
+  transcript.apply(batch(2, "run", "result", {
+    sessionUpdate: "tool_call_update", toolCallId: "tool", status: "completed",
+    rawOutput: { result: "current" },
+    content: [{ type: "content", content: { type: "text", text: "current output" } }],
   }));
-  assert.equal(transcript.isLimited, true);
-  transcript.apply(batch(3, null, "info-2", {
-    sessionUpdate: "session_info_update", title: "Updated title",
-    updatedAt: "2026-09-24T01:00:00Z",
+  transcript.apply(batch(3, "run", "title", {
+    sessionUpdate: "tool_call_update", toolCallId: "tool", title: "Read complete",
   }));
-  assert.deepEqual(transcript.sessionInfo, {
-    title: "Updated title", updatedAt: "2026-09-24T01:00:00Z",
-  });
+  const current = transcript.turns()[0]!.process[0]!;
+  assert.equal(current.status, "completed");
+  assert.equal(current.summary, "Read complete");
+  assert.deepEqual(current.content, [
+    { type: "text", text: 'Input: {"path":"notes.txt"}' },
+    { type: "text", text: 'Output: {"result":"current"}' },
+    { type: "text", text: "current output" },
+  ]);
+  assert.deepEqual(current.toolSections,
+    { inputIndex: 0, outputIndex: 1, detailStartIndex: 2 });
+  assert.match(JSON.stringify(before), /obsolete/u);
+  transcript.apply(batch(4, "run", "clear", {
+    sessionUpdate: "tool_call_update", toolCallId: "tool", content: [], status: null,
+  }));
+  assert.equal(transcript.turns()[0]!.process[0]!.status, "completed");
+  assert.deepEqual(transcript.turns()[0]!.process[0]!.content, current.content.slice(0, 2));
+  assert.deepEqual(transcript.turns()[0]!.process[0]!.toolSections,
+    { inputIndex: 0, outputIndex: 1, detailStartIndex: 2 });
 });
 
-test("a sealed live transcript sheds oversized output and keeps a bounded incomplete preview", () => {
-  const transcript = new CompactTranscript(1024);
-  transcript.apply(batch(1, "run-1", "prompt", {
-    sessionUpdate: "user_message_chunk", messageId: "prompt-1",
-    content: { type: "text", text: "Question" },
+test("live process revisions identify changed indices within a bounded window", () => {
+  const transcript = new CompactTranscript();
+  transcript.apply(batch(1, "run", "tool-start", { sessionUpdate: "tool_call",
+    toolCallId: "tool", title: "Read", status: "in_progress" }));
+  transcript.apply(batch(2, "run", "tool-result", { sessionUpdate: "tool_call_update",
+    toolCallId: "tool", status: "completed" }));
+  transcript.apply(batch(3, "run", "thought", { sessionUpdate: "agent_thought_chunk",
+    messageId: "thought", content: { type: "text", text: "Next" } }));
+  assert.deepEqual(transcript.processChanges("run"),
+    { fromVersion: 2, indices: [1] });
+  for (let sequence = 4; sequence <= 66; sequence++)
+    transcript.apply(batch(sequence, "run", `change-${sequence}`, {
+      sessionUpdate: "tool_call_update", toolCallId: "tool", title: `Read ${sequence}` }));
+  const changes = transcript.processChanges("run");
+  assert.deepEqual(changes?.indices, [0]);
+  assert.ok(changes && changes.fromVersion >= 58 && changes.fromVersion < 66,
+    "Only a bounded number of consecutive same-item changes may be coalesced");
+});
+
+test("live change tracking is charged to retained bytes and released at terminal outcome", () => {
+  const transcript = new CompactTranscript();
+  transcript.apply(batch(1, "run", "start", { sessionUpdate: "tool_call",
+    toolCallId: "tool", title: "Read", status: "in_progress" }));
+  const first = transcript.estimatedRetainedBytes;
+  for (let sequence = 2; sequence <= 21; sequence++)
+    transcript.apply(batch(sequence, "run", `change-${sequence}`, {
+      sessionUpdate: "tool_call_update", toolCallId: "tool", title: "Read" }));
+  const full = transcript.estimatedRetainedBytes;
+  assert.ok(full >= first);
+  transcript.apply(batch(22, "run", "change-22", {
+    sessionUpdate: "tool_call_update", toolCallId: "tool", title: "Read" }));
+  assert.equal(transcript.estimatedRetainedBytes, full);
+  transcript.setOutcome("run", "completed");
+  assert.deepEqual(transcript.processChanges("run"), { fromVersion: 22, indices: [] });
+  assert.ok(transcript.estimatedRetainedBytes < full);
+});
+
+test("a sparse update after an answer does not move the answer into process", () => {
+  const transcript = new CompactTranscript();
+  transcript.apply(batch(1, "run", "tool", {
+    sessionUpdate: "tool_call", toolCallId: "tool", title: "Read", status: "completed",
   }));
-  transcript.enableLiveLimit();
-  transcript.apply(batch(2, "run-1", "large", {
-    sessionUpdate: "agent_message_chunk", messageId: "answer-1",
-    content: { type: "text", text: "a".repeat(2048) },
+  transcript.apply(batch(2, "run", "answer", {
+    sessionUpdate: "agent_message_chunk", messageId: "answer", content: { type: "text", text: "done" },
   }));
-  assert.equal(transcript.isLimited, true);
-  assert.deepEqual(transcript.turns(), []);
-  assert.deepEqual(transcript.limitedPreview, { text: "a".repeat(2048), truncated: true });
-  transcript.apply(batch(3, "run-1", "later", {
-    sessionUpdate: "agent_message_chunk", messageId: "answer-1",
-    content: { type: "text", text: "b".repeat(4096) },
+  transcript.apply(batch(3, "run", "title", {
+    sessionUpdate: "tool_call_update", toolCallId: "tool", title: "Read complete",
   }));
-  assert.equal(transcript.limitedPreview.text.length, 4096);
-  assert.ok(transcript.limitedPreview.text.endsWith("b".repeat(4096)));
-  assert.ok(transcript.estimatedRetainedBytes < 20_000);
+  assert.deepEqual(transcript.turns()[0]!.finalResponse, [{ type: "text", text: "done" }]);
+});
+
+test("anonymous plan updates replace the current plan in place within their Run", () => {
+  const transcript = new CompactTranscript();
+  const entry = { content: "Read", priority: "medium" as const, status: "in_progress" as const };
+  transcript.apply(batch(1, "run", "plan-1", { sessionUpdate: "plan", entries: [entry] }));
+  const original = transcript.turns()[0]!.process[0]!;
+  transcript.apply(batch(2, "run", "plan-2", {
+    sessionUpdate: "plan", entries: [{ ...entry, status: "completed" }],
+  }));
+  const process = transcript.turns()[0]!.process;
+  assert.equal(process.length, 1);
+  assert.equal(process[0]!.id, original.id);
+  assert.deepEqual(process[0]!.content, [{ type: "text", text: JSON.stringify([{ ...entry, status: "completed" }]) }]);
+  transcript.apply(batch(3, "other-run", "plan-3", { sessionUpdate: "plan", entries: [entry] }));
+  assert.equal(transcript.turns()[1]!.process.length, 1);
+});
+
+test("retained accounting replaces metadata and tool results instead of accumulating wire traffic", () => {
+  const transcript = new CompactTranscript();
+  const usage = { sessionUpdate: "usage_update" as const, used: 1, size: 1000 };
+  transcript.apply(batch(1, null, "usage-1", usage));
+  const bytes = transcript.estimatedRetainedBytes;
+  for (let i = 2; i <= 100; i++) transcript.apply(batch(i, null, `usage-${i}`, usage));
+  assert.equal(transcript.estimatedRetainedBytes, bytes);
+  transcript.apply(batch(101, "run", "large", {
+    sessionUpdate: "tool_call", toolCallId: "tool", title: "Read", rawOutput: { text: "x".repeat(10000) },
+  }));
+  const large = transcript.estimatedRetainedBytes;
+  transcript.apply(batch(102, "run", "small", {
+    sessionUpdate: "tool_call_update", toolCallId: "tool", rawOutput: { text: "x" },
+  }));
+  assert.ok(transcript.estimatedRetainedBytes < large - 9000);
+  const small = transcript.estimatedRetainedBytes;
+  transcript.apply(batch(103, "run", "same", {
+    sessionUpdate: "tool_call_update", toolCallId: "tool", rawOutput: { text: "x" },
+  }));
+  assert.equal(transcript.estimatedRetainedBytes, small);
+});
+
+test("valid large history remains complete and accepts subsequent updates", () => {
+  const transcript = new CompactTranscript();
+  const text = "x".repeat(65 * 1024 * 1024);
+  transcript.apply(batch(1, "run", "large", {
+    sessionUpdate: "agent_message_chunk", messageId: "answer",
+    content: { type: "text", text },
+  }));
+  transcript.apply(batch(2, null, "info", {
+    sessionUpdate: "session_info_update", title: "Large session",
+  }));
+  transcript.apply(batch(3, "next-run", "prompt", {
+    sessionUpdate: "user_message_chunk", content: { type: "text", text: "continue" },
+  }));
+  assert.equal(transcript.turnCount, 2);
+  assert.equal(transcript.turnById("run")!.finalResponse[0]!.type, "text");
+  assert.equal((transcript.turnById("run")!.finalResponse[0] as { text: string }).text.length, text.length);
+  assert.equal(transcript.sessionInfo.title, "Large session");
+  assert.ok(transcript.estimatedRetainedBytes >= text.length);
 });
 
 test("stable Run turn retains every native prompt and final answer content block", () => {
@@ -180,85 +276,25 @@ test("thoughts and tools stay in process while later answer remains final", () =
   assert.ok((turn?.processVersion ?? 0) > 0);
 });
 
-test("oversized history fails before mutating a view or accepting a partial batch", () => {
-  const transcript = new CompactTranscript(350);
-  transcript.apply(
-    batch(1, "run-1", "small", {
-      sessionUpdate: "user_message_chunk",
-      messageId: "user-1",
-      content: { type: "text", text: "small" },
-    }),
-  );
-  const before = transcript.turns();
-  assert.throws(
-    () =>
-      transcript.apply(
-        batch(2, "run-1", "large", {
-          sessionUpdate: "agent_message_chunk",
-          messageId: "answer",
-          content: { type: "text", text: "x".repeat(1000) },
-        }),
-      ),
-    HistoryCapacityError,
-  );
-  assert.deepEqual(transcript.turns(), before);
-});
-
-test("transcript accounting rises with accepted content and stays put on a rejected batch", () => {
-  const transcript = new CompactTranscript(350);
+test("accounting tracks current configuration and Session metadata alongside content", () => {
+  const transcript = new CompactTranscript();
   const initial = transcript.estimatedRetainedBytes;
-  transcript.apply(
-    batch(1, "run-1", "small", {
-      sessionUpdate: "user_message_chunk",
-      messageId: "user-1",
-      content: { type: "text", text: "small" },
-    }),
-  );
-  const accepted = transcript.estimatedRetainedBytes;
-  assert.ok(accepted > initial);
-  assert.throws(
-    () =>
-      transcript.apply(
-        batch(2, "run-1", "large", {
-          sessionUpdate: "agent_message_chunk",
-          messageId: "answer",
-          content: { type: "text", text: "x".repeat(1000) },
-        }),
-      ),
-    HistoryCapacityError,
-  );
-  assert.equal(transcript.estimatedRetainedBytes, accepted);
-});
-
-test("initial configuration and later content share one Session history budget", () => {
-  const options = [
-    {
-      id: "auto",
-      name: "Automatic",
-      description: "x".repeat(100),
-      type: "boolean" as const,
-      currentValue: true,
-    },
-  ];
-  const update: SessionUpdate = {
-    sessionUpdate: "user_message_chunk",
-    messageId: "user-1",
-    content: { type: "text", text: "y".repeat(100) },
-  };
-  const configBytes = Buffer.byteLength(JSON.stringify(options));
-  const updateBytes = Buffer.byteLength(JSON.stringify([update]));
-  const budget = Math.max(configBytes, updateBytes) +
-    Buffer.byteLength(JSON.stringify({ title: null, updatedAt: null })) + 10;
-  assert.ok(configBytes + updateBytes > budget);
-  const transcript = new CompactTranscript(budget);
+  const options = [{ id: "auto", name: "Automatic", type: "boolean" as const,
+    currentValue: true, description: "x".repeat(10000) }];
   transcript.setInitialConfigOptions(options);
-  const before = transcript.estimatedRetainedBytes;
-  assert.throws(
-    () => transcript.apply(batch(1, "run-1", "user", update)),
-    HistoryCapacityError,
-  );
-  assert.equal(transcript.estimatedRetainedBytes, before);
-  assert.equal(transcript.turnCount, 0);
+  assert.ok(transcript.estimatedRetainedBytes >= initial + 10000);
+  const configured = transcript.estimatedRetainedBytes;
+  transcript.applyConfigurationNotification(options);
+  assert.equal(transcript.estimatedRetainedBytes, configured);
+  transcript.applyConfigurationNotification([]);
+  assert.equal(transcript.estimatedRetainedBytes, initial);
+  transcript.applySessionInfoNotification({ sessionUpdate: "session_info_update", title: "Title" });
+  const titled = transcript.estimatedRetainedBytes;
+  transcript.applySessionInfoNotification({ sessionUpdate: "session_info_update", title: "Title" });
+  assert.equal(transcript.estimatedRetainedBytes, titled);
+  transcript.apply(batch(1, "run", "input", { sessionUpdate: "user_message_chunk",
+    content: { type: "text", text: "prompt" } }));
+  assert.ok(transcript.estimatedRetainedBytes > titled);
 });
 
 test("tool arguments and raw output remain available in process detail", () => {

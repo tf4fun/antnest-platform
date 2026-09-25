@@ -8,9 +8,8 @@ import {
   AgentBridgeOwner,
   type AcpBridgePort,
 } from "../src/bridge/agent-owner.ts";
-import { AgentAccessRevokedError } from "../src/adapters/acp-http.ts";
+import { AgentAccessRevokedError, SessionNotFoundError } from "../src/adapters/acp-http.ts";
 import { StreamCapacityError } from "../src/bridge/stream-journal.ts";
-import { HistoryCapacityError } from "../src/bridge/compact-transcript.ts";
 
 const scope = {
   organizationId: "org-1",
@@ -109,8 +108,6 @@ test("owner retires when its ACP transport closes", async () => {
 
 test("owner applies unmarked ACP configuration updates to a loaded Session", async () => {
   const f = fixture();
-  let reservations = 0;
-  let releases = 0;
   const mode = (currentValue: string) => ({
     id: "mode",
     name: "Mode",
@@ -124,10 +121,6 @@ test("owner applies unmarked ACP configuration updates to a loaded Session", asy
   const owner = await AgentBridgeOwner.open({
     scope,
     retainWork: f.retainWork,
-    reserveHistory: () => {
-      reservations++;
-      return () => { releases++; };
-    },
     connect: async (identity, callbacks) => {
       const port = await f.connect(identity, callbacks);
       return {
@@ -147,7 +140,7 @@ test("owner applies unmarked ACP configuration updates to a loaded Session", asy
       owner.viewMetadata("session-1").configOptions[0]?.currentValue,
       "auto",
     );
-    const previousReservations = reservations;
+    const retainedBefore = owner.estimatedCachedHistoryBytes;
     f.callback().update({
       sessionId: "session-1",
       update: {
@@ -159,8 +152,7 @@ test("owner applies unmarked ACP configuration updates to a loaded Session", asy
       owner.viewMetadata("session-1").configOptions[0]?.currentValue,
       "chat",
     );
-    assert.equal(reservations, previousReservations + 1);
-    assert.equal(releases, reservations);
+    assert.equal(owner.estimatedCachedHistoryBytes, retainedBefore);
   } finally {
     owner.close();
   }
@@ -236,18 +228,20 @@ test("cold Session replay records one outcome without counting warm reads", asyn
   }
 });
 
-test("failed cold Session replay records error and retries as a new cold load", async () => {
+test("transient cold replay owns its backoff and retries once for concurrent readers", async () => {
   const f = fixture();
   const samples: Array<{ durationMs: number; outcome: "success" | "error" }> =
     [];
   let attempts = 0;
+  let firstFailed!: () => void;
+  const failed = new Promise<void>((resolve) => { firstFailed = resolve; });
   const connect: typeof f.connect = async (scope, callbacks) => {
     const port = await f.connect(scope, callbacks);
     const load = port.load.bind(port);
     return {
       ...port,
       async load(sessionId) {
-        if (attempts++ === 0) throw new Error("replay unavailable");
+        if (attempts++ === 0) { firstFailed(); throw new Error("replay unavailable"); }
         return load(sessionId);
       },
     };
@@ -256,101 +250,95 @@ test("failed cold Session replay records error and retries as a new cold load", 
     scope,
     connect,
     retainWork: f.retainWork,
+    idleMs: 0,
+    replayRetryBackoffMs: 20,
     recordColdReplay: (durationMs, outcome) =>
       samples.push({ durationMs, outcome }),
   });
   try {
-    await assert.rejects(
-      owner.authorizeSession("session-1"),
-      /replay unavailable/,
-    );
-    await owner.authorizeSession("session-1");
-    assert.deepEqual(
-      samples.map((sample) => sample.outcome),
-      ["error", "success"],
-    );
+    const first = owner.authorizeSession("session-1");
+    const second = owner.authorizeSession("session-1");
+    void first.catch(() => {});
+    void second.catch(() => {});
+    await failed;
+    await Promise.resolve();
+    assert.equal(f.work(), 1);
+    await owner.sweep();
+    await Promise.all([first, second]);
+    assert.equal(attempts, 2);
+    assert.deepEqual(samples.map((sample) => sample.outcome), ["success"]);
+    assert.equal(f.work(), 0);
   } finally {
     owner.close();
   }
 });
 
-test("a denied live reservation limits the sealed view without replaying it", async () => {
+test("permanent missing Session ends cold replay without a background retry", async () => {
   const f = fixture();
-  const owner = await AgentBridgeOwner.open({
-    scope,
-    connect: f.connect,
-    retainWork: f.retainWork,
-    reserveHistory: (_owner, bytes) => {
-      if (bytes < 64 * 1024 * 1024) throw new HistoryCapacityError();
-      return () => {};
-    },
-  });
-  await owner.authorizeSession("session-1");
-  f.callback().update({
-    sessionId: "session-1",
-    update: {
-      sessionUpdate: "agent_message_chunk",
-      messageId: "answer-1",
-      content: { type: "text", text: "late" },
-    },
-    _meta: {
-      "antnest.dev/delivery": {
-        kind: "part",
-        sequence: 1,
-        partIndex: 0,
-        partCount: 1,
-        runId: "run-1",
-        messageId: "event-1",
-      },
-    },
-  });
-  await owner.authorizeSession("session-1");
-  assert.equal(f.calls.filter((call) => call === "load:session-1").length, 1);
-  assert.deepEqual(owner.viewLimit("session-1"), {
-    watermark: 1,
-    preview: { text: "late", truncated: true },
-  });
-  owner.close();
+  let attempts = 0;
+  const owner = await AgentBridgeOwner.open({ scope, retainWork: f.retainWork,
+    replayRetryBackoffMs: 1,
+    connect: async (identity, callbacks) => ({ ...await f.connect(identity, callbacks),
+      async load() { attempts++; throw new SessionNotFoundError(); } }) });
+  try {
+    await assert.rejects(owner.authorizeSession("missing"), SessionNotFoundError);
+    assert.equal(attempts, 1);
+    assert.equal(f.work(), 0);
+  } finally { owner.close(); }
 });
 
-test("an oversized live update keeps its watermark and publishes a limited view", async () => {
+test("retiring the owner cancels cold replay backoff before another ACP load", async () => {
   const f = fixture();
-  const owner = await AgentBridgeOwner.open({
-    scope,
-    connect: f.connect,
-    retainWork: f.retainWork,
-    maxSessionHistoryBytes: 64,
-    maxCachedHistoryBytes: 17_000,
-  });
-  await owner.authorizeSession("session-1");
-  assert.doesNotThrow(() =>
-    f.callback().update({
-      sessionId: "session-1",
-      update: {
-        sessionUpdate: "agent_message_chunk",
-        messageId: "answer-1",
-        content: { type: "text", text: "x".repeat(128) },
-      },
-      _meta: {
-        "antnest.dev/delivery": {
-          kind: "part",
-          sequence: 1,
-          partIndex: 0,
-          partCount: 1,
-          runId: "run-1",
-          messageId: "event-1",
-        },
-      },
-    }),
-  );
-  await owner.authorizeSession("session-1");
-  assert.equal(f.calls.filter((call) => call === "load:session-1").length, 1);
-  assert.deepEqual(owner.viewLimit("session-1"), {
-    watermark: 1,
-    preview: { text: "x".repeat(128), truncated: true },
-  });
-  assert.throws(() => owner.readTurns("session-1"), HistoryCapacityError);
+  let attempts = 0;
+  let firstFailed!: () => void;
+  const failed = new Promise<void>((resolve) => { firstFailed = resolve; });
+  const owner = await AgentBridgeOwner.open({ scope, retainWork: f.retainWork,
+    replayRetryBackoffMs: 1_000,
+    connect: async (identity, callbacks) => ({ ...await f.connect(identity, callbacks),
+      async load() { attempts++; firstFailed(); throw new Error("temporary load failure"); } }) });
+  const pending = owner.authorizeSession("session-1");
+  void pending.catch(() => {});
+  await failed;
   owner.close();
+  await assert.rejects(pending, /retired/u);
+  assert.equal(attempts, 1);
+  assert.equal(f.work(), 0);
+});
+
+test("cold replay exhausts bounded retries and releases its work owner", async () => {
+  const f = fixture();
+  let attempts = 0;
+  const owner = await AgentBridgeOwner.open({ scope, retainWork: f.retainWork,
+    replayRetryBackoffMs: 1,
+    connect: async (identity, callbacks) => ({ ...await f.connect(identity, callbacks),
+      async load() { attempts++; throw new Error("temporary load failure"); } }) });
+  try {
+    await assert.rejects(owner.authorizeSession("session-1"), /temporary load failure/u);
+    assert.equal(attempts, 4);
+    assert.equal(f.work(), 0);
+  } finally { owner.close(); }
+});
+
+test("a large live update preserves the complete View without replaying it", async () => {
+  const f = fixture();
+  const owner = await AgentBridgeOwner.open({ scope, connect: f.connect,
+    retainWork: f.retainWork });
+  try {
+    await owner.authorizeSession("session-1");
+    const text = "x".repeat(65 * 1024 * 1024);
+    f.callback().update({ sessionId: "session-1", update: {
+      sessionUpdate: "agent_message_chunk", messageId: "answer-1",
+      content: { type: "text", text },
+    }, _meta: { "antnest.dev/delivery": { kind: "part", sequence: 1,
+      partIndex: 0, partCount: 1, runId: "run-1", messageId: "event-1" } } });
+    await owner.authorizeSession("session-1");
+    assert.equal(f.calls.filter((call) => call === "load:session-1").length, 1);
+    assert.equal(owner.retainedSession("session-1")?.watermark, 1);
+    const block = owner.readTurns("session-1")[0]?.finalResponse[0];
+    assert.ok(block?.type === "text");
+    assert.equal(block.text.length, text.length);
+    assert.ok(block.text === text);
+  } finally { owner.close(); }
 });
 
 test("Agent journals evict cold selections and protect live subscribers", async () => {
@@ -676,13 +664,11 @@ test("one owner serializes Session replay and rejects an overflowing load queue"
   owner.close();
 });
 
-test("new replay evicts a cold Session under the owner cache budget", async () => {
+test("new replay retains the other Session in the same owner", async () => {
   const f = fixture();
   const owner = await AgentBridgeOwner.open({
     scope,
     retainWork: f.retainWork,
-    maxSessionHistoryBytes: 1_024,
-    maxCachedHistoryBytes: 17_500,
     connect: async (identity, callbacks) => {
       const port = await f.connect(identity, callbacks);
       return {
@@ -721,21 +707,19 @@ test("new replay evicts a cold Session under the owner cache budget", async () =
   await owner.authorizeSession("session-1");
   assert.equal(owner.cachedSessionCount, 1);
   await owner.authorizeSession("session-2");
-  assert.equal(owner.cachedSessionCount, 1);
-  assert.throws(() => owner.readTurns("session-1"), /not ready/i);
+  assert.equal(owner.cachedSessionCount, 2);
+  assert.equal(owner.readTurns("session-1")[0]?.turnId, "run-session-1");
   assert.equal(owner.readTurns("session-2")[0]?.turnId, "run-session-2");
   await owner.authorizeSession("session-1");
-  assert.equal(owner.cachedSessionCount, 1);
+  assert.equal(owner.cachedSessionCount, 2);
   owner.close();
 });
 
-test("an observed Session cannot be evicted to admit another replay", async () => {
+test("an observed Session and a new replay remain independently readable", async () => {
   const f = fixture();
   const owner = await AgentBridgeOwner.open({
     scope,
     retainWork: f.retainWork,
-    maxSessionHistoryBytes: 1_024,
-    maxCachedHistoryBytes: 17_500,
     connect: async (identity, callbacks) => {
       const port = await f.connect(identity, callbacks);
       return {
@@ -776,23 +760,21 @@ test("an observed Session cannot be evicted to admit another replay", async () =
     .streamJournal("session-1")
     .subscribe(null, (cursor) => ({ cursor }));
   await events.next();
-  await assert.rejects(owner.authorizeSession("session-2"), /capacity/i);
-  assert.equal(owner.cachedSessionCount, 1);
+  await owner.authorizeSession("session-2");
+  assert.equal(owner.cachedSessionCount, 2);
   assert.equal(owner.readTurns("session-1")[0]?.turnId, "run-session-1");
   await events.return();
   await owner.authorizeSession("session-2");
-  assert.equal(owner.cachedSessionCount, 1);
+  assert.equal(owner.cachedSessionCount, 2);
   owner.close();
 });
 
-test("an ACP-active Session remains cached until execution observation clears it", async () => {
+test("an ACP-active Session does not reject a second Session", async () => {
   const f = fixture();
   let active = true;
   const owner = await AgentBridgeOwner.open({
     scope,
     retainWork: f.retainWork,
-    maxSessionHistoryBytes: 1_024,
-    maxCachedHistoryBytes: 17_500,
     connect: async (identity, callbacks) => {
       const port = await f.connect(identity, callbacks);
       return {
@@ -831,22 +813,20 @@ test("an ACP-active Session remains cached until execution observation clears it
     },
   });
   await owner.authorizeSession("session-1");
-  await assert.rejects(owner.authorizeSession("session-2"), /capacity/i);
-  assert.equal(owner.cachedSessionCount, 1);
+  await owner.authorizeSession("session-2");
+  assert.equal(owner.cachedSessionCount, 2);
   active = false;
   await owner.authorizeExecution("session-1");
   await owner.authorizeSession("session-2");
-  assert.equal(owner.cachedSessionCount, 1);
+  assert.equal(owner.cachedSessionCount, 2);
   owner.close();
 });
 
-test("a pending permission protects its Session from cold-cache eviction", async () => {
+test("a pending permission remains valid while another Session loads", async () => {
   const f = fixture();
   const owner = await AgentBridgeOwner.open({
     scope,
     retainWork: f.retainWork,
-    maxSessionHistoryBytes: 1_024,
-    maxCachedHistoryBytes: 17_500,
     connect: async (identity, callbacks) => {
       const port = await f.connect(identity, callbacks);
       return {
@@ -877,13 +857,13 @@ test("a pending permission protects its Session from cold-cache eviction", async
   const decision = f
     .callback()
     .requestPermission(permission, new AbortController().signal);
-  await assert.rejects(owner.authorizeSession("session-2"), /capacity/i);
-  assert.equal(owner.cachedSessionCount, 1);
+  await owner.authorizeSession("session-2");
+  assert.equal(owner.cachedSessionCount, 2);
   const item = owner.permissions[0]!;
   owner.decidePermission(item.permissionId, item.generation, "yes");
   await decision;
   await owner.authorizeSession("session-2");
-  assert.equal(owner.cachedSessionCount, 1);
+  assert.equal(owner.cachedSessionCount, 2);
   owner.close();
 });
 
@@ -905,8 +885,6 @@ test("a configuration command pins its Session until the ACP response is applied
   const owner = await AgentBridgeOwner.open({
     scope,
     retainWork: f.retainWork,
-    maxSessionHistoryBytes: 1_024,
-    maxCachedHistoryBytes: 17_500,
     connect: async (identity, callbacks) => {
       const port = await f.connect(identity, callbacks);
       return {
@@ -933,8 +911,8 @@ test("a configuration command pins its Session until the ACP response is applied
     false,
     "a".repeat(64),
   );
-  await assert.rejects(owner.authorizeSession("session-2"), /capacity/i);
-  assert.equal(owner.cachedSessionCount, 1);
+  await owner.authorizeSession("session-2");
+  assert.equal(owner.cachedSessionCount, 2);
   finishConfiguration();
   await changing;
   assert.equal(
@@ -1550,7 +1528,7 @@ test("replacing a reconciled replay announces the new view to an existing stream
     }),
   );
   await owner.authorizeSession("session-1");
-  assert.equal(changes, 2);
+  assert.equal(changes, 3);
   assert.equal(
     owner.readTurns("session-1")[0]?.finalResponse[0]?.text,
     "recovered",

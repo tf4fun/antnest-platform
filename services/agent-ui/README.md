@@ -79,6 +79,11 @@ HTTP `202` confirms Bridge admission; the operation and ACP receipt determine
 execution status. ACP owns the authoritative replay: loading a Session builds
 a replacement projection while keeping the cached transcript readable. Only a
 successful replay replaces that transcript; failed replay retains it.
+Selected-Session cold replay retries transient ACP failures up to four total
+attempts under one server-owned work lease. The lease spans each backoff and
+keeps concurrent readers on the same recovery workflow; permanent missing or
+revoked Session errors stop immediately. Exhausted recovery returns an error
+without replacing an earlier sealed transcript.
 Prompt admission checks the full serialized ACP request against the ACP POST
 body limit before returning `202`. The default is 16 MiB; Compose passes
 `ANTNEST_ACP_MAX_PROMPT_BYTES` to ACP and the same value to Node as
@@ -86,26 +91,34 @@ body limit before returning `202`. The default is 16 MiB; Compose passes
 `413 request_too_large` without reserving an operation.
 An uncached selected Session shows a non-interactive history placeholder until
 replay completes. The mounted, disabled composer preserves its draft; cached
-transcripts remain readable during refresh. Completed turns build folded process
-messages only when opened. A process already read stays mounted while expanded
+transcripts remain readable during refresh. An opening failure replaces the
+placeholder with Retry loading and Back to agent actions. Completed turns build folded process
+messages only when opened. Running turns open their process automatically and
+follow its versioned pages until folded by the reader. A complete live process
+uses a one-revision View/SSE item delta for consecutive updates; a missed delta or released
+cache falls back to versioned pages. A process already read
+stays mounted while expanded
 and for five minutes after folding, then releases its DOM while keeping the
 prompt, final answer and process summary. This does not discard ACP history or
 reduce its transport payload. See the [attyd optimization review](docs/attyd-optimization-review-20260923.md).
+Intermediate Agent replies stay in process order before the final answer, even
+when a later process page arrives while an earlier thought is expanded.
 The Node history API now returns both `nextCursor` (older) and `newerCursor`
 (newer) for each turn page. Each cursor is signed for one identity, Session
 incarnation, and output watermark. The browser keeps the latest View plus one
 history page, evicts the previous page on navigation, and can fetch adjacent
 older or newer pages or jump back to the latest View. The real-stack browser
 E2E covers both directions.
-After a sealed replay, live output that exceeds the Session or shared Bridge
-history budget changes the Node projection to `view_limited`: it continues
-receiving delivery watermarks, publishes a bounded incomplete preview and
-operation/permission state, and withholds a history token. Cold replay over
-budget still returns `history_capacity_exceeded`. The browser clears old turns,
-shows the incomplete preview separately, and disables Prompt submission in
-the limited View. A complete View is required before submission resumes. An
-isolated low-budget six-service Docker/Chromium run verifies this state after
-real ACP output and a browser reload.
+History size does not reject a Session or disable Prompt submission. The Bridge
+retains complete ACP content and serves large content through exact, signed
+continuations. Tool patches replace supplied fields, omitted fields retain their
+current values, and each Run has one current plan. Collapsed turn pages do not
+format unrelated tool results.
+Normal SSE publications are atomic Agent View deltas. A browser applies them to
+its HTTP snapshot using `fromCursor`, stream revision, Session incarnation and
+Session revision fences. Gaps, replacement incarnations, oversized deltas and
+slow observers recover through reset snapshots. Unchanged Views publish nothing;
+local output and metadata updates do not trigger ACP observation GETs.
 Each owner admits at most 16 live Agent SSE observers across selected Sessions,
 keeps at most 32 Agent and 32 Session journals, and retains up to 256 KiB of
 replay suffix per journal. A slow observer has a 1 MiB pending-byte limit.
@@ -164,7 +177,7 @@ defaults to `agent-ui`. Route labels use fixed patterns and omit Agent,
 Session and principal identifiers. Normal shutdown waits for telemetry export
 after Bridge drain; exporters have a 5-second timeout.
 The same exporter reports aggregate owner count, observer leases, held work,
-cached and reserved history bytes, stream subscribers, queued and retained
+retained logical history bytes, stream subscribers, queued and retained
 journal bytes, active and queued Session replays, and Node heap/RSS without
 identity labels.
 The HTTP server continues a valid W3C `traceparent`/`tracestate` supplied by
@@ -176,19 +189,16 @@ For a standalone deployment, set `ANTNEST_AGENT_UI_ACP_MAX_PROMPT_BYTES` to
 ACP's `ANTNEST_ACP_MAX_PROMPT_BYTES`; both default to 16777216 bytes and
 accept values from 1024 through 67108864 bytes. Compose sets them together.
 
-`ANTNEST_AGENT_UI_BRIDGE_SESSION_HISTORY_BYTES` defaults to 64 MiB and
-`ANTNEST_AGENT_UI_BRIDGE_CACHE_BYTES` to 256 MiB per owner, and
-`ANTNEST_AGENT_UI_BRIDGE_TOTAL_HISTORY_BYTES` to 512 MiB across owners. These
-are encoded-history estimates and replay reservations. A new replay can evict cold Session
-views; subscribed, active or permission-blocked Sessions remain pinned, so a
-request may receive `history_capacity_exceeded` when no safe eviction exists.
-After a sealed replay, live output that cannot fit changes the affected View to
-`view_limited` while continuing to consume delivery watermarks.
-These estimates are not a measured Node heap limit.
-The production container fixture repeatedly replays 320 KiB of ACP text
-against a 256 KiB Session budget: twelve requests return
-`history_capacity_exceeded` while a separate Session remains readable. Its
-container memory samples are recorded under `artifacts/verification/`.
+Cumulative Session, owner and global history byte quotas have been removed.
+`antnest.ui.bridge.cached_history_bytes` estimates currently retained logical
+content, metadata and Session overhead; it is not a Node heap limit. Identical
+metadata and replacement tool results do not accumulate wire-traffic bytes.
+Expanded content follows all advancing signed pages, including single blocks
+above 64 MiB. Each response stays bounded; cancellation and repeated-cursor
+checks still apply. Collapsed projections avoid copying hidden large text and
+formatting tool results, and browser fragments are assembled once at completion.
+Replay concurrency remains one active load plus eight queued loads per owner;
+queue overflow returns `429 replay_capacity_exceeded`.
 `ANTNEST_AGENT_UI_BRIDGE_MAX_OWNERS` defaults to 16. When full, the Bridge
 retires an idle owner before admitting a new scope; if every owner has an
 observer or retained work, new scopes receive `bridge_capacity_exceeded` (429).
@@ -197,9 +207,22 @@ scope cardinality.
 `ANTNEST_AGENT_UI_BRIDGE_IDLE_MS` defaults to 300000 (5 minutes) and
 `ANTNEST_AGENT_UI_BRIDGE_SWEEP_INTERVAL_MS` to 30000. Both accept integer
 milliseconds; the idle lifetime may be zero, while the sweep interval must be
-positive. A sweep retires owners only after all observers and retained work
-have ended. The production container E2E exercises a short interval and
-checks that the same Session is readable with a new owner incarnation.
+positive. Each materialized Session has its own idle clock. Observation, replay,
+configuration, permissions and running work hold it; another Session's activity
+does not. A recovered ACP Run retains owner work until a terminal observation.
+After all holds end, the Session gets a full idle grace period before eviction.
+A later materialization receives a new incarnation, fencing old tokens and
+continuations. Closing an owner fences late callbacks and leaves durable ACP
+execution independent.
+
+Ordinary workspace HTTP requests have a 60-second total handler/body deadline;
+expiration returns `504 workspace_deadline_exceeded`. Prompt/cancel ambiguity
+uses `query_operation`, never automatic resubmission. SSE and accepted Run work
+have independent lifetimes. The authenticated SSR shell keeps its separate
+150 ms bootstrap budget.
+
+The [alignment batch ledger](docs/attyd-alignment-fixes.md) records the implementation
+and verified local integration evidence against the pinned attyd revision.
 
 ## Verification
 
@@ -208,14 +231,29 @@ npm run typecheck
 npm test
 npm run build
 npm run test:bridge:integration
+npm run test:bridge:memory
+npm run test:bridge:runtime-memory
 npm run test:browser
 npm run test:bridge:soak
 ```
 
-The extended soak takes about four minutes. From the repository root, run
+The extended soak takes about four minutes. `test:bridge:memory` samples V8
+allocation and post-GC retained heap for small updates beside a large unchanged
+tool body; its RSS values are diagnostic, not a container memory limit.
+`test:bridge:runtime-memory` samples the Runtime HTTP View and SSE handler
+path with four observers; it does not include Node sockets or Docker RSS.
+From the repository root, run
 `node --test tests/e2e/agent-ui/fullstack-current.test.mjs` for the isolated
 six-service Docker/Chromium regression; it builds temporary images and cleans
 up its Compose project after completion.
+`node --test tests/e2e/agent-ui/fullstack-history.test.mjs` verifies complete
+large answers and continued submission through the same real stack.
+`npm run test:bridge:docker` uses the production image with an official ACP
+HTTP fixture for slow-observer reset, multi-owner history, 17 MiB content
+paging, and four-observer small updates beside a 1 MiB tool body with a
+container-memory sample. The optional `npm run test:bridge:docker:soak` runs
+the same production-image gate with 180 paced SSE observer attach/detach cycles
+and six peak/post-GC container-memory samples; allow about seven minutes.
 
 See [architecture](docs/architecture.md) and the platform
 [design language](../../docs/design-language.md).

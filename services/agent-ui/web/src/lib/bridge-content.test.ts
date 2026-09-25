@@ -83,3 +83,25 @@ test("turn content loader rejects a repeated cursor", async () => {
       nextCursor: "cut-1", complete: false }),
   }, "agent", "session", "turn", initialBridgeContent([], [], "cut-1")), /cursor did not advance/u);
 });
+
+test("a large valid content block is not rejected by a cumulative byte quota", () => {
+  const state = appendBridgeContentPage(initialBridgeContent([], [], "cut-1"), {
+    section: "finalResponse", items: [], fragment: {
+      blockIndex: 0, byteOffset: 0, totalBytes: 65 * 1024 * 1024,
+      serializedBlockBase64: "ew==",
+    }, nextCursor: "cut-2", complete: false,
+  });
+  assert.equal(state.complete, false);
+  assert.equal(state.fragment?.totalBytes, 65 * 1024 * 1024);
+});
+
+test("complete content follows more than 1024 advancing pages", async () => {
+  let index = 0;
+  const complete = await loadBridgeTurnContent({ turnContent: async () => {
+    index++;
+    return { section: "finalResponse", items: [{ type: "text", text: String(index) }],
+      nextCursor: index === 1025 ? null : `cut-${index}`, complete: index === 1025 };
+  } }, "agent", "session", "turn", initialBridgeContent([], [], "cut-0"));
+  assert.equal(complete.finalResponse.length, 1025);
+  assert.equal(complete.complete, true);
+});

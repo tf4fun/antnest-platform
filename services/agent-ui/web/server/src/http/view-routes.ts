@@ -1,6 +1,7 @@
-import { HistoryCapacityError } from "../bridge/compact-transcript.ts";
+import { ReplayCapacityError } from "../bridge/replay-load-gate.ts";
 import { OperationReconciliationTimeoutError } from "../bridge/operations.ts";
 import { StreamCapacityError } from "../bridge/stream-journal.ts";
+import { SessionNotFoundError } from "../adapters/acp-http.ts";
 import type { BridgeScope } from "../bridge/registry.ts";
 import { bridgeCapacityResponse, error, json, routeParts, trustedScope } from "./command-routes.ts";
 
@@ -36,11 +37,13 @@ export function createViewHandler(dependencies: {
       if (capacity !== null) return capacity;
       if (cause instanceof OperationReconciliationTimeoutError)
         return error(504, "workspace_deadline_exceeded", "Operation reconciliation timed out", "retry_read");
-      if (cause instanceof HistoryCapacityError)
+      if (cause instanceof SessionNotFoundError)
+        return error(404, "session_not_found", "Session not found", "none");
+      if (cause instanceof ReplayCapacityError)
         return error(
           429,
-          "history_capacity_exceeded",
-          "Session history exceeds Bridge capacity",
+          "replay_capacity_exceeded",
+          "Concurrent replay queue is full",
           "retry_read",
         );
       if (cause instanceof StreamCapacityError)

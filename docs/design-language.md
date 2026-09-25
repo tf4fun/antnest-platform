@@ -31,7 +31,7 @@ and visible system state.
 | Border | `#deded9` | dividers and control outlines |
 | Ink | `#1d1d1b` | primary text and commands |
 | Ink soft | `#4b4b47` | secondary labels |
-| Muted | `#777772` | metadata and inactive controls |
+| Muted | `#62625d` | metadata and inactive controls; keeps small text at WCAG AA contrast on Canvas |
 | Signal | `#dbff54` | sparse active or live emphasis |
 | Signal strong | `#a6d000` | signal text and focus detail |
 | Danger | `#c23f35` | destructive and failed states |

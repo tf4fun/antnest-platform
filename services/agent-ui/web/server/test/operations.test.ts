@@ -199,6 +199,63 @@ test("cancellation refuses a stale Run ID and only targets the durable matching 
   assert.deepEqual(cancelled, ["run-1"]);
 });
 
+test("a late cancellation response cannot replace an observed terminal receipt", async () => {
+  let finishCancel!: () => void;
+  let cancelStarted!: () => void;
+  const started = new Promise<void>((resolve) => { cancelStarted = resolve; });
+  const cancelling = new Promise<void>((resolve) => { finishCancel = resolve; });
+  const running = {
+    intentId: "intent-1", sessionId: "session-1", runId: "run-1",
+    phase: "running" as const, appendVersion: 3, outputWatermark: 1,
+    stopReason: null,
+  };
+  const completed = { ...running, phase: "completed" as const,
+    outputWatermark: 2, stopReason: "end_turn" };
+  const operations = new OperationCoordinator({
+    prompt: () => Promise.resolve(),
+    readIntent: () => Promise.resolve({ kind: "receipt" as const, receipt: running }),
+    cancel: () => { cancelStarted(); return cancelling; },
+    retainWork: () => () => {},
+  });
+  operations.submit(intent);
+  operations.observeReceipts("session-1", [running]);
+  const pending = operations.cancel("session-1", "intent-1", "run-1");
+  await started;
+  operations.observeReceipts("session-1", [completed]);
+  finishCancel();
+  assert.equal((await pending).phase, "completed");
+  assert.equal(operations.snapshot("session-1", [])[0]?.phase, "completed");
+  await operations.settled("session-1", "intent-1");
+});
+
+test("a recovered operation rereads its durable outcome after cancellation", async () => {
+  let finishCancel!: () => void;
+  let cancelStarted!: () => void;
+  const started = new Promise<void>((resolve) => { cancelStarted = resolve; });
+  const cancelling = new Promise<void>((resolve) => { finishCancel = resolve; });
+  let phase: "running" | "completed" = "running";
+  let reads = 0;
+  const operations = new OperationCoordinator({
+    prompt: () => Promise.resolve(),
+    readIntent: () => {
+      reads++;
+      return Promise.resolve({ kind: "receipt" as const, receipt: {
+        intentId: "intent-1", sessionId: "session-1", runId: "run-1",
+        phase, appendVersion: 3, outputWatermark: phase === "running" ? 1 : 2,
+        stopReason: phase === "running" ? null : "end_turn",
+      } });
+    },
+    cancel: () => { cancelStarted(); return cancelling; },
+    retainWork: () => () => {},
+  });
+  const pending = operations.cancel("session-1", "intent-1", "run-1");
+  await started;
+  phase = "completed";
+  finishCancel();
+  assert.equal((await pending).phase, "completed");
+  assert.equal(reads, 2);
+});
+
 test("terminal reconciliation releases a work hold once after prompt completion", async () => {
   let releases = 0;
   const operations = new OperationCoordinator({

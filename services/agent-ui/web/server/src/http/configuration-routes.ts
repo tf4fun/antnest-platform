@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { HistoryCapacityError } from "../bridge/compact-transcript.ts";
+import { ReplayCapacityError } from "../bridge/replay-load-gate.ts";
 import { ConfigurationConflictError } from "../bridge/configuration-token.ts";
 import { OperationReconciliationTimeoutError } from "../bridge/operations.ts";
 import type { BridgeScope } from "../bridge/registry.ts";
@@ -8,6 +8,7 @@ import {
   bridgeCapacityResponse,
   error,
   json,
+  missingSessionResponse,
   readBody,
   routeParts,
   trustedScope,
@@ -60,6 +61,8 @@ export function createConfigurationHandler(dependencies: {
     } catch (cause) {
       const capacity = bridgeCapacityResponse(cause);
       if (capacity !== null) return capacity;
+      const missing = missingSessionResponse(cause);
+      if (missing !== null) return missing;
       if (cause instanceof OperationReconciliationTimeoutError)
         return error(504, "workspace_deadline_exceeded", "Operation reconciliation timed out", "retry_read");
       if (cause instanceof BodyTooLargeError)
@@ -83,11 +86,11 @@ export function createConfigurationHandler(dependencies: {
           "Configuration choice is stale",
           "refresh",
         );
-      if (cause instanceof HistoryCapacityError)
+      if (cause instanceof ReplayCapacityError)
         return error(
           429,
-          "history_capacity_exceeded",
-          "Session history exceeds Bridge capacity",
+          "replay_capacity_exceeded",
+          "Concurrent replay queue is full",
           "retry_read",
         );
       return error(

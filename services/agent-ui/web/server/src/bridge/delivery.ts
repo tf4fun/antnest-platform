@@ -2,7 +2,6 @@ import { createHash } from "node:crypto";
 
 const MAX_PARTS_PER_EVENT = 4096;
 const MAX_PENDING_EVENTS = 128;
-const MAX_PENDING_BYTES = 16 * 1024 * 1024;
 const RECENT_DELIVERED_EVENTS = 32;
 
 export type DeliveryMark =
@@ -41,13 +40,6 @@ export class DeliveryProtocolError extends Error {
   public constructor(message: string) {
     super(message);
     this.name = "DeliveryProtocolError";
-  }
-}
-
-export class DeliveryBufferCapacityError extends DeliveryProtocolError {
-  public constructor() {
-    super("Delivery buffer exceeds capacity");
-    this.name = "DeliveryBufferCapacityError";
   }
 }
 
@@ -99,7 +91,6 @@ export class DeliveryTracker<Update> {
   private checkpoint = 0;
   private currentWatermark: number;
   private pendingBytes = 0;
-  private summarize?: (update: Update) => Update | undefined;
 
   public constructor(initialWatermark: number) {
     if (!revision(initialWatermark))
@@ -118,21 +109,6 @@ export class DeliveryTracker<Update> {
     return this.pendingBytes;
   }
 
-  public enableSummaryMode(summarize: (update: Update) => Update | undefined): void {
-    if (this.summarize !== undefined) return;
-    this.summarize = summarize;
-    this.pendingBytes = 0;
-    for (const batch of this.pending.values()) {
-      for (const part of batch.parts.values()) {
-        part.update = part.update === undefined ? undefined : summarize(part.update);
-        part.bytes = part.update === undefined ? 0 : Buffer.byteLength(JSON.stringify(part.update));
-        this.pendingBytes += part.bytes;
-      }
-    }
-    if (this.pendingBytes > MAX_PENDING_BYTES)
-      throw new DeliveryProtocolError("Delivery summary exceeds capacity");
-  }
-
   public accept(mark: DeliveryMark, update?: Update): DeliveredBatch<Update>[] {
     if (mark.kind === "checkpoint") {
       if (!revision(mark.sequence))
@@ -148,8 +124,7 @@ export class DeliveryTracker<Update> {
     if (encoded === undefined)
       throw new DeliveryProtocolError("Delivery update is not JSON");
     const digest = createHash("sha256").update(encoded).digest("hex");
-    const retained = this.summarize?.(update) ?? (this.summarize === undefined ? update : undefined);
-    const bytes = retained === undefined ? 0 : Buffer.byteLength(JSON.stringify(retained));
+    const bytes = Buffer.byteLength(encoded);
     if (mark.sequence <= this.currentWatermark) {
       const previous = this.delivered.get(mark.sequence);
       if (
@@ -164,8 +139,6 @@ export class DeliveryTracker<Update> {
     if (batch === undefined) {
       if (this.pending.size >= MAX_PENDING_EVENTS)
         throw new DeliveryProtocolError("Too many incomplete delivery events");
-      if (this.pendingBytes + bytes > MAX_PENDING_BYTES)
-        throw new DeliveryBufferCapacityError();
       batch = {
         runId: mark.runId,
         messageId: mark.messageId,
@@ -180,9 +153,7 @@ export class DeliveryTracker<Update> {
     if (existing !== undefined && existing.digest !== digest)
       throw new DeliveryProtocolError("Conflicting delivery part payload");
     if (existing === undefined) {
-      if (this.pendingBytes + bytes > MAX_PENDING_BYTES)
-        throw new DeliveryBufferCapacityError();
-      batch.parts.set(mark.partIndex, { update: retained, bytes, digest });
+      batch.parts.set(mark.partIndex, { update, bytes, digest });
       this.pendingBytes += bytes;
     }
     return this.flush();

@@ -3,9 +3,6 @@ export type ServiceConfig = {
   controllerBaseUrl: URL | undefined;
   host: string;
   port: number;
-  maxSessionHistoryBytes: number;
-  maxCachedHistoryBytes: number;
-  maxGlobalHistoryBytes: number;
   maxOwners: number;
   maxAcpPromptBytes: number;
   idleMs: number;
@@ -63,22 +60,6 @@ export function parseServiceConfig(
     port > 65535
   )
     throw new Error("Invalid Bridge listen port");
-  const maxSessionHistoryBytes = positiveBytes(
-    environment.ANTNEST_AGENT_UI_BRIDGE_SESSION_HISTORY_BYTES,
-    64 * 1024 * 1024,
-  );
-  const maxCachedHistoryBytes = positiveBytes(
-    environment.ANTNEST_AGENT_UI_BRIDGE_CACHE_BYTES,
-    256 * 1024 * 1024,
-  );
-  if (maxCachedHistoryBytes < maxSessionHistoryBytes + 16 * 1024)
-    throw new Error("Invalid Bridge cache budget");
-  const maxGlobalHistoryBytes = positiveBytes(
-    environment.ANTNEST_AGENT_UI_BRIDGE_TOTAL_HISTORY_BYTES,
-    512 * 1024 * 1024,
-  );
-  if (maxGlobalHistoryBytes < maxSessionHistoryBytes + 16 * 1024)
-    throw new Error("Invalid Bridge total history budget");
   const rawMaxOwners = environment.ANTNEST_AGENT_UI_BRIDGE_MAX_OWNERS ?? "16";
   const maxOwners = Number(rawMaxOwners);
   if (!/^[0-9]+$/u.test(rawMaxOwners) ||
@@ -117,9 +98,6 @@ export function parseServiceConfig(
     controllerBaseUrl,
     host: environment.ANTNEST_AGENT_UI_BRIDGE_HOST ?? "0.0.0.0",
     port,
-    maxSessionHistoryBytes,
-    maxCachedHistoryBytes,
-    maxGlobalHistoryBytes,
     maxOwners,
     maxAcpPromptBytes,
     idleMs,
@@ -135,13 +113,5 @@ function durationMilliseconds(value: string | undefined, fallback: number,
   if (!/^[0-9]+$/u.test(value) || !Number.isSafeInteger(parsed) ||
     parsed < (allowZero ? 0 : 1))
     throw new Error(error);
-  return parsed;
-}
-
-function positiveBytes(value: string | undefined, fallback: number): number {
-  if (value === undefined) return fallback;
-  const parsed = Number(value);
-  if (!/^[0-9]+$/u.test(value) || !Number.isSafeInteger(parsed) || parsed < 1)
-    throw new Error("Invalid Bridge cache budget");
   return parsed;
 }

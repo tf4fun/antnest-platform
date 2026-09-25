@@ -1,6 +1,9 @@
 export type AgentStatus = "ready" | "busy" | "offline" | "unknown";
 export type ConnectionStatus = "ready" | "connecting" | "offline";
-export type ActivityStatus = "running" | "completed" | "failed";
+export type ActivityStatus = "pending" | "running" | "completed" | "failed" | "unknown";
+
+export type PlanEntry = { content: string; status: "pending" | "in_progress" | "completed";
+  priority: "low" | "medium" | "high" };
 
 export type AgentManagementState = {
   lifecycle: "not_created" | "created" | "deleted";
@@ -36,12 +39,15 @@ export type ToolActivity = {
   detail?: string;
   input?: string;
   output?: string;
+  attachments?: Attachment[];
   durationMs?: number;
 };
 
 export type Message = {
-  presentation?: "thought";
+  presentation?: "thought" | "plan" | "notice";
+  planEntries?: PlanEntry[];
   turnOutcome?: "running" | "completed" | "failed" | "cancelled" | "unknown";
+  processVersion?: number;
   contentIncomplete?: boolean;
   processCount?: number;
   processLoaded?: boolean;
@@ -55,9 +61,8 @@ export type Message = {
 };
 
 export type Conversation = {
-  plan?: { content: string; status: "pending" | "in_progress" | "completed"; priority: "low" | "medium" | "high" }[];
-  historyState?: "loading" | "failed" | "view_limited" | "blocked";
-  limitedPreview?: { text: string; truncated: true };
+  plan?: PlanEntry[];
+  historyState?: "loading" | "failed" | "blocked";
   usage?: SessionUsage;
   usageStale?: boolean;
   configOptions?: SessionConfigOption[];

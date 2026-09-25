@@ -77,6 +77,7 @@ export function WorkspacePage({ model }: { model: WorkspacePageModel }) {
     onShowLatest,
     onLoadContent,
     onLoadProcess,
+    onCancelProcess,
     onUnloadProcess,
   } = model;
   const focusAfterMobileNavigation = (selector: string) => {
@@ -200,6 +201,10 @@ export function WorkspacePage({ model }: { model: WorkspacePageModel }) {
       </main>
     );
   }
+
+  const openingFailure = !preview && workspace.activeConversationId &&
+    !conversationReady && !activeConversation?.messages.length
+    ? history.error : undefined;
   return (
     <div className="app-shell">
       <Sidebar
@@ -317,7 +322,10 @@ export function WorkspacePage({ model }: { model: WorkspacePageModel }) {
             conversation={activeConversation}
             working={sessionWorking}
             settled={sessionSettled}
-            opening={openingHistory}
+            opening={openingHistory || Boolean(openingFailure)}
+            openingError={openingFailure}
+            onRetryOpening={history.retry}
+            onBackOpening={() => navigate({ agentId: activeAgent.id, sessionId: null })}
             hasOlderTurns={hasOlderTurns}
             hasNewerTurns={hasNewerTurns}
             historyGapAfter={historyGapAfter}
@@ -326,6 +334,7 @@ export function WorkspacePage({ model }: { model: WorkspacePageModel }) {
             onShowLatest={onShowLatest}
             onLoadContent={onLoadContent}
             onLoadProcess={onLoadProcess}
+            onCancelProcess={onCancelProcess}
             onUnloadProcess={onUnloadProcess}
           />
           {connectionError ? (
@@ -338,7 +347,7 @@ export function WorkspacePage({ model }: { model: WorkspacePageModel }) {
               {interactionError}
             </div>
           ) : null}
-          {history.error && !preview ? (
+          {history.error && !preview && !openingFailure ? (
             <div className="workspace-alert" role="alert">
               {history.error}{" "}
               <button
@@ -399,7 +408,8 @@ export function WorkspacePage({ model }: { model: WorkspacePageModel }) {
             historyReady={
               conversationReady && (preview || Boolean(activeConversation))
             }
-            historyLimited={activeConversation?.historyState === "view_limited"}
+            openingHistory={openingHistory}
+            openingFailure={Boolean(openingFailure)}
             agentStatus={activeAgent.status}
             attachments={attachments}
             connected={connected}

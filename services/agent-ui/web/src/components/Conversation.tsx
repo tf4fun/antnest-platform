@@ -1,4 +1,5 @@
-import { Bot, Check, ChevronRight, ListChecks } from "lucide-react";
+import { Bot, Check, ChevronDown, ChevronRight, CircleAlert, ListChecks,
+  LoaderCircle, RotateCcw } from "lucide-react";
 import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
   AgentSummary,
@@ -10,13 +11,15 @@ import {
   type ConversationTurn as Turn,
 } from "../lib/conversation-turns";
 import { MessageView } from "./MessageView";
+import { isWorkspaceReadTimeout } from "../lib/workspace-api-client";
 
 type DisclosureProps = {
   atBottom?: boolean;
   canAutoCollapse?: () => boolean;
   onProcessToggle?: () => void;
-  onLoadContent?: (messageId: string) => void;
+  onLoadContent?: (messageId: string) => Promise<void> | void;
   onLoadProcess?: (turnId: string) => Promise<void> | void;
+  onCancelProcess?: (turnId: string) => void;
   onUnloadProcess?: (turnId: string) => void;
 };
 
@@ -31,6 +34,7 @@ export function Conversation({
   onProcessToggle,
   onLoadContent,
   onLoadProcess,
+  onCancelProcess,
   onUnloadProcess,
   visibleStart,
   visibleEnd,
@@ -79,6 +83,7 @@ export function Conversation({
           onProcessToggle={onProcessToggle}
           onLoadContent={onLoadContent}
           onLoadProcess={onLoadProcess}
+          onCancelProcess={onCancelProcess}
           onUnloadProcess={onUnloadProcess}
         />
         {historyGapAfter === index + 1 && onLoadNewer ? (
@@ -144,6 +149,7 @@ function ConversationTurn({
   onProcessToggle,
   onLoadContent,
   onLoadProcess,
+  onCancelProcess,
   onUnloadProcess,
 }: {
   turn: Turn;
@@ -152,15 +158,27 @@ function ConversationTurn({
   completed: boolean;
 } & DisclosureProps) {
   const panelId = useId();
+  const liveProcess = turn.prompt?.turnOutcome === "running";
   const [compact, setCompact] = useState(completed);
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(liveProcess);
   const [retained, setRetained] = useState(!completed);
   const [loadingProcess, setLoadingProcess] = useState(false);
-  const [processError, setProcessError] = useState(false);
+  const [processError, setProcessError] = useState<"timeout" | "error" | null>(null);
+  const autoRequested = useRef(false);
+  const liveRequestedKey = useRef<string | null>(null);
+  const processTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const focusAfterProcessPage = useRef(false);
+  const wasLive = useRef(liveProcess);
   useLayoutEffect(() => {
     if (!completed) setCompact(false);
     else if (canAutoCollapse?.() ?? atBottom) setCompact(true);
   }, [completed, atBottom, canAutoCollapse]);
+  useEffect(() => {
+    if (liveProcess && !wasLive.current) setExpanded(true);
+    if (!liveProcess && wasLive.current && (canAutoCollapse?.() ?? atBottom))
+      setExpanded(false);
+    wasLive.current = liveProcess;
+  }, [liveProcess, atBottom, canAutoCollapse]);
   const folded = completed && compact;
   const bridgeProcess = (turn.prompt?.processCount ?? 0) > 0;
   const unloadRef = useRef(onUnloadProcess);
@@ -182,16 +200,40 @@ function ConversationTurn({
   const failed = tools.filter((tool) => tool.status === "failed").length;
   const processCount = turn.prompt?.processCount ?? 0;
   const hasProcess = entries.length > 0 || (processCount > 0 && Boolean(onLoadProcess));
-  useEffect(() => {
-    if (!expanded || !processCount || turn.prompt?.processLoaded ||
-      !onLoadProcess || loadingProcess || processError) return;
+  const loadProcessPage = () => {
+    if (!onLoadProcess || loadingProcess) return;
     setLoadingProcess(true);
+    setProcessError(null);
     void Promise.resolve().then(() => onLoadProcess(turn.id.slice(0, -7)))
-      .catch(() => setProcessError(true))
+      .catch((cause: unknown) => setProcessError(isWorkspaceReadTimeout(cause) ? "timeout" : "error"))
       .finally(() => setLoadingProcess(false));
-  }, [expanded, processCount, turn.prompt?.processLoaded, onLoadProcess,
-    turn.id, loadingProcess, processError]);
-  const processLabel = tools.length
+  };
+  useEffect(() => {
+    if (liveProcess || !expanded || !processCount || turn.prompt?.processLoaded ||
+      !onLoadProcess || autoRequested.current) return;
+    autoRequested.current = true;
+    loadProcessPage();
+  }, [liveProcess, expanded, processCount, turn.prompt?.processLoaded, onLoadProcess,
+    turn.id]);
+  const liveRequestKey = liveProcess && expanded && processCount > 0 &&
+    (!turn.prompt?.processLoaded || turn.prompt.processHasMore)
+    ? JSON.stringify([turn.prompt?.processVersion, processCount, turn.process.length,
+      turn.prompt?.processHasMore ?? false]) : null;
+  useEffect(() => {
+    if (liveRequestKey === null || !onLoadProcess || loadingProcess || processError ||
+      liveRequestedKey.current === liveRequestKey) return;
+    liveRequestedKey.current = liveRequestKey;
+    loadProcessPage();
+  }, [liveRequestKey, onLoadProcess, loadingProcess, processError]);
+  useLayoutEffect(() => {
+    if (!focusAfterProcessPage.current || loadingProcess) return;
+    if (!processError && !turn.prompt?.processHasMore &&
+      document.activeElement === document.body)
+      processTriggerRef.current?.focus({ preventScroll: true });
+    focusAfterProcessPage.current = false;
+  }, [loadingProcess, processError, turn.prompt?.processHasMore]);
+  const processLabel = bridgeProcess
+    ? `${processCount} ${processCount === 1 ? "update" : "updates"}` : tools.length
     ? `${tools.length} ${tools.length === 1 ? "tool call" : "tool calls"}`
     : `${turn.process.length || processCount} ${(turn.process.length || processCount) === 1 ? "update" : "updates"}`;
   const entry = (message: Message) => (
@@ -220,13 +262,16 @@ function ConversationTurn({
             <button
               type="button"
               className="turn-process-trigger"
+              ref={processTriggerRef}
               aria-label={`${expanded ? "Hide" : "Show"} process`}
               aria-expanded={expanded}
               aria-controls={panelId}
               onClick={() => {
                 onProcessToggle?.();
                 setRetained(true);
-                if (!expanded) setProcessError(false);
+                if (!expanded) { setProcessError(null); autoRequested.current = false;
+                  liveRequestedKey.current = null; }
+                else if (bridgeProcess) onCancelProcess?.(turn.id.slice(0, -7));
                 setExpanded((value) => !value);
               }}
             >
@@ -248,23 +293,37 @@ function ConversationTurn({
             id={panelId}
             className="turn-process-content"
             hidden={(folded || bridgeProcess) && !expanded}
+            aria-busy={loadingProcess}
           >
-            {loadingProcess ? <p role="status">Loading process</p> : null}
-            {processError ? <p role="alert">Process could not be loaded.</p> : null}
             {(!folded && !bridgeProcess) || expanded || retained ? entries.map(entry) : null}
-            {expanded && turn.prompt?.processHasMore && onLoadProcess ? (
-              <button type="button" className="load-more-process" disabled={loadingProcess}
-                onClick={() => {
-                  if (loadingProcess) return;
-                  setLoadingProcess(true);
-                  setProcessError(false);
-                  void Promise.resolve().then(() => onLoadProcess(turn.id.slice(0, -7)))
-                    .catch(() => setProcessError(true))
-                    .finally(() => setLoadingProcess(false));
-                }}>
-                {loadingProcess ? "Loading process" : "Load more process"}
-              </button>
-            ) : null}
+            {expanded && bridgeProcess ? <div className="turn-process-pagination">
+              <div className="turn-process-page-status">
+                {loadingProcess ? <span className="turn-process-loading" role="status">
+                  <LoaderCircle size={13} className="spin" aria-hidden="true" />
+                  <span>Loading process</span>
+                </span> : null}
+                {processError ? <span className="turn-process-load-error" role="alert">
+                  <CircleAlert size={13} aria-hidden="true" />
+                  <span>{processError === "timeout" ? "Process request timed out." :
+                    "Process could not be loaded."}</span>
+                </span> : null}
+                {turn.prompt?.processLoaded ? <span className="turn-process-loaded" role="status">
+                  Loaded {turn.process.length} of {processCount} updates
+                </span> : null}
+              </div>
+              {(processError || turn.prompt?.processHasMore) && onLoadProcess ?
+                <button type="button" className="load-more-process" disabled={loadingProcess}
+                  onClick={(event) => {
+                    focusAfterProcessPage.current = event.detail === 0 &&
+                      document.activeElement === event.currentTarget;
+                    loadProcessPage();
+                  }}>
+                  {processError ? <RotateCcw size={13} aria-hidden="true" /> :
+                    <ChevronDown size={13} aria-hidden="true" />}
+                  {processError ? "Retry process" :
+                    loadingProcess ? "Loading process" : "Load more process"}
+                </button> : null}
+            </div> : null}
           </div>
         </div>
       ) : null}

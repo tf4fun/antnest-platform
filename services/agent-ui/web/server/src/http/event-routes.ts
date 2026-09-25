@@ -1,9 +1,9 @@
-import { HistoryCapacityError } from "../bridge/compact-transcript.ts";
+import { ReplayCapacityError } from "../bridge/replay-load-gate.ts";
 import { AgentAccessRevokedError } from "../adapters/acp-http.ts";
 import { OperationReconciliationTimeoutError } from "../bridge/operations.ts";
-import { StreamCapacityError, type StreamEvent } from "../bridge/stream-journal.ts";
+import { encodedStreamFrame, StreamCapacityError, type StreamEvent } from "../bridge/stream-journal.ts";
 import type { BridgeScope } from "../bridge/registry.ts";
-import { bridgeCapacityResponse, error, trustedScope } from "./command-routes.ts";
+import { bridgeCapacityResponse, error, missingSessionResponse, trustedScope } from "./command-routes.ts";
 
 const prefix = "/api/app/workspace/v1/agents/";
 const heartbeatMs = 15_000;
@@ -71,15 +71,17 @@ export function createEventHandler(dependencies: {
     } catch (cause) {
       const capacity = bridgeCapacityResponse(cause);
       if (capacity !== null) return capacity;
+      const missing = missingSessionResponse(cause);
+      if (missing !== null) return missing;
       if (cause instanceof OperationReconciliationTimeoutError)
         return error(504, "workspace_deadline_exceeded", "Operation reconciliation timed out", "retry_read");
       if (cause instanceof AgentAccessRevokedError)
         return error(403, "access_denied", "Agent access denied", "none");
-      if (cause instanceof HistoryCapacityError)
+      if (cause instanceof ReplayCapacityError)
         return error(
           429,
-          "history_capacity_exceeded",
-          "Session history exceeds Bridge capacity",
+          "replay_capacity_exceeded",
+          "Concurrent replay queue is full",
           "retry_read",
         );
       if (cause instanceof StreamCapacityError)
@@ -141,11 +143,7 @@ export function createEventHandler(dependencies: {
         }
         pending = events.next();
         const event = result.event.value;
-        value.enqueue(
-          encoder.encode(
-            `id: ${event.cursor}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`,
-          ),
-        );
+        value.enqueue(encodedStreamFrame(event));
       },
       cancel() {
         close();

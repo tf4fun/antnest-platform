@@ -21,6 +21,23 @@ test("selection is explicit, scoped and never falls back from an unknown Agent",
   assert.equal(selected.activeConversationId, "s2");
 });
 
+test("selecting another Session releases completed process from the workspace cache", () => {
+  const base = workspaceFromBootstrap({ principal: { user_id: "u", organization_id: "o", administrator: true },
+    agents: [{ agent_id: "a1", name: "One", lifecycle_state: "created",
+      activation_state: "enabled", runtime_state: "available" }] });
+  const selected = selectWorkspaceRoute({ ...base, activeAgentId: "a1",
+    activeConversationId: "s1", conversations: [{ id: "s1", agentId: "a1", title: "One",
+      updatedAt: "now", messages: [
+        { id: "turn:prompt", role: "user", content: "Question",
+          turnOutcome: "completed", processCount: 1, processLoaded: true },
+        { id: "turn:process:tool", role: "assistant", content: "large result" },
+        { id: "turn:answer", role: "assistant", content: "Answer" },
+      ] }] }, { agentId: "a1", sessionId: "s2" });
+  assert.equal(selected.activeConversationId, "s2");
+  assert.deepEqual(selected.conversations[0]?.messages.map((item) => item.id),
+    ["turn:prompt", "turn:answer"]);
+});
+
 test("ambiguous and malformed identifiers cannot choose an Agent", () => {
   for (const query of ["?agent=a1&agent=a2", "?agent=%00", `?agent=${"a".repeat(201)}`]) {
     assert.equal(readWorkspaceRoute(query).agentId, "");

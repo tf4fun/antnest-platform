@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mergeConversationHistory } from "./conversation-history.ts";
+import { compactCachedConversation, mergeConversationHistory } from "./conversation-history.ts";
 import type { Conversation } from "./types";
 
 const cached: Conversation = { id: "s1", agentId: "a1", title: "Chat", updatedAt: "2026-09-10T00:00:00Z",
@@ -24,4 +24,22 @@ test("same Session ID cannot copy history across Agent boundaries", () => {
 
 test("missing cache uses only the incoming projection", () => {
   assert.equal(mergeConversationHistory(undefined, cached), cached);
+});
+
+test("leaving a completed turn releases loaded process while keeping prompt and answer", () => {
+  const conversation: Conversation = { ...cached, messages: [
+    { id: "done:prompt", role: "user", content: "Question", turnOutcome: "completed",
+      processCount: 1, processLoaded: true },
+    { id: "done:process:tool", role: "assistant", content: "private-output" },
+    { id: "done:answer", role: "assistant", content: "Answer" },
+    { id: "live:prompt", role: "user", content: "Still running", turnOutcome: "running",
+      processCount: 1, processLoaded: true },
+    { id: "live:process:tool", role: "assistant", content: "Live output" },
+  ] };
+  const compact = compactCachedConversation(conversation);
+  assert.deepEqual(compact.messages.map((item) => item.id),
+    ["done:prompt", "done:answer", "live:prompt", "live:process:tool"]);
+  assert.equal(compact.messages[0]?.processLoaded, false);
+  assert.equal(compact.messages[0]?.processCount, 1);
+  assert.equal(conversation.messages[1]?.content, "private-output");
 });

@@ -37,23 +37,19 @@ test("scrollable conversation has a named landmark for keyboard and screen-reade
   expect(messages.tabIndex).toBe(0);
 });
 
-test("limited history announces a short warning while keeping long preview available", () => {
-  const preview = "recent output ".repeat(1500);
-  const { container, rerender } = render(<Thread agent={agent} working={false}
-    conversation={conversation([])} />);
-  const warning = screen.getByRole("status", { name: "History limited" });
-  expect(warning.textContent).toBe("");
-  rerender(<Thread agent={agent} working
-    conversation={{ ...conversation([]), historyState: "view_limited",
-      limitedPreview: { text: preview, truncated: true } }} />);
-  expect(screen.getByRole("status", { name: "History limited" })).toBe(warning);
-  expect(warning.textContent).toMatch(/history.*limited/i);
-  expect(warning.textContent).not.toContain(preview);
-  expect(warning.textContent!.length).toBeLessThan(200);
-  expect(screen.getByRole("region", { name: "Recent output preview" }).textContent)
-    .toBe(preview);
-  expect(container.querySelectorAll(".conversation-turn")).toHaveLength(0);
-  expect(screen.queryByText("Start with Agent")).toBeNull();
+test("opening failure replaces the skeleton with retry and back actions", () => {
+  const retry = vi.fn();
+  const back = vi.fn();
+  const { container } = render(<Thread agent={agent} working={false} opening
+    openingError="Conversation history timed out." onRetryOpening={retry}
+    onBackOpening={back} />);
+  expect(screen.getByRole("alert").textContent).toContain("Conversation history timed out.");
+  expect(screen.queryByRole("status", { name: "Opening conversation history" })).toBeNull();
+  expect(container.querySelector(".session-opening-turns")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Retry loading" }));
+  fireEvent.click(screen.getByRole("button", { name: "Back to agent" }));
+  expect(retry).toHaveBeenCalledOnce();
+  expect(back).toHaveBeenCalledOnce();
 });
 
 test("blocked history shows saved messages without offering unavailable detail or pages", async () => {

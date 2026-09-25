@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { ContentBlock } from "@agentclientprotocol/sdk";
 import { z } from "zod";
-import { acpPromptRequestBytes } from "../adapters/acp-http.ts";
+import { acpPromptRequestBytes, SessionNotFoundError } from "../adapters/acp-http.ts";
 import type {
   HistoryCondition,
   HistoryTokens,
@@ -13,7 +13,7 @@ import {
   type PromptIntent,
 } from "../bridge/operations.ts";
 import type { BridgeScope } from "../bridge/registry.ts";
-import { HistoryCapacityError } from "../bridge/compact-transcript.ts";
+import { ReplayCapacityError } from "../bridge/replay-load-gate.ts";
 import { BridgeCapacityError } from "../bridge/registry.ts";
 
 const prefix = ["api", "app", "workspace", "v1", "agents"];
@@ -136,13 +136,15 @@ export function createCommandHandler(dependencies: {
     } catch (cause) {
       const capacity = bridgeCapacityResponse(cause);
       if (capacity !== null) return capacity;
+      const missing = missingSessionResponse(cause);
+      if (missing !== null) return missing;
       if (cause instanceof OperationReconciliationTimeoutError)
         return error(504, "workspace_deadline_exceeded", "Operation reconciliation timed out", "retry_read");
-      if (cause instanceof HistoryCapacityError)
+      if (cause instanceof ReplayCapacityError)
         return error(
           429,
-          "history_capacity_exceeded",
-          "Session history exceeds Bridge capacity",
+          "replay_capacity_exceeded",
+          "Concurrent replay queue is full",
           "retry_read",
         );
       return error(
@@ -207,6 +209,8 @@ export function createCommandHandler(dependencies: {
       }
       return json(await authorized.operations.read(sessionId, intentId!));
     } catch (cause) {
+      const missing = missingSessionResponse(cause);
+      if (missing !== null) return missing;
       if (cause instanceof BodyTooLargeError)
         return error(
           413,
@@ -283,6 +287,11 @@ export function bridgeCapacityResponse(cause: unknown): Response | null {
     : null;
 }
 
+export function missingSessionResponse(cause: unknown): Response | null {
+  return cause instanceof SessionNotFoundError
+    ? error(404, "session_not_found", "Session not found", "none") : null;
+}
+
 function sameCondition(
   actual: HistoryCondition,
   expected: BridgeScope & { sessionId: string },
@@ -301,6 +310,7 @@ export async function readBody(
   request: Request,
   limit = bodyLimit,
 ): Promise<unknown> {
+  request.signal.throwIfAborted();
   if (!request.headers.get("content-type")?.startsWith("application/json"))
     throw new SyntaxError();
   const declaredLength = request.headers.get("content-length");
@@ -315,7 +325,7 @@ export async function readBody(
   const chunks: Uint8Array[] = [];
   let size = 0;
   while (true) {
-    const { done, value } = await reader.read();
+    const { done, value } = await readWhileConnected(reader, request.signal);
     if (done) break;
     size += value.byteLength;
     if (size > limit) {
@@ -331,10 +341,24 @@ export async function readBody(
     offset += chunk.byteLength;
   }
   try {
+    request.signal.throwIfAborted();
     return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
   } catch {
     throw new SyntaxError("Invalid JSON encoding");
   }
+}
+
+async function readWhileConnected(
+  reader: ReadableStreamDefaultReader<Uint8Array>, signal: AbortSignal,
+): Promise<Awaited<ReturnType<typeof reader.read>>> {
+  signal.throwIfAborted();
+  let abort!: () => void;
+  const interrupted = new Promise<never>((_, reject) => {
+    abort = () => reject(signal.reason);
+    signal.addEventListener("abort", abort, { once: true });
+  });
+  try { return await Promise.race([reader.read(), interrupted]); }
+  finally { signal.removeEventListener("abort", abort); }
 }
 
 export function json(value: unknown, status = 200): Response {

@@ -88,6 +88,16 @@ test("attachments count as answers while reasoning and system notices never do",
   assert.equal(turn.notices.length, 1);
 });
 
+test("an unloaded final answer remains the turn output", () => {
+  const prompt: Message = { id: "turn:prompt", role: "user", content: "Explain" };
+  const answer: Message = {
+    id: "turn:answer", role: "assistant", content: "", contentIncomplete: true,
+  };
+  const [turn] = conversationTurns([prompt, answer]);
+  assert.equal(turn.output, answer);
+  assert.deepEqual(turn.process, []);
+});
+
 test("empty history produces no fabricated exchange", () => {
   assert.deepEqual(conversationTurns([]), []);
 });

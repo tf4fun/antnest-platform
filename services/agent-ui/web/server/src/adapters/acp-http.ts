@@ -139,6 +139,20 @@ export class AgentAccessRevokedError extends BridgeCapabilityError {
   }
 }
 
+export class SessionNotFoundError extends BridgeCapabilityError {
+  public constructor() {
+    super("ACP Session was not found");
+    this.name = "SessionNotFoundError";
+  }
+}
+
+export function sessionRequestFailure(cause: unknown): SessionNotFoundError | undefined {
+  if (!(cause instanceof acp.RequestError) || cause.data === null ||
+    typeof cause.data !== "object" || Array.isArray(cause.data)) return undefined;
+  return (cause.data as Record<string, unknown>).code === "session_not_found"
+    ? new SessionNotFoundError() : undefined;
+}
+
 export function bridgeHeaders(scope: BridgeScope): Record<string, string> {
   for (const value of [
     scope.organizationId,
@@ -302,14 +316,19 @@ export class AcpHttpBridge {
     response: acp.LoadSessionResponse;
     cut: { sealedWatermark: number; appendVersion: number };
   }> {
-    const response = await this.connection.agent.request(
-      acp.methods.agent.session.load,
-      {
-        sessionId,
-        cwd: "/workspace",
-        mcpServers: [],
-      },
-    );
+    let response: acp.LoadSessionResponse;
+    try {
+      response = await this.connection.agent.request(
+        acp.methods.agent.session.load,
+        {
+          sessionId,
+          cwd: "/workspace",
+          mcpServers: [],
+        },
+      );
+    } catch (cause) {
+      throw sessionRequestFailure(cause) ?? cause;
+    }
     return { response, cut: requireLoadCut(response._meta) };
   }
 
@@ -357,6 +376,8 @@ export class AcpHttpBridge {
         configurationParams(sessionId, configId, value, expectedRevision),
       );
     } catch (cause) {
+      const missing = sessionRequestFailure(cause);
+      if (missing !== undefined) throw missing;
       if (
         cause instanceof acp.RequestError &&
         cause.data !== null &&
@@ -557,6 +578,10 @@ export async function parseIntentObservation(
       (body as Record<string, unknown>).code === "intent_unknown"
     )
       return { kind: "unknown" };
+    if (body !== null && typeof body === "object" &&
+      (body as Record<string, unknown>).code === "session_not_found")
+      throw new SessionNotFoundError();
+    throw new BridgeCapabilityError("ACP workspace access is unavailable");
   }
   await requireSuccessfulObservation(response);
   return {
@@ -571,6 +596,12 @@ function revision(value: unknown): value is number {
 
 async function requireSuccessfulObservation(response: Response): Promise<void> {
   if (response.ok) return;
+  if (response.status === 404) {
+    const body: unknown = await response.json().catch(() => null);
+    if (body !== null && typeof body === "object" &&
+      (body as Record<string, unknown>).code === "session_not_found")
+      throw new SessionNotFoundError();
+  }
   if (
     response.status === 401 ||
     response.status === 403 ||

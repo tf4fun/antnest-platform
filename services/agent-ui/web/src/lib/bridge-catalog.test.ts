@@ -52,16 +52,30 @@ test("Bridge catalog rejects a cursor loop and duplicate Session identity", asyn
   await assert.rejects(duplicate.loadPage(), /duplicate Session/u);
 });
 
-test("catalog metadata refresh retains an accepted limited View", async () => {
+test("catalog metadata refresh retains an accepted blocked View", async () => {
   const catalog = new BridgeSessionCatalog("agent-1", {
     sessions: async () => ({ items: [{ sessionId: "s1", title: "Updated",
       updatedAt: "2026-09-24T00:00:00Z", activeOperationId: null }], nextCursor: null }),
   });
   catalog.remember({ id: "s1", agentId: "agent-1", title: "Before", updatedAt: "now",
-    messages: [], historyState: "view_limited",
-    limitedPreview: { text: "recent", truncated: true } });
+    messages: [], historyState: "blocked" });
   await catalog.loadPage();
   assert.equal(catalog.conversations[0]?.title, "Updated");
-  assert.equal(catalog.conversations[0]?.historyState, "view_limited");
-  assert.equal(catalog.conversations[0]?.limitedPreview?.text, "recent");
+  assert.equal(catalog.conversations[0]?.historyState, "blocked");
+});
+
+test("catalog releases completed process when a Session is left", () => {
+  const catalog = new BridgeSessionCatalog("agent-1", {
+    sessions: async () => ({ items: [], nextCursor: null }),
+  });
+  catalog.remember({ id: "s1", agentId: "agent-1", title: "One", updatedAt: "now",
+    messages: [
+      { id: "turn:prompt", role: "user", content: "Question",
+        turnOutcome: "completed", processCount: 1, processLoaded: true },
+      { id: "turn:process:tool", role: "assistant", content: "large result" },
+      { id: "turn:answer", role: "assistant", content: "Answer" },
+    ] });
+  catalog.releaseCompletedProcess("s1");
+  assert.deepEqual(catalog.conversations[0]?.messages.map((item) => item.id),
+    ["turn:prompt", "turn:answer"]);
 });

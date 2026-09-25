@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { HistoryCapacityError } from "../bridge/compact-transcript.ts";
+import { ReplayCapacityError } from "../bridge/replay-load-gate.ts";
 import { PermissionDecisionError } from "../bridge/permission-inbox.ts";
 import { OperationReconciliationTimeoutError } from "../bridge/operations.ts";
 import type { BridgeScope } from "../bridge/registry.ts";
@@ -97,11 +97,11 @@ export function createPermissionHandler(dependencies: {
           "Permission request is no longer current",
           "refresh",
         );
-      if (cause instanceof HistoryCapacityError)
+      if (cause instanceof ReplayCapacityError)
         return error(
           429,
-          "history_capacity_exceeded",
-          "Session history exceeds Bridge capacity",
+          "replay_capacity_exceeded",
+          "Concurrent replay queue is full",
           "retry_read",
         );
       return error(

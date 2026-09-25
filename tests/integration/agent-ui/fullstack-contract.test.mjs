@@ -71,17 +71,17 @@ test("Agent view keeps operation state visible without a selected Session", () =
   }), true, JSON.stringify(event.errors));
 });
 
-test("limited Session View carries an explicit bounded preview without a send condition", () => {
+test("Session View preserves usable history instead of a quota-limited substitute", () => {
   const valid = definition(ui, "sessionView");
   const base = {
     agentId: "agent-1", sessionId: "session-1", bridgeEpoch: "epoch-1",
     title: "Deployment metadata", updatedAt: "2026-09-24T00:00:00Z",
     incarnation: "incarnation-1", viewRevision: 8, appendVersion: 3,
     outputWatermark: 15, historyToken: null, streamCursor: "opaque",
-    historyState: "view_limited", turns: [], olderTurnsCursor: null,
+    historyState: "ready", turns: [], olderTurnsCursor: null,
     operations: [{ operationId: "intent-1", sessionId: "session-1",
       phase: "running", acceptance: "acp", runId: "run-1", outputWatermark: 15 }],
-    permissions: [], limitedPreview: { text: "Partial model output", truncated: true },
+    permissions: [],
   };
   assert.equal(valid(base), true, JSON.stringify(valid.errors));
   assert.equal(valid({ ...base, title: null }), true, JSON.stringify(valid.errors));
@@ -89,12 +89,11 @@ test("limited Session View carries an explicit bounded preview without a send co
   assert.equal(valid({ ...base, updatedAt: undefined }), false);
   assert.equal(valid({ ...base, updatedAt: 1 }), false);
   assert.equal(valid({ ...base, title: "x".repeat(513) }), false);
-  assert.equal(valid({ ...base, limitedPreview: undefined }), false);
-  assert.equal(valid({ ...base, historyToken: "send-anyway" }), false);
-  assert.equal(valid({ ...base, olderTurnsCursor: "older" }), false);
+  assert.equal(valid({ ...base, historyToken: "send-condition" }), true);
+  assert.equal(valid({ ...base, olderTurnsCursor: "older" }), true);
   assert.equal(valid({ ...base, turns: [{ turnId: "possibly-incomplete" }] }), false);
-  assert.equal(valid({ ...base, limitedPreview: { text: "x".repeat(4097), truncated: true } }), false);
-  assert.equal(valid({ ...base, historyState: "ready" }), false);
+  assert.equal(valid({ ...base, historyState: "view_limited",
+    limitedPreview: { text: "partial", truncated: true } }), false);
 });
 
 test("blocked Session View keeps sealed history read-only after replay failure", () => {
@@ -172,6 +171,47 @@ test("large process content has its own exact continuation response", () => {
   );
 });
 
+test("tool process sections identify content blocks across continuation pages", () => {
+  const item = definition(ui, "processItem");
+  const base = { id: "tool-1", kind: "tool", summary: "Read", status: "completed",
+    content: [], contentCursor: "opaque" };
+  assert.equal(item({ ...base, toolSections: { inputIndex: 0, outputIndex: 1,
+    detailStartIndex: 2 } }), true, JSON.stringify(item.errors));
+  assert.equal(item(base), false);
+  assert.equal(item({ ...base, kind: "thought", toolSections: { detailStartIndex: 0 } }), false);
+  assert.equal(item({ ...base, toolSections: { detailStartIndex: -1 } }), false);
+  assert.equal(item({ ...base, toolSections: { detailStartIndex: 0,
+    unexpected: true } }), false);
+});
+
+test("running turns carry bounded process changes for a known prior version", () => {
+  const turn = definition(ui, "turn");
+  const base = { turnId: "run-1", outcome: "running", prompt: [], finalResponse: [],
+    contentCursor: null, contentSection: null, processVersion: 2, processCount: 1 };
+  const change = { index: 0, item: { id: "thought-1", kind: "thought",
+    summary: "Progress", status: "running", content: [], contentCursor: null } };
+  assert.equal(turn({ ...base, liveProcessDelta: { fromVersion: 1,
+    items: [change] } }), true, JSON.stringify(turn.errors));
+  assert.equal(turn({ ...base, liveProcessDelta: { fromVersion: -1,
+    items: [change] } }), false);
+  assert.equal(turn({ ...base, outcome: "completed", liveProcessDelta: {
+    fromVersion: 1, items: [change] } }), false);
+});
+
+test("turn continuation identifies whether prompt or answer owns the next page", () => {
+  const turn = definition(ui, "turn");
+  const base = { turnId: "run-1", outcome: "completed", prompt: [],
+    finalResponse: [], processVersion: 0, processCount: 0 };
+  assert.equal(turn({ ...base, contentCursor: "next", contentSection: "finalResponse" }),
+    true, JSON.stringify(turn.errors));
+  assert.equal(turn({ ...base, contentCursor: "next", contentSection: "prompt" }),
+    true, JSON.stringify(turn.errors));
+  assert.equal(turn({ ...base, contentCursor: null, contentSection: null }),
+    true, JSON.stringify(turn.errors));
+  assert.equal(turn({ ...base, contentCursor: "next", contentSection: null }), false);
+  assert.equal(turn({ ...base, contentCursor: null, contentSection: "prompt" }), false);
+});
+
 test("operation and stream envelopes distinguish bridge receipt, durable acceptance and scope", () => {
   const accepted = definition(ui, "promptAccepted");
   assert.equal(
@@ -236,10 +276,12 @@ test("operation and stream envelopes distinguish bridge receipt, durable accepta
       fromStreamRevision: 4,
       toStreamRevision: 5,
       cursor: "opaque",
+      fromCursor: "previous",
       sessionId: "session-1",
       incarnation: "incarnation-1",
+      fromSessionViewRevision: 2,
       sessionViewRevision: 3,
-      patch: [],
+      patch: [{ op: "replace", path: "/selectedView/title", value: "Renamed" }],
     }),
     true,
     JSON.stringify(event.errors),
@@ -253,11 +295,37 @@ test("operation and stream envelopes distinguish bridge receipt, durable accepta
       fromStreamRevision: 4,
       toStreamRevision: 5,
       cursor: "opaque",
+      fromCursor: "previous",
       sessionId: "session-1",
       sessionViewRevision: 3,
     }),
     false,
   );
+});
+
+test("delta is scoped to one retained view and cannot patch identity or prototype paths", () => {
+  const event = definition(ui, "streamEvent");
+  const base = {
+    type: "delta", agentId: "agent-1", bridgeEpoch: "epoch-1",
+    projectionId: "projection-1", fromStreamRevision: 4, toStreamRevision: 5,
+    cursor: "next", fromCursor: "previous", sessionId: "session-1", incarnation: "incarnation-1",
+    fromSessionViewRevision: 2, sessionViewRevision: 3,
+    patch: [{ op: "replace", path: "/selectedView/title", value: "Renamed" }],
+  };
+  assert.equal(event(base), true, JSON.stringify(event.errors));
+  assert.equal(event({ ...base, fromSessionViewRevision: undefined }), false);
+  assert.equal(event({ ...base, fromCursor: undefined }), false);
+  assert.equal(event({ ...base, patch: [] }), false);
+  for (const path of ["/principalId", "/bridgeEpoch", "/selectedSessionId",
+    "/selectedView/incarnation", "/selectedView/sessionId",
+    "/selectedView/turns/0/__proto__/secret", "/selectedView/usage/constructor"]) {
+    assert.equal(event({ ...base, patch: [{ op: "replace", path, value: "x" }] }), false, path);
+  }
+  assert.equal(event({ ...base, patch: [{ op: "replace", path: "/selectedView/title" }] }), false);
+  assert.equal(event({ ...base, sessionId: null, incarnation: null,
+    fromSessionViewRevision: null, sessionViewRevision: null,
+    patch: [{ op: "replace", path: "/availability", value: "busy" }] }), true);
+  assert.equal(event({ ...base, sessionId: null }), false);
 });
 
 test("ACP extension validates intent, target cancellation and complete delivery batches", () => {

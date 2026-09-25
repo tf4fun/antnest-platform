@@ -29,7 +29,8 @@ type Props = {
   configuring: boolean;
   preparing?: boolean;
   historyReady: boolean;
-  historyLimited?: boolean;
+  openingHistory?: boolean;
+  openingFailure?: boolean;
   value: string;
   attachments: Attachment[];
   agentStatus: AgentStatus;
@@ -82,15 +83,17 @@ export function Composer(props: Props) {
     props.sending ||
     props.configuring ||
     props.preparing;
-  const hint = props.preparing
-    ? "Preparing conversation"
-    : props.configuring
-      ? "Updating session settings"
-      : props.historyLimited
-        ? "Conversation history is limited; sending is unavailable"
-      : !props.historyReady && props.connected && !props.sending
-        ? "Conversation not yet synchronized"
-        : statusCopy(props.agentStatus, props.connected, props.sending);
+  const hint = props.openingFailure
+    ? "Conversation history unavailable"
+    : props.openingHistory
+      ? "Opening conversation history"
+      : props.preparing
+        ? "Preparing conversation"
+        : props.configuring
+          ? "Updating session settings"
+          : !props.historyReady && props.connected && !props.sending
+            ? "Conversation not yet synchronized"
+            : statusCopy(props.agentStatus, props.connected, props.sending);
   const submitEnabled =
     canSubmit({
       text: props.value,
@@ -186,6 +189,8 @@ export function Composer(props: Props) {
           disabled={disabled}
           onChange={(event) => props.onChange(event.target.value)}
           onKeyDown={(event) => {
+            // Some IMEs report the confirmation key after compositionend with code 229.
+            if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
             if (event.key === "Escape" && expanded) {
               event.preventDefault();
               setExpanded(false);
@@ -193,8 +198,7 @@ export function Composer(props: Props) {
             }
             if (
               event.key === "Enter" &&
-              !event.shiftKey &&
-              !event.nativeEvent.isComposing
+              !event.shiftKey
             ) {
               event.preventDefault();
               if (submitEnabled) {

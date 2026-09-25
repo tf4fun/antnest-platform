@@ -27,7 +27,7 @@ test("Bridge continues the incoming Gateway trace and flushes HTTP telemetry on 
       serviceName: "agent-ui-test",
     });
     telemetry.registerRuntimeMetrics(() => ({ owners: 2, observerLeases: 1,
-      heldWork: 1, cachedBytes: 1024, reservedBytes: 512,
+      heldWork: 1, cachedBytes: 1024,
       streamSubscribers: 3, journalQueuedBytes: 256, journalRetainedBytes: 768,
       activeReplays: 1, queuedReplays: 2,
       uncertainOperations: 2, oldestUncertainMs: 1_250 }));
@@ -101,7 +101,7 @@ test("Bridge continues the incoming Gateway trace and flushes HTTP telemetry on 
         resource.scopeMetrics.flatMap((scope) => scope.metrics)));
     for (const name of ["antnest.ui.bridge.owners", "antnest.ui.bridge.observer_leases",
       "antnest.ui.bridge.held_work", "antnest.ui.bridge.cached_history_bytes",
-      "antnest.ui.bridge.reserved_history_bytes", "antnest.ui.bridge.stream_subscribers",
+      "antnest.ui.bridge.stream_subscribers",
       "antnest.ui.bridge.journal_queued_bytes", "antnest.ui.bridge.journal_retained_bytes",
       "antnest.ui.bridge.active_replays", "antnest.ui.bridge.queued_replays",
       "antnest.ui.bridge.uncertain_operations",
@@ -130,7 +130,6 @@ test("Bridge continues the incoming Gateway trace and flushes HTTP telemetry on 
     assert.equal(gaugeValue("antnest.ui.bridge.owners"), 2);
     assert.equal(gaugeValue("antnest.ui.bridge.observer_leases"), 1);
     assert.equal(gaugeValue("antnest.ui.bridge.cached_history_bytes"), 1024);
-    assert.equal(gaugeValue("antnest.ui.bridge.reserved_history_bytes"), 512);
     assert.equal(gaugeValue("antnest.ui.bridge.stream_subscribers"), 3);
     assert.equal(gaugeValue("antnest.ui.bridge.journal_queued_bytes"), 256);
     assert.equal(gaugeValue("antnest.ui.bridge.uncertain_operations"), 2);

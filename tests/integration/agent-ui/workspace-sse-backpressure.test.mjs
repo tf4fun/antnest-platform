@@ -26,12 +26,11 @@ test(
   "Node SSE backpressure bounds throttled observers during sustained output",
   { timeout: runMs + 90_000 },
   async () => {
-    if (soak)
-      assert.equal(
-        typeof global.gc,
-        "function",
-        "The extended capacity run requires --expose-gc",
-      );
+    assert.equal(
+      typeof global.gc,
+      "function",
+      "Retained-heap verification requires --expose-gc",
+    );
     const scope = {
       organizationId: "org-1",
       principalId: "user-1",

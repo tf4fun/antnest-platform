@@ -34,6 +34,7 @@ export class BridgeAgentController {
   private request?: AbortController;
   private stop?: () => void;
   private store?: BridgeSessionStore;
+  private storeSessionId: string | null = null;
   private retry?: ReturnType<typeof setTimeout>;
   private retryFailures = 0;
   private closed = false;
@@ -74,15 +75,22 @@ export class BridgeAgentController {
     this.request?.abort();
     this.stop?.();
     this.stop = undefined;
-    this.store?.close();
+    if (sessionId !== null && sessionId === this.storeSessionId && this.store) {
+      this.store.suspendReads();
+    } else {
+      this.store?.close();
+      this.store = undefined;
+      this.storeSessionId = sessionId;
+      if (sessionId !== null) {
+        const store = new BridgeSessionStore(this.agentId, sessionId, this.api,
+          (conversation) => {
+            if (this.store === store && !this.closed)
+              this.publish({ ...this.current, conversation });
+          });
+        this.store = store;
+      }
+    }
     this.permissionStore.clear();
-    this.store = sessionId === null ? undefined : new BridgeSessionStore(
-      this.agentId, sessionId, this.api,
-      (conversation) => {
-        if (selection === this.selection && !this.closed)
-          this.publish({ ...this.current, conversation });
-      },
-    );
     const request = new AbortController();
     this.request = request;
     this.publish({ connection: "connecting", view: null,
@@ -149,6 +157,11 @@ export class BridgeAgentController {
         this.close(true);
         throw cause;
       }
+      if (cause instanceof WorkspaceApiError && cause.code === "session_not_found" &&
+        sessionId !== null) {
+        this.publish({ ...this.current, connection: "offline" });
+        throw cause;
+      }
       this.publish({ ...this.current, connection: "offline" });
       this.scheduleRetry(selection, sessionId);
       throw cause;
@@ -167,6 +180,10 @@ export class BridgeAgentController {
 
   unloadProcess(turnId: string): void {
     this.store?.unloadProcess(turnId);
+  }
+
+  cancelProcessRequests(turnId: string): void {
+    this.store?.cancelProcessRequests(turnId);
   }
 
   loadOlderTurns(): Promise<void> {
@@ -293,6 +310,8 @@ export class BridgeAgentController {
     this.request?.abort();
     this.stop?.();
     this.store?.close();
+    this.store = undefined;
+    this.storeSessionId = null;
     this.tracker.close();
     this.permissionStore.clear();
     this.publish({ connection: "offline", view: null, operations: [], permissions: [],

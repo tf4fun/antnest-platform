@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readTurnContent } from "../../support/agent-ui/bridge-protocol.mjs";
 import { execFile } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { get } from "node:http";
@@ -19,9 +20,9 @@ const memoryBytes = (value) => {
   return Math.round(Number(match[1]) * 1024 ** ["B", "KiB", "MiB", "GiB"].indexOf(match[2]));
 };
 
-test("real Gateway, Identity and ACP Run publish a limited browser View", { timeout: 900_000 }, async () => {
+test("real Gateway, Identity and ACP preserve complete browser history across continued Runs", { timeout: 900_000 }, async () => {
   const abort = new AbortController();
-  const interrupt = () => abort.abort(new Error("Limited View E2E interrupted"));
+  const interrupt = () => abort.abort(new Error("Complete history E2E interrupted"));
   process.once("SIGINT", interrupt);
   process.once("SIGTERM", interrupt);
   let config;
@@ -32,9 +33,9 @@ test("real Gateway, Identity and ACP Run publish a limited browser View", { time
   try {
     config = await configuration(abort.signal);
     const suffix = config.project.slice(-8);
-    const uiImage = `antnest/agent-ui:limited-e2e-${suffix}`;
-    const acpImage = `antnest/agent-acp-service:limited-e2e-${suffix}`;
-    const gatewayImage = `antnest/edge-gateway:limited-e2e-${suffix}`;
+    const uiImage = `antnest/agent-ui:history-e2e-${suffix}`;
+    const acpImage = `antnest/agent-acp-service:history-e2e-${suffix}`;
+    const gatewayImage = `antnest/edge-gateway:history-e2e-${suffix}`;
     images.push(uiImage, acpImage, gatewayImage);
     Object.assign(config.env, {
       ANTNEST_C4_AGENT_UI_IMAGE: uiImage,
@@ -53,7 +54,6 @@ test("real Gateway, Identity and ACP Run publish a limited browser View", { time
     await docker(composeArgs(config.project, [
       "-f", "tests/e2e/workspace-closeout/c4.compose.yaml",
       "-f", "tests/e2e/agent-ui/fullstack.compose.yaml",
-      "-f", "tests/e2e/agent-ui/fullstack-limited.compose.yaml",
       "up", "-d", "--wait", "--wait-timeout", "180", "--no-build",
     ]), true);
     const fixture = await setup(config, abort.signal);
@@ -68,7 +68,6 @@ test("real Gateway, Identity and ACP Run publish a limited browser View", { time
     const uiContainer = await docker(composeArgs(config.project, [
       "-f", "tests/e2e/workspace-closeout/c4.compose.yaml",
       "-f", "tests/e2e/agent-ui/fullstack.compose.yaml",
-      "-f", "tests/e2e/agent-ui/fullstack-limited.compose.yaml",
       "ps", "-q", "agent-ui",
     ]), true);
     assert.ok(uiContainer);
@@ -98,11 +97,11 @@ test("real Gateway, Identity and ACP Run publish a limited browser View", { time
     assert.equal(slowResponse.statusCode, 200);
     slowResponse.on("error", () => {});
     slowResponse.pause();
-    const memory = { beforeBytes: await containerMemory(), limitedBytes: 0,
+    const memory = { beforeBytes: await containerMemory(), retainedBytes: 0,
       afterDisconnectBytes: 0, afterIdleBytes: 0 };
-    let limited;
+    let completedView;
     const submitted = [];
-    for (let index = 0; index < 4 && !limited; index++) {
+    for (let index = 0; index < 4; index++) {
       const phase = index === 1 ? "c4-browser-large-output"
         : `c4-browser-volume-${String(index).padStart(2, "0")}`;
       await composer.fill(phase);
@@ -119,80 +118,72 @@ test("real Gateway, Identity and ACP Run publish a limited browser View", { time
         const view = await response.json();
         const operation = view.operations?.find((row) => row.sessionId === sessionId &&
           row.phase === "completed");
-        if (view.selectedView?.historyState === "view_limited")
-          return { view, operation };
         if (operation && view.selectedView?.turns?.some((turn) =>
           turn.outcome === "completed" &&
           turn.prompt?.some((block) => block.text === phase)))
           return { view, operation };
         return null;
       }, `Run ${phase} delivery`, abort.signal, 45_000);
-      if (state.view.selectedView.historyState === "view_limited") limited = state.view;
-      else {
-        try {
-          await until(() => composer.isEnabled(), "composer after complete Run", abort.signal);
-        } catch (cause) {
-          const browserState = {
-            phase,
-            agentStatus: await page.locator(".topbar-agent .presence").innerText(),
-            historyLimited: await page.getByRole("status", { name: "History limited" }).innerText(),
-            composerDisabled: await composer.isDisabled(),
-            pageErrors: errors,
-          };
-          const response = await fetch(`${config.gateway}${viewPath}`, {
-            headers: { Cookie: memberClient.cookie },
-            signal: AbortSignal.any([abort.signal, AbortSignal.timeout(15_000)]),
-          });
-          const currentView = response.ok ? await response.json() : { status: response.status };
-          throw new Error(`${cause.message}: ${JSON.stringify({ browserState,
-            serverState: { availability: currentView.availability,
-              activeSessionId: currentView.activeSessionId,
-              historyState: currentView.selectedView?.historyState,
-              operations: currentView.operations?.map((row) => ({ phase: row.phase,
-                sessionId: row.sessionId })) } })}`);
-        }
-      }
+      completedView = state.view;
+      assert.equal(completedView.selectedView.historyState, "ready");
+      assert.equal(typeof completedView.selectedView.historyToken, "string");
+      await until(() => composer.isEnabled(), "composer after complete Run", abort.signal);
     }
-    assert.ok(limited, "Real ACP output did not trigger the configured history budget");
-    assert.ok(submitted.includes("c4-browser-large-output"),
-      "Limited View did not cross the ACP text notification bound");
-    const sessionView = limited.selectedView;
-    assert.equal(sessionView.historyState, "view_limited");
-    assert.equal(sessionView.historyToken, null);
-    assert.equal(sessionView.olderTurnsCursor, null);
-    assert.deepEqual(sessionView.turns, []);
-    assert.equal(sessionView.limitedPreview.truncated, true);
-    assert.ok(sessionView.limitedPreview.text.length > 0);
-    assert.ok(sessionView.limitedPreview.text.length <= 4096);
+    assert.equal(submitted.length, 4);
+    const sessionView = completedView.selectedView;
+    assert.equal(sessionView.turns.length, 4);
     assert.ok(Number.isSafeInteger(sessionView.outputWatermark));
     assert.ok(sessionView.outputWatermark > 0);
-    const completedView = await until(async () => {
-      const response = await fetch(`${config.gateway}${viewPath}`, {
-        headers: { Cookie: memberClient.cookie },
-        signal: AbortSignal.any([abort.signal, AbortSignal.timeout(15_000)]),
-      });
-      if (response.status === 503) return null;
-      assert.equal(response.status, 200);
-      const view = await response.json();
-      return view.selectedView?.historyState === "view_limited" &&
-        view.operations?.some((row) => row.sessionId === sessionId && row.phase === "completed")
-        ? view : null;
-    }, "limited View retains completed Run", abort.signal);
+    const agentBase = `${config.gateway}/api/app/workspace/v1/agents/${fixture.agentID}`;
+    for (const phase of submitted) {
+      const turn = sessionView.turns.find((item) => item.prompt.some((block) => block.text === phase));
+      assert.ok(turn, `Missing completed turn ${phase}`);
+      const full = await readTurnContent(agentBase, sessionId, turn,
+        { Cookie: memberClient.cookie }, abort.signal);
+      const expected = `${phase}:${"v".repeat((phase === "c4-browser-large-output" ? 96 : 32) * 1024)}`;
+      assert.equal(full.finalResponse.map((block) => block.text).join(""), expected,
+        "Complete content remains available through signed paging");
+    }
     assert.ok(completedView.selectedView.outputWatermark >=
       Math.max(...completedView.operations.filter((row) => row.sessionId === sessionId &&
         row.phase === "completed").map((row) => row.outputWatermark ?? 0)));
-    memory.limitedBytes = await containerMemory();
-    assert.ok(memory.limitedBytes - memory.beforeBytes < 128 * 1024 * 1024,
-      `Fixed-volume limited Run exceeded Bridge memory allowance: ${JSON.stringify(memory)}`);
-    await page.getByRole("status", { name: "History limited" }).waitFor();
-    assert.ok((await page.getByRole("status", { name: "History limited" }).innerText()).length < 200);
-    assert.equal(await page.locator(".conversation-turn").count(), 0);
-    assert.equal(await page.getByRole("button", { name: "Send message" }).isDisabled(), true);
+    memory.retainedBytes = await containerMemory();
+    assert.ok(memory.retainedBytes - memory.beforeBytes < 128 * 1024 * 1024,
+      `Fixed-volume complete history exceeded Bridge memory allowance: ${JSON.stringify(memory)}`);
+    const assertBrowserHistory = async () => {
+      await until(() => composer.isEnabled(), "complete history composer", abort.signal);
+      await until(async () => (await page.locator(".conversation-turn").count()) === 4,
+        "complete history rendered after lazy Conversation load", abort.signal);
+      assert.equal(await page.locator(".conversation-turn").count(), 4);
+      const largeTurn = page.locator(".conversation-turn").filter({
+        has: page.locator(".message-user .message-content").filter({ hasText: "c4-browser-large-output" }),
+      });
+      // This content exceeds inline projection limits; expansion must recover every byte.
+      const loadFullContent = largeTurn.getByRole("button", { name: "Load full content" });
+      assert.equal(await loadFullContent.evaluate((button) =>
+        button.closest(".message")?.classList.contains("message-answer")), true,
+      "Answer continuation must belong to the Agent message, not the user prompt");
+      await loadFullContent.focus();
+      await page.keyboard.press("Enter");
+      const expected = `c4-browser-large-output:${"v".repeat(96 * 1024)}`;
+      await until(async () => (await largeTurn.innerText()).includes(expected),
+        "complete large answer in browser", abort.signal);
+      try {
+        await until(() => largeTurn.locator(".message-answer").evaluate(
+          (message) => document.activeElement === message),
+        "keyboard focus on completed full answer", abort.signal, 5_000);
+      } catch (cause) {
+        const focused = await page.evaluate(() => ({
+          tag: document.activeElement?.tagName,
+          className: document.activeElement?.className,
+          label: document.activeElement?.getAttribute("aria-label"),
+        }));
+        throw new Error(`Full answer focus remained at ${JSON.stringify(focused)}`, { cause });
+      }
+    };
+    await assertBrowserHistory();
     await page.reload();
-    await page.getByRole("status", { name: "History limited" }).waitFor();
-    assert.ok((await page.getByRole("status", { name: "History limited" }).innerText()).length < 200);
-    assert.equal(await page.locator(".conversation-turn").count(), 0);
-    assert.equal(await page.getByRole("button", { name: "Send message" }).isDisabled(), true);
+    await assertBrowserHistory();
     const modelState = await (await fetch(`${config.model}/status`, {
       signal: AbortSignal.any([abort.signal, AbortSignal.timeout(5000)]),
     })).json();
@@ -202,9 +193,9 @@ test("real Gateway, Identity and ACP Run publish a limited browser View", { time
     memory.afterDisconnectBytes = await containerMemory();
     await delay(10_000, undefined, { signal: abort.signal });
     memory.afterIdleBytes = await containerMemory();
-    assert.ok(memory.afterIdleBytes <= memory.limitedBytes + 16 * 1024 * 1024,
+    assert.ok(memory.afterIdleBytes <= memory.retainedBytes + 16 * 1024 * 1024,
       `Bridge retained unexpected memory after slow observer closed: ${JSON.stringify(memory)}`);
-    const evidence = `${root}/artifacts/verification/agent-ui-limited-capacity`;
+    const evidence = `${root}/artifacts/verification/agent-ui-complete-history`;
     await mkdir(evidence, { recursive: true });
     await writeFile(`${evidence}/metrics.json`, JSON.stringify({
       capturedAt: new Date().toISOString(), submittedRuns: submitted.length,
@@ -216,7 +207,7 @@ test("real Gateway, Identity and ACP Run publish a limited browser View", { time
     await context.close();
   } catch (error) {
     if (config) {
-      const directory = `${root}/artifacts/verification/agent-ui-limited-${config.project}`;
+      const directory = `${root}/artifacts/verification/agent-ui-history-${config.project}`;
       await mkdir(directory, { recursive: true });
       await writeFile(`${directory}/failure.json`, JSON.stringify({
         message: error instanceof Error ? error.message : String(error), viewStatuses,
@@ -227,7 +218,6 @@ test("real Gateway, Identity and ACP Run publish a limited browser View", { time
           const id = await docker(composeArgs(config.project, [
             "-f", "tests/e2e/workspace-closeout/c4.compose.yaml",
             "-f", "tests/e2e/agent-ui/fullstack.compose.yaml",
-            "-f", "tests/e2e/agent-ui/fullstack-limited.compose.yaml",
             "ps", "-q", service,
           ]), true);
           if (!id) continue;

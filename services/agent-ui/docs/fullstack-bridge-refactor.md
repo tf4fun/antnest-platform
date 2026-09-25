@@ -1,5 +1,9 @@
 # Agent UI 全栈与 Bridge 重构方案
 
+> 2026-09-25 实现对齐修订优先于本文早期交付记录。当前契约与门禁状态见
+> [attyd 对齐修订](attyd-alignment-fixes.md) 和
+> [Workspace API](../../../contracts/agent-ui/workspace-api.md)。
+
 当前补充：异步 Prompt 在 HTTP 202 后失败时，ACP 的持久化 Run `error_class` 经授权回执、Node operation View/SSE 传到浏览器。最新失败轮次若是 `model_unsupported_content`，界面显示可操作的附件提示，并在 Agent 恢复 ready 时允许继续编辑和发送。旧 WebSocket 请求错误映射已移除；根目录 Chromium HTTP/SSE fixture 已覆盖这一路径。
 
 日期：2026-09-25。状态：**B0–B5 的主路径与开发部署单一路径已接通；真实跨服务浏览器回归覆盖运行恢复、取消、权限重绑和部署重启，固定负载、十分钟限速 SSE 与生产容器冷启动门槛已通过。完整读屏器/键盘验收及超出固定样本的长期容量仍未完成，因此不宣称 I1/I2 全面验收通过**。
@@ -8,7 +12,7 @@
 
 这是现有服务的重构，不引入阶段四规划中的新服务，也不改变已记录的阶段三验收结论。本文覆盖目标架构、协议、恢复、安全、内存、SSR、部署和分批验收；现状仍以 [architecture.md](architecture.md) 为准。
 
-当前工作进度：B0 共享契约、B1 ACP 受理与交付扩展、B2 Node Bridge、B3 Gateway 代理和 B4 浏览器 HTTP/SSE 主路径已有本地实现与测试。B5 Node 流式 SSR、请求级授权 bootstrap、CSP nonce 和 hydration 已通过服务内、Chromium 与生产容器 fixture 检查。开发阶段采用单一路径：标准 `agent-ui` Dockerfile 和根 Compose 直接构建 Node 服务；Gateway 通过 `ANTNEST_AGENT_UI_URL` 将 HTML、静态资源和业务 HTTP/SSE 统一送到它；开发入口也默认使用 Bridge。旧 Nginx 和浏览器 ACP 入口已移除，不设兼容或回滚模式。真实 Gateway/Identity/Node/ACP/Controller/Runtime 隔离 Docker 浏览器 E2E 已验证认证 SSR、Session 创建、Run 受理、页面关闭、Node 正常重启后的新 epoch、ACP 持续执行、结果恢复及模型单次请求；还验证 Stop 断开受控模型请求后可继续执行、旧 Run 的延迟取消请求不会中断新 Run、待批准工具请求跨页面关闭和 Node 正常重启后重新绑定并完成决定、Prompt 的浏览器响应延迟超过 30 秒后按原 intent 查询且模型仅执行一次，以及身份撤销使已打开页面清空私有内容、保留规范化 Agent/Session `return_to` 并返回登录入口。真实浏览器长历史回归已验证 `turnPage.nextCursor` 与 `newerCursor` 双向续页及 40 轮 DOM 窗口。服务内多身份测试已覆盖共享历史预算的超额拒绝和释放后恢复；固定六服务负载下的三次跨运行 SSR/内存门槛已通过；独立生产容器的三次未经健康检查的首次认证 HTML 测量也已通过。十分钟本地限速 SSE 曲线已覆盖三个慢观察者和每条事件的队列峰值；真实六服务已覆盖固定 80 Run 的限速观察。读屏器与键盘的完整无障碍验收，以及跨机器和更长周期的容量分布仍待完成。
+当前工作进度：B0 共享契约、B1 ACP 受理与交付扩展、B2 Node Bridge、B3 Gateway 代理和 B4 浏览器 HTTP/SSE 主路径已有本地实现与测试。B5 Node 流式 SSR、请求级授权 bootstrap、CSP nonce 和 hydration 已通过服务内、Chromium 与生产容器 fixture 检查。开发阶段采用单一路径：标准 `agent-ui` Dockerfile 和根 Compose 直接构建 Node 服务；Gateway 通过 `ANTNEST_AGENT_UI_URL` 将 HTML、静态资源和业务 HTTP/SSE 统一送到它；开发入口也默认使用 Bridge。旧 Nginx 和浏览器 ACP 入口已移除，不设兼容或回滚模式。真实 Gateway/Identity/Node/ACP/Controller/Runtime 隔离 Docker 浏览器 E2E 已验证认证 SSR、Session 创建、Run 受理、页面关闭、Node 正常重启后的新 epoch、ACP 持续执行、结果恢复及模型单次请求；还验证 Stop 断开受控模型请求后可继续执行、旧 Run 的延迟取消请求不会中断新 Run、待批准工具请求跨页面关闭和 Node 正常重启后重新绑定并完成决定、Prompt 的浏览器响应延迟超过 30 秒后按原 intent 查询且模型仅执行一次，以及身份撤销使已打开页面清空私有内容、保留规范化 Agent/Session `return_to` 并返回登录入口。真实浏览器长历史回归已验证 `turnPage.nextCursor` 与 `newerCursor` 双向续页及 40 轮 DOM 窗口。服务内多身份测试现覆盖完整历史保留和独立空闲回收，累计历史字节配额已移除；固定六服务负载下的三次跨运行 SSR/内存门槛已通过；独立生产容器的三次未经健康检查的首次认证 HTML 测量也已通过。十分钟本地限速 SSE 曲线已覆盖三个慢观察者和每条事件的队列峰值；真实六服务已覆盖固定 80 Run 的限速观察。读屏器与键盘的完整无障碍验收，以及跨机器和更长周期的容量分布仍待完成。
 
 ## 1. 目标与范围
 
@@ -18,7 +22,7 @@
 2. 同一用户的多个页面观察同一执行。Bridge 统一持有连接、回放和权限请求，页面不再各自创建 ACP 客户端。
 3. 命令请求快速返回受理状态；长时间运行通过 SSE 观察。普通 HTTP 超时不等于执行失败，也不触发自动重发。
 4. 完整保留现有 Agent → Session 导航、配置选项、Provider fallback 提示、取消、权限、多模态输入、Usage、附件和无障碍行为。
-5. 初始页面更快显示可用框架和已知状态；长历史按需展示过程，浏览器与 Bridge 均有明确的内存边界。
+5. 初始页面更快显示可用框架和已知状态；长历史按需展示过程，浏览器窗口和交付队列有明确的内存边界，Bridge 保留完整业务历史。
 6. Bridge 重启后的执行继续、状态恢复和重复提交处理有明确保证，不把进程内幂等描述成跨重启 exactly-once。
 
 本期不做：多副本 Bridge 主从协调、跨地域部署、离线执行队列、浏览器持久化业务数据、新项目层级、新的 Agent Runtime、ACP 原始历史的服务端分页协议、SSR 全量历史、复制 attyd 的本地进程启动/终端/文件系统管理能力。Bridge 的业务 API 已提供轮次续页，浏览器按需加载并限制可见 DOM 轮次。正式 UI 不使用 WebSocket；ACP 面向其他客户端的标准 WebSocket 接口保留。
@@ -223,12 +227,12 @@ Compact view 逻辑上保留每轮 prompt、**全部最终回答内容块**、ou
 - 活动过程持续展示；浏览器已经观察/展开的活动轮次完成时，通过稳定 operation/turn anchor 保持可见，不突然折叠或换成另一个轮次。
 - 首次不构建折叠过程 DOM。折叠 5 分钟后释放 DOM、原始过程页缓存与派生渲染数据；展开/运行中的过程不释放。重开按版本重取，晚到请求不能重新填充已释放的槽。
 - Node compact API 减少的是 Node → 浏览器传输和浏览器保留量；Node 初次仍接收 ACP 完整回放。不能宣称已经减少 ACP → Node 历史流量。需要时再单独设计 ACP 历史分页，不作为本轮依赖。
-- Bridge 不为每个观察者复制 baseline；SSR 也不复制全量历史。冷 Session 采用 LRU/持续空闲释放；回放候选计入同一预算，大历史并发加载限流。
-- 达到预算时先释放空闲视图、折叠过程页和可替换交付缓存；对新加载/新订阅作限流。不能为回收内存而取消 Run、丢权限或把未知状态标为完成。
-- 单个活动 overlay 超预算时进入明确的 `view_limited` 展示模式：保留运行/权限/配置、完整接收水位与有界内容预览，继续消费输出以避免阻塞 ACP，但不无限累积原文。提示“执行继续，部分内容待历史同步”，绝不把预览冒充完整结果；原文仍由 ACP 持久化。重建也必须受预算约束。
-- 现有 ACP 完整回放并不保证任意大 Session 都能在本期预算内物化。冷加载/结果重建超预算时返回明确 `history_capacity_exceeded`，保留可读缓存与执行摘要，不无限重试或导致 OOM。如果代表性生产历史触发该边界，就不能宣布容量验收通过，需另立 ACP 历史分页生产者批次，或用实测调整资源预算；它不是本方案偷偷假定已经存在的能力。
+- Bridge 不为每个观察者复制 baseline；SSR 也不复制全量历史。冷 Session 按各自持续空闲时间释放；回放不按累计正文大小拒绝，大历史并发加载限流。
+- 交付队列达到预算时发送可重建 reset；回放队列、owner 或订阅者数量达到上限时，对新请求作明确限流。不能为回收内存而取消 Run、裁剪完整历史、丢权限或把未知状态标为完成。
+- 2026-09-25 对齐修订：有效历史完整保留，不以累计历史字节拒绝加载、清除正文或禁用发送；工具与计划按当前实体替换，页面与大项仍按有界响应分页。
+- 冷加载和明确交付缺口仍从 ACP 持久历史重建；正常本地 Run 根据持久回执与完整输出水位推进版本。回放并发、订阅者队列和 owner 数量有独立的准入限制，累计历史大小不参与准入。
 
-当前预算：每订阅者待发送 1 MiB，每 owner 同时最多 16 个 Agent SSE 订阅、32 个 Agent selection journal 和 32 个 Session snapshot journal，每 journal 最多保留 256 KiB 可续接后缀；达到 journal 上限时淘汰无订阅的旧 journal，全部被订阅则返回 `stream_capacity_exceeded`。process page 256 KiB（大项分片另行读取），每 scope 同时一个历史回放，全局回放并发按容器内存配置。B2 已实现每 owner 一个历史回放、默认最多八个排队加载，并在队列溢出时返回容量错误。Node 入口暂以每 Session 64 MiB、每 owner 256 MiB、全部 owner 共享 512 MiB 编码历史估算为默认值；回放预留、已有历史与实时更新都参与共享预算。冷回放超额仍返回 `history_capacity_exceeded`；已经封闭的活动回放超额则清除完整历史、进入 `view_limited` 并继续消费交付标记。生产容器 fixture 已用官方 ACP HTTP 连续十二次回放 320 KiB 文本，验证在 256 KiB Session 限额下每次均返回 429、另一 Session 仍可读，容器内存采样见 `artifacts/verification/agent-ui-capacity-20260923/metrics.json`；这一固定场景不等于所有长历史和并发负载的内存上界。全局缓存高水位需在容器内存预算扣除运行时、活动 overlay、SSR 与在途响应后，经更广的压测确定默认值、允许最大值与过载返回；没有证据前不承诺“任意长历史都只占常量内存”。
+当前交付预算：每订阅者待发送 1 MiB，每 owner 最多 16 个 Agent SSE 订阅、32 个 Agent selection journal 和 32 个 Session journal，每 journal 保留 256 KiB 可续接后缀；全部 journal 正被订阅时返回 `stream_capacity_exceeded`。process page 256 KiB，大项使用精确分片。每 owner 一个活动回放、八个排队加载，队列溢出返回 `replay_capacity_exceeded`。历史正文没有累计字节配额；以当前逻辑内容估算保留量，并单独观测 Node heap/RSS。空闲 Session 独立回收，运行和待决权限持有工作租约。
 
 该容器测试还暴露 `loadSession` 响应可能先于部分通知的处理完成。Bridge 现在最多等待 5 秒让候选回放达到 sealed watermark；候选因容量或协议错误失败后忽略其晚到通知，保留原始错误并等待下一次安全对账。
 
@@ -291,7 +295,7 @@ SSE 断线时，浏览器保留已保存会话供阅读，但 Agent 状态立即
 Node Bridge 已接入 OTLP/HTTP 请求 span、请求计数与耗时指标，使用固定路由标签，不记录身份或 Prompt 内容；`OTEL_SDK_DISABLED=false` 且设置 collector endpoint 时启用。服务内测试用本地 collector 验证 SDK shutdown 导出；生产容器 E2E 在正常 `docker stop` 后断言退出码为 0，collector 收到非空 trace 与 metric 请求。这个检查证明当前固定负载的正常退出 flush，不能代表 Collector 长期故障下的交接时间；内部容量指标见下文。
 Gateway 的代理 Transport 会注入 W3C `traceparent`；Node 入口现从经过长度限制的 `traceparent`/`tracestate` 提取父上下文，创建 HTTP server span。先写失败测试确认旧实现另起 trace，再由本地 collector 和生产容器 E2E 解析实际 OTLP JSON，断言 trace ID 与父 span ID 与入口一致。Controller 发现及 ACP SDK HTTP/内部观察调用使用同一出站包装：仅在原 HTTP 工作尚未结束时注入当前 trace，后台异步任务即使继承了 JavaScript 上下文也不再携带已结束父 span。服务内测试固定活动与过期两种情况，官方 ACP SDK HTTP 集成和生产容器 E2E 已通过。后台任务的独立 span 或 span link 关联仍需补充。
 
-Bridge 容量指标现增加不带身份标签的 observable gauge：owner 数、观察租约、保留工作、缓存历史估算字节、回放预留字节、journal 订阅者与字节、活动和排队回放数，以及 Node heap/RSS。registry、共享历史预算和回放门槛测试覆盖创建、排队、拒绝、释放和回收；本地 Collector 测试核对导出名称及具体数值。生产容器 E2E 已解析 OTLP 导出并确认运行中 owner、缓存历史和进程内存均有非零样本，原有 ACP 与容量断言同轮通过。跨重启显式同意图重试的业务结果现已纳入真实六服务验收；无受理凭据时的 `uncertain` 已由本地 Node HTTP 双实例故障注入和两种真实六服务故障窗口验证。ACP 生产者已在应用遥测装饰器增加固定 `hit|conflict` 标签的持久意图复用计数，服务测试验证两种结果且不含私有标识，生产镜像 Docker E2E 已验证该指标的实际 OTLP 导出。慢网容量补充了三分钟、多慢客户端、逐轮内存与每条事件队列峰值曲线；真实六服务仍只覆盖固定 80 Run 负载，跨机器和更长周期的容量分布不由这些样本证明。
+Bridge 容量指标现增加不带身份标签的 observable gauge：owner 数、观察租约、保留工作、当前逻辑历史估算字节、journal 订阅者与字节、活动和排队回放数，以及 Node heap/RSS。registry、Session 生命周期和回放门槛测试覆盖创建、排队、拒绝、释放和回收；本地 Collector 测试核对导出名称及具体数值。生产容器 E2E 已解析 OTLP 导出并确认运行中 owner、缓存历史和进程内存均有非零样本，原有 ACP 与容量断言同轮通过。跨重启显式同意图重试的业务结果现已纳入真实六服务验收；无受理凭据时的 `uncertain` 已由本地 Node HTTP 双实例故障注入和两种真实六服务故障窗口验证。ACP 生产者已在应用遥测装饰器增加固定 `hit|conflict` 标签的持久意图复用计数，服务测试验证两种结果且不含私有标识，生产镜像 Docker E2E 已验证该指标的实际 OTLP 导出。慢网容量补充了三分钟、多慢客户端、逐轮内存与每条事件队列峰值曲线；真实六服务仍只覆盖固定 80 Run 负载，跨机器和更长周期的容量分布不由这些样本证明。
 
 首期采用单副本 Recreate/受控切换，避免新旧 Bridge 同时抢占权限连接。不承诺无缝滚动多副本；未来如需 HA，必须先增加 owner lease/fencing 与路由亲和，不能只加 replicas。
 
@@ -328,7 +332,7 @@ HTTP 请求 span 在 HTTP 工作结束时结束；后台观察/执行有独立�
 | 组件 | 真实 SDK 连 fixture、回放失败保留、在途响应丢失、输出分批/checkpoint 与终态先于回放、多 Session SSE 缺口、慢观察者、SSR 跨用户隔离 |
 | 浏览器集成 | 草稿/附件不丢、多个页面、切换 Agent/Session、重连不重发、过期会话停止重连与登录深链接、权限待办、配置/Usage/多模态、轮次/内容/过程分页与回收、hydration/移动端/无障碍 |
 | Docker E2E | 真实身份代理和内网链路、退出/撤销、多端恢复、prompt 受理并发去重、Bridge 正常重启和独立故障注入、运行持续、权限重绑、取消竞态、部署恢复 |
-| 容量与性能 | 固定输入规模下比较首屏、Node/浏览器峰值和回收后内存；长历史/大工具输出/慢网/并发回放不突破预算；过载有明确返回 |
+| 容量与性能 | 固定输入规模下比较首屏、Node/浏览器峰值和回收后内存；长历史和大工具输出完整保留；慢网交付队列与并发回放有界；固定负载验证内存，过载有明确返回 |
 
 测试位置遵循仓库政策：服务单元/服务组件测试放服务内；集成和端到端源码分别在根 `tests/integration/`、`tests/e2e/`，通用支撑在 `tests/support/`。持久私有证据在 `artifacts/verification/`，不得写入 `.cache/`。开发阶段不保留旧 ACP 浏览器协议测试作为兼容门槛；删除旧测试本身不代表当前产品行为已验收，仍须通过上表中的新链路断言。
 
@@ -378,13 +382,13 @@ B5 本地进度：Node 生产入口已对认证 `/workspace/` 返回 React 流�
 
 权限卡的键盘回归又复现：焦点落在决定按钮时，该请求完成并从 DOM 移除，会让焦点退回页面 body。现在只在原决定仍持有焦点且请求确实消失时恢复焦点；若还有待批准请求则进入下一张卡的第一个决定按钮，否则进入消息区域，用户已转向别处时不抢占。组件测试覆盖连续两张卡到消息区域的路径；真实六服务回归在待批准请求跨 Bridge 正常重启后按 Enter 决定，断言卡片消失后焦点进入消息区域。服务内、Chromium 集成和六服务 Docker/Chromium E2E 均通过，临时容器已清理。
 
-生产容器容量 E2E 已补多身份全局预算场景：在 256 KiB 单 Session 上限、1 MiB 全局上限下，5 个不同身份分别保留约 128 KiB 的 Session 历史，第 6 个请求收到 `429 history_capacity_exceeded`，先前身份仍可读；重复 12 次的 320 KiB 单 Session 回放也均返回 429。随后官方 ACP HTTP fixture 对这些身份继续发送实时执行输出，一侧在序号 16 进入 HTTP 200 `view_limited`，另一身份的活动 View 保持可读。受限侧继续接收 24 条每条约 8 KiB 的更新，View 水位逐条推进，预览保持 4096 字符；受限前后容器采样为 58.9 与 60.7 MB。证据位于 `artifacts/verification/agent-ui-capacity-20260923/metrics.json`。此结果证明固定 fixture 输入下的拒绝、受限后持续消费与其他身份保留行为；真实 ACP Run 的受限态另由低预算六服务回归覆盖，慢网叠加及更长时间的回收曲线仍待验收。
+历史验收记录（已被 2026-09-25 对齐修订取代）：本段原来的拒绝/截断容量策略不再适用。原始私有测量保留在 `artifacts/verification/`，当前测试改为完整历史、多身份隔离、精确大项分页与空闲回收；本轮门禁状态见 [attyd 对齐修订](attyd-alignment-fixes.md)。
 
-同一生产容器容量 E2E 又验证预算回收：保持 16 个 owner 上限，在历史预算已拒绝新读取后，以 20 个新身份只读取 Agent View，逐出空闲 owner；随后新身份读取先前被容量限制的 Session 返回 200。原始指标中，驱逐前后 RSS 分别为 112.5 MB 和 118.1 MB，因此这项断言证明共享历史预算可再次分配，不证明进程 RSS 立即下降。带真实 Run 与慢客户端的长期内存回收仍需单独验收。
+历史记录（旧历史配额/预览机制已移除，以下仅为此前证据）：同一生产容器容量 E2E 又验证预算回收：保持 16 个 owner 上限，在历史预算已拒绝新读取后，以 20 个新身份只读取 Agent View，逐出空闲 owner；随后新身份读取先前被容量限制的 Session 返回 200。原始指标中，驱逐前后 RSS 分别为 112.5 MB 和 118.1 MB，因此这项断言证明共享历史预算可再次分配，不证明进程 RSS 立即下降。带真实 Run 与慢客户端的长期内存回收仍需单独验收。
 
 生产镜像又以 100 ms owner 空闲期、50 ms 扫描期执行同一 Session 的二次读取：第一次请求释放观察租约后，后续请求读到新的 incarnation，且历史仍可用。运行时新增 `ANTNEST_AGENT_UI_BRIDGE_IDLE_MS` 和 `ANTNEST_AGENT_UI_BRIDGE_SWEEP_INTERVAL_MS`，默认分别保持 5 分钟和 30 秒。该场景证明定时回收确实连到生产入口；是否释放了预期字节仍需堆与预算的更长时段测量。
 
-服务内新增两身份活动输出容量回归：两个正在执行的 Session 持续接收 ACP 输出，累积到全局预算后超额一侧进入 `view_limited`，另一身份的现有 View 仍可读；此时每个 Session 尚未触及自身 64 KiB 上限。该测试与现有慢观察者队列重置测试均通过；生产容器 fixture 另覆盖实时 ACP 通知，但还不能代替真实 Run 与慢网背压叠加实测。
+历史验收记录（已被 2026-09-25 对齐修订取代）：本段原来的拒绝/截断容量策略不再适用。原始私有测量保留在 `artifacts/verification/`，当前测试改为完整历史、多身份隔离、精确大项分页与空闲回收；本轮门禁状态见 [attyd 对齐修订](attyd-alignment-fixes.md)。
 
 根目录 HTTP 集成 fixture 又补充真实 Node socket 背压：一个 SSE 客户端暂停读取，另一个持续读取；发布 500 个约 16 KiB 的事件后，慢订阅者按队列上限重置，快订阅者仍收到最终事件，断开两端均释放订阅。`npm run test:bridge:integration` 的 5 项检查通过。这验证 Node 写流和订阅队列的组合；大量输出与真实 ACP Run 叠加时的生产容器长期内存曲线仍未测量。
 
@@ -408,7 +412,7 @@ B5 本地进度：Node 生产入口已对认证 `/workspace/` 返回 React 流�
 
 分页键盘回归发现：加载中的旧页按钮被禁用时 Chromium 会先把焦点退到 body；当最后一页替换掉按钮后，键盘用户失去导航位置。现在点击分页或“最新消息”时记录原焦点，待按钮确实离开 DOM 后将焦点交给可键盘操作的消息区域；若焦点已经转向其他控件则不抢占。组件测试先复现最后旧页与缺口关闭两种失焦，真实 Chromium fixture 复现了按钮禁用时的时序差异；修复后服务、生产浏览器和六服务 Docker/Chromium E2E 全部通过，后者覆盖最后旧页、向新页返回和跳至最新页三个实际动作。此为分页控件的焦点验收，不代替整个工作区的完整无障碍审计。
 
-活动输出超预算的共享契约已固定受限态形状：`limitedPreview` 最多 4096 字符且标记不完整，`turns` 为空，历史游标与发送条件为 null，运行和权限摘要仍必需；13 项契约检查通过。Node 生产者在**已成功封闭的活动回放**超出单 Session 或共享预算时清理完整历史、持续接收后续交付批次并发布受限 Session/Agent View 与 SSE；多 part 批次只在完整后推进水位，旧发送 token 被拒绝。未完成交付批次切换到摘要保存：原始更新只参与摘要校验，文本仅保留末尾 4096 字符，超过 16 MiB 的单条实时更新也能推进水位。冷加载超预算仍返回明确 429；已有封闭 View 的替换回放可在超预算时切为受限态，避免在真实 Run 期间退化为 429。浏览器收到受限 View 后丢弃旧历史、终止在途内容读取、显示不完整预览并禁用发送；真实 Chromium fixture 验证 SSE 切换与刷新恢复。独立低预算六服务 Docker/Chromium E2E 已用真实 Gateway、Identity、ACP、Controller、Runtime 和约 32 KiB 的模型回答触发受限态，验证浏览器与刷新后的展示、发送限制及模型只执行一次。官方 ACP HTTP 生产容器容量 E2E 还发送单条 17 MiB 的实时文本通知：受限 View 继续推进水位、预览仍为末尾 4096 字符。该输入下容器内存从 114.4 MB 瞬时升至 221.7 MB，空闲 10 秒后为 114.2 MB；原始值在 `artifacts/verification/agent-ui-capacity-20260923/metrics.json`。这说明原文没有长期留在受限投影，但单个巨大 SSE 帧的解析仍造成显著瞬时峰值，不能据此宣称任意大更新都有常量内存峰值；文本生产者分片后的真实链路与仍未受限的其他字段分别见下文。
+历史验收记录（已被 2026-09-25 对齐修订取代）：本段原来的拒绝/截断容量策略不再适用。原始私有测量保留在 `artifacts/verification/`，当前测试改为完整历史、多身份隔离、精确大项分页与空闲回收；本轮门禁状态见 [attyd 对齐修订](attyd-alignment-fixes.md)。
 
 ACP 生产者现对标准消息文本按最多 64 Ki UTF-16 码元分片，避开代理对的中间位置，并沿用原持久事件的交付序号。服务内官方 SDK 与真实 HTTP/SSE 测试验证了重组和完整的 part 标记；非文本块与工具输入等字段仍未获得统一的单帧上限；正常 Runtime 工具结果本身已有 64 KiB 截断约束。上述 17 MiB 容量 fixture 直接向 Bridge 发单帧，因此仍保留为未遵守生产者分片约束时的峰值证据。
 
@@ -416,11 +420,11 @@ Prompt 受理现先按实际 `session/prompt` JSON-RPC 包装（含 intent metad
 
 ACP 模型适配器的非流式响应过去直接 `response.json()`，缺少读取上限；现在按 4 MiB 字节数逐块读取并在超限时取消响应，和既有流式路径的 4 Mi 字符聚合限制对齐。服务内测试覆盖声明长度超限及无长度头的实际读取超限，828 项 ACP 单元测试与重新构建后的低预算六服务真实 Run 回归通过。这个约束限制模型来源的单次非流式输出，仍不代表所有 ACP 非文本事件已有统一的帧上限。
 
-低预算六服务 E2E 进一步保留一条暂停读取的 Gateway SSE 连接，同时让另一浏览器接收两个真实大输出 Run 的受限 View、终态和完整输出水位；第二个 Run 的模型文本约为 96 KiB，实际经过 ACP 生产者分片。最近一次 Bridge 容器采样从 159.5 MB 升至 167.7 MB，断开慢连接并空闲 10 秒后为 91.0 MB；私有原始值在 `artifacts/verification/agent-ui-limited-capacity/metrics.json`。这证明固定的两个 Run 没有被暂停连接阻塞，也没有在短时采样中持续保留峰值；它尚未把慢客户端推到队列重置阈值，不能替代更长时间、更多受限 Session 与大更新叠加的容量验收。
+历史记录（旧历史配额/预览机制已移除，以下仅为此前证据）：低预算六服务 E2E 进一步保留一条暂停读取的 Gateway SSE 连接，同时让另一浏览器接收两个真实大输出 Run 的受限 View、终态和完整输出水位；第二个 Run 的模型文本约为 96 KiB，实际经过 ACP 生产者分片。最近一次 Bridge 容器采样从 159.5 MB 升至 167.7 MB，断开慢连接并空闲 10 秒后为 91.0 MB；私有原始值在 `artifacts/verification/agent-ui-limited-capacity/metrics.json`。这证明固定的两个 Run 没有被暂停连接阻塞，也没有在短时采样中持续保留峰值；它尚未把慢客户端推到队列重置阈值，不能替代更长时间、更多受限 Session 与大更新叠加的容量验收。
 
 Node Bridge 现额外导出全局 SSE 订阅者数、journal 待发送队列字节和保留后缀字节的无身份 OTel gauge。计数从每个订阅者队列汇总到 owner 与 runtime，断开、重置和 drain 时释放；服务内测试覆盖慢观察者队列重置及 owner 释放。生产容器验收检查这三个指标被导出。它们让后续慢网容量运行能区分历史缓存和待发送队列的增长，尚未形成长期容量曲线。
 
-回放门槛也导出活动与排队 Session 回放数的无身份 gauge。服务内测试确认正在执行、等待、超额拒绝与结束后的数值，owner/runtime 聚合后由本地 Collector 核对，生产容器检查指标可用。冷 Session 首次回放另记录 `antnest.ui.bridge.cold_replay_duration` 直方图，从开始申请历史预算到回放成功或失败结束，包含排队与 ACP `session/load`，仅以 `success`/`error` 为标签，不记录身份；热读取不计入，失败后再次尝试另记一次。本地 Collector 测试验证两种结果，生产容器 E2E 验证真实冷读取导出成功样本。这个时长不包含随后执行状态核验与完整页面首屏，不能代替端到端冷启动指标。
+回放门槛也导出活动与排队 Session 回放数的无身份 gauge。服务内测试确认正在执行、等待、超额拒绝与结束后的数值，owner/runtime 聚合后由本地 Collector 核对，生产容器检查指标可用。冷 Session 首次回放另记录 `antnest.ui.bridge.cold_replay_duration` 直方图，从开始申请回放槽位到回放成功或失败结束，包含排队与 ACP `session/load`，仅以 `success`/`error` 为标签，不记录身份；热读取不计入，失败后再次尝试另记一次。本地 Collector 测试验证两种结果，生产容器 E2E 验证真实冷读取导出成功样本。这个时长不包含随后执行状态核验与完整页面首屏，不能代替端到端冷启动指标。
 
 Bridge 本地 operation 观测新增 `local_intent_reuse` 计数器，按 `hit`/`conflict` 区分同一实例内的重复 intent 与内容冲突；`uncertain_operations` 和 `oldest_uncertain_ms` gauge 汇总当前 owner 中仍未由 receipt 澄清的本地 operation。持续时间使用进程单调时钟，receipt 到达或 owner 退出即释放计数。状态转换、runtime 聚合和本地 Collector 测试已通过，生产容器确认 gauge 可导出。这些值不含用户、Agent、Session 或 intent 标签；本地命中计数不能代表 ACP 持久层去重，Bridge 重启前的 uncertain operation 也不在新进程的 gauge 中。ACP 持久意图复用计数另由生产镜像 Docker E2E 验证真实 OTLP/HTTP 导出：`hit` 与 `conflict` 各一个数据点，新增指标自身仅有 `result` 标签；此验收使用隔离的应用装饰器和本地 Collector，不代表完整跨服务崩溃场景。
 
@@ -436,7 +440,7 @@ Node HTTP/SSE 集成测试先执行至少一分钟的持续限速场景：12 轮
 
 三分钟容量档可用 `npm --prefix services/agent-ui/web run test:bridge:soak` 重现。Bridge 在慢观察者队列溢出后延迟构造 reset View，把尚未消费的多次 reset 合并到下一次实际读取；单元测试验证重置前不反复投影，读取时游标指向最新修订。生产容器 fixture 和包含双 Bridge 配置竞争的六服务 Docker/Chromium 回归曾在此优化后通过；本次加强了逐条发布检查并重跑本地扩展负载，未因此重跑那两组 Docker 用例。
 
-生产容器的官方 ACP HTTP fixture 进一步验证了真实 Node 网络栈的慢 SSE 背压：同一 Session 先交付带标题和更新时间的无水位 `session_info_update`，再连续交付 3000 个 8 KiB 文本更新，每次等待正常观察者看到新水位后再发下一次；另一观察者每 200 ms 最多读 1 KiB。正常观察者得到最终水位，慢观察者在预算溢出后跳过积压修订，本轮收到 950 个 reset 帧并恢复到最终水位。Session 转为受限 View 后仍保留 ACP 标题和更新时间。容器内存从约 77.1 MB 升至约 253.4 MB，两个观察者断开并空闲 10 秒后约 59.7 MB；固定负载的绝对峰值低于 384 MiB、断连后相对基线的保留增长低于 64 MiB。相对起点的峰值增长随 GC 时点变化，故不用它作为固定门槛。原始样本在 `artifacts/verification/agent-ui-capacity-20260923/metrics.json`。先前用 1600 次短更新、随后用 3000 次短更新均未形成 Bridge 背压，因为更新合并与 HTTP/TCP 缓冲吸收了积压；最终场景使用文本块才触发 reset。此测试接官方 ACP HTTP fixture，不包含真实 Runtime Run 或多机长期运行。
+历史记录（旧历史配额/预览机制已移除，以下仅为此前证据）：生产容器的官方 ACP HTTP fixture 进一步验证了真实 Node 网络栈的慢 SSE 背压：同一 Session 先交付带标题和更新时间的无水位 `session_info_update`，再连续交付 3000 个 8 KiB 文本更新，每次等待正常观察者看到新水位后再发下一次；另一观察者每 200 ms 最多读 1 KiB。正常观察者得到最终水位，慢观察者在预算溢出后跳过积压修订，本轮收到 950 个 reset 帧并恢复到最终水位。Session 转为受限 View 后仍保留 ACP 标题和更新时间。容器内存从约 77.1 MB 升至约 253.4 MB，两个观察者断开并空闲 10 秒后约 59.7 MB；固定负载的绝对峰值低于 384 MiB、断连后相对基线的保留增长低于 64 MiB。相对起点的峰值增长随 GC 时点变化，故不用它作为固定门槛。原始样本在 `artifacts/verification/agent-ui-capacity-20260923/metrics.json`。先前用 1600 次短更新、随后用 3000 次短更新均未形成 Bridge 背压，因为更新合并与 HTTP/TCP 缓冲吸收了积压；最终场景使用文本块才触发 reset。此测试接官方 ACP HTTP fixture，不包含真实 Runtime Run 或多机长期运行。
 
 旧元数据浏览器脚本的业务断言已迁至 HTTP/SSE：共享 Session View 契约要求可空标题与更新时间；Node 同时处理回放批次和 ACP 实际发送的无水位 `session_info_update` sideband，浏览器优先采用这些字段，并按服务器更新时间阻止迟到目录页或旧 View 回退标题。Chromium fixture 验证两个页面在 SSE 更新后与刷新后的标题、时间一致、刷新不重发 Prompt，以及音频能力拒绝后的可操作提示与编辑器恢复。真实六服务 Docker/Chromium 进一步验证 ACP 元数据、持久失败回执、刷新恢复及受控提供者未收到被拒音频。旧 Vite/WebSocket driver、fixture 和专属配置 profile 已退役；历史源码与原报告留在迁移归档，不作为当前协议的兼容门槛。
 
@@ -470,7 +474,7 @@ Gateway 部署恢复现纳入同一六服务 E2E：在真实 ACP Run 被模型�
 
 权限列表的实时播报也已收敛：原来 `aria-live="polite"` 包住整张权限卡，新请求可能连长篇工具输入 JSON 一起播报。现在整卡不再作为 live region，独立 `role="status"` 从空待办时就保持挂载；新请求只更新待办数量和最近请求的工具／会话标题，各标题压到最多 64 个 Unicode 字符。工具原始输入仍可在具名区域主动阅读。组件测试先以约 20 KB 原始输入复现缺失的简短播报，再验证空状态到新请求、数量和最近上下文更新；Chromium HTTP/SSE 检查原始输入不在 live region，真实六服务 Docker/Chromium 在 Bridge 重启后的权限页面验证生产构建。完整服务测试（89 项组件测试）、构建、浏览器 fixture 和整轮六服务回归通过，临时容器已清理；实际读屏器操作仍待验收。
 
-受限历史视图原先也把最近输出预览嵌在 `role="status"` 内，较长预览可能被整段播报。现将持续挂载的状态节点限制为简短告警，预览保留在可聚焦的具名区域供主动阅读。组件测试以约 20 KB 预览先复现问题，再检查空状态到受限状态的更新；Chromium HTTP/SSE fixture 和真实 Gateway/Identity/ACP Run 的 Docker/Chromium 回归均通过。回归过程中还修正了两个测试时序：浏览器 fixture 等待刷新后的 SSE 观察者接入，生产容器测试按当前轮 `outcome` 判断完成，不再把前一轮完成误作当前轮完成。完整服务测试、生产构建和上述浏览器回归通过，临时容器已清理；实际读屏器操作仍待验收。
+历史记录（旧历史配额/预览机制已移除，以下仅为此前证据）：受限历史视图原先也把最近输出预览嵌在 `role="status"` 内，较长预览可能被整段播报。现将持续挂载的状态节点限制为简短告警，预览保留在可聚焦的具名区域供主动阅读。组件测试以约 20 KB 预览先复现问题，再检查空状态到受限状态的更新；Chromium HTTP/SSE fixture 和真实 Gateway/Identity/ACP Run 的 Docker/Chromium 回归均通过。回归过程中还修正了两个测试时序：浏览器 fixture 等待刷新后的 SSE 观察者接入，生产容器测试按当前轮 `outcome` 判断完成，不再把前一轮完成误作当前轮完成。完整服务测试、生产构建和上述浏览器回归通过，临时容器已清理；实际读屏器操作仍待验收。
 
 复制结果的实时提示原先嵌在复制按钮内，按钮后代在无障碍树中可能被合并，导致“Copied”或失败重试反馈不可靠。现在保持按钮的“Copy response”动作名称不变，将持续挂载的 `role="status"` 移为按钮同级节点；文本变化时清空旧结果。组件测试先复现嵌套结构，再覆盖复制成功、失败及内容变更；Chromium HTTP/SSE fixture 和真实六服务 Docker/Chromium 均验证点击后的提示与剪贴板内容。完整服务测试（91 项组件测试）、生产构建及两轮浏览器回归通过，临时容器已清理；读屏器实际播报仍待人工验收。
 

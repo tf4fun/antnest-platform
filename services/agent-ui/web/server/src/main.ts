@@ -9,9 +9,6 @@ import { startBridgeTelemetry } from "./telemetry.ts";
 const config = parseServiceConfig(process.env);
 const telemetry = await startBridgeTelemetry(config.telemetry);
 const runtime = createWorkspaceRuntime({
-  maxSessionHistoryBytes: config.maxSessionHistoryBytes,
-  maxGlobalHistoryBytes: config.maxGlobalHistoryBytes,
-  maxCachedHistoryBytes: config.maxCachedHistoryBytes,
   maxOwners: config.maxOwners,
   recordColdReplay: telemetry.recordColdReplay,
   recordLocalIntentReuse: telemetry.recordLocalIntentReuse,

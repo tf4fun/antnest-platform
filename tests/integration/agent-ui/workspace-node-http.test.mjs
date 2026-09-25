@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { applyAgentDelta } from "../../../services/agent-ui/web/server/dist/protocol/agent-view-delta.js";
 import { test } from "node:test";
 import { once } from "node:events";
 import { readFileSync } from "node:fs";
@@ -38,6 +39,10 @@ const validateAgentView = new Ajv2020({
   $defs: viewSchema.$defs,
   $ref: "#/$defs/agentView",
 });
+const validateStreamEvent = new Ajv2020({ strict: true, validateFormats: false }).compile({
+  $schema: "https://json-schema.org/draft/2020-12/schema",
+  $defs: viewSchema.$defs, $ref: "#/$defs/streamEvent",
+});
 const validateProcess = new Ajv2020({
   strict: true,
   validateFormats: false,
@@ -53,6 +58,85 @@ const validateProcessContent = new Ajv2020({
   $schema: "https://json-schema.org/draft/2020-12/schema",
   $defs: viewSchema.$defs,
   $ref: "#/$defs/processContentPage",
+});
+
+test("Node HTTP and SSE expose a coalesced live tool update after skipped versions", async () => {
+  let publish;
+  let watermark = 0;
+  const runtime = createWorkspaceRuntime({ connect: async (_scope, callbacks) => {
+    publish = callbacks.update;
+    return {
+      async readAgentExecutionState() {
+        return { availability: "busy", activeSessionId: "session-1" };
+      },
+      async load() { return { cut: { sealedWatermark: 0, appendVersion: 1 } }; },
+      async readExecution(sessionId) {
+        return { sessionId, appendVersion: 1, outputWatermark: watermark,
+          activeRunId: "run-1", recentReceipts: [{ intentId: "intent-1", sessionId,
+            runId: "run-1", phase: "running", appendVersion: 1,
+            outputWatermark: watermark, stopReason: null }], configurationRevision: null };
+      },
+      async readIntent() { return { kind: "unknown" }; },
+      async prompt() { return { stopReason: "end_turn" }; },
+      async cancel() {}, close() {},
+    };
+  } });
+  const server = createWorkspaceHttpServer(runtime);
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const abort = new AbortController();
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address !== "string");
+    const base = `http://127.0.0.1:${address.port}/api/app/workspace/v1/agents/agent-1`;
+    const headers = { "x-antnest-organization-id": "org-1",
+      "x-antnest-principal-id": "user-1", "x-antnest-agent-id": "agent-1" };
+    const selected = `${base}/view?sessionId=session-1`;
+    assert.equal((await fetch(selected, { headers })).status, 200);
+    for (const [index, title] of ["Started", "Halfway", "Done"].entries()) {
+      watermark = index + 1;
+      await publish({ sessionId: "session-1", update: {
+        sessionUpdate: index === 0 ? "tool_call" : "tool_call_update",
+        toolCallId: "tool-1", title,
+        status: index === 2 ? "completed" : "in_progress",
+      }, _meta: { "antnest.dev/delivery": {
+        kind: "part", sequence: watermark, partIndex: 0, partCount: 1,
+        runId: "run-1", messageId: `event-${watermark}` } } });
+      if (index === 0) {
+        const firstView = await (await fetch(selected, { headers })).json();
+        assert.equal(firstView.selectedView.turns[0]?.outcome, "running");
+      }
+    }
+    const viewResponse = await fetch(selected, { headers });
+    assert.equal(viewResponse.status, 200);
+    const view = await viewResponse.json();
+    assert.equal(validateAgentView(view), true, JSON.stringify(validateAgentView.errors));
+    const turn = view.selectedView.turns.find((item) => item.turnId === "run-1");
+    assert.equal(turn.outcome, "running");
+    assert.equal(turn.processVersion, 3);
+    assert.equal(turn.liveProcessDelta?.fromVersion, 0);
+    assert.equal(turn.liveProcessDelta?.items[0]?.item.summary, "Done");
+    const streamResponse = await fetch(`${base}/events?sessionId=session-1`, {
+      headers, signal: AbortSignal.any([abort.signal, AbortSignal.timeout(5_000)]),
+    });
+    assert.equal(streamResponse.status, 200);
+    const reader = streamResponse.body.getReader();
+    const first = await reader.read();
+    assert.equal(first.done, false);
+    const frame = new TextDecoder().decode(first.value);
+    const event = JSON.parse(frame.match(/data: (.+)/u)?.[1] ?? "null");
+    assert.equal(validateStreamEvent(event), true, JSON.stringify(validateStreamEvent.errors));
+    assert.equal(event.view?.selectedView?.turns.find(
+      (item) => item.turnId === "run-1")?.liveProcessDelta?.fromVersion, 0);
+    abort.abort();
+    await reader.cancel().catch(() => {});
+  } finally {
+    abort.abort();
+    server.closeAllConnections();
+    server.close();
+    await once(server, "close");
+    await runtime.drain(1_000);
+  }
 });
 
 test("closing an in-flight SSR response leaves an accepted ACP Run independent", async () => {
@@ -80,7 +164,7 @@ test("closing an in-flight SSR response leaves an accepted ACP Run independent",
           sessionId,
           appendVersion: 1,
           outputWatermark: 0,
-          activeRunId: receipt?.runId ?? null,
+          activeRunId: receipt?.phase === "running" ? receipt.runId : null,
           recentReceipts: receipt ? [receipt] : [],
           configurationRevision: null,
         };
@@ -147,7 +231,8 @@ test("closing an in-flight SSR response leaves an accepted ACP Run independent",
     });
     assert.equal(accepted.status, 202);
     await promptStarted;
-    assert.equal(runtime.metrics().heldWork, 1);
+    const workBeforeDocument = runtime.metrics().heldWork;
+    assert.ok(workBeforeDocument > 0);
     const response = await new Promise((resolve, reject) => {
       get(
         `${origin}/workspace/?agent=agent-1&session=session-1`,
@@ -164,7 +249,7 @@ test("closing an in-flight SSR response leaves an accepted ACP Run independent",
     await documentClosed;
     assert.equal(
       runtime.metrics().heldWork,
-      1,
+      workBeforeDocument,
       "Closing the HTML stream must not release the accepted Prompt",
     );
     const operation = await fetch(`${origin}${path}/operations/intent-held`, {
@@ -174,6 +259,9 @@ test("closing an in-flight SSR response leaves an accepted ACP Run independent",
     assert.equal((await operation.json()).phase, "running");
     assert.equal(promptCalls, 1);
     finishPrompt();
+    await new Promise((resolve) => setImmediate(resolve));
+    await runtime.sweep();
+    assert.equal(runtime.metrics().heldWork, 0, "Terminal work releases both execution holds");
   } finally {
     finishPrompt();
     server.closeAllConnections();
@@ -621,7 +709,49 @@ test("Node HTTP entry accepts prompt without waiting for ACP completion and supp
   }
 });
 
-test("Node HTTP SSE flushes headers, delivers a live reset and releases a disconnected observer", async () => {
+test("one HTTP selection survives a transient cold replay failure", async () => {
+  let loads = 0;
+  const runtime = createWorkspaceRuntime({ connect: async () => ({
+    async readAgentExecutionState() {
+      return { availability: "ready", activeSessionId: null };
+    },
+    async load() {
+      if (loads++ === 0) throw new Error("temporary ACP load failure");
+      return { cut: { sealedWatermark: 0, appendVersion: 1 } };
+    },
+    async readExecution(sessionId) {
+      return { sessionId, appendVersion: 1, outputWatermark: 0,
+        activeRunId: null, recentReceipts: [], configurationRevision: null };
+    },
+    async readIntent() { return { kind: "unknown" }; },
+    async prompt() { return { stopReason: "end_turn" }; },
+    async cancel() {}, close() {},
+  }) });
+  const server = createWorkspaceHttpServer(runtime);
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address !== "string");
+    const response = await fetch(
+      `http://127.0.0.1:${address.port}/api/app/workspace/v1/agents/agent-1/view?sessionId=session-1`,
+      { headers: { "x-antnest-organization-id": "org-1",
+        "x-antnest-principal-id": "user-1", "x-antnest-agent-id": "agent-1" } },
+    );
+    const view = await response.json();
+    assert.equal(response.status, 200, JSON.stringify(view));
+    assert.equal(validateAgentView(view), true, JSON.stringify(validateAgentView.errors));
+    assert.equal(view.selectedView.historyState, "ready");
+    assert.equal(loads, 2);
+    assert.deepEqual(await runtime.drain(1_000), { forced: false });
+  } finally {
+    server.closeAllConnections();
+    server.close();
+    await once(server, "close");
+  }
+});
+
+test("Node HTTP SSE flushes headers, delivers a live delta and releases a disconnected observer", async () => {
   let update;
   let requestPermission;
   let closes = 0;
@@ -710,14 +840,17 @@ test("Node HTTP SSE flushes headers, delivers a live reset and releases a discon
     });
     const chunk = await reader.read();
     const frame = new TextDecoder().decode(chunk.value);
-    assert.match(frame, /event: reset/u);
+    assert.match(frame, /event: delta/u);
     const event = JSON.parse(frame.match(/data: (.+)/u)?.[1] ?? "null");
+    assert.equal(validateStreamEvent(event), true, JSON.stringify(validateStreamEvent.errors));
+    const updatedView = applyAgentDelta(view, event);
+    assert.ok(updatedView);
     assert.equal(
-      event.view.selectedView.turns[0]?.finalResponse[0]?.text,
+      updatedView.selectedView.turns[0]?.finalResponse[0]?.text,
       "hello SSE",
     );
     assert.equal(
-      validateAgentView(event.view),
+      validateAgentView(updatedView),
       true,
       JSON.stringify(validateAgentView.errors),
     );
@@ -753,6 +886,7 @@ test("Node HTTP SSE flushes headers, delivers a live reset and releases a discon
     assert.ok(Buffer.byteLength(JSON.stringify(process)) <= 262144);
     const tool = process.items.find((item) => item.kind === "tool");
     assert.ok(tool);
+    assert.deepEqual(tool.toolSections, { inputIndex: 0, detailStartIndex: 1 });
     let processCursor = tool.contentCursor;
     assert.ok(processCursor);
     const processItemId = tool.id;

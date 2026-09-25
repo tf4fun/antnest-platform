@@ -3,7 +3,8 @@ import { test } from "node:test";
 import { CompactTranscript } from "../src/bridge/compact-transcript.ts";
 import { ViewPager } from "../src/bridge/view-pager.ts";
 import { createHistoryHandler } from "../src/http/history-routes.ts";
-import { HistoryCapacityError } from "../src/bridge/compact-transcript.ts";
+import { ReplayCapacityError } from "../src/bridge/replay-load-gate.ts";
+import { SessionNotFoundError } from "../src/adapters/acp-http.ts";
 
 const scope = {
   organizationId: "org-1",
@@ -17,6 +18,15 @@ const headers = {
   "x-antnest-principal-id": scope.principalId,
   "x-antnest-agent-id": scope.agentId,
 };
+
+test("missing Session history returns permanent absence", async () => {
+  const handler = createHistoryHandler({
+    async authorize() { throw new SessionNotFoundError(); },
+  });
+  const response = await handler(new Request(base, { headers }));
+  assert.equal(response?.status, 404);
+  assert.equal((await response?.json()).code, "session_not_found");
+});
 
 function fixture() {
   const transcript = new CompactTranscript();
@@ -112,15 +122,15 @@ test("foreign Agent header and absent trusted identity cannot read a cached page
   assert.deepEqual(counts(), { authorizations: 0, releases: 0 });
 });
 
-test("history capacity failure has an explicit recoverable code", async () => {
+test("replay capacity failure has an explicit recoverable code", async () => {
   const handler = createHistoryHandler({
     async authorize() {
-      throw new HistoryCapacityError();
+      throw new ReplayCapacityError();
     },
   });
   const response = await handler(new Request(base, { headers }));
   assert.equal(response?.status, 429);
-  assert.equal((await response?.json()).code, "history_capacity_exceeded");
+  assert.equal((await response?.json()).code, "replay_capacity_exceeded");
 });
 
 test("process HTTP pages reauthorize and bind content cursors to the path item", async () => {

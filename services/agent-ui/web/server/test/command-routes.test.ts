@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { HistoryTokens } from "../src/bridge/history-token.ts";
 import { createCommandHandler } from "../src/http/command-routes.ts";
-import { HistoryCapacityError } from "../src/bridge/compact-transcript.ts";
+import { ReplayCapacityError } from "../src/bridge/replay-load-gate.ts";
+import { SessionNotFoundError } from "../src/adapters/acp-http.ts";
 
 const scope = {
   organizationId: "org-1",
@@ -92,6 +93,15 @@ function request(
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
 }
+
+test("missing Session operation read returns permanent absence", async () => {
+  const handler = createCommandHandler({ tokens,
+    async authorize() { throw new SessionNotFoundError(); },
+  });
+  const response = await handler(request("/operations/intent-1"));
+  assert.equal(response?.status, 404);
+  assert.equal((await response?.json()).code, "session_not_found");
+});
 
 test("prompt accepts a current history condition and stable idempotency key", async () => {
   const { handler, calls } = fixture();
@@ -234,11 +244,11 @@ test("oversized declared bodies and invalid UTF-8 fail before dispatch", async (
   assert.equal(calls.includes("submit:intent-1"), false);
 });
 
-test("prompt admission reports exhausted history capacity explicitly", async () => {
+test("prompt admission reports exhausted replay capacity explicitly", async () => {
   const handler = createCommandHandler({
     tokens,
     async authorize() {
-      throw new HistoryCapacityError();
+      throw new ReplayCapacityError();
     },
   });
   const response = await handler(
@@ -248,5 +258,5 @@ test("prompt admission reports exhausted history capacity explicitly", async () 
     }),
   );
   assert.equal(response?.status, 429);
-  assert.equal((await response?.json()).code, "history_capacity_exceeded");
+  assert.equal((await response?.json()).code, "replay_capacity_exceeded");
 });

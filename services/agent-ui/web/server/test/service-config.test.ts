@@ -13,9 +13,6 @@ test("Bridge service requires an internal ACP base and a valid listen port", () 
       controllerBaseUrl: undefined,
       host: "0.0.0.0",
       port: 8080,
-      maxSessionHistoryBytes: 64 * 1024 * 1024,
-      maxCachedHistoryBytes: 256 * 1024 * 1024,
-      maxGlobalHistoryBytes: 512 * 1024 * 1024,
       maxOwners: 16,
       maxAcpPromptBytes: 16 * 1024 * 1024,
       idleMs: 300_000,
@@ -48,15 +45,6 @@ test("Bridge service requires an internal ACP base and a valid listen port", () 
       }),
     /listen port/i,
   );
-  assert.throws(
-    () =>
-      parseServiceConfig({
-        ANTNEST_AGENT_ACP_SERVICE_URL: "http://agent-acp-service:8080",
-        ANTNEST_AGENT_UI_BRIDGE_SESSION_HISTORY_BYTES: "1048576",
-        ANTNEST_AGENT_UI_BRIDGE_CACHE_BYTES: "1048576",
-      }),
-    /cache budget/i,
-  );
   assert.equal(parseServiceConfig({
     ANTNEST_AGENT_ACP_SERVICE_URL: "http://agent-acp-service:8080",
     ANTNEST_AGENT_CONTROLLER_URL: "http://agent-controller:8080",
@@ -65,10 +53,6 @@ test("Bridge service requires an internal ACP base and a valid listen port", () 
     ANTNEST_AGENT_ACP_SERVICE_URL: "http://agent-acp-service:8080",
     ANTNEST_AGENT_CONTROLLER_URL: "http://user:pass@agent-controller:8080",
   }), /Controller service URL/i);
-  assert.throws(() => parseServiceConfig({
-    ANTNEST_AGENT_ACP_SERVICE_URL: "http://agent-acp-service:8080",
-    ANTNEST_AGENT_UI_BRIDGE_TOTAL_HISTORY_BYTES: "67108864",
-  }), /total history budget/i);
   assert.deepEqual((({ idleMs, sweepIntervalMs }) => ({ idleMs, sweepIntervalMs }))(
     parseServiceConfig({
       ANTNEST_AGENT_ACP_SERVICE_URL: "http://agent-acp-service:8080",

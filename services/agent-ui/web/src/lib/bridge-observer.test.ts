@@ -6,7 +6,10 @@ const initial = {
   agentId: "agent-1", bridgeEpoch: "epoch-1", availability: "ready",
   promptCapabilities: { image: true },
   activeSessionId: null, selectedSessionId: "session-1",
-  selectedView: { sessionId: "session-1", bridgeEpoch: "epoch-1" },
+  selectedView: { sessionId: "session-1", agentId: "agent-1", bridgeEpoch: "epoch-1",
+    incarnation: "incarnation", viewRevision: 1, title: null, updatedAt: null,
+    appendVersion: 1, outputWatermark: 1, historyState: "ready", historyToken: "history",
+    streamCursor: "session-cut", turns: [], olderTurnsCursor: null, operations: [], permissions: [] },
   operations: [], permissions: [], streamCursor: "cut-1",
 };
 
@@ -74,7 +77,7 @@ test("observer closes a stale stream and requests a fresh cut on revision gap", 
   source?.emit("reset", { type: "reset", agentId: "agent-1", bridgeEpoch: "epoch-1",
     projectionId: "projection-1", fromStreamRevision: 0, toStreamRevision: 1,
     cursor: "cut-2", view: { ...initial, streamCursor: "cut-2" } });
-  source?.emit("operation", { type: "operation", agentId: "agent-1", bridgeEpoch: "epoch-1",
+  source?.emit("delta", { type: "delta", agentId: "agent-1", bridgeEpoch: "epoch-1",
     projectionId: "projection-1", fromStreamRevision: 4, toStreamRevision: 5,
     cursor: "cut-5", operation: {} });
   assert.equal(resyncs, 1);

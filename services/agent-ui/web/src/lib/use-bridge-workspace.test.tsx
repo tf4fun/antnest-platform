@@ -1,8 +1,66 @@
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { useBridgeWorkspace } from "./use-bridge-workspace";
+import { WorkspaceApiError } from "./workspace-api-client";
 
 afterEach(cleanup);
+
+test("leaving a Session releases completed process from published workspace history", async () => {
+  window.history.replaceState(null, "", "/workspace/?agent=agent-1&session=session-1");
+  let changed!: (snapshot: unknown) => void;
+  const api = { bootstrap: async () => ({
+    principal: { userId: "user-1", organizationId: "org-1", administrator: false },
+    agents: [{ agentId: "agent-1", name: "Agent", lifecycle: "created",
+      activation: "enabled", runtime: "available" }],
+    renderedAt: "2026-09-25T00:00:00Z", bridgeEpoch: "epoch-1",
+  }), sessions: async () => ({ items: [], nextCursor: null }) };
+  const conversation = { id: "session-1", agentId: "agent-1", title: "Saved",
+    updatedAt: "now", messages: [
+      { id: "turn-1:prompt", role: "user", content: "Question", turnId: "turn-1",
+        turnOutcome: "completed", processCount: 1, processLoaded: true },
+      { id: "turn-1:process:tool-1", role: "tool", content: "large process body" },
+      { id: "turn-1:answer", role: "assistant", content: "Answer" },
+    ] };
+  const snapshot = { connection: "ready", view: { agentId: "agent-1",
+    bridgeEpoch: "epoch-1", availability: "ready", activeSessionId: null,
+    selectedSessionId: "session-1", selectedView: { historyState: "ready" } },
+    operations: [], permissions: [], conversation };
+  const { result } = renderHook(() => useBridgeWorkspace({ api: api as never,
+    makeController: (input) => {
+      changed = input.changed as (snapshot: unknown) => void;
+      return { snapshot, select: async () => { changed(snapshot); }, close: vi.fn() } as never;
+    },
+  }));
+  await waitFor(() => expect(result.current.activeConversation?.messages)
+    .toHaveLength(3));
+  act(() => result.current.selectConversation("session-2"));
+  expect(result.current.workspace?.conversations.find((item) => item.id === "session-1")
+    ?.messages.map((item) => item.id)).toEqual(["turn-1:prompt", "turn-1:answer"]);
+  act(() => changed(snapshot));
+  expect(result.current.workspace?.conversations.find((item) => item.id === "session-1")
+    ?.messages.map((item) => item.id)).toEqual(["turn-1:prompt", "turn-1:answer"]);
+});
+
+test("a missing Session deep link returns to the Agent directory", async () => {
+  window.history.replaceState(null, "", "/workspace/?agent=agent-1&session=gone");
+  const bootstrap = async () => ({
+    principal: { userId: "user-1", organizationId: "org-1", administrator: false },
+    agents: [{ agentId: "agent-1", name: "Agent", lifecycle: "created",
+      activation: "enabled", runtime: "available" }],
+    renderedAt: "2026-09-25T00:00:00Z", bridgeEpoch: "epoch-1",
+  });
+  const { result } = renderHook(() => useBridgeWorkspace({
+    api: { bootstrap, sessions: async () => ({ items: [], nextCursor: null }) } as never,
+    makeController: () => ({ select: async (sessionId: string | null) => {
+      if (sessionId === "gone") throw new WorkspaceApiError("Session not found", 404,
+        "session_not_found", "none");
+    }, close: vi.fn(), snapshot: { connection: "offline", view: null,
+      operations: [], permissions: [] } }) as never,
+  }));
+  await waitFor(() => expect(result.current.workspace?.activeConversationId).toBeNull());
+  expect(result.current.workspace?.activeAgentId).toBe("agent-1");
+  expect(window.location.search).toBe("?agent=agent-1");
+});
 
 test("Bridge workspace bootstraps through HTTP and observes the selected Agent", async () => {
   window.history.replaceState(null, "", "/workspace/?agent=agent-1");

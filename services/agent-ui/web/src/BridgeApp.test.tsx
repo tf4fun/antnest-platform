@@ -42,13 +42,13 @@ test("Bridge page opens existing Session through HTTP and SSE without a browser 
       selectedSessionId: "session-1", streamCursor: "cursor-1",
       operations: [], permissions: [],
       selectedView: { agentId: "agent-1", sessionId: "session-1", bridgeEpoch: "epoch-1",
-        incarnation: "incarnation-1", viewRevision: 1, historyState: "ready",
+        incarnation: "incarnation-1", viewRevision: 1, historyState: "ready", title: null, updatedAt: null,
         appendVersion: 1, historyToken: "token-1", outputWatermark: 1,
         streamCursor: "session-cursor-1", operations: [], permissions: [],
         configOptions: [], configurationToken: null, usage: null,
         turns: [{ turnId: "turn-1", outcome: "completed",
           prompt: [{ type: "text", text: "Question" }],
-          finalResponse: [{ type: "text", text: "Answer" }], contentCursor: null,
+          finalResponse: [{ type: "text", text: "Answer" }], contentCursor: null, contentSection: null,
           processVersion: 0, processCount: 0 }], olderTurnsCursor: null },
     });
     if (url.endsWith("/sessions/session-1/prompts")) {
@@ -83,32 +83,16 @@ test("Bridge page opens existing Session through HTTP and SSE without a browser 
     turns: [{ turnId: "turn-1", outcome: "completed",
       prompt: [{ type: "text", text: "Question" }],
       finalResponse: [{ type: "text", text: "Answer finished" }],
-      contentCursor: null, processVersion: 0, processCount: 0 }],
+      contentCursor: null, contentSection: null, processVersion: 0, processCount: 0 }],
   };
   source.emit("reset", { type: "reset", agentId: "agent-1", bridgeEpoch: "epoch-1",
     projectionId: "projection-1", fromStreamRevision: 0, toStreamRevision: 1,
     cursor: "cursor-2", view: completedView });
   expect(await screen.findByText("Answer finished")).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Stop operation" })).toBeNull();
-  const limitedView = structuredClone(completedView);
-  limitedView.streamCursor = "cursor-3";
-  limitedView.selectedView = {
-    ...(limitedView.selectedView as Record<string, unknown>), viewRevision: 3,
-    historyState: "view_limited", historyToken: null, outputWatermark: 3,
-    turns: [], olderTurnsCursor: null,
-    limitedPreview: { text: "recent output only", truncated: true },
-  };
-  source.emit("reset", { type: "reset", agentId: "agent-1", bridgeEpoch: "epoch-1",
-    projectionId: "projection-1", fromStreamRevision: 1, toStreamRevision: 2,
-    cursor: "cursor-3", view: limitedView });
-  expect(await screen.findByRole("status", { name: "History limited" })).toBeTruthy();
-  expect(screen.getByText("recent output only")).toBeTruthy();
-  expect(screen.queryByText("Answer finished")).toBeNull();
-  expect(screen.getByRole("button", { name: "Send message" })).toHaveProperty("disabled", true);
-  expect(prompts).toHaveLength(1);
   source.emit("access_revoked", { type: "access_revoked", agentId: "agent-1",
     bridgeEpoch: "epoch-1", projectionId: "projection-1",
-    fromStreamRevision: 2, toStreamRevision: 3, cursor: "cursor-4" });
+    fromStreamRevision: 1, toStreamRevision: 2, cursor: "cursor-3" });
   expect(await screen.findByText("No Agent available")).toBeTruthy();
   expect(screen.queryByText("Answer finished")).toBeNull();
 });
