@@ -637,7 +637,7 @@ describe("ACP v1 agent mapping", () => {
   it("forwards a conditional configuration revision through the official SDK request", async () => {
     const setSessionConfiguration = vi.fn<
       AcpApplicationPort["setSessionConfiguration"]
-    >(async () => sessionConfigurationView());
+    >(() => Promise.resolve(sessionConfigurationView()));
     const application = createApplication({ setSessionConfiguration });
     const agent = createAcpV1Agent({
       binding,

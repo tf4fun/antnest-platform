@@ -1,5 +1,10 @@
 # Stage 3 current-service closeout boundary
 
+The later [2026-09-26 final candidate acceptance](stage3-final-acceptance-20260926.md)
+adds the completed Agent UI C4 browser validation and serial cross-service
+regression for the current service images. It preserves this closeout's
+clock-warning exception and the original strict Trace failures.
+
 Decision: 2026-09-23. **The implemented single-node service scope is accepted
 for Stage 3 with the recorded clock-warning exception.** This is an acceptance
 decision about reviewed evidence, not a change to Jaeger data or the strict

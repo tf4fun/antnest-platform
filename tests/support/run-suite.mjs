@@ -12,6 +12,12 @@ import {
 } from "./verification/environment.mjs";
 
 function businessFailure(log) {
+  if (
+    log.includes(
+      "Foundation business/topology failed; diagnostics retained privately",
+    )
+  )
+    return true;
   for (const match of log.matchAll(/(?:^|\n)\{/g)) {
     const start = match.index + (match[0].startsWith("\n") ? 1 : 0);
     let depth = 0,

@@ -231,7 +231,11 @@ describe.skipIf(databaseUrl === undefined)(
         events: [
           {
             kind: "user_message",
-            delivery: { sequence: 1, runId, messageId: expect.any(String) },
+            delivery: {
+              sequence: 1,
+              runId,
+              messageId: expect.any(String) as string,
+            },
           },
         ],
       });

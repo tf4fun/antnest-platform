@@ -1,5 +1,9 @@
 # Historical Workspace browser acceptance migration
 
+Superseded on 2026-09-25 by the Agent UI Node Bridge C4 HTTP/SSE browser
+profile. The `browser-run.mjs` entry now invokes C4; this report describes
+the earlier ACP WebSocket candidate only.
+
 Date: 2026-09-21. Acceptance assets only. The former manual `browser-run.mjs`
 entry now runs repeatable Chromium acceptance through `make e2e-workspace-browser`.
 The [contract](../tests/e2e/workspace-closeout/browser-migration-contract.md) keeps

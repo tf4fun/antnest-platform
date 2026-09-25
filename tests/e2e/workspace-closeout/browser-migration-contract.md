@@ -1,5 +1,9 @@
 # Historical browser acceptance migration
 
+Superseded on 2026-09-25 by the Node Bridge C4 HTTP/SSE browser profile.
+The former `browser-run.mjs` entry now invokes C4; the contract below is
+preserved as historical migration evidence.
+
 The former `browser-run.mjs` manual finish loop becomes a repeatable Chromium
 profile, `make e2e-workspace-browser`. Preserve the existing manual-control/model
 assets until final consumer cleanup. This batch owns acceptance scripts only.

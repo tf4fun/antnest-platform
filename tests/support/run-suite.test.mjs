@@ -66,6 +66,32 @@ test("an accepted Make exit cannot hide a multiline business failure", async (t)
   assert.equal(result.reason, "business-failure");
 });
 
+test("an accepted strict exit cannot hide a Foundation browser failure", async (t) => {
+  const output = mkdtempSync(join(tmpdir(), "antnest-suite-foundation-"));
+  t.after(() => rmSync(output, { recursive: true, force: true }));
+  const result = await runSuite({
+    output,
+    manifest: [
+      {
+        name: "foundation",
+        command: [
+          process.execPath,
+          "-e",
+          'console.error("Foundation business/topology failed; diagnostics retained privately");process.exit(2)',
+        ],
+        accepted_exits: [0, 2],
+      },
+      {
+        name: "must-not-run",
+        command: [process.execPath, "-e", "process.exit()"],
+      },
+    ],
+  });
+  assert.equal(result.complete, false);
+  assert.equal(result.reason, "business-failure");
+  assert.equal(result.results.length, 1);
+});
+
 test("a business failure still records the required environment cleanup check", async (t) => {
   const output = mkdtempSync(join(tmpdir(), "antnest-suite-failed-cleanup-"));
   t.after(() => rmSync(output, { recursive: true, force: true }));

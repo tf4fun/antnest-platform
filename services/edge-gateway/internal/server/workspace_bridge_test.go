@@ -112,7 +112,7 @@ func TestWorkspaceBridgeEventsFlushAndRevalidateBrowserSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK || response.Header.Get("Content-Type") != "text/event-stream" || response.Header.Get("X-Accel-Buffering") != "no" {
 		t.Fatalf("SSE response status=%d headers=%v", response.StatusCode, response.Header)
 	}

@@ -1,9 +1,13 @@
 # Current Implementation And Acceptance
 
-The 2026-09-25 Agent UI candidate and its remaining Stage 3 final admission
-checks are tracked in the [pre-acceptance checkpoint](stage3-final-preacceptance-20260925.md).
+The 2026-09-26 [Stage 3 final acceptance](stage3-final-acceptance-20260926.md)
+records the current single-node service candidate passing business and
+applicable topology gates with the reviewed clock-warning exception. The
+original strict Trace exits remain nonzero. The earlier
+[pre-acceptance checkpoint](stage3-final-preacceptance-20260925.md) is retained
+as history.
 
-Updated: 2026-09-24. Agent UI now runs as one Node full-stack development
+Agent UI implementation checkpoint (2026-09-24): it runs as one Node full-stack development
 service: Gateway-authenticated HTML, business HTTP/SSE, a server-owned ACP
 Bridge and request-scoped React SSR. Service, contract, Chromium and isolated
 six-service Docker regressions pass, including an 80-Run fixed load, Bridge and

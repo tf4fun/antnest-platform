@@ -1,4 +1,3 @@
-import { fileURLToPath } from "node:url";
-import { runFoundation } from "../lifecycle-closeout/foundation-run.mjs";
-process.chdir(fileURLToPath(new URL("../../../", import.meta.url)));
-await runFoundation("workspace-browser");
+// The Node Bridge C4 profile supersedes the ACP WebSocket browser fixture.
+// Keep the historical entry name for callers that invoke the workspace gate.
+await import("./c4-run.mjs");

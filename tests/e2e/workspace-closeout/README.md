@@ -75,41 +75,18 @@ the official ACP SDK and a deterministic OpenAI-compatible model peer. The model
 is the only synthetic business dependency; it requests real Runtime tools.
 No production/provider credential or retained acceptance project is used.
 
-## Migrated historical browser profile
+## Former Workspace browser entry
 
-`make e2e-workspace-browser` (or `node tests/e2e/workspace-closeout/browser-run.mjs`)
-now runs the old four manual scenarios automatically in Chromium. It uses the
-current Foundation deployment, a vision-capable Provider Model and immutable
-Template revision/image. See the [migration contract](browser-migration-contract.md)
-and [revalidation report](../../../docs/workspace-browser-revalidation.md).
-Run `make test-workspace-fixtures` first; Chromium must already be installed in
-the Agent UI Playwright environment. The run has a fifteen-minute deadline.
-
-The real browser signs in, appends/reads the synthetic workspace note, checks
-collapsed Tool activity and expanded output, uploads exact text/image bytes,
-rejects an unsupported file, reloads the same Session without duplicated answers
-or attachments, and creates a distinct mobile conversation. Mobile assertions
-cover overflow, readable text and 44px touch controls. It compares public Run/event
-history and the model ledger before/after replay, and verifies real Runtime bytes.
-
-Browser connection identities come from actual Chromium WebSocket handshake
-response headers. Individual new/load/prompt requests retain their JSON-RPC IDs;
-all four Runs and replay requests receive full ancestry/privacy checks. Exact
-Provider calls and Runtime process binding are verified. Browser closure and
-normal service flush precede trace collection; strict errors/warnings remain
-failures. Exit 1 means business/topology failure; exit 2 retains strict failure.
-
-Private reports, traces and desktop/mobile screenshots are under
-`artifacts/verification/lifecycle-workspace-browser/<project>/`. The runner deletes the Agent,
-workspace and all owned Docker resources. It requires no human `finish` input,
-real credentials, retained stack changes or user upload files. The old manual
-`waitForFinish` export and its exclusive tests are [retired](../../../docs/browser-finish-retirement.md).
-`browser-control.mjs` retains the exact workspace-byte validator used by both
-browser profiles, including its private-content diagnostic check.
-
-This supplements the broader current C4 browser profile above. It does not
-replace that profile's cancellation, approval, rebuild, revocation and metadata
-checks or the real-provider development profile below.
+`make e2e-workspace-browser` and `browser-run.mjs` now invoke the current C4
+HTTP/SSE browser profile above. The four-scenario ACP WebSocket driver was
+superseded by the Node Bridge UI: it waited for a composer immediately after
+Agent selection and captured JSON-RPC browser frames that the current UI no
+longer sends. The 2026-09-21 [migration contract](browser-migration-contract.md)
+and [revalidation report](../../../docs/workspace-browser-revalidation.md)
+remain historical evidence for that earlier candidate. The failed old-driver
+run and successful current C4 run on 2026-09-25 are retained under
+`artifacts/verification/final-regression-20260925/`.
+The shared exact workspace-byte validator remains active in C4.
 
 ## Real Provider Development Acceptance
 
