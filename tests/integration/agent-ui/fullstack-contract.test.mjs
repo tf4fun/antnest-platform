@@ -43,73 +43,129 @@ test("Agent view keeps operation state visible without a selected Session", () =
     activeSessionId: "session-2",
     selectedSessionId: null,
     selectedView: null,
-    operations: [{
-      operationId: "intent-2",
-      sessionId: "session-2",
-      phase: "running",
-      acceptance: "acp",
-      runId: "run-2",
-      outputWatermark: 4,
-    }],
+    operations: [
+      {
+        operationId: "intent-2",
+        sessionId: "session-2",
+        phase: "running",
+        acceptance: "acp",
+        runId: "run-2",
+        outputWatermark: 4,
+      },
+    ],
     permissions: [],
     streamCursor: "opaque",
   };
   assert.equal(view(agentView), true, JSON.stringify(view.errors));
   assert.equal(view({ ...agentView, activeSessionId: 42 }), false);
-  assert.equal(view({ ...agentView, promptCapabilities: { image: true, secret: "x" } }), false);
+  assert.equal(
+    view({ ...agentView, promptCapabilities: { image: true, secret: "x" } }),
+    false,
+  );
   assert.equal(view({ ...agentView, selectedSessionId: "session-1" }), false);
   const event = definition(ui, "streamEvent");
-  assert.equal(event({
-    type: "snapshot",
-    agentId: "agent-1",
-    bridgeEpoch: "epoch-1",
-    projectionId: "projection-1",
-    fromStreamRevision: 0,
-    toStreamRevision: 1,
-    cursor: "opaque",
-    view: agentView,
-  }), true, JSON.stringify(event.errors));
+  assert.equal(
+    event({
+      type: "snapshot",
+      agentId: "agent-1",
+      bridgeEpoch: "epoch-1",
+      projectionId: "projection-1",
+      fromStreamRevision: 0,
+      toStreamRevision: 1,
+      cursor: "opaque",
+      view: agentView,
+    }),
+    true,
+    JSON.stringify(event.errors),
+  );
 });
 
 test("Session View preserves usable history instead of a quota-limited substitute", () => {
   const valid = definition(ui, "sessionView");
   const base = {
-    agentId: "agent-1", sessionId: "session-1", bridgeEpoch: "epoch-1",
-    title: "Deployment metadata", updatedAt: "2026-09-24T00:00:00Z",
-    incarnation: "incarnation-1", viewRevision: 8, appendVersion: 3,
-    outputWatermark: 15, historyToken: null, streamCursor: "opaque",
-    historyState: "ready", turns: [], olderTurnsCursor: null,
-    operations: [{ operationId: "intent-1", sessionId: "session-1",
-      phase: "running", acceptance: "acp", runId: "run-1", outputWatermark: 15 }],
+    agentId: "agent-1",
+    sessionId: "session-1",
+    bridgeEpoch: "epoch-1",
+    title: "Deployment metadata",
+    updatedAt: "2026-09-24T00:00:00Z",
+    incarnation: "incarnation-1",
+    viewRevision: 8,
+    appendVersion: 3,
+    outputWatermark: 15,
+    historyToken: null,
+    streamCursor: "opaque",
+    historyState: "ready",
+    turns: [],
+    olderTurnsCursor: null,
+    operations: [
+      {
+        operationId: "intent-1",
+        sessionId: "session-1",
+        phase: "running",
+        acceptance: "acp",
+        runId: "run-1",
+        outputWatermark: 15,
+      },
+    ],
     permissions: [],
   };
   assert.equal(valid(base), true, JSON.stringify(valid.errors));
-  assert.equal(valid({ ...base, title: null }), true, JSON.stringify(valid.errors));
+  assert.equal(
+    valid({ ...base, title: null }),
+    true,
+    JSON.stringify(valid.errors),
+  );
   assert.equal(valid({ ...base, title: undefined }), false);
   assert.equal(valid({ ...base, updatedAt: undefined }), false);
   assert.equal(valid({ ...base, updatedAt: 1 }), false);
   assert.equal(valid({ ...base, title: "x".repeat(513) }), false);
   assert.equal(valid({ ...base, historyToken: "send-condition" }), true);
   assert.equal(valid({ ...base, olderTurnsCursor: "older" }), true);
-  assert.equal(valid({ ...base, turns: [{ turnId: "possibly-incomplete" }] }), false);
-  assert.equal(valid({ ...base, historyState: "view_limited",
-    limitedPreview: { text: "partial", truncated: true } }), false);
+  assert.equal(
+    valid({ ...base, turns: [{ turnId: "possibly-incomplete" }] }),
+    false,
+  );
+  assert.equal(
+    valid({
+      ...base,
+      historyState: "view_limited",
+      limitedPreview: { text: "partial", truncated: true },
+    }),
+    false,
+  );
 });
 
 test("blocked Session View keeps sealed history read-only after replay failure", () => {
   const valid = definition(ui, "sessionView");
   const blocked = {
-    agentId: "agent-1", sessionId: "session-1", bridgeEpoch: "epoch-1",
-    title: null, updatedAt: null,
-    incarnation: "incarnation-1", viewRevision: 8, appendVersion: 3,
-    outputWatermark: 15, historyToken: null, streamCursor: "opaque",
-    historyState: "blocked", turns: [], olderTurnsCursor: null,
-    operations: [], permissions: [], configurationToken: null,
+    agentId: "agent-1",
+    sessionId: "session-1",
+    bridgeEpoch: "epoch-1",
+    title: null,
+    updatedAt: null,
+    incarnation: "incarnation-1",
+    viewRevision: 8,
+    appendVersion: 3,
+    outputWatermark: 15,
+    historyToken: null,
+    streamCursor: "opaque",
+    historyState: "blocked",
+    turns: [],
+    olderTurnsCursor: null,
+    operations: [],
+    permissions: [],
+    configurationToken: null,
   };
   assert.equal(valid(blocked), true, JSON.stringify(valid.errors));
   assert.equal(valid({ ...blocked, historyToken: "stale-send" }), false);
-  assert.equal(valid({ ...blocked, configurationToken: "stale-config" }), false);
-  assert.equal(valid({ ...blocked, olderTurnsCursor: "unreadable-page" }), false);
+  assert.equal(
+    valid({ ...blocked, configurationToken: "stale-config" }),
+    false,
+  );
+  assert.equal(
+    valid({ ...blocked, olderTurnsCursor: "unreadable-page" }),
+    false,
+  );
 });
 
 test("prompt admission requires a stable intent and append condition, never browser identity", () => {
@@ -173,43 +229,115 @@ test("large process content has its own exact continuation response", () => {
 
 test("tool process sections identify content blocks across continuation pages", () => {
   const item = definition(ui, "processItem");
-  const base = { id: "tool-1", kind: "tool", summary: "Read", status: "completed",
-    content: [], contentCursor: "opaque" };
-  assert.equal(item({ ...base, toolSections: { inputIndex: 0, outputIndex: 1,
-    detailStartIndex: 2 } }), true, JSON.stringify(item.errors));
+  const base = {
+    id: "tool-1",
+    kind: "tool",
+    summary: "Read",
+    status: "completed",
+    content: [],
+    contentCursor: "opaque",
+  };
+  assert.equal(
+    item({
+      ...base,
+      toolSections: { inputIndex: 0, outputIndex: 1, detailStartIndex: 2 },
+    }),
+    true,
+    JSON.stringify(item.errors),
+  );
   assert.equal(item(base), false);
-  assert.equal(item({ ...base, kind: "thought", toolSections: { detailStartIndex: 0 } }), false);
-  assert.equal(item({ ...base, toolSections: { detailStartIndex: -1 } }), false);
-  assert.equal(item({ ...base, toolSections: { detailStartIndex: 0,
-    unexpected: true } }), false);
+  assert.equal(
+    item({ ...base, kind: "thought", toolSections: { detailStartIndex: 0 } }),
+    false,
+  );
+  assert.equal(
+    item({ ...base, toolSections: { detailStartIndex: -1 } }),
+    false,
+  );
+  assert.equal(
+    item({ ...base, toolSections: { detailStartIndex: 0, unexpected: true } }),
+    false,
+  );
 });
 
 test("running turns carry bounded process changes for a known prior version", () => {
   const turn = definition(ui, "turn");
-  const base = { turnId: "run-1", outcome: "running", prompt: [], finalResponse: [],
-    contentCursor: null, contentSection: null, processVersion: 2, processCount: 1 };
-  const change = { index: 0, item: { id: "thought-1", kind: "thought",
-    summary: "Progress", status: "running", content: [], contentCursor: null } };
-  assert.equal(turn({ ...base, liveProcessDelta: { fromVersion: 1,
-    items: [change] } }), true, JSON.stringify(turn.errors));
-  assert.equal(turn({ ...base, liveProcessDelta: { fromVersion: -1,
-    items: [change] } }), false);
-  assert.equal(turn({ ...base, outcome: "completed", liveProcessDelta: {
-    fromVersion: 1, items: [change] } }), false);
+  const base = {
+    turnId: "run-1",
+    outcome: "running",
+    prompt: [],
+    finalResponse: [],
+    contentCursor: null,
+    contentSection: null,
+    processVersion: 2,
+    processCount: 1,
+  };
+  const change = {
+    index: 0,
+    item: {
+      id: "thought-1",
+      kind: "thought",
+      summary: "Progress",
+      status: "running",
+      content: [],
+      contentCursor: null,
+    },
+  };
+  assert.equal(
+    turn({ ...base, liveProcessDelta: { fromVersion: 1, items: [change] } }),
+    true,
+    JSON.stringify(turn.errors),
+  );
+  assert.equal(
+    turn({ ...base, liveProcessDelta: { fromVersion: -1, items: [change] } }),
+    false,
+  );
+  assert.equal(
+    turn({
+      ...base,
+      outcome: "completed",
+      liveProcessDelta: {
+        fromVersion: 1,
+        items: [change],
+      },
+    }),
+    false,
+  );
 });
 
 test("turn continuation identifies whether prompt or answer owns the next page", () => {
   const turn = definition(ui, "turn");
-  const base = { turnId: "run-1", outcome: "completed", prompt: [],
-    finalResponse: [], processVersion: 0, processCount: 0 };
-  assert.equal(turn({ ...base, contentCursor: "next", contentSection: "finalResponse" }),
-    true, JSON.stringify(turn.errors));
-  assert.equal(turn({ ...base, contentCursor: "next", contentSection: "prompt" }),
-    true, JSON.stringify(turn.errors));
-  assert.equal(turn({ ...base, contentCursor: null, contentSection: null }),
-    true, JSON.stringify(turn.errors));
-  assert.equal(turn({ ...base, contentCursor: "next", contentSection: null }), false);
-  assert.equal(turn({ ...base, contentCursor: null, contentSection: "prompt" }), false);
+  const base = {
+    turnId: "run-1",
+    outcome: "completed",
+    prompt: [],
+    finalResponse: [],
+    processVersion: 0,
+    processCount: 0,
+  };
+  assert.equal(
+    turn({ ...base, contentCursor: "next", contentSection: "finalResponse" }),
+    true,
+    JSON.stringify(turn.errors),
+  );
+  assert.equal(
+    turn({ ...base, contentCursor: "next", contentSection: "prompt" }),
+    true,
+    JSON.stringify(turn.errors),
+  );
+  assert.equal(
+    turn({ ...base, contentCursor: null, contentSection: null }),
+    true,
+    JSON.stringify(turn.errors),
+  );
+  assert.equal(
+    turn({ ...base, contentCursor: "next", contentSection: null }),
+    false,
+  );
+  assert.equal(
+    turn({ ...base, contentCursor: null, contentSection: "prompt" }),
+    false,
+  );
 });
 
 test("operation and stream envelopes distinguish bridge receipt, durable acceptance and scope", () => {
@@ -243,17 +371,32 @@ test("operation and stream envelopes distinguish bridge receipt, durable accepta
     true,
     JSON.stringify(operation.errors),
   );
-  assert.equal(operation({
-    operationId: "intent-failed", sessionId: "session-1",
-    phase: "failed", acceptance: "acp", runId: "run-failed",
-    outputWatermark: 5, stopReason: null,
-    errorClass: "model_unsupported_content",
-  }), true, JSON.stringify(operation.errors));
-  assert.equal(operation({
-    operationId: "intent-failed", sessionId: "session-1",
-    phase: "failed", acceptance: "acp", runId: "run-failed",
-    outputWatermark: 5, errorClass: "x".repeat(129),
-  }), false);
+  assert.equal(
+    operation({
+      operationId: "intent-failed",
+      sessionId: "session-1",
+      phase: "failed",
+      acceptance: "acp",
+      runId: "run-failed",
+      outputWatermark: 5,
+      stopReason: null,
+      errorClass: "model_unsupported_content",
+    }),
+    true,
+    JSON.stringify(operation.errors),
+  );
+  assert.equal(
+    operation({
+      operationId: "intent-failed",
+      sessionId: "session-1",
+      phase: "failed",
+      acceptance: "acp",
+      runId: "run-failed",
+      outputWatermark: 5,
+      errorClass: "x".repeat(129),
+    }),
+    false,
+  );
   assert.equal(
     operation({
       operationId: "intent-1",
@@ -306,25 +449,54 @@ test("operation and stream envelopes distinguish bridge receipt, durable accepta
 test("delta is scoped to one retained view and cannot patch identity or prototype paths", () => {
   const event = definition(ui, "streamEvent");
   const base = {
-    type: "delta", agentId: "agent-1", bridgeEpoch: "epoch-1",
-    projectionId: "projection-1", fromStreamRevision: 4, toStreamRevision: 5,
-    cursor: "next", fromCursor: "previous", sessionId: "session-1", incarnation: "incarnation-1",
-    fromSessionViewRevision: 2, sessionViewRevision: 3,
+    type: "delta",
+    agentId: "agent-1",
+    bridgeEpoch: "epoch-1",
+    projectionId: "projection-1",
+    fromStreamRevision: 4,
+    toStreamRevision: 5,
+    cursor: "next",
+    fromCursor: "previous",
+    sessionId: "session-1",
+    incarnation: "incarnation-1",
+    fromSessionViewRevision: 2,
+    sessionViewRevision: 3,
     patch: [{ op: "replace", path: "/selectedView/title", value: "Renamed" }],
   };
   assert.equal(event(base), true, JSON.stringify(event.errors));
   assert.equal(event({ ...base, fromSessionViewRevision: undefined }), false);
   assert.equal(event({ ...base, fromCursor: undefined }), false);
   assert.equal(event({ ...base, patch: [] }), false);
-  for (const path of ["/principalId", "/bridgeEpoch", "/selectedSessionId",
-    "/selectedView/incarnation", "/selectedView/sessionId",
-    "/selectedView/turns/0/__proto__/secret", "/selectedView/usage/constructor"]) {
-    assert.equal(event({ ...base, patch: [{ op: "replace", path, value: "x" }] }), false, path);
+  for (const path of [
+    "/principalId",
+    "/bridgeEpoch",
+    "/selectedSessionId",
+    "/selectedView/incarnation",
+    "/selectedView/sessionId",
+    "/selectedView/turns/0/__proto__/secret",
+    "/selectedView/usage/constructor",
+  ]) {
+    assert.equal(
+      event({ ...base, patch: [{ op: "replace", path, value: "x" }] }),
+      false,
+      path,
+    );
   }
-  assert.equal(event({ ...base, patch: [{ op: "replace", path: "/selectedView/title" }] }), false);
-  assert.equal(event({ ...base, sessionId: null, incarnation: null,
-    fromSessionViewRevision: null, sessionViewRevision: null,
-    patch: [{ op: "replace", path: "/availability", value: "busy" }] }), true);
+  assert.equal(
+    event({ ...base, patch: [{ op: "replace", path: "/selectedView/title" }] }),
+    false,
+  );
+  assert.equal(
+    event({
+      ...base,
+      sessionId: null,
+      incarnation: null,
+      fromSessionViewRevision: null,
+      sessionViewRevision: null,
+      patch: [{ op: "replace", path: "/availability", value: "busy" }],
+    }),
+    true,
+  );
   assert.equal(event({ ...base, sessionId: null }), false);
 });
 
@@ -379,7 +551,10 @@ test("ACP configuration condition carries one producer revision", () => {
   assert.equal(condition({ expectedRevision: "a".repeat(64) }), true);
   assert.equal(condition({ expectedRevision: null }), false);
   assert.equal(condition({ expectedRevision: "stale" }), false);
-  assert.equal(condition({ expectedRevision: "a".repeat(64), sessionId: "other" }), false);
+  assert.equal(
+    condition({ expectedRevision: "a".repeat(64), sessionId: "other" }),
+    false,
+  );
   const capabilities = definition(acp, "bridgeCapabilities");
   const original = { intentReceipt: 1, targetCancel: 1, deliveryMark: 1 };
   assert.equal(capabilities(original), true);
@@ -416,8 +591,13 @@ test("ACP 1.4.0 permits namespaced metadata in the four official wire shapes", (
     [
       "SetSessionConfigOptionRequest",
       {
-        sessionId: "session-1", configId: "safe_mode", type: "boolean", value: true,
-        _meta: { "antnest.dev/configuration": { expectedRevision: "a".repeat(64) } },
+        sessionId: "session-1",
+        configId: "safe_mode",
+        type: "boolean",
+        value: true,
+        _meta: {
+          "antnest.dev/configuration": { expectedRevision: "a".repeat(64) },
+        },
       },
     ],
     [
@@ -448,8 +628,14 @@ test("active Gateway contract describes the deployed Node Workspace routes", () 
     "browser_session_for_html; none_for_assets",
   );
   assert.equal(gateway.routes.workspace_application.prefix, "preserved");
-  assert.equal(gateway.routes.workspace_application.html_identity, "verified Gateway principal headers");
-  assert.equal(gateway.routes.workspace_application.upstream, "internal agent-ui Node via ANTNEST_AGENT_UI_URL");
+  assert.equal(
+    gateway.routes.workspace_application.html_identity,
+    "verified Gateway principal headers",
+  );
+  assert.equal(
+    gateway.routes.workspace_application.upstream,
+    "internal agent-ui Node via ANTNEST_AGENT_UI_URL",
+  );
   assert.equal(
     gateway.routes.workspace_bridge_api.path,
     "/api/app/workspace/v1/{path...}",
@@ -460,8 +646,11 @@ test("active Gateway contract describes the deployed Node Workspace routes", () 
   );
   assert.equal(gateway.routes.workspace_bridge_api.csrf, "unsafe_methods");
   assert.deepEqual(gateway.routes.workspace_bridge_api.identity_headers, [
-    "X-Antnest-Organization-ID", "X-Antnest-Principal-ID",
-    "X-Antnest-User-ID", "X-Antnest-Membership-ID", "X-Antnest-Administrator",
+    "X-Antnest-Organization-ID",
+    "X-Antnest-Principal-ID",
+    "X-Antnest-User-ID",
+    "X-Antnest-Membership-ID",
+    "X-Antnest-Administrator",
   ]);
   assert.ok(gateway.trusted_headers.includes("X-Antnest-Administrator"));
   assert.equal(
@@ -532,11 +721,17 @@ test("cold views cannot imply an append condition and permission decisions requi
 
 test("turn pages expose older and newer cursors while Session View advertises olderTurnsCursor", () => {
   const page = definition(ui, "turnPage");
-  assert.equal(page({ items: [], nextCursor: null, newerCursor: null }), true,
-    JSON.stringify(page.errors));
+  assert.equal(
+    page({ items: [], nextCursor: null, newerCursor: null }),
+    true,
+    JSON.stringify(page.errors),
+  );
   assert.equal(page({ items: [], nextCursor: null }), false);
   assert.equal(page({ items: [], newerCursor: null }), false);
-  assert.equal(page({ items: [], olderTurnsCursor: null, newerCursor: null }), false);
+  assert.equal(
+    page({ items: [], olderTurnsCursor: null, newerCursor: null }),
+    false,
+  );
 });
 
 test("continued content pages identify which turn section receives each block", () => {

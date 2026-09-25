@@ -50,7 +50,9 @@ test("C4 window phases add distinct short turns after a large history", () => {
   for (let index = 0; index < 20; index++) {
     const phase = `c4-browser-window-${String(index).padStart(2, "0")}`;
     assert.deepEqual(decide(payload(phase)), {
-      phase, hold: false, text: `${phase} completed`,
+      phase,
+      hold: false,
+      text: `${phase} completed`,
     });
   }
   assert.throws(() => decide(payload("c4-browser-window-20")));

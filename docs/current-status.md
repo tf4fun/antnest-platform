@@ -1,5 +1,8 @@
 # Current Implementation And Acceptance
 
+The 2026-09-25 Agent UI candidate and its remaining Stage 3 final admission
+checks are tracked in the [pre-acceptance checkpoint](stage3-final-preacceptance-20260925.md).
+
 Updated: 2026-09-24. Agent UI now runs as one Node full-stack development
 service: Gateway-authenticated HTML, business HTTP/SSE, a server-owned ACP
 Bridge and request-scoped React SSR. Service, contract, Chromium and isolated

@@ -114,9 +114,10 @@ describe.skipIf(databaseUrl === undefined)(
         "0008_refused_context.sql",
         "0009_workspace_bridge_intents.sql",
       ]);
-      const appendVersions = await pool.query<{ id: string; append_version: string }>(
-        "SELECT id, append_version FROM acp_sessions ORDER BY id",
-      );
+      const appendVersions = await pool.query<{
+        id: string;
+        append_version: string;
+      }>("SELECT id, append_version FROM acp_sessions ORDER BY id");
       expect(appendVersions.rows).toEqual([
         { id: "session-migration", append_version: "0" },
         { id: "session-running", append_version: "0" },

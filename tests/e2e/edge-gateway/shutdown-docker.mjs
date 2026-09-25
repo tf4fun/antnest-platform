@@ -294,7 +294,8 @@ async function exercise(project, docker, signal, gatewayImage) {
 async function run() {
   const { dockerClient } = await import("../lifecycle-closeout/docker.mjs");
   const project = `antnest-gateway-stop-${randomUUID().slice(0, 8)}`;
-  const gatewayImage = process.env.ANTNEST_GATEWAY_TEST_IMAGE ?? "antnest/edge-gateway:local";
+  const gatewayImage =
+    process.env.ANTNEST_GATEWAY_TEST_IMAGE ?? "antnest/edge-gateway:local";
   const abort = new AbortController();
   const interrupt = () =>
     abort.abort(new Error("Gateway shutdown regression interrupted"));
@@ -313,9 +314,11 @@ async function run() {
   } catch (error) {
     failure = error;
     try {
-      const logs = await dockerClient(process.env, undefined, 30000)([
-        "logs", `${project}-edge`,
-      ]);
+      const logs = await dockerClient(
+        process.env,
+        undefined,
+        30000,
+      )(["logs", `${project}-edge`]);
       console.error(`Gateway shutdown diagnostics:\n${logs}`);
     } catch {
       // The container may not have been created yet.

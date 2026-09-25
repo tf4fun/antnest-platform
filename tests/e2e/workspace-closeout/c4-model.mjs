@@ -29,8 +29,11 @@ export function decide(payload) {
     assert.equal(tail.length, 0);
     return { phase, hold: false, text: `${phase} completed` };
   }
-  if (held.has(phase) || phase === "c4-browser-after-cancel" ||
-    phase === "c4-browser-timeout") {
+  if (
+    held.has(phase) ||
+    phase === "c4-browser-after-cancel" ||
+    phase === "c4-browser-timeout"
+  ) {
     assert.equal(tail.length, 0);
     return { phase, hold: held.has(phase), text: `${phase} completed` };
   }

@@ -13,5 +13,9 @@ export async function assertWcagPage(page) {
       summary: node.failureSummary,
     })),
   }));
-  assert.deepEqual(violations, [], "Workspace page must pass automated WCAG A/AA checks");
+  assert.deepEqual(
+    violations,
+    [],
+    "Workspace page must pass automated WCAG A/AA checks",
+  );
 }

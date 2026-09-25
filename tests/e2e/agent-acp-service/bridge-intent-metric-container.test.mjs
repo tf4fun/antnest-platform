@@ -14,38 +14,66 @@ async function docker(args, timeout = 180_000) {
   runningDocker.add(controller);
   try {
     return await exec("docker", args, {
-      cwd: root, timeout, maxBuffer: 2_000_000, signal: controller.signal,
+      cwd: root,
+      timeout,
+      maxBuffer: 2_000_000,
+      signal: controller.signal,
     });
   } finally {
     runningDocker.delete(controller);
   }
 }
 
-test("ACP production image exports durable Bridge intent reuse without private labels", { timeout: 240_000 }, async () => {
-  const image = `antnest-agent-acp-metric-e2e:${randomUUID().slice(0, 12)}`;
-  const container = `antnest-agent-acp-metric-e2e-${randomUUID().slice(0, 12)}`;
-  const interrupt = (exitCode) => {
-    process.exitCode = exitCode;
-    for (const controller of runningDocker) controller.abort();
-  };
-  const onInterrupt = () => interrupt(130);
-  const onTerminate = () => interrupt(143);
-  process.once("SIGINT", onInterrupt);
-  process.once("SIGTERM", onTerminate);
-  try {
-    await docker(["build", "-q", "-f", "services/agent-acp-service/Dockerfile", "-t", image, "."]);
-    const { stdout } = await docker([
-      "run", "--rm", "--name", container, "--network", "none", "--entrypoint", "node", image,
-      "--input-type=module", "-e", containerProbe,
-    ], 60_000);
-    assert.equal(stdout.trim(), "ACP intent reuse OTLP export verified");
-  } finally {
-    await docker(["rm", "-f", container], 30_000).catch(() => {});
-    await docker(["image", "rm", "-f", image], 30_000).catch(() => {});
-    process.removeListener("SIGINT", onInterrupt);
-    process.removeListener("SIGTERM", onTerminate);
-  }
-});
+test(
+  "ACP production image exports durable Bridge intent reuse without private labels",
+  { timeout: 240_000 },
+  async () => {
+    const image = `antnest-agent-acp-metric-e2e:${randomUUID().slice(0, 12)}`;
+    const container = `antnest-agent-acp-metric-e2e-${randomUUID().slice(0, 12)}`;
+    const interrupt = (exitCode) => {
+      process.exitCode = exitCode;
+      for (const controller of runningDocker) controller.abort();
+    };
+    const onInterrupt = () => interrupt(130);
+    const onTerminate = () => interrupt(143);
+    process.once("SIGINT", onInterrupt);
+    process.once("SIGTERM", onTerminate);
+    try {
+      await docker([
+        "build",
+        "-q",
+        "-f",
+        "services/agent-acp-service/Dockerfile",
+        "-t",
+        image,
+        ".",
+      ]);
+      const { stdout } = await docker(
+        [
+          "run",
+          "--rm",
+          "--name",
+          container,
+          "--network",
+          "none",
+          "--entrypoint",
+          "node",
+          image,
+          "--input-type=module",
+          "-e",
+          containerProbe,
+        ],
+        60_000,
+      );
+      assert.equal(stdout.trim(), "ACP intent reuse OTLP export verified");
+    } finally {
+      await docker(["rm", "-f", container], 30_000).catch(() => {});
+      await docker(["image", "rm", "-f", image], 30_000).catch(() => {});
+      process.removeListener("SIGINT", onInterrupt);
+      process.removeListener("SIGTERM", onTerminate);
+    }
+  },
+);
 
 const containerProbe = `
 import assert from "node:assert/strict";

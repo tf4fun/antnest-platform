@@ -174,11 +174,18 @@ test("Node Bridge uses official ACP HTTP/SSE with scoped headers and durable met
     }
     if (request.url?.endsWith("/intents/intent-failed")) {
       response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify({
-        intentId: "intent-failed", sessionId: "session-1", runId: "run-failed",
-        phase: "failed", appendVersion: 2, outputWatermark: 3,
-        stopReason: null, errorClass: "model_unsupported_content",
-      }));
+      response.end(
+        JSON.stringify({
+          intentId: "intent-failed",
+          sessionId: "session-1",
+          runId: "run-failed",
+          phase: "failed",
+          appendVersion: 2,
+          outputWatermark: 3,
+          stopReason: null,
+          errorClass: "model_unsupported_content",
+        }),
+      );
       return;
     }
     response.writeHead(404, { "content-type": "application/json" });
@@ -298,8 +305,11 @@ test("Node Bridge uses official ACP HTTP/SSE with scoped headers and durable met
         errorClass: null,
       },
     });
-    assert.equal((await bridge.readIntent("session-1", "intent-failed")).receipt.errorClass,
-      "model_unsupported_content");
+    assert.equal(
+      (await bridge.readIntent("session-1", "intent-failed")).receipt
+        .errorClass,
+      "model_unsupported_content",
+    );
     assert.deepEqual(await bridge.readAgentExecutionState(), {
       availability: "busy",
       activeSessionId: "session-2",

@@ -428,18 +428,29 @@ test(
         "held Run has durable receipt before Bridge restart",
         abort.signal,
       );
-      const heldMetadata = await until(async () => {
-        const view = (await memberClient.request(
-          `/api/app/workspace/v1/agents/${fixture.agentID}/view?sessionId=${sessionId}`,
-        )).body.selectedView;
-        return typeof view?.title === "string" && view.title &&
-          typeof view.updatedAt === "string" && view.updatedAt
-          ? { title: view.title, updatedAt: view.updatedAt } : null;
-      }, "ACP Session metadata reaches the Node View", abort.signal);
+      const heldMetadata = await until(
+        async () => {
+          const view = (
+            await memberClient.request(
+              `/api/app/workspace/v1/agents/${fixture.agentID}/view?sessionId=${sessionId}`,
+            )
+          ).body.selectedView;
+          return typeof view?.title === "string" &&
+            view.title &&
+            typeof view.updatedAt === "string" &&
+            view.updatedAt
+            ? { title: view.title, updatedAt: view.updatedAt }
+            : null;
+        },
+        "ACP Session metadata reaches the Node View",
+        abort.signal,
+      );
       await page.waitForFunction(({ title, updatedAt }) => {
         const row = document.querySelector(".conversation-option.active");
-        return row?.querySelector("strong")?.textContent === title &&
-          row.querySelector("time")?.getAttribute("datetime") === updatedAt;
+        return (
+          row?.querySelector("strong")?.textContent === title &&
+          row.querySelector("time")?.getAttribute("datetime") === updatedAt
+        );
       }, heldMetadata);
       const secondSession = (
         await memberClient.request(
@@ -548,7 +559,9 @@ test(
               `/api/app/workspace/v1/agents/${fixture.agentID}/sessions/${sessionId}/operations/${heldRun.operationId}`,
             )
           ).body;
-          return operation.phase === "running" && operation.runId === heldRun.runId;
+          return (
+            operation.phase === "running" && operation.runId === heldRun.runId
+          );
         },
         "same intent retry after Bridge restart resolves to original Run",
         abort.signal,
@@ -564,7 +577,8 @@ test(
       await gatewayPage
         .getByRole("button", { name: "Stop operation" })
         .waitFor();
-      const composerStatus = gatewayPage.getByRole("group", { name: "Message composer" })
+      const composerStatus = gatewayPage
+        .getByRole("group", { name: "Message composer" })
         .getByRole("status");
       assert.equal(await composerStatus.innerText(), "Agent is working");
       let gatewaySseRequests = 0;
@@ -625,16 +639,30 @@ test(
       await reopened
         .getByText("c4-browser-hold-close completed", { exact: true })
         .waitFor({ timeout: 120_000 });
-      await until(async () => await composerStatus.innerText() === "",
-        "composer hint clears after completed Run", abort.signal, 30_000);
-      const copyResponse = reopened.getByRole("button", { name: "Copy response" }).last();
+      await until(
+        async () => (await composerStatus.innerText()) === "",
+        "composer hint clears after completed Run",
+        abort.signal,
+        30_000,
+      );
+      const copyResponse = reopened
+        .getByRole("button", { name: "Copy response" })
+        .last();
       await copyResponse.click();
-      const copyStatus = reopened.getByRole("status").filter({ hasText: "Copied" });
+      const copyStatus = reopened
+        .getByRole("status")
+        .filter({ hasText: "Copied" });
       await copyStatus.waitFor();
-      assert.equal(await copyResponse.evaluate((button) =>
-        button.querySelector('[role="status"]')), null);
-      assert.equal(await reopened.evaluate(() => navigator.clipboard.readText()),
-        "c4-browser-hold-close completed");
+      assert.equal(
+        await copyResponse.evaluate((button) =>
+          button.querySelector('[role="status"]'),
+        ),
+        null,
+      );
+      assert.equal(
+        await reopened.evaluate(() => navigator.clipboard.readText()),
+        "c4-browser-hold-close completed",
+      );
       assert.equal(
         (await modelState()).requests.filter(
           (row) => row.phase === "c4-browser-hold-close",
@@ -801,7 +829,9 @@ test(
         );
       };
       const volumeBatch = async (
-        volumeSessionId, from, count = 20,
+        volumeSessionId,
+        from,
+        count = 20,
         targetSession = () => volumeSessionId,
       ) => {
         const memoryBytes = [await containerMemory()];
@@ -882,8 +912,9 @@ test(
       secondSlowReader = throttleSse(secondThirdSlowResponse);
       metrics.memory.volumeBatches.push({
         sessionIds: [secondSession, thirdSession],
-        ...(await volumeBatch(thirdSession, 20, 60,
-          (index) => index % 5 === 0 ? secondSession : thirdSession)),
+        ...(await volumeBatch(thirdSession, 20, 60, (index) =>
+          index % 5 === 0 ? secondSession : thirdSession,
+        )),
       });
       const volumeRequests = (await modelState()).requests.filter((row) =>
         row.phase.startsWith("c4-browser-volume-"),
@@ -1063,46 +1094,82 @@ test(
         ? await heapMemory()
         : null;
       await longHistoryPage.close();
-      const unsupportedSessionId = (await memberClient.request(
-        `/api/app/workspace/v1/agents/${fixture.agentID}/sessions`,
-        { status: 201, body: {} },
-      )).body.sessionId;
+      const unsupportedSessionId = (
+        await memberClient.request(
+          `/api/app/workspace/v1/agents/${fixture.agentID}/sessions`,
+          { status: 201, body: {} },
+        )
+      ).body.sessionId;
       const unsupportedPage = await open(unsupportedSessionId);
       const unsupportedComposer = unsupportedPage.getByRole("textbox", {
-        name: "Message", exact: true,
+        name: "Message",
+        exact: true,
       });
-      await until(() => unsupportedComposer.isEnabled(),
-        "unsupported-content composer ready", abort.signal);
-      await unsupportedPage.getByLabel("File attachments", { exact: true }).setInputFiles({
-        name: "discard.txt", mimeType: "text/plain", buffer: Buffer.from("discard"),
-      });
-      await unsupportedPage.getByRole("button", { name: "Remove discard.txt" }).press("Enter");
-      assert.equal(await unsupportedPage.evaluate(() =>
-        document.activeElement?.getAttribute("aria-label")), "Message");
-      await unsupportedPage.getByLabel("File attachments", { exact: true }).setInputFiles({
-        name: "unsupported.wav", mimeType: "audio/wav",
-        buffer: Buffer.from(audioData, "base64"),
-      });
+      await until(
+        () => unsupportedComposer.isEnabled(),
+        "unsupported-content composer ready",
+        abort.signal,
+      );
+      await unsupportedPage
+        .getByLabel("File attachments", { exact: true })
+        .setInputFiles({
+          name: "discard.txt",
+          mimeType: "text/plain",
+          buffer: Buffer.from("discard"),
+        });
+      await unsupportedPage
+        .getByRole("button", { name: "Remove discard.txt" })
+        .press("Enter");
+      assert.equal(
+        await unsupportedPage.evaluate(() =>
+          document.activeElement?.getAttribute("aria-label"),
+        ),
+        "Message",
+      );
+      await unsupportedPage
+        .getByLabel("File attachments", { exact: true })
+        .setInputFiles({
+          name: "unsupported.wav",
+          mimeType: "audio/wav",
+          buffer: Buffer.from(audioData, "base64"),
+        });
       await unsupportedComposer.fill("c4-browser-unsupported-audio");
       await unsupportedComposer.press("Enter");
-      const rejectedOperation = await until(async () => {
-        const view = (await memberClient.request(
-          `/api/app/workspace/v1/agents/${fixture.agentID}/view?sessionId=${unsupportedSessionId}`,
-        )).body;
-        return view.operations?.find((operation) =>
-          operation.sessionId === unsupportedSessionId &&
-          operation.phase === "failed" && operation.runId);
-      }, "unsupported audio has a durable failed receipt", abort.signal);
+      const rejectedOperation = await until(
+        async () => {
+          const view = (
+            await memberClient.request(
+              `/api/app/workspace/v1/agents/${fixture.agentID}/view?sessionId=${unsupportedSessionId}`,
+            )
+          ).body;
+          return view.operations?.find(
+            (operation) =>
+              operation.sessionId === unsupportedSessionId &&
+              operation.phase === "failed" &&
+              operation.runId,
+          );
+        },
+        "unsupported audio has a durable failed receipt",
+        abort.signal,
+      );
       assert.equal(rejectedOperation.errorClass, "model_unsupported_content");
       const unsupportedAlert = unsupportedPage.getByRole("alert").filter({
         hasText: "The selected model does not support this attachment type.",
       });
       await unsupportedAlert.waitFor({ timeout: 120_000 });
       assert.equal(await unsupportedComposer.isEnabled(), true);
-      assert.equal(await unsupportedPage.evaluate(() =>
-        document.activeElement?.getAttribute("aria-label")), "Message");
-      assert.equal((await modelState()).requests.some((request) =>
-        request.phase === "c4-browser-unsupported-audio"), false);
+      assert.equal(
+        await unsupportedPage.evaluate(() =>
+          document.activeElement?.getAttribute("aria-label"),
+        ),
+        "Message",
+      );
+      assert.equal(
+        (await modelState()).requests.some(
+          (request) => request.phase === "c4-browser-unsupported-audio",
+        ),
+        false,
+      );
       await unsupportedPage.reload();
       await unsupportedAlert.waitFor({ timeout: 120_000 });
       assert.equal(await unsupportedComposer.isEnabled(), true);
@@ -1518,7 +1585,9 @@ test(
         abort.signal,
       );
       assert.equal(
-        await modePicker.evaluate((element) => element === document.activeElement),
+        await modePicker.evaluate(
+          (element) => element === document.activeElement,
+        ),
         true,
         "A completed configuration must return keyboard focus to its Mode picker",
       );
@@ -1580,17 +1649,24 @@ test(
       );
       const approvalPage = await open();
       const approvalRegion = approvalPage.getByRole("region", {
-        name: "Tool approval", description: /Conversation: .+/u,
+        name: "Tool approval",
+        description: /Conversation: .+/u,
       });
       await approvalRegion.waitFor({ timeout: 120_000 });
       const permissionInbox = approvalPage.locator(".permission-requests");
       assert.equal(await permissionInbox.getAttribute("aria-live"), null);
-      const permissionAnnouncement = await approvalPage.getByRole("status")
-        .filter({ hasText: /tool approval/u }).textContent();
-      assert.match(permissionAnnouncement ?? "",
-        /^1 tool approval requires a decision\. Most recent: .+ in .+\.$/u);
-      assert.ok((permissionAnnouncement?.length ?? 0) < 200,
-        "The pending tool announcement must remain concise");
+      const permissionAnnouncement = await approvalPage
+        .getByRole("status")
+        .filter({ hasText: /tool approval/u })
+        .textContent();
+      assert.match(
+        permissionAnnouncement ?? "",
+        /^1 tool approval requires a decision\. Most recent: .+ in .+\.$/u,
+      );
+      assert.ok(
+        (permissionAnnouncement?.length ?? 0) < 200,
+        "The pending tool announcement must remain concise",
+      );
       await assertWcagPage(approvalPage);
       const allowOnce = approvalRegion.getByRole("button", {
         name: "Allow once",
@@ -1791,9 +1867,10 @@ test(
         .getByRole("heading", { name: "C4 Peer Agent", exact: true })
         .waitFor();
       await until(
-        () => mobileAgentPage.evaluate(
-          () => document.activeElement?.id === "conversation-main",
-        ),
+        () =>
+          mobileAgentPage.evaluate(
+            () => document.activeElement?.id === "conversation-main",
+          ),
         "Mobile Agent selection focuses the new workspace after dialog close",
         abort.signal,
       );
@@ -1809,7 +1886,8 @@ test(
       });
       await agentSearch.waitFor();
       await until(
-        () => agentSearch.evaluate((search) => search === document.activeElement),
+        () =>
+          agentSearch.evaluate((search) => search === document.activeElement),
         "Mobile Agent directory focuses search after dialog close",
         abort.signal,
       );
@@ -1830,13 +1908,17 @@ test(
         .getByRole("button", { name: /C4 Peer Agent/ })
         .click();
       await until(
-        () => new URL(crossAgentPage.url()).searchParams.get("agent") === peerAgentId,
+        () =>
+          new URL(crossAgentPage.url()).searchParams.get("agent") ===
+          peerAgentId,
         "peer Agent selected",
         abort.signal,
       );
       await crossAgentPage.locator(".conversation-option").first().click();
       await until(
-        () => new URL(crossAgentPage.url()).searchParams.get("session") === peerSessionId,
+        () =>
+          new URL(crossAgentPage.url()).searchParams.get("session") ===
+          peerSessionId,
         "peer Agent Session selected",
         abort.signal,
       );
@@ -1850,24 +1932,31 @@ test(
       await crossAgentPage.goBack();
       await crossAgentPage.goBack();
       await until(
-        () => new URL(crossAgentPage.url()).searchParams.get("session") === sessionId,
+        () =>
+          new URL(crossAgentPage.url()).searchParams.get("session") ===
+          sessionId,
         "browser history restored original Agent Session",
         abort.signal,
       );
       await until(
-        async () => (await crossAgentComposer.inputValue()) === "Original Agent private draft",
+        async () =>
+          (await crossAgentComposer.inputValue()) ===
+          "Original Agent private draft",
         "original Agent draft restored",
         abort.signal,
       );
       await crossAgentPage.goForward();
       await crossAgentPage.goForward();
       await until(
-        () => new URL(crossAgentPage.url()).searchParams.get("session") === peerSessionId,
+        () =>
+          new URL(crossAgentPage.url()).searchParams.get("session") ===
+          peerSessionId,
         "browser history restored peer Agent Session",
         abort.signal,
       );
       await until(
-        async () => (await crossAgentComposer.inputValue()) === "c4-browser-hold-peer",
+        async () =>
+          (await crossAgentComposer.inputValue()) === "c4-browser-hold-peer",
         "peer Agent draft restored",
         abort.signal,
       );
@@ -1875,7 +1964,8 @@ test(
         .getByRole("button", { name: "Send message", exact: true })
         .click();
       await until(
-        async () => (await modelState()).pending.includes("c4-browser-hold-peer"),
+        async () =>
+          (await modelState()).pending.includes("c4-browser-hold-peer"),
         "peer Agent Run accepted and model held",
         abort.signal,
       );
@@ -1893,8 +1983,10 @@ test(
             )
           ).body;
           return view.operations?.find(
-            (row) => row.sessionId === peerSessionId &&
-              row.phase === "running" && row.runId,
+            (row) =>
+              row.sessionId === peerSessionId &&
+              row.phase === "running" &&
+              row.runId,
           );
         },
         "peer Agent Run has durable receipt",
@@ -1905,16 +1997,23 @@ test(
           `/api/app/workspace/v1/agents/${fixture.agentID}/view?sessionId=${sessionId}`,
         )
       ).body;
-      assert.equal(JSON.stringify(originalAgentView).includes("c4-browser-hold-peer"), false);
+      assert.equal(
+        JSON.stringify(originalAgentView).includes("c4-browser-hold-peer"),
+        false,
+      );
       await crossAgentPage.goBack();
       await crossAgentPage.goBack();
       await until(
-        () => new URL(crossAgentPage.url()).searchParams.get("session") === sessionId,
+        () =>
+          new URL(crossAgentPage.url()).searchParams.get("session") ===
+          sessionId,
         "original Agent Session restored while peer Run is held",
         abort.signal,
       );
       await until(
-        async () => (await crossAgentComposer.inputValue()) === "Original Agent private draft",
+        async () =>
+          (await crossAgentComposer.inputValue()) ===
+          "Original Agent private draft",
         "original Agent draft retained while peer Run is held",
         abort.signal,
       );
@@ -2009,7 +2108,9 @@ test(
       );
       assert.equal(await logoutPage.locator(".message-content").count(), 0);
       assert.equal(
-        await peerPage.getByText("c4-browser-hold-logout", { exact: true }).count(),
+        await peerPage
+          .getByText("c4-browser-hold-logout", { exact: true })
+          .count(),
         1,
         "Signing out one browser must not erase another authorized observer",
       );

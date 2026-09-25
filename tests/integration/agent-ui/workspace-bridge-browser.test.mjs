@@ -12,7 +12,9 @@ test(
   { timeout: 90_000 },
   async () => {
     const clients = new Set();
-    const loadingEvidence = fileURLToPath(new URL("../../../artifacts/verification/agent-ui/", import.meta.url));
+    const loadingEvidence = fileURLToPath(
+      new URL("../../../artifacts/verification/agent-ui/", import.meta.url),
+    );
     mkdirSync(loadingEvidence, { recursive: true });
     const prompts = [];
     const sockets = [];
@@ -107,29 +109,58 @@ test(
         configurationToken: blocked ? null : `config-${configurationRevision}`,
         usage: { used: 5, size: 100 },
         turns: [
-              {
-                turnId: "turn-1",
-                outcome: runtimeFailed ? "failed" : "completed",
-                prompt: [{ type: "text", text: "Saved question" }],
-                finalResponse: runtimeFailed
-                  ? []
-                  : [{ type: "text", text: answer }],
-                contentCursor: blocked ? "saved-cut" : null,
-                contentSection: blocked ? "finalResponse" : null,
-                processVersion: 1,
-                processCount: 2,
-              },
-              ...(liveTurnPhase !== "absent" ? [{ turnId: "turn-live", outcome: liveTurnPhase,
-                prompt: [{ type: "text", text: "Live question" }], finalResponse:
-                  liveTurnPhase === "completed" ? [{ type: "text", text: "Live finished" }] : [],
-                contentCursor: null, contentSection: null, processVersion: liveProcessVersion, processCount: 2,
-                ...(liveTurnPhase === "running" && liveProcessVersion > 1 ? {
-                  liveProcessDelta: { fromVersion: liveProcessVersion - 1,
-                    items: [{ index: 1, item: { id: "live-second", kind: "thought",
-                      summary: "Live progress", status: "running",
-                      content: [{ type: "text", text: liveSecondText }], contentCursor: null } }] },
-                } : {}) }] : []),
-            ],
+          {
+            turnId: "turn-1",
+            outcome: runtimeFailed ? "failed" : "completed",
+            prompt: [{ type: "text", text: "Saved question" }],
+            finalResponse: runtimeFailed
+              ? []
+              : [{ type: "text", text: answer }],
+            contentCursor: blocked ? "saved-cut" : null,
+            contentSection: blocked ? "finalResponse" : null,
+            processVersion: 1,
+            processCount: 2,
+          },
+          ...(liveTurnPhase !== "absent"
+            ? [
+                {
+                  turnId: "turn-live",
+                  outcome: liveTurnPhase,
+                  prompt: [{ type: "text", text: "Live question" }],
+                  finalResponse:
+                    liveTurnPhase === "completed"
+                      ? [{ type: "text", text: "Live finished" }]
+                      : [],
+                  contentCursor: null,
+                  contentSection: null,
+                  processVersion: liveProcessVersion,
+                  processCount: 2,
+                  ...(liveTurnPhase === "running" && liveProcessVersion > 1
+                    ? {
+                        liveProcessDelta: {
+                          fromVersion: liveProcessVersion - 1,
+                          items: [
+                            {
+                              index: 1,
+                              item: {
+                                id: "live-second",
+                                kind: "thought",
+                                summary: "Live progress",
+                                status: "running",
+                                content: [
+                                  { type: "text", text: liveSecondText },
+                                ],
+                                contentCursor: null,
+                              },
+                            },
+                          ],
+                        },
+                      }
+                    : {}),
+                },
+              ]
+            : []),
+        ],
       },
     });
     const writeJSON = (response, value, status = 200) => {
@@ -145,9 +176,10 @@ test(
       const cursor = `cursor-${revision}`;
       const next = agentView(cursor);
       const delta = diffAgentViews(publishedView, next);
-      const body = delta && Buffer.byteLength(JSON.stringify(delta)) < 65536
-        ? { ...delta, fromCursor: publishedView.streamCursor }
-        : { type: "reset", view: next };
+      const body =
+        delta && Buffer.byteLength(JSON.stringify(delta)) < 65536
+          ? { ...delta, fromCursor: publishedView.streamCursor }
+          : { type: "reset", view: next };
       const event = {
         ...body,
         agentId: "agent-1",
@@ -160,7 +192,9 @@ test(
       publishedView = next;
       publications.push(event);
       for (const response of clients)
-        response.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+        response.write(
+          `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`,
+        );
     };
     try {
       server = await createServer({
@@ -242,7 +276,12 @@ test(
                     heldSelectedViews.push(response);
                     return;
                   }
-                  if (diffAgentViews(publishedView, agentView(publishedView.streamCursor))?.patch.length)
+                  if (
+                    diffAgentViews(
+                      publishedView,
+                      agentView(publishedView.streamCursor),
+                    )?.patch.length
+                  )
                     publish();
                   writeJSON(response, publishedView);
                   return;
@@ -321,7 +360,8 @@ test(
                         outputWatermark: revision + 1,
                       };
                       if (promptNumber === 1 && interruptFirstPromptStream)
-                        firstPromptCompletedWithoutObserver = streamUnavailable && clients.size === 0;
+                        firstPromptCompletedWithoutObserver =
+                          streamUnavailable && clients.size === 0;
                       publish();
                     }, 150);
                   });
@@ -385,7 +425,8 @@ test(
                         finalResponse: [
                           { type: "text", text: "Earlier answer" },
                         ],
-                        contentCursor: null, contentSection: null,
+                        contentCursor: null,
+                        contentSection: null,
                         processVersion: 0,
                         processCount: 0,
                       },
@@ -403,7 +444,9 @@ test(
                   processReads.push(cursor ?? "page");
                   if (cursor !== null && dropNextProcessPage) {
                     dropNextProcessPage = false;
-                    response.writeHead(200, { "content-type": "application/json" });
+                    response.writeHead(200, {
+                      "content-type": "application/json",
+                    });
                     response.write('{"turnId":"turn-1","items":[');
                     setImmediate(() => response.destroy());
                     return;
@@ -447,16 +490,37 @@ test(
                   );
                   return;
                 }
-                if (path ===
-                  "/api/app/workspace/v1/agents/agent-1/sessions/session-1/turns/turn-live/process") {
+                if (
+                  path ===
+                  "/api/app/workspace/v1/agents/agent-1/sessions/session-1/turns/turn-live/process"
+                ) {
                   const cursor = url.searchParams.get("cursor");
-                  processReads.push(cursor === null ? "live-page" : "live-page-2");
-                  writeJSON(response, { turnId: "turn-live", processVersion: liveProcessVersion,
-                    items: [{ id: cursor === null ? "live-first" : "live-second",
-                      kind: "thought", summary: "Live progress", status: "running",
-                      content: [{ type: "text", text: cursor === null
-                        ? "Live first step" : liveSecondText }], contentCursor: null }],
-                    nextCursor: cursor === null ? "live-next" : null });
+                  processReads.push(
+                    cursor === null ? "live-page" : "live-page-2",
+                  );
+                  writeJSON(response, {
+                    turnId: "turn-live",
+                    processVersion: liveProcessVersion,
+                    items: [
+                      {
+                        id: cursor === null ? "live-first" : "live-second",
+                        kind: "thought",
+                        summary: "Live progress",
+                        status: "running",
+                        content: [
+                          {
+                            type: "text",
+                            text:
+                              cursor === null
+                                ? "Live first step"
+                                : liveSecondText,
+                          },
+                        ],
+                        contentCursor: null,
+                      },
+                    ],
+                    nextCursor: cursor === null ? "live-next" : null,
+                  });
                   return;
                 }
                 if (
@@ -466,7 +530,9 @@ test(
                   processReads.push("content");
                   if (dropNextProcessContent) {
                     dropNextProcessContent = false;
-                    response.writeHead(200, { "content-type": "application/json" });
+                    response.writeHead(200, {
+                      "content-type": "application/json",
+                    });
                     response.write('{"turnId":"turn-1","items":[');
                     setImmediate(() => response.destroy());
                     return;
@@ -492,7 +558,9 @@ test(
       const origin = `http://127.0.0.1:${address.port}`;
       browser = await chromium.launch({ headless: true });
       const context = await browser.newContext();
-      await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin });
+      await context.grantPermissions(["clipboard-read", "clipboard-write"], {
+        origin,
+      });
       await context.addCookies([
         { name: "antnest_csrf", value: "browser-csrf", url: origin },
       ]);
@@ -557,24 +625,46 @@ test(
       await page.locator(".session-opening").waitFor();
       const visualTokens = await page.evaluate(() => {
         const root = getComputedStyle(document.documentElement);
-        return Object.fromEntries(["--paper", "--sidebar", "--line", "--muted", "--signal-strong"]
-          .map((name) => [name, root.getPropertyValue(name).trim()]));
+        return Object.fromEntries(
+          ["--paper", "--sidebar", "--line", "--muted", "--signal-strong"].map(
+            (name) => [name, root.getPropertyValue(name).trim()],
+          ),
+        );
       });
-      assert.deepEqual(visualTokens, {
-        "--paper": "#fbfbfa",
-        "--sidebar": "#efefec",
-        "--line": "#deded9",
-        "--muted": "#62625d",
-        "--signal-strong": "#a6d000",
-      }, "Agent UI should use the canonical Antnest palette on the rendered page");
-      assert.equal(await page.locator(".session-opening").getAttribute("aria-busy"), "true");
-      assert.equal(await page.locator(".session-opening-turns[aria-hidden='true']").count(), 1);
-      const openingProcess = await page.locator(".session-opening-process").first().boundingBox();
+      assert.deepEqual(
+        visualTokens,
+        {
+          "--paper": "#fbfbfa",
+          "--sidebar": "#efefec",
+          "--line": "#deded9",
+          "--muted": "#62625d",
+          "--signal-strong": "#a6d000",
+        },
+        "Agent UI should use the canonical Antnest palette on the rendered page",
+      );
+      assert.equal(
+        await page.locator(".session-opening").getAttribute("aria-busy"),
+        "true",
+      );
+      assert.equal(
+        await page
+          .locator(".session-opening-turns[aria-hidden='true']")
+          .count(),
+        1,
+      );
+      const openingProcess = await page
+        .locator(".session-opening-process")
+        .first()
+        .boundingBox();
       assert.ok(openingProcess);
       await assertWcagPage(page);
-      await page.screenshot({ path: `${loadingEvidence}opening-desktop.png`, animations: "disabled" });
+      await page.screenshot({
+        path: `${loadingEvidence}opening-desktop.png`,
+        animations: "disabled",
+      });
       holdSelectedView = false;
-      for (const held of heldSelectedViews.splice(0)) writeJSON(held, publishedView);
+      for (const held of heldSelectedViews.splice(0))
+        writeJSON(held, publishedView);
       try {
         await page.getByText("Saved answer").waitFor({ timeout: 10_000 });
       } catch (cause) {
@@ -582,7 +672,10 @@ test(
           `${cause.message}\nPage: ${await page.locator("body").innerText()}\nPaths: ${seenPaths.join(", ")}\n${diagnostics.join("\n")}`,
         );
       }
-      const loadedProcess = await page.locator(".turn-process-trigger").first().boundingBox();
+      const loadedProcess = await page
+        .locator(".turn-process-trigger")
+        .first()
+        .boundingBox();
       assert.ok(loadedProcess);
       assert.ok(Math.abs(openingProcess.x - loadedProcess.x) <= 2);
       assert.ok(Math.abs(openingProcess.width - loadedProcess.width) <= 2);
@@ -590,47 +683,102 @@ test(
       await mobilePage.setViewportSize({ width: 390, height: 844 });
       await mobilePage.emulateMedia({ reducedMotion: "reduce" });
       holdSelectedView = true;
-      await mobilePage.goto(`${origin}/workspace/?agent=agent-1&session=session-1`);
+      await mobilePage.goto(
+        `${origin}/workspace/?agent=agent-1&session=session-1`,
+      );
       await mobilePage.locator(".session-opening").waitFor();
-      const mobileOpeningProcess = await mobilePage.locator(".session-opening-process")
-        .first().boundingBox();
+      const mobileOpeningProcess = await mobilePage
+        .locator(".session-opening-process")
+        .first()
+        .boundingBox();
       assert.ok(mobileOpeningProcess);
-      assert.equal(await mobilePage.locator(".session-opening-line").first().evaluate(
-        (element) => getComputedStyle(element).animationName), "none");
-      await mobilePage.screenshot({ path: `${loadingEvidence}opening-mobile.png`, animations: "disabled" });
-      assert.ok(await mobilePage.evaluate(() => document.documentElement.scrollWidth <= 390));
+      assert.equal(
+        await mobilePage
+          .locator(".session-opening-line")
+          .first()
+          .evaluate((element) => getComputedStyle(element).animationName),
+        "none",
+      );
+      await mobilePage.screenshot({
+        path: `${loadingEvidence}opening-mobile.png`,
+        animations: "disabled",
+      });
+      assert.ok(
+        await mobilePage.evaluate(
+          () => document.documentElement.scrollWidth <= 390,
+        ),
+      );
       holdSelectedView = false;
-      for (const held of heldSelectedViews.splice(0)) writeJSON(held, {
-        code: "upstream_timeout", message: "History timed out", requestId: "opening-timeout",
-        retryable: true, recovery: "retry_read",
-      }, 504);
-      await mobilePage.getByRole("alert").filter({ hasText: "History timed out" }).waitFor();
-      await mobilePage.screenshot({ path: `${loadingEvidence}opening-error-mobile.png`, animations: "disabled" });
-      assert.equal(await mobilePage.locator(".session-opening").getAttribute("aria-busy"), "false");
-      assert.equal(await mobilePage.locator(".session-opening-turns").count(), 0);
+      for (const held of heldSelectedViews.splice(0))
+        writeJSON(
+          held,
+          {
+            code: "upstream_timeout",
+            message: "History timed out",
+            requestId: "opening-timeout",
+            retryable: true,
+            recovery: "retry_read",
+          },
+          504,
+        );
+      await mobilePage
+        .getByRole("alert")
+        .filter({ hasText: "History timed out" })
+        .waitFor();
+      await mobilePage.screenshot({
+        path: `${loadingEvidence}opening-error-mobile.png`,
+        animations: "disabled",
+      });
+      assert.equal(
+        await mobilePage.locator(".session-opening").getAttribute("aria-busy"),
+        "false",
+      );
+      assert.equal(
+        await mobilePage.locator(".session-opening-turns").count(),
+        0,
+      );
       await assertWcagPage(mobilePage);
       await mobilePage.getByRole("button", { name: "Retry loading" }).click();
       await mobilePage.getByText("Saved answer").waitFor();
-      const mobileLoadedProcess = await mobilePage.locator(".turn-process-trigger")
-        .first().boundingBox();
+      const mobileLoadedProcess = await mobilePage
+        .locator(".turn-process-trigger")
+        .first()
+        .boundingBox();
       assert.ok(mobileLoadedProcess);
       assert.ok(Math.abs(mobileOpeningProcess.x - mobileLoadedProcess.x) <= 2);
-      assert.ok(Math.abs(mobileOpeningProcess.width - mobileLoadedProcess.width) <= 2);
-      await mobilePage.screenshot({ path: `${loadingEvidence}conversation-mobile.png`,
-        animations: "disabled" });
+      assert.ok(
+        Math.abs(mobileOpeningProcess.width - mobileLoadedProcess.width) <= 2,
+      );
+      await mobilePage.screenshot({
+        path: `${loadingEvidence}conversation-mobile.png`,
+        animations: "disabled",
+      });
       await mobilePage.close();
       const backPage = await context.newPage();
       holdSelectedView = true;
-      await backPage.goto(`${origin}/workspace/?agent=agent-1&session=session-1`);
+      await backPage.goto(
+        `${origin}/workspace/?agent=agent-1&session=session-1`,
+      );
       await backPage.locator(".session-opening").waitFor();
       holdSelectedView = false;
-      for (const held of heldSelectedViews.splice(0)) writeJSON(held, {
-        code: "upstream_timeout", message: "History timed out", requestId: "opening-timeout-back",
-        retryable: true, recovery: "retry_read",
-      }, 504);
+      for (const held of heldSelectedViews.splice(0))
+        writeJSON(
+          held,
+          {
+            code: "upstream_timeout",
+            message: "History timed out",
+            requestId: "opening-timeout-back",
+            retryable: true,
+            recovery: "retry_read",
+          },
+          504,
+        );
       await backPage.getByRole("button", { name: "Back to agent" }).click();
-      await backPage.waitForURL((url) => url.searchParams.get("agent") === "agent-1" &&
-        url.searchParams.get("session") === null);
+      await backPage.waitForURL(
+        (url) =>
+          url.searchParams.get("agent") === "agent-1" &&
+          url.searchParams.get("session") === null,
+      );
       await backPage.close();
       assert.equal(
         await page
@@ -638,13 +786,17 @@ test(
           .count(),
         1,
       );
-      const composerStatus = page.getByRole("group", { name: "Message composer" })
+      const composerStatus = page
+        .getByRole("group", { name: "Message composer" })
         .getByRole("status");
       assert.equal(await composerStatus.innerText(), "");
       await assertWcagPage(page);
       await page.getByRole("button", { name: "Copy response" }).click();
       await page.getByRole("status").filter({ hasText: "Copied" }).waitFor();
-      assert.equal(await page.evaluate(() => navigator.clipboard.readText()), "Saved answer");
+      assert.equal(
+        await page.evaluate(() => navigator.clipboard.readText()),
+        "Saved answer",
+      );
       assert.deepEqual(
         processReads,
         [],
@@ -684,7 +836,11 @@ test(
       ).length;
       sessionTitle = "Changed while observer was offline";
       publish();
-      assert.equal(clients.size, 0, "The missed update must have no connected observer");
+      assert.equal(
+        clients.size,
+        0,
+        "The missed update must have no connected observer",
+      );
       streamUnavailable = false;
       for (let attempt = 0; attempt < 200 && clients.size !== 1; attempt++)
         await new Promise((resolve) => setTimeout(resolve, 20));
@@ -697,16 +853,22 @@ test(
         .locator(".topbar-agent .presence")
         .getByText("Available")
         .waitFor();
-      await page.locator(".conversation-option.active strong")
-        .filter({ hasText: sessionTitle }).waitFor();
-      assert.ok(seenPaths.filter((path) =>
-        path === "/api/app/workspace/v1/agents/agent-1/view").length >
-        viewsBeforeStreamRecovery,
-      "Reconnect must recover the missed state from an authoritative View");
+      await page
+        .locator(".conversation-option.active strong")
+        .filter({ hasText: sessionTitle })
+        .waitFor();
+      assert.ok(
+        seenPaths.filter(
+          (path) => path === "/api/app/workspace/v1/agents/agent-1/view",
+        ).length > viewsBeforeStreamRecovery,
+        "Reconnect must recover the missed state from an authoritative View",
+      );
       sessionTitle = "Saved question";
       publish();
-      await page.locator(".conversation-option.active strong")
-        .filter({ hasText: sessionTitle }).waitFor();
+      await page
+        .locator(".conversation-option.active strong")
+        .filter({ hasText: sessionTitle })
+        .waitFor();
       assert.equal(await composerStatus.innerText(), "");
       assert.equal(
         await page.getByRole("button", { name: "Allow once" }).isEnabled(),
@@ -726,10 +888,17 @@ test(
       const safeModeSwitch = page.getByRole("switch", { name: "Safe mode" });
       await safeModeSwitch.focus();
       await page.keyboard.press("Escape");
-      assert.equal(await page.getByRole("group", { name: "Session usage" }).count(), 0);
-      assert.equal(await safeModeSwitch.evaluate((element) =>
-        element === document.activeElement), true,
-      "Closing Usage from another control must leave that control focused");
+      assert.equal(
+        await page.getByRole("group", { name: "Session usage" }).count(),
+        0,
+      );
+      assert.equal(
+        await safeModeSwitch.evaluate(
+          (element) => element === document.activeElement,
+        ),
+        true,
+        "Closing Usage from another control must leave that control focused",
+      );
       const viewsBeforeLostConfiguration = seenPaths.filter(
         (path) => path === "/api/app/workspace/v1/agents/agent-1/view",
       ).length;
@@ -770,22 +939,35 @@ test(
         (path) => path === "/api/app/workspace/v1/agents/agent-1/view",
       ).length;
       const permissionInbox = page.locator(".permission-requests");
-      assert.equal(await permissionInbox.getAttribute("aria-live"), null,
-        "Raw tool input must not sit inside a live announcement");
-      const permissionAnnouncement = await page.getByRole("status")
-        .filter({ hasText: /tool approval/u }).textContent();
-      assert.match(permissionAnnouncement ?? "",
-        /^1 tool approval requires a decision\. Most recent: Read notes in /u);
-      assert.ok(!permissionAnnouncement?.includes("notes.md"),
-        "The live announcement must omit raw tool input");
+      assert.equal(
+        await permissionInbox.getAttribute("aria-live"),
+        null,
+        "Raw tool input must not sit inside a live announcement",
+      );
+      const permissionAnnouncement = await page
+        .getByRole("status")
+        .filter({ hasText: /tool approval/u })
+        .textContent();
+      assert.match(
+        permissionAnnouncement ?? "",
+        /^1 tool approval requires a decision\. Most recent: Read notes in /u,
+      );
+      assert.ok(
+        !permissionAnnouncement?.includes("notes.md"),
+        "The live announcement must omit raw tool input",
+      );
       const approvalContext = /Conversation: Saved question.*Read notes/u;
       const approval = page.getByRole("region", {
-        name: "Tool approval", description: approvalContext,
+        name: "Tool approval",
+        description: approvalContext,
       });
       assert.equal(await approval.count(), 1);
-      await approval.getByRole("button", {
-        name: "Allow once", description: approvalContext,
-      }).focus();
+      await approval
+        .getByRole("button", {
+          name: "Allow once",
+          description: approvalContext,
+        })
+        .focus();
       await page.keyboard.press("Enter");
       await page
         .getByRole("button", { name: "Allow once" })
@@ -821,47 +1003,82 @@ test(
       await page.getByRole("button", { name: "Retry full content" }).focus();
       await page.keyboard.press("Enter");
       await page.getByText("Output preview full").waitFor();
-      assert.equal(await page.evaluate(() =>
-        document.activeElement?.matches(".message")), true,
-      "Finishing full content must focus the message that replaced its keyboard action");
-      assert.equal(await page.evaluate(() =>
-        getComputedStyle(document.activeElement).outlineStyle), "solid",
-      "The focused full message needs a visible keyboard indicator");
+      assert.equal(
+        await page.evaluate(() => document.activeElement?.matches(".message")),
+        true,
+        "Finishing full content must focus the message that replaced its keyboard action",
+      );
+      assert.equal(
+        await page.evaluate(
+          () => getComputedStyle(document.activeElement).outlineStyle,
+        ),
+        "solid",
+        "The focused full message needs a visible keyboard indicator",
+      );
       assert.deepEqual(processReads, ["page", "content", "content"]);
       await page.getByText("Loaded 1 of 2 updates").waitFor();
       const desktopViewport = page.viewportSize();
       await page.setViewportSize({ width: 390, height: 844 });
-      const olderControl = page.getByRole("button", { name: "Load earlier messages" });
+      const olderControl = page.getByRole("button", {
+        name: "Load earlier messages",
+      });
       const olderBounds = await olderControl.boundingBox();
-      assert.ok(olderBounds && olderBounds.height >= 32,
-        "History pagination needs a usable mobile touch target");
-      assert.ok(await olderControl.evaluate((element) =>
-        Number.parseFloat(getComputedStyle(element).borderTopLeftRadius) >= 4),
-      "History pagination should use the same compact control shape as the workspace");
-      await page.screenshot({ path: `${loadingEvidence}process-ready-mobile.png`,
-        animations: "disabled" });
+      assert.ok(
+        olderBounds && olderBounds.height >= 32,
+        "History pagination needs a usable mobile touch target",
+      );
+      assert.ok(
+        await olderControl.evaluate(
+          (element) =>
+            Number.parseFloat(getComputedStyle(element).borderTopLeftRadius) >=
+            4,
+        ),
+        "History pagination should use the same compact control shape as the workspace",
+      );
+      await page.screenshot({
+        path: `${loadingEvidence}process-ready-mobile.png`,
+        animations: "disabled",
+      });
       dropNextProcessPage = true;
       await page.getByRole("button", { name: "Load more process" }).click();
       await page.getByText("Process could not be loaded.").waitFor();
       await page.getByText("Output preview full").waitFor();
       await page.getByText("Loaded 1 of 2 updates").waitFor();
       await assertWcagPage(page);
-      await page.screenshot({ path: `${loadingEvidence}process-error-mobile.png`,
-        animations: "disabled" });
+      await page.screenshot({
+        path: `${loadingEvidence}process-error-mobile.png`,
+        animations: "disabled",
+      });
       await page.getByRole("button", { name: "Retry process" }).focus();
       await page.keyboard.press("Enter");
       await page.getByText("Second step").waitFor({ state: "attached" });
-      assert.equal(await page.evaluate(() => document.activeElement?.className),
+      assert.equal(
+        await page.evaluate(() => document.activeElement?.className),
         "turn-process-trigger",
-        "Finishing the last process page must return keyboard focus to its disclosure");
+        "Finishing the last process page must return keyboard focus to its disclosure",
+      );
       if (desktopViewport) await page.setViewportSize(desktopViewport);
-      const firstExchange = await page.locator(".conversation-turn").first().innerText();
-      assert.ok(firstExchange.indexOf("Second step") < firstExchange.indexOf(answer),
-        "An interim Agent response must remain inside process before the final answer");
-      assert.equal(await page.locator(".turn-process-content .message-system").count(), 0);
+      const firstExchange = await page
+        .locator(".conversation-turn")
+        .first()
+        .innerText();
+      assert.ok(
+        firstExchange.indexOf("Second step") < firstExchange.indexOf(answer),
+        "An interim Agent response must remain inside process before the final answer",
+      );
+      assert.equal(
+        await page.locator(".turn-process-content .message-system").count(),
+        0,
+      );
       await page.getByText("Loaded 2 of 2 updates").waitFor();
       await assertWcagPage(page);
-      assert.deepEqual(processReads, ["page", "content", "content", "page-2", "page-2"]);
+      assert.deepEqual(processReads, [
+        "page",
+        "content",
+        "content",
+        "page-2",
+        "page-2",
+      ]);
       await page.getByRole("button", { name: "Load earlier messages" }).click();
       await page.getByText("Earlier answer").waitFor();
       const historyFocus = await page.evaluate(() => ({
@@ -886,20 +1103,34 @@ test(
       await page.getByRole("textbox", { name: "Message" }).fill("Continue");
       interruptFirstPromptStream = true;
       await page.getByRole("button", { name: "Send message" }).click();
-      for (let attempt = 0; attempt < 200 && !firstPromptCompletedWithoutObserver; attempt++)
+      for (
+        let attempt = 0;
+        attempt < 200 && !firstPromptCompletedWithoutObserver;
+        attempt++
+      )
         await new Promise((resolve) => setTimeout(resolve, 20));
-      assert.equal(firstPromptCompletedWithoutObserver, true,
-        "The accepted Prompt must finish while no browser SSE observer is connected");
-      assert.equal(prompts.length, 1, "Losing the observer must not replay the Prompt");
+      assert.equal(
+        firstPromptCompletedWithoutObserver,
+        true,
+        "The accepted Prompt must finish while no browser SSE observer is connected",
+      );
+      assert.equal(
+        prompts.length,
+        1,
+        "Losing the observer must not replay the Prompt",
+      );
       streamUnavailable = false;
       await page.getByText("Completed over SSE").waitFor();
       await secondPage.getByText("Completed over SSE").waitFor();
       for (const observer of [page, secondPage])
         await observer.waitForFunction(() => {
           const row = document.querySelector(".conversation-option.active");
-          return row?.querySelector("strong")?.textContent === "ACP renamed session" &&
+          return (
+            row?.querySelector("strong")?.textContent ===
+              "ACP renamed session" &&
             row.querySelector("time")?.getAttribute("datetime") ===
-              "2026-09-24T02:00:00Z";
+              "2026-09-24T02:00:00Z"
+          );
         });
       await page.getByText("Output preview full").waitFor();
       await page.getByText("Earlier answer").waitFor();
@@ -930,9 +1161,11 @@ test(
       await secondPage.getByText("Continued after tab close").waitFor();
       await secondPage.waitForFunction(() => {
         const row = document.querySelector(".conversation-option.active");
-        return row?.querySelector("strong")?.textContent === "ACP renamed session" &&
+        return (
+          row?.querySelector("strong")?.textContent === "ACP renamed session" &&
           row.querySelector("time")?.getAttribute("datetime") ===
-            "2026-09-24T02:00:00Z";
+            "2026-09-24T02:00:00Z"
+        );
       });
       assert.equal(prompts.length, 2, "Reload must not resubmit the Prompt");
       runtimeFailed = true;
@@ -967,15 +1200,26 @@ test(
       runtimeFailed = false;
       publish();
       await secondPage.getByText("Continued after tab close").waitFor();
-      const viewReadsBefore = seenPaths.filter((path) => path.endsWith("/view")).length;
+      const viewReadsBefore = seenPaths.filter((path) =>
+        path.endsWith("/view"),
+      ).length;
       sessionTitle = "Renamed through incremental delivery";
       publish();
-      await secondPage.locator(".conversation-option.active strong").filter({ hasText: sessionTitle }).waitFor();
+      await secondPage
+        .locator(".conversation-option.active strong")
+        .filter({ hasText: sessionTitle })
+        .waitFor();
       assert.equal(publications.at(-1).type, "delta");
-      assert.equal(JSON.stringify(publications.at(-1)).includes(answer), false,
-        "A title update must not repeat the retained answer");
-      assert.equal(seenPaths.filter((path) => path.endsWith("/view")).length, viewReadsBefore,
-        "A continuous delta must update the browser without a View GET");
+      assert.equal(
+        JSON.stringify(publications.at(-1)).includes(answer),
+        false,
+        "A title update must not repeat the retained answer",
+      );
+      assert.equal(
+        seenPaths.filter((path) => path.endsWith("/view")).length,
+        viewReadsBefore,
+        "A continuous delta must update the browser without a View GET",
+      );
       await secondPage.getByText("Continued after tab close").waitFor();
       await secondPage.reload();
       await secondPage.getByText("Continued after tab close").waitFor();
@@ -983,22 +1227,33 @@ test(
       liveTurnPhase = "running";
       publish();
       await secondPage.getByRole("button", { name: "Hide process" }).waitFor();
-      await secondPage.getByText("Live first step").waitFor({ state: "attached" });
-      await secondPage.getByText("Live second step").waitFor({ state: "attached" });
+      await secondPage
+        .getByText("Live first step")
+        .waitFor({ state: "attached" });
+      await secondPage
+        .getByText("Live second step")
+        .waitFor({ state: "attached" });
       assert.deepEqual(processReads.slice(-2), ["live-page", "live-page-2"]);
       const liveReads = processReads.length;
       liveProcessVersion = 2;
       liveSecondText = "Live second step updated";
       publish();
       await secondPage.getByText(liveSecondText).waitFor({ state: "attached" });
-      assert.equal(processReads.length, liveReads,
-        "A continuous live process delta must not refetch process pages");
+      assert.equal(
+        processReads.length,
+        liveReads,
+        "A continuous live process delta must not refetch process pages",
+      );
       liveTurnPhase = "completed";
       publish();
       await secondPage.getByText("Live finished").waitFor();
       for (let attempt = 0; attempt < 200 && clients.size !== 1; attempt++)
         await new Promise((resolve) => setTimeout(resolve, 20));
-      assert.equal(clients.size, 1, "Reloaded page must reattach its SSE observer");
+      assert.equal(
+        clients.size,
+        1,
+        "Reloaded page must reattach its SSE observer",
+      );
       await secondPage
         .getByRole("textbox", { name: "Message" })
         .fill("Ready again");
@@ -1144,16 +1399,36 @@ test(
       activeSessionId: null,
       selectedSessionId: id,
       streamCursor: `cursor-${id}-${streamRevision}`,
-      operations: id === "two" ? [
-        ...(firstIntentId ? [{ operationId: firstIntentId, sessionId: "two",
-          phase: "completed", acceptance: "acp", runId: "first-run",
-          outputWatermark: 2 }] : []),
-        ...(rejectedAudio ? [{
-        operationId: rejectedIntentId, sessionId: "two", phase: "failed",
-        acceptance: "acp", runId: "rejected-run", outputWatermark: 3,
-        errorClass: "model_unsupported_content",
-        }] : []),
-      ] : [],
+      operations:
+        id === "two"
+          ? [
+              ...(firstIntentId
+                ? [
+                    {
+                      operationId: firstIntentId,
+                      sessionId: "two",
+                      phase: "completed",
+                      acceptance: "acp",
+                      runId: "first-run",
+                      outputWatermark: 2,
+                    },
+                  ]
+                : []),
+              ...(rejectedAudio
+                ? [
+                    {
+                      operationId: rejectedIntentId,
+                      sessionId: "two",
+                      phase: "failed",
+                      acceptance: "acp",
+                      runId: "rejected-run",
+                      outputWatermark: 3,
+                      errorClass: "model_unsupported_content",
+                    },
+                  ]
+                : []),
+            ]
+          : [],
       permissions: [],
       selectedView: {
         agentId: "agent-1",
@@ -1169,16 +1444,36 @@ test(
         streamCursor: `session-${id}`,
         historyState: "ready",
         olderTurnsCursor: null,
-        operations: id === "two" ? [
-          ...(firstIntentId ? [{ operationId: firstIntentId, sessionId: "two",
-            phase: "completed", acceptance: "acp", runId: "first-run",
-            outputWatermark: 2 }] : []),
-          ...(rejectedAudio ? [{
-          operationId: rejectedIntentId, sessionId: "two", phase: "failed",
-          acceptance: "acp", runId: "rejected-run", outputWatermark: 3,
-          errorClass: "model_unsupported_content",
-          }] : []),
-        ] : [],
+        operations:
+          id === "two"
+            ? [
+                ...(firstIntentId
+                  ? [
+                      {
+                        operationId: firstIntentId,
+                        sessionId: "two",
+                        phase: "completed",
+                        acceptance: "acp",
+                        runId: "first-run",
+                        outputWatermark: 2,
+                      },
+                    ]
+                  : []),
+                ...(rejectedAudio
+                  ? [
+                      {
+                        operationId: rejectedIntentId,
+                        sessionId: "two",
+                        phase: "failed",
+                        acceptance: "acp",
+                        runId: "rejected-run",
+                        outputWatermark: 3,
+                        errorClass: "model_unsupported_content",
+                      },
+                    ]
+                  : []),
+              ]
+            : [],
         permissions: [],
         configOptions: [],
         configurationToken: null,
@@ -1189,16 +1484,25 @@ test(
             outcome: "completed",
             prompt: [{ type: "text", text: `Question ${id}` }],
             finalResponse: [{ type: "text", text: `Answer ${id}` }],
-            contentCursor: null, contentSection: null,
+            contentCursor: null,
+            contentSection: null,
             processVersion: id === "one" ? 1 : 0,
             processCount: id === "one" ? 1 : 0,
           },
-          ...(id === "two" && rejectedAudio ? [{
-            turnId: "rejected-run", outcome: "failed",
-            prompt: [{ type: "text", text: "Unsupported audio check" }],
-            finalResponse: [], contentCursor: null, contentSection: null,
-            processVersion: 0, processCount: 0,
-          }] : []),
+          ...(id === "two" && rejectedAudio
+            ? [
+                {
+                  turnId: "rejected-run",
+                  outcome: "failed",
+                  prompt: [{ type: "text", text: "Unsupported audio check" }],
+                  finalResponse: [],
+                  contentCursor: null,
+                  contentSection: null,
+                  processVersion: 0,
+                  processCount: 0,
+                },
+              ]
+            : []),
         ],
       },
     });
@@ -1208,8 +1512,10 @@ test(
         ...selected,
         agentId: "agent-2",
         selectedSessionId: sessionId,
-        selectedView: sessionId === null ? null
-          : { ...selected.selectedView, agentId: "agent-2" },
+        selectedView:
+          sessionId === null
+            ? null
+            : { ...selected.selectedView, agentId: "agent-2" },
       };
     };
     const writeJSON = (response, body) => {
@@ -1266,17 +1572,27 @@ test(
                   });
                   return;
                 }
-                if (url.pathname === "/api/app/workspace/v1/agents/agent-2/sessions") {
-                  writeJSON(response, { items: [session("peer")], nextCursor: null });
+                if (
+                  url.pathname ===
+                  "/api/app/workspace/v1/agents/agent-2/sessions"
+                ) {
+                  writeJSON(response, {
+                    items: [session("peer")],
+                    nextCursor: null,
+                  });
                   return;
                 }
-                if (url.pathname === "/api/app/workspace/v1/agents/agent-2/view") {
+                if (
+                  url.pathname === "/api/app/workspace/v1/agents/agent-2/view"
+                ) {
                   const sessionId = url.searchParams.get("sessionId");
                   assert.ok(sessionId === null || sessionId === "peer");
                   writeJSON(response, peerView(sessionId));
                   return;
                 }
-                if (url.pathname === "/api/app/workspace/v1/agents/agent-2/events") {
+                if (
+                  url.pathname === "/api/app/workspace/v1/agents/agent-2/events"
+                ) {
                   response.writeHead(200, {
                     "content-type": "text/event-stream",
                     "cache-control": "no-store",
@@ -1306,14 +1622,17 @@ test(
                       phase: "dispatching",
                     });
                     if (promptBodies.length <= 2) {
-                      if (promptBodies.length === 1) firstIntentId = body.intentId;
+                      if (promptBodies.length === 1)
+                        firstIntentId = body.intentId;
                       else {
                         rejectedAudio = true;
                         rejectedIntentId = body.intentId;
                       }
                       streamRevision++;
                       const event = {
-                        type: "reset", agentId: "agent-1", bridgeEpoch: "epoch-1",
+                        type: "reset",
+                        agentId: "agent-1",
+                        bridgeEpoch: "epoch-1",
                         projectionId: "projection-two",
                         fromStreamRevision: streamRevision - 1,
                         toStreamRevision: streamRevision,
@@ -1321,7 +1640,9 @@ test(
                         view: view("two"),
                       };
                       for (const stream of streams)
-                        stream.write(`event: reset\ndata: ${JSON.stringify(event)}\n\n`);
+                        stream.write(
+                          `event: reset\ndata: ${JSON.stringify(event)}\n\n`,
+                        );
                     }
                   });
                   return;
@@ -1332,31 +1653,63 @@ test(
                   const id = url.searchParams.get("sessionId");
                   assert.ok(id === null || id === "one" || id === "two");
                   if (id !== null) selectedViews.push(id);
-                  writeJSON(response, id === null
-                    ? { ...view("one"), selectedSessionId: null, selectedView: null }
-                    : view(id));
+                  writeJSON(
+                    response,
+                    id === null
+                      ? {
+                          ...view("one"),
+                          selectedSessionId: null,
+                          selectedView: null,
+                        }
+                      : view(id),
+                  );
                   return;
                 }
-                if (url.pathname ===
-                  "/api/app/workspace/v1/agents/agent-1/sessions/one/turns/turn-one/process") {
-                  writeJSON(response, { turnId: "turn-one", processVersion: 1,
-                    items: [{ id: "tool-one", kind: "tool", summary: "Large tool",
-                      status: "completed", toolSections: { detailStartIndex: 0 },
-                      content: [{ type: "text", text: "Preview" }],
-                      contentCursor: "tool-more" }], nextCursor: null });
+                if (
+                  url.pathname ===
+                  "/api/app/workspace/v1/agents/agent-1/sessions/one/turns/turn-one/process"
+                ) {
+                  writeJSON(response, {
+                    turnId: "turn-one",
+                    processVersion: 1,
+                    items: [
+                      {
+                        id: "tool-one",
+                        kind: "tool",
+                        summary: "Large tool",
+                        status: "completed",
+                        toolSections: { detailStartIndex: 0 },
+                        content: [{ type: "text", text: "Preview" }],
+                        contentCursor: "tool-more",
+                      },
+                    ],
+                    nextCursor: null,
+                  });
                   return;
                 }
-                if (url.pathname ===
-                  "/api/app/workspace/v1/agents/agent-1/sessions/one/turns/turn-one/process/tool-one/content") {
+                if (
+                  url.pathname ===
+                  "/api/app/workspace/v1/agents/agent-1/sessions/one/turns/turn-one/process/tool-one/content"
+                ) {
                   processContentRequests++;
                   if (processContentRequests === 1) {
                     heldProcessContent.push(response);
-                    response.on("close", () => { processContentClosed = true; });
+                    response.on("close", () => {
+                      processContentClosed = true;
+                    });
                   } else {
-                    writeJSON(response, { turnId: "turn-one", itemId: "tool-one",
-                      items: [{ type: "text", text:
-                        `Late tool body ${processContentRequests}: ${"x".repeat(1024 * 1024)} END-OF-LARGE-TOOL` }],
-                      nextCursor: null, complete: true });
+                    writeJSON(response, {
+                      turnId: "turn-one",
+                      itemId: "tool-one",
+                      items: [
+                        {
+                          type: "text",
+                          text: `Late tool body ${processContentRequests}: ${"x".repeat(1024 * 1024)} END-OF-LARGE-TOOL`,
+                        },
+                      ],
+                      nextCursor: null,
+                      complete: true,
+                    });
                   }
                   return;
                 }
@@ -1397,10 +1750,17 @@ test(
       await page.getByRole("button", { name: "Show process" }).click();
       await page.locator(".tool-activity summary").click();
       await page.getByRole("button", { name: "Load full content" }).click();
-      for (let attempt = 0; attempt < 100 && heldProcessContent.length === 0; attempt++)
+      for (
+        let attempt = 0;
+        attempt < 100 && heldProcessContent.length === 0;
+        attempt++
+      )
         await new Promise((resolve) => setTimeout(resolve, 20));
-      assert.equal(heldProcessContent.length, 1,
-        "The full tool body must have an in-flight browser request");
+      assert.equal(
+        heldProcessContent.length,
+        1,
+        "The full tool body must have an in-flight browser request",
+      );
       await page
         .getByRole("complementary", { name: "Workspace navigation" })
         .getByRole("button", { name: /Conversation two/u })
@@ -1408,8 +1768,11 @@ test(
       await page.getByText("Answer two").waitFor();
       for (let attempt = 0; attempt < 100 && !processContentClosed; attempt++)
         await new Promise((resolve) => setTimeout(resolve, 20));
-      assert.equal(processContentClosed, true,
-        "Leaving the Session must abort its in-flight tool content response");
+      assert.equal(
+        processContentClosed,
+        true,
+        "Leaving the Session must abort its in-flight tool content response",
+      );
       assert.equal(await page.getByText("Late tool body").count(), 0);
       assert.equal(
         await page.getByRole("textbox", { name: "Message" }).inputValue(),
@@ -1450,11 +1813,24 @@ test(
         .getByRole("button", { name: /Conversation peer/u })
         .click();
       await page.getByText("Answer peer").waitFor();
-      assert.equal(await page.getByRole("textbox", { name: "Message" }).inputValue(), "");
-      await page.getByRole("textbox", { name: "Message" }).fill("Draft for peer");
-      for (let attempt = 0; attempt < 100 && (streams.size !== 0 || peerStreams.size !== 1); attempt++)
+      assert.equal(
+        await page.getByRole("textbox", { name: "Message" }).inputValue(),
+        "",
+      );
+      await page
+        .getByRole("textbox", { name: "Message" })
+        .fill("Draft for peer");
+      for (
+        let attempt = 0;
+        attempt < 100 && (streams.size !== 0 || peerStreams.size !== 1);
+        attempt++
+      )
         await new Promise((resolve) => setTimeout(resolve, 20));
-      assert.equal(streams.size, 0, "Switching Agent must close its old SSE observer");
+      assert.equal(
+        streams.size,
+        0,
+        "Switching Agent must close its old SSE observer",
+      );
       assert.equal(peerStreams.size, 1);
       await page
         .getByRole("complementary", { name: "Workspace navigation" })
@@ -1466,10 +1842,21 @@ test(
         .getByRole("button", { name: /Conversation two/u })
         .click();
       await page.getByText("Answer two").waitFor();
-      assert.equal(await page.getByRole("textbox", { name: "Message" }).inputValue(), "Draft for two");
-      for (let attempt = 0; attempt < 100 && (streams.size !== 1 || peerStreams.size !== 0); attempt++)
+      assert.equal(
+        await page.getByRole("textbox", { name: "Message" }).inputValue(),
+        "Draft for two",
+      );
+      for (
+        let attempt = 0;
+        attempt < 100 && (streams.size !== 1 || peerStreams.size !== 0);
+        attempt++
+      )
         await new Promise((resolve) => setTimeout(resolve, 20));
-      assert.equal(peerStreams.size, 0, "Returning Agent must close the peer SSE observer");
+      assert.equal(
+        peerStreams.size,
+        0,
+        "Returning Agent must close the peer SSE observer",
+      );
       assert.equal(streams.size, 1);
       await page
         .getByRole("complementary", { name: "Workspace navigation" })
@@ -1480,7 +1867,10 @@ test(
         .getByRole("button", { name: /Conversation peer/u })
         .click();
       await page.getByText("Answer peer").waitFor();
-      assert.equal(await page.getByRole("textbox", { name: "Message" }).inputValue(), "Draft for peer");
+      assert.equal(
+        await page.getByRole("textbox", { name: "Message" }).inputValue(),
+        "Draft for peer",
+      );
       await page
         .getByRole("complementary", { name: "Workspace navigation" })
         .locator(".agent-option")
@@ -1491,7 +1881,10 @@ test(
         .getByRole("button", { name: /Conversation two/u })
         .click();
       await page.getByText("Answer two").waitFor();
-      assert.equal(await page.getByRole("textbox", { name: "Message" }).inputValue(), "Draft for two");
+      assert.equal(
+        await page.getByRole("textbox", { name: "Message" }).inputValue(),
+        "Draft for two",
+      );
       const png = Buffer.from(
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL/nwAAAABJRU5ErkJggg==",
         "base64",
@@ -1511,24 +1904,47 @@ test(
         { name: "discard-one.txt", mimeType: "text/plain", buffer: note },
         { name: "discard-two.txt", mimeType: "text/plain", buffer: note },
       ]);
-      await page.getByRole("button", { name: "Remove discard-one.txt" }).press("Enter");
-      assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("aria-label")),
-        "Remove discard-two.txt");
-      await page.getByRole("button", { name: "Remove discard-two.txt" }).press("Enter");
-      assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("aria-label")),
-        "Message");
+      await page
+        .getByRole("button", { name: "Remove discard-one.txt" })
+        .press("Enter");
+      assert.equal(
+        await page.evaluate(() =>
+          document.activeElement?.getAttribute("aria-label"),
+        ),
+        "Remove discard-two.txt",
+      );
+      await page
+        .getByRole("button", { name: "Remove discard-two.txt" })
+        .press("Enter");
+      assert.equal(
+        await page.evaluate(() =>
+          document.activeElement?.getAttribute("aria-label"),
+        ),
+        "Message",
+      );
       await page.getByLabel("File attachments", { exact: true }).setInputFiles([
         { name: "pixel.png", mimeType: "image/png", buffer: png },
         { name: "voice.wav", mimeType: "audio/wav", buffer: wav },
         { name: "report.pdf", mimeType: "application/pdf", buffer: pdf },
         { name: "note.txt", mimeType: "text/plain", buffer: note },
       ]);
-      await page.getByRole("textbox", { name: "Message" }).evaluate((editor) => {
-        editor.dispatchEvent(new KeyboardEvent("keydown", {
-          key: "Enter", keyCode: 229, bubbles: true, cancelable: true,
-        }));
-      });
-      assert.equal(promptBodies.length, 0, "IME confirmation must not submit the draft");
+      await page
+        .getByRole("textbox", { name: "Message" })
+        .evaluate((editor) => {
+          editor.dispatchEvent(
+            new KeyboardEvent("keydown", {
+              key: "Enter",
+              keyCode: 229,
+              bubbles: true,
+              cancelable: true,
+            }),
+          );
+        });
+      assert.equal(
+        promptBodies.length,
+        0,
+        "IME confirmation must not submit the draft",
+      );
       await page.getByRole("textbox", { name: "Message" }).press("Enter");
       for (
         let attempt = 0;
@@ -1559,28 +1975,58 @@ test(
         },
       ]);
       await page.waitForFunction(() => window.__revokedPreviews.length === 2);
-      await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Message");
+      await page.waitForFunction(
+        () => document.activeElement?.getAttribute("aria-label") === "Message",
+      );
       await page.getByLabel("File attachments", { exact: true }).setInputFiles({
-        name: "unsupported.wav", mimeType: "audio/wav", buffer: wav,
+        name: "unsupported.wav",
+        mimeType: "audio/wav",
+        buffer: wav,
       });
-      await page.getByRole("textbox", { name: "Message" }).fill("Unsupported audio check");
+      await page
+        .getByRole("textbox", { name: "Message" })
+        .fill("Unsupported audio check");
       await page.getByRole("textbox", { name: "Message" }).press("Enter");
-      await page.getByRole("alert").filter({
-        hasText: "The selected model does not support this attachment type.",
-      }).waitFor();
+      await page
+        .getByRole("alert")
+        .filter({
+          hasText: "The selected model does not support this attachment type.",
+        })
+        .waitFor();
       assert.equal(promptBodies.length, 2);
-      assert.equal(await page.getByRole("textbox", { name: "Message" }).isEnabled(), true);
-      assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("aria-label")),
-        "Message", "Keyboard submission must return focus after the Run settles");
+      assert.equal(
+        await page.getByRole("textbox", { name: "Message" }).isEnabled(),
+        true,
+      );
+      assert.equal(
+        await page.evaluate(() =>
+          document.activeElement?.getAttribute("aria-label"),
+        ),
+        "Message",
+        "Keyboard submission must return focus after the Run settles",
+      );
       await assertWcagPage(page);
       await page.getByRole("textbox", { name: "Message" }).fill("Try again");
-      assert.equal(await page.getByRole("button", { name: "Send message" }).isEnabled(), true);
+      assert.equal(
+        await page.getByRole("button", { name: "Send message" }).isEnabled(),
+        true,
+      );
       await page.reload();
-      await page.getByRole("alert").filter({
-        hasText: "The selected model does not support this attachment type.",
-      }).waitFor();
-      assert.equal(await page.getByRole("textbox", { name: "Message" }).isEnabled(), true);
-      assert.equal(promptBodies.length, 2, "Reload must not replay a rejected Prompt");
+      await page
+        .getByRole("alert")
+        .filter({
+          hasText: "The selected model does not support this attachment type.",
+        })
+        .waitFor();
+      assert.equal(
+        await page.getByRole("textbox", { name: "Message" }).isEnabled(),
+        true,
+      );
+      assert.equal(
+        promptBodies.length,
+        2,
+        "Reload must not replay a rejected Prompt",
+      );
       await page.close();
       const memoryPage = await context.newPage();
       await memoryPage.goto(`${origin}/workspace/?agent=agent-1&session=two`);
@@ -1588,7 +2034,9 @@ test(
       const heapSession = await context.newCDPSession(memoryPage);
       const heapBytes = async () => {
         await heapSession.send("HeapProfiler.collectGarbage");
-        const { usedSize: bytes } = await heapSession.send("Runtime.getHeapUsage");
+        const { usedSize: bytes } = await heapSession.send(
+          "Runtime.getHeapUsage",
+        );
         assert.ok(Number.isSafeInteger(bytes) && bytes > 0);
         return bytes;
       };
@@ -1597,33 +2045,73 @@ test(
       const afterNavigationBytes = [];
       try {
         for (let cycle = 0; cycle < 6; cycle++) {
-          await memoryPage.getByRole("complementary", { name: "Workspace navigation" })
-            .getByRole("button", { name: /Conversation one/u }).click();
+          await memoryPage
+            .getByRole("complementary", { name: "Workspace navigation" })
+            .getByRole("button", { name: /Conversation one/u })
+            .click();
           await memoryPage.getByText("Answer one").waitFor();
-          await memoryPage.getByRole("button", { name: "Show process" }).click();
+          await memoryPage
+            .getByRole("button", { name: "Show process" })
+            .click();
           await memoryPage.locator(".tool-activity summary").click();
-          await memoryPage.getByRole("button", { name: "Load full content" }).click();
+          await memoryPage
+            .getByRole("button", { name: "Load full content" })
+            .click();
           await memoryPage.waitForFunction(() =>
-            document.body.textContent?.includes("END-OF-LARGE-TOOL"));
+            document.body.textContent?.includes("END-OF-LARGE-TOOL"),
+          );
           loadedBytes.push(await heapBytes());
-          await memoryPage.getByRole("complementary", { name: "Workspace navigation" })
-            .getByRole("button", { name: /Conversation two/u }).click();
+          await memoryPage
+            .getByRole("complementary", { name: "Workspace navigation" })
+            .getByRole("button", { name: /Conversation two/u })
+            .click();
           await memoryPage.getByText("Answer two").waitFor();
-          assert.equal(await memoryPage.getByText("END-OF-LARGE-TOOL").count(), 0);
+          assert.equal(
+            await memoryPage.getByText("END-OF-LARGE-TOOL").count(),
+            0,
+          );
           afterNavigationBytes.push(await heapBytes());
         }
-        assert.ok(loadedBytes.every((bytes, index) =>
-          bytes > afterNavigationBytes[index] + 512 * 1024),
-        `CDP heap samples did not detect loaded tool bodies: ${JSON.stringify({ loadedBytes, afterNavigationBytes })}`);
-        assert.ok(afterNavigationBytes.at(-1) < afterNavigationBytes[0] + 2 * 1024 * 1024,
-          `Navigation retained large tool bodies: ${JSON.stringify(afterNavigationBytes)}`);
-        const evidence = fileURLToPath(new URL(
-          "../../../artifacts/verification/agent-ui/browser-navigation-heap.json", import.meta.url));
-        mkdirSync(fileURLToPath(new URL(
-          "../../../artifacts/verification/agent-ui/", import.meta.url)), { recursive: true });
-        writeFileSync(evidence, JSON.stringify({ baselineHeapBytes, loadedBytes,
-          afterNavigationBytes,
-          bodyBytes: 1024 * 1024, cycles: 6 }, null, 2) + "\n");
+        assert.ok(
+          loadedBytes.every(
+            (bytes, index) => bytes > afterNavigationBytes[index] + 512 * 1024,
+          ),
+          `CDP heap samples did not detect loaded tool bodies: ${JSON.stringify({ loadedBytes, afterNavigationBytes })}`,
+        );
+        assert.ok(
+          afterNavigationBytes.at(-1) <
+            afterNavigationBytes[0] + 2 * 1024 * 1024,
+          `Navigation retained large tool bodies: ${JSON.stringify(afterNavigationBytes)}`,
+        );
+        const evidence = fileURLToPath(
+          new URL(
+            "../../../artifacts/verification/agent-ui/browser-navigation-heap.json",
+            import.meta.url,
+          ),
+        );
+        mkdirSync(
+          fileURLToPath(
+            new URL(
+              "../../../artifacts/verification/agent-ui/",
+              import.meta.url,
+            ),
+          ),
+          { recursive: true },
+        );
+        writeFileSync(
+          evidence,
+          JSON.stringify(
+            {
+              baselineHeapBytes,
+              loadedBytes,
+              afterNavigationBytes,
+              bodyBytes: 1024 * 1024,
+              cycles: 6,
+            },
+            null,
+            2,
+          ) + "\n",
+        );
       } finally {
         await heapSession.detach();
         await memoryPage.close();
@@ -1711,7 +2199,9 @@ test(
         .getByRole("button", { name: /Peer Agent/u })
         .focus();
       await mobilePage.keyboard.press("Enter");
-      await mobilePage.getByRole("heading", { name: "Peer Agent", exact: true }).waitFor();
+      await mobilePage
+        .getByRole("heading", { name: "Peer Agent", exact: true })
+        .waitFor();
       assert.equal(
         await mobilePage.evaluate(
           () => document.activeElement?.id === "conversation-main",
@@ -1726,9 +2216,12 @@ test(
         .getByRole("button", { name: "All agents" })
         .focus();
       await mobilePage.keyboard.press("Enter");
-      await mobilePage.getByRole("searchbox", { name: "Find an agent" }).waitFor();
+      await mobilePage
+        .getByRole("searchbox", { name: "Find an agent" })
+        .waitFor();
       assert.equal(
-        await mobilePage.getByRole("searchbox", { name: "Find an agent" })
+        await mobilePage
+          .getByRole("searchbox", { name: "Find an agent" })
           .evaluate((search) => search === document.activeElement),
         true,
         "Leaving mobile navigation for the Agent directory must focus its search",

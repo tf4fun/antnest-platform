@@ -13,20 +13,52 @@ import { durablePath } from "../../support/storage.mjs";
 // provide its dist directory; never include that old client in a current image.
 const legacyDist = process.env.ANTNEST_UI_LEGACY_DIST;
 const output = process.env.ANTNEST_UI_BENCH_OUTPUT;
-assert(legacyDist && output, "set ANTNEST_UI_LEGACY_DIST and ANTNEST_UI_BENCH_OUTPUT");
+assert(
+  legacyDist && output,
+  "set ANTNEST_UI_LEGACY_DIST and ANTNEST_UI_BENCH_OUTPUT",
+);
 durablePath(output);
 const viewportWidth = Number(process.env.ANTNEST_UI_BENCH_WIDTH ?? 1440);
 const viewportHeight = Number(process.env.ANTNEST_UI_BENCH_HEIGHT ?? 900);
-assert(Number.isInteger(viewportWidth) && viewportWidth >= 320 && Number.isInteger(viewportHeight) && viewportHeight >= 480);
+assert(
+  Number.isInteger(viewportWidth) &&
+    viewportWidth >= 320 &&
+    Number.isInteger(viewportHeight) &&
+    viewportHeight >= 480,
+);
 const root = resolve(legacyDist);
 const names = ["Research Partner", "Operations Assistant"];
 const legacyAgents = [
-  { agent_id: "agent-one", name: names[0], lifecycle_state: "created", activation_state: "enabled", runtime_state: "available" },
-  { agent_id: "agent-two", name: names[1], lifecycle_state: "created", activation_state: "disabled", runtime_state: "exited" },
+  {
+    agent_id: "agent-one",
+    name: names[0],
+    lifecycle_state: "created",
+    activation_state: "enabled",
+    runtime_state: "available",
+  },
+  {
+    agent_id: "agent-two",
+    name: names[1],
+    lifecycle_state: "created",
+    activation_state: "disabled",
+    runtime_state: "exited",
+  },
 ];
 const agents = [
-  { agentId: "agent-one", name: names[0], lifecycle: "created", activation: "enabled", runtime: "available" },
-  { agentId: "agent-two", name: names[1], lifecycle: "created", activation: "disabled", runtime: "exited" },
+  {
+    agentId: "agent-one",
+    name: names[0],
+    lifecycle: "created",
+    activation: "enabled",
+    runtime: "available",
+  },
+  {
+    agentId: "agent-two",
+    name: names[1],
+    lifecycle: "created",
+    activation: "disabled",
+    runtime: "exited",
+  },
 ];
 const legacy = createServer(async (request, response) => {
   try {
@@ -34,30 +66,61 @@ const legacy = createServer(async (request, response) => {
     if (path === "/api/app/bootstrap") {
       response.setHeader("content-type", "application/json");
       response.setHeader("cache-control", "no-store");
-      response.end(JSON.stringify({ principal: { user_id: "user", organization_id: "org", administrator: false }, agents: legacyAgents }));
+      response.end(
+        JSON.stringify({
+          principal: {
+            user_id: "user",
+            organization_id: "org",
+            administrator: false,
+          },
+          agents: legacyAgents,
+        }),
+      );
       return;
     }
     const asset = /^\/workspace\/assets\/([\w.-]+)$/.exec(path);
-    const file = asset ? join(root, "assets", asset[1]) : path === "/workspace/" ? join(root, "index.html") : null;
-    if (!file) { response.writeHead(404).end(); return; }
-    response.setHeader("content-type", file.endsWith(".js") ? "text/javascript" : file.endsWith(".css") ? "text/css" : "text/html");
+    const file = asset
+      ? join(root, "assets", asset[1])
+      : path === "/workspace/"
+        ? join(root, "index.html")
+        : null;
+    if (!file) {
+      response.writeHead(404).end();
+      return;
+    }
+    response.setHeader(
+      "content-type",
+      file.endsWith(".js")
+        ? "text/javascript"
+        : file.endsWith(".css")
+          ? "text/css"
+          : "text/html",
+    );
     response.end(await readFile(file));
   } catch (error) {
     response.writeHead(500).end(String(error));
   }
 });
 const document = await loadWorkspaceDocument();
-const current = createWorkspaceHttpServer({
-  async handle(request) {
-    if (new URL(request.url).pathname !== "/api/app/workspace/v1/bootstrap") return null;
-    return Response.json({
-      principal: { userId: "user", organizationId: "org", administrator: false },
-      agents,
-      renderedAt: "2026-09-25T00:00:00Z",
-      bridgeEpoch: "benchmark-epoch",
-    });
+const current = createWorkspaceHttpServer(
+  {
+    async handle(request) {
+      if (new URL(request.url).pathname !== "/api/app/workspace/v1/bootstrap")
+        return null;
+      return Response.json({
+        principal: {
+          userId: "user",
+          organizationId: "org",
+          administrator: false,
+        },
+        agents,
+        renderedAt: "2026-09-25T00:00:00Z",
+        bridgeEpoch: "benchmark-epoch",
+      });
+    },
   },
-}, document);
+  document,
+);
 const listen = async (server) => {
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
@@ -74,11 +137,14 @@ try {
       const context = await browser.newContext({
         viewport: { width: viewportWidth, height: viewportHeight },
         serviceWorkers: "block",
-        extraHTTPHeaders: variant === "new" ? {
-          "x-antnest-organization-id": "org",
-          "x-antnest-principal-id": "user",
-          "x-antnest-administrator": "false",
-        } : {},
+        extraHTTPHeaders:
+          variant === "new"
+            ? {
+                "x-antnest-organization-id": "org",
+                "x-antnest-principal-id": "user",
+                "x-antnest-administrator": "false",
+              }
+            : {},
       });
       try {
         const page = await context.newPage();
@@ -97,8 +163,13 @@ try {
           observer.observe(document, { childList: true, subtree: true });
           document.addEventListener("DOMContentLoaded", mark, { once: true });
           const markInteractive = () => {
-            const button = document.querySelector('button[aria-label="Refresh agents"]');
-            if (button && Object.keys(button).some((key) => key.startsWith("__reactProps$"))) {
+            const button = document.querySelector(
+              'button[aria-label="Refresh agents"]',
+            );
+            if (
+              button &&
+              Object.keys(button).some((key) => key.startsWith("__reactProps$"))
+            ) {
               window.__refreshBoundAt = performance.now();
             } else {
               requestAnimationFrame(markInteractive);
@@ -106,15 +177,25 @@ try {
           };
           requestAnimationFrame(markInteractive);
         }, names);
-        await page.goto(`${variant === "old" ? oldOrigin : newOrigin}/workspace/`, { waitUntil: "domcontentloaded" });
-        await page.waitForFunction(() => window.__directoryReadyAt !== undefined);
+        await page.goto(
+          `${variant === "old" ? oldOrigin : newOrigin}/workspace/`,
+          { waitUntil: "domcontentloaded" },
+        );
+        await page.waitForFunction(
+          () => window.__directoryReadyAt !== undefined,
+        );
         await page.waitForFunction(() => window.__refreshBoundAt !== undefined);
-        await page.waitForFunction(() => performance.getEntriesByType("paint").some((entry) => entry.name === "first-contentful-paint"));
+        await page.waitForFunction(() =>
+          performance
+            .getEntriesByType("paint")
+            .some((entry) => entry.name === "first-contentful-paint"),
+        );
         const result = await page.evaluate(() => {
           const navigation = performance.getEntriesByType("navigation")[0];
           return {
             ttfbMs: navigation.responseStart,
-            fcpMs: performance.getEntriesByName("first-contentful-paint")[0].startTime,
+            fcpMs: performance.getEntriesByName("first-contentful-paint")[0]
+              .startTime,
             directoryReadyMs: window.__directoryReadyAt,
             reactRefreshBoundMs: window.__refreshBoundAt,
           };
@@ -124,10 +205,18 @@ try {
           await mkdir(dirname(output), { recursive: true });
           const path = output.replace(/\.json$/, `-${variant}.png`);
           const bytes = await page.screenshot({ path, fullPage: true });
-          screenshots[variant] = { path, sha256: createHash("sha256").update(bytes).digest("hex") };
+          screenshots[variant] = {
+            path,
+            sha256: createHash("sha256").update(bytes).digest("hex"),
+          };
         }
-        const bootstrapPath = variant === "old" ? "/api/app/bootstrap" : "/api/app/workspace/v1/bootstrap";
-        const refreshed = page.waitForResponse((response) => new URL(response.url()).pathname === bootstrapPath);
+        const bootstrapPath =
+          variant === "old"
+            ? "/api/app/bootstrap"
+            : "/api/app/workspace/v1/bootstrap";
+        const refreshed = page.waitForResponse(
+          (response) => new URL(response.url()).pathname === bootstrapPath,
+        );
         await page.getByRole("button", { name: "Refresh agents" }).click();
         await refreshed;
       } finally {
@@ -135,13 +224,40 @@ try {
       }
     }
   }
-  const percentile = (values, rank) => values.toSorted((a, b) => a - b)[Math.ceil(values.length * rank) - 1];
-  const summary = Object.fromEntries(Object.entries(measurements).map(([variant, samples]) => [variant,
-    Object.fromEntries(["ttfbMs", "fcpMs", "directoryReadyMs", "reactRefreshBoundMs"].map((metric) => [metric, {
-      p50: percentile(samples.map((sample) => sample[metric]), 0.5),
-      p90: percentile(samples.map((sample) => sample[metric]), 0.9),
-    }]))]));
-  const report = { scope: "two-agent directory, local Node static fixture versus local production SSR, 2 warmups and 10 measured navigations per variant", viewport: { width: viewportWidth, height: viewportHeight }, legacyDist: root, measurements, summary, screenshots, screenshotsIdentical: screenshots.old.sha256 === screenshots.new.sha256 };
+  const percentile = (values, rank) =>
+    values.toSorted((a, b) => a - b)[Math.ceil(values.length * rank) - 1];
+  const summary = Object.fromEntries(
+    Object.entries(measurements).map(([variant, samples]) => [
+      variant,
+      Object.fromEntries(
+        ["ttfbMs", "fcpMs", "directoryReadyMs", "reactRefreshBoundMs"].map(
+          (metric) => [
+            metric,
+            {
+              p50: percentile(
+                samples.map((sample) => sample[metric]),
+                0.5,
+              ),
+              p90: percentile(
+                samples.map((sample) => sample[metric]),
+                0.9,
+              ),
+            },
+          ],
+        ),
+      ),
+    ]),
+  );
+  const report = {
+    scope:
+      "two-agent directory, local Node static fixture versus local production SSR, 2 warmups and 10 measured navigations per variant",
+    viewport: { width: viewportWidth, height: viewportHeight },
+    legacyDist: root,
+    measurements,
+    summary,
+    screenshots,
+    screenshotsIdentical: screenshots.old.sha256 === screenshots.new.sha256,
+  };
   await mkdir(dirname(output), { recursive: true });
   await writeFile(output, `${JSON.stringify(report, null, 2)}\n`);
   console.log(JSON.stringify(summary));
